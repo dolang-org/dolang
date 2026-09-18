@@ -1,5 +1,4 @@
 use crate::{
-    error::{Error, Result},
     object::record,
     strand::Strand,
     sym::Sym,
@@ -72,6 +71,11 @@ impl<'v, 'a> Unpack<'v, 'a> {
         self.variadic.positional()
     }
 
+    /// Returns how leftover keyed items are handled.
+    pub(crate) fn key_rest(&self) -> Rest {
+        self.variadic.keyed()
+    }
+
     fn rest_base(&self) -> usize {
         self.required + self.optional.len() + self.keys.len()
     }
@@ -93,18 +97,6 @@ impl<'v, 'a> Unpack<'v, 'a> {
             }
             _ => None,
         }
-    }
-
-    // TODO(#703): remove once every keyed source handles `*` and `**` rests
-    pub(crate) fn reject_split<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
-        if matches!(self.variadic, Variadic::Split(pos, key) if pos != Rest::None || key != Rest::None)
-        {
-            return Err(Error::type_error(
-                strand,
-                "`*` and `**` rests are not yet supported in destructuring",
-            ));
-        }
-        Ok(())
     }
 
     /// Stores an empty record in a `**name` rest, for sources without keyed items.

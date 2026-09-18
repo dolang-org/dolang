@@ -4,7 +4,7 @@ use crate::value::fmt::Format;
 
 use crate::{
     arg::{Arg, Args},
-    bytecode::Variadic,
+    bytecode::{Rest, Variadic},
     error::{Error, Result},
     gc::{Collect, arena::Visit},
     object::{BoundMethod, iter, sym::SymObj},
@@ -18,6 +18,7 @@ use crate::{
 
 use super::{
     protocol::{GcObj, Protocol, Recv, Spread, SpreadContext},
+    record::Record,
     tuple,
 };
 
@@ -44,6 +45,10 @@ struct Action {
 struct UnpackPlan {
     actions: Vec<Action>,
     pos_matched: usize,
+    /// Leftover positional items, for a `*name` rest
+    pos_rest: Vec<usize>,
+    /// Leftover keyed items, for a `**name` rest
+    key_rest: Vec<usize>,
 }
 
 impl<'v> ArgPack<'v> {
@@ -108,20 +113,26 @@ fn unpack_plan<'v, 'a, 's>(
     let pos_count = sig.required + sig.optional.len();
     let mut keys_left = sig.keys.len();
     let mut seen_keys = vec![false; keys_left];
+    let split = !matches!(sig.variadic, Variadic::Discard | Variadic::Capture);
+    let collect_pos = split && sig.pos_rest() == Rest::Capture;
+    let collect_keys = split && sig.key_rest() == Rest::Capture;
+    let mut pos_rest = Vec::new();
+    let mut key_rest = Vec::new();
 
     'top: for (idx, (key, _)) in items.iter().enumerate().skip(start) {
         if skip.contains(&idx) {
             continue;
         }
-        if pos == pos_count && keys_left == 0 && sig.variadic != Variadic::NONE {
+        if pos == pos_count
+            && keys_left == 0
+            && sig.pos_rest() != Rest::None
+            && sig.key_rest() != Rest::None
+            && !collect_pos
+            && !collect_keys
+        {
             break;
         }
         if let Some(sym) = key {
-            if keys_left == 0 && sig.variadic == Variadic::NONE {
-                return Err(Error::unexpected_key(strand, unsafe {
-                    Sym::from_tag(sym.tag)
-                }));
-            }
             for (i, (wanted, seen)) in sig.keys.iter().zip(seen_keys.iter_mut()).enumerate() {
                 if *seen {
                     continue;
@@ -133,29 +144,29 @@ fn unpack_plan<'v, 'a, 's>(
                     keys_left -= 1;
                     actions.push(Action {
                         source_index: idx,
-                        dest_slot: sig.required + i,
+                        dest_slot: pos_count + i,
                     });
                     continue 'top;
                 }
             }
-            if sig.variadic == Variadic::NONE {
+            if sig.key_rest() == Rest::None {
                 return Err(Error::unexpected_key(strand, unsafe {
                     Sym::from_tag(sym.tag)
                 }));
             }
-        } else {
-            if pos >= pos_count {
-                if sig.variadic == Variadic::NONE {
-                    return Err(Error::unexpected_positional(strand, sig.required));
-                } else {
-                    continue;
-                }
+            if collect_keys {
+                key_rest.push(idx);
             }
+        } else if pos < pos_count {
             actions.push(Action {
                 source_index: idx,
                 dest_slot: pos,
             });
             pos += 1;
+        } else if sig.pos_rest() == Rest::None {
+            return Err(Error::unexpected_positional(strand, pos_count));
+        } else if collect_pos {
+            pos_rest.push(idx);
         }
     }
 
@@ -163,24 +174,59 @@ fn unpack_plan<'v, 'a, 's>(
         return Err(Error::missing_positional(strand, pos));
     }
 
-    if sig.variadic == Variadic::NONE && keys_left != 0 {
-        for (wanted, seen) in sig.keys.iter().zip(seen_keys.iter()) {
-            if *seen {
-                continue;
-            }
-            if wanted.default.is_none() {
-                return Err(match &wanted.kind {
-                    sig::UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
-                    sig::UnpackKeyKind::Const(val) => Error::missing_key(strand, val),
-                });
-            }
+    for (wanted, seen) in sig.keys.iter().zip(seen_keys.iter()) {
+        if !*seen && wanted.default.is_none() {
+            return Err(match &wanted.kind {
+                sig::UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
+                sig::UnpackKeyKind::Const(val) => Error::missing_key(strand, val),
+            });
         }
     }
 
     Ok(UnpackPlan {
         actions,
         pos_matched: pos,
+        pos_rest,
+        key_rest,
     })
+}
+
+/// Stores the tuple of a `*name` rest and the record of a `**name` rest.
+fn store_split_rests<'v, 'a>(
+    strand: &mut Strand<'v, '_>,
+    sig: &sig::Unpack<'v, 'a>,
+    out: &mut Slots<'v, 'a>,
+    items: &[ArgItem<'v>],
+    plan: &UnpackPlan,
+) {
+    if sig.variadic == Variadic::Capture {
+        return;
+    }
+    if let Some(i) = sig.pos_rest_slot() {
+        let values: Vec<_> = plan
+            .pos_rest
+            .iter()
+            .map(|&index| items[index].1.dup())
+            .collect();
+        out.at(i)
+            .store(Value::from_object(tuple::tuple(strand, values)));
+    }
+    if let Some(i) = sig.key_rest_slot() {
+        let entries = plan
+            .key_rest
+            .iter()
+            .map(|&index| {
+                let (key, value) = &items[index];
+                (key.clone().unwrap(), value.dup())
+            })
+            .collect();
+        let record = Record::from_sym_entries(strand, entries);
+        out.at(i).store(Value::from_object(GcObj::new(
+            strand.vm().arena(),
+            strand.builtin_types().record,
+            record,
+        )));
+    }
 }
 
 fn fill_unpack_defaults<'v, 'a>(
@@ -196,8 +242,9 @@ fn fill_unpack_defaults<'v, 'a>(
         out.at(pos).store(default.dup());
     }
 
+    let pos_count = sig.required + sig.optional.len();
     for (i, wanted) in sig.keys.iter().enumerate() {
-        let dest = sig.required + i;
+        let dest = pos_count + i;
         if actions.iter().all(|action| action.dest_slot != dest)
             && let Some(default) = &wanted.default
         {
@@ -316,7 +363,6 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        sig.reject_split(strand)?;
         let pack = this.borrow(strand)?;
         let plan = unpack_plan(strand, &pack.inner, &HashSet::new(), 0, sig)?;
 
@@ -326,6 +372,7 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
         }
 
         fill_unpack_defaults(strand, sig, &mut out, plan.pos_matched, &plan.actions);
+        store_split_rests(strand, sig, &mut out, &pack.inner, &plan);
 
         if sig.variadic == Variadic::Capture {
             let skip = plan
@@ -504,26 +551,24 @@ impl<'v> Protocol<'v> for ArgIter<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        sig.reject_split(strand)?;
         let mut iter = this.borrow_mut(strand)?;
-        let pack = iter
-            .pack
+        let pack_obj = iter.pack.clone();
+        let pack = pack_obj
             .borrow()
             .ok_or_else(|| Error::concurrency(strand))?;
         let plan = unpack_plan(strand, &pack.inner, &iter.skip, iter.pos, sig)?;
-        let values: Vec<_> = plan
-            .actions
-            .iter()
-            .map(|action| (action.source_index, pack.inner[action.source_index].1.dup()))
-            .collect();
         let len = pack.inner.len();
-        drop(pack);
 
-        for (action, (source_index, value)) in plan.actions.iter().zip(values) {
-            iter.skip.insert(source_index);
-            out.at(action.dest_slot).store(value);
+        for action in &plan.actions {
+            iter.skip.insert(action.source_index);
+            out.at(action.dest_slot)
+                .store(pack.inner[action.source_index].1.dup());
         }
         fill_unpack_defaults(strand, sig, &mut out, plan.pos_matched, &plan.actions);
+        // The rests take their items
+        store_split_rests(strand, sig, &mut out, &pack.inner, &plan);
+        iter.skip.extend(plan.pos_rest.iter().chain(&plan.key_rest));
+        drop(pack);
 
         let pack = iter
             .pack
@@ -534,7 +579,10 @@ impl<'v> Protocol<'v> for ArgIter<'v> {
         iter.pos = pos;
         iter.int = iter
             .int
-            .checked_add(i64::try_from(plan.pos_matched).map_err(|_| Error::overflow(strand))?)
+            .checked_add(
+                i64::try_from(plan.pos_matched + plan.pos_rest.len())
+                    .map_err(|_| Error::overflow(strand))?,
+            )
             .ok_or_else(|| Error::overflow(strand))?;
 
         if sig.variadic == Variadic::Capture {

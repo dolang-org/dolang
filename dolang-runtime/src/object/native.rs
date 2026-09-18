@@ -214,11 +214,6 @@ impl<'v, 'a> Unpack<'v, 'a> {
         Output::set(strand, out, &record);
     }
 
-    // TODO(#703): remove once every keyed source handles `*` and `**` rests
-    pub(crate) fn reject_split<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
-        self.inner.reject_split(strand)
-    }
-
     /// Returns an iterator over the unpack specification.
     ///
     /// The iterator yields [`UnpackItem`] variants in order:
@@ -1476,7 +1471,6 @@ async fn default_object_unpack<'v, 'a, 's, T: Object<'v>>(
     unpack: Unpack<'v, 'a>,
 ) -> Result<'v, 's, ()> {
     let sig = unpack.inner;
-    sig.reject_split(strand)?;
     let mut out = unpack.slots;
     let pos_count = sig.required + sig.optional.len();
     if sig.required != 0 {
@@ -1496,7 +1490,7 @@ async fn default_object_unpack<'v, 'a, 's, T: Object<'v>>(
                 None => Recv::<ObjectWrap<'v, T>>::new(this.receiver),
             };
             let entries = &recv.vtbl().entries;
-            let track = sig.variadic != Variadic::Discard;
+            let track = sig.key_rest() != Rest::Discard;
             let mut matched: Option<BitBox> = track.then(|| bitbox![0; entries.len()]);
 
             for (key_index, key) in sig.keys.iter().enumerate() {
@@ -1556,7 +1550,7 @@ async fn default_object_unpack<'v, 'a, 's, T: Object<'v>>(
                 }
             }
 
-            if sig.variadic == Variadic::NONE {
+            if sig.key_rest() == Rest::None {
                 let matched = matched.as_mut().unwrap();
                 for (index, (sym, entry)) in entries.iter().enumerate() {
                     if matched[index] || !readable_entry(entry) {
@@ -1590,7 +1584,19 @@ async fn default_object_unpack<'v, 'a, 's, T: Object<'v>>(
                 }
             }
 
-            if sig.variadic == Variadic::Capture {
+            // Fields are keyed items: a `...` or `**` rest gets the unmatched
+            // ones, and a `*` rest gets nothing
+            let rest_slot = if sig.variadic == Variadic::Capture {
+                sig.pos_rest_slot()
+            } else {
+                if let Some(i) = sig.pos_rest_slot() {
+                    staged
+                        .at(i)
+                        .store(Value::from_object(tuple::tuple(strand, [])));
+                }
+                sig.key_rest_slot()
+            };
+            if let Some(rest_slot) = rest_slot {
                 let matched = matched.as_ref().unwrap();
                 let symbols = entries
                     .iter()
@@ -1602,7 +1608,7 @@ async fn default_object_unpack<'v, 'a, 's, T: Object<'v>>(
                 strand.builtin_types().field_iter.create(
                     strand,
                     FieldIter::new(receiver, symbols),
-                    staged.at(sig.len() - 1),
+                    staged.at(rest_slot),
                 );
             }
 

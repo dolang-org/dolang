@@ -46,6 +46,30 @@ assert_eq $first "ultramarine"
 assert_eq $foo 42
 ```
 
+### Positional and Key Rests
+
+`*` captures only surplus positional items, and `**` only surplus key items.
+Either or both may end a pattern, `*` first, in place of `...`. Surplus items
+of a kind that neither takes are an error, as without a rest:
+
+```
+let first *others **options = {1, 2, 3, color: "red"}
+assert_eq $first 1
+assert_eq $others (2, 3)
+assert_eq {...options} {color: "red"}
+```
+
+What a rest captures depends on the structure. For a sequence, `*` captures
+the same iterator as `...`, and `**` captures an empty record. For a
+dictionary, the positional items are the integer keys counting up from the
+next position; `*` captures their values as a tuple, and `**` captures the
+other pairs. Without a `*`, `**` also takes the surplus integer keys, and
+spreading it passes them as keys rather than positions. An argument pack
+captures a tuple and a record, as `*` and `**` parameters of a
+[function](./functions.md#variadic-parameters) do.
+
+`*` or `**` alone ignores the surplus items it would capture.
+
 ### Non-symbol Keys
 
 `:key` and `key: name` match **symbol** keys. External inputs such as decoded

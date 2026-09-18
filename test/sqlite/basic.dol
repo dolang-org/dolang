@@ -153,6 +153,43 @@ def query_star_unpack()
       assert_eq $rest[1]["n"] 3
 
 #[test]
+def split_rest_unpack()
+  sqlite.open ":memory:" do |conn|
+    conn.execute t"CREATE TABLE test (a INTEGER, b TEXT, c REAL)"
+    conn.execute t"INSERT INTO test VALUES (1, 'two', 3.0)"
+
+    conn.prepare t"SELECT * FROM test" do |stmt|
+      for row = stmt.query()
+        # Leftover columns are positional items
+        let :a *rest **keys = row
+        assert_eq $a 1
+        assert_eq ([...rest]) ["two", 3.0]
+        assert_eq ([...keys]) []
+
+      for row = stmt.query()
+        # `**` alone takes them by name
+        let first **others = row
+        assert_eq $first 1
+        assert_eq ({...others}) {b: "two", c: 3.0}
+
+      for row = stmt.query()
+        let **named = row
+        let pairs = $
+          for k v = named
+            - (Tuple [k, v])
+        assert_eq $pairs [(Tuple [:a:, 1]), (Tuple [:b:, "two"]), (Tuple [:c:, 3.0])]
+
+      for row = stmt.query()
+        # A keyed rest has no positional items
+        let **named = row
+        assert_throws $MissingPosError do
+          let _x ** = named
+        let :b *none **more = named
+        assert_eq $b "two"
+        assert_eq $none ()
+        assert_eq ({...more}) {a: 1, c: 3.0}
+
+#[test]
 def repeat_unpack_consumes()
   sqlite.open ":memory:" do |conn|
     conn.execute t"CREATE TABLE test (x INTEGER, y TEXT, z REAL)"

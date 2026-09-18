@@ -10,7 +10,7 @@ use crate::value::fmt::{Format, Spec};
 use bitvec::boxed::BitBox;
 
 use crate::{
-    bytecode::Variadic,
+    bytecode::{Rest, Variadic},
     call,
     error::{Error, Result},
     gc::{Collect, arena::Visit},
@@ -386,9 +386,11 @@ unsafe impl<'v, T: AsRef<Inner<'v>> + Collect + 'v> Collect for KeyValues<'v, T>
 }
 
 impl<'v> Inner<'v> {
+    /// Spreads one pair. It is positional if its key is the integer `next_pos`,
+    /// which then counts up; `None` spreads every pair as keyed.
     fn spread_key_value<'s>(
         strand: &mut Strand<'v, 's>,
-        next_pos: &mut i64,
+        next_pos: &mut Option<i64>,
         mut key: Value<'v>,
         mut value: Value<'v>,
         context: SpreadContext,
@@ -397,8 +399,10 @@ impl<'v> Inner<'v> {
         if context == SpreadContext::Sequence {
             value = Value::from_object(tuple::tuple(strand, [key, value]));
             sink.positional(strand, Slot::new(&mut value))
-        } else if key.to_i64(strand).ok() == Some(*next_pos) {
-            *next_pos += 1;
+        } else if let Some(pos) = *next_pos
+            && key.to_i64(strand).ok() == Some(pos)
+        {
+            *next_pos = pos.checked_add(1);
             sink.positional(strand, Slot::new(&mut value))
         } else if let Some(sym) = key.as_sym(strand) {
             sink.symbol(strand, sym, Slot::new(&mut value))
@@ -498,8 +502,8 @@ impl<'v> Inner<'v> {
                 }
             }
         }
-        if sig.variadic == Variadic::NONE && next(index).is_some() {
-            return Err(Error::unexpected_positional(strand, sig.required));
+        if sig.pos_rest() == Rest::None && next(index).is_some() {
+            return Err(Error::unexpected_positional(strand, pos_count));
         }
         Ok(index)
     }
@@ -585,7 +589,7 @@ impl<'v> Inner<'v> {
                 "collection was modified during iteration",
             ));
         }
-        let mut next_pos = 0i64;
+        let mut next_pos = Some(0i64);
         loop {
             let Some(bucket) = inner.index.get(index.get()) else {
                 return Ok(());
@@ -638,7 +642,6 @@ impl<'v, T: AsRef<Inner<'v>> + Collect + 'v> Protocol<'v> for Values<'v, T> {
         sig: &sig::Unpack<'v, '_>,
         mut out: Slots<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        sig.reject_split(strand)?;
         let borrow = this.borrow(strand)?;
         let next_index = {
             let container_borrow = borrow
@@ -657,10 +660,10 @@ impl<'v, T: AsRef<Inner<'v>> + Collect + 'v> Protocol<'v> for Values<'v, T> {
             })?
         };
         borrow.index.set(next_index);
-        if sig.variadic == Variadic::Capture {
-            out.at(sig.len() - 1)
-                .store(Value::from_input(strand, &this))
+        if let Some(i) = sig.pos_rest_slot() {
+            out.at(i).store(Value::from_input(strand, &this))
         }
+        sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
     }
 
@@ -725,7 +728,6 @@ impl<'v, T: AsRef<Inner<'v>> + Collect + 'v> Protocol<'v> for KeyValues<'v, T> {
         sig: &'a sig::Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        sig.reject_split(strand)?;
         let borrow = this.borrow(strand)?;
         {
             let container_borrow = borrow
@@ -745,10 +747,10 @@ impl<'v, T: AsRef<Inner<'v>> + Collect + 'v> Protocol<'v> for KeyValues<'v, T> {
                 Inner::next_value_from_bucket(borrow.bucket.clone(), i)
             })?;
         borrow.index.set(next_index);
-        if sig.variadic == Variadic::Capture {
-            out.at(sig.len() - 1)
-                .store(Value::from_input(strand, &this))
+        if let Some(i) = sig.pos_rest_slot() {
+            out.at(i).store(Value::from_input(strand, &this))
         }
+        sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
     }
 
@@ -820,7 +822,6 @@ impl<'v, T: AsRef<Inner<'v>> + Collect + 'v> Protocol<'v> for Keys<'v, T> {
         sig: &sig::Unpack<'v, '_>,
         mut out: Slots<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        sig.reject_split(strand)?;
         let borrow = this.borrow(strand)?;
         let (next_index, pending) = {
             let container_borrow = borrow
@@ -849,10 +850,10 @@ impl<'v, T: AsRef<Inner<'v>> + Collect + 'v> Protocol<'v> for Keys<'v, T> {
                 visited.set(bucket_index, true);
             }
         }
-        if sig.variadic == Variadic::Capture {
-            out.at(sig.len() - 1)
-                .store(Value::from_input(strand, &this))
+        if let Some(i) = sig.pos_rest_slot() {
+            out.at(i).store(Value::from_input(strand, &this))
         }
+        sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
     }
 
@@ -1185,34 +1186,90 @@ impl<'v> Inner<'v> {
         strand: &'a mut Strand<'v, 's>,
         sig: &'a sig::Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
-        make_unpack: impl FnOnce(&mut Strand<'v, 's>, GcObj<'v, T>, u64, Skip<'v>) -> Value<'v>,
+        make_unpack: impl FnOnce(
+            &mut Strand<'v, 's>,
+            GcObj<'v, T>,
+            u64,
+            UnpackState<'v>,
+            bool,
+        ) -> Value<'v>,
     ) -> Result<'v, 's, ()> {
-        sig.reject_split(strand)?;
         let borrow = this.borrow(strand)?;
         let inner: &Inner<'v> = (*borrow).as_ref();
+        let mut skip = Skip::new();
+        let matched = inner.unpack_matched(strand, sig, &mut out, Some(0), 0, &mut skip)?;
+        inner.store_pos_rest(strand, sig, &mut out, &matched)?;
+        let epoch = inner.epoch;
+        drop(borrow);
+        if let Some(i) = sig.key_rest_slot() {
+            let state = UnpackState::Resume {
+                index: 0,
+                floor: matched.key_floor(sig),
+                skip,
+            };
+            let rest = make_unpack(strand, this.to_strong(), epoch, state, true);
+            out.at(i).store(rest);
+        } else if sig.variadic == Variadic::Capture {
+            let state = UnpackState::Order {
+                int: matched.start.unwrap_or(i64::MAX),
+                index: 0,
+                skip,
+            };
+            let rest = make_unpack(strand, this.to_strong(), epoch, state, false);
+            out.at(sig.len() - 1).store(rest);
+        }
+        Ok(())
+    }
+
+    /// Matches the positional and key items of `sig` against the pairs an
+    /// unpack has not yet consumed, filling their slots, and checks for
+    /// leftovers of a kind that no rest takes.
+    ///
+    /// The positional items are the first instances of the integer keys
+    /// counting up from `next`, or none if it is `None`. Those of integer keys
+    /// below `floor` are already consumed. `skip` counts the instances of
+    /// each key consumed so far, and is advanced past those the key items
+    /// take.
+    fn unpack_matched<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        sig: &sig::Unpack<'v, '_>,
+        out: &mut Slots<'v, '_>,
+        next: Option<i64>,
+        floor: i64,
+        skip: &mut Skip<'v>,
+    ) -> Result<'v, 's, Matched> {
         let pos_count = sig.required + sig.optional.len();
-        for i in 0..pos_count {
-            let value = i64::try_from(i).map_err(|_| Error::overflow(strand))?;
-            let key = Value::from_i64(strand, value);
-            if let Some(value) = inner.get(strand, &key, Some(0))? {
-                out.at(i).store(value.dup());
-            } else if i >= sig.required
-                && let Some(default) = sig.optional.get(i - sig.required)
-            {
-                out.at(i).store(default.dup());
-            } else {
-                return Err(Error::missing_positional(strand, i));
+        let mut taken = 0usize;
+        if let Some(next) = next {
+            while taken < pos_count {
+                let key = offset(strand, next, taken)?;
+                let Some(value) = self.get(strand, &Value::from_i64(strand, key), Some(0))? else {
+                    break;
+                };
+                out.at(taken).store(value.dup());
+                taken += 1;
             }
         }
-        let value = i64::try_from(pos_count).map_err(|_| Error::overflow(strand))?;
-        if sig.variadic == Variadic::NONE
-            && inner
-                .get(strand, &Value::from_i64(strand, value), Some(0))?
-                .is_some()
-        {
-            return Err(Error::unexpected_positional(strand, sig.required));
+        if taken < sig.required {
+            return Err(Error::missing_positional(strand, taken));
         }
-        let mut skip = Skip::new();
+        for i in taken..pos_count {
+            out.at(i).store(sig.optional[i - sig.required].dup());
+        }
+
+        // The leftover positional items run from `start` to `end`
+        let start = next.map(|next| offset(strand, next, taken)).transpose()?;
+        let mut end = start;
+        if let Some(end) = &mut end {
+            while self
+                .get(strand, &Value::from_i64(strand, *end), Some(0))?
+                .is_some()
+            {
+                *end = offset(strand, *end, 1)?;
+            }
+        }
+
         for (i, key) in sig.keys.iter().enumerate() {
             let key_value = match &key.kind {
                 UnpackKeyKind::Sym(sym) => Value::from_object(strand.sym_obj(*sym)),
@@ -1223,10 +1280,10 @@ impl<'v> Inner<'v> {
             let seen = skip.add(strand, &key_value, hv);
 
             let instance = i64::try_from(seen).map_err(|_| Error::overflow(strand))?;
-            if let Some(value) = inner.get(strand, &key_value, Some(instance))? {
-                out.at(sig.required + i).store(value.dup())
+            if let Some(value) = self.get(strand, &key_value, Some(instance))? {
+                out.at(pos_count + i).store(value.dup())
             } else if let Some(default) = &key.default {
-                out.at(sig.required + i).store(default.dup())
+                out.at(pos_count + i).store(default.dup())
             } else {
                 return Err(match &key.kind {
                     UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
@@ -1234,21 +1291,51 @@ impl<'v> Inner<'v> {
                 });
             }
         }
-        let int_limit = i64::try_from(pos_count).map_err(|_| Error::overflow(strand))?;
-        if sig.variadic == Variadic::NONE
-            && let Some(key) = inner.leftover_key(strand, int_limit, &skip)?
+
+        let matched = Matched { start, end, floor };
+        let leftover_floor = match (sig.pos_rest(), sig.key_rest()) {
+            (Rest::None, Rest::None) => {
+                if start != end {
+                    return Err(Error::unexpected_positional(strand, pos_count));
+                }
+                Some(start.unwrap_or(floor))
+            }
+            (_, Rest::None) => Some(end.unwrap_or(floor)),
+            _ => None,
+        };
+        if let Some(leftover_floor) = leftover_floor
+            && let Some(key) = self.leftover_key(strand, leftover_floor, skip)?
         {
             return Err(Error::unexpected_key(strand, &key));
         }
-        match sig.variadic {
-            Variadic::Discard | Variadic::Split(..) => {}
-            Variadic::Capture => {
-                let container = this.to_strong();
-                let epoch = inner.epoch;
-                out.at(sig.required + sig.keys.len())
-                    .store(make_unpack(strand, container, epoch, skip));
+        Ok(matched)
+    }
+
+    /// Stores the leftover positional items in a `*name` rest, as a tuple.
+    fn store_pos_rest<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        sig: &sig::Unpack<'v, '_>,
+        out: &mut Slots<'v, '_>,
+        matched: &Matched,
+    ) -> Result<'v, 's, ()> {
+        if sig.variadic == Variadic::Capture {
+            return Ok(());
+        }
+        let Some(i) = sig.pos_rest_slot() else {
+            return Ok(());
+        };
+        let mut values = Vec::new();
+        if let (Some(start), Some(end)) = (matched.start, matched.end) {
+            for key in start..end {
+                let key = Value::from_i64(strand, key);
+                if let Some(value) = self.get(strand, &key, Some(0))? {
+                    values.push(value.dup());
+                }
             }
         }
+        out.at(i)
+            .store(Value::from_object(tuple::tuple(strand, values)));
         Ok(())
     }
 
@@ -1297,7 +1384,7 @@ impl<'v> Inner<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         let inner: &Inner<'v> = (*borrow).as_ref();
-        let mut next_pos = 0i64;
+        let mut next_pos = Some(0i64);
         unsafe {
             let mut i = 0usize;
             while i < inner.index.len() {
@@ -1653,27 +1740,164 @@ impl<'v> Skip<'v> {
     }
 }
 
+/// How far [`Inner::unpack_matched`] got.
+struct Matched {
+    /// First integer key after those taken positionally, if any remain.
+    start: Option<i64>,
+    /// End of the run of leftover positional items from `start`.
+    end: Option<i64>,
+    /// First instances of integer keys below this were consumed beforehand.
+    floor: i64,
+}
+
+impl Matched {
+    /// Returns the floor for a `**name` rest: it takes the leftover
+    /// positional items too, as keyed ones, unless a `*` rest takes them.
+    fn key_floor(&self, sig: &sig::Unpack<'_, '_>) -> i64 {
+        if sig.pos_rest() == Rest::None {
+            self.start.unwrap_or(self.floor)
+        } else {
+            self.end.unwrap_or(self.floor)
+        }
+    }
+}
+
+fn offset<'v, 's>(strand: &mut Strand<'v, 's>, base: i64, by: usize) -> Result<'v, 's, i64> {
+    i64::try_from(by)
+        .ok()
+        .and_then(|by| base.checked_add(by))
+        .ok_or_else(|| Error::overflow(strand))
+}
+
+/// Returns which of `entry`'s values a walk over leftover pairs delivers when
+/// it reaches the one at `subindex`, or `None` if that visit delivers nothing.
+///
+/// Values go out in order, skipping those consumed: the first instance of an
+/// integer key below `floor` (taken positionally), then as many more as
+/// `skip` counts.
+fn leftover_instance<'v>(
+    strand: &mut Strand<'v, '_>,
+    entry: &Entry<'v>,
+    subindex: usize,
+    floor: i64,
+    skip: &mut Skip<'v>,
+) -> Option<usize> {
+    let positional = entry
+        .key
+        .as_int(strand)
+        .is_some_and(|int| (0..i128::from(floor)).contains(&int));
+    if positional && subindex == 0 {
+        return None;
+    }
+    let instance = skip.add(strand, &entry.key, entry.hash) + usize::from(positional);
+    (instance < entry.value.len()).then_some(instance)
+}
+
+/// Position of a lazy rest over a keyed container's leftover pairs.
+///
+/// A rest delivers its positional items, the run of integer keys from the
+/// next position, before its keyed ones, which follow insertion order.
 pub(crate) enum UnpackState<'v> {
+    /// Delivering the positional run from `int`, before resuming the keyed
+    /// items at `resume`.
     Int {
         int: i64,
         resume: usize,
         skip: Skip<'v>,
     },
+    /// Walking in insertion order while the integer keys met continue the
+    /// positional run from `int`.
     Order {
         int: i64,
         index: usize,
         skip: Skip<'v>,
     },
+    /// Delivering the keyed items from `index`. First instances of integer
+    /// keys below `floor` were consumed positionally.
     Resume {
         index: usize,
+        floor: i64,
         skip: Skip<'v>,
     },
+}
+
+impl<'v> UnpackState<'v> {
+    /// Returns the next leftover pair, advancing past it.
+    fn next_pair<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        inner: &Inner<'v>,
+    ) -> Result<'v, 's, Option<(Value<'v>, Value<'v>)>> {
+        loop {
+            match self {
+                UnpackState::Int { int, resume, skip } => {
+                    let key = Value::from_i64(strand, *int);
+                    if let Some(value) = inner.get(strand, &key, Some(0))? {
+                        let value = value.dup();
+                        *int = offset(strand, *int, 1)?;
+                        return Ok(Some((key, value)));
+                    }
+                    *self = UnpackState::Resume {
+                        index: *resume,
+                        floor: *int,
+                        skip: skip.take(),
+                    };
+                }
+                UnpackState::Resume { index, floor, skip } => {
+                    let Some(slot) = inner.index.get(*index) else {
+                        return Ok(None);
+                    };
+                    *index += 1;
+                    let Some((bucket, subindex)) = slot else {
+                        continue;
+                    };
+                    let entry = unsafe { bucket.as_ref() };
+                    if let Some(instance) =
+                        leftover_instance(strand, entry, *subindex, *floor, skip)
+                    {
+                        return Ok(Some((entry.key.dup(), entry.value.at(instance).dup())));
+                    }
+                }
+                UnpackState::Order { int, index, skip } => {
+                    let Some(slot) = inner.index.get(*index) else {
+                        return Ok(None);
+                    };
+                    let Some((bucket, subindex)) = slot else {
+                        *index += 1;
+                        continue;
+                    };
+                    let entry = unsafe { bucket.as_ref() };
+                    if let Some(key) = entry.key.as_int(strand) {
+                        if *subindex == 0 && key == i128::from(*int) {
+                            *index += 1;
+                            *int = offset(strand, *int, 1)?;
+                            return Ok(Some((entry.key.dup(), entry.value.at(0).dup())));
+                        }
+                        // Out of sequence: finish the run, then resume here
+                        *self = UnpackState::Int {
+                            int: *int,
+                            resume: *index,
+                            skip: skip.take(),
+                        };
+                        continue;
+                    }
+                    *index += 1;
+                    if let Some(instance) = leftover_instance(strand, entry, *subindex, *int, skip)
+                    {
+                        return Ok(Some((entry.key.dup(), entry.value.at(instance).dup())));
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub(crate) struct UnpackInner<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> {
     pub(crate) state: UnpackState<'v>,
     pub(crate) epoch: u64,
     pub(crate) kv: GcObj<'v, T>,
+    /// Spreads every pair as keyed, for a `**name` rest.
+    pub(crate) keyed: bool,
 }
 
 impl<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> UnpackInner<'v, T> {
@@ -1683,115 +1907,79 @@ impl<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> UnpackInner<'v, 
 
     pub(crate) fn clear(&mut self) {}
 
+    fn check_epoch<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
+        let container = self.kv.borrow().ok_or_else(|| Error::concurrency(strand))?;
+        if (*container).as_ref().epoch != self.epoch {
+            return Err(Error::concurrency_msg(
+                strand,
+                "collection was modified during iteration",
+            ));
+        }
+        Ok(())
+    }
+
     pub(crate) async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, impl AsMut<Self> + Protocol<'v>>,
         strand: &'a mut Strand<'v, 's>,
         sig: &'a sig::Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
+        make_unpack: impl FnOnce(
+            &mut Strand<'v, 's>,
+            GcObj<'v, T>,
+            u64,
+            UnpackState<'v>,
+            bool,
+        ) -> Value<'v>,
     ) -> Result<'v, 's, ()> {
-        sig.reject_split(strand)?;
         let mut borrow = this.borrow_mut(strand)?;
         let borrow = AsMut::<Self>::as_mut(&mut *borrow);
-        let dict = borrow.kv.clone();
-        let dict_borrow = dict.borrow().ok_or_else(|| Error::concurrency(strand))?;
-        let inner: &Inner<'v> = (*dict_borrow).as_ref();
-        let (int, skip) = match &mut borrow.state {
-            UnpackState::Int { int, skip, .. } | UnpackState::Order { int, skip, .. } => {
-                (*int, skip)
-            }
-            UnpackState::Resume { skip, .. } => (i64::MAX, skip),
+        borrow.check_epoch(strand)?;
+        let container = borrow.kv.clone();
+        let container_borrow = container
+            .borrow()
+            .ok_or_else(|| Error::concurrency(strand))?;
+        let inner: &Inner<'v> = (*container_borrow).as_ref();
+        let (next, floor, resume, skip) = match &borrow.state {
+            UnpackState::Int { int, resume, skip } => (Some(*int), *int, *resume, skip),
+            UnpackState::Order { int, index, skip } => (Some(*int), *int, *index, skip),
+            UnpackState::Resume { index, floor, skip } => (None, *floor, *index, skip),
         };
 
-        // Phase 1: Clone Skip for validation - mutate clone instead of original
-        let mut temp_skip = skip.clone();
-
-        let pos_count = sig.required + sig.optional.len();
-        for i in 0..pos_count {
-            let value = i64::try_from(i)
-                .ok()
-                .and_then(|i| i.checked_add(int))
-                .ok_or_else(|| Error::overflow(strand))?;
-            let key = Value::from_i64(strand, value);
-            if let Some(value) = inner.get(strand, &key, Some(0))? {
-                out.at(i).store(value.dup());
-            } else if i >= sig.required
-                && let Some(default) = sig.optional.get(i)
-            {
-                out.at(i).store(default.dup());
-            } else {
-                // Error during validation - temp_skip discarded, original untouched
-                return Err(Error::missing_positional(strand, i));
-            }
-        }
-        let value = i64::try_from(pos_count)
-            .ok()
-            .and_then(|i| i.checked_add(int))
-            .ok_or_else(|| Error::overflow(strand))?;
-        if sig.variadic == Variadic::NONE
-            && inner
-                .get(strand, &Value::from_i64(strand, value), Some(0))?
-                .is_some()
-        {
-            // Error during validation - temp_skip discarded, original untouched
-            return Err(Error::unexpected_positional(strand, sig.required));
-        }
-        for (i, key) in sig.keys.iter().enumerate() {
-            // Convert key to value based on kind
-            let key_value = match &key.kind {
-                UnpackKeyKind::Sym(sym) => Value::from_object(strand.sym_obj(*sym)),
-                UnpackKeyKind::Const(value) => value.dup(),
+        // Match against a copy, so a failure leaves the rest as it was
+        let mut skip = skip.clone();
+        let matched = inner.unpack_matched(strand, sig, &mut out, next, floor, &mut skip)?;
+        inner.store_pos_rest(strand, sig, &mut out, &matched)?;
+        let key_rest = sig.key_rest_slot().map(|i| {
+            let state = UnpackState::Resume {
+                index: resume,
+                floor: matched.key_floor(sig),
+                skip: skip.clone(),
             };
+            (i, state)
+        });
 
-            let hv = hash(strand, &key_value)?;
-            // Mutate CLONE instead of original
-            let seen = temp_skip.add(strand, &key_value, hv);
-
-            let instance = i64::try_from(seen).map_err(|_| Error::overflow(strand))?;
-            if let Some(value) = inner.get(strand, &key_value, Some(instance))? {
-                out.at(sig.required + i).store(value.dup())
-            } else if let Some(default) = &key.default {
-                out.at(sig.required + i).store(default.dup())
-            } else {
-                // Error during validation - temp_skip discarded, original untouched
-                return Err(match &key.kind {
-                    UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
-                    UnpackKeyKind::Const(val) => Error::missing_key(strand, val),
-                });
-            }
-        }
-        // Final validation. Integer keys the iterator has already delivered
-        // (everything below `int`) are consumed too, as are the ones this
-        // unpack just took.
-        let int_limit = int.saturating_add_unsigned(pos_count as u64);
-        if sig.variadic == Variadic::NONE
-            && let Some(key) = inner.leftover_key(strand, int_limit, &temp_skip)?
-        {
-            // Error during validation - temp_skip discarded, original untouched
-            return Err(Error::unexpected_key(strand, &key));
-        }
-
-        // Phase 2: All validation passed, commit Skip changes
-        borrow.state = match &mut borrow.state {
-            UnpackState::Int { int, resume, .. } => UnpackState::Int {
-                int: *int + sig.required as i64,
-                resume: *resume,
-                skip: temp_skip, // Commit the validated Skip
-            },
-            UnpackState::Order { int, index, .. } => UnpackState::Int {
-                int: *int + sig.required as i64,
-                resume: *index,
-                skip: temp_skip, // Commit the validated Skip
-            },
-            UnpackState::Resume { index, .. } => UnpackState::Resume {
-                index: *index,
-                skip: temp_skip, // Commit the validated Skip
+        // Commit, consuming a positional run that a `*` rest took
+        let next = if sig.variadic == Variadic::Capture || sig.pos_rest() == Rest::None {
+            matched.start
+        } else {
+            matched.end
+        };
+        borrow.state = match next {
+            Some(int) => UnpackState::Int { int, resume, skip },
+            None => UnpackState::Resume {
+                index: resume,
+                floor,
+                skip,
             },
         };
-        match sig.variadic {
-            Variadic::Discard | Variadic::Split(..) => {}
-            Variadic::Capture => {
-                Output::set(strand, out.at(sig.required + sig.keys.len()), &this);
-            }
+        let epoch = borrow.epoch;
+        drop(container_borrow);
+
+        if let Some((i, state)) = key_rest {
+            let rest = make_unpack(strand, container, epoch, state, true);
+            out.at(i).store(rest);
+        } else if sig.variadic == Variadic::Capture {
+            Output::set(strand, out.at(sig.len() - 1), &this);
         }
         Ok(())
     }
@@ -1803,111 +1991,29 @@ impl<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> UnpackInner<'v, 
     ) -> Result<'v, 's, bool> {
         let mut borrow = this.borrow_mut(strand)?;
         let borrow = AsMut::<Self>::as_mut(&mut *borrow);
-        let container = borrow.kv.clone();
-        let epoch = borrow.epoch;
-        if (*container
+        if (*borrow
+            .kv
             .borrow()
             .ok_or_else(|| Error::concurrency(strand))?)
         .as_ref()
         .epoch
-            != epoch
+            != borrow.epoch
         {
             return Err(Error::concurrency(strand));
         }
-        'main: loop {
-            break match &mut borrow.state {
-                UnpackState::Int { int, resume, skip } => {
-                    let key = Value::from_i64(strand, *int);
-                    if let Some(value) = (*container
-                        .borrow()
-                        .ok_or_else(|| Error::concurrency(strand))?)
-                    .as_ref()
-                    .get(strand, &key, Some(0))?
-                    {
-                        out.store(Value::from_object(tuple::tuple(strand, [key, value.dup()])));
-                        *int += 1;
-                        Ok(true)
-                    } else {
-                        borrow.state = UnpackState::Resume {
-                            index: *resume,
-                            skip: skip.take(),
-                        };
-                        continue;
-                    }
-                }
-                UnpackState::Resume { index, skip } => loop {
-                    break if let Some(bucket) = (*container
-                        .borrow()
-                        .ok_or_else(|| Error::concurrency(strand))?)
-                    .as_ref()
-                    .index
-                    .get(*index)
-                    {
-                        *index += 1;
-                        if let Some((bucket, subindex)) = bucket {
-                            let bucket = unsafe { bucket.as_ref() };
-                            let key = &bucket.key;
-                            let hv = hash(strand, key)?;
-                            let key = if (*subindex == 0 && key.is_int(strand))
-                                || skip.add(strand, key, hv) >= bucket.value.len()
-                            {
-                                continue;
-                            } else {
-                                key.dup()
-                            };
-                            let value = bucket.value.at(*subindex).dup();
-                            out.store(Value::from_object(tuple::tuple(strand, [key, value])));
-                            Ok(true)
-                        } else {
-                            continue;
-                        }
-                    } else {
-                        Ok(false)
-                    };
-                },
-                UnpackState::Order { int, index, skip } => loop {
-                    break if let Some(bucket) = (*container
-                        .borrow()
-                        .ok_or_else(|| Error::concurrency(strand))?)
-                    .as_ref()
-                    .index
-                    .get(*index)
-                    {
-                        *index += 1;
-                        if let Some((bucket, subindex)) = bucket {
-                            let bucket = unsafe { bucket.as_ref() };
-                            let key = &bucket.key;
-                            let hv = bucket.hash;
-                            let key = if let Some(int_key) =
-                                key.as_int(strand).and_then(|x| i64::try_from(x).ok())
-                            {
-                                if int_key == *int {
-                                    *int += 1;
-                                    key.dup()
-                                } else {
-                                    borrow.state = UnpackState::Int {
-                                        int: *int,
-                                        resume: *index - 1,
-                                        skip: skip.take(),
-                                    };
-                                    continue 'main;
-                                }
-                            } else if skip.add(strand, key, hv) >= bucket.value.len() {
-                                continue;
-                            } else {
-                                key.dup()
-                            };
-                            let value = bucket.value.at(*subindex).dup();
-                            out.store(Value::from_object(tuple::tuple(strand, [key, value])));
-                            Ok(true)
-                        } else {
-                            continue;
-                        }
-                    } else {
-                        Ok(false)
-                    };
-                },
-            };
+        let container = borrow.kv.clone();
+        let container_borrow = container
+            .borrow()
+            .ok_or_else(|| Error::concurrency(strand))?;
+        match borrow
+            .state
+            .next_pair(strand, (*container_borrow).as_ref())?
+        {
+            Some((key, value)) => {
+                out.store(Value::from_object(tuple::tuple(strand, [key, value])));
+                Ok(true)
+            }
+            None => Ok(false),
         }
     }
 
@@ -1920,127 +2026,38 @@ impl<'v, T: Protocol<'v> + AsRef<Inner<'v>> + AsMut<Inner<'v>>> UnpackInner<'v, 
         let mut borrow = this.borrow_mut(strand)?;
         let borrow = AsMut::<Self>::as_mut(&mut *borrow);
         let container = borrow.kv.clone();
-        let epoch = borrow.epoch;
         if (*container
             .borrow()
             .ok_or_else(|| Error::concurrency(strand))?)
         .as_ref()
         .epoch
-            != epoch
+            != borrow.epoch
         {
             return Err(Error::concurrency(strand));
         }
         let mut next_pos = match &borrow.state {
-            UnpackState::Int { int, .. } | UnpackState::Order { int, .. } => *int,
-            UnpackState::Resume { .. } => i64::MAX,
+            _ if borrow.keyed => None,
+            UnpackState::Int { int, .. } | UnpackState::Order { int, .. } => Some(*int),
+            UnpackState::Resume { .. } => None,
         };
         let mut counter = 0usize;
-        'main: loop {
+        loop {
             counter += 1;
             if counter.is_multiple_of(crate::INTERRUPT_INTERVAL) {
                 strand.check_trap()?;
             }
-            match &mut borrow.state {
-                UnpackState::Int { int, resume, skip } => {
-                    let key = Value::from_i64(strand, *int);
-                    if let Some(value) = (*container
-                        .borrow()
-                        .ok_or_else(|| Error::concurrency(strand))?)
-                    .as_ref()
-                    .get(strand, &key, Some(0))?
-                    {
-                        Inner::spread_key_value(
-                            strand,
-                            &mut next_pos,
-                            key,
-                            value.dup(),
-                            context,
-                            sink,
-                        )?;
-                        *int += 1;
-                    } else {
-                        borrow.state = UnpackState::Resume {
-                            index: *resume,
-                            skip: skip.take(),
-                        };
-                    }
-                }
-                UnpackState::Resume { index, skip } => loop {
-                    let container_borrow = container
-                        .borrow()
-                        .ok_or_else(|| Error::concurrency(strand))?;
-                    let inner: &Inner<'v> = (*container_borrow).as_ref();
-                    let Some(bucket) = inner.index.get(*index) else {
-                        return Ok(());
-                    };
-                    *index += 1;
-                    let Some((bucket, subindex)) = bucket else {
-                        continue;
-                    };
-                    let bucket = unsafe { bucket.as_ref() };
-                    let key = &bucket.key;
-                    let hv = bucket.hash;
-                    if (*subindex == 0 && key.is_int(strand))
-                        || skip.add(strand, key, hv) >= bucket.value.len()
-                    {
-                        continue;
-                    }
-                    Inner::spread_key_value(
-                        strand,
-                        &mut next_pos,
-                        key.dup(),
-                        bucket.value.at(*subindex).dup(),
-                        context,
-                        sink,
-                    )?;
-                    break;
-                },
-                UnpackState::Order { int, index, skip } => loop {
-                    let container_borrow = container
-                        .borrow()
-                        .ok_or_else(|| Error::concurrency(strand))?;
-                    let inner: &Inner<'v> = (*container_borrow).as_ref();
-                    let Some(bucket) = inner.index.get(*index) else {
-                        return Ok(());
-                    };
-                    *index += 1;
-                    let Some((bucket, subindex)) = bucket else {
-                        continue;
-                    };
-                    let bucket = unsafe { bucket.as_ref() };
-                    let key = &bucket.key;
-                    let hv = bucket.hash;
-                    let key = if let Some(int_key) =
-                        key.as_int(strand).and_then(|x| i64::try_from(x).ok())
-                    {
-                        if int_key == *int {
-                            let key = key.dup();
-                            *int += 1;
-                            key
-                        } else {
-                            borrow.state = UnpackState::Int {
-                                int: *int,
-                                resume: *index - 1,
-                                skip: skip.take(),
-                            };
-                            continue 'main;
-                        }
-                    } else if skip.add(strand, key, hv) >= bucket.value.len() {
-                        continue;
-                    } else {
-                        key.dup()
-                    };
-                    Inner::spread_key_value(
-                        strand,
-                        &mut next_pos,
-                        key,
-                        bucket.value.at(*subindex).dup(),
-                        context,
-                        sink,
-                    )?;
-                    break;
-                },
-            }
+            let pair = {
+                let container_borrow = container
+                    .borrow()
+                    .ok_or_else(|| Error::concurrency(strand))?;
+                borrow
+                    .state
+                    .next_pair(strand, (*container_borrow).as_ref())?
+            };
+            let Some((key, value)) = pair else {
+                return Ok(());
+            };
+            Inner::spread_key_value(strand, &mut next_pos, key, value, context, sink)?;
         }
     }
 }

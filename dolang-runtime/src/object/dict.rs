@@ -316,6 +316,26 @@ impl<'v> Protocol<'v> for Iter<'v> {
 
 pub(crate) struct Unpack<'v>(kv::UnpackInner<'v, Dict<'v>>);
 
+/// Creates the lazy rest over a dict's leftover pairs.
+fn make_unpack<'v>(
+    strand: &mut Strand<'v, '_>,
+    container: GcObj<'v, Dict<'v>>,
+    epoch: u64,
+    state: UnpackState<'v>,
+    keyed: bool,
+) -> Value<'v> {
+    Value::from_object(GcObj::new(
+        strand.arena(),
+        strand.builtin_types().dict_unpack,
+        Unpack(kv::UnpackInner {
+            state,
+            kv: container,
+            epoch,
+            keyed,
+        }),
+    ))
+}
+
 impl<'v> AsMut<kv::UnpackInner<'v, Dict<'v>>> for Unpack<'v> {
     fn as_mut(&mut self) -> &mut kv::UnpackInner<'v, Dict<'v>> {
         &mut self.0
@@ -368,7 +388,7 @@ impl<'v> Protocol<'v> for Unpack<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        kv::UnpackInner::op_unpack(this, strand, sig, out).await
+        kv::UnpackInner::op_unpack(this, strand, sig, out, make_unpack).await
     }
 
     async fn op_next<'a, 's>(
@@ -710,21 +730,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        kv::Inner::op_unpack(this, strand, sig, out, |strand, container, epoch, skip| {
-            Value::from_object(GcObj::new(
-                strand.arena(),
-                strand.builtin_types().dict_unpack,
-                Unpack(kv::UnpackInner {
-                    state: UnpackState::Order {
-                        int: sig.required as i64,
-                        index: 0,
-                        skip,
-                    },
-                    kv: container,
-                    epoch,
-                }),
-            ))
-        })
+        kv::Inner::op_unpack(this, strand, sig, out, make_unpack)
     }
 }
 

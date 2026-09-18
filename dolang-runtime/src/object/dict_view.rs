@@ -473,9 +473,10 @@ fn unpack_pairs<'v, 's>(
     pairs: Vec<(Value<'v>, Value<'v>)>,
     mut unpack: Unpack<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    unpack.reject_split(strand)?;
+    let (pos_rest, key_rest, mixed) = (unpack.pos_rest(), unpack.key_rest(), unpack.mixed_rest());
     let mut consumed = bitbox![0; pairs.len()];
     let mut position = 0i64;
+    let mut rests = Vec::new();
     for item in unpack.iter() {
         let (key, slot, default) = match item {
             UnpackItem::Pos { slot, default } => {
@@ -489,22 +490,10 @@ fn unpack_pairs<'v, 's>(
                 (Value::from_input(strand, key.as_str(strand)), slot, default)
             }
             UnpackItem::ConstKey { key, slot, default } => (key.dup(), slot, default),
-            UnpackItem::Rest { slot } => {
-                let pairs = pairs
-                    .iter()
-                    .zip(consumed.iter().by_vals())
-                    .filter(|(_, consumed)| !*consumed)
-                    .map(|((key, value), _)| (key.dup(), value.dup()))
-                    .collect();
-                strand.builtin_types().dict_view_iter.create(
-                    strand,
-                    Iter { pairs, index: 0 },
-                    slot,
-                );
+            rest => {
+                rests.push(rest);
                 continue;
             }
-            // Rejected above until stage 3 of #703
-            UnpackItem::PosRest { .. } | UnpackItem::KeyRest { .. } => unreachable!(),
         };
 
         let found = pairs
@@ -530,21 +519,153 @@ fn unpack_pairs<'v, 's>(
             return Err(Error::missing_key(strand, &key));
         }
     }
-    if unpack.key_rest() == Rest::None
+    let start = usize::try_from(position).map_err(|_| Error::overflow(strand))?;
+    let run = settle_leftovers(
+        strand,
+        &pairs,
+        &mut consumed,
+        start,
+        pos_rest,
+        key_rest,
+        mixed,
+    )?;
+    for rest in rests {
+        match rest {
+            UnpackItem::Rest { slot } | UnpackItem::KeyRest { slot } => {
+                let pairs = unconsumed(&pairs, &consumed);
+                strand.builtin_types().dict_view_iter.create(
+                    strand,
+                    Iter { pairs, index: 0 },
+                    slot,
+                );
+            }
+            UnpackItem::PosRest { slot } => {
+                let tuple = run_tuple(strand, &pairs, &run);
+                Output::set(strand, slot, &tuple);
+            }
+            _ => unreachable!(),
+        }
+    }
+    Ok(())
+}
+
+/// Settles the pairs an unpack left over.
+///
+/// Positional items are those with the integer keys counting up from
+/// `start`. This checks for leftovers of a kind that no rest takes and, unless
+/// a `...` rest takes both kinds in order, marks consumed the positional
+/// items that a `*` rest takes. A `**` rest alone takes them as keyed items.
+///
+/// Returns the indices of the positional items a `*` rest takes.
+fn settle_leftovers<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    pairs: &[(Value<'v>, Value<'v>)],
+    consumed: &mut BitBox,
+    start: usize,
+    pos_rest: Rest,
+    key_rest: Rest,
+    mixed: bool,
+) -> Result<'v, 's, Vec<usize>> {
+    if mixed {
+        return Ok(Vec::new());
+    }
+    let mut run = Vec::new();
+    let mut next = start as i128;
+    while let Some(index) = (0..pairs.len())
+        .find(|&index| !consumed[index] && pairs[index].0.as_int(strand) == Some(next))
+    {
+        run.push(index);
+        next += 1;
+    }
+    if pos_rest == Rest::None {
+        if key_rest == Rest::None && !run.is_empty() {
+            return Err(Error::unexpected_positional(strand, start));
+        }
+        run.clear();
+    }
+    for &index in &run {
+        consumed.set(index, true);
+    }
+    if key_rest == Rest::None
         && let Some(index) = consumed.first_zero()
     {
         return Err(Error::unexpected_key(strand, &pairs[index].0));
     }
-    Ok(())
+    Ok(run)
+}
+
+fn settle_pairs<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    sig: &sig::Unpack<'v, '_>,
+    pairs: &[(Value<'v>, Value<'v>)],
+    consumed: &mut BitBox,
+) -> Result<'v, 's, Vec<usize>> {
+    let mixed = matches!(sig.variadic, Variadic::Discard | Variadic::Capture);
+    let start = sig.required + sig.optional.len();
+    settle_leftovers(
+        strand,
+        pairs,
+        consumed,
+        start,
+        sig.pos_rest(),
+        sig.key_rest(),
+        mixed,
+    )
+}
+
+fn unconsumed<'v>(
+    pairs: &[(Value<'v>, Value<'v>)],
+    consumed: &BitBox,
+) -> Vec<(Value<'v>, Value<'v>)> {
+    pairs
+        .iter()
+        .zip(consumed.iter().by_vals())
+        .filter(|(_, consumed)| !*consumed)
+        .map(|((key, value), _)| (key.dup(), value.dup()))
+        .collect()
+}
+
+fn run_tuple<'v>(
+    strand: &mut Strand<'v, '_>,
+    pairs: &[(Value<'v>, Value<'v>)],
+    run: &[usize],
+) -> Value<'v> {
+    let values: Vec<_> = run.iter().map(|&index| pairs[index].1.dup()).collect();
+    Value::from_object(super::tuple::tuple(strand, values))
+}
+
+/// Stores a `*name` rest's tuple and a `**name` rest's iterator.
+fn store_split_rests<'v>(
+    strand: &mut Strand<'v, '_>,
+    sig: &sig::Unpack<'v, '_>,
+    out: &mut Slots<'v, '_>,
+    pairs: &[(Value<'v>, Value<'v>)],
+    consumed: &BitBox,
+    run: &[usize],
+) {
+    if sig.variadic == Variadic::Capture {
+        return;
+    }
+    if let Some(i) = sig.pos_rest_slot() {
+        out.at(i).store(run_tuple(strand, pairs, run));
+    }
+    if let Some(i) = sig.key_rest_slot() {
+        let pairs = unconsumed(pairs, consumed);
+        strand
+            .builtin_types()
+            .dict_view_iter
+            .create(strand, Iter { pairs, index: 0 }, out.at(i));
+    }
 }
 
 /// Matches `pairs` against `sig`, filling in the positional and key slots of
 /// `out`.
 ///
-/// Returns the mask of pairs that were consumed; the caller owns producing
-/// the [`Variadic::Capture`] tail from it, since how the leftovers are best
-/// represented depends on where the pairs came from (a fresh snapshot can be
-/// moved into a new iterator, an existing iterator can just drop them).
+/// Returns the mask of pairs that were consumed; the caller settles the
+/// leftovers with [`settle_leftovers`] and owns producing the
+/// [`Variadic::Capture`] tail, since how the leftovers are best represented
+/// depends on where the pairs came from (a fresh snapshot can be moved into a
+/// new iterator, an existing iterator can just drop them).
 fn unpack_sig_pairs<'v, 's>(
     strand: &mut Strand<'v, 's>,
     pairs: &[(Value<'v>, Value<'v>)],
@@ -589,11 +710,6 @@ fn unpack_sig_pairs<'v, 's>(
                 sig::UnpackKeyKind::Const(value) => Error::missing_key(strand, value),
             });
         }
-    }
-    if sig.variadic == Variadic::NONE
-        && let Some(index) = consumed.first_zero()
-    {
-        return Err(Error::unexpected_key(strand, &pairs[index].0));
     }
     Ok(consumed)
 }
@@ -785,9 +901,10 @@ impl<'v> Protocol<'v> for View<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        sig.reject_split(strand)?;
         let pairs = flatten_glue(this.get(), strand)?;
-        let consumed = unpack_sig_pairs(strand, &pairs, sig, &mut out)?;
+        let mut consumed = unpack_sig_pairs(strand, &pairs, sig, &mut out)?;
+        let run = settle_pairs(strand, sig, &pairs, &mut consumed)?;
+        store_split_rests(strand, sig, &mut out, &pairs, &consumed, &run);
         if sig.variadic == Variadic::Capture {
             // The snapshot is ours, so the tail moves into the iterator.
             let pairs = pairs
@@ -850,7 +967,6 @@ impl<'v> Protocol<'v> for Iter<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        sig.reject_split(strand)?;
         // Unpack against the remaining pairs in place: no copy of the tail,
         // and the iterator is only advanced once the unpack has succeeded, so
         // a failure leaves it exactly where it was. The shared borrow is held
@@ -859,7 +975,11 @@ impl<'v> Protocol<'v> for Iter<'v> {
         // half-consumed iterator.
         let consumed = {
             let iter = this.borrow(strand)?;
-            unpack_sig_pairs(strand, &iter.pairs[iter.index..], sig, &mut out)?
+            let pairs = &iter.pairs[iter.index..];
+            let mut consumed = unpack_sig_pairs(strand, pairs, sig, &mut out)?;
+            let run = settle_pairs(strand, sig, pairs, &mut consumed)?;
+            store_split_rests(strand, sig, &mut out, pairs, &consumed, &run);
+            consumed
         };
         {
             let mut iter = this.borrow_mut(strand)?;
