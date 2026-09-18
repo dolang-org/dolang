@@ -1657,6 +1657,8 @@ impl<'a> Elaborater<'a> {
                 | Expr::Sym(_)
                 | Expr::Array { .. }
                 | Expr::Dict { .. }
+                | Expr::Tuple { .. }
+                | Expr::Record { .. }
                 | Expr::Concat { .. }
                 | Expr::FmtSeq { .. }
                 | Expr::FmtParam { .. }
@@ -1705,7 +1707,7 @@ impl<'a> Elaborater<'a> {
                 self.visit_expr(scope, &mut exprs[1], is_arg)?;
                 Ok(())
             }
-            Expr::Array { elems, .. } => {
+            Expr::Array { elems, .. } | Expr::Tuple { elems, .. } => {
                 for elem in elems.iter_mut() {
                     self.visit_array_elem(scope, elem, is_arg)?;
                 }
@@ -1714,6 +1716,19 @@ impl<'a> Elaborater<'a> {
             Expr::Dict { elems, .. } => {
                 for elem in elems.iter_mut() {
                     self.visit_dict_elem(scope, elem, is_arg)?;
+                }
+                Ok(())
+            }
+            Expr::Record { args, .. } => {
+                for arg in args.iter_mut() {
+                    match arg {
+                        Arg::Pos(Single { expr, .. })
+                        | Arg::Key(Key { expr, .. })
+                        | Arg::Expand(Expand { expr, .. }) => {
+                            self.visit_expr(scope, expr, is_arg)?
+                        }
+                        _ => self.visit_cmd_arg(scope, arg)?,
+                    }
                 }
                 Ok(())
             }

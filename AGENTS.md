@@ -71,7 +71,7 @@ echo $!flag               # boolean not
 Certain argument forms are automatically expressions without `$`:
 
 - Parenthesized: `echo (1 + 1)` → `2`
-- Data literals: `func [1, 2]`, `func {a: 1}`
+- Data literals: `func [1, 2]`, `func {a: 1}`, `func (1, 2)`, `func (a: 1)`
 - Quoted strings: `func "hello $name"`
 - Constants: `func 42`, `func true`, `func nil`, `func :symbol:`
 - `do` blocks: `func do |x| echo $x`
@@ -90,6 +90,8 @@ a syntax error or means something different).
 let x = (1 + 2 * 3)           # 7
 let arr = [1, 2, 3]
 let d = {name: "Alice", age: 30}
+let t = (1, "two", ...rest)   # tuple; (x,) is a singleton, () is empty
+let r = (name: "Alice", 30)   # record: has a static key (`k: v` or `:k`)
 let v = (
   some_long_expr(x, y) +
   another * factor
@@ -125,6 +127,11 @@ Function calls in expression context use either juxtaposition or C-style:
 let r = (add 1 2)          # juxtaposition
 let r = (add(1, 2))        # C-style
 ```
+
+Whitespace before `(` only matters at statement level: `let t = f (1, 2)` passes
+one tuple and `let t = f(1, 2)` passes two arguments, but inside `()` both
+`(f (1, 2))` and `(f(1, 2))` are C-style calls. Pass a lone tuple there as
+`(f((1, 2)))`.
 
 #### 3. Compact Expression Level — after `$` or in implicit positions
 

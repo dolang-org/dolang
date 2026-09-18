@@ -958,9 +958,14 @@ impl Check<'_> {
                 }
             }
             Expr::Get { object, .. } => self.expr(frame, object),
-            Expr::Array { elems, .. } => {
+            Expr::Array { elems, .. } | Expr::Tuple { elems, .. } => {
                 for elem in elems {
                     elem.check(self, frame);
+                }
+            }
+            Expr::Record { args, .. } => {
+                for arg in args {
+                    arg.check(self, frame);
                 }
             }
             Expr::Dict { elems, .. } => {

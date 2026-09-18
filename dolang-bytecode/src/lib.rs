@@ -279,6 +279,8 @@ pub enum Builtin {
     FmtParam,
     Fmt,
     Stub,
+    Tuple,
+    Record,
     _LEN,
 }
 
@@ -300,6 +302,8 @@ pub mod builtin {
     pub const FMT_PARAM: usize = FmtParam as usize;
     pub const FMT: usize = Fmt as usize;
     pub const STUB: usize = Stub as usize;
+    pub const TUPLE: usize = Tuple as usize;
+    pub const RECORD: usize = Record as usize;
 }
 
 pub const BUILTINS: [&str; Builtin::_LEN as usize] = [
@@ -319,6 +323,8 @@ pub const BUILTINS: [&str; Builtin::_LEN as usize] = [
     "fmt_param",
     "fmt",
     "stub",
+    "tuple",
+    "record",
 ];
 
 trait Encode {

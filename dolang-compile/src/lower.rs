@@ -678,14 +678,30 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 self.lower_expr(&exprs[1])?;
                 self.block.insts.push(Inst(InstInfo::Index, expr.span()))
             }
-            Expr::Array { elems, .. } => {
+            Expr::Array { elems, .. } | Expr::Tuple { elems, .. } => {
                 let mut sig = Vec::new();
                 for elem in elems.iter() {
                     sig.push(self.lower_array_elem(elem)?);
                 }
                 let sig = sig::Pack::new(sig.into_iter());
+                let builtin = if matches!(expr, Expr::Tuple { .. }) {
+                    builtin::TUPLE
+                } else {
+                    builtin::ARRAY
+                };
                 self.block.insts.push(Inst(
-                    InstInfo::Builtin(builtin::ARRAY, self.packtab.id(&sig)),
+                    InstInfo::Builtin(builtin, self.packtab.id(&sig)),
+                    expr.span(),
+                ));
+            }
+            Expr::Record { args, .. } => {
+                let mut sig = Vec::new();
+                for arg in args.iter() {
+                    sig.push(self.lower_arg(arg)?);
+                }
+                let sig = sig::Pack::new(sig.into_iter());
+                self.block.insts.push(Inst(
+                    InstInfo::Builtin(builtin::RECORD, self.packtab.id(&sig)),
                     expr.span(),
                 ));
             }

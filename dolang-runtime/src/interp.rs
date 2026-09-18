@@ -15,6 +15,8 @@ use crate::{
         module::{Module, Namespace},
         protocol::{GcObj, Spread, SpreadContext},
         range,
+        record::Record,
+        tuple,
     },
     sig::{self, Pack},
     strand::{InterruptMask, Strand, StrandInner},
@@ -251,6 +253,28 @@ impl<'v> Vm<'v> {
     ) -> Result<'v, 's, ()> {
         let array = Array::from_builtin_args(strand, args).await?;
         strand.builtin_types().array.create(strand, array, out);
+        Ok(())
+    }
+
+    async fn tuple<'a, 's>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        args: Args<'v, 'a>,
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        let values = tuple::from_builtin_args(strand, args).await?;
+        out.store(Value::from_object(tuple::tuple(strand.vm(), values)));
+        Ok(())
+    }
+
+    fn record<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        args: Args<'v, '_>,
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        let record = Record::from_args(strand, args)?;
+        strand.builtin_types().record.create(strand, record, out);
         Ok(())
     }
 
@@ -826,6 +850,8 @@ impl<'v> Vm<'v> {
                         }
                         builtin::ARRAY => self.array(strand, args, Slot::reborrow(&mut res)).await,
                         builtin::DICT => self.dict(strand, args, Slot::reborrow(&mut res)).await,
+                        builtin::TUPLE => self.tuple(strand, args, Slot::reborrow(&mut res)).await,
+                        builtin::RECORD => self.record(strand, args, Slot::reborrow(&mut res)),
                         builtin::RANGE => self.range(strand, args, Slot::reborrow(&mut res)).await,
                         builtin::ITER => self.iter(strand, args, Slot::reborrow(&mut res)).await,
                         builtin::CONCAT_STR => {
