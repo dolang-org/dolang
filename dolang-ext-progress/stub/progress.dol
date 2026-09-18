@@ -199,6 +199,11 @@ do -> Array
 # through the progress display so that it does not interfere with active
 # indicators.
 #
+# Inside an active context, `with` runs `func` in that context, so a script
+# that sets up its own progress display can run nested in another one. Its
+# indicators nest beneath the enclosing indicator, and `style` and `interval`
+# are ignored after they are checked.
+#
 # ## Example
 #
 # ```

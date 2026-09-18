@@ -360,6 +360,16 @@ fn get_multi<'v, 's>(
         .ok_or_else(|| Error::state_error(strand, "progress context closed"))
 }
 
+/// Whether the strand is inside a `progress.with` scope that is still open. A
+/// background strand can inherit the state of a scope that has since closed.
+fn context_active<'v>(strand: &Strand<'v, '_>, global: State<'v, Global<'v>>) -> bool {
+    match &*global.local.get(strand).state.borrow() {
+        None => false,
+        Some(SharedState::Interactive(state)) => state.borrow().multi.is_some(),
+        Some(SharedState::Plain(_)) => global.plain_active.get(),
+    }
+}
+
 struct ShowOptions {
     total: Option<u64>,
     message: Option<String>,
@@ -746,8 +756,25 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             let ([func], [style_val, interval_val]) =
                 unpack!(strand, args, 1, 0, style_kw = None, interval_kw = None)?;
 
-            let style = match style_val {
-                Some(sv) => style::parse_style(strand, &sv, &style_keys)?,
+            let style = style_val
+                .map(|sv| style::parse_style(strand, &sv, &style_keys))
+                .transpose()?;
+            let interval = parse_duration_secs(
+                strand,
+                "interval",
+                interval_val.as_deref(),
+                plain::DEFAULT_INTERVAL,
+            )?;
+
+            // Nested inside a live context: indicators already nest beneath
+            // the enclosing one, so run the block within it. Scoped
+            // overrides aren't supported yet, so they are ignored.
+            if context_active(strand, global) {
+                return call!(strand, &func, &mut out).await;
+            }
+
+            let style = match style {
+                Some(style) => style,
                 // No explicit `style:` kwarg: size the message column to
                 // the terminal's actual width instead of the fixed
                 // built-in default, so the common case makes good use of
@@ -758,12 +785,6 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             // If stderr is not a terminal, use the plain (non-interactive)
             // rendering path instead of indicatif's MultiProgress.
             if !dolang_ext_shell::stderr_is_tty(strand) {
-                let interval = parse_duration_secs(
-                    strand,
-                    "interval",
-                    interval_val.as_deref(),
-                    plain::DEFAULT_INTERVAL,
-                )?;
                 if global.plain_active.replace(true) {
                     return Err(Error::state_error(
                         strand,

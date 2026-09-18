@@ -67,6 +67,18 @@ def nested_indicator()
   assert_eq $results [42]
 
 #[test]
+def nested_with_runs_in_enclosing_context()
+  let result = progress.with do progress.show message: outer do |_|
+    progress.with do progress.show message: inner do |_| 42
+  assert_eq $result 42
+
+#[test]
+def nested_with_ignores_valid_overrides()
+  let result = progress.with do
+    progress.with style: {message: {width: 10}} interval: 1.0 do 42
+  assert_eq $result 42
+
+#[test]
 def indicator_update_units()
   progress.show total: 10 do |indicator|
     assert_type $progress.Indicator $indicator
