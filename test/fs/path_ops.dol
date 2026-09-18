@@ -44,6 +44,16 @@ def exists_method()
 
 #[test]
 #[vfs]
+def exists_through_file()
+  let file = Path "file.txt"
+
+  open $file w do |f|
+    f.write "test"
+
+  assert !$((file / "child")).exists()
+
+#[test]
+#[vfs]
 def canonical_method()
   let subdir = Path "subdir"
   create_dir $subdir
