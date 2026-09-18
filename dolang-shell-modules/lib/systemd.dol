@@ -9,7 +9,6 @@ import shlex term
   url:
     - Url
   std:
-    - Args
     - @Index
     - @Unpack
 
@@ -109,31 +108,31 @@ def ansi_style value
     catch std.ValueError: _
       return nil
 
-  let args = Args()
+  let args = {}
   while true
     let code = parts.next else: do break
     if (code == nil)
       continue
     if (code == 0)
-      args = Args()
+      args = {}
       continue
     else if (code >= 30 && code <= 37)
-      args.push fg: $sgr_color(code - 30)
+      args[:fg:] = sgr_color(code - 30)
     else if (code >= 90 && code <= 97)
-      args.push fg: $sgr_color(code - 90, bright: true)
+      args[:fg:] = sgr_color(code - 90, bright: true)
     else if (code >= 40 && code <= 47)
-      args.push bg: $sgr_color(code - 40)
+      args[:bg:] = sgr_color(code - 40)
     else if (code >= 100 && code <= 107)
-      args.push bg: $sgr_color(code - 100, bright: true)
+      args[:bg:] = sgr_color(code - 100, bright: true)
     else if (code == 38 || code == 48)
       let mode = parts.next default: nil
       if (mode == 5)
         let color = parts.next default: nil
         if (color != nil && color >= 0 && color <= 255)
           if (code == 38)
-            args.push fg: $color
+            args[:fg:] = color
           else
-            args.push bg: $color
+            args[:bg:] = color
       else if (mode == 2)
         let red = parts.next default: nil
         let green = parts.next default: nil
@@ -142,12 +141,13 @@ def ansi_style value
             red >= 0 && red <= 255 && green >= 0 && green <= 255 &&
             blue >= 0 && blue <= 255)
           if (code == 38)
-            args.push fg: $[red, green, blue]
+            args[:fg:] = [red, green, blue]
           else
-            args.push bg: $[red, green, blue]
+            args[:bg:] = [red, green, blue]
     else
       let options = SGR_OPTIONS.get $code else: do return nil
-      args.push ...options
+      for key value = options
+        args[key] = value
   term.Style ...args
 
 def fancy_value value

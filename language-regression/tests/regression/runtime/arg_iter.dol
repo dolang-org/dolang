@@ -1,26 +1,25 @@
 import std:
-  - Iter
   - UnexpectedKeyError
 
 def collect_pos ...args
-  let pos = args.pos_only()
-  assert (type pos Iter)
+  let *pos = args
+  assert (type pos Tuple)
   [...pos]
 
 def unpack_pos ...args
-  let a b ...rest = args.pos_only()
+  let a b *rest = args
   [a, b, [...rest]]
 
 def spread_pos ...args
-  let pos = args.pos_only()
+  let *pos = args
   collect_pos ...pos
 
 def split_args ...args
-  let pos keyed = args.pos_keys()
+  let *pos **keyed = args
   [[...pos], [...keyed], [...args]]
 
 def consume_after_pos ...args
-  let pos = args.pos_only()
+  let *pos = args
   [[...pos], [...args]]
 
 def iter_twice ...args
@@ -32,14 +31,10 @@ def spread_twice ...args
 def collect_pairs ...args
   [...args]
 
-assert (type (std.Args 1 2) std.Args)
-let pack = std.Args 1
-assert_eq (pack.push 2 name: "Alice") nil
-let pushed = [...pack]
-assert_eq $pushed[0][1] 1
-assert_eq $pushed[1][1] 2
-assert_eq $pushed[2][0] :name:
-assert_eq $pushed[2][1] "Alice"
+def rest_type ...args
+  args
+assert (type (rest_type 1 k: 2) Record)
+assert_eq (rest_type 1 k: 2) (record 1 k: 2)
 assert_eq (collect_pos 1 2 3) [1, 2, 3]
 assert_eq (unpack_pos 1 2 3 4) [1, 2, [3, 4]]
 assert_eq (spread_pos 4 5 6) [4, 5, 6]

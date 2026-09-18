@@ -10,7 +10,7 @@ use super::{
 use dolang_util::verified::Verified;
 
 const MAGIC: [u8; 8] = *b"\xffdobytec";
-const VERSION: [u8; 3] = [0, 0, 4];
+const VERSION: [u8; 3] = [0, 0, 5];
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 struct Header {
@@ -101,7 +101,7 @@ pub struct UnpackSig {
     pub optional: Vec<usize>,
     /// Key arguments (required and optional)
     pub keys: Vec<UnpackKey>,
-    /// Variadic mode (None, Discard, or Capture)
+    /// Rest mode
     pub variadic: super::Variadic,
 }
 
@@ -210,10 +210,7 @@ impl<'c> Context for Content<'c> {
             s.required
                 .strict_add(s.optional.len())
                 .strict_add(s.keys.len())
-                .strict_add(match s.variadic {
-                    super::Variadic::None | super::Variadic::Discard => 0,
-                    super::Variadic::Capture => 1,
-                })
+                .strict_add(s.variadic.captures())
         })
     }
 
@@ -363,6 +360,7 @@ fn verify_unpacktab(
         if u.required
             .saturating_add(u.optional.len())
             .saturating_add(u.keys.len())
+            .saturating_add(u.variadic.captures())
             > limit::UNPACK_ENTRIES
         {
             return Err(Error::UnpackLimit(i));
@@ -486,7 +484,7 @@ fn verify_consttab(consttab: &ConstTable, bintab: &[u8], symtab_len: usize) -> R
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{Certificate, Encode, Inst, Variadic, verify::Verifier};
+    use crate::{Certificate, Encode, Inst, Rest, Variadic, verify::Verifier};
 
     fn encode_raw(insts: &[Inst]) -> Vec<u8> {
         let mut bytecode = Vec::new();
@@ -501,7 +499,7 @@ mod test {
             required: 0,
             optional: vec![],
             keys: vec![],
-            variadic: Variadic::None,
+            variadic: Variadic::NONE,
         }
     }
 
@@ -927,6 +925,18 @@ mod test {
                     default: None,
                 })
                 .collect();
+            expect_error(verify(content), |err| matches!(err, Error::UnpackLimit(0)));
+        });
+
+        // Rest captures count toward the limit
+        with_valid_content(|mut content| {
+            content.unpacktab.content[0].keys = (0..(limit::UNPACK_ENTRIES - 1))
+                .map(|_| UnpackKey {
+                    kind: UnpackKeyKind::Sym(0),
+                    default: None,
+                })
+                .collect();
+            content.unpacktab.content[0].variadic = Variadic::Split(Rest::Capture, Rest::Capture);
             expect_error(verify(content), |err| matches!(err, Error::UnpackLimit(0)));
         });
     }

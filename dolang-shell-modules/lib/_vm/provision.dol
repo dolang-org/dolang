@@ -230,11 +230,11 @@ pub let PROVISION_SOURCE = r|
   class Tee: term.Console
     pub field consoles
 
-    def (init) self ...consoles
+    def (init) self *consoles
       term.Console.(init) $self
-      self.consoles = [...consoles.pos_only()]
+      self.consoles = [...consoles]
 
-    pub def write self ...data
+    pub def write self *data
       let written = 0
       for console = self.consoles
         written = (console.write ...data)

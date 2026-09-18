@@ -86,7 +86,7 @@ pub class Node: @Index[{...Str: Str, ...Int: (Node | Str), ...Range[Int]: Array[
     # Unnamespaced attributes with `Sym` or `Str` keys and `Str` values.
     :attrs @ Dict = nil
     # Attributes or children.
-    ...items @ (Attr | Value)
+    *items @ (Attr | Value)
   do
     ...
 

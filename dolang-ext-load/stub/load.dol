@@ -39,9 +39,12 @@ pub class ImportHandler
 # import load:
 #   import: global_import
 #
+# class Virtual
+#   pub field answer = 42
+#
 # let importer = do |name|
 #   if (name == "virtual")
-#     record answer: 42
+#     Virtual()
 #   else
 #     global_import $name
 #
@@ -62,9 +65,12 @@ do
 # ## Example
 #
 # ```
+# class Demo
+#   pub field answer = 42
+#
 # let handle = import_handler do |name|
 #   if (name == "demo")
-#     record answer: 42
+#     Demo()
 #   else
 #     throw std.ImportError(name)
 #

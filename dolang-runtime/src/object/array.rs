@@ -6,7 +6,7 @@ use dolang_util::pairsort;
 
 use crate::{
     arg::{Arg, Args},
-    bytecode::Variadic,
+    bytecode::Rest,
     call,
     error::{Error, Result},
     gc::{Collect, arena::Visit},
@@ -110,9 +110,10 @@ impl<'v> Protocol<'v> for Iter<'v> {
         let count = unpack_from(strand, sig, &mut out, &array_borrow, borrow.index, false)?;
         drop(array_borrow);
         borrow.index += count;
-        if sig.variadic == Variadic::Capture {
-            Output::set(strand, out.at(sig.len() - 1), &this);
+        if let Some(i) = sig.pos_rest_slot() {
+            Output::set(strand, out.at(i), &this);
         }
+        sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
     }
 
@@ -310,9 +311,10 @@ impl<'v> Protocol<'v> for Pairs<'v> {
         let count = unpack_from(strand, sig, &mut out, &array_borrow, borrow.index, true)?;
         mem::drop(array_borrow);
         borrow.index += count;
-        if sig.variadic == Variadic::Capture {
-            Output::set(strand, out.at(sig.len() - 1), &this);
+        if let Some(i) = sig.pos_rest_slot() {
+            Output::set(strand, out.at(i), &this);
         }
+        sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
     }
 
@@ -1052,16 +1054,17 @@ impl<'v> Protocol<'v> for Array<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         let index = unpack_from(strand, sig, &mut out, &borrow, 0, false)?;
-        if sig.variadic == Variadic::Capture {
+        if let Some(i) = sig.pos_rest_slot() {
             strand.builtin_types().array_iter.create(
                 strand,
                 Iter {
                     array: this.to_strong(),
                     index,
                 },
-                out.at(sig.len() - 1),
+                out.at(i),
             );
         }
+        sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
     }
 
@@ -1101,7 +1104,7 @@ fn unpack_from<'v, 's>(
     if sig.required > len {
         return Err(Error::missing_positional(strand, sig.required));
     }
-    if pos_count < len && sig.variadic == Variadic::None {
+    if pos_count < len && sig.pos_rest() == Rest::None {
         return Err(Error::unexpected_positional(strand, sig.required));
     }
     let backfill = if len < pos_count {
@@ -1132,12 +1135,12 @@ fn unpack_from<'v, 's>(
                     UnpackKeyKind::Sym(sym) => Value::from_object(strand.sym_obj(*sym)),
                     UnpackKeyKind::Const(value) => value.dup(),
                 };
-                out.at(i).store(Value::from_object(tuple::tuple(
+                out.at(pos_count + i).store(Value::from_object(tuple::tuple(
                     strand,
                     [key_value, default.dup()],
                 )))
             } else {
-                out.at(i + min).store(default.dup())
+                out.at(pos_count + i).store(default.dup())
             }
         } else {
             return Err(match &key.kind {
@@ -1146,7 +1149,7 @@ fn unpack_from<'v, 's>(
             });
         }
     }
-    Ok(min + sig.keys.len())
+    Ok(min)
 }
 
 // ── Array Class ─────────────────────────────────────────────────

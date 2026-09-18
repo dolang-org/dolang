@@ -12,7 +12,7 @@ use unicode_segmentation::{Graphemes, UnicodeSegmentation};
 
 use crate::{
     arg::Args,
-    bytecode::Variadic,
+    bytecode::Rest,
     error::{Error, Result},
     gc::{Collect, arena::Visit},
     object::protocol::{GcObj, members},
@@ -647,7 +647,7 @@ fn fill_unpack<'v, 's>(
             });
         }
     }
-    if sig.variadic == Variadic::None && next().is_some() {
+    if sig.pos_rest() == Rest::None && next().is_some() {
         return Err(Error::unexpected_positional(strand, pos_count));
     }
     Ok(())
@@ -766,12 +766,13 @@ impl<'v> Protocol<'v> for View<'v> {
     ) -> Result<'v, 's, ()> {
         let mut iter = ViewIter::new(this.get(), strand);
         fill_unpack(strand, sig, &mut out, || iter.next_str().map(str::to_owned))?;
-        if sig.variadic == Variadic::Capture {
+        if let Some(i) = sig.pos_rest_slot() {
             strand
                 .builtin_types()
                 .str_view_iter
-                .create(strand, iter, out.at(sig.len() - 1));
+                .create(strand, iter, out.at(i));
         }
+        sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
     }
 }
@@ -843,9 +844,10 @@ impl<'v> Protocol<'v> for ViewIter<'v> {
         let mut iter = this.borrow_mut(strand)?;
         fill_unpack(strand, sig, &mut out, || iter.next_str().map(str::to_owned))?;
         drop(iter);
-        if sig.variadic == Variadic::Capture {
-            Output::set(strand, out.at(sig.len() - 1), &this);
+        if let Some(i) = sig.pos_rest_slot() {
+            Output::set(strand, out.at(i), &this);
         }
+        sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
     }
 }
@@ -1015,13 +1017,13 @@ impl<'v> Protocol<'v> for Split<'v> {
             }
         }
 
-        // If variadic, assign this (now with updated state) to variadic slot
-        match sig.variadic {
-            Variadic::None | Variadic::Discard => {}
-            Variadic::Capture => {
-                value::Output::set(strand, out.at(pos_count + sig.keys.len()), &this);
-            }
+        drop(borrow);
+
+        // Assign this (now with updated state) to a capturing rest
+        if let Some(i) = sig.pos_rest_slot() {
+            value::Output::set(strand, out.at(i), &this);
         }
+        sig.fill_empty_key_rest(strand, &mut out);
 
         Ok(())
     }

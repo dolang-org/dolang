@@ -12,7 +12,7 @@ use dolang::runtime::value::fmt::Format;
 use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
-    Arg, Error, Instance, Object, Output, Result, State, Strand, Sym, Value, call, method,
+    Error, Instance, Object, Output, Result, State, Strand, Sym, Value, call, method,
     object::TypeBuilder,
     strand::{self, Local},
     unpack,
@@ -914,7 +914,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                     0,
                     message_kw = None,
                     icon_kw = None,
-                    ...
+                    *
                 )?;
 
                 let overall_message = parse_message(strand, message_val.as_deref())?;
@@ -938,11 +938,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
 
                 let res = async {
                     Output::set(strand, &mut out, Empty::Array);
-                    for arg in &mut steps {
-                        let step = match arg {
-                            Arg::Pos(step) => step,
-                            Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
-                        };
+                    for step in &mut steps {
                         let metadata = parse_step(
                             strand,
                             &step,

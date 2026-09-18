@@ -1,7 +1,7 @@
 //! `winscm.Service` — an open handle to a specific service.
 
 use dolang::runtime::{
-    Arg, Error, Object, Result, Slot, State, Strand, call, method,
+    Error, Object, Result, Slot, State, Strand, call, method,
     object::{FlagsTypeExt, TypeBuilder},
     unpack,
 };
@@ -125,15 +125,10 @@ impl<'v> Object<'v> for Service {
                 }
             })
             .method("start", async move |this, strand, args, _out| {
-                let ([], [], rest) = unpack!(strand, args, 0, 0, ...)?;
+                let ([], [], rest) = unpack!(strand, args, 0, 0, *)?;
                 let mut start_args = Vec::with_capacity(rest.len());
-                for arg in rest {
-                    match arg {
-                        Arg::Pos(value) => {
-                            start_args.push(expect_str(strand, value, "start argument")?);
-                        }
-                        Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
-                    }
+                for value in rest {
+                    start_args.push(expect_str(strand, value, "start argument")?);
                 }
                 let borrow = this.borrow(strand)?;
                 let service = borrow

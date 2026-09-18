@@ -1,5 +1,14 @@
 echo if else while for let field = + - / %
-let rec = record true: true false: true nil: true while: true let: true field: true do: true
+class Fields
+  field values
+
+  def (init) self **values
+    self.#values = values
+
+  def (get) self name
+    self.#values[name]
+
+let rec = Fields true: true false: true nil: true while: true let: true field: true do: true
 let field = 1
 assert_eq $field 1
 for field = [2]

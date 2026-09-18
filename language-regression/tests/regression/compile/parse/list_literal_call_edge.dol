@@ -1,5 +1,5 @@
-def capture ...args
-  let pos = args.pos_only()
-  [pos.next(), pos.next(), pos.next()]
+def capture *args
+  let a b c = args
+  [a, b, c]
 
 assert_eq (capture [1, 2] [] [3, 4]) [[1, 2], [], [3, 4]]

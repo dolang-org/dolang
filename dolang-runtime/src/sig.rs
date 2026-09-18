@@ -1,9 +1,11 @@
 use crate::{
+    object::record,
+    strand::Strand,
     sym::Sym,
-    value::{Input, InputBy, Value, private},
+    value::{Input, InputBy, Slots, Value, private},
     vm::Vm,
 };
-use dolang_bytecode::Variadic;
+use dolang_bytecode::{Rest, Variadic};
 
 pub(crate) enum UnpackKeyKind<'v, 'a> {
     Sym(Sym<'v, 'a>),
@@ -61,13 +63,48 @@ impl<'v, 'a> Unpack<'v, 'a> {
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.required
-            + self.optional.len()
-            + self.keys.len()
-            + match self.variadic {
-                Variadic::None | Variadic::Discard => 0,
-                Variadic::Capture => 1,
+        self.required + self.optional.len() + self.keys.len() + self.variadic.captures()
+    }
+
+    /// Returns how leftover positional items are handled.
+    pub(crate) fn pos_rest(&self) -> Rest {
+        self.variadic.positional()
+    }
+
+    /// Returns how leftover keyed items are handled.
+    pub(crate) fn key_rest(&self) -> Rest {
+        self.variadic.keyed()
+    }
+
+    fn rest_base(&self) -> usize {
+        self.required + self.optional.len() + self.keys.len()
+    }
+
+    /// Returns the slot of a rest that captures leftover positional items: `...name` or
+    /// `*name`.
+    pub(crate) fn pos_rest_slot(&self) -> Option<usize> {
+        match self.variadic {
+            Variadic::Capture | Variadic::Split(Rest::Capture, _) => Some(self.rest_base()),
+            _ => None,
+        }
+    }
+
+    /// Returns the slot of a `**name` rest.
+    pub(crate) fn key_rest_slot(&self) -> Option<usize> {
+        match self.variadic {
+            Variadic::Split(pos, Rest::Capture) => {
+                Some(self.rest_base() + usize::from(pos == Rest::Capture))
             }
+            _ => None,
+        }
+    }
+
+    /// Stores an empty record in a `**name` rest, for sources without keyed items.
+    pub(crate) fn fill_empty_key_rest(&self, strand: &mut Strand<'v, '_>, out: &mut Slots<'v, '_>) {
+        if let Some(slot) = self.key_rest_slot() {
+            out.at(slot)
+                .store(Value::from_object(record::empty(strand)));
+        }
     }
 
     pub(crate) fn sym_offset(&self, sym: Sym<'v, '_>) -> Option<usize> {

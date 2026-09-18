@@ -301,7 +301,7 @@ impl<'v> Function<'v> {
                 self.upvars.clone(),
                 Some(strand.fp),
             );
-            frame.unpack_unchecked(strand.inner, args)?;
+            frame.unpack_unchecked(strand, args)?;
             strand.run(strand.inner, &mut frame, out).await
         }
     }

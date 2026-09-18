@@ -4,10 +4,23 @@ use super::{
     stream::ExpectKind,
 };
 use crate::{
+    RestKind,
     ast::{Annot, Ident, Param, ParamDefault, PatIdent, Pattern},
     lex::{Keyword, Op, Token, TokenInfo},
     source::Span,
 };
+
+/// Why a rest of `kind` cannot follow a rest of `prev`, if it cannot.
+pub(super) fn rest_order_error(prev: RestKind, kind: RestKind) -> Option<&'static str> {
+    match (prev, kind) {
+        (RestKind::Pos, RestKind::Key) => None,
+        (RestKind::Key, RestKind::Pos) => Some("`*` rest must come before `**`"),
+        (RestKind::Mixed, _) | (_, RestKind::Mixed) if prev != kind => {
+            Some("`...` rest cannot be combined with `*` or `**`")
+        }
+        _ => Some("duplicate rest"),
+    }
+}
 
 #[derive(Copy, Clone)]
 pub(super) enum ParamMode {
@@ -82,6 +95,7 @@ impl Parser<'_> {
         let mut params = Vec::new();
         let mut variadic = false;
         let mut variadic_span = None;
+        let mut last_rest = None;
         let mut variadic_trailing_reported = false;
         let mut seen_optional = false;
         if mode.is_vertical() {
@@ -201,15 +215,20 @@ impl Parser<'_> {
                         default,
                     })
                 }
-                Some(token @ token!(TokenInfo::Ellipsis)) => {
-                    if variadic {
-                        return Err(self.syntax_error(
-                            scope,
-                            Some(token),
-                            "duplicate rest parameter",
-                        ));
+                Some(
+                    token @ token!(
+                        TokenInfo::Ellipsis | TokenInfo::Op(Op::Star) | TokenInfo::Op(Op::StarStar)
+                    ),
+                ) => {
+                    let kind = match token.info {
+                        TokenInfo::Ellipsis => RestKind::Mixed,
+                        TokenInfo::Op(Op::Star) => RestKind::Pos,
+                        _ => RestKind::Key,
+                    };
+                    if let Some(msg) = last_rest.and_then(|prev| rest_order_error(prev, kind)) {
+                        return Err(self.syntax_error(scope, Some(token), msg));
                     }
-                    let ellipsis_span = self.advance();
+                    let sigil_span = self.advance();
 
                     // Check if followed by identifier, whitespace, or newline
                     let next_token = self.peek()?;
@@ -234,7 +253,10 @@ impl Parser<'_> {
                             return Err(self.syntax_error(
                                 scope,
                                 next_token,
-                                "expected identifier or whitespace after '...'",
+                                format!(
+                                    "expected identifier or whitespace after '{}'",
+                                    kind.sigil()
+                                ),
                             ));
                         }
                     };
@@ -244,13 +266,15 @@ impl Parser<'_> {
                     let (ty, type_ellipsis_span) = self.parse_annot_with_ellipsis(scope, true)?;
 
                     params.push(Param::Rest {
-                        ellipsis_span,
+                        kind,
+                        sigil_span,
                         ident,
                         ty,
                         type_ellipsis_span,
                     });
+                    last_rest = Some(kind);
                     variadic = true;
-                    variadic_span = Some(ellipsis_span);
+                    variadic_span.get_or_insert(sigil_span);
                 }
                 Some(token!(expr_start!())) if mode.is_pattern() => {
                     self.report_non_trailing_variadic(

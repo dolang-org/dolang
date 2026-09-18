@@ -111,10 +111,10 @@ The `$` prefix introduces a compact expression at statement level. It supports:
 - Boolean not: `$!flag`
 
 ```
-let person = record name: "Alice" age: 30
-echo $person.name
+let person = {name: "Alice", age: 30}
+echo $person.len
 echo $person[:age:]
-echo $str(person.age)
+echo $str(person[:age:])
 ```
 
 ### Implicit

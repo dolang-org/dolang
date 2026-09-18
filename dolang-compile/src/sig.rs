@@ -13,6 +13,9 @@ pub(crate) type PackId = intern::Id<PackTag>;
 use super::Compiler;
 
 #[cfg(feature = "debug")]
+use dolang_bytecode::Rest;
+
+#[cfg(feature = "debug")]
 use std::fmt::{self, Write};
 
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
@@ -142,10 +145,7 @@ impl Unpack {
         self.required
             .strict_add(self.optional.len())
             .strict_add(self.keys.len())
-            .strict_add(match self.variadic {
-                Variadic::None | Variadic::Discard => 0,
-                Variadic::Capture => 1,
-            })
+            .strict_add(self.variadic.captures())
     }
 }
 
@@ -187,11 +187,21 @@ impl Unpack {
             }
             need_space = true;
         }
-        if self.variadic != Variadic::None {
+        let rests: &[&str] = match self.variadic {
+            Variadic::Discard | Variadic::Capture => &["⫶"],
+            Variadic::Split(pos, key) => match (pos != Rest::None, key != Rest::None) {
+                (false, false) => &[],
+                (true, false) => &["*"],
+                (false, true) => &["**"],
+                (true, true) => &["*", "**"],
+            },
+        };
+        for rest in rests {
             if need_space {
                 write!(w, " ")?;
             }
-            write!(w, "⫶")?;
+            write!(w, "{rest}")?;
+            need_space = true;
         }
         Ok(())
     }

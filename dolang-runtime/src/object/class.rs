@@ -9,7 +9,7 @@ use std::{
 use crate::value::fmt::{Format, Spec};
 
 use bitvec::{bitbox, boxed::BitBox};
-use dolang_bytecode::Variadic;
+use dolang_bytecode::{Rest, Variadic};
 use dolang_util::alias;
 
 use crate::{
@@ -27,6 +27,7 @@ use crate::{
             members,
         },
         sym::SymObj,
+        tuple,
     },
     sig::{self, Unpack},
     strand::Strand,
@@ -1714,7 +1715,7 @@ async fn default_class_unpack<'v, 'a, 's>(
 
             let class = this.annex().class.annex();
             let entries = &class.entries;
-            let track = sig.variadic != Variadic::Discard;
+            let track = sig.key_rest() != Rest::Discard;
             let mut matched: Option<BitBox> = track.then(|| bitbox![0; entries.len()]);
 
             for (key_index, key) in sig.keys.iter().enumerate() {
@@ -1750,7 +1751,7 @@ async fn default_class_unpack<'v, 'a, 's>(
                 }
             }
 
-            if sig.variadic == Variadic::None {
+            if sig.key_rest() == Rest::None {
                 let matched = matched.as_mut().unwrap();
                 for (index, (sym, entry)) in entries.iter().enumerate() {
                     if matched[index]
@@ -1769,7 +1770,19 @@ async fn default_class_unpack<'v, 'a, 's>(
                 }
             }
 
-            if sig.variadic == Variadic::Capture {
+            // Fields are keyed items: a `...` or `**` rest gets the unmatched
+            // ones, and a `*` rest gets nothing
+            let rest_slot = if sig.variadic == Variadic::Capture {
+                sig.pos_rest_slot()
+            } else {
+                if let Some(i) = sig.pos_rest_slot() {
+                    staged
+                        .at(i)
+                        .store(Value::from_object(tuple::tuple(strand, [])));
+                }
+                sig.key_rest_slot()
+            };
+            if let Some(rest_slot) = rest_slot {
                 let matched = matched.as_ref().unwrap();
                 let symbols = entries
                     .iter()
@@ -1784,7 +1797,7 @@ async fn default_class_unpack<'v, 'a, 's>(
                 strand.builtin_types().field_iter.create(
                     strand,
                     FieldIter::new(Value::from_object(this.to_strong()), symbols),
-                    staged.at(sig.len() - 1),
+                    staged.at(rest_slot),
                 );
             }
 

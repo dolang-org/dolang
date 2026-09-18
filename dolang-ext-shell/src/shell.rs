@@ -781,12 +781,9 @@ pub(crate) fn configure_vm<'v>(
                 Err(Error::abort(strand, Exit { code }))
             },
         )
-        .function("exec", async move |strand, mut args, _| {
-            let program = match args.next() {
-                None => return Err(Error::missing_positional(strand, 0)),
-                Some(Arg::Pos(program)) => path_from_value(strand, &program)?,
-                Some(Arg::Key(key, _)) => return Err(Error::unexpected_key(strand, key)),
-            };
+        .function("exec", async move |strand, args, _| {
+            let ([program], [], args) = unpack!(strand, args, 1, 0, *)?;
+            let program = path_from_value(strand, &program)?;
 
             let (vfs, path, cwd, env) = {
                 let local = global.local.get(strand);
@@ -822,13 +819,8 @@ pub(crate) fn configure_vm<'v>(
             let program = path.to_native().into_sys(strand)?;
             let cwd = cwd.to_native().into_sys(strand)?;
             let mut command_args = Vec::new();
-            for arg in args {
-                match arg {
-                    Arg::Pos(value) => {
-                        command_args.push(value.to_verbatim(strand)?);
-                    }
-                    Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
-                }
+            for value in args {
+                command_args.push(value.to_verbatim(strand)?);
             }
             Err(Error::abort(
                 strand,

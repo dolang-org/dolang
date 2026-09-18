@@ -38,10 +38,6 @@ let s = Set()
 s.add 7
 assert_eq [...s.map (do |x| x + 1)] [8]
 
-def count_variadic ...rest
-  [...rest.map (do |x| x)].len
-assert_eq (count_variadic 1 2) 2
-
 # Methods deliberately withheld from Iterable stay withheld: `next` would mint
 # a fresh iterator per call, `count` is `len` spelled expensively, and `kv` is
 # the iterable's own business.
@@ -83,13 +79,10 @@ let direct = []
 direct.put 9
 assert_eq $direct [9]
 
-# A record follows the iteration protocol but is deliberately NOT Iterable:
-# its member namespace is reserved for user fields, so it cannot expose the
-# method surface. Spreading still works; the methods are absent.
-let rec = record(a: 1, b: 2)
-assert (!(type rec Iterable))
-assert_eq ([...rec].len) 2
-assert_throws $FieldError do rec.map (do |kv| kv)
+# A record is Iterable over its key/value pairs.
+let rec = record(1, a: 2)
+assert (type rec Iterable)
+assert_eq [...rec.map (do |kv| kv[0])] [0, :a:]
 
 # User classes inherit the forwarded methods from the abstract supertype.
 # MyIterable supplies only `(iter)` -- no `(next)` of its own.

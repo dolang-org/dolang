@@ -1,0 +1,7 @@
+def f[*P = Int] x
+  # error: a rest binder cannot have a default
+  #   --> binder_rest_default.dol:LL:LL
+  #    |
+  # LL | def f[*P = Int] x
+  #    |          ^
+  x

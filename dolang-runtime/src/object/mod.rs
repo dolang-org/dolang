@@ -16,7 +16,6 @@ pub(crate) mod function;
 pub(crate) mod index;
 pub(crate) mod int;
 pub(crate) mod iter;
-pub(crate) mod kv;
 pub(crate) mod module;
 pub mod native;
 pub(crate) mod num;
@@ -99,7 +98,6 @@ impl<'v> Drop for TypeTable<'v> {
 
 pub(crate) struct BuiltinTypes<'v> {
     pub(crate) arg_pack: TypeHandle<'v, arg::ArgPack<'v>>,
-    pub(crate) arg_iter: TypeHandle<'v, arg::ArgIter<'v>>,
     pub(crate) array_iter: TypeHandle<'v, array::Iter<'v>>,
     pub(crate) array_sink: TypeHandle<'v, array::Sink<'v>>,
     pub(crate) array_pairs: TypeHandle<'v, array::Pairs<'v>>,
@@ -124,9 +122,9 @@ pub(crate) struct BuiltinTypes<'v> {
     pub(crate) native_function: TypeHandle<'v, function::NativeFunction<'v>>,
     pub(crate) int: TypeHandle<'v, i128>,
     pub(crate) dict_iter: TypeHandle<'v, dict::Iter<'v>>,
-    pub(crate) dict_keys: TypeHandle<'v, kv::Keys<'v, dict::Dict<'v>>>,
-    pub(crate) dict_values: TypeHandle<'v, kv::Values<'v, dict::Dict<'v>>>,
-    pub(crate) dict_key_values: TypeHandle<'v, kv::KeyValues<'v, dict::Dict<'v>>>,
+    pub(crate) dict_keys: TypeHandle<'v, dict::Keys<'v>>,
+    pub(crate) dict_values: TypeHandle<'v, dict::Values<'v>>,
+    pub(crate) dict_key_values: TypeHandle<'v, dict::KeyValues<'v>>,
     pub(crate) dict_unpack: TypeHandle<'v, dict::Unpack<'v>>,
     pub(crate) dict: TypeHandle<'v, dict::Dict<'v>>,
     pub(crate) dict_view: TypeHandle<'v, dict_view::View<'v>>,
@@ -155,10 +153,6 @@ pub(crate) struct BuiltinTypes<'v> {
     pub(crate) record: TypeHandle<'v, record::Record<'v>>,
     pub(crate) record_class: TypeHandle<'v, record::Class>,
     pub(crate) record_iter: TypeHandle<'v, record::Iter<'v>>,
-    pub(crate) record_keys: TypeHandle<'v, kv::Keys<'v, record::Record<'v>>>,
-    pub(crate) record_values: TypeHandle<'v, kv::Values<'v, record::Record<'v>>>,
-    pub(crate) record_key_values: TypeHandle<'v, kv::KeyValues<'v, record::Record<'v>>>,
-    pub(crate) record_unpack: TypeHandle<'v, record::Unpack<'v>>,
     pub(crate) channel_recv: TypeHandle<'v, channel::Receiver<'v>>,
     pub(crate) channel_send: TypeHandle<'v, channel::Sender<'v>>,
     pub(crate) class_object: TypeHandle<'v, class::ClassObject<'v>>,
@@ -224,7 +218,6 @@ impl<'v> BuiltinTypes<'v> {
     pub(crate) fn new(types: &mut TypeTable<'v>) -> Self {
         Self {
             arg_pack: types.register_type_handle(),
-            arg_iter: types.register_type_handle(),
             array_iter: types.register_type_handle(),
             array_sink: types.register_type_handle(),
             array_pairs: types.register_type_handle(),
@@ -278,10 +271,6 @@ impl<'v> BuiltinTypes<'v> {
             record: types.register_type_handle(),
             record_class: types.register_type_handle(),
             record_iter: types.register_type_handle(),
-            record_keys: types.register_type_handle(),
-            record_values: types.register_type_handle(),
-            record_key_values: types.register_type_handle(),
-            record_unpack: types.register_type_handle(),
             str_split: types.register_type_handle(),
             str_view: types.register_type_handle(),
             str_view_iter: types.register_type_handle(),

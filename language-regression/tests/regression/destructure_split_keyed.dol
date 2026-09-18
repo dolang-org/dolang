@@ -1,0 +1,107 @@
+# `*` and `**` rests when destructuring keyed sources
+
+import
+  std: error
+
+def pairs source
+  $
+    for k v = source
+      - (Tuple [k, v])
+
+def args ...rest
+  rest
+
+# Dict positional items are the integer keys counting up from 0; both rests
+# segregate the leftovers
+let d = {0: "x", 1: "y", 5: "z", n: 1}
+let p *pr **kr = d
+assert_eq $p x
+assert_eq $pr ("y",)
+assert_eq (pairs kr) [(Tuple [5, "z"]), (Tuple [:n:, 1])]
+
+# `**` alone takes the positional leftovers too, as keyed items
+let q **kq = d
+assert_eq $q x
+assert_eq (pairs kq) [(Tuple [1, "y"]), (Tuple [5, "z"]), (Tuple [:n:, 1])]
+
+# ... and spreads them as keys, not positionals
+let **ko = {0: "a", n: 1}
+assert_eq [...{...ko}] [(Tuple [0, "a"]), (Tuple [:n:, 1])]
+let **ka = {0: "a"}
+assert_throws $error.UnexpectedKeyError do
+  args ...ka
+
+# `*` alone rejects keyed leftovers, including stray integer keys
+let *s = {0: 1, 1: 2}
+assert_eq $s (1, 2)
+assert_throws $error.UnexpectedKeyError str: "unexpected key item: n" do
+  let *_s = {0: 1, n: 2}
+assert_throws $error.UnexpectedKeyError str: "unexpected key item: 5" do
+  let *_s = {0: 1, 5: 2}
+
+# Spreading both rests passes what spreading the dict would
+let dd = {0: "x", 1: "y", n: 1}
+let *dp **dk = dd
+assert_eq (record ...dp ...dk) (record ...dd)
+
+# Records behave the same
+let t1 *t2 **t3 = (record 1 2 a: 3)
+assert_eq [t1, t2] [1, (2,)]
+assert_eq (pairs t3) [(Tuple [:a:, 3])]
+
+# Key parameters take their keys first
+let :n **rest = d
+assert_eq $n 1
+assert_eq (pairs rest) [(Tuple [0, "x"]), (Tuple [1, "y"]), (Tuple [5, "z"])]
+
+# Rests of a `...` rest continue from where it stands
+let first ...more = d
+let second *mp **mk = more
+assert_eq [first, second, mp] ["x", "y", ()]
+assert_eq (pairs mk) [(Tuple [5, "z"]), (Tuple [:n:, 1])]
+
+# A `**` rest has no positional items
+let **kw = {a: 1}
+assert_throws $error.MissingPosError do
+  let _k1 *_ = kw
+
+# Argument packs: `*` gets a tuple and `**` a record, as in a call
+let a *as **ak = (args 1 k: 2 3)
+assert_eq $a 1
+assert_eq $as (3,)
+assert_eq $ak (k: 2)
+assert_eq (type ak) $Record
+assert_throws $error.UnexpectedKeyError do
+  let _a *_as = (args 1 k: 2)
+assert_throws $error.UnexpectedPosError do
+  let _a **_ak = (args 1 2)
+
+# Object fields are keyed items: `*` gets nothing
+class Point
+  pub field x = 1
+  pub field y = 2
+
+let :x *fp **fk = (Point())
+assert_eq $x 1
+assert_eq $fp ()
+assert_eq (pairs fk) [(Tuple [:y:, 2])]
+assert_throws $error.UnexpectedKeyError do
+  let x: _x *_ = (Point())
+
+# Key defaults and positional defaults fill separate slots
+bind {0: 1, k: 5}
+  - a1
+  - b1 = 2
+  :k
+assert_eq [a1, b1, k] [1, 2, 5]
+
+# A `...` rest keeps stray integer keys and later instances of a key
+let _x ...r1 = {0: "a", 5: "b", n: 1}
+assert_eq (pairs r1) [(Tuple [5, "b"]), (Tuple [:n:, 1])]
+let :dup ...r2 = (record dup: 1 dup: 2 b: 3)
+assert_eq $dup 1
+assert_eq (pairs r2) [(Tuple [:dup:, 2]), (Tuple [:b:, 3])]
+
+# A missing key is an error even with a rest
+assert_throws $error.MissingKeyError do
+  let :_missing ... = (args 1)

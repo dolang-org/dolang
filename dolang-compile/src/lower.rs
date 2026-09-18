@@ -5,7 +5,7 @@ use dolang_util::arena::ArenaVec;
 use dolang_bytecode::builtin;
 
 use crate::{
-    Mode, PreludeImport,
+    Mode, PreludeImport, RestKind,
     ast::{
         Arg, ArrayElem, Assign, Bind, Block, Class, ClassMember, ClassSuper, Const, Decorator, Def,
         DictElem, Expand, Expr, ExprBody, FieldInit, FmtParamName, For, FormatAlign, FormatKind,
@@ -586,7 +586,12 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         Op::GtGt => InstInfo::Shr,
                         Op::Tilde => InstInfo::BitNot,
                         Op::Caret => InstInfo::BitXor,
-                        Op::Bang | Op::AmpAmp | Op::BarBar | Op::Dot | Op::DotHash => {
+                        Op::Bang
+                        | Op::AmpAmp
+                        | Op::BarBar
+                        | Op::Dot
+                        | Op::DotHash
+                        | Op::StarStar => {
                             unreachable!()
                         }
                     },
@@ -1825,7 +1830,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         let mut required = 0;
         let mut optional = Vec::new();
         let mut keys = Vec::new();
-        let mut variadic = dolang_bytecode::Variadic::None;
+        let mut variadic = dolang_bytecode::Variadic::NONE;
 
         for param in params.iter() {
             match param {
@@ -1863,12 +1868,24 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         default: constid_default,
                     })
                 }
-                Param::Rest { ident, .. } => {
-                    assert_eq!(variadic, dolang_bytecode::Variadic::None);
-                    variadic = if ident.is_some() {
-                        dolang_bytecode::Variadic::Capture
+                Param::Rest { kind, ident, .. } => {
+                    use dolang_bytecode::{Rest, Variadic};
+                    let rest = if ident.is_some() {
+                        Rest::Capture
                     } else {
-                        dolang_bytecode::Variadic::Discard
+                        Rest::Discard
+                    };
+                    // The parser allows only `...` alone, or `*` followed by `**`
+                    variadic = match (kind, variadic) {
+                        (RestKind::Mixed, Variadic::NONE) => match rest {
+                            Rest::Capture => Variadic::Capture,
+                            _ => Variadic::Discard,
+                        },
+                        (RestKind::Pos, Variadic::NONE) => Variadic::Split(rest, Rest::None),
+                        (RestKind::Key, Variadic::Split(pos, Rest::None)) => {
+                            Variadic::Split(pos, rest)
+                        }
+                        _ => unreachable!("invalid rest parameters"),
                     };
                 }
             }
@@ -2639,7 +2656,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         let span = guard.span;
 
         // Create a zero-arg synthetic closure for the guard body
-        let empty = sig::Unpack::new(0, [], [], dolang_bytecode::Variadic::None);
+        let empty = sig::Unpack::new(0, [], [], dolang_bytecode::Variadic::NONE);
         let sig = self.unpacktab.id(&empty);
         let fid = self.graph.alloc_nl_guard(sig, Some(self.block.scope));
         let (enter, exit) = {
@@ -3002,18 +3019,22 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 }
             })
             .collect();
-        let rest = params.last().and_then(|p| {
-            if let Param::Rest { ident, .. } = p {
-                ident.as_ref()
-            } else {
-                None
-            }
-        });
+        // Capturing rests, which take the last slots in parameter order
+        let rests: Vec<_> = params
+            .iter()
+            .filter_map(|p| {
+                if let Param::Rest { ident, .. } = p {
+                    ident.as_ref()
+                } else {
+                    None
+                }
+            })
+            .collect();
         sym_keys.sort_by_key(|(sym, _)| *sym);
         const_keys.sort_by_key(|(c, _)| *c);
         let unpack = &self.unpacktab[sig];
         let mut vars = Vec::new();
-        if let Some(id) = rest {
+        for id in rests.iter().rev() {
             let res = id.res.as_ref().expect("unresolved param");
             let var = self.resolve_var_in_scope(cfg::ScopeRef::clone(&scope), res.index, res.depth);
             vars.push(var);
@@ -3280,7 +3301,7 @@ impl<'c> Lowerer<'c> {
 
     pub(crate) fn run(&mut self, root: &Root) -> Result<cfg::Graph> {
         let mut graph = cfg::Graph::new();
-        let empty = sig::Unpack::new(0, [], [], dolang_bytecode::Variadic::None);
+        let empty = sig::Unpack::new(0, [], [], dolang_bytecode::Variadic::NONE);
         let sig = self.unpacktab.id(&empty);
         let fid = graph.alloc_func(sig, None, &root.0.body.vars, None);
         let (enter, exit) = {

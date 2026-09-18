@@ -230,7 +230,8 @@ impl<'v, 'a> Args<'v, 'a> {
         const KO: usize,
         const M: usize,
         const MO: usize,
-        const VAR: bool,
+        const POS: bool,
+        const KEY: bool,
     >(
         mut self,
         strand: &mut Strand<'v, 's>,
@@ -241,12 +242,17 @@ impl<'v, 'a> Args<'v, 'a> {
             assert!(N + K == M);
             assert!(NO + KO == MO);
         }
+        let var = POS || KEY;
         let mut i = 0usize;
         let mut seen = [false; M];
         let mut required = MaybeUninit::<[Slot<'v, 'a>; M]>::uninit();
         let mut optional = [const { None }; MO];
 
-        if VAR && self.mask.is_empty() {
+        // Matched arguments are masked out of the returned rest, unless the
+        // only ones are leading positionals, which the rest can start after
+        let masked = var && (KEY || K + KO > 0 || !self.mask.is_empty());
+        let mut rest_start = self.index;
+        if masked && self.mask.is_empty() {
             self.mask.resize(self.content.len(), false);
             self.mask[0..self.index].fill(true);
         }
@@ -263,15 +269,17 @@ impl<'v, 'a> Args<'v, 'a> {
                                 .write(value)
                         }
                         seen[i] = true;
-                        if VAR {
+                        if masked {
                             self.mask[self.index] = true;
                         }
+                        rest_start = self.index + 1;
                     } else if i < N + NO {
                         optional[i - N] = Some(value);
-                        if VAR {
+                        if masked {
                             self.mask[self.index] = true;
                         }
-                    } else if !VAR {
+                        rest_start = self.index + 1;
+                    } else if !POS {
                         return Err(Error::unexpected_positional(strand, i));
                     }
                     i += 1;
@@ -305,10 +313,10 @@ impl<'v, 'a> Args<'v, 'a> {
                         }
                         break false;
                     };
-                    if VAR && found {
+                    if masked && found {
                         self.mask[self.index] = true;
                     }
-                    if !VAR && !found {
+                    if !KEY && !found {
                         return Err(Error::unexpected_key(strand, sym));
                     }
                 }
@@ -332,19 +340,72 @@ impl<'v, 'a> Args<'v, 'a> {
                 }
             }
         }
-        let var = if VAR {
+        let rest = if masked {
             self.index = self.mask[self.headroom..]
                 .iter()
                 .position(|b| !*b)
                 .map(|i| i + self.headroom)
                 .unwrap_or(len);
             Some(self)
+        } else if var {
+            self.index = rest_start;
+            Some(self)
         } else {
             None
         };
-        Ok((unsafe { required.assume_init() }, optional, var))
+        Ok((unsafe { required.assume_init() }, optional, rest))
+    }
+
+    #[doc(hidden)]
+    pub fn into_pos(self) -> PosArgs<'v, 'a> {
+        PosArgs(self)
+    }
+
+    #[doc(hidden)]
+    pub fn into_keys(self) -> KeyArgs<'v, 'a> {
+        KeyArgs(self)
     }
 }
+
+/// Positional call arguments, left over by [`unpack!()`](crate::unpack) with a `*` rest.
+pub struct PosArgs<'v, 'a>(Args<'v, 'a>);
+
+impl<'v, 'a> Iterator for PosArgs<'v, 'a> {
+    type Item = Slot<'v, 'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.0.next()? {
+            Arg::Pos(slot) => Some(slot),
+            Arg::Key(..) => unreachable!("`*` rest holds a key argument"),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+}
+
+impl<'v, 'a> ExactSizeIterator for PosArgs<'v, 'a> {}
+
+/// Key call arguments, left over by [`unpack!()`](crate::unpack) with a `**` rest.
+pub struct KeyArgs<'v, 'a>(Args<'v, 'a>);
+
+impl<'v, 'a> Iterator for KeyArgs<'v, 'a> {
+    type Item = (Sym<'v, 'a>, Slot<'v, 'a>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.0.next()? {
+            Arg::Key(sym, slot) => Some((sym, slot)),
+            Arg::Pos(_) => unreachable!("`**` rest holds a positional argument"),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+}
+
+impl<'v, 'a> ExactSizeIterator for KeyArgs<'v, 'a> {}
 
 /// Unpacks [`Args`] into required and optional positional and key arguments
 ///
@@ -378,15 +439,39 @@ impl<'v, 'a> Args<'v, 'a> {
 /// # Ok(())
 /// # }
 /// ```
+///
+/// `rest` is then an [`Args`] with the unmatched arguments in call order.  End the invocation
+/// with `*` instead to capture only positional arguments as a [`PosArgs`], or with `**` to capture
+/// only key arguments as a [`KeyArgs`]; an unmatched argument of the other kind is an error, as
+/// without a rest:
+///
+/// ```rust,no_run
+/// # use dolang_runtime::{arg::Args, strand::Strand, sym::Sym, value::Slot, unpack};
+/// # async fn example<'v, 's, 'a>(strand: &mut Strand<'v, 's>, args: Args<'v, 'a>, key: Sym<'v, 'a>) -> dolang_runtime::error::Result<'v, 's, ()> {
+/// let ([first], [opt], values) = unpack!(strand, args, 1, 0, key = None, *)?;
+/// for value in values {
+///     // ...
+/// }
+/// # Ok(())
+/// # }
+/// ```
 #[macro_export]
 macro_rules! unpack {
     (impl $strand: expr, $args: expr, $n: expr, $k: expr, $no: expr, $ko: expr,
      { $(, $kargs: tt)* }, { $(, $koargs: tt)* }, {}) => {
-        $args.unpack::<{$n}, {$k}, {$no}, {$ko}, {$n + $k}, {$no + $ko}, false>($strand, [$($kargs),*], [$($koargs),*]).map(|(req, opt, _)| (req, opt))
+        $args.unpack::<{$n}, {$k}, {$no}, {$ko}, {$n + $k}, {$no + $ko}, false, false>($strand, [$($kargs),*], [$($koargs),*]).map(|(req, opt, _)| (req, opt))
     };
     (impl $strand: expr, $args: expr, $n: expr, $k: expr, $no: expr, $ko: expr,
      { $(, $kargs: tt)* }, { $(, $koargs: tt)* }, {...}) => {
-        $args.unpack::<{$n}, {$k}, {$no}, {$ko}, {$n + $k}, {$no + $ko}, true>($strand, [$($kargs),*], [$($koargs),*]).map(|(req, opt, var)| (req, opt, var.unwrap()))
+        $args.unpack::<{$n}, {$k}, {$no}, {$ko}, {$n + $k}, {$no + $ko}, true, true>($strand, [$($kargs),*], [$($koargs),*]).map(|(req, opt, var)| (req, opt, var.unwrap()))
+    };
+    (impl $strand: expr, $args: expr, $n: expr, $k: expr, $no: expr, $ko: expr,
+     { $(, $kargs: tt)* }, { $(, $koargs: tt)* }, {*}) => {
+        $args.unpack::<{$n}, {$k}, {$no}, {$ko}, {$n + $k}, {$no + $ko}, true, false>($strand, [$($kargs),*], [$($koargs),*]).map(|(req, opt, var)| (req, opt, var.unwrap().into_pos()))
+    };
+    (impl $strand: expr, $args: expr, $n: expr, $k: expr, $no: expr, $ko: expr,
+     { $(, $kargs: tt)* }, { $(, $koargs: tt)* }, {**}) => {
+        $args.unpack::<{$n}, {$k}, {$no}, {$ko}, {$n + $k}, {$no + $ko}, false, true>($strand, [$($kargs),*], [$($koargs),*]).map(|(req, opt, var)| (req, opt, var.unwrap().into_keys()))
     };
     (impl $strand: expr, $args: expr, $n: expr, $k: expr, $no: expr, $ko: expr,
      { $($kargs: tt)* }, { $($koargs: tt)* }, { $key: ident } ) => {

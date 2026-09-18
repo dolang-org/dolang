@@ -33,7 +33,7 @@ pub use error::{Error, Result};
 pub mod object {
     pub use dolang_runtime::fmt;
     pub use dolang_runtime::object::native::{
-        Cast, Instance, Mut, Object, Ref, Spread, SpreadContext, Type, TypeBuilder, TypeMut,
+        Cast, Instance, Mut, Object, Ref, Rest, Spread, SpreadContext, Type, TypeBuilder, TypeMut,
         TypeRef, Unpack, UnpackItem,
     };
     pub use dolang_runtime::object::{

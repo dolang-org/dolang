@@ -886,3 +886,31 @@ def statement_type_imports_keep_document_targets()
   assert_eq (span_text source imports[0][1].module) "missing.module"
   assert_eq (span_text source imports[0][1].name) "renamed"
   unit.emit()
+
+#[test]
+def rest_sigils_are_exposed()
+  let source = r|-
+    def split[*Ps, **Ks] a *rest @Ps **kw @Ks -> Tuple[...Ps]
+      [a, rest, kw]
+    def mixed[...R] ...rest @R
+      rest
+    let schema @{*Int, **Str, ...Bool} = nil
+  let unit = compile.compile "rest_sigils.dol" $source document: true
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
+
+  # A rest binder's sigil says which items it takes
+  let sigils = do |name|
+    let func = (named_node source nodes compile.Function name)
+    let binders = nodes.filter(do |pair| (type(pair[1], compile.RestBinder) && (pair[1].parent == func[0])))
+    [...binders.map(do |pair| pair[1].sigil)]
+  assert_eq (sigils "split") ["*", "**"]
+  assert_eq (sigils "mixed") ["..."]
+
+  # So does a rest item's
+  let schema = (named_node source nodes compile.Bind "schema")
+  let args = (types_of(nodes, schema[0])[0][1].expr.args)
+  assert_eq [...args.map(do |a| type a)] [compile.RestTypeArg, compile.RestTypeArg, compile.RestTypeArg]
+  assert_eq [...args.map(do |a| a.sigil)] ["*", "**", "..."]
+  assert_eq (span_text(source, args[1].span)) "**Str"
+  unit.emit()

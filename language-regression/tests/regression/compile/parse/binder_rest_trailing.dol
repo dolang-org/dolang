@@ -1,0 +1,19 @@
+def late[*P, T] x
+  # error: rest parameter must be trailing
+  #   --> binder_rest_trailing.dol:LL:LL
+  #    |
+  # LL | def late[*P, T] x
+  #    |          ^
+  x
+
+class Keyed[**K, T]
+# error: rest parameter must be trailing
+#   --> binder_rest_trailing.dol:LL:LL
+#    |
+# LL | class Keyed[**K, T]
+#    |             ^^
+
+def fine[T, *P, **K] x
+  x
+
+class Split[*P, **K]

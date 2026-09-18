@@ -1162,7 +1162,7 @@ pub class Path
   pub def join
     self
     # Path components to join.
-    ...components @ (Str | Path)
+    *components @ (Str | Path)
   do -> Path
     ...
 
@@ -2104,7 +2104,7 @@ pub def update_metadata
   # Opaque flag. macOS.
   :opaque @ Bool = nil
   # Paths to update, in order.
-  ...paths @ (Str | Path)
+  *paths @ (Str | Path)
 do
   ...
 
@@ -2381,7 +2381,7 @@ pub def remove
   # Treat a missing path as success.
   :ignore @ Bool = nil
   # One or more paths to remove.
-  ...paths @ (Str | Path)
+  *paths @ (Str | Path)
 do
   ...
 
@@ -2412,7 +2412,7 @@ pub def remove_dir
   :ignore @ Bool = nil
   # One or more directories to
   # remove.
-  ...paths @ (Str | Path)
+  *paths @ (Str | Path)
 do
   ...
 

@@ -37,11 +37,13 @@ use super::{
         self, Inspect, Member, MemberKind, Protocol, TypeHandle, instance_mcall_fallback,
         is_special_mcall, type_mcall_fallback,
     },
+    record, tuple,
 };
 use dolang_bytecode::Variadic;
 use dolang_util::alias;
 
 pub use super::protocol::{Spread, SpreadContext};
+pub use dolang_bytecode::Rest;
 
 pub(crate) struct ObjectWrap<'v, T> {
     value: ManuallyDrop<T>,
@@ -91,7 +93,7 @@ impl<'v, T: Object<'v>> gc::Annex for ObjectAnnex<'v, T> {
 ///
 /// - **Positional parameters**: Required and optional positional values
 /// - **Keyed parameters**: Named values accessed by symbol or constant key
-/// - **Variadic capture**: Capturing remaining values as an iterator
+/// - **Rest capture**: Capturing remaining values, of either kind or of one kind
 ///
 /// # Usage Pattern
 ///
@@ -165,20 +167,51 @@ impl<'v, 'a> Unpack<'v, 'a> {
             .sum()
     }
 
-    /// Returns if match must be exhaustive
+    /// Returns how positional items left over after the positional parameters are
+    /// handled.
     ///
-    /// If true, the unpack operation should fail when the object contains additional
-    /// unmatched items.  If false, iteration may yield a final [`U npackItem::Rest`]
-    /// which should be populated with an iterator over any remaining items.
+    /// - [`Rest::None`]: the unpack operation should fail if any remain.
+    /// - [`Rest::Discard`]: they are ignored.
+    /// - [`Rest::Capture`]: iteration yields an [`UnpackItem::Rest`] or
+    ///   [`UnpackItem::PosRest`] to receive them.
+    ///
+    /// A `...name` rest takes leftovers of both kinds, so this and
+    /// [`key_rest`](Self::key_rest) agree for it; see [`mixed_rest`](Self::mixed_rest).
     #[inline]
-    pub fn exhaustive(&self) -> bool {
-        self.inner.variadic == Variadic::None
+    pub fn pos_rest(&self) -> Rest {
+        self.inner.variadic.positional()
     }
 
-    /// Returns if match has an [`UnpackItem::Rest`] element
+    /// Returns how keyed items not matched by a key parameter are handled.
+    ///
+    /// As for [`pos_rest`](Self::pos_rest), except that a capture is an
+    /// [`UnpackItem::Rest`] or [`UnpackItem::KeyRest`].
     #[inline]
-    pub fn rest(&self) -> bool {
-        self.inner.variadic == Variadic::Capture
+    pub fn key_rest(&self) -> Rest {
+        self.inner.variadic.keyed()
+    }
+
+    /// Returns if leftovers of both kinds go to a single `...` rest, which keeps
+    /// their order.
+    #[inline]
+    pub fn mixed_rest(&self) -> bool {
+        matches!(self.inner.variadic, Variadic::Discard | Variadic::Capture)
+    }
+
+    /// Stores an empty tuple in `out`.
+    ///
+    /// A source without positional items uses this to fill an [`UnpackItem::PosRest`].
+    pub fn empty_pos_rest<'s>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
+        let tuple = Value::from_object(tuple::tuple(strand, []));
+        Output::set(strand, out, &tuple);
+    }
+
+    /// Stores an empty record in `out`.
+    ///
+    /// A source without keyed items uses this to fill an [`UnpackItem::KeyRest`].
+    pub fn empty_key_rest<'s>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
+        let record = Value::from_object(record::empty(strand));
+        Output::set(strand, out, &record);
     }
 
     /// Returns an iterator over the unpack specification.
@@ -187,7 +220,8 @@ impl<'v, 'a> Unpack<'v, 'a> {
     /// 1. Required positional items
     /// 2. Optional positional items
     /// 3. Key items (both required and optional)
-    /// 4. Variadic rest (if applicable)
+    /// 4. Captured rests, if any: a [`Rest`](UnpackItem::Rest), or a
+    ///    [`PosRest`](UnpackItem::PosRest) and/or [`KeyRest`](UnpackItem::KeyRest)
     pub fn iter(&mut self) -> UnpackIter<'v, 'a, '_> {
         UnpackIter { unpack: self, i: 0 }
     }
@@ -210,8 +244,10 @@ pub struct UnpackIter<'v, 'a, 'b> {
 /// - [`SymKey`](Self::SymKey): Keyed parameter accessed by symbol
 /// - [`ConstKey`](Self::ConstKey): Keyed parameter accessed by constant value
 /// - [`Rest`](Self::Rest): Variadic capture of remaining values
+/// - [`PosRest`](Self::PosRest): Capture of remaining positional values
+/// - [`KeyRest`](Self::KeyRest): Capture of remaining keyed values
 ///
-/// All variants except `Rest` include an optional default value. If the value
+/// All variants except the rests include an optional default value. If the value
 /// cannot be extracted and a default is provided, store the default. If no
 /// default is provided, the parameter is required and its absence should
 /// result in an error.
@@ -258,7 +294,7 @@ pub enum UnpackItem<'v, 'a> {
         /// Default value if the parameter is optional (None means required).
         default: Option<&'a Value<'v>>,
     },
-    /// Variadic capture of remaining values.
+    /// Variadic capture of remaining values, for a `...name` rest.
     ///
     /// Store an iterator (or other iterable value) in `slot` that will yield
     /// any values not consumed by earlier parameters. This is always the last
@@ -269,6 +305,26 @@ pub enum UnpackItem<'v, 'a> {
     /// captures remaining unconsumed values.
     Rest {
         /// Output slot where the iterator should be stored.
+        slot: Slot<'v, 'a>,
+    },
+    /// Capture of remaining positional values, for a `*name` rest.
+    ///
+    /// Store a value in `slot` that yields or spreads only the positional
+    /// values not consumed by earlier parameters, such as an iterator over
+    /// them. A source without positional values stores an empty tuple with
+    /// [`Unpack::empty_pos_rest`]. It follows any key items.
+    PosRest {
+        /// Output slot where the value should be stored.
+        slot: Slot<'v, 'a>,
+    },
+    /// Capture of remaining keyed values, for a `**name` rest.
+    ///
+    /// Store a value in `slot` that spreads only the keyed values not matched
+    /// by earlier key parameters, such as a record. A source without keyed
+    /// values stores an empty record with [`Unpack::empty_key_rest`]. This is
+    /// always the last item yielded by the iterator.
+    KeyRest {
+        /// Output slot where the value should be stored.
         slot: Slot<'v, 'a>,
     },
 }
@@ -307,12 +363,15 @@ impl<'v, 'a, 'b> Iterator for UnpackIter<'v, 'a, 'b> {
                     default: key.default.as_ref(),
                 }),
             }
-        } else if i == unpack.inner.required + unpack.inner.optional.len() + unpack.inner.keys.len()
-            && unpack.inner.variadic == Variadic::Capture
-        {
+        } else if i < unpack.inner.len() {
             self.i += 1;
-            Some(UnpackItem::Rest {
-                slot: unsafe { unpack.slots.unchecked_at(i) },
+            let slot = unsafe { unpack.slots.unchecked_at(i) };
+            Some(if unpack.inner.variadic == Variadic::Capture {
+                UnpackItem::Rest { slot }
+            } else if unpack.inner.pos_rest_slot() == Some(i) {
+                UnpackItem::PosRest { slot }
+            } else {
+                UnpackItem::KeyRest { slot }
             })
         } else {
             None
@@ -1431,7 +1490,7 @@ async fn default_object_unpack<'v, 'a, 's, T: Object<'v>>(
                 None => Recv::<ObjectWrap<'v, T>>::new(this.receiver),
             };
             let entries = &recv.vtbl().entries;
-            let track = sig.variadic != Variadic::Discard;
+            let track = sig.key_rest() != Rest::Discard;
             let mut matched: Option<BitBox> = track.then(|| bitbox![0; entries.len()]);
 
             for (key_index, key) in sig.keys.iter().enumerate() {
@@ -1491,7 +1550,7 @@ async fn default_object_unpack<'v, 'a, 's, T: Object<'v>>(
                 }
             }
 
-            if sig.variadic == Variadic::None {
+            if sig.key_rest() == Rest::None {
                 let matched = matched.as_mut().unwrap();
                 for (index, (sym, entry)) in entries.iter().enumerate() {
                     if matched[index] || !readable_entry(entry) {
@@ -1525,7 +1584,19 @@ async fn default_object_unpack<'v, 'a, 's, T: Object<'v>>(
                 }
             }
 
-            if sig.variadic == Variadic::Capture {
+            // Fields are keyed items: a `...` or `**` rest gets the unmatched
+            // ones, and a `*` rest gets nothing
+            let rest_slot = if sig.variadic == Variadic::Capture {
+                sig.pos_rest_slot()
+            } else {
+                if let Some(i) = sig.pos_rest_slot() {
+                    staged
+                        .at(i)
+                        .store(Value::from_object(tuple::tuple(strand, [])));
+                }
+                sig.key_rest_slot()
+            };
+            if let Some(rest_slot) = rest_slot {
                 let matched = matched.as_ref().unwrap();
                 let symbols = entries
                     .iter()
@@ -1537,7 +1608,7 @@ async fn default_object_unpack<'v, 'a, 's, T: Object<'v>>(
                 strand.builtin_types().field_iter.create(
                     strand,
                     FieldIter::new(receiver, symbols),
-                    staged.at(sig.len() - 1),
+                    staged.at(rest_slot),
                 );
             }
 
@@ -4215,8 +4286,9 @@ mod tests {
                     assert_eq!(unpack.optional(), 1);
                     assert_eq!(unpack.required_keys(), 1);
                     assert_eq!(unpack.optional_keys(), 1);
-                    assert!(!unpack.exhaustive());
-                    assert!(unpack.rest());
+                    assert_eq!(unpack.pos_rest(), Rest::Capture);
+                    assert_eq!(unpack.key_rest(), Rest::Capture);
+                    assert!(unpack.mixed_rest());
                     assert!(unpack.first_required_key().is_some());
 
                     let items: Vec<_> = unpack.iter().collect();
@@ -4249,12 +4321,13 @@ mod tests {
     #[test]
     fn unpack_iter_exhaustive_without_variadic_has_no_rest_item() {
         with_fixture_vm(async |strand, []| {
-            let sig = sig::Unpack::new(0, vec![], vec![], Variadic::None);
+            let sig = sig::Unpack::new(0, vec![], vec![], Variadic::NONE);
             strand
                 .with_slots_dynamic(0, async |_strand, slots| {
                     let mut unpack = Unpack { inner: &sig, slots };
-                    assert!(unpack.exhaustive());
-                    assert!(!unpack.rest());
+                    assert_eq!(unpack.pos_rest(), Rest::None);
+                    assert_eq!(unpack.key_rest(), Rest::None);
+                    assert!(!unpack.mixed_rest());
                     assert_eq!(unpack.required_keys(), 0);
                     assert_eq!(unpack.optional_keys(), 0);
                     assert!(unpack.first_required_key().is_none());
@@ -4446,7 +4519,7 @@ mod tests {
             make_fixture(strand, Slot::reborrow(&mut owner));
             let value: &Value = &owner;
             let state = strand.vm().state::<FixtureState>();
-            let sig = sig::Unpack::new(0, vec![], vec![], Variadic::None);
+            let sig = sig::Unpack::new(0, vec![], vec![], Variadic::NONE);
             state
                 .fixture_ty
                 .vtbl
@@ -4602,7 +4675,7 @@ mod tests {
                         default: None,
                     },
                 ],
-                Variadic::None,
+                Variadic::NONE,
             );
             strand
                 .with_slots_dynamic(2, async |strand, mut out| {

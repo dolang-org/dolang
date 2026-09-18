@@ -52,14 +52,27 @@ def synthetic_module_name key
 def cache_usable cache path
   (cache.exists() && path.metadata().modified < cache.metadata().modified)
 
+# Values a script reads as the fields of an imported module.
+class Namespace
+  field values
+
+  def (init) self values
+    self.#values = Record $values
+
+  def (get) self name
+    self.#values.get $name else: do throw std.FieldError $name
+
+  def (set) _self _name _value
+    throw std.ImmutableError()
+
 def injected_module inject
-  record ...inject
+  Namespace $inject
 
 def normalize_imports imports
   let normalized = {}
   for name value = imports
     value = if (type value Dict)
-      record ...value
+      Namespace $value
     else
       value
     name = if (type name Sym)
@@ -174,8 +187,8 @@ pub def run
   :prelude @ Dict[(Str | Sym), compile.PreludeBinding] = {}
   # Global bindings visible to the source when compiled and run.
   :inject @ Dict[Sym, Value] = {}
-  # Modules supplied by name while running. A dictionary value is exposed as
-  # a record.
+  # Modules supplied by name while running. A dictionary with symbol keys is
+  # exposed as a module whose fields are its entries.
   :import @ Dict[(Str | Sym), Value] = {}
   # Arguments the script sees as [`shell.args`](shell.args). Defaults to the
   # caller's.
@@ -212,8 +225,8 @@ pub def module
   :prelude @ Dict[(Str | Sym), compile.PreludeBinding] = {}
   # Global bindings visible to the source when compiled and run.
   :inject @ Dict[Sym, Value] = {}
-  # Modules supplied by name while running. A dictionary value is exposed as
-  # a record.
+  # Modules supplied by name while running. A dictionary with symbol keys is
+  # exposed as a module whose fields are its entries.
   :import @ Dict[(Str | Sym), Value] = {}
   # Arguments the module sees as [`shell.args`](shell.args) while it loads.
   # Defaults to the caller's.

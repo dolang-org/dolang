@@ -1,0 +1,7 @@
+def f[...R, *P] x
+  # error: `...` rest cannot be combined with `*` or `**`
+  #   --> binder_rest_mixed.dol:LL:LL
+  #    |
+  # LL | def f[...R, *P] x
+  #    |             ^
+  x

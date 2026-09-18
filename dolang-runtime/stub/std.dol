@@ -95,7 +95,7 @@ do -> Getter[T, R]
 #
 pub def hash
   # Values to hash.
-  ...values @ Value
+  *values @ Value
 do -> Int
   ...
 
@@ -108,15 +108,15 @@ pub def int value @ (Num | Str) -> Int
 #
 # Creates a record from positional and key arguments.
 #
-# Positional arguments receive incrementing integer keys starting at `0`.
-# Key arguments become symbol fields.
+# Positional arguments become positional items, and key arguments become
+# symbol-keyed items.
 #
 #
 # ## Example
 #
 # ```
 # let r = record name: Alice age: 30
-# echo $r.name  # Alice
+# echo $r[:name:]  # Alice
 # ```
 #
 pub def record[...Ts]
@@ -162,7 +162,7 @@ do -> Sym
 #
 # Creates a tuple from positional arguments.
 #
-pub def tuple[...Ts] ...values@Ts -> Tuple[...Ts]
+pub def tuple[*Ts] *values@Ts -> Tuple[...Ts]
   ...
 
 # Returns the value's type
@@ -591,85 +591,6 @@ pub class Sink[T]: Sinkable[T] @BaseSink[T]
 #
 # Cannot be caught.
 pub class AbortError: Error
-
-#
-# Argument pack.
-#
-# `Args` values are returned by variadic captures such as `...rest` and by
-# calling the `Args` type object. Iterating an `Args` value yields `[key, value]`
-# pairs. Positional items use their positional index as the key.
-#
-pub class Args: @Spread[{...}] @Unpack[{...}] Iterable[Tuple[(Int | Sym), Value]]
-  #
-  #
-  # Creates an argument pack from positional and keyed arguments.
-  #
-  # ```
-  # let pack = Args 1 name: Alice 2
-  # assert_eq [...pack] [[0, 1], [:name:, "Alice"], [1, 2]]
-  # ```
-  #
-  pub def (init) self
-    ...
-
-  #
-  # Number of items in the argument pack.
-  #
-  # ```
-  # let pack = Args 1 2 name: Alice
-  # assert_eq $pack.len 3
-  # ```
-  #
-  #[getter]
-  pub def len self -> Int
-    ...
-
-  #
-  # Returns a tuple of positional values and keyed entries.
-  #
-  # The first item is an iterator over positional values. The second item is an
-  # iterator over keyed `[key, value]` pairs.
-  #
-  # ```
-  # let pack = args 1 left: 2 3 right: 4
-  # let pos keyed = pack.pos_keys()
-  # assert_eq [...pos] [1, 3]
-  # assert_eq [...keyed] [[:left:, 2], [:right:, 4]]
-  # assert_eq [...pack] [[0, 1], [:left:, 2], [1, 3], [:right:, 4]]
-  # ```
-  #
-  pub def pos_keys self -> Tuple[Iter, Iter[Tuple[Sym, Value]]]
-    ...
-
-  #
-  # Returns an iterator over positional values.
-  #
-  # Raises [`UnexpectedKeyError`](std.UnexpectedKeyError) if the pack contains
-  # any keyed items.
-  #
-  # ```
-  # let pack = args 1 2 3
-  # let pos = pack.pos_only()
-  # assert_eq [...pos] [1, 2, 3]
-  # assert_eq [...pack] [[0, 1], [1, 2], [2, 3]]
-  # ```
-  #
-  pub def pos_only self -> Iter
-    ...
-
-  #
-  # Appends positional and keyed arguments to the pack.
-  #
-  # ```
-  # let pack = args 1
-  # pack.push 2 name: Alice
-  # let items = [...pack]
-  # assert_eq $items[1][1] 2
-  # assert_eq $items[2][0] :name:
-  # ```
-  pub def push self
-    ...
-
 
 #
 # Arrays are ordered, mutable sequences of values.
@@ -1510,7 +1431,7 @@ pub class BinBuf: @Index[{...Int: Int, ...Range[Int]: Bin}] @Assign[{...Int: Int
   pub def push
     self
     # byte values (0-255) to append
-    ...bytes @ Int
+    *bytes @ Int
   do
     ...
 
@@ -2036,13 +1957,13 @@ pub class Num
   # Returns the smallest of this value and `others`.
   #
   # If a comparison is unordered, which input is returned is unspecified.
-  pub def min[N @ Num] self @ N ...others @ N -> N
+  pub def min[N @ Num] self @ N *others @ N -> N
     ...
 
   # Returns the largest of this value and `others`.
   #
   # If a comparison is unordered, which input is returned is unspecified.
-  pub def max[N @ Num] self @ N ...others @ N -> N
+  pub def max[N @ Num] self @ N *others @ N -> N
     ...
 
   # Restricts the value to the inclusive interval from `lower` to `upper`.
@@ -3251,16 +3172,23 @@ pub class Range[T @ Num]: Iterable[T]
 
 
 #
-# Stores immutable, ordered symbol and integer fields.
+# Stores an immutable sequence of positional items and symbol-keyed items.
 #
-# Records preserve insertion order and multiple values for a key. Use a class
-# for mutable named fields. To produce a changed record, spread the old record
-# into a new one:
+# Records keep their items in order, and a key may repeat. A lookup finds the
+# latest value for a key. Keys are read by indexing, not as fields:
+#
+# ```
+# let r = record name: Alice age: 30
+# assert_eq $r[:name:] Alice
+# ```
+#
+# A variadic capture such as `...rest` binds a record of the remaining
+# arguments. To produce a changed record, spread the old record into a new one:
 #
 # ```
 # let updated = record ...old status: ready
 # ```
-pub class Record[...Ts]: @Index[{...Ts}] @Spread[{...Ts}] @Unpack[{...Ts}] @BaseIterable[Tuple[(Sym | Int), Value]]
+pub class Record[...Ts]: Iterable[Tuple[(Sym | Int), Value]] @Index[{...Ts}] @Spread[{...Ts}] @Unpack[{...Ts}]
   #
   #
   # Builds a record from one spreadable source of key-value pairs.
@@ -3269,126 +3197,40 @@ pub class Record[...Ts]: @Index[{...Ts}] @Spread[{...Ts}] @Unpack[{...Ts}] @Base
   # let r = Record {name: Alice, age: 30}
   # ```
   #
-  # The lowercase `record` factory constructs a record verbatim from all
-  # arguments, with positional arguments receiving incrementing integer keys and
-  # key arguments becoming fields. Order and key multiplicity are preserved.
+  # Integer keys counting up from `0` become positional items, as when
+  # spreading a dict.
+  #
+  # The lowercase `record` factory instead builds a record from its arguments.
   #
   # ```
   # let r = record first second name: Alice
   # ```
   #
-  # ```
-  # let r = record name: Alice age: 30
-  # echo $r.name  # Alice
-  # echo $r.age   # 30
-  # ```
+  # ## Errors
   #
+  # Raises `TypeError` for any other key that is not a symbol.
   pub def (init) self source
     ...
 
   #
-  # Records support direct dot-syntax for symbol keys:
+  # Gets the value for a symbol or position, with an optional default.
   #
-  # ```
-  # let r = record name: Alice age: 30
-  # echo $r.name
-  # ```
-  #
-  # And indexing for both symbol and integer keys:
-  #
-  # ```
-  # echo $r[:name:]
-  # ```
-  #
-  # Reads a field.
-  pub def (get) self name
+  pub def get[D = nil] self key @ (Int | Sym) :default @ D = nil :else @ (() -> D) = nil -> (Value | D)
     ...
 
   #
-  # Tests whether the record contains the given key. If a value is provided,
-  # tests whether any value associated with that key matches.
+  # Number of items, counting each instance of a repeated key.
   #
-  #
-  # ## Example
-  #
-  # ```
-  # let r = record 1 2 3 a: "first" a: "second"
-  #
-  # # Key-only check
-  # assert (record.contains $r 0)
-  # assert (record.contains $r :a:)
-  # assert (!record.contains $r 10)
-  #
-  # # Key + value check
-  # assert (record.contains $r :a: "first")
-  # assert (record.contains $r :a: "second")
-  # ```
-  #
-  #[class]
-  pub def contains
-    self
-    # the record to check
-    rec @ Record[...Ts]
-    # the key to check
-    key @ (Int | Sym)
-    # optional value to check for (multi-map)
-    value = nil
-  do -> Bool
+  #[getter]
+  pub def len self -> Int
     ...
 
-  #
-  # Returns a count derived from the record's multi-map structure.
-  #
-  # With no `key`, it returns the number of distinct keys. With a `key`, it returns
-  # the number of values associated with that key.
-  #
-  # Missing keys return `0`.
-  #
-  #[class]
-  pub def count self rec @ Record key @ (Int | Sym) = nil -> Int
-    ...
-
-  #
-  # Gets a field value with optional default. Supports `instance:` for multi-map
-  # access. Negative `instance:` indexes count from the end.
-  #
-  #[class]
-  pub def get[D = nil] self rec @ Record key @ (Int | Sym) :instance @ Int = nil :default @ D = nil :else @ (() -> D) = nil -> (Value | D)
-    ...
-
-  #
-  # Returns an iterator of keys. Each distinct key is yielded exactly once, in the
-  # order its first pair was inserted.
-  #
-  # If duplicate-key iteration is needed, use ordinary record iteration.
-  #
-  #[class]
-  pub def keys self rec @ Record -> Iter[(Int | Sym)]
-    ...
-
-  #
-  # Returns the number of fields.
-  #
-  #
-  #[class]
-  pub def len self rec @ Record -> Int
-    ...
-
-  #
-  # Returns an iterator of values. With no `key`, it yields all stored values in
-  # pair insertion order. With a `key`, it yields only the values associated with
-  # that key, in that key's insertion order.
-  #
-  # Missing keys return an empty iterator.
-  #[class]
-  pub def values self rec @ Record key @ (Int | Sym) = nil -> Iter
-    ...
-
-  # Iterates record entries as `[key, value]` pairs in insertion order.
+  # Iterates record items as `[key, value]` pairs in order. A positional item's
+  # key is its position.
   pub def (iter) self
     ...
 
-  # Unpacks record fields by their symbol or integer keys.
+  # Unpacks record items by position and symbol.
   pub def (unpack) self
     ...
 
@@ -4460,7 +4302,7 @@ pub class TimedOutError: RuntimeError
 # object is in the prelude, so `Tuple(iterable)` is available without an
 # explicit import.
 #
-pub class Tuple[...Ts]: Iterable[Union[...Ts]] @Seq[Union[...Ts]]
+pub class Tuple[*Ts]: Iterable[Union[...Ts]] @Seq[Union[...Ts]]
   #
   #
   # Builds a tuple from an iterable.

@@ -1,6 +1,3 @@
-import std:
- - Args
-
 def func foo = 42
   foo
 
@@ -31,13 +28,13 @@ bind {false}
 assert_eq $a false
 assert_eq $b 2
 
-bind Args()
+bind record()
   - a = 1
   - b = 2
 assert_eq $a 1
 assert_eq $b 2
 
-bind Args false
+bind record false
   - a = 1
   - b = 2
 assert_eq $a false

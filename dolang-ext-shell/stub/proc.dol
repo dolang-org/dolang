@@ -510,7 +510,7 @@ do -> R
 # Calling it takes the program name or path as its first argument, followed by
 # the [launch arguments accepted by `Program`](proc.Program.(call)). Index it
 # with a [`Str`](std.Str) or [`fs.Path`](fs.Path) to create a
-# proxy. Destructuring requires a trailing `...`; symbol and string keys create
+# proxy. Destructuring requires a trailing `...` or `**`; symbol and string keys create
 # proxies with the corresponding program names.
 #
 # ## Example

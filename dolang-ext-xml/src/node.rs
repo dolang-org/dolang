@@ -2,7 +2,7 @@ use dolang::runtime::object::fmt;
 use dolang::runtime::value::fmt::Format;
 
 use dolang::runtime::{
-    Arg, Args, Error, Instance, Object, Output, Result, Slot, Strand, Type, Value, call,
+    Args, Error, Instance, Object, Output, Result, Slot, Strand, Type, Value, call,
     object::{ArrayLike, ArrayView, Mut, Ref, TypeBuilder},
     unpack,
     value::{Empty, Nil, TypeObject},
@@ -311,7 +311,7 @@ impl<'v> Object<'v> for Node {
             namespace_sym = None,
             prefix_sym = None,
             attrs_sym = None,
-            ...
+            *
         )?;
         let name = Name {
             local: required_string(strand, &tag, "tag")?,
@@ -328,10 +328,7 @@ impl<'v> Object<'v> for Node {
                 append_attrs_dict(node, strand, &attrs)?;
             }
             for item in items {
-                match item {
-                    Arg::Pos(item) => append_item(node, strand, item)?,
-                    Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
-                }
+                append_item(node, strand, item)?;
             }
             Ok(())
         })

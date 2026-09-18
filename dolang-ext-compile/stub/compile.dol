@@ -350,6 +350,12 @@ pub class KeyParam: Param
 
 # A rest parameter. Its `name` is `nil` when it is anonymous.
 pub class RestParam: Param
+  # The sigil that introduces it: `...` for positional and keyed items, `*`
+  # for positional items only, or `**` for keyed items only.
+  #[getter]
+  pub def sigil self -> Str
+    ...
+
   # The explicit `...` in the type annotation, or `nil` when absent.
   #[getter]
   pub def type_ellipsis self -> (Span | nil)
@@ -452,6 +458,10 @@ pub class KeyBinder: Binder
 
 # A rest binder, such as `...R`.
 pub class RestBinder: Binder
+  # The sigil that introduces it: `...`, `*` or `**`.
+  #[getter]
+  pub def sigil self -> Str
+    ...
 
 # Supertype of the forms a type takes.
 #
@@ -559,6 +569,12 @@ pub class KeyTypeArg: TypeArg
 
 # A rest item, such as `...T`.
 pub class RestTypeArg: TypeArg
+  # The sigil that introduces it: `...` for positional and keyed items, `*`
+  # for positional items only, or `**` for keyed items only.
+  #[getter]
+  pub def sigil self -> Str
+    ...
+
   # The item's type.
   #[getter]
   pub def ty self -> TypeExpr

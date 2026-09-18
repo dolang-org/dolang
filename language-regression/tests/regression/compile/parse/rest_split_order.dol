@@ -1,0 +1,7 @@
+def f **k *p
+  # error: `*` rest must come before `**`
+  #   --> rest_split_order.dol:LL:LL
+  #    |
+  # LL | def f **k *p
+  #    |           ^
+  nil

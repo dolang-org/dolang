@@ -11,13 +11,8 @@ assert_throws $std.RuntimeError str: "unexpected positional item: 2" do
 assert_throws $std.RuntimeError str: "missing positional item: 1" do
   let _a _b = record("only-zero")
 
-# str() of the values/keys iterator types themselves
-assert_eq (str (Record.values (record(a: 1)))) "<values iterator>"
-assert_eq (str (Record.keys (record(a: 1)))) "<keys iterator>"
-assert_eq (str (Record.values (record(a: 1, b: 2, a: 3)) :a:)) "<key values iterator>"
-
-# ...rest captures remaining pairs as an Iter, continuing bucket order,
-# skipping already-consumed keys
+# ...rest captures the remaining pairs as an Iter, in order, skipping those
+# already consumed
 let :a ...rest = record(a: 1, b: 2, c: 3)
 assert_eq $a 1
 assert (type rest Iter)
@@ -26,24 +21,18 @@ let pairs = $
     - (Tuple [k, v])
 assert_eq $pairs [(Tuple [:b:, 2]), (Tuple [:c:, 3])]
 
-# a stray out-of-sequence integer key is dropped by the rest iterator
-# rather than yielded out of order
-let r = Record {0: "zero", 1: "one", 3: "three"}
-let x2 y2 ...rest2 = r
+# the rest iterator numbers positional items after those already taken
+let x2 :k ...rest2 = record("zero", k: 1, "one", "two")
 assert_eq $x2 zero
-assert_eq $y2 one
+assert_eq $k 1
 let pairs2 = $
   for k v = rest2
     - (Tuple [k, v])
-assert_eq $pairs2 []
+assert_eq $pairs2 [(Tuple [1, "one"]), (Tuple [2, "two"])]
 
-# integer keys out of storage order are still recovered in sequence
-let r3 = Record {2: "c", 0: "a", 1: "b"}
-let ...rest3 = r3
-let pairs3 = $
-  for k v = rest3
-    - (Tuple [k, v])
-assert_eq $pairs3 [(Tuple [0, "a"]), (Tuple [1, "b"]), (Tuple [2, "c"])]
+# an integer key out of sequence is not a position, so a record refuses it
+assert_throws $std.TypeError do Record {0: "zero", 1: "one", 3: "three"}
+assert_throws $std.TypeError do Record {2: "c", 0: "a", 1: "b"}
 
 # the rest iterator supports further keyed/positional unpacking
 let a: _a ...rest4 = record(a: 1, "zero", "one")

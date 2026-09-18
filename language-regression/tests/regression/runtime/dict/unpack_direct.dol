@@ -28,15 +28,15 @@ assert_eq $pairs [(Tuple [:b:, 2]), (Tuple [:c:, 3])]
 
 # an out-of-order integer key interleaved with a named key: the rest
 # iterator resolves the expected integer key by direct lookup, and once
-# it can't find the next expected one, falls back to bucket order and
-# drops stray integer keys rather than yielding them out of sequence
+# it can't find the next expected one, falls back to bucket order, where
+# a stray integer key is a keyed item like any other
 let x2 y2 ...rest2 = {0: "zero", 1: "one", 3: "three", name: "n"}
 assert_eq $x2 zero
 assert_eq $y2 one
 let pairs2 = $
   for k v = rest2
     - (Tuple [k, v])
-assert_eq $pairs2 [(Tuple [:name:, "n"])]
+assert_eq $pairs2 [(Tuple [3, "three"]), (Tuple [:name:, "n"])]
 
 # integer keys out of storage order are still recovered in sequence
 let ...rest3 = {2: "c", 0: "a", 1: "b"}

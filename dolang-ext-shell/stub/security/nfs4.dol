@@ -358,6 +358,6 @@ do -> Ace
 pub def acl
   # Entries, spread with `...`
   # to pass a collection.
-  ...aces @ AceSpec
+  *aces @ AceSpec
 do -> Acl
   ...

@@ -614,7 +614,7 @@ pub class Service
   pub def start
     self
     # Arguments passed to the service's `main`.
-    ...args @ Str
+    *args @ Str
   do
     ...
 

@@ -7,7 +7,6 @@ use crate::value::fmt;
 
 use crate::{
     arg::Args,
-    bytecode::Variadic,
     error::{Error, Result},
     gc::{Collect, arena::Visit},
     object::protocol::{GcObj, members},
@@ -662,13 +661,13 @@ impl<'v> Protocol<'v> for Split<'v> {
             }
         }
 
-        // If variadic, assign this (now with updated state) to variadic slot
-        match sig.variadic {
-            Variadic::None | Variadic::Discard => {}
-            Variadic::Capture => {
-                value::Output::set(strand, out.at(pos_count + sig.keys.len()), &this);
-            }
+        drop(borrow);
+
+        // Assign this (now with updated state) to a capturing rest
+        if let Some(i) = sig.pos_rest_slot() {
+            value::Output::set(strand, out.at(i), &this);
         }
+        sig.fill_empty_key_rest(strand, &mut out);
 
         Ok(())
     }
@@ -884,7 +883,10 @@ impl<'v> Protocol<'v> for Class {
 mod tests {
     use std::hash::{DefaultHasher, Hasher};
 
-    use crate::{call, error::ErrorKind, method, sym, test_support::with_vm, value::Empty};
+    use crate::{
+        bytecode::Variadic, call, error::ErrorKind, method, sym, test_support::with_vm,
+        value::Empty,
+    };
 
     use super::*;
 
@@ -1318,7 +1320,7 @@ mod tests {
             .await
             .unwrap();
 
-            let sig = sig::Unpack::new(2, vec![], vec![], Variadic::None);
+            let sig = sig::Unpack::new(2, vec![], vec![], Variadic::NONE);
             strand
                 .builtin_types()
                 .bin_split
@@ -1341,7 +1343,7 @@ mod tests {
                     kind: sig::UnpackKeyKind::Sym(key_sym),
                     default: None,
                 }],
-                Variadic::None,
+                Variadic::NONE,
             );
             strand
                 .builtin_types()

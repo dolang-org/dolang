@@ -139,11 +139,10 @@ log INFO hello world
 # prints: [INFO] hello world
 ```
 
-The `rest` parameter receives an immutable argument pack. It is iterable, but
-is not itself an iterator, so iterating or spreading it does not consume it.
-Iteration yields positional and key arguments in invocation order as key/value
-tuples, where the key is the positional argument index (0-origin) for
-positional arguments.
+The `rest` parameter receives a [record](std.Record) of the extra arguments,
+in invocation order. Read a key argument by indexing, as in `rest[:name:]`.
+Iteration yields key/value tuples, where the key is the positional argument
+index (0-origin) for positional arguments.
 
 ```playground
 def echo_all ...args
@@ -155,6 +154,21 @@ echo_all foo bar: 1 baz
 # bar: 1
 # 1: baz
 ```
+
+`*` accepts only extra positional arguments, and `**` only extra key
+arguments. `*args` receives a tuple and `**kwargs` a record. Both may appear,
+`*` first, but neither combines with `...`. An extra argument that no rest
+parameter accepts is an error:
+
+```playground
+def run cmd *args **opts
+  echo $cmd $args $opts
+
+run ls -l -a color: always
+# prints: ls ("-l", "-a") (color: "always")
+```
+
+Without a name, `*` and `**` accept the arguments without binding them.
 
 ### Argument Spreading
 

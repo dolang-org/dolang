@@ -13,7 +13,7 @@ use crate::{
 use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
-    AllocExt, Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
+    AllocExt, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
     object::{ArrayLike, ArrayView, TypeBuilder},
     unpack,
 };
@@ -310,19 +310,15 @@ impl<'v> Object<'v> for Path {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder.type_method("join", async move |_this, strand, args, out| {
             let global = strand.state::<FsGlobal<'v>>();
+            let ([], [], paths) = unpack!(strand, args, 0, 0, *)?;
             let mut target = None;
             let mut buf = None;
-            for arg in args {
-                match arg {
-                    Arg::Pos(slot) => {
-                        let path = any_path_from_value(strand, global, &slot)?;
-                        let target = *target.get_or_insert_with(|| path.kind());
-                        let path = convert_path_kind(strand, path, target)?;
-                        let buf = buf.get_or_insert_with(|| vfs_path::PathBuf::empty(target));
-                        buf.push(path.as_str());
-                    }
-                    Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
-                }
+            for slot in paths {
+                let path = any_path_from_value(strand, global, &slot)?;
+                let target = *target.get_or_insert_with(|| path.kind());
+                let path = convert_path_kind(strand, path, target)?;
+                let buf = buf.get_or_insert_with(|| vfs_path::PathBuf::empty(target));
+                buf.push(path.as_str());
             }
             let buf = buf.unwrap_or_else(|| match target_path_type(strand, global) {
                 vfs_path::Kind::Unix => vfs_path::PathBuf::from_unix(""),
@@ -1093,15 +1089,10 @@ macro_rules! impl_concrete_path {
                             vfs_path::Kind::Unix => vfs_path::PathBuf::from_unix(""),
                             vfs_path::Kind::Windows => vfs_path::PathBuf::from_windows(""),
                         };
-                        for arg in args {
-                            match arg {
-                                Arg::Pos(slot) => {
-                                    let path =
-                                        concrete_path_from_value(strand, global, &slot, $style)?;
-                                    buf.push(path.as_str());
-                                }
-                                Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
-                            }
+                        let ([], [], paths) = unpack!(strand, args, 0, 0, *)?;
+                        for slot in paths {
+                            let path = concrete_path_from_value(strand, global, &slot, $style)?;
+                            buf.push(path.as_str());
                         }
                         let annex = PathAnnex::try_new(strand, buf, global)?;
                         this.create_with_annex(strand, $path, annex, out);

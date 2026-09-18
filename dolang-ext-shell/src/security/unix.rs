@@ -558,13 +558,9 @@ pub(crate) fn configure_vm<'v>(
             Ok(())
         })
         .function("acl", async move |strand, args, out| {
-            let ([], [], entries) = unpack!(strand, args, 0, 0, ...)?;
+            let ([], [], entries) = unpack!(strand, args, 0, 0, *)?;
             let mut aces = Vec::new();
-            for (index, entry) in entries.enumerate() {
-                let value = match entry {
-                    Arg::Pos(value) => value,
-                    Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
-                };
+            for (index, value) in entries.enumerate() {
                 aces.push(
                     coerce_ace(strand, global, &value, &SpecPath::root("acl").index(index)).await?,
                 );

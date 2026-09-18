@@ -1,7 +1,6 @@
 use std::hash::{DefaultHasher, Hasher};
 
 use crate::{
-    arg::Arg,
     error::Error,
     object::{array::Array, class, dict::Dict, float, int, record::Record, tuple},
     unpack,
@@ -42,7 +41,6 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     let record = bc.record.dup();
     let bin = bc.bin.dup();
     let binbuf = bc.binbuf.dup();
-    let args = bc.args.dup();
 
     // Iterator protocol types (from former std.iter)
     let iter_type = bc.input_iter.dup();
@@ -108,7 +106,6 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .value("Record", &record)
         .value("Bin", &bin)
         .value("BinBuf", &binbuf)
-        .value("Args", &args)
         .value("FmtSpec", fmt.types.spec)
         .value("FmtValue", fmt.types.value)
         .value("FmtParam", fmt.types.param)
@@ -165,7 +162,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             Ok(())
         })
         .function("record", async move |strand, args, out| {
-            let record = Record::from_args(strand, args)?;
+            let record = Record::from_args(strand, args);
             strand.builtin_types().record.create(strand, record, out);
             Ok(())
         })
@@ -233,15 +230,12 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             Ok(())
         })
         .function("hash", async move |strand, args, out| {
+            let ([], [], values) = unpack!(strand, args, 0, 0, *)?;
             let mut hasher = DefaultHasher::new();
-            for (i, arg) in args.enumerate() {
+            for (i, slot) in values.enumerate() {
                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                     strand.check_trap()?;
                 }
-                let slot = match arg {
-                    Arg::Pos(s) => s,
-                    Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
-                };
                 slot.op_hash(strand, &mut hasher)?;
             }
             Output::set(strand, out, hasher.finish());

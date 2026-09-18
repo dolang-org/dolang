@@ -100,7 +100,7 @@ def type_args_text args
       parts.push "$text..."
       continue
     if (kind == "rest")
-      text = "$text..."
+      text = "$text$(arg["sigil"])"
     else if (kind == "key_rest")
       text = "$text...$(type_text(arg["key_type"], BINDS_FUNC)): "
     else if (kind == "key")

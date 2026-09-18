@@ -1,0 +1,7 @@
+def f *a b
+  # error: rest parameter must be trailing
+  #   --> rest_split_trailing.dol:LL:LL
+  #    |
+  # LL | def f *a b
+  #    |       ^
+  nil

@@ -8,7 +8,7 @@ use super::{
     Expr, Ident,
     visit::{Node, NodeKind, Token, Visit},
 };
-use crate::{doc, source::Span};
+use crate::{RestKind, doc, source::Span};
 
 /// A type expression
 pub(crate) enum TypeExpr {
@@ -78,8 +78,12 @@ pub(crate) enum TypeArgKind {
         colon_span: Span,
         ty: TypeExpr,
     },
-    /// `...T`
-    Rest { ellipsis_span: Span, ty: TypeExpr },
+    /// `...T`, `*T` or `**T`
+    Rest {
+        kind: RestKind,
+        sigil_span: Span,
+        ty: TypeExpr,
+    },
     /// `...`, for an unrestricted schema rest
     OpenRest { ellipsis_span: Span },
     /// `...K: V`, for any number of keyed items
@@ -138,8 +142,8 @@ pub(crate) enum BinderKind {
     Pos,
     /// `:K`
     Key { colon_span: Span },
-    /// `...R`
-    Rest { ellipsis_span: Span },
+    /// `...R`, `*R` or `**R`
+    Rest { kind: RestKind, sigil_span: Span },
 }
 
 impl TypeExpr {
@@ -304,8 +308,8 @@ impl Node for TypeArg {
                 visit.token(Token::Delim, *colon_span, None)?;
                 visit.node(ty)?
             }
-            TypeArgKind::Rest { ellipsis_span, ty } => {
-                visit.token(Token::Sigil, *ellipsis_span, None)?;
+            TypeArgKind::Rest { sigil_span, ty, .. } => {
+                visit.token(Token::Sigil, *sigil_span, None)?;
                 visit.node(ty)?
             }
             TypeArgKind::OpenRest { ellipsis_span } => {
@@ -361,7 +365,7 @@ impl Node for Binder {
         match self.kind {
             BinderKind::Pos => {}
             BinderKind::Key { colon_span } => visit.token(Token::Sigil, colon_span, None)?,
-            BinderKind::Rest { ellipsis_span } => visit.token(Token::Sigil, ellipsis_span, None)?,
+            BinderKind::Rest { sigil_span, .. } => visit.token(Token::Sigil, sigil_span, None)?,
         }
         visit.token(Token::Binder, self.ident.span, self.node)?;
         if let Some(bound) = &self.bound {

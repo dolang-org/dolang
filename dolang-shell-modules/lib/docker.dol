@@ -15,22 +15,22 @@ pub import _container.dockman:
   - InvalidImageReferenceError
   - RegistryAuthError
   - ArchiveError
+  - ContainerState
+  - ImageTag
+  - MountInfo
+  - PortBinding
+  - PushResult
   - @AddSpec
   - @ArchiveFormat
   - @BuildMount
   - @ContainerMount
-  - @ContainerState
   - @ContainerStatus
   - @Env
-  - @ImageTag
-  - @MountInfo
   - @PatchSpec
   - @Platform
-  - @PortBinding
   - @PortProtocol
   - @PortSpec
   - @PullPolicy
-  - @PushResult
   - @RestartSpec
 
 let docker_cli = proc.run[:docker:]

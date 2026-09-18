@@ -13,7 +13,7 @@ use crate::{
     sym::Sym,
     value::{Output, Slot, Slots, Value},
 };
-use dolang_bytecode::Variadic;
+use dolang_bytecode::{Rest, Variadic};
 
 use super::protocol::{GcObj, Protocol, Recv, Spread, SpreadContext};
 
@@ -140,7 +140,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
                 let mut iter = this.borrow_mut(strand)?;
                 let receiver = iter.receiver.dup();
                 let symbols = iter.symbols.make_contiguous();
-                let track = sig.variadic != Variadic::Discard || !sig.keys.is_empty();
+                let track = sig.key_rest() != Rest::Discard || !sig.keys.is_empty();
                 let mut consumed: Option<BitBox> = track.then(|| bitbox![0; symbols.len()]);
 
                 for (key_index, key) in sig.keys.iter().enumerate() {
@@ -169,7 +169,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
                     }
                 }
 
-                if sig.variadic == Variadic::None {
+                if sig.key_rest() == Rest::None {
                     let consumed = consumed.as_mut().unwrap();
                     for (index, symbol) in symbols.iter().enumerate() {
                         if consumed[index] {
@@ -192,8 +192,19 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
                         iter.symbols.remove(index);
                     }
                 }
+                // Fields are keyed items: a `...` or `**` rest is this
+                // iterator, and a `*` rest gets nothing
                 if sig.variadic == Variadic::Capture {
                     Output::set(strand, staged.at(sig.len() - 1), &this);
+                } else {
+                    if let Some(i) = sig.pos_rest_slot() {
+                        staged
+                            .at(i)
+                            .store(Value::from_object(tuple::tuple(strand, [])));
+                    }
+                    if let Some(i) = sig.key_rest_slot() {
+                        Output::set(strand, staged.at(i), &this);
+                    }
                 }
                 for index in 0..sig.len() {
                     out.at(index).store(staged.at(index).take());

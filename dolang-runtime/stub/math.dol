@@ -139,7 +139,7 @@ pub def hypot
   # Second coordinate.
   second @ (Int | Float)
   # Additional coordinates.
-  ...rest @ (Int | Float)
+  *rest @ (Int | Float)
 do -> Float
   ...
 
@@ -148,7 +148,7 @@ pub def gcd
   # First value.
   first @ Int
   # Additional values.
-  ...rest @ Int
+  *rest @ Int
 do -> Int
   ...
 
@@ -157,7 +157,7 @@ pub def lcm
   # First value.
   first @ Int
   # Additional values.
-  ...rest @ Int
+  *rest @ Int
 do -> Int
   ...
 

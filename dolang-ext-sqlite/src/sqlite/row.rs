@@ -2,10 +2,11 @@ use std::ffi::CStr;
 
 use bitvec::slice::BitSlice;
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
-    object::{Mut, Ref, Spread, SpreadContext, TypeBuilder, Unpack, UnpackItem},
+    Error, Input, Instance, Object, Output, Result, Slot, State, Strand, Value,
+    object::{Mut, Ref, Rest, Spread, SpreadContext, TypeBuilder, Unpack, UnpackItem},
     value::Nil,
     value::TypeObject,
+    value::{AsSym, AsTuple},
 };
 use libsqlite3_sys::{
     SQLITE_BLOB, SQLITE_FLOAT, SQLITE_INTEGER, SQLITE_NULL, SQLITE_ROW, SQLITE_TEXT,
@@ -85,7 +86,10 @@ impl<'v> Object<'v> for Rows {
                 | UnpackItem::ConstKey { slot, default, .. } => {
                     Output::set(strand, slot, default.unwrap())
                 }
-                UnpackItem::Rest { slot } => Output::set(strand, slot, this),
+                UnpackItem::Rest { slot } | UnpackItem::PosRest { slot } => {
+                    Output::set(strand, slot, this)
+                }
+                UnpackItem::KeyRest { slot } => Unpack::empty_key_rest(strand, slot),
             }
         }
         Ok(())
@@ -251,7 +255,21 @@ pub(crate) struct RowAnnex<'v> {
     data: RowData,
 }
 
+/// What a rest captured by [`unpack_row`] holds.
+enum RowRest {
+    /// A [`RowIter`] over the leftover columns.
+    Leftover { keyed: bool },
+    /// A keyed [`RowIter`] with nothing left.
+    Empty,
+}
+
 /// Helper function to unpack row columns
+///
+/// Columns are positional items, as a [`RowIter`] yields them, unless `keyed`,
+/// when they are keyed items named by their columns. A `**` rest alone takes
+/// leftover positional columns as keyed ones.
+///
+/// Returns the rests to create over the leftover columns.
 ///
 /// # Safety
 ///
@@ -263,20 +281,26 @@ unsafe fn unpack_row<'v, 's, 'a>(
     raw: *mut sqlite3_stmt,
     unpack: &mut Unpack<'v, 'a>,
     consumed: &mut [bool],
-) -> Result<'v, 's, Option<Slot<'v, 'a>>> {
+    keyed: bool,
+) -> Result<'v, 's, Vec<(Slot<'v, 'a>, RowRest)>> {
     unsafe {
         let count = sqlite3_column_count(raw) as usize;
-        let mut rest_slot = None;
-        let exhaustive = unpack.exhaustive();
+        let mut rests = Vec::new();
+        let pos_rest = unpack.pos_rest();
+        let exhaustive = unpack.key_rest() == Rest::None && (keyed || pos_rest == Rest::None);
 
         'top: for item in unpack.iter() {
             match item {
+                UnpackItem::Pos { slot, default } if keyed => {
+                    let input = default.ok_or_else(|| Error::missing_positional(strand, 0))?;
+                    Output::set(strand, slot, input);
+                }
                 UnpackItem::Pos { mut slot, default } => {
                     // Find next unconsumed column
                     for (i, con) in consumed.iter_mut().enumerate() {
                         if !*con {
                             *con = true;
-                            let found = !get(
+                            let found = get(
                                 strand,
                                 annex,
                                 stmt_annex,
@@ -337,7 +361,7 @@ unsafe fn unpack_row<'v, 's, 'a>(
                         Output::set(strand, slot, input);
                     } else {
                         consumed[idx as usize] = true;
-                        let found = !get(
+                        let found = get(
                             strand,
                             annex,
                             stmt_annex,
@@ -348,9 +372,15 @@ unsafe fn unpack_row<'v, 's, 'a>(
                         debug_assert!(found);
                     }
                 }
-                UnpackItem::Rest { slot } => {
-                    rest_slot = Some(slot);
+                UnpackItem::Rest { slot } => rests.push((slot, RowRest::Leftover { keyed })),
+                UnpackItem::PosRest { slot } if keyed => Unpack::empty_pos_rest(strand, slot),
+                UnpackItem::PosRest { slot } => {
+                    rests.push((slot, RowRest::Leftover { keyed: false }))
                 }
+                UnpackItem::KeyRest { slot } if keyed || pos_rest == Rest::None => {
+                    rests.push((slot, RowRest::Leftover { keyed: true }))
+                }
+                UnpackItem::KeyRest { slot } => rests.push((slot, RowRest::Empty)),
             }
         }
 
@@ -369,8 +399,42 @@ unsafe fn unpack_row<'v, 's, 'a>(
                 }
             }
         }
-        Ok(rest_slot)
+        Ok(rests)
     }
+}
+
+/// Creates a [`RowIter`] over the columns of `row` not yet `consumed`.
+fn create_row_iter<'v>(
+    strand: &mut Strand<'v, '_>,
+    global: State<'v, Global<'v>>,
+    row: impl Input<'v>,
+    consumed: Vec<bool>,
+    keyed: bool,
+    out: impl Output<'v>,
+) {
+    strand.with_slots_sync(|strand, [mut wrapper]| {
+        global.types.row_iter.create_with_annex(
+            strand,
+            RowIter {
+                consumed,
+                current: 0,
+                keyed,
+            },
+            RowIterAnnex { global },
+            &mut wrapper,
+        );
+        // Store reference to Row in slot 0
+        global
+            .types
+            .row_iter
+            .cast(&wrapper)
+            .unwrap()
+            .enter_sync(strand, |strand, row_iter| {
+                let mut row_iter = row_iter.borrow_mut_unwrap();
+                Output::set(strand, Mut::slot_mut::<0>(&mut row_iter), row);
+            });
+        Output::set(strand, out, wrapper);
+    })
 }
 
 impl<'v> Object<'v> for Row {
@@ -413,41 +477,21 @@ impl<'v> Object<'v> for Row {
             let mut consumed = vec![false; count];
 
             unsafe {
-                let rest_slot =
-                    unpack_row(strand, &annex, &stmt_annex, raw, &mut unpack, &mut consumed)?;
-
-                if let Some(slot) = rest_slot {
-                    // Create RowIter with remaining columns
-                    strand
-                        .with_slots(async |strand, [mut wrapper]| {
-                            annex.global.types.row_iter.create_with_annex(
-                                strand,
-                                RowIter {
-                                    consumed,
-                                    current: 0,
-                                },
-                                RowIterAnnex {
-                                    global: annex.global,
-                                },
-                                &mut wrapper,
-                            );
-
-                            // Store reference to Row in slot 0
-                            annex
-                                .global
-                                .types
-                                .row_iter
-                                .cast(&wrapper)
-                                .unwrap()
-                                .enter_sync(strand, |strand, row_iter| {
-                                    let mut row_iter = row_iter.borrow_mut_unwrap();
-                                    Output::set(strand, Mut::slot_mut::<0>(&mut row_iter), this);
-                                });
-
-                            Output::set(strand, slot, wrapper);
-                            Ok(())
-                        })
-                        .await?;
+                let rests = unpack_row(
+                    strand,
+                    &annex,
+                    &stmt_annex,
+                    raw,
+                    &mut unpack,
+                    &mut consumed,
+                    false,
+                )?;
+                for (slot, rest) in rests {
+                    let (consumed, keyed) = match rest {
+                        RowRest::Leftover { keyed } => (consumed.clone(), keyed),
+                        RowRest::Empty => (vec![true; count], true),
+                    };
+                    create_row_iter(strand, annex.global, this, consumed, keyed, slot);
                 }
             }
             Ok(())
@@ -513,6 +557,8 @@ impl<'v> Object<'v> for Row {
 pub(crate) struct RowIter {
     consumed: Vec<bool>,
     current: usize,
+    /// Yields `(name, value)` pairs and spreads keyed items, for a `**` rest.
+    keyed: bool,
 }
 
 pub(crate) struct RowIterAnnex<'v> {
@@ -576,19 +622,48 @@ impl<'v> Object<'v> for RowIter {
                             return Err(Error::state_error(strand, "statement closed"));
                         }
 
-                        unsafe {
-                            let rest_slot = unpack_row(
+                        let keyed = borrow.keyed;
+                        let rests = unsafe {
+                            unpack_row(
                                 strand,
                                 &row_annex,
                                 &stmt_annex,
                                 raw,
                                 &mut unpack,
                                 &mut borrow.consumed,
-                            )?;
-
-                            if let Some(slot) = rest_slot {
-                                // For Rest in RowIter, just set self again
-                                Output::set(strand, slot, this);
+                                keyed,
+                            )?
+                        };
+                        for (slot, rest) in rests {
+                            match rest {
+                                // A rest of the same kind is this iterator
+                                RowRest::Leftover { keyed: rest_keyed } if rest_keyed == keyed => {
+                                    Output::set(strand, slot, this)
+                                }
+                                // A keyed rest takes the leftover columns
+                                RowRest::Leftover { .. } => {
+                                    let consumed = borrow.consumed.clone();
+                                    borrow.consumed.fill(true);
+                                    create_row_iter(
+                                        strand,
+                                        row_annex.global,
+                                        row,
+                                        consumed,
+                                        true,
+                                        slot,
+                                    );
+                                }
+                                RowRest::Empty => {
+                                    let consumed = vec![true; borrow.consumed.len()];
+                                    create_row_iter(
+                                        strand,
+                                        row_annex.global,
+                                        row,
+                                        consumed,
+                                        true,
+                                        slot,
+                                    );
+                                }
                             }
                         }
                         Ok(())
@@ -602,7 +677,72 @@ impl<'v> Object<'v> for RowIter {
     async fn next<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        if !this.borrow(strand)?.keyed {
+            return RowIter::next_column(this, strand, None, out).await;
+        }
+        strand
+            .with_slots(async move |strand, [mut key, mut value]| {
+                let found = RowIter::next_column(
+                    this,
+                    strand,
+                    Some(Slot::reborrow(&mut key)),
+                    Slot::reborrow(&mut value),
+                )
+                .await?;
+                if found {
+                    Output::set(strand, out, AsTuple::new([&key, &value]));
+                }
+                Ok(found)
+            })
+            .await
+    }
+
+    async fn spread<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        let keyed = this.borrow(strand)?.keyed;
+        strand
+            .with_slots(async move |strand, [mut key, mut value, mut pair]| {
+                while RowIter::next_column(
+                    this,
+                    strand,
+                    keyed.then_some(Slot::reborrow(&mut key)),
+                    Slot::reborrow(&mut value),
+                )
+                .await?
+                {
+                    if !keyed {
+                        sink.positional(strand, Slot::reborrow(&mut value))?;
+                    } else if context == SpreadContext::Sequence {
+                        Output::set(
+                            strand,
+                            Slot::reborrow(&mut pair),
+                            AsTuple::new([&key, &value]),
+                        );
+                        sink.positional(strand, Slot::reborrow(&mut pair))?;
+                    } else {
+                        sink.keyed(strand, Slot::reborrow(&mut key), Slot::reborrow(&mut value))?;
+                    }
+                }
+                Ok(())
+            })
+            .await
+    }
+}
+
+impl RowIter {
+    /// Delivers the next leftover column's value to `value`, and its name as
+    /// a symbol to `key` if given.
+    async fn next_column<'v, 's>(
+        this: Instance<'v, '_, Self>,
+        strand: &mut Strand<'v, 's>,
+        mut key: Option<Slot<'v, '_>>,
+        mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, bool> {
         strand
             .with_slots(async move |strand, [mut row]| {
@@ -641,15 +781,20 @@ impl<'v> Object<'v> for RowIter {
                             if !*con {
                                 unsafe {
                                     // Get the column value
+                                    let index = current + i;
                                     let found = get(
                                         strand,
                                         &row_annex,
                                         &stmt_annex,
                                         raw,
-                                        (current + i) as i32,
-                                        Slot::reborrow(&mut out),
+                                        index as i32,
+                                        Slot::reborrow(&mut value),
                                     )?;
                                     debug_assert!(found);
+                                    if let Some(key) = &mut key {
+                                        let name = column_name(raw, index);
+                                        Output::set(strand, Slot::reborrow(key), AsSym::new(&name));
+                                    }
                                     *con = true;
                                     borrow.current = current + i + 1;
                                     return Ok(true);
@@ -664,6 +809,22 @@ impl<'v> Object<'v> for RowIter {
                 .await
             })
             .await
+    }
+}
+
+/// Returns the name of column `index`.
+///
+/// # Safety
+///
+/// The raw pointer must be a valid sqlite3_stmt pointer.
+unsafe fn column_name(raw: *mut sqlite3_stmt, index: usize) -> String {
+    unsafe {
+        let ptr = sqlite3_column_name(raw, index as i32);
+        if ptr.is_null() {
+            index.to_string()
+        } else {
+            CStr::from_ptr(ptr).to_string_lossy().into_owned()
+        }
     }
 }
 

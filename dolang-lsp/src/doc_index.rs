@@ -106,6 +106,7 @@ pub(crate) fn signature(entry: &DocEntry) -> String {
                     let name = if param.optional
                         && !param.name.ends_with('?')
                         && !param.name.starts_with("...")
+                        && !param.name.starts_with('*')
                     {
                         format!("{}?", param.name)
                     } else {

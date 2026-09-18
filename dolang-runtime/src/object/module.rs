@@ -1,4 +1,9 @@
-use std::{borrow::Cow, mem, ops::ControlFlow};
+use std::{
+    borrow::Cow,
+    hash::{DefaultHasher, Hasher},
+    mem,
+    ops::ControlFlow,
+};
 
 use crate::value::fmt::Format;
 
@@ -21,7 +26,7 @@ use crate::{
     vm::Vm,
 };
 
-use super::{dict::Dict, kv};
+use super::dict::Dict;
 
 pub(crate) type ModuleGetter<'v> =
     dyn for<'a, 's> Fn(&mut Strand<'v, 's>, Slot<'v, 'a>) -> Result<'v, 's, ()> + 'v;
@@ -432,7 +437,9 @@ impl<'v> Namespace<'v> {
                 }
                 let mut ns = Self::new(strand);
                 ns.insert(strand, rest, slot)?;
-                let hv = kv::hash(strand, &sym)?;
+                let mut hasher = DefaultHasher::new();
+                sym.op_hash(strand, &mut hasher)?;
+                let hv = hasher.finish();
                 self.dict
                     .borrow_mut()
                     .ok_or_else(|| Error::concurrency(strand))?
@@ -583,7 +590,9 @@ impl<'v> Protocol<'v> for Namespace<'v> {
             NamespaceInner::Empty => (),
         }
         let key = Value::from_object(strand.sym_obj(field));
-        let hv = kv::hash(strand, &key).unwrap();
+        let mut hasher = DefaultHasher::new();
+        key.op_hash(strand, &mut hasher).unwrap();
+        let hv = hasher.finish();
         re.dict
             .borrow_mut()
             .ok_or_else(|| Error::concurrency(strand))?
@@ -1203,7 +1212,9 @@ mod tests {
             let mut ns = Namespace::new(strand);
             Output::set(strand, &mut leaf, 1_i64);
             let sym_a = Value::from_object(strand.sym_register_obj("a"));
-            let hv = kv::hash(strand, &sym_a).unwrap();
+            let mut hasher = DefaultHasher::new();
+            sym_a.op_hash(strand, &mut hasher).unwrap();
+            let hv = hasher.finish();
             ns.dict
                 .borrow_mut()
                 .unwrap()

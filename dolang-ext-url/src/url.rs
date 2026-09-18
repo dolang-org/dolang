@@ -5,7 +5,7 @@ use dolang::runtime::value::fmt::Format;
 use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
-    AllocExt, Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
+    AllocExt, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
     error::ResultExt,
     object::{ArrayLike, ArrayView, Cast, DictLike, DictView, DictViewSink, TypeBuilder},
     unpack,
@@ -339,18 +339,15 @@ impl<'v> Object<'v> for Url {
             .method_with_slots(
                 "with_query",
                 async move |this, strand, args, out, [mut iter, mut item, mut key, mut value]| {
-                    let ([], [pairs], mut keys) = unpack!(strand, args, 0, 1, ...)?;
+                    let ([], [pairs], mut keys) = unpack!(strand, args, 0, 1, **)?;
                     let mut url = this.annex().inner.clone();
                     {
                         let mut query = url.query_pairs_mut();
                         query.clear();
                         // Pairs come from either a single iterable or key arguments.
                         if let Some(pairs) = pairs {
-                            if let Some(extra) = keys.next() {
-                                return Err(match extra {
-                                    Arg::Pos(_) => Error::unexpected_positional(strand, 1),
-                                    Arg::Key(name, _) => Error::unexpected_key(strand, name),
-                                });
+                            if let Some((name, _)) = keys.next() {
+                                return Err(Error::unexpected_key(strand, name));
                             }
                             pairs.iter(strand, &mut iter).await?;
                             while iter.next(strand, &mut item).await? {
@@ -362,11 +359,7 @@ impl<'v> Object<'v> for Url {
                                 );
                             }
                         } else {
-                            for arg in keys {
-                                // Any positional argument would have been taken as `pairs`.
-                                let Arg::Key(name, value) = arg else {
-                                    unreachable!("positional argument after optional `pairs`");
-                                };
+                            for (name, value) in keys {
                                 let name = name.as_str(strand);
                                 query.append_pair(name, &value.to_string(strand)?);
                             }

@@ -1,0 +1,83 @@
+# `*` and `**` rests when destructuring positional sources
+
+import
+  std: error
+
+# `*rest` takes the positional leftovers
+let a *r = [1, 2, 3]
+assert_eq $a 1
+assert_eq [...r] [2, 3]
+
+let t1 *tr = (1, 2, 3)
+assert_eq $t1 1
+assert_eq [...tr] [2, 3]
+
+# It can be empty
+let only *none = [1]
+assert_eq $only 1
+assert_eq [...none] []
+
+# `**rest` gets an empty record, since there are no keys
+let b *br **bk = [1, 2]
+assert_eq $b 1
+assert_eq [...br] [2]
+assert_eq $bk $record()
+
+let * **tk = (1, 2)
+assert_eq $tk $record()
+
+# Bare `*` discards
+let c * = [1, 2, 3]
+assert_eq $c 1
+
+# An iterator continues where the pattern stopped
+let it = ([1, 2, 3, 4].iter())
+let d *dr = it
+assert_eq $d 1
+assert_eq [...dr] [2, 3, 4]
+
+# Strings, binaries, and their split iterators
+let s *sr = "xyz".scalars()
+assert_eq $s x
+assert_eq [...sr] ["y", "z"]
+
+let p *pr = ("a,b,c".split(","))
+assert_eq $p a
+assert_eq [...pr] ["b", "c"]
+
+let q *qr **qk = (b"a,b".split(b","))
+assert_eq $q b"a"
+assert_eq [...qr] [b"b"]
+assert_eq $qk $record()
+
+# `bind` and `for` take them too
+bind [1, 2, 3]
+  - e
+  *er
+assert_eq $e 1
+assert_eq [...er] [2, 3]
+
+let firsts = $
+  for f *_ = [[1, 2], [3, 4, 5]]
+    - $f
+assert_eq $firsts [1, 3]
+
+# Key defaults fill in beside positional defaults
+bind [1]
+  - g
+  - h = 2
+  :k = 3
+assert_eq [g, h, k] [1, 2, 3]
+
+let it2 = ([1, 2, 3, 4].iter())
+bind it2
+  - x
+  :k2 = 9
+  *xr
+assert_eq [x, k2, [...xr]] [1, 9, [2, 3, 4]]
+
+# Without a `*` rest, positional leftovers are an error
+assert_throws $error.UnexpectedPosError do
+  let _y **_yk = [1, 2]
+assert_throws $error.UnexpectedPosError do
+  let _z _w = (1, 2, 3)

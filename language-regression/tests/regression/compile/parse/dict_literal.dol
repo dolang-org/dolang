@@ -1,2 +1,5 @@
-let foo = record bar: hello
+class Foo
+  pub field bar = "hello"
+
+let foo = Foo()
 let _ = {$foo.bar: 5}

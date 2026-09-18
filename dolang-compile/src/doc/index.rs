@@ -186,16 +186,18 @@ impl Index<'_> {
                 )
             }
             Param::Rest {
-                ellipsis_span,
+                kind,
+                sigil_span,
                 ident,
                 ty,
                 type_ellipsis_span,
             } => (
                 Kind::RestParam {
+                    kind: *kind,
                     name: ident.as_ref().map(|ident| ident.span),
                     type_ellipsis: *type_ellipsis_span,
                 },
-                Some(*ellipsis_span),
+                Some(*sigil_span),
                 ident.as_ref().map(|ident| ident.span),
                 ty,
                 &None,
@@ -388,9 +390,11 @@ impl Index<'_> {
                         };
                         (doc::TypeArgKind::Key { key, key_ty }, Some(ty), Some(key))
                     }
-                    TypeArgKind::Rest { ellipsis_span, ty } => {
-                        (doc::TypeArgKind::Rest, Some(ty), Some(*ellipsis_span))
-                    }
+                    TypeArgKind::Rest {
+                        kind,
+                        sigil_span,
+                        ty,
+                    } => (doc::TypeArgKind::Rest(*kind), Some(ty), Some(*sigil_span)),
                     TypeArgKind::OpenRest { ellipsis_span } => {
                         (doc::TypeArgKind::OpenRest, None, Some(*ellipsis_span))
                     }
@@ -437,8 +441,8 @@ impl Index<'_> {
             let (kind, sigil) = match binder.kind {
                 BinderKind::Pos => (crate::BinderKind::Pos, None),
                 BinderKind::Key { colon_span } => (crate::BinderKind::Key, Some(colon_span)),
-                BinderKind::Rest { ellipsis_span } => {
-                    (crate::BinderKind::Rest, Some(ellipsis_span))
+                BinderKind::Rest { kind, sigil_span } => {
+                    (crate::BinderKind::Rest(kind), Some(sigil_span))
                 }
             };
             let name = binder.ident.span;

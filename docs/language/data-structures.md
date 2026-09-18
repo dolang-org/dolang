@@ -116,12 +116,12 @@ Spreading of dicts preserves duplicate keys and order.
 
 ## Records (`Record`)
 
-Records are immutable product values with symbol and integer keys. They allow
-direct field access with dot syntax:
+Records are immutable sequences of positional items and symbol-keyed items,
+like a tuple with keys. Read an item by indexing with its symbol or position:
 
 ```
 let r = (name: "Alice", age: 30)
-echo $r.name # Alice
+echo $r[:name:] # Alice
 ```
 
 Parentheses make a record rather than a tuple when they hold at least one static
@@ -141,15 +141,16 @@ The `record` function builds a record from its arguments:
 let r = record name: Alice age: 30
 ```
 
-Records support the same ordering and multi-map semantics as dicts where
-applicable. They are iterable, unpackable, and support indexing for their key
-types. Build a changed record by spreading the original into a new record:
+A key may repeat, and a lookup finds its latest value. Iterating a record
+yields key/value tuples in order, with a positional item's position as its key.
+Build a changed record by spreading the original into a new record:
 
 ```
 let updated = (...r, age: 31)
 ```
 
-Use a class when named fields need to be mutable.
+Keys are not fields: `r.name` is an error. Use a class for a value with named
+fields.
 
 See the [Record API](std.Record) for details.
 

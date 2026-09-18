@@ -7,7 +7,7 @@ use std::{
 
 use dolang_util::alias;
 
-use crate::{BinderKind, source::Span};
+use crate::{BinderKind, RestKind, source::Span};
 
 mod comment;
 mod index;
@@ -98,6 +98,7 @@ pub(crate) enum Kind {
         default: Option<Span>,
     },
     RestParam {
+        kind: RestKind,
         name: Option<Span>,
         /// The explicit expansion marker in the annotation, if present.
         type_ellipsis: Option<Span>,
@@ -234,7 +235,7 @@ pub(crate) enum TypeArgKind {
         /// The type giving the key, absent for a bareword symbol
         key_ty: Option<TypeExpr>,
     },
-    Rest,
+    Rest(RestKind),
     OpenRest,
     KeyRest {
         key_ty: TypeExpr,

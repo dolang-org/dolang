@@ -1,5 +1,5 @@
 use crate::{
-    arg::{Arg, Args},
+    arg::Args,
     error::{Error, Result},
     strand::Strand,
     unpack,
@@ -72,13 +72,9 @@ async fn gcd<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    let ([first], [], rest) = unpack!(strand, args, 1, 0, ...)?;
+    let ([first], [], rest) = unpack!(strand, args, 1, 0, *)?;
     let mut result = as_int(strand, &first, "gcd")?.unsigned_abs();
-    for arg in rest {
-        let value = match arg {
-            Arg::Pos(value) => value,
-            Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
-        };
+    for value in rest {
         result = gcd_pair(result, as_int(strand, &value, "gcd")?.unsigned_abs());
     }
     let result = i128::try_from(result).map_err(|_| Error::overflow(strand))?;
@@ -91,16 +87,12 @@ async fn lcm<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    let ([first], [], rest) = unpack!(strand, args, 1, 0, ...)?;
+    let ([first], [], rest) = unpack!(strand, args, 1, 0, *)?;
     let mut result = as_int(strand, &first, "lcm")?.unsigned_abs();
     if result > i128::MAX as u128 {
         return Err(Error::overflow(strand));
     }
-    for arg in rest {
-        let value = match arg {
-            Arg::Pos(value) => value,
-            Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
-        };
+    for value in rest {
         let value = as_int(strand, &value, "lcm")?.unsigned_abs();
         result = if result == 0 || value == 0 {
             0
@@ -175,13 +167,9 @@ async fn hypot<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    let ([first, second], [], rest) = unpack!(strand, args, 2, 0, ...)?;
+    let ([first, second], [], rest) = unpack!(strand, args, 2, 0, *)?;
     let mut result = as_float(strand, &first, "hypot")?.hypot(as_float(strand, &second, "hypot")?);
-    for arg in rest {
-        let value = match arg {
-            Arg::Pos(value) => value,
-            Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
-        };
+    for value in rest {
         result = result.hypot(as_float(strand, &value, "hypot")?);
     }
     Output::set(strand, out, result);

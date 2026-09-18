@@ -1,7 +1,13 @@
 let x = 5
 let y = 10
 let arr = [1, 2, 3]
-let obj = record field: false
+class Leaf
+  pub field field
+
+  def (init) self field
+    self.field = field
+
+let obj = Leaf false
 
 # Arithmetic operations
 (x + y)
