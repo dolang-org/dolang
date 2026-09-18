@@ -59,7 +59,9 @@ let KIND_NAMES = $
   $compile.PreludeItem: "PreludeItem"
   $compile.PositionalParam: "PositionalParam"
   $compile.KeyParam: "KeyParam"
-  $compile.RestParam: "RestParam"
+  $compile.MixedRestParam: "MixedRestParam"
+  $compile.PosRestParam: "PosRestParam"
+  $compile.KeyRestParam: "KeyRestParam"
   $compile.Lambda: "Lambda"
   $compile.If: "If"
   $compile.Else: "Else"
@@ -77,7 +79,9 @@ let KIND_NAMES = $
   $compile.Type: "Type"
   $compile.PosBinder: "PosBinder"
   $compile.KeyBinder: "KeyBinder"
-  $compile.RestBinder: "RestBinder"
+  $compile.MixedRestBinder: "MixedRestBinder"
+  $compile.PosRestBinder: "PosRestBinder"
+  $compile.KeyRestBinder: "KeyRestBinder"
 
 # Type expression kind name, matching the `compile` class names.
 let TYPE_KIND_NAMES = $
@@ -92,17 +96,35 @@ let TYPE_KIND_NAMES = $
 let TYPE_ARG_KIND_NAMES = $
   $compile.PosTypeArg: "PosTypeArg"
   $compile.KeyTypeArg: "KeyTypeArg"
-  $compile.RestTypeArg: "RestTypeArg"
-  $compile.OpenRestTypeArg: "OpenRestTypeArg"
+  $compile.MixedRestTypeArg: "MixedRestTypeArg"
+  $compile.PosRestTypeArg: "PosRestTypeArg"
   $compile.KeyRestTypeArg: "KeyRestTypeArg"
+  $compile.OpenRestTypeArg: "OpenRestTypeArg"
+  $compile.EntryRestTypeArg: "EntryRestTypeArg"
 
 # How a type argument is given, as the documentation projection names it.
 let ARG_KINDS = $
   $compile.PosTypeArg: pos
   $compile.KeyTypeArg: key
-  $compile.RestTypeArg: rest
-  $compile.OpenRestTypeArg: open_rest
+  $compile.MixedRestTypeArg: mixed_rest
+  $compile.PosRestTypeArg: pos_rest
   $compile.KeyRestTypeArg: key_rest
+  $compile.OpenRestTypeArg: open_rest
+  $compile.EntryRestTypeArg: entry_rest
+
+# How a parameter or binder is declared, as the documentation projection names
+# it.
+let DECL_KINDS = $
+  $compile.PositionalParam: pos
+  $compile.KeyParam: key
+  $compile.MixedRestParam: mixed_rest
+  $compile.PosRestParam: pos_rest
+  $compile.KeyRestParam: key_rest
+  $compile.PosBinder: pos
+  $compile.KeyBinder: key
+  $compile.MixedRestBinder: mixed_rest
+  $compile.PosRestBinder: pos_rest
+  $compile.KeyRestBinder: key_rest
 
 # The type of a constant type's value, which JSON alone cannot tell apart.
 def const_type value
@@ -146,9 +168,7 @@ def type_arg_json id_to_index arg
     optional: $arg.optional
     if type(arg, compile.KeyTypeArg)
       key: (span_json arg.key)
-    if type(arg, compile.RestTypeArg)
-      sigil: $arg.sigil
-    if (type(arg, compile.KeyTypeArg) && arg.key_ty != nil || type(arg, compile.KeyRestTypeArg))
+    if (type(arg, compile.KeyTypeArg) && arg.key_ty != nil || type(arg, compile.EntryRestTypeArg))
       key_type: (type_expr_json id_to_index arg.key_ty)
     if !type(arg, compile.OpenRestTypeArg)
       type: (type_expr_json id_to_index arg.ty)
@@ -393,32 +413,24 @@ class Document
     else
       "instance"
 
-  def param_info self child
-    if (type(child, compile.PositionalParam))
-      [self.#text(child.name), child.default != nil]
-    else if (type(child, compile.KeyParam))
-      [":$(self.#text(child.key))", child.default != nil]
-    else if (type(child, compile.RestParam))
-      let bound = if (child.name == nil)
-        ""
-      else
-        self.#text(child.name)
-      ["$(child.sigil)$bound", false]
-    else
-      nil
-
+  # A parameter's name is its key if it is a keyword parameter, and absent if
+  # it is an anonymous rest.
   def params self id
     let result = []
     for child_id = self.#index.own_ids(id)
       let child = self.#index.node $child_id
-      let info = self.#param_info $child
-      if (info == nil)
+      if !type(child, compile.Param)
         continue
-      let name optional = info
+      let name = if type(child, compile.KeyParam)
+        child.key
+      else
+        child.name
       let ty = self.#type_of $child_id
       let param = $
-        name: $name
-        optional: $optional
+        kind: (DECL_KINDS.get (type child))
+        if (name != nil)
+          name: (self.#text(name))
+        optional: (!type(child, compile.RestParam) && child.default != nil)
         if (type(child, compile.RestParam) && child.type_ellipsis != nil)
           type_spread: true
         doc: (self.#doc_of(child))
@@ -427,22 +439,16 @@ class Document
       result.push $param
     result
 
-  # The binders declared by a function, method, class, or alias. A name keeps
-  # its `:`, `...`, `*` or `**` sigil, as a parameter's does; a bound or default
-  # is a type tree, like an annotation's.
+  # The binders declared by a function, method, class, or alias. A bound or
+  # default is a type tree, like an annotation's.
   def binders self id
     let result = []
     for child = self.#own(id)
       if !type(child, compile.Binder)
         continue
-      let sigil = if type(child, compile.KeyBinder)
-        ":"
-      else if type(child, compile.RestBinder)
-        child.sigil
-      else
-        ""
       result.push $
-        name: "$sigil$(self.#text(child.name))"
+        kind: (DECL_KINDS.get (type child))
+        name: (self.#text(child.name))
         if (child.bound != nil)
           bound: (self.#type_tree(child.bound))
         if (child.default != nil)
@@ -523,9 +529,7 @@ class Document
         optional: $arg.optional
         if type(arg, compile.KeyTypeArg)
           key: (self.#text(arg.key))
-        if type(arg, compile.RestTypeArg)
-          sigil: $arg.sigil
-        if (type(arg, compile.KeyTypeArg) && arg.key_ty != nil || type(arg, compile.KeyRestTypeArg))
+        if (type(arg, compile.KeyTypeArg) && arg.key_ty != nil || type(arg, compile.EntryRestTypeArg))
           key_type: (self.#type_tree(arg.key_ty))
         if !type(arg, compile.OpenRestTypeArg)
           type: (self.#type_tree(arg.ty))

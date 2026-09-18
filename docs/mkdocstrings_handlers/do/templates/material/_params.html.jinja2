@@ -48,7 +48,7 @@
 {% endif %}
 {% for p in entity.params %}
 <tr>
-  <td><code>{{ p.name }}{{ "?" if p.optional }}</code></td>
+  <td><code>{{ p.written }}{{ "?" if p.optional }}</code></td>
   <td>{% if p.type %}<code>{{ p.type | convert_markdown(heading_level, base_id ~ "--" ~ p.slug, strip_paragraph=true) }}</code>{% endif %}</td>
   <td>{{ p.doc_short | convert_markdown(heading_level, base_id ~ "--" ~ p.slug, strip_paragraph=true) }}</td>
 </tr>
@@ -61,7 +61,7 @@
 #}
 {% for p in entity.params if p.doc_rest %}
 {% set param_id = base_id ~ "--" ~ p.slug %}
-{{ ("<code>" ~ p.name ~ "</code>") | heading(heading_level + 1, skip_inventory=true, id=param_id, toc_label=p.name) }}
+{{ ("<code>" ~ p.written ~ "</code>") | heading(heading_level + 1, skip_inventory=true, id=param_id, toc_label=p.written) }}
 {{ p.doc_rest | convert_markdown(heading_level + 2, param_id) }}
 {% endfor %}
 {% endif %}

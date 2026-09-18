@@ -58,17 +58,31 @@ struct Entity {
 struct ParamJson {
     #[serde(default)]
     type_spread: bool,
-    name: String,
+    kind: String,
+    /// The name, or the key of a keyword parameter; absent for an anonymous rest
+    #[serde(default)]
+    name: Option<String>,
     #[serde(default)]
     optional: bool,
     #[serde(default, rename = "type")]
     type_: Option<TypeJson>,
 }
 
+impl ParamJson {
+    /// The name as its declaration writes it
+    fn written(&self) -> String {
+        format!(
+            "{}{}",
+            sigil(&self.kind),
+            self.name.as_deref().unwrap_or_default()
+        )
+    }
+}
+
 /// A type binder, as the extractor gives it
 #[derive(Clone, serde::Deserialize)]
 struct BinderJson {
-    /// The name, with any `:` or `...` sigil
+    kind: String,
     name: String,
     #[serde(default)]
     bound: Option<TypeJson>,
@@ -79,7 +93,7 @@ struct BinderJson {
 impl BinderJson {
     /// The binder as its declaration writes it
     fn render(&self) -> String {
-        let mut text = self.name.clone();
+        let mut text = format!("{}{}", sigil(&self.kind), self.name);
         if let Some(bound) = &self.bound {
             write!(text, " @ {}", bound.render(Binding::Compact))
                 .expect("writing to a String cannot fail");
@@ -129,11 +143,19 @@ struct TypeArgJson {
     /// The key type of `...K: V`, or of a schema key given as a type
     #[serde(default)]
     key_type: Option<TypeJson>,
-    /// A rest item's `...`, `*` or `**`
-    #[serde(default)]
-    sigil: Option<String>,
     #[serde(rename = "type")]
     ty: Option<TypeJson>,
+}
+
+/// The sigil that declares a parameter, binder, or type argument of the given kind
+fn sigil(kind: &str) -> &'static str {
+    match kind {
+        "key" => ":",
+        "mixed_rest" => "...",
+        "pos_rest" => "*",
+        "key_rest" => "**",
+        _ => "",
+    }
 }
 
 /// How tightly a type form binds, so that it is parenthesized where it would have
@@ -186,10 +208,10 @@ fn render_args(args: &[TypeArgJson]) -> String {
             };
             let ty = ty.render(Binding::Func);
             match (arg.kind.as_str(), &arg.key_type, &arg.key) {
-                ("rest", _, _) => {
-                    format!("{optional}{}{ty}", arg.sigil.as_deref().unwrap_or("..."))
+                (kind @ ("mixed_rest" | "pos_rest" | "key_rest"), _, _) => {
+                    format!("{optional}{}{ty}", sigil(kind))
                 }
-                ("key_rest", Some(key), _) => {
+                ("entry_rest", Some(key), _) => {
                     format!("{optional}...{}: {ty}", key.render(Binding::Func))
                 }
                 // A name must be parenthesized to not be taken as a symbol key
@@ -395,7 +417,7 @@ fn render(rows: &[Row]) -> String {
             write!(
                 out,
                 "Param {{ name: {:?}, optional: {}, type_: {:?} }}, ",
-                param.name,
+                param.written(),
                 param.optional,
                 param.type_.as_ref().map(|ty| format!(
                     "{}{}",
@@ -421,7 +443,7 @@ mod tests {
             r#"{
             "module": "m", "entities": [{
                 "kind": "function", "name": "fork", "pub": true,
-                "params": [{"name": "...thunks", "type_spread": true,
+                "params": [{"kind": "mixed_rest", "name": "thunks", "type_spread": true,
                     "type": {"kind": "func", "params": [], "ret": {"kind": "name", "name": "Rs"}}}]
             }]
         }"#,
@@ -430,9 +452,10 @@ mod tests {
         let mut rows = Vec::new();
         add_module(&mut rows, &HashMap::new(), &module);
         assert!(render(&rows).contains("...(() -> Rs)"));
-        let old: ParamJson =
-            serde_json::from_str(r#"{"name": "...args", "type": {"kind": "name", "name": "Int"}}"#)
-                .unwrap();
+        let old: ParamJson = serde_json::from_str(
+            r#"{"kind": "mixed_rest", "name": "args", "type": {"kind": "name", "name": "Int"}}"#,
+        )
+        .unwrap();
         assert!(!old.type_spread);
     }
 }

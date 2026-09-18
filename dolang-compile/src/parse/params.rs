@@ -255,7 +255,7 @@ impl Parser<'_> {
                                 next_token,
                                 format!(
                                     "expected identifier or whitespace after '{}'",
-                                    kind.sigil()
+                                    self.file.str(sigil_span)
                                 ),
                             ));
                         }

@@ -36,10 +36,13 @@ pub(crate) struct Types<'v> {
     block: Type<'v, NodeObject<BlockTag>>,
     reference: Type<'v, NodeObject<ReferenceTag>>,
     binder: Type<'v, NodeObject<BinderTag>>,
+    rest_binder: Type<'v, NodeObject<RestBinderTag>>,
+    rest_param: Type<'v, NodeObject<RestParamTag>>,
     concrete_nodes: ConcreteNodeTypes<'v>,
     type_expr: Type<'v, TypeExprObject<TypeExprTag>>,
     type_kinds: TypeExprTypes<'v>,
     type_arg: Type<'v, TypeExprObject<TypeArgTag>>,
+    rest_arg: Type<'v, TypeExprObject<RestTypeArgTag>>,
     arg_kinds: TypeArgTypes<'v>,
     diagnostic: Type<'v, Diagnostic>,
     span: Type<'v, Span>,
@@ -101,7 +104,9 @@ pub(crate) struct ConcreteNodeTypes<'v> {
     prelude_item: Type<'v, NodeObject<PreludeItemTag>>,
     positional_param: Type<'v, NodeObject<PositionalParamTag>>,
     key_param: Type<'v, NodeObject<KeyParamTag>>,
-    rest_param: Type<'v, NodeObject<RestParamTag>>,
+    mixed_rest_param: Type<'v, NodeObject<MixedRestParamTag>>,
+    pos_rest_param: Type<'v, NodeObject<PosRestParamTag>>,
+    key_rest_param: Type<'v, NodeObject<KeyRestParamTag>>,
     lambda: Type<'v, NodeObject<LambdaTag>>,
     if_node: Type<'v, NodeObject<IfTag>>,
     else_node: Type<'v, NodeObject<ElseTag>>,
@@ -119,7 +124,9 @@ pub(crate) struct ConcreteNodeTypes<'v> {
     type_node: Type<'v, NodeObject<TypeTag>>,
     pos_binder: Type<'v, NodeObject<PosBinderTag>>,
     key_binder: Type<'v, NodeObject<KeyBinderTag>>,
-    rest_binder: Type<'v, NodeObject<RestBinderTag>>,
+    mixed_rest_binder: Type<'v, NodeObject<MixedRestBinderTag>>,
+    pos_rest_binder: Type<'v, NodeObject<PosRestBinderTag>>,
+    key_rest_binder: Type<'v, NodeObject<KeyRestBinderTag>>,
 }
 
 pub struct Tag;
@@ -155,6 +162,14 @@ impl<'v> Global<'v> {
             .build_type::<NodeObject<BinderTag>>((), ())
             .nominal_supertype(declaration)
             .build();
+        let rest_param = builder
+            .build_type::<NodeObject<RestParamTag>>((), ())
+            .nominal_supertype(param)
+            .build();
+        let rest_binder = builder
+            .build_type::<NodeObject<RestBinderTag>>((), ())
+            .nominal_supertype(binder)
+            .build();
         macro_rules! subtype {
             ($tag:ty, $base:expr) => {
                 builder
@@ -173,6 +188,7 @@ impl<'v> Global<'v> {
                     .build()
             };
         }
+        let rest_arg = type_subtype!(RestTypeArgTag, type_arg);
         Self {
             types: Types {
                 unit: builder.register_type(),
@@ -188,6 +204,8 @@ impl<'v> Global<'v> {
                 block,
                 reference,
                 binder,
+                rest_binder,
+                rest_param,
                 concrete_nodes: ConcreteNodeTypes {
                     root: subtype!(RootTag, node),
                     class: subtype!(ClassTag, declaration),
@@ -204,7 +222,9 @@ impl<'v> Global<'v> {
                     prelude_item: subtype!(PreludeItemTag, import),
                     positional_param: subtype!(PositionalParamTag, param),
                     key_param: subtype!(KeyParamTag, param),
-                    rest_param: subtype!(RestParamTag, param),
+                    mixed_rest_param: subtype!(MixedRestParamTag, rest_param),
+                    pos_rest_param: subtype!(PosRestParamTag, rest_param),
+                    key_rest_param: subtype!(KeyRestParamTag, rest_param),
                     lambda: subtype!(LambdaTag, block),
                     if_node: subtype!(IfTag, block),
                     else_node: subtype!(ElseTag, block),
@@ -222,7 +242,9 @@ impl<'v> Global<'v> {
                     type_node: subtype!(TypeTag, node),
                     pos_binder: subtype!(PosBinderTag, binder),
                     key_binder: subtype!(KeyBinderTag, binder),
-                    rest_binder: subtype!(RestBinderTag, binder),
+                    mixed_rest_binder: subtype!(MixedRestBinderTag, rest_binder),
+                    pos_rest_binder: subtype!(PosRestBinderTag, rest_binder),
+                    key_rest_binder: subtype!(KeyRestBinderTag, rest_binder),
                 },
                 type_expr,
                 type_kinds: TypeExprTypes {
@@ -234,12 +256,15 @@ impl<'v> Global<'v> {
                     func: type_subtype!(FuncTypeTag, type_expr),
                 },
                 type_arg,
+                rest_arg,
                 arg_kinds: TypeArgTypes {
                     pos: type_subtype!(PosTypeArgTag, type_arg),
                     key: type_subtype!(KeyTypeArgTag, type_arg),
-                    rest: type_subtype!(RestTypeArgTag, type_arg),
+                    mixed_rest: type_subtype!(MixedRestTypeArgTag, rest_arg),
+                    pos_rest: type_subtype!(PosRestTypeArgTag, rest_arg),
+                    key_rest: type_subtype!(KeyRestTypeArgTag, rest_arg),
                     open_rest: type_subtype!(OpenRestTypeArgTag, type_arg),
-                    key_rest: type_subtype!(KeyRestTypeArgTag, type_arg),
+                    entry_rest: type_subtype!(EntryRestTypeArgTag, type_arg),
                 },
                 diagnostic: builder.register_type(),
                 span: builder.register_type(),
@@ -408,11 +433,14 @@ node_tags! {
     AliasTag=>"Alias",
     SelfParamTag=>"SelfParam", ImportModuleTag=>"ImportModule", ImportItemTag=>"ImportItem",
     PreludeModuleTag=>"PreludeModule", PreludeItemTag=>"PreludeItem", PositionalParamTag=>"PositionalParam",
-    KeyParamTag=>"KeyParam", RestParamTag=>"RestParam", LambdaTag=>"Lambda", IfTag=>"If", ElseTag=>"Else",
+    KeyParamTag=>"KeyParam", RestParamTag=>"RestParam", MixedRestParamTag=>"MixedRestParam",
+    PosRestParamTag=>"PosRestParam", KeyRestParamTag=>"KeyRestParam", LambdaTag=>"Lambda", IfTag=>"If", ElseTag=>"Else",
     WhileTag=>"While", ForTag=>"For", TryTag=>"Try", CatchTag=>"Catch", FinallyTag=>"Finally",
     ForElemTag=>"ForElem", IfElemTag=>"IfElem", DecoratorTag=>"Decorator", BreakTag=>"Break",
     ContinueTag=>"Continue", ReturnTag=>"Return", TypeTag=>"Type", BinderTag=>"Binder",
-    PosBinderTag=>"PosBinder", KeyBinderTag=>"KeyBinder", RestBinderTag=>"RestBinder"
+    PosBinderTag=>"PosBinder", KeyBinderTag=>"KeyBinder", RestBinderTag=>"RestBinder",
+    MixedRestBinderTag=>"MixedRestBinder", PosRestBinderTag=>"PosRestBinder",
+    KeyRestBinderTag=>"KeyRestBinder"
 }
 pub(crate) struct Diagnostic;
 pub(crate) struct Span;
@@ -441,8 +469,9 @@ type_tags! {
     AppTypeTag=>"AppType", SchemaTypeTag=>"SchemaType", UnionTypeTag=>"UnionType",
     FuncTypeTag=>"FuncType", TypeArgTag=>"TypeArg", PosTypeArgTag=>"PosTypeArg",
     KeyTypeArgTag=>"KeyTypeArg", RestTypeArgTag=>"RestTypeArg",
-    OpenRestTypeArgTag=>"OpenRestTypeArg",
-    KeyRestTypeArgTag=>"KeyRestTypeArg"
+    MixedRestTypeArgTag=>"MixedRestTypeArg", PosRestTypeArgTag=>"PosRestTypeArg",
+    KeyRestTypeArgTag=>"KeyRestTypeArg", OpenRestTypeArgTag=>"OpenRestTypeArg",
+    EntryRestTypeArgTag=>"EntryRestTypeArg"
 }
 
 pub(crate) struct TypeExprTypes<'v> {
@@ -457,9 +486,11 @@ pub(crate) struct TypeExprTypes<'v> {
 pub(crate) struct TypeArgTypes<'v> {
     pos: Type<'v, TypeExprObject<PosTypeArgTag>>,
     key: Type<'v, TypeExprObject<KeyTypeArgTag>>,
-    rest: Type<'v, TypeExprObject<RestTypeArgTag>>,
-    open_rest: Type<'v, TypeExprObject<OpenRestTypeArgTag>>,
+    mixed_rest: Type<'v, TypeExprObject<MixedRestTypeArgTag>>,
+    pos_rest: Type<'v, TypeExprObject<PosRestTypeArgTag>>,
     key_rest: Type<'v, TypeExprObject<KeyRestTypeArgTag>>,
+    open_rest: Type<'v, TypeExprObject<OpenRestTypeArgTag>>,
+    entry_rest: Type<'v, TypeExprObject<EntryRestTypeArgTag>>,
 }
 
 pub(crate) struct TypeAnnex<'v> {
@@ -478,8 +509,6 @@ enum TypeDetail {
     Arg {
         optional: bool,
         key: Option<SpanData>,
-        /// The sigil of a rest item
-        sigil: Option<&'static str>,
     },
 }
 
@@ -1251,7 +1280,9 @@ fn create_node<'v, 's>(
         PreludeItem,
         PositionalParam,
         KeyParam,
-        RestParam,
+        MixedRestParam,
+        PosRestParam,
+        KeyRestParam,
         Lambda,
         If,
         Else,
@@ -1269,7 +1300,9 @@ fn create_node<'v, 's>(
         Type,
         PosBinder,
         KeyBinder,
-        RestBinder,
+        MixedRestBinder,
+        PosRestBinder,
+        KeyRestBinder,
     }
     let kind = {
         let b = owner.borrow(strand)?;
@@ -1296,7 +1329,12 @@ fn create_node<'v, 's>(
             compile::Kind::PreludeItem { .. } => Which::PreludeItem,
             compile::Kind::PositionalParam { .. } => Which::PositionalParam,
             compile::Kind::KeyParam { .. } => Which::KeyParam,
-            compile::Kind::RestParam { .. } => Which::RestParam,
+            compile::Kind::RestParam { kind, .. } => match kind {
+                compile::RestKind::Mixed => Which::MixedRestParam,
+                compile::RestKind::Pos => Which::PosRestParam,
+                compile::RestKind::Key => Which::KeyRestParam,
+                _ => return Err(Error::not_supported(strand)),
+            },
             compile::Kind::Lambda => Which::Lambda,
             compile::Kind::If => Which::If,
             compile::Kind::Else => Which::Else,
@@ -1315,7 +1353,9 @@ fn create_node<'v, 's>(
             compile::Kind::Binder { kind, .. } => match kind {
                 compile::BinderKind::Pos => Which::PosBinder,
                 compile::BinderKind::Key => Which::KeyBinder,
-                compile::BinderKind::Rest(_) => Which::RestBinder,
+                compile::BinderKind::Rest(compile::RestKind::Mixed) => Which::MixedRestBinder,
+                compile::BinderKind::Rest(compile::RestKind::Pos) => Which::PosRestBinder,
+                compile::BinderKind::Rest(compile::RestKind::Key) => Which::KeyRestBinder,
                 _ => return Err(Error::not_supported(strand)),
             },
             _ => unreachable!(),
@@ -1344,7 +1384,9 @@ fn create_node<'v, 's>(
         Which::PreludeItem => make!(t.prelude_item, PreludeItemTag),
         Which::PositionalParam => make!(t.positional_param, PositionalParamTag),
         Which::KeyParam => make!(t.key_param, KeyParamTag),
-        Which::RestParam => make!(t.rest_param, RestParamTag),
+        Which::MixedRestParam => make!(t.mixed_rest_param, MixedRestParamTag),
+        Which::PosRestParam => make!(t.pos_rest_param, PosRestParamTag),
+        Which::KeyRestParam => make!(t.key_rest_param, KeyRestParamTag),
         Which::Lambda => make!(t.lambda, LambdaTag),
         Which::If => make!(t.if_node, IfTag),
         Which::Else => make!(t.else_node, ElseTag),
@@ -1362,7 +1404,9 @@ fn create_node<'v, 's>(
         Which::Type => make!(t.type_node, TypeTag),
         Which::PosBinder => make!(t.pos_binder, PosBinderTag),
         Which::KeyBinder => make!(t.key_binder, KeyBinderTag),
-        Which::RestBinder => make!(t.rest_binder, RestBinderTag),
+        Which::MixedRestBinder => make!(t.mixed_rest_binder, MixedRestBinderTag),
+        Which::PosRestBinder => make!(t.pos_rest_binder, PosRestBinderTag),
+        Which::KeyRestBinder => make!(t.key_rest_binder, KeyRestBinderTag),
     }
     Ok(())
 }
@@ -1421,10 +1465,14 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                 | "PreludeItem"
                 | "PositionalParam"
                 | "KeyParam"
-                | "RestParam"
+                | "MixedRestParam"
+                | "PosRestParam"
+                | "KeyRestParam"
                 | "PosBinder"
                 | "KeyBinder"
-                | "RestBinder"
+                | "MixedRestBinder"
+                | "PosRestBinder"
+                | "KeyRestBinder"
         ) {
             builder = builder.get("name", |this, strand, out| project_name(this, strand, out));
         }
@@ -1446,15 +1494,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                 project_default(this, strand, out)
             });
         }
-        if T::NAME == "RestParam" {
-            builder = builder.get("sigil", |this, strand, out| {
-                let sigil = with_node(this, strand, |n, _| match n.kind() {
-                    compile::Kind::RestParam { kind, .. } => kind.sigil(),
-                    _ => unreachable!("RestParam object for another node kind"),
-                })?;
-                Output::set(strand, out, sigil);
-                Ok(())
-            });
+        if matches!(T::NAME, "MixedRestParam" | "PosRestParam" | "KeyRestParam") {
             builder = builder.get("type_ellipsis", |this, strand, out| {
                 let span = with_node(this, strand, |n, _| match n.kind() {
                     compile::Kind::RestParam { type_ellipsis, .. } => type_ellipsis.map(span_data),
@@ -1518,20 +1558,10 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
         if T::NAME == "Type" {
             builder = builder.get("expr", |this, strand, out| project_expr(this, strand, out));
         }
-        if T::NAME == "RestBinder" {
-            builder = builder.get("sigil", |this, strand, out| {
-                let sigil = with_node(this, strand, |n, _| match n.kind() {
-                    compile::Kind::Binder {
-                        kind: compile::BinderKind::Rest(kind),
-                        ..
-                    } => kind.sigil(),
-                    _ => unreachable!("RestBinder object for another node kind"),
-                })?;
-                Output::set(strand, out, sigil);
-                Ok(())
-            });
-        }
-        if matches!(T::NAME, "PosBinder" | "KeyBinder" | "RestBinder") {
+        if matches!(
+            T::NAME,
+            "PosBinder" | "KeyBinder" | "MixedRestBinder" | "PosRestBinder" | "KeyRestBinder"
+        ) {
             builder = builder
                 .get("bound", |this, strand, out| {
                     project_binder_type(this, strand, true, out)
@@ -1936,10 +1966,6 @@ fn create_type_args<'v, 's>(
                 detail: TypeDetail::Arg {
                     optional: arg.optional(),
                     key,
-                    sigil: match arg.kind() {
-                        compile::TypeArgKind::Rest(kind) => Some(kind.sigil()),
-                        _ => None,
-                    },
                 },
             };
             macro_rules! make {
@@ -1984,7 +2010,9 @@ fn create_type_args<'v, 's>(
                             );
                         });
                 }
-                compile::TypeArgKind::Rest(_) => make!(t.rest, None),
+                compile::TypeArgKind::Rest(compile::RestKind::Mixed) => make!(t.mixed_rest, None),
+                compile::TypeArgKind::Rest(compile::RestKind::Pos) => make!(t.pos_rest, None),
+                compile::TypeArgKind::Rest(compile::RestKind::Key) => make!(t.key_rest, None),
                 compile::TypeArgKind::OpenRest => {
                     t.open_rest.create_with_annex(
                         strand,
@@ -1997,7 +2025,7 @@ fn create_type_args<'v, 's>(
                 }
                 compile::TypeArgKind::KeyRest { key_ty: key } => {
                     create_type_expr(global, strand, unit, key, &mut key_ty)?;
-                    let t = t.key_rest;
+                    let t = t.entry_rest;
                     t.create_with_annex(
                         strand,
                         TypeExprObject {
@@ -2044,7 +2072,13 @@ impl<'v, T: TypeMarker + 'static> Object<'v> for TypeExprObject<T> {
         });
         if matches!(
             T::NAME,
-            "PosTypeArg" | "KeyTypeArg" | "RestTypeArg" | "OpenRestTypeArg" | "KeyRestTypeArg"
+            "PosTypeArg"
+                | "KeyTypeArg"
+                | "MixedRestTypeArg"
+                | "PosRestTypeArg"
+                | "KeyRestTypeArg"
+                | "OpenRestTypeArg"
+                | "EntryRestTypeArg"
         ) {
             builder = builder.get("optional", |this, strand, out| {
                 let TypeDetail::Arg { optional, .. } = &this.annex().detail else {
@@ -2056,11 +2090,16 @@ impl<'v, T: TypeMarker + 'static> Object<'v> for TypeExprObject<T> {
         }
         if matches!(
             T::NAME,
-            "PosTypeArg" | "KeyTypeArg" | "RestTypeArg" | "KeyRestTypeArg"
+            "PosTypeArg"
+                | "KeyTypeArg"
+                | "MixedRestTypeArg"
+                | "PosRestTypeArg"
+                | "KeyRestTypeArg"
+                | "EntryRestTypeArg"
         ) {
             builder = builder.get("ty", slot!(0));
         }
-        if matches!(T::NAME, "KeyTypeArg" | "KeyRestTypeArg") {
+        if matches!(T::NAME, "KeyTypeArg" | "EntryRestTypeArg") {
             builder = builder.get("key_ty", slot!(1));
         }
         match T::NAME {
@@ -2087,16 +2126,6 @@ impl<'v, T: TypeMarker + 'static> Object<'v> for TypeExprObject<T> {
             "SchemaType" => builder.get("args", slot!(0)),
             "UnionType" => builder.get("members", slot!(0)),
             "FuncType" => builder.get("params", slot!(0)).get("ret", slot!(1)),
-            "RestTypeArg" => builder.get("sigil", |this, strand, out| {
-                let TypeDetail::Arg {
-                    sigil: Some(sigil), ..
-                } = &this.annex().detail
-                else {
-                    unreachable!()
-                };
-                Output::set(strand, out, *sigil);
-                Ok(())
-            }),
             "KeyTypeArg" => builder.get("key", |this, strand, out| {
                 let TypeDetail::Arg { key: Some(key), .. } = &this.annex().detail else {
                     unreachable!()
@@ -2462,7 +2491,13 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
             global.types.concrete_nodes.positional_param,
         )
         .value("KeyParam", global.types.concrete_nodes.key_param)
-        .value("RestParam", global.types.concrete_nodes.rest_param)
+        .value("RestParam", global.types.rest_param)
+        .value(
+            "MixedRestParam",
+            global.types.concrete_nodes.mixed_rest_param,
+        )
+        .value("PosRestParam", global.types.concrete_nodes.pos_rest_param)
+        .value("KeyRestParam", global.types.concrete_nodes.key_rest_param)
         .value("Lambda", global.types.concrete_nodes.lambda)
         .value("If", global.types.concrete_nodes.if_node)
         .value("Else", global.types.concrete_nodes.else_node)
@@ -2481,7 +2516,13 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .value("Binder", global.types.binder)
         .value("PosBinder", global.types.concrete_nodes.pos_binder)
         .value("KeyBinder", global.types.concrete_nodes.key_binder)
-        .value("RestBinder", global.types.concrete_nodes.rest_binder)
+        .value("RestBinder", global.types.rest_binder)
+        .value(
+            "MixedRestBinder",
+            global.types.concrete_nodes.mixed_rest_binder,
+        )
+        .value("PosRestBinder", global.types.concrete_nodes.pos_rest_binder)
+        .value("KeyRestBinder", global.types.concrete_nodes.key_rest_binder)
         .value("TypeExpr", global.types.type_expr)
         .value("NameType", global.types.type_kinds.name)
         .value("ConstType", global.types.type_kinds.constant)
@@ -2492,9 +2533,12 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .value("TypeArg", global.types.type_arg)
         .value("PosTypeArg", global.types.arg_kinds.pos)
         .value("KeyTypeArg", global.types.arg_kinds.key)
-        .value("RestTypeArg", global.types.arg_kinds.rest)
-        .value("OpenRestTypeArg", global.types.arg_kinds.open_rest)
+        .value("RestTypeArg", global.types.rest_arg)
+        .value("MixedRestTypeArg", global.types.arg_kinds.mixed_rest)
+        .value("PosRestTypeArg", global.types.arg_kinds.pos_rest)
         .value("KeyRestTypeArg", global.types.arg_kinds.key_rest)
+        .value("OpenRestTypeArg", global.types.arg_kinds.open_rest)
+        .value("EntryRestTypeArg", global.types.arg_kinds.entry_rest)
         .value("Diagnostic", global.types.diagnostic)
         .value("Span", global.types.span)
         .value("Pos", global.types.pos)

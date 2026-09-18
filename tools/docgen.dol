@@ -65,6 +65,18 @@ let BINDS_FUNC = 0
 let BINDS_UNION = 1
 let BINDS_COMPACT = 2
 
+# The sigil that declares each kind of parameter, binder, or type argument
+let SIGILS = $
+  "pos": ""
+  "key": ":"
+  "mixed_rest": "..."
+  "pos_rest": "*"
+  "key_rest": "**"
+
+# A binder's name as its declaration writes it.
+def binder_name binder
+  "$(SIGILS[binder["kind"]])$(binder["name"])"
+
 # A type tree from the extractor, as source writes it in a position binding as
 # tightly as `context`.
 def type_text ty context
@@ -99,9 +111,9 @@ def type_args_text args
     if (kind == "open_rest")
       parts.push "$text..."
       continue
-    if (kind == "rest")
-      text = "$text$(arg["sigil"])"
-    else if (kind == "key_rest")
+    if (kind == "mixed_rest" || kind == "pos_rest" || kind == "key_rest")
+      text = "$text$(SIGILS[kind])"
+    else if (kind == "entry_rest")
       text = "$text...$(type_text(arg["key_type"], BINDS_FUNC)): "
     else if (kind == "key")
       text = "$text$(arg["key"]): "
@@ -110,7 +122,7 @@ def type_args_text args
 
 # A binder as its declaration writes it.
 def binder_text binder
-  let text = binder["name"]
+  let text = binder_name $binder
   if let bound = binder.get "bound" default: nil
     text = "$text @ $(type_text(bound, BINDS_COMPACT))"
   if let value = binder.get "default" default: nil
@@ -125,7 +137,7 @@ def class_titles entry
   let name = (protocol && "@$bare" || bare)
   if !binders.len
     return [name, name]
-  let names = [...binders.map(do |binder| binder["name"])]
+  let names = [...binders.map(binder_name)]
   let declared = [...binders.map(binder_text)]
   ["$name[$(", ".join(names))]", "$name[$(", ".join(declared))]"]
 

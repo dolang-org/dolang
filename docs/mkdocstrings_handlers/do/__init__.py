@@ -384,6 +384,20 @@ class _TypeScope:
 # How tightly each type form binds, so that it is parenthesized where needed
 _BINDS_FUNC, _BINDS_UNION, _BINDS_COMPACT = range(3)
 
+# The sigil that declares each kind of parameter, binder, or type argument
+_SIGILS = {
+    "pos": "",
+    "key": ":",
+    "mixed_rest": "...",
+    "pos_rest": "*",
+    "key_rest": "**",
+}
+
+
+def _written(decl: dict) -> str:
+    """A parameter or binder's name as its declaration writes it."""
+    return _SIGILS[decl["kind"]] + decl.get("name", "")
+
 
 def _escape_type_text(text: str) -> str:
     """Escape text for HTML that Markdown will still read.
@@ -437,12 +451,12 @@ def _render_type_args(args: list[dict], scope: _TypeScope, plain: bool = False) 
     rendered = []
     for arg in args:
         text = "?" if arg.get("optional") else ""
-        if arg.get("kind") == "rest":
-            text += arg.get("sigil", "...")
+        if arg.get("kind") in ("mixed_rest", "pos_rest", "key_rest"):
+            text += _SIGILS[arg["kind"]]
         elif arg.get("kind") == "open_rest":
             rendered.append(text + "...")
             continue
-        elif arg.get("kind") == "key_rest":
+        elif arg.get("kind") == "entry_rest":
             key = _render_type(arg["key_type"], scope, _BINDS_FUNC, plain)
             text += f"...{key}: "
         elif arg.get("kind") == "key" and "key_type" in arg:
@@ -459,7 +473,7 @@ def _render_type_args(args: list[dict], scope: _TypeScope, plain: bool = False) 
 
 def _binder_text(binder: dict, scope: _TypeScope) -> str:
     """A binder as its declaration writes it, as plain text."""
-    text = binder.get("name", "")
+    text = _written(binder)
     if binder.get("bound"):
         text += " @ " + _render_type(binder["bound"], scope, _BINDS_COMPACT, plain=True)
     if binder.get("default"):
@@ -537,7 +551,7 @@ def _signature(entity: dict) -> str:
     params = entity.get("params") or []
     if not params:
         return f"{name}()"
-    written = [p.get("name", "") + ("?" if p.get("optional") else "") for p in params]
+    written = [p["written"] + ("?" if p.get("optional") else "") for p in params]
     if not any(p.get("documented") for p in params):
         return " ".join([name, *written])
     kept: list[str] = []
@@ -575,6 +589,7 @@ def _annotate_params(entities: list[dict]) -> None:
         seen: set[str] = set()
         for index, param in enumerate(entity.get("params") or []):
             param["doc"] = param.get("doc") or ""
+            param["written"] = _written(param)
             short, rest = _split_doc(param["doc"])
             type_ = param.get("annotation", "")
             param["type"] = type_
@@ -583,7 +598,7 @@ def _annotate_params(entities: list[dict]) -> None:
             # A type alone documents a parameter, so it is enough to earn the
             # table -- and the abbreviated signature that comes with it.
             param["documented"] = bool(type_ or short or rest)
-            slug = _slug(param.get("name", "")) or f"param{index}"
+            slug = _slug(param["written"]) or f"param{index}"
             if slug in seen:
                 slug = f"{slug}-{index}"
             seen.add(slug)
