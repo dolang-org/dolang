@@ -22,7 +22,8 @@ use tokio::{
 };
 
 use wax::{
-    Glob,
+    Glob, Program as _,
+    query::DepthVariance,
     walk::{DepthBehavior, DepthMax, Entry, LinkBehavior, WalkBehavior},
 };
 
@@ -2113,15 +2114,6 @@ impl Direct {
                 .partition();
             let walk_root = root.join(&prefix);
 
-            let mut behavior = WalkBehavior::default();
-            if follow_symlinks {
-                behavior.link = LinkBehavior::ReadTarget;
-            }
-            if let Some(depth) = max_depth {
-                behavior.depth =
-                    DepthBehavior::Max(DepthMax(depth.saturating_sub(prefix.components().count())));
-            }
-
             let mut paths = Vec::new();
 
             // A pattern with no wildcards is partitioned entirely into
@@ -2135,6 +2127,29 @@ impl Direct {
                     .map(path::PathBuf::from_native)
                     .collect::<Result<_>>();
             };
+
+            let mut behavior = WalkBehavior::default();
+            if follow_symlinks {
+                behavior.link = LinkBehavior::ReadTarget;
+            }
+            // wax prunes directories that fail to match their pattern
+            // component, but keeps descending below one that matches even
+            // when the path is already deeper than the pattern can reach, so
+            // bound the walk by the deepest match the pattern allows
+            let pattern_depth = match glob.depth() {
+                DepthVariance::Invariant(depth) => Some(depth),
+                DepthVariance::Variant(range) => range.upper().bounded().map(usize::from),
+            };
+            let depth = [
+                max_depth.map(|depth| depth.saturating_sub(prefix.components().count())),
+                pattern_depth,
+            ]
+            .into_iter()
+            .flatten()
+            .min();
+            if let Some(depth) = depth {
+                behavior.depth = DepthBehavior::Max(DepthMax(depth));
+            }
 
             for entry in glob.walk_with_behavior(&walk_root, behavior) {
                 let entry = entry.map_err(io::Error::other)?;
