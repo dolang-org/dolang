@@ -55,20 +55,11 @@ of a kind that neither takes are an error, as without a rest:
 ```
 let first *others **options = {1, 2, 3, color: "red"}
 assert_eq $first 1
-assert_eq $others (2, 3)
+assert_eq [...others] [2, 3]
 assert_eq {...options} {color: "red"}
 ```
 
-What a rest captures depends on the structure. For a sequence, `*` captures
-the same iterator as `...`, and `**` captures an empty record. For a
-dictionary, the positional items are the integer keys counting up from the
-next position; `*` captures their values as a tuple, and `**` captures the
-other pairs. Without a `*`, `**` also takes the surplus integer keys, and
-spreading it passes them as keys rather than positions. A record captures a
-tuple and a record, as `*` and `**` parameters of a
-[function](./functions.md#variadic-parameters) do.
-
-`*` or `**` alone ignores the surplus items it would capture.
+`*` or `**` alone discards surplus items entirely.
 
 ### Non-symbol Keys
 

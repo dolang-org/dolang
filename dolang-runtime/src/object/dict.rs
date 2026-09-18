@@ -1233,6 +1233,16 @@ impl Matched {
             self.end.unwrap_or(self.floor)
         }
     }
+
+    /// Returns the slot and state of a `*name` rest, which takes the leftover
+    /// positional run.
+    fn pos_rest<'v>(&self, sig: &sig::Unpack<'_, '_>) -> Option<(usize, UnpackState<'v>)> {
+        if sig.variadic == Variadic::Capture {
+            return None;
+        }
+        let slot = sig.pos_rest_slot()?;
+        Some((slot, UnpackState::Run { int: self.start }))
+    }
 }
 
 fn offset<'v, 's>(strand: &mut Strand<'v, 's>, base: i64, by: usize) -> Result<'v, 's, i64> {
@@ -1292,9 +1302,15 @@ enum UnpackState<'v> {
         floor: i64,
         skip: Skip<'v>,
     },
+    /// Delivering only the positional run from `int`, for a `*name` rest.
+    Run { int: Option<i64> },
 }
 
 impl<'v> UnpackState<'v> {
+    fn is_run(&self) -> bool {
+        matches!(self, UnpackState::Run { .. })
+    }
+
     /// Returns the next leftover pair, advancing past it.
     fn next_pair<'s>(
         &mut self,
@@ -1303,6 +1319,19 @@ impl<'v> UnpackState<'v> {
     ) -> Result<'v, 's, Option<(Value<'v>, Value<'v>)>> {
         loop {
             match self {
+                UnpackState::Run { int } => {
+                    let Some(pos) = *int else {
+                        return Ok(None);
+                    };
+                    let key = Value::from_i64(strand, pos);
+                    let Some(value) = dict.get(strand, &key, Some(0))? else {
+                        *int = None;
+                        return Ok(None);
+                    };
+                    let value = value.dup();
+                    *int = pos.checked_add(1);
+                    return Ok(Some((key, value)));
+                }
                 UnpackState::Int { int, resume, skip } => {
                     let key = Value::from_i64(strand, *int);
                     if let Some(value) = dict.get(strand, &key, Some(0))? {
@@ -1466,12 +1495,31 @@ impl<'v> Protocol<'v> for Unpack<'v> {
             UnpackState::Int { int, resume, skip } => (Some(*int), *int, *resume, skip),
             UnpackState::Order { int, index, skip } => (Some(*int), *int, *index, skip),
             UnpackState::Resume { index, floor, skip } => (None, *floor, *index, skip),
+            UnpackState::Run { int } => {
+                // A positional run unpacks as a sequence
+                let values = dict.run_values(strand, *int)?;
+                let taken = Dict::iter_unpack_values(strand, sig, &mut out, 0, |i| {
+                    values.get(i).map(|value| (i + 1, value.dup()))
+                })?;
+                let next = match *int {
+                    Some(int) if taken < values.len() => Some(offset(strand, int, taken)?),
+                    _ => None,
+                };
+                borrow.state = UnpackState::Run { int: next };
+                drop(dict);
+                drop(borrow);
+                if let Some(i) = sig.pos_rest_slot() {
+                    Output::set(strand, out.at(i), &this);
+                }
+                sig.fill_empty_key_rest(strand, &mut out);
+                return Ok(());
+            }
         };
 
         // Match against a copy, so a failure leaves the rest as it was
         let mut skip = skip.clone();
         let matched = dict.unpack_matched(strand, sig, &mut out, next, floor, &mut skip)?;
-        dict.store_pos_rest(strand, sig, &mut out, &matched)?;
+        let pos_rest = matched.pos_rest(sig);
         let key_rest = sig.key_rest_slot().map(|i| {
             let state = UnpackState::Resume {
                 index: resume,
@@ -1499,6 +1547,10 @@ impl<'v> Protocol<'v> for Unpack<'v> {
         drop(dict);
         drop(borrow);
 
+        if let Some((i, state)) = pos_rest {
+            let rest = make_unpack(strand, container.clone(), epoch, state, false);
+            out.at(i).store(rest);
+        }
         if let Some((i, state)) = key_rest {
             let rest = make_unpack(strand, container, epoch, state, true);
             out.at(i).store(rest);
@@ -1522,6 +1574,11 @@ impl<'v> Protocol<'v> for Unpack<'v> {
             return Err(Error::concurrency(strand));
         }
         match borrow.state.next_pair(strand, &dict)? {
+            // A positional run yields its values, as a sequence does
+            Some((_, value)) if borrow.state.is_run() => {
+                out.store(value);
+                Ok(true)
+            }
             Some((key, value)) => {
                 out.store(Value::from_object(tuple::tuple(strand, [key, value])));
                 Ok(true)
@@ -1568,7 +1625,7 @@ impl<'v> Protocol<'v> for Unpack<'v> {
         let mut next_pos = match &borrow.state {
             _ if borrow.keyed => None,
             UnpackState::Int { int, .. } | UnpackState::Order { int, .. } => Some(*int),
-            UnpackState::Resume { .. } => None,
+            UnpackState::Run { .. } | UnpackState::Resume { .. } => None,
         };
         let mut counter = 0usize;
         loop {
@@ -1582,10 +1639,14 @@ impl<'v> Protocol<'v> for Unpack<'v> {
                     .ok_or_else(|| Error::concurrency(strand))?;
                 borrow.state.next_pair(strand, &dict)?
             };
-            let Some((key, value)) = pair else {
+            let Some((key, mut value)) = pair else {
                 return Ok(());
             };
-            Dict::spread_key_value(strand, &mut next_pos, key, value, context, sink)?;
+            if borrow.state.is_run() {
+                sink.positional(strand, Slot::new(&mut value))?;
+            } else {
+                Dict::spread_key_value(strand, &mut next_pos, key, value, context, sink)?;
+            }
         }
     }
 }
@@ -2080,9 +2141,12 @@ impl<'v> Protocol<'v> for Dict<'v> {
         let dict = this.borrow(strand)?;
         let mut skip = Skip::new();
         let matched = dict.unpack_matched(strand, sig, &mut out, Some(0), 0, &mut skip)?;
-        dict.store_pos_rest(strand, sig, &mut out, &matched)?;
         let epoch = dict.epoch;
         drop(dict);
+        if let Some((i, state)) = matched.pos_rest(sig) {
+            let rest = make_unpack(strand, this.to_strong(), epoch, state, false);
+            out.at(i).store(rest);
+        }
         if let Some(i) = sig.key_rest_slot() {
             let state = UnpackState::Resume {
                 index: 0,
@@ -2268,32 +2332,21 @@ impl<'v> Dict<'v> {
         Ok(matched)
     }
 
-    /// Stores the leftover positional items in a `*name` rest, as a tuple.
-    fn store_pos_rest<'s>(
+    /// Returns the values of the run of integer keys counting up from `int`.
+    fn run_values<'s>(
         &self,
         strand: &mut Strand<'v, 's>,
-        sig: &sig::Unpack<'v, '_>,
-        out: &mut Slots<'v, '_>,
-        matched: &Matched,
-    ) -> Result<'v, 's, ()> {
-        if sig.variadic == Variadic::Capture {
-            return Ok(());
-        }
-        let Some(i) = sig.pos_rest_slot() else {
-            return Ok(());
-        };
+        int: Option<i64>,
+    ) -> Result<'v, 's, Vec<Value<'v>>> {
         let mut values = Vec::new();
-        if let (Some(start), Some(end)) = (matched.start, matched.end) {
-            for key in start..end {
-                let key = Value::from_i64(strand, key);
-                if let Some(value) = self.get(strand, &key, Some(0))? {
-                    values.push(value.dup());
-                }
-            }
+        let mut next = int;
+        while let Some(int) = next
+            && let Some(value) = self.get(strand, &Value::from_i64(strand, int), Some(0))?
+        {
+            values.push(value.dup());
+            next = int.checked_add(1);
         }
-        out.at(i)
-            .store(Value::from_object(tuple::tuple(strand, values)));
-        Ok(())
+        Ok(values)
     }
 
     fn iter_op_next<'a, 's>(
