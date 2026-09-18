@@ -1,4 +1,4 @@
-use std::hash::{Hash, Hasher};
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 use crate::{
     arg::{Arg, Args},
@@ -6,7 +6,6 @@ use crate::{
     object::{
         array_view::{ArrayLike, ArrayView},
         dict::Dict,
-        kv,
         native::{Instance, Mut, Object, Ref, Type, TypeBuilder, Unpack},
         protocol::{Spread, SpreadContext},
     },
@@ -372,8 +371,11 @@ impl<'v> Object<'v> for FmtValue {
     ) -> Result<'v, 's, ()> {
         this.annex().spec.hash(hasher);
         let borrow = this.borrow(strand)?;
-        hasher.write_u64(kv::hash(strand, Ref::slot::<0>(&borrow))?);
-        hasher.write_u64(kv::hash(strand, Ref::slot::<1>(&borrow))?);
+        for value in [Ref::slot::<0>(&borrow), Ref::slot::<1>(&borrow)] {
+            let mut value_hasher = DefaultHasher::new();
+            value.op_hash(strand, &mut value_hasher)?;
+            hasher.write_u64(value_hasher.finish());
+        }
         Ok(())
     }
 }
@@ -482,8 +484,11 @@ impl<'v> Object<'v> for FmtParam {
     ) -> Result<'v, 's, ()> {
         this.annex().spec.hash(hasher);
         let borrow = this.borrow(strand)?;
-        hasher.write_u64(kv::hash(strand, Ref::slot::<0>(&borrow))?);
-        hasher.write_u64(kv::hash(strand, Ref::slot::<1>(&borrow))?);
+        for value in [Ref::slot::<0>(&borrow), Ref::slot::<1>(&borrow)] {
+            let mut value_hasher = DefaultHasher::new();
+            value.op_hash(strand, &mut value_hasher)?;
+            hasher.write_u64(value_hasher.finish());
+        }
         Ok(())
     }
 }
@@ -751,7 +756,9 @@ impl<'v> Object<'v> for Fmt {
     ) -> Result<'v, 's, ()> {
         hasher.write_usize(Segments.len(this, strand));
         each_segment(this, strand, |strand, segment| {
-            hasher.write_u64(kv::hash(strand, segment)?);
+            let mut segment_hasher = DefaultHasher::new();
+            segment.op_hash(strand, &mut segment_hasher)?;
+            hasher.write_u64(segment_hasher.finish());
             Ok(())
         })
     }

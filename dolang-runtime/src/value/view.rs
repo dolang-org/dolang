@@ -1,6 +1,6 @@
 use std::{
     fmt::{self, Display, Formatter},
-    hash::{Hash, Hasher},
+    hash::{DefaultHasher, Hash, Hasher},
     marker::PhantomData,
     mem,
     num::NonZero,
@@ -12,8 +12,8 @@ use crate::{
     error::{Error, Result},
     gc,
     object::{
-        array, dict,
-        kv::{self, Entry, EntryValue},
+        array,
+        dict::{self, Entry, EntryValue},
         native::Cast,
         protocol::{GcObjBorrow, Header},
         range, record, set,
@@ -481,7 +481,7 @@ impl<'v, 'a> Dict<'v, 'a> {
             Some(b) => b,
             None => return Err(Error::concurrency(strand)),
         };
-        Ok(borrow.0.total_pairs)
+        Ok(borrow.total_pairs)
     }
 
     /// Return a stateful cursor over insertion-order key-value pairs.
@@ -532,12 +532,14 @@ impl<'v, 'a> Dict<'v, 'a> {
     ) -> Result<'v, 's, ()> {
         let key = Value::from_input(strand, key);
         let value = Value::from_input(strand, value);
-        let hv = kv::hash(strand, &key)?;
+        let mut hasher = DefaultHasher::new();
+        key.op_hash(strand, &mut hasher)?;
+        let hv = hasher.finish();
         let mut borrow = match self.0.borrow_mut() {
             Some(b) => b,
             None => return Err(Error::concurrency(strand)),
         };
-        borrow.0.insert(strand, key, value, hv, unique);
+        borrow.insert(strand, key, value, hv, unique);
         Ok(())
     }
 }
@@ -579,7 +581,9 @@ impl<'v, 'a> Set<'v, 'a> {
         value: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
         let value = Value::from_input(strand, value);
-        let hash = kv::hash(strand, &value)?;
+        let mut hasher = DefaultHasher::new();
+        value.op_hash(strand, &mut hasher)?;
+        let hash = hasher.finish();
         let borrow = match self.0.borrow() {
             Some(b) => b,
             None => return Err(Error::concurrency(strand)),
@@ -596,7 +600,9 @@ impl<'v, 'a> Set<'v, 'a> {
     ) -> Result<'v, 's, bool> {
         // Build the value and hash it before taking the exclusive borrow.
         let value = Value::from_input(strand, value);
-        let hash = kv::hash(strand, &value)?;
+        let mut hasher = DefaultHasher::new();
+        value.op_hash(strand, &mut hasher)?;
+        let hash = hasher.finish();
         let mut borrow = match self.0.borrow_mut() {
             Some(b) => b,
             None => return Err(Error::concurrency(strand)),
@@ -611,7 +617,9 @@ impl<'v, 'a> Set<'v, 'a> {
         value: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
         let value = Value::from_input(strand, value);
-        let hash = kv::hash(strand, &value)?;
+        let mut hasher = DefaultHasher::new();
+        value.op_hash(strand, &mut hasher)?;
+        let hash = hasher.finish();
         let mut borrow = match self.0.borrow_mut() {
             Some(b) => b,
             None => return Err(Error::concurrency(strand)),
@@ -866,7 +874,7 @@ impl<'v, 'a> DictPairs<'v, 'a> {
             Some(b) => b,
             None => return Err(Error::concurrency(strand)),
         };
-        Ok(kv_next_pair(&borrow.0, &mut self.pos, strand, key, value))
+        Ok(dict_next_pair(&borrow, &mut self.pos, strand, key, value))
     }
 }
 
@@ -934,14 +942,14 @@ impl<'v, 'a> RecordPairs<'v, 'a> {
     }
 }
 
-fn kv_next_pair<'v>(
-    inner: &kv::Inner<'v>,
+fn dict_next_pair<'v>(
+    dict: &dict::Dict<'v>,
     pos: &mut usize,
     alloc: &mut impl Alloc<'v>,
     key: impl Output<'v>,
     value: impl Output<'v>,
 ) -> bool {
-    while let Some(slot) = inner.index.get(*pos) {
+    while let Some(slot) = dict.index.get(*pos) {
         *pos += 1;
         if let Some((bucket, subindex)) = slot {
             let entry: &Entry<'v> = unsafe { bucket.as_ref() };

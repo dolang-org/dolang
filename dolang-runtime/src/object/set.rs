@@ -19,7 +19,7 @@ use crate::{
 };
 
 use super::{
-    BoundMethod, iter, kv,
+    BoundMethod, iter,
     protocol::{
         GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, instance_mcall_fallback,
         is_special_mcall, type_mcall_fallback,
@@ -279,7 +279,9 @@ impl<'a, 'v, 's> Spread<'v, 's> for SetSpread<'a, 'v> {
         strand: &mut Strand<'v, 's>,
         mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let hash = kv::hash(strand, &value)?;
+        let mut hasher = DefaultHasher::new();
+        value.op_hash(strand, &mut hasher)?;
+        let hash = hasher.finish();
         self.0.insert(strand, value.take(), hash)?;
         Ok(())
     }
@@ -294,7 +296,9 @@ impl<'a, 'v, 's> Spread<'v, 's> for SetSpread<'a, 'v> {
             strand,
             [Value::from_object(strand.sym_obj(key)), value.take()],
         ));
-        let hash = kv::hash(strand, &pair)?;
+        let mut hasher = DefaultHasher::new();
+        pair.op_hash(strand, &mut hasher)?;
+        let hash = hasher.finish();
         self.0.insert(strand, pair, hash)?;
         Ok(())
     }
@@ -306,7 +310,9 @@ impl<'a, 'v, 's> Spread<'v, 's> for SetSpread<'a, 'v> {
         mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let pair = Value::from_object(tuple::tuple(strand, [key.take(), value.take()]));
-        let hash = kv::hash(strand, &pair)?;
+        let mut hasher = DefaultHasher::new();
+        pair.op_hash(strand, &mut hasher)?;
+        let hash = hasher.finish();
         self.0.insert(strand, pair, hash)?;
         Ok(())
     }
@@ -535,14 +541,18 @@ impl<'v> Protocol<'v> for Set<'v> {
         match method.tag() {
             sym::ADD => {
                 let ([mut value], []) = unpack!(strand, args, 1, 0)?;
-                let hash = kv::hash(strand, &value)?;
+                let mut hasher = DefaultHasher::new();
+                value.op_hash(strand, &mut hasher)?;
+                let hash = hasher.finish();
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.insert(strand, value.take(), hash)?;
                 Ok(())
             }
             sym::DELETE => {
                 let ([value], []) = unpack!(strand, args, 1, 0)?;
-                let hash = kv::hash(strand, &value)?;
+                let mut hasher = DefaultHasher::new();
+                value.op_hash(strand, &mut hasher)?;
+                let hash = hasher.finish();
                 let deleted = {
                     let mut borrow = this.borrow_mut(strand)?;
                     borrow.delete(strand, &value, hash)?
@@ -568,7 +578,9 @@ impl<'v> Protocol<'v> for Set<'v> {
             }
             sym::CONTAINS => {
                 let ([value], []) = unpack!(strand, args, 1, 0)?;
-                let hash = kv::hash(strand, &value)?;
+                let mut hasher = DefaultHasher::new();
+                value.op_hash(strand, &mut hasher)?;
+                let hash = hasher.finish();
                 let contains = this.borrow(strand)?.contains(strand, &value, hash)?;
                 Output::set(strand, out, contains);
                 Ok(())

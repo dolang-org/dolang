@@ -16,7 +16,6 @@ pub(crate) mod function;
 pub(crate) mod index;
 pub(crate) mod int;
 pub(crate) mod iter;
-pub(crate) mod kv;
 pub(crate) mod module;
 pub mod native;
 pub(crate) mod num;
@@ -123,9 +122,9 @@ pub(crate) struct BuiltinTypes<'v> {
     pub(crate) native_function: TypeHandle<'v, function::NativeFunction<'v>>,
     pub(crate) int: TypeHandle<'v, i128>,
     pub(crate) dict_iter: TypeHandle<'v, dict::Iter<'v>>,
-    pub(crate) dict_keys: TypeHandle<'v, kv::Keys<'v, dict::Dict<'v>>>,
-    pub(crate) dict_values: TypeHandle<'v, kv::Values<'v, dict::Dict<'v>>>,
-    pub(crate) dict_key_values: TypeHandle<'v, kv::KeyValues<'v, dict::Dict<'v>>>,
+    pub(crate) dict_keys: TypeHandle<'v, dict::Keys<'v>>,
+    pub(crate) dict_values: TypeHandle<'v, dict::Values<'v>>,
+    pub(crate) dict_key_values: TypeHandle<'v, dict::KeyValues<'v>>,
     pub(crate) dict_unpack: TypeHandle<'v, dict::Unpack<'v>>,
     pub(crate) dict: TypeHandle<'v, dict::Dict<'v>>,
     pub(crate) dict_view: TypeHandle<'v, dict_view::View<'v>>,
