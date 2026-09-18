@@ -686,17 +686,6 @@ pub enum RestKind {
     Key,
 }
 
-impl RestKind {
-    /// The sigil that introduces the rest, such as `...`
-    pub fn sigil(self) -> &'static str {
-        match self {
-            Self::Mixed => "...",
-            Self::Pos => "*",
-            Self::Key => "**",
-        }
-    }
-}
-
 /// A type as written, with the names in it resolved
 #[derive(Copy, Clone)]
 pub struct TypeExpr<'a> {

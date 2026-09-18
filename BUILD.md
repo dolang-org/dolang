@@ -189,7 +189,6 @@ Run `dodo cov` before `cov-dump` or `serve-cov`.
 | Rule                     | Purpose                                                                                  |
 | ------------------------ | ---------------------------------------------------------------------------------------- |
 | `gen-system-error-codes` | Regenerates system error lookup tables. Arguments are passed to the generator.           |
-| `verify-macos-interpose` | Checks that the macOS `posix_spawn` interpose section survived linking.                  |
 | `publish`                | Publishes workspace crates in dependency order. Arguments are passed to `cargo publish`. |
 
 These rules update generated source, verify release artifacts, or publish

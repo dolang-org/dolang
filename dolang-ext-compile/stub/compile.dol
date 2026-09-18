@@ -348,18 +348,22 @@ pub class KeyParam: Param
   pub def key self -> Span
     ...
 
-# A rest parameter. Its `name` is `nil` when it is anonymous.
+# Supertype of rest parameters. Its subtype says which items it takes, and its
+# `name` is `nil` when it is anonymous.
 pub class RestParam: Param
-  # The sigil that introduces it: `...` for positional and keyed items, `*`
-  # for positional items only, or `**` for keyed items only.
-  #[getter]
-  pub def sigil self -> Str
-    ...
-
   # The explicit `...` in the type annotation, or `nil` when absent.
   #[getter]
   pub def type_ellipsis self -> (Span | nil)
     ...
+
+# A rest parameter for positional and keyed items, such as `...rest`.
+pub class MixedRestParam: RestParam
+
+# A rest parameter for positional items only, such as `*rest`.
+pub class PosRestParam: RestParam
+
+# A rest parameter for keyed items only, such as `**rest`.
+pub class KeyRestParam: RestParam
 
 # Supertype of the nodes that introduce a nested body.
 #
@@ -456,12 +460,17 @@ pub class PosBinder: Binder
 # A keyed binder, such as `:K`.
 pub class KeyBinder: Binder
 
-# A rest binder, such as `...R`.
+# Supertype of rest binders. Its subtype says which items it stands for.
 pub class RestBinder: Binder
-  # The sigil that introduces it: `...`, `*` or `**`.
-  #[getter]
-  pub def sigil self -> Str
-    ...
+
+# A rest binder for positional and keyed items, such as `...R`.
+pub class MixedRestBinder: RestBinder
+
+# A rest binder for positional items only, such as `*R`.
+pub class PosRestBinder: RestBinder
+
+# A rest binder for keyed items only, such as `**R`.
+pub class KeyRestBinder: RestBinder
 
 # Supertype of the forms a type takes.
 #
@@ -567,24 +576,28 @@ pub class KeyTypeArg: TypeArg
   pub def key_ty self -> (TypeExpr | nil)
     ...
 
-# A rest item, such as `...T`.
+# Supertype of rest items with a type. Its subtype says which items it
+# describes.
 pub class RestTypeArg: TypeArg
-  # The sigil that introduces it: `...` for positional and keyed items, `*`
-  # for positional items only, or `**` for keyed items only.
-  #[getter]
-  pub def sigil self -> Str
-    ...
-
   # The item's type.
   #[getter]
   pub def ty self -> TypeExpr
     ...
 
+# A rest item for positional and keyed items, such as `...T`.
+pub class MixedRestTypeArg: RestTypeArg
+
+# A rest item for positional items only, such as `*T`.
+pub class PosRestTypeArg: RestTypeArg
+
+# A rest item for keyed items only, such as `**T`.
+pub class KeyRestTypeArg: RestTypeArg
+
 # An unrestricted schema rest item, written `...`.
 pub class OpenRestTypeArg: TypeArg
 
-# A keyed rest item, such as `...K: V`.
-pub class KeyRestTypeArg: TypeArg
+# A rest item for arbitrary keyed entries, such as `...K: V`.
+pub class EntryRestTypeArg: TypeArg
   # The value type.
   #[getter]
   pub def ty self -> TypeExpr

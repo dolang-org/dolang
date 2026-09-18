@@ -2922,7 +2922,6 @@ impl<'a> AsSym<'a> {
 impl<'v> Input<'v> for AsSym<'_> {
     #[allow(private_interfaces)]
     fn input_take<'a>(&'a mut self, vm: &'a Vm<'v>, _: private::Sealed) -> InputBy<'v, 'a> {
-        vm.sym_gc();
         InputBy::Value(Value::from_object(vm.sym_register_obj(self.0)), None)
     }
 }

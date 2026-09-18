@@ -1079,7 +1079,7 @@
       }
     },
     {
-      "kind": "RestParam",
+      "kind": "MixedRestParam",
       "span": {
         "start": {
           "line": 21,
@@ -1378,7 +1378,7 @@
       }
     },
     {
-      "kind": "RestBinder",
+      "kind": "MixedRestBinder",
       "span": {
         "start": {
           "line": 35,
@@ -3555,7 +3555,7 @@
                   }
                 },
                 {
-                  "kind": "KeyRestTypeArg",
+                  "kind": "EntryRestTypeArg",
                   "span": {
                     "start": {
                       "line": 81,
@@ -3951,7 +3951,7 @@
       }
     },
     {
-      "kind": "RestParam",
+      "kind": "MixedRestParam",
       "span": {
         "start": {
           "line": 93,
@@ -4840,7 +4840,7 @@
       }
     },
     {
-      "kind": "RestBinder",
+      "kind": "MixedRestBinder",
       "span": {
         "start": {
           "line": 122,
@@ -4869,7 +4869,7 @@
       }
     },
     {
-      "kind": "RestParam",
+      "kind": "MixedRestParam",
       "span": {
         "start": {
           "line": 122,
@@ -5032,7 +5032,7 @@
         },
         "args": [
           {
-            "kind": "RestTypeArg",
+            "kind": "MixedRestTypeArg",
             "span": {
               "start": {
                 "line": 122,
@@ -5046,7 +5046,6 @@
               }
             },
             "optional": false,
-            "sigil": "...",
             "type": {
               "kind": "NameType",
               "span": {
@@ -13668,17 +13667,20 @@
         "doc": "A greeting.\n\nSpans several lines.",
         "params": [
           {
+            "kind": "pos",
             "name": "name",
             "optional": false,
             "doc": null
           },
           {
-            "name": ":greeting",
+            "kind": "key",
+            "name": "greeting",
             "optional": true,
             "doc": null
           },
           {
-            "name": "...rest",
+            "kind": "mixed_rest",
+            "name": "rest",
             "optional": false,
             "doc": null
           }
@@ -13721,6 +13723,7 @@
         "doc": "A named point.",
         "binders": [
           {
+            "kind": "pos",
             "name": "T",
             "bound": {
               "kind": "union",
@@ -13744,10 +13747,12 @@
             }
           },
           {
-            "name": ":K"
+            "kind": "key",
+            "name": "K"
           },
           {
-            "name": "...R"
+            "kind": "mixed_rest",
+            "name": "R"
           }
         ],
         "supers": [
@@ -13843,6 +13848,7 @@
             "scope": "instance",
             "params": [
               {
+                "kind": "pos",
                 "name": "x",
                 "optional": false,
                 "doc": null
@@ -13915,17 +13921,20 @@
             "scope": "instance",
             "binders": [
               {
+                "kind": "pos",
                 "name": "U"
               }
             ],
             "params": [
               {
+                "kind": "pos",
                 "name": "by",
                 "optional": false,
                 "doc": null
               },
               {
-                "name": ":clamp",
+                "kind": "key",
+                "name": "clamp",
                 "optional": true,
                 "doc": null
               }
@@ -13952,6 +13961,7 @@
             "scope": "instance",
             "binders": [
               {
+                "kind": "pos",
                 "name": "S",
                 "bound": {
                   "kind": "name",
@@ -14054,6 +14064,7 @@
         "doc": "Place a point.",
         "params": [
           {
+            "kind": "pos",
             "name": "point",
             "optional": false,
             "doc": null,
@@ -14064,7 +14075,8 @@
             }
           },
           {
-            "name": ":limit",
+            "kind": "key",
+            "name": "limit",
             "optional": true,
             "doc": null,
             "type": {
@@ -14134,11 +14146,13 @@
         "doc": "The first of some items.",
         "binders": [
           {
+            "kind": "pos",
             "name": "T"
           }
         ],
         "params": [
           {
+            "kind": "pos",
             "name": "items",
             "optional": false,
             "doc": null,
@@ -14163,7 +14177,8 @@
             }
           },
           {
-            "name": ":fallback",
+            "kind": "key",
+            "name": "fallback",
             "optional": true,
             "doc": null,
             "type": {
@@ -14196,7 +14211,8 @@
             }
           },
           {
-            "name": ":options",
+            "kind": "key",
+            "name": "options",
             "optional": true,
             "doc": null,
             "type": {
@@ -14234,7 +14250,7 @@
                         }
                       },
                       {
-                        "kind": "key_rest",
+                        "kind": "entry_rest",
                         "optional": false,
                         "key_type": {
                           "kind": "name",
@@ -14254,7 +14270,8 @@
             }
           },
           {
-            "name": ":mode",
+            "kind": "key",
+            "name": "mode",
             "optional": true,
             "doc": null,
             "type": {
@@ -14305,17 +14322,20 @@
         "doc": "Build something.\n\nThe parameters are laid out vertically, so each can be documented on its own.",
         "params": [
           {
-            "name": ":from",
+            "kind": "key",
+            "name": "from",
             "optional": false,
             "doc": "Where the parts come from."
           },
           {
-            "name": ":pull",
+            "kind": "key",
+            "name": "pull",
             "optional": true,
             "doc": "Whether to fetch them first."
           },
           {
-            "name": "...args",
+            "kind": "mixed_rest",
+            "name": "args",
             "optional": false,
             "doc": "Everything else, passed along."
           }
@@ -14390,6 +14410,7 @@
             "scope": "instance",
             "params": [
               {
+                "kind": "pos",
                 "name": "scale",
                 "optional": false,
                 "doc": null,
@@ -14509,6 +14530,7 @@
         "doc": "Grow a number.",
         "params": [
           {
+            "kind": "pos",
             "name": "x",
             "optional": false,
             "doc": null,
@@ -14545,6 +14567,7 @@
         "doc": "Grow a string.",
         "params": [
           {
+            "kind": "pos",
             "name": "x",
             "optional": false,
             "doc": null,
@@ -14580,6 +14603,7 @@
         "doc": null,
         "params": [
           {
+            "kind": "pos",
             "name": "x",
             "optional": false,
             "doc": null
@@ -14605,12 +14629,14 @@
         "doc": "Collects callable arguments with corresponding result types.",
         "binders": [
           {
-            "name": "...Rs"
+            "kind": "mixed_rest",
+            "name": "Rs"
           }
         ],
         "params": [
           {
-            "name": "...thunks",
+            "kind": "mixed_rest",
+            "name": "thunks",
             "optional": false,
             "type_spread": true,
             "doc": null,
@@ -14634,9 +14660,8 @@
           },
           "args": [
             {
-              "kind": "rest",
+              "kind": "mixed_rest",
               "optional": false,
-              "sigil": "...",
               "type": {
                 "kind": "name",
                 "name": "Rs",
@@ -14665,6 +14690,7 @@
         "doc": "A type with no definition in source.",
         "binders": [
           {
+            "kind": "pos",
             "name": "T"
           }
         ],

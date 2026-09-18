@@ -207,7 +207,6 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 Output::set(strand, out, value);
                 Ok(())
             } else if let Some(value) = value.as_str_raw(strand) {
-                strand.sym_gc();
                 out.store(Value::from_object(strand.sym_register_obj(value)));
                 Ok(())
             } else {

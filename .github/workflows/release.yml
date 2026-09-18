@@ -50,11 +50,6 @@ jobs:
         run: |
           dodo.run install --prefix release
 
-      - name: Verify macOS posix_spawn interpose survived linking
-        if: matrix.target == 'aarch64-macos'
-        run: |
-          dodo.run verify-macos-interpose --bin release/bin/dolang
-
       - name: Run integration tests
         run: |
           let is_win = (sys.os_info().family == :WINDOWS:)

@@ -103,11 +103,7 @@ pub(crate) fn signature(entry: &DocEntry) -> String {
                 .params
                 .iter()
                 .map(|param| {
-                    let name = if param.optional
-                        && !param.name.ends_with('?')
-                        && !param.name.starts_with("...")
-                        && !param.name.starts_with('*')
-                    {
+                    let name = if param.optional && !param.name.ends_with('?') {
                         format!("{}?", param.name)
                     } else {
                         param.name.to_owned()
