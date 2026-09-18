@@ -146,6 +146,8 @@ def type_arg_json id_to_index arg
     optional: $arg.optional
     if type(arg, compile.KeyTypeArg)
       key: (span_json arg.key)
+    if type(arg, compile.RestTypeArg)
+      sigil: $arg.sigil
     if (type(arg, compile.KeyTypeArg) && arg.key_ty != nil || type(arg, compile.KeyRestTypeArg))
       key_type: (type_expr_json id_to_index arg.key_ty)
     if !type(arg, compile.OpenRestTypeArg)
@@ -426,8 +428,8 @@ class Document
     result
 
   # The binders declared by a function, method, class, or alias. A name keeps
-  # its `:` or `...` sigil, as a parameter's does; a bound or default is a type
-  # tree, like an annotation's.
+  # its `:`, `...`, `*` or `**` sigil, as a parameter's does; a bound or default
+  # is a type tree, like an annotation's.
   def binders self id
     let result = []
     for child = self.#own(id)
@@ -436,7 +438,7 @@ class Document
       let sigil = if type(child, compile.KeyBinder)
         ":"
       else if type(child, compile.RestBinder)
-        "..."
+        child.sigil
       else
         ""
       result.push $
@@ -521,6 +523,8 @@ class Document
         optional: $arg.optional
         if type(arg, compile.KeyTypeArg)
           key: (self.#text(arg.key))
+        if type(arg, compile.RestTypeArg)
+          sigil: $arg.sigil
         if (type(arg, compile.KeyTypeArg) && arg.key_ty != nil || type(arg, compile.KeyRestTypeArg))
           key_type: (self.#type_tree(arg.key_ty))
         if !type(arg, compile.OpenRestTypeArg)

@@ -126,6 +126,9 @@ struct TypeArgJson {
     optional: bool,
     #[serde(default)]
     key: Option<String>,
+    /// A rest item's `...`, `*` or `**`
+    #[serde(default)]
+    sigil: Option<String>,
     #[serde(rename = "type")]
     ty: Option<TypeJson>,
 }
@@ -180,7 +183,7 @@ fn render_args(args: &[TypeArgJson]) -> String {
             };
             let ty = ty.render(Binding::Func);
             match (arg.kind.as_str(), &arg.key) {
-                ("rest", _) => format!("{optional}...{ty}"),
+                ("rest", _) => format!("{optional}{}{ty}", arg.sigil.as_deref().unwrap_or("...")),
                 ("key", Some(key)) => format!("{optional}{key}: {ty}"),
                 _ => format!("{optional}{ty}"),
             }

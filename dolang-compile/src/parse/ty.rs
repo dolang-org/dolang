@@ -4,9 +4,11 @@ use super::{
         InvalidConstType, NonConstExpr, OptionalRest, OptionalTypeArg, ParamsWithoutArrow,
         RequiredAfterOptional, RestMustBeTrailing,
     },
+    params::rest_order_error,
     stream::ExpectKind,
 };
 use crate::{
+    RestKind,
     ast::{
         Annot, Binder, BinderDefault, BinderKind, Binders, Const, Ident, RetType, TypeArg,
         TypeArgKind, TypeExpr, TypeKey, visit::Node,
@@ -104,17 +106,14 @@ impl Parser<'_> {
         let open = self.advance();
         self.with_mode(Mode::FullExpr, |this| {
             let mut binders = Vec::new();
-            let mut rest_span = None;
+            // The last rest, which only another rest may follow
+            let mut last_rest = None;
             let mut seen_default = false;
             let close = loop {
                 if let Some(token!(TokenInfo::RightBracket)) = this.peek()?
                     && !binders.is_empty()
                 {
                     break this.advance();
-                }
-                if let Some(span) = rest_span.take() {
-                    this.fail = true;
-                    this.diags.push(RestMustBeTrailing(span));
                 }
                 let (kind, ident) = match this.next()? {
                     Some(token!(TokenInfo::DittoKey, span)) => (
@@ -123,16 +122,44 @@ impl Parser<'_> {
                         },
                         span,
                     ),
-                    Some(token!(TokenInfo::Ellipsis, ellipsis_span)) => {
-                        rest_span = Some(ellipsis_span);
+                    Some(
+                        token @ token!(
+                            TokenInfo::Ellipsis
+                                | TokenInfo::Op(Op::Star)
+                                | TokenInfo::Op(Op::StarStar)
+                        ),
+                    ) => {
+                        let kind = match token.info {
+                            TokenInfo::Ellipsis => RestKind::Mixed,
+                            TokenInfo::Op(Op::Star) => RestKind::Pos,
+                            _ => RestKind::Key,
+                        };
+                        if let Some(msg) =
+                            last_rest.and_then(|(prev, _)| rest_order_error(prev, kind))
+                        {
+                            return Err(this.syntax_error(scope, Some(token), msg));
+                        }
+                        last_rest = Some((kind, token.span));
                         let ident = this.expect(scope, &[ExpectKind::Ident])?;
-                        (BinderKind::Rest { ellipsis_span }, ident)
+                        (
+                            BinderKind::Rest {
+                                kind,
+                                sigil_span: token.span,
+                            },
+                            ident,
+                        )
                     }
                     token => match decay_ident!(token) {
                         Some(token!(TokenInfo::Ident, span)) => (BinderKind::Pos, span),
                         token => return Err(this.syntax_error(scope, token, "expected binder")),
                     },
                 };
+                if !matches!(kind, BinderKind::Rest { .. })
+                    && let Some((_, span)) = last_rest.take()
+                {
+                    this.fail = true;
+                    this.diags.push(RestMustBeTrailing(span));
+                }
                 let bound = this.parse_annot(scope)?;
                 let default = if let Some(token!(TokenInfo::Equal)) = this.peek()? {
                     let equal_span = this.advance();
@@ -365,6 +392,23 @@ impl Parser<'_> {
                     this.diags.push(OptionalTypeArg(span));
                 }
                 let kind = match this.peek()? {
+                    Some(token @ token!(TokenInfo::Op(Op::Star) | TokenInfo::Op(Op::StarStar))) => {
+                        let sigil_span = this.advance();
+                        if let Some(span) = optional
+                            && delim != Delim::Bracket
+                        {
+                            this.fail = true;
+                            this.diags.push(OptionalRest(span));
+                        }
+                        TypeArgKind::Rest {
+                            kind: match token.info {
+                                TokenInfo::Op(Op::Star) => RestKind::Pos,
+                                _ => RestKind::Key,
+                            },
+                            sigil_span,
+                            ty: this.parse_type_full(scope)?,
+                        }
+                    }
                     Some(token!(TokenInfo::Ellipsis)) => {
                         let ellipsis_span = this.advance();
                         if let Some(span) = optional
@@ -428,7 +472,11 @@ impl Parser<'_> {
                                     ty: this.parse_type_full(scope)?,
                                 }
                             } else {
-                                TypeArgKind::Rest { ellipsis_span, ty }
+                                TypeArgKind::Rest {
+                                    kind: RestKind::Mixed,
+                                    sigil_span: ellipsis_span,
+                                    ty,
+                                }
                             }
                         }
                     }

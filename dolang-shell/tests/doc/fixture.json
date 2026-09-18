@@ -5046,6 +5046,7 @@
               }
             },
             "optional": false,
+            "sigil": "...",
             "type": {
               "kind": "NameType",
               "span": {
@@ -14635,6 +14636,7 @@
             {
               "kind": "rest",
               "optional": false,
+              "sigil": "...",
               "type": {
                 "kind": "name",
                 "name": "Rs",

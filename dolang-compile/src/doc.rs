@@ -235,7 +235,7 @@ pub(crate) enum TypeArgKind {
         /// The type giving the key, absent for a bareword symbol
         key_ty: Option<TypeExpr>,
     },
-    Rest,
+    Rest(RestKind),
     OpenRest,
     KeyRest {
         key_ty: TypeExpr,

@@ -390,9 +390,11 @@ impl Index<'_> {
                         };
                         (doc::TypeArgKind::Key { key, key_ty }, Some(ty), Some(key))
                     }
-                    TypeArgKind::Rest { ellipsis_span, ty } => {
-                        (doc::TypeArgKind::Rest, Some(ty), Some(*ellipsis_span))
-                    }
+                    TypeArgKind::Rest {
+                        kind,
+                        sigil_span,
+                        ty,
+                    } => (doc::TypeArgKind::Rest(*kind), Some(ty), Some(*sigil_span)),
                     TypeArgKind::OpenRest { ellipsis_span } => {
                         (doc::TypeArgKind::OpenRest, None, Some(*ellipsis_span))
                     }
@@ -439,8 +441,8 @@ impl Index<'_> {
             let (kind, sigil) = match binder.kind {
                 BinderKind::Pos => (crate::BinderKind::Pos, None),
                 BinderKind::Key { colon_span } => (crate::BinderKind::Key, Some(colon_span)),
-                BinderKind::Rest { ellipsis_span } => {
-                    (crate::BinderKind::Rest, Some(ellipsis_span))
+                BinderKind::Rest { kind, sigil_span } => {
+                    (crate::BinderKind::Rest(kind), Some(sigil_span))
                 }
             };
             let name = binder.ident.span;

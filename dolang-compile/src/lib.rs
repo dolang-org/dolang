@@ -670,8 +670,8 @@ pub enum BinderKind {
     Pos,
     /// `:K`
     Key,
-    /// `...R`, taking any number of further arguments
-    Rest,
+    /// `...R`, `*R` or `**R`, taking any number of further arguments
+    Rest(RestKind),
 }
 
 /// Which leftover items a rest parameter takes
@@ -831,7 +831,7 @@ impl<'a> TypeArg<'a> {
                     expr,
                 }),
             },
-            doc::TypeArgKind::Rest => TypeArgKind::Rest,
+            doc::TypeArgKind::Rest(kind) => TypeArgKind::Rest(*kind),
             doc::TypeArgKind::OpenRest => TypeArgKind::OpenRest,
             doc::TypeArgKind::KeyRest { key_ty } => TypeArgKind::KeyRest {
                 key_ty: TypeExpr {
@@ -865,8 +865,8 @@ pub enum TypeArgKind<'a> {
         /// The type giving the key, or `None` for a bareword symbol
         key_ty: Option<TypeExpr<'a>>,
     },
-    /// `...T`, for any number of further items
-    Rest,
+    /// `...T`, `*T` or `**T`, for any number of further items
+    Rest(RestKind),
     /// `...`, for unrestricted further schema items
     OpenRest,
     /// `...K: V`, for any number of keyed items
@@ -885,7 +885,7 @@ impl fmt::Debug for TypeArgKind<'_> {
                 .field("key", key)
                 .field("key_ty", &key_ty.as_ref().map(|_| ..))
                 .finish(),
-            Self::Rest => f.write_str("Rest"),
+            Self::Rest(kind) => f.debug_tuple("Rest").field(kind).finish(),
             Self::OpenRest => f.write_str("OpenRest"),
             Self::KeyRest { .. } => f.write_str("KeyRest { key_ty: ... }"),
         }

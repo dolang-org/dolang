@@ -458,6 +458,10 @@ pub class KeyBinder: Binder
 
 # A rest binder, such as `...R`.
 pub class RestBinder: Binder
+  # The sigil that introduces it: `...`, `*` or `**`.
+  #[getter]
+  pub def sigil self -> Str
+    ...
 
 # Supertype of the forms a type takes.
 #
@@ -565,6 +569,12 @@ pub class KeyTypeArg: TypeArg
 
 # A rest item, such as `...T`.
 pub class RestTypeArg: TypeArg
+  # The sigil that introduces it: `...` for positional and keyed items, `*`
+  # for positional items only, or `**` for keyed items only.
+  #[getter]
+  pub def sigil self -> Str
+    ...
+
   # The item's type.
   #[getter]
   pub def ty self -> TypeExpr

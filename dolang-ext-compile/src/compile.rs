@@ -478,6 +478,8 @@ enum TypeDetail {
     Arg {
         optional: bool,
         key: Option<SpanData>,
+        /// The sigil of a rest item
+        sigil: Option<&'static str>,
     },
 }
 
@@ -1313,7 +1315,7 @@ fn create_node<'v, 's>(
             compile::Kind::Binder { kind, .. } => match kind {
                 compile::BinderKind::Pos => Which::PosBinder,
                 compile::BinderKind::Key => Which::KeyBinder,
-                compile::BinderKind::Rest => Which::RestBinder,
+                compile::BinderKind::Rest(_) => Which::RestBinder,
                 _ => return Err(Error::not_supported(strand)),
             },
             _ => unreachable!(),
@@ -1515,6 +1517,19 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
         }
         if T::NAME == "Type" {
             builder = builder.get("expr", |this, strand, out| project_expr(this, strand, out));
+        }
+        if T::NAME == "RestBinder" {
+            builder = builder.get("sigil", |this, strand, out| {
+                let sigil = with_node(this, strand, |n, _| match n.kind() {
+                    compile::Kind::Binder {
+                        kind: compile::BinderKind::Rest(kind),
+                        ..
+                    } => kind.sigil(),
+                    _ => unreachable!("RestBinder object for another node kind"),
+                })?;
+                Output::set(strand, out, sigil);
+                Ok(())
+            });
         }
         if matches!(T::NAME, "PosBinder" | "KeyBinder" | "RestBinder") {
             builder = builder
@@ -1921,6 +1936,10 @@ fn create_type_args<'v, 's>(
                 detail: TypeDetail::Arg {
                     optional: arg.optional(),
                     key,
+                    sigil: match arg.kind() {
+                        compile::TypeArgKind::Rest(kind) => Some(kind.sigil()),
+                        _ => None,
+                    },
                 },
             };
             macro_rules! make {
@@ -1965,7 +1984,7 @@ fn create_type_args<'v, 's>(
                             );
                         });
                 }
-                compile::TypeArgKind::Rest => make!(t.rest, None),
+                compile::TypeArgKind::Rest(_) => make!(t.rest, None),
                 compile::TypeArgKind::OpenRest => {
                     t.open_rest.create_with_annex(
                         strand,
@@ -2068,6 +2087,16 @@ impl<'v, T: TypeMarker + 'static> Object<'v> for TypeExprObject<T> {
             "SchemaType" => builder.get("args", slot!(0)),
             "UnionType" => builder.get("members", slot!(0)),
             "FuncType" => builder.get("params", slot!(0)).get("ret", slot!(1)),
+            "RestTypeArg" => builder.get("sigil", |this, strand, out| {
+                let TypeDetail::Arg {
+                    sigil: Some(sigil), ..
+                } = &this.annex().detail
+                else {
+                    unreachable!()
+                };
+                Output::set(strand, out, *sigil);
+                Ok(())
+            }),
             "KeyTypeArg" => builder.get("key", |this, strand, out| {
                 let TypeDetail::Arg { key: Some(key), .. } = &this.annex().detail else {
                     unreachable!()

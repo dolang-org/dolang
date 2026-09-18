@@ -438,7 +438,7 @@ def _render_type_args(args: list[dict], scope: _TypeScope, plain: bool = False) 
     for arg in args:
         text = "?" if arg.get("optional") else ""
         if arg.get("kind") == "rest":
-            text += "..."
+            text += arg.get("sigil", "...")
         elif arg.get("kind") == "open_rest":
             rendered.append(text + "...")
             continue

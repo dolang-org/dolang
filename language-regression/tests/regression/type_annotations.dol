@@ -221,3 +221,12 @@ assert_eq (discard 1 2) 9
 def mapped ...thunks
   {...thunks}
 assert_eq (mapped 10) {10}
+
+# Positional and keyed rest items and binders
+@def segregate[*Ps, **Ks] *args @ Ps **kw @ Ks -> Tuple[Tuple[*Ps], Record[**Ks]]
+def segregate *args **kw
+  (args, kw)
+assert_eq (segregate 1 k: 2) ((1,), (k: 2))
+let schema @ Dict[{name: Str, *Int, **Str}] = {name: "n", 1, x: "y"}
+let callback @ ((Int, *Str, **Bool) -> nil) = nil
+assert_eq [schema[0], callback] [1, nil]

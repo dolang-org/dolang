@@ -29,6 +29,9 @@ schema instead describes the complete argument pack:
 def log level@Sym ...parts@Str
   echo "[$level]" ...parts
 
+def tag name@Str *children@Str **attrs@Str
+  [name, children, attrs]
+
 def configure ...options@{name: Str, ?port: Int}
   apply ...options
 ```
@@ -83,16 +86,21 @@ let halve = (do |x @ Int| -> Int x // 2)
 
 `[]` directly after the name of a `def` or `class` declares binders: names that
 stand for types within the declaration. A binder is a name, `:name` for a
-keyword type argument, or `...name` for any number of further type arguments.
-`@` gives a bound and `=` gives a default; both are type expressions. A
-variadic binder must come last and cannot have a default. A variadic binder
-stands for the remaining arguments, so it is always a schema binder. Any other
-binder is a type binder unless a schema bound such as `S @ {...}` makes it a
-schema binder.
+keyword type argument, or a variadic binder for any number of further type
+arguments: `...name` for positional and keyword ones, `*name` for positional
+ones, or `**name` for keyword ones. `@` gives a bound and `=` gives a default;
+both are type expressions. Variadic binders come last and cannot have defaults.
+As with rest parameters, `*` and `**` may appear together, `*` first, but not
+with `...`. A variadic binder stands for the remaining arguments, so it is
+always a schema binder. Any other binder is a type binder unless a schema bound
+such as `S @ {...}` makes it a schema binder.
 
 ```
 def first[T] items @ Array[T] -> T
   items[0]
+
+def apply[R, *Ps, **Ks] func@((*Ps, **Ks) -> R) *args@Ps **kw@Ks -> R
+  func ...args ...kw
 
 class Table[K, V]
   pub field rows @ Dict[K, V] = {}
@@ -269,14 +277,16 @@ let mode @ (:TARGET: | :LINK:) = :TARGET:
 
 `[]` directly after a type applies generic arguments.
 
-The items of `[]`, `()`, and `{}` share positional, symbol-keyed, and
-`...type` rest syntax. Keyed and open rest items are allowed in schemas and
-generic applications, but not in function parameter lists.
+The items of `[]`, `()`, and `{}` share positional, symbol-keyed, and rest
+syntax. `...type` stands for any number of further items, `*type` for further
+positional items, and `**type` for further keyed items. The `...K: V` and open
+`...` rest items are allowed in schemas and generic applications, but not in
+function parameter lists.
 
 ```
 let names @ Array[Str] = []
 let index @ Dict[Str, Array[Int]] = {}
-let row @ Tuple[...Str] = Tuple ["id", "name"]
+let row @ Tuple[*Str] = Tuple ["id", "name"]
 let result @ Record[value: Int, error: (Error | nil)] = nil
 let open @ Record[name: Str, ...] = nil
 ```
@@ -303,7 +313,8 @@ A schema is not itself a type. It lists the positional and keyed entries of a
 inside `Dict[...]` to describe a dict. Bare keys are symbols and quoted keys are
 strings, as in dict literals. Any other type may give a key, parenthesized when
 it is a name, as in `{(K): V}`. `?` marks an optional key. `...T` allows further
-items with values of type `T`, or splices `T` when it is a schema. `...K: V`
+items with values of type `T`, or splices `T` when it is a schema. `*T` allows
+only further positional items, and `**T` only further keyed ones. `...K: V`
 allows further keyed entries whose keys have type `K` and values have type `V`.
 Schemas are closed unless they contain a rest item. `{...}` is the universal
 schema, shorthand for `{...std.Value}`:
@@ -315,7 +326,7 @@ let anything @ Dict[{...}] = {}
 ```
 
 A type whose only parameter is a schema, such as `Dict`, also accepts types in
-its place. `Dict[T]` stands for a schema of any number of positional items of
+its place. `Dict[T]` stands for `Dict[{*T}]`, any number of positional items of
 type `T`, and `Dict[K, V]` stands for `Dict[{...K: V}]`. An argument that is
 already a schema, including a binder bounded by one, is passed as is:
 

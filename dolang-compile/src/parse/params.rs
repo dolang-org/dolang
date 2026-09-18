@@ -10,6 +10,18 @@ use crate::{
     source::Span,
 };
 
+/// Why a rest of `kind` cannot follow a rest of `prev`, if it cannot.
+pub(super) fn rest_order_error(prev: RestKind, kind: RestKind) -> Option<&'static str> {
+    match (prev, kind) {
+        (RestKind::Pos, RestKind::Key) => None,
+        (RestKind::Key, RestKind::Pos) => Some("`*` rest must come before `**`"),
+        (RestKind::Mixed, _) | (_, RestKind::Mixed) if prev != kind => {
+            Some("`...` rest cannot be combined with `*` or `**`")
+        }
+        _ => Some("duplicate rest"),
+    }
+}
+
 #[derive(Copy, Clone)]
 pub(super) enum ParamMode {
     HorizFunc,
@@ -213,20 +225,8 @@ impl Parser<'_> {
                         TokenInfo::Op(Op::Star) => RestKind::Pos,
                         _ => RestKind::Key,
                     };
-                    if let Some(prev) = last_rest {
-                        let msg = match (prev, kind) {
-                            (RestKind::Pos, RestKind::Key) => None,
-                            (RestKind::Key, RestKind::Pos) => {
-                                Some("`*` rest must come before `**`")
-                            }
-                            (RestKind::Mixed, _) | (_, RestKind::Mixed) if prev != kind => {
-                                Some("`...` rest cannot be combined with `*` or `**`")
-                            }
-                            _ => Some("duplicate rest parameter"),
-                        };
-                        if let Some(msg) = msg {
-                            return Err(self.syntax_error(scope, Some(token), msg));
-                        }
+                    if let Some(msg) = last_rest.and_then(|prev| rest_order_error(prev, kind)) {
+                        return Err(self.syntax_error(scope, Some(token), msg));
                     }
                     let sigil_span = self.advance();
 
