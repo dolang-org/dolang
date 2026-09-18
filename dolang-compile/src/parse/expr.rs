@@ -1,19 +1,30 @@
-use std::{borrow::Cow, cmp::Ordering, mem};
+use std::{borrow::Cow, cmp::Ordering};
 
 use super::{
     Error, ExprMode, Parser, Result, Scope,
-    diag::{AmbigIndex, BadFloat, InvalidCompactOp, MisleadingArg, MisleadingDollar, NonConstExpr},
+    diag::{
+        AmbigIndex, BadFloat, InvalidCompactOp, MisleadingArg, MisleadingCall, MisleadingDollar,
+        NonConstExpr,
+    },
     stream::ExpectKind,
     string::StrKind,
 };
 use crate::{
     ast::{
-        Arg, ArrayElem, Const, DictElem, Expr, GetVariant, GroupDelim, Ident, Key, Pair, Single,
-        visit::Node,
+        Arg, ArrayElem, Const, DictElem, Expand, Expr, GetVariant, GroupDelim, Ident, Key, Pair,
+        Single, visit::Node,
     },
     lex::{self, Keyword, Mode, Op, Token, TokenInfo},
     source::Span,
 };
+
+/// What parenthesized items make outside a C-style call
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ParenKind {
+    Group,
+    Tuple,
+    Record,
+}
 
 #[derive(PartialEq, Eq, Debug)]
 enum Assoc {
@@ -100,26 +111,33 @@ impl Parser<'_> {
         })
     }
 
-    fn parse_arg_pack(
-        &mut self,
-        scope: &mut Scope,
-        initial: Option<(Expr, Span)>,
-    ) -> Result<Vec<Arg>> {
+    /// Parse the items between parentheses, up to but not including the `)`.
+    ///
+    /// These become the arguments of a C-style call, or a group, tuple, or
+    /// record via [`Self::paren_expr`].
+    fn parse_arg_pack(&mut self, scope: &mut Scope) -> Result<Vec<Arg>> {
         use self::Key;
         use TokenInfo::*;
 
-        let mut args = if let Some((arg, span)) = initial {
-            vec![Arg::Pos(Single {
-                expr: arg,
-                delim_span: Some(span),
-            })]
-        } else {
-            Vec::new()
-        };
+        let mut args: Vec<Arg> = Vec::new();
         loop {
             let fail = self.fail;
+            let separated = match args.last() {
+                None => true,
+                Some(Arg::Pos(Single { delim_span, .. }))
+                | Some(Arg::Key(Key { delim_span, .. }))
+                | Some(Arg::Expand(Expand { delim_span, .. })) => delim_span.is_some(),
+                Some(_) => unreachable!(),
+            };
             let arg = match self.peek()? {
                 Some(token!(RightParen)) => break,
+                // Items must be separated by commas; leave anything else for the
+                // caller's check for `)`
+                _ if !separated => break,
+                Some(token!(DittoKey, span)) => {
+                    self.advance();
+                    Arg::Key(Self::ditto_key(span, self.consume_comma()?))
+                }
                 Some(token!(Key, span)) => {
                     self.advance();
                     Arg::Key(Key {
@@ -146,6 +164,51 @@ impl Parser<'_> {
         Ok(args)
     }
 
+    /// Classify parenthesized items.
+    ///
+    /// A lone positional item without a trailing comma is a group. Otherwise,
+    /// any static key makes a record, and anything else is a tuple.
+    fn paren_kind(args: &[Arg]) -> ParenKind {
+        if let [
+            Arg::Pos(Single {
+                delim_span: None, ..
+            }),
+        ] = args
+        {
+            ParenKind::Group
+        } else if args.iter().any(|arg| matches!(arg, Arg::Key(_))) {
+            ParenKind::Record
+        } else {
+            ParenKind::Tuple
+        }
+    }
+
+    /// Interpret parenthesized items as an expression (see [`Self::paren_kind`]).
+    fn paren_expr(mut args: Vec<Arg>, paren_span: Span) -> Expr {
+        match Self::paren_kind(&args) {
+            ParenKind::Group => {
+                let Some(Arg::Pos(Single { expr, .. })) = args.pop() else {
+                    unreachable!()
+                };
+                return Expr::Group {
+                    expr: Box::new(expr),
+                    delim: Some(GroupDelim::Paren(paren_span)),
+                };
+            }
+            ParenKind::Record => return Expr::Record { paren_span, args },
+            ParenKind::Tuple => (),
+        }
+        let elems = args
+            .into_iter()
+            .map(|arg| match arg {
+                Arg::Pos(single) => ArrayElem::Single(single),
+                Arg::Expand(expand) => ArrayElem::Expand(expand),
+                _ => unreachable!(),
+            })
+            .collect();
+        Expr::Tuple { paren_span, elems }
+    }
+
     pub(super) fn parse_expr_primary(&mut self, scope: &mut Scope, mode: ExprMode) -> Result<Expr> {
         use self::{Ident, Keyword};
         use TokenInfo::*;
@@ -166,17 +229,11 @@ impl Parser<'_> {
                     delim: Some(GroupDelim::RawQuotes(start, end)),
                 })
             }
-            Some(token!(LeftParen, left)) => {
-                let expr = self.with_mode(lex::Mode::FullExpr, |this| {
-                    let expr = this.parse_expr(scope, ExprMode::Full)?;
-                    let right = this.expect_matching(scope, ExpectKind::RightParen, left);
-                    Ok(Expr::Group {
-                        expr: Box::new(expr),
-                        delim: Some(GroupDelim::Paren(left | right)),
-                    })
-                })?;
-                Ok(expr)
-            }
+            Some(token!(LeftParen, left)) => self.with_mode(lex::Mode::FullExpr, |this| {
+                let args = this.parse_arg_pack(scope)?;
+                let right = this.expect_matching(scope, ExpectKind::RightParen, left);
+                Ok(Self::paren_expr(args, left | right))
+            }),
             Some(token!(LeftBracket, left)) => self.parse_array_literal(scope, left, None),
             Some(token!(LeftBrace, left)) => self.parse_dict_literal(scope, left),
             Some(token!(Keyword(Keyword::Do), span)) => Ok(self.parse_lambda(scope, span)?),
@@ -488,6 +545,11 @@ impl Parser<'_> {
             }
         };
 
+        // A C-style call separated from its callee by whitespace, which looks like
+        // a call with a tuple or record. Reported once the call is final, since
+        // juxtaposing another argument turns it into exactly that.
+        let mut spaced_call: Option<MisleadingCall> = None;
+
         loop {
             match decay_ident!(self.peek()?) {
                 Some(token!(TokenInfo::DotDot, span)) if !matches!(mode, ExprMode::Shell) => {
@@ -722,34 +784,27 @@ impl Parser<'_> {
                     let info = info.clone();
                     let mut juxta_warn = false;
                     // Immediately invoking the result of a C-style call is disallowed.
-                    // Convert it into a regular call if possible, otherwise give up parsing
+                    // Convert it into a regular call whose first argument is a group,
+                    // tuple, or record, unless in compact mode, where we give up parsing
                     if let Expr::Call {
                         arg0,
-                        mut args,
+                        args,
                         delim: Some(GroupDelim::Paren(paren_span)),
                     } = lhs
                     {
-                        if mode != ExprMode::Compact
-                            && args.len() == 1
-                            && matches!(&args[0], Arg::Pos(..))
-                        {
+                        if mode != ExprMode::Compact {
                             let arg0_span = arg0.span();
                             if arg0_span.end == paren_span.start {
                                 juxta_warn = true;
                             }
-                            let expr = match args.remove(0) {
-                                Arg::Pos(Single { expr, .. }) => expr,
-                                _ => unreachable!(),
-                            };
+                            if spaced_call.is_some_and(|call| call.paren_span == paren_span) {
+                                spaced_call = None;
+                            }
                             lhs = Expr::Call {
                                 arg0,
-                                args: vec![Arg::Pos(Single {
-                                    expr: Expr::Group {
-                                        expr: Box::new(expr),
-                                        delim: Some(GroupDelim::Paren(paren_span)),
-                                    },
-                                    delim_span: None,
-                                })],
+                                args: vec![Self::positional_arg(Self::paren_expr(
+                                    args, paren_span,
+                                ))],
                                 delim: None,
                             };
                         } else {
@@ -787,23 +842,28 @@ impl Parser<'_> {
                         }
                         TokenInfo::LeftParen if !matches!(lhs, Expr::Call { .. }) => {
                             let left = self.advance();
-                            self.with_mode(Mode::FullExpr, |this| {
-                                lhs = Expr::Call {
-                                    arg0: Box::new(mem::replace(
-                                        &mut lhs,
-                                        Expr::Nil(Span::INVALID),
-                                    )),
-                                    args: this.parse_arg_pack(scope, None)?,
-                                    delim: Some(GroupDelim::Paren(
-                                        left | this.expect_matching(
-                                            scope,
-                                            ExpectKind::RightParen,
-                                            left,
-                                        ),
-                                    )),
-                                };
-                                Ok(())
+                            let callee_span = lhs.span();
+                            let (args, paren_span) = self.with_mode(Mode::FullExpr, |this| {
+                                let args = this.parse_arg_pack(scope)?;
+                                let right =
+                                    this.expect_matching(scope, ExpectKind::RightParen, left);
+                                Ok((args, left | right))
                             })?;
+                            if callee_span.end != left.start {
+                                let kind = Self::paren_kind(&args);
+                                if kind != ParenKind::Group {
+                                    spaced_call = Some(MisleadingCall {
+                                        callee_span,
+                                        paren_span,
+                                        record: kind == ParenKind::Record,
+                                    });
+                                }
+                            }
+                            lhs = Expr::Call {
+                                arg0: Box::new(lhs),
+                                args,
+                                delim: Some(GroupDelim::Paren(paren_span)),
+                            };
                             continue;
                         }
                         _ => Self::positional_arg(self.parse_expr_prec(scope, mode, Some(prec))?),
@@ -849,6 +909,9 @@ impl Parser<'_> {
             }
         }
 
+        if let Some(call) = spaced_call {
+            self.diags.push(call);
+        }
         Ok(lhs)
     }
 

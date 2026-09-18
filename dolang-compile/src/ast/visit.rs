@@ -136,6 +136,8 @@ pub enum NodeKind {
     Index,
     Array,
     Dict,
+    Tuple,
+    Record,
     Error,
     Assign,
     Bind,

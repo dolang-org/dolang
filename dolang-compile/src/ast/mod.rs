@@ -633,6 +633,19 @@ pub(crate) enum Expr {
         brace_span: Option<Span>,
         elems: Vec<DictElem>,
     },
+    /// A parenthesized sequence that isn't a group and has no static key:
+    /// `()`, `(x,)`, `(x, y)`, `(...xs)`. Elements are only `Single` or
+    /// `Expand`.
+    Tuple {
+        paren_span: Span,
+        elems: Vec<ArrayElem>,
+    },
+    /// A parenthesized sequence with at least one static key: `(a: 1)`,
+    /// `(x, :y)`. Arguments are only `Pos`, `Key`, or `Expand`.
+    Record {
+        paren_span: Span,
+        args: Vec<Arg>,
+    },
     Error,
 }
 
@@ -969,6 +982,23 @@ impl Expr {
                 }
             })),
 
+            // Tuple literals - check all elements
+            Expr::Tuple { elems, .. } => Self::combine_iter(elems.iter().map(|e| match e {
+                ArrayElem::Single(s) => s.expr.side_effect(),
+                // Expansion upgrades VarRef to Unlikely (overloadable iteration/unpack)
+                ArrayElem::Expand(e) => e.expr.side_effect().unlikely(),
+                _ => SideEffect::Likely,
+            })),
+
+            // Record literals - check all elements
+            Expr::Record { args, .. } => Self::combine_iter(args.iter().map(|a| match a {
+                Arg::Pos(s) => s.expr.side_effect(),
+                Arg::Key(k) => k.expr.side_effect(),
+                // Expansion upgrades VarRef to Unlikely (overloadable unpack)
+                Arg::Expand(e) => e.expr.side_effect().unlikely(),
+                _ => SideEffect::Likely,
+            })),
+
             // String concatenation - upgrade VarRef to Unlikely (overloadable string conversion)
             Expr::Concat { exprs, .. } => {
                 Self::combine_iter(exprs.iter().map(|e| e.side_effect().unlikely()))
@@ -1253,6 +1283,16 @@ impl Node for Expr {
                 }
                 ControlFlow::Continue(())
             }
+            Expr::Tuple { paren_span, elems } => {
+                visit.token(Token::Delim, paren_span.left_char(), None)?;
+                elems.accept(visit)?;
+                visit.token(Token::Delim, paren_span.right_char(), None)
+            }
+            Expr::Record { paren_span, args } => {
+                visit.token(Token::Delim, paren_span.left_char(), None)?;
+                args.accept(visit)?;
+                visit.token(Token::Delim, paren_span.right_char(), None)
+            }
             Expr::Error => ControlFlow::Continue(()),
         }
     }
@@ -1285,6 +1325,8 @@ impl Node for Expr {
             Expr::Index { .. } => NodeKind::Index,
             Expr::Array { .. } => NodeKind::Array,
             Expr::Dict { .. } => NodeKind::Dict,
+            Expr::Tuple { .. } => NodeKind::Tuple,
+            Expr::Record { .. } => NodeKind::Record,
             Expr::Error => NodeKind::Error,
         }
     }

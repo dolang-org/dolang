@@ -967,12 +967,14 @@ impl<'v> Inner<'v> {
         open: &str,
         close: &str,
         separator: &str,
+        // Written before `close` when the only entry is positional
+        singleton: &str,
     ) -> Result<'v, 's, ()> {
         let this_borrow = this.borrow(strand)?;
         crate::fmt!(strand, w, "{open}")?;
         let mut index = 0usize;
         let mut next_int_key = Some(0);
-        let mut first = true;
+        let mut count = 0usize;
         unsafe {
             while let Some(bucket) = (*this_borrow).as_ref().index.get(index) {
                 index += 1;
@@ -984,11 +986,10 @@ impl<'v> Inner<'v> {
                 if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
                     strand.check_trap()?;
                 }
-                if first {
-                    first = false
-                } else {
+                if count > 0 {
                     crate::fmt!(strand, w, "{separator}")?;
                 }
+                count += 1;
                 if let (Some(int_key), Some(expected)) =
                     (bucket.as_ref().key.to_i64(strand).ok(), next_int_key)
                 {
@@ -1008,6 +1009,10 @@ impl<'v> Inner<'v> {
                 crate::fmt!(strand, w, ": ")?;
                 bucket.as_ref().value.at(subindex).op_debug(strand, w)?;
             }
+        }
+        // A lone positional entry
+        if next_int_key == Some(1) && count == 1 {
+            crate::fmt!(strand, w, "{singleton}")?;
         }
         crate::fmt!(strand, w, "{close}")
     }

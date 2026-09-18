@@ -120,8 +120,25 @@ Records are immutable product values with symbol and integer keys. They allow
 direct field access with dot syntax:
 
 ```
-let r = record name: Alice age: 30
+let r = (name: "Alice", age: 30)
 echo $r.name # Alice
+```
+
+Parentheses make a record rather than a tuple when they hold at least one static
+key: `key: value` or the ditto shorthand `:name`. Positional items get integer
+keys counting from 0:
+
+```
+let name = "Alice"
+let r = (:name, age: 30)
+let mixed = (1, 2, tag: "x")
+assert_eq $mixed[1] 2
+```
+
+The `record` function builds a record from its arguments:
+
+```
+let r = record name: Alice age: 30
 ```
 
 Records support the same ordering and multi-map semantics as dicts where
@@ -129,7 +146,7 @@ applicable. They are iterable, unpackable, and support indexing for their key
 types. Build a changed record by spreading the original into a new record:
 
 ```
-let updated = record ...r age: 31
+let updated = (...r, age: 31)
 ```
 
 Use a class when named fields need to be mutable.
@@ -159,13 +176,33 @@ See the [Set API](std.Set) for methods such as `add`, `contains`,
 
 Tuples are immutable, ordered sequences of values.
 
-Like sets, tuples do not have a dedicated literal syntax. Construct them with
-the `Tuple` type object from an iterable:
+Write a tuple as comma-separated items in parentheses. A single item needs a
+trailing comma, since `(x)` only groups `x`:
+
+```
+let tup = (1, "two", true)
+assert_eq $tup[1] two
+let empty = ()
+let single = (1,)
+```
+
+Spread an iterable into a tuple with `...`:
+
+```
+let rest = [2, 3]
+assert_eq (1, ...rest) (Tuple [1, 2, 3])
+```
+
+The `Tuple` type object also builds a tuple from an iterable:
 
 ```
 let tup = Tuple [1, 2, 3]
-assert_eq $tup[1] 2
 ```
+
+At statement level, whitespace separates arguments, so `f (1, 2)` passes one
+tuple while `f(1, 2)` passes two arguments. Within a full expression,
+whitespace is insignificant and both are C-style calls, so write
+`(f((1, 2)))` to pass a lone tuple.
 
 Some APIs produce tuples, such as key/value pair iteration:
 

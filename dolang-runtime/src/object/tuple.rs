@@ -61,6 +61,34 @@ pub(crate) fn from_args<'v, 's>(
     Ok(values)
 }
 
+pub(crate) async fn from_builtin_args<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    mut args: Args<'v, '_>,
+) -> Result<'v, 's, Vec<Value<'v>>> {
+    let mut values = Vec::new();
+    let mut counter = 0;
+
+    loop {
+        counter += 1;
+        if counter % crate::INTERRUPT_INTERVAL == 0 {
+            strand.check_trap_gc()?;
+        }
+        match args.next() {
+            Some(Arg::Pos(mut item)) => values.push(item.take()),
+            Some(Arg::Key(sym, expand)) if sym.tag() == sym::ITER => {
+                let mut sink = TupleSpread(&mut values);
+                expand
+                    .op_spread(strand, SpreadContext::Sequence, &mut sink)
+                    .await?;
+            }
+            Some(Arg::Key(sym, _)) => return Err(Error::unexpected_key(strand, sym)),
+            None => break,
+        }
+    }
+
+    Ok(values)
+}
+
 struct TupleSpread<'a, 'v>(&'a mut Vec<Value<'v>>);
 
 impl<'a, 'v, 's> Spread<'v, 's> for TupleSpread<'a, 'v> {
@@ -107,13 +135,18 @@ impl<'v> Protocol<'v> for [Value<'v>] {
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         crate::fmt!(strand, w, "(")?;
-        let mut iter = this.receiver.get().iter();
+        let items = this.receiver.get();
+        let mut iter = items.iter();
         if let Some(first) = iter.next() {
             first.op_debug(strand, w)?;
             for item in iter {
                 crate::fmt!(strand, w, ", ")?;
                 item.op_debug(strand, w)?;
             }
+        }
+        // Match the literal syntax, where `(x)` is only a group
+        if items.len() == 1 {
+            crate::fmt!(strand, w, ",")?;
         }
         crate::fmt!(strand, w, ")")
     }

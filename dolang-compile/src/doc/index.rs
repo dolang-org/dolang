@@ -1177,9 +1177,14 @@ impl Index<'_> {
                 }
             }
             Expr::Get { object, .. } => self.expr(scope, object),
-            Expr::Array { elems, .. } => {
+            Expr::Array { elems, .. } | Expr::Tuple { elems, .. } => {
                 for elem in elems {
                     elem.index(self, scope);
+                }
+            }
+            Expr::Record { args, .. } => {
+                for arg in args {
+                    arg.index(self, scope);
                 }
             }
             Expr::Dict { elems, .. } => {

@@ -26,6 +26,13 @@ Full expressions support:
     - C-style: `echo("hello", "world")`, `func()`
 - Indexing: `arr[0]`, `dict["key"]`
 - Field access: `obj.field`
+- Tuple literals: `(1, 2)`, `(x,)`, `()`
+- Record literals: `(name: "Alice", age: 30)`
+
+Parentheses around a single item with no trailing comma only group it. With a
+comma, several items, or none, they make a tuple, or a record if any item has a
+static key. See [Tuples](data-structures.md#tuples-tuple) and
+[Records](data-structures.md#records-record).
 
 Full expressions can span multiple lines:
 

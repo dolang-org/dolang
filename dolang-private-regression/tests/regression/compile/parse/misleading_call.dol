@@ -1,0 +1,65 @@
+# Unambiguous: no space, or the parentheses would only group
+(echo(1, 2))
+(echo (1))
+# Unambiguous: another argument makes the parentheses a tuple
+(echo (1, 2) 3)
+# Misleading: a C-style call that looks like a call with a tuple or record
+(echo (1, 2))
+# warning: call arguments separated by whitespace are misleading
+#   --> misleading_call.dol:LL:LL
+#    |
+# LL | (echo (1, 2))
+#    |  ^^^^^^^^^^^
+#    |
+# help: remove space
+#    |
+# LL - (echo (1, 2))
+# LL + (echo(1, 2))
+#    |
+# help: wrap with parentheses to call with a tuple
+#    |
+# LL - (echo (1, 2))
+# LL + (echo((1, 2)))
+#    |
+(echo (a: 1))
+# warning: call arguments separated by whitespace are misleading
+#   --> misleading_call.dol:LL:LL
+#    |
+# LL | (echo (a: 1))
+#    |  ^^^^^^^^^^^
+#    |
+# help: remove space
+#    |
+# LL - (echo (a: 1))
+# LL + (echo(a: 1))
+#    |
+# help: wrap with parentheses to call with a record
+#    |
+# LL - (echo (a: 1))
+# LL + (echo((a: 1)))
+#    |
+(echo ())
+# warning: call arguments separated by whitespace are misleading
+#   --> misleading_call.dol:LL:LL
+#    |
+# LL | (echo ())
+#    |  ^^^^^^^
+#    |
+# help: remove space
+#    |
+# LL - (echo ())
+# LL + (echo())
+#    |
+# help: wrap with parentheses to call with a tuple
+#    |
+# LL - (echo ())
+# LL + (echo(()))
+#    |
+# output: END
+# 1 2
+# 1
+# (1, 2) 3
+# 1 2
+# a: 1
+# 
+# END

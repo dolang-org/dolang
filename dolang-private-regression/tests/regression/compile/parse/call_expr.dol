@@ -4,6 +4,9 @@
 (echo(1, foo: 2, 3))
 (echo(foo: 1))
 (echo (1) 2 3 (4))
+(echo(1, 2))
+let x = 3
+(echo(:x))
 # output: END
 # 5 foo: false
 # bar: true
@@ -11,4 +14,6 @@
 # 1 foo: 2 3
 # foo: 1
 # 1 2 3 4
+# 1 2
+# x: 3
 # END
