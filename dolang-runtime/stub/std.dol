@@ -286,7 +286,7 @@ pub @let Phantom[S] = ...
 # [`(index)`](../../language/classes.md#index-and-assign-subscript-access)
 # protocol for the keys in `S`. A key's presence is not checked, only that the
 # value has such a key.
-pub @class Index[S @ {}]
+pub @class Index[S @ {...}]
   field schema @Phantom[S]
 
   # Returns the value at `key`.
@@ -296,7 +296,7 @@ pub @class Index[S @ {}]
 # A value that implements the
 # [`(assign)`](../../language/classes.md#index-and-assign-subscript-access)
 # protocol for the keys in `S`, which it need not already have.
-pub @class Assign[S @ {}]
+pub @class Assign[S @ {...}]
   field schema @Phantom[S]
 
   # Sets the value at `key`.
@@ -306,7 +306,7 @@ pub @class Assign[S @ {}]
 # A value that implements the
 # [`(spread)`](../../language/classes.md#spread-spreading) protocol, spreading
 # as the items in `S`.
-pub @class Spread[S @ {}]
+pub @class Spread[S @ {...}]
   # Returns a value to spread in place of this one.
   pub def (spread) self -> Spread[S]
 
@@ -314,7 +314,7 @@ pub @class Spread[S @ {}]
 # A value that implements the
 # [`(unpack)`](../../language/classes.md#unpack-destructuring) protocol,
 # destructuring as the items in `S`.
-pub @class Unpack[S @ {}]
+pub @class Unpack[S @ {...}]
   # Returns a value to destructure in place of this one.
   pub def (unpack) self -> Unpack[S]
 
