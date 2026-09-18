@@ -229,12 +229,17 @@ let WINDOWS_FORBIDDEN_IMPORTS = $
   - "api-ms-win-crt-"
 
 def verify_windows_crt spec name
-  let bin = spec.bin(name)
+  let bin = spec.bin $name
   let contents = bin.read "b"
   for needle = WINDOWS_FORBIDDEN_IMPORTS
     if contents.contains(Bin needle)
       throw std.RuntimeError "$bin imports $needle: crt-static did not take effect"
-  echo "verified: $(bin.name) links the CRT statically"
+
+def verify_macos_interpose spec
+  let bin = spec.bin dolang
+  let load_commands = sub do run otool -lv $bin
+  if !(load_commands.contains "__interpose")
+    throw std.RuntimeError "__DATA,__interpose section missing from $bin"
 
 def install_bin_symlink spec bin_dir from to
   bin_dir = bin_dir.absolute()
@@ -501,6 +506,7 @@ return $
       let spec = Spec $args profile: dist
       let is_linux = spec.tuple.ends_with "-linux-gnu"
       let is_windows = spec.tuple.ends_with "-pc-windows-msvc"
+      let is_mac = spec.tuple.ends_with "-darwin"
       let vfs_spec = if is_linux
         Spec $args
           profile: dist
@@ -538,6 +544,9 @@ return $
         verify_windows_crt $spec dolang-lsp
         verify_windows_crt $vfs_spec dolang-vfs
 
+      if is_mac
+        verify_macos_interpose $spec
+
       let bin_dir = (args.prefix / "bin")
 
       let context = if can_write_dir $bin_dir
@@ -553,18 +562,6 @@ return $
           install_bin_symlink $spec $bin_dir dolang dodo
           install_bin_symlink $spec $bin_dir dolang dolang-test
         install_bin $vfs_spec $bin_dir dolang-vfs
-
-  "verify-macos-interpose":
-    help: check that the macOS posix_spawn interpose section survived linking
-    - opt: bin
-      help: path to the built dolang binary to inspect
-      default: nil
-    do |args|
-      let bin = (args.bin || "release/bin/dolang")
-      echo "checking $bin for __DATA,__interpose survival"
-      let load_commands = sub do run otool -lv $bin
-      if !(load_commands.contains "__interpose")
-        throw std.RuntimeError "__DATA,__interpose section missing from $bin -- posix_spawn guard was stripped"
 
   publish:
     help: publish workspace crates
