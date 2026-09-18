@@ -58,9 +58,9 @@
 #     term.Console.(init) $self
 #     self.lines = []
 #
-#   pub def write self ...data
+#   pub def write self *data
 #     let line = ""
-#     for piece = data.pos_only()
+#     for piece = data
 #       line = "$line$piece"
 #     self.lines.push $line
 #     line.len
@@ -166,7 +166,7 @@ pub class Console
   pub def write
     self
     # Pieces to write, in order.
-    ...data @ (Str | Bin)
+    *data @ (Str | Bin)
   do -> Int
     ...
 

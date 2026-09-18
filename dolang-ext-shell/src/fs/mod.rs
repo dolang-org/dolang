@@ -1,5 +1,5 @@
 use dolang::runtime::{
-    AllocExt, Arg, Error, Output, Result, Slot, State, Strand, call,
+    AllocExt, Error, Output, Result, Slot, State, Strand, call,
     object::FlagsTypeExt,
     strand::InterruptMask,
     unpack,
@@ -1033,7 +1033,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
         })
         .function("remove", async move |strand, args, _out| {
             let ([], [all, ignore], paths) =
-                unpack!(strand, args, 0, 0, all = None, ignore = None, ...)?;
+                unpack!(strand, args, 0, 0, all = None, ignore = None, *)?;
             let all = match all {
                 Some(v) => v
                     .as_bool(strand)
@@ -1047,13 +1047,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
                 None => false,
             };
             for path in paths {
-                match path {
-                    Arg::Pos(path) => {
-                        let path = path_from_value(strand, &path)?;
-                        remove(strand, global, path.to_path(), all, ignore).await?;
-                    }
-                    Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
-                }
+                let path = path_from_value(strand, &path)?;
+                remove(strand, global, path.to_path(), all, ignore).await?;
             }
             Ok(())
         })
@@ -1281,7 +1276,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
                 direct_access = None,
                 extent_format = None,
                 opaque = None,
-                ...
+                *
             )?;
             let attrs = attrs_patch(
                 strand,
@@ -1325,13 +1320,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             )?;
             let mut requested_paths = Vec::new();
             for path in paths {
-                match path {
-                    Arg::Pos(path) => {
-                        let path = path_from_value(strand, &path)?;
-                        requested_paths.push(path);
-                    }
-                    Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
-                }
+                requested_paths.push(path_from_value(strand, &path)?);
             }
             if requested_paths.is_empty() {
                 return Err(Error::missing_positional(strand, 0));
@@ -1469,7 +1458,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
         })
         .function("remove_dir", async move |strand, args, _out| {
             let ([], [all, ignore], paths) =
-                unpack!(strand, args, 0, 0, all = None, ignore = None, ...)?;
+                unpack!(strand, args, 0, 0, all = None, ignore = None, *)?;
             let all = match all {
                 Some(v) => v
                     .as_bool(strand)
@@ -1483,13 +1472,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
                 None => false,
             };
             for path in paths {
-                match path {
-                    Arg::Pos(path) => {
-                        let path = path_from_value(strand, &path)?;
-                        remove_dir(strand, global, path.to_path(), all, ignore).await?;
-                    }
-                    Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
-                }
+                let path = path_from_value(strand, &path)?;
+                remove_dir(strand, global, path.to_path(), all, ignore).await?;
             }
             Ok(())
         });

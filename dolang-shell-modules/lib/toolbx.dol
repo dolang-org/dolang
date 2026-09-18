@@ -48,9 +48,9 @@ pub def run
   :name = nil
   :cd = nil
   :env = {}
-  ...args
+  *args
 do
-  run_command :name :cd :env $cmd ...args.pos_only()
+  run_command :name :cd :env $cmd ...args
 
 # Run a function inside a toolbox container.
 #

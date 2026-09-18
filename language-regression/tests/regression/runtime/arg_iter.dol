@@ -1,26 +1,25 @@
 import std:
-  - Iter
   - UnexpectedKeyError
 
 def collect_pos ...args
-  let pos = args.pos_only()
-  assert (type pos Iter)
+  let *pos = args
+  assert (type pos Tuple)
   [...pos]
 
 def unpack_pos ...args
-  let a b ...rest = args.pos_only()
+  let a b *rest = args
   [a, b, [...rest]]
 
 def spread_pos ...args
-  let pos = args.pos_only()
+  let *pos = args
   collect_pos ...pos
 
 def split_args ...args
-  let pos keyed = args.pos_keys()
+  let *pos **keyed = args
   [[...pos], [...keyed], [...args]]
 
 def consume_after_pos ...args
-  let pos = args.pos_only()
+  let *pos = args
   [[...pos], [...args]]
 
 def iter_twice ...args

@@ -126,8 +126,6 @@ well_known_symbols! {
     (Sink, "sink", SINK),
     (Pack, "pack", PACK),
     (Pairs, "pairs", PAIRS),
-    (PosOnly, "pos_only", POS_ONLY),
-    (PosKeys, "pos_keys", POS_KEYS),
     (Pop, "pop", POP),
     (Premap, "premap", PREMAP),
     (Prefilter, "prefilter", PREFILTER),

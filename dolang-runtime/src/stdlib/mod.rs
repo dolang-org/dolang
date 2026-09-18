@@ -1,7 +1,6 @@
 use std::hash::{DefaultHasher, Hasher};
 
 use crate::{
-    arg::Arg,
     error::Error,
     object::{array::Array, class, dict::Dict, float, int, record::Record, tuple},
     unpack,
@@ -233,15 +232,12 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             Ok(())
         })
         .function("hash", async move |strand, args, out| {
+            let ([], [], values) = unpack!(strand, args, 0, 0, *)?;
             let mut hasher = DefaultHasher::new();
-            for (i, arg) in args.enumerate() {
+            for (i, slot) in values.enumerate() {
                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                     strand.check_trap()?;
                 }
-                let slot = match arg {
-                    Arg::Pos(s) => s,
-                    Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
-                };
                 slot.op_hash(strand, &mut hasher)?;
             }
             Output::set(strand, out, hasher.finish());

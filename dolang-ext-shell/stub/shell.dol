@@ -402,7 +402,7 @@ pub def exec
   # Program to execute.
   program @ (Str | Path)
   # Program arguments.
-  ...args @ Value
+  *args @ Value
 do
   ...
 

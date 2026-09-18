@@ -97,10 +97,10 @@ pub def tagged[T]
   # The parametrize value.
   value @ T
   # Tags to attach.
-  ...values @ Str
+  *values @ Str
 do -> Tagged[T]
   let tag_values = []
-  for tag = values.pos_only()
+  for tag = values
     if !(type tag Str)
       throw std.TypeError "tagged: expected strings"
     tag_values.push $tag
@@ -463,10 +463,10 @@ do
 # ```
 pub def tags
   # Tag to add.
-  ...values @ Str
+  *values @ Str
 do
   let tag_values = []
-  for tag = values.pos_only()
+  for tag = values
     if !(type tag Str)
       throw std.TypeError "test tags: expected strings"
     tag_values.push $tag
@@ -671,9 +671,9 @@ pub def run
   # Capture output and show it for failures.
   :capture @ Bool = true
   # Test file or directory.
-  ...paths @ (Str | Path)
+  *paths @ (Str | Path)
 do -> Int
-  let paths = [...paths.pos_only()]
+  let paths = [...paths]
   let harness = Harness :jobs :module_jobs :filter :timeout :capture
   let files = []
   for path = paths

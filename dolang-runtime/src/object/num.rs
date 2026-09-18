@@ -1,7 +1,7 @@
 use std::ops::ControlFlow;
 
 use crate::{
-    arg::{Arg, Args},
+    arg::Args,
     error::{Error, Result},
     gc::{Collect, arena::Visit},
     object::{
@@ -98,19 +98,13 @@ pub(crate) fn float_get<'v, 'a, 's>(
 
 async fn extrema<'v, 'a, 's>(
     strand: &mut Strand<'v, 's>,
-    mut args: Args<'v, 'a>,
+    args: Args<'v, 'a>,
     mut out: Slot<'v, 'a>,
     is_min: bool,
 ) -> Result<'v, 's, ()> {
-    let Some(Arg::Pos(mut first)) = args.next() else {
-        return Err(Error::missing_positional(strand, 0));
-    };
+    let ([mut first], [], rest) = unpack!(strand, args, 1, 0, *)?;
     out.store(first.take());
-    for arg in args {
-        let mut value = match arg {
-            Arg::Pos(value) => value,
-            Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
-        };
+    for mut value in rest {
         let replace = if is_min {
             value.op_lt(strand, &out)?.to_bool(strand)
         } else {

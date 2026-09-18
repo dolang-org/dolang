@@ -67,9 +67,9 @@ def greeting() -> Str
 
 def build
   :tag @ Str
-  ...args @ Str
+  *args @ Str
 do -> Array[Str]
-  [tag, ...args.pos_only()]
+  [tag, ...args]
 ```
 
 A `do` block's return type follows its parameters:

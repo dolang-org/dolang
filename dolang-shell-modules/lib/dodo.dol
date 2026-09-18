@@ -57,7 +57,7 @@ def highlight_arg arg
 # Runs the external command `cmd`, first printing a highlighted
 # message showing the command to the terminal
 pub def show ...cmd
-  let prog ...args = cmd.pos_only()
+  let prog *args ** = cmd
   print
     (highlight_prog prog)
     for arg = args
@@ -68,8 +68,8 @@ pub def show ...cmd
 # Runs a dodo task from `dodo.dol` in the current directory,
 # equivalnent to running `dolang -m dodo ...argv`, but correctly
 # handles re-entrancy.
-pub def run ...argv
-  args.with args: $argv.pos_only()
+pub def run *argv
+  args.with args: $argv
     help: run tasks
     - flag: list
       help: list tasks

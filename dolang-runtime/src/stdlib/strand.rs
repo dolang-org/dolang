@@ -955,13 +955,8 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             },
         )
         .function("fork", async move |strand, args, mut out| {
-            let mut thunks = Vec::new();
-            for arg in args {
-                match arg {
-                    Arg::Pos(thunk) => thunks.push(thunk),
-                    Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
-                }
-            }
+            let ([], [], thunks) = unpack!(strand, args, 0, 0, *)?;
+            let thunks: Vec<_> = thunks.collect();
 
             let count = thunks.len();
             // We must avoid being dropped until we've awaited all strands we create

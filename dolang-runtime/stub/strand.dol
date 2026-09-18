@@ -245,7 +245,7 @@ do
 # Runs blocks concurrently and returns their results in block order.
 pub def fork[...Rs]
   # functions to execute concurrently
-  ...blocks @ ...(() -> Rs)
+  *blocks @ ...(() -> Rs)
 do -> Tuple[...Rs]
   ...
 

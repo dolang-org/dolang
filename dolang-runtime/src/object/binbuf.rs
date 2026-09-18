@@ -6,7 +6,7 @@ use std::{
 use crate::value::fmt::Format;
 
 use crate::{
-    arg::{Arg, Args},
+    arg::Args,
     error::{Error, Result},
     gc::{Collect, arena::Visit},
     object::protocol::members,
@@ -338,21 +338,15 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                 borrow.append(strand, &value)
             }
             sym::PUSH => {
+                let ([], [], values) = unpack!(strand, args, 0, 0, *)?;
                 let mut borrow = this.borrow_mut(strand)?;
-                for arg in args {
-                    match arg {
-                        Arg::Pos(value) => {
-                            let byte = value
-                                .to_i64(strand)
-                                .ok()
-                                .and_then(|v| u8::try_from(v).ok())
-                                .ok_or_else(|| {
-                                    Error::type_error(strand, "expected byte value 0..=255")
-                                })?;
-                            borrow.extend_raw(strand, &[byte]);
-                        }
-                        Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
-                    }
+                for value in values {
+                    let byte = value
+                        .to_i64(strand)
+                        .ok()
+                        .and_then(|v| u8::try_from(v).ok())
+                        .ok_or_else(|| Error::type_error(strand, "expected byte value 0..=255"))?;
+                    borrow.extend_raw(strand, &[byte]);
                 }
                 Ok(())
             }

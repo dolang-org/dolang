@@ -610,8 +610,8 @@ def do_subclass_console()
       term.Console.(init) $self
       self.lines = []
 
-    pub def write self ...data
-      let pieces = [...data.pos_only()]
+    pub def write self *data
+      let pieces = [...data]
       self.lines.push $pieces
       let written = 0
       for piece = pieces
@@ -656,9 +656,9 @@ def do_console_declares_capabilities()
       term.Console.(init) $self
       self.lines = []
 
-    pub def write self ...data
+    pub def write self *data
       let line = ""
-      for piece = [...data.pos_only()]
+      for piece = data
         line = "$line$piece"
       self.lines.push $line
       line.len
@@ -691,9 +691,9 @@ def do_console_chooses_its_terminator()
       term.Console.(init) $self
       self.lines = []
 
-    pub def write self ...data
+    pub def write self *data
       let line = ""
-      for piece = [...data.pos_only()]
+      for piece = data
         line = "$line$piece"
       self.lines.push $line
       line.len
@@ -718,8 +718,8 @@ def capture_reads_line_ending_once()
       term.Console.(init) $self
       self.lines = []
 
-    pub def write self ...data
-      self.lines.push [...data.pos_only()]
+    pub def write self *data
+      self.lines.push [...data]
       nil
 
     pub def flush _self
@@ -778,9 +778,9 @@ def reentrant_console_does_not_recurse()
           term.Console.(init) $self
           self.seen = []
 
-        pub def write self ...data
+        pub def write self *data
           let line = ""
-          for piece = [...data.pos_only()]
+          for piece = data
             line = "$line$piece"
           self.seen.push $line
           echo "loud: $line"

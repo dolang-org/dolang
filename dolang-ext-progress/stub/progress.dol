@@ -189,7 +189,7 @@ pub def steps
   # | ------ | -------------------- | ----------------------------------- |
   # | `name` | [`Str`](std.Str)     | Step name                           |
   # | `icon` | [`Str`](std.Str)     | Icon overriding the default         |
-  ...steps @ ((() -> Value) | Dict[{(() -> Value), ?name: Str, ?icon: Str}])
+  *steps @ ((() -> Value) | Dict[{(() -> Value), ?name: Str, ?icon: Str}])
 do -> Array
   ...
 

@@ -53,8 +53,8 @@ def id x
   x
 def key_id :key
   key
-def array_id ...args
-  [...args.pos_only()]
+def array_id *args
+  [...args]
 
 doc = id |-
   a doc

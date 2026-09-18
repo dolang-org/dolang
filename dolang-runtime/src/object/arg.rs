@@ -7,11 +7,10 @@ use crate::{
     bytecode::{Rest, Variadic},
     error::{Error, Result},
     gc::{Collect, arena::Visit},
-    object::{BoundMethod, iter, sym::SymObj},
+    object::{iter, sym::SymObj},
     sig,
     strand::Strand,
     sym::{self, Sym},
-    unpack,
     value::{Output, Slot, Slots, Value},
     vm::Vm,
 };
@@ -26,7 +25,6 @@ pub(crate) type ArgItem<'v> = (Option<GcObj<'v, SymObj>>, Value<'v>);
 
 pub(crate) struct ArgPack<'v> {
     inner: Vec<ArgItem<'v>>,
-    has_keys: bool,
 }
 
 pub(crate) struct ArgIter<'v> {
@@ -34,7 +32,6 @@ pub(crate) struct ArgIter<'v> {
     skip: HashSet<usize>,
     pos: usize,
     int: i64,
-    pos_only: bool,
 }
 
 struct Action {
@@ -53,8 +50,7 @@ struct UnpackPlan {
 
 impl<'v> ArgPack<'v> {
     pub(crate) fn new(inner: Vec<ArgItem<'v>>) -> Self {
-        let has_keys = inner.iter().any(|(key, _)| key.is_some());
-        Self { inner, has_keys }
+        Self { inner }
     }
 
     pub(crate) fn from_args(vm: &Vm<'v>, args: Args<'v, '_>) -> Self {
@@ -75,14 +71,12 @@ impl<'v> ArgIter<'v> {
         skip: HashSet<usize>,
         pos: usize,
         int: i64,
-        positional_only: bool,
     ) -> Self {
         Self {
             pack,
             skip,
             pos,
             int,
-            pos_only: positional_only,
         }
     }
 }
@@ -253,46 +247,6 @@ fn fill_unpack_defaults<'v, 'a>(
     }
 }
 
-fn first_visible_key<'v>(
-    items: &[ArgItem<'v>],
-    skip: &HashSet<usize>,
-    start: usize,
-) -> Option<Sym<'v, 'static>> {
-    for (idx, (key, _)) in items.iter().enumerate().skip(start) {
-        if skip.contains(&idx) {
-            continue;
-        }
-        if let Some(sym) = key {
-            return Some(unsafe { Sym::from_tag(sym.tag) });
-        }
-    }
-    None
-}
-
-fn split_skip_sets<'v>(
-    items: &[ArgItem<'v>],
-    skip: &HashSet<usize>,
-    start: usize,
-) -> (HashSet<usize>, HashSet<usize>) {
-    let mut pos_skip = skip.clone();
-    let mut key_skip = skip.clone();
-    for index in 0..start {
-        pos_skip.insert(index);
-        key_skip.insert(index);
-    }
-    for (index, (key, _)) in items.iter().enumerate().skip(start) {
-        if skip.contains(&index) {
-            continue;
-        }
-        if key.is_some() {
-            pos_skip.insert(index);
-        } else {
-            key_skip.insert(index);
-        }
-    }
-    (pos_skip, key_skip)
-}
-
 unsafe impl<'v> Collect for ArgPack<'v> {
     const CYCLIC: bool = true;
     const IMMUTABLE: bool = false;
@@ -351,7 +305,7 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
     ) -> Result<'v, 's, ()> {
         strand.builtin_types().arg_iter.create(
             strand,
-            ArgIter::new(this.to_strong(), HashSet::new(), 0, 0, false),
+            ArgIter::new(this.to_strong(), HashSet::new(), 0, 0),
             out,
         );
         Ok(())
@@ -385,7 +339,7 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
                 i64::try_from(plan.pos_matched).map_err(|_| Error::overflow(strand))?;
             strand.builtin_types().arg_iter.create(
                 strand,
-                ArgIter::new(this.to_strong(), skip, pos, positional_matched, false),
+                ArgIter::new(this.to_strong(), skip, pos, positional_matched),
                 out.at(sig.len() - 1),
             );
         }
@@ -443,10 +397,6 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
                 Output::set(strand, out, len);
                 Ok(())
             }
-            sym::POS_ONLY | sym::POS_KEYS => {
-                BoundMethod::create(strand, &this, field, out);
-                Ok(())
-            }
             _ => iter::iterable_get(strand, &this, field, out),
         }
     }
@@ -456,7 +406,7 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::PUSH => {
@@ -465,53 +415,10 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
                     match arg {
                         Arg::Pos(mut value) => pack.inner.push((None, value.take())),
                         Arg::Key(key, mut value) => {
-                            pack.has_keys = true;
                             pack.inner.push((Some(strand.sym_obj(key)), value.take()));
                         }
                     }
                 }
-                Ok(())
-            }
-            sym::POS_ONLY => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
-                let pack = this.borrow(strand)?;
-                if pack.has_keys {
-                    return Err(Error::unexpected_key(
-                        strand,
-                        first_visible_key(&pack.inner, &HashSet::new(), 0)
-                            .expect("has_keys implies a key"),
-                    ));
-                }
-                strand.builtin_types().arg_iter.create(
-                    strand,
-                    ArgIter::new(this.to_strong(), HashSet::new(), 0, 0, true),
-                    out,
-                );
-                Ok(())
-            }
-            sym::POS_KEYS => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
-                let pack = this.borrow(strand)?;
-                let (pos_skip, key_skip) = split_skip_sets(&pack.inner, &HashSet::new(), 0);
-                let pos_pos =
-                    first_visible_index(&pack.inner, &pos_skip, 0).unwrap_or(pack.inner.len());
-                let key_pos =
-                    first_visible_index(&pack.inner, &key_skip, 0).unwrap_or(pack.inner.len());
-                out.store(Value::from_object(tuple::tuple(
-                    strand,
-                    [
-                        Value::from_object(GcObj::new(
-                            strand.arena(),
-                            strand.builtin_types().arg_iter,
-                            ArgIter::new(this.to_strong(), pos_skip, pos_pos, 0, true),
-                        )),
-                        Value::from_object(GcObj::new(
-                            strand.arena(),
-                            strand.builtin_types().arg_iter,
-                            ArgIter::new(this.to_strong(), key_skip, key_pos, 0, false),
-                        )),
-                    ],
-                )));
                 Ok(())
             }
             _ => iter::iterable_mcall(strand, &this, method, args, out).await,
@@ -609,15 +516,6 @@ impl<'v> Protocol<'v> for ArgIter<'v> {
         drop(pack);
         if let Some((index, key, value)) = item {
             iter.pos = index + 1;
-            if iter.pos_only {
-                debug_assert!(
-                    key.is_none(),
-                    "positional-only iterators skip keyed entries"
-                );
-                out.store(value);
-                return Ok(true);
-            }
-
             let key = match key {
                 None => {
                     let key = Value::from_i64(strand, iter.int);
@@ -653,7 +551,7 @@ impl<'v> Protocol<'v> for ArgIter<'v> {
             let Some((index, key, value)) = item else {
                 break;
             };
-            if context == SpreadContext::Sequence && !iter.pos_only {
+            if context == SpreadContext::Sequence {
                 if let Some(key) = key {
                     let mut value =
                         Value::from_object(tuple::tuple(strand, [Value::from_object(key), value]));
@@ -699,10 +597,6 @@ impl<'v> Protocol<'v> for ArgIter<'v> {
                 Output::set(strand, out, len);
                 Ok(())
             }
-            sym::POS_ONLY | sym::POS_KEYS => {
-                BoundMethod::create(strand, &this, field, out);
-                Ok(())
-            }
             _ => iter::iter_get(strand, &this, field, out),
         }
     }
@@ -712,62 +606,8 @@ impl<'v> Protocol<'v> for ArgIter<'v> {
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        match method.tag() {
-            sym::POS_ONLY => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
-                let iter = this.borrow(strand)?;
-                let pack = iter
-                    .pack
-                    .borrow()
-                    .ok_or_else(|| Error::concurrency(strand))?;
-                if let Some(sym) = first_visible_key(&pack.inner, &iter.skip, iter.pos) {
-                    return Err(Error::unexpected_key(strand, sym));
-                }
-                let mut skip = iter.skip.clone();
-                for index in 0..iter.pos {
-                    skip.insert(index);
-                }
-                let pos =
-                    first_visible_index(&pack.inner, &skip, iter.pos).unwrap_or(pack.inner.len());
-                strand.builtin_types().arg_iter.create(
-                    strand,
-                    ArgIter::new(iter.pack.clone(), skip, pos, 0, true),
-                    out,
-                );
-                Ok(())
-            }
-            sym::POS_KEYS => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
-                let iter = this.borrow(strand)?;
-                let pack = iter
-                    .pack
-                    .borrow()
-                    .ok_or_else(|| Error::concurrency(strand))?;
-                let (pos_skip, key_skip) = split_skip_sets(&pack.inner, &iter.skip, iter.pos);
-                let pos_pos = first_visible_index(&pack.inner, &pos_skip, iter.pos)
-                    .unwrap_or(pack.inner.len());
-                let key_pos = first_visible_index(&pack.inner, &key_skip, iter.pos)
-                    .unwrap_or(pack.inner.len());
-                out.store(Value::from_object(tuple::tuple(
-                    strand,
-                    [
-                        Value::from_object(GcObj::new(
-                            strand.arena(),
-                            strand.builtin_types().arg_iter,
-                            ArgIter::new(iter.pack.clone(), pos_skip, pos_pos, 0, true),
-                        )),
-                        Value::from_object(GcObj::new(
-                            strand.arena(),
-                            strand.builtin_types().arg_iter,
-                            ArgIter::new(iter.pack.clone(), key_skip, key_pos, 0, false),
-                        )),
-                    ],
-                )));
-                Ok(())
-            }
-            _ => iter::iter_mcall(strand, &this, method, args, out).await,
-        }
+        iter::iter_mcall(strand, &this, method, args, out).await
     }
 }

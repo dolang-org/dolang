@@ -73,9 +73,9 @@ pub def run
   # Environment requested via sudo policy.
   :env @ Dict = {}
   # Arguments passed verbatim to `cmd`.
-  ...args
+  *args
 do -> nil
-  run_command $cmd :user :cd :env ...args.pos_only()
+  run_command $cmd :user :cd :env ...args
 
 # Runs a block with elevated privileges through `sudo`.
 #

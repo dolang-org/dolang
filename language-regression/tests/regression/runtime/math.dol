@@ -4,6 +4,7 @@ import std:
   - MissingPosError
   - OverflowError
   - TypeError
+  - UnexpectedKeyError
 
 assert_eq $math.PI 3.141592653589793
 assert_eq $math.TAU (2.0 * math.PI)
@@ -59,3 +60,11 @@ assert_throws $TypeError do math.sqrt true
 assert_throws $TypeError do math.gcd 1.0
 assert_throws $OverflowError do math.gcd -170141183460469231731687303715884105728
 assert_throws $OverflowError do math.lcm -170141183460469231731687303715884105728
+assert_throws $UnexpectedKeyError do math.gcd 4 x: 2
+assert_throws $UnexpectedKeyError do math.hypot 3 x: 1 4
+
+# Leftover positionals follow the required ones
+assert_eq (3.min 5 1 4) 1
+assert_eq (3.max 5 1 4) 5
+assert_throws $UnexpectedKeyError do 3.min 5 x: 1
+assert_throws $UnexpectedKeyError do std.hash 1 x: 2

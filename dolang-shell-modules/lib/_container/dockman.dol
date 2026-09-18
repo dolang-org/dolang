@@ -808,11 +808,11 @@ pub class Runtime
     :networks = []
     :user = nil
     :entrypoint = nil
-    ...args
+    *args
   do
     self.#run_direct $ctr $cmd
       :cd :env :pull :name :mounts :labels :ports :networks :user :entrypoint
-      argv: $args.pos_only()
+      argv: $args
 
   pub def create
     self image cmd = nil
@@ -827,7 +827,7 @@ pub class Runtime
     :entrypoint = nil
     :restart = nil
     :pull = :MISSING:
-    ...args
+    *args
   do
     ensure_image $self $image $pull
     let config_args = container_create_args
@@ -838,7 +838,7 @@ pub class Runtime
         ...config_args
         $image
         if (cmd != nil)
-          $cmd ...args.pos_only()
+          $cmd ...args
         stderr: $lines.prechomp()
     catch proc.Error: e
       classify_image_error $image $lines
@@ -884,7 +884,7 @@ pub class Runtime
     let data = inspect_container $self $ref
     Container $self $data
 
-  pub def save self target :format = :DOCKER_ARCHIVE: :platform = nil ...images
+  pub def save self target :format = :DOCKER_ARCHIVE: :platform = nil *images
     if (images.len == 0)
       throw "save: expected at least one image"
     let spec = normalize_save_format $self $format
@@ -895,7 +895,7 @@ pub class Runtime
     else
       Path $target
     let platform = normalize_platform $platform
-    let refs = [...images.pos_only()]
+    let refs = [...images]
     let lines = []
     try
       self.cli save
