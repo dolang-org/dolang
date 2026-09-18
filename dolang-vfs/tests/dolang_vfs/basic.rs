@@ -1064,6 +1064,33 @@ async fn glob_local_max_depth() {
 }
 
 #[tokio::test]
+async fn glob_local_bounded_by_pattern_depth() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // Root can read the directory regardless of its mode
+    if geteuid().is_root() {
+        return;
+    }
+
+    let direct = Vfs::direct().unwrap();
+    let dir = tempdir().unwrap();
+
+    // A directory the walk fails on if it descends past the pattern's depth
+    let sealed = dir.path().join("level1").join("sealed");
+    std::fs::create_dir_all(&sealed).unwrap();
+    std::fs::write(dir.path().join("root.txt"), "root").unwrap();
+    std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    let result = direct.glob("*", typed(dir.path()), false, None).await;
+    std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let paths = result.unwrap();
+    assert_eq!(paths.len(), 2);
+    assert!(paths.iter().any(|p| p.file_name().unwrap() == "level1"));
+    assert!(paths.iter().any(|p| p.file_name().unwrap() == "root.txt"));
+}
+
+#[tokio::test]
 async fn glob_local_no_matches() {
     let direct = Vfs::direct().unwrap();
     let dir = tempdir().unwrap();

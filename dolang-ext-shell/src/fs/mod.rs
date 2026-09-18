@@ -8,6 +8,7 @@ use dolang::runtime::{
 };
 use dolang_vfs::path as vfs_path;
 use dolang_vfs::{
+    error::ErrorKind as VfsErrorKind,
     metadata::{AttrFlags, FileType, Mode as VfsMode},
     path::WellKnownPath,
     security::{Acl as VfsAnyAcl, AclKind as VfsAclKind},
@@ -434,7 +435,16 @@ async fn exists<'v, 's>(
         out,
         match res {
             Ok(()) => true,
-            Err(e) if e.kind() == ErrorKind::NotFound => false,
+            // A path through a file fails with `ENOTDIR`, or on Windows
+            // either `ERROR_PATH_NOT_FOUND` or `ERROR_DIRECTORY`
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    VfsErrorKind::NotFound | VfsErrorKind::NotADirectory
+                ) =>
+            {
+                false
+            }
             Err(e) => return Err(e.into_sys(strand)),
         },
     );
