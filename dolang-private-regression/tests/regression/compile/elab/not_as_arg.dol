@@ -1,0 +1,87 @@
+let f = false
+let p = [1]
+echo !$f
+# warning: literal string where logical negation may be intended
+#   --> not_as_arg.dol:LL:LL
+#    |
+# LL | echo !$f
+#    |      -^^
+#    |      |
+#    |      this token is a literal string
+#    |
+# help: place `!` after `$`
+#    |
+# LL - echo !$f
+# LL + echo $!f
+#    |
+echo !$p.len
+# warning: literal string where logical negation may be intended
+#   --> not_as_arg.dol:LL:LL
+#    |
+# LL | echo !$p.len
+#    |      -^^^^^^
+#    |      |
+#    |      this token is a literal string
+#    |
+# help: place `!` after `$`
+#    |
+# LL - echo !$p.len
+# LL + echo $!p.len
+#    |
+echo !(f)
+# warning: literal string where logical negation may be intended
+#   --> not_as_arg.dol:LL:LL
+#    |
+# LL | echo !(f)
+#    |      -^^^
+#    |      |
+#    |      this token is a literal string
+#    |
+# help: wrap entire expression in parentheses
+#    |
+# LL - echo !(f)
+# LL + echo (!(f))
+#    |
+echo key: !$f
+# warning: literal string where logical negation may be intended
+#   --> not_as_arg.dol:LL:LL
+#    |
+# LL | echo key: !$f
+#    |           -^^
+#    |           |
+#    |           this token is a literal string
+#    |
+# help: place `!` after `$`
+#    |
+# LL - echo key: !$f
+# LL + echo key: $!f
+#    |
+echo !"quoted"
+# warning: literal string where logical negation may be intended
+#   --> not_as_arg.dol:LL:LL
+#    |
+# LL | echo !"quoted"
+#    |      -^^^^^^^^
+#    |      |
+#    |      this token is a literal string
+#    |
+# help: wrap entire expression in parentheses
+#    |
+# LL - echo !"quoted"
+# LL + echo (!"quoted")
+#    |
+echo !(p f)
+# warning: literal string where logical negation may be intended
+#   --> not_as_arg.dol:LL:LL
+#    |
+# LL | echo !(p f)
+#    |      -^^
+#    |      |
+#    |      this token is a literal string
+
+# Not warned: logical negation, quoted or plain literals, and `!` mid-argument
+echo $!f
+echo (!f)
+echo "!$f"
+echo !important
+echo prefix!$f
