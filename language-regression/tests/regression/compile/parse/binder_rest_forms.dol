@@ -1,0 +1,20 @@
+# Type declarations leave the arrangement of their rests and optional items to
+# the type checker: binders, function types, and overloads have no ordering
+# constraints of their own
+
+class _Mixed[...R, *P, **K, T, *Q, :K2 = Int, U]
+
+class _Split[*P, **K]
+
+let _func @ ((?Int, Str, *Bool, Int, **Str, ...Str) -> nil) = nil
+
+@def _pipe[*Rs, R] *_thunks@...(() -> Rs) _last@(() -> R) -> R
+@def _pipe
+  - _first = 1
+  - _second
+  **_kw
+  *_more
+  ...
+do -> nil
+def _pipe *thunks
+  thunks

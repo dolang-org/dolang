@@ -632,7 +632,8 @@ let double = (do |x @ Int| -> Int x * 2)
 ```
 
 `[]` directly after a `def` or `class` name declares binders (names standing for
-types; also `:K`, and trailing `...R` or `*R`/`**R` as for rest parameters).
+types; also `:K`, and `...R` or `*R`/`**R` as for rest parameters, in any
+number and order).
 Binders may have type-expression bounds and defaults (`T @ Bound = Default`); a
 schema bound such as `S @ {...}` marks a schema binder. Type arguments expand a
 pack only with `...`, whatever its binder: `class Tuple[*Ts]` is used as

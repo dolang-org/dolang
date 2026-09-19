@@ -31,7 +31,7 @@ pub @let PullPolicy = (:MISSING: | :ALWAYS: | :NEVER:)
 
 # Environment variables to set. A value of `:INHERIT:` copies the variable from
 # the calling environment; any other value is converted to a string.
-pub @let Env = Dict[(Str | Sym), Value]
+pub @let Env = Dict[Str | Sym, Value]
 
 # A mount for a container.
 #
@@ -42,8 +42,8 @@ pub @let Env = Dict[(Str | Sym), Value]
 # | `source`   | Host path or volume name. Required for `:BIND:` |
 # | `readonly` | Mount read-only. Defaults to `false`            |
 pub @let ContainerMount = Dict[{
-  type: (:BIND: | :VOLUME: | :TMPFS:), target: (Str | Path),
-  ?source: (Str | Path), ?readonly: Bool,
+  type: :BIND: | :VOLUME: | :TMPFS:, target: Str | Path,
+  ?source: Str | Path, ?readonly: Bool,
 }]
 
 # A mount available to every build step.
@@ -56,8 +56,8 @@ pub @let ContainerMount = Dict[{
 # | `id`       | Cache ID. Defaults to `target`                  |
 # | `readonly` | Mount read-only. Defaults to `false`            |
 pub @let BuildMount = Dict[{
-  type: (:CACHE: | :BIND: | :VOLUME: | :TMPFS:), target: (Str | Path),
-  ?source: (Str | Path), ?id: Str, ?readonly: Bool,
+  type: :CACHE: | :BIND: | :VOLUME: | :TMPFS:, target: Str | Path,
+  ?source: Str | Path, ?id: Str, ?readonly: Bool,
 }]
 
 # A network protocol for a published port.
@@ -72,7 +72,7 @@ pub @let PortProtocol = (:TCP: | :UDP: | :SCTP:)
 # | `host_ip`        | Host address to bind                            |
 # | `protocol`       | Protocol. Defaults to `:TCP:`                   |
 pub @let PortSpec = Dict[{
-  container_port: (Int | Str), ?host_port: (Int | Str), ?host_ip: Str,
+  container_port: Int | Str, ?host_port: Int | Str, ?host_ip: Str,
   ?protocol: PortProtocol,
 }]
 
@@ -87,7 +87,7 @@ pub @let PortSpec = Dict[{
 #
 # `max_retries` limits restarts, and applies only to `:ON_FAILURE:`.
 pub @let RestartSpec = Dict[{
-  policy: (:NO: | :ON_FAILURE: | :ALWAYS: | :UNLESS_STOPPED:),
+  policy: :NO: | :ON_FAILURE: | :ALWAYS: | :UNLESS_STOPPED:,
   ?max_retries: Int,
 }]
 
@@ -113,12 +113,12 @@ pub @let ArchiveFormat = (
 # content is always written to `target` itself. `chmod` sets the destination's
 # permissions.
 pub @let AddSpec = (
-  | Dict[{source: (Str | Path | Url), target: (Str | Path), ?chmod: (Int | Mode)}]
-  | Dict[{content: (Str | Bin), target: (Str | Path), ?chmod: (Int | Mode)}]
+  | Dict[{source: Str | Path | Url, target: Str | Path, ?chmod: Int | Mode}]
+  | Dict[{content: Str | Bin, target: Str | Path, ?chmod: Int | Mode}]
 )
 
 # A unified patch to apply in a build step, from a file or as direct content.
-pub @let PatchSpec = (Dict[{source: (Str | Path)}] | Dict[{content: (Str | Bin)}])
+pub @let PatchSpec = (Dict[{source: Str | Path}] | Dict[{content: Str | Bin}])
 
 # The lifecycle state of a container.
 pub @let ContainerStatus = (

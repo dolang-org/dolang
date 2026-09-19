@@ -384,7 +384,7 @@ class _TypeScope:
 # How tightly each type form binds, so that it is parenthesized where needed
 _BINDS_FUNC, _BINDS_UNION, _BINDS_COMPACT = range(3)
 
-# The sigil that declares each kind of parameter, binder, or type argument
+# The sigil that declares each kind of parameter or binder
 _SIGILS = {
     "pos": "",
     "key": ":",
@@ -429,7 +429,7 @@ def _render_type(ty: dict, scope: _TypeScope, context: int, plain: bool = False)
         rendered = f"{base}[{args}]" if plain else f"{base}\\[{args}\\]"
         binding = _BINDS_COMPACT
     elif kind == "schema":
-        rendered = f"{{{_render_type_args(ty['args'], scope, plain)}}}"
+        rendered = f"{{{_render_type_params(ty['params'], scope, plain)}}}"
         binding = _BINDS_COMPACT
     elif kind == "union":
         rendered = " | ".join(
@@ -437,7 +437,7 @@ def _render_type(ty: dict, scope: _TypeScope, context: int, plain: bool = False)
         )
         binding = _BINDS_UNION
     elif kind == "func":
-        params = _render_type_args(ty["params"], scope, plain)
+        params = _render_type_params(ty["params"], scope, plain)
         ret = _render_type(ty["ret"], scope, _BINDS_FUNC, plain)
         arrow = "->" if plain else "-&gt;"
         rendered = f"({params}) {arrow} {ret}"
@@ -450,24 +450,37 @@ def _render_type(ty: dict, scope: _TypeScope, context: int, plain: bool = False)
 def _render_type_args(args: list[dict], scope: _TypeScope, plain: bool = False) -> str:
     rendered = []
     for arg in args:
-        text = "?" if arg.get("optional") else ""
-        if arg.get("kind") in ("mixed_rest", "pos_rest", "key_rest"):
-            text += _SIGILS[arg["kind"]]
-        elif arg.get("kind") == "open_rest":
+        text = _render_type(arg["type"], scope, _BINDS_FUNC, plain)
+        if arg.get("kind") == "expand":
+            text = "..." + text
+        elif arg.get("kind") == "key":
+            name = arg.get("name", "")
+            text = f"{name if plain else _escape_type_text(name)}: {text}"
+        rendered.append(text)
+    return ", ".join(rendered)
+
+
+def _render_type_params(params: list[dict], scope: _TypeScope, plain: bool = False) -> str:
+    rendered = []
+    for param in params:
+        text = "?" if param.get("optional") else ""
+        if param.get("kind") in ("mixed_rest", "pos_rest", "key_rest"):
+            text += _SIGILS[param["kind"]]
+        elif param.get("kind") == "open_rest":
             rendered.append(text + "...")
             continue
-        elif arg.get("kind") == "entry_rest":
-            key = _render_type(arg["key_type"], scope, _BINDS_FUNC, plain)
+        elif param.get("kind") == "entry_rest":
+            key = _render_type(param["key_type"], scope, _BINDS_FUNC, plain)
             text += f"...{key}: "
-        elif arg.get("kind") == "key" and "key_type" in arg:
+        elif param.get("kind") == "key" and "key_type" in param:
             # A name must be parenthesized to not be taken as a symbol key
-            key_type = arg["key_type"]
+            key_type = param["key_type"]
             key = _render_type(key_type, scope, _BINDS_COMPACT, plain)
             text += f"({key}): " if key_type.get("kind") == "name" else f"{key}: "
-        elif arg.get("kind") == "key":
-            key = arg.get("key", "")
+        elif param.get("kind") == "key":
+            key = param.get("key", "")
             text += f"{key if plain else _escape_type_text(key)}: "
-        rendered.append(text + _render_type(arg["type"], scope, _BINDS_FUNC, plain))
+        rendered.append(text + _render_type(param["type"], scope, _BINDS_FUNC, plain))
     return ", ".join(rendered)
 
 

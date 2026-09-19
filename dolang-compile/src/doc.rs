@@ -196,13 +196,13 @@ pub(crate) enum TypeKind {
         args: alias::Box<[TypeArg]>,
     },
     Schema {
-        args: alias::Box<[TypeArg]>,
+        params: alias::Box<[TypeParam]>,
     },
     Union {
         members: alias::Box<[TypeExpr]>,
     },
     Func {
-        params: alias::Box<[TypeArg]>,
+        params: alias::Box<[TypeParam]>,
         ret: alias::Box<TypeExpr>,
     },
 }
@@ -216,18 +216,34 @@ pub(crate) enum TypeConst {
     Nil,
 }
 
-/// An item in `[]`, `()` or `{}` within a type
+/// A type argument in the `[]` of an application
 #[derive(Debug)]
 pub(crate) struct TypeArg {
-    /// The item without its trailing `,`
+    /// The argument without its trailing `,`
     pub(crate) span: Span,
-    pub(crate) optional: bool,
     pub(crate) kind: TypeArgKind,
-    pub(crate) ty: Option<TypeExpr>,
+    pub(crate) ty: TypeExpr,
 }
 
 #[derive(Debug)]
 pub(crate) enum TypeArgKind {
+    Pos,
+    Key { name: Span },
+    Expand,
+}
+
+/// An item a schema or a function type's parameters declare
+#[derive(Debug)]
+pub(crate) struct TypeParam {
+    /// The item without its trailing `,`
+    pub(crate) span: Span,
+    pub(crate) optional: bool,
+    pub(crate) kind: TypeParamKind,
+    pub(crate) ty: Option<TypeExpr>,
+}
+
+#[derive(Debug)]
+pub(crate) enum TypeParamKind {
     Pos,
     Key {
         /// The key as written, quotes and parentheses and all

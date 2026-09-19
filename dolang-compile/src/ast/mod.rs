@@ -6,7 +6,7 @@ pub(crate) mod visit;
 
 pub(crate) use self::ty::{
     Annot, Binder, BinderDefault, BinderKind, Binders, RetType, TypeArg, TypeArgKind, TypeDecl,
-    TypeExpr, TypeKey,
+    TypeExpr, TypeKey, TypeParam, TypeParamKind,
 };
 
 use std::{

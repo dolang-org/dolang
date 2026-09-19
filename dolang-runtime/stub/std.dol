@@ -172,7 +172,7 @@ pub def tuple[*Ts] *values@Ts -> Tuple[...Ts]
 # ```
 # assert_eq (type 42) $Int
 # ```
-pub def type value @ Value -> Type
+pub def type[T] value @ T -> Type[T]
   ...
 
 #
@@ -184,7 +184,7 @@ pub def type value @ Value -> Type
 # ```
 # assert (type 42 Int)
 # ```
-pub def type value@Value type@Type -> Bool
+pub def type[T] value@Value type@Type[T] -> Bool
   ...
 
 #
@@ -380,6 +380,37 @@ pub @class MutSeq[T]: AssignSeq[T]
   pub def clear self
 
 
+# A set of flags, each named by a symbol in `F`, such as
+# [`fs.unix.Mode`](fs.unix.Mode).
+#
+# Iterating a flag set yields symbols naming the flags it has set. Flag sets of
+# the same type are equal when the same flags are set, and combine with `|`,
+# `&`, `^`, and `~`.
+pub @class FlagSet[F]: Iterable[F]
+  # Constructs a flag set from symbols.
+  #[class]
+  pub def (call)[S] cls@Type[S] ...flags@F -> S
+
+  # Constructs a flag set from one iterable of symbols.
+  #[class]
+  pub def (call)[S] cls@Type[S] flags@Iterable[F] -> S
+
+  # Tests whether all flags named by `flag` are set.
+  pub def contains self flag @ F -> Bool
+
+  # Returns the flags set in either.
+  pub def (bor)[S] self@S other@S -> S
+
+  # Returns the flags set in both.
+  pub def (band)[S] self@S other@S -> S
+
+  # Returns the flags set in exactly one.
+  pub def (bxor)[S] self@S other@S -> S
+
+  # Returns the flags of the type that are not set.
+  pub def (bnot)[S] self @ S -> S
+
+
 #
 # Abstract type for iterable values, whose instances have the methods below.
 # Arrays, dicts, and ranges are `Iterable`; a [`Record`](std.Record), or a
@@ -407,7 +438,7 @@ pub class Iterable[T]: @BaseIterable[T] @Spread[T]
     ...
 
   # Returns an iterator with a line terminator appended to each item.
-  pub def crimp[U @ (Str | Bin)] self @ Iterable[U] terminator @ (Str | Bin) = nil -> Iter[U]
+  pub def crimp[U @ (Str | Bin)] self@Iterable[U] terminator@(Str | Bin) = nil -> Iter[U]
     ...
 
   # Returns an iterator of `[index, value]` tuples.
@@ -419,11 +450,11 @@ pub class Iterable[T]: @BaseIterable[T] @Spread[T]
     ...
 
   # Returns the first value for which `pred` is truthy.
-  pub def find[D = T] self pred @ (T -> Value) :default @ D = nil :else @ (() -> D) = nil -> (T | D)
+  pub def find[D = T] self pred@(T -> Value) :default@D = nil :else@(() -> D) = nil -> (T | D)
     ...
 
   # Accumulates a value left-to-right with `func`.
-  pub def fold[A] self init @ A func @ ((A, T) -> A) -> A
+  pub def fold[A] self init@A func@((A, T) -> A) -> A
     ...
 
   # Returns an iterator that maps each item through `func`.
@@ -470,7 +501,7 @@ pub class Sinkable[T]: @BaseSinkable[T]
     ...
 
   # Returns a sink that appends a line terminator to each value.
-  pub def precrimp[U @ (Str | Bin)] self @ Sinkable[U] terminator @ (Str | Bin) = nil -> Sink[U]
+  pub def precrimp[U @ (Str | Bin)] self@Sinkable[U] terminator@(Str | Bin) = nil -> Sink[U]
     ...
 
   # Returns a sink that writes only values for which `pred` is truthy.
@@ -537,7 +568,7 @@ pub class Sink[T]: Sinkable[T] @BaseSink[T]
   #   file.precrimp(shell.line_ending()).put "native"
   # ```
   #
-  pub def precrimp[U @ (Str | Bin)] self @ Sink[U] terminator @ (Str | Bin) = nil -> Sink[U]
+  pub def precrimp[U @ (Str | Bin)] self@Sink[U] terminator@(Str | Bin) = nil -> Sink[U]
     ...
 
   #
@@ -993,7 +1024,7 @@ pub class Bin: @Index[Range[Int], Bin]
   pub def join
     self
     # iterable to join; uses the default input when omitted
-    iter @ Iterable[(Str | Bin)] = nil
+    iter @ Iterable[Str | Bin] = nil
   do -> Bin
     ...
 
@@ -1818,7 +1849,7 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[T
   # If duplicate-key iteration is needed, use [`pairs`](#pairs) instead.
   #
   #
-  pub def keys self -> Iter
+  pub def keys self -> Iter[Value]
     ...
 
   #
@@ -1870,7 +1901,7 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[T
   # Missing keys return an empty iterator.
   #
   #
-  pub def values self key = nil -> Iter
+  pub def values self key = nil -> Iter[Value]
     ...
 
   #
@@ -1957,20 +1988,20 @@ pub class Num
   # Returns the smallest of this value and `others`.
   #
   # If a comparison is unordered, which input is returned is unspecified.
-  pub def min[N @ Num] self @ N *others @ N -> N
+  pub def min[N @ Num] self@N *others@N -> N
     ...
 
   # Returns the largest of this value and `others`.
   #
   # If a comparison is unordered, which input is returned is unspecified.
-  pub def max[N @ Num] self @ N *others @ N -> N
+  pub def max[N @ Num] self@N *others@N -> N
     ...
 
   # Restricts the value to the inclusive interval from `lower` to `upper`.
   #
   # Raises [`ValueError`](std.ValueError) if `lower > upper`. If a comparison
   # is unordered, which input is returned is unspecified.
-  pub def clamp[N @ Num] self @ N lower @ N upper @ N -> N
+  pub def clamp[N @ Num] self@N lower@N upper@N -> N
     ...
 
   pub def (add) self other
@@ -2898,7 +2929,7 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Unpack[T]
   # run cmd stdin: (["one", "two"].crimp())
   # ```
   #
-  pub def crimp[U @ (Str | Bin)] self @ Iter[U] terminator @ (Str | Bin) = nil -> Iter[U]
+  pub def crimp[U @ (Str | Bin)] self@Iter[U] terminator@(Str | Bin) = nil -> Iter[U]
     ...
 
   #
@@ -2924,7 +2955,7 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Unpack[T]
   # Raises [`RuntimeError`](std.RuntimeError) if no value matches and
   # no fallback is provided.
   #
-  pub def find[D = T] self pred @ (T -> Value) :default @ D = nil :else @ (() -> D) = nil -> (T | D)
+  pub def find[D = T] self pred@(T -> Value) :default@D = nil :else@(() -> D) = nil -> (T | D)
     ...
 
   #
@@ -2932,7 +2963,7 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Unpack[T]
   #
   # Returns `init` unchanged if the iterator is empty.
   #
-  pub def fold[A] self init @ A func @ ((A, T) -> A) -> A
+  pub def fold[A] self init@A func@((A, T) -> A) -> A
     ...
 
   #
@@ -2988,7 +3019,7 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Unpack[T]
   # Raises [`IterStop`](std.IterStop) when exhausted and no fallback
   # is provided.
   #
-  pub def next[D = T] self :default @ D = nil :else @ (() -> D) = nil -> (T | D)
+  pub def next[D = T] self :default@D = nil :else@(() -> D) = nil -> (T | D)
     ...
 
   #
@@ -3188,7 +3219,7 @@ pub class Range[T @ Num]: Iterable[T]
 # ```
 # let updated = record ...old status: ready
 # ```
-pub class Record[...Ts]: Iterable[Tuple[(Sym | Int), Value]] @Index[{...Ts}] @Spread[{...Ts}] @Unpack[{...Ts}]
+pub class Record[...Ts]: Iterable[Tuple[Sym | Int, Value]] @Index[{...Ts}] @Spread[{...Ts}] @Unpack[{...Ts}]
   #
   #
   # Builds a record from one spreadable source of key-value pairs.
@@ -3215,7 +3246,7 @@ pub class Record[...Ts]: Iterable[Tuple[(Sym | Int), Value]] @Index[{...Ts}] @Sp
   #
   # Gets the value for a symbol or position, with an optional default.
   #
-  pub def get[D = nil] self key @ (Int | Sym) :default @ D = nil :else @ (() -> D) = nil -> (Value | D)
+  pub def get[D = nil] self key@(Int | Sym) :default@D = nil :else@(() -> D) = nil -> (Value | D)
     ...
 
   #
@@ -3325,10 +3356,10 @@ pub class Set[T]: Iterable[T]
   # `other`.
   #
   #
-  pub def diff
+  pub def diff[U]
     self
     # other Set
-    other @ Set
+    other @ Set[U]
   do -> Set[T]
     ...
 
@@ -3337,10 +3368,10 @@ pub class Set[T]: Iterable[T]
   # the receiver's insertion order.
   #
   #
-  pub def intersect
+  pub def intersect[U]
     self
     # other Set
-    other @ Set
+    other @ Set[U]
   do -> Set[T]
     ...
 
@@ -3348,10 +3379,10 @@ pub class Set[T]: Iterable[T]
   # Returns `true` when every member of the receiver is present in `other`.
   #
   #
-  pub def is_subset
+  pub def is_subset[U]
     self
     # other Set
-    other @ Set
+    other @ Set[U]
   do -> Bool
     ...
 
@@ -3359,10 +3390,10 @@ pub class Set[T]: Iterable[T]
   # Returns `true` when every member of `other` is present in the receiver.
   #
   #
-  pub def is_superset
+  pub def is_superset[U]
     self
     # other Set
-    other @ Set
+    other @ Set[U]
   do -> Bool
     ...
 
@@ -3540,7 +3571,7 @@ pub class Str: @Index[Range[Int], Str]
   # assert_eq $scalars[-1] "́"
   # ```
   #
-  pub def scalars self -> Iterable
+  pub def scalars self -> Iterable[Str]
     ...
 
   #
@@ -3644,7 +3675,7 @@ pub class Str: @Index[Range[Int], Str]
   # assert_eq [...graphemes] ["é", "👩‍💻"]
   # ```
   #
-  pub def graphemes self -> Iterable
+  pub def graphemes self -> Iterable[Str]
     ...
 
   #
@@ -3660,7 +3691,7 @@ pub class Str: @Index[Range[Int], Str]
   pub def join
     self
     # iterable to join; uses the default input when omitted
-    iter @ Iterable = nil
+    iter @ Iterable[Value] = nil
   do -> Str
     ...
 
@@ -4434,8 +4465,10 @@ pub class TypeError: RuntimeError
 
 
 #
-# `Type` is the type of all types and cannot be constructed directly.
-pub class Type
+# The type of a class whose instances are `T`. `Type` is the type of all types
+# and cannot be constructed directly.
+pub class Type[T]
+  field instance @ Phantom[T]
 
 #
 # Raised when an unexpected key argument is passed.

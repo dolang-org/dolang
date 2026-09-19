@@ -124,9 +124,8 @@ let r = (name: "Alice", age: 30)
 echo $r[:name:] # Alice
 ```
 
-Parentheses make a record rather than a tuple when they hold at least one static
-key: `key: value` or the ditto shorthand `:name`. Positional items get integer
-keys counting from 0:
+Parentheses make a record rather than a tuple when at least one key is
+specified. Positional items get integer keys counting from 0:
 
 ```
 let name = "Alice"
@@ -143,14 +142,6 @@ let r = record name: Alice age: 30
 
 A key may repeat, and a lookup finds its latest value. Iterating a record
 yields key/value tuples in order, with a positional item's position as its key.
-Build a changed record by spreading the original into a new record:
-
-```
-let updated = (...r, age: 31)
-```
-
-Keys are not fields: `r.name` is an error. Use a class for a value with named
-fields.
 
 See the [Record API](std.Record) for details.
 
@@ -158,8 +149,8 @@ See the [Record API](std.Record) for details.
 
 Sets are ordered, mutable collections with unique membership semantics.
 
-Unlike arrays and dicts, sets do not have a dedicated literal syntax. Construct
-them with the `Set` type object from any iterable:
+Sets do not have a dedicated literal syntax. Construct them with the `Set` type
+object from any iterable:
 
 ```
 let empty = Set()
@@ -177,8 +168,8 @@ See the [Set API](std.Set) for methods such as `add`, `contains`,
 
 Tuples are immutable, ordered sequences of values.
 
-Write a tuple as comma-separated items in parentheses. A single item needs a
-trailing comma, since `(x)` only groups `x`:
+Comma-separated items within parentheses construct a tuple. A single item needs
+a trailing comma to distinguish it from mere grouping:
 
 ```
 let tup = (1, "two", true)
@@ -199,21 +190,5 @@ The `Tuple` type object also builds a tuple from an iterable:
 ```
 let tup = Tuple [1, 2, 3]
 ```
-
-At statement level, whitespace separates arguments, so `f (1, 2)` passes one
-tuple while `f(1, 2)` passes two arguments. Within a full expression,
-whitespace is insignificant and both are C-style calls, so write
-`(f((1, 2)))` to pass a lone tuple.
-
-Some APIs produce tuples, such as key/value pair iteration:
-
-```
-for pair = {name: "Alice"}
-  echo $pair[0]
-  echo $pair[1]
-```
-
-Note that mutable collections may be used as `dict` keys, so `tuple` usage is
-not mandatory as in Python.
 
 See the [Tuple API](std.Tuple) for details.

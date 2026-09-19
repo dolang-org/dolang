@@ -171,6 +171,9 @@ impl Parser<'_> {
         };
         let binders = self.parse_binders(scope)?;
         let params = match self.peek()? {
+            Some(token!(TokenInfo::Indent)) if type_only => {
+                self.parse_params(scope, ParamMode::VertSig)?
+            }
             Some(token!(TokenInfo::Indent)) => self.parse_params(scope, ParamMode::VertFunc)?,
             Some(token!(TokenInfo::LeftParen)) => {
                 let left = self.advance();

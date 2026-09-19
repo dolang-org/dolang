@@ -1,11 +1,3 @@
-def late[...R, T] x
-  # error: rest parameter must be trailing
-  #   --> binder_errors.dol:LL:LL
-  #    |
-  # LL | def late[...R, T] x
-  #    |          ^^^
-  x
-
 class Bounded[T @Int]
 
 class Defaulted[T = Int]

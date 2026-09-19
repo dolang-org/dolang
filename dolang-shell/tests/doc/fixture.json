@@ -2345,7 +2345,6 @@
                 "byte_offset": 1153
               }
             },
-            "optional": false,
             "type": {
               "kind": "NameType",
               "span": {
@@ -2853,7 +2852,6 @@
                 "byte_offset": 1422
               }
             },
-            "optional": false,
             "type": {
               "kind": "NameType",
               "span": {
@@ -2897,7 +2895,6 @@
                 "byte_offset": 1430
               }
             },
-            "optional": false,
             "type": {
               "kind": "NameType",
               "span": {
@@ -3062,7 +3059,6 @@
                 "byte_offset": 1497
               }
             },
-            "optional": false,
             "type": {
               "kind": "NameType",
               "span": {
@@ -3181,7 +3177,7 @@
         },
         "params": [
           {
-            "kind": "PosTypeArg",
+            "kind": "PosTypeParam",
             "span": {
               "start": {
                 "line": 81,
@@ -3225,7 +3221,7 @@
             }
           },
           {
-            "kind": "PosTypeArg",
+            "kind": "PosTypeParam",
             "span": {
               "start": {
                 "line": 81,
@@ -3426,7 +3422,6 @@
                 "byte_offset": 1586
               }
             },
-            "optional": false,
             "type": {
               "kind": "SchemaType",
               "span": {
@@ -3441,9 +3436,9 @@
                   "byte_offset": 1586
                 }
               },
-              "args": [
+              "params": [
                 {
-                  "kind": "KeyTypeArg",
+                  "kind": "KeyTypeParam",
                   "span": {
                     "start": {
                       "line": 81,
@@ -3499,7 +3494,7 @@
                   }
                 },
                 {
-                  "kind": "KeyTypeArg",
+                  "kind": "KeyTypeParam",
                   "span": {
                     "start": {
                       "line": 81,
@@ -3555,7 +3550,7 @@
                   }
                 },
                 {
-                  "kind": "EntryRestTypeArg",
+                  "kind": "EntryRestTypeParam",
                   "span": {
                     "start": {
                       "line": 81,
@@ -5032,7 +5027,7 @@
         },
         "args": [
           {
-            "kind": "MixedRestTypeArg",
+            "kind": "ExpandTypeArg",
             "span": {
               "start": {
                 "line": 122,
@@ -5045,7 +5040,6 @@
                 "byte_offset": 2447
               }
             },
-            "optional": false,
             "type": {
               "kind": "NameType",
               "span": {
@@ -5181,7 +5175,6 @@
                 "byte_offset": 2593
               }
             },
-            "optional": false,
             "type": {
               "kind": "UnionType",
               "span": {
@@ -13980,7 +13973,6 @@
               "args": [
                 {
                   "kind": "pos",
-                  "optional": false,
                   "type": {
                     "kind": "name",
                     "name": "S",
@@ -14106,7 +14098,6 @@
           "args": [
             {
               "kind": "pos",
-              "optional": false,
               "type": {
                 "kind": "name",
                 "name": "Str",
@@ -14115,7 +14106,6 @@
             },
             {
               "kind": "pos",
-              "optional": false,
               "type": {
                 "kind": "name",
                 "name": "Record",
@@ -14166,7 +14156,6 @@
               "args": [
                 {
                   "kind": "pos",
-                  "optional": false,
                   "type": {
                     "kind": "name",
                     "name": "T",
@@ -14225,10 +14214,9 @@
               "args": [
                 {
                   "kind": "pos",
-                  "optional": false,
                   "type": {
                     "kind": "schema",
-                    "args": [
+                    "params": [
                       {
                         "kind": "key",
                         "optional": false,
@@ -14660,8 +14648,7 @@
           },
           "args": [
             {
-              "kind": "mixed_rest",
-              "optional": false,
+              "kind": "expand",
               "type": {
                 "kind": "name",
                 "name": "Rs",
@@ -14723,7 +14710,6 @@
           "args": [
             {
               "kind": "pos",
-              "optional": false,
               "type": {
                 "kind": "union",
                 "members": [

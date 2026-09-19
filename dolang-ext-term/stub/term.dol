@@ -287,12 +287,11 @@ pub class SinkConsole
   pub def (init)
     self
     # Where output values are written.
-    sink @ Sink
+    sink @ Sink[Value]
     # Emit ANSI styling. Off by default.
     :can_style @ Bool = false
-    # `:LINE:` (the default) or `:CHUNK:`. See
-    # [Output mode](term.SinkConsole.output-mode).
-    :mode @ Sym = nil
+    # [Output mode](term.SinkConsole.output-mode). Defaults to `:LINE:`.
+    :mode @ (:LINE: | :CHUNK:) = nil
   do
     ...
 
@@ -495,7 +494,7 @@ pub class Text
   pub def join
     self
     # Values to join. Uses the default input when omitted.
-    iter @ Iterable = nil
+    iter @ Iterable[Value] = nil
   do -> Text
     ...
 
@@ -569,13 +568,12 @@ pub def capture[R]
   # Destination to
   # install. A plain sink is wrapped in a
   # [`SinkConsole`](term.SinkConsole) using the requested `mode:`.
-  console @ (Console | Sink)
+  console @ (Console | Sink[Value])
   # Block to run.
   block @ (() -> R)
-  # `:LINE:` (the default) or `:CHUNK:`, when
-  # `console` is a plain sink. See
-  # [Output mode](term.SinkConsole.output-mode).
-  :mode @ Sym = nil
+  # [Output mode](term.SinkConsole.output-mode) when `console` is a plain
+  # sink. Defaults to `:LINE:`.
+  :mode @ (:LINE: | :CHUNK:) = nil
 do -> R
   ...
 

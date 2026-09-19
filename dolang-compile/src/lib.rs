@@ -702,9 +702,9 @@ impl<'a> TypeExpr<'a> {
     /// The form the type takes
     pub fn kind(&self) -> TypeKind<'a> {
         let file = self.file;
-        let args = |args: &'a [doc::TypeArg]| TypeArgs {
+        let params = |params: &'a [doc::TypeParam]| TypeParams {
             file,
-            args: args.iter(),
+            params: params.iter(),
         };
         match &self.expr.kind {
             doc::TypeKind::Name { head, target } => TypeKind::Name {
@@ -718,19 +718,24 @@ impl<'a> TypeExpr<'a> {
                 doc::TypeConst::Bool(value) => TypeConst::Bool(*value),
                 doc::TypeConst::Nil => TypeConst::Nil,
             }),
-            doc::TypeKind::App { base, args: items } => TypeKind::App {
+            doc::TypeKind::App { base, args } => TypeKind::App {
                 base: TypeExpr { file, expr: base },
-                args: args(items),
+                args: TypeArgs {
+                    file,
+                    args: args.iter(),
+                },
             },
-            doc::TypeKind::Schema { args: items } => TypeKind::Schema { args: args(items) },
+            doc::TypeKind::Schema { params: items } => TypeKind::Schema {
+                params: params(items),
+            },
             doc::TypeKind::Union { members } => TypeKind::Union {
                 members: TypeExprs {
                     file,
                     exprs: members.iter(),
                 },
             },
-            doc::TypeKind::Func { params, ret } => TypeKind::Func {
-                params: args(params),
+            doc::TypeKind::Func { params: items, ret } => TypeKind::Func {
+                params: params(items),
                 ret: TypeExpr { file, expr: ret },
             },
         }
@@ -758,8 +763,8 @@ pub enum TypeKind<'a> {
     },
     /// A schema, e.g. `{name: Str, ?port: Int}`
     Schema {
-        /// The entries
-        args: TypeArgs<'a>,
+        /// The parameters
+        params: TypeParams<'a>,
     },
     /// A union, e.g. `(Str | Path)`
     Union {
@@ -769,7 +774,7 @@ pub enum TypeKind<'a> {
     /// A function type, e.g. `(Int, ?Int) -> Int`
     Func {
         /// The parameters
-        params: TypeArgs<'a>,
+        params: TypeParams<'a>,
         /// The return type
         ret: TypeExpr<'a>,
     },
@@ -791,7 +796,7 @@ pub enum TypeConst<'a> {
     Nil,
 }
 
-/// An item in the `[]`, `()` or `{}` of a type
+/// A type argument in the `[]` of an application
 #[derive(Copy, Clone)]
 pub struct TypeArg<'a> {
     file: &'a File<'a>,
@@ -799,89 +804,47 @@ pub struct TypeArg<'a> {
 }
 
 impl<'a> TypeArg<'a> {
-    /// The item as written, without a trailing `,`
+    /// The argument as written, without a trailing `,`
     pub fn span(&self) -> diag::Span {
         convert_span(self.file, self.arg.span)
     }
 
-    /// Whether the item is marked optional with `?`
-    pub fn optional(&self) -> bool {
-        self.arg.optional
-    }
-
-    /// How the item is given
-    pub fn kind(&self) -> TypeArgKind<'a> {
+    /// How the argument is given
+    pub fn kind(&self) -> TypeArgKind {
         match &self.arg.kind {
             doc::TypeArgKind::Pos => TypeArgKind::Pos,
-            doc::TypeArgKind::Key { key, key_ty } => TypeArgKind::Key {
-                key: convert_span(self.file, *key),
-                key_ty: key_ty.as_ref().map(|expr| TypeExpr {
-                    file: self.file,
-                    expr,
-                }),
+            doc::TypeArgKind::Key { name } => TypeArgKind::Key {
+                name: convert_span(self.file, *name),
             },
-            doc::TypeArgKind::Rest(kind) => TypeArgKind::Rest(*kind),
-            doc::TypeArgKind::OpenRest => TypeArgKind::OpenRest,
-            doc::TypeArgKind::KeyRest { key_ty } => TypeArgKind::KeyRest {
-                key_ty: TypeExpr {
-                    file: self.file,
-                    expr: key_ty,
-                },
-            },
+            doc::TypeArgKind::Expand => TypeArgKind::Expand,
         }
     }
 
-    /// The item's type, or `None` for an unrestricted [`TypeArgKind::OpenRest`]
-    pub fn ty(&self) -> Option<TypeExpr<'a>> {
-        self.arg.ty.as_ref().map(|expr| TypeExpr {
+    /// The argument's type
+    pub fn ty(&self) -> TypeExpr<'a> {
+        TypeExpr {
             file: self.file,
-            expr,
-        })
+            expr: &self.arg.ty,
+        }
     }
 }
 
 /// How a [`TypeArg`] is given
 #[non_exhaustive]
-#[derive(Clone)]
-pub enum TypeArgKind<'a> {
+#[derive(Clone, Debug)]
+pub enum TypeArgKind {
     /// `T`
     Pos,
-    /// `key: T`
+    /// `name: T`
     Key {
-        /// The key as written: a bareword for a symbol, or a type such as a quoted string
-        /// or a parenthesized name
-        key: diag::Span,
-        /// The type giving the key, or `None` for a bareword symbol
-        key_ty: Option<TypeExpr<'a>>,
+        /// The name
+        name: diag::Span,
     },
-    /// `...T`, `*T` or `**T`, for any number of further items
-    Rest(RestKind),
-    /// `...`, for unrestricted further schema items
-    OpenRest,
-    /// `...K: V`, for any number of keyed items
-    KeyRest {
-        /// The type of each key
-        key_ty: TypeExpr<'a>,
-    },
+    /// `...T`, expanding a pack into further arguments
+    Expand,
 }
 
-impl fmt::Debug for TypeArgKind<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Pos => f.write_str("Pos"),
-            Self::Key { key, key_ty } => f
-                .debug_struct("Key")
-                .field("key", key)
-                .field("key_ty", &key_ty.as_ref().map(|_| ..))
-                .finish(),
-            Self::Rest(kind) => f.debug_tuple("Rest").field(kind).finish(),
-            Self::OpenRest => f.write_str("OpenRest"),
-            Self::KeyRest { .. } => f.write_str("KeyRest { key_ty: ... }"),
-        }
-    }
-}
-
-/// Iterator over the items of a type
+/// Iterator over the arguments of an application
 #[derive(Clone)]
 pub struct TypeArgs<'a> {
     file: &'a File<'a>,
@@ -904,6 +867,120 @@ impl<'a> Iterator for TypeArgs<'a> {
 }
 
 impl ExactSizeIterator for TypeArgs<'_> {}
+
+/// An item a schema or a function type's parameters declare
+#[derive(Copy, Clone)]
+pub struct TypeParam<'a> {
+    file: &'a File<'a>,
+    param: &'a doc::TypeParam,
+}
+
+impl<'a> TypeParam<'a> {
+    /// The item as written, without a trailing `,`
+    pub fn span(&self) -> diag::Span {
+        convert_span(self.file, self.param.span)
+    }
+
+    /// Whether the item is marked optional with `?`
+    pub fn optional(&self) -> bool {
+        self.param.optional
+    }
+
+    /// How the item is given
+    pub fn kind(&self) -> TypeParamKind<'a> {
+        match &self.param.kind {
+            doc::TypeParamKind::Pos => TypeParamKind::Pos,
+            doc::TypeParamKind::Key { key, key_ty } => TypeParamKind::Key {
+                key: convert_span(self.file, *key),
+                key_ty: key_ty.as_ref().map(|expr| TypeExpr {
+                    file: self.file,
+                    expr,
+                }),
+            },
+            doc::TypeParamKind::Rest(kind) => TypeParamKind::Rest(*kind),
+            doc::TypeParamKind::OpenRest => TypeParamKind::OpenRest,
+            doc::TypeParamKind::KeyRest { key_ty } => TypeParamKind::KeyRest {
+                key_ty: TypeExpr {
+                    file: self.file,
+                    expr: key_ty,
+                },
+            },
+        }
+    }
+
+    /// The item's type, or `None` for an unrestricted [`TypeParamKind::OpenRest`]
+    pub fn ty(&self) -> Option<TypeExpr<'a>> {
+        self.param.ty.as_ref().map(|expr| TypeExpr {
+            file: self.file,
+            expr,
+        })
+    }
+}
+
+/// How a [`TypeParam`] is given
+#[non_exhaustive]
+#[derive(Clone)]
+pub enum TypeParamKind<'a> {
+    /// `T`
+    Pos,
+    /// `key: T`
+    Key {
+        /// The key as written: a bareword for a symbol, or a type such as a quoted string
+        /// or a parenthesized name
+        key: diag::Span,
+        /// The type giving the key, or `None` for a bareword symbol
+        key_ty: Option<TypeExpr<'a>>,
+    },
+    /// `...T`, `*T` or `**T`, for any number of further items
+    Rest(RestKind),
+    /// `...`, for unrestricted further schema items
+    OpenRest,
+    /// `...K: V`, for any number of keyed items
+    KeyRest {
+        /// The type of each key
+        key_ty: TypeExpr<'a>,
+    },
+}
+
+impl fmt::Debug for TypeParamKind<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pos => f.write_str("Pos"),
+            Self::Key { key, key_ty } => f
+                .debug_struct("Key")
+                .field("key", key)
+                .field("key_ty", &key_ty.as_ref().map(|_| ..))
+                .finish(),
+            Self::Rest(kind) => f.debug_tuple("Rest").field(kind).finish(),
+            Self::OpenRest => f.write_str("OpenRest"),
+            Self::KeyRest { .. } => f.write_str("KeyRest { key_ty: ... }"),
+        }
+    }
+}
+
+/// Iterator over the parameters of a schema or function type
+#[derive(Clone)]
+pub struct TypeParams<'a> {
+    file: &'a File<'a>,
+    params: slice::Iter<'a, doc::TypeParam>,
+}
+
+impl<'a> Iterator for TypeParams<'a> {
+    type Item = TypeParam<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.params.next().map(|param| TypeParam {
+            file: self.file,
+            param,
+        })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.params.size_hint()
+    }
+}
+
+impl ExactSizeIterator for TypeParams<'_> {}
 
 /// Iterator over the members of a union
 #[derive(Clone)]

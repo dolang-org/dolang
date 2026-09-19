@@ -81,15 +81,15 @@ pub def with[R]
   # | `:DEFAULT:`    | Use SSH's own configured checking policy                 |
   # | `:STRICT:`     | Reject any host key not already in the known-hosts file  |
   # | `:ACCEPT_NEW:` | Accept and record an unknown host key; reject a changed one |
-  :host_key @ Sym = :DEFAULT:
+  :host_key @ (:DEFAULT: | :STRICT: | :ACCEPT_NEW:) = :DEFAULT:
   # Override the known-hosts file.
   :known_hosts @ (Str | Path) = nil
   # Remote VFS launcher command and arguments.
-  :command @ Iterable = ["dolang-vfs"]
+  :command @ Iterable[Str] = ["dolang-vfs"]
   # Initial remote working directory.
   :cd @ (Str | Path) = nil
   # Initial remote environment overrides.
-  :env @ Dict = {}
+  :env @ Dict[Str | Sym, Value] = {}
   # Import the remote login
   # environment. `false` skips it entirely; a path names the login shell to
   # use instead of the one in the passwd database, and is ignored on Windows

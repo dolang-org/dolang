@@ -1,10 +1,13 @@
-import std:
-  - RuntimeError
-import json:
-  - @Data: JsonData
-  - @Encodable: JsonEncodable
-import url:
-  - @Url
+import
+  json:
+    - @Data: JsonData
+    - @Encodable: JsonEncodable
+  std:
+    - RuntimeError
+  time:
+    - @DateTime
+  url:
+    - @Url
 
 # HTTP client.
 #
@@ -97,7 +100,7 @@ pub class Status: Error
   # The response headers, as
   # [`Response.headers`](http.Response.headers) presents them.
   #[getter]
-  pub def headers self -> Dict
+  pub def headers self -> Dict[Str, Str | DateTime]
     ...
 
   # Whether the saved body excerpt was cut off,
@@ -201,7 +204,7 @@ pub class Response
   # echo $response.headers["content-type"]
   # ```
   #[getter]
-  pub def headers self -> Dict
+  pub def headers self -> Dict[Str, Str | DateTime]
     ...
 
   # Reads the whole body as bytes, consuming and closing the response.
@@ -467,10 +470,9 @@ pub class Client
     # Passing it without `identity` raises
     # [`ValueError`](std.ValueError).
     :password @ Str = nil
-    # Pass `:DANGER_ACCEPT:` to disable TLS
-    # certificate validation. It is the only accepted value, and it is
+    # Pass `:DANGER_ACCEPT:` to disable TLS certificate validation. This is
     # dangerous -- it defeats the point of TLS, so reserve it for testing.
-    :invalid_certs @ Sym = nil
+    :invalid_certs @ :DANGER_ACCEPT: = nil
   do -> Client
 
   # Builds a client and calls `func` with it. The client is closed when `func`
@@ -500,10 +502,9 @@ pub class Client
     # Passing it without `identity` raises
     # [`ValueError`](std.ValueError).
     :password @ Str = nil
-    # Pass `:DANGER_ACCEPT:` to disable TLS
-    # certificate validation. It is the only accepted value, and it is
+    # Pass `:DANGER_ACCEPT:` to disable TLS certificate validation. This is
     # dangerous -- it defeats the point of TLS, so reserve it for testing.
-    :invalid_certs @ Sym = nil
+    :invalid_certs @ :DANGER_ACCEPT: = nil
     # Called with the `Client`. Omit to receive the client instead.
     func @ (Client -> R)
   do -> R
@@ -537,14 +538,14 @@ pub class Client
     url @ (Str | Url)
     # Request headers -- see
     # [`headers`](http.Client.headers).
-    :headers @ Dict = nil
+    :headers @ Dict[Value, Value] = nil
     # Query parameters -- see
     # [`query`](http.Client.query).
-    :query @ Dict = nil
+    :query @ Dict[Value, Value] = nil
     # Pass `:IGNORE:` to return the response even
     # when its status is outside `200..=299`, instead of raising
     # [`Status`](http.Status).
-    :status @ Sym = nil
+    :status @ (:IGNORE: | "IGNORE") = nil
   do -> Response
 
   # Makes a request without a body and calls `block` with the response. The
@@ -555,14 +556,14 @@ pub class Client
     url @ (Str | Url)
     # Request headers -- see
     # [`headers`](http.Client.headers).
-    :headers @ Dict = nil
+    :headers @ Dict[Value, Value] = nil
     # Query parameters -- see
     # [`query`](http.Client.query).
-    :query @ Dict = nil
+    :query @ Dict[Value, Value] = nil
     # Pass `:IGNORE:` to return the response even
     # when its status is outside `200..=299`, instead of raising
     # [`Status`](http.Status).
-    :status @ Sym = nil
+    :status @ (:IGNORE: | "IGNORE") = nil
     # Called with the [`Response`](http.Response). Omit to receive the response instead.
     block @ (Response -> R)
   do -> R
@@ -601,20 +602,20 @@ pub class Client
     :json @ JsonEncodable = nil
     # Request body streamed with a newline after each element --
     # see [`lines`](http.Client.lines).
-    :lines @ Iterable = nil
+    :lines @ Iterable[Value] = nil
     # Multipart form parts -- see
     # [`multipart`](http.Client.multipart).
-    :multipart @ Iterable = nil
+    :multipart @ Iterable[Dict[{name: Str, ...}]] = nil
     # Request headers -- see
     # [`headers`](http.Client.headers).
-    :headers @ Dict = nil
+    :headers @ Dict[Value, Value] = nil
     # Query parameters -- see
     # [`query`](http.Client.query).
-    :query @ Dict = nil
+    :query @ Dict[Value, Value] = nil
     # Pass `:IGNORE:` to return the response even
     # when its status is outside `200..=299`, instead of raising
     # [`Status`](http.Status).
-    :status @ Sym = nil
+    :status @ (:IGNORE: | "IGNORE") = nil
   do -> Response
 
   # Makes a request with a body and calls `block` with the response. The
@@ -630,20 +631,20 @@ pub class Client
     :json @ JsonEncodable = nil
     # Request body streamed with a newline after each element --
     # see [`lines`](http.Client.lines).
-    :lines @ Iterable = nil
+    :lines @ Iterable[Value] = nil
     # Multipart form parts -- see
     # [`multipart`](http.Client.multipart).
-    :multipart @ Iterable = nil
+    :multipart @ Iterable[Dict[{name: Str, ...}]] = nil
     # Request headers -- see
     # [`headers`](http.Client.headers).
-    :headers @ Dict = nil
+    :headers @ Dict[Value, Value] = nil
     # Query parameters -- see
     # [`query`](http.Client.query).
-    :query @ Dict = nil
+    :query @ Dict[Value, Value] = nil
     # Pass `:IGNORE:` to return the response even
     # when its status is outside `200..=299`, instead of raising
     # [`Status`](http.Status).
-    :status @ Sym = nil
+    :status @ (:IGNORE: | "IGNORE") = nil
     # Called with the [`Response`](http.Response). Omit to receive the response instead.
     block @ (Response -> R)
   do -> R
@@ -674,12 +675,12 @@ pub class Client
   # URL to request.
   url @ (Str | Url)
   # Request headers.
-  :headers @ Dict = nil
+  :headers @ Dict[Value, Value] = nil
   # Query parameters.
-  :query @ Dict = nil
+  :query @ Dict[Value, Value] = nil
   # Pass `:IGNORE:` to return the response even when
   # its status is outside `200..=299`.
-  :status @ Sym = nil
+  :status @ (:IGNORE: | "IGNORE") = nil
 do -> Response
 
 # Makes a `GET` request through a fresh stateless client and calls `block` with
@@ -688,12 +689,12 @@ do -> Response
   # URL to request.
   url @ (Str | Url)
   # Request headers.
-  :headers @ Dict = nil
+  :headers @ Dict[Value, Value] = nil
   # Query parameters.
-  :query @ Dict = nil
+  :query @ Dict[Value, Value] = nil
   # Pass `:IGNORE:` to return the response even when
   # its status is outside `200..=299`.
-  :status @ Sym = nil
+  :status @ (:IGNORE: | "IGNORE") = nil
   # Called with the [`Response`](http.Response).
   block @ (Response -> R)
 do -> R
@@ -721,16 +722,16 @@ pub def get url ...options
   # Request body, JSON-serialized.
   :json @ JsonEncodable = nil
   # Request body streamed with a newline after each element.
-  :lines @ Iterable = nil
+  :lines @ Iterable[Value] = nil
   # Multipart form parts.
-  :multipart @ Iterable = nil
+  :multipart @ Iterable[Dict[{name: Str, ...}]] = nil
   # Request headers.
-  :headers @ Dict = nil
+  :headers @ Dict[Value, Value] = nil
   # Query parameters.
-  :query @ Dict = nil
+  :query @ Dict[Value, Value] = nil
   # Pass `:IGNORE:` to return the response even when
   # its status is outside `200..=299`.
-  :status @ Sym = nil
+  :status @ (:IGNORE: | "IGNORE") = nil
 do -> Response
 
 # Makes a `POST` request through a fresh stateless client and calls `block`
@@ -743,16 +744,16 @@ do -> Response
   # Request body, JSON-serialized.
   :json @ JsonEncodable = nil
   # Request body streamed with a newline after each element.
-  :lines @ Iterable = nil
+  :lines @ Iterable[Value] = nil
   # Multipart form parts.
-  :multipart @ Iterable = nil
+  :multipart @ Iterable[Dict[{name: Str, ...}]] = nil
   # Request headers.
-  :headers @ Dict = nil
+  :headers @ Dict[Value, Value] = nil
   # Query parameters.
-  :query @ Dict = nil
+  :query @ Dict[Value, Value] = nil
   # Pass `:IGNORE:` to return the response even when
   # its status is outside `200..=299`.
-  :status @ Sym = nil
+  :status @ (:IGNORE: | "IGNORE") = nil
   # Called with the [`Response`](http.Response).
   block @ (Response -> R)
 do -> R

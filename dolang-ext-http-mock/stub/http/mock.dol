@@ -28,8 +28,11 @@
 #       body: $req.body
 # ```
 
-import url:
-  - @Url
+import
+  time:
+    - @DateTime
+  url:
+    - @Url
 
 # A request the mock server received.
 #
@@ -64,7 +67,7 @@ pub class Request
   #       status: 200
   # ```
   #[getter]
-  pub def headers self -> Dict
+  pub def headers self -> Dict[Str, Str | DateTime]
     ...
 
 # A handle to the mocks one [`Server.mock`](http.mock.Server.mock) call registered.
@@ -251,7 +254,7 @@ pub class Server
   @def mock
     self
     # Mock items, as described above.
-    ...items @ Dict
+    ...items @ Dict[{respond: Value, ...}]
   do -> Mock
 
   # Registers mocks for the duration of a block, which is called with the

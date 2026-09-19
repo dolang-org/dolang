@@ -819,7 +819,7 @@ impl Check<'_> {
                     &super_ref.fields,
                 );
             }
-            for ty in super_ref.args.iter_mut().flat_map(TypeArg::tys_mut) {
+            for ty in super_ref.args.iter_mut().map(TypeArg::ty_mut) {
                 self.ty(&inner, ty);
             }
         }

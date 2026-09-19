@@ -35,7 +35,7 @@ pub def with[R]
   # Initial working directory.
   :cd @ (Str | Path) = nil
   # Initial environment overrides.
-  :env @ Dict = {}
+  :env @ Dict[Str | Sym, Value] = {}
 do -> R
   if (sys.os_info().family == :WINDOWS:)
     if security_windows.token_info().is_elevated

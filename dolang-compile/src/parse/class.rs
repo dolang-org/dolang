@@ -368,7 +368,7 @@ impl Parser<'_> {
         let (args, bracket_span) = match self.peek()? {
             Some(token!(TokenInfo::LeftBracket)) => {
                 let open = self.advance();
-                let (args, bracket_span) = self.parse_type_bracket_args(scope, open)?;
+                let (args, bracket_span) = self.parse_type_args(scope, open)?;
                 (args, Some(bracket_span))
             }
             _ => (vec![], None),

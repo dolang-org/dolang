@@ -37,7 +37,7 @@ pub def decode
   # the standard alphabet otherwise. Input containing characters from both
   # alphabets is rejected. Input containing neither decodes identically under
   # both.
-  :alphabet @ Sym = nil
+  :alphabet @ (:STANDARD: | :URL: | :AUTO:) = nil
   # Required padding; default none.
   #
   # When `pad:` is omitted, canonical padding and any lesser amount — including
@@ -74,7 +74,7 @@ pub def encode
   # Data to encode.
   data @ (Str | Bin)
   # Alphabet; default `:STANDARD:`.
-  :alphabet @ Sym = nil
+  :alphabet @ (:STANDARD: | :URL:) = nil
   # Whether to emit padding; default depends on `alphabet:`.
   #
   # `pad:` defaults to `true` for `:STANDARD:` and `false` for `:URL:`, since

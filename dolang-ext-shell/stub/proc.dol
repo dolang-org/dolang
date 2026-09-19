@@ -14,6 +14,23 @@ import
   time:
     - @Duration
 
+# A signal name, with or without a `SIG` prefix, such as `:TERM:` or
+# `:SIGTERM:`.
+pub @let Signal = (
+  | :HUP: | :INT: | :QUIT: | :ILL: | :TRAP: | :ABRT: | :IOT: | :EMT: | :FPE:
+  | :KILL: | :BUS: | :SEGV: | :SYS: | :UNUSED: | :PIPE: | :ALRM: | :TERM:
+  | :URG: | :STOP: | :TSTP: | :CONT: | :CHLD: | :CLD: | :TTIN: | :TTOU: | :IO:
+  | :POLL: | :XCPU: | :XFSZ: | :VTALRM: | :PROF: | :WINCH: | :INFO: | :USR1:
+  | :USR2: | :STKFLT: | :PWR: | :THR: | :LIBRT: | :SIGHUP: | :SIGINT:
+  | :SIGQUIT: | :SIGILL: | :SIGTRAP: | :SIGABRT: | :SIGIOT: | :SIGEMT:
+  | :SIGFPE: | :SIGKILL: | :SIGBUS: | :SIGSEGV: | :SIGSYS: | :SIGUNUSED:
+  | :SIGPIPE: | :SIGALRM: | :SIGTERM: | :SIGURG: | :SIGSTOP: | :SIGTSTP:
+  | :SIGCONT: | :SIGCHLD: | :SIGCLD: | :SIGTTIN: | :SIGTTOU: | :SIGIO:
+  | :SIGPOLL: | :SIGXCPU: | :SIGXFSZ: | :SIGVTALRM: | :SIGPROF: | :SIGWINCH:
+  | :SIGINFO: | :SIGUSR1: | :SIGUSR2: | :SIGSTKFLT: | :SIGPWR: | :SIGTHR:
+  | :SIGLIBRT:
+)
+
 # Raised when an external program exits unsuccessfully.
 #
 # Spawn, lookup and other I/O failures do not raise this; they raise
@@ -108,7 +125,7 @@ pub class Info
   # is split according to typical C runtime conventions;
   # [`cmdline_win`](proc.Info.cmdline_win) is the raw original.
   #[getter]
-  pub def cmdline self -> (Tuple | nil)
+  pub def cmdline self -> (Tuple[...Str] | nil)
     ...
 
   # The working directory.
@@ -167,7 +184,7 @@ pub class Info
 #
 # Both framing methods reconfigure the receiver in place. They do not alter
 # values sent directly by another Do pipeline stage.
-pub class PipeReceiver: std.Iter
+pub class PipeReceiver: std.Iter[Value]
   # Selects arbitrary-sized [`Bin`](std.Bin) chunks when the receiver
   # reads bytes from an external program.
   pub def chunks self -> PipeReceiver
@@ -188,7 +205,7 @@ pub class PipeReceiver: std.Iter
 # [`strand.pipeline`](strand.pipeline)
 # stages and for a [`strand.stream`](strand.stream) strand's
 # implicit output; it cannot be constructed directly.
-pub class PipeSender: std.Sink
+pub class PipeSender: std.Sink[Value]
   # Closes the sender, signaling end of input to its receiver.
   #
   # If an error is given, the receiver re-raises it after draining any buffered
@@ -239,8 +256,8 @@ pub class Proc
   # ```
   pub def signal
     self
-    # Signal name, such as `:TERM:`.
-    sig @ Sym
+    # Signal to send.
+    sig @ Signal
   do
     ...
 
@@ -319,20 +336,19 @@ pub class Program
     self
     # Source for
     # standard input.
-    :stdin @ (Path | Iter) = nil
+    :stdin @ (Path | Iter[Value]) = nil
     # Destination for
     # standard output.
-    :stdout @ (Path | Sink) = nil
+    :stdout @ (Path | Sink[Value]) = nil
     # Destination for standard error, or `:STDOUT:` to merge it with standard
     # output.
-    :stderr @ (Path | Sink | Sym) = nil
+    :stderr @ (Path | Sink[Value] | :STDOUT:) = nil
     # Per-launch termination overrides: `signal`,
     # `grace` and `force`, as
     # [`with_policy`](proc.with_policy) takes them.
-    :policy @ Dict = nil
-    # `:LINE:` (the default) or `:CHUNK:` output
-    # framing.
-    :mode @ Sym = nil
+    :policy @ Dict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    # Output framing. Defaults to `:LINE:`.
+    :mode @ (:LINE: | :CHUNK:) = nil
     # Command-line arguments.
     ...args
   do
@@ -496,8 +512,8 @@ do -> Str
 pub def with_policy[R]
   # Block to run.
   block @ (() -> R)
-  # Unix signal name. `:TERM:` by default.
-  :signal @ Sym = nil
+  # Unix signal. `:TERM:` by default.
+  :signal @ Signal = nil
   # Time before forced termination. Five seconds by default.
   :grace @ (Duration | Int | Float) = nil
   # Force termination after the grace period.

@@ -7,7 +7,7 @@ pub @let Data = (Bool | Int | Float | Str | Array[Data] | Dict[Str, Data])
 pub @let Encodable = (
   | Bool | Int | Float | Str | Sym
   | Array[Encodable] | Tuple[...Encodable] | Record[...{...Sym: Encodable}]
-  | Dict[(Str | Sym), Encodable]
+  | Dict[Str | Sym, Encodable]
 )
 
 # Parses a TOML string into a Do value.

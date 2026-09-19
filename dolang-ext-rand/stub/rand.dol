@@ -64,7 +64,7 @@ do -> T
 # ```
 pub def shuffle
   # Array to mutate.
-  array @ Array
+  array @ Array[Value]
 do
   ...
 

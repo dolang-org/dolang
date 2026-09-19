@@ -16,7 +16,7 @@ def args ...rest
 let d = {0: "x", 1: "y", 5: "z", n: 1}
 let p *pr **kr = d
 assert_eq $p x
-assert_eq $pr ("y",)
+assert_eq [...pr] ["y"]
 assert_eq (pairs kr) [(Tuple [5, "z"]), (Tuple [:n:, 1])]
 
 # `**` alone takes the positional leftovers too, as keyed items
@@ -33,7 +33,7 @@ assert_throws $error.UnexpectedKeyError do
 
 # `*` alone rejects keyed leftovers, including stray integer keys
 let *s = {0: 1, 1: 2}
-assert_eq $s (1, 2)
+assert_eq [...s] [1, 2]
 assert_throws $error.UnexpectedKeyError str: "unexpected key item: n" do
   let *_s = {0: 1, n: 2}
 assert_throws $error.UnexpectedKeyError str: "unexpected key item: 5" do
@@ -43,6 +43,27 @@ assert_throws $error.UnexpectedKeyError str: "unexpected key item: 5" do
 let dd = {0: "x", 1: "y", n: 1}
 let *dp **dk = dd
 assert_eq (record ...dp ...dk) (record ...dd)
+
+# A `*` rest is a lazy rest over the positional run, which iterates, spreads,
+# and unpacks as a sequence
+let _ *pa **_ = {0: "a", 1: "b", 2: "c", n: 1}
+let pb *pc **pk = pa
+assert_eq $pb b
+assert_eq [...pc] ["c"]
+assert_eq $pk $record()
+let _ *pd = {0: "a", 1: "b", 2: "c"}
+let pv = $
+  for v = pd
+    - $v
+assert_eq $pv ["b", "c"]
+let _ *pe = {0: "a", 1: "b"}
+assert_throws $error.UnexpectedPosError do
+  let **_pk = pe
+let pm = {0: "a", 1: "b"}
+let _ *pf = pm
+pm.insert 2 c
+assert_throws $std.ConcurrencyError do
+  [...pf]
 
 # Records behave the same
 let t1 *t2 **t3 = (record 1 2 a: 3)
@@ -57,7 +78,7 @@ assert_eq (pairs rest) [(Tuple [0, "x"]), (Tuple [1, "y"]), (Tuple [5, "z"])]
 # Rests of a `...` rest continue from where it stands
 let first ...more = d
 let second *mp **mk = more
-assert_eq [first, second, mp] ["x", "y", ()]
+assert_eq [first, second, [...mp]] ["x", "y", []]
 assert_eq (pairs mk) [(Tuple [5, "z"]), (Tuple [:n:, 1])]
 
 # A `**` rest has no positional items

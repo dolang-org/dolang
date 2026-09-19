@@ -8,7 +8,7 @@ pub @let Data = (nil | Bool | Int | Float | Str | Array[Data] | Dict[Str, Data])
 pub @let Encodable = (
   | nil | Bool | Int | Float | Str | Sym
   | Array[Encodable] | Tuple[...Encodable] | Record[...{...Encodable, ...Sym: Encodable}]
-  | Dict[(Str | Sym | Int | Float | Bool), Encodable]
+  | Dict[Str | Sym | Int | Float | Bool, Encodable]
 )
 
 # Deserializes a JSON string to a Do value.

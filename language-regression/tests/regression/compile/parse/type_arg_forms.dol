@@ -1,0 +1,18 @@
+let _open @ Record[name: Str, ...] = nil
+# error: expected type
+#   --> type_arg_forms.dol:LL:LL
+#    |
+# LL | let _open @ Record[name: Str, ...] = nil
+#    |                                  ^
+let _keyed @ Dict[...Str: Int] = nil
+# error: expected type
+#   --> type_arg_forms.dol:LL:LL
+#    |
+# LL | let _keyed @ Dict[...Str: Int] = nil
+#    |                      ^^^
+let _compound @ Dict[...Tuple[Int]: Int] = nil
+# error: got :, expected: ]
+#   --> type_arg_forms.dol:LL:LL
+#    |
+# LL | let _compound @ Dict[...Tuple[Int]: Int] = nil
+#    |                                   ^

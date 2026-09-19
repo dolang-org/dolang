@@ -1,158 +1,70 @@
 # NFSv4 access-control-list types.
 
 import std:
+  - @FlagSet
   - @Seq
 
+# A symbol naming a bit of a [`Mask`](security.nfs4.Mask).
+#
+# | Symbol                | Meaning                                                |
+# | --------------------- | ------------------------------------------------------ |
+# | `:READ_DATA:`         | Read the file's data, or list a directory              |
+# | `:WRITE_DATA:`        | Write the file's data, or create a file in a directory |
+# | `:APPEND_DATA:`       | Append to the file's data, or create a subdirectory    |
+# | `:READ_NAMED_ATTRS:`  | Read named attributes                                  |
+# | `:WRITE_NAMED_ATTRS:` | Write named attributes                                 |
+# | `:EXECUTE:`           | Execute the file, or traverse a directory              |
+# | `:DELETE_CHILD:`      | Delete a file or directory within a directory          |
+# | `:READ_ATTRIBUTES:`   | Read basic attributes                                  |
+# | `:WRITE_ATTRIBUTES:`  | Write basic attributes                                 |
+# | `:DELETE:`            | Delete the file or directory                           |
+# | `:READ_ACL:`          | Read the ACL                                           |
+# | `:WRITE_ACL:`         | Write the ACL                                          |
+# | `:WRITE_OWNER:`       | Change owner and owning group                          |
+# | `:SYNCHRONIZE:`       | Use synchronous I/O                                    |
+pub @let MaskBit = (
+  | :READ_DATA: | :WRITE_DATA: | :APPEND_DATA: | :READ_NAMED_ATTRS:
+  | :WRITE_NAMED_ATTRS: | :EXECUTE: | :DELETE_CHILD: | :READ_ATTRIBUTES:
+  | :WRITE_ATTRIBUTES: | :DELETE: | :READ_ACL: | :WRITE_ACL: | :WRITE_OWNER:
+  | :SYNCHRONIZE:
+)
+
 # NFSv4 ACE permission bits.
-pub class Mask: Iterable[Sym]
-  # Constructs a mask from symbols or one iterable of symbols.
-  #
-  # ## Supported symbols
-  #
-  # | Symbol                | Meaning                                                |
-  # | --------------------- | ------------------------------------------------------ |
-  # | `:READ_DATA:`         | Read the file's data, or list a directory              |
-  # | `:WRITE_DATA:`        | Write the file's data, or create a file in a directory |
-  # | `:APPEND_DATA:`       | Append to the file's data, or create a subdirectory    |
-  # | `:READ_NAMED_ATTRS:`  | Read named attributes                                  |
-  # | `:WRITE_NAMED_ATTRS:` | Write named attributes                                 |
-  # | `:EXECUTE:`           | Execute the file, or traverse a directory              |
-  # | `:DELETE_CHILD:`      | Delete a file or directory within a directory          |
-  # | `:READ_ATTRIBUTES:`   | Read basic attributes                                  |
-  # | `:WRITE_ATTRIBUTES:`  | Write basic attributes                                 |
-  # | `:DELETE:`            | Delete the file or directory                           |
-  # | `:READ_ACL:`          | Read the ACL                                           |
-  # | `:WRITE_ACL:`         | Write the ACL                                          |
-  # | `:WRITE_OWNER:`       | Change owner and owning group                          |
-  # | `:SYNCHRONIZE:`       | Use synchronous I/O                                    |
-  #
-  # ## Example
-  #
-  # ```
-  # let rw = Mask :READ_DATA: :WRITE_DATA:
-  # ```
-  pub def (init)
-    self
-    # Mask bits, or one iterable of them.
-    ...bits @ Sym
-  do
-    ...
+#
+# ## Example
+#
+# ```
+# let rw = Mask :READ_DATA: :WRITE_DATA:
+# ```
+pub class Mask: Iterable[MaskBit] @FlagSet[MaskBit]
 
-  # Tests whether all bits represented by a symbol are set.
-  pub def contains
-    self
-    # Bits to test for.
-    bit @ Sym
-  do -> Bool
-    ...
-
-  # Union of two masks.
-  pub def (bor)
-    self
-    other @ Mask
-  do -> Mask
-    ...
-
-  # Intersection of two masks.
-  pub def (band)
-    self
-    other @ Mask
-  do -> Mask
-    ...
-
-  # Symmetric difference of two masks.
-  pub def (bxor)
-    self
-    other @ Mask
-  do -> Mask
-    ...
-
-  # Complement within the supported bit set.
-  pub def (bnot) self -> Mask
-    ...
-
-  # Compares two masks.
-  pub def (eq)
-    self
-    other
-  do
-    ...
-
-  # Yields the symbols represented by the mask.
-  pub def (iter) self -> Iter[Sym]
-    ...
+# A symbol naming a flag of a [`Flags`](security.nfs4.Flags).
+#
+# | Symbol                   | Meaning                                                                          |
+# | ------------------------ | -------------------------------------------------------------------------------- |
+# | `:FILE_INHERIT:`         | Files created within a directory inherit this entry                              |
+# | `:DIRECTORY_INHERIT:`    | Subdirectories created within a directory inherit this entry                     |
+# | `:NO_PROPAGATE_INHERIT:` | Stop propagating this entry after one level of inheritance                       |
+# | `:INHERIT_ONLY:`         | This entry is inherited but does not apply to the directory itself               |
+# | `:SUCCESSFUL_ACCESS:`    | Generate an audit/alarm event on successful access (`:AUDIT:`/`:ALARM:` entries) |
+# | `:FAILED_ACCESS:`        | Generate an audit/alarm event on failed access (`:AUDIT:`/`:ALARM:` entries)     |
+# | `:INHERITED:`            | This entry was inherited from a parent directory                                 |
+pub @let FlagBit = (
+  | :FILE_INHERIT: | :DIRECTORY_INHERIT: | :NO_PROPAGATE_INHERIT: | :INHERIT_ONLY:
+  | :SUCCESSFUL_ACCESS: | :FAILED_ACCESS: | :INHERITED:
+)
 
 # NFSv4 ACE inheritance and audit flags.
-pub class Flags: Iterable[Sym]
-  # Constructs a flag set from symbols or one iterable of symbols.
-  #
-  # ## Supported symbols
-  #
-  # | Symbol                   | Meaning                                                                          |
-  # | ------------------------ | -------------------------------------------------------------------------------- |
-  # | `:FILE_INHERIT:`         | Files created within a directory inherit this entry                              |
-  # | `:DIRECTORY_INHERIT:`    | Subdirectories created within a directory inherit this entry                     |
-  # | `:NO_PROPAGATE_INHERIT:` | Stop propagating this entry after one level of inheritance                       |
-  # | `:INHERIT_ONLY:`         | This entry is inherited but does not apply to the directory itself               |
-  # | `:SUCCESSFUL_ACCESS:`    | Generate an audit/alarm event on successful access (`:AUDIT:`/`:ALARM:` entries) |
-  # | `:FAILED_ACCESS:`        | Generate an audit/alarm event on failed access (`:AUDIT:`/`:ALARM:` entries)     |
-  # | `:INHERITED:`            | This entry was inherited from a parent directory                                 |
-  #
-  # ## Example
-  #
-  # ```
-  # let inherit = Flags(:FILE_INHERIT:, :DIRECTORY_INHERIT:)
-  # ```
-  pub def (init)
-    self
-    # Flag bits, or one iterable of them.
-    ...bits @ Sym
-  do
-    ...
+#
+# ## Example
+#
+# ```
+# let inherit = Flags(:FILE_INHERIT:, :DIRECTORY_INHERIT:)
+# ```
+pub class Flags: Iterable[FlagBit] @FlagSet[FlagBit]
 
-  # Tests whether all bits represented by a symbol are set.
-  pub def contains
-    self
-    # Bits to test for.
-    bit @ Sym
-  do -> Bool
-    ...
-
-  # Union of two flag sets.
-  pub def (bor)
-    self
-    other @ Flags
-  do -> Flags
-    ...
-
-  # Intersection of two flag sets.
-  pub def (band)
-    self
-    other @ Flags
-  do -> Flags
-    ...
-
-  # Symmetric difference of two flag sets.
-  pub def (bxor)
-    self
-    other @ Flags
-  do -> Flags
-    ...
-
-  # Complement within the supported bit set.
-  pub def (bnot) self -> Flags
-    ...
-
-  # Compares two flag sets.
-  pub def (eq)
-    self
-    other
-  do
-    ...
-
-  # Yields the symbols represented by the flag set.
-  pub def (iter) self -> Iter[Sym]
-    ...
+# The type of an entry.
+pub @let AceType = (:ALLOW: | :DENY: | :AUDIT: | :ALARM:)
 
 # Immutable NFSv4 access-control entry.
 #
@@ -171,9 +83,8 @@ pub class Ace
   #[class]
   pub def owner
     self
-    # Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`,
-    # or `:ALARM:`.
-    :type @ Sym
+    # Entry type.
+    :type @ AceType
     # Permission mask.
     :mask @ Mask
     # Inheritance/audit flags. Defaults to empty.
@@ -185,9 +96,8 @@ pub class Ace
   #[class]
   pub def owning_group
     self
-    # Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`,
-    # or `:ALARM:`.
-    :type @ Sym
+    # Entry type.
+    :type @ AceType
     # Permission mask.
     :mask @ Mask
     # Inheritance/audit flags. Defaults to empty.
@@ -199,9 +109,8 @@ pub class Ace
   #[class]
   pub def everyone
     self
-    # Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`,
-    # or `:ALARM:`.
-    :type @ Sym
+    # Entry type.
+    :type @ AceType
     # Permission mask.
     :mask @ Mask
     # Inheritance/audit flags. Defaults to empty.
@@ -215,9 +124,8 @@ pub class Ace
     self
     # User ID.
     id @ Int
-    # Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`,
-    # or `:ALARM:`.
-    :type @ Sym
+    # Entry type.
+    :type @ AceType
     # Permission mask.
     :mask @ Mask
     # Inheritance/audit flags. Defaults to empty.
@@ -231,9 +139,8 @@ pub class Ace
     self
     # Group ID.
     id @ Int
-    # Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`,
-    # or `:ALARM:`.
-    :type @ Sym
+    # Entry type.
+    :type @ AceType
     # Permission mask.
     :mask @ Mask
     # Inheritance/audit flags. Defaults to empty.
@@ -241,16 +148,14 @@ pub class Ace
   do -> Ace
     ...
 
-  # Entry type: `:ALLOW:`, `:DENY:`, `:AUDIT:`, or
-  # `:ALARM:`.
+  # Entry type.
   #[getter]
-  pub def type self -> Sym
+  pub def type self -> AceType
     ...
 
-  # Entry qualifier: `:OWNER:`, `:OWNING_GROUP:`,
-  # `:EVERYONE:`, `:USER:`, or `:GROUP:`.
+  # Entry qualifier.
   #[getter]
-  pub def principal self -> Sym
+  pub def principal self -> (:OWNER: | :OWNING_GROUP: | :EVERYONE: | :USER: | :GROUP:)
     ...
 
   # Numeric user or group ID.
@@ -305,11 +210,11 @@ pub @let Principal = (
 
 # A mask given as a [`Mask`](security.nfs4.Mask), one symbol, or an iterable
 # of symbols.
-pub @let MaskSpec = (Mask | Sym | Iterable[Sym])
+pub @let MaskSpec = (Mask | MaskBit | Iterable[MaskBit])
 
 # Flags given as [`Flags`](security.nfs4.Flags), one symbol, or an iterable of
 # symbols.
-pub @let FlagsSpec = (Flags | Sym | Iterable[Sym])
+pub @let FlagsSpec = (Flags | FlagBit | Iterable[FlagBit])
 
 # An NFSv4 entry, built or declared as a dictionary. A dictionary has
 # exactly one type key, with the same meaning as the keyword arguments of
