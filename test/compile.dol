@@ -666,19 +666,22 @@ def types_describe_what_they_annotate()
   assert_eq [...members.map(do |m| m.value)] [:a:, "b", 1, true, nil]
 
   let schema = (named_node source nodes compile.Bind "schema")
-  let args = (types_of(nodes, schema[0])[0][1].expr.args)
-  assert_eq [...args.map(do |a| type a)] [compile.KeyTypeArg, compile.KeyTypeArg, compile.MixedRestTypeArg]
-  assert_eq [...args.map(do |a| type(a, compile.TypeArg))] [true, true, true]
-  assert_eq [...args.map(do |a| a.optional)] [false, true, false]
-  assert_eq (span_text(source, args[0].key)) "name"
-  assert_eq (span_text(source, args[1].span)) "?port: Int"
-  assert_type $compile.AppType $args[2].ty
+  let schema_params = (types_of(nodes, schema[0])[0][1].expr.params)
+  assert_eq [...schema_params.map(do |p| type p)] $
+    - $compile.KeyTypeParam
+    - $compile.KeyTypeParam
+    - $compile.MixedRestTypeParam
+  assert_eq [...schema_params.map(do |p| type(p, compile.TypeParam))] [true, true, true]
+  assert_eq [...schema_params.map(do |p| p.optional)] [false, true, false]
+  assert_eq (span_text(source, schema_params[0].key)) "name"
+  assert_eq (span_text(source, schema_params[1].span)) "?port: Int"
+  assert_type $compile.AppType $schema_params[2].ty
 
   let func = (named_node source nodes compile.Bind "func")
   let func_type = (types_of(nodes, func[0])[0][1].expr)
   assert_type $compile.FuncType $func_type
   let params = func_type.params
-  assert_eq [...params.map(do |a| type a)] [compile.PosTypeArg, compile.PosTypeArg]
+  assert_eq [...params.map(do |a| type a)] [compile.PosTypeParam, compile.PosTypeParam]
   assert_eq [...params.map(do |a| a.optional)] [false, true]
   assert_type $compile.NameType $func_type.ret
 
@@ -695,7 +698,7 @@ def superclasses_are_types_of_their_class()
     class Tagged: std.Record
       pub field tag = nil
 
-    class Keyed[K]: Record[...K: Int]
+    class Keyed[K]: Record[...{...K: Int}]
       pub field key = nil
   let unit = compile.compile "supers.dol" $source document: true
   assert_no_errors $unit
@@ -722,11 +725,14 @@ def superclasses_are_types_of_their_class()
   let binder = nodes.find(do |pair| (type(pair[1], compile.Binder) && (pair[1].parent == keyed[0])))
   let app = (types_of(nodes, keyed[0])[0][1].expr)
   assert_type $compile.AppType $app
-  assert_eq (span_text(source, app.span)) "Record[...K: Int]"
+  assert_eq (span_text(source, app.span)) "Record[...{...K: Int}]"
   assert_eq $app.base.target $record[0]
   let arg = app.args[0]
-  assert_type $compile.EntryRestTypeArg $arg
-  assert_eq $arg.key_ty.target $binder[0]
+  assert_type $compile.ExpandTypeArg $arg
+  assert_eq (span_text(source, arg.span)) "...{...K: Int}"
+  let entries = arg.ty.params[0]
+  assert_type $compile.EntryRestTypeParam $entries
+  assert_eq $entries.key_ty.target $binder[0]
 
   assert (!(record[1].type_only))
 
@@ -749,20 +755,20 @@ def type_followups_are_exposed()
   assert_eq (span_text(source, binder[1].default.span)) "Sym"
   let schema = (types_of(nodes, alias[0])[0][1].expr.args[0].ty)
   assert_type $compile.SchemaType $schema
-  assert_eq [...schema.args.map(do |arg| type arg)] $
-    - $compile.OpenRestTypeArg
-    - $compile.EntryRestTypeArg
-    - $compile.EntryRestTypeArg
-    - $compile.KeyTypeArg
-    - $compile.KeyTypeArg
-  assert_eq (span_text(source, schema.args[0].span)) "..."
-  assert_eq (span_text(source, schema.args[1].key_ty.span)) "K"
-  assert_eq (span_text(source, schema.args[2].key_ty.span)) "Tuple[Int, Int]"
+  assert_eq [...schema.params.map(do |param| type param)] $
+    - $compile.OpenRestTypeParam
+    - $compile.EntryRestTypeParam
+    - $compile.EntryRestTypeParam
+    - $compile.KeyTypeParam
+    - $compile.KeyTypeParam
+  assert_eq (span_text(source, schema.params[0].span)) "..."
+  assert_eq (span_text(source, schema.params[1].key_ty.span)) "K"
+  assert_eq (span_text(source, schema.params[2].key_ty.span)) "Tuple[Int, Int]"
   # A key other than a bareword is a type, and a name in it resolves
-  assert_eq (span_text(source, schema.args[3].key)) "(K)"
-  assert_eq $schema.args[3].key_ty.target $binder[0]
-  assert_type $compile.ConstType $schema.args[4].key_ty
-  assert_eq $schema.args[4].key_ty.value "k"
+  assert_eq (span_text(source, schema.params[3].key)) "(K)"
+  assert_eq $schema.params[3].key_ty.target $binder[0]
+  assert_type $compile.ConstType $schema.params[4].key_ty
+  assert_eq $schema.params[4].key_ty.value "k"
   # A binder's bound may name a later binder
   let later = (named_node source nodes compile.Alias "Later")
   let later_binders = [...nodes.filter(do |pair| (type(pair[1], compile.Binder) && (pair[1].parent == later[0])))]
@@ -773,7 +779,7 @@ def type_followups_are_exposed()
   assert_eq $binder[1].bound.target (prelude_item "Str")
   assert_eq $binder[1].default.target (prelude_item "Sym")
   assert_eq (types_of(nodes, alias[0])[0][1].expr.base.target) (prelude_item "Dict")
-  assert_eq $schema.args[1].key_ty.target $binder[0]
+  assert_eq $schema.params[1].key_ty.target $binder[0]
   # Type-only declarations have no runtime imports or bindings to emit.
   unit.emit()
 
@@ -842,6 +848,21 @@ def rest_annotation_expansion_is_indexed()
     :type_ellipsis
     ...
   assert_eq $type_ellipsis.start.byte_offset $rest.type_ellipsis.start.byte_offset
+
+#[test]
+def type_arguments_are_positional_keyword_or_expansions()
+  let source = "let r @ Record[Int, name: Str, ...{*Bool}] = nil\n"
+  let unit = compile.compile "args.dol" $source document: true
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
+  let bind_node = (named_node source nodes compile.Bind "r")
+  let args = (types_of(nodes, bind_node[0])[0][1].expr.args)
+  assert_eq [...args.map(do |a| type a)] [compile.PosTypeArg, compile.KeyTypeArg, compile.ExpandTypeArg]
+  assert $args.all(do |a| type(a, compile.TypeArg))
+  assert_eq (span_text(source, args[1].name)) "name"
+  assert_eq (span_text(source, args[1].span)) "name: Str"
+  assert_eq (span_text(source, args[2].span)) "...{*Bool}"
+  assert_type $compile.SchemaType $args[2].ty
 
 #[test]
 def invalid_rest_annotation_expansions()
@@ -917,8 +938,11 @@ def rest_kinds_are_exposed()
 
   # And a rest item's
   let schema = (named_node source nodes compile.Bind "schema")
-  let args = (types_of(nodes, schema[0])[0][1].expr.args)
-  assert_eq [...args.map(do |a| type a)] [compile.PosRestTypeArg, compile.KeyRestTypeArg, compile.MixedRestTypeArg]
-  assert $args.all(do |a| type(a, compile.RestTypeArg))
-  assert_eq (span_text(source, args[1].span)) "**Str"
+  let schema_params = (types_of(nodes, schema[0])[0][1].expr.params)
+  assert_eq [...schema_params.map(do |p| type p)] $
+    - $compile.PosRestTypeParam
+    - $compile.KeyRestTypeParam
+    - $compile.MixedRestTypeParam
+  assert $schema_params.all(do |p| type(p, compile.RestTypeParam))
+  assert_eq (span_text(source, schema_params[1].span)) "**Str"
   unit.emit()

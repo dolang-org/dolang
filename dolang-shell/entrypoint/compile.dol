@@ -96,21 +96,33 @@ let TYPE_KIND_NAMES = $
 let TYPE_ARG_KIND_NAMES = $
   $compile.PosTypeArg: "PosTypeArg"
   $compile.KeyTypeArg: "KeyTypeArg"
-  $compile.MixedRestTypeArg: "MixedRestTypeArg"
-  $compile.PosRestTypeArg: "PosRestTypeArg"
-  $compile.KeyRestTypeArg: "KeyRestTypeArg"
-  $compile.OpenRestTypeArg: "OpenRestTypeArg"
-  $compile.EntryRestTypeArg: "EntryRestTypeArg"
+  $compile.ExpandTypeArg: "ExpandTypeArg"
+
+# Type parameter kind name, matching the `compile` class names.
+let TYPE_PARAM_KIND_NAMES = $
+  $compile.PosTypeParam: "PosTypeParam"
+  $compile.KeyTypeParam: "KeyTypeParam"
+  $compile.MixedRestTypeParam: "MixedRestTypeParam"
+  $compile.PosRestTypeParam: "PosRestTypeParam"
+  $compile.KeyRestTypeParam: "KeyRestTypeParam"
+  $compile.OpenRestTypeParam: "OpenRestTypeParam"
+  $compile.EntryRestTypeParam: "EntryRestTypeParam"
 
 # How a type argument is given, as the documentation projection names it.
 let ARG_KINDS = $
   $compile.PosTypeArg: pos
   $compile.KeyTypeArg: key
-  $compile.MixedRestTypeArg: mixed_rest
-  $compile.PosRestTypeArg: pos_rest
-  $compile.KeyRestTypeArg: key_rest
-  $compile.OpenRestTypeArg: open_rest
-  $compile.EntryRestTypeArg: entry_rest
+  $compile.ExpandTypeArg: expand
+
+# How a type parameter is declared, as the documentation projection names it.
+let PARAM_KINDS = $
+  $compile.PosTypeParam: pos
+  $compile.KeyTypeParam: key
+  $compile.MixedRestTypeParam: mixed_rest
+  $compile.PosRestTypeParam: pos_rest
+  $compile.KeyRestTypeParam: key_rest
+  $compile.OpenRestTypeParam: open_rest
+  $compile.EntryRestTypeParam: entry_rest
 
 # How a parameter or binder is declared, as the documentation projection names
 # it.
@@ -152,26 +164,39 @@ def type_expr_json id_to_index expr
       value: $expr.value
     if type(expr, compile.AppType)
       base: (type_expr_json id_to_index expr.base)
-    if (type(expr, compile.AppType) || type(expr, compile.SchemaType))
+    if type(expr, compile.AppType)
       args: [...expr.args.map do |arg| (type_arg_json id_to_index arg)]
+    if (type(expr, compile.SchemaType) || type(expr, compile.FuncType))
+      params: [...expr.params.map do |param| (type_param_json id_to_index param)]
     if type(expr, compile.UnionType)
       members: [...expr.members.map do |member| (type_expr_json id_to_index member)]
     if type(expr, compile.FuncType)
-      params: [...expr.params.map do |arg| (type_arg_json id_to_index arg)]
       ret: (type_expr_json id_to_index expr.ret)
 
-# An item in the `[]`, `()` or `{}` of a type expression.
+# A type argument in the `[]` of an application.
 def type_arg_json id_to_index arg
   $
     kind: (TYPE_ARG_KIND_NAMES.get (type arg))
     span: (span_json arg.span)
-    optional: $arg.optional
     if type(arg, compile.KeyTypeArg)
-      key: (span_json arg.key)
-    if (type(arg, compile.KeyTypeArg) && arg.key_ty != nil || type(arg, compile.EntryRestTypeArg))
-      key_type: (type_expr_json id_to_index arg.key_ty)
-    if !type(arg, compile.OpenRestTypeArg)
-      type: (type_expr_json id_to_index arg.ty)
+      name: (span_json arg.name)
+    type: (type_expr_json id_to_index arg.ty)
+
+# A parameter of a schema or function type.
+def type_param_json id_to_index param
+  $
+    kind: (TYPE_PARAM_KIND_NAMES.get (type param))
+    span: (span_json param.span)
+    optional: $param.optional
+    if type(param, compile.KeyTypeParam)
+      key: (span_json param.key)
+    if (
+      type(param, compile.KeyTypeParam) && param.key_ty != nil ||
+      type(param, compile.EntryRestTypeParam)
+    )
+      key_type: (type_expr_json id_to_index param.key_ty)
+    if !type(param, compile.OpenRestTypeParam)
+      type: (type_expr_json id_to_index param.ty)
 
 # Where a node starts, for ordering. A prelude node has no span, and comes first.
 def start_offset node
@@ -486,7 +511,7 @@ class Document
     else if type(expr, compile.SchemaType)
       $
         kind: "schema"
-        args: (self.#type_args(expr.args))
+        params: (self.#type_params(expr.params))
     else if type(expr, compile.UnionType)
       let members = []
       for member = expr.members
@@ -497,7 +522,7 @@ class Document
     else
       $
         kind: "func"
-        params: (self.#type_args(expr.params))
+        params: (self.#type_params(expr.params))
         ret: (self.#type_tree(expr.ret))
 
   # The text of a name or constant type, whose span includes any parentheses
@@ -526,13 +551,26 @@ class Document
     for arg = args
       result.push $
         kind: (ARG_KINDS.get (type arg))
-        optional: $arg.optional
         if type(arg, compile.KeyTypeArg)
-          key: (self.#text(arg.key))
-        if (type(arg, compile.KeyTypeArg) && arg.key_ty != nil || type(arg, compile.EntryRestTypeArg))
-          key_type: (self.#type_tree(arg.key_ty))
-        if !type(arg, compile.OpenRestTypeArg)
-          type: (self.#type_tree(arg.ty))
+          name: (self.#text(arg.name))
+        type: (self.#type_tree(arg.ty))
+    result
+
+  def type_params self params
+    let result = []
+    for param = params
+      result.push $
+        kind: (PARAM_KINDS.get (type param))
+        optional: $param.optional
+        if type(param, compile.KeyTypeParam)
+          key: (self.#text(param.key))
+        if (
+          type(param, compile.KeyTypeParam) && param.key_ty != nil ||
+          type(param, compile.EntryRestTypeParam)
+        )
+          key_type: (self.#type_tree(param.key_ty))
+        if !type(param, compile.OpenRestTypeParam)
+          type: (self.#type_tree(param.ty))
     result
 
   # A class's supertypes, in source order, as type trees. A type-only one is

@@ -22,6 +22,8 @@ def connect :host@Str = "localhost" :port@Int = 8080
   echo "Connecting to $host:$port"
 ```
 
+### Rest Bindings
+
 The annotation on a rest parameter gives the type of each item it collects. A
 schema instead describes the complete argument pack:
 
@@ -36,19 +38,19 @@ def configure ...options@{name: Str, ?port: Int}
   apply ...options
 ```
 
-A leading `...` after `@` explicitly expands a type pattern over a pack:
+A leading `...` after `@` expands a type pattern over a pack:
 
 ```
 def fork[*Rs] *thunks @ ...(() -> Rs) -> Tuple[...Rs]
   ...
 ```
 
-The expansion marker is accepted only on rest bindings, including rest items
-in destructuring and `bind` patterns. Its operand is a compact type; enclose
-function types and unions in parentheses.
+The expansion marker is accepted only on rest bindings.
 
-A field declaration that names several fields share an annotation, just as
-they share a default value:
+### Fields
+
+A field declaration that names several fields gives them all its annotation,
+just as it gives them all its default value:
 
 ```
 class Point
@@ -85,29 +87,51 @@ let halve = (do |x @ Int| -> Int x // 2)
 ## Binders
 
 `[]` directly after the name of a `def` or `class` declares binders: names that
-stand for types within the declaration. A binder is a name, `:name` for a
-keyword type argument, or a variadic binder for any number of further type
-arguments: `...name` for positional and keyword ones, `*name` for positional
-ones, or `**name` for keyword ones. `@` gives a bound and `=` gives a default;
-both are type expressions. Variadic binders come last and cannot have defaults.
-As with rest parameters, `*` and `**` may appear together, `*` first, but not
-with `...`. A variadic binder stands for the remaining arguments, so it is
-always a schema binder. Any other binder is a type binder unless a schema bound
-such as `S @ {...}` makes it a schema binder.
+stand for types within the declaration.
 
 ```
 def first[T] items @ Array[T] -> T
   items[0]
 
-def apply[R, *Ps, **Ks] func@((*Ps, **Ks) -> R) *args@Ps **kw@Ks -> R
-  func ...args ...kw
-
 class Table[K, V]
   pub field rows @ Dict[K, V] = {}
+```
 
+### Binder Forms
+
+| Binder    | Binds                                                       |
+| --------- | ----------------------------------------------------------- |
+| `name`    | A positional type argument                                  |
+| `:name`   | A keyword type argument                                     |
+| `...name` | Any number of further positional and keyword type arguments |
+| `*name`   | Any number of further positional type arguments             |
+| `**name`  | Any number of further keyword type arguments                |
+
+The last three are variadic binders. They come last, and as with rest
+parameters, `*` and `**` may appear together, `*` first, but not with `...`:
+
+```
+def apply[R, *Ps, **Ks] func@((*Ps, **Ks) -> R) *args@Ps **kw@Ks -> R
+  func ...args ...kw
+```
+
+### Bounds and Defaults
+
+`@` gives a binder a bound and `=` gives it a default; both are type
+expressions. Variadic binders cannot have defaults.
+
+```
 def lookup[K @ Hashable, V = nil] key@K -> V
   nil
 ```
+
+### Schema Binders
+
+A variadic binder stands for the remaining arguments, so it is always a schema
+binder. Any other binder is a type binder unless a schema bound such as
+`S @ {...}` makes it a schema binder.
+
+### Supertype Arguments
 
 A superclass can take type arguments:
 
@@ -152,21 +176,8 @@ import @geometry
 let point @ geometry.Point = nil
 ```
 
-Modules are not nested, so a module holds only the types declared in it, and a
-dotted type name reaches no further than the module it imports. Modules sharing
-a leading name are separate imports, written one per line under `import`:
-
-```
-import
-  @geometry.plane
-  @geometry.solid
-
-let area @ geometry.plane.Area = nil
-let volume @ geometry.solid.Volume = nil
-```
-
-`@import` makes every module and item in the statement type-only, including
-renamed imports. Individual `@` markers remain valid but are redundant:
+`@import` makes every module and item in the statement type-only Individual `@`
+markers remain valid but are redundant:
 
 ```
 @import geometry: g
@@ -188,20 +199,22 @@ function:
 
 ```
 @def double x @ Int -> Int
+
 @def double x @ Str -> Str
+
 pub def double x
   (x + x)
 ```
 
-An overload has no runtime binding. It is exported with its implementation, so
-it is never written `pub`. A method, including a special method such as
-`(init)`, takes overloads in its class body the same way.
+An overload has no runtime binding. It doesn't take `pub`; it's exported if
+its implementation is. A method, including a special method such as `(init)`,
+takes overloads in its class body the same way.
 
 ## Protocols
 
-`@class` declares a protocol, a type made up of the members a value has. A
-protocol has no runtime binding. Its methods have no bodies, its fields have no
-defaults, and methods sharing a name are overloads:
+`@class` declares a protocol, which describes the fields and methods exposed by
+implementing types. Its methods have no bodies, its fields have no defaults,
+and methods sharing a name are implicitly overloads:
 
 ```
 pub @class Shape
@@ -210,9 +223,8 @@ pub @class Shape
   pub def area self scale @ Int -> Int
 ```
 
-A protocol is structural: a value with its members is one of its instances,
-whatever its class. A class claims a type with a type-only supertype, written
-with `@`, which is not inherited at runtime and may name any type:
+Protocols have no corresponding type objects at runtime. A class can indicate
+it implements a protocol by naming it as a supertype with `@`:
 
 ```
 class Square: @Shape
@@ -275,21 +287,23 @@ let mode @ (:TARGET: | :LINK:) = :TARGET:
 
 ### Type Arguments
 
-`[]` directly after a type applies generic arguments.
+`[]` directly after a type applies type arguments to it. Each argument is one
+of:
 
-The items of `[]`, `()`, and `{}` share positional, symbol-keyed, and rest
-syntax. `...type` stands for any number of further items. In schemas and
-function parameter lists, `*type` stands for further positional items and
-`**type` for further keyed items; `[]` expands packs only with `...`. The
-`...K: V` and open `...` rest items are allowed in schemas and generic
-applications, but not in function parameter lists.
+| Argument  | Meaning                                         |
+| --------- | ----------------------------------------------- |
+| `T`       | A positional argument                           |
+| `name: T` | A keyword argument                              |
+| `...S`    | Expands the schema `S` into further arguments   |
+
+Expansion of a plain type is shorthand for `...{*T}`
 
 ```
 let names @ Array[Str] = []
 let index @ Dict[Str, Array[Int]] = {}
 let row @ Tuple[...Str] = Tuple ["id", "name"]
 let result @ Record[value: Int, error: (Error | nil)] = nil
-let open @ Record[name: Str, ...] = nil
+let open @ Record[...{name: Str, ...}] = nil
 ```
 
 ### Unions
@@ -305,31 +319,76 @@ let target @ (
 ) = nil
 ```
 
-There is no shorthand for a type that also accepts `nil`; write `(T | nil)`.
-
 ### Schemas
 
-A schema is not itself a type. It lists the positional and keyed entries of a
-`Dict`, argument pack, or similar construct and the type of each value. Put it
-inside `Dict[...]` to describe a dict. Bare keys are symbols and quoted keys are
-strings, as in dict literals. Any other type may give a key, parenthesized when
-it is a name, as in `{(K): V}`. `?` marks an optional key. `...T` allows further
-items with values of type `T`, or splices `T` when it is a schema. `*T` allows
-only further positional items, and `**T` only further keyed ones. `...K: V`
-allows further keyed entries whose keys have type `K` and values have type `V`.
-Schemas are closed unless they contain a rest item. `{...}` is the universal
-schema, shorthand for `{...std.Value}`:
+A schema is not itself a type, but a description of positional and keyed items
+and their types which can parameterize a `Dict`, argument pack, etc. Schemas are
+closed: they admit only the items they list, unless they contain a
+[rest item](./types.md#rest-items).
 
 ```
 let options @ Dict[{name: Str, ?port: Int}] = {name: "db"}
+```
+
+#### Positional Items
+
+A type alone is a positional item:
+
+```
+let pair @ Dict[{Str, Int}] = {"a", 1}
+```
+
+#### Keyed Items
+
+`key: T` is a keyed item. Bare keys are literal symbols while other expressions
+give the key type.
+
+```
+let headers @ Dict[{host: Str, "x-custom": Str}] = {}
+let codes @ Dict[{(Tuple[Int, Int]): Str}] = {}
+```
+
+#### Optional Items
+
+`?` marks an optional item:
+
+```
+let options @ Dict[{name: Str, ?port: Int}] = {name: "db"}
+```
+
+#### Rest Items
+
+A rest item allows items beyond those listed:
+
+| Item      | Allows                                                           |
+| --------- | ---------------------------------------------------------------- |
+| `...T`    | Further items of either kind with values of type `T`             |
+| `*T`      | Further positional items of type `T`                             |
+| `**T`     | Further keyed items with values of type `T`                      |
+| `...K: V` | Further keyed items with keys of type `K` and values of type `V` |
+| `...`     | Any further items; shorthand for `...std.Value`                  |
+
+```
 let headers @ Dict[{...Str: Str}] = {}
 let anything @ Dict[{...}] = {}
 ```
 
+#### Splices
+
+When `S` is a schema rather than a type, `...S` splices its items.
+
+#### Types as Schema Arguments
+
 A type whose only parameter is a schema, such as `Dict`, also accepts types in
-its place. `Dict[T]` stands for `Dict[{*T}]`, any number of positional items of
-type `T`, and `Dict[K, V]` stands for `Dict[{...K: V}]`. An argument that is
-already a schema, including a binder bounded by one, is passed as is:
+its place:
+
+| Shorthand    | Stands for          |
+| ------------ | ------------------- |
+| `Dict[T]`    | `Dict[{*T}]`        |
+| `Dict[K, V]` | `Dict[{...K: V}]`   |
+
+An argument that is already a schema, including a binder bounded by one, is
+passed as is:
 
 ```
 let headers @ Dict[Str, Str] = {}
@@ -348,6 +407,12 @@ let add @ ((Int, ?Int) -> Int) = do |a b = 0| (a + b)
 let address @ ((Str, ?port: Int) -> Str) = do |host :port = 80| "$host:$port"
 let curried @ (Int -> Int -> Int) = do |a| do |b| (a + b)
 let thunk @ (() -> Str) = do "hello"
+```
+
+Rest parameters are written `...T`, `*T`, or `**T`.
+
+```
+let log @ ((Sym, *Str, **Str) -> nil) = do |level *parts **opts| echo "[$level]" ...parts ...opts
 ```
 
 A required positional parameter cannot follow an optional one, and a rest

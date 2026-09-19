@@ -65,7 +65,7 @@ let BINDS_FUNC = 0
 let BINDS_UNION = 1
 let BINDS_COMPACT = 2
 
-# The sigil that declares each kind of parameter, binder, or type argument
+# The sigil that declares each kind of parameter or binder
 let SIGILS = $
   "pos": ""
   "key": ":"
@@ -90,34 +90,47 @@ def type_text ty context
   if (kind == "app")
     text = "$(type_text(ty["base"], BINDS_COMPACT))[$(type_args_text(ty["args"]))]"
   else if (kind == "schema")
-    text = "{$(type_args_text(ty["args"]))}"
+    text = "{$(type_params_text(ty["params"]))}"
   else if (kind == "union")
     text = " | ".join([...ty["members"].map(do |member| type_text(member, BINDS_COMPACT))])
     binding = BINDS_UNION
   else
-    text = "($(type_args_text(ty["params"]))) -> $(type_text(ty["ret"], BINDS_FUNC))"
+    text = "($(type_params_text(ty["params"]))) -> $(type_text(ty["ret"], BINDS_FUNC))"
     binding = BINDS_FUNC
   if (binding < context)
     "($text)"
   else
     text
 
-# The items in the `[]`, `()` or `{}` of a type tree.
+# The arguments in the `[]` of an application type tree.
 def type_args_text args
   let parts = []
   for arg = args
-    let text = (arg["optional"] && "?" || "")
+    let text = (type_text arg["type"] BINDS_FUNC)
     let kind = arg["kind"]
+    if (kind == "expand")
+      text = "...$text"
+    else if (kind == "key")
+      text = "$(arg["name"]): $text"
+    parts.push $text
+  ", ".join $parts
+
+# The parameters in the `()` or `{}` of a function or schema type tree.
+def type_params_text params
+  let parts = []
+  for param = params
+    let text = (param["optional"] && "?" || "")
+    let kind = param["kind"]
     if (kind == "open_rest")
       parts.push "$text..."
       continue
     if (kind == "mixed_rest" || kind == "pos_rest" || kind == "key_rest")
       text = "$text$(SIGILS[kind])"
     else if (kind == "entry_rest")
-      text = "$text...$(type_text(arg["key_type"], BINDS_FUNC)): "
+      text = "$text...$(type_text(param["key_type"], BINDS_FUNC)): "
     else if (kind == "key")
-      text = "$text$(arg["key"]): "
-    parts.push "$text$(type_text(arg["type"], BINDS_FUNC))"
+      text = "$text$(param["key"]): "
+    parts.push "$text$(type_text(param["type"], BINDS_FUNC))"
   ", ".join $parts
 
 # A binder as its declaration writes it.

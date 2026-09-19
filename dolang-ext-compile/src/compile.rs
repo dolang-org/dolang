@@ -42,8 +42,10 @@ pub(crate) struct Types<'v> {
     type_expr: Type<'v, TypeExprObject<TypeExprTag>>,
     type_kinds: TypeExprTypes<'v>,
     type_arg: Type<'v, TypeExprObject<TypeArgTag>>,
-    rest_arg: Type<'v, TypeExprObject<RestTypeArgTag>>,
     arg_kinds: TypeArgTypes<'v>,
+    type_param: Type<'v, TypeExprObject<TypeParamTag>>,
+    rest_type_param: Type<'v, TypeExprObject<RestTypeParamTag>>,
+    param_kinds: TypeParamTypes<'v>,
     diagnostic: Type<'v, Diagnostic>,
     span: Type<'v, Span>,
     pos: Type<'v, Pos>,
@@ -180,6 +182,7 @@ impl<'v> Global<'v> {
         }
         let type_expr = builder.register_type();
         let type_arg = builder.register_type();
+        let type_param = builder.register_type();
         macro_rules! type_subtype {
             ($tag:ty, $base:expr) => {
                 builder
@@ -188,7 +191,7 @@ impl<'v> Global<'v> {
                     .build()
             };
         }
-        let rest_arg = type_subtype!(RestTypeArgTag, type_arg);
+        let rest_type_param = type_subtype!(RestTypeParamTag, type_param);
         Self {
             types: Types {
                 unit: builder.register_type(),
@@ -256,15 +259,21 @@ impl<'v> Global<'v> {
                     func: type_subtype!(FuncTypeTag, type_expr),
                 },
                 type_arg,
-                rest_arg,
                 arg_kinds: TypeArgTypes {
                     pos: type_subtype!(PosTypeArgTag, type_arg),
                     key: type_subtype!(KeyTypeArgTag, type_arg),
-                    mixed_rest: type_subtype!(MixedRestTypeArgTag, rest_arg),
-                    pos_rest: type_subtype!(PosRestTypeArgTag, rest_arg),
-                    key_rest: type_subtype!(KeyRestTypeArgTag, rest_arg),
-                    open_rest: type_subtype!(OpenRestTypeArgTag, type_arg),
-                    entry_rest: type_subtype!(EntryRestTypeArgTag, type_arg),
+                    expand: type_subtype!(ExpandTypeArgTag, type_arg),
+                },
+                type_param,
+                rest_type_param,
+                param_kinds: TypeParamTypes {
+                    pos: type_subtype!(PosTypeParamTag, type_param),
+                    key: type_subtype!(KeyTypeParamTag, type_param),
+                    mixed_rest: type_subtype!(MixedRestTypeParamTag, rest_type_param),
+                    pos_rest: type_subtype!(PosRestTypeParamTag, rest_type_param),
+                    key_rest: type_subtype!(KeyRestTypeParamTag, rest_type_param),
+                    open_rest: type_subtype!(OpenRestTypeParamTag, type_param),
+                    entry_rest: type_subtype!(EntryRestTypeParamTag, type_param),
                 },
                 diagnostic: builder.register_type(),
                 span: builder.register_type(),
@@ -468,10 +477,12 @@ type_tags! {
     TypeExprTag=>"TypeExpr", NameTypeTag=>"NameType", ConstTypeTag=>"ConstType",
     AppTypeTag=>"AppType", SchemaTypeTag=>"SchemaType", UnionTypeTag=>"UnionType",
     FuncTypeTag=>"FuncType", TypeArgTag=>"TypeArg", PosTypeArgTag=>"PosTypeArg",
-    KeyTypeArgTag=>"KeyTypeArg", RestTypeArgTag=>"RestTypeArg",
-    MixedRestTypeArgTag=>"MixedRestTypeArg", PosRestTypeArgTag=>"PosRestTypeArg",
-    KeyRestTypeArgTag=>"KeyRestTypeArg", OpenRestTypeArgTag=>"OpenRestTypeArg",
-    EntryRestTypeArgTag=>"EntryRestTypeArg"
+    KeyTypeArgTag=>"KeyTypeArg", ExpandTypeArgTag=>"ExpandTypeArg",
+    TypeParamTag=>"TypeParam", PosTypeParamTag=>"PosTypeParam",
+    KeyTypeParamTag=>"KeyTypeParam", RestTypeParamTag=>"RestTypeParam",
+    MixedRestTypeParamTag=>"MixedRestTypeParam", PosRestTypeParamTag=>"PosRestTypeParam",
+    KeyRestTypeParamTag=>"KeyRestTypeParam", OpenRestTypeParamTag=>"OpenRestTypeParam",
+    EntryRestTypeParamTag=>"EntryRestTypeParam"
 }
 
 pub(crate) struct TypeExprTypes<'v> {
@@ -486,11 +497,17 @@ pub(crate) struct TypeExprTypes<'v> {
 pub(crate) struct TypeArgTypes<'v> {
     pos: Type<'v, TypeExprObject<PosTypeArgTag>>,
     key: Type<'v, TypeExprObject<KeyTypeArgTag>>,
-    mixed_rest: Type<'v, TypeExprObject<MixedRestTypeArgTag>>,
-    pos_rest: Type<'v, TypeExprObject<PosRestTypeArgTag>>,
-    key_rest: Type<'v, TypeExprObject<KeyRestTypeArgTag>>,
-    open_rest: Type<'v, TypeExprObject<OpenRestTypeArgTag>>,
-    entry_rest: Type<'v, TypeExprObject<EntryRestTypeArgTag>>,
+    expand: Type<'v, TypeExprObject<ExpandTypeArgTag>>,
+}
+
+pub(crate) struct TypeParamTypes<'v> {
+    pos: Type<'v, TypeExprObject<PosTypeParamTag>>,
+    key: Type<'v, TypeExprObject<KeyTypeParamTag>>,
+    mixed_rest: Type<'v, TypeExprObject<MixedRestTypeParamTag>>,
+    pos_rest: Type<'v, TypeExprObject<PosRestTypeParamTag>>,
+    key_rest: Type<'v, TypeExprObject<KeyRestTypeParamTag>>,
+    open_rest: Type<'v, TypeExprObject<OpenRestTypeParamTag>>,
+    entry_rest: Type<'v, TypeExprObject<EntryRestTypeParamTag>>,
 }
 
 pub(crate) struct TypeAnnex<'v> {
@@ -506,7 +523,11 @@ enum TypeDetail {
         head: SpanData,
         target: Option<NodeIdAnnex>,
     },
+    /// A type argument's name, if it is a keyword argument
     Arg {
+        name: Option<SpanData>,
+    },
+    Param {
         optional: bool,
         key: Option<SpanData>,
     },
@@ -1888,8 +1909,8 @@ fn create_type_expr<'v, 's>(
                 create_type_args(global, strand, unit, args, &mut second)?;
                 (Which::App, TypeDetail::None)
             }
-            compile::TypeKind::Schema { args } => {
-                create_type_args(global, strand, unit, args, &mut first)?;
+            compile::TypeKind::Schema { params } => {
+                create_type_params(global, strand, unit, params, &mut first)?;
                 (Which::Schema, TypeDetail::None)
             }
             compile::TypeKind::Union { members } => {
@@ -1904,7 +1925,7 @@ fn create_type_expr<'v, 's>(
                 (Which::Union, TypeDetail::None)
             }
             compile::TypeKind::Func { params, ret } => {
-                create_type_args(global, strand, unit, params, &mut first)?;
+                create_type_params(global, strand, unit, params, &mut first)?;
                 create_type_expr(global, strand, unit, ret, &mut second)?;
                 (Which::Func, TypeDetail::None)
             }
@@ -1956,15 +1977,65 @@ fn create_type_args<'v, 's>(
     Output::set(strand, &mut *out, Empty::Array);
     let array = out.as_array(strand).unwrap();
     for arg in args {
+        strand.with_slots_sync(|strand, [mut item, mut ty]| {
+            create_type_expr(global, strand, unit, arg.ty(), &mut ty)?;
+            let annex = |name| TypeAnnex {
+                global,
+                span: span_data(arg.span()),
+                detail: TypeDetail::Arg { name },
+            };
+            macro_rules! make {
+                ($ty:expr, $name:expr) => {{
+                    let t = $ty;
+                    t.create_with_annex(
+                        strand,
+                        TypeExprObject {
+                            marker: PhantomData,
+                        },
+                        annex($name),
+                        &mut item,
+                    );
+                    t.cast(&item).unwrap().enter_sync(strand, |strand, object| {
+                        Output::set(
+                            strand,
+                            Mut::slot_mut::<0>(&mut object.borrow_mut_unwrap()),
+                            &*ty,
+                        );
+                    });
+                }};
+            }
+            let t = &global.types.arg_kinds;
+            match arg.kind() {
+                compile::TypeArgKind::Pos => make!(t.pos, None),
+                compile::TypeArgKind::Key { name } => make!(t.key, Some(span_data(name))),
+                compile::TypeArgKind::Expand => make!(t.expand, None),
+                _ => return Err(Error::not_supported(strand)),
+            }
+            array.push(strand, &mut item)
+        })?;
+    }
+    Ok(())
+}
+
+fn create_type_params<'v, 's>(
+    global: State<'v, Global<'v>>,
+    strand: &mut Strand<'v, 's>,
+    unit: u64,
+    params: compile::TypeParams<'_>,
+    out: &mut Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    Output::set(strand, &mut *out, Empty::Array);
+    let array = out.as_array(strand).unwrap();
+    for param in params {
         strand.with_slots_sync(|strand, [mut item, mut ty, mut key_ty]| {
-            if let Some(arg_ty) = arg.ty() {
-                create_type_expr(global, strand, unit, arg_ty, &mut ty)?;
+            if let Some(param_ty) = param.ty() {
+                create_type_expr(global, strand, unit, param_ty, &mut ty)?;
             }
             let annex = |key| TypeAnnex {
                 global,
-                span: span_data(arg.span()),
-                detail: TypeDetail::Arg {
-                    optional: arg.optional(),
+                span: span_data(param.span()),
+                detail: TypeDetail::Param {
+                    optional: param.optional(),
                     key,
                 },
             };
@@ -1988,10 +2059,10 @@ fn create_type_args<'v, 's>(
                     });
                 }};
             }
-            let t = &global.types.arg_kinds;
-            match arg.kind() {
-                compile::TypeArgKind::Pos => make!(t.pos, None),
-                compile::TypeArgKind::Key {
+            let t = &global.types.param_kinds;
+            match param.kind() {
+                compile::TypeParamKind::Pos => make!(t.pos, None),
+                compile::TypeParamKind::Key {
                     key,
                     key_ty: key_expr,
                 } => {
@@ -2010,10 +2081,10 @@ fn create_type_args<'v, 's>(
                             );
                         });
                 }
-                compile::TypeArgKind::Rest(compile::RestKind::Mixed) => make!(t.mixed_rest, None),
-                compile::TypeArgKind::Rest(compile::RestKind::Pos) => make!(t.pos_rest, None),
-                compile::TypeArgKind::Rest(compile::RestKind::Key) => make!(t.key_rest, None),
-                compile::TypeArgKind::OpenRest => {
+                compile::TypeParamKind::Rest(compile::RestKind::Mixed) => make!(t.mixed_rest, None),
+                compile::TypeParamKind::Rest(compile::RestKind::Pos) => make!(t.pos_rest, None),
+                compile::TypeParamKind::Rest(compile::RestKind::Key) => make!(t.key_rest, None),
+                compile::TypeParamKind::OpenRest => {
                     t.open_rest.create_with_annex(
                         strand,
                         TypeExprObject {
@@ -2023,7 +2094,7 @@ fn create_type_args<'v, 's>(
                         &mut item,
                     );
                 }
-                compile::TypeArgKind::KeyRest { key_ty: key } => {
+                compile::TypeParamKind::KeyRest { key_ty: key } => {
                     create_type_expr(global, strand, unit, key, &mut key_ty)?;
                     let t = t.entry_rest;
                     t.create_with_annex(
@@ -2072,16 +2143,16 @@ impl<'v, T: TypeMarker + 'static> Object<'v> for TypeExprObject<T> {
         });
         if matches!(
             T::NAME,
-            "PosTypeArg"
-                | "KeyTypeArg"
-                | "MixedRestTypeArg"
-                | "PosRestTypeArg"
-                | "KeyRestTypeArg"
-                | "OpenRestTypeArg"
-                | "EntryRestTypeArg"
+            "PosTypeParam"
+                | "KeyTypeParam"
+                | "MixedRestTypeParam"
+                | "PosRestTypeParam"
+                | "KeyRestTypeParam"
+                | "OpenRestTypeParam"
+                | "EntryRestTypeParam"
         ) {
             builder = builder.get("optional", |this, strand, out| {
-                let TypeDetail::Arg { optional, .. } = &this.annex().detail else {
+                let TypeDetail::Param { optional, .. } = &this.annex().detail else {
                     unreachable!()
                 };
                 Output::set(strand, out, *optional);
@@ -2092,14 +2163,17 @@ impl<'v, T: TypeMarker + 'static> Object<'v> for TypeExprObject<T> {
             T::NAME,
             "PosTypeArg"
                 | "KeyTypeArg"
-                | "MixedRestTypeArg"
-                | "PosRestTypeArg"
-                | "KeyRestTypeArg"
-                | "EntryRestTypeArg"
+                | "ExpandTypeArg"
+                | "PosTypeParam"
+                | "KeyTypeParam"
+                | "MixedRestTypeParam"
+                | "PosRestTypeParam"
+                | "KeyRestTypeParam"
+                | "EntryRestTypeParam"
         ) {
             builder = builder.get("ty", slot!(0));
         }
-        if matches!(T::NAME, "KeyTypeArg" | "EntryRestTypeArg") {
+        if matches!(T::NAME, "KeyTypeParam" | "EntryRestTypeParam") {
             builder = builder.get("key_ty", slot!(1));
         }
         match T::NAME {
@@ -2123,11 +2197,18 @@ impl<'v, T: TypeMarker + 'static> Object<'v> for TypeExprObject<T> {
                 }),
             "ConstType" => builder.get("value", slot!(0)),
             "AppType" => builder.get("base", slot!(0)).get("args", slot!(1)),
-            "SchemaType" => builder.get("args", slot!(0)),
+            "SchemaType" => builder.get("params", slot!(0)),
             "UnionType" => builder.get("members", slot!(0)),
             "FuncType" => builder.get("params", slot!(0)).get("ret", slot!(1)),
-            "KeyTypeArg" => builder.get("key", |this, strand, out| {
-                let TypeDetail::Arg { key: Some(key), .. } = &this.annex().detail else {
+            "KeyTypeArg" => builder.get("name", |this, strand, out| {
+                let TypeDetail::Arg { name: Some(name) } = &this.annex().detail else {
+                    unreachable!()
+                };
+                create_span(this.annex().global, strand, name.clone(), out);
+                Ok(())
+            }),
+            "KeyTypeParam" => builder.get("key", |this, strand, out| {
+                let TypeDetail::Param { key: Some(key), .. } = &this.annex().detail else {
                     unreachable!()
                 };
                 create_span(this.annex().global, strand, key.clone(), out);
@@ -2533,12 +2614,16 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .value("TypeArg", global.types.type_arg)
         .value("PosTypeArg", global.types.arg_kinds.pos)
         .value("KeyTypeArg", global.types.arg_kinds.key)
-        .value("RestTypeArg", global.types.rest_arg)
-        .value("MixedRestTypeArg", global.types.arg_kinds.mixed_rest)
-        .value("PosRestTypeArg", global.types.arg_kinds.pos_rest)
-        .value("KeyRestTypeArg", global.types.arg_kinds.key_rest)
-        .value("OpenRestTypeArg", global.types.arg_kinds.open_rest)
-        .value("EntryRestTypeArg", global.types.arg_kinds.entry_rest)
+        .value("ExpandTypeArg", global.types.arg_kinds.expand)
+        .value("TypeParam", global.types.type_param)
+        .value("PosTypeParam", global.types.param_kinds.pos)
+        .value("KeyTypeParam", global.types.param_kinds.key)
+        .value("RestTypeParam", global.types.rest_type_param)
+        .value("MixedRestTypeParam", global.types.param_kinds.mixed_rest)
+        .value("PosRestTypeParam", global.types.param_kinds.pos_rest)
+        .value("KeyRestTypeParam", global.types.param_kinds.key_rest)
+        .value("OpenRestTypeParam", global.types.param_kinds.open_rest)
+        .value("EntryRestTypeParam", global.types.param_kinds.entry_rest)
         .value("Diagnostic", global.types.diagnostic)
         .value("Span", global.types.span)
         .value("Pos", global.types.pos)

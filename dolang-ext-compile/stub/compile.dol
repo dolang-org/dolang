@@ -517,9 +517,9 @@ pub class AppType: TypeExpr
 
 # A schema, such as `{name: Str, ?port: Int}`.
 pub class SchemaType: TypeExpr
-  # The entries.
+  # The parameters.
   #[getter]
-  pub def args self -> Array[TypeArg]
+  pub def params self -> Array[TypeParam]
     ...
 
 # A union, such as `(Str | Path)`.
@@ -533,7 +533,7 @@ pub class UnionType: TypeExpr
 pub class FuncType: TypeExpr
   # The parameters.
   #[getter]
-  pub def params self -> Array[TypeArg]
+  pub def params self -> Array[TypeParam]
     ...
 
   # The return type.
@@ -541,28 +541,62 @@ pub class FuncType: TypeExpr
   pub def ret self -> TypeExpr
     ...
 
-# Supertype of the items in the `[]`, `()`, or `{}` of a type.
+# Supertype of the type arguments in the `[]` of an
+# [`AppType`](compile.AppType).
 pub class TypeArg
-  # Whether the item is marked optional with `?`.
-  #[getter]
-  pub def optional self -> Bool
-    ...
-
-  # The span of the item, without a trailing `,`.
+  # The span of the argument, without a trailing `,`.
   #[getter]
   pub def span self -> Span
     ...
 
-# A positional item, such as `T`.
+# A positional argument, such as `T`.
 pub class PosTypeArg: TypeArg
-  # The item's type.
+  # The argument's type.
   #[getter]
   pub def ty self -> TypeExpr
     ...
 
-# A keyed item, such as `name: T` or `(K): T`.
+# A keyword argument, such as `name: T`.
 pub class KeyTypeArg: TypeArg
-  # The item's type.
+  # The argument's type.
+  #[getter]
+  pub def ty self -> TypeExpr
+    ...
+  # The span of the name.
+  #[getter]
+  pub def name self -> Span
+    ...
+
+# An expansion of a pack into further arguments, such as `...T`.
+pub class ExpandTypeArg: TypeArg
+  # The type expanded.
+  #[getter]
+  pub def ty self -> TypeExpr
+    ...
+
+# Supertype of the parameters of a [`SchemaType`](compile.SchemaType) or
+# [`FuncType`](compile.FuncType).
+pub class TypeParam
+  # Whether the parameter is marked optional with `?`.
+  #[getter]
+  pub def optional self -> Bool
+    ...
+
+  # The span of the parameter, without a trailing `,`.
+  #[getter]
+  pub def span self -> Span
+    ...
+
+# A positional parameter, such as `T`.
+pub class PosTypeParam: TypeParam
+  # The parameter's type.
+  #[getter]
+  pub def ty self -> TypeExpr
+    ...
+
+# A keyed parameter, such as `name: T` or `(K): T`.
+pub class KeyTypeParam: TypeParam
+  # The parameter's type.
   #[getter]
   pub def ty self -> TypeExpr
     ...
@@ -576,28 +610,28 @@ pub class KeyTypeArg: TypeArg
   pub def key_ty self -> (TypeExpr | nil)
     ...
 
-# Supertype of rest items with a type. Its subtype says which items it
+# Supertype of rest parameters with a type. Its subtype says which items it
 # describes.
-pub class RestTypeArg: TypeArg
-  # The item's type.
+pub class RestTypeParam: TypeParam
+  # The parameter's type.
   #[getter]
   pub def ty self -> TypeExpr
     ...
 
-# A rest item for positional and keyed items, such as `...T`.
-pub class MixedRestTypeArg: RestTypeArg
+# A rest parameter for positional and keyed items, such as `...T`.
+pub class MixedRestTypeParam: RestTypeParam
 
-# A rest item for positional items only, such as `*T`.
-pub class PosRestTypeArg: RestTypeArg
+# A rest parameter for positional items only, such as `*T`.
+pub class PosRestTypeParam: RestTypeParam
 
-# A rest item for keyed items only, such as `**T`.
-pub class KeyRestTypeArg: RestTypeArg
+# A rest parameter for keyed items only, such as `**T`.
+pub class KeyRestTypeParam: RestTypeParam
 
-# An unrestricted schema rest item, written `...`.
-pub class OpenRestTypeArg: TypeArg
+# An unrestricted schema rest parameter, written `...`.
+pub class OpenRestTypeParam: TypeParam
 
-# A rest item for arbitrary keyed entries, such as `...K: V`.
-pub class EntryRestTypeArg: TypeArg
+# A rest parameter for arbitrary keyed entries, such as `...K: V`.
+pub class EntryRestTypeParam: TypeParam
   # The value type.
   #[getter]
   pub def ty self -> TypeExpr

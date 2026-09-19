@@ -121,20 +121,31 @@ enum TypeJson {
         args: Vec<TypeArgJson>,
     },
     Schema {
-        args: Vec<TypeArgJson>,
+        params: Vec<TypeParamJson>,
     },
     Union {
         members: Vec<TypeJson>,
     },
     Func {
-        params: Vec<TypeArgJson>,
+        params: Vec<TypeParamJson>,
         ret: Box<TypeJson>,
     },
 }
 
-/// An item in the `[]`, `()` or `{}` of a type
+/// A type argument in the `[]` of an application
 #[derive(Clone, serde::Deserialize)]
 struct TypeArgJson {
+    kind: String,
+    /// The name of a keyword argument
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(rename = "type")]
+    ty: TypeJson,
+}
+
+/// A parameter of a schema or function type
+#[derive(Clone, serde::Deserialize)]
+struct TypeParamJson {
     kind: String,
     #[serde(default)]
     optional: bool,
@@ -147,7 +158,7 @@ struct TypeArgJson {
     ty: Option<TypeJson>,
 }
 
-/// The sigil that declares a parameter, binder, or type argument of the given kind
+/// The sigil that declares a parameter or binder of the given kind
 fn sigil(kind: &str) -> &'static str {
     match kind {
         "key" => ":",
@@ -177,7 +188,9 @@ impl TypeJson {
                 format!("{}[{}]", base.render(Binding::Compact), render_args(args)),
                 Binding::Compact,
             ),
-            TypeJson::Schema { args } => (format!("{{{}}}", render_args(args)), Binding::Compact),
+            TypeJson::Schema { params } => {
+                (format!("{{{}}}", render_params(params)), Binding::Compact)
+            }
             TypeJson::Union { members } => (
                 members
                     .iter()
@@ -187,7 +200,11 @@ impl TypeJson {
                 Binding::Union,
             ),
             TypeJson::Func { params, ret } => (
-                format!("({}) -> {}", render_args(params), ret.render(Binding::Func)),
+                format!(
+                    "({}) -> {}",
+                    render_params(params),
+                    ret.render(Binding::Func)
+                ),
                 Binding::Func,
             ),
         };
@@ -202,12 +219,27 @@ impl TypeJson {
 fn render_args(args: &[TypeArgJson]) -> String {
     args.iter()
         .map(|arg| {
-            let optional = if arg.optional { "?" } else { "" };
-            let Some(ty) = arg.ty.as_ref() else {
+            let ty = arg.ty.render(Binding::Func);
+            match (arg.kind.as_str(), &arg.name) {
+                ("expand", _) => format!("...{ty}"),
+                ("key", Some(name)) => format!("{name}: {ty}"),
+                _ => ty,
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn render_params(params: &[TypeParamJson]) -> String {
+    params
+        .iter()
+        .map(|param| {
+            let optional = if param.optional { "?" } else { "" };
+            let Some(ty) = param.ty.as_ref() else {
                 return format!("{optional}...");
             };
             let ty = ty.render(Binding::Func);
-            match (arg.kind.as_str(), &arg.key_type, &arg.key) {
+            match (param.kind.as_str(), &param.key_type, &param.key) {
                 (kind @ ("mixed_rest" | "pos_rest" | "key_rest"), _, _) => {
                     format!("{optional}{}{ty}", sigil(kind))
                 }
