@@ -28,12 +28,6 @@ let e @((?...Int) -> Int) = 1
 #    |
 # LL | let e @((?...Int) -> Int) = 1
 #    |          ^
-let f @((?Int, Int) -> Int) = 1
-# error: required positional items must precede any optional positional items
-#   --> type_errors.dol:LL:LL
-#    |
-# LL | let f @((?Int, Int) -> Int) = 1
-#    |                ^^^
 let g @"$a" = 1
 # error: expression is not a constant
 #   --> type_errors.dol:LL:LL

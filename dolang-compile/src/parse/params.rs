@@ -11,7 +11,7 @@ use crate::{
 };
 
 /// Why a rest of `kind` cannot follow a rest of `prev`, if it cannot.
-pub(super) fn rest_order_error(prev: RestKind, kind: RestKind) -> Option<&'static str> {
+fn rest_order_error(prev: RestKind, kind: RestKind) -> Option<&'static str> {
     match (prev, kind) {
         (RestKind::Pos, RestKind::Key) => None,
         (RestKind::Key, RestKind::Pos) => Some("`*` rest must come before `**`"),
@@ -28,6 +28,8 @@ pub(super) enum ParamMode {
     /// Horizontal parameters of a declaration without a body, which end with the statement
     HorizSig,
     VertFunc,
+    /// Vertical parameters of a declaration without a body
+    VertSig,
     HorizPattern,
     VertPattern,
 }
@@ -38,13 +40,18 @@ impl ParamMode {
     }
 
     fn is_vertical(&self) -> bool {
-        matches!(self, Self::VertFunc | Self::VertPattern)
+        matches!(self, Self::VertFunc | Self::VertSig | Self::VertPattern)
     }
+
     fn supports_defaults(&self) -> bool {
-        matches!(
-            self,
-            Self::HorizFunc | Self::HorizSig | Self::VertFunc | Self::VertPattern
-        )
+        !matches!(self, Self::HorizPattern)
+    }
+
+    /// Whether the parameters unpack arguments, which constrains their order. A
+    /// declaration without a body only describes calls, leaving any constraint to
+    /// the type checker.
+    fn unpacks(&self) -> bool {
+        !matches!(self, Self::HorizSig | Self::VertSig)
     }
 }
 
@@ -136,7 +143,7 @@ impl Parser<'_> {
                         ));
                     }
                     self.advance();
-                    if matches!(mode, ParamMode::VertFunc) {
+                    if matches!(mode, ParamMode::VertFunc | ParamMode::VertSig) {
                         self.expect(scope, &[ExpectKind::Keyword(Keyword::Do)])?;
                     }
                     break Ok(params);
@@ -205,7 +212,7 @@ impl Parser<'_> {
                     let default = self.parse_param_default(scope, mode)?;
                     if default.is_some() {
                         seen_optional = true;
-                    } else if seen_optional {
+                    } else if seen_optional && mode.unpacks() {
                         self.fail = true;
                         self.diags.push(RequiredAfterOptional(span));
                     }
@@ -225,7 +232,9 @@ impl Parser<'_> {
                         TokenInfo::Op(Op::Star) => RestKind::Pos,
                         _ => RestKind::Key,
                     };
-                    if let Some(msg) = last_rest.and_then(|prev| rest_order_error(prev, kind)) {
+                    if mode.unpacks()
+                        && let Some(msg) = last_rest.and_then(|prev| rest_order_error(prev, kind))
+                    {
                         return Err(self.syntax_error(scope, Some(token), msg));
                     }
                     let sigil_span = self.advance();
@@ -273,7 +282,7 @@ impl Parser<'_> {
                         type_ellipsis_span,
                     });
                     last_rest = Some(kind);
-                    variadic = true;
+                    variadic = mode.unpacks();
                     variadic_span.get_or_insert(sigil_span);
                 }
                 Some(token!(expr_start!())) if mode.is_pattern() => {
@@ -328,7 +337,7 @@ impl Parser<'_> {
                         let default = self.parse_param_default(scope, mode)?;
                         if default.is_some() {
                             seen_optional = true;
-                        } else if seen_optional {
+                        } else if seen_optional && mode.unpacks() {
                             self.fail = true;
                             self.diags.push(RequiredAfterOptional(span));
                         }

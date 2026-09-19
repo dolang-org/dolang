@@ -107,8 +107,8 @@ class Table[K, V]
 | `*name`   | Any number of further positional type arguments             |
 | `**name`  | Any number of further keyword type arguments                |
 
-The last three are variadic binders. They come last, and as with rest
-parameters, `*` and `**` may appear together, `*` first, but not with `...`:
+The last three are variadic binders. Binders of any form may appear in any
+order, and a declaration may have several variadic binders:
 
 ```
 def apply[R, *Ps, **Ks] func@((*Ps, **Ks) -> R) *args@Ps **kw@Ks -> R
@@ -209,6 +209,14 @@ pub def double x
 An overload has no runtime binding. It doesn't take `pub`; it's exported if
 its implementation is. A method, including a special method such as `(init)`,
 takes overloads in its class body the same way.
+
+Since an overload receives no arguments, its parameters are not ordered as a
+function's are: rest parameters may appear anywhere and more than once, and a
+required parameter may follow an optional one.
+
+```
+@def pipeline[*Rs, R] *stages @ ...(() -> Rs) last @ (() -> R) -> R
+```
 
 ## Protocols
 
@@ -409,12 +417,9 @@ let curried @ (Int -> Int -> Int) = do |a| do |b| (a + b)
 let thunk @ (() -> Str) = do "hello"
 ```
 
-Rest parameters are written `...T`, `*T`, or `**T`.
+Rest parameters are written `...T`, `*T`, or `**T`, and may appear anywhere and
+more than once.
 
 ```
 let log @ ((Sym, *Str, **Str) -> nil) = do |level *parts **opts| echo "[$level]" ...parts ...opts
 ```
-
-A required positional parameter cannot follow an optional one, and a rest
-parameter cannot be optional. Parentheses that `->` does not follow must hold
-exactly one type.

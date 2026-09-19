@@ -1,10 +1,6 @@
 use super::{
     ExprMode, Parser, Result, Scope,
-    diag::{
-        InvalidConstType, NonConstExpr, OptionalRest, OptionalTypeArg, ParamsWithoutArrow,
-        RequiredAfterOptional, RestMustBeTrailing,
-    },
-    params::rest_order_error,
+    diag::{InvalidConstType, NonConstExpr, OptionalRest, OptionalTypeArg, ParamsWithoutArrow},
     stream::ExpectKind,
 };
 use crate::{
@@ -115,9 +111,6 @@ impl Parser<'_> {
         let open = self.advance();
         self.with_mode(Mode::FullExpr, |this| {
             let mut binders = Vec::new();
-            // The last rest, which only another rest may follow
-            let mut last_rest = None;
-            let mut seen_default = false;
             let close = loop {
                 if let Some(token!(TokenInfo::RightBracket)) = this.peek()?
                     && !binders.is_empty()
@@ -132,12 +125,6 @@ impl Parser<'_> {
                         span,
                     ),
                     Some(token) if let Some(kind) = rest_sigil(&token.info) => {
-                        if let Some(msg) =
-                            last_rest.and_then(|(prev, _)| rest_order_error(prev, kind))
-                        {
-                            return Err(this.syntax_error(scope, Some(token), msg));
-                        }
-                        last_rest = Some((kind, token.span));
                         let ident = this.expect(scope, &[ExpectKind::Ident])?;
                         (
                             BinderKind::Rest {
@@ -152,12 +139,6 @@ impl Parser<'_> {
                         token => return Err(this.syntax_error(scope, token, "expected binder")),
                     },
                 };
-                if !matches!(kind, BinderKind::Rest { .. })
-                    && let Some((_, span)) = last_rest.take()
-                {
-                    this.fail = true;
-                    this.diags.push(RestMustBeTrailing(span));
-                }
                 let bound = this.parse_annot(scope)?;
                 let default = if let Some(token!(TokenInfo::Equal)) = this.peek()? {
                     let equal_span = this.advance();
@@ -178,14 +159,6 @@ impl Parser<'_> {
                 } else {
                     None
                 };
-                if matches!(kind, BinderKind::Pos) {
-                    if default.is_some() {
-                        seen_default = true;
-                    } else if seen_default {
-                        this.fail = true;
-                        this.diags.push(RequiredAfterOptional(ident));
-                    }
-                }
                 let delim_span = this.consume_comma()?;
                 binders.push(Binder {
                     kind,
@@ -224,10 +197,7 @@ impl Parser<'_> {
         {
             let arrow_span = self.advance();
             let (params, paren_span) = match first {
-                Compact::Params { params, paren_span } => {
-                    self.check_type_params(&params);
-                    (params, Some(paren_span))
-                }
+                Compact::Params { params, paren_span } => (params, Some(paren_span)),
                 Compact::Type(ty) => (
                     vec![TypeParam {
                         optional: None,
@@ -564,21 +534,6 @@ impl Parser<'_> {
             sigil_span: ellipsis_span,
             ty,
         })
-    }
-
-    /// Check the parameter list of a function type.
-    fn check_type_params(&mut self, params: &[TypeParam]) {
-        let mut seen_optional = false;
-        for param in params {
-            if let TypeParamKind::Pos(ty) = &param.kind {
-                if param.optional.is_some() {
-                    seen_optional = true;
-                } else if seen_optional {
-                    self.fail = true;
-                    self.diags.push(RequiredAfterOptional(ty.span()));
-                }
-            }
-        }
     }
 
     /// Interpret a compact type that `->` does not follow.

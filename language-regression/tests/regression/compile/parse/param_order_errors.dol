@@ -1,0 +1,8 @@
+# Parameters that unpack arguments keep their ordering constraints
+def _late *_rest _after
+  # error: rest parameter must be trailing
+  #   --> param_order_errors.dol:LL:LL
+  #    |
+  # LL | def _late *_rest _after
+  #    |           ^
+  nil

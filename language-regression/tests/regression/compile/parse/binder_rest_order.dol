@@ -1,7 +1,0 @@
-def f[**K, *P] x
-  # error: `*` rest must come before `**`
-  #   --> binder_rest_order.dol:LL:LL
-  #    |
-  # LL | def f[**K, *P] x
-  #    |            ^
-  x

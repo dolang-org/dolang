@@ -271,14 +271,18 @@ do
 
 # Connects pipeline stages and runs them concurrently, returning the last
 # stage's result.
-pub def pipeline[R]
+@def pipeline[R]
   # override strand-local input for the first stage
   :input @ Iterable = nil
   # override strand-local output for the last stage
   :output @ Sinkable = nil
   # pipeline stages
-  ...stages @ {...(() -> Value), (() -> R)}
+  ...stages @ ...(() -> Value)
+  # final stage
+  final @ (() -> R)
 do -> R
+
+pub def pipeline ...
   ...
 
 # Runs a function over an iterator with a fixed number of scoped workers.
@@ -289,7 +293,7 @@ do -> R
   input @ Iterable
   # function applied to each input value
   func @ (Value -> Value)
-do
+do -> nil
 
 # Runs a function over the strand-local input with a fixed number of scoped workers.
 @def pool
@@ -297,7 +301,7 @@ do
   count @ Int
   # function applied to each input value
   func @ (Value -> Value)
-do
+do -> nil
 
 pub def pool count ...args
   ...
