@@ -140,7 +140,7 @@ import _vfs base64 digest json proc progress rand shell shlex ssh std strand sys
 # ```
 pub @let ArtifactSpec = (
   | Str | Path | Url
-  | Dict[{source: (Str | Path | Url), ?digest: Str}]
+  | Dict[{source: Str | Path | Url, ?digest: Str}]
 )
 
 # Install media, as an artifact spec that may also select an edition.
@@ -151,8 +151,8 @@ pub @let ArtifactSpec = (
 # list; they are alternatives.
 pub @let InstallerSpec = (
   | Str | Path | Url
-  | Dict[{source: (Str | Path | Url), ?digest: Str, ?edition: Str}]
-  | Dict[{source: (Str | Path | Url), ?digest: Str, ?index: Int}]
+  | Dict[{source: Str | Path | Url, ?digest: Str, ?edition: Str}]
+  | Dict[{source: Str | Path | Url, ?digest: Str, ?index: Int}]
 )
 
 # A file to write into the guest, from an artifact or as direct content.
@@ -160,19 +160,19 @@ pub @let InstallerSpec = (
 # `chmod` is a Unix file mode, and is rejected for a guest provisioned by
 # unattended install.
 pub @let AddSpec = (
-  | Dict[{target: Str, source: ArtifactSpec, ?chmod: (Int | Mode)}]
-  | Dict[{target: Str, content: (Str | Bin), ?chmod: (Int | Mode)}]
+  | Dict[{target: Str, source: ArtifactSpec, ?chmod: Int | Mode}]
+  | Dict[{target: Str, content: Str | Bin, ?chmod: Int | Mode}]
 )
 
 # A file for cloud-init to write during early boot. `owner`, `append`, and
 # `defer` are passed to cloud-init's `write_files`.
 pub @let InitAddSpec = (
   | Dict[{
-    target: Str, source: ArtifactSpec, ?chmod: (Int | Mode),
+    target: Str, source: ArtifactSpec, ?chmod: Int | Mode,
     ?owner: Str, ?append: Bool, ?defer: Bool,
   }]
   | Dict[{
-    target: Str, content: (Str | Bin), ?chmod: (Int | Mode),
+    target: Str, content: Str | Bin, ?chmod: Int | Mode,
     ?owner: Str, ?append: Bool, ?defer: Bool,
   }]
 )
@@ -187,8 +187,8 @@ pub @let InitAddSpec = (
 # | `packages` | Installs guest packages                                  |
 pub @let InitSpec = Dict[{
   ...:add:: InitAddSpec,
-  ...:run:: (Str | Array[Str]),
-  ...:packages:: (Str | Array[Str]),
+  ...:run:: Str | Array[Str],
+  ...:packages:: Str | Array[Str],
 }]
 
 # The Do build to install into a guest.
@@ -207,7 +207,7 @@ pub @let InitSpec = Dict[{
 pub @let DolangSpec = (
   | Str | Path | Url
   | Dict[{version: Str}]
-  | Dict[{source: (Str | Path | Url), ?digest: Str}]
+  | Dict[{source: Str | Path | Url, ?digest: Str}]
 )
 
 # A host cache mode for the domain disk. The hypervisor's own default, which
@@ -260,11 +260,19 @@ pub @let DiskIo = (:IO_URING: | :THREADS: | :NATIVE: | Str)
 # extracted into the image store, where it backs every domain laid over it.
 pub @let Compress = (Bool | :ZSTD: | :ZLIB:)
 
-# A domain's state. A state libvirt reports that has no symbol here is spelled
-# as an uppercase symbol of its own.
+# A readiness probe.
+#
+# | Value          | Answers when                                  |
+# | -------------- | --------------------------------------------- |
+# | `:VFS:`        | `dolang-vfs` runs, which is what `with` needs |
+# | `:SSH:`        | sshd accepts a connection                     |
+# | `:CLOUD_INIT:` | cloud-init has written its ready file         |
+@let Probe = (:VFS: | :SSH: | :CLOUD_INIT:)
+
+# A domain's state.
 pub @let DomainState = (
   | :RUNNING: | :IDLE: | :PAUSED: | :IN_SHUTDOWN: | :SHUTOFF: | :CRASHED:
-  | :PMSUSPENDED: | :BLOCKED: | Sym
+  | :PMSUSPENDED: | :BLOCKED:
 )
 
 let VM_NAMESPACE = "https://github.com/dolang-org/dolang"
@@ -396,11 +404,11 @@ let DOMAIN_STATES = $
   "pmsuspended": :PMSUSPENDED:
   "blocked": :BLOCKED:
 
-# Normalizes one of libvirt's state or state-reason words into a symbol.
+# Normalizes a libvirt state word into a symbol, or returns it as reported when
+# it is not one this module knows.
 def normalized_state text
-  let value = text.trim().lower()
-  DOMAIN_STATES.get $value else: do
-    sym $value.upper().replace(" ", "_").replace("-", "_")
+  let text = text.trim()
+  DOMAIN_STATES.get $text.lower() default: $text
 
 # Raised when a requested libvirt domain does not exist.
 pub class NoDomainError: std.RuntimeError
@@ -1464,24 +1472,24 @@ class DomainImpl
         throw NoDomainError $self.name
       throw e
 
-  # Returns the normalized libvirt state as a symbol.
+  # Returns the normalized libvirt state.
   pub def state self
     normalized_state $self.#domstate()
 
   # The domain's state together with libvirt's reason for it, as
   # `virsh domstate --reason` reports the pair — for example
-  # `shut off (destroyed)` becomes `:SHUTOFF:` and `:DESTROYED:`.
+  # `shut off (destroyed)` becomes `:SHUTOFF:` and `"destroyed"`.
   #
   # The reason is runtime state rather than a property of the definition, so it
-  # reads back as `:UNKNOWN:` after libvirtd restarts.
+  # reads back as `"unknown"` after libvirtd restarts.
   def state_reason self
     let text = self.#domstate("--reason").trim()
     let parts = [...text.split "(" limit: 1]
     let state = normalized_state $parts[0]
     let reason = if (parts.len > 1)
-      normalized_state (parts[1].replace(")", ""))
+      parts[1].replace(")", "").trim()
     else
-      :UNKNOWN:
+      "unknown"
     Struct :state :reason
 
   # Starts the domain.
@@ -1572,7 +1580,7 @@ class DomainImpl
     # `:VFS:` proves the transport `with` runs over. `:SSH:` proves only that
     # sshd accepts a connection, which is all a guest has before its payload is
     # installed.
-    :probe @ Sym = :VFS:
+    :probe @ Probe = :VFS:
     # Seconds to wait; unbounded when
     # omitted.
     :timeout @ (Int | Float) = nil
@@ -1624,7 +1632,7 @@ class DomainImpl
   # stops answering has not started rebooting, and the reason for that is worth
   # reporting as a timeout of its own rather than folding into the wait for it
   # to return.
-  pub def reboot_ready self :probe = :VFS: :timeout = nil :screenshot_dir = nil
+  pub def reboot_ready self :probe@Probe = :VFS: :timeout = nil :screenshot_dir = nil
     progress.show message: "reboot guest" icon: 🔁 do |_|
       self.reboot()
       try
@@ -1642,15 +1650,14 @@ class DomainImpl
   # A killed domain's disk is arbitrarily stale — spectacularly so under
   # `cache: :UNSAFE:`, where guest flushes are discarded outright — so an image
   # taken from one is not a gold image but a corrupted one. `force` exists
-  # because libvirt forgets the reason when it restarts, reporting `:UNKNOWN:`
+  # because libvirt forgets the reason when it restarts, reporting `"unknown"`
   # for a domain that did shut down cleanly.
   def require_clean_shutoff self force
     let info = self.#state_reason()
     if (info.state != :SHUTOFF:)
       throw std.StateError "domain must be shut off before exporting its disk"
-    if (!force && info.reason != :SHUTDOWN:)
-      let reason = str(info.reason).lower()
-      let message = "domain did not shut down cleanly (reason: $reason); pass force: true to export anyway"
+    if (!force && info.reason != "shutdown")
+      let message = "domain did not shut down cleanly (reason: $(info.reason)); pass force: true to export anyway"
       throw std.StateError $message
   # Flattens the shut-off domain's file-backed disk into a standalone qcow2.
   pub def export_disk self destination :compress = false
@@ -2062,8 +2069,9 @@ pub class Domain
   pub def connect_uri obj -> Str
     obj.#impl.connect_uri
 
-  # Returns the domain's state.
-  pub def state self -> DomainState
+  # Returns the domain's state. A state this module does not know is returned
+  # as libvirt reports it.
+  pub def state self -> (DomainState | Str)
     self.#impl.state()
 
   # Starts the domain.
@@ -2174,7 +2182,7 @@ pub class Domain
     :cd @ (Str | Path) = nil
     # Environment overrides for the block. `nil` unsets a variable, and
     # `:INHERIT:` copies it from the calling context.
-    :env @ Dict[(Str | Sym), Value] = {}
+    :env @ Dict[Str | Sym, Value] = {}
   do -> R
     self.#impl.with $block :cd :env
 

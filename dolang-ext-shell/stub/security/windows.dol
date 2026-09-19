@@ -21,10 +21,12 @@
 #       flags: [:OBJECT_INHERIT:, :CONTAINER_INHERIT:]
 # ```
 
-import std:
-  - @Seq
-import uuid:
-  - @Guid
+import
+  std:
+    - @FlagSet
+    - @Seq
+  uuid:
+    - @Guid
 
 # A SID that is the same on every Windows installation, so naming one takes no
 # lookup.
@@ -180,10 +182,10 @@ pub @let AclRevision = (:BASIC: | :DIRECTORY_SERVICE:)
 
 # An access mask, built or given as right symbols or native bits. A subtype
 # such as [`winreg.AccessMask`](winreg.AccessMask) is accepted too.
-pub @let AccessMaskSpec = (AccessMask | Int | Sym | Iterable[Sym])
+pub @let AccessMaskSpec = (AccessMask | Int | AccessRight | Iterable[AccessRight])
 
 # ACE header flags, built or given as flag symbols or native bits.
-pub @let AceFlagsSpec = (AceFlags | Int | Sym | Iterable[Sym])
+pub @let AceFlagsSpec = (AceFlags | Int | AceFlag | Iterable[AceFlag])
 
 # An ACE, built or given as a dictionary.
 #
@@ -201,17 +203,17 @@ pub @let AceSpec = (
   | Ace
   | Dict[{
     allow: SidSpec, mask: AccessMaskSpec, ?flags: AceFlagsSpec,
-    ?object_type: (Guid | Str | Bin), ?inherited_object_type: (Guid | Str | Bin),
+    ?object_type: Guid | Str | Bin, ?inherited_object_type: Guid | Str | Bin,
     ?callback: Bool, ?application_data: Bin,
   }]
   | Dict[{
     deny: SidSpec, mask: AccessMaskSpec, ?flags: AceFlagsSpec,
-    ?object_type: (Guid | Str | Bin), ?inherited_object_type: (Guid | Str | Bin),
+    ?object_type: Guid | Str | Bin, ?inherited_object_type: Guid | Str | Bin,
     ?callback: Bool, ?application_data: Bin,
   }]
   | Dict[{
     audit: SidSpec, mask: AccessMaskSpec, ?flags: AceFlagsSpec,
-    ?object_type: (Guid | Str | Bin), ?inherited_object_type: (Guid | Str | Bin),
+    ?object_type: Guid | Str | Bin, ?inherited_object_type: Guid | Str | Bin,
     ?callback: Bool, ?application_data: Bin, ?successful: Bool, ?failed: Bool,
   }]
 )
@@ -230,7 +232,7 @@ pub @let AceSpec = (
 pub @let AclSpec = (
   | Acl
   | Iterable[AceSpec]
-  | Dict[{...AceSpec, ?revision: (AclRevision | Int)}]
+  | Dict[{...AceSpec, ?revision: AclRevision | Int}]
 )
 
 # A security descriptor, built, given as a self-relative packet, or given as a
@@ -240,8 +242,8 @@ pub @let SecDescSpec = (
   | SecDesc
   | Bin
   | Dict[{
-    ?owner: (SidSpec | nil), ?group: (SidSpec | nil),
-    ?dacl: (AclSpec | nil), ?sacl: (AclSpec | nil),
+    ?owner: SidSpec | nil, ?group: SidSpec | nil,
+    ?dacl: AclSpec | nil, ?sacl: AclSpec | nil,
     ?owner_defaulted: Bool, ?group_defaulted: Bool,
     ?dacl_present: Bool, ?dacl_defaulted: Bool,
     ?dacl_auto_inherit_required: Bool, ?dacl_auto_inherited: Bool,
@@ -249,41 +251,39 @@ pub @let SecDescSpec = (
     ?sacl_present: Bool, ?sacl_defaulted: Bool,
     ?sacl_auto_inherit_required: Bool, ?sacl_auto_inherited: Bool,
     ?sacl_protected: Bool,
-    ?rm_control: (Int | nil),
+    ?rm_control: Int | nil,
   }]
+)
+
+# A symbol naming rights of an [`AccessMask`](security.windows.AccessMask).
+#
+# | Symbol                       | Meaning                                          |
+# | ---------------------------- | ------------------------------------------------ |
+# | `:DELETE:`                   | Delete the object                                |
+# | `:READ_CONTROL:`             | Read its security descriptor, except the SACL    |
+# | `:WRITE_DAC:`                | Change its discretionary access-control list     |
+# | `:WRITE_OWNER:`              | Change its owner                                 |
+# | `:SYNCHRONIZE:`              | Synchronize access to the object                 |
+# | `:STANDARD_RIGHTS_REQUIRED:` | The standard rights required by most objects     |
+# | `:STANDARD_RIGHTS_ALL:`      | All standard rights                              |
+# | `:ACCESS_SYSTEM_SECURITY:`   | Access its system access-control list            |
+# | `:MAXIMUM_ALLOWED:`          | Request the maximum rights allowed to the caller |
+# | `:GENERIC_READ:`             | Request object-specific read access              |
+# | `:GENERIC_WRITE:`            | Request object-specific write access             |
+# | `:GENERIC_EXECUTE:`          | Request object-specific execute access           |
+# | `:GENERIC_ALL:`              | Request all object-specific access               |
+pub @let AccessRight = (
+  | :DELETE: | :READ_CONTROL: | :WRITE_DAC: | :WRITE_OWNER: | :SYNCHRONIZE:
+  | :STANDARD_RIGHTS_REQUIRED: | :STANDARD_RIGHTS_ALL:
+  | :ACCESS_SYSTEM_SECURITY: | :MAXIMUM_ALLOWED: | :GENERIC_READ:
+  | :GENERIC_WRITE: | :GENERIC_EXECUTE: | :GENERIC_ALL:
 )
 
 # Generic Windows object access rights.
 #
 # Domain-specific rights such as [`winreg.AccessMask`](winreg.AccessMask) are
 # subtypes. This type names generically applicable rights only.
-pub class AccessMask: Iterable[Sym]
-  # Constructs a mask from symbols or one iterable of symbols.
-  #
-  # ## Supported symbols
-  #
-  # | Symbol                       | Meaning                                          |
-  # | ---------------------------- | ------------------------------------------------ |
-  # | `:DELETE:`                   | Delete the object                                |
-  # | `:READ_CONTROL:`             | Read its security descriptor, except the SACL    |
-  # | `:WRITE_DAC:`                | Change its discretionary access-control list     |
-  # | `:WRITE_OWNER:`              | Change its owner                                 |
-  # | `:SYNCHRONIZE:`              | Synchronize access to the object                 |
-  # | `:STANDARD_RIGHTS_REQUIRED:` | The standard rights required by most objects     |
-  # | `:STANDARD_RIGHTS_ALL:`      | All standard rights                              |
-  # | `:ACCESS_SYSTEM_SECURITY:`   | Access its system access-control list            |
-  # | `:MAXIMUM_ALLOWED:`          | Request the maximum rights allowed to the caller |
-  # | `:GENERIC_READ:`             | Request object-specific read access              |
-  # | `:GENERIC_WRITE:`            | Request object-specific write access             |
-  # | `:GENERIC_EXECUTE:`          | Request object-specific execute access           |
-  # | `:GENERIC_ALL:`              | Request all object-specific access               |
-  pub def (init)
-    self
-    # Rights, or one iterable of them.
-    ...rights @ Sym
-  do
-    ...
-
+pub class AccessMask: Iterable[AccessRight] @FlagSet[AccessRight]
   # Constructs a mask from a native integer, preserving unknown bits.
   #[class]
   pub def from_int
@@ -313,79 +313,35 @@ pub class AccessMask: Iterable[Sym]
   pub def int self -> Int
     ...
 
-  # Tests whether all bits represented by a symbol are set.
-  pub def contains
-    self
-    # Right to test for.
-    right @ Sym
-  do -> Bool
-    ...
-
-  # Union of two masks.
-  pub def (bor)
-    self
-    other @ AccessMask
-  do -> AccessMask
-    ...
-
-  # Intersection of two masks.
-  pub def (band)
-    self
-    other @ AccessMask
-  do -> AccessMask
-    ...
-
-  # Symmetric difference of two masks.
-  pub def (bxor)
-    self
-    other @ AccessMask
-  do -> AccessMask
-    ...
-
-  # Complement within the supported bit set.
-  pub def (bnot) self -> AccessMask
-    ...
-
-  # Compares two masks.
-  pub def (eq) self other
-    ...
-
-  # Yields the symbols represented by the mask.
-  pub def (iter) self -> Iter[Sym]
-    ...
+# A symbol naming a flag of an [`AceFlags`](security.windows.AceFlags).
+#
+# The trust-protected-filter flag occupies the same bit as
+# `:SUCCESSFUL_ACCESS:` and has no symbol of its own. Read it from an
+# access-filter entry's
+# [`trust_protected_filter`](security.windows.Ace.trust_protected_filter).
+#
+# [`ace`](security.windows.ace) and the [`Ace`](security.windows.Ace)
+# constructor set the outcome flags from their own `successful` and `failed`
+# arguments.
+#
+# | Symbol                   | Meaning                                                |
+# | ------------------------ | ------------------------------------------------------ |
+# | `:OBJECT_INHERIT:`       | Non-container child objects inherit the entry          |
+# | `:CONTAINER_INHERIT:`    | Container child objects inherit the entry              |
+# | `:NO_PROPAGATE_INHERIT:` | Inherited copies stop propagating after one generation |
+# | `:INHERIT_ONLY:`         | The entry applies only through inheritance             |
+# | `:INHERITED:`            | The entry was inherited                                |
+# | `:CRITICAL:`             | The entry is critical and cannot be removed            |
+# | `:SUCCESSFUL_ACCESS:`    | An audit or alarm entry selects successful access      |
+# | `:FAILED_ACCESS:`        | An audit or alarm entry selects failed access          |
+pub @let AceFlag = (
+  | :OBJECT_INHERIT: | :CONTAINER_INHERIT: | :NO_PROPAGATE_INHERIT:
+  | :INHERIT_ONLY: | :INHERITED: | :CRITICAL: | :SUCCESSFUL_ACCESS:
+  | :FAILED_ACCESS:
+)
 
 # Flags stored in an ACE header.
-pub class AceFlags: Iterable[Sym]
-  # Constructs flags from symbols or one iterable of symbols.
-  #
-  # The trust-protected-filter flag occupies the same bit as
-  # `:SUCCESSFUL_ACCESS:` and has no symbol of its own. Read it from an
-  # access-filter entry's
-  # [`trust_protected_filter`](security.windows.Ace.trust_protected_filter).
-  #
-  # [`ace`](security.windows.ace) and the [`Ace`](security.windows.Ace)
-  # constructor set the outcome flags from their own `successful` and `failed`
-  # arguments.
-  #
-  # ## Supported symbols
-  #
-  # | Symbol                   | Meaning                                                |
-  # | ------------------------ | ------------------------------------------------------ |
-  # | `:OBJECT_INHERIT:`       | Non-container child objects inherit the entry          |
-  # | `:CONTAINER_INHERIT:`    | Container child objects inherit the entry              |
-  # | `:NO_PROPAGATE_INHERIT:` | Inherited copies stop propagating after one generation |
-  # | `:INHERIT_ONLY:`         | The entry applies only through inheritance             |
-  # | `:INHERITED:`            | The entry was inherited                                |
-  # | `:CRITICAL:`             | The entry is critical and cannot be removed            |
-  # | `:SUCCESSFUL_ACCESS:`    | An audit or alarm entry selects successful access      |
-  # | `:FAILED_ACCESS:`        | An audit or alarm entry selects failed access          |
-  pub def (init)
-    self
-    # Flags, or one iterable of them.
-    ...flags @ Sym
-  do
-    ...
-
+pub class AceFlags: Iterable[AceFlag] @FlagSet[AceFlag]
   # Constructs flags from a native integer, preserving unknown bits.
   #[class]
   pub def from_int
@@ -400,242 +356,71 @@ pub class AceFlags: Iterable[Sym]
   pub def int self -> Int
     ...
 
-  # Tests whether all bits represented by a symbol are set.
-  pub def contains
-    self
-    # Flag to test for.
-    flag @ Sym
-  do -> Bool
-    ...
-
-  # Union of two flag sets.
-  pub def (bor)
-    self
-    other @ AceFlags
-  do -> AceFlags
-    ...
-
-  # Intersection of two flag sets.
-  pub def (band)
-    self
-    other @ AceFlags
-  do -> AceFlags
-    ...
-
-  # Symmetric difference of two flag sets.
-  pub def (bxor)
-    self
-    other @ AceFlags
-  do -> AceFlags
-    ...
-
-  # Complement within the supported bit set.
-  pub def (bnot) self -> AceFlags
-    ...
-
-  # Compares two flag sets.
-  pub def (eq) self other
-    ...
-
-  # Yields the symbols represented by the flags.
-  pub def (iter) self -> Iter[Sym]
-    ...
+# A symbol naming a flag of a [`SecDescControl`](security.windows.SecDescControl).
+#
+# | Symbol                         | Meaning                               |
+# | ------------------------------ | ------------------------------------- |
+# | `:OWNER_DEFAULTED:`            | Owner supplied by a default method    |
+# | `:GROUP_DEFAULTED:`            | Group supplied by a default method    |
+# | `:DACL_PRESENT:`               | DACL present                          |
+# | `:DACL_DEFAULTED:`             | DACL supplied by a default method     |
+# | `:SACL_PRESENT:`               | SACL present                          |
+# | `:SACL_DEFAULTED:`             | SACL supplied by a default method     |
+# | `:DACL_AUTO_INHERIT_REQUIRED:` | DACL requires inheritance processing  |
+# | `:SACL_AUTO_INHERIT_REQUIRED:` | SACL requires inheritance processing  |
+# | `:DACL_AUTO_INHERITED:`        | DACL was automatically inherited      |
+# | `:SACL_AUTO_INHERITED:`        | SACL was automatically inherited      |
+# | `:DACL_PROTECTED:`             | DACL blocks inheritable ACEs          |
+# | `:SACL_PROTECTED:`             | SACL blocks inheritable ACEs          |
+# | `:RM_CONTROL_VALID:`           | Resource-manager control byte valid   |
+# | `:SELF_RELATIVE:`              | Descriptor uses self-relative storage |
+pub @let SecDescControlFlag = (
+  | :OWNER_DEFAULTED: | :GROUP_DEFAULTED: | :DACL_PRESENT: | :DACL_DEFAULTED:
+  | :SACL_PRESENT: | :SACL_DEFAULTED: | :DACL_AUTO_INHERIT_REQUIRED:
+  | :SACL_AUTO_INHERIT_REQUIRED: | :DACL_AUTO_INHERITED: | :SACL_AUTO_INHERITED:
+  | :DACL_PROTECTED: | :SACL_PROTECTED: | :RM_CONTROL_VALID: | :SELF_RELATIVE:
+)
 
 # Security descriptor control flags.
-pub class SecDescControl: Iterable[Sym]
-  # Constructs control flags from symbols or one iterable of symbols.
-  #
-  # ## Supported symbols
-  #
-  # | Symbol                         | Meaning                               |
-  # | ------------------------------ | ------------------------------------- |
-  # | `:OWNER_DEFAULTED:`            | Owner supplied by a default method    |
-  # | `:GROUP_DEFAULTED:`            | Group supplied by a default method    |
-  # | `:DACL_PRESENT:`               | DACL present                          |
-  # | `:DACL_DEFAULTED:`             | DACL supplied by a default method     |
-  # | `:SACL_PRESENT:`               | SACL present                          |
-  # | `:SACL_DEFAULTED:`             | SACL supplied by a default method     |
-  # | `:DACL_AUTO_INHERIT_REQUIRED:` | DACL requires inheritance processing  |
-  # | `:SACL_AUTO_INHERIT_REQUIRED:` | SACL requires inheritance processing  |
-  # | `:DACL_AUTO_INHERITED:`        | DACL was automatically inherited      |
-  # | `:SACL_AUTO_INHERITED:`        | SACL was automatically inherited      |
-  # | `:DACL_PROTECTED:`             | DACL blocks inheritable ACEs          |
-  # | `:SACL_PROTECTED:`             | SACL blocks inheritable ACEs          |
-  # | `:RM_CONTROL_VALID:`           | Resource-manager control byte valid   |
-  # | `:SELF_RELATIVE:`              | Descriptor uses self-relative storage |
-  pub def (init)
-    self
-    # Flags, or one iterable of them.
-    ...flags @ Sym
-  do
-    ...
+pub class SecDescControl: Iterable[SecDescControlFlag] @FlagSet[SecDescControlFlag]
 
-  # Tests whether all bits represented by a symbol are set.
-  pub def contains
-    self
-    # Flag to test for.
-    flag @ Sym
-  do -> Bool
-    ...
-
-  # Union of two flag sets.
-  pub def (bor)
-    self
-    other @ SecDescControl
-  do -> SecDescControl
-    ...
-
-  # Intersection of two flag sets.
-  pub def (band)
-    self
-    other @ SecDescControl
-  do -> SecDescControl
-    ...
-
-  # Symmetric difference of two flag sets.
-  pub def (bxor)
-    self
-    other @ SecDescControl
-  do -> SecDescControl
-    ...
-
-  # Complement within the supported bit set.
-  pub def (bnot) self -> SecDescControl
-    ...
-
-  # Compares two flag sets.
-  pub def (eq) self other
-    ...
-
-  # Yields the symbols represented by the flags.
-  pub def (iter) self -> Iter[Sym]
-    ...
+# A symbol naming components of a [`SecInfo`](security.windows.SecInfo).
+#
+# | Symbol    | Component                |
+# | --------- | ------------------------ |
+# | `:OWNER:` | Owner SID                |
+# | `:GROUP:` | Primary group SID        |
+# | `:DACL:`  | Discretionary ACL        |
+# | `:SACL:`  | System ACL               |
+# | `:ALL:`   | All supported components |
+pub @let SecInfoComponent = (
+  | :OWNER: | :GROUP: | :DACL: | :SACL: | :ALL:
+)
 
 # Security descriptor components loaded by a query.
-pub class SecInfo: Iterable[Sym]
-  # Constructs a component set from symbols or one iterable of symbols.
-  #
-  # ## Supported symbols
-  #
-  # | Symbol    | Component                |
-  # | --------- | ------------------------ |
-  # | `:OWNER:` | Owner SID                |
-  # | `:GROUP:` | Primary group SID        |
-  # | `:DACL:`  | Discretionary ACL        |
-  # | `:SACL:`  | System ACL               |
-  # | `:ALL:`   | All supported components |
-  pub def (init)
-    self
-    # Components, or one iterable of them.
-    ...components @ Sym
-  do
-    ...
+pub class SecInfo: Iterable[SecInfoComponent] @FlagSet[SecInfoComponent]
 
-  # Tests whether a component is selected.
-  pub def contains
-    self
-    # Component to test for.
-    component @ Sym
-  do -> Bool
-    ...
-
-  # Union of two component sets.
-  pub def (bor)
-    self
-    other @ SecInfo
-  do -> SecInfo
-    ...
-
-  # Intersection of two component sets.
-  pub def (band)
-    self
-    other @ SecInfo
-  do -> SecInfo
-    ...
-
-  # Symmetric difference of two component sets.
-  pub def (bxor)
-    self
-    other @ SecInfo
-  do -> SecInfo
-    ...
-
-  # Complement within the supported bit set.
-  pub def (bnot) self -> SecInfo
-    ...
-
-  # Compares two component sets.
-  pub def (eq) self other
-    ...
-
-  # Yields the selected component symbols.
-  pub def (iter) self -> Iter[Sym]
-    ...
+# A symbol naming an attribute of a [`TokenGroupAttributes`](security.windows.TokenGroupAttributes).
+#
+# | Symbol                 | Attribute                   |
+# | ---------------------- | --------------------------- |
+# | `:MANDATORY:`          | Mandatory group             |
+# | `:ENABLED_BY_DEFAULT:` | Enabled by default          |
+# | `:ENABLED:`            | Enabled                     |
+# | `:OWNER:`              | Eligible as an object owner |
+# | `:USE_FOR_DENY_ONLY:`  | Used only for deny checks   |
+# | `:INTEGRITY:`          | Integrity SID               |
+# | `:INTEGRITY_ENABLED:`  | Integrity SID enabled       |
+# | `:RESOURCE:`           | Resource group              |
+# | `:LOGON_ID:`           | Logon-session identifier    |
+pub @let TokenGroupAttribute = (
+  | :MANDATORY: | :ENABLED_BY_DEFAULT: | :ENABLED: | :OWNER:
+  | :USE_FOR_DENY_ONLY: | :INTEGRITY: | :INTEGRITY_ENABLED: | :RESOURCE:
+  | :LOGON_ID:
+)
 
 # Windows access-token group attributes.
-pub class TokenGroupAttributes: Iterable[Sym]
-  # Constructs attributes from symbols or one iterable of symbols.
-  #
-  # ## Supported symbols
-  #
-  # | Symbol                 | Attribute                   |
-  # | ---------------------- | --------------------------- |
-  # | `:MANDATORY:`          | Mandatory group             |
-  # | `:ENABLED_BY_DEFAULT:` | Enabled by default          |
-  # | `:ENABLED:`            | Enabled                     |
-  # | `:OWNER:`              | Eligible as an object owner |
-  # | `:USE_FOR_DENY_ONLY:`  | Used only for deny checks   |
-  # | `:INTEGRITY:`          | Integrity SID               |
-  # | `:INTEGRITY_ENABLED:`  | Integrity SID enabled       |
-  # | `:RESOURCE:`           | Resource group              |
-  # | `:LOGON_ID:`           | Logon-session identifier    |
-  pub def (init)
-    self
-    # Attributes, or one iterable of them.
-    ...attributes @ Sym
-  do
-    ...
-
-  # Tests whether an attribute is set.
-  pub def contains
-    self
-    # Attribute to test for.
-    attribute @ Sym
-  do -> Bool
-    ...
-
-  # Union of two attribute sets.
-  pub def (bor)
-    self
-    other @ TokenGroupAttributes
-  do -> TokenGroupAttributes
-    ...
-
-  # Intersection of two attribute sets.
-  pub def (band)
-    self
-    other @ TokenGroupAttributes
-  do -> TokenGroupAttributes
-    ...
-
-  # Symmetric difference of two attribute sets.
-  pub def (bxor)
-    self
-    other @ TokenGroupAttributes
-  do -> TokenGroupAttributes
-    ...
-
-  # Complement within the supported bit set.
-  pub def (bnot) self -> TokenGroupAttributes
-    ...
-
-  # Compares two attribute sets.
-  pub def (eq) self other
-    ...
-
-  # Yields the attribute symbols that are set.
-  pub def (iter) self -> Iter[Sym]
-    ...
+pub class TokenGroupAttributes: Iterable[TokenGroupAttribute] @FlagSet[TokenGroupAttribute]
 
 # Windows security identifier.
 #

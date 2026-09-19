@@ -34,6 +34,19 @@ import
     - @DateTime
     - @Duration
 
+# The kind of resource a share exposes.
+#
+# | Symbol       | Resource                   |
+# | ------------ | -------------------------- |
+# | `:DISKTREE:` | Disk drive                 |
+# | `:PRINTQ:`   | Print queue                |
+# | `:DEVICE:`   | Communication device       |
+# | `:IPC:`      | Interprocess communication |
+pub @let ShareKind = (:DISKTREE: | :PRINTQ: | :DEVICE: | :IPC:)
+
+# The kind of resource a network connection reaches.
+pub @let ConnectionKind = (:DISK: | :PRINT: | :ANY:)
+
 # A Windows local user, identified by immutable SID.
 #
 # The SID is what makes this a durable handle: the account may be renamed, by
@@ -452,7 +465,7 @@ pub class Share
     # Connection limit. `nil` is unlimited.
     :max_uses @ (Int | nil) = nil
     # Security descriptor, self-relative packet, or declarative descriptor.
-    :sec_desc @ (SecDesc | Bin | Dict) = nil
+    :sec_desc @ (SecDesc | Bin | Dict[{...}]) = nil
   do -> ShareInfo
     ...
 
@@ -470,10 +483,9 @@ pub class ShareInfo
   pub def name self -> Str
     ...
 
-  # Resource kind: `:DISKTREE:`, `:PRINTQ:`,
-  # `:DEVICE:`, or `:IPC:`.
+  # Resource kind.
   #[getter]
-  pub def kind self -> Sym
+  pub def kind self -> ShareKind
     ...
 
   # Whether the native special-share flag is set.
@@ -601,17 +613,17 @@ pub class ConnectionInfo
   pub def user self -> (Str | nil)
     ...
 
-  # Resource kind: `:DISK:`, `:PRINT:`, or `:ANY:`. A
-  # provider resource type this binding does not model reports as `:ANY:`.
+  # Resource kind. A provider resource type this binding does not model
+  # reports as `:ANY:`.
   #[getter]
-  pub def kind self -> Sym
+  pub def kind self -> ConnectionKind
     ...
 
   # `:CONNECTED:` when the connection is established,
   # `:REMEMBERED:` when it is saved in the profile but not currently connected
   # -- what `net use` shows as `Unavailable`.
   #[getter]
-  pub def state self -> Sym
+  pub def state self -> (:CONNECTED: | :REMEMBERED:)
     ...
 
   # Whether the connection is recorded in the
@@ -636,11 +648,10 @@ pub class ConnectionInfo
 #   echo "not domain-joined"
 # ```
 pub class JoinStatus
-  # How the machine is named on the network:
-  # `:DOMAIN:`, `:WORKGROUP:`, `:UNJOINED:`, or `:UNKNOWN:` when the state
+  # How the machine is named on the network, or `:UNKNOWN:` when the state
   # could not be determined.
   #[getter]
-  pub def kind self -> Sym
+  pub def kind self -> (:DOMAIN: | :WORKGROUP: | :UNJOINED: | :UNKNOWN:)
     ...
 
   # Domain or workgroup name, or `nil` when
@@ -868,9 +879,8 @@ pub def create_share
   name @ Str
   # Local path to share.
   :path @ Path
-  # Resource kind: `:DISKTREE:` (the default),
-  # `:PRINTQ:`, `:DEVICE:`, or `:IPC:`.
-  :kind @ Sym = nil
+  # Resource kind. Defaults to `:DISKTREE:`.
+  :kind @ ShareKind = nil
   # Comment.
   :comment @ Str = nil
   # Connection limit. Defaults to unlimited.
@@ -881,7 +891,7 @@ pub def create_share
   :temporary @ Bool = nil
   # Security descriptor, self-relative packet, or declarative descriptor.
   # Defaults to the one Windows supplies.
-  :sec_desc @ (SecDesc | Bin | Dict) = nil
+  :sec_desc @ (SecDesc | Bin | Dict[{...}]) = nil
 do -> Share
   ...
 
@@ -935,8 +945,8 @@ do -> Share
   :user @ Str = nil
   # Password for `user`.
   :password @ Str = nil
-  # Resource kind: `:DISK:`, `:PRINT:`, or `:ANY:`.
-  :kind @ Sym = nil
+  # Resource kind.
+  :kind @ ConnectionKind = nil
   # Record the connection so it is restored at
   # logon.
   #
@@ -971,8 +981,8 @@ do -> Connection
   :user @ Str = nil
   # Password for `user`.
   :password @ Str = nil
-  # Resource kind: `:DISK:`, `:PRINT:`, or `:ANY:`.
-  :kind @ Sym = nil
+  # Resource kind.
+  :kind @ ConnectionKind = nil
   # Record the connection so it is restored at
   # logon.
   :persistent @ Bool = nil

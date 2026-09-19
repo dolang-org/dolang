@@ -19,7 +19,7 @@
 pub def join
   # Values, each converted to a string as
   # [`std.verbatim`](std.verbatim) would.
-  iterable @ Iterable
+  iterable @ Iterable[Value]
 do -> Str
   ...
 

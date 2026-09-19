@@ -331,12 +331,12 @@ do -> R
 pub def write[R]
   # Archive path.
   path @ (Str | Path)
-  # `:NONE:`, `:GZIP:`, or `:ZSTD:`.
+  # Compression.
   #
   # When omitted, `.gz` and `.tgz` select gzip, `.zst` and `.tzst` select
   # zstd, and other extensions select no compression. Extension matching is
   # case-insensitive. An explicit `compression` overrides the path.
-  :compression @ Sym = nil
+  :compression @ (:NONE: | :GZIP: | :ZSTD:) = nil
   # Writer scope, called with a [`Writer`](tar.Writer).
   func @ (Writer -> R)
 do -> R

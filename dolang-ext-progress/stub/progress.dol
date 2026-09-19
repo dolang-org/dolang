@@ -98,11 +98,19 @@ pub class Indicator
     # Relative adjustment, positive or negative.
     # Exclusive with `position`.
     :delta @ Int = nil
-    # New display units: `:COUNT:`, `:BYTES:`, or
-    # `:PERCENT:`.
-    :units @ Sym = nil
+    # New display units.
+    :units @ Units = nil
   do
     ...
+
+# Display units of an indicator.
+#
+# | Value       | Description                         |
+# | ----------- | ----------------------------------- |
+# | `:COUNT:`   | Display as `pos/len` or `pos`       |
+# | `:BYTES:`   | Display as human-readable bytes     |
+# | `:PERCENT:` | Display `pos / len` as a percentage |
+pub @let Units = (:COUNT: | :BYTES: | :PERCENT:)
 
 # Creates a progress indicator and runs `func` with it.
 #
@@ -135,15 +143,9 @@ pub def show[R]
   :icon @ Str = nil
   # Unit format.
   #
-  # | Value       | Description                         |
-  # | ----------- | ----------------------------------- |
-  # | `:COUNT:`   | Display as `pos/len` or `pos`       |
-  # | `:BYTES:`   | Display as human-readable bytes     |
-  # | `:PERCENT:` | Display `pos / len` as a percentage |
-  #
   # Units default to `:COUNT:` when `total` is given. With neither `total` nor
   # `units`, spinner mode shows only elapsed time.
-  :units @ Sym = nil
+  :units @ Units = nil
   # Tick interval in seconds. Defaults to `0.08`.
   :tick @ Float = nil
   # Callback receiving an [`Indicator`](progress.Indicator).
@@ -190,8 +192,84 @@ pub def steps
   # | `name` | [`Str`](std.Str)     | Step name                           |
   # | `icon` | [`Str`](std.Str)     | Icon overriding the default         |
   *steps @ ((() -> Value) | Dict[{(() -> Value), ?name: Str, ?icon: Str}])
-do -> Array
+do -> Array[Value]
   ...
+
+# A color for [`Colors`](progress.Colors).
+#
+# | Standard     | Bright              |
+# | ------------ | ------------------- |
+# | `:BLACK:`    | `:BRIGHT_BLACK:`    |
+# | `:RED:`      | `:BRIGHT_RED:`      |
+# | `:GREEN:`    | `:BRIGHT_GREEN:`    |
+# | `:YELLOW:`   | `:BRIGHT_YELLOW:`   |
+# | `:BLUE:`     | `:BRIGHT_BLUE:`     |
+# | `:MAGENTA:`  | `:BRIGHT_MAGENTA:`  |
+# | `:CYAN:`     | `:BRIGHT_CYAN:`     |
+# | `:WHITE:`    | `:BRIGHT_WHITE:`    |
+#
+# `:BRIGHT:` brightens the default color.
+pub @let Color = (
+  | :BLACK: | :RED: | :GREEN: | :YELLOW: | :BLUE: | :MAGENTA: | :CYAN: | :WHITE:
+  | :BRIGHT_BLACK: | :BRIGHT_RED: | :BRIGHT_GREEN: | :BRIGHT_YELLOW:
+  | :BRIGHT_BLUE: | :BRIGHT_MAGENTA: | :BRIGHT_CYAN: | :BRIGHT_WHITE:
+  | :BRIGHT:
+)
+
+# A text attribute for [`Colors`](progress.Colors).
+#
+# | Attribute         | Effect        |
+# | ----------------- | ------------- |
+# | `:BOLD:`          | Bold          |
+# | `:DIM:`           | Dim           |
+# | `:ITALIC:`        | Italic        |
+# | `:UNDERLINED:`    | Underlined    |
+# | `:BLINK:`         | Blinking      |
+# | `:REVERSE:`       | Reverse video |
+# | `:HIDDEN:`        | Hidden        |
+# | `:STRIKETHROUGH:` | Strikethrough |
+pub @let Attr = (
+  | :BOLD: | :DIM: | :ITALIC: | :UNDERLINED: | :BLINK: | :REVERSE: | :HIDDEN:
+  | :STRIKETHROUGH:
+)
+
+# Colors and attributes of one element of the progress display.
+#
+# | Key     | Meaning          |
+# | ------- | ---------------- |
+# | `fg`    | Foreground color |
+# | `bg`    | Background color |
+# | `attrs` | Text attributes  |
+pub @let Colors = {?fg: Color, ?bg: Color, ?attrs: Array[Attr]}
+
+# Display style overrides for [`with`](progress.with).
+#
+# Each key names an element of the progress display. `bar`, `message`, `icon`
+# and `status` take a `width` in characters; every element but `status` takes
+# [`Colors`](progress.Colors). `bar` also takes `alt`, the colors of its
+# unfilled portion. Omitted values use these defaults:
+#
+# | Element    | Default width | Default fg | Default attrs |
+# | ---------- | ------------- | ---------- | ------------- |
+# | `bar`      | 20            | `:CYAN:`   |               |
+# | `bar.alt`  |               | `:BLUE:`   |               |
+# | `message`  | 40            |            | `:BOLD:`      |
+# | `icon`     | 2             |            | `:BOLD:`      |
+# | `status`   | 30            |            |               |
+# | `spinner`  |               | `:CYAN:`   |               |
+# | `elapsed`  |               |            | `:DIM:`       |
+# | `position` |               |            |               |
+# | `total`    |               |            |               |
+pub @let Style = Dict[{
+  ?bar: Dict[{?width: Int, ...Colors, ?alt: Dict[Colors]}],
+  ?message: Dict[{?width: Int, ...Colors}],
+  ?icon: Dict[{?width: Int, ...Colors}],
+  ?status: Dict[{?width: Int}],
+  ?spinner: Dict[Colors],
+  ?elapsed: Dict[Colors],
+  ?position: Dict[Colors],
+  ?total: Dict[Colors],
+}]
 
 # Activates a progress context for the duration of `func`.
 #
@@ -233,69 +311,7 @@ do -> Array
 # ```
 pub def with[R]
   # Display style overrides.
-  #
-  # Top-level keys name the visual elements of the progress display, and each
-  # element accepts a nested [`Dict`](std.Dict) of properties. All keys are
-  # optional; omitted values use the defaults below.
-  #
-  # ## Elements with width and color
-  #
-  # | Element   | Default width | Default fg | Default attrs |
-  # | --------- | ------------- | ---------- | ------------- |
-  # | `bar`     | 20            | `:CYAN:`   |               |
-  # | `message` | 30            |            | `:BOLD:`      |
-  # | `icon`    | 2             |            | `:BOLD:`      |
-  #
-  # ## Color-only elements
-  #
-  # | Element    | Default fg | Default attrs |
-  # | ---------- | ---------- | ------------- |
-  # | `spinner`  | `:CYAN:`   |               |
-  # | `elapsed`  |            | `:DIM:`       |
-  # | `position` |            |               |
-  # | `total`    |            |               |
-  #
-  # ## Properties
-  #
-  # | Property | Type                   | Description                                   |
-  # | -------- | ---------------------- | --------------------------------------------- |
-  # | `width`  | [`Int`](std.Int) | Character width (bar, message, icon only)     |
-  # | `fg`     | [`Sym`](std.Sym) | Foreground color                              |
-  # | `bg`     | [`Sym`](std.Sym) | Background color                              |
-  # | `attrs`  | [`Array`](std.Array) | Text attribute symbols                        |
-  # | `alt`    | [`Dict`](std.Dict)   | Alt style for unfilled bar portion (bar only) |
-  #
-  # The `alt` style accepts the same styling properties. Its default foreground
-  # color is `:BLUE:`.
-  #
-  # ## Color names
-  #
-  # | Standard     | Bright              |
-  # | ------------ | ------------------- |
-  # | `:BLACK:`    | `:BRIGHT_BLACK:`    |
-  # | `:RED:`      | `:BRIGHT_RED:`      |
-  # | `:GREEN:`    | `:BRIGHT_GREEN:`    |
-  # | `:YELLOW:`   | `:BRIGHT_YELLOW:`   |
-  # | `:BLUE:`     | `:BRIGHT_BLUE:`     |
-  # | `:MAGENTA:`  | `:BRIGHT_MAGENTA:`  |
-  # | `:CYAN:`     | `:BRIGHT_CYAN:`     |
-  # | `:WHITE:`    | `:BRIGHT_WHITE:`    |
-  #
-  # `:BRIGHT:` brightens the default color.
-  #
-  # ## Attributes
-  #
-  # | Symbol              | Effect        |
-  # | ------------------- | ------------- |
-  # | `:BOLD:`            | Bold          |
-  # | `:DIM:`             | Dim           |
-  # | `:ITALIC:`          | Italic        |
-  # | `:UNDERLINED:`      | Underlined    |
-  # | `:BLINK:`           | Blinking      |
-  # | `:REVERSE:`         | Reverse video |
-  # | `:HIDDEN:`          | Hidden        |
-  # | `:STRIKETHROUGH:`   | Strikethrough |
-  :style @ Dict = nil
+  :style @ Style = nil
   # Plain-mode rate limit in seconds. Defaults to `5`. Has no effect
   # when connected to a real terminal.
   :interval @ Float = nil

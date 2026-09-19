@@ -29,16 +29,16 @@ import term:
 # dictionary of items to their aliases.
 pub @let PreludeBinding = (
   | Str | Sym
-  | Array[(Str | Sym)]
-  | Dict[(Str | Sym), (Str | Sym)]
+  | Array[Str | Sym]
+  | Dict[Str | Sym, Str | Sym]
 )
 
 # Imports to bind before compiled source: a module name, an array of module
 # names, or a dictionary of module names to their bindings.
 pub @let Prelude = (
   | Str | Sym
-  | Array[(Str | Sym)]
-  | Dict[(Str | Sym), PreludeBinding]
+  | Array[Str | Sym]
+  | Dict[Str | Sym, PreludeBinding]
 )
 
 # A staged compilation unit.

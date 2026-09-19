@@ -42,6 +42,36 @@ import
 # junctions.
 pub @let Resolve = (:TARGET: | :LINK:)
 
+# The type of a file.
+#
+# | Value            | Description                  |
+# | ---------------- | ---------------------------- |
+# | `:FILE:`         | Regular file                 |
+# | `:DIR:`          | Directory                    |
+# | `:SYMLINK:`      | Symbolic link                |
+# | `:FIFO:`         | Named pipe (FIFO)            |
+# | `:CHAR_DEVICE:`  | Character device             |
+# | `:BLOCK_DEVICE:` | Block device                 |
+# | `:SOCKET:`       | Unix domain socket           |
+# | `:UNKNOWN:`      | Type could not be determined |
+pub @let FileType = (
+  | :FILE: | :DIR: | :SYMLINK: | :FIFO: | :CHAR_DEVICE: | :BLOCK_DEVICE: | :SOCKET:
+  | :UNKNOWN:
+)
+
+# How a copy shares blocks between its source and destination.
+#
+# | Value       | Meaning                                                |
+# | ----------- | ------------------------------------------------------ |
+# | `:AUTO:`    | share blocks where possible, copy the data otherwise   |
+# | `:REQUIRE:` | fail rather than copy the data outright                |
+# | `:NEVER:`   | copy the data outright even where sharing is available |
+pub @let CloneMode = (:AUTO: | :REQUIRE: | :NEVER:)
+
+# An extended-attribute namespace: a name, or `:USER:` or `:SYSTEM:` for the
+# well-known namespaces.
+pub @let XattrNamespace = (Str | :USER: | :SYSTEM:)
+
 # File access mode accepted by [`open`](fs.open).
 #
 # | Mode   | Description                              |
@@ -87,24 +117,13 @@ pub class DirEntry
 
   # The file type.
   #
-  # | Value            | Description                  |
-  # | ---------------- | ---------------------------- |
-  # | `:FILE:`         | Regular file                 |
-  # | `:DIR:`          | Directory                    |
-  # | `:SYMLINK:`      | Symbolic link                |
-  # | `:FIFO:`         | Named pipe (FIFO)            |
-  # | `:CHAR_DEVICE:`  | Character device             |
-  # | `:BLOCK_DEVICE:` | Block device                 |
-  # | `:SOCKET:`       | Unix domain socket           |
-  # | `:UNKNOWN:`      | Type could not be determined |
-  #
   # ```
   # for entry = entries .
   #   if (entry.type == :DIR:)
   #     echo "Directory: $(entry.name)"
   # ```
   #[getter]
-  pub def type self -> Sym
+  pub def type self -> FileType
     ...
 
   # The inode number of the entry.
@@ -126,7 +145,7 @@ pub class DirEntry
 # file's lifetime: a text-mode file yields and accepts lines, a binary-mode one
 # arbitrary chunks. In either mode the values read from a file concatenate back
 # to exactly the file's bytes.
-pub class File: Iter[(Str | Bin)] Sink[Value]
+pub class File: Iter[Str | Bin] Sink[Value]
   # Closes the file.
   #
   # This is required if [`open`](fs.open) was not given a block.
@@ -334,8 +353,9 @@ pub class File: Iter[(Str | Bin)] Sink[Value]
     :size @ Int = nil
     # Absolute byte offset in the destination.
     :offset @ Int = nil
-    # `:AUTO:` (default), `:REQUIRE:`, or `:NEVER:`.
-    :clone @ Sym = nil
+    # How blocks should be shared between the source and destination. Defaults
+    # to `:AUTO:`.
+    :clone @ CloneMode = nil
   do -> Int
     ...
 
@@ -488,10 +508,8 @@ pub class File: Iter[(Str | Bin)] Sink[Value]
   # ```
   pub def xattrs
     self
-    # Namespace to query;
-    # `:USER:` and `:SYSTEM:` name well-known namespaces, and `:ANY:` lists all
-    # namespaces.
-    :namespace @ (Str | Sym) = nil
+    # Namespace to query; `:ANY:` lists all namespaces.
+    :namespace @ (XattrNamespace | :ANY:) = nil
   do -> Iter[XattrEntry]
     ...
 
@@ -509,7 +527,7 @@ pub class File: Iter[(Str | Bin)] Sink[Value]
     # or entry from [`xattrs`](fs.File.xattrs).
     name @ (Str | XattrEntry)
     # Namespace to query.
-    :namespace @ (Str | Sym) = nil
+    :namespace @ XattrNamespace = nil
   do -> Bin
     ...
 
@@ -533,7 +551,7 @@ pub class File: Iter[(Str | Bin)] Sink[Value]
     # use UTF-8.
     value @ (Str | Bin)
     # Namespace to update.
-    :namespace @ (Str | Sym) = nil
+    :namespace @ XattrNamespace = nil
   do
     ...
 
@@ -551,7 +569,7 @@ pub class File: Iter[(Str | Bin)] Sink[Value]
     # or entry from [`xattrs`](fs.File.xattrs).
     name @ (Str | XattrEntry)
     # Namespace to update.
-    :namespace @ (Str | Sym) = nil
+    :namespace @ XattrNamespace = nil
   do
     ...
 
@@ -854,10 +872,9 @@ pub class Metadata
   pub def size self -> Int
     ...
 
-  # File type: `:FILE:`, `:DIR:`, `:SYMLINK:`,
-  # `:FIFO:`, `:CHAR_DEVICE:`, `:BLOCK_DEVICE:`, `:SOCKET:`, or `:UNKNOWN:`.
+  # File type.
   #[getter]
-  pub def type self -> Sym
+  pub def type self -> FileType
     ...
 
   # Last modification time.
@@ -1551,8 +1568,8 @@ pub class Path
   # The method form of [`fs.xattrs`](fs.xattrs).
   pub def xattrs
     self
-    # Namespace to query.
-    :namespace @ (Str | Sym) = nil
+    # Namespace to query; `:ANY:` lists all namespaces.
+    :namespace @ (XattrNamespace | :ANY:) = nil
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
   do -> Iter[XattrEntry]
@@ -1565,7 +1582,7 @@ pub class Path
     # or entry from [`xattrs`](fs.Path.xattrs).
     name @ (Str | XattrEntry)
     # Namespace to query.
-    :namespace @ (Str | Sym) = nil
+    :namespace @ XattrNamespace = nil
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
   do -> Bin
@@ -1581,7 +1598,7 @@ pub class Path
     # use UTF-8.
     value @ (Str | Bin)
     # Namespace to update.
-    :namespace @ (Str | Sym) = nil
+    :namespace @ XattrNamespace = nil
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
   do
@@ -1594,7 +1611,7 @@ pub class Path
     # or entry from [`xattrs`](fs.Path.xattrs).
     name @ (Str | XattrEntry)
     # Namespace to update.
-    :namespace @ (Str | Sym) = nil
+    :namespace @ XattrNamespace = nil
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
   do
@@ -1864,12 +1881,6 @@ pub def copy_data
   #
   # ### Clone Behavior
   #
-  # | Value       | Meaning                                                |
-  # | ----------- | ------------------------------------------------------ |
-  # | `:AUTO:`    | share blocks where possible, copy the data otherwise   |
-  # | `:REQUIRE:` | fail rather than copy the data outright                |
-  # | `:NEVER:`   | copy the data outright even where sharing is available |
-  #
   # On Linux and FreeBSD, `:AUTO:` opportunistically performs copy-on-write
   # cloning for local filesystems and server-side copying for network mounts.
   # `:REQUIRE:` explicitly requests a copy-on-write clone and fails if not
@@ -1891,7 +1902,7 @@ pub def copy_data
   # unavailable the zeroes may consume physical storage. On Windows, a file
   # must be explicitly marked sparse to permit unallocated zero blocks; this
   # operation will not do so automatically.
-  :clone @ Sym = nil
+  :clone @ CloneMode = nil
 do -> Int
   ...
 
@@ -2190,10 +2201,8 @@ do
 pub def xattrs
   # Path to query.
   path @ (Str | Path)
-  # Namespace to query;
-  # `:USER:` and `:SYSTEM:` name well-known namespaces, and `:ANY:` lists all
-  # namespaces.
-  :namespace @ (Str | Sym) = nil
+  # Namespace to query; `:ANY:` lists all namespaces.
+  :namespace @ (XattrNamespace | :ANY:) = nil
   # Resolution mode. Defaults to
   # `:TARGET:`.
   :resolve @ Resolve = nil
@@ -2214,7 +2223,7 @@ pub def xattr
   # or entry from [`xattrs`](fs.xattrs).
   name @ (Str | XattrEntry)
   # Namespace to query.
-  :namespace @ (Str | Sym) = nil
+  :namespace @ XattrNamespace = nil
   # Resolution mode. Defaults to
   # `:TARGET:`.
   :resolve @ Resolve = nil
@@ -2242,7 +2251,7 @@ pub def set_xattr
   # use UTF-8.
   value @ (Str | Bin)
   # Namespace to update.
-  :namespace @ (Str | Sym) = nil
+  :namespace @ XattrNamespace = nil
   # Resolution mode. Defaults to
   # `:TARGET:`.
   :resolve @ Resolve = nil
@@ -2263,7 +2272,7 @@ pub def remove_xattr
   # or entry from [`xattrs`](fs.xattrs).
   name @ (Str | XattrEntry)
   # Namespace to update.
-  :namespace @ (Str | Sym) = nil
+  :namespace @ XattrNamespace = nil
   # Resolution mode. Defaults to
   # `:TARGET:`.
   :resolve @ Resolve = nil

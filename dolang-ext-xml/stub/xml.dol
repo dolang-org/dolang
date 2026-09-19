@@ -54,7 +54,7 @@ pub class Attr
 #
 # Nodes can be shared or inserted into different trees. Serialization derives
 # namespace declarations from each node rather than from parent pointers.
-pub class Node: @Index[{...Str: Str, ...Int: (Node | Str), ...Range[Int]: Array[(Node | Str)]}] @Assign[Str, Str]
+pub class Node: @Index[{...Str: Str, ...Int: Node | Str, ...Range[Int]: Array[Node | Str]}] @Assign[Str, Str]
   # Creates an element, optionally with attributes and children.
   #
   # Children are not checked here, matching `children.push`; [`verify`](xml.verify)
@@ -84,7 +84,7 @@ pub class Node: @Index[{...Str: Str, ...Int: (Node | Str), ...Range[Int]: Array[
     # Preferred namespace prefix.
     :prefix @ Str = nil
     # Unnamespaced attributes with `Sym` or `Str` keys and `Str` values.
-    :attrs @ Dict = nil
+    :attrs @ Dict[Sym | Str, Str] = nil
     # Attributes or children.
     *items @ (Attr | Value)
   do
@@ -102,7 +102,7 @@ pub class Node: @Index[{...Str: Str, ...Int: (Node | Str), ...Range[Int]: Array[
   #
   # Iterating a node iterates this view directly.
   #[getter]
-  pub def children self -> MutSeq[(Node | Str)]
+  pub def children self -> MutSeq[Node | Str]
     ...
 
   # Mutable namespace URI, or `nil` for no namespace.
@@ -186,7 +186,7 @@ pub class Node: @Index[{...Str: Str, ...Int: (Node | Str), ...Range[Int]: Array[
     ...
 
   # Returns a depth-first, parent-first iterator over this node and descendants.
-  pub def traverse self -> Iter[(Node | Str)]
+  pub def traverse self -> Iter[Node | Str]
     ...
 
   # Reads an unnamespaced attribute by string or a child by integer index.

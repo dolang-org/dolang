@@ -1,9 +1,11 @@
 # Unix security types and uid/gid identity lookups.
 
-import std:
-  - @Seq
-import uuid:
-  - @Uuid
+import
+  std:
+    - @FlagSet
+    - @Seq
+  uuid:
+    - @Uuid
 
 # Unix process identity information for the active VFS target.
 #
@@ -34,73 +36,23 @@ pub class Identity
   pub def groups self -> Tuple[...Int]
     ...
 
+# A symbol naming a bit of a [`Permission`](security.unix.Permission).
+#
+# | Symbol      | Meaning            |
+# | ----------- | ------------------ |
+# | `:READ:`    | Read permission    |
+# | `:WRITE:`   | Write permission   |
+# | `:EXECUTE:` | Execute permission |
+pub @let PermissionBit = (:READ: | :WRITE: | :EXECUTE:)
+
 # POSIX read/write/execute permission bits.
-pub class Permission: Iterable[Sym]
-  # Constructs a permission set from symbols or one iterable of symbols.
-  #
-  # ## Supported symbols
-  #
-  # | Symbol      | Meaning            |
-  # | ----------- | ------------------ |
-  # | `:READ:`    | Read permission    |
-  # | `:WRITE:`   | Write permission   |
-  # | `:EXECUTE:` | Execute permission |
-  #
-  # ## Example
-  #
-  # ```
-  # let rw = Permission(:READ:, :WRITE:)
-  # ```
-  pub def (init)
-    self
-    # Permission bits, or one iterable of them.
-    ...bits @ Sym
-  do
-    ...
-
-  # Tests whether all bits represented by a symbol are set.
-  pub def contains
-    self
-    # Bits to test for.
-    bit @ Sym
-  do -> Bool
-    ...
-
-  # Union of two permission sets.
-  pub def (bor)
-    self
-    other @ Permission
-  do -> Permission
-    ...
-
-  # Intersection of two permission sets.
-  pub def (band)
-    self
-    other @ Permission
-  do -> Permission
-    ...
-
-  # Symmetric difference of two permission sets.
-  pub def (bxor)
-    self
-    other @ Permission
-  do -> Permission
-    ...
-
-  # Complement within the supported bit set.
-  pub def (bnot) self -> Permission
-    ...
-
-  # Compares two permission sets.
-  pub def (eq)
-    self
-    other
-  do
-    ...
-
-  # Yields the symbols represented by the permission set.
-  pub def (iter) self -> Iter[Sym]
-    ...
+#
+# ## Example
+#
+# ```
+# let rw = Permission(:READ:, :WRITE:)
+# ```
+pub class Permission: Iterable[PermissionBit] @FlagSet[PermissionBit]
 
 # Immutable POSIX.1e access-control entry.
 #
@@ -165,10 +117,9 @@ pub class Ace
   do -> Ace
     ...
 
-  # Entry qualifier: `:USER_OBJ:`, `:USER:`,
-  # `:GROUP_OBJ:`, `:GROUP:`, `:MASK:`, or `:OTHER:`.
+  # Entry qualifier.
   #[getter]
-  pub def type self -> Sym
+  pub def type self -> (:USER_OBJ: | :USER: | :GROUP_OBJ: | :GROUP: | :MASK: | :OTHER:)
     ...
 
   # Numeric user or group ID.
@@ -215,7 +166,7 @@ pub class Acl
 
 # Permissions given as a [`Permission`](security.unix.Permission), one
 # permission symbol, or an iterable of permission symbols.
-pub @let PermissionSpec = (Permission | Sym | Iterable[Sym])
+pub @let PermissionSpec = (Permission | PermissionBit | Iterable[PermissionBit])
 
 # A POSIX entry, built or declared as a dictionary. A dictionary has exactly
 # one qualifier key, with the same meaning as the keyword arguments of

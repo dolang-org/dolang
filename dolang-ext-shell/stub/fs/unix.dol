@@ -1,7 +1,41 @@
 # Unix filesystem types.
 
-import security.unix:
-  - @Permission
+import
+  security.unix:
+    - @Permission
+  std:
+    - @FlagSet
+
+# A symbol naming bits of a [`Mode`](fs.unix.Mode).
+#
+# | Symbol            | Meaning                 |
+# | ----------------- | ----------------------- |
+# | `:OWNER_READ:`    | Owner may read          |
+# | `:OWNER_WRITE:`   | Owner may write         |
+# | `:OWNER_EXECUTE:` | Owner may execute       |
+# | `:GROUP_READ:`    | Group may read          |
+# | `:GROUP_WRITE:`   | Group may write         |
+# | `:GROUP_EXECUTE:` | Group may execute       |
+# | `:OTHER_READ:`    | Everyone may read       |
+# | `:OTHER_WRITE:`   | Everyone may write      |
+# | `:OTHER_EXECUTE:` | Everyone may execute    |
+# | `:SET_UID:`       | Set user ID on execute  |
+# | `:SET_GID:`       | Set group ID on execute |
+# | `:STICKY:`        | Sticky bit              |
+# | `:IFREG:`         | Regular file            |
+# | `:IFDIR:`         | Directory               |
+# | `:IFLNK:`         | Symbolic link           |
+# | `:IFIFO:`         | FIFO                    |
+# | `:IFCHR:`         | Character device        |
+# | `:IFBLK:`         | Block device            |
+# | `:IFSOCK:`        | Socket                  |
+pub @let ModeBit = (
+  | :OWNER_READ: | :OWNER_WRITE: | :OWNER_EXECUTE:
+  | :GROUP_READ: | :GROUP_WRITE: | :GROUP_EXECUTE:
+  | :OTHER_READ: | :OTHER_WRITE: | :OTHER_EXECUTE:
+  | :SET_UID: | :SET_GID: | :STICKY:
+  | :IFREG: | :IFDIR: | :IFLNK: | :IFIFO: | :IFCHR: | :IFBLK: | :IFSOCK:
+)
 
 # Unix `st_mode` bits: permissions, the set-user-ID/set-group-ID/sticky bits,
 # and the file type.
@@ -14,50 +48,11 @@ import security.unix:
 # let mode = metadata("template.sh").mode
 # update_metadata "script.sh" mode: $mode
 # ```
-pub class Mode
-  # Constructs a mode from symbols or one iterable of symbols.
-  #
-  # ## Permission symbols
-  #
-  # | Symbol            | Meaning                 |
-  # | ----------------- | ----------------------- |
-  # | `:OWNER_READ:`    | Owner may read          |
-  # | `:OWNER_WRITE:`   | Owner may write         |
-  # | `:OWNER_EXECUTE:` | Owner may execute       |
-  # | `:GROUP_READ:`    | Group may read          |
-  # | `:GROUP_WRITE:`   | Group may write         |
-  # | `:GROUP_EXECUTE:` | Group may execute       |
-  # | `:OTHER_READ:`    | Everyone may read       |
-  # | `:OTHER_WRITE:`   | Everyone may write      |
-  # | `:OTHER_EXECUTE:` | Everyone may execute    |
-  # | `:SET_UID:`       | Set user ID on execute  |
-  # | `:SET_GID:`       | Set group ID on execute |
-  # | `:STICKY:`        | Sticky bit              |
-  #
-  # ## File type symbols
-  #
-  # | Symbol     | File type        |
-  # | ---------- | ---------------- |
-  # | `:IFREG:`  | Regular file     |
-  # | `:IFDIR:`  | Directory        |
-  # | `:IFLNK:`  | Symbolic link    |
-  # | `:IFIFO:`  | FIFO             |
-  # | `:IFCHR:`  | Character device |
-  # | `:IFBLK:`  | Block device     |
-  # | `:IFSOCK:` | Socket           |
-  #
-  # ## Example
-  #
-  # ```
-  # let rw = Mode(:OWNER_READ:, :OWNER_WRITE:)
-  # ```
-  pub def (init)
-    self
-    # Mode bits, or one iterable of them.
-    ...bits @ Sym
-  do
-    ...
-
+#
+# ```
+# let rw = Mode(:OWNER_READ:, :OWNER_WRITE:)
+# ```
+pub class Mode: Iterable[ModeBit] @FlagSet[ModeBit]
   # Constructs a mode from a raw `st_mode` value, preserving unknown bits.
   #
   # ## Example
@@ -101,50 +96,6 @@ pub class Mode
   # ```
   #[getter]
   pub def int self -> Int
-    ...
-
-  # Tests whether all bits represented by a symbol are set.
-  pub def contains
-    self
-    # Bits to test for.
-    bit @ Sym
-  do -> Bool
-    ...
-
-  # Union of two modes.
-  pub def (bor)
-    self
-    other
-  do
-    ...
-
-  # Intersection of two modes.
-  pub def (band)
-    self
-    other
-  do
-    ...
-
-  # Symmetric difference of two modes.
-  pub def (bxor)
-    self
-    other
-  do
-    ...
-
-  # Complement within the supported bit set.
-  pub def (bnot) self
-    ...
-
-  # Compares two modes.
-  pub def (eq)
-    self
-    other
-  do
-    ...
-
-  # Yields the symbols represented by the mode.
-  pub def (iter) self
     ...
 
 # [`fs.Path`](fs.Path) using Unix path syntax.

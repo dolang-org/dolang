@@ -64,10 +64,6 @@ pub class Url
   #
   # Duplicate keys and original ordering are preserved.
   #
-  # ## Returns
-  #
-  # [`Iter`](std.Iter) of `(Str, Str)` tuples.
-  #
   # ## Example
   #
   # ```playground
@@ -82,7 +78,7 @@ pub class Url
   # assert_eq $pairs[1][1] "c"
   # ```
   #[getter]
-  pub def query self -> Iter
+  pub def query self -> Iter[Tuple[Str, Str]]
     ...
 
   # The raw query string without the leading `?`, or `nil` if absent.
@@ -141,7 +137,7 @@ pub class Url
   pub def with_query
     self
     # Decoded key/value pairs.
-    pairs @ Iterable = nil
+    pairs @ Iterable[Tuple[Value, Value]] = nil
     # Query values keyed by argument name.
     **keys
   do -> Url

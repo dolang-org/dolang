@@ -39,7 +39,7 @@ import fs:
 # | `env`     | Environment variable consulted when the flag is absent             |
 # | `help`    | Description shown in `--help` output                               |
 pub @let FlagSpec = Dict[{
-  flag: Str, ?long: (Str | nil), ?short: Str, ?default: Bool, ?divider: Bool,
+  flag: Str, ?long: Str | nil, ?short: Str, ?default: Bool, ?divider: Bool,
   ?env: Str, ?help: Str,
 }]
 
@@ -59,9 +59,9 @@ pub @let FlagSpec = Dict[{
 # | `values`  | Allowed values                                                     |
 # | `help`    | Description shown in `--help` output                               |
 pub @let OptSpec = Dict[{
-  opt: Str, ?long: (Str | nil), ?short: Str, ?parse: (Str -> Value),
+  opt: Str, ?long: Str | nil, ?short: Str, ?parse: (Str -> Value),
   ?default: Value, ?divider: Bool, ?env: Str, ?collect: Bool, ?meta: Str,
-  ?values: Iterable, ?help: Str,
+  ?values: Iterable[Value], ?help: Str,
 }]
 
 # A positional argument.
@@ -77,7 +77,7 @@ pub @let OptSpec = Dict[{
 # | `help`    | Description shown in `--help` output                               |
 pub @let ArgSpec = Dict[{
   arg: Str, ?parse: (Str -> Value), ?default: Value, ?divider: Bool,
-  ?collect: Bool, ?values: Iterable, ?help: Str,
+  ?collect: Bool, ?values: Iterable[Value], ?help: Str,
 }]
 
 # A subcommand.

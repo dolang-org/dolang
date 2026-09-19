@@ -8,7 +8,7 @@ class _Split[*P, **K]
 
 let _func @ ((?Int, Str, *Bool, Int, **Str, ...Str) -> nil) = nil
 
-@def _pipe[*Rs, R] *_thunks @ ...(() -> Rs) _last @ (() -> R) -> R
+@def _pipe[*Rs, R] *_thunks@...(() -> Rs) _last@(() -> R) -> R
 @def _pipe
   - _first = 1
   - _second

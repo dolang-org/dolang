@@ -196,6 +196,6 @@ do -> Patch
 # ```
 pub def encode
   # One patch or an iterable of patches.
-  value @ (Patch | Iterable)
+  value @ (Patch | Iterable[Patch])
 do -> (Str | Bin)
   ...

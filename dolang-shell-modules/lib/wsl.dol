@@ -39,11 +39,11 @@ pub def with_linux[R]
   # Linux user. Defaults to WSL's configured default.
   :user @ Str = nil
   # Linux VFS launcher command and arguments.
-  :command @ Iterable = ["dolang-vfs"]
+  :command @ Iterable[Str] = ["dolang-vfs"]
   # Initial Linux working directory.
   :cd @ (Str | Path) = nil
   # Initial Linux environment overrides.
-  :env @ Dict = {}
+  :env @ Dict[Str | Sym, Value] = {}
 do -> R
   require_windows()
   let executable = run["wsl.exe"].which()
@@ -61,11 +61,11 @@ pub def with_windows[R]
   # Windows VFS launcher command and arguments.
   # Defaults to `dolang-vfs.exe`, preferring `dolang.exe --vfs` as a
   # fallback.
-  :command @ Iterable = find_windows_command()
+  :command @ Iterable[Str] = find_windows_command()
   # Initial Windows working directory.
   :cd @ (Str | Path) = nil
   # Initial Windows environment overrides.
-  :env @ Dict = {}
+  :env @ Dict[Str | Sym, Value] = {}
 do -> R
   require_linux()
   let argv = _wsl.build_windows_command $command :cd :env

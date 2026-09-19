@@ -114,9 +114,8 @@ pub class Archive
     # `size` announced it up front. Pass the uncompressed size whenever it is
     # known; it is a hint, and the actual sizes are what end up recorded.
     :size @ Int = nil
-    # `:STORED:`, `:DEFLATE:` (the default), or
-    # `:ZSTD:`.
-    :compression @ Sym = nil
+    # Compression method. Defaults to `:DEFLATE:`.
+    :compression @ (:STORED: | :DEFLATE: | :ZSTD:) = nil
   do -> File
 
   # Opens a file within the archive and calls `func` with it. The file is
@@ -132,9 +131,8 @@ pub class Archive
     :mode @ Int = nil
     # Expected uncompressed size.
     :size @ Int = nil
-    # `:STORED:`, `:DEFLATE:` (the default), or
-    # `:ZSTD:`.
-    :compression @ Sym = nil
+    # Compression method. Defaults to `:DEFLATE:`.
+    :compression @ (:STORED: | :DEFLATE: | :ZSTD:) = nil
     # Called with the [`File`](zip.File).
     func @ (File -> R)
   do -> R

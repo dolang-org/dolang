@@ -1,159 +1,69 @@
 # macOS extended access-control-list types and principal identity resolution
 # between Unix uid/gid values and macOS `guid_t` UUIDs.
 
-import std:
-  - @Seq
-import uuid:
-  - @Uuid
+import
+  std:
+    - @FlagSet
+    - @Seq
+  uuid:
+    - @Uuid
+
+# A symbol naming a bit of a [`Mask`](security.macos.Mask).
+#
+# | Symbol                  | Meaning                                                |
+# | ----------------------- | ------------------------------------------------------ |
+# | `:READ_DATA:`           | Read the file's data, or list a directory              |
+# | `:WRITE_DATA:`          | Write the file's data, or create a file in a directory |
+# | `:EXECUTE:`             | Execute the file, or traverse a directory              |
+# | `:DELETE:`              | Delete the file or directory                           |
+# | `:APPEND_DATA:`         | Append to the file's data, or create a subdirectory    |
+# | `:DELETE_CHILD:`        | Delete a file or directory within a directory          |
+# | `:READ_ATTRIBUTES:`     | Read basic attributes                                  |
+# | `:WRITE_ATTRIBUTES:`    | Write basic attributes                                 |
+# | `:READ_EXTATTRIBUTES:`  | Read extended attributes                               |
+# | `:WRITE_EXTATTRIBUTES:` | Write extended attributes                              |
+# | `:READ_SECURITY:`       | Read the ACL                                           |
+# | `:WRITE_SECURITY:`      | Write the ACL                                          |
+# | `:CHANGE_OWNER:`        | Change owner and owning group                          |
+# | `:SYNCHRONIZE:`         | Use synchronous I/O                                    |
+pub @let MaskBit = (
+  | :READ_DATA: | :WRITE_DATA: | :EXECUTE: | :DELETE: | :APPEND_DATA:
+  | :DELETE_CHILD: | :READ_ATTRIBUTES: | :WRITE_ATTRIBUTES:
+  | :READ_EXTATTRIBUTES: | :WRITE_EXTATTRIBUTES: | :READ_SECURITY:
+  | :WRITE_SECURITY: | :CHANGE_OWNER: | :SYNCHRONIZE:
+)
 
 # macOS extended ACE permission bits.
-pub class Mask: Iterable[Sym]
-  # Constructs a mask from symbols or one iterable of symbols.
-  #
-  # ## Supported symbols
-  #
-  # | Symbol                  | Meaning                                                |
-  # | ----------------------- | ------------------------------------------------------ |
-  # | `:READ_DATA:`           | Read the file's data, or list a directory              |
-  # | `:WRITE_DATA:`          | Write the file's data, or create a file in a directory |
-  # | `:EXECUTE:`             | Execute the file, or traverse a directory              |
-  # | `:DELETE:`              | Delete the file or directory                           |
-  # | `:APPEND_DATA:`         | Append to the file's data, or create a subdirectory    |
-  # | `:DELETE_CHILD:`        | Delete a file or directory within a directory          |
-  # | `:READ_ATTRIBUTES:`     | Read basic attributes                                  |
-  # | `:WRITE_ATTRIBUTES:`    | Write basic attributes                                 |
-  # | `:READ_EXTATTRIBUTES:`  | Read extended attributes                               |
-  # | `:WRITE_EXTATTRIBUTES:` | Write extended attributes                              |
-  # | `:READ_SECURITY:`       | Read the ACL                                           |
-  # | `:WRITE_SECURITY:`      | Write the ACL                                          |
-  # | `:CHANGE_OWNER:`        | Change owner and owning group                          |
-  # | `:SYNCHRONIZE:`         | Use synchronous I/O                                    |
-  #
-  # ## Example
-  #
-  # ```
-  # let rw = Mask(:READ_DATA:, :WRITE_DATA:)
-  # ```
-  pub def (init)
-    self
-    # Mask bits, or one iterable of them.
-    ...bits @ Sym
-  do
-    ...
+#
+# ## Example
+#
+# ```
+# let rw = Mask(:READ_DATA:, :WRITE_DATA:)
+# ```
+pub class Mask: Iterable[MaskBit] @FlagSet[MaskBit]
 
-  # Tests whether all bits represented by a symbol are set.
-  pub def contains
-    self
-    # Bits to test for.
-    bit @ Sym
-  do -> Bool
-    ...
-
-  # Union of two masks.
-  pub def (bor)
-    self
-    other @ Mask
-  do -> Mask
-    ...
-
-  # Intersection of two masks.
-  pub def (band)
-    self
-    other @ Mask
-  do -> Mask
-    ...
-
-  # Symmetric difference of two masks.
-  pub def (bxor)
-    self
-    other @ Mask
-  do -> Mask
-    ...
-
-  # Complement within the supported bit set.
-  pub def (bnot) self -> Mask
-    ...
-
-  # Compares two masks.
-  pub def (eq)
-    self
-    other
-  do
-    ...
-
-  # Yields the symbols represented by the mask.
-  pub def (iter) self -> Iter[Sym]
-    ...
+# A symbol naming a flag of a [`Flags`](security.macos.Flags).
+#
+# | Symbol                | Meaning                                                            |
+# | --------------------- | ------------------------------------------------------------------ |
+# | `:FILE_INHERIT:`      | Files created within a directory inherit this entry                |
+# | `:DIRECTORY_INHERIT:` | Subdirectories created within a directory inherit this entry       |
+# | `:LIMIT_INHERIT:`     | Stop propagating this entry after one level of inheritance         |
+# | `:ONLY_INHERIT:`      | This entry is inherited but does not apply to the directory itself |
+# | `:INHERITED:`         | This entry was inherited from a parent directory                   |
+pub @let FlagBit = (
+  | :FILE_INHERIT: | :DIRECTORY_INHERIT: | :LIMIT_INHERIT: | :ONLY_INHERIT:
+  | :INHERITED:
+)
 
 # macOS extended ACE inheritance flags.
-pub class Flags: Iterable[Sym]
-  # Constructs a flag set from symbols or one iterable of symbols.
-  #
-  # ## Supported symbols
-  #
-  # | Symbol                | Meaning                                                            |
-  # | --------------------- | ------------------------------------------------------------------ |
-  # | `:FILE_INHERIT:`      | Files created within a directory inherit this entry                |
-  # | `:DIRECTORY_INHERIT:` | Subdirectories created within a directory inherit this entry       |
-  # | `:LIMIT_INHERIT:`     | Stop propagating this entry after one level of inheritance         |
-  # | `:ONLY_INHERIT:`      | This entry is inherited but does not apply to the directory itself |
-  # | `:INHERITED:`         | This entry was inherited from a parent directory                   |
-  #
-  # ## Example
-  #
-  # ```
-  # let inherit = Flags(:FILE_INHERIT:, :DIRECTORY_INHERIT:)
-  # ```
-  pub def (init)
-    self
-    # Flag bits, or one iterable of them.
-    ...bits @ Sym
-  do
-    ...
-
-  # Tests whether all bits represented by a symbol are set.
-  pub def contains
-    self
-    # Bits to test for.
-    bit @ Sym
-  do -> Bool
-    ...
-
-  # Union of two flag sets.
-  pub def (bor)
-    self
-    other @ Flags
-  do -> Flags
-    ...
-
-  # Intersection of two flag sets.
-  pub def (band)
-    self
-    other @ Flags
-  do -> Flags
-    ...
-
-  # Symmetric difference of two flag sets.
-  pub def (bxor)
-    self
-    other @ Flags
-  do -> Flags
-    ...
-
-  # Complement within the supported bit set.
-  pub def (bnot) self -> Flags
-    ...
-
-  # Compares two flag sets.
-  pub def (eq)
-    self
-    other
-  do
-    ...
-
-  # Yields the symbols represented by the flag set.
-  pub def (iter) self -> Iter[Sym]
-    ...
+#
+# ## Example
+#
+# ```
+# let inherit = Flags(:FILE_INHERIT:, :DIRECTORY_INHERIT:)
+# ```
+pub class Flags: Iterable[FlagBit] @FlagSet[FlagBit]
 
 # Immutable macOS extended access-control entry.
 #
@@ -200,9 +110,9 @@ pub class Ace
   do -> Ace
     ...
 
-  # Entry type: `:ALLOW:` or `:DENY:`.
+  # Entry type.
   #[getter]
-  pub def type self -> Sym
+  pub def type self -> (:ALLOW: | :DENY:)
     ...
 
   # The entry's principal.
@@ -250,11 +160,11 @@ pub @let Principal = (Uuid | Str | Bin)
 
 # A mask given as a [`Mask`](security.macos.Mask), one symbol, or an iterable
 # of symbols.
-pub @let MaskSpec = (Mask | Sym | Iterable[Sym])
+pub @let MaskSpec = (Mask | MaskBit | Iterable[MaskBit])
 
 # Flags given as [`Flags`](security.macos.Flags), one symbol, or an iterable of
 # symbols.
-pub @let FlagsSpec = (Flags | Sym | Iterable[Sym])
+pub @let FlagsSpec = (Flags | FlagBit | Iterable[FlagBit])
 
 # A macOS entry, built or declared as a dictionary. A dictionary has
 # exactly one type key, with the same meaning as the keyword arguments of
@@ -353,5 +263,5 @@ do -> Uuid
 pub def id_for_uuid
   # macOS principal UUID.
   uuid @ (Uuid | Str | Bin)
-do -> Tuple[(:UID: | :GID:), Int]
+do -> Tuple[:UID: | :GID:, Int]
   ...

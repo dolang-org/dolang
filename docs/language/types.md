@@ -215,7 +215,7 @@ function's are: rest parameters may appear anywhere and more than once, and a
 required parameter may follow an optional one.
 
 ```
-@def pipeline[*Rs, R] *stages @ ...(() -> Rs) last @ (() -> R) -> R
+@def pipeline[*Rs, R] *stages@...(() -> Rs) last@(() -> R) -> R
 ```
 
 ## Protocols
@@ -310,7 +310,7 @@ Expansion of a plain type is shorthand for `...{*T}`
 let names @ Array[Str] = []
 let index @ Dict[Str, Array[Int]] = {}
 let row @ Tuple[...Str] = Tuple ["id", "name"]
-let result @ Record[value: Int, error: (Error | nil)] = nil
+let result @ Record[value: Int, error: Error | nil] = nil
 let open @ Record[...{name: Str, ...}] = nil
 ```
 

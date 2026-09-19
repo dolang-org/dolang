@@ -71,7 +71,7 @@ pub def run
   # sudo.
   :cd @ (Str | Path) = nil
   # Environment requested via sudo policy.
-  :env @ Dict = {}
+  :env @ Dict[Str | Sym, Value] = {}
   # Arguments passed verbatim to `cmd`.
   *args
 do -> nil
@@ -95,6 +95,6 @@ pub def with[R]
   # Initial elevated directory.
   :cd @ (Str | Path) = nil
   # Initial environment overrides.
-  :env @ Dict = {}
+  :env @ Dict[Str | Sym, Value] = {}
 do -> R
   run_agent $func :user :cd :env
