@@ -1,13 +1,17 @@
 use super::{
     ExprMode, Parser, Result, Scope,
-    diag::{InvalidConstType, NonConstExpr, OptionalQuant, OptionalTypeArg, ParamsWithoutArrow},
+    diag::{
+        DuplicateImplicit, ImplicitInSchema, InvalidConstType, NonConstExpr, OptionalQuant,
+        OptionalTypeArg, ParamsWithoutArrow, QuantifiedImplicit,
+    },
     stream::ExpectKind,
 };
 use crate::{
     RestKind,
     ast::{
-        Annot, Binder, BinderDefault, BinderKind, Binders, Const, Ident, RetType, TypeArg,
-        TypeArgKind, TypeExpr, TypeKey, TypeParam, TypeParamKind, TypeQuant, visit::Node,
+        Annot, Binder, BinderDefault, BinderKind, Binders, Const, Ident, Implicit, Implicits,
+        RetType, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam, TypeParamKind, TypeQuant,
+        visit::Node,
     },
     lex::{Keyword, Mode, Op, Token, TokenInfo},
     source::Span,
@@ -49,11 +53,14 @@ fn rest_sigil(info: &TokenInfo) -> Option<RestKind> {
     }
 }
 
-/// A compact type, or a parenthesized list that is only a type if `->` follows it
-enum Compact {
+/// A parenthesized type expression, whose meaning is not known until a `->`
+/// either follows it, making it a function type's parameters, or does not,
+/// making it a grouped type
+enum Group {
     Type(TypeExpr),
     Params {
         params: Vec<TypeParam>,
+        implicits: Implicits,
         paren_span: Span,
     },
 }
@@ -181,8 +188,8 @@ impl Parser<'_> {
 
     /// Parse a compact type, which whitespace ends in shell-like contexts.
     pub(super) fn parse_type_compact(&mut self, scope: &mut Scope) -> Result<TypeExpr> {
-        let compact = self.parse_type_compact_or_params(scope)?;
-        Ok(self.finish_params(compact))
+        let group = self.parse_type_compact_or_params(scope)?;
+        Ok(self.finish_params(group))
     }
 
     /// Parse a full type, as found within `[]`, `()` and `{}`.
@@ -196,20 +203,27 @@ impl Parser<'_> {
             && let Some(token!(TokenInfo::Arrow)) = self.peek()?
         {
             let arrow_span = self.advance();
-            let (params, paren_span) = match first {
-                Compact::Params { params, paren_span } => (params, Some(paren_span)),
-                Compact::Type(ty) => (
+            let (params, implicits, paren_span) = match first {
+                Group::Params {
+                    params,
+                    implicits,
+                    paren_span,
+                } => (params, implicits, Some(paren_span)),
+                Group::Type(ty) => (
                     vec![TypeParam {
                         quant: None,
                         kind: Some(TypeParamKind::Pos(ty)),
                         delim_span: None,
                     }],
+                    Implicits::default(),
                     None,
                 ),
             };
             let ret = self.parse_type_full(scope)?;
             return Ok(TypeExpr::Func {
                 params,
+                input: implicits.input,
+                output: implicits.output,
                 paren_span,
                 arrow_span,
                 ret: Box::new(ret),
@@ -235,24 +249,24 @@ impl Parser<'_> {
         Ok(TypeExpr::Union { members, bars })
     }
 
-    fn parse_type_compact_or_params(&mut self, scope: &mut Scope) -> Result<Compact> {
-        let mut compact = self.parse_type_primary(scope)?;
+    fn parse_type_compact_or_params(&mut self, scope: &mut Scope) -> Result<Group> {
+        let mut group = self.parse_type_primary(scope)?;
         // In shell-like contexts, whitespace before `[` lexes as a separator, which
         // ends the type
         while let Some(token!(TokenInfo::LeftBracket)) = self.peek()? {
             let left = self.advance();
-            let base = self.finish_params(compact);
+            let base = self.finish_params(group);
             let (args, bracket_span) = self.parse_type_args(scope, left)?;
-            compact = Compact::Type(TypeExpr::App {
+            group = Group::Type(TypeExpr::App {
                 base: Box::new(base),
                 args,
                 bracket_span,
             });
         }
-        Ok(compact)
+        Ok(group)
     }
 
-    fn parse_type_primary(&mut self, scope: &mut Scope) -> Result<Compact> {
+    fn parse_type_primary(&mut self, scope: &mut Scope) -> Result<Group> {
         let ty = match decay_ident!(self.peek()?) {
             Some(token!(TokenInfo::Ident)) => {
                 let head = Ident::new(self.advance());
@@ -278,12 +292,18 @@ impl Parser<'_> {
             }
             Some(token!(TokenInfo::LeftParen)) => {
                 let left = self.advance();
-                let (params, paren_span) = self.parse_type_params(scope, Params::Func, left)?;
-                return Ok(Compact::Params { params, paren_span });
+                let (params, implicits, paren_span) =
+                    self.parse_type_params(scope, Params::Func, left)?;
+                return Ok(Group::Params {
+                    params,
+                    implicits,
+                    paren_span,
+                });
             }
             Some(token!(TokenInfo::LeftBrace)) => {
                 let left = self.advance();
-                let (params, brace_span) = self.parse_type_params(scope, Params::Schema, left)?;
+                let (params, _, brace_span) =
+                    self.parse_type_params(scope, Params::Schema, left)?;
                 TypeExpr::Schema { params, brace_span }
             }
             Some(
@@ -322,7 +342,7 @@ impl Parser<'_> {
                 return Err(self.syntax_error(scope, token, "expected type"));
             }
         };
-        Ok(Compact::Type(ty))
+        Ok(Group::Type(ty))
     }
 
     /// Parse type arguments after the opening `[`.
@@ -391,9 +411,10 @@ impl Parser<'_> {
         scope: &mut Scope,
         list: Params,
         open: Span,
-    ) -> Result<(Vec<TypeParam>, Span)> {
+    ) -> Result<(Vec<TypeParam>, Implicits, Span)> {
         self.with_mode(Mode::FullExpr, |this| {
             let mut params = Vec::new();
+            let mut implicits = Implicits::default();
             let close = loop {
                 if let Some(token) = this.peek()?
                     && list.is_close(&token.info)
@@ -421,6 +442,39 @@ impl Parser<'_> {
                     this.diags.push(OptionalQuant(span));
                     this.advance();
                 }
+                // An implicit is an item of its own rather than an element a
+                // quantifier applies to, and a list holds at most one of each.
+                if let Some(token) = this.peek()?
+                    && matches!(token.info, TokenInfo::Op(Op::Lt) | TokenInfo::Op(Op::Gt))
+                {
+                    let input = matches!(token.info, TokenInfo::Op(Op::Lt));
+                    let sigil_span = this.advance();
+                    if let Some(quant) = &quant {
+                        this.fail = true;
+                        this.diags.push(QuantifiedImplicit(quant.span()));
+                    }
+                    // A schema describes data, and an ambient channel is not data
+                    if list != Params::Func {
+                        this.fail = true;
+                        this.diags.push(ImplicitInSchema(sigil_span));
+                    }
+                    let ty = this.parse_type_full(scope)?;
+                    let slot = if input {
+                        &mut implicits.input
+                    } else {
+                        &mut implicits.output
+                    };
+                    if slot.is_some() {
+                        this.fail = true;
+                        this.diags.push(DuplicateImplicit(sigil_span));
+                    } else {
+                        *slot = Some(Box::new(Implicit { sigil_span, ty }));
+                    }
+                    if this.consume_comma()?.is_none() {
+                        break this.expect(scope, &[list.close()])?;
+                    }
+                    continue;
+                }
                 // `*` and `**` may stand alone, admitting any item of their kind.
                 let bare = matches!(quant, Some(TypeQuant::Star(_) | TypeQuant::StarStar(_)))
                     && this.at_item_end(list)?;
@@ -439,7 +493,7 @@ impl Parser<'_> {
                     break this.expect(scope, &[list.close()])?;
                 }
             };
-            Ok((params, open | close))
+            Ok((params, implicits, open | close))
         })
     }
 
@@ -496,12 +550,13 @@ impl Parser<'_> {
         }
     }
 
-    /// Interpret a compact type that `->` does not follow.
-    fn finish_params(&mut self, compact: Compact) -> TypeExpr {
-        match compact {
-            Compact::Type(ty) => ty,
-            Compact::Params {
+    /// Interpret a parenthesized list that `->` does not follow.
+    fn finish_params(&mut self, group: Group) -> TypeExpr {
+        match group {
+            Group::Type(ty) => ty,
+            Group::Params {
                 mut params,
+                implicits,
                 paren_span,
             } => {
                 if let [
@@ -511,6 +566,9 @@ impl Parser<'_> {
                         delim_span: None,
                     },
                 ] = params.as_slice()
+                    // An implicit describes a function, so it leaves no grouped type
+                    && implicits.input.is_none()
+                    && implicits.output.is_none()
                     && let Some(TypeParam {
                         kind: Some(TypeParamKind::Pos(ty)),
                         ..

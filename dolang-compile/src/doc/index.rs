@@ -6,7 +6,7 @@ use dolang_util::alias;
 
 use super::{Id, Kind, Node, Table, comment::Blocks};
 use crate::{
-    PreludeImport,
+    ImplicitKind, PreludeImport,
     ast::{visit::Node as AstNode, *},
     doc,
     source::{File, Span},
@@ -366,8 +366,16 @@ impl Index<'_> {
                     .map(|member| self.type_expr(member))
                     .collect::<Option<_>>()?,
             },
-            TypeExpr::Func { params, ret, .. } => doc::TypeKind::Func {
+            TypeExpr::Func {
+                params,
+                input,
+                output,
+                ret,
+                ..
+            } => doc::TypeKind::Func {
                 params: self.type_params(params)?,
+                input: self.implicit_type(input)?,
+                output: self.implicit_type(output)?,
                 ret: alias::Box::new(self.type_expr(ret)?),
             },
             TypeExpr::Error => return None,
@@ -398,6 +406,18 @@ impl Index<'_> {
                 })
             })
             .collect()
+    }
+
+    /// Convert an implicit parameter's type. The outer `None` means the type
+    /// could not be read, the inner that the implicit is absent.
+    fn implicit_type(
+        &self,
+        implicit: &Option<Box<Implicit>>,
+    ) -> Option<Option<alias::Box<doc::TypeExpr>>> {
+        match implicit {
+            Some(implicit) => Some(Some(alias::Box::new(self.type_expr(&implicit.ty)?))),
+            None => Some(None),
+        }
     }
 
     fn type_params(&self, params: &[TypeParam]) -> Option<alias::Box<[doc::TypeParam]>> {
@@ -735,6 +755,21 @@ impl Index<'_> {
         }
         for (i, param) in func.params.iter_mut().enumerate() {
             self.param(&inner, param, true, false, method && i == 0, None);
+        }
+        for (kind, implicit) in [
+            (ImplicitKind::In, &mut func.input),
+            (ImplicitKind::Out, &mut func.output),
+        ] {
+            let Some(implicit) = implicit else { continue };
+            self.ty(&inner, &mut implicit.ty);
+            // An implicit binds no name, so it is only ever a node of its own,
+            // as an anonymous rest parameter is
+            let id = self.push(
+                &inner,
+                Kind::ImplicitParam { kind },
+                implicit.sigil_span | implicit.ty.span(),
+            );
+            self.type_node(id, &implicit.ty);
         }
         if let Some(ret) = &mut func.ret {
             self.ty(&inner, &mut ret.ty);

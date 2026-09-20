@@ -692,9 +692,15 @@ quantifier. `...` alone admits any item and is shorthand for `*, **`; `*` and
 literal key and `*...S` repeats a whole subschema. Schemas are closed unless an
 item admits more. A function's parameter list is a schema, except that a
 parameter key must be a name, so `(K): V` is not allowed there:
-`((Int, *Str, **Bool) -> nil)`. A type whose only parameter is a schema takes
-`Foo[T]` for `Foo[{*T}]` and `Foo[K, V]` for `Foo[{*(K): V}]`; prefer these to
-a schema with a single rest item.
+`((Int, *Str, **Bool) -> nil)`. A parameter list also takes the implicit
+parameters `<T` and `>T`, giving the types of the strand's ambient input and
+output; each may appear once, in any position among the other items, and a
+declaration's is a compact type as an annotation is:
+`def sink count @ Int <Iter[Int] >Sink[Str] -> nil`. A lambda's go inside its
+`|`, as in `do |x <Iter[Int]| x`. Schemas and binding patterns have neither. A
+type whose only parameter is a schema takes `Foo[T]` for `Foo[{*T}]` and
+`Foo[K, V]` for `Foo[{*(K): V}]`; prefer these to a schema with a single rest
+item.
 
 ### Concurrency
 

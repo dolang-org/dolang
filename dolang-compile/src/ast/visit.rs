@@ -175,6 +175,7 @@ pub enum NodeKind {
     TypeParam,
     Annot,
     RetType,
+    Implicit,
     Binders,
     Binder,
 }

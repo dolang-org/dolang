@@ -128,6 +128,12 @@ enum TypeJson {
     },
     Func {
         params: Vec<TypeParamJson>,
+        /// The `<` implicit parameter, giving the ambient input
+        #[serde(default)]
+        input: Option<Box<TypeJson>>,
+        /// The `>` implicit parameter, giving the ambient output
+        #[serde(default)]
+        output: Option<Box<TypeJson>>,
         ret: Box<TypeJson>,
     },
 }
@@ -166,6 +172,8 @@ fn sigil(kind: &str) -> &'static str {
         "mixed_rest" => "...",
         "pos_rest" => "*",
         "key_rest" => "**",
+        "input" => "<",
+        "output" => ">",
         _ => "",
     }
 }
@@ -210,10 +218,15 @@ impl TypeJson {
                     .join(" | "),
                 Binding::Union,
             ),
-            TypeJson::Func { params, ret } => (
+            TypeJson::Func {
+                params,
+                input,
+                output,
+                ret,
+            } => (
                 format!(
                     "({}) -> {}",
-                    render_params(params),
+                    render_list(params, input.as_deref(), output.as_deref()),
                     ret.render(Binding::Func)
                 ),
                 Binding::Func,
@@ -241,34 +254,53 @@ fn render_args(args: &[TypeArgJson]) -> String {
         .join(", ")
 }
 
+/// A function type's parameters, with its implicits after them
+fn render_list(
+    params: &[TypeParamJson],
+    input: Option<&TypeJson>,
+    output: Option<&TypeJson>,
+) -> String {
+    let implicits = [("<", input), (">", output)]
+        .into_iter()
+        .filter_map(|(sigil, ty)| Some(format!("{sigil}{}", ty?.render(Binding::Func))));
+    params
+        .iter()
+        .map(render_param)
+        .chain(implicits)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn render_params(params: &[TypeParamJson]) -> String {
     params
         .iter()
-        .map(|param| {
-            let quant = quant_sigil(param.quant.as_deref());
-            let Some(ty) = param.ty.as_ref() else {
-                // An open `...`, or a quantifier standing alone
-                return match param.kind.as_str() {
-                    "open" => format!("{quant}..."),
-                    _ => quant.to_string(),
-                };
-            };
-            let ty = ty.render(Binding::Func);
-            match (param.kind.as_str(), &param.key_type, &param.key) {
-                ("include", _, _) => format!("{quant}...{ty}"),
-                // A name must be parenthesized to not be taken as a symbol key
-                ("key", Some(key @ TypeJson::Name { .. }), _) => {
-                    format!("{quant}({}): {ty}", key.render(Binding::Compact))
-                }
-                ("key", Some(key), _) => {
-                    format!("{quant}{}: {ty}", key.render(Binding::Compact))
-                }
-                ("key", None, Some(key)) => format!("{quant}{key}: {ty}"),
-                _ => format!("{quant}{ty}"),
-            }
-        })
+        .map(render_param)
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn render_param(param: &TypeParamJson) -> String {
+    let quant = quant_sigil(param.quant.as_deref());
+    let Some(ty) = param.ty.as_ref() else {
+        // An open `...`, or a quantifier standing alone
+        return match param.kind.as_str() {
+            "open" => format!("{quant}..."),
+            _ => quant.to_string(),
+        };
+    };
+    let ty = ty.render(Binding::Func);
+    match (param.kind.as_str(), &param.key_type, &param.key) {
+        ("include", _, _) => format!("{quant}...{ty}"),
+        // A name must be parenthesized to not be taken as a symbol key
+        ("key", Some(key @ TypeJson::Name { .. }), _) => {
+            format!("{quant}({}): {ty}", key.render(Binding::Compact))
+        }
+        ("key", Some(key), _) => {
+            format!("{quant}{}: {ty}", key.render(Binding::Compact))
+        }
+        ("key", None, Some(key)) => format!("{quant}{key}: {ty}"),
+        _ => format!("{quant}{ty}"),
+    }
 }
 
 /// One row of the generated table, before Rust-literal rendering.
@@ -456,16 +488,27 @@ fn render(rows: &[Row]) -> String {
         )
         .expect("writing to a String cannot fail");
         for param in &row.params {
-            write!(
-                out,
-                "Param {{ name: {:?}, optional: {}, type_: {:?} }}, ",
-                param.written(),
-                param.optional,
-                param.type_.as_ref().map(|ty| format!(
+            // An implicit is written as its sigil and type with no `@` between,
+            // so it carries its whole spelling as the name
+            let implicit = matches!(param.kind.as_str(), "input" | "output");
+            let ty = param.type_.as_ref().map(|ty| {
+                format!(
                     "{}{}",
                     if param.type_spread { "..." } else { "" },
                     ty.render(Binding::Compact)
-                )),
+                )
+            });
+            let (name, ty) = match (implicit, ty) {
+                (true, ty) => (
+                    format!("{}{}", param.written(), ty.unwrap_or_default()),
+                    None,
+                ),
+                (false, ty) => (param.written(), ty),
+            };
+            write!(
+                out,
+                "Param {{ name: {name:?}, optional: {}, type_: {ty:?} }}, ",
+                param.optional,
             )
             .expect("writing to a String cannot fail");
         }

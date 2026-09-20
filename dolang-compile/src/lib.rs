@@ -375,6 +375,7 @@ impl<'a> Node<'a> {
                 type_ellipsis: type_ellipsis.as_ref().map(span),
             },
             doc::Kind::SelfParam { name } => Kind::SelfParam { name: span(name) },
+            doc::Kind::ImplicitParam { kind } => Kind::ImplicitParam { kind: *kind },
             doc::Kind::ImportModule {
                 module,
                 name,
@@ -555,6 +556,11 @@ pub enum Kind<'a> {
         /// The bound name
         name: diag::Span,
     },
+    /// `<T` or `>T`, naming an ambient channel the function uses
+    ImplicitParam {
+        /// Which channel it names
+        kind: ImplicitKind,
+    },
     /// `import foo` or `import foo: bar`
     ImportModule {
         /// The module path as written
@@ -698,6 +704,16 @@ pub enum RestKind {
     Key,
 }
 
+/// Which ambient channel an implicit parameter names
+#[non_exhaustive]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ImplicitKind {
+    /// `<T`: the input the function reads from
+    In,
+    /// `>T`: the output the function writes to
+    Out,
+}
+
 /// A type as written, with the names in it resolved
 #[derive(Copy, Clone)]
 pub struct TypeExpr<'a> {
@@ -746,8 +762,15 @@ impl<'a> TypeExpr<'a> {
                     exprs: members.iter(),
                 },
             },
-            doc::TypeKind::Func { params: items, ret } => TypeKind::Func {
+            doc::TypeKind::Func {
+                params: items,
+                input,
+                output,
+                ret,
+            } => TypeKind::Func {
                 params: params(items),
+                input: input.as_ref().map(|ty| TypeExpr { file, expr: ty }),
+                output: output.as_ref().map(|ty| TypeExpr { file, expr: ty }),
                 ret: TypeExpr { file, expr: ret },
             },
         }
@@ -787,6 +810,10 @@ pub enum TypeKind<'a> {
     Func {
         /// The parameters
         params: TypeParams<'a>,
+        /// The `<` implicit parameter, giving the ambient input
+        input: Option<TypeExpr<'a>>,
+        /// The `>` implicit parameter, giving the ambient output
+        output: Option<TypeExpr<'a>>,
         /// The return type
         ret: TypeExpr<'a>,
     },

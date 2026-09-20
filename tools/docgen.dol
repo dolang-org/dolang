@@ -72,6 +72,8 @@ let SIGILS = $
   "mixed_rest": "..."
   "pos_rest": "*"
   "key_rest": "**"
+  "input": "<"
+  "output": ">"
 
 # The sigil a schema item's quantifier is written with.
 let QUANTS = $
@@ -101,7 +103,17 @@ def type_text ty context
     text = " | ".join([...ty["members"].map(do |member| type_text(member, BINDS_COMPACT))])
     binding = BINDS_UNION
   else
-    text = "($(type_params_text(ty["params"]))) -> $(type_text(ty["ret"], BINDS_FUNC))"
+    # The implicits are written among the items, but a list holds at most one
+    # of each, so they are rendered after them
+    let parts = []
+    let params = (type_params_text ty["params"])
+    if (params != "")
+      parts.push $params
+    if let input = ty.get("input", default: nil)
+      parts.push "<$(type_text(input, BINDS_FUNC))"
+    if let output = ty.get("output", default: nil)
+      parts.push ">$(type_text(output, BINDS_FUNC))"
+    text = "($(", ".join(parts))) -> $(type_text(ty["ret"], BINDS_FUNC))"
     binding = BINDS_FUNC
   if (binding < context)
     "($text)"

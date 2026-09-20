@@ -459,3 +459,30 @@ parameter's key must be a name, so a key given as a type is not allowed; write
 let log @ ((Sym, *Str, **Str) -> nil) = do |level *parts **opts| echo "[$level]" ...parts ...opts
 let shout @ ((...) -> nil) = do |...args| nil
 ```
+
+#### Implicit Parameters
+
+Every function also takes the strand's ambient input and output, which nothing
+passes explicitly. `<T` gives the type a function reads from and `>T` the type
+it writes to. Both are items of the parameter list, so they may appear in any
+order among the others, but a list takes at most one of each:
+
+```
+def collect count @ Int <Iter[Int] >Sink[Str] -> nil
+  for value = strand.input()
+    strand.put $ str $value
+let runner @ ((Int, <Iter[Int], >Sink[Str]) -> Int) = nil
+```
+
+Omitting one says nothing about that channel, which is what most functions
+want. In a declaration the type is compact, as an annotation's is, so a union
+needs parentheses: `<(Iter[Int] | nil)`.
+
+A lambda's parameter list is delimited by `|`, so its implicits go inside:
+
+```
+let double = do |x <Iter[Int] >Sink[Int]| (x * 2)
+```
+
+Schemas have no implicits, since an ambient channel is not data, and neither do
+`bind` arms or `let` patterns, which bind values.

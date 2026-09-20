@@ -43,6 +43,10 @@ pub(crate) enum TypeExpr {
     /// A function type, e.g. `(Int, ?Int) -> Int` or `Int -> Int`
     Func {
         params: Vec<TypeParam>,
+        /// The `<` implicit parameter, giving the ambient input
+        input: Option<Box<Implicit>>,
+        /// The `>` implicit parameter, giving the ambient output
+        output: Option<Box<Implicit>>,
         /// Absent when a single unparenthesized parameter precedes the `->`
         paren_span: Option<Span>,
         arrow_span: Span,
@@ -142,6 +146,44 @@ pub(crate) struct RetType {
     pub(crate) ty: TypeExpr,
 }
 
+/// An implicit parameter naming an ambient channel: `<T` for the input a
+/// function reads from, `>T` for the output it writes to
+pub(crate) struct Implicit {
+    /// The `<` or `>`
+    pub(crate) sigil_span: Span,
+    pub(crate) ty: TypeExpr,
+}
+
+/// The implicit parameters of a parameter list, each of which may appear once
+/// in any position among the items
+#[derive(Default)]
+pub(crate) struct Implicits {
+    pub(crate) input: Option<Box<Implicit>>,
+    pub(crate) output: Option<Box<Implicit>>,
+}
+
+/// Both implicits of a parameter list, in `<` then `>` order
+pub(crate) fn implicits<'a>(
+    input: &'a Option<Box<Implicit>>,
+    output: &'a Option<Box<Implicit>>,
+) -> impl Iterator<Item = &'a Implicit> {
+    [input, output]
+        .into_iter()
+        .flatten()
+        .map(|implicit| &**implicit)
+}
+
+/// The type of each implicit of a parameter list, in `<` then `>` order
+pub(crate) fn implicit_tys_mut<'a>(
+    input: &'a mut Option<Box<Implicit>>,
+    output: &'a mut Option<Box<Implicit>>,
+) -> impl Iterator<Item = &'a mut TypeExpr> {
+    [input, output]
+        .into_iter()
+        .flatten()
+        .map(|implicit| &mut implicit.ty)
+}
+
 /// The binders in `[]` after the name of a `def` or `class`
 pub(crate) struct Binders {
     pub(crate) binders: Vec<Binder>,
@@ -201,9 +243,18 @@ impl TypeExpr {
                     member.each_name(f);
                 }
             }
-            TypeExpr::Func { params, ret, .. } => {
+            TypeExpr::Func {
+                params,
+                input,
+                output,
+                ret,
+                ..
+            } => {
                 for param in params {
                     param.each_name(f);
+                }
+                for ty in implicit_tys_mut(input, output) {
+                    ty.each_name(f);
                 }
                 ret.each_name(f);
             }
@@ -310,6 +361,8 @@ impl Node for TypeExpr {
             }
             TypeExpr::Func {
                 params,
+                input,
+                output,
                 paren_span,
                 arrow_span,
                 ret,
@@ -318,6 +371,11 @@ impl Node for TypeExpr {
                     visit.token(Token::Delim, paren_span.left_char(), None)?;
                 }
                 params.accept(visit)?;
+                // The implicits are written among the items, but the list holds
+                // at most one of each, so they are visited after them
+                for implicit in implicits(input, output) {
+                    visit.node(implicit)?;
+                }
                 if let Some(paren_span) = paren_span {
                     visit.token(Token::Delim, paren_span.right_char(), None)?;
                 }
@@ -461,6 +519,17 @@ impl Node for RetType {
 
     fn kind(&self) -> NodeKind {
         NodeKind::RetType
+    }
+}
+
+impl Node for Implicit {
+    fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+        visit.token(Token::Sigil, self.sigil_span, None)?;
+        visit.node(&self.ty)
+    }
+
+    fn kind(&self) -> NodeKind {
+        NodeKind::Implicit
     }
 }
 

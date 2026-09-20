@@ -317,7 +317,8 @@ pub class PreludeItem: Import
 pub class Param: Node
   # The bound name.
   #
-  # `nil` for an anonymous [`RestParam`](compile.RestParam); every other
+  # `nil` for an anonymous [`RestParam`](compile.RestParam) and for an
+  # [`ImplicitParam`](compile.ImplicitParam), which binds nothing; every other
   # parameter has one.
   #[getter]
   pub def name self -> (Span | nil)
@@ -364,6 +365,17 @@ pub class PosRestParam: RestParam
 
 # A rest parameter for keyed items only, such as `**rest`.
 pub class KeyRestParam: RestParam
+
+# Supertype of the implicit parameters naming a strand's ambient channels.
+#
+# An implicit binds no name; its type is its [`Type`](compile.Type) child.
+pub class ImplicitParam: Param
+
+# The `<T` implicit parameter, giving the ambient input a function reads from.
+pub class InputParam: ImplicitParam
+
+# The `>T` implicit parameter, giving the ambient output a function writes to.
+pub class OutputParam: ImplicitParam
 
 # Supertype of the nodes that introduce a nested body.
 #
@@ -539,6 +551,16 @@ pub class FuncType: TypeExpr
   # The return type.
   #[getter]
   pub def ret self -> TypeExpr
+    ...
+
+  # The `<` implicit parameter, giving the ambient input, or `nil` when absent.
+  #[getter]
+  pub def input self -> (TypeExpr | nil)
+    ...
+
+  # The `>` implicit parameter, giving the ambient output, or `nil` when absent.
+  #[getter]
+  pub def output self -> (TypeExpr | nil)
     ...
 
 # Supertype of the type arguments in the `[]` of an

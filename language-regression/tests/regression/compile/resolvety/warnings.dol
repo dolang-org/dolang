@@ -112,3 +112,13 @@ def _schema_key[U @ {(K): V, (_MissingKey): V, ...}, K, V] x @U -> V
   # LL | def _schema_key[U @ {(K): V, (_MissingKey): V, ...}, K, V] x @U -> V
   #    |                               ^^^^^^^^^^^
   x
+
+# A binder used only in an implicit parameter is used, and a name in one
+# resolves like any other type
+def _implicits[T] < Iter[T] > Sink[_MissingImplicit] -> nil
+  # warning: unbound type name
+  #   --> warnings.dol:LL:LL
+  #    |
+  # LL | def _implicits[T] < Iter[T] > Sink[_MissingImplicit] -> nil
+  #    |                                    ^^^^^^^^^^^^^^^^
+  nil

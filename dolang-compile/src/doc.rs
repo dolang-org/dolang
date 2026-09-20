@@ -7,7 +7,7 @@ use std::{
 
 use dolang_util::alias;
 
-use crate::{BinderKind, RestKind, TypeQuant, source::Span};
+use crate::{BinderKind, ImplicitKind, RestKind, TypeQuant, source::Span};
 
 mod comment;
 mod index;
@@ -106,6 +106,10 @@ pub(crate) enum Kind {
     SelfParam {
         name: Span,
     },
+    /// An implicit parameter naming an ambient channel, which binds no name
+    ImplicitParam {
+        kind: ImplicitKind,
+    },
 
     // Imports.  Prelude imports have no source text, so they carry their
     // resolved identity as strings rather than spans.
@@ -203,6 +207,10 @@ pub(crate) enum TypeKind {
     },
     Func {
         params: alias::Box<[TypeParam]>,
+        /// The `<` implicit parameter, giving the ambient input
+        input: Option<alias::Box<TypeExpr>>,
+        /// The `>` implicit parameter, giving the ambient output
+        output: Option<alias::Box<TypeExpr>>,
         ret: alias::Box<TypeExpr>,
     },
 }
@@ -297,6 +305,7 @@ impl Kind {
             | Kind::Break { .. }
             | Kind::Continue { .. }
             | Kind::Return { .. }
+            | Kind::ImplicitParam { .. }
             | Kind::Type { .. } => None,
         }
     }

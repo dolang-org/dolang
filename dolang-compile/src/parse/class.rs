@@ -131,6 +131,8 @@ impl Parser<'_> {
             } else {
                 FieldInit::Thunk(Function {
                     params: vec![],
+                    input: None,
+                    output: None,
                     ret: None,
                     stub_span: None,
                     body: Block {

@@ -131,3 +131,16 @@ pub @let Outline = Array[(Label | Outline)]
 
 # A leaf of an outline.
 pub @let Label = Str
+
+# Transforms the strand's ambient input into its ambient output.
+pub def transform
+  # How many to take.
+  count @ Int
+  <std.Iter[Int]
+  >std.Sink[Str]
+do -> nil
+  nil
+
+# Runs a function that has implicits of its own.
+pub def with_channels func @ ((Int, <std.Iter[Int], >std.Sink[Str]) -> Int) -> Int
+  func 0

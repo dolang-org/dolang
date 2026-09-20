@@ -471,6 +471,70 @@ impl Diagnose for RequiredAfterOptional {
     }
 }
 
+pub(super) struct ImplicitInPattern(pub(super) Span);
+
+impl Diagnose for ImplicitInPattern {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "a pattern cannot have an implicit parameter")
+    }
+}
+
+pub(super) struct ImplicitInSchema(pub(super) Span);
+
+impl Diagnose for ImplicitInSchema {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "a schema cannot have an implicit parameter")
+    }
+}
+
+pub(super) struct DuplicateImplicit(pub(super) Span);
+
+impl Diagnose for DuplicateImplicit {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "duplicate implicit parameter")
+    }
+}
+
+pub(super) struct QuantifiedImplicit(pub(super) Span);
+
+impl Diagnose for QuantifiedImplicit {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "an implicit parameter cannot be quantified")
+    }
+}
+
 pub(super) struct RestMustBeTrailing(pub(super) Span);
 
 impl Diagnose for RestMustBeTrailing {

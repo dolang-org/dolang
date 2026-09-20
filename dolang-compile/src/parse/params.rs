@@ -1,11 +1,11 @@
 use super::{
     ExprMode, Parser, Result, Scope,
-    diag::{RequiredAfterOptional, RestMustBeTrailing},
+    diag::{DuplicateImplicit, ImplicitInPattern, RequiredAfterOptional, RestMustBeTrailing},
     stream::ExpectKind,
 };
 use crate::{
     RestKind,
-    ast::{Annot, Ident, Param, ParamDefault, PatIdent, Pattern},
+    ast::{Annot, Ident, Implicit, Implicits, Param, ParamDefault, PatIdent, Pattern},
     lex::{Keyword, Op, Token, TokenInfo},
     source::Span,
 };
@@ -72,7 +72,8 @@ impl Parser<'_> {
     }
 
     pub(super) fn parse_pattern(&mut self, scope: &mut Scope, vertical: bool) -> Result<Pattern> {
-        let params = self.parse_params(
+        // A pattern binds values, so any implicit in it has been diagnosed
+        let (params, _) = self.parse_params(
             scope,
             if vertical {
                 ParamMode::VertPattern
@@ -97,9 +98,10 @@ impl Parser<'_> {
         &mut self,
         scope: &mut Scope,
         mode: ParamMode,
-    ) -> Result<Vec<Param>> {
+    ) -> Result<(Vec<Param>, Implicits)> {
         use self::{Ident, Keyword, Op};
         let mut params = Vec::new();
+        let mut implicits = Implicits::default();
         let mut variadic = false;
         let mut variadic_span = None;
         let mut last_rest = None;
@@ -122,17 +124,17 @@ impl Parser<'_> {
                             "expected at least one item in pattern",
                         ));
                     }
-                    break Ok(params);
+                    break Ok((params, implicits));
                 }
                 Some(token!(TokenInfo::Arrow))
                     if matches!(mode, ParamMode::HorizFunc | ParamMode::HorizSig) =>
                 {
-                    break Ok(params);
+                    break Ok((params, implicits));
                 }
                 Some(token!(TokenInfo::StmtSep | TokenInfo::Dedent))
                     if matches!(mode, ParamMode::HorizSig) =>
                 {
-                    break Ok(params);
+                    break Ok((params, implicits));
                 }
                 token @ Some(token!(TokenInfo::Dedent)) if mode.is_vertical() => {
                     if params.is_empty() {
@@ -146,7 +148,7 @@ impl Parser<'_> {
                     if matches!(mode, ParamMode::VertFunc | ParamMode::VertSig) {
                         self.expect(scope, &[ExpectKind::Keyword(Keyword::Do)])?;
                     }
-                    break Ok(params);
+                    break Ok((params, implicits));
                 }
                 Some(token!(TokenInfo::ArgSep)) => {
                     self.advance();
@@ -221,6 +223,34 @@ impl Parser<'_> {
                         ty,
                         default,
                     })
+                }
+                Some(token @ token!(TokenInfo::Op(Op::Lt) | TokenInfo::Op(Op::Gt))) => {
+                    let input = matches!(token.info, TokenInfo::Op(Op::Lt));
+                    let sigil_span = self.advance();
+                    // An implicit describes an ambient channel rather than a
+                    // value the list unpacks, so it binds nothing
+                    if mode.is_pattern() {
+                        self.fail = true;
+                        self.diags.push(ImplicitInPattern(sigil_span));
+                    }
+                    // Whitespace may separate the sigil from the type, as `@`
+                    // allows, so the type itself ends at the next separator
+                    if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
+                        self.advance();
+                    }
+                    let ty = self.with_inline_shell(|this| this.parse_type_compact(scope))?;
+                    let slot = if input {
+                        &mut implicits.input
+                    } else {
+                        &mut implicits.output
+                    };
+                    // A list admits at most one of each, so a second is dropped
+                    if slot.is_some() {
+                        self.fail = true;
+                        self.diags.push(DuplicateImplicit(sigil_span));
+                    } else {
+                        *slot = Some(Box::new(Implicit { sigil_span, ty }));
+                    }
                 }
                 Some(
                     token @ token!(

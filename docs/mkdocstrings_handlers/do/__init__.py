@@ -391,7 +391,12 @@ _SIGILS = {
     "mixed_rest": "...",
     "pos_rest": "*",
     "key_rest": "**",
+    "input": "<",
+    "output": ">",
 }
+
+# The implicit parameters, which name ambient channels rather than being passed
+_IMPLICITS = ("input", "output")
 
 # The sigil a schema item's quantifier is written with
 _QUANTS = {
@@ -445,6 +450,14 @@ def _render_type(ty: dict, scope: _TypeScope, context: int, plain: bool = False)
         binding = _BINDS_UNION
     elif kind == "func":
         params = _render_type_params(ty["params"], scope, plain)
+        # The implicits are written among the items, but a list holds at most
+        # one of each, so they are rendered after them
+        implicits = [
+            escape(sigil) + _render_type(ty[key], scope, _BINDS_FUNC, plain)
+            for key, sigil in (("input", "<"), ("output", ">"))
+            if ty.get(key)
+        ]
+        params = ", ".join([p for p in [params, *implicits] if p])
         ret = _render_type(ty["ret"], scope, _BINDS_FUNC, plain)
         arrow = "->" if plain else "-&gt;"
         rendered = f"({params}) {arrow} {ret}"
@@ -571,7 +584,10 @@ def _signature(entity: dict) -> str:
     as a table-of-contents entry.
     """
     name = _declaration_name(entity)
-    params = entity.get("params") or []
+    # An implicit is not passed, so it has no place in a call-shaped heading
+    params = [
+        p for p in (entity.get("params") or []) if p.get("kind") not in _IMPLICITS
+    ]
     if not params:
         return f"{name}()"
     written = [p["written"] + ("?" if p.get("optional") else "") for p in params]

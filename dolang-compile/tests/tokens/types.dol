@@ -142,3 +142,18 @@ let _selected @ Selected = nil
 
 let _alias @ AliasItem = nil
 #            ^~~~~~~~~: type_token, node=import_item
+
+# An implicit parameter's sigil is a sigil, and its type a type
+def implicits x @Int <Iter[Int] > Sink[Str] -> nil
+  #                  ^: sigil
+  #                   ^~~~: type_token
+  #                             ^: sigil
+  #                               ^~~~: type_token
+  x
+
+let _chans @((Int, <Iter[Int], >Sink[Str]) -> nil) = nil
+#                  ^: sigil
+#                   ^~~~: type_token
+#                              ^: sigil
+#                               ^~~~: type_token
+
