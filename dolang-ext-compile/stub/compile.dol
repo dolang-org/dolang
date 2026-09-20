@@ -317,7 +317,8 @@ pub class PreludeItem: Import
 pub class Param: Node
   # The bound name.
   #
-  # `nil` for an anonymous [`RestParam`](compile.RestParam); every other
+  # `nil` for an anonymous [`RestParam`](compile.RestParam) and for an
+  # [`ImplicitParam`](compile.ImplicitParam), which binds nothing; every other
   # parameter has one.
   #[getter]
   pub def name self -> (Span | nil)
@@ -364,6 +365,17 @@ pub class PosRestParam: RestParam
 
 # A rest parameter for keyed items only, such as `**rest`.
 pub class KeyRestParam: RestParam
+
+# Supertype of the implicit parameters naming a strand's ambient channels.
+#
+# An implicit binds no name; its type is its [`Type`](compile.Type) child.
+pub class ImplicitParam: Param
+
+# The `<T` implicit parameter, giving the ambient input a function reads from.
+pub class InputParam: ImplicitParam
+
+# The `>T` implicit parameter, giving the ambient output a function writes to.
+pub class OutputParam: ImplicitParam
 
 # Supertype of the nodes that introduce a nested body.
 #
@@ -541,6 +553,16 @@ pub class FuncType: TypeExpr
   pub def ret self -> TypeExpr
     ...
 
+  # The `<` implicit parameter, giving the ambient input, or `nil` when absent.
+  #[getter]
+  pub def input self -> (TypeExpr | nil)
+    ...
+
+  # The `>` implicit parameter, giving the ambient output, or `nil` when absent.
+  #[getter]
+  pub def output self -> (TypeExpr | nil)
+    ...
+
 # Supertype of the type arguments in the `[]` of an
 # [`AppType`](compile.AppType).
 pub class TypeArg
@@ -577,9 +599,15 @@ pub class ExpandTypeArg: TypeArg
 # Supertype of the parameters of a [`SchemaType`](compile.SchemaType) or
 # [`FuncType`](compile.FuncType).
 pub class TypeParam
-  # Whether the parameter is marked optional with `?`.
+  # How many of the element the item admits, or `nil` for exactly one.
+  #
+  # | Value         | Sigil | Admits            |
+  # | ------------- | ----- | ----------------- |
+  # | `:OPT:`       | `?`   | Zero or one       |
+  # | `:STAR:`      | `*`   | Zero or more      |
+  # | `:STAR_STAR:` | `**`  | Zero or more keyed |
   #[getter]
-  pub def optional self -> Bool
+  pub def quant self -> (Sym | nil)
     ...
 
   # The span of the parameter, without a trailing `,`.
@@ -610,36 +638,19 @@ pub class KeyTypeParam: TypeParam
   pub def key_ty self -> (TypeExpr | nil)
     ...
 
-# Supertype of rest parameters with a type. Its subtype says which items it
-# describes.
-pub class RestTypeParam: TypeParam
-  # The parameter's type.
+# An inclusion of a schema's items, such as `...S`.
+pub class IncludeTypeParam: TypeParam
+  # The schema included.
   #[getter]
   pub def ty self -> TypeExpr
     ...
 
-# A rest parameter for positional and keyed items, such as `...T`.
-pub class MixedRestTypeParam: RestTypeParam
+# An unrestricted item, written `...`.
+pub class OpenTypeParam: TypeParam
 
-# A rest parameter for positional items only, such as `*T`.
-pub class PosRestTypeParam: RestTypeParam
-
-# A rest parameter for keyed items only, such as `**T`.
-pub class KeyRestTypeParam: RestTypeParam
-
-# An unrestricted schema rest parameter, written `...`.
-pub class OpenRestTypeParam: TypeParam
-
-# A rest parameter for arbitrary keyed entries, such as `...K: V`.
-pub class EntryRestTypeParam: TypeParam
-  # The value type.
-  #[getter]
-  pub def ty self -> TypeExpr
-    ...
-  # The key type.
-  #[getter]
-  pub def key_ty self -> TypeExpr
-    ...
+# A quantifier standing alone, such as `*` or `**`, admitting any item of its
+# kind.
+pub class AnyTypeParam: TypeParam
 
 # The kind of a [`Token`](compile.Token).
 #

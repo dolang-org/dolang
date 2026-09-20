@@ -6,15 +6,15 @@ use super::{
 };
 use crate::{
     ast::{
-        Binders, Block, Decorator, Def, Expr, Function, Ident, Method, Param, PrimStmt, RetType,
-        SpecialMethod, Stmt,
+        Binders, Block, Decorator, Def, Expr, Function, Ident, Implicits, Method, Param, PrimStmt,
+        RetType, SpecialMethod, Stmt,
     },
     lex::{self, Keyword, Op, Token, TokenInfo},
     source::Span,
 };
 
 impl Parser<'_> {
-    fn parse_lambda_params(&mut self, scope: &mut Scope) -> Result<Vec<Param>> {
+    fn parse_lambda_params(&mut self, scope: &mut Scope) -> Result<(Vec<Param>, Implicits)> {
         match self.peek()? {
             Some(token!(TokenInfo::Op(Op::Bar))) => {
                 self.advance();
@@ -24,17 +24,19 @@ impl Parser<'_> {
                     Ok(params)
                 })
             }
-            _ => Ok(vec![]),
+            _ => Ok((vec![], Implicits::default())),
         }
     }
 
     pub(super) fn parse_lambda(&mut self, scope: &mut Scope, do_span: Span) -> Result<Expr> {
-        let params = self.parse_lambda_params(scope)?;
+        let (params, implicits) = self.parse_lambda_params(scope)?;
         let ret = self.parse_ret_type(scope)?;
         let expr = self.parse_expr(scope, ExprMode::Full)?;
         Ok(Expr::Lambda {
             func: Box::new(Function {
                 params,
+                input: implicits.input,
+                output: implicits.output,
                 ret,
                 stub_span: None,
                 body: Block {
@@ -47,9 +49,12 @@ impl Parser<'_> {
         })
     }
 
-    fn parse_do_params(&mut self, scope: &mut Scope) -> Result<(Vec<Param>, Option<Box<RetType>>)> {
+    fn parse_do_params(
+        &mut self,
+        scope: &mut Scope,
+    ) -> Result<(Vec<Param>, Implicits, Option<Box<RetType>>)> {
         match self.peek()? {
-            Some(token!(TokenInfo::Indent)) => return Ok((vec![], None)),
+            Some(token!(TokenInfo::Indent)) => return Ok((vec![], Implicits::default(), None)),
             Some(token!(TokenInfo::ArgSep)) => self.advance(),
             _ => {
                 let token = self.next()?;
@@ -60,7 +65,7 @@ impl Parser<'_> {
                 ));
             }
         };
-        let params = match self.peek()? {
+        let (params, implicits) = match self.peek()? {
             Some(token!(TokenInfo::Op(Op::Bar))) => {
                 self.advance();
                 let params = self.parse_params(scope, ParamMode::HorizFunc)?;
@@ -70,7 +75,7 @@ impl Parser<'_> {
                 }
                 params
             }
-            _ => vec![],
+            _ => (vec![], Implicits::default()),
         };
         let ret = self.parse_ret_type(scope)?;
         if ret.is_some()
@@ -78,7 +83,7 @@ impl Parser<'_> {
         {
             self.advance();
         }
-        Ok((params, ret))
+        Ok((params, implicits, ret))
     }
 
     pub(super) fn parse_do_block(
@@ -87,12 +92,14 @@ impl Parser<'_> {
         allow_trailing: bool,
     ) -> Result<Expr> {
         let do_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Do)])?;
-        let (params, ret) = self.parse_do_params(scope)?;
+        let (params, implicits, ret) = self.parse_do_params(scope)?;
         match self.peek()? {
             Some(token!(TokenInfo::Indent)) if allow_trailing => {
                 self.advance();
                 let function = Function {
                     params,
+                    input: implicits.input,
+                    output: implicits.output,
                     ret,
                     stub_span: None,
                     body: self.parse_block_through_dedent(scope)?,
@@ -105,6 +112,8 @@ impl Parser<'_> {
             _ => Ok(Expr::Lambda {
                 func: Box::new(Function {
                     params,
+                    input: implicits.input,
+                    output: implicits.output,
                     ret,
                     stub_span: None,
                     body: Block {
@@ -170,7 +179,7 @@ impl Parser<'_> {
             }
         };
         let binders = self.parse_binders(scope)?;
-        let params = match self.peek()? {
+        let (params, implicits) = match self.peek()? {
             Some(token!(TokenInfo::Indent)) if type_only => {
                 self.parse_params(scope, ParamMode::VertSig)?
             }
@@ -179,7 +188,7 @@ impl Parser<'_> {
                 let left = self.advance();
                 let _right = self.expect_matching(scope, ExpectKind::RightParen, left);
                 // FIXME: include paren spans somewhere
-                vec![]
+                (vec![], Implicits::default())
             }
             _ if type_only => self.parse_params(scope, ParamMode::HorizSig)?,
             _ => self.parse_params(scope, ParamMode::HorizFunc)?,
@@ -251,6 +260,8 @@ impl Parser<'_> {
             binders,
             func: Function {
                 params,
+                input: implicits.input,
+                output: implicits.output,
                 ret,
                 stub_span,
                 body,

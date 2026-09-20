@@ -186,9 +186,9 @@ pub @let InitAddSpec = (
 # | `run`      | Runs a command, split with `shlex` when given as a `Str` |
 # | `packages` | Installs guest packages                                  |
 pub @let InitSpec = Dict[{
-  ...:add:: InitAddSpec,
-  ...:run:: Str | Array[Str],
-  ...:packages:: Str | Array[Str],
+  *add: InitAddSpec,
+  *run: Str | Array[Str],
+  *packages: Str | Array[Str],
 }]
 
 # The Do build to install into a guest.

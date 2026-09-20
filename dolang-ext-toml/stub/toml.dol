@@ -6,7 +6,7 @@ pub @let Data = (Bool | Int | Float | Str | Array[Data] | Dict[Str, Data])
 # A value that encodes as TOML.
 pub @let Encodable = (
   | Bool | Int | Float | Str | Sym
-  | Array[Encodable] | Tuple[...Encodable] | Record[...{...Sym: Encodable}]
+  | Array[Encodable] | Tuple[...Encodable] | Record[...{**Encodable}]
   | Dict[Str | Sym, Encodable]
 )
 

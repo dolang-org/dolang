@@ -79,7 +79,7 @@ pub def place point @Point :limit @(Int | nil) = nil -> std.Dict[Str, Record]
   nil
 
 # The first of some items.
-pub def first[T] items @Array[T] :fallback @((Int, ?Str) -> T) = nil :options @Dict[{name: Str, ?port: Int, ...Str: Str}] = nil :mode @(:fast: | "slow" | 1 | true) = nil -> T
+pub def first[T] items @Array[T] :fallback @((Int, ?Str) -> T) = nil :options @Dict[{name: Str, ?port: Int, *(Str): Str}] = nil :mode @(:fast: | "slow" | 1 | true) = nil -> T
   items[0]
 
 # Build something.
@@ -131,3 +131,16 @@ pub @let Outline = Array[(Label | Outline)]
 
 # A leaf of an outline.
 pub @let Label = Str
+
+# Transforms the strand's ambient input into its ambient output.
+pub def transform
+  # How many to take.
+  count @ Int
+  <std.Iter[Int]
+  >std.Sink[Str]
+do -> nil
+  nil
+
+# Runs a function that has implicits of its own.
+pub def with_channels func @ ((Int, <std.Iter[Int], >std.Sink[Str]) -> Int) -> Int
+  func 0

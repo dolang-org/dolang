@@ -43,6 +43,10 @@ pub(crate) enum TypeExpr {
     /// A function type, e.g. `(Int, ?Int) -> Int` or `Int -> Int`
     Func {
         params: Vec<TypeParam>,
+        /// The `<` implicit parameter, giving the ambient input
+        input: Option<Box<Implicit>>,
+        /// The `>` implicit parameter, giving the ambient output
+        output: Option<Box<Implicit>>,
         /// Absent when a single unparenthesized parameter precedes the `->`
         paren_span: Option<Span>,
         arrow_span: Span,
@@ -82,11 +86,30 @@ pub(crate) enum TypeArgKind {
 
 /// An item a schema or a function type's parameters declare
 pub(crate) struct TypeParam {
-    /// The `?` marking the position optional
-    pub(crate) optional: Option<Span>,
-    pub(crate) kind: TypeParamKind,
+    /// How many of the element the item admits
+    pub(crate) quant: Option<TypeQuant>,
+    /// The element the quantifier applies to, absent only for a bare `*` or `**`
+    pub(crate) kind: Option<TypeParamKind>,
     /// The trailing `,`
     pub(crate) delim_span: Option<Span>,
+}
+
+/// How many of an element a schema item admits
+pub(crate) enum TypeQuant {
+    /// `?`, for zero or one
+    Opt(Span),
+    /// `*`, for zero or more
+    Star(Span),
+    /// `**`, for zero or more keyed items
+    StarStar(Span),
+}
+
+impl TypeQuant {
+    pub(crate) fn span(&self) -> Span {
+        match self {
+            TypeQuant::Opt(span) | TypeQuant::Star(span) | TypeQuant::StarStar(span) => *span,
+        }
+    }
 }
 
 pub(crate) enum TypeParamKind {
@@ -98,21 +121,10 @@ pub(crate) enum TypeParamKind {
         colon_span: Span,
         ty: TypeExpr,
     },
-    /// `...T`, `*T` or `**T`
-    Rest {
-        kind: RestKind,
-        sigil_span: Span,
-        ty: TypeExpr,
-    },
+    /// `...S`, including a schema's items
+    Include { ellipsis_span: Span, ty: TypeExpr },
     /// `...`, for an unrestricted schema rest
-    OpenRest { ellipsis_span: Span },
-    /// `...K: V`, for any number of keyed items
-    KeyRest {
-        ellipsis_span: Span,
-        key_ty: TypeExpr,
-        colon_span: Span,
-        ty: TypeExpr,
-    },
+    Open { ellipsis_span: Span },
 }
 
 pub(crate) enum TypeKey {
@@ -132,6 +144,44 @@ pub(crate) struct Annot {
 pub(crate) struct RetType {
     pub(crate) arrow_span: Span,
     pub(crate) ty: TypeExpr,
+}
+
+/// An implicit parameter naming an ambient channel: `<T` for the input a
+/// function reads from, `>T` for the output it writes to
+pub(crate) struct Implicit {
+    /// The `<` or `>`
+    pub(crate) sigil_span: Span,
+    pub(crate) ty: TypeExpr,
+}
+
+/// The implicit parameters of a parameter list, each of which may appear once
+/// in any position among the items
+#[derive(Default)]
+pub(crate) struct Implicits {
+    pub(crate) input: Option<Box<Implicit>>,
+    pub(crate) output: Option<Box<Implicit>>,
+}
+
+/// Both implicits of a parameter list, in `<` then `>` order
+pub(crate) fn implicits<'a>(
+    input: &'a Option<Box<Implicit>>,
+    output: &'a Option<Box<Implicit>>,
+) -> impl Iterator<Item = &'a Implicit> {
+    [input, output]
+        .into_iter()
+        .flatten()
+        .map(|implicit| &**implicit)
+}
+
+/// The type of each implicit of a parameter list, in `<` then `>` order
+pub(crate) fn implicit_tys_mut<'a>(
+    input: &'a mut Option<Box<Implicit>>,
+    output: &'a mut Option<Box<Implicit>>,
+) -> impl Iterator<Item = &'a mut TypeExpr> {
+    [input, output]
+        .into_iter()
+        .flatten()
+        .map(|implicit| &mut implicit.ty)
 }
 
 /// The binders in `[]` after the name of a `def` or `class`
@@ -193,9 +243,18 @@ impl TypeExpr {
                     member.each_name(f);
                 }
             }
-            TypeExpr::Func { params, ret, .. } => {
+            TypeExpr::Func {
+                params,
+                input,
+                output,
+                ret,
+                ..
+            } => {
                 for param in params {
                     param.each_name(f);
+                }
+                for ty in implicit_tys_mut(input, output) {
+                    ty.each_name(f);
                 }
                 ret.each_name(f);
             }
@@ -228,16 +287,17 @@ impl TypeParam {
     /// The item's key type, if it has one, then its type.
     pub(crate) fn tys_mut(&mut self) -> impl Iterator<Item = &mut TypeExpr> {
         let (key_ty, ty) = match &mut self.kind {
-            TypeParamKind::Pos(ty) | TypeParamKind::Rest { ty, .. } => (None, Some(ty)),
-            TypeParamKind::Key { key, ty, .. } => (
+            Some(TypeParamKind::Pos(ty)) | Some(TypeParamKind::Include { ty, .. }) => {
+                (None, Some(ty))
+            }
+            Some(TypeParamKind::Key { key, ty, .. }) => (
                 match key {
                     TypeKey::Sym(_) => None,
                     TypeKey::Type(key_ty) => Some(&mut **key_ty),
                 },
                 Some(ty),
             ),
-            TypeParamKind::KeyRest { key_ty, ty, .. } => (Some(key_ty), Some(ty)),
-            TypeParamKind::OpenRest { .. } => (None, None),
+            Some(TypeParamKind::Open { .. }) | None => (None, None),
         };
         key_ty.into_iter().chain(ty)
     }
@@ -301,6 +361,8 @@ impl Node for TypeExpr {
             }
             TypeExpr::Func {
                 params,
+                input,
+                output,
                 paren_span,
                 arrow_span,
                 ret,
@@ -309,6 +371,11 @@ impl Node for TypeExpr {
                     visit.token(Token::Delim, paren_span.left_char(), None)?;
                 }
                 params.accept(visit)?;
+                // The implicits are written among the items, but the list holds
+                // at most one of each, so they are visited after them
+                for implicit in implicits(input, output) {
+                    visit.node(implicit)?;
+                }
                 if let Some(paren_span) = paren_span {
                     visit.token(Token::Delim, paren_span.right_char(), None)?;
                 }
@@ -355,16 +422,20 @@ impl Node for TypeArg {
 
 impl Node for TypeParam {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
-        if let Some(span) = self.optional {
-            visit.token(Token::Operator, span, None)?;
+        match &self.quant {
+            Some(TypeQuant::Opt(span)) => visit.token(Token::Operator, *span, None)?,
+            Some(TypeQuant::Star(span)) | Some(TypeQuant::StarStar(span)) => {
+                visit.token(Token::Sigil, *span, None)?
+            }
+            None => {}
         }
         match &self.kind {
-            TypeParamKind::Pos(ty) => visit.node(ty)?,
-            TypeParamKind::Key {
+            Some(TypeParamKind::Pos(ty)) => visit.node(ty)?,
+            Some(TypeParamKind::Key {
                 key,
                 colon_span,
                 ty,
-            } => {
+            }) => {
                 match key {
                     TypeKey::Sym(span) => visit.token(Token::TypeKey, *span, None)?,
                     TypeKey::Type(key_ty) => visit.node(&**key_ty)?,
@@ -372,24 +443,14 @@ impl Node for TypeParam {
                 visit.token(Token::Delim, *colon_span, None)?;
                 visit.node(ty)?
             }
-            TypeParamKind::Rest { sigil_span, ty, .. } => {
-                visit.token(Token::Sigil, *sigil_span, None)?;
+            Some(TypeParamKind::Include { ellipsis_span, ty }) => {
+                visit.token(Token::Sigil, *ellipsis_span, None)?;
                 visit.node(ty)?
             }
-            TypeParamKind::OpenRest { ellipsis_span } => {
+            Some(TypeParamKind::Open { ellipsis_span }) => {
                 visit.token(Token::Sigil, *ellipsis_span, None)?;
             }
-            TypeParamKind::KeyRest {
-                ellipsis_span,
-                key_ty,
-                colon_span,
-                ty,
-            } => {
-                visit.token(Token::Sigil, *ellipsis_span, None)?;
-                visit.node(key_ty)?;
-                visit.token(Token::Delim, *colon_span, None)?;
-                visit.node(ty)?
-            }
+            None => {}
         }
         if let Some(span) = self.delim_span {
             visit.token(Token::Delim, span, None)?;
@@ -458,6 +519,17 @@ impl Node for RetType {
 
     fn kind(&self) -> NodeKind {
         NodeKind::RetType
+    }
+}
+
+impl Node for Implicit {
+    fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+        visit.token(Token::Sigil, self.sigil_span, None)?;
+        visit.node(&self.ty)
+    }
+
+    fn kind(&self) -> NodeKind {
+        NodeKind::Implicit
     }
 }
 

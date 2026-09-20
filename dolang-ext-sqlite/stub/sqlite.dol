@@ -393,7 +393,7 @@ pub class Statement
 # for value = rest
 #   echo $ str value
 # ```
-pub class Row: @Index[Int | Str, Value] @Unpack[{...Value, ...Sym: Value}]
+pub class Row: @Index[Int | Str, Value] @Unpack[{...}]
   # Reads a column by position or by name.
   #
   # ## Errors

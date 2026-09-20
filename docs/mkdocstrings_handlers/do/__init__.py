@@ -391,6 +391,18 @@ _SIGILS = {
     "mixed_rest": "...",
     "pos_rest": "*",
     "key_rest": "**",
+    "input": "<",
+    "output": ">",
+}
+
+# The implicit parameters, which name ambient channels rather than being passed
+_IMPLICITS = ("input", "output")
+
+# The sigil a schema item's quantifier is written with
+_QUANTS = {
+    "opt": "?",
+    "star": "*",
+    "star_star": "**",
 }
 
 
@@ -438,6 +450,14 @@ def _render_type(ty: dict, scope: _TypeScope, context: int, plain: bool = False)
         binding = _BINDS_UNION
     elif kind == "func":
         params = _render_type_params(ty["params"], scope, plain)
+        # The implicits are written among the items, but a list holds at most
+        # one of each, so they are rendered after them
+        implicits = [
+            escape(sigil) + _render_type(ty[key], scope, _BINDS_FUNC, plain)
+            for key, sigil in (("input", "<"), ("output", ">"))
+            if ty.get(key)
+        ]
+        params = ", ".join([p for p in [params, *implicits] if p])
         ret = _render_type(ty["ret"], scope, _BINDS_FUNC, plain)
         arrow = "->" if plain else "-&gt;"
         rendered = f"({params}) {arrow} {ret}"
@@ -461,17 +481,20 @@ def _render_type_args(args: list[dict], scope: _TypeScope, plain: bool = False) 
 
 
 def _render_type_params(params: list[dict], scope: _TypeScope, plain: bool = False) -> str:
+    escape = (lambda text: text) if plain else _escape_type_text
     rendered = []
     for param in params:
-        text = "?" if param.get("optional") else ""
-        if param.get("kind") in ("mixed_rest", "pos_rest", "key_rest"):
-            text += _SIGILS[param["kind"]]
-        elif param.get("kind") == "open_rest":
+        # A `*` sigil would otherwise read as Markdown emphasis
+        text = escape(_QUANTS.get(param.get("quant"), ""))
+        if param.get("kind") == "open":
             rendered.append(text + "...")
             continue
-        elif param.get("kind") == "entry_rest":
-            key = _render_type(param["key_type"], scope, _BINDS_FUNC, plain)
-            text += f"...{key}: "
+        elif param.get("kind") == "any":
+            # A quantifier standing alone, such as `*` or `**`
+            rendered.append(text)
+            continue
+        elif param.get("kind") == "include":
+            text += "..."
         elif param.get("kind") == "key" and "key_type" in param:
             # A name must be parenthesized to not be taken as a symbol key
             key_type = param["key_type"]
@@ -561,7 +584,10 @@ def _signature(entity: dict) -> str:
     as a table-of-contents entry.
     """
     name = _declaration_name(entity)
-    params = entity.get("params") or []
+    # An implicit is not passed, so it has no place in a call-shaped heading
+    params = [
+        p for p in (entity.get("params") or []) if p.get("kind") not in _IMPLICITS
+    ]
     if not params:
         return f"{name}()"
     written = [p["written"] + ("?" if p.get("optional") else "") for p in params]

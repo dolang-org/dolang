@@ -6,7 +6,7 @@ use dolang_util::alias;
 
 use super::{Id, Kind, Node, Table, comment::Blocks};
 use crate::{
-    PreludeImport,
+    ImplicitKind, PreludeImport,
     ast::{visit::Node as AstNode, *},
     doc,
     source::{File, Span},
@@ -366,8 +366,16 @@ impl Index<'_> {
                     .map(|member| self.type_expr(member))
                     .collect::<Option<_>>()?,
             },
-            TypeExpr::Func { params, ret, .. } => doc::TypeKind::Func {
+            TypeExpr::Func {
+                params,
+                input,
+                output,
+                ret,
+                ..
+            } => doc::TypeKind::Func {
                 params: self.type_params(params)?,
+                input: self.implicit_type(input)?,
+                output: self.implicit_type(output)?,
                 ret: alias::Box::new(self.type_expr(ret)?),
             },
             TypeExpr::Error => return None,
@@ -400,41 +408,46 @@ impl Index<'_> {
             .collect()
     }
 
+    /// Convert an implicit parameter's type. The outer `None` means the type
+    /// could not be read, the inner that the implicit is absent.
+    fn implicit_type(
+        &self,
+        implicit: &Option<Box<Implicit>>,
+    ) -> Option<Option<alias::Box<doc::TypeExpr>>> {
+        match implicit {
+            Some(implicit) => Some(Some(alias::Box::new(self.type_expr(&implicit.ty)?))),
+            None => Some(None),
+        }
+    }
+
     fn type_params(&self, params: &[TypeParam]) -> Option<alias::Box<[doc::TypeParam]>> {
         params
             .iter()
             .map(|param| {
                 let (kind, ty, start) = match &param.kind {
-                    TypeParamKind::Pos(ty) => (doc::TypeParamKind::Pos, Some(ty), None),
-                    TypeParamKind::Key { key, ty, .. } => {
+                    Some(TypeParamKind::Pos(ty)) => (Some(doc::TypeParamKind::Pos), Some(ty), None),
+                    Some(TypeParamKind::Key { key, ty, .. }) => {
                         let (key, key_ty) = match key {
                             TypeKey::Sym(span) => (*span, None),
                             TypeKey::Type(key_ty) => (key_ty.span(), Some(self.type_expr(key_ty)?)),
                         };
-                        (doc::TypeParamKind::Key { key, key_ty }, Some(ty), Some(key))
+                        (
+                            Some(doc::TypeParamKind::Key { key, key_ty }),
+                            Some(ty),
+                            Some(key),
+                        )
                     }
-                    TypeParamKind::Rest {
-                        kind,
-                        sigil_span,
-                        ty,
-                    } => (doc::TypeParamKind::Rest(*kind), Some(ty), Some(*sigil_span)),
-                    TypeParamKind::OpenRest { ellipsis_span } => {
-                        (doc::TypeParamKind::OpenRest, None, Some(*ellipsis_span))
-                    }
-                    TypeParamKind::KeyRest {
-                        ellipsis_span,
-                        key_ty,
-                        ty,
-                        ..
-                    } => (
-                        doc::TypeParamKind::KeyRest {
-                            key_ty: self.type_expr(key_ty)?,
-                        },
+                    Some(TypeParamKind::Include { ellipsis_span, ty }) => (
+                        Some(doc::TypeParamKind::Include),
                         Some(ty),
                         Some(*ellipsis_span),
                     ),
+                    Some(TypeParamKind::Open { ellipsis_span }) => {
+                        (Some(doc::TypeParamKind::Open), None, Some(*ellipsis_span))
+                    }
+                    None => (None, None, None),
                 };
-                let span = [param.optional, start]
+                let span = [param.quant.as_ref().map(|quant| quant.span()), start]
                     .into_iter()
                     .flatten()
                     .chain(ty.map(|ty| ty.span()))
@@ -442,7 +455,11 @@ impl Index<'_> {
                     .expect("a type parameter has a source span");
                 Some(doc::TypeParam {
                     span,
-                    optional: param.optional.is_some(),
+                    quant: param.quant.as_ref().map(|quant| match quant {
+                        TypeQuant::Opt(_) => crate::TypeQuant::Opt,
+                        TypeQuant::Star(_) => crate::TypeQuant::Star,
+                        TypeQuant::StarStar(_) => crate::TypeQuant::StarStar,
+                    }),
                     kind,
                     ty: match ty {
                         Some(ty) => Some(self.type_expr(ty)?),
@@ -738,6 +755,21 @@ impl Index<'_> {
         }
         for (i, param) in func.params.iter_mut().enumerate() {
             self.param(&inner, param, true, false, method && i == 0, None);
+        }
+        for (kind, implicit) in [
+            (ImplicitKind::In, &mut func.input),
+            (ImplicitKind::Out, &mut func.output),
+        ] {
+            let Some(implicit) = implicit else { continue };
+            self.ty(&inner, &mut implicit.ty);
+            // An implicit binds no name, so it is only ever a node of its own,
+            // as an anonymous rest parameter is
+            let id = self.push(
+                &inner,
+                Kind::ImplicitParam { kind },
+                implicit.sigil_span | implicit.ty.span(),
+            );
+            self.type_node(id, &implicit.ty);
         }
         if let Some(ret) = &mut func.ret {
             self.ty(&inner, &mut ret.ty);

@@ -54,7 +54,7 @@ pub class Attr
 #
 # Nodes can be shared or inserted into different trees. Serialization derives
 # namespace declarations from each node rather than from parent pointers.
-pub class Node: @Index[{...Str: Str, ...Int: Node | Str, ...Range[Int]: Array[Node | Str]}] @Assign[Str, Str]
+pub class Node: @Index[{*(Str): Str, *(Int): Node | Str, *(Range[Int]): Array[Node | Str]}] @Assign[Str, Str]
   # Creates an element, optionally with attributes and children.
   #
   # Children are not checked here, matching `children.push`; [`verify`](xml.verify)

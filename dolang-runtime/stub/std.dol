@@ -1256,7 +1256,7 @@ pub class Bin: @Index[Range[Int], Bin]
 #
 # Mutable byte buffer; the mutable counterpart to [`Bin`](std.Bin).
 #
-pub class BinBuf: @Index[{...Int: Int, ...Range[Int]: Bin}] @Assign[{...Int: Int, ...Range[Int]: Bin}]
+pub class BinBuf: @Index[{*(Int): Int, *(Range[Int]): Bin}] @Assign[{*(Int): Int, *(Range[Int]): Bin}]
   #
   #
   # Builds a buffer, optionally seeded with the contents of existing binary data.
@@ -2559,7 +2559,7 @@ pub class FmtValue
 # assert_eq $seq[1].value $user
 # assert_eq $seq[1].width 8
 # ```
-pub class Fmt: @Index[{...Int: FmtSegment, ...Range[Int]: Array[FmtSegment]}] @Spread[FmtSegment] @Unpack[FmtSegment]
+pub class Fmt: @Index[{*(Int): FmtSegment, *(Range[Int]): Array[FmtSegment]}] @Spread[FmtSegment] @Unpack[FmtSegment]
   #
   #
   # Builds a sequence from an iterable of segments.

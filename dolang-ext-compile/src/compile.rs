@@ -38,13 +38,13 @@ pub(crate) struct Types<'v> {
     binder: Type<'v, NodeObject<BinderTag>>,
     rest_binder: Type<'v, NodeObject<RestBinderTag>>,
     rest_param: Type<'v, NodeObject<RestParamTag>>,
+    implicit_param: Type<'v, NodeObject<ImplicitParamTag>>,
     concrete_nodes: ConcreteNodeTypes<'v>,
     type_expr: Type<'v, TypeExprObject<TypeExprTag>>,
     type_kinds: TypeExprTypes<'v>,
     type_arg: Type<'v, TypeExprObject<TypeArgTag>>,
     arg_kinds: TypeArgTypes<'v>,
     type_param: Type<'v, TypeExprObject<TypeParamTag>>,
-    rest_type_param: Type<'v, TypeExprObject<RestTypeParamTag>>,
     param_kinds: TypeParamTypes<'v>,
     diagnostic: Type<'v, Diagnostic>,
     span: Type<'v, Span>,
@@ -55,6 +55,9 @@ pub(crate) struct Types<'v> {
 }
 
 pub(crate) struct Syms<'v> {
+    quant_opt: Sym<'v, 'v>,
+    quant_star: Sym<'v, 'v>,
+    quant_star_star: Sym<'v, 'v>,
     token_annotation: Sym<'v, 'v>,
     token_binder: Sym<'v, 'v>,
     error: Sym<'v, 'v>,
@@ -109,6 +112,8 @@ pub(crate) struct ConcreteNodeTypes<'v> {
     mixed_rest_param: Type<'v, NodeObject<MixedRestParamTag>>,
     pos_rest_param: Type<'v, NodeObject<PosRestParamTag>>,
     key_rest_param: Type<'v, NodeObject<KeyRestParamTag>>,
+    input_param: Type<'v, NodeObject<InputParamTag>>,
+    output_param: Type<'v, NodeObject<OutputParamTag>>,
     lambda: Type<'v, NodeObject<LambdaTag>>,
     if_node: Type<'v, NodeObject<IfTag>>,
     else_node: Type<'v, NodeObject<ElseTag>>,
@@ -168,6 +173,10 @@ impl<'v> Global<'v> {
             .build_type::<NodeObject<RestParamTag>>((), ())
             .nominal_supertype(param)
             .build();
+        let implicit_param = builder
+            .build_type::<NodeObject<ImplicitParamTag>>((), ())
+            .nominal_supertype(param)
+            .build();
         let rest_binder = builder
             .build_type::<NodeObject<RestBinderTag>>((), ())
             .nominal_supertype(binder)
@@ -191,7 +200,6 @@ impl<'v> Global<'v> {
                     .build()
             };
         }
-        let rest_type_param = type_subtype!(RestTypeParamTag, type_param);
         Self {
             types: Types {
                 unit: builder.register_type(),
@@ -209,6 +217,7 @@ impl<'v> Global<'v> {
                 binder,
                 rest_binder,
                 rest_param,
+                implicit_param,
                 concrete_nodes: ConcreteNodeTypes {
                     root: subtype!(RootTag, node),
                     class: subtype!(ClassTag, declaration),
@@ -228,6 +237,8 @@ impl<'v> Global<'v> {
                     mixed_rest_param: subtype!(MixedRestParamTag, rest_param),
                     pos_rest_param: subtype!(PosRestParamTag, rest_param),
                     key_rest_param: subtype!(KeyRestParamTag, rest_param),
+                    input_param: subtype!(InputParamTag, implicit_param),
+                    output_param: subtype!(OutputParamTag, implicit_param),
                     lambda: subtype!(LambdaTag, block),
                     if_node: subtype!(IfTag, block),
                     else_node: subtype!(ElseTag, block),
@@ -265,15 +276,12 @@ impl<'v> Global<'v> {
                     expand: type_subtype!(ExpandTypeArgTag, type_arg),
                 },
                 type_param,
-                rest_type_param,
                 param_kinds: TypeParamTypes {
                     pos: type_subtype!(PosTypeParamTag, type_param),
                     key: type_subtype!(KeyTypeParamTag, type_param),
-                    mixed_rest: type_subtype!(MixedRestTypeParamTag, rest_type_param),
-                    pos_rest: type_subtype!(PosRestTypeParamTag, rest_type_param),
-                    key_rest: type_subtype!(KeyRestTypeParamTag, rest_type_param),
-                    open_rest: type_subtype!(OpenRestTypeParamTag, type_param),
-                    entry_rest: type_subtype!(EntryRestTypeParamTag, type_param),
+                    include: type_subtype!(IncludeTypeParamTag, type_param),
+                    open: type_subtype!(OpenTypeParamTag, type_param),
+                    any: type_subtype!(AnyTypeParamTag, type_param),
                 },
                 diagnostic: builder.register_type(),
                 span: builder.register_type(),
@@ -283,6 +291,9 @@ impl<'v> Global<'v> {
                 patch: builder.register_type(),
             },
             syms: Syms {
+                quant_opt: builder.sym("OPT"),
+                quant_star: builder.sym("STAR"),
+                quant_star_star: builder.sym("STAR_STAR"),
                 token_annotation: builder.sym("ANNOTATION"),
                 token_binder: builder.sym("BINDER"),
                 error: builder.sym("ERROR"),
@@ -443,7 +454,9 @@ node_tags! {
     SelfParamTag=>"SelfParam", ImportModuleTag=>"ImportModule", ImportItemTag=>"ImportItem",
     PreludeModuleTag=>"PreludeModule", PreludeItemTag=>"PreludeItem", PositionalParamTag=>"PositionalParam",
     KeyParamTag=>"KeyParam", RestParamTag=>"RestParam", MixedRestParamTag=>"MixedRestParam",
-    PosRestParamTag=>"PosRestParam", KeyRestParamTag=>"KeyRestParam", LambdaTag=>"Lambda", IfTag=>"If", ElseTag=>"Else",
+    PosRestParamTag=>"PosRestParam", KeyRestParamTag=>"KeyRestParam",
+    ImplicitParamTag=>"ImplicitParam", InputParamTag=>"InputParam", OutputParamTag=>"OutputParam",
+    LambdaTag=>"Lambda", IfTag=>"If", ElseTag=>"Else",
     WhileTag=>"While", ForTag=>"For", TryTag=>"Try", CatchTag=>"Catch", FinallyTag=>"Finally",
     ForElemTag=>"ForElem", IfElemTag=>"IfElem", DecoratorTag=>"Decorator", BreakTag=>"Break",
     ContinueTag=>"Continue", ReturnTag=>"Return", TypeTag=>"Type", BinderTag=>"Binder",
@@ -479,10 +492,8 @@ type_tags! {
     FuncTypeTag=>"FuncType", TypeArgTag=>"TypeArg", PosTypeArgTag=>"PosTypeArg",
     KeyTypeArgTag=>"KeyTypeArg", ExpandTypeArgTag=>"ExpandTypeArg",
     TypeParamTag=>"TypeParam", PosTypeParamTag=>"PosTypeParam",
-    KeyTypeParamTag=>"KeyTypeParam", RestTypeParamTag=>"RestTypeParam",
-    MixedRestTypeParamTag=>"MixedRestTypeParam", PosRestTypeParamTag=>"PosRestTypeParam",
-    KeyRestTypeParamTag=>"KeyRestTypeParam", OpenRestTypeParamTag=>"OpenRestTypeParam",
-    EntryRestTypeParamTag=>"EntryRestTypeParam"
+    KeyTypeParamTag=>"KeyTypeParam", IncludeTypeParamTag=>"IncludeTypeParam",
+    OpenTypeParamTag=>"OpenTypeParam", AnyTypeParamTag=>"AnyTypeParam"
 }
 
 pub(crate) struct TypeExprTypes<'v> {
@@ -503,11 +514,9 @@ pub(crate) struct TypeArgTypes<'v> {
 pub(crate) struct TypeParamTypes<'v> {
     pos: Type<'v, TypeExprObject<PosTypeParamTag>>,
     key: Type<'v, TypeExprObject<KeyTypeParamTag>>,
-    mixed_rest: Type<'v, TypeExprObject<MixedRestTypeParamTag>>,
-    pos_rest: Type<'v, TypeExprObject<PosRestTypeParamTag>>,
-    key_rest: Type<'v, TypeExprObject<KeyRestTypeParamTag>>,
-    open_rest: Type<'v, TypeExprObject<OpenRestTypeParamTag>>,
-    entry_rest: Type<'v, TypeExprObject<EntryRestTypeParamTag>>,
+    include: Type<'v, TypeExprObject<IncludeTypeParamTag>>,
+    open: Type<'v, TypeExprObject<OpenTypeParamTag>>,
+    any: Type<'v, TypeExprObject<AnyTypeParamTag>>,
 }
 
 pub(crate) struct TypeAnnex<'v> {
@@ -528,7 +537,7 @@ enum TypeDetail {
         name: Option<SpanData>,
     },
     Param {
-        optional: bool,
+        quant: Option<compile::TypeQuant>,
         key: Option<SpanData>,
     },
 }
@@ -1301,6 +1310,8 @@ fn create_node<'v, 's>(
         PreludeItem,
         PositionalParam,
         KeyParam,
+        InputParam,
+        OutputParam,
         MixedRestParam,
         PosRestParam,
         KeyRestParam,
@@ -1350,6 +1361,11 @@ fn create_node<'v, 's>(
             compile::Kind::PreludeItem { .. } => Which::PreludeItem,
             compile::Kind::PositionalParam { .. } => Which::PositionalParam,
             compile::Kind::KeyParam { .. } => Which::KeyParam,
+            compile::Kind::ImplicitParam { kind } => match kind {
+                compile::ImplicitKind::In => Which::InputParam,
+                compile::ImplicitKind::Out => Which::OutputParam,
+                _ => return Err(Error::not_supported(strand)),
+            },
             compile::Kind::RestParam { kind, .. } => match kind {
                 compile::RestKind::Mixed => Which::MixedRestParam,
                 compile::RestKind::Pos => Which::PosRestParam,
@@ -1405,6 +1421,8 @@ fn create_node<'v, 's>(
         Which::PreludeItem => make!(t.prelude_item, PreludeItemTag),
         Which::PositionalParam => make!(t.positional_param, PositionalParamTag),
         Which::KeyParam => make!(t.key_param, KeyParamTag),
+        Which::InputParam => make!(t.input_param, InputParamTag),
+        Which::OutputParam => make!(t.output_param, OutputParamTag),
         Which::MixedRestParam => make!(t.mixed_rest_param, MixedRestParamTag),
         Which::PosRestParam => make!(t.pos_rest_param, PosRestParamTag),
         Which::KeyRestParam => make!(t.key_rest_param, KeyRestParamTag),
@@ -1489,6 +1507,8 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                 | "MixedRestParam"
                 | "PosRestParam"
                 | "KeyRestParam"
+                | "InputParam"
+                | "OutputParam"
                 | "PosBinder"
                 | "KeyBinder"
                 | "MixedRestBinder"
@@ -1642,6 +1662,8 @@ fn project_name<'v, 's, T: NodeMarker + 'static>(
         compile::Kind::RestParam { name, .. } => {
             name.map_or(Name::None, |v| Name::Span(span_data(v)))
         }
+        // An implicit names an ambient channel rather than binding anything
+        compile::Kind::ImplicitParam { .. } => Name::None,
         compile::Kind::PreludeModule { name, .. } | compile::Kind::PreludeItem { name, .. } => {
             Name::Text(name.to_owned())
         }
@@ -1878,7 +1900,7 @@ fn create_type_expr<'v, 's>(
         Func,
     }
     let span = span_data(expr.span());
-    strand.with_slots_sync(|strand, [mut first, mut second]| {
+    strand.with_slots_sync(|strand, [mut first, mut second, mut third, mut fourth]| {
         let (which, detail) = match expr.kind() {
             compile::TypeKind::Name { head, target } => (
                 Which::Name,
@@ -1924,9 +1946,20 @@ fn create_type_expr<'v, 's>(
                 }
                 (Which::Union, TypeDetail::None)
             }
-            compile::TypeKind::Func { params, ret } => {
+            compile::TypeKind::Func {
+                params,
+                input,
+                output,
+                ret,
+            } => {
                 create_type_params(global, strand, unit, params, &mut first)?;
                 create_type_expr(global, strand, unit, ret, &mut second)?;
+                if let Some(input) = input {
+                    create_type_expr(global, strand, unit, input, &mut third)?;
+                }
+                if let Some(output) = output {
+                    create_type_expr(global, strand, unit, output, &mut fourth)?;
+                }
                 (Which::Func, TypeDetail::None)
             }
             _ => return Err(Error::not_supported(strand)),
@@ -1952,6 +1985,8 @@ fn create_type_expr<'v, 's>(
                     let mut borrow = object.borrow_mut_unwrap();
                     Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &*first);
                     Output::set(strand, Mut::slot_mut::<1>(&mut borrow), &*second);
+                    Output::set(strand, Mut::slot_mut::<2>(&mut borrow), &*third);
+                    Output::set(strand, Mut::slot_mut::<3>(&mut borrow), &*fourth);
                 });
             }};
         }
@@ -2035,7 +2070,7 @@ fn create_type_params<'v, 's>(
                 global,
                 span: span_data(param.span()),
                 detail: TypeDetail::Param {
-                    optional: param.optional(),
+                    quant: param.quant(),
                     key,
                 },
             };
@@ -2061,11 +2096,12 @@ fn create_type_params<'v, 's>(
             }
             let t = &global.types.param_kinds;
             match param.kind() {
-                compile::TypeParamKind::Pos => make!(t.pos, None),
-                compile::TypeParamKind::Key {
+                None => make!(t.any, None),
+                Some(compile::TypeParamKind::Pos) => make!(t.pos, None),
+                Some(compile::TypeParamKind::Key {
                     key,
                     key_ty: key_expr,
-                } => {
+                }) => {
                     if let Some(key_expr) = key_expr {
                         create_type_expr(global, strand, unit, key_expr, &mut key_ty)?;
                     }
@@ -2081,11 +2117,9 @@ fn create_type_params<'v, 's>(
                             );
                         });
                 }
-                compile::TypeParamKind::Rest(compile::RestKind::Mixed) => make!(t.mixed_rest, None),
-                compile::TypeParamKind::Rest(compile::RestKind::Pos) => make!(t.pos_rest, None),
-                compile::TypeParamKind::Rest(compile::RestKind::Key) => make!(t.key_rest, None),
-                compile::TypeParamKind::OpenRest => {
-                    t.open_rest.create_with_annex(
+                Some(compile::TypeParamKind::Include) => make!(t.include, None),
+                Some(compile::TypeParamKind::Open) => {
+                    t.open.create_with_annex(
                         strand,
                         TypeExprObject {
                             marker: PhantomData,
@@ -2093,23 +2127,6 @@ fn create_type_params<'v, 's>(
                         annex(None),
                         &mut item,
                     );
-                }
-                compile::TypeParamKind::KeyRest { key_ty: key } => {
-                    create_type_expr(global, strand, unit, key, &mut key_ty)?;
-                    let t = t.entry_rest;
-                    t.create_with_annex(
-                        strand,
-                        TypeExprObject {
-                            marker: PhantomData,
-                        },
-                        annex(None),
-                        &mut item,
-                    );
-                    t.cast(&item).unwrap().enter_sync(strand, |strand, object| {
-                        let mut borrow = object.borrow_mut_unwrap();
-                        Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &*ty);
-                        Output::set(strand, Mut::slot_mut::<1>(&mut borrow), &*key_ty);
-                    });
                 }
                 _ => return Err(Error::not_supported(strand)),
             }
@@ -2122,7 +2139,9 @@ fn create_type_params<'v, 's>(
 impl<'v, T: TypeMarker + 'static> Object<'v> for TypeExprObject<T> {
     const NAME: &'v str = T::NAME;
     const MODULE: &'v str = "compile";
-    const SLOTS: usize = 2;
+    // A function type uses all four: parameters, return type and the two
+    // implicits. Every other form leaves the later ones nil.
+    const SLOTS: usize = 4;
     type Annex = TypeAnnex<'v>;
     type Type = ();
     type TypeAnnex = ();
@@ -2143,19 +2162,25 @@ impl<'v, T: TypeMarker + 'static> Object<'v> for TypeExprObject<T> {
         });
         if matches!(
             T::NAME,
-            "PosTypeParam"
-                | "KeyTypeParam"
-                | "MixedRestTypeParam"
-                | "PosRestTypeParam"
-                | "KeyRestTypeParam"
-                | "OpenRestTypeParam"
-                | "EntryRestTypeParam"
+            "PosTypeParam" | "KeyTypeParam" | "IncludeTypeParam" | "OpenTypeParam" | "AnyTypeParam"
         ) {
-            builder = builder.get("optional", |this, strand, out| {
-                let TypeDetail::Param { optional, .. } = &this.annex().detail else {
+            builder = builder.get("quant", |this, strand, out| {
+                let TypeDetail::Param { quant, .. } = &this.annex().detail else {
                     unreachable!()
                 };
-                Output::set(strand, out, *optional);
+                let global = this.annex().global;
+                match quant {
+                    Some(compile::TypeQuant::Opt) => {
+                        Output::set(strand, out, global.syms.quant_opt)
+                    }
+                    Some(compile::TypeQuant::Star) => {
+                        Output::set(strand, out, global.syms.quant_star)
+                    }
+                    Some(compile::TypeQuant::StarStar) => {
+                        Output::set(strand, out, global.syms.quant_star_star)
+                    }
+                    _ => Output::set(strand, out, Nil),
+                }
                 Ok(())
             });
         }
@@ -2166,14 +2191,11 @@ impl<'v, T: TypeMarker + 'static> Object<'v> for TypeExprObject<T> {
                 | "ExpandTypeArg"
                 | "PosTypeParam"
                 | "KeyTypeParam"
-                | "MixedRestTypeParam"
-                | "PosRestTypeParam"
-                | "KeyRestTypeParam"
-                | "EntryRestTypeParam"
+                | "IncludeTypeParam"
         ) {
             builder = builder.get("ty", slot!(0));
         }
-        if matches!(T::NAME, "KeyTypeParam" | "EntryRestTypeParam") {
+        if T::NAME == "KeyTypeParam" {
             builder = builder.get("key_ty", slot!(1));
         }
         match T::NAME {
@@ -2199,7 +2221,11 @@ impl<'v, T: TypeMarker + 'static> Object<'v> for TypeExprObject<T> {
             "AppType" => builder.get("base", slot!(0)).get("args", slot!(1)),
             "SchemaType" => builder.get("params", slot!(0)),
             "UnionType" => builder.get("members", slot!(0)),
-            "FuncType" => builder.get("params", slot!(0)).get("ret", slot!(1)),
+            "FuncType" => builder
+                .get("params", slot!(0))
+                .get("ret", slot!(1))
+                .get("input", slot!(2))
+                .get("output", slot!(3)),
             "KeyTypeArg" => builder.get("name", |this, strand, out| {
                 let TypeDetail::Arg { name: Some(name) } = &this.annex().detail else {
                     unreachable!()
@@ -2573,6 +2599,9 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         )
         .value("KeyParam", global.types.concrete_nodes.key_param)
         .value("RestParam", global.types.rest_param)
+        .value("ImplicitParam", global.types.implicit_param)
+        .value("InputParam", global.types.concrete_nodes.input_param)
+        .value("OutputParam", global.types.concrete_nodes.output_param)
         .value(
             "MixedRestParam",
             global.types.concrete_nodes.mixed_rest_param,
@@ -2618,12 +2647,9 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .value("TypeParam", global.types.type_param)
         .value("PosTypeParam", global.types.param_kinds.pos)
         .value("KeyTypeParam", global.types.param_kinds.key)
-        .value("RestTypeParam", global.types.rest_type_param)
-        .value("MixedRestTypeParam", global.types.param_kinds.mixed_rest)
-        .value("PosRestTypeParam", global.types.param_kinds.pos_rest)
-        .value("KeyRestTypeParam", global.types.param_kinds.key_rest)
-        .value("OpenRestTypeParam", global.types.param_kinds.open_rest)
-        .value("EntryRestTypeParam", global.types.param_kinds.entry_rest)
+        .value("IncludeTypeParam", global.types.param_kinds.include)
+        .value("OpenTypeParam", global.types.param_kinds.open)
+        .value("AnyTypeParam", global.types.param_kinds.any)
         .value("Diagnostic", global.types.diagnostic)
         .value("Span", global.types.span)
         .value("Pos", global.types.pos)

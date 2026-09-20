@@ -5,8 +5,9 @@ pub(crate) mod ty;
 pub(crate) mod visit;
 
 pub(crate) use self::ty::{
-    Annot, Binder, BinderDefault, BinderKind, Binders, RetType, TypeArg, TypeArgKind, TypeDecl,
-    TypeExpr, TypeKey, TypeParam, TypeParamKind,
+    Annot, Binder, BinderDefault, BinderKind, Binders, Implicit, Implicits, RetType, TypeArg,
+    TypeArgKind, TypeDecl, TypeExpr, TypeKey, TypeParam, TypeParamKind, TypeQuant,
+    implicit_tys_mut, implicits,
 };
 
 use std::{
@@ -2595,6 +2596,10 @@ impl Block {
 
 pub(crate) struct Function {
     pub(crate) params: Vec<Param>,
+    /// The `<` implicit parameter, giving the ambient input
+    pub(crate) input: Option<Box<Implicit>>,
+    /// The `>` implicit parameter, giving the ambient output
+    pub(crate) output: Option<Box<Implicit>>,
     pub(crate) ret: Option<Box<RetType>>,
     /// The `...` of a stub body, in place of the otherwise empty block.
     pub(crate) stub_span: Option<Span>,
@@ -2604,6 +2609,11 @@ pub(crate) struct Function {
 impl Node for Function {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         self.params.accept(visit)?;
+        // The implicits are written among the parameters, but the list holds at
+        // most one of each, so they are visited after them
+        for implicit in implicits(&self.input, &self.output) {
+            visit.node(implicit)?;
+        }
         if let Some(ret) = &self.ret {
             visit.node(&**ret)?;
         }

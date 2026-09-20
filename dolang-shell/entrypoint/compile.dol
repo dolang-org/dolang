@@ -62,6 +62,8 @@ let KIND_NAMES = $
   $compile.MixedRestParam: "MixedRestParam"
   $compile.PosRestParam: "PosRestParam"
   $compile.KeyRestParam: "KeyRestParam"
+  $compile.InputParam: "InputParam"
+  $compile.OutputParam: "OutputParam"
   $compile.Lambda: "Lambda"
   $compile.If: "If"
   $compile.Else: "Else"
@@ -102,11 +104,9 @@ let TYPE_ARG_KIND_NAMES = $
 let TYPE_PARAM_KIND_NAMES = $
   $compile.PosTypeParam: "PosTypeParam"
   $compile.KeyTypeParam: "KeyTypeParam"
-  $compile.MixedRestTypeParam: "MixedRestTypeParam"
-  $compile.PosRestTypeParam: "PosRestTypeParam"
-  $compile.KeyRestTypeParam: "KeyRestTypeParam"
-  $compile.OpenRestTypeParam: "OpenRestTypeParam"
-  $compile.EntryRestTypeParam: "EntryRestTypeParam"
+  $compile.IncludeTypeParam: "IncludeTypeParam"
+  $compile.OpenTypeParam: "OpenTypeParam"
+  $compile.AnyTypeParam: "AnyTypeParam"
 
 # How a type argument is given, as the documentation projection names it.
 let ARG_KINDS = $
@@ -118,11 +118,16 @@ let ARG_KINDS = $
 let PARAM_KINDS = $
   $compile.PosTypeParam: pos
   $compile.KeyTypeParam: key
-  $compile.MixedRestTypeParam: mixed_rest
-  $compile.PosRestTypeParam: pos_rest
-  $compile.KeyRestTypeParam: key_rest
-  $compile.OpenRestTypeParam: open_rest
-  $compile.EntryRestTypeParam: entry_rest
+  $compile.IncludeTypeParam: include
+  $compile.OpenTypeParam: open
+  $compile.AnyTypeParam: any
+
+# How many of its element an item admits, as the documentation projection names
+# it.
+let QUANTS = $
+  :OPT:: opt
+  :STAR:: star
+  :STAR_STAR:: star_star
 
 # How a parameter or binder is declared, as the documentation projection names
 # it.
@@ -132,6 +137,8 @@ let DECL_KINDS = $
   $compile.MixedRestParam: mixed_rest
   $compile.PosRestParam: pos_rest
   $compile.KeyRestParam: key_rest
+  $compile.InputParam: input
+  $compile.OutputParam: output
   $compile.PosBinder: pos
   $compile.KeyBinder: key
   $compile.MixedRestBinder: mixed_rest
@@ -170,6 +177,10 @@ def type_expr_json id_to_index expr
       params: [...expr.params.map do |param| (type_param_json id_to_index param)]
     if type(expr, compile.UnionType)
       members: [...expr.members.map do |member| (type_expr_json id_to_index member)]
+    if (type(expr, compile.FuncType) && expr.input != nil)
+      input: (type_expr_json id_to_index expr.input)
+    if (type(expr, compile.FuncType) && expr.output != nil)
+      output: (type_expr_json id_to_index expr.output)
     if type(expr, compile.FuncType)
       ret: (type_expr_json id_to_index expr.ret)
 
@@ -187,15 +198,12 @@ def type_param_json id_to_index param
   $
     kind: (TYPE_PARAM_KIND_NAMES.get (type param))
     span: (span_json param.span)
-    optional: $param.optional
+    quant: (QUANTS.get param.quant)
     if type(param, compile.KeyTypeParam)
       key: (span_json param.key)
-    if (
-      type(param, compile.KeyTypeParam) && param.key_ty != nil ||
-      type(param, compile.EntryRestTypeParam)
-    )
+    if (type(param, compile.KeyTypeParam) && param.key_ty != nil)
       key_type: (type_expr_json id_to_index param.key_ty)
-    if !type(param, compile.OpenRestTypeParam)
+    if (!type(param, compile.OpenTypeParam) && !type(param, compile.AnyTypeParam))
       type: (type_expr_json id_to_index param.ty)
 
 # Where a node starts, for ordering. A prelude node has no span, and comes first.
@@ -450,12 +458,13 @@ class Document
         child.key
       else
         child.name
+      let implicit = type(child, compile.ImplicitParam)
       let ty = self.#type_of $child_id
       let param = $
         kind: (DECL_KINDS.get (type child))
         if (name != nil)
           name: (self.#text(name))
-        optional: (!type(child, compile.RestParam) && child.default != nil)
+        optional: (!type(child, compile.RestParam) && !implicit && child.default != nil)
         if (type(child, compile.RestParam) && child.type_ellipsis != nil)
           type_spread: true
         doc: (self.#doc_of(child))
@@ -523,6 +532,10 @@ class Document
       $
         kind: "func"
         params: (self.#type_params(expr.params))
+        if (expr.input != nil)
+          input: (self.#type_tree(expr.input))
+        if (expr.output != nil)
+          output: (self.#type_tree(expr.output))
         ret: (self.#type_tree(expr.ret))
 
   # The text of a name or constant type, whose span includes any parentheses
@@ -561,15 +574,12 @@ class Document
     for param = params
       result.push $
         kind: (PARAM_KINDS.get (type param))
-        optional: $param.optional
+        quant: (QUANTS.get param.quant)
         if type(param, compile.KeyTypeParam)
           key: (self.#text(param.key))
-        if (
-          type(param, compile.KeyTypeParam) && param.key_ty != nil ||
-          type(param, compile.EntryRestTypeParam)
-        )
+        if (type(param, compile.KeyTypeParam) && param.key_ty != nil)
           key_type: (self.#type_tree(param.key_ty))
-        if !type(param, compile.OpenRestTypeParam)
+        if (!type(param, compile.OpenTypeParam) && !type(param, compile.AnyTypeParam))
           type: (self.#type_tree(param.ty))
     result
 

@@ -417,9 +417,9 @@ impl Diagnose for OptionalTypeArg {
     }
 }
 
-pub(super) struct OptionalRest(pub(super) Span);
+pub(super) struct OptionalQuant(pub(super) Span);
 
-impl Diagnose for OptionalRest {
+impl Diagnose for OptionalQuant {
     fn span(&self) -> Span {
         self.0
     }
@@ -429,7 +429,7 @@ impl Diagnose for OptionalRest {
     }
 
     fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(w, "a rest item cannot be optional")
+        write!(w, "an item cannot be both optional and repeated")
     }
 }
 
@@ -468,6 +468,70 @@ impl Diagnose for RequiredAfterOptional {
             w,
             "required positional items must precede any optional positional items"
         )
+    }
+}
+
+pub(super) struct ImplicitInPattern(pub(super) Span);
+
+impl Diagnose for ImplicitInPattern {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "a pattern cannot have an implicit parameter")
+    }
+}
+
+pub(super) struct ImplicitInSchema(pub(super) Span);
+
+impl Diagnose for ImplicitInSchema {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "a schema cannot have an implicit parameter")
+    }
+}
+
+pub(super) struct DuplicateImplicit(pub(super) Span);
+
+impl Diagnose for DuplicateImplicit {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "duplicate implicit parameter")
+    }
+}
+
+pub(super) struct QuantifiedImplicit(pub(super) Span);
+
+impl Diagnose for QuantifiedImplicit {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "an implicit parameter cannot be quantified")
     }
 }
 

@@ -683,13 +683,23 @@ it begins ends it, even inside `()`. Parenthesize unions and function types:
 `@Str|Path` is not a union, but `@(Str | Path)` is. Other forms:
 `@Dict[Str, Array[Int]]`, `@{name: Str, ?port: Int}`, `@((Int, ?Int) -> Int)`,
 `@(:a: | :b:)`. Braces form schemas rather than types; use `Dict[{...}]` for a
-dict with a schema. Within a schema, `...T` describes further items of any
-kind, `*T` further positional items, `**T` further keyed items, and `...K: V`
-arbitrary keyed entries; `{...}` is shorthand for `{...std.Value}`. Schemas are
-closed unless they contain a rest item. Keyed and open rest items are not
-allowed in function parameter lists: `((Int, *Str, **Bool) -> nil)`. A type
-whose only parameter is a schema takes `Foo[T]` for `Foo[{*T}]` and
-`Foo[K, V]` for `Foo[{...K: V}]`; prefer these to a schema with a single rest
+dict with a schema. A schema item is an element -- `T` positional, `key: T` or
+`(K): T` keyed, `...S` including a schema's items -- optionally preceded by a
+quantifier saying how many it admits: `?` zero or one, `*` zero or more, `**`
+zero or more keyed (`**V` is `*(Sym): V`). An item takes at most one
+quantifier. `...` alone admits any item and is shorthand for `*, **`; `*` and
+`**` alone admit any positional or keyed item. So `*key: V` is a repeatable
+literal key and `*...S` repeats a whole subschema. Schemas are closed unless an
+item admits more. A function's parameter list is a schema, except that a
+parameter key must be a name, so `(K): V` is not allowed there:
+`((Int, *Str, **Bool) -> nil)`. A parameter list also takes the implicit
+parameters `<T` and `>T`, giving the types of the strand's ambient input and
+output; each may appear once, in any position among the other items, and a
+declaration's is a compact type as an annotation is:
+`def sink count @ Int <Iter[Int] >Sink[Str] -> nil`. A lambda's go inside its
+`|`, as in `do |x <Iter[Int]| x`. Schemas and binding patterns have neither. A
+type whose only parameter is a schema takes `Foo[T]` for `Foo[{*T}]` and
+`Foo[K, V]` for `Foo[{*(K): V}]`; prefer these to a schema with a single rest
 item.
 
 ### Concurrency

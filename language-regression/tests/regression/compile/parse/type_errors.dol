@@ -23,11 +23,6 @@ let d @Array[?Int] = 1
 # LL | let d @Array[?Int] = 1
 #    |              ^
 let e @((?...Int) -> Int) = 1
-# error: a rest item cannot be optional
-#   --> type_errors.dol:LL:LL
-#    |
-# LL | let e @((?...Int) -> Int) = 1
-#    |          ^
 let g @"$a" = 1
 # error: expression is not a constant
 #   --> type_errors.dol:LL:LL
@@ -59,7 +54,7 @@ let k @Array[0: Int] = 1
 # LL | let k @Array[0: Int] = 1
 #    |               ^
 let k2 @(("k": Int) -> Int) = 1
-# error: a key outside a schema must be a name
+# error: a parameter key must be a name
 #   --> type_errors.dol:LL:LL
 #    |
 # LL | let k2 @(("k": Int) -> Int) = 1

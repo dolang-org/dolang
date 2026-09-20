@@ -331,12 +331,23 @@ let target @ (
 
 A schema is not itself a type, but a description of positional and keyed items
 and their types which can parameterize a `Dict`, argument pack, etc. Schemas are
-closed: they admit only the items they list, unless they contain a
-[rest item](./types.md#rest-items).
+closed: they admit only the items they list, unless a
+[quantifier](./types.md#quantifiers) or an [open item](./types.md#open-items)
+admits more.
 
 ```
 let options @ Dict[{name: Str, ?port: Int}] = {name: "db"}
 ```
+
+Each item is an element, optionally preceded by a quantifier saying how many of
+that element the schema admits:
+
+| Element  | Is                               |
+| -------- | -------------------------------- |
+| `T`      | A positional item                |
+| `key: T` | A keyed item                     |
+| `(K): T` | A keyed item whose keys type `K` |
+| `...S`   | The items of the schema `S`      |
 
 #### Positional Items
 
@@ -348,42 +359,64 @@ let pair @ Dict[{Str, Int}] = {"a", 1}
 
 #### Keyed Items
 
-`key: T` is a keyed item. Bare keys are literal symbols while other expressions
-give the key type.
+`key: T` is a keyed item. Bare keys are literal symbols; a key given as a type
+describes the keys it admits, and a name must be parenthesized so that it is not
+taken for a symbol.
 
 ```
 let headers @ Dict[{host: Str, "x-custom": Str}] = {}
 let codes @ Dict[{(Tuple[Int, Int]): Str}] = {}
 ```
 
-#### Optional Items
+#### Inclusions
 
-`?` marks an optional item:
+`...S` includes the items of the schema `S`, which must be a schema rather than
+a type:
+
+```
+@let Colors = {?fg: Color, ?bg: Color}
+let style @ Dict[{?width: Int, ...Colors}] = {}
+```
+
+#### Quantifiers
+
+A quantifier before an item says how many of the element the schema admits.
+Without one it admits exactly one:
+
+| Quantifier | Admits                                         |
+| ---------- | ---------------------------------------------- |
+| `?`        | Zero or one                                    |
+| `*`        | Zero or more                                   |
+| `**`       | Zero or more keyed items; `**V` is `*(Sym): V` |
+
+An item takes at most one quantifier, so `?` cannot also repeat.
 
 ```
 let options @ Dict[{name: Str, ?port: Int}] = {name: "db"}
+let headers @ Dict[{*(Str): Str}] = {}
+let cookies @ Dict[{*set_cookie: Str}] = {}
+let pairs @ Dict[{*...{Str, Int}}] = {}
 ```
 
-#### Rest Items
+Since a `Dict` is a multi-map, a quantifier gives a literal key an exact
+multiplicity: `key: V` admits one, `?key: V` at most one, and `*key: V` any
+number.
 
-A rest item allows items beyond those listed:
+#### Open Items
 
-| Item      | Allows                                                           |
-| --------- | ---------------------------------------------------------------- |
-| `...T`    | Further items of either kind with values of type `T`             |
-| `*T`      | Further positional items of type `T`                             |
-| `**T`     | Further keyed items with values of type `T`                      |
-| `...K: V` | Further keyed items with keys of type `K` and values of type `V` |
-| `...`     | Any further items; shorthand for `...std.Value`                  |
+`...` alone admits any further item, and is shorthand for `*, **`. A quantifier
+alone admits any further item of its own kind:
+
+| Item  | Admits                       |
+| ----- | ---------------------------- |
+| `...` | Any further items            |
+| `*`   | Any further positional items |
+| `**`  | Any further keyed items      |
 
 ```
-let headers @ Dict[{...Str: Str}] = {}
 let anything @ Dict[{...}] = {}
+let positional @ Dict[{Str, *}] = {}
 ```
-
-#### Splices
-
-When `S` is a schema rather than a type, `...S` splices its items.
 
 #### Types as Schema Arguments
 
@@ -393,7 +426,7 @@ its place:
 | Shorthand    | Stands for          |
 | ------------ | ------------------- |
 | `Dict[T]`    | `Dict[{*T}]`        |
-| `Dict[K, V]` | `Dict[{...K: V}]`   |
+| `Dict[K, V]` | `Dict[{*(K): V}]`   |
 
 An argument that is already a schema, including a binder bounded by one, is
 passed as is:
@@ -417,9 +450,39 @@ let curried @ (Int -> Int -> Int) = do |a| do |b| (a + b)
 let thunk @ (() -> Str) = do "hello"
 ```
 
-Rest parameters are written `...T`, `*T`, or `**T`, and may appear anywhere and
-more than once.
+A parameter list is a schema, so its items take the same elements and
+quantifiers, and a repeating one may appear anywhere and more than once. A
+parameter's key must be a name, so a key given as a type is not allowed; write
+`**V` for a list that takes any keyword.
 
 ```
 let log @ ((Sym, *Str, **Str) -> nil) = do |level *parts **opts| echo "[$level]" ...parts ...opts
+let shout @ ((...) -> nil) = do |...args| nil
 ```
+
+#### Implicit Parameters
+
+Every function also takes the strand's ambient input and output, which nothing
+passes explicitly. `<T` gives the type a function reads from and `>T` the type
+it writes to. Both are items of the parameter list, so they may appear in any
+order among the others, but a list takes at most one of each:
+
+```
+def collect count @ Int <Iter[Int] >Sink[Str] -> nil
+  for value = strand.input()
+    strand.put $ str $value
+let runner @ ((Int, <Iter[Int], >Sink[Str]) -> Int) = nil
+```
+
+Omitting one says nothing about that channel, which is what most functions
+want. In a declaration the type is compact, as an annotation's is, so a union
+needs parentheses: `<(Iter[Int] | nil)`.
+
+A lambda's parameter list is delimited by `|`, so its implicits go inside:
+
+```
+let double = do |x <Iter[Int] >Sink[Int]| (x * 2)
+```
+
+Schemas have no implicits, since an ambient channel is not data, and neither do
+`bind` arms or `let` patterns, which bind values.

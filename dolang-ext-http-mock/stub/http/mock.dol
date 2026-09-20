@@ -277,7 +277,7 @@ pub class Server
   @def mock[R]
     self
     # Mock items followed by the block.
-    ...args @ {...Dict, (Mock -> R)}
+    ...args @ {*Dict, (Mock -> R)}
   do -> R
 
   pub def mock self ...args

@@ -13,9 +13,9 @@
           "byte_offset": 0
         },
         "end": {
-          "line": 133,
+          "line": 146,
           "column": 0,
-          "byte_offset": 2641
+          "byte_offset": 2953
         }
       },
       "parent": null,
@@ -997,6 +997,90 @@
       "is_pub": true
     },
     {
+      "kind": "Function",
+      "span": {
+        "start": {
+          "line": 135,
+          "column": 0,
+          "byte_offset": 2707
+        },
+        "end": {
+          "line": 141,
+          "column": 5,
+          "byte_offset": 2810
+        }
+      },
+      "parent": 0,
+      "doc": {
+        "start": {
+          "line": 134,
+          "column": 0,
+          "byte_offset": 2642
+        },
+        "end": {
+          "line": 134,
+          "column": 64,
+          "byte_offset": 2706
+        }
+      },
+      "name": {
+        "start": {
+          "line": 135,
+          "column": 8,
+          "byte_offset": 2715
+        },
+        "end": {
+          "line": 135,
+          "column": 17,
+          "byte_offset": 2724
+        }
+      },
+      "is_pub": true,
+      "type_only": false
+    },
+    {
+      "kind": "Function",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 0,
+          "byte_offset": 2861
+        },
+        "end": {
+          "line": 145,
+          "column": 8,
+          "byte_offset": 2952
+        }
+      },
+      "parent": 0,
+      "doc": {
+        "start": {
+          "line": 143,
+          "column": 0,
+          "byte_offset": 2812
+        },
+        "end": {
+          "line": 143,
+          "column": 48,
+          "byte_offset": 2860
+        }
+      },
+      "name": {
+        "start": {
+          "line": 144,
+          "column": 8,
+          "byte_offset": 2869
+        },
+        "end": {
+          "line": 144,
+          "column": 21,
+          "byte_offset": 2882
+        }
+      },
+      "is_pub": true,
+      "type_only": false
+    },
+    {
       "kind": "PositionalParam",
       "span": {
         "start": {
@@ -1507,7 +1591,7 @@
           "byte_offset": 660
         }
       },
-      "parent": 42,
+      "parent": 44,
       "doc": null,
       "type_only": false,
       "expr": {
@@ -1594,7 +1678,7 @@
           "byte_offset": 703
         }
       },
-      "parent": 44,
+      "parent": 46,
       "doc": null,
       "target": 7
     },
@@ -1653,7 +1737,7 @@
           "byte_offset": 759
         }
       },
-      "parent": 46,
+      "parent": 48,
       "doc": null,
       "target": 9
     },
@@ -1712,7 +1796,7 @@
           "byte_offset": 826
         }
       },
-      "parent": 48,
+      "parent": 50,
       "doc": null,
       "name": {
         "start": {
@@ -1741,7 +1825,7 @@
           "byte_offset": 828
         }
       },
-      "parent": 48,
+      "parent": 50,
       "doc": null,
       "name": {
         "start": {
@@ -1811,7 +1895,7 @@
           "byte_offset": 880
         }
       },
-      "parent": 51,
+      "parent": 53,
       "doc": null,
       "name": {
         "start": {
@@ -1882,7 +1966,7 @@
           "byte_offset": 946
         }
       },
-      "parent": 53,
+      "parent": 55,
       "doc": null,
       "target": 8
     },
@@ -1900,7 +1984,7 @@
           "byte_offset": 972
         }
       },
-      "parent": 53,
+      "parent": 55,
       "doc": null,
       "name": {
         "start": {
@@ -1929,7 +2013,7 @@
           "byte_offset": 979
         }
       },
-      "parent": 53,
+      "parent": 55,
       "doc": null,
       "type_only": false,
       "expr": {
@@ -2017,7 +2101,7 @@
           "byte_offset": 1022
         }
       },
-      "parent": 57,
+      "parent": 59,
       "doc": null,
       "name": {
         "start": {
@@ -2046,7 +2130,7 @@
           "byte_offset": 1028
         }
       },
-      "parent": 57,
+      "parent": 59,
       "doc": null,
       "name": {
         "start": {
@@ -2075,7 +2159,7 @@
           "byte_offset": 1031
         }
       },
-      "parent": 57,
+      "parent": 59,
       "doc": null,
       "name": {
         "start": {
@@ -2104,7 +2188,7 @@
           "byte_offset": 1046
         }
       },
-      "parent": 57,
+      "parent": 59,
       "doc": null,
       "name": {
         "start": {
@@ -2199,7 +2283,7 @@
           "byte_offset": 1137
         }
       },
-      "parent": 62,
+      "parent": 64,
       "doc": null,
       "name": {
         "start": {
@@ -2256,7 +2340,7 @@
           "byte_offset": 1154
         }
       },
-      "parent": 62,
+      "parent": 64,
       "doc": null,
       "name": {
         "start": {
@@ -2285,7 +2369,7 @@
           "byte_offset": 1154
         }
       },
-      "parent": 64,
+      "parent": 66,
       "doc": null,
       "type_only": false,
       "expr": {
@@ -2371,7 +2455,7 @@
                   "byte_offset": 1153
                 }
               },
-              "target": 63
+              "target": 65
             }
           }
         ]
@@ -2391,7 +2475,7 @@
           "byte_offset": 1159
         }
       },
-      "parent": 62,
+      "parent": 64,
       "doc": null,
       "type_only": false,
       "expr": {
@@ -2420,7 +2504,7 @@
             "byte_offset": 1159
           }
         },
-        "target": 63
+        "target": 65
       }
     },
     {
@@ -2479,7 +2563,7 @@
           "byte_offset": 1212
         }
       },
-      "parent": 67,
+      "parent": 69,
       "doc": null,
       "name": {
         "start": {
@@ -2613,7 +2697,7 @@
           "byte_offset": 1380
         }
       },
-      "parent": 71,
+      "parent": 73,
       "doc": null,
       "type_only": false,
       "expr": {
@@ -2712,7 +2796,7 @@
           "byte_offset": 1400
         }
       },
-      "parent": 73,
+      "parent": 75,
       "doc": null,
       "type_only": false,
       "expr": {
@@ -2999,7 +3083,7 @@
           "byte_offset": 1498
         }
       },
-      "parent": 77,
+      "parent": 79,
       "doc": null,
       "type_only": false,
       "expr": {
@@ -3085,7 +3169,7 @@
                   "byte_offset": 1497
                 }
               },
-              "target": 76
+              "target": 78
             }
           }
         ]
@@ -3158,7 +3242,7 @@
           "byte_offset": 1528
         }
       },
-      "parent": 79,
+      "parent": 81,
       "doc": null,
       "type_only": false,
       "expr": {
@@ -3190,7 +3274,7 @@
                 "byte_offset": 1515
               }
             },
-            "optional": false,
+            "quant": null,
             "type": {
               "kind": "NameType",
               "span": {
@@ -3234,7 +3318,7 @@
                 "byte_offset": 1521
               }
             },
-            "optional": true,
+            "quant": "opt",
             "type": {
               "kind": "NameType",
               "span": {
@@ -3291,7 +3375,7 @@
               "byte_offset": 1527
             }
           },
-          "target": 76
+          "target": 78
         }
       }
     },
@@ -3362,7 +3446,7 @@
           "byte_offset": 1587
         }
       },
-      "parent": 81,
+      "parent": 83,
       "doc": null,
       "type_only": false,
       "expr": {
@@ -3451,7 +3535,7 @@
                       "byte_offset": 1560
                     }
                   },
-                  "optional": false,
+                  "quant": null,
                   "key": {
                     "start": {
                       "line": 81,
@@ -3507,7 +3591,7 @@
                       "byte_offset": 1572
                     }
                   },
-                  "optional": true,
+                  "quant": "opt",
                   "key": {
                     "start": {
                       "line": 81,
@@ -3550,7 +3634,7 @@
                   }
                 },
                 {
-                  "kind": "EntryRestTypeParam",
+                  "kind": "KeyTypeParam",
                   "span": {
                     "start": {
                       "line": 81,
@@ -3563,14 +3647,26 @@
                       "byte_offset": 1585
                     }
                   },
-                  "optional": false,
+                  "quant": "star",
+                  "key": {
+                    "start": {
+                      "line": 81,
+                      "column": 109,
+                      "byte_offset": 1575
+                    },
+                    "end": {
+                      "line": 81,
+                      "column": 114,
+                      "byte_offset": 1580
+                    }
+                  },
                   "key_type": {
                     "kind": "NameType",
                     "span": {
                       "start": {
                         "line": 81,
-                        "column": 111,
-                        "byte_offset": 1577
+                        "column": 109,
+                        "byte_offset": 1575
                       },
                       "end": {
                         "line": 81,
@@ -3581,13 +3677,13 @@
                     "head": {
                       "start": {
                         "line": 81,
-                        "column": 111,
-                        "byte_offset": 1577
+                        "column": 110,
+                        "byte_offset": 1576
                       },
                       "end": {
                         "line": 81,
-                        "column": 114,
-                        "byte_offset": 1580
+                        "column": 113,
+                        "byte_offset": 1579
                       }
                     },
                     "target": 5
@@ -3694,7 +3790,7 @@
           "byte_offset": 1629
         }
       },
-      "parent": 83,
+      "parent": 85,
       "doc": null,
       "type_only": false,
       "expr": {
@@ -3826,7 +3922,7 @@
             "byte_offset": 1640
           }
         },
-        "target": 76
+        "target": 78
       }
     },
     {
@@ -4041,7 +4137,7 @@
           "byte_offset": 2008
         }
       },
-      "parent": 89,
+      "parent": 91,
       "doc": null,
       "name": {
         "start": {
@@ -4070,7 +4166,7 @@
           "byte_offset": 2015
         }
       },
-      "parent": 89,
+      "parent": 91,
       "doc": null,
       "type_only": false,
       "expr": {
@@ -4158,7 +4254,7 @@
           "byte_offset": 2058
         }
       },
-      "parent": 92,
+      "parent": 94,
       "doc": null,
       "name": {
         "start": {
@@ -4187,7 +4283,7 @@
           "byte_offset": 2070
         }
       },
-      "parent": 92,
+      "parent": 94,
       "doc": null,
       "name": {
         "start": {
@@ -4216,7 +4312,7 @@
           "byte_offset": 2070
         }
       },
-      "parent": 94,
+      "parent": 96,
       "doc": null,
       "type_only": false,
       "expr": {
@@ -4262,7 +4358,7 @@
           "byte_offset": 2077
         }
       },
-      "parent": 92,
+      "parent": 94,
       "doc": null,
       "type_only": false,
       "expr": {
@@ -4442,7 +4538,7 @@
           "byte_offset": 2174
         }
       },
-      "parent": 99,
+      "parent": 101,
       "doc": null,
       "name": {
         "start": {
@@ -4471,7 +4567,7 @@
           "byte_offset": 2181
         }
       },
-      "parent": 99,
+      "parent": 101,
       "doc": null,
       "type_only": false,
       "expr": {
@@ -4548,7 +4644,7 @@
           "byte_offset": 2202
         }
       },
-      "parent": 102,
+      "parent": 104,
       "doc": null,
       "name": {
         "start": {
@@ -4606,7 +4702,7 @@
           "byte_offset": 2244
         }
       },
-      "parent": 104,
+      "parent": 106,
       "doc": null,
       "type_only": false,
       "expr": {
@@ -4727,7 +4823,7 @@
           "byte_offset": 2287
         }
       },
-      "parent": 107,
+      "parent": 109,
       "doc": null,
       "type_only": false,
       "expr": {
@@ -4918,7 +5014,7 @@
           "byte_offset": 2432
         }
       },
-      "parent": 112,
+      "parent": 114,
       "doc": null,
       "type_only": false,
       "expr": {
@@ -4962,7 +5058,7 @@
               "byte_offset": 2431
             }
           },
-          "target": 111
+          "target": 113
         }
       }
     },
@@ -5066,7 +5162,7 @@
                   "byte_offset": 2447
                 }
               },
-              "target": 111
+              "target": 113
             }
           }
         ]
@@ -5296,6 +5392,731 @@
           }
         },
         "target": 5
+      }
+    },
+    {
+      "kind": "PositionalParam",
+      "span": {
+        "start": {
+          "line": 137,
+          "column": 2,
+          "byte_offset": 2749
+        },
+        "end": {
+          "line": 137,
+          "column": 13,
+          "byte_offset": 2760
+        }
+      },
+      "parent": 32,
+      "doc": {
+        "start": {
+          "line": 136,
+          "column": 2,
+          "byte_offset": 2727
+        },
+        "end": {
+          "line": 136,
+          "column": 21,
+          "byte_offset": 2746
+        }
+      },
+      "name": {
+        "start": {
+          "line": 137,
+          "column": 2,
+          "byte_offset": 2749
+        },
+        "end": {
+          "line": 137,
+          "column": 7,
+          "byte_offset": 2754
+        }
+      }
+    },
+    {
+      "kind": "Type",
+      "span": {
+        "start": {
+          "line": 137,
+          "column": 10,
+          "byte_offset": 2757
+        },
+        "end": {
+          "line": 137,
+          "column": 13,
+          "byte_offset": 2760
+        }
+      },
+      "parent": 120,
+      "doc": null,
+      "type_only": false,
+      "expr": {
+        "kind": "NameType",
+        "span": {
+          "start": {
+            "line": 137,
+            "column": 10,
+            "byte_offset": 2757
+          },
+          "end": {
+            "line": 137,
+            "column": 13,
+            "byte_offset": 2760
+          }
+        },
+        "head": {
+          "start": {
+            "line": 137,
+            "column": 10,
+            "byte_offset": 2757
+          },
+          "end": {
+            "line": 137,
+            "column": 13,
+            "byte_offset": 2760
+          }
+        },
+        "target": 4
+      }
+    },
+    {
+      "kind": "InputParam",
+      "span": {
+        "start": {
+          "line": 138,
+          "column": 2,
+          "byte_offset": 2763
+        },
+        "end": {
+          "line": 138,
+          "column": 16,
+          "byte_offset": 2777
+        }
+      },
+      "parent": 32,
+      "doc": null
+    },
+    {
+      "kind": "Type",
+      "span": {
+        "start": {
+          "line": 138,
+          "column": 3,
+          "byte_offset": 2764
+        },
+        "end": {
+          "line": 138,
+          "column": 16,
+          "byte_offset": 2777
+        }
+      },
+      "parent": 122,
+      "doc": null,
+      "type_only": false,
+      "expr": {
+        "kind": "AppType",
+        "span": {
+          "start": {
+            "line": 138,
+            "column": 3,
+            "byte_offset": 2764
+          },
+          "end": {
+            "line": 138,
+            "column": 16,
+            "byte_offset": 2777
+          }
+        },
+        "base": {
+          "kind": "NameType",
+          "span": {
+            "start": {
+              "line": 138,
+              "column": 3,
+              "byte_offset": 2764
+            },
+            "end": {
+              "line": 138,
+              "column": 11,
+              "byte_offset": 2772
+            }
+          },
+          "head": {
+            "start": {
+              "line": 138,
+              "column": 3,
+              "byte_offset": 2764
+            },
+            "end": {
+              "line": 138,
+              "column": 6,
+              "byte_offset": 2767
+            }
+          },
+          "target": 13
+        },
+        "args": [
+          {
+            "kind": "PosTypeArg",
+            "span": {
+              "start": {
+                "line": 138,
+                "column": 12,
+                "byte_offset": 2773
+              },
+              "end": {
+                "line": 138,
+                "column": 15,
+                "byte_offset": 2776
+              }
+            },
+            "type": {
+              "kind": "NameType",
+              "span": {
+                "start": {
+                  "line": 138,
+                  "column": 12,
+                  "byte_offset": 2773
+                },
+                "end": {
+                  "line": 138,
+                  "column": 15,
+                  "byte_offset": 2776
+                }
+              },
+              "head": {
+                "start": {
+                  "line": 138,
+                  "column": 12,
+                  "byte_offset": 2773
+                },
+                "end": {
+                  "line": 138,
+                  "column": 15,
+                  "byte_offset": 2776
+                }
+              },
+              "target": 4
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "OutputParam",
+      "span": {
+        "start": {
+          "line": 139,
+          "column": 2,
+          "byte_offset": 2780
+        },
+        "end": {
+          "line": 139,
+          "column": 16,
+          "byte_offset": 2794
+        }
+      },
+      "parent": 32,
+      "doc": null
+    },
+    {
+      "kind": "Type",
+      "span": {
+        "start": {
+          "line": 139,
+          "column": 3,
+          "byte_offset": 2781
+        },
+        "end": {
+          "line": 139,
+          "column": 16,
+          "byte_offset": 2794
+        }
+      },
+      "parent": 124,
+      "doc": null,
+      "type_only": false,
+      "expr": {
+        "kind": "AppType",
+        "span": {
+          "start": {
+            "line": 139,
+            "column": 3,
+            "byte_offset": 2781
+          },
+          "end": {
+            "line": 139,
+            "column": 16,
+            "byte_offset": 2794
+          }
+        },
+        "base": {
+          "kind": "NameType",
+          "span": {
+            "start": {
+              "line": 139,
+              "column": 3,
+              "byte_offset": 2781
+            },
+            "end": {
+              "line": 139,
+              "column": 11,
+              "byte_offset": 2789
+            }
+          },
+          "head": {
+            "start": {
+              "line": 139,
+              "column": 3,
+              "byte_offset": 2781
+            },
+            "end": {
+              "line": 139,
+              "column": 6,
+              "byte_offset": 2784
+            }
+          },
+          "target": 13
+        },
+        "args": [
+          {
+            "kind": "PosTypeArg",
+            "span": {
+              "start": {
+                "line": 139,
+                "column": 12,
+                "byte_offset": 2790
+              },
+              "end": {
+                "line": 139,
+                "column": 15,
+                "byte_offset": 2793
+              }
+            },
+            "type": {
+              "kind": "NameType",
+              "span": {
+                "start": {
+                  "line": 139,
+                  "column": 12,
+                  "byte_offset": 2790
+                },
+                "end": {
+                  "line": 139,
+                  "column": 15,
+                  "byte_offset": 2793
+                }
+              },
+              "head": {
+                "start": {
+                  "line": 139,
+                  "column": 12,
+                  "byte_offset": 2790
+                },
+                "end": {
+                  "line": 139,
+                  "column": 15,
+                  "byte_offset": 2793
+                }
+              },
+              "target": 5
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "Type",
+      "span": {
+        "start": {
+          "line": 140,
+          "column": 6,
+          "byte_offset": 2801
+        },
+        "end": {
+          "line": 140,
+          "column": 9,
+          "byte_offset": 2804
+        }
+      },
+      "parent": 32,
+      "doc": null,
+      "type_only": false,
+      "expr": {
+        "kind": "ConstType",
+        "span": {
+          "start": {
+            "line": 140,
+            "column": 6,
+            "byte_offset": 2801
+          },
+          "end": {
+            "line": 140,
+            "column": 9,
+            "byte_offset": 2804
+          }
+        },
+        "type": "Nil",
+        "value": null
+      }
+    },
+    {
+      "kind": "PositionalParam",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 22,
+          "byte_offset": 2883
+        },
+        "end": {
+          "line": 144,
+          "column": 75,
+          "byte_offset": 2936
+        }
+      },
+      "parent": 33,
+      "doc": null,
+      "name": {
+        "start": {
+          "line": 144,
+          "column": 22,
+          "byte_offset": 2883
+        },
+        "end": {
+          "line": 144,
+          "column": 26,
+          "byte_offset": 2887
+        }
+      }
+    },
+    {
+      "kind": "Type",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 29,
+          "byte_offset": 2890
+        },
+        "end": {
+          "line": 144,
+          "column": 75,
+          "byte_offset": 2936
+        }
+      },
+      "parent": 127,
+      "doc": null,
+      "type_only": false,
+      "expr": {
+        "kind": "FuncType",
+        "span": {
+          "start": {
+            "line": 144,
+            "column": 29,
+            "byte_offset": 2890
+          },
+          "end": {
+            "line": 144,
+            "column": 75,
+            "byte_offset": 2936
+          }
+        },
+        "params": [
+          {
+            "kind": "PosTypeParam",
+            "span": {
+              "start": {
+                "line": 144,
+                "column": 31,
+                "byte_offset": 2892
+              },
+              "end": {
+                "line": 144,
+                "column": 34,
+                "byte_offset": 2895
+              }
+            },
+            "quant": null,
+            "type": {
+              "kind": "NameType",
+              "span": {
+                "start": {
+                  "line": 144,
+                  "column": 31,
+                  "byte_offset": 2892
+                },
+                "end": {
+                  "line": 144,
+                  "column": 34,
+                  "byte_offset": 2895
+                }
+              },
+              "head": {
+                "start": {
+                  "line": 144,
+                  "column": 31,
+                  "byte_offset": 2892
+                },
+                "end": {
+                  "line": 144,
+                  "column": 34,
+                  "byte_offset": 2895
+                }
+              },
+              "target": 4
+            }
+          }
+        ],
+        "input": {
+          "kind": "AppType",
+          "span": {
+            "start": {
+              "line": 144,
+              "column": 37,
+              "byte_offset": 2898
+            },
+            "end": {
+              "line": 144,
+              "column": 50,
+              "byte_offset": 2911
+            }
+          },
+          "base": {
+            "kind": "NameType",
+            "span": {
+              "start": {
+                "line": 144,
+                "column": 37,
+                "byte_offset": 2898
+              },
+              "end": {
+                "line": 144,
+                "column": 45,
+                "byte_offset": 2906
+              }
+            },
+            "head": {
+              "start": {
+                "line": 144,
+                "column": 37,
+                "byte_offset": 2898
+              },
+              "end": {
+                "line": 144,
+                "column": 40,
+                "byte_offset": 2901
+              }
+            },
+            "target": 13
+          },
+          "args": [
+            {
+              "kind": "PosTypeArg",
+              "span": {
+                "start": {
+                  "line": 144,
+                  "column": 46,
+                  "byte_offset": 2907
+                },
+                "end": {
+                  "line": 144,
+                  "column": 49,
+                  "byte_offset": 2910
+                }
+              },
+              "type": {
+                "kind": "NameType",
+                "span": {
+                  "start": {
+                    "line": 144,
+                    "column": 46,
+                    "byte_offset": 2907
+                  },
+                  "end": {
+                    "line": 144,
+                    "column": 49,
+                    "byte_offset": 2910
+                  }
+                },
+                "head": {
+                  "start": {
+                    "line": 144,
+                    "column": 46,
+                    "byte_offset": 2907
+                  },
+                  "end": {
+                    "line": 144,
+                    "column": 49,
+                    "byte_offset": 2910
+                  }
+                },
+                "target": 4
+              }
+            }
+          ]
+        },
+        "output": {
+          "kind": "AppType",
+          "span": {
+            "start": {
+              "line": 144,
+              "column": 53,
+              "byte_offset": 2914
+            },
+            "end": {
+              "line": 144,
+              "column": 66,
+              "byte_offset": 2927
+            }
+          },
+          "base": {
+            "kind": "NameType",
+            "span": {
+              "start": {
+                "line": 144,
+                "column": 53,
+                "byte_offset": 2914
+              },
+              "end": {
+                "line": 144,
+                "column": 61,
+                "byte_offset": 2922
+              }
+            },
+            "head": {
+              "start": {
+                "line": 144,
+                "column": 53,
+                "byte_offset": 2914
+              },
+              "end": {
+                "line": 144,
+                "column": 56,
+                "byte_offset": 2917
+              }
+            },
+            "target": 13
+          },
+          "args": [
+            {
+              "kind": "PosTypeArg",
+              "span": {
+                "start": {
+                  "line": 144,
+                  "column": 62,
+                  "byte_offset": 2923
+                },
+                "end": {
+                  "line": 144,
+                  "column": 65,
+                  "byte_offset": 2926
+                }
+              },
+              "type": {
+                "kind": "NameType",
+                "span": {
+                  "start": {
+                    "line": 144,
+                    "column": 62,
+                    "byte_offset": 2923
+                  },
+                  "end": {
+                    "line": 144,
+                    "column": 65,
+                    "byte_offset": 2926
+                  }
+                },
+                "head": {
+                  "start": {
+                    "line": 144,
+                    "column": 62,
+                    "byte_offset": 2923
+                  },
+                  "end": {
+                    "line": 144,
+                    "column": 65,
+                    "byte_offset": 2926
+                  }
+                },
+                "target": 5
+              }
+            }
+          ]
+        },
+        "ret": {
+          "kind": "NameType",
+          "span": {
+            "start": {
+              "line": 144,
+              "column": 71,
+              "byte_offset": 2932
+            },
+            "end": {
+              "line": 144,
+              "column": 74,
+              "byte_offset": 2935
+            }
+          },
+          "head": {
+            "start": {
+              "line": 144,
+              "column": 71,
+              "byte_offset": 2932
+            },
+            "end": {
+              "line": 144,
+              "column": 74,
+              "byte_offset": 2935
+            }
+          },
+          "target": 4
+        }
+      }
+    },
+    {
+      "kind": "Type",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 79,
+          "byte_offset": 2940
+        },
+        "end": {
+          "line": 144,
+          "column": 82,
+          "byte_offset": 2943
+        }
+      },
+      "parent": 33,
+      "doc": null,
+      "type_only": false,
+      "expr": {
+        "kind": "NameType",
+        "span": {
+          "start": {
+            "line": 144,
+            "column": 79,
+            "byte_offset": 2940
+          },
+          "end": {
+            "line": 144,
+            "column": 82,
+            "byte_offset": 2943
+          }
+        },
+        "head": {
+          "start": {
+            "line": 144,
+            "column": 79,
+            "byte_offset": 2940
+          },
+          "end": {
+            "line": 144,
+            "column": 82,
+            "byte_offset": 2943
+          }
+        },
+        "target": 4
       }
     }
   ],
@@ -5739,7 +6560,7 @@
           "byte_offset": 275
         }
       },
-      "ref": 32,
+      "ref": 34,
       "context": null
     },
     {
@@ -5790,7 +6611,7 @@
           "byte_offset": 285
         }
       },
-      "ref": 33,
+      "ref": 35,
       "context": null
     },
     {
@@ -5892,7 +6713,7 @@
           "byte_offset": 303
         }
       },
-      "ref": 34,
+      "ref": 36,
       "context": null
     },
     {
@@ -5943,7 +6764,7 @@
           "byte_offset": 320
         }
       },
-      "ref": 33,
+      "ref": 35,
       "context": null
     },
     {
@@ -5977,7 +6798,7 @@
           "byte_offset": 326
         }
       },
-      "ref": 32,
+      "ref": 34,
       "context": null
     },
     {
@@ -6011,7 +6832,7 @@
           "byte_offset": 334
         }
       },
-      "ref": 34,
+      "ref": 36,
       "context": null
     },
     {
@@ -6062,7 +6883,7 @@
           "byte_offset": 415
         }
       },
-      "ref": 35,
+      "ref": 37,
       "context": null
     },
     {
@@ -6079,7 +6900,7 @@
           "byte_offset": 419
         }
       },
-      "ref": 35,
+      "ref": 37,
       "context": null
     },
     {
@@ -6130,7 +6951,7 @@
           "byte_offset": 470
         }
       },
-      "ref": 36,
+      "ref": 38,
       "context": null
     },
     {
@@ -6232,7 +7053,7 @@
           "byte_offset": 526
         }
       },
-      "ref": 37,
+      "ref": 39,
       "context": null
     },
     {
@@ -6385,7 +7206,7 @@
           "byte_offset": 571
         }
       },
-      "ref": 38,
+      "ref": 40,
       "context": null
     },
     {
@@ -6572,7 +7393,7 @@
           "byte_offset": 595
         }
       },
-      "ref": 39,
+      "ref": 41,
       "context": null
     },
     {
@@ -6623,7 +7444,7 @@
           "byte_offset": 601
         }
       },
-      "ref": 40,
+      "ref": 42,
       "context": null
     },
     {
@@ -6725,7 +7546,7 @@
           "byte_offset": 655
         }
       },
-      "ref": 42,
+      "ref": 44,
       "context": null
     },
     {
@@ -6895,7 +7716,7 @@
           "byte_offset": 721
         }
       },
-      "ref": 44,
+      "ref": 46,
       "context": null
     },
     {
@@ -7031,7 +7852,7 @@
           "byte_offset": 778
         }
       },
-      "ref": 46,
+      "ref": 48,
       "context": null
     },
     {
@@ -7116,7 +7937,7 @@
           "byte_offset": 820
         }
       },
-      "ref": 48,
+      "ref": 50,
       "context": null
     },
     {
@@ -7133,7 +7954,7 @@
           "byte_offset": 826
         }
       },
-      "ref": 49,
+      "ref": 51,
       "context": null
     },
     {
@@ -7150,7 +7971,7 @@
           "byte_offset": 828
         }
       },
-      "ref": 50,
+      "ref": 52,
       "context": null
     },
     {
@@ -7167,7 +7988,7 @@
           "byte_offset": 837
         }
       },
-      "ref": 49,
+      "ref": 51,
       "context": null
     },
     {
@@ -7235,7 +8056,7 @@
           "byte_offset": 843
         }
       },
-      "ref": 50,
+      "ref": 52,
       "context": null
     },
     {
@@ -7286,7 +8107,7 @@
           "byte_offset": 874
         }
       },
-      "ref": 51,
+      "ref": 53,
       "context": null
     },
     {
@@ -7303,7 +8124,7 @@
           "byte_offset": 880
         }
       },
-      "ref": 52,
+      "ref": 54,
       "context": null
     },
     {
@@ -7354,7 +8175,7 @@
           "byte_offset": 894
         }
       },
-      "ref": 52,
+      "ref": 54,
       "context": null
     },
     {
@@ -7490,7 +8311,7 @@
           "byte_offset": 967
         }
       },
-      "ref": 53,
+      "ref": 55,
       "context": null
     },
     {
@@ -7507,7 +8328,7 @@
           "byte_offset": 972
         }
       },
-      "ref": 55,
+      "ref": 57,
       "context": null
     },
     {
@@ -7558,7 +8379,7 @@
           "byte_offset": 988
         }
       },
-      "ref": 55,
+      "ref": 57,
       "context": null
     },
     {
@@ -7643,7 +8464,7 @@
           "byte_offset": 1020
         }
       },
-      "ref": 57,
+      "ref": 59,
       "context": null
     },
     {
@@ -7677,7 +8498,7 @@
           "byte_offset": 1022
         }
       },
-      "ref": 58,
+      "ref": 60,
       "context": null
     },
     {
@@ -7711,7 +8532,7 @@
           "byte_offset": 1028
         }
       },
-      "ref": 59,
+      "ref": 61,
       "context": null
     },
     {
@@ -7728,7 +8549,7 @@
           "byte_offset": 1031
         }
       },
-      "ref": 60,
+      "ref": 62,
       "context": null
     },
     {
@@ -7779,7 +8600,7 @@
           "byte_offset": 1038
         }
       },
-      "ref": 61,
+      "ref": 63,
       "context": null
     },
     {
@@ -7830,7 +8651,7 @@
           "byte_offset": 1055
         }
       },
-      "ref": 59,
+      "ref": 61,
       "context": null
     },
     {
@@ -7932,7 +8753,7 @@
           "byte_offset": 1065
         }
       },
-      "ref": 59,
+      "ref": 61,
       "context": null
     },
     {
@@ -8000,7 +8821,7 @@
           "byte_offset": 1072
         }
       },
-      "ref": 60,
+      "ref": 62,
       "context": null
     },
     {
@@ -8051,7 +8872,7 @@
           "byte_offset": 1129
         }
       },
-      "ref": 62,
+      "ref": 64,
       "context": null
     },
     {
@@ -8085,7 +8906,7 @@
           "byte_offset": 1131
         }
       },
-      "ref": 63,
+      "ref": 65,
       "context": null
     },
     {
@@ -8153,7 +8974,7 @@
           "byte_offset": 1143
         }
       },
-      "ref": 64,
+      "ref": 66,
       "context": null
     },
     {
@@ -8221,7 +9042,7 @@
           "byte_offset": 1153
         }
       },
-      "ref": 63,
+      "ref": 65,
       "context": null
     },
     {
@@ -8272,7 +9093,7 @@
           "byte_offset": 1159
         }
       },
-      "ref": 63,
+      "ref": 65,
       "context": null
     },
     {
@@ -8323,7 +9144,7 @@
           "byte_offset": 1173
         }
       },
-      "ref": 64,
+      "ref": 66,
       "context": null
     },
     {
@@ -8391,7 +9212,7 @@
           "byte_offset": 1207
         }
       },
-      "ref": 67,
+      "ref": 69,
       "context": null
     },
     {
@@ -8408,7 +9229,7 @@
           "byte_offset": 1212
         }
       },
-      "ref": 68,
+      "ref": 70,
       "context": null
     },
     {
@@ -8595,7 +9416,7 @@
           "byte_offset": 1329
         }
       },
-      "ref": 70,
+      "ref": 72,
       "context": null
     },
     {
@@ -8697,7 +9518,7 @@
           "byte_offset": 1373
         }
       },
-      "ref": 71,
+      "ref": 73,
       "context": null
     },
     {
@@ -8782,7 +9603,7 @@
           "byte_offset": 1387
         }
       },
-      "ref": 73,
+      "ref": 75,
       "context": null
     },
     {
@@ -9173,7 +9994,7 @@
           "byte_offset": 1481
         }
       },
-      "ref": 76,
+      "ref": 78,
       "context": null
     },
     {
@@ -9207,7 +10028,7 @@
           "byte_offset": 1488
         }
       },
-      "ref": 77,
+      "ref": 79,
       "context": null
     },
     {
@@ -9275,7 +10096,7 @@
           "byte_offset": 1497
         }
       },
-      "ref": 76,
+      "ref": 78,
       "context": null
     },
     {
@@ -9343,7 +10164,7 @@
           "byte_offset": 1508
         }
       },
-      "ref": 79,
+      "ref": 81,
       "context": null
     },
     {
@@ -9513,7 +10334,7 @@
           "byte_offset": 1527
         }
       },
-      "ref": 76,
+      "ref": 78,
       "context": null
     },
     {
@@ -9615,7 +10436,7 @@
           "byte_offset": 1543
         }
       },
-      "ref": 81,
+      "ref": 83,
       "context": null
     },
     {
@@ -9849,8 +10670,25 @@
         },
         "end": {
           "line": 81,
-          "column": 111,
-          "byte_offset": 1577
+          "column": 109,
+          "byte_offset": 1575
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 81,
+          "column": 109,
+          "byte_offset": 1575
+        },
+        "end": {
+          "line": 81,
+          "column": 110,
+          "byte_offset": 1576
         }
       },
       "ref": null,
@@ -9861,8 +10699,25 @@
       "span": {
         "start": {
           "line": 81,
-          "column": 111,
-          "byte_offset": 1577
+          "column": 110,
+          "byte_offset": 1576
+        },
+        "end": {
+          "line": 81,
+          "column": 113,
+          "byte_offset": 1579
+        }
+      },
+      "ref": 5,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 81,
+          "column": 113,
+          "byte_offset": 1579
         },
         "end": {
           "line": 81,
@@ -9870,7 +10725,7 @@
           "byte_offset": 1580
         }
       },
-      "ref": 5,
+      "ref": null,
       "context": null
     },
     {
@@ -10023,7 +10878,7 @@
           "byte_offset": 1599
         }
       },
-      "ref": 83,
+      "ref": 85,
       "context": null
     },
     {
@@ -10295,7 +11150,7 @@
           "byte_offset": 1640
         }
       },
-      "ref": 76,
+      "ref": 78,
       "context": null
     },
     {
@@ -10312,7 +11167,7 @@
           "byte_offset": 1648
         }
       },
-      "ref": 77,
+      "ref": 79,
       "context": null
     },
     {
@@ -10465,7 +11320,7 @@
           "byte_offset": 1806
         }
       },
-      "ref": 86,
+      "ref": 88,
       "context": null
     },
     {
@@ -10516,7 +11371,7 @@
           "byte_offset": 1847
         }
       },
-      "ref": 87,
+      "ref": 89,
       "context": null
     },
     {
@@ -10584,7 +11439,7 @@
           "byte_offset": 1899
         }
       },
-      "ref": 88,
+      "ref": 90,
       "context": null
     },
     {
@@ -10635,7 +11490,7 @@
           "byte_offset": 1915
         }
       },
-      "ref": 86,
+      "ref": 88,
       "context": null
     },
     {
@@ -10669,7 +11524,7 @@
           "byte_offset": 1921
         }
       },
-      "ref": 87,
+      "ref": 89,
       "context": null
     },
     {
@@ -10703,7 +11558,7 @@
           "byte_offset": 1929
         }
       },
-      "ref": 88,
+      "ref": 90,
       "context": null
     },
     {
@@ -10822,7 +11677,7 @@
           "byte_offset": 2003
         }
       },
-      "ref": 89,
+      "ref": 91,
       "context": null
     },
     {
@@ -10839,7 +11694,7 @@
           "byte_offset": 2008
         }
       },
-      "ref": 90,
+      "ref": 92,
       "context": null
     },
     {
@@ -10924,7 +11779,7 @@
           "byte_offset": 2053
         }
       },
-      "ref": 92,
+      "ref": 94,
       "context": null
     },
     {
@@ -10941,7 +11796,7 @@
           "byte_offset": 2058
         }
       },
-      "ref": 93,
+      "ref": 95,
       "context": null
     },
     {
@@ -10958,7 +11813,7 @@
           "byte_offset": 2064
         }
       },
-      "ref": 94,
+      "ref": 96,
       "context": null
     },
     {
@@ -11196,7 +12051,7 @@
           "byte_offset": 2169
         }
       },
-      "ref": 99,
+      "ref": 101,
       "context": null
     },
     {
@@ -11213,7 +12068,7 @@
           "byte_offset": 2174
         }
       },
-      "ref": 100,
+      "ref": 102,
       "context": null
     },
     {
@@ -11298,7 +12153,7 @@
           "byte_offset": 2196
         }
       },
-      "ref": 102,
+      "ref": 104,
       "context": null
     },
     {
@@ -11315,7 +12170,7 @@
           "byte_offset": 2202
         }
       },
-      "ref": 103,
+      "ref": 105,
       "context": null
     },
     {
@@ -11400,7 +12255,7 @@
           "byte_offset": 2238
         }
       },
-      "ref": 104,
+      "ref": 106,
       "context": null
     },
     {
@@ -11536,7 +12391,7 @@
           "byte_offset": 2281
         }
       },
-      "ref": 107,
+      "ref": 109,
       "context": null
     },
     {
@@ -11672,7 +12527,7 @@
           "byte_offset": 2310
         }
       },
-      "ref": 110,
+      "ref": 112,
       "context": null
     },
     {
@@ -11723,7 +12578,7 @@
           "byte_offset": 2315
         }
       },
-      "ref": 110,
+      "ref": 112,
       "context": null
     },
     {
@@ -11757,7 +12612,7 @@
           "byte_offset": 2319
         }
       },
-      "ref": 110,
+      "ref": 112,
       "context": null
     },
     {
@@ -11859,7 +12714,7 @@
           "byte_offset": 2405
         }
       },
-      "ref": 111,
+      "ref": 113,
       "context": null
     },
     {
@@ -11910,7 +12765,7 @@
           "byte_offset": 2416
         }
       },
-      "ref": 112,
+      "ref": 114,
       "context": null
     },
     {
@@ -12029,7 +12884,7 @@
           "byte_offset": 2431
         }
       },
-      "ref": 111,
+      "ref": 113,
       "context": null
     },
     {
@@ -12131,7 +12986,7 @@
           "byte_offset": 2447
         }
       },
-      "ref": 111,
+      "ref": 113,
       "context": null
     },
     {
@@ -12165,7 +13020,7 @@
           "byte_offset": 2457
         }
       },
-      "ref": 112,
+      "ref": 114,
       "context": null
     },
     {
@@ -12267,7 +13122,7 @@
           "byte_offset": 2515
         }
       },
-      "ref": 115,
+      "ref": 117,
       "context": null
     },
     {
@@ -12642,6 +13497,924 @@
         }
       },
       "ref": 5,
+      "context": null
+    },
+    {
+      "kind": "KEYWORD",
+      "span": {
+        "start": {
+          "line": 135,
+          "column": 0,
+          "byte_offset": 2707
+        },
+        "end": {
+          "line": 135,
+          "column": 3,
+          "byte_offset": 2710
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "KEYWORD",
+      "span": {
+        "start": {
+          "line": 135,
+          "column": 4,
+          "byte_offset": 2711
+        },
+        "end": {
+          "line": 135,
+          "column": 7,
+          "byte_offset": 2714
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "VARIABLE",
+      "span": {
+        "start": {
+          "line": 135,
+          "column": 8,
+          "byte_offset": 2715
+        },
+        "end": {
+          "line": 135,
+          "column": 17,
+          "byte_offset": 2724
+        }
+      },
+      "ref": 32,
+      "context": null
+    },
+    {
+      "kind": "VARIABLE",
+      "span": {
+        "start": {
+          "line": 137,
+          "column": 2,
+          "byte_offset": 2749
+        },
+        "end": {
+          "line": 137,
+          "column": 7,
+          "byte_offset": 2754
+        }
+      },
+      "ref": 120,
+      "context": null
+    },
+    {
+      "kind": "ANNOTATION",
+      "span": {
+        "start": {
+          "line": 137,
+          "column": 8,
+          "byte_offset": 2755
+        },
+        "end": {
+          "line": 137,
+          "column": 9,
+          "byte_offset": 2756
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "TYPE",
+      "span": {
+        "start": {
+          "line": 137,
+          "column": 10,
+          "byte_offset": 2757
+        },
+        "end": {
+          "line": 137,
+          "column": 13,
+          "byte_offset": 2760
+        }
+      },
+      "ref": 4,
+      "context": null
+    },
+    {
+      "kind": "SIGIL",
+      "span": {
+        "start": {
+          "line": 138,
+          "column": 2,
+          "byte_offset": 2763
+        },
+        "end": {
+          "line": 138,
+          "column": 3,
+          "byte_offset": 2764
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "TYPE",
+      "span": {
+        "start": {
+          "line": 138,
+          "column": 3,
+          "byte_offset": 2764
+        },
+        "end": {
+          "line": 138,
+          "column": 6,
+          "byte_offset": 2767
+        }
+      },
+      "ref": 13,
+      "context": null
+    },
+    {
+      "kind": "OPERATOR",
+      "span": {
+        "start": {
+          "line": 138,
+          "column": 6,
+          "byte_offset": 2767
+        },
+        "end": {
+          "line": 138,
+          "column": 7,
+          "byte_offset": 2768
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "TYPE",
+      "span": {
+        "start": {
+          "line": 138,
+          "column": 7,
+          "byte_offset": 2768
+        },
+        "end": {
+          "line": 138,
+          "column": 11,
+          "byte_offset": 2772
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 138,
+          "column": 11,
+          "byte_offset": 2772
+        },
+        "end": {
+          "line": 138,
+          "column": 12,
+          "byte_offset": 2773
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "TYPE",
+      "span": {
+        "start": {
+          "line": 138,
+          "column": 12,
+          "byte_offset": 2773
+        },
+        "end": {
+          "line": 138,
+          "column": 15,
+          "byte_offset": 2776
+        }
+      },
+      "ref": 4,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 138,
+          "column": 15,
+          "byte_offset": 2776
+        },
+        "end": {
+          "line": 138,
+          "column": 16,
+          "byte_offset": 2777
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "SIGIL",
+      "span": {
+        "start": {
+          "line": 139,
+          "column": 2,
+          "byte_offset": 2780
+        },
+        "end": {
+          "line": 139,
+          "column": 3,
+          "byte_offset": 2781
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "TYPE",
+      "span": {
+        "start": {
+          "line": 139,
+          "column": 3,
+          "byte_offset": 2781
+        },
+        "end": {
+          "line": 139,
+          "column": 6,
+          "byte_offset": 2784
+        }
+      },
+      "ref": 13,
+      "context": null
+    },
+    {
+      "kind": "OPERATOR",
+      "span": {
+        "start": {
+          "line": 139,
+          "column": 6,
+          "byte_offset": 2784
+        },
+        "end": {
+          "line": 139,
+          "column": 7,
+          "byte_offset": 2785
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "TYPE",
+      "span": {
+        "start": {
+          "line": 139,
+          "column": 7,
+          "byte_offset": 2785
+        },
+        "end": {
+          "line": 139,
+          "column": 11,
+          "byte_offset": 2789
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 139,
+          "column": 11,
+          "byte_offset": 2789
+        },
+        "end": {
+          "line": 139,
+          "column": 12,
+          "byte_offset": 2790
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "TYPE",
+      "span": {
+        "start": {
+          "line": 139,
+          "column": 12,
+          "byte_offset": 2790
+        },
+        "end": {
+          "line": 139,
+          "column": 15,
+          "byte_offset": 2793
+        }
+      },
+      "ref": 5,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 139,
+          "column": 15,
+          "byte_offset": 2793
+        },
+        "end": {
+          "line": 139,
+          "column": 16,
+          "byte_offset": 2794
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "OPERATOR",
+      "span": {
+        "start": {
+          "line": 140,
+          "column": 3,
+          "byte_offset": 2798
+        },
+        "end": {
+          "line": 140,
+          "column": 5,
+          "byte_offset": 2800
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "CONSTANT",
+      "span": {
+        "start": {
+          "line": 140,
+          "column": 6,
+          "byte_offset": 2801
+        },
+        "end": {
+          "line": 140,
+          "column": 9,
+          "byte_offset": 2804
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "CONSTANT",
+      "span": {
+        "start": {
+          "line": 141,
+          "column": 2,
+          "byte_offset": 2807
+        },
+        "end": {
+          "line": 141,
+          "column": 5,
+          "byte_offset": 2810
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "KEYWORD",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 0,
+          "byte_offset": 2861
+        },
+        "end": {
+          "line": 144,
+          "column": 3,
+          "byte_offset": 2864
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "KEYWORD",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 4,
+          "byte_offset": 2865
+        },
+        "end": {
+          "line": 144,
+          "column": 7,
+          "byte_offset": 2868
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "VARIABLE",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 8,
+          "byte_offset": 2869
+        },
+        "end": {
+          "line": 144,
+          "column": 21,
+          "byte_offset": 2882
+        }
+      },
+      "ref": 33,
+      "context": null
+    },
+    {
+      "kind": "VARIABLE",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 22,
+          "byte_offset": 2883
+        },
+        "end": {
+          "line": 144,
+          "column": 26,
+          "byte_offset": 2887
+        }
+      },
+      "ref": 127,
+      "context": null
+    },
+    {
+      "kind": "ANNOTATION",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 27,
+          "byte_offset": 2888
+        },
+        "end": {
+          "line": 144,
+          "column": 28,
+          "byte_offset": 2889
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 29,
+          "byte_offset": 2890
+        },
+        "end": {
+          "line": 144,
+          "column": 30,
+          "byte_offset": 2891
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 30,
+          "byte_offset": 2891
+        },
+        "end": {
+          "line": 144,
+          "column": 31,
+          "byte_offset": 2892
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "TYPE",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 31,
+          "byte_offset": 2892
+        },
+        "end": {
+          "line": 144,
+          "column": 34,
+          "byte_offset": 2895
+        }
+      },
+      "ref": 4,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 34,
+          "byte_offset": 2895
+        },
+        "end": {
+          "line": 144,
+          "column": 35,
+          "byte_offset": 2896
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "SIGIL",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 36,
+          "byte_offset": 2897
+        },
+        "end": {
+          "line": 144,
+          "column": 37,
+          "byte_offset": 2898
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "TYPE",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 37,
+          "byte_offset": 2898
+        },
+        "end": {
+          "line": 144,
+          "column": 40,
+          "byte_offset": 2901
+        }
+      },
+      "ref": 13,
+      "context": null
+    },
+    {
+      "kind": "OPERATOR",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 40,
+          "byte_offset": 2901
+        },
+        "end": {
+          "line": 144,
+          "column": 41,
+          "byte_offset": 2902
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "TYPE",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 41,
+          "byte_offset": 2902
+        },
+        "end": {
+          "line": 144,
+          "column": 45,
+          "byte_offset": 2906
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 45,
+          "byte_offset": 2906
+        },
+        "end": {
+          "line": 144,
+          "column": 46,
+          "byte_offset": 2907
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "TYPE",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 46,
+          "byte_offset": 2907
+        },
+        "end": {
+          "line": 144,
+          "column": 49,
+          "byte_offset": 2910
+        }
+      },
+      "ref": 4,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 49,
+          "byte_offset": 2910
+        },
+        "end": {
+          "line": 144,
+          "column": 50,
+          "byte_offset": 2911
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "SIGIL",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 52,
+          "byte_offset": 2913
+        },
+        "end": {
+          "line": 144,
+          "column": 53,
+          "byte_offset": 2914
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "TYPE",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 53,
+          "byte_offset": 2914
+        },
+        "end": {
+          "line": 144,
+          "column": 56,
+          "byte_offset": 2917
+        }
+      },
+      "ref": 13,
+      "context": null
+    },
+    {
+      "kind": "OPERATOR",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 56,
+          "byte_offset": 2917
+        },
+        "end": {
+          "line": 144,
+          "column": 57,
+          "byte_offset": 2918
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "TYPE",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 57,
+          "byte_offset": 2918
+        },
+        "end": {
+          "line": 144,
+          "column": 61,
+          "byte_offset": 2922
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 61,
+          "byte_offset": 2922
+        },
+        "end": {
+          "line": 144,
+          "column": 62,
+          "byte_offset": 2923
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "TYPE",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 62,
+          "byte_offset": 2923
+        },
+        "end": {
+          "line": 144,
+          "column": 65,
+          "byte_offset": 2926
+        }
+      },
+      "ref": 5,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 65,
+          "byte_offset": 2926
+        },
+        "end": {
+          "line": 144,
+          "column": 66,
+          "byte_offset": 2927
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 66,
+          "byte_offset": 2927
+        },
+        "end": {
+          "line": 144,
+          "column": 67,
+          "byte_offset": 2928
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "OPERATOR",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 68,
+          "byte_offset": 2929
+        },
+        "end": {
+          "line": 144,
+          "column": 70,
+          "byte_offset": 2931
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "TYPE",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 71,
+          "byte_offset": 2932
+        },
+        "end": {
+          "line": 144,
+          "column": 74,
+          "byte_offset": 2935
+        }
+      },
+      "ref": 4,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 74,
+          "byte_offset": 2935
+        },
+        "end": {
+          "line": 144,
+          "column": 75,
+          "byte_offset": 2936
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "OPERATOR",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 76,
+          "byte_offset": 2937
+        },
+        "end": {
+          "line": 144,
+          "column": 78,
+          "byte_offset": 2939
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "TYPE",
+      "span": {
+        "start": {
+          "line": 144,
+          "column": 79,
+          "byte_offset": 2940
+        },
+        "end": {
+          "line": 144,
+          "column": 82,
+          "byte_offset": 2943
+        }
+      },
+      "ref": 4,
+      "context": null
+    },
+    {
+      "kind": "VARIABLE",
+      "span": {
+        "start": {
+          "line": 145,
+          "column": 2,
+          "byte_offset": 2946
+        },
+        "end": {
+          "line": 145,
+          "column": 6,
+          "byte_offset": 2950
+        }
+      },
+      "ref": 127,
+      "context": "CALL"
+    },
+    {
+      "kind": "NUMBER",
+      "span": {
+        "start": {
+          "line": 145,
+          "column": 7,
+          "byte_offset": 2951
+        },
+        "end": {
+          "line": 145,
+          "column": 8,
+          "byte_offset": 2952
+        }
+      },
+      "ref": null,
       "context": null
     },
     {
@@ -13357,6 +15130,57 @@
       },
       "ref": null,
       "context": null
+    },
+    {
+      "kind": "COMMENT",
+      "span": {
+        "start": {
+          "line": 134,
+          "column": 0,
+          "byte_offset": 2642
+        },
+        "end": {
+          "line": 134,
+          "column": 64,
+          "byte_offset": 2706
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "COMMENT",
+      "span": {
+        "start": {
+          "line": 136,
+          "column": 2,
+          "byte_offset": 2727
+        },
+        "end": {
+          "line": 136,
+          "column": 21,
+          "byte_offset": 2746
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "COMMENT",
+      "span": {
+        "start": {
+          "line": 143,
+          "column": 0,
+          "byte_offset": 2812
+        },
+        "end": {
+          "line": 143,
+          "column": 48,
+          "byte_offset": 2860
+        }
+      },
+      "ref": null,
+      "context": null
     }
   ],
   "diagnostics": [
@@ -13487,6 +15311,25 @@
           "line": 81,
           "column": 133,
           "byte_offset": 1599
+        }
+      },
+      "annotations": [],
+      "notes": [],
+      "patches": []
+    },
+    {
+      "severity": "WARNING",
+      "message": "unused variable",
+      "span": {
+        "start": {
+          "line": 137,
+          "column": 2,
+          "byte_offset": 2749
+        },
+        "end": {
+          "line": 137,
+          "column": 7,
+          "byte_offset": 2754
         }
       },
       "annotations": [],
@@ -13976,7 +15819,7 @@
                   "type": {
                     "kind": "name",
                     "name": "S",
-                    "target": 63
+                    "target": 65
                   }
                 }
               ]
@@ -13985,7 +15828,7 @@
             "returns": {
               "kind": "name",
               "name": "S",
-              "target": 63
+              "target": 65
             }
           }
         ]
@@ -14159,7 +16002,7 @@
                   "type": {
                     "kind": "name",
                     "name": "T",
-                    "target": 76
+                    "target": 78
                   }
                 }
               ]
@@ -14175,7 +16018,7 @@
               "params": [
                 {
                   "kind": "pos",
-                  "optional": false,
+                  "quant": null,
                   "type": {
                     "kind": "name",
                     "name": "Int",
@@ -14184,7 +16027,7 @@
                 },
                 {
                   "kind": "pos",
-                  "optional": true,
+                  "quant": "opt",
                   "type": {
                     "kind": "name",
                     "name": "Str",
@@ -14195,7 +16038,7 @@
               "ret": {
                 "kind": "name",
                 "name": "T",
-                "target": 76
+                "target": 78
               }
             }
           },
@@ -14219,7 +16062,7 @@
                     "params": [
                       {
                         "kind": "key",
-                        "optional": false,
+                        "quant": null,
                         "key": "name",
                         "type": {
                           "kind": "name",
@@ -14229,7 +16072,7 @@
                       },
                       {
                         "kind": "key",
-                        "optional": true,
+                        "quant": "opt",
                         "key": "port",
                         "type": {
                           "kind": "name",
@@ -14238,8 +16081,9 @@
                         }
                       },
                       {
-                        "kind": "entry_rest",
-                        "optional": false,
+                        "kind": "key",
+                        "quant": "star",
+                        "key": "(Str)",
                         "key_type": {
                           "kind": "name",
                           "name": "Str",
@@ -14288,7 +16132,7 @@
         "returns": {
           "kind": "name",
           "name": "T",
-          "target": 76
+          "target": 78
         }
       },
       {
@@ -14634,7 +16478,7 @@
               "ret": {
                 "kind": "name",
                 "name": "Rs",
-                "target": 111
+                "target": 113
               }
             }
           }
@@ -14652,7 +16496,7 @@
               "type": {
                 "kind": "name",
                 "name": "Rs",
-                "target": 111
+                "target": 113
               }
             }
           ]
@@ -14750,6 +16594,177 @@
           "kind": "name",
           "name": "Str",
           "target": 5
+        }
+      },
+      {
+        "kind": "function",
+        "name": "transform",
+        "pub": true,
+        "span": {
+          "start": {
+            "line": 135,
+            "column": 8,
+            "byte_offset": 2715
+          },
+          "end": {
+            "line": 135,
+            "column": 17,
+            "byte_offset": 2724
+          }
+        },
+        "doc": "Transforms the strand's ambient input into its ambient output.",
+        "params": [
+          {
+            "kind": "pos",
+            "name": "count",
+            "optional": false,
+            "doc": "How many to take.",
+            "type": {
+              "kind": "name",
+              "name": "Int",
+              "target": 4
+            }
+          },
+          {
+            "kind": "input",
+            "optional": false,
+            "doc": null,
+            "type": {
+              "kind": "app",
+              "base": {
+                "kind": "name",
+                "name": "std.Iter",
+                "target": 13,
+                "module": "std"
+              },
+              "args": [
+                {
+                  "kind": "pos",
+                  "type": {
+                    "kind": "name",
+                    "name": "Int",
+                    "target": 4
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "kind": "output",
+            "optional": false,
+            "doc": null,
+            "type": {
+              "kind": "app",
+              "base": {
+                "kind": "name",
+                "name": "std.Sink",
+                "target": 13,
+                "module": "std"
+              },
+              "args": [
+                {
+                  "kind": "pos",
+                  "type": {
+                    "kind": "name",
+                    "name": "Str",
+                    "target": 5
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "returns": {
+          "kind": "const",
+          "text": "nil"
+        }
+      },
+      {
+        "kind": "function",
+        "name": "with_channels",
+        "pub": true,
+        "span": {
+          "start": {
+            "line": 144,
+            "column": 8,
+            "byte_offset": 2869
+          },
+          "end": {
+            "line": 144,
+            "column": 21,
+            "byte_offset": 2882
+          }
+        },
+        "doc": "Runs a function that has implicits of its own.",
+        "params": [
+          {
+            "kind": "pos",
+            "name": "func",
+            "optional": false,
+            "doc": null,
+            "type": {
+              "kind": "func",
+              "params": [
+                {
+                  "kind": "pos",
+                  "quant": null,
+                  "type": {
+                    "kind": "name",
+                    "name": "Int",
+                    "target": 4
+                  }
+                }
+              ],
+              "input": {
+                "kind": "app",
+                "base": {
+                  "kind": "name",
+                  "name": "std.Iter",
+                  "target": 13,
+                  "module": "std"
+                },
+                "args": [
+                  {
+                    "kind": "pos",
+                    "type": {
+                      "kind": "name",
+                      "name": "Int",
+                      "target": 4
+                    }
+                  }
+                ]
+              },
+              "output": {
+                "kind": "app",
+                "base": {
+                  "kind": "name",
+                  "name": "std.Sink",
+                  "target": 13,
+                  "module": "std"
+                },
+                "args": [
+                  {
+                    "kind": "pos",
+                    "type": {
+                      "kind": "name",
+                      "name": "Str",
+                      "target": 5
+                    }
+                  }
+                ]
+              },
+              "ret": {
+                "kind": "name",
+                "name": "Int",
+                "target": 4
+              }
+            }
+          }
+        ],
+        "returns": {
+          "kind": "name",
+          "name": "Int",
+          "target": 4
         }
       }
     ]

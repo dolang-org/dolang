@@ -2,6 +2,10 @@
 # Concurrency primitives.
 #
 
+pub @let PipeSender[I] = ...
+
+pub @let PipeReceiver[I] = ...
+
 # Stores a strand-local value.
 pub class Key
   #
@@ -143,7 +147,7 @@ pub class Sender[T]: std.Sink[T]
     ...
 
 
-# Handles a background strand created by [`spawn`](strand).
+# Handles a background strand created by [`spawn`](strand.spawn).
 pub class Strand[R]
   #
   # Whether the strand has completed execution.
@@ -176,7 +180,7 @@ pub class Strand[R]
 
 
 # A [`Strand`](strand.Strand) with channel-backed input and output, created by
-# [`stream`](strand).
+# [`stream`](strand.stream).
 #
 # Its iterator re-raises a strand error after draining output; its sink reports
 # ordinary shutdown after input closes.
@@ -222,22 +226,21 @@ do -> Tuple[Sender[T], Receiver[T]]
   ...
 
 # Collects the strand-local input into a new array.
-@def collect() -> Array[Value]
+@def collect[I] < Iter[I] -> Array[I]
 
 # Collects the strand-local input into a sink, returning the sink.
-@def collect[S @ Sinkable[Value]]
-  # collection to add to
-  target @ S
-do -> S
+@def collect[I, S @ Sinkable[I]] target@S <Iter[I] -> S
 
 pub def collect ...args
   ...
 
 # Transforms each value of the strand-local input and writes the result to the
 # strand-local output.
-pub def each
+pub def each[I, O]
   # a function that transforms a single value
-  func @ (Value -> Value)
+  func @ (I -> O)
+  < Iter[I]
+  > Sink[O]
 do
   ...
 
@@ -249,54 +252,59 @@ do -> Tuple[...Rs]
   ...
 
 # Writes the values of an iterable to the strand-local output.
-pub def from
+pub def from[O]
   # an iterable to emit values from
-  value @ Iterable[Value]
+  value @ Iterable[O]
+  > Sink[O]
 do
   ...
 
 # Applies a function concurrently to values from the strand-local input,
 # writing results to the strand-local output.
-@def map
+@def map[I, O]
   # number of worker strands
   count @ Int
   # function applied to each input value
-  func @ (Value -> Value)
+  func @ (I -> O)
+  < Iter[I]
+  > Sink[O]
 do -> nil
 
 # Applies a function concurrently to values pulled from an iterable, writing
 # results to the strand-local output.
-@def map[T]
+@def map[I, O]
   # number of worker strands
   count @ Int
   # function applied to each input value
-  func @ (T -> Value)
+  func @ (I -> O)
   # source
-  :input @ Iterable[T]
+  :input @ Iterable[I]
+  > Sink[O]
 do -> nil
 
 # Applies a function concurrently to values from the strand-local input,
 # writing results to a sink.
-@def map[U]
+@def map[I, O]
   # number of worker strands
   count @ Int
   # function applied to each input value
-  func @ (Value -> U)
+  func @ (I -> O)
   # destination
-  :output @ Sinkable[U]
+  :output @ Sinkable[O]
+  < Iter[I]
 do -> nil
 
 # Applies a function concurrently to values pulled from an iterable, writing
 # results to a sink.
-@def map[T, U]
+@def map[I, O]
   # number of worker strands
   count @ Int
   # function applied to each input value
-  func @ (T -> U)
+  func @ (I -> O)
   # source
-  :input @ Iterable[T]
+  :input @ Iterable[I]
   # destination
-  :output @ Sinkable[U]
+  :output @ Sinkable[O]
 do -> nil
 
 pub def map count func ...options
@@ -325,25 +333,23 @@ pub def pipeline ...
   # iterable of items
   input @ Iterable[T]
   # function applied to each input value
-  func @ (T -> Value)
+  func @ (T -> nil)
 do -> nil
 
 # Runs a function over the strand-local input with a fixed number of scoped workers.
-@def pool
+@def pool[T]
   # number of worker strands
   count @ Int
   # function applied to each input value
-  func @ (Value -> Value)
+  func @ (T -> nil)
+  < Iter[T]
 do -> nil
 
 pub def pool count ...args
   ...
 
 # Writes a value to the strand-local output.
-pub def put
-  # value to write
-  value
-do
+pub def put[T] value@T >Sink[T]
   ...
 
 # Calls a function with the strand-local input or output replaced, returning its
@@ -362,13 +368,13 @@ do
 #   strand.each do |x| (x * 2)
 # assert_eq $doubled [2, 4, 6]
 # ```
-pub def redirect[R]
+pub def redirect[R, I, O]
   # replacement for the strand-local input
-  :input @ Iterable[Value] = nil
+  :input @ Iterable[I] = nil
   # replacement for the strand-local output
-  :output @ Sinkable[Value] = nil
+  :output @ Sinkable[O] = nil
   # function to call
-  block @ (() -> R)
+  block @ ((<Iter[I], >Sink[O]) -> R)
 do -> R
   ...
 
@@ -380,16 +386,13 @@ do -> Strand[R]
   ...
 
 # Runs a function in a background strand with channel-backed endpoints.
-pub def stream[R]
+pub def stream[R, I, O]
   # the function to execute
-  func @ (() -> R)
-do -> Stream[R, Value, Value]
+  func @ ((<PipeReceiver[I], >PipeSender[O]) -> R)
+do -> Stream[R, O, I]
   ...
 
 # Writes the values of the strand-local input that satisfy a predicate to the
 # strand-local output.
-pub def where
-  # a function returning a truthy/falsy value
-  predicate @ (Value -> Value)
-do
+pub def where[T] predicate@(T -> Bool) <Iter[T] >Sink[T]
   ...

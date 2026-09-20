@@ -20,7 +20,7 @@ use crate::{
         AliasBody, Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, Def, DictElem, Expr,
         ExprBody, FieldInit, For, Function, Ident, If, ImportElement, LValue, Origin, Param,
         PatIdent, Pattern, PrimStmt, Res, Root, Stmt, TypeArg, TypeDecl, TypeExpr, Var,
-        visit::Node,
+        implicit_tys_mut, visit::Node,
     },
     diag::Severity,
     source::{Diagnose, Diags, File, Span},
@@ -586,11 +586,19 @@ impl Check<'_> {
 
     fn function(&mut self, outer: Option<&Frame<'_>>, func: &mut Function) {
         let Function {
-            params, ret, body, ..
+            params,
+            input,
+            output,
+            ret,
+            body,
+            ..
         } = func;
         let frame = Frame::vars(outer, &mut body.vars, &body.stmts);
         for param in params.iter_mut() {
             self.param(&frame, param);
+        }
+        for ty in implicit_tys_mut(input, output) {
+            self.ty(&frame, ty);
         }
         if let Some(ret) = ret {
             self.ty(&frame, &mut ret.ty);

@@ -610,7 +610,7 @@ def types_describe_what_they_annotate()
       pub field first second @T = nil
     let record @Record = nil
     let consts @(:a: | "b" | 1 | true | nil) = nil
-    let schema @{name: Str, ?port: Int, ...Dict[Str, Str]} = nil
+    let schema @{name: Str, ?port: Int, *Dict[Str, Str]} = nil
     let func @((Int, ?Int) -> Int) = nil
     def spread[T, :K, ...R] value @T
       value
@@ -670,9 +670,9 @@ def types_describe_what_they_annotate()
   assert_eq [...schema_params.map(do |p| type p)] $
     - $compile.KeyTypeParam
     - $compile.KeyTypeParam
-    - $compile.MixedRestTypeParam
+    - $compile.PosTypeParam
   assert_eq [...schema_params.map(do |p| type(p, compile.TypeParam))] [true, true, true]
-  assert_eq [...schema_params.map(do |p| p.optional)] [false, true, false]
+  assert_eq [...schema_params.map(do |p| p.quant)] [nil, :OPT:, :STAR:]
   assert_eq (span_text(source, schema_params[0].key)) "name"
   assert_eq (span_text(source, schema_params[1].span)) "?port: Int"
   assert_type $compile.AppType $schema_params[2].ty
@@ -682,7 +682,7 @@ def types_describe_what_they_annotate()
   assert_type $compile.FuncType $func_type
   let params = func_type.params
   assert_eq [...params.map(do |a| type a)] [compile.PosTypeParam, compile.PosTypeParam]
-  assert_eq [...params.map(do |a| a.optional)] [false, true]
+  assert_eq [...params.map(do |a| a.quant)] [nil, :OPT:]
   assert_type $compile.NameType $func_type.ret
 
 #[test]
@@ -698,7 +698,7 @@ def superclasses_are_types_of_their_class()
     class Tagged: std.Record
       pub field tag = nil
 
-    class Keyed[K]: Record[...{...K: Int}]
+    class Keyed[K]: Record[...{*(K): Int}]
       pub field key = nil
   let unit = compile.compile "supers.dol" $source document: true
   assert_no_errors $unit
@@ -725,13 +725,14 @@ def superclasses_are_types_of_their_class()
   let binder = nodes.find(do |pair| (type(pair[1], compile.Binder) && (pair[1].parent == keyed[0])))
   let app = (types_of(nodes, keyed[0])[0][1].expr)
   assert_type $compile.AppType $app
-  assert_eq (span_text(source, app.span)) "Record[...{...K: Int}]"
+  assert_eq (span_text(source, app.span)) "Record[...{*(K): Int}]"
   assert_eq $app.base.target $record[0]
   let arg = app.args[0]
   assert_type $compile.ExpandTypeArg $arg
-  assert_eq (span_text(source, arg.span)) "...{...K: Int}"
+  assert_eq (span_text(source, arg.span)) "...{*(K): Int}"
   let entries = arg.ty.params[0]
-  assert_type $compile.EntryRestTypeParam $entries
+  assert_type $compile.KeyTypeParam $entries
+  assert_eq $entries.quant :STAR:
   assert_eq $entries.key_ty.target $binder[0]
 
   assert (!(record[1].type_only))
@@ -740,7 +741,7 @@ def superclasses_are_types_of_their_class()
 def type_followups_are_exposed()
   let source = r|-
     import @not_loaded
-    pub @let Entries[K @ Str = Sym] = Dict[{..., ...K: Int, ...Tuple[Int, Int]: Str, (K): Bool, "k": nil}]
+    pub @let Entries[K @ Str = Sym] = Dict[{..., *(K): Int, *(Tuple[Int, Int]): Str, (K): Bool, "k": nil}]
     let value @Entries[Str] = nil
     @let Later[U @ Array[T], T] = U
   let unit = compile.compile "type_followups.dol" $source document: true
@@ -756,14 +757,15 @@ def type_followups_are_exposed()
   let schema = (types_of(nodes, alias[0])[0][1].expr.args[0].ty)
   assert_type $compile.SchemaType $schema
   assert_eq [...schema.params.map(do |param| type param)] $
-    - $compile.OpenRestTypeParam
-    - $compile.EntryRestTypeParam
-    - $compile.EntryRestTypeParam
+    - $compile.OpenTypeParam
     - $compile.KeyTypeParam
     - $compile.KeyTypeParam
+    - $compile.KeyTypeParam
+    - $compile.KeyTypeParam
+  assert_eq [...schema.params.map(do |param| param.quant)] [nil, :STAR:, :STAR:, nil, nil]
   assert_eq (span_text(source, schema.params[0].span)) "..."
-  assert_eq (span_text(source, schema.params[1].key_ty.span)) "K"
-  assert_eq (span_text(source, schema.params[2].key_ty.span)) "Tuple[Int, Int]"
+  assert_eq (span_text(source, schema.params[1].key_ty.span)) "(K)"
+  assert_eq (span_text(source, schema.params[2].key_ty.span)) "(Tuple[Int, Int])"
   # A key other than a bareword is a type, and a name in it resolves
   assert_eq (span_text(source, schema.params[3].key)) "(K)"
   assert_eq $schema.params[3].key_ty.target $binder[0]
@@ -915,7 +917,7 @@ def rest_kinds_are_exposed()
       [a, rest, kw]
     def mixed[...R] ...rest @R
       rest
-    let schema @{*Int, **Str, ...Bool} = nil
+    let schema @{*Int, **Str, *...{a: Bool}} = nil
   let unit = compile.compile "rest_kinds.dol" $source document: true
   assert_no_errors $unit
   let nodes = [...unit.nodes()]
@@ -940,9 +942,46 @@ def rest_kinds_are_exposed()
   let schema = (named_node source nodes compile.Bind "schema")
   let schema_params = (types_of(nodes, schema[0])[0][1].expr.params)
   assert_eq [...schema_params.map(do |p| type p)] $
-    - $compile.PosRestTypeParam
-    - $compile.KeyRestTypeParam
-    - $compile.MixedRestTypeParam
-  assert $schema_params.all(do |p| type(p, compile.RestTypeParam))
+    - $compile.PosTypeParam
+    - $compile.PosTypeParam
+    - $compile.IncludeTypeParam
+  assert_eq [...schema_params.map(do |p| p.quant)] [:STAR:, :STAR_STAR:, :STAR:]
+  assert $schema_params.all(do |p| type(p, compile.TypeParam))
   assert_eq (span_text(source, schema_params[1].span)) "**Str"
+  unit.emit()
+
+#[test]
+def implicit_params_are_exposed()
+  let source = r|-
+    def reads a @Int <Iter[Int] >Sink[Str] -> nil
+      nil
+    def plain a
+      a
+    let func @((Int, <Iter[Int], >Sink[Str]) -> Int) = nil
+  let unit = compile.compile "implicits.dol" $source document: true
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
+
+  # A declaration's implicits are parameter nodes that bind no name
+  let implicits = do |name|
+    let func = (named_node source nodes compile.Function name)
+    let found = nodes.filter(do |pair| (type(pair[1], compile.ImplicitParam) && (pair[1].parent == func[0])))
+    [...found.map(do |pair| type pair[1])]
+  assert_eq (implicits "reads") [compile.InputParam, compile.OutputParam]
+  assert_eq (implicits "plain") []
+
+  let input = nodes.find(do |pair| type(pair[1], compile.InputParam))[1]
+  assert $type(input, compile.Param)
+  assert_eq $input.name nil
+  assert_eq (span_text source input.span) "<Iter[Int]"
+
+  # A function type carries them beside its parameters
+  let func = (named_node source nodes compile.Bind "func")
+  let func_type = (types_of(nodes, func[0])[0][1].expr)
+  assert_type $compile.FuncType $func_type
+  assert_eq [...func_type.params.map(do |p| type p)] [compile.PosTypeParam]
+  assert_type $compile.AppType $func_type.input
+  assert_type $compile.AppType $func_type.output
+  assert_eq (span_text source func_type.input.span) "Iter[Int]"
+
   unit.emit()

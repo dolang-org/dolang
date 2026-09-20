@@ -1,0 +1,22 @@
+@let _Colors = {?fg: Str, ?bg: Str}
+let _repeat_key @ Dict[{*name: Int}] = nil
+let _key_type @ Dict[{*(Sym): Int}] = nil
+let _bare_pos @ Dict[{*}] = nil
+let _bare_key @ Dict[{**}] = nil
+let _open @ Dict[{...}] = nil
+let _include @ Dict[{?width: Int, ..._Colors}] = nil
+let _repeat_include @ Dict[{*..._Colors}] = nil
+let _group @ Dict[{Int, *...{a: Int, b: Str}, Str}] = nil
+let _any @ ((...) -> nil) = nil
+let _opt_and_star @ Dict[{?*Int}] = nil
+# error: an item cannot be both optional and repeated
+#   --> quant_forms.dol:LL:LL
+#    |
+# LL | let _opt_and_star @ Dict[{?*Int}] = nil
+#    |                           ^
+let _opt_alone @ Dict[{?}] = nil
+# error: expected type
+#   --> quant_forms.dol:LL:LL
+#    |
+# LL | let _opt_alone @ Dict[{?}] = nil
+#    |                         ^
