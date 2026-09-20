@@ -147,11 +147,12 @@ struct TypeArgJson {
 #[derive(Clone, serde::Deserialize)]
 struct TypeParamJson {
     kind: String,
+    /// How many of the element the item admits, absent for exactly one
     #[serde(default)]
-    optional: bool,
+    quant: Option<String>,
     #[serde(default)]
     key: Option<String>,
-    /// The key type of `...K: V`, or of a schema key given as a type
+    /// The key type of a schema key given as a type
     #[serde(default)]
     key_type: Option<TypeJson>,
     #[serde(rename = "type")]
@@ -165,6 +166,16 @@ fn sigil(kind: &str) -> &'static str {
         "mixed_rest" => "...",
         "pos_rest" => "*",
         "key_rest" => "**",
+        _ => "",
+    }
+}
+
+/// The sigil a schema item's quantifier is written with
+fn quant_sigil(quant: Option<&str>) -> &'static str {
+    match quant {
+        Some("opt") => "?",
+        Some("star") => "*",
+        Some("star_star") => "**",
         _ => "",
     }
 }
@@ -234,27 +245,26 @@ fn render_params(params: &[TypeParamJson]) -> String {
     params
         .iter()
         .map(|param| {
-            let optional = if param.optional { "?" } else { "" };
+            let quant = quant_sigil(param.quant.as_deref());
             let Some(ty) = param.ty.as_ref() else {
-                return format!("{optional}...");
+                // An open `...`, or a quantifier standing alone
+                return match param.kind.as_str() {
+                    "open" => format!("{quant}..."),
+                    _ => quant.to_string(),
+                };
             };
             let ty = ty.render(Binding::Func);
             match (param.kind.as_str(), &param.key_type, &param.key) {
-                (kind @ ("mixed_rest" | "pos_rest" | "key_rest"), _, _) => {
-                    format!("{optional}{}{ty}", sigil(kind))
-                }
-                ("entry_rest", Some(key), _) => {
-                    format!("{optional}...{}: {ty}", key.render(Binding::Func))
-                }
+                ("include", _, _) => format!("{quant}...{ty}"),
                 // A name must be parenthesized to not be taken as a symbol key
                 ("key", Some(key @ TypeJson::Name { .. }), _) => {
-                    format!("{optional}({}): {ty}", key.render(Binding::Compact))
+                    format!("{quant}({}): {ty}", key.render(Binding::Compact))
                 }
                 ("key", Some(key), _) => {
-                    format!("{optional}{}: {ty}", key.render(Binding::Compact))
+                    format!("{quant}{}: {ty}", key.render(Binding::Compact))
                 }
-                ("key", None, Some(key)) => format!("{optional}{key}: {ty}"),
-                _ => format!("{optional}{ty}"),
+                ("key", None, Some(key)) => format!("{quant}{key}: {ty}"),
+                _ => format!("{quant}{ty}"),
             }
         })
         .collect::<Vec<_>>()

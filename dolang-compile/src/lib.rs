@@ -674,6 +674,18 @@ pub enum BinderKind {
     Rest(RestKind),
 }
 
+/// How many of its element a schema item admits
+#[non_exhaustive]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TypeQuant {
+    /// `?`: zero or one
+    Opt,
+    /// `*`: zero or more
+    Star,
+    /// `**`: zero or more keyed items
+    StarStar,
+}
+
 /// Which leftover items a rest parameter takes
 #[non_exhaustive]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -881,14 +893,14 @@ impl<'a> TypeParam<'a> {
         convert_span(self.file, self.param.span)
     }
 
-    /// Whether the item is marked optional with `?`
-    pub fn optional(&self) -> bool {
-        self.param.optional
+    /// How many of the element the item admits, or `None` for exactly one
+    pub fn quant(&self) -> Option<TypeQuant> {
+        self.param.quant
     }
 
-    /// How the item is given
-    pub fn kind(&self) -> TypeParamKind<'a> {
-        match &self.param.kind {
+    /// The element the quantifier applies to, or `None` for a bare `*` or `**`
+    pub fn kind(&self) -> Option<TypeParamKind<'a>> {
+        Some(match self.param.kind.as_ref()? {
             doc::TypeParamKind::Pos => TypeParamKind::Pos,
             doc::TypeParamKind::Key { key, key_ty } => TypeParamKind::Key {
                 key: convert_span(self.file, *key),
@@ -897,18 +909,12 @@ impl<'a> TypeParam<'a> {
                     expr,
                 }),
             },
-            doc::TypeParamKind::Rest(kind) => TypeParamKind::Rest(*kind),
-            doc::TypeParamKind::OpenRest => TypeParamKind::OpenRest,
-            doc::TypeParamKind::KeyRest { key_ty } => TypeParamKind::KeyRest {
-                key_ty: TypeExpr {
-                    file: self.file,
-                    expr: key_ty,
-                },
-            },
-        }
+            doc::TypeParamKind::Include => TypeParamKind::Include,
+            doc::TypeParamKind::Open => TypeParamKind::Open,
+        })
     }
 
-    /// The item's type, or `None` for an unrestricted [`TypeParamKind::OpenRest`]
+    /// The item's type, absent for [`TypeParamKind::Open`] and for a bare quantifier
     pub fn ty(&self) -> Option<TypeExpr<'a>> {
         self.param.ty.as_ref().map(|expr| TypeExpr {
             file: self.file,
@@ -931,15 +937,10 @@ pub enum TypeParamKind<'a> {
         /// The type giving the key, or `None` for a bareword symbol
         key_ty: Option<TypeExpr<'a>>,
     },
-    /// `...T`, `*T` or `**T`, for any number of further items
-    Rest(RestKind),
+    /// `...S`, including a schema's items
+    Include,
     /// `...`, for unrestricted further schema items
-    OpenRest,
-    /// `...K: V`, for any number of keyed items
-    KeyRest {
-        /// The type of each key
-        key_ty: TypeExpr<'a>,
-    },
+    Open,
 }
 
 impl fmt::Debug for TypeParamKind<'_> {
@@ -951,9 +952,8 @@ impl fmt::Debug for TypeParamKind<'_> {
                 .field("key", key)
                 .field("key_ty", &key_ty.as_ref().map(|_| ..))
                 .finish(),
-            Self::Rest(kind) => f.debug_tuple("Rest").field(kind).finish(),
-            Self::OpenRest => f.write_str("OpenRest"),
-            Self::KeyRest { .. } => f.write_str("KeyRest { key_ty: ... }"),
+            Self::Include => f.write_str("Include"),
+            Self::Open => f.write_str("Open"),
         }
     }
 }

@@ -232,7 +232,7 @@ pub @let AceSpec = (
 pub @let AclSpec = (
   | Acl
   | Iterable[AceSpec]
-  | Dict[{...AceSpec, ?revision: AclRevision | Int}]
+  | Dict[{*AceSpec, ?revision: AclRevision | Int}]
 )
 
 # A security descriptor, built, given as a self-relative packet, or given as a

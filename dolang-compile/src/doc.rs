@@ -7,7 +7,7 @@ use std::{
 
 use dolang_util::alias;
 
-use crate::{BinderKind, RestKind, source::Span};
+use crate::{BinderKind, RestKind, TypeQuant, source::Span};
 
 mod comment;
 mod index;
@@ -237,8 +237,9 @@ pub(crate) enum TypeArgKind {
 pub(crate) struct TypeParam {
     /// The item without its trailing `,`
     pub(crate) span: Span,
-    pub(crate) optional: bool,
-    pub(crate) kind: TypeParamKind,
+    pub(crate) quant: Option<TypeQuant>,
+    /// Absent only for a bare `*` or `**`
+    pub(crate) kind: Option<TypeParamKind>,
     pub(crate) ty: Option<TypeExpr>,
 }
 
@@ -251,11 +252,8 @@ pub(crate) enum TypeParamKind {
         /// The type giving the key, absent for a bareword symbol
         key_ty: Option<TypeExpr>,
     },
-    Rest(RestKind),
-    OpenRest,
-    KeyRest {
-        key_ty: TypeExpr,
-    },
+    Include,
+    Open,
 }
 
 impl Kind {

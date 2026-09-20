@@ -1,13 +1,13 @@
 use super::{
     ExprMode, Parser, Result, Scope,
-    diag::{InvalidConstType, NonConstExpr, OptionalRest, OptionalTypeArg, ParamsWithoutArrow},
+    diag::{InvalidConstType, NonConstExpr, OptionalQuant, OptionalTypeArg, ParamsWithoutArrow},
     stream::ExpectKind,
 };
 use crate::{
     RestKind,
     ast::{
         Annot, Binder, BinderDefault, BinderKind, Binders, Const, Ident, RetType, TypeArg,
-        TypeArgKind, TypeExpr, TypeKey, TypeParam, TypeParamKind, visit::Node,
+        TypeArgKind, TypeExpr, TypeKey, TypeParam, TypeParamKind, TypeQuant, visit::Node,
     },
     lex::{Keyword, Mode, Op, Token, TokenInfo},
     source::Span,
@@ -200,8 +200,8 @@ impl Parser<'_> {
                 Compact::Params { params, paren_span } => (params, Some(paren_span)),
                 Compact::Type(ty) => (
                     vec![TypeParam {
-                        optional: None,
-                        kind: TypeParamKind::Pos(ty),
+                        quant: None,
+                        kind: Some(TypeParamKind::Pos(ty)),
                         delim_span: None,
                     }],
                     None,
@@ -400,62 +400,38 @@ impl Parser<'_> {
                 {
                     break this.advance();
                 }
-                let optional = match this.peek()? {
-                    Some(token!(TokenInfo::Question)) => Some(this.advance()),
+                let quant = match this.peek()? {
+                    Some(token!(TokenInfo::Question)) => Some(TypeQuant::Opt(this.advance())),
+                    Some(token!(TokenInfo::Op(Op::Star))) => Some(TypeQuant::Star(this.advance())),
+                    Some(token!(TokenInfo::Op(Op::StarStar))) => {
+                        Some(TypeQuant::StarStar(this.advance()))
+                    }
                     _ => None,
                 };
-                let kind = match this.peek()? {
-                    Some(token) if let Some(kind) = rest_sigil(&token.info) => {
-                        let sigil_span = this.advance();
-                        if let Some(span) = optional {
-                            this.fail = true;
-                            this.diags.push(OptionalRest(span));
-                        }
-                        if kind == RestKind::Mixed {
-                            this.parse_type_mixed_rest(scope, list, sigil_span)?
-                        } else {
-                            TypeParamKind::Rest {
-                                kind,
-                                sigil_span,
-                                ty: this.parse_type_full(scope)?,
-                            }
-                        }
-                    }
-                    Some(token!(TokenInfo::Key, span)) => {
-                        this.advance();
-                        TypeParamKind::Key {
-                            key: TypeKey::Sym(span),
-                            colon_span: span.after_right_char(),
-                            ty: this.parse_type_full(scope)?,
-                        }
-                    }
-                    _ => {
-                        let ty = this.parse_type_full(scope)?;
-                        match this.peek()? {
-                            // A schema key may be any type, while a parameter's key is
-                            // a name
-                            Some(token @ token!(TokenInfo::Colon)) => {
-                                if list != Params::Schema {
-                                    return Err(this.syntax_error(
-                                        scope,
-                                        Some(token),
-                                        "a key outside a schema must be a name",
-                                    ));
-                                }
-                                let colon_span = this.advance();
-                                TypeParamKind::Key {
-                                    key: TypeKey::Type(Box::new(ty)),
-                                    colon_span,
-                                    ty: this.parse_type_full(scope)?,
-                                }
-                            }
-                            _ => TypeParamKind::Pos(ty),
-                        }
-                    }
+                // An item takes one quantifier, so `?` cannot also repeat.
+                if let Some(TypeQuant::Opt(span)) = quant
+                    && matches!(
+                        this.peek()?,
+                        Some(token!(
+                            TokenInfo::Op(Op::Star) | TokenInfo::Op(Op::StarStar)
+                        ))
+                    )
+                {
+                    this.fail = true;
+                    this.diags.push(OptionalQuant(span));
+                    this.advance();
+                }
+                // `*` and `**` may stand alone, admitting any item of their kind.
+                let bare = matches!(quant, Some(TypeQuant::Star(_) | TypeQuant::StarStar(_)))
+                    && this.at_item_end(list)?;
+                let kind = if bare {
+                    None
+                } else {
+                    Some(this.parse_type_element(scope, list)?)
                 };
                 let delim_span = this.consume_comma()?;
                 params.push(TypeParam {
-                    optional,
+                    quant,
                     kind,
                     delim_span,
                 });
@@ -467,73 +443,57 @@ impl Parser<'_> {
         })
     }
 
-    /// Parse a parameter after `...`: `...T`, or, in a schema, `...K: V` or an
-    /// open `...`.
-    fn parse_type_mixed_rest(
-        &mut self,
-        scope: &mut Scope,
-        list: Params,
-        ellipsis_span: Span,
-    ) -> Result<TypeParamKind> {
-        // `K:` is one lexer token, while a compound key type such as
-        // `Tuple[Int, Int]:` leaves the `:` as its own token.
-        if let Some(token!(TokenInfo::Key, key_span)) = self.peek()? {
-            if list == Params::Func {
-                let token = self.next()?;
-                return Err(self.syntax_error(
-                    scope,
-                    token,
-                    "a keyed rest item is not valid in function parameters",
-                ));
+    /// Whether the next token ends an item, so that a quantifier stands alone.
+    fn at_item_end(&mut self, list: Params) -> Result<bool> {
+        Ok(
+            matches!(self.peek()?, Some(token!(TokenInfo::Comma)) | None)
+                || self.peek()?.is_some_and(|token| list.is_close(&token.info)),
+        )
+    }
+
+    /// Parse the element a quantifier applies to: `T`, `k: V`, `(K): V`, `...S`,
+    /// or an open `...`.
+    fn parse_type_element(&mut self, scope: &mut Scope, list: Params) -> Result<TypeParamKind> {
+        if let Some(token!(TokenInfo::Ellipsis)) = self.peek()? {
+            let ellipsis_span = self.advance();
+            if self.at_item_end(list)? {
+                return Ok(TypeParamKind::Open { ellipsis_span });
             }
-            self.advance();
-            return Ok(TypeParamKind::KeyRest {
+            return Ok(TypeParamKind::Include {
                 ellipsis_span,
-                key_ty: TypeExpr::Name {
-                    head: Ident::new(key_span),
-                    fields: Vec::new(),
-                    decl: None,
-                },
-                colon_span: key_span.after_right_char(),
                 ty: self.parse_type_full(scope)?,
             });
         }
-        if matches!(self.peek()?, Some(token!(TokenInfo::Comma)) | None)
-            || self.peek()?.is_some_and(|token| list.is_close(&token.info))
-        {
-            if list == Params::Func {
-                let token = self.peek()?;
-                return Err(self.syntax_error(
-                    scope,
-                    token,
-                    "an open rest item is not valid in function parameters",
-                ));
-            }
-            return Ok(TypeParamKind::OpenRest { ellipsis_span });
+        // `k:` is one lexer token, while a compound key type such as
+        // `Tuple[Int, Int]:` leaves the `:` as its own token.
+        if let Some(token!(TokenInfo::Key, span)) = self.peek()? {
+            self.advance();
+            return Ok(TypeParamKind::Key {
+                key: TypeKey::Sym(span),
+                colon_span: span.after_right_char(),
+                ty: self.parse_type_full(scope)?,
+            });
         }
         let ty = self.parse_type_full(scope)?;
-        if let Some(token!(TokenInfo::Colon)) = self.peek()? {
-            if list == Params::Func {
-                let token = self.next()?;
-                return Err(self.syntax_error(
-                    scope,
-                    token,
-                    "a keyed rest item is not valid in function parameters",
-                ));
+        match self.peek()? {
+            // A schema key may be any type, while a parameter's key is a name
+            Some(token @ token!(TokenInfo::Colon)) => {
+                if list != Params::Schema {
+                    return Err(self.syntax_error(
+                        scope,
+                        Some(token),
+                        "a parameter key must be a name",
+                    ));
+                }
+                let colon_span = self.advance();
+                Ok(TypeParamKind::Key {
+                    key: TypeKey::Type(Box::new(ty)),
+                    colon_span,
+                    ty: self.parse_type_full(scope)?,
+                })
             }
-            let colon_span = self.advance();
-            return Ok(TypeParamKind::KeyRest {
-                ellipsis_span,
-                key_ty: ty,
-                colon_span,
-                ty: self.parse_type_full(scope)?,
-            });
+            _ => Ok(TypeParamKind::Pos(ty)),
         }
-        Ok(TypeParamKind::Rest {
-            kind: RestKind::Mixed,
-            sigil_span: ellipsis_span,
-            ty,
-        })
     }
 
     /// Interpret a compact type that `->` does not follow.
@@ -546,13 +506,13 @@ impl Parser<'_> {
             } => {
                 if let [
                     TypeParam {
-                        optional: None,
-                        kind: TypeParamKind::Pos(_),
+                        quant: None,
+                        kind: Some(TypeParamKind::Pos(_)),
                         delim_span: None,
                     },
                 ] = params.as_slice()
                     && let Some(TypeParam {
-                        kind: TypeParamKind::Pos(ty),
+                        kind: Some(TypeParamKind::Pos(ty)),
                         ..
                     }) = params.pop()
                 {

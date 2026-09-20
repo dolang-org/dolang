@@ -417,9 +417,9 @@ impl Diagnose for OptionalTypeArg {
     }
 }
 
-pub(super) struct OptionalRest(pub(super) Span);
+pub(super) struct OptionalQuant(pub(super) Span);
 
-impl Diagnose for OptionalRest {
+impl Diagnose for OptionalQuant {
     fn span(&self) -> Span {
         self.0
     }
@@ -429,7 +429,7 @@ impl Diagnose for OptionalRest {
     }
 
     fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(w, "a rest item cannot be optional")
+        write!(w, "an item cannot be both optional and repeated")
     }
 }
 

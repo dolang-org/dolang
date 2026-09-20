@@ -79,7 +79,7 @@ pub def place point @Point :limit @(Int | nil) = nil -> std.Dict[Str, Record]
   nil
 
 # The first of some items.
-pub def first[T] items @Array[T] :fallback @((Int, ?Str) -> T) = nil :options @Dict[{name: Str, ?port: Int, ...Str: Str}] = nil :mode @(:fast: | "slow" | 1 | true) = nil -> T
+pub def first[T] items @Array[T] :fallback @((Int, ?Str) -> T) = nil :options @Dict[{name: Str, ?port: Int, *(Str): Str}] = nil :mode @(:fast: | "slow" | 1 | true) = nil -> T
   items[0]
 
 # Build something.

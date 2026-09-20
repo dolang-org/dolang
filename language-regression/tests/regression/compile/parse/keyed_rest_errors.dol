@@ -1,12 +1,12 @@
-let y @((...Str: Int) -> Int) = nil
-# error: a keyed rest item is not valid in function parameters
+let y @((*(Str): Int) -> Int) = nil
+# error: a parameter key must be a name
 #   --> keyed_rest_errors.dol:LL:LL
 #    |
-# LL | let y @((...Str: Int) -> Int) = nil
-#    |             ^^^
-let w @((...) -> Int) = nil
-# error: an open rest item is not valid in function parameters
+# LL | let y @((*(Str): Int) -> Int) = nil
+#    |                ^
+let z @((?(Str): Int) -> Int) = nil
+# error: a parameter key must be a name
 #   --> keyed_rest_errors.dol:LL:LL
 #    |
-# LL | let w @((...) -> Int) = nil
-#    |             ^
+# LL | let z @((?(Str): Int) -> Int) = nil
+#    |                ^

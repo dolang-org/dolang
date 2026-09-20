@@ -577,9 +577,15 @@ pub class ExpandTypeArg: TypeArg
 # Supertype of the parameters of a [`SchemaType`](compile.SchemaType) or
 # [`FuncType`](compile.FuncType).
 pub class TypeParam
-  # Whether the parameter is marked optional with `?`.
+  # How many of the element the item admits, or `nil` for exactly one.
+  #
+  # | Value         | Sigil | Admits            |
+  # | ------------- | ----- | ----------------- |
+  # | `:OPT:`       | `?`   | Zero or one       |
+  # | `:STAR:`      | `*`   | Zero or more      |
+  # | `:STAR_STAR:` | `**`  | Zero or more keyed |
   #[getter]
-  pub def optional self -> Bool
+  pub def quant self -> (Sym | nil)
     ...
 
   # The span of the parameter, without a trailing `,`.
@@ -610,36 +616,19 @@ pub class KeyTypeParam: TypeParam
   pub def key_ty self -> (TypeExpr | nil)
     ...
 
-# Supertype of rest parameters with a type. Its subtype says which items it
-# describes.
-pub class RestTypeParam: TypeParam
-  # The parameter's type.
+# An inclusion of a schema's items, such as `...S`.
+pub class IncludeTypeParam: TypeParam
+  # The schema included.
   #[getter]
   pub def ty self -> TypeExpr
     ...
 
-# A rest parameter for positional and keyed items, such as `...T`.
-pub class MixedRestTypeParam: RestTypeParam
+# An unrestricted item, written `...`.
+pub class OpenTypeParam: TypeParam
 
-# A rest parameter for positional items only, such as `*T`.
-pub class PosRestTypeParam: RestTypeParam
-
-# A rest parameter for keyed items only, such as `**T`.
-pub class KeyRestTypeParam: RestTypeParam
-
-# An unrestricted schema rest parameter, written `...`.
-pub class OpenRestTypeParam: TypeParam
-
-# A rest parameter for arbitrary keyed entries, such as `...K: V`.
-pub class EntryRestTypeParam: TypeParam
-  # The value type.
-  #[getter]
-  pub def ty self -> TypeExpr
-    ...
-  # The key type.
-  #[getter]
-  pub def key_ty self -> TypeExpr
-    ...
+# A quantifier standing alone, such as `*` or `**`, admitting any item of its
+# kind.
+pub class AnyTypeParam: TypeParam
 
 # The kind of a [`Token`](compile.Token).
 #

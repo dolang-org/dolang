@@ -405,36 +405,29 @@ impl Index<'_> {
             .iter()
             .map(|param| {
                 let (kind, ty, start) = match &param.kind {
-                    TypeParamKind::Pos(ty) => (doc::TypeParamKind::Pos, Some(ty), None),
-                    TypeParamKind::Key { key, ty, .. } => {
+                    Some(TypeParamKind::Pos(ty)) => (Some(doc::TypeParamKind::Pos), Some(ty), None),
+                    Some(TypeParamKind::Key { key, ty, .. }) => {
                         let (key, key_ty) = match key {
                             TypeKey::Sym(span) => (*span, None),
                             TypeKey::Type(key_ty) => (key_ty.span(), Some(self.type_expr(key_ty)?)),
                         };
-                        (doc::TypeParamKind::Key { key, key_ty }, Some(ty), Some(key))
+                        (
+                            Some(doc::TypeParamKind::Key { key, key_ty }),
+                            Some(ty),
+                            Some(key),
+                        )
                     }
-                    TypeParamKind::Rest {
-                        kind,
-                        sigil_span,
-                        ty,
-                    } => (doc::TypeParamKind::Rest(*kind), Some(ty), Some(*sigil_span)),
-                    TypeParamKind::OpenRest { ellipsis_span } => {
-                        (doc::TypeParamKind::OpenRest, None, Some(*ellipsis_span))
-                    }
-                    TypeParamKind::KeyRest {
-                        ellipsis_span,
-                        key_ty,
-                        ty,
-                        ..
-                    } => (
-                        doc::TypeParamKind::KeyRest {
-                            key_ty: self.type_expr(key_ty)?,
-                        },
+                    Some(TypeParamKind::Include { ellipsis_span, ty }) => (
+                        Some(doc::TypeParamKind::Include),
                         Some(ty),
                         Some(*ellipsis_span),
                     ),
+                    Some(TypeParamKind::Open { ellipsis_span }) => {
+                        (Some(doc::TypeParamKind::Open), None, Some(*ellipsis_span))
+                    }
+                    None => (None, None, None),
                 };
-                let span = [param.optional, start]
+                let span = [param.quant.as_ref().map(|quant| quant.span()), start]
                     .into_iter()
                     .flatten()
                     .chain(ty.map(|ty| ty.span()))
@@ -442,7 +435,11 @@ impl Index<'_> {
                     .expect("a type parameter has a source span");
                 Some(doc::TypeParam {
                     span,
-                    optional: param.optional.is_some(),
+                    quant: param.quant.as_ref().map(|quant| match quant {
+                        TypeQuant::Opt(_) => crate::TypeQuant::Opt,
+                        TypeQuant::Star(_) => crate::TypeQuant::Star,
+                        TypeQuant::StarStar(_) => crate::TypeQuant::StarStar,
+                    }),
                     kind,
                     ty: match ty {
                         Some(ty) => Some(self.type_expr(ty)?),

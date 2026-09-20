@@ -393,6 +393,13 @@ _SIGILS = {
     "key_rest": "**",
 }
 
+# The sigil a schema item's quantifier is written with
+_QUANTS = {
+    "opt": "?",
+    "star": "*",
+    "star_star": "**",
+}
+
 
 def _written(decl: dict) -> str:
     """A parameter or binder's name as its declaration writes it."""
@@ -461,17 +468,20 @@ def _render_type_args(args: list[dict], scope: _TypeScope, plain: bool = False) 
 
 
 def _render_type_params(params: list[dict], scope: _TypeScope, plain: bool = False) -> str:
+    escape = (lambda text: text) if plain else _escape_type_text
     rendered = []
     for param in params:
-        text = "?" if param.get("optional") else ""
-        if param.get("kind") in ("mixed_rest", "pos_rest", "key_rest"):
-            text += _SIGILS[param["kind"]]
-        elif param.get("kind") == "open_rest":
+        # A `*` sigil would otherwise read as Markdown emphasis
+        text = escape(_QUANTS.get(param.get("quant"), ""))
+        if param.get("kind") == "open":
             rendered.append(text + "...")
             continue
-        elif param.get("kind") == "entry_rest":
-            key = _render_type(param["key_type"], scope, _BINDS_FUNC, plain)
-            text += f"...{key}: "
+        elif param.get("kind") == "any":
+            # A quantifier standing alone, such as `*` or `**`
+            rendered.append(text)
+            continue
+        elif param.get("kind") == "include":
+            text += "..."
         elif param.get("kind") == "key" and "key_type" in param:
             # A name must be parenthesized to not be taken as a symbol key
             key_type = param["key_type"]

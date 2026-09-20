@@ -3190,7 +3190,7 @@
                 "byte_offset": 1515
               }
             },
-            "optional": false,
+            "quant": null,
             "type": {
               "kind": "NameType",
               "span": {
@@ -3234,7 +3234,7 @@
                 "byte_offset": 1521
               }
             },
-            "optional": true,
+            "quant": "opt",
             "type": {
               "kind": "NameType",
               "span": {
@@ -3451,7 +3451,7 @@
                       "byte_offset": 1560
                     }
                   },
-                  "optional": false,
+                  "quant": null,
                   "key": {
                     "start": {
                       "line": 81,
@@ -3507,7 +3507,7 @@
                       "byte_offset": 1572
                     }
                   },
-                  "optional": true,
+                  "quant": "opt",
                   "key": {
                     "start": {
                       "line": 81,
@@ -3550,7 +3550,7 @@
                   }
                 },
                 {
-                  "kind": "EntryRestTypeParam",
+                  "kind": "KeyTypeParam",
                   "span": {
                     "start": {
                       "line": 81,
@@ -3563,14 +3563,26 @@
                       "byte_offset": 1585
                     }
                   },
-                  "optional": false,
+                  "quant": "star",
+                  "key": {
+                    "start": {
+                      "line": 81,
+                      "column": 109,
+                      "byte_offset": 1575
+                    },
+                    "end": {
+                      "line": 81,
+                      "column": 114,
+                      "byte_offset": 1580
+                    }
+                  },
                   "key_type": {
                     "kind": "NameType",
                     "span": {
                       "start": {
                         "line": 81,
-                        "column": 111,
-                        "byte_offset": 1577
+                        "column": 109,
+                        "byte_offset": 1575
                       },
                       "end": {
                         "line": 81,
@@ -3581,13 +3593,13 @@
                     "head": {
                       "start": {
                         "line": 81,
-                        "column": 111,
-                        "byte_offset": 1577
+                        "column": 110,
+                        "byte_offset": 1576
                       },
                       "end": {
                         "line": 81,
-                        "column": 114,
-                        "byte_offset": 1580
+                        "column": 113,
+                        "byte_offset": 1579
                       }
                     },
                     "target": 5
@@ -9849,8 +9861,25 @@
         },
         "end": {
           "line": 81,
-          "column": 111,
-          "byte_offset": 1577
+          "column": 109,
+          "byte_offset": 1575
+        }
+      },
+      "ref": null,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 81,
+          "column": 109,
+          "byte_offset": 1575
+        },
+        "end": {
+          "line": 81,
+          "column": 110,
+          "byte_offset": 1576
         }
       },
       "ref": null,
@@ -9861,8 +9890,25 @@
       "span": {
         "start": {
           "line": 81,
-          "column": 111,
-          "byte_offset": 1577
+          "column": 110,
+          "byte_offset": 1576
+        },
+        "end": {
+          "line": 81,
+          "column": 113,
+          "byte_offset": 1579
+        }
+      },
+      "ref": 5,
+      "context": null
+    },
+    {
+      "kind": "DELIM",
+      "span": {
+        "start": {
+          "line": 81,
+          "column": 113,
+          "byte_offset": 1579
         },
         "end": {
           "line": 81,
@@ -9870,7 +9916,7 @@
           "byte_offset": 1580
         }
       },
-      "ref": 5,
+      "ref": null,
       "context": null
     },
     {
@@ -14175,7 +14221,7 @@
               "params": [
                 {
                   "kind": "pos",
-                  "optional": false,
+                  "quant": null,
                   "type": {
                     "kind": "name",
                     "name": "Int",
@@ -14184,7 +14230,7 @@
                 },
                 {
                   "kind": "pos",
-                  "optional": true,
+                  "quant": "opt",
                   "type": {
                     "kind": "name",
                     "name": "Str",
@@ -14219,7 +14265,7 @@
                     "params": [
                       {
                         "kind": "key",
-                        "optional": false,
+                        "quant": null,
                         "key": "name",
                         "type": {
                           "kind": "name",
@@ -14229,7 +14275,7 @@
                       },
                       {
                         "kind": "key",
-                        "optional": true,
+                        "quant": "opt",
                         "key": "port",
                         "type": {
                           "kind": "name",
@@ -14238,8 +14284,9 @@
                         }
                       },
                       {
-                        "kind": "entry_rest",
-                        "optional": false,
+                        "kind": "key",
+                        "quant": "star",
+                        "key": "(Str)",
                         "key_type": {
                           "kind": "name",
                           "name": "Str",

@@ -73,6 +73,12 @@ let SIGILS = $
   "pos_rest": "*"
   "key_rest": "**"
 
+# The sigil a schema item's quantifier is written with.
+let QUANTS = $
+  "opt": "?"
+  "star": "*"
+  "star_star": "**"
+
 # A binder's name as its declaration writes it.
 def binder_name binder
   "$(SIGILS[binder["kind"]])$(binder["name"])"
@@ -119,17 +125,26 @@ def type_args_text args
 def type_params_text params
   let parts = []
   for param = params
-    let text = (param["optional"] && "?" || "")
+    let text = QUANTS.get(param.get("quant", default: nil), default: "")
     let kind = param["kind"]
-    if (kind == "open_rest")
+    if (kind == "open")
       parts.push "$text..."
       continue
-    if (kind == "mixed_rest" || kind == "pos_rest" || kind == "key_rest")
-      text = "$text$(SIGILS[kind])"
-    else if (kind == "entry_rest")
-      text = "$text...$(type_text(param["key_type"], BINDS_FUNC)): "
+    if (kind == "any")
+      parts.push $text
+      continue
+    if (kind == "include")
+      text = "$text..."
     else if (kind == "key")
-      text = "$text$(param["key"]): "
+      if let key_type = param.get("key_type", default: nil)
+        # A name must be parenthesized to not be taken as a symbol key
+        let key = (type_text key_type BINDS_COMPACT)
+        text = if (key_type["kind"] == "name")
+          "$text($key): "
+        else
+          "$text$key: "
+      else
+        text = "$text$(param["key"]): "
     parts.push "$text$(type_text(param["type"], BINDS_FUNC))"
   ", ".join $parts
 
