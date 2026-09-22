@@ -191,4 +191,3 @@ checker. Structural function types, including quantified function signatures,
 are subtypes of this registered type and its declared supertypes. This rule does
 not desugar function syntax into a nominal application or assign generic
 semantics to `Func`; those remain undecided. A missing registration is residual.
->>>>>>> 3ae626a6 (fixup db)
