@@ -4,7 +4,7 @@ use std::{
 };
 
 use super::{ast::Var, constant, sig, source::Span, sym};
-use dolang_util::arena::ArenaVec;
+use dolang_util::mono::MonoVec;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ScopeId(usize);
@@ -15,7 +15,7 @@ pub(crate) struct Scope {
     pub(crate) vars: Vec<Var>,
     pub(crate) caps: usize,
     pub(crate) func_upvar_depth: usize,
-    pub(crate) blocks: ArenaVec<BlockId>,
+    pub(crate) blocks: MonoVec<BlockId>,
     pub(crate) is_nl_guard: bool,
     pub(crate) func: Option<FuncId>,
 }
@@ -120,7 +120,7 @@ pub(crate) struct Func {
     pub(crate) exit: BlockId,
     pub(crate) sig: sig::UnpackId,
     pub(crate) locals: usize,
-    pub(crate) scopes: ArenaVec<ScopeId>,
+    pub(crate) scopes: MonoVec<ScopeId>,
     pub(crate) name: Option<Span>,
     pub(crate) class_name: Option<Span>,
 }
@@ -155,9 +155,9 @@ pub(crate) type FuncRef<'c> = Ref<'c, Func>;
 pub(crate) type FuncRefMut<'c> = RefMut<'c, Func>;
 
 pub(crate) struct Graph {
-    funcs: ArenaVec<RefCell<Func>>,
-    scopes: ArenaVec<RefCell<Scope>>,
-    blocks: ArenaVec<RefCell<Block>>,
+    funcs: MonoVec<RefCell<Func>>,
+    scopes: MonoVec<RefCell<Scope>>,
+    blocks: MonoVec<RefCell<Block>>,
 }
 
 impl Graph {

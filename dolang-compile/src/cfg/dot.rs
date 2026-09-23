@@ -1,7 +1,7 @@
 use std::fmt::{self};
 
 use super::{BlockId, FuncId, Graph, Inst, InstInfo, ScopeId, Term, TermInfo};
-use crate::Compiler;
+use crate::{Compiler, sym};
 
 #[cfg(feature = "debug")]
 use super::Block;
@@ -33,7 +33,7 @@ impl Inst {
                 .filter(|v| v.is_emitted() && !v.captured)
                 .nth(idx - scope.local_offset)
                 .unwrap();
-            if var.sym.index() == usize::MAX {
+            if var.sym == sym::Id::INVALID {
                 "<synthetic>"
             } else {
                 &compiler.bintab[compiler.symtab[var.sym]]
@@ -59,7 +59,7 @@ impl Inst {
             self.resolve_upvar(compiler, graph, parent, idx, depth)
         } else if depth == 0 {
             let var = scope.vars.iter().filter(|v| v.captured).nth(idx).unwrap();
-            if var.sym.index() == usize::MAX {
+            if var.sym == sym::Id::INVALID {
                 "<synthetic>"
             } else {
                 &compiler.bintab[compiler.symtab[var.sym]]
@@ -330,7 +330,7 @@ impl super::Func {
             // Add all variables
             for (j, local) in used.iter() {
                 label.push_str(&format!("  {}: ", j));
-                let name = if local.sym.index() == usize::MAX {
+                let name = if local.sym == sym::Id::INVALID {
                     "<synthetic>"
                 } else {
                     &compiler.bintab[compiler.symtab[local.sym]]

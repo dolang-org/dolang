@@ -60,9 +60,11 @@ impl PartialEq for Const {
             (Self::Int(l), Self::Int(r)) => l == r,
             (Self::VerbatimInt(_, l), Self::VerbatimInt(_, r)) => l == r,
             // We need to be able to locate NaN if it really ends up in the table
-            (Self::F64(l), Self::F64(r)) => l.is_nan() && r.is_nan() || l == r,
+            (Self::F64(l), Self::F64(r)) => l.is_nan() && r.is_nan() || l.to_bits() == r.to_bits(),
+            (Self::VerbatimF64(_, l), Self::VerbatimF64(_, r)) => l == r,
             (Self::Bool(l), Self::Bool(r)) => l == r,
             (Self::Str(l), Self::Str(r)) => l == r,
+            (Self::Sym(l), Self::Sym(r)) => l == r,
             (Self::Nil, Self::Nil) => true,
             (Self::Bin(l), Self::Bin(r)) => l == r,
             _ => false,
@@ -92,51 +94,51 @@ impl Const {
 pub(crate) type Table = intern::Table<Const, Tag>;
 
 pub(crate) trait ConstantExt {
-    fn int(&mut self, value: Int) -> Id;
-    fn verbatim_int(&mut self, value: Int, text: StrId) -> Id;
-    fn f64(&mut self, value: f64) -> Id;
-    fn verbatim_f64(&mut self, value: f64, text: StrId) -> Id;
-    fn str(&mut self, value: StrId) -> Id;
-    fn bool(&mut self, value: bool) -> Id;
-    fn nil(&mut self) -> Id;
-    fn sym(&mut self, value: sym::Id) -> Id;
-    fn bin(&mut self, value: BinId) -> Id;
+    fn int(&self, value: Int) -> Id;
+    fn verbatim_int(&self, value: Int, text: StrId) -> Id;
+    fn f64(&self, value: f64) -> Id;
+    fn verbatim_f64(&self, value: f64, text: StrId) -> Id;
+    fn str(&self, value: StrId) -> Id;
+    fn bool(&self, value: bool) -> Id;
+    fn nil(&self) -> Id;
+    fn sym(&self, value: sym::Id) -> Id;
+    fn bin(&self, value: BinId) -> Id;
 }
 
 impl ConstantExt for Table {
-    fn int(&mut self, value: Int) -> Id {
-        self.id(&Const::Int(value))
+    fn int(&self, value: Int) -> Id {
+        self.id_owned(Const::Int(value))
     }
 
-    fn verbatim_int(&mut self, value: Int, text: StrId) -> Id {
-        self.id(&Const::VerbatimInt(value, text))
+    fn verbatim_int(&self, value: Int, text: StrId) -> Id {
+        self.id_owned(Const::VerbatimInt(value, text))
     }
 
-    fn f64(&mut self, value: f64) -> Id {
-        self.id(&Const::F64(value))
+    fn f64(&self, value: f64) -> Id {
+        self.id_owned(Const::F64(value))
     }
 
-    fn verbatim_f64(&mut self, value: f64, text: StrId) -> Id {
-        self.id(&Const::VerbatimF64(value, text))
+    fn verbatim_f64(&self, value: f64, text: StrId) -> Id {
+        self.id_owned(Const::VerbatimF64(value, text))
     }
 
-    fn str(&mut self, value: StrId) -> Id {
-        self.id(&Const::Str(value))
+    fn str(&self, value: StrId) -> Id {
+        self.id_owned(Const::Str(value))
     }
 
-    fn bool(&mut self, value: bool) -> Id {
-        self.id(&Const::Bool(value))
+    fn bool(&self, value: bool) -> Id {
+        self.id_owned(Const::Bool(value))
     }
 
-    fn sym(&mut self, value: sym::Id) -> Id {
-        self.id(&Const::Sym(value))
+    fn sym(&self, value: sym::Id) -> Id {
+        self.id_owned(Const::Sym(value))
     }
 
-    fn nil(&mut self) -> Id {
-        self.id(&Const::Nil)
+    fn nil(&self) -> Id {
+        self.id_owned(Const::Nil)
     }
 
-    fn bin(&mut self, value: BinId) -> Id {
-        self.id(&Const::Bin(value))
+    fn bin(&self, value: BinId) -> Id {
+        self.id_owned(Const::Bin(value))
     }
 }

@@ -45,20 +45,20 @@ use crate::{
     vm::Alloc,
 };
 
-use dolang_util::{alias, arena::ArenaVec};
+use dolang_util::{alias, mono::MonoVec};
 use protocol::{GcObj, Protocol, TypeHandle};
 
 type VtblEntry = (NonNull<()>, unsafe fn(NonNull<()>));
 
 pub(crate) struct TypeTable<'v> {
-    entries: ArenaVec<VtblEntry>,
+    entries: MonoVec<VtblEntry>,
     _phantom: std::marker::PhantomData<&'v ()>,
 }
 
 impl<'v> TypeTable<'v> {
     pub(crate) fn new() -> Self {
         Self {
-            entries: ArenaVec::new(),
+            entries: MonoVec::new(),
             _phantom: std::marker::PhantomData,
         }
     }

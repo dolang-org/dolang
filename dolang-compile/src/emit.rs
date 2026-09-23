@@ -255,17 +255,10 @@ impl<'a, 'b> FuncEmitter<'a, 'b> {
 
     fn debug_table(&self) -> file::FuncDebug {
         let path = self.emitter.file.path().to_string_lossy();
-        let path = self.emitter.debugbintab.borrow_mut().id_str(&path);
-        let path = file::StrId {
-            start: path.start(),
-            end: path.end(),
-        };
+        let debugbintab = &self.emitter.debugbintab;
+        let path = debugbintab.range(debugbintab.id_str(&path).as_bin_id());
         let name_str: Cow<'_, str> = self.emitter.qualified_name(self.func).into();
-        let name = self.emitter.debugbintab.borrow_mut().id_str(&name_str);
-        let name = file::StrId {
-            start: name.start(),
-            end: name.end(),
-        };
+        let name = debugbintab.range(debugbintab.id_str(&name_str).as_bin_id());
 
         let mut sourcemap = Vec::new();
 
@@ -360,7 +353,7 @@ pub(crate) struct Emitter<'a> {
     pub(crate) consttab: &'a constant::Table,
     pub(crate) packtab: &'a sig::PackTable,
     pub(crate) unpacktab: &'a sig::UnpackTable,
-    pub(crate) debugbintab: RefCell<BinTable>,
+    pub(crate) debugbintab: BinTable,
     pub(crate) mode: Mode<'a>,
 }
 
@@ -509,45 +502,29 @@ impl<'a> Emitter<'a> {
             .map(|(_, c)| match c {
                 Const::Nil => file::Const::Nil,
                 Const::Int(v) => file::Const::Int(*v),
-                Const::VerbatimInt(v, id) => file::Const::VerbatimInt(
-                    *v,
-                    file::StrId {
-                        start: id.start(),
-                        end: id.end(),
-                    },
-                ),
+                Const::VerbatimInt(v, id) => {
+                    file::Const::VerbatimInt(*v, self.bintab.range(id.as_bin_id()))
+                }
                 Const::F64(v) => file::Const::F64(*v),
-                Const::VerbatimF64(v, id) => file::Const::VerbatimF64(
-                    *v,
-                    file::StrId {
-                        start: id.start(),
-                        end: id.end(),
-                    },
-                ),
+                Const::VerbatimF64(v, id) => {
+                    file::Const::VerbatimF64(*v, self.bintab.range(id.as_bin_id()))
+                }
                 Const::Bool(v) => file::Const::Bool(*v),
-                Const::Str(id) => file::Const::Str(file::StrId {
-                    start: id.start(),
-                    end: id.end(),
-                }),
+                Const::Str(id) => file::Const::Str(self.bintab.range(id.as_bin_id())),
                 Const::Sym(id) => file::Const::Sym(id.index()),
-                Const::Bin(id) => file::Const::Bin(file::BinId {
-                    start: id.start(),
-                    end: id.end(),
-                }),
+                Const::Bin(id) => file::Const::Bin(self.bintab.range(*id)),
             })
             .collect();
+        let bintab_content = self.bintab.flatten();
         let bintab = file::BinTable {
-            content: self.bintab.as_slice(),
+            content: &bintab_content,
         };
         let symtab = file::SymTable {
             content: self
                 .symtab
                 .iter()
                 .map(|(sym_id, id)| file::SymEntry {
-                    name: file::StrId {
-                        start: id.start(),
-                        end: id.end(),
-                    },
+                    name: self.bintab.range(id.as_bin_id()),
                     private: self.symtab.is_fresh(sym_id),
                 })
                 .collect(),
@@ -595,19 +572,16 @@ impl<'a> Emitter<'a> {
                 })
                 .collect(),
         };
-        let debugstrtab_inner = self.debugbintab.get_mut();
         let module_name = match self.mode {
-            Mode::Module { name } => {
-                let id = debugstrtab_inner.id_str(name);
-                Some(file::StrId {
-                    start: id.start(),
-                    end: id.end(),
-                })
-            }
+            Mode::Module { name } => Some(
+                self.debugbintab
+                    .range(self.debugbintab.id_str(name).as_bin_id()),
+            ),
             _ => None,
         };
+        let debugbintab_content = self.debugbintab.flatten();
         let debugbintab = file::BinTable {
-            content: debugstrtab_inner.as_slice(),
+            content: &debugbintab_content,
         };
         let funcdebugtab = file::FuncDebugTable { content: debugs };
         let content = file::Content {

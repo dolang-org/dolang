@@ -5,7 +5,7 @@ use std::{
     iter, result,
 };
 
-use dolang_util::{arena::ArenaVec, intern::BinTable};
+use dolang_util::{intern::BinTable, mono::MonoVec};
 
 use crate::{
     Compiler, Mode, PreludeImport,
@@ -697,8 +697,8 @@ pub(crate) struct Elaborater<'a> {
     mode: Mode<'a>,
     file: &'a File<'a>,
     diags: &'a Diags,
-    bintab: &'a mut BinTable,
-    symtab: &'a mut sym::Table,
+    bintab: &'a BinTable,
+    symtab: &'a sym::Table,
     fail: bool,
     epoch: Epoch,
 }
@@ -736,7 +736,7 @@ enum Scope<'s> {
         nl_break: Cell<bool>,
         nl_continue: Cell<bool>,
         nl_return: Cell<Option<usize>>,
-        vars: ArenaVec<Cell<(Var, Epoch)>>,
+        vars: MonoVec<Cell<(Var, Epoch)>>,
         parent: &'s Scope<'s>,
         index: HashMap<sym::Id, usize>,
     },
@@ -815,7 +815,7 @@ impl<'s> Scope<'s> {
             nl_break: Cell::new(false),
             nl_continue: Cell::new(false),
             nl_return: Cell::new(None),
-            vars: ArenaVec::new(),
+            vars: MonoVec::new(),
             parent: self,
             index: HashMap::new(),
         }
@@ -830,7 +830,7 @@ impl<'s> Scope<'s> {
             nl_break: Cell::new(false),
             nl_continue: Cell::new(false),
             nl_return: Cell::new(None),
-            vars: ArenaVec::new(),
+            vars: MonoVec::new(),
             parent: self,
             index: HashMap::new(),
         }
@@ -849,7 +849,7 @@ impl<'s> Scope<'s> {
             nl_break: Cell::new(false),
             nl_continue: Cell::new(false),
             nl_return: Cell::new(None),
-            vars: ArenaVec::new(),
+            vars: MonoVec::new(),
             parent: self,
             index: HashMap::new(),
         }
@@ -1067,7 +1067,7 @@ impl<'s> Scope<'s> {
             nl_break: Cell::new(false),
             nl_continue: Cell::new(false),
             nl_return: Cell::new(None),
-            vars: ArenaVec::new(),
+            vars: MonoVec::new(),
             parent: self,
             index: HashMap::new(),
         }
@@ -1160,7 +1160,7 @@ impl<'s> Scope<'s> {
                 let i = vars.len();
                 vars.push(Cell::new((
                     Var {
-                        sym: sym::Id::new(usize::MAX),
+                        sym: sym::Id::INVALID,
                         captured: false,
                         exported: false,
                         used: true,
@@ -3000,8 +3000,8 @@ impl<'a> Elaborater<'a> {
     pub(crate) fn new(
         mode: Mode<'a>,
         file: &'a File<'a>,
-        bintab: &'a mut BinTable,
-        symtab: &'a mut sym::Table,
+        bintab: &'a BinTable,
+        symtab: &'a sym::Table,
         diags: &'a Diags,
     ) -> Self {
         Elaborater {

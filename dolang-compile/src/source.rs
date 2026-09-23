@@ -7,7 +7,7 @@ use std::{
 
 use crate::diag::{self, Annotation, AnnotationKind, NoteKind, Pos, Severity};
 
-use dolang_util::arena::ArenaVec;
+use dolang_util::mono::MonoVec;
 
 use super::Compiler;
 
@@ -296,13 +296,13 @@ impl Diag {
 }
 
 pub(crate) struct Diags {
-    vec: ArenaVec<Diag>,
+    vec: MonoVec<Diag>,
 }
 
 impl Diags {
     pub(crate) fn new() -> Self {
         Self {
-            vec: ArenaVec::new(),
+            vec: MonoVec::new(),
         }
     }
 
