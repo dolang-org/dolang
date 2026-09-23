@@ -187,6 +187,20 @@ impl<T: ?Sized> AsMut<T> for Box<T> {
     }
 }
 
+impl<T: PartialEq + ?Sized> PartialEq for Box<T> {
+    fn eq(&self, other: &Self) -> bool {
+        T::eq(self, other)
+    }
+}
+
+impl<T: Eq + ?Sized> Eq for Box<T> {}
+
+impl<T: std::hash::Hash + ?Sized> std::hash::Hash for Box<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        T::hash(self, state);
+    }
+}
+
 impl<T: fmt::Debug + ?Sized> fmt::Debug for Box<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         T::fmt(self, f)
