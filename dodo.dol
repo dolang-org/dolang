@@ -13,7 +13,7 @@ let MIRI_CRATES = $
   - dolang-runtime
   - dolang-private-util
   - dolang
-  - dolang-private-regression
+  - language-regression
 
 let COV_IGNORE = $
   - dolang-private-util/src/hashbrown

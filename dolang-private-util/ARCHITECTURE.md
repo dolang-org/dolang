@@ -5,15 +5,29 @@ Do implementation.
 
 ## Interning (`intern.rs`)
 
-`StrTable` provides string deduplication by storing everything in a single
-`String` with a `HashMap` index. `Table` provides for generic interning of
-sized types.
+`BinTable` interns byte strings through `&self`. It copies each one whole into
+the last of a list of doubling heap segments, starting a new segment when it
+doesn't fit, and indexes them with a `MonoHashMap` from the bytes to a logical
+start offset. Offsets are assigned densely in insertion order, so `flatten`
+concatenates the segments' filled prefixes into the contiguous table that
+bytecode files store. `BinId`/`StrId` are entry indices; `range` gives their
+logical offsets. `Table` interns sized types through `&self`,
+built on `MonoHashMap`; unindexed "fresh" entries share its storage but are
+never found by lookup. `Id` stores the index plus one as a `NonZeroU32`.
 
-## Arena Vector (`arena.rs`)
+## Monotonic Collections (`mono.rs`)
 
-`ArenaVec<T>` is an append-only vector that grows in exponentially-sized chunks.
-Elements are never moved after insertion, enabling stable references with O(1)
-push operations via `&self`.
+These collections grow through `&self` and never move their elements, so
+references to elements remain valid as they grow.
+
+`MonoVec<T>` is an append-only vector that grows in exponentially-sized chunks,
+with O(1) push.
+
+`MonoHashMap<K, V>` stores entries in insertion order in a `MonoVec` and indexes
+them with a raw `hashbrown` table of entry indices behind a `RefCell`. Growth
+rehashes from stored hashes and frees the old index at once. Inserting an
+existing key fails. Accessing the map from a key's `Eq` during insertion panics.
+`MonoHashSet<T>` wraps `MonoHashMap<T, ()>`.
 
 ## Intrusive Linked Lists (`ring.rs`)
 

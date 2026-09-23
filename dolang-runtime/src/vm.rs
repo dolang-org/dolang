@@ -12,7 +12,7 @@ use std::{
     task::{Poll, Waker},
 };
 
-use dolang_util::{alias, arena::ArenaVec};
+use dolang_util::{alias, mono::MonoVec};
 use futures::{
     channel::mpsc,
     stream::{FuturesUnordered, StreamExt},
@@ -227,14 +227,14 @@ type ChannelFactory<'v> = dyn for<'s> Fn(&mut Strand<'v, 's>, Slot<'v, '_>, Slot
 pub struct Vm<'v> {
     pub(crate) import_cache: RefCell<HashMap<String, ImportCacheEntry<'v>>>,
     pub(crate) native_modules: RefCell<HashMap<&'v str, Value<'v>>>,
-    pub(crate) importers: ArenaVec<Value<'v>>,
+    pub(crate) importers: MonoVec<Value<'v>>,
     pub(crate) pipe_handler: RefCell<Option<Box<ChannelFactory<'v>>>>,
     pub(crate) trap: RefCell<Option<Box<Trap<'v>>>>,
     // SAFETY: GC objects may point into state, so `arena` must be cleared first (but not dropped)
     pub(crate) state: RefCell<HashMap<TypeId, ErasedState>>,
     // SAFETY: must be unregistered after clearing GC objects and state, as this invalidates
     // all Sym<'v, 'v>
-    pub(crate) symroots: ArenaVec<GcObj<'v, SymObj>>,
+    pub(crate) symroots: MonoVec<GcObj<'v, SymObj>>,
     pub(crate) symtab: sym::Table<'v>,
     // SAFETY: must be dropped before arena, as it holds GC objects
     pub(crate) singletons: Singletons<'v>,
@@ -244,7 +244,7 @@ pub struct Vm<'v> {
     pub(crate) builtin_types: BuiltinTypes<'v>,
     pub(crate) types: TypeTable<'v>,
     /// Class object singletons for user-registered [`Object`] types.
-    pub(crate) type_singletons: ArenaVec<Value<'v>>,
+    pub(crate) type_singletons: MonoVec<Value<'v>>,
     /// Instance vtbls of user-registered [`Object`] types that declared an error
     /// kind via a nominal supertype.
     ///
@@ -252,8 +252,8 @@ pub struct Vm<'v> {
     /// error, so [`crate::error::Error::kind`] classifies its instances by
     /// looking their vtbl up here. Only types that declared a kind appear, which
     /// in practice is a handful per VM.
-    pub(crate) error_kind_vtbls: ArenaVec<NonNull<ObjectVtbl<'v>>>,
-    pub(crate) locals: ArenaVec<LocalVtbl<'v>>,
+    pub(crate) error_kind_vtbls: MonoVec<NonNull<ObjectVtbl<'v>>>,
+    pub(crate) locals: MonoVec<LocalVtbl<'v>>,
     pub(crate) local_root_count: Cell<usize>,
     pub(crate) spawn_tx: RefCell<Option<mpsc::UnboundedSender<SpawnedFuture<'v>>>>,
     // Strings that have to be allocated for the lifetime of the VM

@@ -1,9 +1,9 @@
 #![deny(warnings)]
 
 pub mod alias;
-pub mod arena;
 pub mod hashbrown;
 pub mod intern;
+pub mod mono;
 pub mod pairsort;
 pub mod pin;
 pub mod ring;

@@ -1547,8 +1547,8 @@ impl Compiler<'_> {
         Elaborater::new(
             self.mode.clone(),
             &self.file,
-            &mut self.bintab,
-            &mut self.symtab,
+            &self.bintab,
+            &self.symtab,
             diags,
         )
     }
@@ -1557,13 +1557,13 @@ impl Compiler<'_> {
         Lowerer {
             mode: self.mode.clone(),
             file: &self.file,
-            symtab: &mut self.symtab,
-            bintab: &mut self.bintab,
-            consttab: &mut self.consttab,
-            packtab: &mut self.packtab,
-            unpacktab: &mut self.unpacktab,
+            symtab: &self.symtab,
+            bintab: &self.bintab,
+            consttab: &self.consttab,
+            packtab: &self.packtab,
+            unpacktab: &self.unpacktab,
             prelude: &self.prelude,
-            sentinel_const: None,
+            sentinel_const: Default::default(),
         }
     }
 

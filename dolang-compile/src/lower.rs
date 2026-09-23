@@ -1,6 +1,6 @@
 use std::{cell::OnceCell, mem, str::Utf8Error};
 
-use dolang_util::arena::ArenaVec;
+use dolang_util::mono::MonoVec;
 
 use dolang_bytecode::builtin;
 
@@ -25,13 +25,13 @@ use crate::{
 pub(crate) struct Lowerer<'c> {
     pub(crate) mode: Mode<'c>,
     pub(crate) file: &'c File<'c>,
-    pub(crate) symtab: &'c mut sym::Table,
-    pub(crate) bintab: &'c mut intern::BinTable,
-    pub(crate) consttab: &'c mut constant::Table,
-    pub(crate) packtab: &'c mut sig::PackTable,
-    pub(crate) unpacktab: &'c mut sig::UnpackTable,
+    pub(crate) symtab: &'c sym::Table,
+    pub(crate) bintab: &'c intern::BinTable,
+    pub(crate) consttab: &'c constant::Table,
+    pub(crate) packtab: &'c sig::PackTable,
+    pub(crate) unpacktab: &'c sig::UnpackTable,
     pub(crate) prelude: &'c [PreludeImport],
-    pub(crate) sentinel_const: Option<constant::Id>,
+    pub(crate) sentinel_const: OnceCell<constant::Id>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -83,17 +83,17 @@ struct Work<'a> {
     params: Params<'a>,
 }
 
-type Queue<'a> = ArenaVec<Work<'a>>;
+type Queue<'a> = MonoVec<Work<'a>>;
 
 struct Scope<'a, 'c, 'q> {
     file: &'c File<'c>,
-    symtab: &'c mut sym::Table,
-    bintab: &'c mut intern::BinTable,
-    consttab: &'c mut constant::Table,
-    packtab: &'c mut sig::PackTable,
-    unpacktab: &'c mut sig::UnpackTable,
+    symtab: &'c sym::Table,
+    bintab: &'c intern::BinTable,
+    consttab: &'c constant::Table,
+    packtab: &'c sig::PackTable,
+    unpacktab: &'c sig::UnpackTable,
     prelude: &'c [PreludeImport],
-    sentinel_const: &'c mut Option<constant::Id>,
+    sentinel_const: &'c OnceCell<constant::Id>,
     graph: &'a cfg::Graph,
     bb: cfg::BlockId,
     params: Params<'a>,
@@ -1955,14 +1955,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     }
 
     fn sentinel_const(&mut self) -> constant::Id {
-        if let Some(id) = *self.sentinel_const {
-            id
-        } else {
+        *self.sentinel_const.get_or_init(|| {
             let sym_id = self.symtab.fresh(self.bintab.id_str("default"));
-            let id = self.consttab.sym(sym_id);
-            *self.sentinel_const = Some(id);
-            id
-        }
+            self.consttab.sym(sym_id)
+        })
     }
 
     fn lower_const(&mut self, node: &Const) -> constant::Id {
@@ -3334,7 +3330,7 @@ impl<'c> Lowerer<'c> {
                 packtab: self.packtab,
                 unpacktab: self.unpacktab,
                 prelude: self.prelude,
-                sentinel_const: &mut self.sentinel_const,
+                sentinel_const: &self.sentinel_const,
                 graph: &graph,
                 bb: work.bb,
                 block: graph.block_mut(work.bb),
