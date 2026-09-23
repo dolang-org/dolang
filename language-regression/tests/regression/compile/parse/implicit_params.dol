@@ -1,0 +1,88 @@
+@let _Ints = Iter[Int]
+@let _Strs = Sink[Str]
+
+# Accepted: a declaration, with the implicits among the parameters in any order
+def _decl a @ Int <_Ints >_Strs -> nil
+  nil
+
+# Whitespace may follow the sigil, as it may follow `@`
+def _spaced a @ Int < _Ints > _Strs -> nil
+  nil
+
+def _decl_first <_Ints a @ Int -> nil
+  nil
+
+# A compact type, so a union needs parentheses
+def _decl_union <(Iter[Int] | nil) -> nil
+  nil
+
+# Accepted: a bodiless signature, whose rest rules are relaxed
+@def _sig *a **k <_Ints >_Strs -> nil
+pub def _sig ...args
+  nil
+
+# Accepted: vertical parameters ending in `do`
+def _vert
+  a @ Int
+  < _Ints
+  >_Strs
+do -> nil
+  nil
+
+# Accepted: a lambda, whose parameter list is delimited by `|`
+let _lambda = do |a <_Ints >_Strs|
+  nil
+let _lambda_expr = (do |a <_Ints| a)
+
+# Accepted: a method
+class _C
+  pub def _m self <_Ints -> nil
+    nil
+
+# Accepted: a function type, in either order, with a full type
+let _ty @ ((Int, <_Ints, >_Strs) -> nil) = nil
+let _ty_first @ ((<_Ints, Int) -> nil) = nil
+let _ty_union @ ((<(Iter[Int] | nil)) -> nil) = nil
+let _ty_only @ ((<_Ints) -> nil) = nil
+let _ty_spaced @ ((Int, < _Ints, > _Strs) -> nil) = nil
+
+# Rejected: a schema describes data, which an ambient channel is not
+let _schema @ Dict[{<Int}] = nil
+# error: a schema cannot have an implicit parameter
+#   --> implicit_params.dol:LL:LL
+#    |
+# LL | let _schema @ Dict[{<Int}] = nil
+#    |                     ^
+
+# Rejected: a pattern binds values, and an implicit binds nothing
+let _pat <Int = [1]
+# error: a pattern cannot have an implicit parameter
+#   --> implicit_params.dol:LL:LL
+#    |
+# LL | let _pat <Int = [1]
+#    |          ^
+
+# Rejected: a list admits at most one of each
+def _dup a <Int <Str -> nil
+  nil
+# error: duplicate implicit parameter
+#   --> implicit_params.dol:LL:LL
+#    |
+# LL | def _dup a <Int <Str -> nil
+#    |                 ^
+
+# Rejected: an implicit is an item of its own, not a quantified element
+let _quant @ ((?<Int) -> nil) = nil
+# error: an implicit parameter cannot be quantified
+#   --> implicit_params.dol:LL:LL
+#    |
+# LL | let _quant @ ((?<Int) -> nil) = nil
+#    |                ^
+
+# Rejected: an implicit describes a function, so it leaves no grouped type
+let _no_arrow @ ((<Int)) = nil
+# error: parenthesized type is a parameter list, which must be followed by `->`
+#   --> implicit_params.dol:LL:LL
+#    |
+# LL | let _no_arrow @ ((<Int)) = nil
+#    |                  ^^^^^^
