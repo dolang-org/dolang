@@ -99,3 +99,13 @@ def _nested x @_Local -> _Local
   @let _Local = Array[_Local]
   x
 assert_eq (_nested 1) 1
+
+# A nested function names its block's type-only declarations, and dotted module imports
+# sharing a head stay distinct
+def _nesting()
+  import @_pkg.one
+  import @_pkg.two
+  @let _Either = (_pkg.one.Thing | _pkg.two.Thing)
+  let f = (do |x @_Either| -> _pkg.two.Other x)
+  f(nil)
+assert_eq $_nesting() nil

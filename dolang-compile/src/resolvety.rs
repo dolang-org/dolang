@@ -2,8 +2,9 @@
 //!
 //! This runs only when documenting, after elaboration. It must not change anything
 //! lowering reads, so it records resolutions on type names alone and marks bindings
-//! only as named by a type. Scopes are walked as the document index walks them, so a
-//! resolution's depth means the same to both.
+//! only as named by a type. A resolution counts frames outward, each a binder group or
+//! a lexical scope, and the document index pushes the same frames, so its depth means
+//! the same to both.
 
 use std::{
     cell::Cell,
@@ -19,8 +20,8 @@ use crate::{
     ast::{
         AliasBody, Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, Def, DictElem, Expr,
         ExprBody, FieldInit, For, Function, Ident, If, ImportElement, LValue, Origin, Param,
-        PatIdent, Pattern, PrimStmt, Res, Root, Stmt, TypeArg, TypeDecl, TypeExpr, Var,
-        implicit_tys_mut, visit::Node,
+        PatIdent, Pattern, PrimStmt, Res, Root, Stmt, TypeArg, TypeDecl, TypeEntry, TypeExpr,
+        TypeRes, Var, implicit_tys_mut, visit::Node,
     },
     diag::Severity,
     source::{Diagnose, Diags, File, Span},
@@ -240,20 +241,24 @@ struct Frame<'s> {
 }
 
 enum FrameKind<'s> {
-    /// A lexical scope, holding the variables elaboration left in it
-    Vars {
+    /// A lexical scope, holding the variables elaboration left in it and the type-only
+    /// declarations of its statements
+    Scope {
         vars: &'s [Cell<Var>],
         decls: Decls,
+        /// The type-only declarations, numbered as [`Stmt::type_decls`] numbers them.
+        /// They are visible only within the block's statements, where they are found
+        /// before its variables.
+        types: Vec<TypeName>,
         /// Whether names are being resolved within the block's statements, where its
         /// declarations are visible before they appear
         in_body: Cell<bool>,
     },
-    /// Names that exist only in types: the binders of a declaration, or the type-only
-    /// imports of a block
-    Types { names: Vec<TypeName> },
+    /// The binders of a declaration
+    Binders { names: Vec<TypeName> },
 }
 
-/// A name declared for types alone
+/// A name declared for types alone: a binder, or a type-only declaration of a block
 struct TypeName {
     span: Span,
     /// The whole dotted path of a type-only module import, of which `span` is only the
@@ -273,6 +278,24 @@ struct TypeName {
 }
 
 impl TypeName {
+    fn new(decl: TypeDecl<'_>) -> Self {
+        let (module, import, alias, used) = match decl {
+            TypeDecl::Module { path, is_pub, .. } => (Some(path), true, None, is_pub),
+            // An exported name may be used elsewhere
+            TypeDecl::Item { is_pub, .. } => (None, true, None, is_pub),
+            TypeDecl::Alias(alias) => (None, false, Some(alias.span()), false),
+            TypeDecl::Protocol(_) => (None, false, None, false),
+        };
+        TypeName {
+            span: decl.name(),
+            module,
+            import,
+            alias,
+            warn_unused: import,
+            used: Cell::new(used),
+        }
+    }
+
     /// The name this binds, which for a dotted module import is only its head.
     fn bound_name<'a>(&self, file: &'a File<'_>) -> &'a str {
         file.str(self.span)
@@ -293,25 +316,23 @@ impl TypeName {
     }
 }
 
-enum Found {
-    Var { res: Res, import: bool },
-    Type { import: bool, span: Span },
-}
-
 impl<'s> Frame<'s> {
-    fn vars<T: Element>(outer: Option<&'s Frame<'s>>, vars: &'s mut [Var], elems: &[T]) -> Self {
+    fn scope<T: Element>(outer: Option<&'s Frame<'s>>, vars: &'s mut [Var], elems: &[T]) -> Self {
         let mut decls = Decls {
             decls: vec![None; vars.len()],
             modules: Vec::new(),
         };
+        let mut types = Vec::new();
         for elem in elems {
             elem.declare(&mut decls);
+            elem.declare_types(&mut |decl| types.push(TypeName::new(decl)));
         }
         Frame {
             outer,
-            kind: FrameKind::Vars {
+            kind: FrameKind::Scope {
                 vars: Cell::from_mut(vars).as_slice_of_cells(),
                 decls,
+                types,
                 in_body: Cell::new(false),
             },
         }
@@ -332,24 +353,24 @@ impl<'s> Frame<'s> {
             .collect();
         Frame {
             outer: Some(outer),
-            kind: FrameKind::Types { names },
+            kind: FrameKind::Binders { names },
         }
     }
 
-    /// Enter the statements of the block whose variables this frame holds, where the
-    /// block's declarations are visible before they appear. The returned frame holds the
-    /// block's type-only imports, which are found before its variables.
-    fn body<T: Element>(&'s self, elems: &[T]) -> Frame<'s> {
-        if let FrameKind::Vars { in_body, .. } = &self.kind {
+    /// Enter the statements of the block this frame is the scope of, where the block's
+    /// declarations are visible before they appear, and its type-only declarations at all.
+    fn enter_body(&self) {
+        if let FrameKind::Scope { in_body, .. } = &self.kind {
             in_body.set(true);
         }
-        let mut names = Vec::new();
-        for elem in elems {
-            elem.type_imports(&mut names);
-        }
-        Frame {
-            outer: Some(self),
-            kind: FrameKind::Types { names },
+    }
+
+    /// The type-only names visible in this frame
+    fn type_names(&self) -> &[TypeName] {
+        match &self.kind {
+            FrameKind::Scope { types, in_body, .. } if in_body.get() => types,
+            FrameKind::Scope { .. } => &[],
+            FrameKind::Binders { names } => names,
         }
     }
 }
@@ -383,10 +404,11 @@ impl Check<'_> {
     fn has_value(&self, frame: &Frame<'_>, name: &str, site: u32) -> bool {
         let mut frame = Some(frame);
         while let Some(current) = frame {
-            if let FrameKind::Vars {
+            if let FrameKind::Scope {
                 vars,
                 decls,
                 in_body,
+                ..
             } = &current.kind
                 && vars.iter().enumerate().rev().any(|(index, cell)| {
                     let var = cell.get();
@@ -415,12 +437,10 @@ impl Check<'_> {
     fn has_type(&self, frame: &Frame<'_>, name: &str, site: u32) -> bool {
         let mut frame = Some(frame);
         while let Some(current) = frame {
-            if let FrameKind::Types { names } = &current.kind
-                && names.iter().rev().any(|found| {
-                    found.bound_name(self.file) == name
-                        && found.alias.is_none_or(|alias| site > alias.end)
-                })
-            {
+            if current.type_names().iter().rev().any(|found| {
+                found.bound_name(self.file) == name
+                    && found.alias.is_none_or(|alias| site > alias.end)
+            }) {
                 return true;
             }
             frame = current.outer;
@@ -434,86 +454,84 @@ impl Check<'_> {
         }
     }
 
-    /// Find what the dotted `path`, written at `site`, refers to.
-    fn lookup(&self, frame: &Frame<'_>, path: &[&str], site: u32) -> Option<Found> {
+    /// Find what the dotted `path`, written at `site`, refers to, and whether that is an
+    /// import.
+    fn lookup(&self, frame: &Frame<'_>, path: &[&str], site: u32) -> Option<(TypeRes, bool)> {
         let name = path[0];
         let mut depth = 0;
         let mut frame = Some(frame);
         while let Some(current) = frame {
-            match &current.kind {
-                FrameKind::Vars {
-                    vars,
-                    decls,
-                    in_body,
-                } => {
-                    // A later binding of a name shadows an earlier one
-                    for (index, cell) in vars.iter().enumerate().rev() {
-                        let var = cell.get();
-                        if self.sym_name(var.sym) != Some(name) {
-                            continue;
-                        }
-                        let decl = decls.decl(index);
-                        let visible = match var.origin {
-                            Origin::Source(span) | Origin::SelfParam(span) => {
-                                span.start < site || (decl.is_some() && in_body.get())
-                            }
-                            Origin::PreludeModule | Origin::PreludeItem { .. } | Origin::Repl => {
-                                true
-                            }
-                            Origin::Synthetic => false,
-                        };
-                        if !visible {
-                            continue;
-                        }
-                        // An import binds only the head of the module path it names, so
-                        // the whole path must be one of the modules actually imported.
-                        if decls.imports_module(index)
-                            && !decls.names_module(self.file, index, path)
-                        {
-                            continue;
-                        }
-                        cell.update(|mut var| {
-                            var.type_used = true;
-                            var
-                        });
-                        return Some(Found::Var {
-                            res: Res {
-                                index,
-                                depth,
-                                node: None,
-                            },
-                            import: decl == Some(Decl::Import) || var.is_prelude(),
-                        });
-                    }
-                    depth += 1;
+            let res = |entry| TypeRes {
+                depth,
+                entry,
+                node: None,
+            };
+            // A later binding of a name shadows an earlier one
+            let names = current.type_names();
+            if let Some(index) = names
+                .iter()
+                .rposition(|found| found.matches(self.file, path))
+            {
+                let found = &names[index];
+                found.used.set(true);
+                if let Some(alias) = found.alias
+                    && site <= alias.end
+                    // Past the block's own variables, whose conflicts with its aliases
+                    // are diagnosed at the alias
+                    && let Some(outer) = current.outer
+                    && (self.has_type(outer, name, site) || self.has_value(outer, name, site))
+                {
+                    self.diags.push(AliasShadowsEarly(Span {
+                        start: site,
+                        end: site + name.len() as u32,
+                    }));
                 }
-                FrameKind::Types { names } => {
-                    // A later binding of a name shadows an earlier one
-                    if let Some(found) = names
-                        .iter()
-                        .rev()
-                        .find(|found| found.matches(self.file, path))
-                    {
-                        found.used.set(true);
-                        if let Some(alias) = found.alias
-                            && site <= alias.end
-                            // Past the block's own variables, whose conflicts with its
-                            // aliases are diagnosed at the alias
-                            && let Some(outer) = current.outer.and_then(|block| block.outer)
-                            && (self.has_type(outer, name, site) || self.has_value(outer, name, site))
-                        {
-                            self.diags.push(AliasShadowsEarly(Span {
-                                start: site,
-                                end: site + name.len() as u32,
-                            }));
-                        }
-                        return Some(Found::Type {
-                            import: found.import,
-                            span: found.span,
-                        });
+                let entry = match current.kind {
+                    FrameKind::Scope { .. } => TypeEntry::Type(index),
+                    FrameKind::Binders { .. } => TypeEntry::Binder(index),
+                };
+                return Some((res(entry), found.import));
+            }
+            if let FrameKind::Scope {
+                vars,
+                decls,
+                in_body,
+                ..
+            } = &current.kind
+            {
+                // A later binding of a name shadows an earlier one
+                for (index, cell) in vars.iter().enumerate().rev() {
+                    let var = cell.get();
+                    if self.sym_name(var.sym) != Some(name) {
+                        continue;
                     }
+                    let decl = decls.decl(index);
+                    let visible = match var.origin {
+                        Origin::Source(span) | Origin::SelfParam(span) => {
+                            span.start < site || (decl.is_some() && in_body.get())
+                        }
+                        Origin::PreludeModule | Origin::PreludeItem { .. } | Origin::Repl => true,
+                        Origin::Synthetic => false,
+                    };
+                    if !visible {
+                        continue;
+                    }
+                    // An import binds only the head of the module path it names, so the
+                    // whole path must be one of the modules actually imported.
+                    if decls.imports_module(index) && !decls.names_module(self.file, index, path) {
+                        continue;
+                    }
+                    cell.update(|mut var| {
+                        var.type_used = true;
+                        var
+                    });
+                    return Some((
+                        res(TypeEntry::Var(index)),
+                        decl == Some(Decl::Import) || var.is_prelude(),
+                    ));
                 }
             }
+            depth += 1;
             frame = current.outer;
         }
         None
@@ -526,60 +544,44 @@ impl Check<'_> {
     }
 
     fn ty(&mut self, frame: &Frame<'_>, ty: &mut TypeExpr) {
-        ty.each_name(&mut |head, decl, fields| self.name(frame, head, decl, fields));
+        ty.each_name(&mut |head, res, fields| self.name(frame, head, res, fields));
     }
 
-    fn name(
-        &self,
-        frame: &Frame<'_>,
-        head: &mut Ident,
-        decl: &mut Option<TypeDecl>,
-        fields: &[Span],
-    ) {
-        let path: Vec<_> = iter::once(head.span)
+    fn name(&self, frame: &Frame<'_>, head: Span, res: &mut Option<TypeRes>, fields: &[Span]) {
+        let path: Vec<_> = iter::once(head)
             .chain(fields.iter().copied())
             .map(|span| self.file.str(span))
             .collect();
         let dotted = !fields.is_empty();
-        match self.lookup(frame, &path, head.span.start) {
+        match self.lookup(frame, &path, head.start) {
             // What is unbound is everything the last component is looked up in, which for
             // a dotted name is the module it says holds the type.
             None => self.diags.push(UnboundType(Span {
-                start: head.span.start,
+                start: head.start,
                 end: match fields.split_last() {
                     Some((_, [.., module])) => module.end,
-                    _ => head.span.end,
+                    _ => head.end,
                 },
             })),
-            Some(Found::Var { res, import }) => {
-                head.res = Some(res);
+            Some((found, import)) => {
+                *res = Some(found);
                 if dotted && !import {
-                    self.diags.push(DottedNonImport(head.span));
-                }
-            }
-            Some(Found::Type { import, span }) => {
-                *decl = Some(TypeDecl { span, node: None });
-                if dotted && !import {
-                    self.diags.push(DottedNonImport(head.span));
+                    self.diags.push(DottedNonImport(head));
                 }
             }
         }
     }
 
     fn unused_types(&self, frame: &Frame<'_>) {
-        if let FrameKind::Types { names } = &frame.kind {
-            for name in names {
-                if !name.warn_unused
-                    || name.used.get()
-                    || name.bound_name(self.file).starts_with('_')
-                {
-                    continue;
-                }
-                if name.import {
-                    self.diags.push(UnusedTypeImport(name.report_span()));
-                } else {
-                    self.diags.push(UnusedBinder(name.report_span()));
-                }
+        let (FrameKind::Scope { types: names, .. } | FrameKind::Binders { names }) = &frame.kind;
+        for name in names {
+            if !name.warn_unused || name.used.get() || name.bound_name(self.file).starts_with('_') {
+                continue;
+            }
+            if name.import {
+                self.diags.push(UnusedTypeImport(name.report_span()));
+            } else {
+                self.diags.push(UnusedBinder(name.report_span()));
             }
         }
     }
@@ -593,7 +595,7 @@ impl Check<'_> {
             body,
             ..
         } = func;
-        let frame = Frame::vars(outer, &mut body.vars, &body.stmts);
+        let frame = Frame::scope(outer, &mut body.vars, &body.stmts);
         for param in params.iter_mut() {
             self.param(&frame, param);
         }
@@ -603,12 +605,12 @@ impl Check<'_> {
         if let Some(ret) = ret {
             self.ty(&frame, &mut ret.ty);
         }
-        let inner = frame.body(&body.stmts);
+        frame.enter_body();
         self.overloads(&body.stmts);
         for stmt in body.stmts.iter_mut() {
-            self.stmt(&inner, stmt);
+            self.stmt(&frame, stmt);
         }
-        self.unused_types(&inner);
+        self.unused_types(&frame);
     }
 
     /// Warn about a type-only def that no def of the same name among its block's
@@ -770,15 +772,8 @@ impl Check<'_> {
                 if class.is_protocol() {
                     // A protocol is visible throughout its block, so a value of the
                     // block is diagnosed where the value is bound
-                    let mut enclosing = Some(frame);
-                    while let Some(current) = enclosing {
-                        enclosing = current.outer;
-                        if matches!(current.kind, FrameKind::Vars { .. }) {
-                            break;
-                        }
-                    }
                     let name = self.file.str(class.ident.span);
-                    if let Some(enclosing) = enclosing
+                    if let Some(enclosing) = frame.outer
                         && self.has_value(enclosing, name, class.ident.span.start)
                     {
                         self.diags.push(TypeShadowsValue(class.ident.span));
@@ -822,8 +817,8 @@ impl Check<'_> {
             if super_ref.type_only {
                 self.name(
                     &inner,
-                    &mut super_ref.ident,
-                    &mut super_ref.decl,
+                    super_ref.ident.span,
+                    &mut super_ref.res,
                     &super_ref.fields,
                 );
             }
@@ -896,16 +891,16 @@ impl Check<'_> {
 
     fn branch<T: Body>(&mut self, frame: &Frame<'_>, body: &mut T, pattern: Option<&mut Pattern>) {
         let (vars, elems) = body.parts();
-        let inner = Frame::vars(Some(frame), vars, elems);
+        let inner = Frame::scope(Some(frame), vars, elems);
         if let Some(pattern) = pattern {
             self.pattern(&inner, pattern);
         }
-        let body = inner.body(elems);
+        inner.enter_body();
         self.overloads(elems);
         for elem in elems.iter_mut() {
-            elem.check(self, &body);
+            elem.check(self, &inner);
         }
-        self.unused_types(&body);
+        self.unused_types(&inner);
     }
 
     fn if_body<T: Body>(&mut self, frame: &Frame<'_>, node: &mut If<T>) {
@@ -1042,8 +1037,8 @@ trait Element {
     /// Record how the element declares variables of its enclosing block.
     fn declare(&self, _decls: &mut Decls) {}
 
-    /// Collect the type-only imports the element declares in its enclosing block.
-    fn type_imports(&self, _names: &mut Vec<TypeName>) {}
+    /// Visit the type-only declarations the element makes in its enclosing block.
+    fn declare_types<'a>(&'a self, _f: &mut impl FnMut(TypeDecl<'a>)) {}
 
     /// The `def` the element is, if it is one.
     fn def(&self) -> Option<&Def> {
@@ -1097,73 +1092,8 @@ impl Element for Stmt {
         }
     }
 
-    fn type_imports(&self, names: &mut Vec<TypeName>) {
-        match self {
-            Stmt::NlGuard(guard) => guard.body.type_imports(names),
-            Stmt::Import(import) => {
-                for element in &import.elements {
-                    match element {
-                        ImportElement::ModuleAsIs {
-                            module,
-                            bind,
-                            type_only: Some(_),
-                            ..
-                        } => names.push(TypeName {
-                            span: bind.span,
-                            module: Some(*module),
-                            import: true,
-                            alias: None,
-                            warn_unused: true,
-                            used: Cell::new(import.pub_span.is_some()),
-                        }),
-                        ImportElement::ModuleRenamed {
-                            bind,
-                            type_only: Some(_),
-                            ..
-                        } => names.push(TypeName {
-                            span: bind.span,
-                            module: Some(bind.span),
-                            import: true,
-                            alias: None,
-                            warn_unused: true,
-                            used: Cell::new(import.pub_span.is_some()),
-                        }),
-                        ImportElement::Items { items, .. } => {
-                            for item in items.iter().filter(|item| item.is_type_only()) {
-                                names.push(TypeName {
-                                    span: item.bind().span,
-                                    module: None,
-                                    import: true,
-                                    alias: None,
-                                    warn_unused: true,
-                                    // An exported name may be used elsewhere
-                                    used: Cell::new(import.pub_span.is_some()),
-                                });
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            Stmt::TypeAlias(alias) => names.push(TypeName {
-                span: alias.ident.span,
-                module: None,
-                import: false,
-                alias: Some(alias.span()),
-                warn_unused: false,
-                used: Cell::new(false),
-            }),
-            // A protocol, like a class, is visible throughout its block
-            Stmt::Class(class) if class.is_protocol() => names.push(TypeName {
-                span: class.ident.span,
-                module: None,
-                import: false,
-                alias: None,
-                warn_unused: false,
-                used: Cell::new(false),
-            }),
-            _ => {}
-        }
+    fn declare_types<'a>(&'a self, f: &mut impl FnMut(TypeDecl<'a>)) {
+        self.type_decls(f);
     }
 
     fn def(&self) -> Option<&Def> {
