@@ -1,8 +1,8 @@
 //! A deliberately incomplete subtype engine over a sealed declaration database.
 //!
-//! Views capture immutable substitution environments. Bounds constrain existential
-//! inference variables, but this engine does not choose or reify their solutions.
-//! A report with retained bounds is therefore unresolved, not a proof.
+//! Views capture immutable substitution environments. Append-only bounds constrain
+//! inference variables; separate assignments commit only forced, fully resolved
+//! solutions. Assignments wake dependent judgments without rewriting stored terms.
 //!
 //! Subtype judgments assume well-formed inputs. Callers must establish generic
 //! argument bounds and validate declaration bodies and supertypes under their
@@ -10,7 +10,10 @@
 //! and are closed outside their own binder groups. Exposure performs substitution
 //! without rechecking bounds or scanning declarations for free references.
 
-use std::{cell::Cell, collections::HashSet};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashSet,
+};
 
 use dolang_util::{
     intern,
@@ -19,7 +22,7 @@ use dolang_util::{
 
 use super::r#type::{
     Argument, Binder, Binding, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
-    Multiplicity, SourceSpan, Type, TypeId, Variance,
+    Multiplicity, SourceSpan, Type, TypeId, UnionMember, Variance,
 };
 
 macro_rules! id {
@@ -72,7 +75,7 @@ pub(crate) struct Provenance {
 /// A reason a judgment remains unresolved, rather than proven or refuted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Residual {
-    /// Constraints were recorded on inference variables, but no solution was chosen.
+    /// An inference variable has no committed solution.
     Inference,
     /// No implemented rule handles this combination of exposed type forms.
     Unsupported,
@@ -84,8 +87,8 @@ pub(crate) enum Residual {
     /// Function ambient input/output channels differ in presence or cannot be
     /// shown equal by contextual structural comparison.
     AmbientChannels,
-    /// Inheritance traversal revisited a declaration, or reporting found a cycle
-    /// in obligation dependencies. Neither cycle is accepted as a proof.
+    /// A candidate contains a recursive substitution, inheritance revisited a
+    /// declaration, or current proof dependencies cycle. None establishes a proof.
     Recursive,
     /// A work or traversal-depth limit prevented completion. Also used for
     /// obligations left pending when solving exhausted its work budget.
@@ -118,6 +121,8 @@ pub(crate) enum Step {
     Return,
     IntrinsicBacking(Intrinsic),
     BoundPropagation,
+    Assignment,
+    UnionMember(usize),
 }
 
 #[derive(Clone, Debug)]
@@ -137,6 +142,10 @@ pub(crate) struct Obligation {
     pub(crate) relation: Relation,
     pub(crate) dependencies: MonoVec<Dependency>,
     state: Cell<State>,
+    queued: Cell<bool>,
+    // Child obligation IDs and labeled steps used as current proof premises.
+    // Replaced on reprocessing; `dependencies` retains historical edges for diagnostics.
+    active: RefCell<Vec<(ObligationId, Step)>>,
 }
 
 #[derive(Clone, Debug)]
@@ -169,9 +178,19 @@ struct Root {
 /// Maps each distinct bound term to the obligations that introduced it. Several
 /// obligations can impose the same bound; retain each so derived contradictions
 /// remain reachable from every contributing constraint's diagnostic root.
-/// Both terms and their source sets grow monotonically, without choosing or
-/// simplifying a solution for the variable.
+/// Both terms and their source sets grow monotonically, independently of the
+/// variable's committed assignment.
 type BoundSet = MonoHashMap<Term, MonoHashSet<ObligationId>>;
+
+/// Solver-local resolution and wake-up state, independent of accumulated bounds.
+#[derive(Default)]
+struct Inference {
+    // Solutions are closed canonical types; no solver-local identity can escape.
+    assignment: Cell<Option<TypeId>>,
+    support: MonoHashSet<ObligationId>,
+    subscribers: MonoHashSet<ObligationId>,
+    dirty: Cell<bool>,
+}
 
 /// Accumulated constraints on one inference variable `V`.
 #[derive(Default)]
@@ -232,6 +251,7 @@ pub(crate) struct Solver<'db> {
     db: &'db Database,
     environments: intern::Table<Environment, EnvironmentId>,
     bounds: Vec<Bounds>,
+    inference: Vec<Inference>,
     // Intern only the relation; processing state and diagnostic edges do not
     // participate in identity and can grow while existing nodes are borrowed.
     obligations: MonoVec<Obligation>,
@@ -259,6 +279,7 @@ impl<'db> Solver<'db> {
             db,
             environments,
             bounds: Vec::new(),
+            inference: Vec::new(),
             obligations: MonoVec::new(),
             obligation_index: MonoHashMap::new(),
             queue: MonoVec::new(),
@@ -306,7 +327,288 @@ impl<'db> Solver<'db> {
     pub(crate) fn infer(&mut self) -> Term {
         let id = InferVarId(self.bounds.len());
         self.bounds.push(Bounds::default());
+        self.inference.push(Inference::default());
         Term::Infer(id)
+    }
+
+    /// A committed, fully resolved solution. Bounds remain available independently.
+    pub(crate) fn solution(&self, id: InferVarId) -> Option<TypeId> {
+        self.inference[id.0].assignment.get()
+    }
+
+    /// Obligations that supported the commitment, retained for diagnostic inspection.
+    pub(crate) fn solution_sources(
+        &self,
+        id: InferVarId,
+    ) -> impl Iterator<Item = ObligationId> + '_ {
+        self.inference[id.0].support.iter().copied()
+    }
+
+    pub(crate) fn unresolved(&self) -> impl Iterator<Item = InferVarId> + '_ {
+        self.inference
+            .iter()
+            .enumerate()
+            .filter_map(|(i, b)| b.assignment.get().is_none().then_some(InferVarId(i)))
+    }
+
+    /// Rebuild a closed canonical type, retaining references owned by local binders.
+    pub(crate) fn reify(&self, term: Term) -> Result<TypeId, Residual> {
+        self.reify_scoped(term, 0, 0)
+    }
+
+    fn reify_scoped(&self, term: Term, local: u32, depth: usize) -> Result<TypeId, Residual> {
+        self.depth(depth)?;
+        self.spend()?;
+        match term {
+            Term::Infer(id) => self.solution(id).ok_or(Residual::Inference),
+            Term::View(view) => {
+                let ty = self.db.ty(view.ty);
+                if let Type::Bound { reference, kind } = *ty {
+                    if u32::from(reference.depth) < local {
+                        return Ok(view.ty);
+                    }
+                    let replacement = self.lookup(
+                        view.environment,
+                        (u32::from(reference.depth) - local) as u16,
+                        reference.slot,
+                        kind,
+                    );
+                    // Replacements carry their own context, not the caller's local scope.
+                    return self.reify_scoped(replacement, 0, depth + 1);
+                }
+                let mapped = ty.map_children(|child, groups| {
+                    self.reify_scoped(view.child(child), local + groups, depth + 1)
+                })?;
+                Ok(self.db.intern(mapped))
+            }
+        }
+    }
+
+    fn variables(
+        &self,
+        term: Term,
+        local: u32,
+        depth: usize,
+        found: &mut HashSet<InferVarId>,
+    ) -> Result<(), Residual> {
+        self.depth(depth)?;
+        self.spend()?;
+        match term {
+            Term::Infer(id) => {
+                found.insert(id);
+            }
+            Term::View(view) => {
+                let ty = self.db.ty(view.ty);
+                if let Type::Bound { reference, kind } = *ty {
+                    if u32::from(reference.depth) >= local {
+                        let value = self.lookup(
+                            view.environment,
+                            (u32::from(reference.depth) - local) as u16,
+                            reference.slot,
+                            kind,
+                        );
+                        self.variables(value, 0, depth + 1, found)?;
+                    }
+                } else {
+                    let mut children = Vec::new();
+                    ty.visit_children(|child, groups| children.push((child, groups)));
+                    for (child, groups) in children {
+                        self.variables(view.child(child), local + groups, depth + 1, found)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn subscribe(&self, obligation: ObligationId) -> Result<(), Residual> {
+        let relation = self.obligation(obligation).relation;
+        let mut variables = HashSet::new();
+        self.variables(relation.actual, 0, 0, &mut variables)?;
+        self.variables(relation.expected, 0, 0, &mut variables)?;
+        for variable in variables {
+            let bounds = &self.inference[variable.0];
+            let _ = bounds.subscribers.try_insert(obligation);
+            if bounds.assignment.get().is_some() {
+                for &source in bounds.support.iter() {
+                    self.link(source, obligation, Step::Assignment);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn schedule(&self, id: ObligationId) {
+        if !self.obligation(id).queued.replace(true) {
+            self.queue.push(id);
+        }
+    }
+
+    /// Closed proof queries cannot create inference bounds or leak alternative edges.
+    fn probe(&self, actual: TypeId, expected: TypeId) -> Result<Status, Residual> {
+        self.spend()?;
+        if self.limits.depth <= 1 {
+            return Err(Residual::Limit);
+        }
+        let mut proof = Self::with_limits(
+            self.db,
+            Limits {
+                work: self.limits.work.saturating_sub(self.work.get()),
+                depth: self.limits.depth - 1,
+            },
+        );
+        proof.constrain(
+            proof.closed(actual),
+            proof.closed(expected),
+            Provenance::default(),
+        );
+        let result = proof.solve().remove(0);
+        self.work.set(self.work.get() + proof.work.get());
+        if proof.exhausted.get()
+            || result
+                .diagnostics
+                .iter()
+                .any(|d| d.issue == Residual::Limit.into())
+        {
+            return Err(Residual::Limit);
+        }
+        Ok(result.status)
+    }
+
+    /// Follow exact candidate dependencies, without unfolding declaration bodies.
+    /// Variable-only cycles are not recursive type substitutions.
+    fn occurs(
+        &self,
+        target: InferVarId,
+        term: Term,
+        local: u32,
+        nested: bool,
+        visiting: &mut HashSet<InferVarId>,
+        depth: usize,
+    ) -> Result<bool, Residual> {
+        self.depth(depth)?;
+        self.spend()?;
+        match term {
+            Term::Infer(id) => {
+                if id == target {
+                    return Ok(nested);
+                }
+                if self.solution(id).is_some() || !visiting.insert(id) {
+                    return Ok(false);
+                }
+                let bounds = self.bounds(id);
+                for lower in bounds.lower() {
+                    for upper in bounds.upper() {
+                        if self.same(lower, upper)?
+                            && self.occurs(target, lower, 0, nested, visiting, depth + 1)?
+                        {
+                            visiting.remove(&id);
+                            return Ok(true);
+                        }
+                    }
+                }
+                visiting.remove(&id);
+                Ok(false)
+            }
+            Term::View(view) => {
+                let ty = self.db.ty(view.ty);
+                if let Type::Bound { reference, kind } = *ty {
+                    if u32::from(reference.depth) < local {
+                        return Ok(false);
+                    }
+                    let value = self.lookup(
+                        view.environment,
+                        (u32::from(reference.depth) - local) as u16,
+                        reference.slot,
+                        kind,
+                    );
+                    return self.occurs(target, value, 0, nested, visiting, depth + 1);
+                }
+                let mut children = Vec::new();
+                ty.visit_children(|ty, groups| children.push((ty, groups)));
+                for (ty, groups) in children {
+                    if self.occurs(
+                        target,
+                        view.child(ty),
+                        local + groups,
+                        true,
+                        visiting,
+                        depth + 1,
+                    )? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+        }
+    }
+
+    fn try_assign(&self, id: InferVarId) -> Result<bool, Residual> {
+        let bounds = &self.bounds[id.0];
+        let inference = &self.inference[id.0];
+        for lower in bounds.lower() {
+            for upper in bounds.upper() {
+                if self.same(lower, upper)?
+                    && self.occurs(id, lower, 0, false, &mut HashSet::new(), 0)?
+                {
+                    for (_, sources) in bounds.lower.iter().chain(bounds.upper.iter()) {
+                        for &source in sources.iter() {
+                            let state = &self.obligation(source).state;
+                            if matches!(
+                                state.get(),
+                                State::Issue(Issue::Residual(Residual::Inference))
+                            ) {
+                                state.set(State::Issue(Residual::Recursive.into()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let mut lower = Vec::new();
+        let mut upper = Vec::new();
+        for (set, values) in [(&bounds.lower, &mut lower), (&bounds.upper, &mut upper)] {
+            for (&term, _) in set.iter() {
+                match self.reify(term) {
+                    Ok(ty) => values.push(ty),
+                    Err(Residual::Inference) => {}
+                    Err(issue) => return Err(issue),
+                }
+            }
+        }
+        if lower.is_empty() || upper.is_empty() {
+            return Ok(false);
+        }
+        let candidate = self.db.intern(Type::Union(
+            lower.iter().copied().map(UnionMember::Type).collect(),
+        ));
+        let mut forced = false;
+        for &ty in &upper {
+            if self.probe(candidate, ty)? != Status::Proven {
+                return Ok(false);
+            }
+            forced |= self.probe(ty, candidate)? == Status::Proven;
+        }
+        if !forced {
+            return Ok(false);
+        }
+        // Only closed candidates can commit, so substitution cycles cannot be introduced.
+        for (_, sources) in bounds.lower.iter().chain(bounds.upper.iter()) {
+            for &source in sources.iter() {
+                let _ = inference.support.try_insert(source);
+            }
+        }
+        inference.assignment.set(Some(candidate));
+        for &obligation in inference.subscribers.iter() {
+            self.schedule(obligation);
+        }
+        // A bound may contain the assigned variable deeply in a contextual view.
+        for other in &self.inference {
+            if other.assignment.get().is_none() {
+                other.dirty.set(true);
+            }
+        }
+        Ok(true)
     }
 
     pub(crate) fn bounds(&self, id: InferVarId) -> &Bounds {
@@ -366,6 +668,8 @@ impl<'db> Solver<'db> {
             relation,
             dependencies: MonoVec::new(),
             state: Cell::new(State::Pending),
+            queued: Cell::new(true),
+            active: RefCell::new(Vec::new()),
         });
         self.obligation_index.try_insert(relation, id).unwrap();
         self.queue.push(id);
@@ -380,6 +684,16 @@ impl<'db> Solver<'db> {
             "derived constraint kind mismatch"
         );
         let child = self.enqueue(Relation { actual, expected });
+        if step != Step::BoundPropagation && step != Step::Assignment {
+            self.obligations[parent.0]
+                .active
+                .borrow_mut()
+                .push((child, step.clone()));
+        }
+        self.link(parent, child, step);
+    }
+
+    fn link(&self, parent: ObligationId, child: ObligationId, step: Step) {
         let dependencies = &self.obligations[parent.0].dependencies;
         if !dependencies
             .iter()
@@ -427,13 +741,20 @@ impl<'db> Solver<'db> {
         value
     }
 
-    /// Follow environment substitutions at the root without exposing declarations.
+    /// Follow root environment substitutions and committed assignments without exposing declarations.
     fn resolve(&self, mut term: Term) -> Result<Term, Residual> {
         for depth in 0.. {
             self.depth(depth)?;
             self.spend()?;
-            let Term::View(view) = term else {
+            if let Term::Infer(id) = term {
+                if let Some(ty) = self.solution(id) {
+                    term = self.closed(ty);
+                    continue;
+                }
                 return Ok(term);
+            }
+            let Term::View(view) = term else {
+                unreachable!()
             };
             let Type::Bound { reference, kind } = *self.db.ty(view.ty) else {
                 return Ok(term);
@@ -460,6 +781,18 @@ impl<'db> Solver<'db> {
     ) -> Result<bool, Residual> {
         self.depth(depth)?;
         self.spend()?;
+        let a = match a {
+            Term::Infer(id) if self.solution(id).is_some() => {
+                self.closed(self.solution(id).unwrap())
+            }
+            _ => a,
+        };
+        let b = match b {
+            Term::Infer(id) if self.solution(id).is_some() => {
+                self.closed(self.solution(id).unwrap())
+            }
+            _ => b,
+        };
         for (term, local, other, other_local, left) in [(a, ad, b, bd, true), (b, bd, a, ad, false)]
         {
             if let Term::View(view) = term
@@ -755,6 +1088,27 @@ impl<'db> Solver<'db> {
     /// Success means local reduction succeeded; child obligations may still fail or remain unresolved.
     fn reduce(&self, obligation: ObligationId) -> Result<(), Issue> {
         let Relation { actual, expected } = self.obligations[obligation.0].relation;
+        for (term, other, lower) in [(actual, expected, false), (expected, actual, true)] {
+            let mut term = term;
+            for depth in 0.. {
+                self.depth(depth)?;
+                self.spend()?;
+                match term {
+                    Term::Infer(id) => {
+                        if term != other {
+                            self.add_bound(id, other, lower, obligation)?;
+                        }
+                        break;
+                    }
+                    Term::View(view) => {
+                        let Type::Bound { reference, kind } = *self.db.ty(view.ty) else {
+                            break;
+                        };
+                        term = self.lookup(view.environment, reference.depth, reference.slot, kind);
+                    }
+                }
+            }
+        }
         let a = self.head(actual)?;
         let b = self.head(expected)?;
         if let Head::Structural(view) = &b
@@ -768,6 +1122,47 @@ impl<'db> Solver<'db> {
             && self.kind(expected) == Kind::Type
         {
             return Ok(());
+        }
+        if let (Head::Structural(a), Head::Structural(b)) = (&a, &b)
+            && self.same(Term::View(*a), Term::View(*b))?
+        {
+            return Ok(());
+        }
+        if !matches!(b, Head::Infer(_))
+            && let Head::Structural(view) = &a
+            && let Type::Union(members) = self.db.ty(view.ty)
+        {
+            if members.iter().any(|m| matches!(m, UnionMember::Expand(_))) {
+                return Err(Residual::Unsupported.into());
+            }
+            for (index, member) in members.iter().enumerate() {
+                let UnionMember::Type(ty) = *member else {
+                    unreachable!()
+                };
+                self.derive(
+                    obligation,
+                    view.child(ty),
+                    expected,
+                    Step::UnionMember(index),
+                );
+            }
+            return Ok(());
+        }
+        if !matches!(a, Head::Infer(_))
+            && let Head::Structural(view) = &b
+            && let Type::Union(members) = self.db.ty(view.ty)
+        {
+            // Testing alternatives must never add bounds to this solver.
+            let actual = self.reify(actual)?;
+            for member in members.iter() {
+                if let UnionMember::Type(ty) = *member
+                    && let Ok(expected) = self.reify(view.child(ty))
+                    && self.probe(actual, expected)? == Status::Proven
+                {
+                    return Ok(());
+                }
+            }
+            return Err(Residual::Unsupported.into());
         }
         match (a, b) {
             (Head::Infer(a), Head::Infer(b)) if a == b => Ok(()),
@@ -852,6 +1247,7 @@ impl<'db> Solver<'db> {
         if sources.try_insert(source).is_err() {
             return Ok(());
         }
+        self.inference[id.0].dirty.set(true);
         for (&other, other_sources) in opposite.iter() {
             self.spend()?;
             // L <: V <: U requires L <: U. L or U may itself be an inference
@@ -866,22 +1262,47 @@ impl<'db> Solver<'db> {
 
     /// Process queued obligations to quiescence or exhaustion and report each submitted root.
     pub(crate) fn solve(&mut self) -> Vec<Outcome> {
-        while !self.exhausted.get() && !self.queue.is_empty() {
-            // Detach the current batch so reduction can append through &self.
-            // Newly discovered obligations run after the rest of this batch.
-            let mut batch = std::mem::take(&mut self.queue);
-            for id in batch.drain() {
-                let result = self
-                    .spend()
-                    .map_err(Issue::from)
-                    .and_then(|()| self.reduce(id));
-                self.obligations[id.0].state.set(match result {
-                    Ok(()) => State::Reduced,
-                    Err(issue) => State::Issue(issue),
-                });
-                if self.exhausted.get() {
-                    break;
+        loop {
+            while !self.exhausted.get() && !self.queue.is_empty() {
+                let mut batch = std::mem::take(&mut self.queue);
+                for id in batch.drain() {
+                    let node = &self.obligations[id.0];
+                    node.queued.set(false);
+                    node.active.borrow_mut().clear();
+                    let result = self
+                        .spend()
+                        .map_err(Issue::from)
+                        .and_then(|()| self.subscribe(id).map_err(Issue::from))
+                        .and_then(|()| self.reduce(id));
+                    node.state.set(match result {
+                        Ok(()) => State::Reduced,
+                        Err(issue) => State::Issue(issue),
+                    });
+                    if self.exhausted.get() {
+                        break;
+                    }
                 }
+            }
+            if self.exhausted.get() {
+                break;
+            }
+            let mut assigned = false;
+            for index in 0..self.bounds.len() {
+                if self.inference[index].dirty.replace(false)
+                    && self.inference[index].assignment.get().is_none()
+                {
+                    match self.try_assign(InferVarId(index)) {
+                        Ok(changed) => assigned |= changed,
+                        Err(Residual::Limit) => {
+                            self.exhausted.set(true);
+                            break;
+                        }
+                        Err(_) => {}
+                    }
+                }
+            }
+            if !assigned && self.queue.is_empty() {
+                break;
             }
         }
         (0..self.roots.len())
@@ -930,8 +1351,37 @@ impl<'db> Solver<'db> {
                 State::Reduced => {}
             }
             stack.push((id, true));
-            for dependency in self.obligations[id.0].dependencies.iter() {
+            for dependency in self.obligations[id.0].dependencies.iter().filter(|d| {
+                self.obligations[id.0]
+                    .active
+                    .borrow()
+                    .contains(&(d.obligation, d.step.clone()))
+            }) {
                 stack.push((dependency.obligation, false));
+            }
+        }
+        // Historical edges explain contradictions, but are not current proof premises.
+        let mut history = vec![(root, vec![root])];
+        let mut seen = HashSet::new();
+        while let Some((id, path)) = history.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            if let State::Issue(issue @ Issue::Contradiction(_)) =
+                self.obligations[id.0].state.get()
+                && !diagnostics
+                    .iter()
+                    .any(|d| d.path.last() == Some(&id) && d.issue == issue)
+            {
+                diagnostics.push(Diagnostic {
+                    issue,
+                    path: path.clone(),
+                });
+            }
+            for dependency in self.obligations[id.0].dependencies.iter() {
+                let mut next = path.clone();
+                next.push(dependency.obligation);
+                history.push((dependency.obligation, next));
             }
         }
         if self.exhausted.get() {
