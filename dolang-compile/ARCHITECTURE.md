@@ -140,51 +140,85 @@ speculative inference or combining bounds from alternative paths.
 Monomorphic functions support required positional parameters, contravariant
 parameter types, covariant results, and arity checks. Ambient input/output
 declarations must match in presence and contextual structural identity;
-other channel judgments remain residual. Nontrivial union reasoning, schema
-inclusion, optional/keyed/variadic matching, higher-rank rules, and generic
-keyword/default/rest argument matching are deferred. Identity and top/bottom
-rules can still settle some judgments involving otherwise unsupported forms.
+other channel judgments remain residual and are retried when their inference
+variables receive assignments. Union-left judgments require every member;
+union-right judgments accept a member proved by an isolated, closed subtype
+query. Alternative queries cannot add inference bounds or diagnostic edges to
+the calling solver. Expanded union packs and alternatives that cannot be proved
+remain residual. Schema inclusion, optional/keyed/variadic matching, higher-rank
+rules, and generic keyword/default/rest argument matching remain deferred.
+Contextual identity and top/bottom rules can still settle some judgments
+involving otherwise unsupported forms.
 
-Subtype obligations are deduplicated by both operands, including environments,
-and reduced on a work queue. Each inference variable retains separate lower and
-upper bounds. Variable-to-variable constraints are stored in the same bounds
-sets as other constraints. Each newly inserted bound is paired with the opposite
-bounds to generate ordinary subtype obligations. All contributing obligations
-are retained so contradictions can be traced through variable chains. No
-intersection node or chosen solution is needed. Bound propagation runs until it
-stops changing and the work queue is empty; adding constraints can resume it.
+### Assignments and fixed point
 
-Each submitted constraint retains its actual/expected source spans. Reduction
-nodes retain their original operands, and labeled dependency edges identify
-parameters, returns, arguments, and bound propagation. Reports contain
-root-to-leaf obligation paths, so sharing a reduced obligation does not discard
-the sources of the original constraints.
+Each variable retains append-only lower/upper bound terms and all introducing
+obligations. Opposite bounds generate ordinary subtype obligations, propagating
+constraints through variable relationships. Assignments are stored separately
+from these sets; neither bounds nor canonical types are rewritten. A stored
+`Array[?A]` view is interpreted through `?A`'s assignment when used.
 
-Results distinguish proven, contradicted, and unresolved constraints. Nontrivial
-inference bounds remain unresolved even when all their current compatibility
-checks succeed: this solver does not choose or reify solutions. Recursive
-reduction dependencies and incomplete inheritance traversal are residual, never
-evidence of a proof. Work and depth
-limits also produce residuals. The work budget applies to the solver's lifetime;
-exhaustion prevents a complete proof for that solver. Repeated solves without
-new constraints do no reduction work. Invalid IDs, environments, substitution
-kinds, and use of an unsealed database are API errors and panic. Transparent
-declaration cycles and generic arity mismatches, including application of a
-non-generic type, are also rejected by panicking; a well-formedness pass must
-eliminate them before solving. Omitted arguments with binder defaults remain
-residual. Generic arguments are resolved through their
-environments before instantiation, so an application cycle repeats an exposed
-term rather than nesting environments without bound.
+The assignment policy commits only forced, fully resolved solutions. The union
+of the currently reifiable lower bounds is a candidate `C`. Every reifiable
+upper bound must admit `C`, and at least one must also be proved a subtype of
+`C`. Thus the constraints force equivalence to `C`; a one-sided lower bound or
+an arbitrary satisfiable interval does not select a solution. Bounds containing
+unsolved variables remain obligations and are revisited after commitments.
+Unsupported concrete compatibility checks defer commitment. There are no
+intersection nodes, speculative assignments, rollback, or defaults to top or
+bottom. Closed proof queries reuse the subtype engine and charge their work to
+the caller's lifetime budget.
 
-Solver environments use an `intern::Table`. Obligations have stable `MonoVec`
-storage and a `MonoHashMap` relation index; their processing state uses `Cell`,
-and their dependencies grow through `MonoVec`. Bounds use
-`MonoHashMap` and `MonoHashSet` for monotonic constraint and provenance storage.
-Setup methods require exclusive references; roots and inference-variable storage
-use ordinary vectors. Internal insertion and reduction use shared references.
-`solve` detaches and drains each queue batch while reduction appends to the next
-batch. No bounds-map snapshots or separate variable-edge table are
-needed for propagation.
+Exact candidate dependencies receive a scope-aware occurs check. Recursive
+substitutions remain recursive residuals; variable-only cycles remain unsolved
+unless concrete bounds force them. Assignments contain only closed canonical
+types, so they cannot introduce assignment cycles. Declaration wrappers remain
+opaque to this check: supported recursion through declarations is distinct from
+substitution recursion.
+
+Obligations are interned by their original operands, including environments,
+but processing is repeatable. Each has a queued flag and a replaceable current
+reduction state. Scope-aware traversal subscribes obligations to variables
+throughout contextual types, including nested binders, function channels, and
+replacement environments. Assignments queue subscribers and conservatively mark
+all unsolved variables' candidates dirty. New bounds also mark their variable
+dirty. Reduction and candidate evaluation alternate until neither produces work.
+Adding constraints resumes the fixed point; an unchanged solve does no work.
+This fixed point remains independent of CFG/dataflow analysis.
+
+### Reporting and reification
+
+Each submitted root retains actual/expected source spans. Obligations retain
+original operands and historical labeled edges for arguments, parameters,
+returns, union members, bound propagation, and assignments. Current proof
+premises are tracked separately and replaced on reprocessing. Historical edges
+explain contradictions to every contributing root, but historical cycles and
+obsolete residuals do not prevent a current proof. Cycles in current proof
+premises remain unresolved. Reports distinguish proven, contradicted, and
+unresolved roots; quiescence alone is not proof.
+
+`solution` exposes a committed canonical type, `solution_sources` exposes its
+supporting obligations, and `unresolved` enumerates variables available for
+later inference or generalization. `reify` rebuilds a fully resolved contextual
+view using the database's scope-aware child mapping. It preserves local binder
+coordinates, bounds/defaults, declaration wrappers, and each replacement's own
+environment. All existing structural forms can be reconstructed; reconstruction
+does not imply subtype support for those forms. An unsolved variable produces an
+inference residual. Solver IDs never enter the canonical database.
+
+Work and depth limits produce residuals. The work budget applies to the solver's
+lifetime; exhaustion prevents a complete proof. Invalid IDs, environments,
+substitution kinds, and unsealed databases are API errors and panic. Transparent
+declaration exposure cycles and generic arity mismatches also panic;
+well-formedness checking must eliminate them before solving. Omitted arguments
+with binder defaults remain residual.
+
+Environments use an immutable `intern::Table`; obligations use stable `MonoVec`
+storage and a `MonoHashMap` relation index. Bound terms, sources, and
+subscribers use monotonic collections. Assignments and scheduling flags use
+interior mutability; current proof premises are replaced between reductions.
+Setup needs exclusive access, while reduction and insertion preserve borrowed
+solver state.
 
 `Intrinsic::Func` associates the runtime nominal function supertype with the
 checker. Structural function types, including quantified function signatures,

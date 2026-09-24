@@ -589,14 +589,14 @@ fn unsupported_nested_forms_stay_residual() {
     }));
     db.seal();
     for (a, b) in [
-        (one, union),
-        (a, b),
         (poly, mono),
         (variadic, mono),
         (optional, schema(&db, &[one])),
     ] {
         assert_eq!(check(&db, a, b).status, Status::Unresolved);
     }
+    assert_eq!(check(&db, one, union).status, Status::Proven);
+    assert_eq!(check(&db, a, b).status, Status::Proven);
     assert_eq!(check(&db, union, union).status, Status::Proven);
 }
 
@@ -836,9 +836,9 @@ fn repeated_solve_without_new_constraints_does_no_work() {
     let variable = s.infer();
     s.constrain(s.closed(one), variable, Provenance::default());
     s.constrain(variable, s.closed(one), Provenance::default());
-    assert!(s.solve().iter().all(|r| r.status == Status::Unresolved));
+    assert!(s.solve().iter().all(|r| r.status == Status::Proven));
     let work = s.work.get();
-    assert!(s.solve().iter().all(|r| r.status == Status::Unresolved));
+    assert!(s.solve().iter().all(|r| r.status == Status::Proven));
     assert_eq!(s.work.get(), work);
 }
 
@@ -882,7 +882,7 @@ fn mro_commits_to_an_inference_path_without_combining_alternatives() {
         s.closed(expected),
         Provenance::default(),
     );
-    assert_eq!(s.solve()[0].status, Status::Unresolved);
+    assert_eq!(s.solve()[0].status, Status::Proven);
     let Term::Infer(id) = variable else {
         unreachable!()
     };
@@ -1060,4 +1060,317 @@ fn missing_func_intrinsic_is_residual() {
         &result,
         Residual::MissingIntrinsic(Intrinsic::Func).into()
     ));
+}
+
+fn variable_id(term: Term) -> InferVarId {
+    let Term::Infer(id) = term else {
+        panic!("expected inference variable")
+    };
+    id
+}
+
+#[test]
+fn exact_assignments_propagate_in_both_orders_and_through_cycles() {
+    for reverse in [false, true] {
+        let mut db = Database::new();
+        let int = nominal(&mut db, "Int", vec![], vec![]);
+        db.seal();
+        let mut s = Solver::new(&db);
+        let a = s.infer();
+        let b = s.infer();
+        let c = s.infer();
+        let mut pairs = vec![
+            (s.closed(int), a),
+            (a, b),
+            (b, a),
+            (b, c),
+            (c, s.closed(int)),
+        ];
+        if reverse {
+            pairs.reverse();
+        }
+        for (a, b) in pairs {
+            s.constrain(a, b, Provenance::default());
+        }
+        assert!(s.solve().iter().all(|o| o.status == Status::Proven));
+        for v in [a, b, c] {
+            assert_eq!(s.solution(variable_id(v)), Some(int));
+        }
+        assert_eq!(s.unresolved().count(), 0);
+    }
+}
+
+#[test]
+fn forced_union_checks_all_uppers_and_preserves_one_sided_bounds() {
+    let mut db = Database::new();
+    let one = literal(&db, 1);
+    let two = literal(&db, 2);
+    let union = db.intern(Type::Union(
+        vec![UnionMember::Type(one), UnionMember::Type(two)].into(),
+    ));
+    db.seal();
+    let mut s = Solver::new(&db);
+    let v = s.infer();
+    let unused = s.infer();
+    s.constrain(s.closed(one), v, Provenance::default());
+    s.constrain(s.closed(two), v, Provenance::default());
+    assert!(s.solve().iter().all(|o| o.status == Status::Unresolved));
+    assert_eq!(
+        s.unresolved().collect::<Vec<_>>(),
+        vec![variable_id(v), variable_id(unused)]
+    );
+    s.constrain(v, s.closed(union), Provenance::default());
+    assert!(s.solve().iter().all(|o| o.status == Status::Proven));
+    assert_eq!(s.solution(variable_id(v)), Some(union));
+    let work = s.work.get();
+    s.solve();
+    assert_eq!(s.work.get(), work);
+    s.constrain(v, s.closed(one), Provenance::default());
+    assert!(s.solve().iter().all(|o| o.status == Status::Contradicted));
+    assert_eq!(s.solution(variable_id(v)), Some(union));
+}
+
+#[test]
+fn assignments_wake_nested_applications_functions_and_channels() {
+    let mut db = Database::new();
+    let one = literal(&db, 1);
+    let r = reference(&db, 0, 0);
+    let array = nominal(&mut db, "Array", vec![binder(Variance::Covariant)], vec![]);
+    let open_array = apply(&db, array, &[r]);
+    let closed_array = apply(&db, array, &[one]);
+    let open = db.intern(Type::Function(Function {
+        params: schema(&db, &[open_array]),
+        result: open_array,
+        input: Some(r),
+        output: Some(open_array),
+    }));
+    let closed = db.intern(Type::Function(Function {
+        params: schema(&db, &[closed_array]),
+        result: closed_array,
+        input: Some(one),
+        output: Some(closed_array),
+    }));
+    db.seal();
+    let mut s = Solver::new(&db);
+    let v = s.infer();
+    let env = s.environment(s.empty_environment(), vec![v]);
+    s.constrain(s.view(open, env), s.closed(closed), Provenance::default());
+    // Function variance already forces the argument; channel equality must wake too.
+    assert!(s.solve().iter().all(|o| o.status == Status::Proven));
+    assert_eq!(s.reify(s.view(open, env)), Ok(closed));
+}
+
+#[test]
+fn resolution_contradictions_retain_all_roots_and_assignment_paths() {
+    let mut db = Database::new();
+    let one = literal(&db, 1);
+    let two = literal(&db, 2);
+    let r = reference(&db, 0, 0);
+    let union = db.intern(Type::Union(
+        vec![UnionMember::Type(one), UnionMember::Type(two)].into(),
+    ));
+    let open = function(&db, &[], r);
+    let expected = function(&db, &[], one);
+    db.seal();
+    let mut s = Solver::new(&db);
+    let v = s.infer();
+    let env = s.environment(s.empty_environment(), vec![v]);
+    s.constrain(s.closed(union), v, Provenance::default());
+    s.constrain(v, s.closed(union), Provenance::default());
+    assert!(s.solve().iter().all(|o| o.status == Status::Proven));
+    s.constrain(s.view(open, env), s.closed(expected), Provenance::default());
+    let outcomes = s.solve();
+    assert!(outcomes.iter().all(|o| o.status == Status::Contradicted));
+    assert!(
+        s.obligations
+            .iter()
+            .any(|o| o.dependencies.iter().any(|d| d.step == Step::Assignment))
+    );
+    assert!(outcomes.iter().all(|o| {
+        o.diagnostics
+            .iter()
+            .any(|d| matches!(d.issue, Issue::Contradiction(_)))
+    }));
+}
+
+#[test]
+fn reification_keeps_replacement_scopes_and_local_binders() {
+    let mut db = Database::new();
+    let one = literal(&db, 1);
+    let local = reference(&db, 0, 0);
+    let free = reference(&db, 1, 0);
+    let open = quantified(
+        &db,
+        vec![binder(Variance::Invariant)],
+        function(&db, &[local], free),
+    );
+    let closed = quantified(
+        &db,
+        vec![binder(Variance::Invariant)],
+        function(&db, &[local], one),
+    );
+    db.seal();
+    let mut s = Solver::new(&db);
+    let v = s.infer();
+    let inner = s.environment(s.empty_environment(), vec![v]);
+    let outer = s.environment(s.empty_environment(), vec![s.view(local, inner)]);
+    assert_eq!(s.reify(s.view(open, outer)), Err(Residual::Inference));
+    s.constrain(s.closed(one), v, Provenance::default());
+    s.constrain(v, s.closed(one), Provenance::default());
+    s.solve();
+    assert_eq!(s.reify(s.view(open, outer)), Ok(closed));
+}
+
+#[test]
+fn upper_only_and_unanchored_variable_cycles_stay_unsolved() {
+    let mut db = Database::new();
+    let one = literal(&db, 1);
+    db.seal();
+    let mut s = Solver::new(&db);
+    let a = s.infer();
+    let b = s.infer();
+    let c = s.infer();
+    for (a, b) in [(a, b), (b, a), (c, s.closed(one))] {
+        s.constrain(a, b, Provenance::default());
+    }
+    assert!(s.solve().iter().all(|o| o.status == Status::Unresolved));
+    assert_eq!(s.unresolved().count(), 3);
+    let work = s.work.get();
+    s.solve();
+    assert_eq!(s.work.get(), work);
+}
+
+#[test]
+fn direct_and_indirect_recursive_candidates_are_explicit_residuals() {
+    for indirect in [false, true] {
+        let mut db = Database::new();
+        let r = reference(&db, 0, 0);
+        let array = nominal(&mut db, "Array", vec![binder(Variance::Invariant)], vec![]);
+        let open = apply(&db, array, &[r]);
+        db.seal();
+        let mut s = Solver::new(&db);
+        let a = s.infer();
+        let b = if indirect { s.infer() } else { a };
+        let env = s.environment(s.empty_environment(), vec![b]);
+        let recursive = s.view(open, env);
+        for (left, right) in [(a, recursive), (recursive, a)] {
+            s.constrain(left, right, Provenance::default());
+        }
+        if indirect {
+            s.constrain(a, b, Provenance::default());
+            s.constrain(b, a, Provenance::default());
+        }
+        let outcomes = s.solve();
+        assert!(outcomes.iter().all(|o| o.status == Status::Unresolved));
+        assert!(outcomes.iter().any(|o| has(o, Residual::Recursive.into())));
+        assert_eq!(s.solution(variable_id(a)), None);
+        assert_eq!(s.solution(variable_id(b)), None);
+        assert!(!s.exhausted.get());
+    }
+}
+
+#[test]
+fn unsupported_upper_bounds_block_commitment_without_becoming_proofs() {
+    let mut db = Database::new();
+    let one = literal(&db, 1);
+    let two = literal(&db, 2);
+    let params = schema(&db, &[]);
+    let function = function(&db, &[], one);
+    let expanded = db.intern(Type::Union(vec![UnionMember::Expand(params)].into()));
+    let alternatives = db.intern(Type::Union(
+        vec![UnionMember::Type(two), UnionMember::Type(function)].into(),
+    ));
+    db.seal();
+    for upper in [expanded, alternatives] {
+        let mut s = Solver::new(&db);
+        let v = s.infer();
+        for (a, b) in [(s.closed(one), v), (v, s.closed(one)), (v, s.closed(upper))] {
+            s.constrain(a, b, Provenance::default());
+        }
+        assert!(s.solve().iter().all(|o| o.status == Status::Unresolved));
+        assert_eq!(s.solution(variable_id(v)), None);
+    }
+}
+
+#[test]
+fn bounds_keep_context_and_sources_after_assignment_and_duplicate_roots() {
+    let mut db = Database::new();
+    let one = literal(&db, 1);
+    let r = reference(&db, 0, 0);
+    let array = nominal(&mut db, "Array", vec![binder(Variance::Invariant)], vec![]);
+    let open = apply(&db, array, &[r]);
+    let closed = apply(&db, array, &[one]);
+    db.seal();
+    let mut s = Solver::new(&db);
+    let a = s.infer();
+    let b = s.infer();
+    let env = s.environment(s.empty_environment(), vec![a]);
+    let contextual = s.view(open, env);
+    s.constrain(contextual, b, Provenance::default());
+    s.constrain(b, s.closed(closed), Provenance::default());
+    s.constrain(s.closed(one), a, Provenance::default());
+    s.constrain(a, s.closed(one), Provenance::default());
+    assert!(s.solve().iter().all(|o| o.status == Status::Proven));
+    assert!(
+        s.bounds(variable_id(b))
+            .lower()
+            .any(|term| term == contextual)
+    );
+    assert_eq!(s.reify(contextual), Ok(closed));
+    let work = s.work.get();
+    s.constrain(contextual, b, Provenance::default());
+    assert!(s.solve().iter().all(|o| o.status == Status::Proven));
+    assert_eq!(s.work.get(), work);
+    s.constrain(b, s.closed(db.top()), Provenance::default());
+    s.solve();
+    assert!(
+        s.bounds(variable_id(b))
+            .upper()
+            .any(|term| term == s.closed(db.top()))
+    );
+}
+
+#[test]
+fn reification_preserves_binder_bounds_defaults_and_declaration_recursion() {
+    let mut db = Database::new();
+    let one = literal(&db, 1);
+    let local = reference(&db, 0, 0);
+    let free = reference(&db, 1, 0);
+    let mut open_binder = binder(Variance::Invariant);
+    open_binder.bound = Some(free);
+    open_binder.default = Some(free);
+    let open = quantified(&db, vec![open_binder.clone()], local);
+    open_binder.bound = Some(one);
+    open_binder.default = Some(one);
+    let closed = quantified(&db, vec![open_binder], local);
+    let (decl, wrapper, source) = reserve(&mut db, DeclKind::Alias, "Recursive");
+    let recursive = function(&db, &[], wrapper);
+    populate(&mut db, decl, source, recursive, vec![]);
+    db.seal();
+    let mut s = Solver::new(&db);
+    let env = s.environment(s.empty_environment(), vec![s.closed(one)]);
+    assert_eq!(s.reify(s.view(open, env)), Ok(closed));
+    assert_eq!(s.reify(s.closed(wrapper)), Ok(wrapper));
+    let v = s.infer();
+    s.constrain(s.closed(wrapper), v, Provenance::default());
+    s.constrain(v, s.closed(wrapper), Provenance::default());
+    assert!(s.solve().iter().all(|o| o.status == Status::Proven));
+    assert_eq!(s.solution(variable_id(v)), Some(wrapper));
+}
+
+#[test]
+fn explicit_exact_extreme_bounds_are_solutions_without_defaulting() {
+    let mut db = Database::new();
+    db.seal();
+    for ty in [db.top(), db.bottom()] {
+        let mut s = Solver::new(&db);
+        let v = s.infer();
+        let unused = s.infer();
+        s.constrain(s.closed(ty), v, Provenance::default());
+        s.constrain(v, s.closed(ty), Provenance::default());
+        assert!(s.solve().iter().all(|o| o.status == Status::Proven));
+        assert_eq!(s.solution(variable_id(v)), Some(ty));
+        assert!(s.solution_sources(variable_id(v)).count() >= 2);
+        assert_eq!(s.solution(variable_id(unused)), None);
+    }
 }
