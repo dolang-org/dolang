@@ -80,7 +80,7 @@ fn source(db: &mut Database, kind: DeclKind, name: &str) -> DeclSource {
         kind,
         result_kind: Kind::Type,
         name,
-        span: SourceSpan {
+        span: UnitSpan {
             unit,
             span: (0u32..10).into(),
         },
@@ -183,7 +183,7 @@ fn symbols_are_interned_independently_of_units() {
             kind: DeclKind::Alias,
             result_kind: Kind::Schema,
             name: Some(key),
-            span: SourceSpan {
+            span: UnitSpan {
                 unit,
                 span: (2u32..7).into(),
             },

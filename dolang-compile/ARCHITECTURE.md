@@ -225,3 +225,25 @@ checker. Structural function types, including quantified function signatures,
 are subtypes of this registered type and its declared supertypes. This rule does
 not desugar function syntax into a nominal application or assign generic
 semantics to `Func`; those remain undecided. A missing registration is residual.
+
+## Checking units and diagnostic locations
+
+`typeck::Builder` collects the units to check together. A unit must have
+compiled without failure and with `Config::typecheck`, so that elaboration and
+type resolution have run; anything else is rejected. `Config::typecheck` runs
+type resolution without building the document index. Adding a unit returns its
+`UnitId`, which is meaningful only within that check; paths do not identify
+units. A module name may be added only once. `Builder::check` consumes the
+builder and returns a `Check`, which yields the type checker's diagnostics. The
+units' own diagnostics stay with the units.
+
+A `SourceSpan` is a span with an optional unit. A unit's own diagnostics have
+no unit and are relative to that unit. Type checker diagnostics name a unit in
+every location, so one diagnostic can point into several units. Mapping a unit
+to its file and rendering diagnostics belong to callers. Token and document
+spans remain local.
+
+No semantic checking runs yet, so a `Check` has no diagnostics. Callers
+assemble modules and stubs without executing imports. Embedding-provided
+ambient endpoint types will require an explicit caller-selected environment on
+the builder.

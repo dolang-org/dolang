@@ -1,5 +1,7 @@
 use std::fmt::Display;
 
+use crate::UnitId;
+
 /// Diagnostic severity
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -22,7 +24,7 @@ impl Display for Severity {
 }
 
 /// Source code position
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Pos {
     offset: usize,
     line: u32,
@@ -30,19 +32,12 @@ pub struct Pos {
 }
 
 impl Pos {
+    /// Construct a position from a byte offset and zero-based line/column.
     pub(crate) fn new(offset: usize, line: u32, column: u32) -> Self {
         Self {
             offset,
             line,
             column,
-        }
-    }
-
-    pub(crate) fn dup(&self) -> Self {
-        Self {
-            offset: self.offset,
-            line: self.line,
-            column: self.column,
         }
     }
 
@@ -70,27 +65,17 @@ impl Pos {
     pub fn column_number(&self) -> u32 {
         self.column + 1
     }
-
-    fn clone(&self) -> Self {
-        Self::new(self.offset, self.line, self.column)
-    }
 }
 
 /// Source code span
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Span {
     start: Pos,
     end: Pos,
 }
 
 impl Span {
-    pub(crate) fn dup(&self) -> Self {
-        Self {
-            start: self.start.dup(),
-            end: self.end.dup(),
-        }
-    }
-
+    /// Construct a half-open span.
     pub(crate) fn new(start: Pos, end: Pos) -> Self {
         Self { start, end }
     }
@@ -106,11 +91,38 @@ impl Span {
     }
 }
 
+/// A diagnostic location, optionally qualified by a checked unit.
+///
+/// A location without a unit is local to the [`Unit`](crate::Unit) whose
+/// diagnostics produced it. Type checker diagnostics name a unit in every
+/// location.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SourceSpan {
+    unit: Option<UnitId>,
+    span: Span,
+}
+
+impl SourceSpan {
+    pub(crate) fn new(unit: Option<UnitId>, span: Span) -> Self {
+        Self { unit, span }
+    }
+
+    pub fn unit(&self) -> Option<UnitId> {
+        self.unit
+    }
+    pub fn span(&self) -> Span {
+        self.span.clone()
+    }
+    pub(crate) fn dup(&self) -> Self {
+        self.clone()
+    }
+}
+
 /// Compiler diagnostic
 #[derive(Clone)]
 pub struct Diag {
     severity: Severity,
-    span: Span,
+    span: SourceSpan,
     message: String,
     annotations: Vec<Annotation>,
     notes: Vec<Note>,
@@ -140,7 +152,7 @@ impl AnnotationKind {
 #[derive(Clone)]
 pub struct Annotation {
     pub(crate) kind: AnnotationKind,
-    pub(crate) span: Span,
+    pub(crate) span: SourceSpan,
     pub(crate) message: String,
 }
 
@@ -151,7 +163,7 @@ impl Annotation {
     }
 
     /// Span of annotation in source code
-    pub fn span(&self) -> Span {
+    pub fn span(&self) -> SourceSpan {
         self.span.dup()
     }
 
@@ -202,14 +214,14 @@ impl Note {
 /// Suggested change to source code
 #[derive(Clone)]
 pub struct Patch {
-    pub(crate) span: Span,
+    pub(crate) span: SourceSpan,
     pub(crate) message: String,
     pub(crate) sub: String,
 }
 
 impl Patch {
     /// Span in source code to change
-    pub fn span(&self) -> Span {
+    pub fn span(&self) -> SourceSpan {
         self.span.dup()
     }
 
@@ -227,7 +239,7 @@ impl Patch {
 impl Diag {
     pub(crate) fn new(
         severity: Severity,
-        span: Span,
+        span: SourceSpan,
         message: impl Into<String>,
         annotations: impl Iterator<Item = Annotation>,
         notes: impl Iterator<Item = Note>,
@@ -254,7 +266,7 @@ impl Diag {
     }
 
     /// Source code span
-    pub fn span(&self) -> Span {
+    pub fn span(&self) -> SourceSpan {
         self.span.dup()
     }
 

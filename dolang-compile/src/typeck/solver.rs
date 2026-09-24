@@ -20,9 +20,11 @@ use dolang_util::{
     mono::{MonoHashMap, MonoHashSet, MonoVec},
 };
 
+use crate::typeck::r#type::UnitSpan;
+
 use super::r#type::{
     Argument, Binder, Binding, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
-    Multiplicity, SourceSpan, Type, TypeId, UnionMember, Variance,
+    Multiplicity, Type, TypeId, UnionMember, Variance,
 };
 
 macro_rules! id {
@@ -68,8 +70,8 @@ pub(crate) struct Relation {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Provenance {
-    pub(crate) actual: Option<SourceSpan>,
-    pub(crate) expected: Option<SourceSpan>,
+    pub(crate) actual: Option<UnitSpan>,
+    pub(crate) expected: Option<UnitSpan>,
 }
 
 /// A reason a judgment remains unresolved, rather than proven or refuted.

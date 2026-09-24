@@ -32,7 +32,7 @@ def compile_diagnostic_line_number()
   let result = compile.compile "bad.dol" $source
   let diag = result.diagnostics().next()
   # Zero-based, so the fourth line.
-  assert_eq $diag.span.start.line 3
+  assert_eq $diag.span.span.start.line 3
 
   # One-based in the rendered location, so one more than the span reports.
   assert (str(diag.render()).contains("bad.dol:4:5"))

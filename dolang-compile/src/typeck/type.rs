@@ -51,7 +51,7 @@ macro_rules! id {
 }
 
 id!(DeclId);
-id!(UnitId);
+pub(crate) use crate::UnitId;
 
 pub(crate) struct TypeTag;
 pub(crate) type TypeId = intern::Id<TypeTag>;
@@ -352,7 +352,7 @@ impl Type {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct SourceSpan {
+pub(crate) struct UnitSpan {
     pub(crate) unit: UnitId,
     pub(crate) span: Span,
 }
@@ -360,9 +360,9 @@ pub(crate) struct SourceSpan {
 #[derive(Clone, Debug)]
 pub(crate) struct BinderSource {
     pub(crate) name: SymbolId,
-    pub(crate) span: SourceSpan,
-    pub(crate) bound: Option<SourceSpan>,
-    pub(crate) default: Option<SourceSpan>,
+    pub(crate) span: UnitSpan,
+    pub(crate) bound: Option<UnitSpan>,
+    pub(crate) default: Option<UnitSpan>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -387,7 +387,7 @@ pub(crate) struct DeclSource {
     pub(crate) kind: DeclKind,
     pub(crate) result_kind: Kind,
     pub(crate) name: Option<SymbolId>,
-    pub(crate) span: SourceSpan,
+    pub(crate) span: UnitSpan,
 }
 
 #[derive(Clone, Debug)]

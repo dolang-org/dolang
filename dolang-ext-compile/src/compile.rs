@@ -48,6 +48,7 @@ pub(crate) struct Types<'v> {
     param_kinds: TypeParamTypes<'v>,
     diagnostic: Type<'v, Diagnostic>,
     span: Type<'v, Span>,
+    source_span: Type<'v, SourceSpan>,
     pos: Type<'v, Pos>,
     annotation: Type<'v, Annotation>,
     note: Type<'v, Note>,
@@ -285,6 +286,7 @@ impl<'v> Global<'v> {
                 },
                 diagnostic: builder.register_type(),
                 span: builder.register_type(),
+                source_span: builder.register_type(),
                 pos: builder.register_type(),
                 annotation: builder.register_type(),
                 note: builder.register_type(),
@@ -373,13 +375,24 @@ pub(crate) struct DiagnosticAnnex<'v> {
     global: State<'v, Global<'v>>,
     diag: Diag,
     #[cfg(feature = "diagnostic-rendering")]
-    path: String,
+    paths: Vec<String>,
 }
 
 #[derive(Clone)]
 pub(crate) struct SpanAnnex<'v> {
     global: State<'v, Global<'v>>,
     span: SpanData,
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct SourceSpanData {
+    unit: Option<compile::UnitId>,
+    span: SpanData,
+}
+
+pub(crate) struct SourceSpanAnnex<'v> {
+    global: State<'v, Global<'v>>,
+    location: SourceSpanData,
 }
 
 #[derive(Clone)]
@@ -390,7 +403,7 @@ pub(crate) struct PosAnnex {
 pub(crate) struct AnnotationAnnex<'v> {
     global: State<'v, Global<'v>>,
     kind: compile::AnnotationKind,
-    span: SpanData,
+    span: SourceSpanData,
     message: String,
 }
 
@@ -402,7 +415,7 @@ pub(crate) struct NoteAnnex<'v> {
 
 pub(crate) struct PatchAnnex<'v> {
     global: State<'v, Global<'v>>,
-    span: SpanData,
+    span: SourceSpanData,
     message: String,
     sub: String,
 }
@@ -466,6 +479,7 @@ node_tags! {
 }
 pub(crate) struct Diagnostic;
 pub(crate) struct Span;
+pub(crate) struct SourceSpan;
 pub(crate) struct Pos;
 pub(crate) struct Annotation;
 pub(crate) struct Note;
@@ -623,6 +637,27 @@ fn create_span<'v>(
         .create_with_annex(strand, Span, SpanAnnex { global, span }, out);
 }
 
+fn source_span_data(location: compile::SourceSpan) -> SourceSpanData {
+    SourceSpanData {
+        unit: location.unit(),
+        span: span_data(location.span()),
+    }
+}
+
+fn create_source_span<'v>(
+    global: State<'v, Global<'v>>,
+    strand: &mut Strand<'v, '_>,
+    location: SourceSpanData,
+    out: Slot<'v, '_>,
+) {
+    global.types.source_span.create_with_annex(
+        strand,
+        SourceSpan,
+        SourceSpanAnnex { global, location },
+        out,
+    );
+}
+
 fn create_annotation<'v>(
     global: State<'v, Global<'v>>,
     strand: &mut Strand<'v, '_>,
@@ -635,7 +670,7 @@ fn create_annotation<'v>(
         AnnotationAnnex {
             global,
             kind: annotation.kind(),
-            span: span_data(annotation.span()),
+            span: source_span_data(annotation.span()),
             message: annotation.message().to_string(),
         },
         out,
@@ -671,7 +706,7 @@ fn create_patch<'v>(
         Patch,
         PatchAnnex {
             global,
-            span: span_data(patch.span()),
+            span: source_span_data(patch.span()),
             message: patch.message().to_owned(),
             sub: patch.sub().to_owned(),
         },
@@ -682,14 +717,10 @@ fn create_patch<'v>(
 fn create_diagnostic<'v, 's>(
     global: State<'v, Global<'v>>,
     strand: &mut Strand<'v, 's>,
-    path: &str,
-    source: &Value<'v>,
+    sources: &[(&str, &Value<'v>)],
     diag: Diag,
     out: &mut Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    #[cfg(not(feature = "diagnostic-rendering"))]
-    let _ = path;
-
     global.types.diagnostic.create_with_annex(
         strand,
         Diagnostic,
@@ -697,7 +728,7 @@ fn create_diagnostic<'v, 's>(
             global,
             diag,
             #[cfg(feature = "diagnostic-rendering")]
-            path: path.to_owned(),
+            paths: sources.iter().map(|(path, _)| (*path).to_owned()).collect(),
         },
         &mut *out,
     );
@@ -725,7 +756,11 @@ fn create_diagnostic<'v, 's>(
                     Mut::slot_mut::<DIAG_PATCHES>(&mut borrow),
                     Empty::Array,
                 );
-                Output::set(strand, Mut::slot_mut::<DIAG_SOURCE>(&mut borrow), source);
+                Output::set(
+                    strand,
+                    Mut::slot_mut::<DIAG_SOURCE>(&mut borrow),
+                    Empty::Array,
+                );
             }
 
             let borrow = inst.borrow(strand)?;
@@ -735,7 +770,12 @@ fn create_diagnostic<'v, 's>(
             let notes = Ref::slot::<DIAG_NOTES>(&borrow).as_array(strand).unwrap();
             let patches = Ref::slot::<DIAG_PATCHES>(&borrow).as_array(strand).unwrap();
 
+            let source_array = Ref::slot::<DIAG_SOURCE>(&borrow).as_array(strand).unwrap();
             strand.with_slots_sync(|strand, [mut item]| {
+                for (_, source) in sources {
+                    Output::set(strand, &mut item, *source);
+                    source_array.push(strand, &mut item)?;
+                }
                 for annotation in inst.annex().diag.annotations() {
                     create_annotation(global, strand, annotation, Slot::reborrow(&mut item));
                     annotations.push(strand, &mut item)?;
@@ -1084,7 +1124,7 @@ impl<'v> Object<'v> for DiagnosticIter {
             };
             let source = Ref::slot::<UNIT_SOURCE>(&unit_borrow);
             let path = unit_borrow.path.to_string_lossy();
-            create_diagnostic(strand.state(), strand, &path, source, diag, &mut out)?;
+            create_diagnostic(strand.state(), strand, &[(&path, source)], diag, &mut out)?;
             Ok(true)
         })
     }
@@ -2266,41 +2306,55 @@ impl<'v> Object<'v> for Diagnostic {
                     let ([], []) = unpack!(strand, args, 0, 0)?;
                     let rendered = {
                         let borrow = this.borrow(strand)?;
-                        let source = Ref::slot::<DIAG_SOURCE>(&borrow).view(strand.vm());
-                        match source {
-                            View::Str(_) => (),
-                            View::Bin(bin) => {
-                                if strand.access(|access| {
-                                    std::str::from_utf8(bin.as_slice(access)).is_err()
-                                }) {
+                        let array = Ref::slot::<DIAG_SOURCE>(&borrow).as_array(strand).unwrap();
+                        let annex = this.annex();
+                        let backings = strand.with_slots_sync(|strand, [mut item]| {
+                            let mut backings = Vec::with_capacity(annex.paths.len());
+                            for index in 0..annex.paths.len() {
+                                array.get(strand, index, &mut item)?;
+                                // SAFETY: the sources array is rooted in this diagnostic's
+                                // DIAG_SOURCE slot and never modified after creation, so each
+                                // source outlives its pin, which is dropped at the end of
+                                // this method.
+                                backings.push(match item.view(strand) {
+                                    View::Str(s) => {
+                                        Backing::Str(unsafe { s.pin().into_static_unchecked() })
+                                    }
+                                    View::Bin(b) => {
+                                        Backing::Bin(unsafe { b.pin().into_static_unchecked() })
+                                    }
+                                    _ => {
+                                        return Err(Error::type_error(
+                                            strand,
+                                            "source: expected `Str` or `Bin`",
+                                        ));
+                                    }
+                                });
+                            }
+                            Ok(backings)
+                        })?;
+                        let mut texts = Vec::with_capacity(backings.len());
+                        for backing in &backings {
+                            match std::str::from_utf8(backing.bytes()) {
+                                Ok(text) => texts.push(text),
+                                Err(_) => {
                                     return Err(Error::type_error(
                                         strand,
                                         "source: expected valid utf-8",
                                     ));
                                 }
                             }
-                            _ => {
-                                return Err(Error::type_error(
-                                    strand,
-                                    "source: expected `Str` or `Bin`",
-                                ));
-                            }
                         }
-                        strand.access(|access| {
-                            let source = match source {
-                                View::Str(value) => value.as_str(access),
-                                View::Bin(value) => {
-                                    std::str::from_utf8(value.as_slice(access)).unwrap()
-                                }
-                                _ => unreachable!(),
-                            };
-                            crate::render::render_compile_diag(
-                                &this.annex().path,
-                                source,
-                                &this.annex().diag,
-                                crate::render::ColorMode::Always,
-                            )
-                        })
+                        let paths: Vec<_> = annex.paths.iter().map(String::as_str).collect();
+                        crate::render::render_diag(
+                            &paths,
+                            &texts,
+                            &annex.diag,
+                            crate::render::ColorMode::Always,
+                        )
+                        .map_err(|_| {
+                            Error::value(strand, "diagnostic refers to an unknown source")
+                        })?
                     };
 
                     match strand.import("term", &mut term).await {
@@ -2330,10 +2384,10 @@ impl<'v> Object<'v> for Diagnostic {
                 Ok(())
             })
             .get("span", |this, strand, out| {
-                create_span(
+                create_source_span(
                     this.annex().global,
                     strand,
-                    span_data(this.annex().diag.span()),
+                    source_span_data(this.annex().diag.span()),
                     out,
                 );
                 Ok(())
@@ -2423,6 +2477,72 @@ impl<'v> Object<'v> for Span {
     }
 }
 
+impl<'v> Object<'v> for SourceSpan {
+    const NAME: &'v str = "SourceSpan";
+    const MODULE: &'v str = "compile";
+    type Annex = SourceSpanAnnex<'v>;
+    type Type = ();
+    type TypeAnnex = ();
+
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder
+            .get("unit", |this, strand, out| {
+                if let Some(unit) = this.annex().location.unit {
+                    Output::set(strand, out, unit.index());
+                } else {
+                    Output::set(strand, out, Nil);
+                }
+                Ok(())
+            })
+            .get("span", |this, strand, out| {
+                create_span(
+                    this.annex().global,
+                    strand,
+                    this.annex().location.span.clone(),
+                    out,
+                );
+                Ok(())
+            })
+    }
+
+    fn eq<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, bool> {
+        if let Some(other) = this.annex().global.types.source_span.cast(other) {
+            Ok(other.enter_sync(strand, |_strand, other| {
+                this.annex().location == other.annex().location
+            }))
+        } else {
+            Err(Error::not_supported(strand))
+        }
+    }
+
+    fn hash<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        _strand: &'a mut Strand<'v, 's>,
+        hasher: &mut impl Hasher,
+    ) -> Result<'v, 's, ()> {
+        this.annex().location.hash(hasher);
+        Ok(())
+    }
+
+    fn lt<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, bool> {
+        if let Some(other) = this.annex().global.types.source_span.cast(other) {
+            Ok(other.enter_sync(strand, |_strand, other| {
+                this.annex().location < other.annex().location
+            }))
+        } else {
+            Err(Error::not_supported(strand))
+        }
+    }
+}
+
 impl<'v> Object<'v> for Pos {
     const NAME: &'v str = "Pos";
     const MODULE: &'v str = "compile";
@@ -2504,7 +2624,7 @@ impl<'v> Object<'v> for Annotation {
                 Ok(())
             })
             .get("span", |this, strand, out| {
-                create_span(this.annex().global, strand, this.annex().span.clone(), out);
+                create_source_span(this.annex().global, strand, this.annex().span.clone(), out);
                 Ok(())
             })
             .get("message", |this, strand, out| {
@@ -2549,7 +2669,7 @@ impl<'v> Object<'v> for Patch {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("span", |this, strand, out| {
-                create_span(this.annex().global, strand, this.annex().span.clone(), out);
+                create_source_span(this.annex().global, strand, this.annex().span.clone(), out);
                 Ok(())
             })
             .get("message", |this, strand, out| {
@@ -2652,6 +2772,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .value("AnyTypeParam", global.types.param_kinds.any)
         .value("Diagnostic", global.types.diagnostic)
         .value("Span", global.types.span)
+        .value("SourceSpan", global.types.source_span)
         .value("Pos", global.types.pos)
         .value("Annotation", global.types.annotation)
         .value("Note", global.types.note)

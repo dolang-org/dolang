@@ -17,7 +17,9 @@ pub mod source;
 pub(crate) mod sym;
 // The database is incubating independently of the compilation pipeline.
 #[allow(dead_code)]
-pub(crate) mod typeck;
+pub mod typeck;
+mod unit_id;
+pub use unit_id::UnitId;
 
 use std::{
     convert::Infallible,
@@ -62,6 +64,8 @@ const STD_PRELUDE: &[&str] = &[
 enum ErrorInfo {
     Fail,
     Io(io::Error),
+    DuplicateModule(String),
+    Unresolved,
 }
 
 /// Kind of compilation error.
@@ -72,6 +76,10 @@ pub enum ErrorKind {
     Fail,
     /// I/O error emitting bytecode.
     Io,
+    /// Two units checked together are the same module.
+    DuplicateModule,
+    /// A unit to check was compiled without [`Config::typecheck`].
+    Unresolved,
 }
 
 /// Compile error
@@ -84,6 +92,8 @@ impl Error {
         match &self.0 {
             ErrorInfo::Fail => ErrorKind::Fail,
             ErrorInfo::Io(_) => ErrorKind::Io,
+            ErrorInfo::DuplicateModule(_) => ErrorKind::DuplicateModule,
+            ErrorInfo::Unresolved => ErrorKind::Unresolved,
         }
     }
 
@@ -107,6 +117,8 @@ impl Display for Error {
         match &self.0 {
             ErrorInfo::Fail => "compilation failed".fmt(f),
             ErrorInfo::Io(e) => e.fmt(f),
+            ErrorInfo::DuplicateModule(name) => write!(f, "duplicate module `{name}`"),
+            ErrorInfo::Unresolved => "unit types were not resolved".fmt(f),
         }
     }
 }
@@ -114,7 +126,7 @@ impl Display for Error {
 impl error::Error for Error {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match &self.0 {
-            ErrorInfo::Fail => None,
+            ErrorInfo::Fail | ErrorInfo::DuplicateModule(_) | ErrorInfo::Unresolved => None,
             ErrorInfo::Io(error) => Some(error),
         }
     }
@@ -1266,6 +1278,7 @@ pub struct Config<'a> {
     prelude: Vec<PreludeImport>,
     recover: bool,
     document: bool,
+    typecheck: bool,
 }
 
 impl Default for Config<'_> {
@@ -1282,6 +1295,7 @@ impl<'a> Config<'a> {
             prelude: Default::default(),
             recover: false,
             document: false,
+            typecheck: false,
         };
         this.prelude()
             .import_module("std")
@@ -1320,6 +1334,15 @@ impl<'a> Config<'a> {
     /// Default: false. When disabled, node queries are empty and tokens carry no identities.
     pub fn document(&mut self, document: bool) -> &mut Self {
         self.document = document;
+        self
+    }
+
+    /// Resolve type annotations so the unit can be passed to
+    /// [`typeck::Builder::unit`].
+    ///
+    /// Default: false. [`Config::document`] also resolves them.
+    pub fn typecheck(&mut self, typecheck: bool) -> &mut Self {
+        self.typecheck = typecheck;
         self
     }
 
@@ -1380,9 +1403,10 @@ impl<'a> Config<'a> {
         }
 
         compiler.prelude = prelude;
-        // Types only matter to documentation, and a unit that failed to elaborate has no
-        // scopes to resolve them in
-        if self.document && !failed {
+        // Types only matter to documentation and checking, and a unit that failed to
+        // elaborate has no scopes to resolve them in
+        let resolved = (self.document || self.typecheck) && !failed;
+        if resolved {
             resolvety::check(
                 &mut ast,
                 &compiler.file,
@@ -1401,6 +1425,7 @@ impl<'a> Config<'a> {
             comments,
             diags,
             failed,
+            resolved,
         }
     }
 }
@@ -1416,6 +1441,7 @@ pub struct Unit<'a> {
     comments: Vec<source::Span>,
     diags: Diags,
     failed: bool,
+    resolved: bool,
 }
 
 impl Unit<'_> {

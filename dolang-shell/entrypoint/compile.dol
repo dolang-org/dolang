@@ -280,10 +280,15 @@ def token_json id_to_index token
     ref: (node_ref id_to_index token.node)
     context: $token.context
 
+def source_span_json location
+  $
+    unit: $location.unit
+    span: (span_json location.span)
+
 def annotation_json a
   $
     kind: $a.kind
-    span: (span_json a.span)
+    span: (source_span_json a.span)
     message: $a.message
 
 def note_json n
@@ -293,7 +298,7 @@ def note_json n
 
 def patch_json p
   $
-    span: (span_json p.span)
+    span: (source_span_json p.span)
     message: $p.message
     sub: $p.sub
 
@@ -303,7 +308,7 @@ def diagnostic_json diag
   $
     severity: $diag.severity
     message: $diag.message
-    span: (span_json diag.span)
+    span: (source_span_json diag.span)
     annotations: [...diag.annotations.map(annotation_json)]
     notes: [...diag.notes.map(note_json)]
     patches: [...diag.patches.map(patch_json)]

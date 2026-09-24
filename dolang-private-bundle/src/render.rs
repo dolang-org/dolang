@@ -23,15 +23,14 @@ fn render_report<'a>(file: &'a str, source: &'a str, diag: &'a Diag) -> Vec<Grou
                 }
                 _ => SnippetAnnotationKind::Context,
             }
-            .span(ann.span().start().byte_offset()..ann.span().end().byte_offset())
+            .span(ann.span().span().start().byte_offset()..ann.span().span().end().byte_offset())
             .label(ann.message().to_string()),
         );
     }
     if !have_primary {
-        snippet = snippet.annotation(
-            SnippetAnnotationKind::Primary
-                .span(diag.span().start().byte_offset()..diag.span().end().byte_offset()),
-        );
+        snippet = snippet.annotation(SnippetAnnotationKind::Primary.span(
+            diag.span().span().start().byte_offset()..diag.span().span().end().byte_offset(),
+        ));
     }
     let mut primary = level
         .primary_title(diag.message().to_string())
@@ -49,7 +48,8 @@ fn render_report<'a>(file: &'a str, source: &'a str, diag: &'a Diag) -> Vec<Grou
         report.push(
             Group::with_title(Level::HELP.secondary_title(patch.message().to_string())).element(
                 Snippet::source(source).path(file).patch(SnippetPatch::new(
-                    patch.span().start().byte_offset()..patch.span().end().byte_offset(),
+                    patch.span().span().start().byte_offset()
+                        ..patch.span().span().end().byte_offset(),
                     patch.sub().to_owned(),
                 )),
             ),
