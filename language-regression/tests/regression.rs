@@ -241,7 +241,7 @@ mod detail {
                 dolang_private_test::match_diagnostic(&mut directives, &d, file, source)
             {
                 if update_mode {
-                    pending_updates.push((d.span().end().line_number(), rendered));
+                    pending_updates.push((d.span().span().end().line_number(), rendered));
                 } else {
                     let display = dolang_private_test::render_diag_display(file, source, &d);
                     eprintln!("unexpected diagnostic:\n{display}");

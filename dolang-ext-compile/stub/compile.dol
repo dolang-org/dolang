@@ -756,7 +756,7 @@ pub class Diagnostic
 
   # The primary source span.
   #[getter]
-  pub def span self -> Span
+  pub def span self -> SourceSpan
     ...
 
   # Renders the diagnostic for terminal presentation.
@@ -782,7 +782,7 @@ pub class Annotation
 
   # The annotated span.
   #[getter]
-  pub def span self -> Span
+  pub def span self -> SourceSpan
     ...
 
 # An auxiliary note attached to a [`Diagnostic`](compile.Diagnostic).
@@ -806,12 +806,28 @@ pub class Patch
 
   # The span to replace.
   #[getter]
-  pub def span self -> Span
+  pub def span self -> SourceSpan
     ...
 
   # The replacement text.
   #[getter]
   pub def sub self -> Str
+    ...
+
+# A diagnostic location within an optional input unit.
+#
+# A nil unit denotes the caller's local source. Unit indices belong to one input
+# collection; they are not persistent identities across collections.
+# Locations compare and hash by unit index and span.
+pub class SourceSpan
+  # Zero-based unit index, or nil for a local diagnostic.
+  #[getter]
+  pub def unit self -> (Int | nil)
+    ...
+
+  # The region within that source.
+  #[getter]
+  pub def span self -> Span
     ...
 
 # A region of source text.

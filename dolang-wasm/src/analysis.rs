@@ -48,7 +48,11 @@ pub(crate) fn diagnostics(unit: &Unit<'_>, source: &str) -> Vec<Diagnostic> {
     let offsets = Offsets::new(source);
     let mut result = Vec::new();
     for diag in unit.diagnostics() {
-        let (from, to) = offsets.range(&diag.span());
+        assert!(
+            diag.span().unit().is_none(),
+            "playground diagnostics must be local"
+        );
+        let (from, to) = offsets.range(&diag.span().span());
         let mut message = diag.message().to_string();
         for note in diag.notes() {
             message.push_str(&format!("\n{}", note.message()));
@@ -64,9 +68,13 @@ pub(crate) fn diagnostics(unit: &Unit<'_>, source: &str) -> Vec<Diagnostic> {
             message,
         });
         for annotation in diag.annotations() {
+            assert!(
+                annotation.span().unit().is_none(),
+                "playground annotations must be local"
+            );
             let message = annotation.message().to_string();
             if !message.is_empty() {
-                let (from, to) = offsets.range(&annotation.span());
+                let (from, to) = offsets.range(&annotation.span().span());
                 result.push(Diagnostic {
                     from,
                     to,

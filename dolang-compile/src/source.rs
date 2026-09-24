@@ -258,7 +258,7 @@ impl Diag {
     }
 
     pub(crate) fn resolve<'a>(&self, compiler: &Compiler<'a>) -> diag::Diag {
-        let span = Self::resolve_span(compiler, self.0.span());
+        let span = diag::SourceSpan::new(None, Self::resolve_span(compiler, self.0.span()));
         let mut msg = String::new();
         self.0.message(compiler, &mut msg).unwrap();
         diag::Diag::new(
@@ -266,7 +266,7 @@ impl Diag {
             span,
             msg,
             self.0.annotations().map(|a| {
-                let span = Self::resolve_span(compiler, a.span());
+                let span = diag::SourceSpan::new(None, Self::resolve_span(compiler, a.span()));
                 let mut message = String::new();
                 a.message(compiler, &mut message).unwrap();
                 Annotation {
@@ -284,7 +284,7 @@ impl Diag {
                 }
             }),
             self.0.patches().map(|p| {
-                let span = Self::resolve_span(compiler, p.span());
+                let span = diag::SourceSpan::new(None, Self::resolve_span(compiler, p.span()));
                 let mut sub = String::new();
                 p.sub(compiler, &mut sub).unwrap();
                 let mut message = String::new();

@@ -61,8 +61,13 @@ def warning()
   let diag = diagnostics[0]
   assert_type $compile.Diagnostic $diag
   assert_eq $diag.severity :WARNING:
-  let span = diag.span
-  let equal_span = diag.span
+  assert_type $compile.SourceSpan $diag.span
+  assert_eq $diag.span.unit nil
+  assert_eq $diag.span $diag.span
+  assert_eq (hash diag.span) (hash diag.span)
+  assert (diag.span <= diag.span)
+  let span = diag.span.span
+  let equal_span = diag.span.span
   assert_span_contract $span $equal_span
   assert_eq $diag.patches.len 0
   assert_eq $diag.notes.len 0
@@ -76,8 +81,8 @@ def error()
   let diag = diagnostics[0]
   assert_type $compile.Diagnostic $diag
   assert_eq $diag.severity :ERROR:
-  let span = diag.span
-  let equal_span = diag.span
+  let span = diag.span.span
+  let equal_span = diag.span.span
   assert_span_contract $span $equal_span
   assert_type $Array $diag.annotations
   assert_type $Array $diag.notes
@@ -820,7 +825,7 @@ def unused_module_type_import_names_its_whole_path()
   assert_no_errors $unit
   let diagnostics = [...unit.diagnostics()]
   assert_eq $diagnostics.len 1
-  assert_eq (span_text(source, diagnostics[0].span)) "not_loaded.two"
+  assert_eq (span_text(source, diagnostics[0].span.span)) "not_loaded.two"
 
 #[test]
 def a_module_import_names_types_in_that_module_alone()
@@ -836,7 +841,7 @@ def a_module_import_names_types_in_that_module_alone()
   assert_no_errors $unit
   let unbound = [...unit.diagnostics().filter(do |d| (d.message == "unbound type name"))]
   # The module is what is unbound, so each is reported over its whole path
-  assert_eq [...unbound.map(do |d| span_text(source, d.span))] ["not_loaded.deeper", "loaded.nested"]
+  assert_eq [...unbound.map(do |d| span_text(source, d.span.span))] ["not_loaded.deeper", "loaded.nested"]
 
 #[test]
 def rest_annotation_expansion_is_indexed()

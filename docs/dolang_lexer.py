@@ -193,8 +193,9 @@ class DoLexer(Lexer):
         # wins, but an uncovered error span still surfaces (as Token.Error,
         # logged below) rather than silently vanishing.
         candidates = list(payload.get("tokens", [])) + [
-            {"kind": d.get("severity"), "span": d.get("span")}
+            {"kind": d.get("severity"), "span": (d.get("span") or {}).get("span")}
             for d in payload.get("diagnostics", [])
+            if (d.get("span") or {}).get("unit") is None
         ]
 
         # First, collect all valid tokens with their metadata

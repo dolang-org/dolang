@@ -954,7 +954,7 @@ impl Backend {
             let hovers = build_hovers(&unit, content);
             for diag in unit.diagnostics() {
                 let mut out = Diagnostic::new_simple(
-                    index.range_from_span(&diag.span()),
+                    index.range_from_span(&diag.span().span()),
                     diag.message().to_string(),
                 );
                 out.severity = Some(match diag.severity() {
@@ -965,7 +965,10 @@ impl Backend {
                 let mut related = Vec::new();
                 for ann in diag.annotations() {
                     related.push(DiagnosticRelatedInformation {
-                        location: Location::new(uri.clone(), index.range_from_span(&ann.span())),
+                        location: Location::new(
+                            uri.clone(),
+                            index.range_from_span(&ann.span().span()),
+                        ),
                         message: ann.message().to_string(),
                     });
                 }
@@ -973,7 +976,7 @@ impl Backend {
                 diags.push(out);
                 for note in diag.notes() {
                     let mut out = Diagnostic::new_simple(
-                        index.range_from_span(&diag.span()),
+                        index.range_from_span(&diag.span().span()),
                         note.message().to_string(),
                     );
                     out.severity = Some(match note.kind() {
@@ -983,7 +986,7 @@ impl Backend {
                     diags.push(out);
                 }
 
-                let diagnostic_range = index.range_from_span(&diag.span());
+                let diagnostic_range = index.range_from_span(&diag.span().span());
                 let diagnostic_message = diag.message().to_string();
                 let diagnostic_severity = match diag.severity() {
                     diag::Severity::Error => DiagnosticSeverity::ERROR,
@@ -996,7 +999,7 @@ impl Backend {
                         diagnostic_range,
                         diagnostic_severity,
                         diagnostic_message: diagnostic_message.clone(),
-                        patch_range: index.range_from_span(&patch.span()),
+                        patch_range: index.range_from_span(&patch.span().span()),
                         replacement: patch.sub().to_string(),
                         title: patch.message().to_string(),
                     });

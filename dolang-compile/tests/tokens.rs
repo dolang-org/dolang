@@ -277,7 +277,7 @@ fn tokenize(path: &Path, content: &[u8]) -> Vec<Tok> {
             format!(
                 "  {}:{}: {}",
                 path.display(),
-                diag.span().start().line_number(),
+                diag.span().span().start().line_number(),
                 diag.message()
             )
         })

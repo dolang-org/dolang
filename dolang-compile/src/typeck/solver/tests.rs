@@ -67,7 +67,7 @@ fn reserve(db: &mut Database, kind: DeclKind, name: &str) -> (DeclId, TypeId, De
         kind,
         result_kind: Kind::Type,
         name: Some(db.intern_symbol(name)),
-        span: SourceSpan {
+        span: UnitSpan {
             unit: db.allocate_unit(),
             span: (0u32..1).into(),
         },

@@ -74,7 +74,7 @@ pub async fn vm_run<'v>(
     for d in diags {
         if let Some(rendered) = match_diagnostic(&mut directives, &d, file, source) {
             if update_mode {
-                pending_updates.push((d.span().end().line_number(), rendered));
+                pending_updates.push((d.span().span().end().line_number(), rendered));
             } else {
                 let display = render_diag_display(file, source, &d);
                 eprintln!("unexpected diagnostic:\n{display}");
@@ -298,15 +298,14 @@ fn build_diag_report<'s>(file: &'s str, source: &'s str, diag: &Diag) -> Vec<Gro
                 }
                 _ => AnnotationKind::Context,
             }
-            .span(ann.span().start().byte_offset()..ann.span().end().byte_offset())
+            .span(ann.span().span().start().byte_offset()..ann.span().span().end().byte_offset())
             .label(ann.message().to_string()),
         );
     }
     if !have_primary {
-        snippet = snippet.annotation(
-            AnnotationKind::Primary
-                .span(diag.span().start().byte_offset()..diag.span().end().byte_offset()),
-        );
+        snippet = snippet.annotation(AnnotationKind::Primary.span(
+            diag.span().span().start().byte_offset()..diag.span().span().end().byte_offset(),
+        ));
     }
     let mut primary = level
         .primary_title(diag.message().to_string())
@@ -324,7 +323,8 @@ fn build_diag_report<'s>(file: &'s str, source: &'s str, diag: &Diag) -> Vec<Gro
         report.push(
             Group::with_title(Level::HELP.secondary_title(patch.message().to_string())).element(
                 Snippet::source(source).path(file).patch(Patch::new(
-                    patch.span().start().byte_offset()..patch.span().end().byte_offset(),
+                    patch.span().span().start().byte_offset()
+                        ..patch.span().span().end().byte_offset(),
                     patch.sub().to_owned(),
                 )),
             ),
@@ -380,7 +380,7 @@ pub fn match_diagnostic(
 /// Insert rendered diagnostic blocks into a test file, after the lines they reference.
 ///
 /// `updates` is a list of `(line_number, rendered_block)` pairs where `line_number`
-/// is 1-indexed (from `diag.span().end().line_number()`), so blocks are inserted
+/// is 1-indexed (from `diag.span().span().end().line_number()`), so blocks are inserted
 /// after the last source line covered by the span.
 pub fn apply_diagnostic_updates(path: &Path, source: &[u8], mut updates: Vec<(u32, String)>) {
     if updates.is_empty() {
