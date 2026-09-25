@@ -1,0 +1,2 @@
+pub class Acl
+  pub field entries @ Int = 0

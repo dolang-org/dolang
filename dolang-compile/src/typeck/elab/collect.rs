@@ -31,17 +31,20 @@ use crate::{
 pub(crate) type UnitDiag = (UnitId, source::Diag);
 
 /// Collect the declarations of `units`, allocating each in `db`, and resolve every
-/// type name in them.
+/// type name in them. The units are walked in `order`, which fixes the order of
+/// declarations and diagnostics.
 pub(crate) fn collect<'u>(
     db: &mut Database,
     units: &[&'u Unit<'u>],
+    order: &[UnitId],
 ) -> (Tables<'u>, Vec<UnitDiag>) {
     let mut decls = Vec::new();
     let mut pending = Vec::new();
-    let mut exports = Vec::new();
-    for (index, unit) in units.iter().enumerate() {
+    let mut exports = vec![HashMap::new(); units.len()];
+    for &id in order {
+        let unit = units[id.index()];
         let mut walk = Walk {
-            unit: UnitId::from_index(index),
+            unit: id,
             file: &unit.compiler.file,
             prelude: &unit.compiler.prelude,
             db: &mut *db,
@@ -52,10 +55,9 @@ pub(crate) fn collect<'u>(
         };
         let root = &unit.ast.0;
         walk.function(None, root);
-        exports.push(match unit.compiler.mode {
-            Mode::Module { .. } => walk.exports(&root.body.stmts),
-            Mode::Script | Mode::Repl => HashMap::new(),
-        });
+        if let Mode::Module { .. } = unit.compiler.mode {
+            exports[id.index()] = walk.exports(&root.body.stmts);
+        }
     }
 
     let mut fixup = Fixup {

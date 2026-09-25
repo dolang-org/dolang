@@ -3,10 +3,14 @@ use std::fs::File;
 use std::path::Path;
 
 fn main() {
-    let out_dir = env::var_os("OUT_DIR").unwrap();
-    let dest_path = Path::new(&out_dir).join("generated_tests.rs");
-    let mut f = File::create(&dest_path).unwrap();
+    let out_dir = Path::new(&env::var_os("OUT_DIR").unwrap()).to_owned();
 
-    let test_dir = Path::new("tests/regression");
-    dolang_private_build::generate_tests(&mut f, test_dir);
+    let mut f = File::create(out_dir.join("generated_tests.rs")).unwrap();
+    dolang_private_build::generate_tests(&mut f, Path::new("tests/regression"));
+
+    let mut f = File::create(out_dir.join("generated_token_tests.rs")).unwrap();
+    dolang_private_build::generate_tests(&mut f, Path::new("tests/tokens"));
+
+    let mut f = File::create(out_dir.join("generated_typeck_tests.rs")).unwrap();
+    dolang_private_build::generate_case_tests(&mut f, Path::new("tests/typeck"), &["stub"]);
 }

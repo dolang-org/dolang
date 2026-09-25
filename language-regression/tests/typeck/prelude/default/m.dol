@@ -1,0 +1,4 @@
+# Prelude names reach the standard library, which no unit here provides.
+
+pub let name @ Str = ""
+#              ^~~: ref external std.Str

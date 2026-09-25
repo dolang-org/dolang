@@ -1,0 +1,8 @@
+# Without a prelude, standard names are unbound.
+
+pub let count @ Int = 0
+# warning: unbound type name
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let count @ Int = 0
+#    |                 ^^^

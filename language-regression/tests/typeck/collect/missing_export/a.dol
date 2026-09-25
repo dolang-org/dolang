@@ -1,0 +1,7 @@
+pub class Present
+  pub field x @ Int = 0
+
+class Hidden
+  pub field x @ Int = 0
+
+pub let hidden = (Hidden())

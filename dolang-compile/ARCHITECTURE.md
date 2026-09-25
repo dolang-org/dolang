@@ -258,7 +258,9 @@ caller-selected environment on the builder.
 
 `Builder::check` allocates each unit in the database, in the order units were
 added, then runs the passes in `typeck/elab` over common tables and the frozen
-syntax trees. The tables refer to declaration nodes in place.
+syntax trees. The tables refer to declaration nodes in place. Passes visit units
+in a fixed order, modules by name and then scripts by path, so declarations and
+diagnostics do not depend on the order units were added.
 
 Collection walks each unit with the frames type resolution pushed, binder groups
 and lexical scopes, so each type name's `TypeRes` nominates its target without a
@@ -277,3 +279,9 @@ renames are chased away but aliases are not, so `Pair[Int]` refers to the
 alias then has its underlying head found by following alias chains, in
 declaration order. Import cycles, alias cycles and imports of names a checked
 module does not export are diagnosed.
+
+`Check` keeps the tables. Its hidden `judgments` method reports what they
+concluded about each span of a unit, such as a type name's referent or an
+alias's head, as text naming declarations by qualified name rather than by ID.
+The type-checking tests in `language-regression/tests/typeck` assert these with
+annotations in fixture source.

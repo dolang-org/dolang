@@ -5,6 +5,7 @@
 //! intermediate representation.
 
 mod collect;
+mod judge;
 
 use std::{
     collections::HashMap,
@@ -20,6 +21,7 @@ use crate::{
 };
 
 pub(crate) use collect::collect;
+pub(crate) use judge::JUDGMENTS;
 
 /// What collection learns of the checked units
 pub(crate) struct Tables<'u> {

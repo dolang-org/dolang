@@ -1,0 +1,64 @@
+# Type names resolve to declarations of the same unit, and binders to the
+# declaration and signature that declare them.
+
+pub class Point
+  pub field x @ Int = 0
+
+pub @class Shape
+  pub def area self -> Int
+
+pub class Square: Point
+  #               ^~~~~: ref m.Point
+  pub field side @ Int = 0
+
+pub class Circle: @Shape
+  #                ^~~~~: ref m.Shape
+  pub def area _self
+    1
+
+pub @let Pair[T] = Tuple[T, T]
+#                  ^~~~~: ref external std.Tuple
+#                        ^: ref binder T
+
+pub let origin @ Point = nil
+#                ^~~~~: ref m.Point
+pub let shape @ Shape = nil
+#               ^~~~~: ref m.Shape
+pub let pair @ Pair[Int] = nil
+#              ^~~~: ref m.Pair
+#                   ^~~: ref external std.Int
+
+let count = 0
+pub let odd @ count = count
+#             ^~~~~: ref value
+
+pub def first[T] items @ Array[T] -> T
+  #                            ^: ref binder T
+  #                                  ^: ref binder T
+  items[0]
+
+@def pick[A] x@A -> A
+#              ^: ref binder A
+@def pick[B] x@B y@B -> B
+#              ^: ref binder B
+pub def pick x y = nil
+  [x, y]
+
+pub class Box[T]
+  pub field item @ T = nil
+  #                ^: ref binder T
+
+  pub def map[U] self f@((T) -> U) -> Box[U]
+    #                     ^: ref binder T
+    #                           ^: ref binder U
+    #                                 ^~~: ref m.Box
+    Box(f(self.item))
+
+pub def outer[T] x @ T
+  @let Local = Array[T]
+  #                  ^: ref binder T
+  def inner y @ T -> Local
+    #           ^: ref binder T
+    #                ^~~~~: ref m.outer.Local
+    [y]
+  inner $x

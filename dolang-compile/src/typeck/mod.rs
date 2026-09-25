@@ -6,7 +6,11 @@ pub(crate) mod r#type;
 
 use std::collections::HashSet;
 
-use crate::{Error, ErrorInfo, Mode, Unit, UnitId, diag::Diag};
+use crate::{
+    Error, ErrorInfo, Mode, Unit, UnitId,
+    diag::{self, Diag},
+    source,
+};
 
 /// Collects the units to check together.
 ///
@@ -60,7 +64,10 @@ impl<'u, 's> Builder<'u, 's> {
     }
 
     /// Check the units.
-    pub fn check(self) -> Check {
+    ///
+    /// Units are checked in a fixed order, modules by name and then scripts by path,
+    /// whatever order they were added in.
+    pub fn check(self) -> Check<'u> {
         let mut db = r#type::Database::new();
         for index in 0..self.units.len() {
             assert_eq!(
@@ -70,28 +77,64 @@ impl<'u, 's> Builder<'u, 's> {
             );
         }
         let units: Vec<&Unit<'_>> = self.units;
-        // The tables are what later stages of elaboration will consume
-        let (_tables, diags) = elab::collect(&mut db, &units);
+        let mut order: Vec<UnitId> = (0..units.len()).map(UnitId::from_index).collect();
+        order.sort_by_key(|id| {
+            let compiler = &units[id.index()].compiler;
+            match compiler.mode {
+                Mode::Module { name } => (0, name, None),
+                Mode::Script | Mode::Repl => (1, "", Some(compiler.file.path())),
+            }
+        });
+        let (tables, diags) = elab::collect(&mut db, &units, &order);
         Check {
             diagnostics: diags
                 .iter()
                 .map(|(unit, diag)| diag.resolve_in(&units[unit.index()].compiler, Some(*unit)))
                 .collect(),
+            tables,
         }
     }
 }
 
 /// The result of checking a set of units.
-pub struct Check {
+pub struct Check<'u> {
     diagnostics: Vec<Diag>,
+    tables: elab::Tables<'u>,
 }
 
-impl Check {
+/// The names of the judgments [`Check::judgments`] reports.
+#[doc(hidden)]
+pub const JUDGMENTS: &[&str] = elab::JUDGMENTS;
+
+/// A fact the checker concluded about a span, for regression tests.
+#[doc(hidden)]
+pub struct Judgment {
+    pub name: &'static str,
+    pub span: diag::Span,
+    pub value: String,
+}
+
+impl Check<'_> {
     /// Iterate the type checker's diagnostics.
     ///
     /// Every location names the unit it refers to. The units' own diagnostics
     /// are not included.
     pub fn diagnostics(&self) -> impl Iterator<Item = &Diag> {
         self.diagnostics.iter()
+    }
+
+    /// The judgments about spans of `unit`, in source order.
+    #[doc(hidden)]
+    pub fn judgments(&self, unit: UnitId) -> Vec<Judgment> {
+        let compiler = &self.tables.units[unit.index()].compiler;
+        self.tables
+            .judgments(unit)
+            .into_iter()
+            .map(|(name, span, value)| Judgment {
+                name,
+                span: source::Diag::resolve_span(compiler, span),
+                value,
+            })
+            .collect()
     }
 }

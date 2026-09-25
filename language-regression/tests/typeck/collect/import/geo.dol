@@ -1,0 +1,7 @@
+pub class Point
+  pub field x @ Int = 0
+
+pub @class Shape
+  pub def area self -> Int
+
+pub @let Pair[T] = Tuple[T, T]

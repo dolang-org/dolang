@@ -1,0 +1,7 @@
+# The standard library's stub checks alongside a module that uses it.
+
+pub let name @ Str = ""
+#              ^~~: ref std.Str
+pub let table @ Dict[Str, Int] = {}
+#               ^~~~: ref std.Dict
+#                         ^~~: ref std.Int

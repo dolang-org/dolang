@@ -1,0 +1,21 @@
+import a:
+  - @Present
+  - @Hidden
+  - @Absent
+
+pub let present @ Present = nil
+#                 ^~~~~~~: ref a.Present
+pub let hidden @ Hidden = nil
+#                ^~~~~~: ref error
+# error: module `a` has no export `Hidden`
+#   --> user.dol:LL:LL
+#    |
+# LL | pub let hidden @ Hidden = nil
+#    |                  ^^^^^^
+pub let absent @ Absent = nil
+#                ^~~~~~: ref error
+# error: module `a` has no export `Absent`
+#   --> user.dol:LL:LL
+#    |
+# LL | pub let absent @ Absent = nil
+#    |                  ^^^^^^

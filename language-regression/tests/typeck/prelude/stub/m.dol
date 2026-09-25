@@ -1,0 +1,6 @@
+# A stub provides the module the prelude imports from.
+
+pub let name @ Str = ""
+#              ^~~: ref std.Str
+pub let count @ Int = 0
+#               ^~~: ref std.Int

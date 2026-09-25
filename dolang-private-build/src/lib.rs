@@ -70,3 +70,67 @@ fn process(out: &mut dyn Write, dir: &Path, parent_skip_miri: bool) {
         }
     }
 }
+
+/// Generate a test for each case directory under `dir`.
+///
+/// A directory that directly contains `.dol` files is a case, and its test calls
+/// `run` with the directory's path. Any other directory is a group of cases and
+/// becomes a module. `skip` names top-level directories to leave out.
+///
+/// A `.test` file in a case or group directory holds `key: value` lines, and a
+/// deeper file overrides a shallower one key by key. Cases with `skip: miri` are
+/// skipped under Miri.
+pub fn generate_case_tests(out: &mut dyn Write, dir: &Path, skip: &[&str]) {
+    println!("cargo::rerun-if-changed={}", dir.display());
+    for entry in sorted_entries(dir) {
+        let name = entry.file_name().unwrap().display().to_string();
+        if entry.is_dir() && !skip.contains(&name.as_str()) {
+            process_case(out, &entry, test_setting(dir, "skip"));
+        }
+    }
+}
+
+fn process_case(out: &mut dyn Write, dir: &Path, skip: Option<String>) {
+    let skip = test_setting(dir, "skip").or(skip);
+    let name = munge(dir.file_name().unwrap().display().to_string());
+    let entries = sorted_entries(dir);
+    if entries
+        .iter()
+        .any(|path| path.extension() == Some("dol".as_ref()))
+    {
+        let path_str = dir.display().to_string().replace('\\', "/");
+        if skip.as_deref() == Some("miri") {
+            writeln!(out, "#[cfg_attr(miri, ignore)]").unwrap();
+        }
+        writeln!(out, "#[test]").unwrap();
+        writeln!(out, "fn r#{name}() {{").unwrap();
+        writeln!(out, "    run(std::path::Path::new(\"{path_str}\"));").unwrap();
+        writeln!(out, "}}").unwrap();
+    } else {
+        writeln!(out, "mod r#{name} {{").unwrap();
+        writeln!(out, "#[allow(unused_imports)]").unwrap();
+        writeln!(out, "use super::run;").unwrap();
+        for entry in entries.iter().filter(|path| path.is_dir()) {
+            process_case(out, entry, skip.clone());
+        }
+        writeln!(out, "}}").unwrap();
+    }
+}
+
+fn sorted_entries(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut entries: Vec<_> = fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    entries.sort();
+    entries
+}
+
+/// The value of `key` in a directory's `.test` file, if it sets one.
+fn test_setting(dir: &Path, key: &str) -> Option<String> {
+    let content = fs::read_to_string(dir.join(".test")).ok()?;
+    content.lines().find_map(|line| {
+        let (k, v) = line.split_once(':')?;
+        (k.trim() == key).then(|| v.trim().to_owned())
+    })
+}

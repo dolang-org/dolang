@@ -1,0 +1,4 @@
+pub import b:
+  Thing: Renamed
+pub @import a:
+  Thing: Ghost

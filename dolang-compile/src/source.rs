@@ -249,7 +249,7 @@ impl Diag {
         Self(Box::new(info))
     }
 
-    fn resolve_span(compiler: &Compiler<'_>, span: Span) -> diag::Span {
+    pub(crate) fn resolve_span(compiler: &Compiler<'_>, span: Span) -> diag::Span {
         let coords = compiler.file.coord_span(span);
         diag::Span::new(
             Pos::new(span.start as usize, coords.start.line, coords.start.column),
