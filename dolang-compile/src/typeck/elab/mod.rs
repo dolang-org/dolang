@@ -8,13 +8,14 @@ mod collect;
 mod judge;
 mod kind;
 mod sig;
+mod variance;
 
 use std::{
     collections::HashMap,
     fmt::{self, Write},
 };
 
-use super::r#type::{DeclId, DeclKind, Intrinsic, Kind, UnitId, UnitSpan};
+use super::r#type::{DeclId, DeclKind, Intrinsic, Kind, UnitId, UnitSpan, Variance};
 use crate::{
     Compiler, RestKind, Unit,
     ast::{Binder, Class, Def, Function, Method, Param, TypeAlias, TypeExpr},
@@ -24,8 +25,9 @@ use crate::{
 
 pub(crate) use collect::{UnitDiag, collect};
 pub(crate) use judge::JUDGMENTS;
-pub(crate) use kind::kinds;
+pub(crate) use kind::{Fill, kinds};
 pub(crate) use sig::signatures;
+pub(crate) use variance::variances;
 
 /// What collection learns of the checked units
 pub(crate) struct Tables<'u> {
@@ -56,6 +58,12 @@ pub(crate) struct Tables<'u> {
     pub(crate) func_ambients: HashMap<UnitSpan, [Ambient; 2]>,
     /// The declarations of `std` the checker treats specially
     pub(crate) designated: HashMap<DeclId, Designated>,
+    /// The variance of each binder, including the implicit binders of omitted ambient
+    /// channels
+    pub(crate) variance: HashMap<BinderRef, Variance>,
+    /// The variance of each binder of an enclosing declaration that a nested one uses.
+    /// A binder it does not use is absent, and invariant if it is captured anyway.
+    pub(crate) captured: HashMap<(DeclId, BinderRef), Variance>,
 }
 
 impl<'u> Tables<'u> {
@@ -175,6 +183,8 @@ pub(crate) enum Ambient {
 /// A def or method signature, completed with the defaults for what it omits
 pub(crate) struct Sig<'u> {
     pub(crate) params: Vec<(&'u Param, ParamTy<'u>)>,
+    /// Whether the first parameter is an instance method's receiver
+    pub(crate) receiver: bool,
     pub(crate) input: Ambient,
     pub(crate) output: Ambient,
     pub(crate) ret: Slot<'u>,
@@ -185,6 +195,8 @@ pub(crate) struct Sig<'u> {
 pub(crate) enum Designated {
     /// `std.Value`, which is top
     Value,
+    /// `std.Phantom`, which marks its arguments as used covariantly
+    Phantom,
     Intrinsic(Intrinsic),
 }
 
@@ -195,8 +207,9 @@ pub(crate) struct Decl<'u> {
     /// The declared name; absent for a closure
     pub(crate) name: Option<Span>,
     pub(crate) node: DeclNode<'u>,
-    /// The declaration this one is nested in, whose binders it may capture
-    pub(crate) outer: Option<DeclId>,
+    /// The declaration this one is nested in, and which of its signatures, whose
+    /// binders it may capture
+    pub(crate) outer: Option<(DeclId, usize)>,
 }
 
 pub(crate) enum DeclNode<'u> {

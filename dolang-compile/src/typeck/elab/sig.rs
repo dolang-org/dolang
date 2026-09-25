@@ -62,7 +62,7 @@ pub(crate) fn signatures(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
 }
 
 /// The function of a def or method signature
-fn function<'u>(tables: &Tables<'u>, decl: DeclId, sig: usize) -> &'u Function {
+pub(crate) fn function<'u>(tables: &Tables<'u>, decl: DeclId, sig: usize) -> &'u Function {
     match tables.decls[decl.index()].node {
         DeclNode::Defs(ref defs) => &defs[sig].func,
         DeclNode::Methods(ref methods) => &methods[sig].func,
@@ -137,6 +137,7 @@ fn complete<'u>(tables: &Tables<'u>, decl: DeclId, sig: usize) -> Sig<'u> {
     });
     Sig {
         params,
+        receiver,
         input,
         output,
         ret: func
@@ -158,6 +159,7 @@ fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
     };
     let (designated, expected) = match tables.text(owner.unit, name) {
         "Value" => (Designated::Value, DeclKind::Class),
+        "Phantom" => (Designated::Phantom, DeclKind::OpaqueAlias),
         "Union" => (
             Designated::Intrinsic(Intrinsic::Union),
             DeclKind::OpaqueAlias,

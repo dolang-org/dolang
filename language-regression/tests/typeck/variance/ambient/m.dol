@@ -1,0 +1,18 @@
+# An omitted ambient channel is an implicit binder, used contravariantly. A function
+# type without channels in the signature takes the def's, using them in reverse.
+
+pub def plain _x
+  #     ^~~~~: variance <#0 contravariant >#1 contravariant
+  nil
+
+pub def takes _f @ (() -> nil)
+  #     ^~~~~: variance <#0 invariant >#1 invariant
+  nil
+
+pub @class Reader[T]
+  #               ^: variance contravariant
+  pub def read self <T
+
+pub @class Chan[T]
+  #             ^: variance invariant
+  pub def run self <T f @ (() -> nil)

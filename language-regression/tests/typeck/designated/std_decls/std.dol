@@ -4,6 +4,10 @@ pub class Value
 #         ^~~~~: designated top
 pub @let Union[...Ts] = ...
 #        ^~~~~: designated intrinsic Union
+#                 ^~: variance covariant
+pub @let Phantom[...Ts] = ...
+#        ^~~~~~~: designated phantom
+#                   ^~: variance covariant
 pub class Func
 #         ^~~~: designated intrinsic Func
 pub class Int

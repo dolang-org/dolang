@@ -314,9 +314,36 @@ its class applied to its own binders, except on a `class` or `static` method.
 A function type written without channels in a def's signature or body, but not
 in a nested class or alias, shares that def's channels; elsewhere they are
 `Unknown`. Closures keep only their syntax: CFG flow infers what they omit.
-Nothing is interned yet, because interning a quantified type needs the variance
-of its binders. Top-level declarations of a checked `std` module named `Value`,
-`Union`, `Func`, `Int`, `Bool`, `Sym`, `Nil` and `Str` are designated for the
-database's special treatment; the same name in another module is only a
-lookalike. The `kind`, `sig`, `ambient` and `designated` judgments report
-these results.
+Top-level declarations of a checked `std` module named `Value`, `Phantom`,
+`Union`, `Func`, `Int`, `Bool`, `Sym`, `Nil` and `Str` are designated for
+special treatment; the same name in another module is only a lookalike. The
+`kind`, `sig`, `ambient` and `designated` judgments report these results.
+
+Variance is inferred for every binder, and for each outer binder a nested
+declaration uses, before anything is interned, since a quantified type's binders
+carry it. A def or method uses its parameters, rest parameters and ambient
+channels contravariantly and its result covariantly; an instance method's
+receiver, annotated or not, does not count. A class or protocol uses its
+supertypes covariantly, its public fields invariantly, since they are mutable,
+and each binder as its public and special methods use it. Private members and
+`(init)` do not count, as Scala's `private[this]` members and constructors do
+not: a private member is reached only through a `self` parameter, so whatever it
+stores or returns passes through a method that counts, and `(init)` runs only on
+an object being constructed. This relies on elaboration refusing `.#` on
+anything but a `self` parameter, and `.(init)` calls outside an `(init)` body or
+on anything but its `self`. A field whose type is an application of `Phantom`
+always counts, whatever its visibility, using its arguments covariantly as
+Rust's `PhantomData` does, so `Phantom[(T -> nil)]` marks a class
+contravariant. A transparent alias uses
+its body covariantly; `Union` and `Phantom` take their binders covariantly, and
+any other opaque alias uses none. A binder used in a bound of its own group is
+invariant, and an outer binder used in the bound of a nested group is used
+contravariantly there. Defaults and bodies do not count. A type argument is used
+as the binder it fills varies, matched as kind checking matches it, and one
+whose binder is unknown is invariant. A type declared within a generic
+declaration takes the outer binders as implicit arguments. These equations are
+solved by a worklist for their least solution, which is unique whatever the
+order. A binder with no use, including one used only through itself, is then
+invariant, as is any use through it, and a second round propagates that. The
+`variance` judgment reports a binder's variance, and `captured` a nested
+declaration's outer binders.

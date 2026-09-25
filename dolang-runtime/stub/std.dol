@@ -278,8 +278,10 @@ pub @class BaseSink[T]
 
 
 # An opaque type that mentions its type arguments, for a field that only marks
-# binders as used. A schema binder is mentioned by expanding it:
-# `Phantom[...S]`.
+# how a class varies with its binders. A field of this type uses its arguments
+# covariantly, although a field is otherwise invariant, so `Phantom[T]` marks a
+# class covariant in `T` and `Phantom[(T -> nil)]` contravariant. A schema
+# binder is mentioned by expanding it: `Phantom[...S]`.
 pub @let Phantom[...Ts] = ...
 
 
@@ -298,7 +300,7 @@ pub @class Index[S @ {...}]
 # [`(assign)`](../../language/classes.md#index-and-assign-subscript-access)
 # protocol for the keys in `S`, which it need not already have.
 pub @class Assign[S @ {...}]
-  field schema @Phantom[...S]
+  field schema @Phantom[((...S) -> nil)]
 
   # Sets the value at `key`.
   pub def (assign)[K, V, U @ {?(K): V, ...}] self@Assign[U] key@K value@V
@@ -308,6 +310,8 @@ pub @class Assign[S @ {...}]
 # [`(spread)`](../../language/classes.md#spread-spreading) protocol, spreading
 # as the items in `S`.
 pub @class Spread[S @ {...}]
+  field schema @Phantom[...S]
+
   # Returns a value to spread in place of this one.
   pub def (spread) self -> Spread[S]
 
@@ -316,6 +320,8 @@ pub @class Spread[S @ {...}]
 # [`(unpack)`](../../language/classes.md#unpack-destructuring) protocol,
 # destructuring as the items in `S`.
 pub @class Unpack[S @ {...}]
+  field schema @Phantom[...S]
+
   # Returns a value to destructure in place of this one.
   pub def (unpack) self -> Unpack[S]
 

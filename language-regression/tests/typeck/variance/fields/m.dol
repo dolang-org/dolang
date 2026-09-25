@@ -1,0 +1,59 @@
+# A public field is invariant, since it is mutable. Private members are reached only
+# through `self`, and `(init)` only while constructing, so neither counts. A
+# `Phantom` field always uses its arguments covariantly.
+
+import std:
+  - @Phantom
+
+pub class Cell[T]
+  #            ^: variance invariant
+  pub field item @ T = nil
+
+pub class Getter[T]
+  #              ^: variance covariant
+  field item @ T
+
+  pub def (init) self item @ T
+    self.#item = item
+
+  pub def get self -> T
+    self.#item
+
+pub class Setter[T]
+  #              ^: variance contravariant
+  field item @ T
+
+  pub def set self item @ T
+    self.#item = item
+
+pub class Hidden[T]
+  #              ^: variance invariant
+  field item @ T
+
+  def take self item @ T
+    self.#item = item
+
+pub class Hook[T]
+  #            ^: variance contravariant
+  def (put) _self _value @ T
+    nil
+
+pub class Out[T]
+  #           ^: variance covariant
+  field marker @ Phantom[T]
+
+pub class In[T]
+  #          ^: variance contravariant
+  field marker @ Phantom[(T -> nil)]
+
+pub class Grouped[T]
+  #               ^: variance covariant
+  field marker @ (Phantom[T])
+
+pub class Nested[T]
+  #              ^: variance invariant
+  pub field marker @ Wrap[Phantom[T]]
+
+pub @class Wrap[W]
+  #             ^: variance covariant
+  pub def get self -> W

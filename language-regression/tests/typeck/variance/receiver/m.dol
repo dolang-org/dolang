@@ -1,0 +1,18 @@
+# An instance method's receiver does not count, annotated or not. A class method's
+# first parameter does.
+
+pub class Box[T]
+  #           ^: variance covariant
+  field item = nil
+
+  pub def get self -> T
+    self.#item
+
+  pub def narrow _self @ Box[Int] -> Int
+    0
+
+pub class Made[T]
+  #            ^: variance contravariant
+  #[class]
+  pub def make _cls @ T
+    nil

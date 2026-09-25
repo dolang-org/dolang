@@ -116,6 +116,8 @@ pub(crate) fn collect<'u>(
         fields: HashMap::new(),
         func_ambients: HashMap::new(),
         designated: HashMap::new(),
+        variance: HashMap::new(),
+        captured: HashMap::new(),
     };
     (tables, diags)
 }
@@ -278,8 +280,9 @@ struct Walk<'c, 'u> {
     decls: &'c mut Vec<Decl<'u>>,
     pending: &'c mut Vec<Pending<'u>>,
     sites: &'c mut Vec<Site<'u>>,
-    /// The declaration being walked, which encloses any found within it
-    owner: Option<DeclId>,
+    /// The declaration being walked, and which of its signatures, which encloses any
+    /// found within it
+    owner: Option<(DeclId, usize)>,
     /// The def or method signature whose ambient channels the types being walked
     /// share, absent outside any def or within a class or alias declared in one
     sig: Option<(DeclId, usize)>,
@@ -620,7 +623,7 @@ impl<'u> Walk<'_, 'u> {
     ) {
         let outer = self.sig.replace((decl, sig));
         let group = self.binders(frame, decl, sig, binders);
-        let owner = self.owner.replace(decl);
+        let owner = self.owner.replace((decl, sig));
         self.function(Some(&group), func);
         self.owner = owner;
         self.sig = outer;
@@ -628,7 +631,7 @@ impl<'u> Walk<'_, 'u> {
 
     fn closure(&mut self, frame: &Frame<'_, 'u>, func: &'u Function) {
         let id = self.allocate(DeclKind::Closure, None, DeclNode::Closure(func));
-        let owner = self.owner.replace(id);
+        let owner = self.owner.replace((id, 0));
         self.function(Some(frame), func);
         self.owner = owner;
     }
@@ -742,7 +745,7 @@ impl<'u> Walk<'_, 'u> {
         let id = self.declared(class.ident.span);
         let outer = self.sig.take();
         let group = self.binders(frame, id, 0, class.binders.as_deref());
-        let owner = self.owner.replace(id);
+        let owner = self.owner.replace((id, 0));
         for super_ref in &class.super_refs {
             if super_ref.type_only {
                 self.name(

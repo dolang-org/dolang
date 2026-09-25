@@ -1,0 +1,21 @@
+# Variance follows alias chains across units and renamed imports, and composes
+# through nested applications.
+
+import b:
+  - @Wrap: W
+
+pub @let Pair[T] = W[W[T]]
+#             ^: variance covariant
+pub @let Flip[T] = W[(T -> nil)]
+#             ^: variance contravariant
+pub @let Twice[T] = Flip[Flip[T]]
+#              ^: variance covariant
+pub @let Mixed[T] = W[(T -> T)]
+#              ^: variance invariant
+pub @let Loop[T] = Loop[T]
+#             ^: variance invariant
+# error: alias refers to itself
+#   --> a.dol:LL:LL
+#    |
+# LL | pub @let Loop[T] = Loop[T]
+#    |          ^^^^

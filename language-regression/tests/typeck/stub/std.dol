@@ -1,5 +1,9 @@
 # A small stand-in for the standard library.
 
+pub @let Union[...Ts] = ...
+
+pub @let Phantom[...Ts] = ...
+
 pub class Int
   pub def abs self -> Int
     ...

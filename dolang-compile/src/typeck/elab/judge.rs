@@ -3,7 +3,7 @@
 //! A judgment names what the checker concluded at a span in terms a fixture can
 //! write down: qualified names rather than IDs.
 
-use std::fmt::Write;
+use std::{collections::HashMap, fmt::Write};
 
 use super::{
     Ambient, BinderRef, DeclNode, Designated, Head, KindOf, ModuleRef, ParamTy, Referent, RestSlot,
@@ -13,11 +13,28 @@ use crate::{
     Mode, RestKind,
     ast::{Param, TypeExpr, visit::Node},
     source::Span,
-    typeck::r#type::{DeclId, Kind, UnitId},
+    typeck::r#type::{DeclId, Kind, UnitId, Variance},
 };
 
 /// The judgments the tables record, by the name a fixture writes
-pub(crate) const JUDGMENTS: &[&str] = &["ref", "head", "kind", "sig", "ambient", "designated"];
+pub(crate) const JUDGMENTS: &[&str] = &[
+    "ref",
+    "head",
+    "kind",
+    "sig",
+    "ambient",
+    "designated",
+    "variance",
+    "captured",
+];
+
+fn variance(variance: Variance) -> &'static str {
+    match variance {
+        Variance::Covariant => "covariant",
+        Variance::Contravariant => "contravariant",
+        Variance::Invariant => "invariant",
+    }
+}
 
 impl Tables<'_> {
     /// Every judgment about spans of `unit`, in source order
@@ -61,7 +78,52 @@ impl Tables<'_> {
                     _ => unreachable!("only a def or method has a signature"),
                 };
                 judgments.push(("sig", name, self.sig(unit, completed)));
+                let implicit: Vec<_> = [('<', completed.input), ('>', completed.output)]
+                    .into_iter()
+                    .filter_map(|(sigil, ambient)| match ambient {
+                        Ambient::Implicit(binder) => Some(format!(
+                            "{sigil}#{} {}",
+                            binder.slot,
+                            variance(self.variance[&binder])
+                        )),
+                        _ => None,
+                    })
+                    .collect();
+                if !implicit.is_empty() {
+                    judgments.push(("variance", name, implicit.join(" ")));
+                }
             }
+        }
+        for (binder, &value) in &self.variance {
+            let owner = &self.decls[binder.decl.index()];
+            if owner.unit == unit
+                && let Some(written) = self.binders(binder.decl, binder.sig).get(binder.slot)
+            {
+                judgments.push(("variance", written.ident.span, variance(value).to_owned()));
+            }
+        }
+        let mut captured: HashMap<DeclId, Vec<(BinderRef, Variance)>> = HashMap::new();
+        for (&(id, binder), &value) in &self.captured {
+            if self.decls[id.index()].unit == unit {
+                captured.entry(id).or_default().push((binder, value));
+            }
+        }
+        for (id, mut binders) in captured {
+            let Some(name) = self.decls[id.index()].name else {
+                continue;
+            };
+            // Outer declarations are allocated first
+            binders.sort_by_key(|(binder, _)| (binder.decl, binder.sig, binder.slot));
+            let value = binders
+                .iter()
+                .map(|&(binder, value)| {
+                    let unit = self.decls[binder.decl.index()].unit;
+                    let ident = &self.binders(binder.decl, binder.sig)[binder.slot].ident;
+                    format!("{} {}", self.text(unit, ident.span), variance(value))
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            judgments.push(("captured", name, value));
         }
         for (arrow, ambients) in &self.func_ambients {
             if arrow.unit == unit {
@@ -76,6 +138,7 @@ impl Tables<'_> {
             {
                 let value = match designated {
                     Designated::Value => "top".to_owned(),
+                    Designated::Phantom => "phantom".to_owned(),
                     Designated::Intrinsic(intrinsic) => format!("intrinsic {intrinsic:?}"),
                 };
                 judgments.push(("designated", name, value));
@@ -198,7 +261,7 @@ impl Tables<'_> {
     fn qualified(&self, id: DeclId) -> String {
         let decl = &self.decls[id.index()];
         let mut name = match decl.outer {
-            Some(outer) => self.qualified(outer),
+            Some((outer, _)) => self.qualified(outer),
             None => self.unit_name(decl.unit),
         };
         name.push('.');

@@ -88,6 +88,7 @@ impl<'u, 's> Builder<'u, 's> {
         let (mut tables, mut diags) = elab::collect(&mut db, &units, &order);
         elab::kinds(&mut tables, &mut diags);
         elab::signatures(&mut tables, &mut diags);
+        elab::variances(&mut tables);
         Check {
             diagnostics: diags
                 .iter()
