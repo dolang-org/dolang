@@ -1,0 +1,11 @@
+# A unit that fails to compile is not checked, so what it declares is not known.
+
+import broken:
+  - @Lost
+import good:
+  - @Found
+
+pub let lost @ Lost = nil
+#              ^~~~: ref external broken.Lost
+pub let found @ Found = nil
+#               ^~~~~: ref good.Found

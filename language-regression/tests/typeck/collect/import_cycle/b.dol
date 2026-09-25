@@ -1,0 +1,9 @@
+pub import a:
+  - X
+# error: import cycle
+#   --> b.dol:LL:LL
+#    |
+# LL |   - X
+#    |     ^
+#    |
+#    = note: `a.X`, `b.X` re-export each other

@@ -15,39 +15,13 @@
 //! disappear or change kind freely, so a fixture does not have to be rewritten
 //! every time the token stream changes elsewhere.
 //!
-//! # Why two forms
-//!
-//! Comments participate in indentation: a comment at column 0 inside an
-//! indented block ends the block, and a comment indented less than its block is
-//! an indentation error.  An annotation comment therefore sits at the enclosing
-//! block's indent column or deeper, which puts the *first* token of every line
-//! out of reach of a `^`.  A run that starts immediately after the `#` binds
-//! downward instead, with the `#` standing in for the span's first column:
-//!
-//! ```text
-//! #~~: keyword
-//! def foo bar
-//! ```
-//!
-//! The `#` must sit at exactly the column where the next line's first token
-//! starts, which is also the column the comment would naturally be written at.
-//!
-//! # Limits
-//!
-//! Annotations stack, but nothing else may come between one and what it marks:
-//! an ordinary comment written among them becomes the line they bind to.  Prose
-//! goes above the source line, not in the middle of its annotations.
-//!
-//! An annotation names a span on one line, so a token spanning several lines
-//! cannot be annotated.  Nothing inside a here string can be annotated at all,
-//! one line or many: a `#` there is content, not a comment.
-//! Annotated lines must be ASCII, because columns are byte offsets and a
-//! multi-byte character would silently slide the carets off the span they
-//! appear to mark.
+//! See [`dolang_private_test::annotate`] for the annotation forms and their
+//! limits.
 
 use std::{fmt::Write as _, fs, path::Path};
 
-use dolang_compile::{Config, Context, Kind, NodeId, Token, diag};
+use dolang::compile::{Config, Context, Kind, NodeId, Severity, Span, Token};
+use dolang_private_test::annotate::{self, Annotation};
 
 /// Names for [`Token`], as written after the `:` in an annotation.
 ///
@@ -198,24 +172,8 @@ struct Tok {
     end: (usize, usize),
 }
 
-/// Which line an annotation binds to.
-#[derive(Clone, Copy, PartialEq)]
-enum Bind {
-    /// A run containing `^`, binding to the line above.
-    Up,
-    /// A run starting immediately after the `#`, binding to the line below.
-    Down,
-}
-
-struct Annotation {
-    /// Line the annotation is written on, for error messages.
-    line: usize,
-    bind: Bind,
-    /// Column the `#` sits at, which the down form must anchor.
-    hash_col: usize,
-    /// Marked span, as columns on the target line.
-    start_col: usize,
-    end_col: usize,
+/// What a token annotation asserts.
+struct Expect {
     kind: String,
     node: Option<String>,
     context: Option<String>,
@@ -227,7 +185,7 @@ fn run(path: &Path) {
         .unwrap_or_else(|e| panic!("{}: fixture is not UTF-8: {e}", path.display()));
     let lines: Vec<&str> = source.split('\n').collect();
 
-    let annotations = parse(path, &lines);
+    let annotations = annotate::parse(path, &lines);
     assert!(
         !annotations.is_empty(),
         "{}: fixture has no annotations",
@@ -237,8 +195,16 @@ fn run(path: &Path) {
 
     let mut failures = String::new();
     for annotation in &annotations {
-        let target = target_line(&annotations, annotation, &lines);
-        if let Err(report) = compare(annotation, target, &lines, &tokens) {
+        let expect = expect(&annotation.payload).unwrap_or_else(|msg| {
+            panic!(
+                "{}:{}: {msg}\n    {}",
+                path.display(),
+                annotation.line + 1,
+                lines[annotation.line]
+            )
+        });
+        let target = annotate::target_line(&annotations, annotation, &lines);
+        if let Err(report) = compare(annotation, &expect, target, &lines, &tokens) {
             let _ = write!(
                 failures,
                 "\n{}:{}: {report}",
@@ -272,7 +238,7 @@ fn tokenize(path: &Path, content: &[u8]) -> Vec<Tok> {
 
     let errors: Vec<String> = unit
         .diagnostics()
-        .filter(|diag| diag.severity() == diag::Severity::Error)
+        .filter(|diag| diag.severity() == Severity::Error)
         .map(|diag| {
             format!(
                 "  {}:{}: {}",
@@ -290,82 +256,28 @@ fn tokenize(path: &Path, content: &[u8]) -> Vec<Tok> {
     );
 
     let mut tokens = Vec::new();
-    unit.tokens(
-        &mut |token, span: diag::Span, node: Option<NodeId>, context| {
-            tokens.push(Tok {
-                kind: token_name(token),
-                node: node
-                    .and_then(|id| unit.node(id))
-                    .map_or("none", |node| node_name(&node.kind())),
-                context: context_name(context),
-                start: (
-                    span.start().line_offset() as usize,
-                    span.start().column_offset() as usize,
-                ),
-                end: (
-                    span.end().line_offset() as usize,
-                    span.end().column_offset() as usize,
-                ),
-            });
-        },
-    );
+    unit.tokens(&mut |token, span: Span, node: Option<NodeId>, context| {
+        tokens.push(Tok {
+            kind: token_name(token),
+            node: node
+                .and_then(|id| unit.node(id))
+                .map_or("none", |node| node_name(&node.kind())),
+            context: context_name(context),
+            start: (
+                span.start().line_offset() as usize,
+                span.start().column_offset() as usize,
+            ),
+            end: (
+                span.end().line_offset() as usize,
+                span.end().column_offset() as usize,
+            ),
+        });
+    });
     tokens
 }
 
-/// Parse every annotation in the fixture, panicking on a malformed one.
-fn parse(path: &Path, lines: &[&str]) -> Vec<Annotation> {
-    let mut annotations = Vec::new();
-    for (index, line) in lines.iter().enumerate() {
-        match parse_line(index, line) {
-            Ok(Some(annotation)) => annotations.push(annotation),
-            Ok(None) => {}
-            Err(msg) => panic!("{}:{}: {msg}\n    {line}", path.display(), index + 1),
-        }
-    }
-    annotations
-}
-
-/// Recognize an annotation, or return `None` for an ordinary line.
-///
-/// A comment that looks like an annotation but is not one — a marker run with
-/// no `:` after it — is an error rather than an ordinary comment, so that a
-/// miscounted or mistyped run cannot quietly assert nothing.
-fn parse_line(index: usize, line: &str) -> Result<Option<Annotation>, String> {
-    let Some(hash_col) = line.find(|c: char| !c.is_whitespace()) else {
-        return Ok(None);
-    };
-    if line.as_bytes()[hash_col] != b'#' {
-        return Ok(None);
-    }
-    let rest = &line[hash_col + 1..];
-
-    let (bind, start_col, run) = match rest.as_bytes().first() {
-        Some(b'~' | b':') => (Bind::Down, hash_col, rest),
-        _ => {
-            let caret = rest.len() - rest.trim_start().len();
-            if rest.as_bytes().get(caret) != Some(&b'^') {
-                // An ordinary comment.
-                return Ok(None);
-            }
-            (Bind::Up, hash_col + 1 + caret, &rest[caret + 1..])
-        }
-    };
-
-    // The `#` (down) or the `^` (up) is the first marked column; `~` extends it.
-    let tildes = run.len() - run.trim_start_matches('~').len();
-    let end_col = start_col + 1 + tildes;
-    let payload = match run[tildes..].strip_prefix(':') {
-        Some(payload) => payload,
-        None if run.as_bytes().get(tildes) == Some(&b'^') => {
-            return Err(
-                "`^` may not appear in a run that binds to the line below; a run \
-                        starting immediately after the `#` binds downward"
-                    .to_owned(),
-            );
-        }
-        None => return Err("expected `:` after the marker run".to_owned()),
-    };
-
+/// Parse a token annotation's payload: a token kind, then `key=value` fields.
+fn expect(payload: &str) -> Result<Expect, String> {
     let mut kind = None;
     let mut node = None;
     let mut context = None;
@@ -373,9 +285,6 @@ fn parse_line(index: usize, line: &str) -> Result<Option<Annotation>, String> {
         let field = field.trim();
         match field.split_once('=') {
             None if position == 0 => {
-                if field.is_empty() {
-                    return Err("expected a token kind after `:`".to_owned());
-                }
                 if !ALL_TOKENS.iter().any(|token| token_name(*token) == field) {
                     return Err(format!("unknown token kind `{field}`"));
                 }
@@ -400,91 +309,21 @@ fn parse_line(index: usize, line: &str) -> Result<Option<Annotation>, String> {
             Some((key, _)) => return Err(format!("unknown field `{key}`")),
         }
     }
-
-    Ok(Some(Annotation {
-        line: index,
-        bind,
-        hash_col,
-        start_col,
-        end_col,
+    Ok(Expect {
         kind: kind.ok_or("expected a token kind after `:`")?,
         node,
         context,
-    }))
-}
-
-/// The line an annotation binds to: the nearest neighbour that is not itself an
-/// annotation.
-///
-/// Annotations stack, so several may share one target, but nothing else may
-/// come between an annotation and what it marks — a blank line in between is a
-/// mistake rather than something to scan past.
-fn target_line(annotations: &[Annotation], annotation: &Annotation, lines: &[&str]) -> usize {
-    let no_target = || -> ! {
-        panic!(
-            "the annotation on line {} has no line to mark {} it",
-            annotation.line + 1,
-            match annotation.bind {
-                Bind::Up => "above",
-                Bind::Down => "below",
-            }
-        )
-    };
-    let mut line = annotation.line;
-    loop {
-        line = match annotation.bind {
-            Bind::Up => match line.checked_sub(1) {
-                Some(line) => line,
-                None => no_target(),
-            },
-            Bind::Down => line + 1,
-        };
-        if annotations.iter().any(|other| other.line == line) {
-            continue;
-        }
-        match lines.get(line) {
-            Some(text) if !text.trim().is_empty() => return line,
-            _ => no_target(),
-        }
-    }
+    })
 }
 
 /// Check one annotation, returning a report if it does not hold.
 fn compare(
     annotation: &Annotation,
+    expect: &Expect,
     target: usize,
     lines: &[&str],
     tokens: &[Tok],
 ) -> Result<(), String> {
-    let line = lines[target];
-    assert!(
-        line.is_ascii(),
-        "line {} is annotated but is not ASCII; columns are byte offsets, so the \
-         markers would not line up with what they appear to mark",
-        target + 1
-    );
-    assert!(
-        annotation.end_col <= line.len(),
-        "the marker run on line {} is {} columns wide, but line {} — the line it \
-         marks — is only {} columns long:\n    {line}",
-        annotation.line + 1,
-        annotation.end_col - annotation.start_col,
-        target + 1,
-        line.len(),
-    );
-    if annotation.bind == Bind::Down {
-        let first = line.find(|c: char| !c.is_whitespace()).expect("not blank");
-        assert!(
-            annotation.hash_col == first,
-            "the `#` on line {} sits at column {}, but a run that binds downward \
-             marks the span starting at the `#` — so it must sit at column {}, \
-             where the first token of the line below starts",
-            annotation.line + 1,
-            annotation.hash_col + 1,
-            first + 1,
-        );
-    }
-
     let start = (target, annotation.start_col);
     let end = (target, annotation.end_col);
     let exact: Vec<&Tok> = tokens
@@ -495,18 +334,15 @@ fn compare(
     match exact.as_slice() {
         [token] => {
             let mut wrong = Vec::new();
-            if token.kind != annotation.kind {
-                wrong.push(format!(
-                    "expected {}, found {}",
-                    annotation.kind, token.kind
-                ));
+            if token.kind != expect.kind {
+                wrong.push(format!("expected {}, found {}", expect.kind, token.kind));
             }
-            if let Some(node) = &annotation.node
+            if let Some(node) = &expect.node
                 && token.node != node
             {
                 wrong.push(format!("expected node={node}, found node={}", token.node));
             }
-            if let Some(context) = &annotation.context
+            if let Some(context) = &expect.context
                 && token.context != context
             {
                 wrong.push(format!(
@@ -520,13 +356,13 @@ fn compare(
                 Err(format!(
                     "{}\n{}",
                     wrong.join("; "),
-                    excerpt(annotation, target, lines)
+                    annotate::excerpt(annotation, target, lines)
                 ))
             }
         }
         [] => Err(format!(
             "no token spans these columns exactly\n{}{}",
-            excerpt(annotation, target, lines),
+            annotate::excerpt(annotation, target, lines),
             overlapping(annotation, target, tokens)
         )),
         several => Err(format!(
@@ -537,25 +373,9 @@ fn compare(
                 .map(|token| token.kind)
                 .collect::<Vec<_>>()
                 .join(", "),
-            excerpt(annotation, target, lines)
+            annotate::excerpt(annotation, target, lines)
         )),
     }
-}
-
-/// The marked line with the run redrawn beneath it.
-///
-/// The run is drawn as `^~~` whichever form the annotation used, so a down-form
-/// annotation reads the same way as an up-form one in a failure.
-fn excerpt(annotation: &Annotation, target: usize, lines: &[&str]) -> String {
-    let mut out = format!("    {}\n    ", lines[target]);
-    for _ in 0..annotation.start_col {
-        out.push(' ');
-    }
-    out.push('^');
-    for _ in annotation.start_col + 1..annotation.end_col {
-        out.push('~');
-    }
-    out
 }
 
 /// Every token touching the marked columns, so a miscounted run is visible.

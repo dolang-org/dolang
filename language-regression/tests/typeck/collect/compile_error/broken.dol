@@ -1,0 +1,9 @@
+pub class Lost
+  pub field x @ Int = 0
+
+let =
+# error: expected at least one item in pattern
+#   --> broken.dol:LL:LL
+#    |
+# LL | let =
+#    |     ^

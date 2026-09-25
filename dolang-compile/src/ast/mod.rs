@@ -1843,6 +1843,14 @@ impl ImportItem {
         }
     }
 
+    /// The item's name in the module it comes from
+    pub(crate) fn item(&self) -> Span {
+        match self {
+            ImportItem::AsIs { bind, .. } => bind.span,
+            ImportItem::Renamed { item, .. } => *item,
+        }
+    }
+
     /// Whether the item binds a name for types alone, and so is never imported
     pub(crate) fn is_type_only(&self) -> bool {
         match self {
@@ -1991,19 +1999,32 @@ impl Node for Import {
 /// A declaration that names a type alone, which a lexical scope holds apart from its
 /// variables
 pub(crate) enum TypeDecl<'a> {
-    /// A type-only module import
-    Module {
-        /// The dotted path a type name spells to reach the module: the module's own path,
-        /// or the local name of a renamed import. Modules are not nested, so
-        /// `security.unix` and `security.nfs4` are separate imports sharing the head
-        /// they bind.
-        path: Span,
+    /// `import @a.b`, which binds only the path's head. Modules are not nested, so
+    /// `security.unix` and `security.nfs4` are separate imports sharing the head.
+    ModuleAsIs {
+        module: Span,
         bind: &'a Ident,
         type_only: &'a TypeOnly,
         is_pub: bool,
     },
-    /// A type-only import item
-    Item {
+    /// `import @a.b: m`
+    ModuleRenamed {
+        module: Span,
+        bind: &'a Ident,
+        type_only: &'a TypeOnly,
+        is_pub: bool,
+    },
+    /// `- @X` under `import m:`
+    ItemAsIs {
+        module: Span,
+        bind: &'a Ident,
+        type_only: &'a TypeOnly,
+        is_pub: bool,
+    },
+    /// `- @X: Y` under `import m:`
+    ItemRenamed {
+        module: Span,
+        item: Span,
         bind: &'a Ident,
         type_only: &'a TypeOnly,
         is_pub: bool,
@@ -2016,7 +2037,10 @@ impl TypeDecl<'_> {
     /// The name the declaration binds, which for a dotted module import is only its head
     pub(crate) fn name(&self) -> Span {
         match self {
-            TypeDecl::Module { bind, .. } | TypeDecl::Item { bind, .. } => bind.span,
+            TypeDecl::ModuleAsIs { bind, .. }
+            | TypeDecl::ModuleRenamed { bind, .. }
+            | TypeDecl::ItemAsIs { bind, .. }
+            | TypeDecl::ItemRenamed { bind, .. } => bind.span,
             TypeDecl::Alias(alias) => alias.ident.span,
             TypeDecl::Protocol(class) => class.ident.span,
         }
@@ -2025,7 +2049,10 @@ impl TypeDecl<'_> {
     /// The declaration's document node
     pub(crate) fn node(&self) -> Option<doc::Id> {
         match self {
-            TypeDecl::Module { type_only, .. } | TypeDecl::Item { type_only, .. } => type_only.node,
+            TypeDecl::ModuleAsIs { type_only, .. }
+            | TypeDecl::ModuleRenamed { type_only, .. }
+            | TypeDecl::ItemAsIs { type_only, .. }
+            | TypeDecl::ItemRenamed { type_only, .. } => type_only.node,
             TypeDecl::Alias(alias) => alias.node,
             TypeDecl::Protocol(class) => class.node,
         }
@@ -2590,36 +2617,50 @@ impl Stmt {
                             bind,
                             type_only: Some(type_only),
                             ..
-                        } => f(TypeDecl::Module {
-                            path: *module,
+                        } => f(TypeDecl::ModuleAsIs {
+                            module: *module,
                             bind,
                             type_only,
                             is_pub,
                         }),
                         ImportElement::ModuleRenamed {
+                            module,
                             bind,
                             type_only: Some(type_only),
                             ..
-                        } => f(TypeDecl::Module {
-                            path: bind.span,
+                        } => f(TypeDecl::ModuleRenamed {
+                            module: *module,
                             bind,
                             type_only,
                             is_pub,
                         }),
-                        ImportElement::Items { items, .. } => {
+                        ImportElement::Items { module, items } => {
+                            let module = *module;
                             for item in items {
-                                let (ImportItem::AsIs {
-                                    bind, type_only, ..
-                                }
-                                | ImportItem::Renamed {
-                                    bind, type_only, ..
-                                }) = item;
-                                if let Some(type_only) = type_only {
-                                    f(TypeDecl::Item {
+                                match item {
+                                    ImportItem::AsIs {
+                                        bind,
+                                        type_only: Some(type_only),
+                                        ..
+                                    } => f(TypeDecl::ItemAsIs {
+                                        module,
                                         bind,
                                         type_only,
                                         is_pub,
-                                    });
+                                    }),
+                                    ImportItem::Renamed {
+                                        item,
+                                        bind,
+                                        type_only: Some(type_only),
+                                        ..
+                                    } => f(TypeDecl::ItemRenamed {
+                                        module,
+                                        item: *item,
+                                        bind,
+                                        type_only,
+                                        is_pub,
+                                    }),
+                                    _ => {}
                                 }
                             }
                         }

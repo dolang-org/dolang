@@ -1,0 +1,6 @@
+pub class Point
+  pub field x @ Int = 0
+
+pub @let Base = Point
+#        ^~~~: head a.Point
+pub @let Prim = ...

@@ -1,0 +1,5 @@
+import a:
+  - @X
+
+pub let x @ X = nil
+#           ^: ref error

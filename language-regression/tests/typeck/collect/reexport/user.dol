@@ -1,0 +1,10 @@
+# Re-exports are chased to the declaration they end at.
+
+import c:
+  - @Renamed
+  - @Ghost
+
+pub let renamed @ Renamed = nil
+#                 ^~~~~~~: ref a.Thing
+pub let ghost @ Ghost = nil
+#               ^~~~~: ref a.Thing

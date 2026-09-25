@@ -1,0 +1,47 @@
+# Imports resolve to the declaration they name in another unit, however the
+# import is written.
+
+import geo:
+  - Point
+  Shape: Form
+  - @Pair
+  - @Point: Spot
+import geo: g
+@import geo: tg
+import @security.unix
+import @security.nfs4
+import hub:
+  - @g: hubgeo
+import elsewhere:
+  - @Thing
+@import geo:
+  Shape: Outline
+
+pub let point @ Point = (Point())
+#               ^~~~~: ref geo.Point
+pub let form @ Form = Form
+#              ^~~~: ref geo.Shape
+pub let pair @ Pair[Int] = nil
+#              ^~~~: ref geo.Pair
+pub let spot @ Spot = nil
+#              ^~~~: ref geo.Point
+pub let outline @ Outline = nil
+#                 ^~~~~~~: ref geo.Shape
+
+# A dotted name picks its module through the name the import binds
+pub let dotted @ g.Point = g
+#                ^: ref geo.Point
+pub let typed @ tg.Shape = nil
+#               ^~: ref geo.Shape
+pub let mode @ security.unix.Mode = nil
+#              ^~~~~~~~: ref security.unix.Mode
+pub let acl @ security.nfs4.Acl = nil
+#             ^~~~~~~~: ref security.nfs4.Acl
+
+# A module no checked unit provides
+pub let thing @ Thing = nil
+#               ^~~~~: ref external elsewhere.Thing
+
+# An item that is a re-exported module
+pub let module @ hubgeo = nil
+#                ^~~~~~: ref module geo

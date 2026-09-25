@@ -1,0 +1,2 @@
+pub class Thing
+  pub field x @ Int = 0

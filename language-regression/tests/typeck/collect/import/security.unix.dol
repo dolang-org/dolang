@@ -1,0 +1,2 @@
+pub class Mode
+  pub field bits @ Int = 0

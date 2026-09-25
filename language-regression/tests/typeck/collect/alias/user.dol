@@ -1,0 +1,27 @@
+# An alias's head is found through aliases, across units, to what is not one.
+
+import a:
+  - @Base
+  - @Prim
+
+pub @let Chain = Base
+#        ^~~~~: head a.Point
+pub @let Opaque = Prim
+#        ^~~~~~: head a.Prim
+pub @let Generic[T] = Array[T]
+#        ^~~~~~~: head external std.Array
+pub @let Param[T] = T
+#        ^~~~~: head binder T
+pub @let Union = (Int | Str)
+#        ^~~~~: head structural
+pub @let Loop = Loop2
+#        ^~~~: head error
+# error: alias refers to itself
+#   --> user.dol:LL:LL
+#    |
+# LL | pub @let Loop = Loop2
+#    |          ^^^^
+pub @let Loop2 = Loop
+#        ^~~~~: head error
+pub @let Grouped = (Chain)
+#        ^~~~~~~: head a.Point

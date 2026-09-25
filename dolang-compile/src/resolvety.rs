@@ -229,7 +229,7 @@ impl Decls {
 
 /// Whether the dotted module path `module` is what holds the type `path` names. Modules
 /// are not nested, so the path must be the module's own components and then one name.
-fn names_type_in(module: &str, path: &[&str]) -> bool {
+pub(crate) fn names_type_in(module: &str, path: &[&str]) -> bool {
     let components = module.split('.');
     components.clone().count() + 1 == path.len()
         && components.eq(path[..path.len() - 1].iter().copied())
@@ -280,9 +280,13 @@ struct TypeName {
 impl TypeName {
     fn new(decl: TypeDecl<'_>) -> Self {
         let (module, import, alias, used) = match decl {
-            TypeDecl::Module { path, is_pub, .. } => (Some(path), true, None, is_pub),
+            // A type name spells the module's path, or the name it is renamed to
+            TypeDecl::ModuleAsIs { module, is_pub, .. } => (Some(module), true, None, is_pub),
+            TypeDecl::ModuleRenamed { bind, is_pub, .. } => (Some(bind.span), true, None, is_pub),
             // An exported name may be used elsewhere
-            TypeDecl::Item { is_pub, .. } => (None, true, None, is_pub),
+            TypeDecl::ItemAsIs { is_pub, .. } | TypeDecl::ItemRenamed { is_pub, .. } => {
+                (None, true, None, is_pub)
+            }
             TypeDecl::Alias(alias) => (None, false, Some(alias.span()), false),
             TypeDecl::Protocol(_) => (None, false, None, false),
         };

@@ -227,31 +227,12 @@ mod detail {
         [mut retval]: [Slot<'v, '_>; 1],
     ) {
         let content = dolang_private_test::read_file(path);
-        let update_mode = std::env::var("DOLANG_TEST_UPDATE").is_ok();
+        let update_mode = dolang_private_test::update_mode();
         let file = path.file_name().unwrap().to_str().unwrap();
-        let source = std::str::from_utf8(&content).unwrap();
 
         let (res, diags, mut directives) = compile(path, &content, None);
-
-        // Process diagnostics
-        let mut unexpected_diag = false;
-        let mut pending_updates: Vec<(u32, String)> = Vec::new();
-        for d in diags {
-            if let Some(rendered) =
-                dolang_private_test::match_diagnostic(&mut directives, &d, file, source)
-            {
-                if update_mode {
-                    pending_updates.push((d.span().span().end().line_number(), rendered));
-                } else {
-                    let display = dolang_private_test::render_diag_display(file, source, &d);
-                    eprintln!("unexpected diagnostic:\n{display}");
-                    unexpected_diag = true;
-                }
-            }
-        }
-        if !pending_updates.is_empty() {
-            dolang_private_test::apply_diagnostic_updates(path, &content, pending_updates);
-        }
+        let unexpected_diag =
+            dolang_private_test::match_diagnostics(path, &content, file, &diags, &mut directives);
 
         // Check for compile error vs runtime execution
         let compile_failed = res.is_err();

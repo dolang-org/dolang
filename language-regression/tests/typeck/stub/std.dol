@@ -1,0 +1,9 @@
+# A small stand-in for the standard library.
+
+pub class Int
+  pub def abs self -> Int
+    ...
+
+pub class Str
+  pub def len self -> Int
+    ...
