@@ -1806,3 +1806,286 @@ fn reach_walks_rigids_through_their_bounds() {
         Ok(Reach::Dynamic)
     ));
 }
+
+fn item(multiplicity: Multiplicity, element: Element) -> SchemaItem {
+    SchemaItem {
+        multiplicity,
+        element,
+    }
+}
+
+fn items(db: &Database, items: Vec<SchemaItem>) -> TypeId {
+    db.intern(Type::Schema(items.into()))
+}
+
+/// `Int` with its literal backing registered
+fn int(db: &mut Database) -> TypeId {
+    let int = nominal(db, "Int", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Int, int);
+    int
+}
+
+#[test]
+fn schema_keyword_and_rest_binders_are_instantiated() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let [one, two] = [1, 2].map(|n| literal(&db, n));
+    let rest = |binding| Binder {
+        variance: Variance::Covariant,
+        ..bounded(Kind::Schema, binding, None)
+    };
+    let tuple = nominal(
+        &mut db,
+        "Tuple",
+        vec![rest(Binding::Rest(Rest::Positional))],
+        vec![],
+    );
+    let keyword = db.intern_symbol("T");
+    let named = nominal(
+        &mut db,
+        "Named",
+        vec![Binder {
+            binding: Binding::Keyword(keyword),
+            ..binder(Variance::Covariant)
+        }],
+        vec![],
+    );
+    let s = db.intern(Type::Bound {
+        reference: BoundRef::new(0, 0),
+        kind: Kind::Schema,
+    });
+    let body = quantified(&db, vec![rest(Binding::Positional)], s);
+    let (id, pack, mut source) = reserve(&mut db, DeclKind::Alias, "Pack");
+    source.result_kind = Kind::Schema;
+    populate(&mut db, id, source, body, vec![]);
+    let ones = items(
+        &db,
+        vec![item(Multiplicity::Repeated, Element::Positional(one))],
+    );
+    let ints = items(
+        &db,
+        vec![item(Multiplicity::Repeated, Element::Positional(int))],
+    );
+    let schema_apply = |db: &Database, base, arg, kind| {
+        db.intern(Type::Apply {
+            base,
+            args: vec![Argument::Positional(arg)].into(),
+            kind,
+        })
+    };
+    let tuple_ones = schema_apply(&db, tuple, ones, Kind::Type);
+    let tuple_ints = schema_apply(&db, tuple, ints, Kind::Type);
+    let packed = schema_apply(&db, pack, schema(&db, &[one, two]), Kind::Schema);
+    let expanded = db.intern(Type::Apply {
+        base: tuple,
+        args: vec![Argument::Expand(ones)].into(),
+        kind: Kind::Type,
+    });
+    let [named_one, named_two] = [one, two].map(|arg| apply(&db, named, &[arg]));
+    db.seal();
+    assert_eq!(check(&db, tuple_ones, tuple_ints).status, Status::Proven);
+    assert_eq!(
+        check(&db, tuple_ints, tuple_ones).status,
+        Status::Unresolved
+    );
+    assert_eq!(check(&db, packed, ints).status, Status::Proven);
+    assert_eq!(check(&db, named_one, named_one).status, Status::Proven);
+    assert_eq!(
+        check(&db, named_one, named_two).status,
+        Status::Contradicted
+    );
+    assert!(has(
+        &check(&db, expanded, tuple_ints),
+        Residual::GenericArguments.into()
+    ));
+}
+
+#[test]
+#[should_panic(expected = "implicit binder applied")]
+fn applying_an_implicit_binder_panics() {
+    let mut db = Database::new();
+    let ambient = nominal(
+        &mut db,
+        "Ambient",
+        vec![bounded(Kind::Type, Binding::Implicit, None)],
+        vec![],
+    );
+    let applied = apply(&db, ambient, &[db.top()]);
+    db.seal();
+    check(&db, applied, applied);
+}
+
+#[test]
+fn rest_shapes_admit_items_of_their_kinds() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let sym = nominal(&mut db, "Sym", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Sym, sym);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Str, str);
+    let [one, two] = [1, 2].map(|n| literal(&db, n));
+    let top = db.top();
+    let name = db.intern(Type::Literal(Literal::Sym(db.intern_symbol("a"))));
+    let text = db.intern(Type::Literal(Literal::Str("a".into())));
+    let positional = |ty| item(Multiplicity::Repeated, Element::Positional(ty));
+    let keyed = |key, value| item(Multiplicity::Repeated, Element::Keyed { key, value });
+    let ints = items(&db, vec![positional(int)]);
+    let options = items(&db, vec![keyed(sym, top)]);
+    let anything = items(&db, vec![positional(top), keyed(sym, top)]);
+    let empty = items(&db, vec![]);
+    let pair = schema(&db, &[one, two]);
+    let named = items(
+        &db,
+        vec![item(
+            Multiplicity::Required,
+            Element::Keyed {
+                key: name,
+                value: one,
+            },
+        )],
+    );
+    let texted = items(
+        &db,
+        vec![item(
+            Multiplicity::Required,
+            Element::Keyed {
+                key: text,
+                value: one,
+            },
+        )],
+    );
+    let maybe = items(
+        &db,
+        vec![item(Multiplicity::Optional, Element::Positional(one))],
+    );
+    let nested = items(
+        &db,
+        vec![
+            item(
+                Multiplicity::Required,
+                Element::Include(schema(&db, &[one])),
+            ),
+            item(
+                Multiplicity::Repeated,
+                Element::Include(schema(&db, &[two])),
+            ),
+            positional(one),
+        ],
+    );
+    db.seal();
+    for (a, b) in [
+        (pair, ints),
+        (nested, ints),
+        (named, options),
+        (named, anything),
+        (pair, anything),
+        (empty, empty),
+        (empty, ints),
+    ] {
+        assert_eq!(check(&db, a, b).status, Status::Proven);
+    }
+    let item = Issue::Contradiction(Contradiction::Item);
+    for (a, b) in [(pair, options), (named, ints), (maybe, empty)] {
+        let result = check(&db, a, b);
+        assert_eq!(result.status, Status::Contradicted);
+        assert!(has(&result, item));
+    }
+    assert!(has(
+        &check(&db, texted, anything),
+        Issue::Contradiction(Contradiction::UnrelatedNominals)
+    ));
+}
+
+#[test]
+fn rest_shape_inclusions_of_rigids_and_unknown() {
+    let mut db = Database::new();
+    let num = nominal(&mut db, "Num", vec![], vec![]);
+    let int = nominal(&mut db, "Int", vec![], vec![num]);
+    let [s, ts] = [0, 1].map(|slot| {
+        db.intern(Type::Bound {
+            reference: BoundRef::new(0, slot),
+            kind: Kind::Schema,
+        })
+    });
+    let positional = |ty| item(Multiplicity::Repeated, Element::Positional(ty));
+    let include = |ty| item(Multiplicity::Required, Element::Include(ty));
+    let ints = items(&db, vec![positional(int)]);
+    let nums = items(&db, vec![positional(num)]);
+    let tops = items(&db, vec![positional(db.top())]);
+    let keys = items(
+        &db,
+        vec![item(
+            Multiplicity::Repeated,
+            Element::Keyed {
+                key: db.top(),
+                value: db.top(),
+            },
+        )],
+    );
+    let of_s = items(&db, vec![include(s)]);
+    let of_ts = items(&db, vec![include(ts)]);
+    let of_unknown = items(&db, vec![include(db.unknown_schema())]);
+    let one = schema(&db, &[literal(&db, 1)]);
+    let body = function(&db, &[], db.top());
+    let f = generic(
+        &mut db,
+        vec![
+            bounded(Kind::Schema, Binding::Positional, Some(ints)),
+            bounded(Kind::Schema, Binding::Rest(Rest::Positional), None),
+        ],
+        body,
+    );
+    db.seal();
+    assert_eq!(under(&db, f, of_s, nums).status, Status::Proven);
+    assert_eq!(under(&db, f, of_ts, tops).status, Status::Proven);
+    assert_eq!(under(&db, f, of_ts, keys).status, Status::Contradicted);
+    assert_eq!(check(&db, of_unknown, ints).status, Status::Proven);
+    assert_eq!(check(&db, one, db.unknown_schema()).status, Status::Proven);
+
+    let mut solver = Solver::new(&db);
+    let env = solver.rigid_environment(f);
+    solver.constrain(
+        solver.view(of_s, env),
+        solver.view(nums, env),
+        Provenance::default(),
+    );
+    assert_eq!(solver.solve()[0].status, Status::Proven);
+    let root = solver.obligation(solver.roots[0].obligation);
+    let (child, _) = root
+        .active
+        .borrow()
+        .iter()
+        .find(|(_, step)| *step == Step::Item(0))
+        .cloned()
+        .expect("the inclusion is derived");
+    let child = solver.obligation(child);
+    assert!(
+        child
+            .active
+            .borrow()
+            .iter()
+            .any(|(_, step)| *step == Step::RigidBound)
+    );
+}
+
+#[test]
+fn other_expected_schemas_stay_unsupported() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let one = literal(&db, 1);
+    let positional = |ty| item(Multiplicity::Repeated, Element::Positional(ty));
+    let exact = schema(&db, &[int]);
+    let twice = items(&db, vec![positional(int), positional(str)]);
+    let repeated = items(
+        &db,
+        vec![item(Multiplicity::Repeated, Element::Include(exact))],
+    );
+    let actual = schema(&db, &[one]);
+    db.seal();
+    for expected in [exact, twice, repeated] {
+        let result = check(&db, actual, expected);
+        assert_eq!(result.status, Status::Unresolved);
+        assert!(has(&result, Residual::Unsupported.into()));
+    }
+}

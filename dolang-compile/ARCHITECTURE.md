@@ -153,8 +153,11 @@ consistent with `Unknown` and `Unknown` with `Str`, but `Int` is not a subtype
 of `Str`, so no rule chains through it. A union keeps `Unknown` as an ordinary
 member, so every other member of a union on the left must still hold.
 
-Generic applications currently require all arguments explicitly, with fixed
-positional ordinary-type binders. Subtype judgments assume well-formed inputs:
+Generic applications require every argument in its binder's slot, as population
+places them: a keyword argument in its binder's, a variadic binder's arguments
+as one schema, and omitted arguments as their defaults. Binders of either kind
+and any binding but an implicit one are applied this way. Arguments left as
+written after an expansion of unknown reach are residual. Subtype judgments assume well-formed inputs:
 callers establish argument bounds and validate declaration bodies and supertypes
 under their binder assumptions. Exposure substitutes arguments without
 generating binder-bound obligations, including on unselected inheritance paths.
@@ -175,10 +178,20 @@ variables receive assignments. Union-left judgments require every member;
 union-right judgments accept a member proved by an isolated, closed subtype
 query. Alternative queries cannot add inference bounds or diagnostic edges to
 the calling solver. Expanded union packs and alternatives that cannot be proved
-remain residual. Schema inclusion, optional/keyed/variadic matching, higher-rank
-rules, and generic keyword/default/rest argument matching remain deferred.
-Contextual identity and top/bottom rules can still settle some judgments
-involving otherwise unsupported forms.
+remain residual. Optional, keyed and variadic parameter matching and
+higher-rank rules remain deferred. Contextual identity and top/bottom rules can
+still settle some judgments involving otherwise unsupported forms.
+
+A schema is included in a rest-shaped one, whose items are all repeated, with at
+most one positional item `*P` and one keyed item `*(K): V`, as in `{*T}`, `{**V}`
+and `{...}`. Each positional item's type must be a subtype of `P`, and each keyed
+item's key of `K` and value of `V`. An item the shape has no counterpart for
+contradicts the judgment. Multiplicities don't matter, since the shape admits
+any number of each. An included schema must itself be included in the whole
+shape, so inclusions flatten through the ordinary rules: a rigid reduces to its
+bound, and `Unknown` is consistent. This decides schema binder bounds, symbol
+keys in parameter lists (`<: {...}`), and packs expanded into a positional-only
+rest (`<: {*Value}`). Every other schema judgment is residual.
 
 ### Rigids
 

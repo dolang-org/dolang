@@ -110,6 +110,8 @@ pub(crate) enum Contradiction {
     Arity,
     /// A rigid is related to something other than itself, and its bound can't show it
     Rigid,
+    /// A schema item that the expected rest shape does not admit
+    Item,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -137,6 +139,10 @@ pub(crate) enum Step {
     RigidBound,
     /// A rigid reduced to the default bound of an omitted ambient channel
     ImplicitBound,
+    /// A schema item's positional type, keyed value or included schema
+    Item(usize),
+    /// A schema item's key
+    Key(usize),
 }
 
 /// Where an ancestor query ends
@@ -999,7 +1005,10 @@ impl<'db> Solver<'db> {
         Ok(true)
     }
 
-    /// Substitute fixed positional arguments whose binder bounds the caller has established.
+    /// Substitute fixed arguments whose binder bounds the caller has established.
+    /// Population places every argument in its binder's slot, whatever the
+    /// binder's kind or binding; only arguments after an expansion of unknown
+    /// reach stay as written.
     fn instantiate(
         &self,
         binders: &[Binder],
@@ -1007,12 +1016,13 @@ impl<'db> Solver<'db> {
         view: TypeView,
         parent: EnvironmentId,
     ) -> Result<(Vec<Term>, EnvironmentId), Issue> {
-        if binders
+        assert!(
+            binders.iter().all(|b| b.binding != Binding::Implicit),
+            "implicit binder applied"
+        );
+        if arguments
             .iter()
-            .any(|b| b.kind != Kind::Type || b.binding != Binding::Positional)
-            || arguments
-                .iter()
-                .any(|a| !matches!(a, Argument::Positional(_)))
+            .any(|a| !matches!(a, Argument::Positional(_)))
         {
             return Err(Residual::GenericArguments.into());
         }
@@ -1032,13 +1042,14 @@ impl<'db> Solver<'db> {
         );
         let args: Vec<_> = arguments
             .iter()
-            .map(|arg| {
+            .zip(binders)
+            .map(|(arg, binder)| {
                 let Argument::Positional(ty) = *arg else {
                     unreachable!()
                 };
                 // Resolving keeps environments from nesting through forwarded binders.
                 let term = self.resolve(view.child(ty))?;
-                assert_eq!(self.kind(term), Kind::Type, "argument kind mismatch");
+                assert_eq!(self.kind(term), binder.kind, "argument kind mismatch");
                 Ok(term)
             })
             .collect::<Result<_, Residual>>()?;
@@ -1251,6 +1262,58 @@ impl<'db> Solver<'db> {
         Ok(())
     }
 
+    /// Include a schema in one whose items are all repeated: at most one
+    /// positional and one keyed. Each of `xs`'s items must fit the matching
+    /// repeated item, whatever its multiplicity, and each inclusion must fit
+    /// the whole expected schema. Any other expected schema is unsupported.
+    fn schemas(
+        &self,
+        av: TypeView,
+        xs: &[SchemaItem],
+        bv: TypeView,
+        ys: &[SchemaItem],
+        expected: Term,
+        obligation: ObligationId,
+    ) -> Result<(), Issue> {
+        let (mut positional, mut keyed) = (None, None);
+        for item in ys {
+            let slot = match (item.multiplicity, &item.element) {
+                (Multiplicity::Repeated, Element::Positional(_)) => &mut positional,
+                (Multiplicity::Repeated, Element::Keyed { .. }) => &mut keyed,
+                _ => return Err(Residual::Unsupported.into()),
+            };
+            if slot.replace(&item.element).is_some() {
+                return Err(Residual::Unsupported.into());
+            }
+        }
+        for item in xs {
+            let admitted = match item.element {
+                Element::Positional(_) => positional.is_some(),
+                Element::Keyed { .. } => keyed.is_some(),
+                Element::Include(_) => true,
+            };
+            if !admitted {
+                return Err(Issue::Contradiction(Contradiction::Item));
+            }
+        }
+        for (index, item) in xs.iter().enumerate() {
+            match (&item.element, positional, keyed) {
+                (&Element::Positional(ty), Some(&Element::Positional(p)), _) => {
+                    self.derive(obligation, av.child(ty), bv.child(p), Step::Item(index));
+                }
+                (&Element::Keyed { key, value }, _, Some(&Element::Keyed { key: k, value: v })) => {
+                    self.derive(obligation, av.child(key), bv.child(k), Step::Key(index));
+                    self.derive(obligation, av.child(value), bv.child(v), Step::Item(index));
+                }
+                (&Element::Include(schema), _, _) => {
+                    self.derive(obligation, av.child(schema), expected, Step::Item(index));
+                }
+                _ => unreachable!(),
+            }
+        }
+        Ok(())
+    }
+
     /// Reduce one relation, recording bounds or child obligations, or return a diagnostic issue.
     /// Success means local reduction succeeded; child obligations may still fail or remain unresolved.
     fn reduce(&self, obligation: ObligationId) -> Result<(), Issue> {
@@ -1406,6 +1469,9 @@ impl<'db> Solver<'db> {
                     }
                     (Type::Function(a_func), Type::Function(b_func)) => {
                         self.functions(a, a_func, b, b_func, obligation)
+                    }
+                    (Type::Schema(xs), Type::Schema(ys)) => {
+                        self.schemas(a, xs, b, ys, expected, obligation)
                     }
                     _ => Err(Residual::Unsupported.into()),
                 }
