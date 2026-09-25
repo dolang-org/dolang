@@ -157,17 +157,18 @@ Generic applications require every argument in its binder's slot, as population
 places them: a keyword argument in its binder's, a variadic binder's arguments
 as one schema, and omitted arguments as their defaults. Binders of either kind
 and any binding but an implicit one are applied this way. Arguments left as
-written after an expansion of unknown reach are residual. Subtype judgments assume well-formed inputs:
-callers establish argument bounds and validate declaration bodies and supertypes
-under their binder assumptions. Exposure substitutes arguments without
-generating binder-bound obligations, including on unselected inheritance paths.
-A separate well-formedness checker remains future work. Matching constructors
-decompose according to declared variance. Inheritance walks left-to-right,
-depth-first, carrying substitutions through each edge. The first matching
-declaration wins, even if its arguments contradict the expected arguments or
-remain unresolved. An earlier incomplete branch cannot be skipped to find a
-later match. This follows runtime member lookup's left-wins ordering and avoids
-speculative inference or combining bounds from alternative paths.
+written after an expansion of unknown reach are residual. Subtype judgments
+assume well-formed inputs: callers establish argument bounds and validate
+declaration bodies and supertypes under their binder assumptions. Exposure
+substitutes arguments without generating binder-bound obligations, including on
+unselected inheritance paths. A separate well-formedness checker remains future
+work. Matching constructors decompose according to declared variance.
+Inheritance walks left-to-right, depth-first, carrying substitutions through
+each edge. The first matching declaration wins, even if its arguments contradict
+the expected arguments or remain unresolved. An earlier incomplete branch cannot
+be skipped to find a later match. This follows runtime member lookup's left-wins
+ordering and avoids speculative inference or combining bounds from alternative
+paths.
 
 Monomorphic functions support required positional parameters, contravariant
 parameter types, covariant results, and arity checks. Ambient input/output
@@ -183,15 +184,15 @@ higher-rank rules remain deferred. Contextual identity and top/bottom rules can
 still settle some judgments involving otherwise unsupported forms.
 
 A schema is included in a rest-shaped one, whose items are all repeated, with at
-most one positional item `*P` and one keyed item `*(K): V`, as in `{*T}`, `{**V}`
-and `{...}`. Each positional item's type must be a subtype of `P`, and each keyed
-item's key of `K` and value of `V`. An item the shape has no counterpart for
-contradicts the judgment. Multiplicities don't matter, since the shape admits
-any number of each. An included schema must itself be included in the whole
-shape, so inclusions flatten through the ordinary rules: a rigid reduces to its
-bound, and `Unknown` is consistent. This decides schema binder bounds, symbol
-keys in parameter lists (`<: {...}`), and packs expanded into a positional-only
-rest (`<: {*Value}`). Every other schema judgment is residual.
+most one positional item `*P` and one keyed item `*(K): V`, as in `{*T}`,
+`{**V}` and `{...}`. Each positional item's type must be a subtype of `P`, and
+each keyed item's key of `K` and value of `V`. An item the shape has no
+counterpart for contradicts the judgment. Multiplicities don't matter, since the
+shape admits any number of each. An included schema must itself be included in
+the whole shape, so inclusions flatten through the ordinary rules: a rigid
+reduces to its bound, and `Unknown` is consistent. This decides schema binder
+bounds, symbol keys in parameter lists (`<: {...}`), and packs expanded into a
+positional-only rest (`<: {*Value}`). Every other schema judgment is residual.
 
 ### Rigids
 
@@ -207,11 +208,14 @@ A rigid is a subtype of itself, top and `Unknown`, and bottom and `Unknown` are
 subtypes of it. Otherwise, an assumed rigid on the left reduces to its bound,
 labeled so a strictness policy can find reductions through an omitted ambient
 channel's default bound. An unbounded one, or one on the right, contradicts the
-judgment. A union on the right is proved by a member identical to the left side
-before alternatives are probed. Rigids are closed, so they reify to themselves
-and assignments may contain them. A rigid of a declaration not assumed has
-escaped its own check: it is related only to itself and top, and reifying it is
-residual.
+judgment. Forwarding an omitted ambient channel to a callee is identity and
+never consults its default bound; using its elements reduces through the bound,
+so a strict mode can reject proofs carrying that label and ask for the channel
+to be annotated. A union on the right is proved by a member identical to the
+left side before alternatives are probed. Rigids are closed, so they reify to
+themselves and assignments may contain them. A rigid of a declaration not
+assumed has escaped its own check: it is related only to itself and top, and
+reifying it is residual.
 
 `reach` walks a term to a target declaration through the substitution-carrying
 inheritance walk, continuing through an assumed rigid's bound, and returns the
@@ -230,10 +234,10 @@ The assignment policy commits only forced, fully resolved solutions. The union
 of the currently reifiable lower bounds is a candidate `C`. Every reifiable
 upper bound must admit `C`, and at least one must also be proved a subtype of
 `C`. Thus the constraints force equivalence to `C`; a one-sided lower bound or
-an arbitrary satisfiable interval does not select a solution. Consistency is
-not antisymmetric, so a bound containing `Unknown` must still admit `C` but is
-never part of `C` and never forces it; this also keeps a variable from being
-assigned `Unknown`, which would chain consistency transitively. Bounds containing
+an arbitrary satisfiable interval does not select a solution. Consistency is not
+antisymmetric, so a bound containing `Unknown` must still admit `C` but is never
+part of `C` and never forces it; this also keeps a variable from being assigned
+`Unknown`, which would chain consistency transitively. Bounds containing
 unsolved variables remain obligations and are revisited after commitments.
 Unsupported concrete compatibility checks defer commitment. There are no
 intersection nodes, speculative assignments, rollback, or defaults to top or
@@ -370,18 +374,19 @@ type.
 Signature completion fills each def and method signature with the defaults for
 what it omits, the same for public and private definitions. An omitted
 parameter, rest or return annotation is `Unknown`, a rest's as each of its
-items. An omitted ambient channel is an implicit binder with no bound,
-following the signature's written binders. A method's unannotated receiver is
-its class applied to its own binders, except on a `class` or `static` method.
-A function type written without channels in a def's signature or body, but not
-in a nested class or alias, shares that def's channels; elsewhere they are
-`Unknown`. A closure is populated with its annotations and `Unknown` for what
-it omits, channels included; CFG flow infers the omissions separately, without
-changing the database.
-Top-level declarations of a checked `std` module named `Value`, `Phantom`,
-`Union`, `Func`, `Int`, `Bool`, `Sym`, `Nil` and `Str` are designated for
-special treatment; the same name in another module is only a lookalike. The
-`kind`, `sig`, `ambient` and `designated` judgments report these results.
+items. An omitted ambient channel is an implicit binder following the
+signature's written binders. It is gradual, bounded by `Iter[Unknown]` or
+`Sink[Unknown]` when `std` designates them, and unbounded otherwise. A method's
+unannotated receiver is its class applied to its own binders, except on a
+`class` or `static` method. A function type written without channels in a def's
+signature or body, but not in a nested class or alias, shares that def's
+channels; elsewhere they are `Unknown`. A closure is populated with its
+annotations and `Unknown` for what it omits, channels included; CFG flow infers
+the omissions separately, without changing the database. Top-level declarations
+of a checked `std` module named `Value`, `Phantom`, `Union`, `Func`, `Int`,
+`Bool`, `Sym`, `Nil`, `Str`, `Iter` and `Sink` are designated for special
+treatment; the same name in another module is only a lookalike. The `kind`,
+`sig`, `ambient` and `designated` judgments report these results.
 
 Variance is inferred for every binder, and for each outer binder a nested
 declaration uses, before anything is interned, since a quantified type's binders

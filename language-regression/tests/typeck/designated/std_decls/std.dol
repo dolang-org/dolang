@@ -18,6 +18,14 @@ pub class Sym
 #         ^~~: designated intrinsic Sym
 pub class Nil
 #         ^~~: designated intrinsic Nil
+pub class Iter[T]
+  #       ^~~~: designated intrinsic Iter
+  pub def next self -> T
+    ...
+pub class Sink[T]
+  #       ^~~~: designated intrinsic Sink
+  pub def put self value @ T
+    ...
 pub @class Str
 # error: the checker requires this to be a class
 #   --> std.dol:LL:LL

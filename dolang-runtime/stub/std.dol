@@ -512,7 +512,7 @@ pub class Sinkable[T]: @BaseSinkable[T]
     ...
 
   # Returns a sink that writes only values for which `pred` is truthy.
-  pub def prefilter self pred @ (T -> Value) -> Sink[T]
+  pub def prefilter[U @ T] self pred @ (U -> Value) -> Sink[U]
     ...
 
   # Returns a sink that transforms each value with `func` before writing it.
@@ -594,7 +594,7 @@ pub class Sink[T]: Sinkable[T] @BaseSink[T]
   # assert_eq $acc [2]
   # ```
   #
-  pub def prefilter self pred @ (T -> Value) -> Sink[T]
+  pub def prefilter[U @ T] self pred @ (U -> Value) -> Sink[U]
     ...
 
   #

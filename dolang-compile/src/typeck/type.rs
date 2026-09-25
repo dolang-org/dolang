@@ -527,6 +527,10 @@ pub(crate) enum Intrinsic {
     Sym,
     Nil,
     Str,
+    /// Bounds an omitted ambient input channel, as `Iter[Unknown]`
+    Iter,
+    /// Bounds an omitted ambient output channel, as `Sink[Unknown]`
+    Sink,
 }
 
 /// Optional associations to elaborated stub types, populated before sealing.
@@ -539,6 +543,8 @@ struct Intrinsics {
     sym: Option<TypeId>,
     nil: Option<TypeId>,
     str: Option<TypeId>,
+    iter: Option<TypeId>,
+    sink: Option<TypeId>,
 }
 
 impl Intrinsics {
@@ -551,6 +557,8 @@ impl Intrinsics {
             Intrinsic::Sym => self.sym,
             Intrinsic::Nil => self.nil,
             Intrinsic::Str => self.str,
+            Intrinsic::Iter => self.iter,
+            Intrinsic::Sink => self.sink,
         }
     }
 
@@ -563,6 +571,8 @@ impl Intrinsics {
             Intrinsic::Sym => &mut self.sym,
             Intrinsic::Nil => &mut self.nil,
             Intrinsic::Str => &mut self.str,
+            Intrinsic::Iter => &mut self.iter,
+            Intrinsic::Sink => &mut self.sink,
         }
     }
 }

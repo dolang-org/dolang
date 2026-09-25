@@ -2089,3 +2089,55 @@ fn other_expected_schemas_stay_unsupported() {
         assert!(has(&result, Residual::Unsupported.into()));
     }
 }
+
+#[test]
+fn omitted_channels_are_used_through_their_default_bounds() {
+    let mut db = Database::new();
+    let int = nominal(&mut db, "Int", vec![], vec![]);
+    let iter = nominal(&mut db, "Iter", vec![binder(Variance::Covariant)], vec![]);
+    let sink = nominal(
+        &mut db,
+        "Sink",
+        vec![binder(Variance::Contravariant)],
+        vec![],
+    );
+    let [iter_unknown, sink_unknown] = [iter, sink].map(|c| apply(&db, c, &[db.unknown()]));
+    let [iter_int, sink_int] = [iter, sink].map(|c| apply(&db, c, &[int]));
+    let [input, output] = [0, 1].map(|slot| reference(&db, 0, slot));
+    let body = db.intern(Type::Function(Function {
+        params: schema(&db, &[]),
+        result: db.top(),
+        input: Some(input),
+        output: Some(output),
+    }));
+    let f = generic(
+        &mut db,
+        vec![
+            bounded(Kind::Type, Binding::Implicit, Some(iter_unknown)),
+            bounded(Kind::Type, Binding::Implicit, Some(sink_unknown)),
+        ],
+        body,
+    );
+    db.seal();
+    let relate = |a, b| {
+        let mut s = Solver::new(&db);
+        let env = s.rigid_environment(f);
+        s.constrain(s.view(a, env), s.view(b, env), Provenance::default());
+        let status = s.solve()[0].status;
+        let root = s.obligation(s.roots[0].obligation);
+        let implicit = root
+            .active
+            .borrow()
+            .iter()
+            .any(|(_, step)| *step == Step::ImplicitBound);
+        (status, implicit)
+    };
+    // Forwarding a channel is identity, so it never consults the bound
+    for channel in [input, output] {
+        assert_eq!(relate(channel, channel), (Status::Proven, false));
+    }
+    // Using its elements goes through the bound, labeled for strictness
+    assert_eq!(relate(input, iter_int), (Status::Proven, true));
+    assert_eq!(relate(output, sink_int), (Status::Proven, true));
+    assert_eq!(relate(input, sink_int).0, Status::Contradicted);
+}

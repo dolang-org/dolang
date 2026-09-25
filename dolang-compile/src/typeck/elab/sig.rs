@@ -194,6 +194,8 @@ fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
         "Sym" => (Designated::Intrinsic(Intrinsic::Sym), DeclKind::Class),
         "Nil" => (Designated::Intrinsic(Intrinsic::Nil), DeclKind::Class),
         "Str" => (Designated::Intrinsic(Intrinsic::Str), DeclKind::Class),
+        "Iter" => (Designated::Intrinsic(Intrinsic::Iter), DeclKind::Class),
+        "Sink" => (Designated::Intrinsic(Intrinsic::Sink), DeclKind::Class),
         _ => return,
     };
     if owner.kind == expected {
