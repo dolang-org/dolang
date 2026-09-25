@@ -1,0 +1,2 @@
+pub @let Fields = {name: Str}
+#        ^~~~~~: kind schema

@@ -1,0 +1,64 @@
+# An omitted annotation on a def is dynamic, and an omitted ambient channel is
+# an implicit binder of its signature, whatever the def's visibility.
+
+pub def shown a @ Int b :k @ Str = "x" *rest **kw -> Int
+  #     ^~~~~: sig (a: Int, b: Unknown, ?:k: Str, *rest: {*Unknown}, **kw: {**Unknown}) <#0 >#1 -> Int
+  [a, b, k, rest, kw]
+
+def hidden a @ Int b :k @ Str = "x" *rest **kw -> Int
+  # ^~~~~~: sig (a: Int, b: Unknown, ?:k: Str, *rest: {*Unknown}, **kw: {**Unknown}) <#0 >#1 -> Int
+  [a, b, k, rest, kw]
+
+pub def mixed ...rest
+  #     ^~~~~: sig (...rest: {*Unknown, **Unknown}) <#0 >#1 -> Unknown
+  rest
+
+pub def generic[T] x @ T -> T
+  #     ^~~~~~~: sig (x: T) <#1 >#2 -> T
+  x
+
+pub def items *args @ Str **kw @ Int
+  #     ^~~~~: sig (*args: {*Str}, **kw: {**Int}) <#0 >#1 -> Unknown
+  [args, kw]
+
+pub def packed[*Ps, **Ks] *args @ Ps **kw @ Ks
+  #     ^~~~~~: sig (*args: Ps, **kw: Ks) <#2 >#3 -> Unknown
+  [args, kw]
+
+pub def fork[*Rs] *thunks @ ...(() -> Rs) -> Tuple[...Rs]
+  #     ^~~~: sig (*thunks: ...(() -> Rs)) <#1 >#2 -> Tuple[...Rs]
+  #                                ^~: ambient <m.fork#1 >m.fork#2
+  thunks
+
+pub def reads <Iter[Int] x
+  #     ^~~~~: sig (x: Unknown) <written >#0 -> Unknown
+  x
+
+# A function type without its own channels shares the enclosing def's
+pub def each f @ ((Int) -> nil)
+  #                     ^~: ambient <m.each#0 >m.each#1
+  let cb @ (() -> nil) = f
+  #            ^~: ambient <m.each#0 >m.each#1
+  cb
+
+pub def pipe <Iter[Int] f @ (() -> nil)
+  #                             ^~: ambient <of m.pipe >m.pipe#0
+  f
+
+pub def half f @ ((<Iter[Str]) -> nil)
+  #                            ^~: ambient <written >m.half#1
+  f
+
+# Outside any def, they are dynamic
+pub let handler @ (() -> nil) = nil
+#                     ^~: ambient <Unknown >Unknown
+
+@def pick x @ Int -> Int
+#    ^~~~: sig (x: Int) <#0 >#1 -> Int
+@def pick x @ Str -> Str
+#    ^~~~: sig (x: Str) <#0 >#1 -> Str
+pub def pick x
+  #     ^~~~: sig (x: Unknown) <#0 >#1 -> Unknown
+  x
+
+hidden 1 2

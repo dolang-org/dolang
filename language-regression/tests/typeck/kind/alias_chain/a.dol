@@ -1,0 +1,16 @@
+# A schema bound is followed through aliases across units, whatever order the
+# units are checked in.
+
+import y:
+  - @Mid
+
+pub class Keyed[S @ Mid]
+  #             ^: kind schema
+  pub field items @ ((...S) -> nil) = nil
+
+pub let bad @ Mid = nil
+# error: expected a type, found a schema
+#   --> a.dol:LL:LL
+#    |
+# LL | pub let bad @ Mid = nil
+#    |               ^^^

@@ -1,0 +1,99 @@
+# Each type expression is used as its kind allows.
+
+pub class Box[S @ {...}]
+  pub field item @ S = nil
+# error: expected a type, found a schema
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Box[S @ {...}]
+#    |               - declared here
+# LL |   pub field item @ S = nil
+#    |                    ^
+
+pub class Plain[T]
+  pub field item @ T = nil
+
+pub class Flat
+  pub field item = nil
+
+pub @let Pair = {Int, Int}
+
+pub def applied_schema x @ Pair[Int]
+  # error: a schema takes no type arguments
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def applied_schema x @ Pair[Int]
+  #    |                            ^^^^^^^^^
+  x
+
+pub def applied_binder[T] x @ T[Int]
+  # error: type takes no type arguments
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def applied_binder[T] x @ T[Int]
+  #    |                               ^^^^^^
+  x
+
+pub let too_many @ Plain[Int, Str] = nil
+# error: too many type arguments
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let too_many @ Plain[Int, Str] = nil
+#    |                               ^^^
+pub let keyword @ Plain[item: Int] = nil
+# error: no binder takes the keyword type argument `item`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let keyword @ Plain[item: Int] = nil
+#    |                         ^^^^
+pub let flat @ Flat[Int] = nil
+# error: type takes no type arguments
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let flat @ Flat[Int] = nil
+#    |                ^^^^^^^^^
+pub let included @ ((...Plain[Int]) -> nil) = nil
+# error: expected a schema, found a type
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let included @ ((...Plain[Int]) -> nil) = nil
+#    |                         ^^^^^^^^^^
+pub let schema_default @ Box = nil
+
+# A type expands as a pack of any number of it
+pub let expanded @ Opaque[...Int] = nil
+pub @let Opaque[...Ts] = ...
+
+# A dictionary-like type takes its schema's items directly
+pub class Table[S @ {...}]
+  pub field rows @ ((...S) -> nil) = nil
+pub let one @ Table[Int] = nil
+pub let two @ Table[Sym, Int] = nil
+pub let three @ Table[Sym, Int, Str] = nil
+# error: too many type arguments
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let three @ Table[Sym, Int, Str] = nil
+#    |                                 ^^^
+pub let whole @ Table[{name: Str}] = nil
+
+pub def fork[*Rs] *thunks @ ...(() -> Rs) -> Tuple[...Rs]
+  thunks
+
+pub def unpatterned *thunks @ ...(() -> Int)
+  # error: `...` pattern names no pack to expand over
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def unpatterned *thunks @ ...(() -> Int)
+  #    |                                  ^^^^^^^^^^^
+  thunks
+
+pub @let Loop = Loop2
+#        ^~~~: kind flexible type
+# error: alias refers to itself
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @let Loop = Loop2
+#    |          ^^^^
+pub @let Loop2 = Loop
+pub let looped @ Loop = nil

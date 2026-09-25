@@ -45,3 +45,8 @@ pub let thing @ Thing = nil
 # An item that is a re-exported module
 pub let module @ hubgeo = nil
 #                ^~~~~~: ref module geo
+# error: `hubgeo` is not a type
+#   --> user.dol:LL:LL
+#    |
+# LL | pub let module @ hubgeo = nil
+#    |                  ^^^^^^

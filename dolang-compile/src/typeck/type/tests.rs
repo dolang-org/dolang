@@ -400,6 +400,21 @@ fn unions_normalize_without_exposing_or_expanding() {
 }
 
 #[test]
+fn unknown_is_a_type_that_unions_do_not_absorb() {
+    let mut db = Database::new();
+    let unknown = db.unknown();
+    assert_eq!(intern(&mut db, Type::Unknown), unknown);
+    assert_ne!(unknown, db.top());
+    assert_eq!(db.kind(unknown), Kind::Type);
+    let a = intern(&mut db, Type::Literal(Literal::Int(1)));
+    let au = union(&mut db, &[a, unknown]);
+    assert!(matches!(db.ty(au), Type::Union(members) if members.len() == 2));
+    assert_eq!(union(&mut db, &[unknown, unknown]), unknown);
+    let top = db.top();
+    assert_eq!(union(&mut db, &[unknown, top]), top);
+}
+
+#[test]
 fn schema_order_multiplicity_and_argument_modes_are_structural() {
     let mut db = Database::new();
     let a = intern(&mut db, Type::Literal(Literal::Int(1)));
