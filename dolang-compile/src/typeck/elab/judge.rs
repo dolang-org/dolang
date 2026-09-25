@@ -512,6 +512,9 @@ impl Tables<'_> {
                 };
             }
             Type::Decl(id) => out.push_str(&self.qualified(*id)),
+            Type::Rigid { decl, slot, .. } => {
+                let _ = write!(out, "{}.#{slot}", self.qualified(*decl));
+            }
             Type::Bound { reference, .. } => match names.get(usize::from(reference.slot)) {
                 Some(name) if reference.depth == depth => out.push_str(name),
                 _ => {

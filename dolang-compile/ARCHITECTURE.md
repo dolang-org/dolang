@@ -60,7 +60,12 @@ may be set once before sealing; missing associations are allowed. Elaboration
 supplies these associations, and the solver can use the literal backing types to
 enter the declared supertype hierarchy. Schemas and ordinary types share the ID
 domain but carry distinct kinds; packs are schemas, not a third kind. There are
-no solver variables, skolems, or flow variables. `Unknown` is the dynamic type
+no solver variables, skolems, or flow variables. A rigid names one slot of a
+declaration's binder group, held abstract while that declaration is checked. It
+is closed, since a declaration has exactly one group, and is interned on demand
+after sealing, but a declaration never contains one. `abstract_rigids` turns a
+declaration's rigids back into references to its group, and reports any other
+declaration's rigid as having escaped. `Unknown` is the dynamic type
 that an omitted `def` annotation stands for, and what an erroneous site is
 interned as. It is interned once like top, with a schema-kinded twin for
 erroneous schema positions, and a union keeps it as an ordinary member. How
@@ -174,6 +179,31 @@ remain residual. Schema inclusion, optional/keyed/variadic matching, higher-rank
 rules, and generic keyword/default/rest argument matching remain deferred.
 Contextual identity and top/bottom rules can still settle some judgments
 involving otherwise unsupported forms.
+
+### Rigids
+
+A solver checks declarations it is told to assume. `rigid_environment` assumes a
+declaration and interprets its group as its rigids, so its type, supertypes and
+members viewed there are what is checked. Only assumed declarations' bounds are
+facts: a rigid's bound is its binder's bound with the declaration's rigids
+substituted, and a rest binder without one is bounded by its mode's shape,
+`{*Value}`, `{**Sym: Value}` or both. Exposure and instantiation never assume
+the bounds of anything else. Probes inherit the assumed declarations.
+
+A rigid is a subtype of itself, top and `Unknown`, and bottom and `Unknown` are
+subtypes of it. Otherwise, an assumed rigid on the left reduces to its bound,
+labeled so a strictness policy can find reductions through an omitted ambient
+channel's default bound. An unbounded one, or one on the right, contradicts the
+judgment. A union on the right is proved by a member identical to the left side
+before alternatives are probed. Rigids are closed, so they reify to themselves
+and assignments may contain them. A rigid of a declaration not assumed has
+escaped its own check: it is related only to itself and top, and reifying it is
+residual.
+
+`reach` walks a term to a target declaration through the substitution-carrying
+inheritance walk, continuing through an assumed rigid's bound, and returns the
+target's arguments. It reports a term that doesn't reach the target, and
+`Unknown` as reaching anything.
 
 ### Assignments and fixed point
 

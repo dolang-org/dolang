@@ -1097,3 +1097,69 @@ fn intrinsic_associations_require_type_kind() {
     db.populate(id, definition(source, schema));
     assert_panics(|| db.seal());
 }
+
+/// A generic declaration of `count` type binders
+fn generic(db: &mut Database, name: &str, count: usize, body: TypeId) -> DeclId {
+    let (id, _, source) = declare(db, DeclKind::Annotation, name);
+    let ty = quantify(db, vec![binder(Kind::Type); count], body);
+    let binders = (0..count)
+        .map(|_| BinderSource {
+            name: source.name.unwrap(),
+            span: source.span,
+            bound: None,
+            default: None,
+            origin: BinderOrigin::Written,
+        })
+        .collect();
+    db.populate(
+        id,
+        Declaration {
+            binders,
+            ..definition(source, ty)
+        },
+    );
+    id
+}
+
+#[test]
+fn rigids_abstract_back_to_their_group() {
+    let mut db = Database::new();
+    let t = reference(&mut db, 0, 0, Kind::Type);
+    let u = reference(&mut db, 0, 1, Kind::Type);
+    let outer = reference(&mut db, 1, 1, Kind::Type);
+    let local = reference(&mut db, 0, 0, Kind::Type);
+    let nested_body = union(&mut db, &[outer, local]);
+    let nested = quantify(&mut db, vec![binder(Kind::Type)], nested_body);
+    let body = function(&mut db, &[t, nested], u);
+    let f = generic(&mut db, "f", 2, body);
+    let g = generic(&mut db, "g", 1, t);
+
+    let rigids = db.rigids(f);
+    assert_eq!(rigids, db.rigids(f), "rigids are interned");
+    assert_eq!(
+        db.ty(rigids[1]),
+        &Type::Rigid {
+            decl: f,
+            slot: 1,
+            kind: Kind::Type
+        }
+    );
+    let checked = db.substitute(body, &rigids);
+    assert_ne!(checked, body);
+    assert_eq!(db.abstract_rigids(checked, f), Ok(body));
+
+    let foreign = db.rigids(g)[0];
+    let escaped = union(&mut db, &[checked, foreign]);
+    assert_eq!(db.abstract_rigids(escaped, f), Err(Escape(foreign)));
+}
+
+#[test]
+#[should_panic(expected = "rigid in a declaration")]
+fn declarations_never_contain_rigids() {
+    let mut db = Database::new();
+    let t = reference(&mut db, 0, 0, Kind::Type);
+    let f = generic(&mut db, "f", 1, t);
+    let rigid = db.rigids(f)[0];
+    let (id, _, source) = declare(&mut db, DeclKind::Annotation, "leak");
+    db.populate(id, definition(source, rigid));
+}

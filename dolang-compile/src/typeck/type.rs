@@ -14,6 +14,9 @@
 //! binders it captures (lifted), then its written binders, then its implicit ambient
 //! binders. Where each slot came from is metadata only.
 //!
+//! A rigid stands for a binder of a declaration while it is checked. Rigids are
+//! closed and interned like any type, but never appear in a declaration.
+//!
 //! Solver variables, skolems, and flow state do not belong here. `Unknown` is the
 //! dynamic type an omitted `def` annotation stands for, and what an erroneous site
 //! is interned as; it is not a marker of either. It has a schema-kinded twin.
@@ -186,6 +189,13 @@ pub(crate) enum Type {
         reference: BoundRef,
         kind: Kind,
     },
+    /// Binder `slot` of a declaration's group, held abstract while that declaration
+    /// is checked. Closed, unlike a reference; never part of a declaration.
+    Rigid {
+        decl: DeclId,
+        slot: u16,
+        kind: Kind,
+    },
     /// The result kind is supplied by elaboration; argument matching is deferred.
     Apply {
         base: TypeId,
@@ -210,7 +220,8 @@ impl Type {
             | Self::Unknown(_)
             | Self::Literal(_)
             | Self::Decl(_)
-            | Self::Bound { .. } => {}
+            | Self::Bound { .. }
+            | Self::Rigid { .. } => {}
             Self::Apply { base, args, .. } => {
                 visit(*base, 0);
                 for arg in args.iter() {
@@ -318,7 +329,8 @@ impl Type {
             | Self::Unknown(_)
             | Self::Literal(_)
             | Self::Decl(_)
-            | Self::Bound { .. } => {}
+            | Self::Bound { .. }
+            | Self::Rigid { .. } => {}
             Self::Apply { base, args, .. } => {
                 *base = f(*base, 0)?;
                 for arg in args.iter_mut() {
@@ -492,6 +504,10 @@ pub(crate) struct ExposureCycle(pub(crate) Vec<DeclId>);
 /// A reference that prevents removing its enclosing binder group.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RemovedBinder(pub(crate) BoundRef);
+
+/// A rigid of a declaration other than the one being abstracted over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Escape(pub(crate) TypeId);
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Exposure {
@@ -741,6 +757,25 @@ impl Database {
                 self.expect_kind(*ty, Kind::Type);
             }
         }
+        let fields = declaration
+            .members
+            .iter()
+            .filter_map(|(_, member)| match member {
+                Member::Field { ty, .. } => Some(*ty),
+                Member::Method { .. } => None,
+            });
+        for root in [declaration.ty]
+            .into_iter()
+            .chain(declaration.supertypes.iter().copied())
+            .chain(fields)
+        {
+            self.walk(root, |id, _| {
+                assert!(
+                    !matches!(self.ty(id), Type::Rigid { .. }),
+                    "rigid in a declaration"
+                );
+            });
+        }
     }
 
     pub(crate) fn seal(&mut self) {
@@ -819,7 +854,9 @@ impl Database {
     fn known_kind(&self, id: TypeId) -> Option<Kind> {
         match self.ty(id) {
             Type::Schema(_) => Some(Kind::Schema),
-            Type::Bound { kind, .. } | Type::Apply { kind, .. } => Some(*kind),
+            Type::Bound { kind, .. } | Type::Rigid { kind, .. } | Type::Apply { kind, .. } => {
+                Some(*kind)
+            }
             Type::Decl(id) => self
                 .declarations
                 .get(*id)
@@ -873,7 +910,7 @@ impl Database {
     fn validate(&self, ty: &Type) {
         match ty {
             Type::Top | Type::Unknown(_) | Type::Literal(_) | Type::Bound { .. } => {}
-            Type::Decl(id) => {
+            Type::Decl(id) | Type::Rigid { decl: id, .. } => {
                 self.declarations.get(*id);
             }
             Type::Apply { base, args, .. } => {
@@ -1089,6 +1126,72 @@ impl Database {
         };
         memo.insert((id, cutoff), result);
         result
+    }
+
+    /// The rigids of a declaration's binders, in slot order. Substituting them for
+    /// its group gives the declaration as checked.
+    pub(crate) fn rigids(&self, decl: DeclId) -> Vec<TypeId> {
+        let Type::Quantified { binders, .. } = self.ty(self.declaration(decl).ty) else {
+            return Vec::new();
+        };
+        binders
+            .iter()
+            .enumerate()
+            .map(|(slot, binder)| {
+                self.intern(Type::Rigid {
+                    decl,
+                    slot: slot.try_into().expect("binder slot overflow"),
+                    kind: binder.kind,
+                })
+            })
+            .collect()
+    }
+
+    /// Replace `decl`'s rigids with references to its group, undoing [`Self::substitute`]
+    /// with [`Self::rigids`]. Another declaration's rigid has escaped its check.
+    pub(crate) fn abstract_rigids(&self, root: TypeId, decl: DeclId) -> Result<TypeId, Escape> {
+        self.abstract_inner(root, 0, decl, &mut HashMap::new())
+    }
+
+    fn abstract_inner(
+        &self,
+        id: TypeId,
+        cutoff: u32,
+        decl: DeclId,
+        memo: &mut HashMap<(TypeId, u32), TypeId>,
+    ) -> Result<TypeId, Escape> {
+        if let Some(result) = memo.get(&(id, cutoff)) {
+            return Ok(*result);
+        }
+        let ty = self.ty(id);
+        let result = match *ty {
+            Type::Rigid {
+                decl: owner,
+                slot,
+                kind,
+            } => {
+                if owner != decl {
+                    return Err(Escape(id));
+                }
+                self.intern(Type::Bound {
+                    reference: BoundRef {
+                        depth: cutoff.try_into().expect("binder depth overflow"),
+                        slot,
+                    },
+                    kind,
+                })
+            }
+            _ => self.intern(ty.map_children(|child, groups| {
+                self.abstract_inner(
+                    child,
+                    cutoff.checked_add(groups).expect("binder cutoff overflow"),
+                    decl,
+                    memo,
+                )
+            })?),
+        };
+        memo.insert((id, cutoff), result);
+        Ok(result)
     }
 }
 

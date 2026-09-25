@@ -9,10 +9,14 @@
 //! binder assumptions. Nested declarations have their captured binders lambda-lifted
 //! and are closed outside their own binder groups. Exposure performs substitution
 //! without rechecking bounds or scanning declarations for free references.
+//!
+//! A declaration is checked by assuming it: its binders become rigids, whose bounds
+//! are the only binder bounds taken as facts. Any other declaration's rigid has
+//! escaped its check.
 
 use std::{
     cell::{Cell, RefCell},
-    collections::HashSet,
+    collections::{HashMap, HashSet},
 };
 
 use dolang_util::{
@@ -24,7 +28,7 @@ use crate::typeck::r#type::UnitSpan;
 
 use super::r#type::{
     Argument, Binder, Binding, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
-    Multiplicity, Type, TypeId, UnionMember, Variance,
+    Multiplicity, Rest, SchemaItem, Type, TypeId, UnionMember, Variance,
 };
 
 macro_rules! id {
@@ -95,6 +99,8 @@ pub(crate) enum Residual {
     /// A work or traversal-depth limit prevented completion. Also used for
     /// obligations left pending when solving exhausted its work budget.
     Limit,
+    /// A rigid of a declaration this solver does not check has escaped its own check.
+    Escape,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,6 +108,8 @@ pub(crate) enum Contradiction {
     DistinctLiterals,
     UnrelatedNominals,
     Arity,
+    /// A rigid is related to something other than itself, and its bound can't show it
+    Rigid,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,6 +133,20 @@ pub(crate) enum Step {
     BoundPropagation,
     Assignment,
     UnionMember(usize),
+    /// A rigid reduced to its written or default bound
+    RigidBound,
+    /// A rigid reduced to the default bound of an omitted ambient channel
+    ImplicitBound,
+}
+
+/// Where an ancestor query ends
+#[derive(Clone, Debug)]
+pub(crate) enum Reach {
+    /// The target, with its arguments
+    Reached(Vec<Term>),
+    Unreached,
+    /// The dynamic type, which reaches anything
+    Dynamic,
 }
 
 #[derive(Clone, Debug)]
@@ -263,6 +285,10 @@ pub(crate) struct Solver<'db> {
     limits: Limits,
     work: Cell<usize>,
     exhausted: Cell<bool>,
+    /// The declarations being checked, whose rigids' bounds are assumptions
+    scope: HashSet<DeclId>,
+    /// Each rigid's bound, once computed
+    rigid_bounds: RefCell<HashMap<TypeId, Option<TypeId>>>,
 }
 
 impl<'db> Solver<'db> {
@@ -289,7 +315,116 @@ impl<'db> Solver<'db> {
             limits,
             work: Cell::new(0),
             exhausted: Cell::new(false),
+            scope: HashSet::new(),
+            rigid_bounds: RefCell::new(HashMap::new()),
         }
+    }
+
+    /// Check `decl`: its rigids' bounds become assumptions. The rigids of any other
+    /// declaration have escaped their own check.
+    pub(crate) fn assume(&mut self, decl: DeclId) {
+        self.scope.insert(decl);
+    }
+
+    /// Assume `decl`, and return an environment that interprets its group as its
+    /// rigids. Its type, supertypes and members viewed there are what is checked.
+    pub(crate) fn rigid_environment(&mut self, decl: DeclId) -> EnvironmentId {
+        self.assume(decl);
+        let group = self
+            .db
+            .rigids(decl)
+            .into_iter()
+            .map(|ty| self.closed(ty))
+            .collect();
+        self.intern_environment(self.empty_environment(), group)
+    }
+
+    /// A rigid in scope, and the binder it stands for
+    fn rigid(&self, ty: TypeId) -> Result<Option<&Binder>, Residual> {
+        let Type::Rigid { decl, slot, .. } = *self.db.ty(ty) else {
+            return Ok(None);
+        };
+        if !self.scope.contains(&decl) {
+            return Err(Residual::Escape);
+        }
+        let Type::Quantified { binders, .. } = self.db.ty(self.db.declaration(decl).ty) else {
+            unreachable!("a rigid of a declaration without binders")
+        };
+        Ok(Some(&binders[usize::from(slot)]))
+    }
+
+    /// A rigid's bound, with its declaration's rigids for its group. A rest binder
+    /// without one is bounded by its rest mode's shape.
+    fn rigid_bound(&self, ty: TypeId) -> Option<TypeId> {
+        if let Some(&bound) = self.rigid_bounds.borrow().get(&ty) {
+            return bound;
+        }
+        let Type::Rigid { decl, slot, .. } = *self.db.ty(ty) else {
+            unreachable!()
+        };
+        let Type::Quantified { binders, .. } = self.db.ty(self.db.declaration(decl).ty) else {
+            unreachable!("a rigid of a declaration without binders")
+        };
+        let binder = &binders[usize::from(slot)];
+        let bound = match (binder.bound, binder.binding) {
+            (Some(bound), _) => Some(self.db.substitute(bound, &self.db.rigids(decl))),
+            (None, Binding::Rest(rest)) => {
+                let top = self.db.top();
+                let key = self
+                    .db
+                    .intrinsic(Intrinsic::Sym)
+                    .unwrap_or_else(|| self.db.unknown());
+                let positional = SchemaItem {
+                    multiplicity: Multiplicity::Repeated,
+                    element: Element::Positional(top),
+                };
+                let keyed = SchemaItem {
+                    multiplicity: Multiplicity::Repeated,
+                    element: Element::Keyed { key, value: top },
+                };
+                let items = match rest {
+                    Rest::Positional => vec![positional],
+                    Rest::Keyed => vec![keyed],
+                    Rest::All => vec![positional, keyed],
+                };
+                Some(self.db.intern(Type::Schema(items.into())))
+            }
+            (None, _) => None,
+        };
+        self.rigid_bounds.borrow_mut().insert(ty, bound);
+        bound
+    }
+
+    /// Walk a term to the target declaration, carrying substitutions. A rigid in
+    /// scope continues through its bound.
+    pub(crate) fn reach(&self, mut term: Term, target: DeclId) -> Result<Reach, Issue> {
+        for depth in 0.. {
+            self.depth(depth)?;
+            self.spend()?;
+            match self.head(term)? {
+                Head::Infer(_) => return Err(Residual::Inference.into()),
+                Head::Nominal(nominal) => {
+                    return Ok(
+                        match self.ancestor(nominal, target, &mut HashSet::new(), 0)? {
+                            Some(found) => Reach::Reached(found.arguments),
+                            None => Reach::Unreached,
+                        },
+                    );
+                }
+                Head::Structural(view) => match self.db.ty(view.ty) {
+                    Type::Unknown(_) => return Ok(Reach::Dynamic),
+                    Type::Rigid { .. } => {
+                        self.rigid(view.ty)?;
+                        match self.rigid_bound(view.ty) {
+                            Some(bound) => term = self.closed(bound),
+                            None => return Ok(Reach::Unreached),
+                        }
+                    }
+                    _ => return Ok(Reach::Unreached),
+                },
+            }
+        }
+        unreachable!()
     }
 
     pub(crate) fn empty_environment(&self) -> EnvironmentId {
@@ -378,6 +513,7 @@ impl<'db> Solver<'db> {
                     // Replacements carry their own context, not the caller's local scope.
                     return self.reify_scoped(replacement, 0, depth + 1);
                 }
+                self.rigid(view.ty)?;
                 let mapped = ty.map_children(|child, groups| {
                     self.reify_scoped(view.child(child), local + groups, depth + 1)
                 })?;
@@ -459,6 +595,7 @@ impl<'db> Solver<'db> {
                 depth: self.limits.depth - 1,
             },
         );
+        proof.scope = self.scope.clone();
         proof.constrain(
             proof.closed(actual),
             proof.closed(expected),
@@ -1162,6 +1299,44 @@ impl<'db> Solver<'db> {
         {
             return Ok(());
         }
+        // Past identity, a rigid of a declaration not being checked has escaped
+        for head in [&a, &b] {
+            if let Head::Structural(view) = head {
+                self.rigid(view.ty)?;
+            }
+        }
+        if !matches!(a, Head::Infer(_))
+            && let Head::Structural(view) = &b
+            && let Type::Union(members) = self.db.ty(view.ty)
+        {
+            for member in members.iter() {
+                if let UnionMember::Type(ty) = *member
+                    && self.same(actual, view.child(ty))?
+                {
+                    return Ok(());
+                }
+            }
+        }
+        // A rigid is below whatever its bound is below
+        if !matches!(b, Head::Infer(_))
+            && let Head::Structural(view) = &a
+            && let Some(binder) = self.rigid(view.ty)?
+        {
+            let step = match binder.binding {
+                Binding::Implicit => Step::ImplicitBound,
+                _ => Step::RigidBound,
+            };
+            match self.rigid_bound(view.ty) {
+                Some(bound) => {
+                    self.derive(obligation, self.closed(bound), expected, step);
+                    return Ok(());
+                }
+                // A union may still have a member that admits anything
+                None if matches!(&b, Head::Structural(view)
+                    if matches!(self.db.ty(view.ty), Type::Union(_))) => {}
+                None => return Err(Issue::Contradiction(Contradiction::Rigid)),
+            }
+        }
         if !matches!(b, Head::Infer(_))
             && let Head::Structural(view) = &a
             && let Type::Union(members) = self.db.ty(view.ty)
@@ -1181,6 +1356,13 @@ impl<'db> Solver<'db> {
                 );
             }
             return Ok(());
+        }
+        // Only itself, bottom and the dynamic type are below a rigid
+        if !matches!(a, Head::Infer(_))
+            && let Head::Structural(view) = &b
+            && self.rigid(view.ty)?.is_some()
+        {
+            return Err(Issue::Contradiction(Contradiction::Rigid));
         }
         if !matches!(a, Head::Infer(_))
             && let Head::Structural(view) = &b
