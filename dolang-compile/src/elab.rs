@@ -632,6 +632,58 @@ impl Patch for DiscardedComputation {
     }
 }
 
+#[derive(Clone)]
+struct ReceiverAccess {
+    span: Span,
+    receiver: Option<Span>,
+    message: &'static str,
+}
+
+impl Diagnose for ReceiverAccess {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        w.write_str(self.message)
+    }
+    fn span(&self) -> Span {
+        self.span
+    }
+    fn annotations(&self) -> Box<dyn Iterator<Item = Box<dyn Annotate>>> {
+        Box::new(
+            self.receiver
+                .map(|_| Box::new(self.clone()) as Box<dyn Annotate>)
+                .into_iter(),
+        )
+    }
+}
+
+impl Annotate for ReceiverAccess {
+    fn kind(&self) -> AnnotationKind {
+        AnnotationKind::Context
+    }
+    fn span(&self) -> Span {
+        self.receiver.unwrap()
+    }
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        w.write_str("method receiver declared here")
+    }
+}
+
+fn ungroup(mut expr: &Expr) -> &Expr {
+    while let Expr::Group { expr: inner, .. } = expr {
+        expr = inner;
+    }
+    expr
+}
+
+fn ungroup_mut(mut expr: &mut Expr) -> &mut Expr {
+    while let Expr::Group { expr: inner, .. } = expr {
+        expr = inner;
+    }
+    expr
+}
+
 struct NoPrivateField {
     span: Span,
     name: String,
@@ -730,6 +782,8 @@ enum Scope<'s> {
     Base,
     Nested {
         kind: ScopeKind,
+        receiver: Option<Span>,
+        constructor: bool,
         can_break: CanBranch,
         can_continue: CanBranch,
         can_return: CanBranch,
@@ -747,6 +801,37 @@ enum Scope<'s> {
 }
 
 impl<'s> Scope<'s> {
+    /// The nearest class's receiver, optionally restricted to this function's
+    /// constructor body. Ordinary closures retain private-access authority.
+    fn receiver(&self, init: bool) -> Option<Span> {
+        match self {
+            Self::Base | Self::Class { .. } => None,
+            Self::Nested {
+                kind,
+                receiver,
+                constructor,
+                parent,
+                ..
+            } => {
+                if init && matches!(kind, ScopeKind::Function | ScopeKind::Lambda) {
+                    if *constructor { *receiver } else { None }
+                } else {
+                    receiver.or_else(|| parent.receiver(init))
+                }
+            }
+        }
+    }
+
+    fn is_receiver(&self, expr: &Expr, init: bool) -> bool {
+        let Expr::Ident(ident) = ungroup(expr) else {
+            return false;
+        };
+        let Some(res) = ident.res else {
+            return false;
+        };
+        matches!(self.origin(res), Origin::SelfParam(span) if Some(span) == self.receiver(init))
+    }
+
     fn should_warn_unused(&self, resolver: &Elaborater, var: &Var) -> Option<Span> {
         if var.used
             || var.exported
@@ -809,6 +894,8 @@ impl<'s> Scope<'s> {
     fn nested(&'s self) -> Self {
         Self::Nested {
             kind: ScopeKind::Normal,
+            receiver: None,
+            constructor: false,
             can_break: self.can_break(),
             can_continue: self.can_continue(),
             can_return: self.can_return(),
@@ -824,6 +911,8 @@ impl<'s> Scope<'s> {
     fn nested_loop(&'s self) -> Self {
         Self::Nested {
             kind: ScopeKind::Loop,
+            receiver: None,
+            constructor: false,
             can_break: CanBranch::Yes,
             can_continue: CanBranch::Yes,
             can_return: self.can_return(),
@@ -839,6 +928,8 @@ impl<'s> Scope<'s> {
     fn function(&'s self, can_return: bool) -> Self {
         Self::Nested {
             kind: ScopeKind::Function,
+            receiver: None,
+            constructor: false,
             can_break: CanBranch::No,
             can_continue: CanBranch::No,
             can_return: if can_return {
@@ -1061,6 +1152,8 @@ impl<'s> Scope<'s> {
     fn lambda(&'s self, bad_nl: Option<Span>) -> Self {
         Self::Nested {
             kind: ScopeKind::Lambda,
+            receiver: None,
+            constructor: false,
             can_break: self.can_break().bad_nl(bad_nl),
             can_continue: self.can_continue().bad_nl(bad_nl),
             can_return: self.can_return().bad_nl(bad_nl),
@@ -1601,6 +1694,15 @@ impl<'a> Elaborater<'a> {
         });
     }
 
+    fn receiver_error(&mut self, scope: &Scope<'_>, span: Span, message: &'static str, init: bool) {
+        self.diags.push(ReceiverAccess {
+            span,
+            receiver: scope.receiver(init),
+            message,
+        });
+        self.fail = true;
+    }
+
     fn visit_expr(&mut self, scope: &mut Scope<'_>, node: &mut Expr, is_arg: bool) -> Result<()> {
         match node {
             Expr::Ident(ident) => self.visit_ident(scope, ident),
@@ -1624,12 +1726,47 @@ impl<'a> Elaborater<'a> {
                 self.visit_lambda(scope, func, if is_arg { None } else { Some(span) })
             }
             Expr::Call { arg0, args, .. } => {
-                self.visit_expr(scope, arg0, is_arg)?;
+                let init_span = if let Expr::Get {
+                    object,
+                    field:
+                        GetVariant::SpecialMethod {
+                            method: ast::SpecialMethod::Init,
+                            span,
+                            ..
+                        },
+                    ..
+                } = ungroup_mut(arg0)
+                {
+                    self.visit_expr(scope, object, is_arg)?;
+                    Some(*span)
+                } else {
+                    self.visit_expr(scope, arg0, is_arg)?;
+                    None
+                };
 
                 for arg in args.iter_mut() {
                     self.visit_cmd_arg(scope, arg)?;
                     if let Arg::Pos(Single { expr, .. }) | Arg::Key(Key { expr, .. }) = arg {
                         self.check_not_as_arg(expr);
+                    }
+                }
+
+                if let Some(span) = init_span {
+                    if scope.receiver(true).is_none() {
+                        self.receiver_error(
+                            scope,
+                            span,
+                            "`(init)` calls are only allowed in a constructor body",
+                            true,
+                        );
+                    } else if !matches!(args.first(), Some(Arg::Pos(Single { expr, .. })) if scope.is_receiver(expr, true))
+                    {
+                        self.receiver_error(
+                            scope,
+                            args.first().map_or(span, Node::span),
+                            "the first argument to `(init)` must be the constructor's receiver",
+                            true,
+                        );
                     }
                 }
 
@@ -1678,6 +1815,14 @@ impl<'a> Elaborater<'a> {
                         let name = self.file.str(*span);
                         if let Some(private_sym) = scope.lookup_private_field(name) {
                             *res = Some(private_sym);
+                            if !scope.is_receiver(object, false) {
+                                self.receiver_error(
+                                    scope,
+                                    object.span(),
+                                    "private members require the enclosing class's receiver",
+                                    false,
+                                );
+                            }
                         } else {
                             self.diags.push(NoPrivateField {
                                 span: *span,
@@ -1690,13 +1835,21 @@ impl<'a> Elaborater<'a> {
                         // Warn if this looks like accessing a private field on `self`
                         // without using the `.#field` syntax
                         let name = self.file.str(*span);
-                        if scope.is_private_field(name)
-                            && let Expr::Ident(ident) = object.as_ref()
-                            && let Some(res) = ident.res
-                            && matches!(scope.origin(res), Origin::SelfParam(_))
-                        {
+                        if scope.is_private_field(name) && scope.is_receiver(object, false) {
                             self.diags.push(PrivateFieldWithoutHash { span: *span });
                         }
+                    }
+                    GetVariant::SpecialMethod {
+                        method: ast::SpecialMethod::Init,
+                        span,
+                        ..
+                    } => {
+                        self.receiver_error(
+                            scope,
+                            *span,
+                            "`(init)` may only be used as a direct constructor call",
+                            true,
+                        );
                     }
                     GetVariant::SpecialMethod { .. } => {}
                 }
@@ -1765,17 +1918,26 @@ impl<'a> Elaborater<'a> {
 
     fn visit_lvalue(&mut self, scope: &mut Scope, node: &mut LValue) -> Result<()> {
         match node {
-            LValue::Ident(id) => self.visit_ident(scope, id),
+            LValue::Ident(id) => {
+                self.visit_ident(scope, id)?;
+                if let Some(res) = id.res
+                    && let Origin::SelfParam(receiver) = scope.origin(res)
+                {
+                    self.diags.push(ReceiverAccess {
+                        span: id.span,
+                        receiver: Some(receiver),
+                        message: "method receiver bindings cannot be reassigned",
+                    });
+                    self.fail = true;
+                }
+                Ok(())
+            }
             LValue::Field { object, field, .. } => {
                 self.visit_expr(scope, object, false)?;
                 // Warn if this looks like accessing a private field on `self`
                 // without using the `.#field` syntax
                 let name = self.file.str(*field);
-                if scope.is_private_field(name)
-                    && let Expr::Ident(ident) = object.as_ref()
-                    && let Some(res) = ident.res
-                    && matches!(scope.origin(res), Origin::SelfParam(_))
-                {
+                if scope.is_private_field(name) && scope.is_receiver(object, false) {
                     self.diags.push(PrivateFieldWithoutHash { span: *field });
                 }
                 Ok(())
@@ -1787,6 +1949,14 @@ impl<'a> Elaborater<'a> {
                 let name = self.file.str(*field);
                 if let Some(private_sym) = scope.lookup_private_field(name) {
                     *res = Some(private_sym);
+                    if !scope.is_receiver(object, false) {
+                        self.receiver_error(
+                            scope,
+                            object.span(),
+                            "private members require the enclosing class's receiver",
+                            false,
+                        );
+                    }
                 } else {
                     self.diags.push(NoPrivateField {
                         span: *field,
@@ -2535,7 +2705,12 @@ impl<'a> Elaborater<'a> {
         if def.type_only || def.func.stub_span.is_some() {
             return self.visit_signature(scope, &mut def.func);
         }
-        self.visit_function(scope, &mut def.func, None)
+        self.visit_function_context(
+            scope,
+            &mut def.func,
+            None,
+            Some(matches!(def.special, Some(ast::SpecialMethod::Init))),
+        )
     }
 
     /// Resolve a field decorator to a member-scope annotation.
@@ -2865,11 +3040,36 @@ impl<'a> Elaborater<'a> {
         &mut self,
         scope: &mut Scope<'_>,
         node: &mut Function,
-        mut prelude: Option<&mut [PreludeImport]>,
+        prelude: Option<&mut [PreludeImport]>,
     ) -> Result<()> {
-        let is_class_method = scope.is_class();
+        self.visit_function_context(scope, node, prelude, None)
+    }
+
+    fn visit_function_context(
+        &mut self,
+        scope: &mut Scope<'_>,
+        node: &mut Function,
+        mut prelude: Option<&mut [PreludeImport]>,
+        method: Option<bool>,
+    ) -> Result<()> {
+        let is_class_method = method.is_some();
         let mut scope = scope.function(self.mode != Mode::Repl || prelude.is_none());
         self.visit_params(&mut scope, &mut node.params, is_class_method)?;
+        if let Scope::Nested {
+            receiver,
+            constructor,
+            vars,
+            ..
+        } = &mut scope
+        {
+            if is_class_method {
+                *receiver = vars.iter().find_map(|var| match var.get().0.origin {
+                    Origin::SelfParam(span) => Some(span),
+                    _ => None,
+                });
+            }
+            *constructor = method == Some(true);
+        }
 
         if let Some(prelude) = &mut prelude {
             for import in prelude.iter_mut() {

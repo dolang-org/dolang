@@ -9,7 +9,7 @@ class MyInput: Iter
   pub field items = nil
 
   def (init) self items
-    Iter.(init) self
+    Iter.(init) $self
     self.items = items.iter()
 
   pub def (next) self
@@ -17,10 +17,6 @@ class MyInput: Iter
 
   pub def (iter) self
     self
-
-# op_get of (init) returns a bound method
-let f = Iter.(init)
-assert (type f Func)
 
 # Subtype checks
 let src = MyInput [1, 2, 3]
@@ -35,7 +31,7 @@ class MyOutput: Sink
   pub field items = nil
 
   def (init) self items
-    Sink.(init) self
+    Sink.(init) $self
     self.items = items.sink()
 
   pub def (put) self value
@@ -57,7 +53,7 @@ class MyPairInput: Iter
   pub field pairs = nil
 
   def (init) self pairs
-    Iter.(init) self
+    Iter.(init) $self
     self.pairs = pairs.iter()
 
   pub def (next) self

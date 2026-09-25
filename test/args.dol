@@ -265,3 +265,15 @@ def nested_subcommand_shape()
   assert_eq $p.cmd :cloud:
   assert_eq $p.cloud.cmd :deploy:
   assert_eq $p.cloud.deploy.service "api"
+
+#[test]
+def nested_subcommand_help()
+  let p = args.parse
+    args: ["cloud-tools", "deploy-app", "--help"]
+    program: prog
+    - cmd: cloud-tools
+      - cmd: deploy-app
+        - arg: service
+  assert_eq $p.cmd :cloud_tools:
+  assert_eq $p.cloud_tools.cmd :deploy_app:
+  assert $p.help.contains("Usage: prog cloud-tools deploy-app SERVICE")

@@ -8,7 +8,7 @@ class MyIter: Iter
   pub field inner = nil
 
   def (init) self items
-    Iter.(init) self
+    Iter.(init) $self
     self.inner = items.iter()
 
   def (next) self
@@ -21,7 +21,7 @@ class MyEntryIter: Iter
   pub field inner = nil
 
   def (init) self items
-    Iter.(init) self
+    Iter.(init) $self
     self.inner = items.iter()
 
   def (next) self
@@ -34,7 +34,7 @@ class MySink: Sink
   pub field inner = nil
 
   def (init) self items
-    Sink.(init) self
+    Sink.(init) $self
     self.inner = items.sink()
 
   def (put) self value
