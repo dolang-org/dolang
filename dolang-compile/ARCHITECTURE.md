@@ -139,6 +139,15 @@ through the corresponding registered intrinsic type; a missing registration
 is residual. Distinct singleton literals and exhausted, concrete nominal
 searches can establish contradictions.
 
+`Unknown` is consistent with every type or schema of its kind, in either
+direction, wherever a judgment meets it: at the root, under nominal arguments
+of any variance, in function parameters and results, and as a union member. The
+judgment is proven; the checker's strictness flags omissions where they were
+written, not where `Unknown` is found. Consistency is not transitive: `Int` is
+consistent with `Unknown` and `Unknown` with `Str`, but `Int` is not a subtype
+of `Str`, so no rule chains through it. A union keeps `Unknown` as an ordinary
+member, so every other member of a union on the left must still hold.
+
 Generic applications currently require all arguments explicitly, with fixed
 positional ordinary-type binders. Subtype judgments assume well-formed inputs:
 callers establish argument bounds and validate declaration bodies and supertypes
@@ -154,8 +163,9 @@ speculative inference or combining bounds from alternative paths.
 
 Monomorphic functions support required positional parameters, contravariant
 parameter types, covariant results, and arity checks. Ambient input/output
-declarations must match in presence and contextual structural identity;
-other channel judgments remain residual and are retried when their inference
+declarations must match in presence and either contextual structural identity
+or `Unknown` on one side; other channel judgments, including `Unknown` nested
+within a channel, remain residual and are retried when their inference
 variables receive assignments. Union-left judgments require every member;
 union-right judgments accept a member proved by an isolated, closed subtype
 query. Alternative queries cannot add inference bounds or diagnostic edges to
@@ -177,7 +187,10 @@ The assignment policy commits only forced, fully resolved solutions. The union
 of the currently reifiable lower bounds is a candidate `C`. Every reifiable
 upper bound must admit `C`, and at least one must also be proved a subtype of
 `C`. Thus the constraints force equivalence to `C`; a one-sided lower bound or
-an arbitrary satisfiable interval does not select a solution. Bounds containing
+an arbitrary satisfiable interval does not select a solution. Consistency is
+not antisymmetric, so a bound containing `Unknown` must still admit `C` but is
+never part of `C` and never forces it; this also keeps a variable from being
+assigned `Unknown`, which would chain consistency transitively. Bounds containing
 unsolved variables remain obligations and are revisited after commitments.
 Unsupported concrete compatibility checks defer commitment. There are no
 intersection nodes, speculative assignments, rollback, or defaults to top or

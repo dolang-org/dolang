@@ -578,6 +578,9 @@ impl<'db> Solver<'db> {
                 }
             }
         }
+        // Consistency with the dynamic type is not antisymmetric, so a bound containing
+        // it never builds a candidate or forces one. It must still admit the candidate.
+        lower.retain(|&ty| !self.contains_unknown(ty));
         if lower.is_empty() || upper.is_empty() {
             return Ok(false);
         }
@@ -589,7 +592,7 @@ impl<'db> Solver<'db> {
             if self.probe(candidate, ty)? != Status::Proven {
                 return Ok(false);
             }
-            forced |= self.probe(ty, candidate)? == Status::Proven;
+            forced |= !self.contains_unknown(ty) && self.probe(ty, candidate)? == Status::Proven;
         }
         if !forced {
             return Ok(false);
@@ -764,6 +767,28 @@ impl<'db> Solver<'db> {
             term = self.lookup(view.environment, reference.depth, reference.slot, kind);
         }
         unreachable!()
+    }
+
+    /// Whether an exposed head is the dynamic type or schema
+    fn is_unknown(&self, head: &Head) -> bool {
+        matches!(head, Head::Structural(view) if matches!(self.db.ty(view.ty), Type::Unknown(_)))
+    }
+
+    /// Whether a term resolves to the dynamic type or schema
+    fn unknown(&self, term: Term) -> Result<bool, Residual> {
+        Ok(match self.resolve(term)? {
+            Term::View(view) => matches!(self.db.ty(view.ty), Type::Unknown(_)),
+            Term::Infer(_) => false,
+        })
+    }
+
+    /// Whether a closed type contains the dynamic type or schema anywhere
+    fn contains_unknown(&self, ty: TypeId) -> bool {
+        let mut found = false;
+        self.db.walk(ty, |node, _| {
+            found |= matches!(self.db.ty(node), Type::Unknown(_));
+        });
+        found
     }
 
     /// Compare structure without substituting into the canonical database. Local
@@ -1079,7 +1104,10 @@ impl<'db> Solver<'db> {
         for (a, b) in [(a.input, b.input), (a.output, b.output)] {
             match (a, b) {
                 (None, None) => {}
-                (Some(a), Some(b)) if self.same(av.child(a), bv.child(b))? => {}
+                (Some(a), Some(b))
+                    if self.same(av.child(a), bv.child(b))?
+                        || self.unknown(av.child(a))?
+                        || self.unknown(bv.child(b))? => {}
                 _ => return Err(Residual::AmbientChannels.into()),
             }
         }
@@ -1113,6 +1141,10 @@ impl<'db> Solver<'db> {
         }
         let a = self.head(actual)?;
         let b = self.head(expected)?;
+        // The dynamic type or schema is consistent with anything of its kind
+        if [&a, &b].into_iter().any(|head| self.is_unknown(head)) {
+            return Ok(());
+        }
         if let Head::Structural(view) = &b
             && view.ty == self.db.top()
             && self.kind(actual) == Kind::Type
