@@ -6,7 +6,7 @@ pub(crate) mod visit;
 
 pub(crate) use self::ty::{
     Annot, Binder, BinderDefault, BinderKind, Binders, Implicit, Implicits, RetType, TypeArg,
-    TypeArgKind, TypeDecl, TypeExpr, TypeKey, TypeParam, TypeParamKind, TypeQuant,
+    TypeArgKind, TypeEntry, TypeExpr, TypeKey, TypeParam, TypeParamKind, TypeQuant, TypeRes,
     implicit_tys_mut, implicits,
 };
 
@@ -1988,6 +1988,50 @@ impl Node for Import {
     }
 }
 
+/// A declaration that names a type alone, which a lexical scope holds apart from its
+/// variables
+pub(crate) enum TypeDecl<'a> {
+    /// A type-only module import
+    Module {
+        /// The dotted path a type name spells to reach the module: the module's own path,
+        /// or the local name of a renamed import. Modules are not nested, so
+        /// `security.unix` and `security.nfs4` are separate imports sharing the head
+        /// they bind.
+        path: Span,
+        bind: &'a Ident,
+        type_only: &'a TypeOnly,
+        is_pub: bool,
+    },
+    /// A type-only import item
+    Item {
+        bind: &'a Ident,
+        type_only: &'a TypeOnly,
+        is_pub: bool,
+    },
+    Alias(&'a TypeAlias),
+    Protocol(&'a Class),
+}
+
+impl TypeDecl<'_> {
+    /// The name the declaration binds, which for a dotted module import is only its head
+    pub(crate) fn name(&self) -> Span {
+        match self {
+            TypeDecl::Module { bind, .. } | TypeDecl::Item { bind, .. } => bind.span,
+            TypeDecl::Alias(alias) => alias.ident.span,
+            TypeDecl::Protocol(class) => class.ident.span,
+        }
+    }
+
+    /// The declaration's document node
+    pub(crate) fn node(&self) -> Option<doc::Id> {
+        match self {
+            TypeDecl::Module { type_only, .. } | TypeDecl::Item { type_only, .. } => type_only.node,
+            TypeDecl::Alias(alias) => alias.node,
+            TypeDecl::Protocol(class) => class.node,
+        }
+    }
+}
+
 pub(crate) struct Return {
     pub(crate) expr: Option<Expr>,
     pub(crate) span: Span,
@@ -2372,8 +2416,9 @@ pub(crate) struct ClassSuper {
     /// Type arguments, which only annotate the superclass
     pub(crate) args: Vec<TypeArg>,
     pub(crate) bracket_span: Option<Span>,
-    /// What a type-only head names when that is not a variable. Set only when documenting.
-    pub(crate) decl: Option<TypeDecl>,
+    /// What a type-only head names. A supertype that exists at runtime is a value, which
+    /// elaboration resolves through `ident` instead. Set only when documenting.
+    pub(crate) res: Option<TypeRes>,
 }
 
 impl Node for ClassSuper {
@@ -2388,7 +2433,7 @@ impl Node for ClassSuper {
                 .res
                 .as_ref()
                 .and_then(|res| res.node)
-                .or_else(|| self.decl.as_ref().and_then(|decl| decl.node)),
+                .or_else(|| self.res.and_then(|res| res.node)),
         )?;
         for field in &self.fields {
             visit.token(Token::Operator, field.before_left_char(), None)?;
@@ -2528,6 +2573,66 @@ pub(crate) enum Stmt {
     Throw(Throw),
     TypeAlias(TypeAlias),
     While(While),
+}
+
+impl Stmt {
+    /// Visit the type-only declarations the statement makes in its block, in the order
+    /// that numbers [`TypeEntry::Type`].
+    pub(crate) fn type_decls<'a>(&'a self, f: &mut impl FnMut(TypeDecl<'a>)) {
+        match self {
+            Stmt::NlGuard(guard) => guard.body.type_decls(f),
+            Stmt::Import(import) => {
+                let is_pub = import.pub_span.is_some();
+                for element in &import.elements {
+                    match element {
+                        ImportElement::ModuleAsIs {
+                            module,
+                            bind,
+                            type_only: Some(type_only),
+                            ..
+                        } => f(TypeDecl::Module {
+                            path: *module,
+                            bind,
+                            type_only,
+                            is_pub,
+                        }),
+                        ImportElement::ModuleRenamed {
+                            bind,
+                            type_only: Some(type_only),
+                            ..
+                        } => f(TypeDecl::Module {
+                            path: bind.span,
+                            bind,
+                            type_only,
+                            is_pub,
+                        }),
+                        ImportElement::Items { items, .. } => {
+                            for item in items {
+                                let (ImportItem::AsIs {
+                                    bind, type_only, ..
+                                }
+                                | ImportItem::Renamed {
+                                    bind, type_only, ..
+                                }) = item;
+                                if let Some(type_only) = type_only {
+                                    f(TypeDecl::Item {
+                                        bind,
+                                        type_only,
+                                        is_pub,
+                                    });
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Stmt::TypeAlias(alias) => f(TypeDecl::Alias(alias)),
+            // A protocol, like a class, is visible throughout its block
+            Stmt::Class(class) if class.is_protocol() => f(TypeDecl::Protocol(class)),
+            _ => {}
+        }
+    }
 }
 
 impl Node for Stmt {

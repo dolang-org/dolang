@@ -18,6 +18,13 @@ lexical scope depth is independent of document parentage. Token visits read the
 annotations; without indexing they emit no node IDs. Lowering does not consume
 document metadata.
 
+Type names resolve apart from values, when documenting, to a `TypeRes`: a depth
+counting binder groups and lexical scopes outward, and an entry of the frame it
+reaches. A lexical scope numbers its type-only declarations (type-only imports,
+`@let` aliases and `@class` protocols) separately from its variables, as
+`Stmt::type_decls` enumerates them. Type resolution and document indexing push
+the same frames, so a resolution means the same to both.
+
 ## Type checking foundations
 
 `typeck/type.rs` holds the canonical type and declaration database. It is not

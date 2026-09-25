@@ -382,7 +382,7 @@ impl Parser<'_> {
             fields,
             args,
             bracket_span,
-            decl: None,
+            res: None,
         })
     }
 }

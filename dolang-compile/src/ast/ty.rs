@@ -14,10 +14,10 @@ use crate::{RestKind, doc, source::Span};
 pub(crate) enum TypeExpr {
     /// A possibly dotted name, e.g. `Str` or `time.Duration`
     Name {
-        head: Ident,
+        head: Span,
         fields: Vec<Span>,
-        /// What the head names when that is not a variable. Set only when documenting.
-        decl: Option<TypeDecl>,
+        /// What the head names. Set only when documenting.
+        res: Option<TypeRes>,
     },
     /// A constant: a symbol, string, integer, boolean or `nil`
     Const { expr: Box<Expr> },
@@ -56,12 +56,27 @@ pub(crate) enum TypeExpr {
     Error,
 }
 
-/// A binder or type-only import named by a type, neither of which has a variable
-pub(crate) struct TypeDecl {
-    /// The declared name, which identifies the declaration
-    pub(crate) span: Span,
-    /// The declaration's document node
+/// What a type name refers to: an entry of a frame enclosing it, where a frame is a
+/// binder group or a lexical scope
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TypeRes {
+    /// Binder groups and lexical scopes outward
+    pub(crate) depth: usize,
+    pub(crate) entry: TypeEntry,
+    /// The target's document node. Filled only by document indexing.
     pub(crate) node: Option<doc::Id>,
+}
+
+/// An entry of the frame a [`TypeRes`] reaches
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TypeEntry {
+    /// Slot n of a binder group
+    Binder(usize),
+    /// Variable n of a lexical scope
+    Var(usize),
+    /// Type-only declaration n of a lexical scope, as numbered by
+    /// [`Stmt::type_decls`](super::Stmt::type_decls)
+    Type(usize),
 }
 
 /// A type argument in the `[]` of an application
@@ -217,14 +232,11 @@ pub(crate) enum BinderKind {
 }
 
 impl TypeExpr {
-    /// Visit each name within the type: its head, what the head names besides a variable,
-    /// and the fields dotted onto the head.
-    pub(crate) fn each_name<F: FnMut(&mut Ident, &mut Option<TypeDecl>, &[Span])>(
-        &mut self,
-        f: &mut F,
-    ) {
+    /// Visit each name within the type: its head, what the head names, and the fields
+    /// dotted onto the head.
+    pub(crate) fn each_name<F: FnMut(Span, &mut Option<TypeRes>, &[Span])>(&mut self, f: &mut F) {
         match self {
-            TypeExpr::Name { head, fields, decl } => f(head, decl, fields),
+            TypeExpr::Name { head, fields, res } => f(*head, res, fields),
             TypeExpr::Const { .. } | TypeExpr::Error => {}
             TypeExpr::App { base, args, .. } => {
                 base.each_name(f);
@@ -263,7 +275,7 @@ impl TypeExpr {
 }
 
 impl TypeArg {
-    fn each_name<F: FnMut(&mut Ident, &mut Option<TypeDecl>, &[Span])>(&mut self, f: &mut F) {
+    fn each_name<F: FnMut(Span, &mut Option<TypeRes>, &[Span])>(&mut self, f: &mut F) {
         self.ty_mut().each_name(f);
     }
 
@@ -278,7 +290,7 @@ impl TypeArg {
 }
 
 impl TypeParam {
-    fn each_name<F: FnMut(&mut Ident, &mut Option<TypeDecl>, &[Span])>(&mut self, f: &mut F) {
+    fn each_name<F: FnMut(Span, &mut Option<TypeRes>, &[Span])>(&mut self, f: &mut F) {
         for ty in self.tys_mut() {
             ty.each_name(f);
         }
@@ -306,15 +318,8 @@ impl TypeParam {
 impl Node for TypeExpr {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         match self {
-            TypeExpr::Name { head, fields, decl } => {
-                match decl {
-                    Some(decl) => visit.token(Token::Type, head.span, decl.node)?,
-                    None => visit.token(
-                        Token::Type,
-                        head.span,
-                        head.res.as_ref().and_then(|res| res.node),
-                    )?,
-                }
+            TypeExpr::Name { head, fields, res } => {
+                visit.token(Token::Type, *head, res.and_then(|res| res.node))?;
                 for field in fields {
                     visit.token(Token::Operator, field.before_left_char(), None)?;
                     visit.token(Token::Type, *field, None)?;

@@ -269,7 +269,7 @@ impl Parser<'_> {
     fn parse_type_primary(&mut self, scope: &mut Scope) -> Result<Group> {
         let ty = match decay_ident!(self.peek()?) {
             Some(token!(TokenInfo::Ident)) => {
-                let head = Ident::new(self.advance());
+                let head = self.advance();
                 let mut fields = Vec::new();
                 while let Some(token!(TokenInfo::Op(Op::Dot))) = self.peek()? {
                     self.advance();
@@ -287,7 +287,7 @@ impl Parser<'_> {
                 TypeExpr::Name {
                     head,
                     fields,
-                    decl: None,
+                    res: None,
                 }
             }
             Some(token!(TokenInfo::LeftParen)) => {

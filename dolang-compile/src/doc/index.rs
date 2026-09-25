@@ -1,6 +1,9 @@
 //! Annotate the elaborated tree without changing its semantic resolutions.
 
-use std::{cell::Cell, collections::HashMap};
+use std::{
+    cell::{Cell, OnceCell},
+    collections::HashMap,
+};
 
 use dolang_util::alias;
 
@@ -23,7 +26,6 @@ pub(crate) fn index(
         file,
         blocks,
         table: Table::new(),
-        type_decls: HashMap::new(),
     };
     let root_id = index.table.push(Node::new(
         None,
@@ -36,7 +38,10 @@ pub(crate) fn index(
     ));
     let scope = Scope {
         outer: None,
-        vars: Some(Cell::from_mut(root.0.body.vars.as_mut_slice()).as_slice_of_cells()),
+        kind: ScopeKind::Lexical {
+            vars: Cell::from_mut(root.0.body.vars.as_mut_slice()).as_slice_of_cells(),
+            types: OnceCell::new(),
+        },
         parent: Some(root_id),
         loop_target: None,
         return_target: None,
@@ -81,27 +86,40 @@ struct Index<'a> {
     file: &'a File<'a>,
     blocks: Blocks,
     table: Table,
-    /// The nodes of binders and type-only imports, by where their names start. They
-    /// have no variables, so the types naming them identify them this way.
-    type_decls: HashMap<u32, Id>,
 }
 
+/// A frame of the traversal, which is a binder group or a lexical scope exactly where
+/// type resolution pushed one
 struct Scope<'s> {
     // Frames live on the recursive call stack. Cells borrow the AST's existing
     // variable storage, so annotating an outer binding needs no parallel table.
     outer: Option<&'s Scope<'s>>,
-    // Class frames affect document parentage but do not count toward Res::depth.
-    vars: Option<&'s [Cell<Var>]>,
+    kind: ScopeKind<'s>,
     parent: Option<Id>,
     loop_target: Option<Id>,
     return_target: Option<Id>,
+}
+
+enum ScopeKind<'s> {
+    Lexical {
+        vars: &'s [Cell<Var>],
+        /// The name and node of each type-only declaration of the block's statements,
+        /// numbered as [`Stmt::type_decls`] numbers them. Set once they are declared.
+        types: OnceCell<Vec<(Span, Option<Id>)>>,
+    },
+    /// The name and node of each binder of a declaration. Only type names count this
+    /// frame, so it does not count toward `Res::depth`.
+    Binders(Vec<(Span, Option<Id>)>),
 }
 
 impl Scope<'_> {
     fn nested<'s>(&'s self, vars: &'s mut [Var], parent: Option<Id>) -> Scope<'s> {
         Scope {
             outer: Some(self),
-            vars: Some(Cell::from_mut(vars).as_slice_of_cells()),
+            kind: ScopeKind::Lexical {
+                vars: Cell::from_mut(vars).as_slice_of_cells(),
+                types: OnceCell::new(),
+            },
             parent: parent.or(self.parent),
             loop_target: self.loop_target,
             return_target: self.return_target,
@@ -109,14 +127,43 @@ impl Scope<'_> {
     }
 
     fn binding(&self, res: Res) -> Option<&Cell<Var>> {
-        match self.vars {
-            Some(vars) if res.depth == 0 => vars.get(res.index),
-            Some(_) => self.outer?.binding(Res {
+        match &self.kind {
+            ScopeKind::Lexical { vars, .. } if res.depth == 0 => vars.get(res.index),
+            ScopeKind::Lexical { .. } => self.outer?.binding(Res {
                 depth: res.depth - 1,
                 ..res
             }),
-            None => self.outer?.binding(res),
+            ScopeKind::Binders(_) => self.outer?.binding(res),
         }
+    }
+
+    /// The node of what a type name resolves to, where `name` is the name's head.
+    fn type_node(&self, file: &File<'_>, res: TypeRes, name: &str) -> Option<Id> {
+        let mut scope = self;
+        for _ in 0..res.depth {
+            scope = scope.outer?;
+        }
+        let target = match (&scope.kind, res.entry) {
+            (ScopeKind::Binders(slots), TypeEntry::Binder(index)) => slots.get(index).copied(),
+            (ScopeKind::Lexical { types, .. }, TypeEntry::Type(index)) => {
+                types.get().and_then(|types| types.get(index)).copied()
+            }
+            (ScopeKind::Lexical { vars, .. }, TypeEntry::Var(index)) => {
+                let var = vars.get(index)?.get();
+                match var.origin {
+                    Origin::Source(span) | Origin::SelfParam(span) => Some((span, var.node)),
+                    // A prelude binding has no source name to compare
+                    _ => return var.node,
+                }
+            }
+            _ => None,
+        };
+        let Some((span, node)) = target else {
+            debug_assert!(false, "{res:?} names no entry of its frame");
+            return None;
+        };
+        debug_assert_eq!(file.str(span), name, "{res:?} names another entry");
+        node
     }
 
     fn node(&self, res: Res) -> Option<Id> {
@@ -276,9 +323,11 @@ impl Index<'_> {
 
     /// Resolve the names within a type.
     fn ty(&mut self, scope: &Scope<'_>, ty: &mut TypeExpr) {
-        ty.each_name(&mut |head, decl, _| match decl {
-            Some(decl) => decl.node = self.type_decls.get(&decl.span.start).copied(),
-            None => self.reference(scope, head),
+        let file = self.file;
+        ty.each_name(&mut |head, res, _| {
+            if let Some(res) = res {
+                res.node = scope.type_node(file, *res, file.str(head));
+            }
         });
     }
 
@@ -309,7 +358,7 @@ impl Index<'_> {
                     .ident
                     .res
                     .and_then(|res| res.node)
-                    .or_else(|| super_ref.decl.as_ref().and_then(|decl| decl.node)),
+                    .or_else(|| super_ref.res.and_then(|res| res.node)),
             },
         };
         if let Some(bracket_span) = super_ref.bracket_span {
@@ -337,12 +386,9 @@ impl Index<'_> {
 
     fn type_expr(&self, ty: &TypeExpr) -> Option<doc::TypeExpr> {
         let kind = match ty {
-            TypeExpr::Name { head, decl, .. } => doc::TypeKind::Name {
-                head: head.span,
-                target: match decl {
-                    Some(decl) => decl.node,
-                    None => head.res.and_then(|res| res.node),
-                },
+            TypeExpr::Name { head, res, .. } => doc::TypeKind::Name {
+                head: *head,
+                target: res.and_then(|res| res.node),
             },
             TypeExpr::Const { expr } => doc::TypeKind::Const(match expr.fold(self.file)? {
                 Const::Sym(span) => doc::TypeConst::Sym(self.file.str(span).into()),
@@ -470,53 +516,67 @@ impl Index<'_> {
             .collect()
     }
 
-    /// Index the binders of a function, method or class.
-    fn binders(&mut self, scope: &Scope<'_>, parent: Option<Id>, binders: Option<&mut Binders>) {
-        let (Some(parent), Some(binders)) = (parent, binders) else {
-            return;
-        };
+    /// Index the binders of a function, method, class or alias, and give the binder
+    /// group its types resolve in.
+    fn binders<'s>(
+        &mut self,
+        scope: &'s Scope<'s>,
+        parent: Option<Id>,
+        binders: Option<&mut Binders>,
+    ) -> Scope<'s> {
+        let binders = binders.map_or(&mut [][..], |binders| &mut binders.binders[..]);
         // Every binder is in scope of each bound and default, so declare them all first
-        let mut ids = Vec::with_capacity(binders.binders.len());
-        for binder in &mut binders.binders {
-            let (kind, sigil) = match binder.kind {
-                BinderKind::Pos => (crate::BinderKind::Pos, None),
-                BinderKind::Key { colon_span } => (crate::BinderKind::Key, Some(colon_span)),
-                BinderKind::Rest { kind, sigil_span } => {
-                    (crate::BinderKind::Rest(kind), Some(sigil_span))
-                }
-            };
+        let mut slots = Vec::with_capacity(binders.len());
+        for binder in binders.iter_mut() {
             let name = binder.ident.span;
-            let span = [
-                sigil,
-                Some(name),
-                binder.bound.as_ref().map(|bound| bound.span()),
-                binder.default.as_ref().map(|default| default.ty.span()),
-            ]
-            .into_iter()
-            .flatten()
-            .reduce(|left, right| left | right)
-            .unwrap();
-            let id = self.push_to(
-                Some(parent),
-                Kind::Binder {
-                    name,
-                    kind,
-                    bound: None,
-                    default: None,
-                },
-                span,
-            );
-            binder.node = Some(id);
-            self.type_decls.insert(name.start, id);
-            ids.push(id);
+            let id = parent.map(|parent| {
+                let (kind, sigil) = match binder.kind {
+                    BinderKind::Pos => (crate::BinderKind::Pos, None),
+                    BinderKind::Key { colon_span } => (crate::BinderKind::Key, Some(colon_span)),
+                    BinderKind::Rest { kind, sigil_span } => {
+                        (crate::BinderKind::Rest(kind), Some(sigil_span))
+                    }
+                };
+                let span = [
+                    sigil,
+                    Some(name),
+                    binder.bound.as_ref().map(|bound| bound.span()),
+                    binder.default.as_ref().map(|default| default.ty.span()),
+                ]
+                .into_iter()
+                .flatten()
+                .reduce(|left, right| left | right)
+                .unwrap();
+                let id = self.push_to(
+                    Some(parent),
+                    Kind::Binder {
+                        name,
+                        kind,
+                        bound: None,
+                        default: None,
+                    },
+                    span,
+                );
+                binder.node = Some(id);
+                id
+            });
+            slots.push((name, id));
         }
-        for (binder, id) in binders.binders.iter_mut().zip(ids) {
+        let group = Scope {
+            outer: Some(scope),
+            kind: ScopeKind::Binders(slots),
+            parent: scope.parent,
+            loop_target: scope.loop_target,
+            return_target: scope.return_target,
+        };
+        for binder in binders.iter_mut() {
             if let Some(bound) = &mut binder.bound {
-                self.ty(scope, &mut bound.ty);
+                self.ty(&group, &mut bound.ty);
             }
             if let Some(default) = &mut binder.default {
-                self.ty(scope, &mut default.ty);
+                self.ty(&group, &mut default.ty);
             }
+            let Some(id) = binder.node else { continue };
             let bound = binder
                 .bound
                 .as_ref()
@@ -536,6 +596,7 @@ impl Index<'_> {
             *node_bound = bound;
             *node_default = default;
         }
+        group
     }
 
     fn block(&mut self, scope: &Scope<'_>, stmts: &mut [Stmt]) {
@@ -552,6 +613,14 @@ impl Index<'_> {
             .collect();
         for stmt in stmts.iter_mut() {
             self.predeclare(scope, stmt, &impls);
+        }
+        if let ScopeKind::Lexical { types, .. } = &scope.kind {
+            let mut decls = Vec::new();
+            for stmt in stmts.iter() {
+                stmt.type_decls(&mut |decl| decls.push((decl.name(), decl.node())));
+            }
+            let set = types.set(decls);
+            debug_assert!(set.is_ok(), "a lexical scope holds one block");
         }
         for stmt in stmts.iter_mut() {
             self.stmt(scope, stmt);
@@ -601,7 +670,6 @@ impl Index<'_> {
                     class.span(),
                 );
                 class.node = Some(id);
-                self.type_decls.insert(name.start, id);
             }
             Stmt::Class(class) => {
                 let name = class.ident.span;
@@ -630,7 +698,6 @@ impl Index<'_> {
                     alias.span(),
                 );
                 alias.node = Some(id);
-                self.type_decls.insert(name.start, id);
             }
             _ => {}
         }
@@ -661,7 +728,6 @@ impl Index<'_> {
                     if let Some(type_only) = type_only {
                         let id = self.push(scope, kind, element_span);
                         type_only.node = Some(id);
-                        self.type_decls.insert(bind.span.start, id);
                     } else {
                         self.declaration(scope, bind, kind, element_span);
                     }
@@ -681,7 +747,6 @@ impl Index<'_> {
                     if let Some(type_only) = type_only {
                         let id = self.push(scope, kind, element_span);
                         type_only.node = Some(id);
-                        self.type_decls.insert(bind.span.start, id);
                     } else {
                         self.declaration(scope, bind, kind, element_span);
                     }
@@ -713,7 +778,6 @@ impl Index<'_> {
                             Some(type_only) => {
                                 let id = self.push(scope, kind, item_span);
                                 type_only.node = Some(id);
-                                self.type_decls.insert(bind.span.start, id);
                             }
                             None => {
                                 self.declaration(scope, bind, kind, item_span);
@@ -901,9 +965,9 @@ impl Index<'_> {
             // may name a later one
             Stmt::TypeAlias(alias) => {
                 if let Some(id) = alias.node {
-                    self.binders(scope, Some(id), alias.binders.as_deref_mut());
+                    let group = self.binders(scope, Some(id), alias.binders.as_deref_mut());
                     if let AliasBody::Type(ty) = &mut alias.body {
-                        self.ty(scope, ty);
+                        self.ty(&group, ty);
                         self.type_node(id, ty);
                     }
                 }
@@ -916,8 +980,8 @@ impl Index<'_> {
                 if let Some(id) = id {
                     self.decorators(id, &mut def.decorators);
                 }
-                self.binders(scope, id, def.binders.as_deref_mut());
-                self.function(scope, &mut def.func, id, true, false);
+                let group = self.binders(scope, id, def.binders.as_deref_mut());
+                self.function(&group, &mut def.func, id, true, false);
             }
             Stmt::Class(class) => self.class(scope, class),
             Stmt::Return(ret) => {
@@ -989,11 +1053,17 @@ impl Index<'_> {
         if let Some(id) = id {
             self.decorators(id, &mut class.decorators);
         }
-        self.binders(scope, id, class.binders.as_deref_mut());
+        let mut group = self.binders(scope, id, class.binders.as_deref_mut());
+        // The class's binder group is also the document parent of its members
+        group.parent = id.or(scope.parent);
+        let scope = &group;
+        let file = self.file;
         for super_ref in &mut class.super_refs {
-            // A type-only supertype may name a declaration that has no variable
-            match &mut super_ref.decl {
-                Some(decl) => decl.node = self.type_decls.get(&decl.span.start).copied(),
+            // A type-only supertype resolves as a type name, and any other as a value
+            match &mut super_ref.res {
+                Some(res) => {
+                    res.node = scope.type_node(file, *res, file.str(super_ref.ident.span));
+                }
                 None => self.reference(scope, &mut super_ref.ident),
             }
             for ty in super_ref.args.iter_mut().map(TypeArg::ty_mut) {
@@ -1003,15 +1073,6 @@ impl Index<'_> {
                 self.super_node(id, super_ref);
             }
         }
-        let inner = Scope {
-            outer: Some(scope),
-            vars: None,
-            parent: id.or(scope.parent),
-            loop_target: scope.loop_target,
-            return_target: scope.return_target,
-        };
-        let scope = &inner;
-        let file = self.file;
         // Whether each implementation is `pub`, by name, which its overloads follow
         let impls: HashMap<&str, bool> = class
             .body
@@ -1059,8 +1120,8 @@ impl Index<'_> {
                         self.expr(scope, &mut decorator.expr);
                     }
                     self.decorators(id, &mut method.decorators);
-                    self.binders(scope, Some(id), method.binders.as_deref_mut());
-                    self.function(scope, &mut method.func, Some(id), true, true);
+                    let group = self.binders(scope, Some(id), method.binders.as_deref_mut());
+                    self.function(&group, &mut method.func, Some(id), true, true);
                 }
                 ClassMember::Field(field) => {
                     // Every name in a `field x y` shares the declaration, so
