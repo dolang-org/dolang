@@ -1,6 +1,7 @@
 use super::*;
 use crate::typeck::r#type::{
-    BinderSource, BoundRef, DeclKind, DeclSource, Declaration, SchemaItem, UnionMember,
+    BinderOrigin, BinderSource, BoundRef, DeclKind, DeclSource, Declaration, SchemaItem,
+    UnionMember,
 };
 
 fn literal(db: &Database, n: i128) -> TypeId {
@@ -89,6 +90,7 @@ fn populate(
                 span: source.span,
                 bound: None,
                 default: None,
+                origin: BinderOrigin::Written,
             })
             .collect(),
         _ => Default::default(),
@@ -100,6 +102,7 @@ fn populate(
             ty,
             binders,
             supertypes: supertypes.into(),
+            members: Default::default(),
         },
     );
 }

@@ -234,6 +234,8 @@ fn run(case: &Path) {
         }
     }
     let check = checker.check();
+    // The sealed database must never make the solver panic, whatever errors it holds
+    check.smoke();
 
     let mut diags: Vec<Vec<_>> = units
         .iter()

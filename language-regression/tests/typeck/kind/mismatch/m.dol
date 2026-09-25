@@ -46,6 +46,11 @@ pub let keyword @ Plain[item: Int] = nil
 #    |
 # LL | pub let keyword @ Plain[item: Int] = nil
 #    |                         ^^^^
+# error: missing type arguments for `T`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let keyword @ Plain[item: Int] = nil
+#    |                   ^^^^^^^^^^^^^^^^
 pub let flat @ Flat[Int] = nil
 # error: type takes no type arguments
 #   --> m.dol:LL:LL
@@ -59,6 +64,11 @@ pub let included @ ((...Plain[Int]) -> nil) = nil
 # LL | pub let included @ ((...Plain[Int]) -> nil) = nil
 #    |                         ^^^^^^^^^^
 pub let schema_default @ Box = nil
+# error: `Box` needs type arguments
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let schema_default @ Box = nil
+#    |                          ^^^
 
 # A type expands as a pack of any number of it
 pub let expanded @ Opaque[...Int] = nil

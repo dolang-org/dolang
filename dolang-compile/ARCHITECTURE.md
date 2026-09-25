@@ -27,10 +27,11 @@ the same frames, so a resolution means the same to both.
 
 ## Type checking foundations
 
-`typeck/type.rs` holds the canonical type and declaration database. It is not
-yet connected to AST elaboration or bytecode compilation. The database lives
-inside this crate while its interfaces develop; its only compiler dependency
-is the source span representation.
+`typeck/type.rs` holds the canonical type and declaration database. Elaboration
+populates it (see [Elaborating declarations](#elaborating-declarations)); it is
+not connected to bytecode compilation. The database lives inside this crate
+while its interfaces develop; its only compiler dependency is the source span
+representation.
 
 `DeclId` identifies an allocated source occurrence. Allocation reserves an empty
 slot in a `Vec<Option<Declaration>>`, allowing forward references before the
@@ -40,7 +41,12 @@ preventing further declaration or unit changes. Sealing twice panics. Kind
 checks involving empty slots are retained until sealing, including those from
 normalized-away nodes. Types and symbols can still be interned after sealing.
 Source spans pair a unit ID with byte offsets, and binder names/spans are
-parallel metadata for the definition's outer structural binder group. Unit IDs
+parallel metadata for the definition's outer structural binder group, including
+whether each slot was lifted from an enclosing declaration, written, or an
+implicit ambient binder. A class or protocol also records its members by name:
+fields with their type, scope and visibility, and methods by their function
+declaration. An overloaded function records each of its signatures, which are
+declarations of their own. Unit IDs
 are allocated from a counter and checked when declarations are populated.
 Filenames and local symbol mappings belong to upper layers. Ordinary symbols are
 interned by spelling; callers can allocate fresh symbols separately when source
@@ -55,10 +61,11 @@ supplies these associations, and the solver can use the literal backing types to
 enter the declared supertype hierarchy. Schemas and ordinary types share the ID
 domain but carry distinct kinds; packs are schemas, not a third kind. There are
 no solver variables, skolems, or flow variables. `Unknown` is the dynamic type
-that an omitted `def` annotation stands for, interned once like top; it is a
-type, never a schema, and a union keeps it as an ordinary member. How checker
-strictness treats an omission is decided where it was written, not by finding
-`Unknown`.
+that an omitted `def` annotation stands for, and what an erroneous site is
+interned as. It is interned once like top, with a schema-kinded twin for
+erroneous schema positions, and a union keeps it as an ordinary member. How
+checker strictness treats an omission is decided where it was written, not by
+finding `Unknown`.
 
 Quantifiers own structural binder groups. References use relative group depth
 and declaration-order slot, each a checked `u16`. The whole group is in scope in
@@ -81,9 +88,8 @@ Interning performs local shape/kind checks and structural union normalization,
 not subtype reasoning. Bottom is the empty union; top has an explicit node.
 Both are interned and cached when the database is created. Type interning and
 shifting accept shared database references; arena storage keeps borrowed types
-stable while the interning index uses interior mutability. Future elaboration
-treats `std.Value` as judgmentally equal to top; `Empty` needs only its ordinary
-alias to `Union[]`.
+stable while the interning index uses interior mutability. Elaboration interns
+`std.Value` as top; `Empty` needs only its ordinary alias to `Union[]`.
 Union expansions can remain symbolic until a consumer
 supplies their schema arguments. Declaration wrappers are not normalized away.
 Exposure follows transparent head references and reports direct cycles, stopping
@@ -313,7 +319,9 @@ following the signature's written binders. A method's unannotated receiver is
 its class applied to its own binders, except on a `class` or `static` method.
 A function type written without channels in a def's signature or body, but not
 in a nested class or alias, shares that def's channels; elsewhere they are
-`Unknown`. Closures keep only their syntax: CFG flow infers what they omit.
+`Unknown`. A closure is populated with its annotations and `Unknown` for what
+it omits, channels included; CFG flow infers the omissions separately, without
+changing the database.
 Top-level declarations of a checked `std` module named `Value`, `Phantom`,
 `Union`, `Func`, `Int`, `Bool`, `Sym`, `Nil` and `Str` are designated for
 special treatment; the same name in another module is only a lookalike. The
@@ -341,9 +349,41 @@ invariant, and an outer binder used in the bound of a nested group is used
 contravariantly there. Defaults and bodies do not count. A type argument is used
 as the binder it fills varies, matched as kind checking matches it, and one
 whose binder is unknown is invariant. A type declared within a generic
-declaration takes the outer binders as implicit arguments. These equations are
-solved by a worklist for their least solution, which is unique whatever the
-order. A binder with no use, including one used only through itself, is then
-invariant, as is any use through it, and a second round propagates that. The
-`variance` judgment reports a binder's variance, and `captured` a nested
-declaration's outer binders.
+declaration takes the outer binders it is lifted over as implicit arguments.
+These equations are solved by a worklist for their least solution, which is
+unique whatever the order. A binder with no use, including one used only through
+itself, is then invariant, as is any use through it, and a second round
+propagates that. The `variance` judgment reports a binder's variance, and
+`captured` a nested declaration's outer binders.
+
+Every declaration is closed. Before variance, the captures pass finds the outer
+binders each is lifted over: those it names anywhere, in its signature, members
+or body, including the implicit binders a function type written without channels
+takes, and those that what it names, or what is nested in it, is lifted over. A
+method is lifted over all of its class's binders, and a lifted binder keeps its
+bound, so a declaration also takes what its lifted binders' bounds name.
+
+Population then interns each declaration signature over one flat group: the
+binders it is lifted over, outermost first, then its written binders, then its
+implicit ones. A lifted binder takes the variance its declaration uses it with,
+or is invariant. A reference to a declaration passes the binders it is lifted
+over as leading arguments, then one argument per written binder as type argument
+matching places them. A variadic binder's arguments become a schema. An omitted
+argument takes its binder's default, substituted with the arguments before it,
+since a later binder is not yet known there. Arguments after an expansion whose
+reach is unknown stay as written, for the solver to leave residual. Each written
+type is also interned in its group, by its span, for flow analysis. Classes
+record their members, the signatures of an overloaded def or method are
+declarations of their own, and designated declarations set the database's
+intrinsics.
+
+Population diagnoses what needs no solver: missing type arguments, a generic
+name used without them, an inheritance cycle, and a binder group or type too
+large to represent. Each erroneous site, whenever it was diagnosed, is interned
+as `Unknown` of the kind its position requires, and an alias on a cycle gets an
+`Unknown` body, so the sealed database keeps every structural invariant the
+solver assumes. It is sealed but not validated; checking well-formedness is a
+separate step. `Check`'s hidden `smoke` method relates every type the database
+holds to itself and to top, to show that the solver judges it without
+panicking. The `quantifier`, `decl`, `member` and `type` judgments report what
+was interned.

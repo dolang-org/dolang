@@ -4,9 +4,11 @@
 //! tables refer to declaration nodes in place rather than copying source into an
 //! intermediate representation.
 
+mod capture;
 mod collect;
 mod judge;
 mod kind;
+mod populate;
 mod sig;
 mod variance;
 
@@ -15,17 +17,19 @@ use std::{
     fmt::{self, Write},
 };
 
-use super::r#type::{DeclId, DeclKind, Intrinsic, Kind, UnitId, UnitSpan, Variance};
+use super::r#type::{DeclId, DeclKind, Intrinsic, Kind, TypeId, UnitId, UnitSpan, Variance};
 use crate::{
     Compiler, RestKind, Unit,
-    ast::{Binder, Class, Def, Function, Method, Param, TypeAlias, TypeExpr},
+    ast::{Binder, Class, Def, Function, Method, Param, TypeAlias, TypeExpr, visit::Node},
     diag::{AnnotationKind, NoteKind, Severity},
     source::{Annotate, Diagnose, Note, Span},
 };
 
+pub(crate) use capture::captures;
 pub(crate) use collect::{UnitDiag, collect};
 pub(crate) use judge::JUDGMENTS;
 pub(crate) use kind::{Fill, kinds};
+pub(crate) use populate::populate;
 pub(crate) use sig::signatures;
 pub(crate) use variance::variances;
 
@@ -64,6 +68,17 @@ pub(crate) struct Tables<'u> {
     /// The variance of each binder of an enclosing declaration that a nested one uses.
     /// A binder it does not use is absent, and invariant if it is captured anyway.
     pub(crate) captured: HashMap<(DeclId, BinderRef), Variance>,
+    /// The binders of enclosing declarations each declaration is lifted over, which
+    /// lead its binder group, outermost first
+    pub(crate) lifted: HashMap<DeclId, Vec<BinderRef>>,
+    /// The database declaration of each def or method signature. A function's own
+    /// ID holds its implementation, or its first signature when it has none.
+    pub(crate) sig_decls: HashMap<(DeclId, usize), DeclId>,
+    /// The binder group of each declaration signature: the binders it is lifted
+    /// over, its written binders, then its implicit binders
+    pub(crate) groups: HashMap<(DeclId, usize), Vec<BinderRef>>,
+    /// Each type expression written in source, interned in its group, by its span
+    pub(crate) site_types: HashMap<UnitSpan, TypeId>,
 }
 
 impl<'u> Tables<'u> {
@@ -88,6 +103,24 @@ impl<'u> Tables<'u> {
         binders.map_or(&[], |binders| &binders.binders)
     }
 
+    /// Each written type as interned, with the kinds of the binders of the group it
+    /// is interpreted in
+    pub(crate) fn site_kinds(&self) -> impl Iterator<Item = (TypeId, Vec<Kind>)> + '_ {
+        self.sites.iter().map(|site| {
+            let ty = self.site_types[&UnitSpan {
+                unit: site.unit,
+                span: site.ty.span(),
+            }];
+            let kinds = site.group().map_or_else(Vec::new, |key| {
+                self.groups[&key]
+                    .iter()
+                    .map(|binder| self.binder_kinds[binder].kind)
+                    .collect()
+            });
+            (ty, kinds)
+        })
+    }
+
     /// The source text of a span of a unit
     pub(crate) fn text(&self, unit: UnitId, span: Span) -> &'u str {
         self.units[unit.index()].compiler.file.str(span)
@@ -97,7 +130,8 @@ impl<'u> Tables<'u> {
 /// A binder: slot `slot` of signature `sig` of a declaration. `sig` indexes the
 /// declaration's defs or methods, and is 0 for any other declaration. The implicit
 /// binders of a signature's omitted ambient channels follow its written binders.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// Outer declarations are allocated first, so the order is outermost first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct BinderRef {
     pub(crate) decl: DeclId,
     pub(crate) sig: usize,
@@ -112,6 +146,20 @@ pub(crate) struct Site<'u> {
     /// The def or method signature whose ambient channels a function type written
     /// here takes when it omits its own
     pub(crate) ambient: Option<(DeclId, usize)>,
+    /// The declaration signature whose body or signature the type is written in,
+    /// absent at a unit's top level
+    pub(crate) owner: Option<(DeclId, usize)>,
+}
+
+impl Site<'_> {
+    /// The declaration signature whose binder group the type is interpreted in
+    pub(crate) fn group(&self) -> Option<(DeclId, usize)> {
+        match self.role {
+            Role::Bound(binder) | Role::Default(binder) => Some((binder.decl, binder.sig)),
+            Role::Alias(decl) => Some((decl, 0)),
+            Role::Type | Role::Rest | Role::Pattern => self.owner,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

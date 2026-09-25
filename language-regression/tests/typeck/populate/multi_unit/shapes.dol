@@ -1,0 +1,8 @@
+import geo:
+  - Box
+  - @Boxes
+
+pub class Crate[T]: Box[T]
+  #       ^~~~~: decl nominal <: geo.Box[T]
+  pub field extra @ Boxes[T] = nil
+  #                 ^~~~~~~~: type geo.Boxes[T]

@@ -13,9 +13,9 @@ use super::{
 };
 use crate::{
     Mode,
-    ast::{ClassMember, Expr, Function, Param},
+    ast::{ClassMember, Expr, Function, Method, Param},
     source,
-    typeck::r#type::{DeclId, DeclKind, Intrinsic, Kind},
+    typeck::r#type::{DeclId, DeclKind, Intrinsic, Kind, Scope, UnitId},
 };
 
 /// Complete every def and method signature, record every field's type, and find
@@ -90,16 +90,39 @@ pub(crate) fn channels(tables: &Tables<'_>, decl: DeclId, sig: usize) -> [Ambien
 fn complete<'u>(tables: &Tables<'u>, decl: DeclId, sig: usize) -> Sig<'u> {
     let unit = tables.decls[decl.index()].unit;
     let func = function(tables, decl, sig);
-    // The receiver of an instance method is its class unless annotated otherwise
     let receiver = match tables.decls[decl.index()].node {
-        DeclNode::Methods(ref methods) => !methods[sig].decorators.iter().any(|decorator| {
-            matches!(&decorator.expr, Expr::Ident(ident)
-                if matches!(tables.text(unit, ident.span), "class" | "static"))
-        }),
+        DeclNode::Methods(ref methods) => {
+            method_scope(tables, unit, methods[sig]) == Scope::Instance
+        }
         _ => false,
     };
-    let params = func
-        .params
+    let params = params(tables, unit, func, receiver);
+    let [input, output] = channels(tables, decl, sig).map(|ambient| match ambient {
+        Ambient::Of(..) => Ambient::Written,
+        ambient => ambient,
+    });
+    Sig {
+        params,
+        receiver,
+        input,
+        output,
+        ret: func
+            .ret
+            .as_ref()
+            .map_or(Slot::Unknown, |ret| Slot::Annot(&ret.ty)),
+    }
+}
+
+/// The parameters of a def, method or closure, each with the type it has, or the
+/// default for an omitted annotation. An instance method's `receiver` is its class
+/// unless annotated otherwise.
+pub(crate) fn params<'u>(
+    tables: &Tables<'u>,
+    unit: UnitId,
+    func: &'u Function,
+    receiver: bool,
+) -> Vec<(&'u Param, ParamTy<'u>)> {
+    func.params
         .iter()
         .enumerate()
         .map(|(index, param)| {
@@ -130,21 +153,22 @@ fn complete<'u>(tables: &Tables<'u>, decl: DeclId, sig: usize) -> Sig<'u> {
             };
             (param, ty)
         })
-        .collect();
-    let [input, output] = channels(tables, decl, sig).map(|ambient| match ambient {
-        Ambient::Of(..) => Ambient::Written,
-        ambient => ambient,
-    });
-    Sig {
-        params,
-        receiver,
-        input,
-        output,
-        ret: func
-            .ret
-            .as_ref()
-            .map_or(Slot::Unknown, |ret| Slot::Annot(&ret.ty)),
+        .collect()
+}
+
+/// The scope of a method, from its decorators
+pub(crate) fn method_scope(tables: &Tables<'_>, unit: UnitId, method: &Method) -> Scope {
+    let mut scope = Scope::Instance;
+    for decorator in &method.decorators {
+        if let Expr::Ident(ident) = &decorator.expr {
+            match tables.text(unit, ident.span) {
+                "class" => scope = Scope::Class,
+                "static" => scope = Scope::Static,
+                _ => {}
+            }
+        }
     }
+    scope
 }
 
 /// Designate a top-level declaration of `std` that the checker treats specially.

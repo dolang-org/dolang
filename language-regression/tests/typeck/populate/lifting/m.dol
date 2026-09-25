@@ -1,0 +1,60 @@
+# A method takes all of its class's binders. A declaration nested elsewhere
+# takes exactly the outer binders it names, or that what it names takes.
+
+pub class Num
+
+pub class Box[T, U]
+  #       ^~~: quantifier T invariant, U invariant
+  pub field item @ T = nil
+
+  pub def get self -> T
+    #     ^~~: quantifier ^T covariant, ^U invariant, in contravariant, out contravariant
+    #     ^~~: decl (m.Box[T, U]) <in >out -> T
+    self.item
+
+  pub def map[V] _self _f @ (T -> V) -> Box[V, U]
+    #     ^~~: quantifier ^T covariant, ^U invariant, V invariant, in invariant, out invariant
+    #                       ^~~~~~~~: type (T) <in >out -> V
+    #                                   ^~~~~~~~~: type m.Box[V, U]
+    nil
+
+pub def outer[A, B] _a @ A _b @ B
+  @let OnlyA = (A | nil)
+  #    ^~~~~: quantifier ^A covariant
+  #    ^~~~~: decl A | nil
+  @let Neither = Num
+  #    ^~~~~~~: quantifier none
+  class Local
+    #   ^~~~~: quantifier ^B covariant
+    pub def get _self -> B
+      #     ^~~: quantifier ^B covariant, in contravariant, out contravariant
+      nil
+  class Via
+    #   ^~~: quantifier ^B invariant
+    pub field local @ Local = nil
+    #                 ^~~~~: type m.outer.Local[^B]
+  def uses_alias x @ OnlyA
+    # ^~~~~~~~~~: quantifier ^A contravariant, in contravariant, out contravariant
+    #                ^~~~~: type m.outer.OnlyA[^A]
+    x
+  def body_only _x
+    # ^~~~~~~~~: quantifier ^B invariant, in contravariant, out contravariant
+    let y @ B = nil
+    #       ^: type B
+    y
+  let f = do |x @ A| x
+  #               ^: type A
+  let _n @ Neither = nil
+  (uses_alias, body_only, Via, Local, f)
+
+pub class Bounded[T, U @ Box[T, Num]]
+  pub field u @ U = nil
+  pub def peek self -> U
+    #     ^~~~: quantifier ^T invariant, ^U @ m.Box[T, m.Num] covariant, in contravariant, out contravariant
+    self.u
+
+pub def bounded[T, U @ Box[T, Num]] _u @ U
+  class Inner
+    #   ^~~~~: quantifier ^T invariant, ^U @ m.Box[T, m.Num] invariant
+    pub field u @ U = nil
+  Inner

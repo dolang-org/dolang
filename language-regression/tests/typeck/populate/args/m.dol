@@ -1,0 +1,51 @@
+# Type arguments are placed by the binders they fill, and an omitted one takes
+# its binder's default, which sees the arguments before it.
+
+pub class Num
+pub class Text
+pub class Pair[A, B = A]
+  pub field items @ Phantom[A, B] = nil
+pub class Keyed[T, :K = Num]
+  pub field items @ Phantom[T, K] = nil
+pub class Tuple[*Ts]
+  pub field items @ Phantom[...Ts] = nil
+pub class Record[**Ks]
+  pub field items @ Phantom[...Ks] = nil
+pub class Table[S @ {...}]
+  pub field items @ Phantom[...S] = nil
+pub class Early[A = B, B = Num]
+  pub field items @ Phantom[A, B] = nil
+pub @let Phantom[...Ts] = ...
+
+pub let defaulted @ Pair[Text] = nil
+#                   ^~~~~~~~~~: type m.Pair[m.Text, m.Text]
+pub let both @ Pair[Text, Num] = nil
+#              ^~~~~~~~~~~~~~~: type m.Pair[m.Text, m.Num]
+pub let bare @ Pair[Num] = nil
+pub let keyword @ Keyed[Text, K: Text] = nil
+#                 ^~~~~~~~~~~~~~~~~~~~: type m.Keyed[m.Text, m.Text]
+pub let keyword_default @ Keyed[Text] = nil
+#                         ^~~~~~~~~~~: type m.Keyed[m.Text, m.Num]
+pub let items @ Tuple[Num, Text] = nil
+#               ^~~~~~~~~~~~~~~~: type m.Tuple[{m.Num, m.Text}]
+pub let empty @ Tuple[] = nil
+#               ^~~~~~~: type m.Tuple[{}]
+pub let expanded @ Tuple[Num, ...Text] = nil
+#                  ^~~~~~~~~~~~~~~~~~~: type m.Tuple[{m.Num, *m.Text}]
+pub let keyed @ Record[a: Num] = nil
+#               ^~~~~~~~~~~~~~: type m.Record[{a: m.Num}]
+pub let short @ Table[Num] = nil
+#               ^~~~~~~~~~: type m.Table[{*m.Num}]
+pub let short_keyed @ Table[Text, Num] = nil
+#                     ^~~~~~~~~~~~~~~~: type m.Table[{*(m.Text): m.Num}]
+pub let whole @ Table[{Num}] = nil
+#               ^~~~~~~~~~~~: type m.Table[{m.Num}]
+pub let later @ Early[] = nil
+#               ^~~~~~~: type m.Early[Unknown, m.Num]
+
+# After an expansion, where later arguments go is unknown, so they stay as written
+pub class Two[A, B]
+  pub field items @ Phantom[A, B] = nil
+pub def unplaced[*S] _x @ Two[...S, Num]
+  #                       ^~~~~~~~~~~~~~: type m.Two[...S, m.Num]
+  nil
