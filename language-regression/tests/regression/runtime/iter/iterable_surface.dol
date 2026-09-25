@@ -90,7 +90,7 @@ class MyIterable: Iterable
   pub field items = nil
 
   def (init) self items
-    Iterable.(init) self
+    Iterable.(init) $self
     self.items = items
 
   def (iter) self
@@ -108,7 +108,7 @@ class MySinkable: Sinkable
   pub field dest = nil
 
   def (init) self dest
-    Sinkable.(init) self
+    Sinkable.(init) $self
     self.dest = dest
 
   def (sink) self

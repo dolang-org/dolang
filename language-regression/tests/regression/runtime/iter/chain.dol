@@ -20,7 +20,7 @@ class MyInput: Iter
   pub field inner = nil
 
   def (init) self items
-    Iter.(init) self
+    Iter.(init) $self
     self.inner = items.iter()
 
   def (next) self

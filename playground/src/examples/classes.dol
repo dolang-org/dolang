@@ -14,7 +14,11 @@ class Animal
   def (init) self name sound
     self.name = name
     self.#sound = sound
-    type(self).#created = (type(self).#created + 1)
+    type(self).record_creation()
+
+  #[class]
+  pub def record_creation cls
+    cls.#created = (cls.#created + 1)
     Animal.total_created = (Animal.total_created + 1)
 
   pub def speak self
@@ -60,7 +64,7 @@ class Vec2
     self.#y
 
   def (add) self other
-    Vec2 (self.#x + other.#x) (self.#y + other.#y)
+    Vec2 (self.#x + other.x) (self.#y + other.y)
 
   def (str) self
     "($(self.#x), $(self.#y))"

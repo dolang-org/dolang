@@ -476,8 +476,8 @@ class Parser
     if (sub != nil)
       sub.init_rec()
       let sub_rec = sub.parse_impl $argi
-      self.#rec[sub.#sym] = Args $sub_rec
-      self.#rec[:cmd:] = sub.#sym
+      self.#rec[sub.sym] = Args $sub_rec
+      self.#rec[:cmd:] = sub.sym
       self.#rec[:handler:] = sub_rec[:handler:]
       if sub_rec[:help:]
         self.#rec[:help:] = true
@@ -616,13 +616,20 @@ class Parser
 
     "\n".join $lines
 
+  #[getter]
+  pub def sym self
+    self.#sym
+
+  pub def find_subcommand self cmd
+    self.#sub_cmds.map(do |p| p[1]).filter(do |s| s.sym == cmd).next()
+
   pub def selected_help self rec
     let prog = self.name
     let sub = self
     while (rec[:cmd:] != nil)
       let cmd = rec[:cmd:]
       rec = rec[cmd]
-      sub = sub.#sub_cmds.map(do |p| p[1]).filter(do |s| s.#sym == cmd).next()
+      sub = sub.find_subcommand $cmd
       prog = "$prog $(sub.name)"
     sub.make_help $prog
 

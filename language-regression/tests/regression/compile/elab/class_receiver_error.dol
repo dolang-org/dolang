@@ -1,0 +1,263 @@
+pub class Box
+  field value = 0
+
+  def helper self
+    self.#value
+
+  pub def bad self other
+    let _ = other.#value
+    # error: private members require the enclosing class's receiver
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |   pub def bad self other
+    #    |               ---- method receiver declared here
+    # LL |     let _ = other.#value
+    #    |             ^^^^^
+    other.#value = 1
+    # error: private members require the enclosing class's receiver
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |   pub def bad self other
+    #    |               ---- method receiver declared here
+    # ...
+    # LL |     other.#value = 1
+    #    |     ^^^^^
+    other.#helper()
+    # error: private members require the enclosing class's receiver
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |   pub def bad self other
+    #    |               ---- method receiver declared here
+    # ...
+    # LL |     other.#helper()
+    #    |     ^^^^^
+    let alias = self
+    let _ = alias.#value
+    # error: private members require the enclosing class's receiver
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |   pub def bad self other
+    #    |               ---- method receiver declared here
+    # ...
+    # LL |     let _ = alias.#value
+    #    |             ^^^^^
+    let _ = (do |self| self.#value)
+    # error: private members require the enclosing class's receiver
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |   pub def bad self other
+    #    |               ---- method receiver declared here
+    # ...
+    # LL |     let _ = (do |self| self.#value)
+    #    |                        ^^^^
+    self = other
+    # error: method receiver bindings cannot be reassigned
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |   pub def bad self other
+    #    |               ---- method receiver declared here
+    # ...
+    # LL |     self = other
+    #    |     ^^^^
+    let _ = do
+      self = other
+    # error: method receiver bindings cannot be reassigned
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |   pub def bad self other
+    #    |               ---- method receiver declared here
+    # ...
+    # LL |       self = other
+    #    |       ^^^^
+    if true
+      let self = other
+      let _ = self.#value
+    # error: private members require the enclosing class's receiver
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |   pub def bad self other
+    #    |               ---- method receiver declared here
+    # ...
+    # LL |       let _ = self.#value
+    #    |               ^^^^
+    class Inner
+      field value = 0
+      pub def read inner
+        let _ = inner.#value
+        self.#value
+    # error: private members require the enclosing class's receiver
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |       pub def read inner
+    #    |                    ----- method receiver declared here
+    # LL |         let _ = inner.#value
+    # LL |         self.#value
+    #    |         ^^^^
+    Inner()
+
+  def (init) self other
+    Box.(init) $other
+    # error: the first argument to `(init)` must be the constructor's receiver
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |   def (init) self other
+    #    |              ---- method receiver declared here
+    # LL |     Box.(init) $other
+    #    |                ^^^^^^
+    Box.(init)()
+    # error: the first argument to `(init)` must be the constructor's receiver
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |   def (init) self other
+    #    |              ---- method receiver declared here
+    # ...
+    # LL |     Box.(init)()
+    #    |          ^^^^
+    Box.(init) ...[self]
+    # error: the first argument to `(init)` must be the constructor's receiver
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |   def (init) self other
+    #    |              ---- method receiver declared here
+    # ...
+    # LL |     Box.(init) ...[self]
+    #    |                ^^^^^^^^^
+    let alias = self
+    Box.(init) $alias
+    # error: the first argument to `(init)` must be the constructor's receiver
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |   def (init) self other
+    #    |              ---- method receiver declared here
+    # ...
+    # LL |     Box.(init) $alias
+    #    |                ^^^^^^
+    let _ = Box.(init)
+    # error: `(init)` may only be used as a direct constructor call
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |   def (init) self other
+    #    |              ---- method receiver declared here
+    # ...
+    # LL |     let _ = Box.(init)
+    #    |                  ^^^^
+    let _ = do Box.(init) $self
+    # error: `(init)` calls are only allowed in a constructor body
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |     let _ = do Box.(init) $self
+    #    |                     ^^^^
+    def nested()
+      Box.(init) $self
+    # error: `(init)` calls are only allowed in a constructor body
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |       Box.(init) $self
+    #    |            ^^^^
+    nested()
+
+  pub def reset self
+    Box.(init) $self
+# error: `(init)` calls are only allowed in a constructor body
+#   --> class_receiver_error.dol:LL:LL
+#    |
+# LL |     Box.(init) $self
+#    |          ^^^^
+
+let _ = Box.(init)
+# error: `(init)` may only be used as a direct constructor call
+#   --> class_receiver_error.dol:LL:LL
+#    |
+# LL | let _ = Box.(init)
+#    |              ^^^^
+Box.(init) nil
+# error: `(init)` calls are only allowed in a constructor body
+#   --> class_receiver_error.dol:LL:LL
+#    |
+# LL | Box.(init) nil
+#    |      ^^^^
+
+pub class More
+  field value = 0
+
+  #[class]
+  pub def bad cls other
+    other.#value = 1
+    # error: private members require the enclosing class's receiver
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |   pub def bad cls other
+    #    |               --- method receiver declared here
+    # LL |     other.#value = 1
+    #    |     ^^^^^
+    cls = other
+  # error: method receiver bindings cannot be reassigned
+  #   --> class_receiver_error.dol:LL:LL
+  #    |
+  # LL |   pub def bad cls other
+  #    |               --- method receiver declared here
+  # ...
+  # LL |     cls = other
+  #    |     ^^^
+
+  #[static]
+  pub def replace cls other
+    cls = other
+  # error: method receiver bindings cannot be reassigned
+  #   --> class_receiver_error.dol:LL:LL
+  #    |
+  # LL |   pub def replace cls other
+  #    |                   --- method receiver declared here
+  # LL |     cls = other
+  #    |     ^^^
+
+  pub def computed self
+    let _ = (do self)().#value
+  # error: private members require the enclosing class's receiver
+  #   --> class_receiver_error.dol:LL:LL
+  #    |
+  # LL |   pub def computed self
+  #    |                    ---- method receiver declared here
+  # LL |     let _ = (do self)().#value
+  #    |             ^^^^^^^^^^^
+
+  def (init) self :value = More.(init)(self)
+    # error: `(init)` calls are only allowed in a constructor body
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |   def (init) self :value = More.(init)(self)
+    #    |                                  ^^^^
+    let _ = value
+    More.(init)(self: self)
+    # error: the first argument to `(init)` must be the constructor's receiver
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |   def (init) self :value = More.(init)(self)
+    #    |              ---- method receiver declared here
+    # ...
+    # LL |     More.(init)(self: self)
+    #    |                 ^^^^^^^^^^
+    More.(init)((do self)())
+    # error: the first argument to `(init)` must be the constructor's receiver
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |   def (init) self :value = More.(init)(self)
+    #    |              ---- method receiver declared here
+    # ...
+    # LL |     More.(init)((do self)())
+    #    |                 ^^^^^^^^^^^
+    class Nested
+      field value = self.#value
+      # error: private members require the enclosing class's receiver
+      #   --> class_receiver_error.dol:LL:LL
+      #    |
+      # LL |       field value = self.#value
+      #    |                     ^^^^
+      pub def reset _obj
+        More.(init) $self
+    # error: `(init)` calls are only allowed in a constructor body
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |         More.(init) $self
+    #    |               ^^^^
+    Nested()

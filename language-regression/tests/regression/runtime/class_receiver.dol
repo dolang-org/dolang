@@ -1,0 +1,68 @@
+class Base
+  field value = 0
+
+  def (init) obj value
+    obj.#value = value
+
+  def read obj
+    (obj).#value
+
+  pub def captured obj
+    do obj.#read()
+
+  pub def named obj
+    def read()
+      obj.#value
+    read()
+
+class Child: Base
+  def (init) instance value
+    if true
+      (Base.(init)) (instance) $value
+
+let obj = Child 42
+let captured = obj.captured()
+assert_eq $captured() 42
+assert_eq $obj.named() 42
+
+# Shadowing creates a new, ordinary binding, which remains assignable.
+class Shadow
+  pub def run self
+    let _ = self
+    let self = 1
+    self = 2
+    self
+assert_eq $(Shadow().run()) 2
+
+class Spread: Base
+  def (init) obj value
+    Base.(init)(obj, ...[value])
+assert_eq $(Spread(7).named()) 7
+
+class Counter
+  #[class]
+  field count = 0
+
+  #[static]
+  field total = 0
+
+  #[class]
+  def bump cls
+    cls.#count = (cls.#count + 1)
+    cls.#count
+
+  #[class]
+  pub def next cls
+    let bound = cls.#bump
+    bound()
+
+  #[static]
+  pub def add cls
+    cls.#total = (cls.#total + 1)
+    cls.#total
+
+class Derived: Counter
+assert_eq $Counter.next() 1
+assert_eq $Derived.next() 1
+assert_eq $Counter.next() 2
+assert_eq $Counter.add() 1

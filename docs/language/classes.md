@@ -223,6 +223,13 @@ pub class Point
 
 ## Private Fields
 
+Private access requires the method's first parameter as the receiver. Its name
+need not be `self`; class and static methods use their type-object parameter.
+Receiver bindings cannot be reassigned, but their fields can be written.
+Aliases and other objects cannot be used with `.#`, even inside the same class.
+Nested functions may access private members through the captured receiver;
+a nested class has its own receiver and private namespace.
+
 Fields declared without `pub` are private. Within the class, private fields are
 accessed using the `.#field` syntax:
 
@@ -386,7 +393,8 @@ assert_eq $(D().who()) B
 
 ### Calling Parent Constructor
 
-Call the parent's `(init)` explicitly to initialize inherited fields:
+Call the parent's `(init)` explicitly within a constructor body to initialize
+inherited fields. The first argument must be that constructor's receiver:
 
 ```
 class Cat: Animal
@@ -563,6 +571,11 @@ class Point
     self.#x = x
     self.#y = y
 ```
+
+Explicit `(init)` access is permitted only as a direct call in an `(init)` body,
+with that body's receiver as the first positional argument. It cannot be saved
+as a callable, invoked from a nested function, or called with an alias or spread
+in place of the receiver. Call the class to create a new instance.
 
 ### `(call)`: Function Call
 
