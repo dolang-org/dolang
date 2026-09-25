@@ -54,8 +54,11 @@ may be set once before sealing; missing associations are allowed. Elaboration
 supplies these associations, and the solver can use the literal backing types to
 enter the declared supertype hierarchy. Schemas and ordinary types share the ID
 domain but carry distinct kinds; packs are schemas, not a third kind. There are
-no solver variables, skolems, flow variables, or missing-annotation nodes. Later
-elaboration will decide how checker strictness interprets omissions.
+no solver variables, skolems, or flow variables. `Unknown` is the dynamic type
+that an omitted `def` annotation stands for, interned once like top; it is a
+type, never a schema, and a union keeps it as an ordinary member. How checker
+strictness treats an omission is decided where it was written, not by finding
+`Unknown`.
 
 Quantifiers own structural binder groups. References use relative group depth
 and declaration-order slot, each a checked `u16`. The whole group is in scope in
@@ -79,8 +82,8 @@ not subtype reasoning. Bottom is the empty union; top has an explicit node.
 Both are interned and cached when the database is created. Type interning and
 shifting accept shared database references; arena storage keeps borrowed types
 stable while the interning index uses interior mutability. Future elaboration
-will recognize `std.Value` as judgmentally equal to top; `Empty` needs only its
-ordinary alias to `Union[]`.
+treats `std.Value` as judgmentally equal to top; `Empty` needs only its ordinary
+alias to `Union[]`.
 Union expansions can remain symbolic until a consumer
 supplies their schema arguments. Declaration wrappers are not normalized away.
 Exposure follows transparent head references and reports direct cycles, stopping
@@ -99,8 +102,7 @@ identity.
 All IDs are database-local and must not be mixed between databases. Structural
 equality of open types does not imply equality of their interpretations. Future
 solver and dataflow consumers must retain interpretation environments for open
-types during exposure and substitution. Intrinsic recognition for `std.Value`
-and `std.Union`, source elaboration, and solver judgments are follow-up work.
+types during exposure and substitution.
 
 ## Standalone subtype solver
 
@@ -285,3 +287,36 @@ concluded about each span of a unit, such as a type name's referent or an
 alias's head, as text naming declarations by qualified name rather than by ID.
 The type-checking tests in `language-regression/tests/typeck` assert these with
 annotations in fixture source.
+
+Kinds come from declarations only, never from uses. A variadic binder is a
+schema and a keyword binder a type; any other binder has its bound's kind, and a
+transparent alias its body's. These equations are solved by union-find over one
+variable per binder and alias, so alias chains and cycles across units need no
+ordering. A kind nothing determines is a type. One that only an external or
+erroneous name could have determined, including an alias on a cycle, is
+flexible: it is recorded as a type but never reported as a mismatch. Every type
+expression is then checked against the kind its use requires. A rest binding's
+annotation is either kind, giving each item's type or the whole pack, and a
+variadic binder's bound likewise. Type arguments are matched to the binders
+they fill: positional arguments in order and then to a variadic binder,
+keyword arguments by name, and an expansion `...X` of either kind, a type
+expanding as any number of it. A declaration whose only binder is a schema
+takes `Foo[T]` and `Foo[K, V]` for its items. Applying a schema, a binder or a
+declaration without binders is an error, as is naming a value or module as a
+type.
+
+Signature completion fills each def and method signature with the defaults for
+what it omits, the same for public and private definitions. An omitted
+parameter, rest or return annotation is `Unknown`, a rest's as each of its
+items. An omitted ambient channel is an implicit binder with no bound,
+following the signature's written binders. A method's unannotated receiver is
+its class applied to its own binders, except on a `class` or `static` method.
+A function type written without channels in a def's signature or body, but not
+in a nested class or alias, shares that def's channels; elsewhere they are
+`Unknown`. Closures keep only their syntax: CFG flow infers what they omit.
+Nothing is interned yet, because interning a quantified type needs the variance
+of its binders. Top-level declarations of a checked `std` module named `Value`,
+`Union`, `Func`, `Int`, `Bool`, `Sym`, `Nil` and `Str` are designated for the
+database's special treatment; the same name in another module is only a
+lookalike. The `kind`, `sig`, `ambient` and `designated` judgments report
+these results.

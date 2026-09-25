@@ -11,8 +11,8 @@ use std::{
 };
 
 use super::{
-    AliasCycle, Decl, DeclNode, Head, ImportCycle, MissingExport, ModuleRef, Referent, Tables,
-    Target,
+    AliasCycle, BinderRef, Decl, DeclNode, Head, ImportCycle, MissingExport, ModuleRef, Referent,
+    Role, Site, Tables, Target,
 };
 use crate::{
     Mode, PreludeImport, Unit,
@@ -40,6 +40,7 @@ pub(crate) fn collect<'u>(
 ) -> (Tables<'u>, Vec<UnitDiag>) {
     let mut decls = Vec::new();
     let mut pending = Vec::new();
+    let mut sites = Vec::new();
     let mut exports = vec![HashMap::new(); units.len()];
     for &id in order {
         let unit = units[id.index()];
@@ -50,7 +51,9 @@ pub(crate) fn collect<'u>(
             db: &mut *db,
             decls: &mut decls,
             pending: &mut pending,
+            sites: &mut sites,
             owner: None,
+            sig: None,
             declared: HashMap::new(),
         };
         let root = &unit.ast.0;
@@ -106,6 +109,13 @@ pub(crate) fn collect<'u>(
         referents,
         aliases,
         exports,
+        sites,
+        binder_kinds: HashMap::new(),
+        alias_kinds: HashMap::new(),
+        sigs: HashMap::new(),
+        fields: HashMap::new(),
+        func_ambients: HashMap::new(),
+        designated: HashMap::new(),
     };
     (tables, diags)
 }
@@ -164,11 +174,11 @@ impl<'u> Frame<'_, 'u> {
         let found = match (&frame.kind, res.entry) {
             (FrameKind::Binders { decl, sig, binders }, TypeEntry::Binder(slot)) => {
                 binders.get(slot).map(|binder| {
-                    let referent = Referent::Binder {
+                    let referent = Referent::Binder(BinderRef {
                         decl: *decl,
                         sig: *sig,
                         slot,
-                    };
+                    });
                     (
                         Some(binder.ident.span),
                         Entry::Target(Target::Local(referent)),
@@ -267,8 +277,12 @@ struct Walk<'c, 'u> {
     db: &'c mut Database,
     decls: &'c mut Vec<Decl<'u>>,
     pending: &'c mut Vec<Pending<'u>>,
+    sites: &'c mut Vec<Site<'u>>,
     /// The declaration being walked, which encloses any found within it
     owner: Option<DeclId>,
+    /// The def or method signature whose ambient channels the types being walked
+    /// share, absent outside any def or within a class or alias declared in one
+    sig: Option<(DeclId, usize)>,
     /// The declarations of the unit's blocks, by the span of the name each declares,
     /// with the signature each def is among its function's
     declared: HashMap<Span, (DeclId, usize)>,
@@ -538,13 +552,19 @@ impl<'u> Walk<'_, 'u> {
         }
     }
 
-    fn ty(&mut self, frame: &Frame<'_, 'u>, ty: &'u TypeExpr) {
+    fn ty(&mut self, frame: &Frame<'_, 'u>, ty: &'u TypeExpr, role: Role) {
+        self.sites.push(Site {
+            unit: self.unit,
+            ty,
+            role,
+            ambient: self.sig,
+        });
         ty.names(&mut |head, res, fields| self.name(frame, head, res, fields));
     }
 
-    fn annot(&mut self, frame: &Frame<'_, 'u>, annot: &'u Option<Box<Annot>>) {
+    fn annot(&mut self, frame: &Frame<'_, 'u>, annot: &'u Option<Box<Annot>>, role: Role) {
         if let Some(annot) = annot {
-            self.ty(frame, &annot.ty);
+            self.ty(frame, &annot.ty, role);
         }
     }
 
@@ -554,10 +574,10 @@ impl<'u> Walk<'_, 'u> {
             self.param(&frame, param);
         }
         for implicit in implicits(&func.input, &func.output) {
-            self.ty(&frame, &implicit.ty);
+            self.ty(&frame, &implicit.ty, Role::Type);
         }
         if let Some(ret) = &func.ret {
-            self.ty(&frame, &ret.ty);
+            self.ty(&frame, &ret.ty, Role::Type);
         }
         for stmt in &func.body.stmts {
             self.stmt(&frame, stmt);
@@ -577,12 +597,13 @@ impl<'u> Walk<'_, 'u> {
             outer: Some(frame),
             kind: FrameKind::Binders { decl, sig, binders },
         };
-        for binder in binders {
+        for (slot, binder) in binders.iter().enumerate() {
+            let binder_ref = BinderRef { decl, sig, slot };
             if let Some(bound) = &binder.bound {
-                self.ty(&group, &bound.ty);
+                self.ty(&group, &bound.ty, Role::Bound(binder_ref));
             }
             if let Some(default) = &binder.default {
-                self.ty(&group, &default.ty);
+                self.ty(&group, &default.ty, Role::Default(binder_ref));
             }
         }
         group
@@ -597,10 +618,12 @@ impl<'u> Walk<'_, 'u> {
         binders: Option<&'u Binders>,
         func: &'u Function,
     ) {
+        let outer = self.sig.replace((decl, sig));
         let group = self.binders(frame, decl, sig, binders);
         let owner = self.owner.replace(decl);
         self.function(Some(&group), func);
         self.owner = owner;
+        self.sig = outer;
     }
 
     fn closure(&mut self, frame: &Frame<'_, 'u>, func: &'u Function) {
@@ -616,7 +639,7 @@ impl<'u> Walk<'_, 'u> {
                 if let Some(default) = default {
                     self.expr(frame, &default.expr);
                 }
-                self.annot(frame, ty);
+                self.annot(frame, ty, Role::Type);
             }
             Param::ConstKey {
                 key_expr,
@@ -628,15 +651,25 @@ impl<'u> Walk<'_, 'u> {
                 if let Some(default) = default {
                     self.expr(frame, &default.expr);
                 }
-                self.annot(frame, ty);
+                self.annot(frame, ty, Role::Type);
             }
-            Param::Rest { ty, .. } => self.annot(frame, ty),
+            Param::Rest {
+                ty,
+                type_ellipsis_span,
+                ..
+            } => {
+                let role = match type_ellipsis_span {
+                    Some(_) => Role::Pattern,
+                    None => Role::Rest,
+                };
+                self.annot(frame, ty, role);
+            }
         }
     }
 
     fn pattern(&mut self, frame: &Frame<'_, 'u>, pattern: &'u Pattern) {
         match pattern {
-            Pattern::Ident(PatIdent { ty, .. }) => self.annot(frame, ty),
+            Pattern::Ident(PatIdent { ty, .. }) => self.annot(frame, ty, Role::Type),
             Pattern::Unpack(params) => {
                 for param in params {
                     self.param(frame, param);
@@ -664,10 +697,12 @@ impl<'u> Walk<'_, 'u> {
             Stmt::Import(_) | Stmt::Break(..) | Stmt::Continue(..) => {}
             Stmt::TypeAlias(alias) => {
                 let id = self.declared(alias.ident.span);
+                let outer = self.sig.take();
                 let group = self.binders(frame, id, 0, alias.binders.as_deref());
                 if let AliasBody::Type(ty) = &alias.body {
-                    self.ty(&group, ty);
+                    self.ty(&group, ty, Role::Alias(id));
                 }
+                self.sig = outer;
             }
             Stmt::Def(def) => {
                 for decorator in &def.decorators {
@@ -705,6 +740,7 @@ impl<'u> Walk<'_, 'u> {
             self.expr(frame, &decorator.expr);
         }
         let id = self.declared(class.ident.span);
+        let outer = self.sig.take();
         let group = self.binders(frame, id, 0, class.binders.as_deref());
         let owner = self.owner.replace(id);
         for super_ref in &class.super_refs {
@@ -722,7 +758,9 @@ impl<'u> Walk<'_, 'u> {
                 self.refer(super_ref.ident.span, entry, &super_ref.fields);
             }
             for arg in &super_ref.args {
-                self.ty(&group, arg.ty());
+                // Checked with the supertype, whose binders they fill
+                arg.ty()
+                    .names(&mut |head, res, fields| self.name(&group, head, res, fields));
             }
         }
         // The methods of a name are one function, as are the overloads of a def
@@ -775,11 +813,12 @@ impl<'u> Walk<'_, 'u> {
                         }
                         FieldInit::Thunk(func) => self.closure(&group, func),
                     }
-                    self.annot(&group, &field.ty);
+                    self.annot(&group, &field.ty, Role::Type);
                 }
             }
         }
         self.owner = owner;
+        self.sig = outer;
     }
 
     fn prim(&mut self, frame: &Frame<'_, 'u>, prim: &'u PrimStmt) {
@@ -1144,11 +1183,7 @@ impl Aliases<'_, '_> {
                         self.head(*decl)
                     }
                     Some(Referent::Decl(decl)) => Head::Decl(*decl),
-                    Some(Referent::Binder { decl, sig, slot }) => Head::Binder {
-                        decl: *decl,
-                        sig: *sig,
-                        slot: *slot,
-                    },
+                    Some(Referent::Binder(binder)) => Head::Binder(*binder),
                     Some(Referent::External { module, item }) => Head::External {
                         module: module.clone(),
                         item: item.clone(),

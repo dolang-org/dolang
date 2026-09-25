@@ -1,0 +1,22 @@
+# The declarations of `std` the checker treats specially.
+
+pub class Value
+#         ^~~~~: designated top
+pub @let Union[...Ts] = ...
+#        ^~~~~: designated intrinsic Union
+pub class Func
+#         ^~~~: designated intrinsic Func
+pub class Int
+#         ^~~: designated intrinsic Int
+pub class Bool
+#         ^~~~: designated intrinsic Bool
+pub class Sym
+#         ^~~: designated intrinsic Sym
+pub class Nil
+#         ^~~: designated intrinsic Nil
+pub @class Str
+# error: the checker requires this to be a class
+#   --> std.dol:LL:LL
+#    |
+# LL | pub @class Str
+#    |            ^^^

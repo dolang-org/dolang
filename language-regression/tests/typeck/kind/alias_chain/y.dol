@@ -1,0 +1,5 @@
+import z:
+  - @Fields
+
+pub @let Mid = Fields
+#        ^~~: kind schema

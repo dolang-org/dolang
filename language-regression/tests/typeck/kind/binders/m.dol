@@ -1,0 +1,43 @@
+# Only declarations determine kinds. A variadic binder is a schema, a keyword
+# binder a type, and any other binder has its bound's kind, or is a type.
+
+import @ext
+
+pub class Plain[T]
+  #             ^: kind type
+  pub field item @ T = nil
+
+pub class Bounded[S @ {...}]
+  #               ^: kind schema
+  pub field items @ ((...S) -> nil) = nil
+
+pub class Chained[A @ {...}, B @ A]
+  #               ^: kind schema
+  #                          ^: kind schema
+  pub field items @ ((...A, ...B) -> nil) = nil
+
+pub def rests[*P, **K, ...M, :Key] x @ ((...P, ...K, ...M) -> Key)
+  #            ^: kind schema
+  #                 ^: kind schema
+  #                       ^: kind schema
+  #                           ^~~: kind type
+  x
+
+# Bounds that only name each other determine nothing
+pub def cycle[U @ V, V @ U] x @ U y @ V
+  #           ^: kind type
+  #                  ^: kind type
+  [x, y]
+
+# An external bound might have been either kind
+pub def outside[E @ ext.Thing] x @ E
+  #             ^: kind flexible type
+  x
+
+pub @let Fields = {name: Str}
+#        ^~~~~~: kind schema
+pub @let Same = Fields
+#        ^~~~: kind schema
+pub @let Opaque[...Ts] = ...
+#        ^~~~~~: kind type
+#                  ^~: kind schema

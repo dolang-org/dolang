@@ -1,0 +1,7 @@
+# A renamed import reaches the designated declaration by what it refers to.
+
+import std:
+  - @Int: Integer
+
+pub let count @ Integer = 0
+#               ^~~~~~~: ref std.Int

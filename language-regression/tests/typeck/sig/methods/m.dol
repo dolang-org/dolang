@@ -1,0 +1,27 @@
+# A method's unannotated receiver is its class.
+
+pub class Box[T]
+  pub field item @ T = nil
+  pub field loose = nil
+
+  pub def get self -> T
+    #     ^~~: sig (self: Self) <#0 >#1 -> T
+    self.item
+
+  pub def map[U] self f @ ((T) -> U) -> Box[U]
+    #     ^~~: sig (self: Self, f: ((T) -> U)) <#1 >#2 -> Box[U]
+    #                          ^~: ambient <m.Box.map#1 >m.Box.map#2
+    Box(f(self.item))
+
+  pub def narrow self @ Box[Int] -> Int
+    #     ^~~~~~: sig (self: Box[Int]) <#0 >#1 -> Int
+    self.item
+
+  #[class]
+  pub def make cls x
+    #     ^~~~: sig (cls: Unknown, x: Unknown) <#0 >#1 -> Unknown
+    cls(x)
+
+pub @class Shape
+  pub def area self -> Int
+  #       ^~~~: sig (self: Self) <#0 >#1 -> Int

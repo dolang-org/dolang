@@ -31,6 +31,11 @@ pub let pair @ Pair[Int] = nil
 let count = 0
 pub let odd @ count = count
 #             ^~~~~: ref value
+# error: `count` is not a type
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let odd @ count = count
+#    |               ^^^^^
 
 pub def first[T] items @ Array[T] -> T
   #                            ^: ref binder T

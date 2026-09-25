@@ -277,9 +277,10 @@ pub @class BaseSink[T]
   pub def (put) self value @ T
 
 
-# An opaque type that mentions `S`, for a field that only marks a binder as
-# used.
-pub @let Phantom[S] = ...
+# An opaque type that mentions its type arguments, for a field that only marks
+# binders as used. A schema binder is mentioned by expanding it:
+# `Phantom[...S]`.
+pub @let Phantom[...Ts] = ...
 
 
 # A value that implements the
@@ -287,7 +288,7 @@ pub @let Phantom[S] = ...
 # protocol for the keys in `S`. A key's presence is not checked, only that the
 # value has such a key.
 pub @class Index[S @ {...}]
-  field schema @Phantom[S]
+  field schema @Phantom[...S]
 
   # Returns the value at `key`.
   pub def (index)[K, V, U @ {?(K): V, ...}] self@Index[U] key@K -> V
@@ -297,7 +298,7 @@ pub @class Index[S @ {...}]
 # [`(assign)`](../../language/classes.md#index-and-assign-subscript-access)
 # protocol for the keys in `S`, which it need not already have.
 pub @class Assign[S @ {...}]
-  field schema @Phantom[S]
+  field schema @Phantom[...S]
 
   # Sets the value at `key`.
   pub def (assign)[K, V, U @ {?(K): V, ...}] self@Assign[U] key@K value@V

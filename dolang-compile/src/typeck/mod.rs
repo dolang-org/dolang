@@ -85,7 +85,9 @@ impl<'u, 's> Builder<'u, 's> {
                 Mode::Script | Mode::Repl => (1, "", Some(compiler.file.path())),
             }
         });
-        let (tables, diags) = elab::collect(&mut db, &units, &order);
+        let (mut tables, mut diags) = elab::collect(&mut db, &units, &order);
+        elab::kinds(&mut tables, &mut diags);
+        elab::signatures(&mut tables, &mut diags);
         Check {
             diagnostics: diags
                 .iter()

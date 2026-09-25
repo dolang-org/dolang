@@ -10,8 +10,8 @@
 //! then selects a slot in declaration order. Declarations' binder metadata is
 //! parallel to the outer structural group, never a second quantifier.
 //!
-//! Missing annotations, solver variables, skolems, and flow state do not belong
-//! here. Consumers interpret free references through their own environments.
+//! Solver variables, skolems, and flow state do not belong here. `Unknown` is the
+//! dynamic type an omitted `def` annotation stands for, not a marker of the omission. Consumers interpret free references through their own environments.
 //! Invalid construction, lifecycle misuse, and representation overflow panic.
 //! Source complexity limits must be enforced before constructing these structures.
 //! Exposure returns definitions in their defining environment: a consumer must
@@ -170,6 +170,8 @@ pub(crate) enum UnionMember {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Type {
     Top,
+    /// The dynamic type, consistent with every type
+    Unknown,
     Literal(Literal),
     Decl(DeclId),
     Bound {
@@ -196,7 +198,7 @@ impl Type {
     /// quantifier boundaries crossed, including those around bounds/defaults.
     pub(crate) fn visit_children(&self, mut visit: impl FnMut(TypeId, u32)) {
         match self {
-            Self::Top | Self::Literal(_) | Self::Decl(_) | Self::Bound { .. } => {}
+            Self::Top | Self::Unknown | Self::Literal(_) | Self::Decl(_) | Self::Bound { .. } => {}
             Self::Apply { base, args, .. } => {
                 visit(*base, 0);
                 for arg in args.iter() {
@@ -300,7 +302,7 @@ impl Type {
     ) -> Result<Self, E> {
         let mut mapped = self.clone();
         match &mut mapped {
-            Self::Top | Self::Literal(_) | Self::Decl(_) | Self::Bound { .. } => {}
+            Self::Top | Self::Unknown | Self::Literal(_) | Self::Decl(_) | Self::Bound { .. } => {}
             Self::Apply { base, args, .. } => {
                 *base = f(*base, 0)?;
                 for arg in args.iter_mut() {
@@ -489,6 +491,7 @@ impl Intrinsics {
 pub(crate) struct Database {
     top: TypeId,
     bottom: TypeId,
+    unknown: TypeId,
     intrinsics: Intrinsics,
     types: intern::Table<Type, TypeTag>,
     symbols: intern::Table<String, SymbolTag>,
@@ -503,6 +506,7 @@ impl Default for Database {
         Self {
             top: types.id_owned(Type::Top),
             bottom: types.id_owned(Type::Union(alias::Box::default())),
+            unknown: types.id_owned(Type::Unknown),
             intrinsics: Intrinsics::default(),
             types,
             symbols: intern::Table::new(),
@@ -529,6 +533,11 @@ impl Database {
     /// The empty union, interned before any source declarations.
     pub(crate) fn bottom(&self) -> TypeId {
         self.bottom
+    }
+
+    /// The dynamic type, interned before any source declarations.
+    pub(crate) fn unknown(&self) -> TypeId {
+        self.unknown
     }
 
     pub(crate) fn intrinsic(&self, intrinsic: Intrinsic) -> Option<TypeId> {
@@ -704,7 +713,7 @@ impl Database {
 
     fn validate(&self, ty: &Type) {
         match ty {
-            Type::Top | Type::Literal(_) | Type::Bound { .. } => {}
+            Type::Top | Type::Unknown | Type::Literal(_) | Type::Bound { .. } => {}
             Type::Decl(id) => {
                 self.declarations.get(*id);
             }
