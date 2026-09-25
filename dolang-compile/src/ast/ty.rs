@@ -274,7 +274,59 @@ impl TypeExpr {
     }
 }
 
+impl TypeExpr {
+    /// Visit each name within the type as [`each_name`](Self::each_name) does, without
+    /// changing it.
+    pub(crate) fn names<'a>(&'a self, f: &mut impl FnMut(Span, Option<TypeRes>, &'a [Span])) {
+        match self {
+            TypeExpr::Name { head, fields, res } => f(*head, *res, fields),
+            TypeExpr::Const { .. } | TypeExpr::Error => {}
+            TypeExpr::App { base, args, .. } => {
+                base.names(f);
+                for arg in args {
+                    arg.ty().names(f);
+                }
+            }
+            TypeExpr::Schema { params, .. } => {
+                for ty in params.iter().flat_map(TypeParam::tys) {
+                    ty.names(f);
+                }
+            }
+            TypeExpr::Group { ty, .. } => ty.names(f),
+            TypeExpr::Union { members, .. } => {
+                for member in members {
+                    member.names(f);
+                }
+            }
+            TypeExpr::Func {
+                params,
+                input,
+                output,
+                ret,
+                ..
+            } => {
+                for ty in params.iter().flat_map(TypeParam::tys) {
+                    ty.names(f);
+                }
+                for implicit in implicits(input, output) {
+                    implicit.ty.names(f);
+                }
+                ret.names(f);
+            }
+        }
+    }
+}
+
 impl TypeArg {
+    /// The argument's type.
+    pub(crate) fn ty(&self) -> &TypeExpr {
+        match &self.kind {
+            TypeArgKind::Pos(ty) | TypeArgKind::Key { ty, .. } | TypeArgKind::Expand { ty, .. } => {
+                ty
+            }
+        }
+    }
+
     fn each_name<F: FnMut(Span, &mut Option<TypeRes>, &[Span])>(&mut self, f: &mut F) {
         self.ty_mut().each_name(f);
     }
@@ -294,6 +346,24 @@ impl TypeParam {
         for ty in self.tys_mut() {
             ty.each_name(f);
         }
+    }
+
+    /// The item's key type, if it has one, then its type.
+    pub(crate) fn tys(&self) -> impl Iterator<Item = &TypeExpr> {
+        let (key_ty, ty) = match &self.kind {
+            Some(TypeParamKind::Pos(ty)) | Some(TypeParamKind::Include { ty, .. }) => {
+                (None, Some(ty))
+            }
+            Some(TypeParamKind::Key { key, ty, .. }) => (
+                match key {
+                    TypeKey::Sym(_) => None,
+                    TypeKey::Type(key_ty) => Some(&**key_ty),
+                },
+                Some(ty),
+            ),
+            Some(TypeParamKind::Open { .. }) | None => (None, None),
+        };
+        key_ty.into_iter().chain(ty)
     }
 
     /// The item's key type, if it has one, then its type.

@@ -250,7 +250,30 @@ every location, so one diagnostic can point into several units. Mapping a unit
 to its file and rendering diagnostics belong to callers. Token and document
 spans remain local.
 
-No semantic checking runs yet, so a `Check` has no diagnostics. Callers
-assemble modules and stubs without executing imports. Embedding-provided
-ambient endpoint types will require an explicit caller-selected environment on
-the builder.
+Callers assemble modules and stubs without executing imports.
+Embedding-provided ambient endpoint types will require an explicit
+caller-selected environment on the builder.
+
+## Elaborating declarations
+
+`Builder::check` allocates each unit in the database, in the order units were
+added, then runs the passes in `typeck/elab` over common tables and the frozen
+syntax trees. The tables refer to declaration nodes in place.
+
+Collection walks each unit with the frames type resolution pushed, binder groups
+and lexical scopes, so each type name's `TypeRes` nominates its target without a
+side table. Entering a scope allocates a `DeclId` for each class, protocol,
+alias and function its statements declare; a def's `@def` overloads join its
+function, as the methods of one name do in a class body. Lambdas and field
+initializers are closure declarations, and each declaration records the one
+enclosing it.
+
+A module's exports are its root block's `pub` declarations and bindings, and the
+names its `pub` imports re-export. Once every unit is collected, each type name
+that goes through an import follows the exports of the units checked, and the
+referent of every type name is recorded by the span of its head. Imports and
+renames are chased away but aliases are not, so `Pair[Int]` refers to the
+`Pair` alias; an item of a module no unit provides is external. Each transparent
+alias then has its underlying head found by following alias chains, in
+declaration order. Import cycles, alias cycles and imports of names a checked
+module does not export are diagnosed.

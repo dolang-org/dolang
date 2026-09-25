@@ -1,5 +1,6 @@
 //! Static checking of a set of compilation units.
 
+pub(crate) mod elab;
 pub(crate) mod solver;
 pub(crate) mod r#type;
 
@@ -60,8 +61,22 @@ impl<'u, 's> Builder<'u, 's> {
 
     /// Check the units.
     pub fn check(self) -> Check {
+        let mut db = r#type::Database::new();
+        for index in 0..self.units.len() {
+            assert_eq!(
+                db.allocate_unit().index(),
+                index,
+                "units are allocated in order"
+            );
+        }
+        let units: Vec<&Unit<'_>> = self.units;
+        // The tables are what later stages of elaboration will consume
+        let (_tables, diags) = elab::collect(&mut db, &units);
         Check {
-            diagnostics: Vec::new(),
+            diagnostics: diags
+                .iter()
+                .map(|(unit, diag)| diag.resolve_in(&units[unit.index()].compiler, Some(*unit)))
+                .collect(),
         }
     }
 }

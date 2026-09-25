@@ -33,7 +33,7 @@ macro_rules! id {
         pub(crate) struct $name(NonZeroU32);
 
         impl $name {
-            fn from_index(index: usize) -> Self {
+            pub(crate) fn from_index(index: usize) -> Self {
                 Self(
                     NonZeroU32::new(
                         u32::try_from(index.checked_add(1).expect("database too large"))
@@ -43,7 +43,7 @@ macro_rules! id {
                 )
             }
 
-            fn index(self) -> usize {
+            pub(crate) fn index(self) -> usize {
                 self.0.get() as usize - 1
             }
         }
@@ -351,7 +351,7 @@ impl Type {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct UnitSpan {
     pub(crate) unit: UnitId,
     pub(crate) span: Span,

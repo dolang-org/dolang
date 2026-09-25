@@ -9,7 +9,7 @@ use crate::diag::{self, Annotation, AnnotationKind, NoteKind, Pos, Severity};
 
 use dolang_util::mono::MonoVec;
 
-use super::Compiler;
+use super::{Compiler, UnitId};
 
 pub(crate) type Offset = u32;
 
@@ -257,8 +257,13 @@ impl Diag {
         )
     }
 
-    pub(crate) fn resolve<'a>(&self, compiler: &Compiler<'a>) -> diag::Diag {
-        let span = diag::SourceSpan::new(None, Self::resolve_span(compiler, self.0.span()));
+    pub(crate) fn resolve(&self, compiler: &Compiler<'_>) -> diag::Diag {
+        self.resolve_in(compiler, None)
+    }
+
+    /// Resolve the diagnostic, naming `unit` as the one its locations are in.
+    pub(crate) fn resolve_in(&self, compiler: &Compiler<'_>, unit: Option<UnitId>) -> diag::Diag {
+        let span = diag::SourceSpan::new(unit, Self::resolve_span(compiler, self.0.span()));
         let mut msg = String::new();
         self.0.message(compiler, &mut msg).unwrap();
         diag::Diag::new(
@@ -266,7 +271,7 @@ impl Diag {
             span,
             msg,
             self.0.annotations().map(|a| {
-                let span = diag::SourceSpan::new(None, Self::resolve_span(compiler, a.span()));
+                let span = diag::SourceSpan::new(unit, Self::resolve_span(compiler, a.span()));
                 let mut message = String::new();
                 a.message(compiler, &mut message).unwrap();
                 Annotation {
@@ -284,7 +289,7 @@ impl Diag {
                 }
             }),
             self.0.patches().map(|p| {
-                let span = diag::SourceSpan::new(None, Self::resolve_span(compiler, p.span()));
+                let span = diag::SourceSpan::new(unit, Self::resolve_span(compiler, p.span()));
                 let mut sub = String::new();
                 p.sub(compiler, &mut sub).unwrap();
                 let mut message = String::new();
