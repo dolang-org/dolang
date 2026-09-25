@@ -1,0 +1,25 @@
+# A binder with no use is invariant, as is one used only through itself or through
+# a binder with no use. A default is not a use.
+
+pub class Unused[T]
+  #              ^: variance invariant
+  pub field loose = nil
+# warning: unused binder
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Unused[T]
+#    |                  ^
+
+pub @class Itself[T]
+  #               ^: variance invariant
+  pub def me self -> Itself[T]
+
+pub @class Through[T]
+  #                ^: variance invariant
+  pub def get self -> Unused[T]
+
+pub @class Defaulted[T]
+  #                  ^: variance covariant
+  pub def get self -> T
+  pub def find[D = T] self -> D
+  #            ^: variance covariant

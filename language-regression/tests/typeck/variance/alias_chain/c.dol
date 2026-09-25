@@ -1,0 +1,3 @@
+pub @class Box[V]
+  #            ^: variance covariant
+  pub def get self -> V

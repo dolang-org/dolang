@@ -5,3 +5,36 @@ pub let name @ Str = ""
 pub let table @ Dict[Str, Int] = {}
 #               ^~~~: ref std.Dict
 #                         ^~~: ref std.Int
+
+# The standard library's collections vary as their members use their items.
+import std:
+  - @Seq
+  - @Union
+  - @Index
+  - @Assign
+  - @Spread
+
+pub @let IterableOf[T] = Iterable[T]
+#                   ^: variance covariant
+pub @let IterOf[T] = Iter[T]
+#               ^: variance covariant
+pub @let SinkOf[T] = Sink[T]
+#               ^: variance invariant
+pub @let SeqOf[T] = Seq[T]
+#              ^: variance covariant
+pub @let ArrayOf[T] = Array[T]
+#                ^: variance invariant
+pub @let TupleOf[T] = Tuple[T]
+#                ^: variance covariant
+pub @let TypeOf[T] = Type[T]
+#               ^: variance covariant
+pub @let UnionOf[T] = Union[T]
+#                ^: variance covariant
+pub @let IndexOf[S @ {...}] = Index[S]
+#                ^: variance covariant
+pub @let AssignOf[S @ {...}] = Assign[S]
+#                 ^: variance contravariant
+pub @let SpreadOf[S @ {...}] = Spread[S]
+#                 ^: variance covariant
+pub @let DictOf[S @ {...}] = Dict[S]
+#               ^: variance invariant

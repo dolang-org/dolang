@@ -464,7 +464,7 @@ impl<'u> Check<'_, '_, 'u> {
             Named::Generic(kind, .., binders)
                 if !kind.flexible && kind.kind == Kind::Type && !binders.is_empty() =>
             {
-                return self.match_args(named, binders, args);
+                return self.match_args(named, args);
             }
             // A binder stands for a type, not for something that takes arguments
             Named::Generic(kind, ..) | Named::Kind(kind, ..) if !kind.flexible => {
@@ -480,105 +480,38 @@ impl<'u> Check<'_, '_, 'u> {
         }
     }
 
-    fn match_args(&mut self, named: &Named<'u>, binders: &'u [Binder], args: &'u [TypeArg]) {
-        let Named::Generic(_, unit, _, decl, _) = *named else {
+    fn match_args(&mut self, named: &Named<'u>, args: &'u [TypeArg]) {
+        let Named::Generic(_, _, _, decl, _) = *named else {
             unreachable!("only a declaration has binders")
         };
         let tables = self.tables;
-        let kind_of = |slot: usize| tables.binder_kinds[&BinderRef { decl, sig: 0, slot }];
-
-        // A declaration whose only binder is a schema takes `Foo[T]` for `Foo[{*T}]`
-        // and `Foo[K, V]` for `Foo[{*(K): V}]`
-        if let [binder] = binders
-            && matches!(binder.kind, BinderKind::Pos)
-            && kind_of(0).kind == Kind::Schema
-            && !kind_of(0).flexible
-        {
-            let single_schema = matches!(args, [TypeArg { kind: TypeArgKind::Pos(ty), .. }]
-                if matches!(self.synth_kind(ty), Some(Kind::Schema)));
-            if single_schema {
-                return self.check(args[0].ty(), Some(Kind::Schema));
-            }
-            let mut positional = 0;
-            for arg in args {
-                match &arg.kind {
-                    TypeArgKind::Pos(ty) => {
-                        positional += 1;
-                        if positional == 3 {
-                            self.diag(TooManyTypeArgs(arg.ty().span()));
-                        }
-                        self.check(ty, Some(Kind::Type));
-                    }
-                    TypeArgKind::Key { name, ty, .. } => {
-                        let name_text = self.tables.text(self.unit, *name).to_owned();
-                        self.diag(UnknownTypeKeyword {
-                            span: *name,
-                            name: name_text,
-                        });
-                        self.check(ty, None);
-                    }
-                    TypeArgKind::Expand { ty, .. } => self.check(ty, None),
-                }
-            }
-            return;
-        }
-
-        let mut positional = binders
-            .iter()
-            .enumerate()
-            .filter(|(_, binder)| matches!(binder.kind, BinderKind::Pos));
-        let rest = |accepts: &dyn Fn(RestKind) -> bool| {
-            binders
-                .iter()
-                .any(|binder| matches!(binder.kind, BinderKind::Rest { kind, .. } if accepts(kind)))
-        };
-        let positional_rest = rest(&|kind| matches!(kind, RestKind::Pos | RestKind::Mixed));
-        let keyed_rest = rest(&|kind| matches!(kind, RestKind::Key | RestKind::Mixed));
-        // After an expansion, which binders later positional arguments fill is unknown
-        let mut expanded = false;
         let mut reported = false;
-        for arg in args {
-            match &arg.kind {
-                TypeArgKind::Pos(ty) => {
-                    let expected = match positional.next() {
-                        Some((slot, _)) if !expanded => Some(kind_of(slot).kind),
-                        _ if expanded => None,
-                        _ if positional_rest => Some(Kind::Type),
-                        _ => {
-                            if !reported {
-                                reported = true;
-                                self.diag(TooManyTypeArgs(ty.span()));
-                            }
-                            None
-                        }
-                    };
-                    self.check(ty, expected);
+        for (arg, fill) in args.iter().zip(tables.fill(self.unit, decl, args)) {
+            let expected = match fill {
+                Fill::Binder(slot) => {
+                    Some(tables.binder_kinds[&BinderRef { decl, sig: 0, slot }].kind)
                 }
-                TypeArgKind::Key { name, ty, .. } => {
-                    let text = tables.text(self.unit, *name);
-                    let binder = binders.iter().position(|binder| {
-                        matches!(binder.kind, BinderKind::Key { .. })
-                            && tables.text(unit, binder.ident.span) == text
+                Fill::Item(_) => Some(Kind::Type),
+                Fill::Expand(_) | Fill::Unknown => None,
+                Fill::Excess => {
+                    if !reported {
+                        reported = true;
+                        self.diag(TooManyTypeArgs(arg.ty().span()));
+                    }
+                    None
+                }
+                Fill::UnknownKeyword => {
+                    let TypeArgKind::Key { name, .. } = arg.kind else {
+                        unreachable!("only a keyword argument names a keyword")
+                    };
+                    self.diag(UnknownTypeKeyword {
+                        span: name,
+                        name: tables.text(self.unit, name).to_owned(),
                     });
-                    let expected = match binder {
-                        Some(slot) => Some(kind_of(slot).kind),
-                        None if keyed_rest => Some(Kind::Type),
-                        None => {
-                            self.diag(UnknownTypeKeyword {
-                                span: *name,
-                                name: text.to_owned(),
-                            });
-                            None
-                        }
-                    };
-                    self.check(ty, expected);
+                    None
                 }
-                // A type expands as a pack of any number of it
-                TypeArgKind::Expand { ty, .. } => {
-                    expanded = true;
-                    self.check(ty, None);
-                }
-            }
+            };
+            self.check(arg.ty(), expected);
         }
     }
 
@@ -588,7 +521,111 @@ impl<'u> Check<'_, '_, 'u> {
     }
 }
 
+/// What a type argument fills of the binders of the declaration it is applied to
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Fill {
+    /// The whole binder in this slot
+    Binder(usize),
+    /// A type among the items of the schema binder in this slot
+    Item(usize),
+    /// An expansion `...X`, into the variadic binder in this slot if it is known to
+    /// reach only that binder
+    Expand(Option<usize>),
+    /// A positional argument after an expansion, which fills a binder not known
+    Unknown,
+    /// A positional argument beyond the binders
+    Excess,
+    /// A keyword argument no binder takes
+    UnknownKeyword,
+}
+
 impl Tables<'_> {
+    /// Match the type arguments applied, in `unit`, to a declaration to the binders
+    /// they fill: positional arguments in order and then to a variadic binder, keyword
+    /// arguments by name. A declaration whose only binder is a schema takes `Foo[T]`
+    /// for `Foo[{*T}]` and `Foo[K, V]` for `Foo[{*(K): V}]`.
+    pub(crate) fn fill(&self, unit: UnitId, decl: DeclId, args: &[TypeArg]) -> Vec<Fill> {
+        let binders = self.binders(decl, 0);
+        let kind_of = |slot: usize| self.binder_kinds[&BinderRef { decl, sig: 0, slot }];
+
+        if let [binder] = binders
+            && matches!(binder.kind, BinderKind::Pos)
+            && kind_of(0).kind == Kind::Schema
+            && !kind_of(0).flexible
+        {
+            if let [
+                TypeArg {
+                    kind: TypeArgKind::Pos(ty),
+                    ..
+                },
+            ] = args
+                && self.kind_of(unit, ty) == Some(Kind::Schema)
+            {
+                return vec![Fill::Binder(0)];
+            }
+            let mut positional = 0;
+            return args
+                .iter()
+                .map(|arg| match arg.kind {
+                    TypeArgKind::Pos(_) => {
+                        positional += 1;
+                        match positional {
+                            ..=2 => Fill::Item(0),
+                            _ => Fill::Excess,
+                        }
+                    }
+                    TypeArgKind::Key { .. } => Fill::UnknownKeyword,
+                    TypeArgKind::Expand { .. } => Fill::Expand(Some(0)),
+                })
+                .collect();
+        }
+
+        let mut positional = binders
+            .iter()
+            .enumerate()
+            .filter(|(_, binder)| matches!(binder.kind, BinderKind::Pos))
+            .map(|(slot, _)| slot);
+        let rest = |accepts: &dyn Fn(RestKind) -> bool| {
+            binders.iter().position(
+                |binder| matches!(binder.kind, BinderKind::Rest { kind, .. } if accepts(kind)),
+            )
+        };
+        let positional_rest = rest(&|kind| matches!(kind, RestKind::Pos | RestKind::Mixed));
+        let keyed_rest = rest(&|kind| matches!(kind, RestKind::Key | RestKind::Mixed));
+        let any_rest = rest(&|_| true);
+        // After an expansion, which binders later positional arguments fill is unknown
+        let mut expanded = false;
+        args.iter()
+            .map(|arg| match &arg.kind {
+                TypeArgKind::Pos(_) => match positional.next() {
+                    _ if expanded => Fill::Unknown,
+                    Some(slot) => Fill::Binder(slot),
+                    None => positional_rest.map_or(Fill::Excess, Fill::Item),
+                },
+                TypeArgKind::Key { name, .. } => {
+                    let text = self.text(unit, *name);
+                    let owner = self.decls[decl.index()].unit;
+                    binders
+                        .iter()
+                        .position(|binder| {
+                            matches!(binder.kind, BinderKind::Key { .. })
+                                && self.text(owner, binder.ident.span) == text
+                        })
+                        .map(Fill::Binder)
+                        .or(keyed_rest.map(Fill::Item))
+                        .unwrap_or(Fill::UnknownKeyword)
+                }
+                // A type expands as a pack of any number of it. It reaches only the
+                // variadic binder once every positional binder is filled.
+                TypeArgKind::Expand { .. } => {
+                    let only_rest = !expanded && positional.clone().next().is_none();
+                    expanded = true;
+                    Fill::Expand(any_rest.filter(|_| only_rest))
+                }
+            })
+            .collect()
+    }
+
     /// The kind of a type expression of `unit`, once kinds are inferred. `None` when
     /// no declaration determines it, as for an external name.
     pub(crate) fn kind_of(&self, unit: UnitId, ty: &TypeExpr) -> Option<Kind> {

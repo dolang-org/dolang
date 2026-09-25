@@ -1,0 +1,39 @@
+# Uses through a declaration's own binders, and through each other's, reach the
+# least solution. A generic method's uses of its class's binders are its class's.
+
+pub @class List[T]
+  #             ^: variance covariant
+  pub def head self -> T
+  pub def tail self -> List[T]
+
+pub @class Ping[T]
+  #             ^: variance contravariant
+  pub def pong self -> Pong[T]
+
+pub @class Pong[U]
+  #             ^: variance contravariant
+  pub def ping self -> Ping[U]
+  pub def put self x @ U
+
+pub @class Box[T]
+  #            ^: variance covariant
+  pub def get self -> T
+  pub def map[U] self f @ (T -> U) -> Box[U]
+  #       ^~~: captured T covariant
+  #           ^: variance invariant
+
+pub @class Bounded[T]
+  #                ^: variance contravariant
+  pub def put[U @ T] self x @ U
+  #       ^~~: captured T contravariant
+  #           ^: variance contravariant
+
+pub @class Pair[A, B @ Source[A]]
+  #             ^: variance invariant
+  #                ^: variance covariant
+  pub def first self -> A
+  pub def second self -> B
+
+pub @class Source[S]
+  #               ^: variance covariant
+  pub def get self -> S

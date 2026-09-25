@@ -1,3 +1,5 @@
 # A declaration of the same name in another module is only a lookalike.
 
 pub class Int
+pub @let Phantom[...Ts] = ...
+#                   ^~: variance invariant

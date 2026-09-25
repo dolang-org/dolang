@@ -1,0 +1,41 @@
+# A def uses its parameters contravariantly and its result covariantly, and a
+# function type reverses what its parameters use.
+
+pub @class Source[T]
+  #               ^: variance covariant
+  pub def get self -> T
+
+pub @class Target[T]
+  #               ^: variance contravariant
+  pub def put self x @ T
+
+pub @class Both[T]
+  #             ^: variance invariant
+  pub def get self -> T
+  pub def put self x @ T
+
+pub @class Each[T]
+  #             ^: variance covariant
+  pub def each self f @ (T -> nil)
+
+pub @class Rests[P, K, S @ {...}]
+  #              ^: variance contravariant
+  #                 ^: variance contravariant
+  #                    ^: variance contravariant
+  pub def take self *items @ P **named @ K ...pack @ S
+
+pub @class Keyed[K, V]
+  #              ^: variance contravariant
+  #                 ^: variance contravariant
+  pub def take self ...pack @ {?(K): V}
+
+pub @class Shapes[A, B, C]
+  #               ^: variance covariant
+  #                  ^: variance contravariant
+  #                     ^: variance invariant
+  pub def get self -> (A | ((B) -> C) | ((C) -> nil))
+
+pub def pick[T, U] x @ T -> (T | U)
+  #          ^: variance invariant
+  #             ^: variance covariant
+  x
