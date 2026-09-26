@@ -11,3 +11,9 @@ pub class Int
 pub class Str
   pub def len self -> Int
     ...
+
+pub def getter func
+  ...
+
+pub def setter func
+  ...

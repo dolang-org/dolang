@@ -13,13 +13,14 @@
 //! structural invariant. Nothing here validates the database.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, hash_map::Entry as MapEntry},
     fmt::{self, Write},
 };
 
 use super::{
     Ambient, BinderRef, DeclNode, Designated, Head, ParamTy, Referent, RestSlot, Role, Slot,
-    Tables, UnitDiag, sig,
+    Tables, UnitDiag,
+    sig::{self, Form},
 };
 use crate::{
     Compiler, RestKind,
@@ -51,9 +52,10 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
         let count = tables.sig_count(id);
         let primary = match &tables.decls[index].node {
             DeclNode::Defs(defs) => defs.iter().position(|def| !def.is_type_only()),
-            DeclNode::Methods(methods) => methods
-                .iter()
-                .position(|method| method.at_span.is_none() && !method.type_only),
+            // A protocol member is type-only, but not an overload signature
+            DeclNode::Methods(methods) => {
+                methods.iter().position(|method| method.at_span.is_none())
+            }
             _ => None,
         }
         .unwrap_or(0);
@@ -1119,11 +1121,13 @@ impl<'t, 'u> Populate<'t, 'u> {
         self.schema(items)
     }
 
-    /// A class's members, in source order. The first of a name wins.
+    /// A class's members, in source order. The first member of a key in a
+    /// namespace wins, except that a getter and a setter make one property.
     fn members(&mut self, id: DeclId, group: Group<'_>, class: &Class) -> Vec<(MemberKey, Member)> {
         let tables = self.tables;
         let unit = group.unit;
-        // A method's overloads share the scope and visibility of its implementation
+        // A function's overload signatures share the scope, visibility and form of
+        // its implementation
         let mut methods = HashMap::new();
         for (index, decl) in tables.decls.iter().enumerate() {
             if decl.outer == Some((id, 0))
@@ -1131,66 +1135,106 @@ impl<'t, 'u> Populate<'t, 'u> {
             {
                 let primary = found
                     .iter()
-                    .find(|method| method.at_span.is_none() && !method.type_only)
+                    .find(|method| method.at_span.is_none())
                     .unwrap_or(&found[0]);
-                let key = (
-                    primary.special.is_some(),
-                    tables.text(unit, primary.name_span),
-                );
-                methods.insert(key, (DeclId::from_index(index), *primary));
+                methods.insert(primary.name_span, (DeclId::from_index(index), *primary));
             }
         }
-        let mut seen = HashSet::new();
+        // Instance members and type-object members are separate namespaces
+        let mut index = HashMap::new();
         let mut members = Vec::new();
         for member in &class.body.members {
             match member {
                 ClassMember::Field(field) => {
+                    let scope = match field.scope {
+                        MemberScope::Instance => Scope::Instance,
+                        MemberScope::Class => Scope::Class,
+                        MemberScope::Static => Scope::Static,
+                    };
                     for name in &field.fields {
                         let key = MemberKey {
                             name: self.db.intern_symbol(tables.text(unit, name.ident.span)),
                             special: false,
+                            private: field.pub_span.is_none(),
                         };
-                        if !seen.insert(key) {
+                        let MapEntry::Vacant(entry) = index.entry((key, scope == Scope::Instance))
+                        else {
                             continue;
-                        }
+                        };
+                        entry.insert(members.len());
                         let slot = tables.fields[&(id, name.ident.span)];
                         let ty = self.slot(id, group, &slot);
                         members.push((
                             key,
                             Member::Field {
                                 ty,
-                                scope: match field.scope {
-                                    MemberScope::Instance => Scope::Instance,
-                                    MemberScope::Class => Scope::Class,
-                                    MemberScope::Static => Scope::Static,
-                                },
+                                scope,
                                 public: field.pub_span.is_some(),
                             },
                         ));
                     }
                 }
                 ClassMember::Method(method) => {
-                    let text = tables.text(unit, method.name_span);
-                    let key = MemberKey {
-                        name: self.db.intern_symbol(text),
-                        special: method.special.is_some(),
-                    };
-                    if !seen.insert(key) {
+                    let Some(&(decl, primary)) = methods.get(&method.name_span) else {
+                        // An overload signature, with its implementation's function
                         continue;
+                    };
+                    let key = MemberKey {
+                        name: self.db.intern_symbol(tables.text(unit, primary.name_span)),
+                        special: primary.special.is_some(),
+                        private: primary.pub_span.is_none() && primary.special.is_none(),
+                    };
+                    let scope = sig::method_scope(tables, unit, primary);
+                    // A special method other than `(init)` is reached by the runtime
+                    // from anywhere
+                    let public = primary.pub_span.is_some()
+                        || matches!(primary.special, Some(special)
+                            if !matches!(special, SpecialMethod::Init));
+                    let form = sig::method_form(tables, unit, primary);
+                    match index.entry((key, scope == Scope::Instance)) {
+                        MapEntry::Occupied(entry) => {
+                            let (_, found) = &mut members[*entry.get()];
+                            match (form, found) {
+                                (
+                                    Form::Getter,
+                                    Member::Property {
+                                        getter: slot @ None,
+                                        ..
+                                    },
+                                )
+                                | (
+                                    Form::Setter,
+                                    Member::Property {
+                                        setter: slot @ None,
+                                        ..
+                                    },
+                                ) => *slot = Some(decl),
+                                _ => {}
+                            }
+                        }
+                        MapEntry::Vacant(entry) => {
+                            entry.insert(members.len());
+                            let member = match form {
+                                Form::Plain => Member::Method {
+                                    decl,
+                                    scope,
+                                    public,
+                                },
+                                Form::Getter | Form::Setter => Member::Property {
+                                    getter: (form == Form::Getter).then_some(decl),
+                                    setter: (form == Form::Setter).then_some(decl),
+                                    scope,
+                                    public,
+                                },
+                                Form::Unknown => Member::Decorated {
+                                    decl,
+                                    scope,
+                                    public,
+                                },
+                            };
+                            members.push((key, member));
+                        }
                     }
-                    let (decl, primary) = methods[&(method.special.is_some(), text)];
-                    members.push((
-                        key,
-                        Member::Method {
-                            decl,
-                            scope: sig::method_scope(tables, unit, primary),
-                            // A special method other than `(init)` is reached by the
-                            // runtime from anywhere
-                            public: primary.pub_span.is_some()
-                                || matches!(primary.special, Some(special)
-                                    if !matches!(special, SpecialMethod::Init)),
-                        },
-                    ));
                 }
             }
         }

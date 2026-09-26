@@ -45,8 +45,16 @@ parallel metadata for the definition's outer structural binder group, including
 whether each slot was lifted from an enclosing declaration, written, or an
 implicit ambient binder. A class or protocol also records its members by name:
 fields with their type, scope and visibility, and methods by their function
-declaration. An overloaded function records each of its signatures, which are
-declarations of their own. Unit IDs
+declaration. A private member is named apart from public ones, as the runtime
+gives it a symbol of its class's own, and instance and type-object members are
+separate namespaces; otherwise the first member of a name wins. A method's
+decorators decide what it becomes. Only `class` and `static` mean something
+fixed by syntax; until decorator applications are evaluated, std's `getter` and
+`setter`, found by what their names resolve to, make a method half of a computed
+field's property, and any other decorator leaves a member of unknown type. Each
+implementation of a method name is a function of its own, so a getter and a
+setter are two. An overloaded function records each of its signatures, which are
+declarations of their own, with its first implementation. Unit IDs
 are allocated from a counter and checked when declarations are populated.
 Filenames and local symbol mappings belong to upper layers. Ordinary symbols are
 interned by spelling; callers can allocate fresh symbols separately when source
@@ -288,6 +296,36 @@ obligation, so reprocessing derives the same obligations without creating
 variables. Variables never leave the solver: flow analysis creates a solver per
 step and exports only reified types. A quantifier on the right, which needs
 skolems, is residual.
+
+### Member lookup
+
+`typeck/solver/member.rs` finds a receiver's member as the runtime does. It is a
+query on the solver, not a judgment: it adds no bounds, but the receiver is a
+term, possibly holding inference variables, and its class is reached through the
+same substitution-carrying walk as subtyping. A rigid in scope is looked up
+through its bound, and a literal or function through its intrinsic class. An
+unsolved variable is residual, a union is unsupported until alternatives are
+judged, `Unknown` is dynamic, and `Value` has no members.
+
+The class and its ancestors are searched in MRO order, left to right and depth
+first, and the first member of the name wins. A supertype that isn't nominal
+makes a member not yet found dynamic. Instance members and type-object members
+are separate namespaces. An instance with no member of an ordinary name falls
+back to its class's `(get)` and `(set)` methods. A class object has type
+`Type[C]`: its members are `C`'s class members, its static members only on `C`
+itself, and then `C`'s instance methods, unbound. A private member is its
+class's own, so private access names that class, and the receiver is walked to
+it.
+
+A found member is interpreted with the arguments its class is reached with. A
+method is lifted over its class's binders, so `Database::split` separates them
+from its own and the class's arguments are applied, leaving it quantified over
+the rest: `map[U] self f @ (T -> U) -> U` found through `Box[Int]` is
+`[U] (Box[Int], (Int -> U)) -> U`. Its receiver parameter stays, so a call
+passes the receiver as its first argument, and each signature of an overloaded
+method is applied alike. A property's getter and setter are methods. A
+result says whether the member is public, since only a public member can be
+replaced in a subclass, so only access to one may dispatch.
 
 ### Assignments and fixed point
 

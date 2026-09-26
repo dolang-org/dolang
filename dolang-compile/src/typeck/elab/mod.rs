@@ -252,6 +252,10 @@ pub(crate) enum Designated {
     Value,
     /// `std.Phantom`, which marks its arguments as used covariantly
     Phantom,
+    /// `std.getter`, which makes a method a computed field's getter
+    Getter,
+    /// `std.setter`, which makes a method a computed field's setter
+    Setter,
     Intrinsic(Intrinsic),
 }
 

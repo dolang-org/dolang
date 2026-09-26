@@ -26,6 +26,15 @@ pub class Sink[T]
   #       ^~~~: designated intrinsic Sink
   pub def put self value @ T
     ...
+pub class Type[T]
+  #       ^~~~: designated intrinsic Type
+  field instance @ Phantom[T]
+pub def getter func
+  #     ^~~~~~: designated getter
+  func
+pub def setter func
+  #     ^~~~~~: designated setter
+  func
 pub @class Str
 # error: the checker requires this to be a class
 #   --> std.dol:LL:LL

@@ -289,6 +289,13 @@ struct Nominal {
     environment: EnvironmentId,
 }
 
+/// What an MRO walk visits
+enum Visited<'a> {
+    Nominal(&'a Nominal),
+    /// A supertype that isn't nominal
+    Structural,
+}
+
 /// The outer form of a term after resolving environment references, exposing
 /// transparent declarations, and instantiating supported applications. Children
 /// remain contextual terms rather than recursively normalized types. Nominal
@@ -1283,10 +1290,27 @@ impl<'db> Solver<'db> {
         path: &mut HashSet<DeclId>,
         depth: usize,
     ) -> Result<Option<Nominal>, Issue> {
+        self.preorder(current, path, depth, &mut |visited| match visited {
+            Visited::Nominal(nominal) if nominal.declaration == target => Ok(Some(nominal.clone())),
+            Visited::Nominal(_) => Ok(None),
+            Visited::Structural => Err(Residual::Unsupported.into()),
+        })
+    }
+
+    /// Visit `current` and its ancestors in MRO order, left to right and depth
+    /// first, until `visit` finds something. A supertype that isn't nominal is
+    /// visited as structural, and its ancestors are unknown.
+    fn preorder<T>(
+        &self,
+        current: Nominal,
+        path: &mut HashSet<DeclId>,
+        depth: usize,
+        visit: &mut impl FnMut(Visited<'_>) -> Result<Option<T>, Issue>,
+    ) -> Result<Option<T>, Issue> {
         self.depth(depth)?;
         self.spend()?;
-        if current.declaration == target {
-            return Ok(Some(current));
+        if let Some(found) = visit(Visited::Nominal(&current))? {
+            return Ok(Some(found));
         }
         if !path.insert(current.declaration) {
             return Err(Residual::Recursive.into());
@@ -1294,11 +1318,12 @@ impl<'db> Solver<'db> {
         let supers = &self.db.declaration(current.declaration).supertypes;
         for &ty in supers.iter() {
             let head = self.head(self.view(ty, current.environment))?;
-            let Head::Nominal(next) = head else {
-                return Err(Residual::Unsupported.into());
+            let found = match head {
+                Head::Nominal(next) => self.preorder(next, path, depth + 1, visit)?,
+                _ => visit(Visited::Structural)?,
             };
-            if let Some(found) = self.ancestor(next, target, path, depth + 1)? {
-                return Ok(Some(found));
+            if found.is_some() {
+                return Ok(found);
             }
         }
         path.remove(&current.declaration);
@@ -1849,6 +1874,7 @@ impl<'db> Solver<'db> {
     }
 }
 
+mod member;
 mod schema;
 
 #[cfg(test)]

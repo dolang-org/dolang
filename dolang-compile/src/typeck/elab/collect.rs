@@ -18,7 +18,7 @@ use crate::{
     Mode, PreludeImport, Unit,
     ast::{
         AliasBody, Annot, Arg, ArrayElem, Binder, Binders, Block, Class, ClassMember, DictElem,
-        Expr, ExprBody, FieldInit, For, Function, Ident, If, ImportElement, LValue, Param,
+        Expr, ExprBody, FieldInit, For, Function, Ident, If, ImportElement, LValue, Method, Param,
         PatIdent, Pattern, PrimStmt, Res, Stmt, TypeDecl, TypeEntry, TypeExpr, TypeRes, Var,
         implicits,
     },
@@ -772,42 +772,62 @@ impl<'u> Walk<'_, 'u> {
                     .names(&mut |head, res, fields| self.name(&group, head, res, fields));
             }
         }
-        // The methods of a name are one function, as are the overloads of a def
+        // A method's overload signatures are one function with its first
+        // implementation, as a def's are. Each other implementation of the name is a
+        // function of its own, as a getter and a setter are.
         let file = self.file;
-        let mut methods: HashMap<_, DeclId> = HashMap::new();
-        let mut sigs = Vec::new();
+        let mut grouped: HashMap<_, Vec<&'u Method>> = HashMap::new();
+        let mut names = Vec::new();
         for member in &class.body.members {
             let ClassMember::Method(method) = member else {
                 continue;
             };
             let key = (method.special.is_some(), file.str(method.name_span));
-            sigs.push(match methods.entry(key) {
-                MapEntry::Occupied(entry) => {
-                    let id = *entry.get();
-                    let DeclNode::Methods(methods) = &mut self.decls[id.index()].node else {
-                        unreachable!("a method groups with methods")
-                    };
-                    methods.push(method);
-                    (id, methods.len() - 1)
-                }
-                MapEntry::Vacant(entry) => {
-                    let id = self.allocate(
-                        DeclKind::Function,
-                        Some(method.name_span),
-                        DeclNode::Methods(vec![method]),
-                    );
-                    entry.insert(id);
-                    (id, 0)
-                }
-            });
+            grouped
+                .entry(key)
+                .or_insert_with(|| {
+                    names.push(key);
+                    Vec::new()
+                })
+                .push(method);
         }
-        let mut sigs = sigs.into_iter();
+        let mut sigs = HashMap::new();
+        for key in names {
+            let methods = &grouped[&key];
+            let first = methods.iter().position(|method| method.at_span.is_none());
+            let mut overloaded = Vec::new();
+            let mut single = Vec::new();
+            for (index, &method) in methods.iter().enumerate() {
+                if method.at_span.is_some() || first.is_none_or(|first| first == index) {
+                    overloaded.push(method);
+                } else {
+                    single.push(vec![method]);
+                }
+            }
+            for methods in iter::once(overloaded).chain(single) {
+                let id = self.allocate(
+                    DeclKind::Function,
+                    Some(methods[0].name_span),
+                    DeclNode::Methods(methods.clone()),
+                );
+                for (sig, method) in methods.into_iter().enumerate() {
+                    sigs.insert(method.name_span, (id, sig));
+                }
+            }
+        }
         for member in &class.body.members {
             match member {
                 ClassMember::Method(method) => {
-                    let (id, sig) = sigs.next().expect("a signature for each method");
+                    let (id, sig) = sigs[&method.name_span];
                     for decorator in &method.decorators {
                         self.expr(&group, &decorator.expr);
+                        // Only std's `getter` and `setter` are recognized so far
+                        if let Expr::Ident(ident) = &decorator.expr
+                            && let Some(res) = ident.res
+                            && let Some(entry) = group.value_entry(res)
+                        {
+                            self.refer(ident.span, entry, &[]);
+                        }
                     }
                     self.def(&group, id, sig, method.binders.as_deref(), &method.func);
                 }
