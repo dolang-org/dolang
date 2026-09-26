@@ -1,0 +1,56 @@
+import std:
+  - UnexpectedKeyError
+import regression2:
+  - keyword_rest
+  - mixed_rest
+
+def required :msg
+  msg
+def optional :msg = 42
+  msg
+
+# Native callme has a required msg; assert has an optional msg.
+let native_required = do |...args| callme (do |:msg| msg) ...args
+let native_optional = do |...args| assert true ...args
+for f = [required, optional, native_required, native_optional]
+  f msg: nil
+  assert_throws $UnexpectedKeyError str: "duplicate keyword argument: msg" do
+    f msg: nil msg: 2
+  assert_throws $UnexpectedKeyError str: "duplicate keyword argument: msg" do
+    f ...(msg: 1, msg: 2)
+  assert_throws $UnexpectedKeyError str: "duplicate keyword argument: msg" do
+    f msg: 1 ...{msg: 2}
+  assert_throws $UnexpectedKeyError str: "duplicate keyword argument: msg" do
+    f ...{msg: 1} msg: 2
+
+assert_eq (required msg: 7) 7
+assert_eq (optional()) 42
+assert_eq (optional msg: nil) nil
+
+def keys :msg :optional = nil **rest
+  let _ = [msg, optional]
+  rest
+def mixed :msg :optional = nil ...rest
+  let _ = [msg, optional]
+  rest
+let native_keys = do |...args| keyword_rest $record ...args
+let native_mixed = do |...args| mixed_rest $record ...args
+for f = [keys, mixed, native_keys, native_mixed]
+  assert_eq (f msg: 1 x: 2 y: 3 x: 4) (x: 2, y: 3, x: 4)
+  assert_eq (f msg: 1 ...(x: 2, y: 3, x: 4)) (x: 2, y: 3, x: 4)
+  assert_throws $UnexpectedKeyError str: "duplicate keyword argument: msg" do
+    f msg: 1 msg: 2
+  assert_throws $UnexpectedKeyError str: "duplicate keyword argument: optional" do
+    f msg: 1 optional: nil ...{optional: 2}
+for f = [mixed, native_mixed]
+  assert_eq (f 1 msg: 2 x: 3 4 x: 5) (1, x: 3, 4, x: 5)
+
+def discard :msg **
+  msg
+assert_eq (discard msg: 1 x: 2 x: 3) 1
+assert_throws $UnexpectedKeyError str: "duplicate keyword argument: msg" do
+  discard msg: 1 msg: 2
+
+# Errors clean up the frame and don't affect subsequent invocations.
+assert_eq (required msg: 9) 9
+assert_eq (optional()) 42

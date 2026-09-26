@@ -1,0 +1,54 @@
+import std:
+  - TypeError
+  - UnexpectedKeyError
+  - UnexpectedPosError
+
+let original = (10, a: 1, 20, b: 2, a: 3, c: 4, 30)
+let saved = (10, a: 1, 20, b: 2, a: 3, c: 4, 30)
+assert_eq (original.with a: 9) (10, a: 9, 20, b: 2, c: 4, 30)
+assert_eq (original.with b: 9) (10, a: 1, 20, b: 9, a: 3, c: 4, 30)
+assert_eq (original.with d: 9) (10, a: 1, 20, b: 2, a: 3, c: 4, 30, d: 9)
+assert_eq (original.with c: 8 a: 7) (10, a: 7, 20, b: 2, c: 8, 30)
+assert_eq (original.with d: 1 e: 2 d: 3) (10, a: 1, 20, b: 2, a: 3, c: 4, 30, d: 3, e: 2)
+assert_eq (original.with a: 1 ...{a: 2, d: 3} a: 4) (10, a: 4, 20, b: 2, c: 4, 30, d: 3)
+assert_eq (original.with a: nil) (10, a: nil, 20, b: 2, c: 4, 30)
+assert_eq (original.without :a: :c:) (10, 20, b: 2, 30)
+assert_eq (original.without ...[:a:, :missing:, :a:]) (10, 20, b: 2, c: 4, 30)
+assert_eq (original.without :a: :b: :c:) (record 10 20 30)
+assert_eq $original.with() $saved
+assert_eq $original.without() $saved
+assert_eq $original $saved
+assert_eq $record().with() $record()
+assert_eq $record().without(:missing:) $record()
+assert_eq $record().with(a: 1) (a: 1)
+assert_eq $(record a: 1).without(:a:) $record()
+
+assert_throws $UnexpectedPosError do original.with 1
+assert_throws $UnexpectedPosError do original.with ...(record 1 a: 2)
+assert_throws $UnexpectedKeyError do original.without a: 1
+assert_throws $TypeError do original.without "a"
+assert_throws $TypeError do original.without 0
+
+let update = original.with
+let remove = original.without
+assert_eq (update a: 9) (original.with a: 9)
+assert_eq (remove :a:) (original.without :a:)
+assert_eq (Record.with original a: 9) (original.with a: 9)
+assert_eq (Record.without original :a:) (original.without :a:)
+
+class Custom: Record
+  def (init) self source
+    Record.(init) $self $source
+let custom = Custom $original
+assert_eq (type (custom.with a: 9)) $Record
+assert_eq (custom.with a: 9) (original.with a: 9)
+assert_eq (type (custom.without :a:)) $Record
+assert_eq (custom.without :a:) (original.without :a:)
+assert_eq [...custom] [...original]
+
+def consume :status
+  status
+let statuses = (status: "pending", status: "queued")
+let updated = statuses.with status: ready
+assert_eq (consume ...updated) ready
+assert_eq $statuses (status: "pending", status: "queued")

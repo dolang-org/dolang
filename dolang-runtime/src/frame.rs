@@ -79,6 +79,7 @@ impl<'v> CallFrame<'v> {
     /// - Required positional argument is missing
     /// - Unexpected positional argument (no rest parameter takes it)
     /// - Unexpected keyword argument (no rest parameter takes it)
+    /// - A named keyword argument is repeated
     /// - Required keyword argument without default is missing
     pub(crate) unsafe fn unpack_unchecked<'s>(
         &mut self,
@@ -148,7 +149,11 @@ impl<'v> CallFrame<'v> {
                         }
                         Arg::Key(sym, mut value) => {
                             if let Some(i) = unpack.sym_offset(sym) {
-                                (*slots.get_unchecked(offset + i).get()).store(value.take());
+                                let dest = &mut *slots.get_unchecked(offset + i).get();
+                                if !dest.is_uninit() {
+                                    return Err(Error::duplicate_key_raw(inner, sym));
+                                }
+                                dest.store(value.take());
                             } else {
                                 match unpack.variadic {
                                     Variadic::Capture => {

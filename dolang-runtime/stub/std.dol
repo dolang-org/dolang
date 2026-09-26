@@ -3213,7 +3213,10 @@ pub class Range[T @ Num]: Iterable[T]
 # Stores an immutable sequence of positional items and symbol-keyed items.
 #
 # Records keep their items in order, and a key may repeat. A lookup finds the
-# latest value for a key. Keys are read by indexing, not as fields:
+# latest value for a key. Spreading a repeated key into a call raises
+# [`UnexpectedKeyError`](std.UnexpectedKeyError) if it names a parameter;
+# duplicates captured by a rest remain in order. Keys are read by indexing,
+# not as fields:
 #
 # ```
 # let r = record name: Alice age: 30
@@ -3221,10 +3224,10 @@ pub class Range[T @ Num]: Iterable[T]
 # ```
 #
 # A variadic capture such as `...rest` binds a record of the remaining
-# arguments. To produce a changed record, spread the old record into a new one:
+# arguments. Use [`with`](std.Record.with) to replace keys in a new record:
 #
 # ```
-# let updated = record ...old status: ready
+# let updated = old.with status: ready
 # ```
 pub class Record[...Ts]: Iterable[Tuple[Sym | Int, Value]] @Index[{...Ts}] @Spread[{...Ts}] @Unpack[{...Ts}]
   #
@@ -3254,6 +3257,46 @@ pub class Record[...Ts]: Iterable[Tuple[Sym | Int, Value]] @Index[{...Ts}] @Spre
   # Gets the value for a symbol or position, with an optional default.
   #
   pub def get[D = nil] self key@(Int | Sym) :default@D = nil :else@(() -> D) = nil -> (Value | D)
+    ...
+
+  # Replaces keys in a new record, leaving the original unchanged.
+  #
+  # Each updated key occupies its first position; later occurrences are removed.
+  # New keys append in the order first supplied. Repeated updates use their last
+  # value. Other items, including positional items, keep their relative order.
+  # Spread a source with `...source` to supply updates.
+  #
+  # ```
+  # let r = record status: pending name: Alice status: queued
+  # assert_eq (r.with status: ready) (status: "ready", name: "Alice")
+  # ```
+  #
+  # The result annotation does not yet describe which keys changed.
+  #
+  # ## Errors
+  #
+  # Raises [`UnexpectedPosError`](std.UnexpectedPosError) for positional arguments.
+  pub def with self **updates -> Record
+    ...
+
+  # Removes all occurrences of the keys in a new record.
+  #
+  # Missing and repeated keys are harmless. Remaining items keep their relative
+  # order, and the original is unchanged. Only symbol keys can be removed.
+  # The result annotation does not yet describe which keys were removed.
+  #
+  # ```
+  # let r = record name: Alice status: ready debug: true
+  # assert_eq (r.without :status: :debug:) (name: "Alice")
+  # ```
+  #
+  # ## Errors
+  #
+  # | Exception | Condition |
+  # | --------- | --------- |
+  # | [`TypeError`](std.TypeError) | A key is not a symbol |
+  # | [`UnexpectedKeyError`](std.UnexpectedKeyError) | A keyword argument is supplied |
+  pub def without self *keys@Sym -> Record
     ...
 
   #
@@ -4478,7 +4521,7 @@ pub class Type[T]
   field instance @ Phantom[T]
 
 #
-# Raised when an unexpected key argument is passed.
+# Raised when a key argument is unexpected or repeats a named parameter.
 #
 pub class UnexpectedKeyError: RuntimeError
   #

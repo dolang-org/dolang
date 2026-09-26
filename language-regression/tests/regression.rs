@@ -274,6 +274,7 @@ mod detail {
             .spawn(move || {
                 futures::executor::block_on(Builder::build(async |vm| {
                     let msg = vm.sym("msg");
+                    let optional = vm.sym("optional");
                     let footy = vm.register_type::<Foo>();
                     let test_flags_ty = TestFlags::register_type(vm);
 
@@ -306,6 +307,16 @@ mod detail {
                     .function("callme", async move |strand, args, out| {
                         let ([func, input], _) = unpack!(strand, args, 1, 0, msg)?;
                         call!(strand, func, out, msg: input).await
+                    })
+                    .function("keyword_rest", async move |strand, args, out| {
+                        let ([func, _required], [_optional], rest) = args
+                            .unpack::<1, 1, 0, 1, 2, 1, false, true>(strand, [msg], [optional])?;
+                        func.call(strand, rest.unwrap(), out).await
+                    })
+                    .function("mixed_rest", async move |strand, args, out| {
+                        let ([func, _required], [_optional], rest) =
+                            unpack!(strand, args, 1, 0, msg, optional = None, ...)?;
+                        func.call(strand, rest, out).await
                     })
                     .function("makefoo", async move |strand, args, out| {
                         let _ = unpack!(strand, args, 0, 0)?;
