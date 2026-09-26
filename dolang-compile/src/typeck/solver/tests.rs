@@ -591,13 +591,13 @@ fn unsupported_nested_forms_stay_residual() {
         output: None,
     }));
     db.seal();
-    for (a, b) in [
-        (poly, mono),
-        (variadic, mono),
-        (optional, schema(&db, &[one])),
-    ] {
+    for (a, b) in [(poly, mono), (variadic, mono)] {
         assert_eq!(check(&db, a, b).status, Status::Unresolved);
     }
+    assert!(has(
+        &check(&db, optional, schema(&db, &[one])),
+        Issue::Contradiction(Contradiction::Missing(0))
+    ));
     assert_eq!(check(&db, one, union).status, Status::Proven);
     assert_eq!(check(&db, a, b).status, Status::Proven);
     assert_eq!(check(&db, union, union).status, Status::Proven);
@@ -1988,7 +1988,7 @@ fn rest_shapes_admit_items_of_their_kinds() {
     ] {
         assert_eq!(check(&db, a, b).status, Status::Proven);
     }
-    let item = Issue::Contradiction(Contradiction::Item);
+    let item = Issue::Contradiction(Contradiction::Excess(0));
     for (a, b) in [(pair, options), (named, ints), (maybe, empty)] {
         let result = check(&db, a, b);
         assert_eq!(result.status, Status::Contradicted);
@@ -2073,28 +2073,6 @@ fn rest_shape_inclusions_of_rigids_and_unknown() {
 }
 
 #[test]
-fn other_expected_schemas_stay_unsupported() {
-    let mut db = Database::new();
-    let int = int(&mut db);
-    let str = nominal(&mut db, "Str", vec![], vec![]);
-    let one = literal(&db, 1);
-    let positional = |ty| item(Multiplicity::Repeated, Element::Positional(ty));
-    let exact = schema(&db, &[int]);
-    let twice = items(&db, vec![positional(int), positional(str)]);
-    let repeated = items(
-        &db,
-        vec![item(Multiplicity::Repeated, Element::Include(exact))],
-    );
-    let actual = schema(&db, &[one]);
-    db.seal();
-    for expected in [exact, twice, repeated] {
-        let result = check(&db, actual, expected);
-        assert_eq!(result.status, Status::Unresolved);
-        assert!(has(&result, Residual::Unsupported.into()));
-    }
-}
-
-#[test]
 fn omitted_channels_are_used_through_their_default_bounds() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
@@ -2144,4 +2122,315 @@ fn omitted_channels_are_used_through_their_default_bounds() {
     assert_eq!(relate(input, iter_int), (Status::Proven, true));
     assert_eq!(relate(output, sink_int), (Status::Proven, true));
     assert_eq!(relate(input, sink_int).0, Status::Contradicted);
+}
+
+fn positional(multiplicity: Multiplicity, ty: TypeId) -> SchemaItem {
+    item(multiplicity, Element::Positional(ty))
+}
+
+fn keyed(multiplicity: Multiplicity, key: TypeId, value: TypeId) -> SchemaItem {
+    item(multiplicity, Element::Keyed { key, value })
+}
+
+fn include(multiplicity: Multiplicity, schema: TypeId) -> SchemaItem {
+    item(multiplicity, Element::Include(schema))
+}
+
+fn contradiction(outcome: &Outcome, contradiction: Contradiction) -> bool {
+    outcome.status == Status::Contradicted && has(outcome, Issue::Contradiction(contradiction))
+}
+
+fn residual(outcome: &Outcome, residual: Residual) -> bool {
+    outcome.status == Status::Unresolved && has(outcome, residual.into())
+}
+
+#[test]
+fn positional_items_are_distributed_by_count() {
+    use Multiplicity::{Optional as Opt, Repeated as Rep, Required as Req};
+    let mut db = Database::new();
+    let num = nominal(&mut db, "Num", vec![], vec![]);
+    let int = nominal(&mut db, "Int", vec![], vec![num]);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let s = |db: &Database, items: Vec<SchemaItem>| self::items(db, items);
+    let ints = |db: &Database, ms: &[Multiplicity]| {
+        s(db, ms.iter().map(|&m| positional(m, int)).collect())
+    };
+    let one = ints(&db, &[Req]);
+    let two = ints(&db, &[Req, Req]);
+    let three = ints(&db, &[Req, Req, Req]);
+    let empty = ints(&db, &[]);
+    let any = ints(&db, &[Rep]);
+    let maybe = ints(&db, &[Opt]);
+    let prefix = ints(&db, &[Req, Opt]);
+    let signature = s(
+        &db,
+        vec![
+            positional(Req, num),
+            positional(Opt, num),
+            positional(Rep, str),
+        ],
+    );
+    let spill = s(&db, vec![positional(Req, int), positional(Rep, str)]);
+    let optional_rest = s(&db, vec![positional(Opt, num), positional(Rep, num)]);
+    let optional_str = s(&db, vec![positional(Opt, int), positional(Rep, str)]);
+    let twice = ints(&db, &[Rep, Rep]);
+    let nested = s(&db, vec![positional(Req, int), include(Req, two)]);
+    db.seal();
+    for (a, b) in [
+        (one, signature),
+        (two, signature),
+        (prefix, prefix),
+        (prefix, signature),
+        (any, optional_rest),
+        (empty, maybe),
+        (three, ints(&db, &[Req, Opt, Rep])),
+        (nested, three),
+    ] {
+        assert_eq!(check(&db, a, b).status, Status::Proven, "{a:?} <: {b:?}");
+    }
+    // The second item goes to the optional parameter, as the runtime binds it
+    assert!(contradiction(
+        &check(&db, three, signature),
+        Contradiction::UnrelatedNominals
+    ));
+    assert!(contradiction(
+        &check(&db, two, spill),
+        Contradiction::UnrelatedNominals
+    ));
+    assert!(contradiction(
+        &check(&db, any, optional_str),
+        Contradiction::UnrelatedNominals
+    ));
+    assert!(contradiction(
+        &check(&db, empty, one),
+        Contradiction::Missing(0)
+    ));
+    assert!(contradiction(
+        &check(&db, maybe, one),
+        Contradiction::Missing(0)
+    ));
+    assert!(contradiction(
+        &check(&db, three, prefix),
+        Contradiction::Excess(2)
+    ));
+    assert!(contradiction(
+        &check(&db, any, maybe),
+        Contradiction::Excess(0)
+    ));
+    // The excess item is the inclusion it came from
+    assert!(contradiction(
+        &check(&db, nested, two),
+        Contradiction::Excess(1)
+    ));
+    assert!(residual(&check(&db, one, twice), Residual::Alignment));
+}
+
+#[test]
+fn literal_keys_own_their_items_and_others_go_to_the_domain() {
+    use Multiplicity::{Optional as Opt, Repeated as Rep, Required as Req};
+    let mut db = Database::new();
+    let int = nominal(&mut db, "Int", vec![], vec![]);
+    let sym = nominal(&mut db, "Sym", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Sym, sym);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Str, str);
+    let [a, b] = ["a", "b"].map(|k| db.intern(Type::Literal(Literal::Sym(db.intern_symbol(k)))));
+    let text = db.intern(Type::Literal(Literal::Str("b".into())));
+    let s = |db: &Database, items: Vec<SchemaItem>| self::items(db, items);
+    let named = |db: &Database, keys: &[(Multiplicity, TypeId)]| {
+        s(db, keys.iter().map(|&(m, k)| keyed(m, k, int)).collect())
+    };
+    let a_once = named(&db, &[(Req, a)]);
+    let a_twice = named(&db, &[(Req, a), (Req, a)]);
+    let a_maybe = named(&db, &[(Opt, a)]);
+    let a_many = named(&db, &[(Rep, a)]);
+    let a_b = named(&db, &[(Req, a), (Req, b)]);
+    let b_once = named(&db, &[(Req, b)]);
+    let texted = s(&db, vec![keyed(Req, text, int)]);
+    let empty = named(&db, &[]);
+    let options = named(&db, &[(Rep, sym)]);
+    let with_options = |db: &Database, m| s(db, vec![keyed(m, a, int), keyed(Rep, sym, int)]);
+    let required = with_options(&db, Req);
+    let optional = with_options(&db, Opt);
+    let repeated = with_options(&db, Rep);
+    let a_str = s(&db, vec![keyed(Req, a, str)]);
+    db.seal();
+    for (x, y) in [
+        (a_once, a_once),
+        (a_once, a_maybe),
+        (empty, a_maybe),
+        (a_b, required),
+        (b_once, optional),
+        (options, repeated),
+        (a_twice, a_many),
+    ] {
+        assert_eq!(check(&db, x, y).status, Status::Proven, "{x:?} <: {y:?}");
+    }
+    assert!(contradiction(
+        &check(&db, empty, a_once),
+        Contradiction::Missing(0)
+    ));
+    // A repeated literal key is still the named item's
+    assert!(contradiction(
+        &check(&db, a_twice, required),
+        Contradiction::Excess(1)
+    ));
+    assert!(contradiction(
+        &check(&db, a_many, a_maybe),
+        Contradiction::Excess(0)
+    ));
+    assert!(contradiction(
+        &check(&db, b_once, a_maybe),
+        Contradiction::Excess(0)
+    ));
+    // A domain might hold the literal key any number of times
+    assert!(contradiction(
+        &check(&db, options, optional),
+        Contradiction::Excess(0)
+    ));
+    assert!(contradiction(
+        &check(&db, options, required),
+        Contradiction::Missing(0)
+    ));
+    assert!(contradiction(
+        &check(&db, texted, optional),
+        Contradiction::UnrelatedNominals
+    ));
+    assert!(contradiction(
+        &check(&db, a_once, a_str),
+        Contradiction::UnrelatedNominals
+    ));
+}
+
+#[test]
+fn inclusions_splice_or_take_on_their_multiplicity() {
+    use Multiplicity::{Optional as Opt, Repeated as Rep, Required as Req};
+    let mut db = Database::new();
+    let int = nominal(&mut db, "Int", vec![], vec![]);
+    let one = items(&db, vec![positional(Req, int)]);
+    let two = items(&db, vec![positional(Req, int), positional(Req, int)]);
+    let spliced = items(&db, vec![include(Req, two)]);
+    let maybe = items(&db, vec![include(Opt, one)]);
+    let many = items(&db, vec![include(Rep, one)]);
+    let pairs = items(&db, vec![include(Rep, two)]);
+    let expected_maybe = items(&db, vec![positional(Opt, int)]);
+    let prefix = items(&db, vec![positional(Req, int), positional(Opt, int)]);
+    db.seal();
+    assert_eq!(check(&db, spliced, two).status, Status::Proven);
+    assert_eq!(check(&db, maybe, expected_maybe).status, Status::Proven);
+    assert!(contradiction(
+        &check(&db, many, one),
+        Contradiction::Missing(0)
+    ));
+    assert!(residual(&check(&db, pairs, prefix), Residual::Unsupported));
+}
+
+#[test]
+fn opaque_rigids_pair_up_or_stand_for_their_bounds() {
+    use Multiplicity::{Optional as Opt, Repeated as Rep, Required as Req};
+    let mut db = Database::new();
+    let num = nominal(&mut db, "Num", vec![], vec![]);
+    let int = nominal(&mut db, "Int", vec![], vec![num]);
+    let [s, ts] = [0, 1].map(|slot| {
+        db.intern(Type::Bound {
+            reference: BoundRef::new(0, slot),
+            kind: Kind::Schema,
+        })
+    });
+    let ints = items(&db, vec![positional(Rep, int)]);
+    let of_s = items(&db, vec![include(Req, s)]);
+    let led = items(&db, vec![positional(Req, int), include(Req, ts)]);
+    let led_maybe = items(&db, vec![positional(Opt, int), include(Req, ts)]);
+    let trailed = items(&db, vec![include(Req, ts), positional(Req, int)]);
+    let trailed_num = items(&db, vec![include(Req, ts), positional(Req, num)]);
+    let nums = items(&db, vec![positional(Opt, num), positional(Rep, num)]);
+    let one = items(&db, vec![positional(Req, int)]);
+    let of_ts = items(&db, vec![include(Req, ts)]);
+    let body = function(&db, &[], db.top());
+    let f = generic(
+        &mut db,
+        vec![
+            bounded(Kind::Schema, Binding::Positional, Some(ints)),
+            bounded(Kind::Schema, Binding::Rest(Rest::Positional), None),
+        ],
+        body,
+    );
+    db.seal();
+    for (a, b) in [(led, led), (trailed, trailed_num), (of_s, nums)] {
+        assert_eq!(under(&db, f, a, b).status, Status::Proven, "{a:?} <: {b:?}");
+    }
+    let result = under(&db, f, one, of_ts);
+    assert!(contradiction(&result, Contradiction::Rigid));
+    assert!(residual(
+        &under(&db, f, led, led_maybe),
+        Residual::Alignment
+    ));
+    // A pack stands for its bound, which may be empty
+    assert!(contradiction(
+        &under(&db, f, of_ts, one),
+        Contradiction::Missing(0)
+    ));
+}
+
+#[test]
+fn the_dynamic_schema_leaves_its_lanes_unchecked() {
+    use Multiplicity::{Optional as Opt, Required as Req};
+    let mut db = Database::new();
+    let int = nominal(&mut db, "Int", vec![], vec![]);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let [a, b] = ["a", "b"].map(|k| db.intern(Type::Literal(Literal::Sym(db.intern_symbol(k)))));
+    let unknown = include(Req, db.unknown_schema());
+    let open_int = items(&db, vec![positional(Req, int), unknown.clone()]);
+    let strs = items(&db, vec![positional(Req, str)]);
+    let open_a_str = items(&db, vec![keyed(Req, a, str), unknown.clone()]);
+    let open_a_twice = items(
+        &db,
+        vec![keyed(Req, a, int), keyed(Req, a, int), unknown.clone()],
+    );
+    let open = items(&db, vec![unknown.clone()]);
+    let a_int = items(&db, vec![keyed(Req, a, int)]);
+    let a_str_b = items(&db, vec![keyed(Req, a, str), keyed(Req, b, int)]);
+    let b_int = items(&db, vec![keyed(Req, b, int)]);
+    let open_a_int = items(&db, vec![keyed(Req, a, int), unknown.clone()]);
+    let open_maybe_a = items(&db, vec![keyed(Opt, a, int), unknown]);
+    db.seal();
+    for (x, y) in [(open_int, strs), (open, a_int), (b_int, open_maybe_a)] {
+        assert_eq!(check(&db, x, y).status, Status::Proven, "{x:?} <: {y:?}");
+    }
+    // Explicit keyed items are still what they say
+    assert!(contradiction(
+        &check(&db, open_a_str, a_int),
+        Contradiction::UnrelatedNominals
+    ));
+    assert!(contradiction(
+        &check(&db, a_str_b, open_a_int),
+        Contradiction::UnrelatedNominals
+    ));
+    assert!(contradiction(
+        &check(&db, open_a_twice, a_int),
+        Contradiction::Excess(1)
+    ));
+}
+
+#[test]
+fn positional_items_under_int_keys_are_not_yet_decided() {
+    use Multiplicity::{Repeated as Rep, Required as Req};
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let sym = nominal(&mut db, "Sym", vec![], vec![]);
+    let one = items(&db, vec![positional(Req, int)]);
+    let by_int = items(&db, vec![keyed(Rep, int, int)]);
+    let by_sym = items(&db, vec![keyed(Rep, sym, int)]);
+    let a = db.intern(Type::Literal(Literal::Sym(db.intern_symbol("a"))));
+    let named_by_int = items(&db, vec![keyed(Req, a, int), keyed(Rep, int, int)]);
+    db.seal();
+    assert!(residual(&check(&db, one, by_int), Residual::Unsupported));
+    assert!(residual(
+        &check(&db, one, named_by_int),
+        Residual::Unsupported
+    ));
+    assert!(contradiction(
+        &check(&db, one, by_sym),
+        Contradiction::Excess(0)
+    ));
 }

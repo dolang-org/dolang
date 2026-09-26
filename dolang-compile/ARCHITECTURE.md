@@ -184,17 +184,50 @@ higher-rank rules remain deferred. Contextual identity and top/bottom rules can
 still settle some judgments involving otherwise unsupported forms: anything is
 below top and `Unknown`, even a type that can't be exposed.
 
-A schema is included in a rest-shaped one, whose items are all repeated, with at
-most one positional item `*P` and one keyed item `*(K): V`, as in `{*T}`,
-`{**V}` and `{...}`. Each positional item's type must be a subtype of `P`, and
-each keyed item's key of `K` and value of `V`. An item the shape has no
-counterpart for contradicts the judgment. Multiplicities don't matter, since the
-shape admits any number of each. An included schema must itself be included in
-the whole shape, so inclusions flatten through the ordinary rules: a rigid
-reduces to its bound, and `Unknown` is consistent. This decides schema binder
-bounds, symbol keys in parameter lists (`<: {*Value, **Value}`), and packs
-expanded into a positional-only rest (`<: {*Value}`). Every other schema
-judgment is residual.
+### Schemas
+
+`typeck/solver/schema.rs` relates schemas. A schema admits item sequences whose
+positional and keyed items are independent. Positional items are distributed by
+count, as the runtime binds positional arguments: each required item takes one,
+optional items take what is left over from left to right, and a repeated item
+takes the rest. Keyed items are unordered. A literal key owns every item with
+that key, as a named parameter does, and other keys go to a key domain
+`(K): V`. Data schemas and parameter lists mean the same thing, which requires
+duplicate keywords for a named parameter to be a runtime error.
+
+Both sides flatten into lanes of positional and keyed atoms. A required
+inclusion splices its items; an optional or repeated one gives its single item
+that multiplicity, and correlating several items' counts is residual. A schema
+that can't be exposed stays opaque, occupying the lanes its bound allows. The
+same rigid on both sides pairs up and splits the positional lanes into segments.
+Only the last segment's expected items may vary in count, since counts are
+distributed over the whole lane. An actual rigid without a counterpart stands
+for its bound, and an expected one contradicts the judgment. `Unknown` leaves
+the lanes it occupies unchecked, except that the actual side's items with
+literal keys must still fit the expected side's items with those keys.
+
+Positional inclusion tries every way of filling the actual side's
+multiplicities, up to one overflow past the expected items. Each actual atom
+must be a subtype of every expected atom its items can land on. Too few or too
+many items contradict the judgment, naming the expected item that can go missing
+or the actual item that can be excess. So does a literal key whose count can
+fall outside its item's multiplicity, where a domain on the actual side may hold
+the key any number of times. Keys not named on the expected side go to its
+single repeated domain; several domains are residual. When several expected
+repeated items could take the overflow, the judgment is residual.
+
+A positional item may someday be admitted as an `Int`-keyed item. Until that
+rule exists, positional items against an expected schema with none but a domain
+that might admit `Int` are residual rather than contradictions.
+
+An expected schema whose items are all repeated, with at most one positional
+item `*P` and one keyed item `*(K): V`, as in `{*T}`, `{**V}` and `{...}`,
+admits each actual item independently. Each positional item's type must be a
+subtype of `P`, and each keyed item's key of `K` and value of `V`. An included
+schema must itself be included in the whole shape, through the ordinary rules
+for rigids and `Unknown`. This decides schema binder bounds, symbol keys in
+parameter lists (`<: {*Value, **Value}`), and packs expanded into a
+positional-only rest (`<: {*Value}`) without flattening.
 
 ### Rigids
 

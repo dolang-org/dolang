@@ -101,6 +101,9 @@ pub(crate) enum Residual {
     Limit,
     /// A rigid of a declaration this solver does not check has escaped its own check.
     Escape,
+    /// Positional schema items can't be matched up by count: several expected
+    /// items repeat, or an opaque schema precedes items of varying count.
+    Alignment,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,8 +113,10 @@ pub(crate) enum Contradiction {
     Arity,
     /// A rigid is related to something other than itself, and its bound can't show it
     Rigid,
-    /// A schema item that the expected rest shape does not admit
-    Item,
+    /// The actual schema's item can be more than the expected schema admits
+    Excess(usize),
+    /// The expected schema's item can be missing from the actual schema
+    Missing(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1238,58 +1243,6 @@ impl<'db> Solver<'db> {
         Ok(())
     }
 
-    /// Include a schema in one whose items are all repeated: at most one
-    /// positional and one keyed. Each of `xs`'s items must fit the matching
-    /// repeated item, whatever its multiplicity, and each inclusion must fit
-    /// the whole expected schema. Any other expected schema is unsupported.
-    fn schemas(
-        &self,
-        av: TypeView,
-        xs: &[SchemaItem],
-        bv: TypeView,
-        ys: &[SchemaItem],
-        expected: Term,
-        obligation: ObligationId,
-    ) -> Result<(), Issue> {
-        let (mut positional, mut keyed) = (None, None);
-        for item in ys {
-            let slot = match (item.multiplicity, &item.element) {
-                (Multiplicity::Repeated, Element::Positional(_)) => &mut positional,
-                (Multiplicity::Repeated, Element::Keyed { .. }) => &mut keyed,
-                _ => return Err(Residual::Unsupported.into()),
-            };
-            if slot.replace(&item.element).is_some() {
-                return Err(Residual::Unsupported.into());
-            }
-        }
-        for item in xs {
-            let admitted = match item.element {
-                Element::Positional(_) => positional.is_some(),
-                Element::Keyed { .. } => keyed.is_some(),
-                Element::Include(_) => true,
-            };
-            if !admitted {
-                return Err(Issue::Contradiction(Contradiction::Item));
-            }
-        }
-        for (index, item) in xs.iter().enumerate() {
-            match (&item.element, positional, keyed) {
-                (&Element::Positional(ty), Some(&Element::Positional(p)), _) => {
-                    self.derive(obligation, av.child(ty), bv.child(p), Step::Item(index));
-                }
-                (&Element::Keyed { key, value }, _, Some(&Element::Keyed { key: k, value: v })) => {
-                    self.derive(obligation, av.child(key), bv.child(k), Step::Key(index));
-                    self.derive(obligation, av.child(value), bv.child(v), Step::Item(index));
-                }
-                (&Element::Include(schema), _, _) => {
-                    self.derive(obligation, av.child(schema), expected, Step::Item(index));
-                }
-                _ => unreachable!(),
-            }
-        }
-        Ok(())
-    }
-
     /// Reduce one relation, recording bounds or child obligations, or return a diagnostic issue.
     /// Success means local reduction succeeded; child obligations may still fail or remain unresolved.
     fn reduce(&self, obligation: ObligationId) -> Result<(), Issue> {
@@ -1666,6 +1619,8 @@ impl<'db> Solver<'db> {
         }
     }
 }
+
+mod schema;
 
 #[cfg(test)]
 mod tests;
