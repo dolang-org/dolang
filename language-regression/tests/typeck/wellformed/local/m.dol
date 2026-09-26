@@ -1,0 +1,25 @@
+# A violation is local: checks that use the offending declaration are unaffected,
+# but the check as a whole is not validated.
+
+pub class Num
+pub class Text
+
+pub class Box[T @ Num]
+  pub def get _self -> T
+    nil
+
+pub @let Broken = Box[Text]
+# error: this does not satisfy `T @ Num`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @let Broken = Box[Text]
+#    |                       ^^^^
+
+pub class Holder[T @ Broken]
+  pub def get _self -> T
+    nil
+
+pub let held @ Holder[Broken] = nil
+
+pub def unwrap x @ Broken -> Broken
+  x

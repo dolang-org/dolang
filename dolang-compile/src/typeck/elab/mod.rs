@@ -12,6 +12,7 @@ mod populate;
 mod sig;
 mod specialize;
 mod variance;
+mod wellformed;
 
 use std::{
     collections::HashMap,
@@ -34,6 +35,7 @@ pub(crate) use populate::populate;
 pub(crate) use sig::signatures;
 pub(crate) use specialize::specialize;
 pub(crate) use variance::variances;
+pub(crate) use wellformed::{Unresolved, wellformed};
 
 /// What collection learns of the checked units
 pub(crate) struct Tables<'u> {
@@ -81,6 +83,9 @@ pub(crate) struct Tables<'u> {
     pub(crate) groups: HashMap<(DeclId, usize), Vec<BinderRef>>,
     /// Each type expression written in source, interned in its group, by its span
     pub(crate) site_types: HashMap<UnitSpan, TypeId>,
+    /// Each application and function type written in source, nested or not,
+    /// interned in its group, by its span
+    pub(crate) expr_types: HashMap<UnitSpan, TypeId>,
 }
 
 impl<'u> Tables<'u> {
@@ -565,6 +570,105 @@ impl Diagnose for BadReceiver {
                 w,
                 "cannot tell whether this is a `{}` or a subtype of it",
                 self.class
+            ),
+        }
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+/// A type argument, or a binder's default, that doesn't satisfy its binder's bound
+struct BoundViolation {
+    span: Span,
+    /// The binder with its bound, as written: `T @ Num`
+    binder: String,
+    default: bool,
+}
+
+impl Diagnose for BoundViolation {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        match self.default {
+            false => write!(w, "this does not satisfy `{}`", self.binder),
+            true => write!(w, "the default does not satisfy `{}`", self.binder),
+        }
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+/// A function type or signature whose parameters admit keys that aren't symbols
+struct ParameterKeys(Span);
+
+impl Diagnose for ParameterKeys {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "function parameters must have symbol keys")
+    }
+
+    fn span(&self) -> Span {
+        self.0
+    }
+}
+
+/// An ambient channel annotation that isn't an `Iter` or a `Sink`
+struct BadChannel {
+    span: Span,
+    output: bool,
+}
+
+impl Diagnose for BadChannel {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        match self.output {
+            false => write!(w, "`<` must be an `Iter`"),
+            true => write!(w, "`>` must be a `Sink`"),
+        }
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+/// A recursive alias reference that isn't guarded, or doesn't pass its binders
+/// unchanged
+struct BadRecursion {
+    span: Span,
+    alias: String,
+    /// It is guarded, but not regular
+    irregular: bool,
+}
+
+impl Diagnose for BadRecursion {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        match self.irregular {
+            false => write!(
+                w,
+                "recursive reference to `{}` must be inside a class's arguments, a function type or a schema",
+                self.alias
+            ),
+            true => write!(
+                w,
+                "recursive reference to `{}` must pass its binders unchanged",
+                self.alias
             ),
         }
     }

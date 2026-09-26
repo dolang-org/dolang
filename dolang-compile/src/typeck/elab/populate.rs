@@ -118,6 +118,7 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
         reported: HashSet::new(),
         defaults: HashMap::new(),
         expanding: Vec::new(),
+        expr_types: HashMap::new(),
     };
     let mut site_types = HashMap::new();
     for site in &tables.sites {
@@ -148,9 +149,11 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
     populate.inheritance_cycles();
     diags.append(&mut populate.diags);
 
+    let expr_types = std::mem::take(&mut populate.expr_types);
     for (id, declaration) in declarations {
         db.populate(id, declaration);
     }
+    tables.expr_types = expr_types;
     tables.sig_decls = sig_decls;
     tables.groups = groups;
     tables.site_types = site_types;
@@ -190,6 +193,8 @@ struct Populate<'t, 'u> {
     defaults: HashMap<BinderRef, Option<TypeId>>,
     /// The written channels being interned in place of a function type's own
     expanding: Vec<(DeclId, usize, usize)>,
+    /// Each written application and function type, by span
+    expr_types: HashMap<UnitSpan, TypeId>,
 }
 
 impl<'t, 'u> Populate<'t, 'u> {
@@ -290,6 +295,30 @@ impl<'t, 'u> Populate<'t, 'u> {
     /// Intern a type expression as `expected`, or the dynamic type or schema when it
     /// is not one.
     fn intern(&mut self, group: Group<'_>, ty: &TypeExpr, expected: Kind, depth: usize) -> TypeId {
+        let id = self.intern_node(group, ty, expected, depth);
+        // Well-formedness checks these where they are written, in the group they are
+        // written in, not where a def's channels are taken by a function type
+        if let TypeExpr::App { .. } | TypeExpr::Func { .. } = ty
+            && self.expanding.is_empty()
+        {
+            self.expr_types.insert(
+                UnitSpan {
+                    unit: group.unit,
+                    span: ty.span(),
+                },
+                id,
+            );
+        }
+        id
+    }
+
+    fn intern_node(
+        &mut self,
+        group: Group<'_>,
+        ty: &TypeExpr,
+        expected: Kind,
+        depth: usize,
+    ) -> TypeId {
         if depth > MAX_TYPE_DEPTH {
             self.report(group.unit, TypeTooDeep(ty.span()));
             return self.unknown(expected);
@@ -314,7 +343,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                 }
             }
             TypeExpr::Schema { params, .. } if expected == Kind::Schema => {
-                let items = self.items(group, params, depth);
+                let items = self.items(group, params, false, depth);
                 self.schema(items)
             }
             TypeExpr::Union { members, .. } if expected == Kind::Type => {
@@ -332,7 +361,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                 ret,
                 ..
             } if expected == Kind::Type => {
-                let items = self.items(group, params, depth);
+                let items = self.items(group, params, true, depth);
                 let params = self.schema(items);
                 let ambients = self
                     .tables
@@ -410,10 +439,21 @@ impl<'t, 'u> Populate<'t, 'u> {
         }
     }
 
-    /// The items of a schema or parameter list
-    fn items(&mut self, group: Group<'_>, params: &[TypeParam], depth: usize) -> Vec<SchemaItem> {
+    /// The items of a schema or parameter list. A bare `**` or `...` admits any
+    /// keyed item in a schema, but only a named one in a parameter list.
+    fn items(
+        &mut self,
+        group: Group<'_>,
+        params: &[TypeParam],
+        parameters: bool,
+        depth: usize,
+    ) -> Vec<SchemaItem> {
         let top = self.db.top();
         let sym = self.sym();
+        let any = match parameters {
+            true => sym,
+            false => top,
+        };
         let mut items = Vec::new();
         for param in params {
             let (multiplicity, keyed) = match param.quant {
@@ -427,6 +467,13 @@ impl<'t, 'u> Populate<'t, 'u> {
                 false => Element::Positional(value),
             };
             match &param.kind {
+                None if keyed => items.push(Self::item(
+                    multiplicity,
+                    Element::Keyed {
+                        key: any,
+                        value: top,
+                    },
+                )),
                 None => items.push(Self::item(multiplicity, element(top))),
                 Some(TypeParamKind::Pos(ty)) => {
                     let ty = self.intern(group, ty, Kind::Type, depth);
@@ -450,7 +497,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                     items.push(Self::item(
                         Multiplicity::Repeated,
                         Element::Keyed {
-                            key: sym,
+                            key: any,
                             value: top,
                         },
                     ));
@@ -754,10 +801,12 @@ impl<'t, 'u> Populate<'t, 'u> {
                     let name = self
                         .db
                         .intern_symbol(tables.text(owner, written.ident.span));
-                    let binding = match (origin, &written.kind) {
-                        (BinderOrigin::Lifted, _) | (_, BinderKind::Pos) => Binding::Positional,
-                        (_, BinderKind::Key { .. }) => Binding::Keyword(name),
-                        (_, BinderKind::Rest { kind, .. }) => Binding::Rest(match kind {
+                    // A lifted binder keeps its binding, so a rest binder keeps its
+                    // shape as a bound; it is still always passed positionally
+                    let binding = match &written.kind {
+                        BinderKind::Pos => Binding::Positional,
+                        BinderKind::Key { .. } => Binding::Keyword(name),
+                        BinderKind::Rest { kind, .. } => Binding::Rest(match kind {
                             RestKind::Mixed => Rest::All,
                             RestKind::Pos => Rest::Positional,
                             RestKind::Key => Rest::Keyed,
@@ -886,6 +935,15 @@ impl<'t, 'u> Populate<'t, 'u> {
                         }
                         _ => continue,
                     };
+                    // Checked for well-formedness by its name, as it has no type
+                    // expression of its own
+                    self.expr_types.insert(
+                        UnitSpan {
+                            unit: decl.unit,
+                            span,
+                        },
+                        ty,
+                    );
                     // Every type is a subtype of top, and an erroneous supertype is
                     // already diagnosed
                     let erroneous = ty == self.db.unknown()

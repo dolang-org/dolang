@@ -1165,6 +1165,40 @@ fn declarations_never_contain_rigids() {
 }
 
 #[test]
+fn binder_bounds_substitute_arguments_or_take_rest_shapes() {
+    let mut db = Database::new();
+    let t = reference(&mut db, 0, 0, Kind::Type);
+    let bounded = Binder {
+        bound: Some(t),
+        ..binder(Kind::Type)
+    };
+    let top = db.top();
+    assert_eq!(db.binder_bound(&bounded, &[top]), Some(top));
+    assert_eq!(db.binder_bound(&binder(Kind::Type), &[top]), None);
+    // Without a designated `Sym`, keys are dynamic
+    let (key, value) = (db.unknown(), db.top());
+    let item = |element| SchemaItem {
+        multiplicity: Multiplicity::Repeated,
+        element,
+    };
+    let positional = item(Element::Positional(value));
+    let keyed = item(Element::Keyed { key, value });
+    for (rest, items) in [
+        (Rest::Positional, vec![positional.clone()]),
+        (Rest::Keyed, vec![keyed.clone()]),
+        (Rest::All, vec![positional, keyed]),
+    ] {
+        let shape = intern(&mut db, Type::Schema(items.into()));
+        let pack = Binder {
+            binding: Binding::Rest(rest),
+            ..binder(Kind::Schema)
+        };
+        assert_eq!(db.rest_shape(rest), shape);
+        assert_eq!(db.binder_bound(&pack, &[]), Some(shape));
+    }
+}
+
+#[test]
 fn sealed_declarations_can_be_retyped_and_are_revalidated() {
     let mut db = Database::new();
     let t = reference(&mut db, 0, 0, Kind::Type);

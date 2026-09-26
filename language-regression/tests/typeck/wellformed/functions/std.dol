@@ -1,0 +1,10 @@
+# The declarations of `std` that parameter keys and channels are checked against.
+
+pub class Sym
+pub @let Phantom[...Ts] = ...
+pub class Iter[T]
+  pub def next _self -> T
+    nil
+pub class Sink[T]
+  pub def put _self _value @ T
+    nil

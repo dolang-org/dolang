@@ -1152,6 +1152,37 @@ impl Database {
         result
     }
 
+    /// The shape of a rest mode: `{*Value}`, `{**Sym: Value}` or both. The key is
+    /// `Unknown` when `Sym` is not designated.
+    pub(crate) fn rest_shape(&self, rest: Rest) -> TypeId {
+        let top = self.top();
+        let key = self.intrinsic(Intrinsic::Sym).unwrap_or(self.unknown());
+        let positional = SchemaItem {
+            multiplicity: Multiplicity::Repeated,
+            element: Element::Positional(top),
+        };
+        let keyed = SchemaItem {
+            multiplicity: Multiplicity::Repeated,
+            element: Element::Keyed { key, value: top },
+        };
+        let items = match rest {
+            Rest::Positional => vec![positional],
+            Rest::Keyed => vec![keyed],
+            Rest::All => vec![positional, keyed],
+        };
+        self.intern(Type::Schema(items.into()))
+    }
+
+    /// A binder's bound with `args` for its group, or its rest mode's shape for an
+    /// unbounded rest binder
+    pub(crate) fn binder_bound(&self, binder: &Binder, args: &[TypeId]) -> Option<TypeId> {
+        match (binder.bound, binder.binding) {
+            (Some(bound), _) => Some(self.substitute(bound, args)),
+            (None, Binding::Rest(rest)) => Some(self.rest_shape(rest)),
+            (None, _) => None,
+        }
+    }
+
     /// The rigids of a declaration's binders, in slot order. Substituting them for
     /// its group gives the declaration as checked.
     pub(crate) fn rigids(&self, decl: DeclId) -> Vec<TypeId> {

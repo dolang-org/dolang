@@ -161,8 +161,8 @@ written after an expansion of unknown reach are residual. Subtype judgments
 assume well-formed inputs: callers establish argument bounds and validate
 declaration bodies and supertypes under their binder assumptions. Exposure
 substitutes arguments without generating binder-bound obligations, including on
-unselected inheritance paths. A separate well-formedness checker remains future
-work. Matching constructors decompose according to declared variance.
+unselected inheritance paths; well-formedness checking establishes them.
+Matching constructors decompose according to declared variance.
 Inheritance walks left-to-right, depth-first, carrying substitutions through
 each edge. The first matching declaration wins, even if its arguments contradict
 the expected arguments or remain unresolved. An earlier incomplete branch cannot
@@ -181,7 +181,8 @@ query. Alternative queries cannot add inference bounds or diagnostic edges to
 the calling solver. Expanded union packs and alternatives that cannot be proved
 remain residual. Optional, keyed and variadic parameter matching and
 higher-rank rules remain deferred. Contextual identity and top/bottom rules can
-still settle some judgments involving otherwise unsupported forms.
+still settle some judgments involving otherwise unsupported forms: anything is
+below top and `Unknown`, even a type that can't be exposed.
 
 A schema is included in a rest-shaped one, whose items are all repeated, with at
 most one positional item `*P` and one keyed item `*(K): V`, as in `{*T}`,
@@ -191,8 +192,9 @@ counterpart for contradicts the judgment. Multiplicities don't matter, since the
 shape admits any number of each. An included schema must itself be included in
 the whole shape, so inclusions flatten through the ordinary rules: a rigid
 reduces to its bound, and `Unknown` is consistent. This decides schema binder
-bounds, symbol keys in parameter lists (`<: {...}`), and packs expanded into a
-positional-only rest (`<: {*Value}`). Every other schema judgment is residual.
+bounds, symbol keys in parameter lists (`<: {*Value, **Value}`), and packs
+expanded into a positional-only rest (`<: {*Value}`). Every other schema
+judgment is residual.
 
 ### Rigids
 
@@ -285,8 +287,8 @@ Work and depth limits produce residuals. The work budget applies to the solver's
 lifetime; exhaustion prevents a complete proof. Invalid IDs, environments,
 substitution kinds, and unsealed databases are API errors and panic. Transparent
 declaration exposure cycles and generic arity mismatches also panic;
-well-formedness checking must eliminate them before solving. Omitted arguments
-with binder defaults remain residual.
+well-formedness checking diagnoses what causes them. Omitted arguments with
+binder defaults remain residual.
 
 Environments use an immutable `intern::Table`; obligations use stable `MonoVec`
 storage and a `MonoHashMap` relation index. Bound terms, sources, and
@@ -443,8 +445,8 @@ name used without them, an inheritance cycle, and a binder group or type too
 large to represent. Each erroneous site, whenever it was diagnosed, is interned
 as `Unknown` of the kind its position requires, and an alias on a cycle gets an
 `Unknown` body, so the sealed database keeps every structural invariant the
-solver assumes. It is sealed but not validated; checking well-formedness is a
-separate step. `Check`'s hidden `smoke` method relates every type the database
+solver assumes. It is sealed but not validated until well-formedness is
+checked. `Check`'s hidden `smoke` method relates every type the database
 holds to itself and to top, to show that the solver judges it without
 panicking. The `quantifier`, `decl`, `member` and `type` judgments report what
 was interned.
@@ -463,3 +465,46 @@ nor member lookup, which stays positional. Walks read only class supertypes and
 the method's own bounds, so the order of methods doesn't matter. A receiver that
 doesn't reach its class, or whose walk is undecided, is diagnosed and keeps the
 unspecialized type.
+
+Well-formedness is checked last. Each check holds the binders of the declaration
+it is written in as rigids, assuming only their bounds, and every application of
+a declaration is checked against that declaration's bounds. So validation is
+local, rely-guarantee: if every check passes, every assumption is backed by one,
+whatever order checks run in, and an invalid declaration elsewhere can only add
+diagnostics, never make the whole validate. No verdict is cached or fed into
+another check. A check the solver can't decide doesn't pass. `Unknown` passes
+vacuously, but its site was already diagnosed.
+
+Written types are checked where they are written, found by span in the
+applications and function types population records, so diagnostics point at the
+offending argument. Each argument of an application, including a keyword
+argument, a variadic binder's items, a default filling an omitted argument and a
+leading lifted binder, must satisfy its binder's bound with the application's
+arguments substituted. An unbounded rest binder is bounded by its mode's shape,
+so a pack expanded into `Tuple[*Ts]` has no keyed items. Arguments left as
+written after an expansion of unknown reach are undecided. A function type's
+parameters must have symbol keys, and its written channels must reach `Iter` and
+`Sink` when `std` designates them. `Phantom` only marks variance, so its
+arguments satisfy no shape, and function types within them may have any keys.
+Class supertypes, which have no type expression of their own, are checked the
+same way. Each declaration's binder defaults must satisfy their bounds, and a
+def or method signature's parameters and written channels are checked as
+declared.
+
+A bare `**` or `...` in a schema admits any keyed item, so `Dict[Str, Int]`
+satisfies `S @ {...}`; in a parameter list it admits only named ones. A written
+`**T` item, and every rest binder's shape, has symbol keys.
+
+Recursion among transparent aliases must be contractive and regular. Within a
+cycle of aliases, a reference to one of them must be guarded by a class's
+arguments, a function type or a schema's items: a union member, an argument of a
+transparent alias and a schema inclusion don't guard, since each is flattened
+into its surroundings. A guarded reference must pass the referring alias's
+binders unchanged, so `E[T] = nil | Box[E[Array[T]]]` is rejected, as OCaml
+rejects irregular abbreviations. Recursion through class supertypes is left to
+the solver, which reports expanding inheritance as residual.
+
+`Check::validated` holds when the checker reported no errors and decided every
+check. Otherwise the result is partial: usable for diagnostics and tooling, but
+checking code against it proves nothing. Undecided checks are not diagnosed
+until a strictness policy decides how, but a `wf` judgment reports each.

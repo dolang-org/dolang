@@ -7,7 +7,7 @@ use std::{collections::HashMap, fmt::Write};
 
 use super::{
     Ambient, BinderRef, DeclNode, Designated, Head, KindOf, ModuleRef, ParamTy, Referent, RestSlot,
-    Sig, Slot, Tables,
+    Sig, Slot, Tables, Unresolved,
 };
 use crate::{
     Mode, RestKind,
@@ -33,6 +33,7 @@ pub(crate) const JUDGMENTS: &[&str] = &[
     "decl",
     "member",
     "type",
+    "wf",
 ];
 
 fn variance(variance: Variance) -> &'static str {
@@ -44,11 +45,13 @@ fn variance(variance: Variance) -> &'static str {
 }
 
 impl Tables<'_> {
-    /// Every judgment about spans of `unit`, in source order
+    /// Every judgment about spans of `unit`, in source order, including the
+    /// well-formedness checks left unresolved
     pub(crate) fn judgments(
         &self,
         db: &Database,
         unit: UnitId,
+        unresolved: &[Unresolved],
     ) -> Vec<(&'static str, Span, String)> {
         let mut judgments = Vec::new();
         self.populated(db, unit, &mut judgments);
@@ -154,6 +157,12 @@ impl Tables<'_> {
                     Designated::Intrinsic(intrinsic) => format!("intrinsic {intrinsic:?}"),
                 };
                 judgments.push(("designated", name, value));
+            }
+        }
+        for unresolved in unresolved {
+            if unresolved.span.unit == unit {
+                let value = format!("undecided {:?}", unresolved.residual);
+                judgments.push(("wf", unresolved.span.span, value));
             }
         }
         judgments.sort_by_key(|(name, span, _)| (span.start, span.end, *name));

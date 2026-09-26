@@ -28,7 +28,7 @@ use crate::typeck::r#type::UnitSpan;
 
 use super::r#type::{
     Argument, Binder, Binding, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
-    Multiplicity, Rest, SchemaItem, Type, TypeId, UnionMember, Variance,
+    Multiplicity, SchemaItem, Type, TypeId, UnionMember, Variance,
 };
 
 macro_rules! id {
@@ -372,31 +372,7 @@ impl<'db> Solver<'db> {
             unreachable!("a rigid of a declaration without binders")
         };
         let binder = &binders[usize::from(slot)];
-        let bound = match (binder.bound, binder.binding) {
-            (Some(bound), _) => Some(self.db.substitute(bound, &self.db.rigids(decl))),
-            (None, Binding::Rest(rest)) => {
-                let top = self.db.top();
-                let key = self
-                    .db
-                    .intrinsic(Intrinsic::Sym)
-                    .unwrap_or_else(|| self.db.unknown());
-                let positional = SchemaItem {
-                    multiplicity: Multiplicity::Repeated,
-                    element: Element::Positional(top),
-                };
-                let keyed = SchemaItem {
-                    multiplicity: Multiplicity::Repeated,
-                    element: Element::Keyed { key, value: top },
-                };
-                let items = match rest {
-                    Rest::Positional => vec![positional],
-                    Rest::Keyed => vec![keyed],
-                    Rest::All => vec![positional, keyed],
-                };
-                Some(self.db.intern(Type::Schema(items.into())))
-            }
-            (None, _) => None,
-        };
+        let bound = self.db.binder_bound(binder, &self.db.rigids(decl));
         self.rigid_bounds.borrow_mut().insert(ty, bound);
         bound
     }
@@ -1339,16 +1315,17 @@ impl<'db> Solver<'db> {
                 }
             }
         }
-        let a = self.head(actual)?;
+        // Anything is below top and the dynamic type, even what can't be exposed
         let b = self.head(expected)?;
-        // The dynamic type or schema is consistent with anything of its kind
-        if [&a, &b].into_iter().any(|head| self.is_unknown(head)) {
+        if self.is_unknown(&b)
+            || matches!(&b, Head::Structural(view) if view.ty == self.db.top())
+                && self.kind(actual) == Kind::Type
+        {
             return Ok(());
         }
-        if let Head::Structural(view) = &b
-            && view.ty == self.db.top()
-            && self.kind(actual) == Kind::Type
-        {
+        let a = self.head(actual)?;
+        // The dynamic type or schema is consistent with anything of its kind
+        if self.is_unknown(&a) {
             return Ok(());
         }
         if let Head::Structural(view) = &a

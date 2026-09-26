@@ -1,0 +1,48 @@
+# Recursion among transparent aliases must be contractive, guarded by a class's
+# arguments, a function type or a schema's items, and regular, passing the
+# recursive alias's binders unchanged.
+
+pub class Int
+
+pub class Box[T]
+  pub def get _self -> T
+    nil
+
+pub class Pair[A, B]
+  pub def first _self -> A
+    nil
+  pub def second _self -> B
+    nil
+
+pub @let List[T] = (nil | Pair[T, List[T]])
+
+pub @let Callback = (Callback -> nil)
+
+pub @let Bad = (nil | Bad)
+# error: recursive reference to `Bad` must be inside a class's arguments, a function type or a schema
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @let Bad = (nil | Bad)
+#    |                       ^^^
+
+pub @let Id[X] = X
+pub @let Worse = (nil | Id[Worse])
+# error: recursive reference to `Worse` must be inside a class's arguments, a function type or a schema
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @let Worse = (nil | Id[Worse])
+#    |                            ^^^^^
+
+pub @let Loop = {Int, ...Loop}
+# error: recursive reference to `Loop` must be inside a class's arguments, a function type or a schema
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @let Loop = {Int, ...Loop}
+#    |                          ^^^^
+
+pub @let Growing[T] = (nil | Box[Growing[Box[T]]])
+# error: recursive reference to `Growing` must pass its binders unchanged
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @let Growing[T] = (nil | Box[Growing[Box[T]]])
+#    |                                  ^^^^^^^^^^^^^^^

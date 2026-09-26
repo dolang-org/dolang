@@ -122,6 +122,7 @@ pub(crate) fn collect<'u>(
         sig_decls: HashMap::new(),
         groups: HashMap::new(),
         site_types: HashMap::new(),
+        expr_types: HashMap::new(),
     };
     (tables, diags)
 }

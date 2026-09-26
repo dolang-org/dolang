@@ -1,0 +1,64 @@
+# A function's parameters have symbol keys, except within `Phantom`, and its
+# written channels reach `Iter` and `Sink`.
+
+import std:
+  - @Iter
+  - @Sink
+  - @Phantom
+
+pub class Int
+
+pub def named[S @ {**Int}] f @ ((...S) -> nil)
+  f
+
+pub def numbered[S @ {*(Int): Int}] f @ ((...S) -> nil)
+  # error: function parameters must have symbol keys
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def numbered[S @ {*(Int): Int}] f @ ((...S) -> nil)
+  #    |                                          ^^^^^^^^^^^^^
+  f
+
+# `Phantom` only marks variance, so it takes any schema, and a function type
+# within it may have any keys.
+pub class Marker[S @ {*(Int): Int}]
+  pub field keys @ Phantom[...S] = nil
+  pub field marks @ Phantom[((...S) -> nil)] = nil
+
+pub def reads f @ ((<Int) -> nil)
+  # error: `<` must be an `Iter`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def reads f @ ((<Int) -> nil)
+  #    |                      ^^^
+  f
+
+pub def writes f @ ((>Int) -> nil)
+  # error: `>` must be a `Sink`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def writes f @ ((>Int) -> nil)
+  #    |                       ^^^
+  f
+
+pub def source <Int
+  # error: `<` must be an `Iter`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def source <Int
+  #    |                 ^^^
+  nil
+
+pub def drain >Int
+  # error: `>` must be a `Sink`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def drain >Int
+  #    |                ^^^
+  nil
+
+pub def pipe <Iter[Int] >Sink[Int]
+  nil
+
+pub def bounded[N @ Iter[Int]] <N
+  nil

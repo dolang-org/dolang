@@ -28,6 +28,7 @@
 //! | `stubs` | Modules to add from `tests/typeck/stub/` | none |
 //! | `repo-stubs` | Modules to add from the repository's native module stubs | none |
 //! | `prelude` | `default` for the default prelude, `none` for an empty one | `default` |
+//! | `validated` | `true` or `false`: whether every well-formedness check must pass | not asserted |
 //! | `skip` | `miri` to skip under Miri | none |
 
 use std::{
@@ -48,6 +49,7 @@ struct Settings {
     stubs: Vec<String>,
     repo_stubs: Vec<String>,
     prelude_none: bool,
+    validated: Option<bool>,
 }
 
 impl Settings {
@@ -92,6 +94,13 @@ impl Settings {
                         "none" => true,
                         _ => panic!("{}: unknown prelude `{value}`", path.display()),
                     }
+                }
+                "validated" => {
+                    self.validated = Some(match value {
+                        "true" => true,
+                        "false" => false,
+                        _ => panic!("{}: expected `true` or `false`", path.display()),
+                    })
                 }
                 "skip" if value == "miri" => {}
                 key => panic!("{}: unknown setting `{key}: {value}`", path.display()),
@@ -250,6 +259,15 @@ fn run(case: &Path) {
     }
 
     let mut failures = String::new();
+    if let Some(expected) = settings.validated
+        && check.validated() != expected
+    {
+        let _ = write!(
+            failures,
+            "\nexpected the check {}validated",
+            if expected { "" } else { "not to be " }
+        );
+    }
     for (index, source) in sources.iter().enumerate() {
         let diags = &diags[index];
         if !source.case {

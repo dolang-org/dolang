@@ -485,7 +485,7 @@ pub class Iterable[T]: @BaseIterable[T] @Spread[T]
     ...
 
   # Returns an iterator of tuples across this and additional iterables.
-  pub def zip[...Us] self ...values @ ...Iterable[Us] -> Iter[Tuple[T, ...Us]]
+  pub def zip[*Us] self *values @ ...Iterable[Us] -> Iter[Tuple[T, ...Us]]
     ...
 
 
@@ -3059,7 +3059,7 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Unpack[T]
   # Returns an iterator that yields one tuple for each step across this iterator
   # and the additional iterables.
   # The zipped iterator stops as soon as any input is exhausted.
-  pub def zip[...Us] self ...values @ ...Iterable[Us] -> Iter[Tuple[T, ...Us]]
+  pub def zip[*Us] self *values @ ...Iterable[Us] -> Iter[Tuple[T, ...Us]]
     ...
 
 

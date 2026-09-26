@@ -1,6 +1,6 @@
 use super::*;
 use crate::typeck::r#type::{
-    BinderOrigin, BinderSource, BoundRef, DeclKind, DeclSource, Declaration, SchemaItem,
+    BinderOrigin, BinderSource, BoundRef, DeclKind, DeclSource, Declaration, Rest, SchemaItem,
     UnionMember,
 };
 
@@ -695,6 +695,10 @@ fn unsupported_generic_matching_is_residual() {
         &check(&db, keyed, keyed),
         Residual::GenericArguments.into()
     ));
+    // What can't be exposed is still below top and the dynamic type
+    for expected in [db.top(), db.unknown()] {
+        assert_eq!(check(&db, keyed, expected).status, Status::Proven);
+    }
 }
 
 #[test]
