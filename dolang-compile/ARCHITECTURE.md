@@ -230,6 +230,14 @@ for rigids and `Unknown`. This decides schema binder bounds, symbol keys in
 parameter lists (`<: {*Value, **Value}`), and packs expanded into a
 positional-only rest (`<: {*Value}`) without flattening.
 
+A schema variable is opaque like a rigid. The same variable on both sides pairs
+up. An expected variable without a counterpart takes what the actual side has
+left: it must end its positional lane, after required items only, and it takes
+the keyed items the expected side doesn't name, or is residual beside a key
+domain. What it takes becomes a schema built around the atoms' solver terms,
+which is its lower bound. An actual variable without a counterpart is bounded
+only by a rest-shaped expected schema; otherwise the judgment is residual.
+
 A call is checked as an ordinary judgment: the callee's type must be a subtype
 of the function type the call expects, `(args) <input >output -> result`.
 `Solver::call` builds that type around solver terms, since canonical types
@@ -266,6 +274,20 @@ reifying it is residual.
 inheritance walk, continuing through an assumed rigid's bound, and returns the
 target's arguments. It reports a term that doesn't reach the target, and
 `Unknown` as reaching anything.
+
+### Instantiation
+
+A quantified function type on the left of a function type is instantiated: each
+binder gets a fresh variable of its kind, and a schema variable records the
+lanes its rest mode allows. Each variable must be below its binder's bound,
+interpreted in the instantiation's environment, and the body below the expected
+function. An implicit binder that is the body's ambient channel takes the
+expected function's channel instead of a variable, so a callee runs in its
+caller's ambient. A call instantiates its callee this way, and so do lifted
+binders. The environment is recorded by obligation, so reprocessing derives the
+same obligations without creating variables. Variables never leave the solver:
+flow analysis creates a solver per step and exports only reified types. A
+quantifier on the right, which needs skolems, is residual.
 
 ### Assignments and fixed point
 

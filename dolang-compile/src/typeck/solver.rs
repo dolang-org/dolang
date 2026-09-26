@@ -28,7 +28,7 @@ use crate::typeck::r#type::UnitSpan;
 
 use super::r#type::{
     Argument, Binder, Binding, BoundRef, Database, DeclId, Element, Function, Intrinsic, Kind,
-    Literal, Multiplicity, SchemaItem, SymbolId, Type, TypeId, UnionMember, Variance,
+    Literal, Multiplicity, Rest, SchemaItem, SymbolId, Type, TypeId, UnionMember, Variance,
 };
 
 macro_rules! id {
@@ -158,6 +158,10 @@ pub(crate) enum Step {
     Item(usize),
     /// A schema item's key
     Key(usize),
+    /// A quantified type's body under fresh variables for its binders
+    Instantiation,
+    /// A fresh variable below its binder's bound
+    InstantiationBound(usize),
 }
 
 /// Where an ancestor query ends
@@ -228,8 +232,10 @@ struct Root {
 type BoundSet = MonoHashMap<Term, MonoHashSet<ObligationId>>;
 
 /// Solver-local resolution and wake-up state, independent of accumulated bounds.
-#[derive(Default)]
 struct Inference {
+    kind: Kind,
+    /// For a schema variable, the lanes its items can occupy
+    lanes: Rest,
     // Solutions are closed canonical types; no solver-local identity can escape.
     assignment: Cell<Option<TypeId>>,
     support: MonoHashSet<ObligationId>,
@@ -295,8 +301,11 @@ enum Head {
 pub(crate) struct Solver<'db> {
     db: &'db Database,
     environments: intern::Table<Environment, EnvironmentId>,
-    bounds: Vec<Bounds>,
-    inference: Vec<Inference>,
+    bounds: MonoVec<Bounds>,
+    inference: MonoVec<Inference>,
+    /// The environment each quantifier instantiation created, by the obligation
+    /// that instantiated it, so reprocessing reuses its variables
+    instantiations: RefCell<HashMap<ObligationId, EnvironmentId>>,
     // Intern only the relation; processing state and diagnostic edges do not
     // participate in identity and can grow while existing nodes are borrowed.
     obligations: MonoVec<Obligation>,
@@ -327,8 +336,9 @@ impl<'db> Solver<'db> {
         Self {
             db,
             environments,
-            bounds: Vec::new(),
-            inference: Vec::new(),
+            bounds: MonoVec::new(),
+            inference: MonoVec::new(),
+            instantiations: RefCell::new(HashMap::new()),
             obligations: MonoVec::new(),
             obligation_index: MonoHashMap::new(),
             queue: MonoVec::new(),
@@ -509,9 +519,25 @@ impl<'db> Solver<'db> {
     }
 
     pub(crate) fn infer(&mut self) -> Term {
+        self.fresh(Kind::Type, Rest::All)
+    }
+
+    /// A fresh variable of `kind`. A schema variable's items occupy `lanes`.
+    pub(crate) fn infer_kind(&mut self, kind: Kind, lanes: Rest) -> Term {
+        self.fresh(kind, lanes)
+    }
+
+    fn fresh(&self, kind: Kind, lanes: Rest) -> Term {
         let id = InferVarId(self.bounds.len());
         self.bounds.push(Bounds::default());
-        self.inference.push(Inference::default());
+        self.inference.push(Inference {
+            kind,
+            lanes,
+            assignment: Cell::new(None),
+            support: MonoHashSet::new(),
+            subscribers: MonoHashSet::new(),
+            dirty: Cell::new(false),
+        });
         Term::Infer(id)
     }
 
@@ -768,9 +794,9 @@ impl<'db> Solver<'db> {
         if lower.is_empty() || upper.is_empty() {
             return Ok(false);
         }
-        let candidate = self.db.intern(Type::Union(
-            lower.iter().copied().map(UnionMember::Type).collect(),
-        ));
+        let Some(candidate) = self.join(inference.kind, &lower) else {
+            return Ok(false);
+        };
         let mut forced = false;
         for &ty in &upper {
             if self.probe(candidate, ty)? != Status::Proven {
@@ -792,12 +818,23 @@ impl<'db> Solver<'db> {
             self.schedule(obligation);
         }
         // A bound may contain the assigned variable deeply in a contextual view.
-        for other in &self.inference {
+        for other in self.inference.iter() {
             if other.assignment.get().is_none() {
                 other.dirty.set(true);
             }
         }
         Ok(true)
+    }
+
+    /// The least candidate above nonempty lower bounds: their union, or for a
+    /// schema the one they all are, since there are no schema unions
+    fn join(&self, kind: Kind, lower: &[TypeId]) -> Option<TypeId> {
+        match kind {
+            Kind::Type => Some(self.db.intern(Type::Union(
+                lower.iter().copied().map(UnionMember::Type).collect(),
+            ))),
+            Kind::Schema => lower.iter().all(|&ty| ty == lower[0]).then_some(lower[0]),
+        }
     }
 
     pub(crate) fn bounds(&self, id: InferVarId) -> &Bounds {
@@ -812,13 +849,10 @@ impl<'db> Solver<'db> {
         &self.roots[id.0].provenance
     }
 
-    /// Check the term IDs and return their kind; inference variables have type kind.
+    /// Check the term IDs and return their kind
     fn kind(&self, term: Term) -> Kind {
         match term {
-            Term::Infer(id) => {
-                let _ = &self.bounds[id.0];
-                Kind::Type
-            }
+            Term::Infer(id) => self.inference[id.0].kind,
             Term::View(view) => {
                 assert!(self.environments.get_by_index(view.environment.0).is_some());
                 self.db.kind(view.ty)
@@ -1295,6 +1329,83 @@ impl<'db> Solver<'db> {
         Ok(())
     }
 
+    /// Relate a quantified function to a function type through fresh variables
+    /// for its binders. An implicit binder that is the body's ambient channel
+    /// takes the expected function's channel instead: a callee runs in its
+    /// caller's ambient. The variables are created once per obligation, so
+    /// reprocessing it derives the same obligations.
+    fn instantiation(
+        &self,
+        view: TypeView,
+        binders: &[Binder],
+        body: TypeId,
+        bv: TypeView,
+        expected: &Function,
+        obligation: ObligationId,
+    ) -> Result<(), Issue> {
+        let known = self.instantiations.borrow().get(&obligation).copied();
+        let environment = match known {
+            Some(environment) => environment,
+            None => {
+                let slot = |channel: Option<TypeId>| match channel.map(|ty| self.db.ty(ty)) {
+                    Some(&Type::Bound { reference, .. }) if reference.depth == 0 => {
+                        Some(usize::from(reference.slot))
+                    }
+                    _ => None,
+                };
+                let (input, output) = match self.db.ty(body) {
+                    Type::Function(function) => (slot(function.input), slot(function.output)),
+                    _ => (None, None),
+                };
+                let group = binders
+                    .iter()
+                    .enumerate()
+                    .map(|(index, binder)| {
+                        let channel = match binder.binding {
+                            Binding::Implicit if input == Some(index) => expected.input,
+                            Binding::Implicit if output == Some(index) => expected.output,
+                            _ => None,
+                        };
+                        match (channel, binder.binding) {
+                            (Some(channel), _) => bv.child(channel),
+                            (None, Binding::Rest(rest)) => self.fresh(binder.kind, rest),
+                            (None, _) => self.fresh(binder.kind, Rest::All),
+                        }
+                    })
+                    .collect();
+                let environment = self.intern_environment(view.environment, group);
+                self.instantiations
+                    .borrow_mut()
+                    .insert(obligation, environment);
+                environment
+            }
+        };
+        let group = self
+            .environments
+            .get_by_index(environment.0)
+            .unwrap()
+            .group
+            .clone();
+        for (index, (binder, term)) in binders.iter().zip(group).enumerate() {
+            if !matches!(term, Term::Infer(_)) {
+                continue;
+            }
+            let bound = match (binder.bound, binder.binding) {
+                (Some(bound), _) => self.view(bound, environment),
+                (None, Binding::Rest(rest)) => self.closed(self.db.rest_shape(rest)),
+                (None, _) => continue,
+            };
+            self.derive(obligation, term, bound, Step::InstantiationBound(index));
+        }
+        self.derive(
+            obligation,
+            self.view(body, environment),
+            Term::View(bv),
+            Step::Instantiation,
+        );
+        Ok(())
+    }
+
     /// The default bound of an omitted ambient channel, `Iter[Unknown]` or
     /// `Sink[Unknown]`, or `Unknown` when `std` doesn't designate one with a
     /// single positional type binder
@@ -1476,6 +1587,9 @@ impl<'db> Solver<'db> {
                     }
                     (Type::Function(a_func), Type::Function(b_func)) => {
                         self.functions(a, a_func, b, b_func, obligation)
+                    }
+                    (Type::Quantified { binders, body }, Type::Function(b_func)) => {
+                        self.instantiation(a, binders, *body, b, b_func, obligation)
                     }
                     (Type::Schema(xs), Type::Schema(ys)) => {
                         self.schemas(a, xs, b, ys, expected, obligation)
