@@ -27,8 +27,8 @@ use dolang_util::{
 use crate::typeck::r#type::UnitSpan;
 
 use super::r#type::{
-    Argument, Binder, Binding, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
-    Multiplicity, SchemaItem, Type, TypeId, UnionMember, Variance,
+    Argument, Binder, Binding, BoundRef, Database, DeclId, Element, Function, Intrinsic, Kind,
+    Literal, Multiplicity, SchemaItem, SymbolId, Type, TypeId, UnionMember, Variance,
 };
 
 macro_rules! id {
@@ -72,6 +72,15 @@ pub(crate) struct Relation {
     pub(crate) expected: Term,
 }
 
+/// An argument of a call, by how it is passed
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CallArgument {
+    Positional(Term),
+    Keyword(SymbolId, Term),
+    /// The schema of a spread value's items
+    Spread(Term),
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Provenance {
     pub(crate) actual: Option<UnitSpan>,
@@ -90,9 +99,6 @@ pub(crate) enum Residual {
     GenericArguments,
     /// An intrinsic subtype rule needs a backing type that the database has not registered.
     MissingIntrinsic(Intrinsic),
-    /// Function ambient input/output channels differ in presence or cannot be
-    /// shown equal by contextual structural comparison.
-    AmbientChannels,
     /// A candidate contains a recursive substitution, inheritance revisited a
     /// declaration, or current proof dependencies cycle. None establishes a proof.
     Recursive,
@@ -110,7 +116,6 @@ pub(crate) enum Residual {
 pub(crate) enum Contradiction {
     DistinctLiterals,
     UnrelatedNominals,
-    Arity,
     /// A rigid is related to something other than itself, and its bound can't show it
     Rigid,
     /// The actual schema's item can be more than the expected schema admits
@@ -134,8 +139,13 @@ impl From<Residual> for Issue {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Step {
     Argument(usize),
-    Parameter(usize),
+    /// A function's parameter list, related contravariantly
+    Parameters,
     Return,
+    /// A function's ambient input channel, related contravariantly
+    Input,
+    /// A function's ambient output channel, related contravariantly
+    Output,
     IntrinsicBacking(Intrinsic),
     BoundPropagation,
     Assignment,
@@ -446,6 +456,56 @@ impl<'db> Solver<'db> {
 
     pub(crate) fn closed(&self, ty: TypeId) -> Term {
         self.view(ty, self.empty_environment())
+    }
+
+    /// The function type a call expects of its callee: `(args) <input >output ->
+    /// result`. Constraining the callee's type below it checks the call.
+    /// Contradictions and derivations under the parameter list name an argument
+    /// by its index in `args`, through [`Step::Item`] and [`Step::Key`].
+    pub(crate) fn call(
+        &self,
+        args: &[CallArgument],
+        result: Term,
+        input: Option<Term>,
+        output: Option<Term>,
+    ) -> Term {
+        let mut group = Vec::new();
+        let mut slot = |term: Term, kind| {
+            group.push(term);
+            self.db.intern(Type::Bound {
+                reference: BoundRef::new(0, group.len() - 1),
+                kind,
+            })
+        };
+        let items: Vec<_> = args
+            .iter()
+            .map(|arg| match *arg {
+                CallArgument::Positional(term) => SchemaItem {
+                    multiplicity: Multiplicity::Required,
+                    element: Element::Positional(slot(term, Kind::Type)),
+                },
+                CallArgument::Keyword(name, term) => SchemaItem {
+                    multiplicity: Multiplicity::Required,
+                    element: Element::Keyed {
+                        key: self.db.intern(Type::Literal(Literal::Sym(name))),
+                        value: slot(term, Kind::Type),
+                    },
+                },
+                CallArgument::Spread(term) => SchemaItem {
+                    multiplicity: Multiplicity::Required,
+                    element: Element::Include(slot(term, Kind::Schema)),
+                },
+            })
+            .collect();
+        let function = Function {
+            params: self.db.intern(Type::Schema(items.into())),
+            result: slot(result, Kind::Type),
+            input: input.map(|term| slot(term, Kind::Type)),
+            output: output.map(|term| slot(term, Kind::Type)),
+        };
+        let ty = self.db.intern(Type::Function(function));
+        let environment = self.intern_environment(self.empty_environment(), group);
+        self.view(ty, environment)
     }
 
     pub(crate) fn infer(&mut self) -> Term {
@@ -1188,26 +1248,10 @@ impl<'db> Solver<'db> {
         Ok(())
     }
 
-    /// Expose a parameter schema and extract required positional types.
-    fn parameters(&self, view: TypeView, function: &Function) -> Result<Vec<Term>, Issue> {
-        let Head::Structural(params) = self.head(view.child(function.params))? else {
-            return Err(Residual::Unsupported.into());
-        };
-        let Type::Schema(items) = self.db.ty(params.ty) else {
-            return Err(Residual::Unsupported.into());
-        };
-        items
-            .iter()
-            .map(|item| match item.element {
-                Element::Positional(ty) if item.multiplicity == Multiplicity::Required => {
-                    Ok(params.child(ty))
-                }
-                _ => Err(Residual::Unsupported.into()),
-            })
-            .collect()
-    }
-
-    /// Derive contravariant parameter and covariant result obligations; check ambient channels.
+    /// Derive a contravariant parameter list and a covariant result. The ambient
+    /// channels are implicit arguments, so they are contravariant too; `Sink`'s
+    /// own contravariance makes the element types written covariant. An omitted
+    /// channel stands for its default bound.
     fn functions(
         &self,
         av: TypeView,
@@ -1216,31 +1260,64 @@ impl<'db> Solver<'db> {
         b: &Function,
         obligation: ObligationId,
     ) -> Result<(), Issue> {
-        let ap = self.parameters(av, a)?;
-        let bp = self.parameters(bv, b)?;
-        if ap.len() != bp.len() {
-            return Err(Issue::Contradiction(Contradiction::Arity));
-        }
-        for (index, (a, b)) in ap.into_iter().zip(bp).enumerate() {
-            self.derive(obligation, b, a, Step::Parameter(index));
-        }
+        self.derive(
+            obligation,
+            bv.child(b.params),
+            av.child(a.params),
+            Step::Parameters,
+        );
         self.derive(
             obligation,
             av.child(a.result),
             bv.child(b.result),
             Step::Return,
         );
-        for (a, b) in [(a.input, b.input), (a.output, b.output)] {
-            match (a, b) {
-                (None, None) => {}
-                (Some(a), Some(b))
-                    if self.same(av.child(a), bv.child(b))?
-                        || self.unknown(av.child(a))?
-                        || self.unknown(bv.child(b))? => {}
-                _ => return Err(Residual::AmbientChannels.into()),
-            }
+        let channel = |view: TypeView, ty: Option<TypeId>, intrinsic| match ty {
+            Some(ty) => view.child(ty),
+            None => self.channel_bound(intrinsic),
+        };
+        if a.input.is_some() || b.input.is_some() {
+            self.derive(
+                obligation,
+                channel(bv, b.input, Intrinsic::Iter),
+                channel(av, a.input, Intrinsic::Iter),
+                Step::Input,
+            );
+        }
+        if a.output.is_some() || b.output.is_some() {
+            self.derive(
+                obligation,
+                channel(bv, b.output, Intrinsic::Sink),
+                channel(av, a.output, Intrinsic::Sink),
+                Step::Output,
+            );
         }
         Ok(())
+    }
+
+    /// The default bound of an omitted ambient channel, `Iter[Unknown]` or
+    /// `Sink[Unknown]`, or `Unknown` when `std` doesn't designate one with a
+    /// single positional type binder
+    fn channel_bound(&self, intrinsic: Intrinsic) -> Term {
+        let unknown = self.closed(self.db.unknown());
+        let Some(base) = self.db.intrinsic(intrinsic) else {
+            return unknown;
+        };
+        let Type::Decl(decl) = *self.db.ty(base) else {
+            return unknown;
+        };
+        let Type::Quantified { binders, .. } = self.db.ty(self.db.declaration(decl).ty) else {
+            return unknown;
+        };
+        if !matches!(&binders[..], [binder] if binder.binding == Binding::Positional && binder.kind == Kind::Type)
+        {
+            return unknown;
+        }
+        self.closed(self.db.intern(Type::Apply {
+            base,
+            args: vec![Argument::Positional(self.db.unknown())].into(),
+            kind: Kind::Type,
+        }))
     }
 
     /// Reduce one relation, recording bounds or child obligations, or return a diagnostic issue.

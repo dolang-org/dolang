@@ -170,19 +170,20 @@ be skipped to find a later match. This follows runtime member lookup's left-wins
 ordering and avoids speculative inference or combining bounds from alternative
 paths.
 
-Monomorphic functions support required positional parameters, contravariant
-parameter types, covariant results, and arity checks. Ambient input/output
-declarations must match in presence and either contextual structural identity
-or `Unknown` on one side; other channel judgments, including `Unknown` nested
-within a channel, remain residual and are retried when their inference
-variables receive assignments. Union-left judgments require every member;
-union-right judgments accept a member proved by an isolated, closed subtype
-query. Alternative queries cannot add inference bounds or diagnostic edges to
-the calling solver. Expanded union packs and alternatives that cannot be proved
-remain residual. Optional, keyed and variadic parameter matching and
-higher-rank rules remain deferred. Contextual identity and top/bottom rules can
-still settle some judgments involving otherwise unsupported forms: anything is
-below top and `Unknown`, even a type that can't be exposed.
+A function type is a subtype of another when its parameter list includes the
+other's (see [Schemas](#schemas)), its result is a subtype of the other's, and
+its ambient channels are supertypes of the other's. Channels are implicit
+arguments, so both are contravariant; since `Sink` is contravariant in its
+element type, a function that writes `Int`s can be given a `Sink[Num]`.
+An omitted channel stands for its default bound, `Iter[Unknown]` or
+`Sink[Unknown]`, or `Unknown` when `std` doesn't designate one. Union-left
+judgments require every member; union-right judgments accept a member proved by
+an isolated, closed subtype query. Alternative queries cannot add inference
+bounds or diagnostic edges to the calling solver. Expanded union packs and
+alternatives that cannot be proved remain residual. Higher-rank rules remain
+deferred. Contextual identity and top/bottom rules can still settle some
+judgments involving otherwise unsupported forms: anything is below top and
+`Unknown`, even a type that can't be exposed.
 
 ### Schemas
 
@@ -228,6 +229,15 @@ schema must itself be included in the whole shape, through the ordinary rules
 for rigids and `Unknown`. This decides schema binder bounds, symbol keys in
 parameter lists (`<: {*Value, **Value}`), and packs expanded into a
 positional-only rest (`<: {*Value}`) without flattening.
+
+A call is checked as an ordinary judgment: the callee's type must be a subtype
+of the function type the call expects, `(args) <input >output -> result`.
+`Solver::call` builds that type around solver terms, since canonical types
+can't hold them. Its parameter list has a required item for each positional or
+keyword argument, whose key is the literal name, and includes each spread
+value's schema. Contradictions and derivations under the parameter list name the
+argument by its index, so the caller can point at it. Omitting an optional
+argument adds no item, while passing `nil` is checked like any other value.
 
 ### Rigids
 
