@@ -174,6 +174,8 @@ well_known_symbols! {
     (Upper, "upper", UPPER),
     (Lower, "lower", LOWER),
     (Wait, "wait", WAIT),
+    (With, "with", WITH),
+    (Without, "without", WITHOUT),
     (WithoutPrefix, "without_prefix", WITHOUT_PREFIX),
     (WithoutSuffix, "without_suffix", WITHOUT_SUFFIX),
     (Zip, "zip", ZIP),

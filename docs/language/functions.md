@@ -109,6 +109,11 @@ connect port: 3000             # localhost:3000
 connect host: example.com      # example.com:8080
 ```
 
+A keyword that names a parameter may be supplied only once, including through
+spreading. Repeats raise [UnexpectedKeyError](std.UnexpectedKeyError), even when
+the function has a rest parameter. Keywords that name no parameter may repeat
+in a `**` or `...` rest, which preserves their order.
+
 Defaults are evaluated on every invocation of the function, so the following
 function always returns a fresh empty `array` if called with no arguments:
 

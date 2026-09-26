@@ -143,6 +143,21 @@ let r = record name: Alice age: 30
 A key may repeat, and a lookup finds its latest value. Iterating a record
 yields key/value tuples in order, with a positional item's position as its key.
 
+Use `with` to replace keys and `without` to remove them in a new record:
+
+```
+let updated = r.with status: ready
+let cleaned = updated.without :status:
+```
+
+`with` keeps each replaced key at its first position, removes later occurrences,
+and appends new keys. `without` removes all occurrences of the supplied keys.
+Both leave the original unchanged.
+
+Spreading a repeated key into a call raises
+[UnexpectedKeyError](std.UnexpectedKeyError) if it names a parameter. Duplicates
+captured by a `**` or `...` rest remain in order.
+
 See the [Record API](std.Record) for details.
 
 ## Sets (`Set`)

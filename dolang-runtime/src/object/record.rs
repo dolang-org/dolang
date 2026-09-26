@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     hash::{DefaultHasher, Hash},
     ops::ControlFlow,
 };
@@ -727,7 +727,7 @@ impl<'v> Protocol<'v> for Record<'v> {
                 Output::set(strand, out, len);
                 Ok(())
             }
-            sym::GET => {
+            sym::GET | sym::WITH | sym::WITHOUT => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
@@ -764,6 +764,78 @@ impl<'v> Protocol<'v> for Record<'v> {
                     out.store(Value::NIL);
                     Ok(())
                 }
+            }
+            sym::WITH => {
+                let ([], [], updates) = unpack!(strand, args, 0, 0, **)?;
+                // Keep argument slots intact so updates remain rooted. This path
+                // checks interrupts but never collects while building the result.
+                let mut replacements = Vec::new();
+                let mut indices = HashMap::new();
+                for (i, (key, value)) in updates.enumerate() {
+                    if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
+                        strand.check_trap()?;
+                    }
+                    let index = *indices.entry(key.tag()).or_insert_with(|| {
+                        replacements.push((key, None));
+                        replacements.len() - 1
+                    });
+                    replacements[index].1 = Some(value.dup());
+                }
+                let borrow = this.borrow(strand)?;
+                let mut items = Vec::with_capacity(borrow.items.len());
+                for (i, (key, value)) in borrow.items.iter().enumerate() {
+                    if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
+                        strand.check_trap()?;
+                    }
+                    if let Some(index) = key.as_ref().and_then(|key| indices.get(&key.tag)) {
+                        if let Some(value) = replacements[*index].1.take() {
+                            items.push((key.clone(), value));
+                        }
+                    } else {
+                        items.push((key.clone(), value.dup()));
+                    }
+                }
+                for (i, (key, value)) in replacements.into_iter().enumerate() {
+                    if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
+                        strand.check_trap()?;
+                    }
+                    if let Some(value) = value {
+                        items.push((Some(strand.sym_obj(key)), value));
+                    }
+                }
+                strand
+                    .builtin_types()
+                    .record
+                    .create(strand, Record::new(items), out);
+                Ok(())
+            }
+            sym::WITHOUT => {
+                let ([], [], keys) = unpack!(strand, args, 0, 0, *)?;
+                let mut removed = HashSet::new();
+                for (i, key) in keys.enumerate() {
+                    if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
+                        strand.check_trap()?;
+                    }
+                    let key = key
+                        .as_sym(strand)
+                        .ok_or_else(|| Error::type_error(strand, "expected `Sym`"))?;
+                    removed.insert(key.tag());
+                }
+                let borrow = this.borrow(strand)?;
+                let mut items = Vec::with_capacity(borrow.items.len());
+                for (i, (key, value)) in borrow.items.iter().enumerate() {
+                    if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
+                        strand.check_trap()?;
+                    }
+                    if !key.as_ref().is_some_and(|key| removed.contains(&key.tag)) {
+                        items.push((key.clone(), value.dup()));
+                    }
+                }
+                strand
+                    .builtin_types()
+                    .record
+                    .create(strand, Record::new(items), out);
+                Ok(())
             }
             sym::LEN => Err(Error::type_error(
                 strand,
@@ -963,6 +1035,8 @@ impl<'v> Protocol<'v> for Class {
                 Method(sym::HASH_METHOD),
                 Getter(sym::LEN),
                 Method(sym::GET),
+                Method(sym::WITH),
+                Method(sym::WITHOUT),
                 Method(sym::INDEX_METHOD),
                 Method(sym::ITER_METHOD),
                 Method(sym::UNPACK_METHOD),
@@ -1006,6 +1080,8 @@ impl<'v> Protocol<'v> for Class {
             sym::INIT_METHOD
             | sym::LEN
             | sym::GET
+            | sym::WITH
+            | sym::WITHOUT
             | sym::STR_METHOD
             | sym::DBG_METHOD
             | sym::FMT_METHOD

@@ -290,23 +290,22 @@ impl<'v, 'a> Args<'v, 'a> {
                         for (i, ksym) in kparam.iter().enumerate() {
                             if sym == *ksym {
                                 if seen[i + N] {
-                                    unsafe {
-                                        *(required.as_mut_ptr() as *mut Slot<'v, 'a>).add(i + N) =
-                                            value
-                                    }
-                                } else {
-                                    seen[i + N] = true;
-                                    unsafe {
-                                        (required.as_mut_ptr() as *mut Slot<'v, 'a>)
-                                            .add(i + N)
-                                            .write(value)
-                                    }
+                                    return Err(Error::duplicate_key(strand, sym));
+                                }
+                                seen[i + N] = true;
+                                unsafe {
+                                    (required.as_mut_ptr() as *mut Slot<'v, 'a>)
+                                        .add(i + N)
+                                        .write(value)
                                 }
                                 break 'search true;
                             }
                         }
                         for (i, ksym) in koparam.iter().enumerate() {
                             if sym == *ksym {
+                                if optional[i + NO].is_some() {
+                                    return Err(Error::duplicate_key(strand, sym));
+                                }
                                 optional[i + NO] = Some(value);
                                 break 'search true;
                             }
@@ -427,6 +426,9 @@ impl<'v, 'a> ExactSizeIterator for KeyArgs<'v, 'a> {}
 /// - `key2`: like the above, but optional
 /// - `req1`, ...: required arguments; positional first, then key arguments in provided order
 /// - `opt1`, ...: optional arguments; positional first, then key arguments in provided order
+///
+/// Repeating a named keyword raises `UnexpectedKeyError`. Unmatched keywords
+/// captured by a rest may repeat and retain their order.
 ///
 /// Required arguments are of type [`Slot`] and optional are of type [`Option<Slot>`].
 ///
