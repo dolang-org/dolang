@@ -1,8 +1,9 @@
 //! A deliberately incomplete subtype engine over a sealed declaration database.
 //!
 //! Views capture immutable substitution environments. Append-only bounds constrain
-//! inference variables; separate assignments commit only forced, fully resolved
-//! solutions. Assignments wake dependent judgments without rewriting stored terms.
+//! inference variables; separate assignments commit fully resolved solutions,
+//! either forced or defaulted at the caller's request. Assignments wake dependent
+//! judgments without rewriting stored terms.
 //!
 //! Subtype judgments assume well-formed inputs. Callers must establish generic
 //! argument bounds and validate declaration bodies and supertypes under their
@@ -238,6 +239,8 @@ struct Inference {
     lanes: Rest,
     // Solutions are closed canonical types; no solver-local identity can escape.
     assignment: Cell<Option<TypeId>>,
+    /// Whether the assignment is a default rather than forced
+    defaulted: Cell<bool>,
     support: MonoHashSet<ObligationId>,
     subscribers: MonoHashSet<ObligationId>,
     dirty: Cell<bool>,
@@ -534,6 +537,7 @@ impl<'db> Solver<'db> {
             kind,
             lanes,
             assignment: Cell::new(None),
+            defaulted: Cell::new(false),
             support: MonoHashSet::new(),
             subscribers: MonoHashSet::new(),
             dirty: Cell::new(false),
@@ -807,7 +811,15 @@ impl<'db> Solver<'db> {
         if !forced {
             return Ok(false);
         }
-        // Only closed candidates can commit, so substitution cycles cannot be introduced.
+        self.commit(id, candidate);
+        Ok(true)
+    }
+
+    /// Assign a closed candidate and wake what depends on it. Only closed
+    /// candidates can commit, so substitution cycles cannot be introduced.
+    fn commit(&self, id: InferVarId, candidate: TypeId) {
+        let bounds = &self.bounds[id.0];
+        let inference = &self.inference[id.0];
         for (_, sources) in bounds.lower.iter().chain(bounds.upper.iter()) {
             for &source in sources.iter() {
                 let _ = inference.support.try_insert(source);
@@ -823,7 +835,57 @@ impl<'db> Solver<'db> {
                 other.dirty.set(true);
             }
         }
-        Ok(true)
+    }
+
+    /// Default an unsolved variable to the join of its lower bounds: the least
+    /// choice, not one its constraints force. The caller decides which variables
+    /// to default and in what order, defaulting a variable's lower bounds first,
+    /// then solves again. `Unknown` among the lower bounds makes the default
+    /// `Unknown`.
+    ///
+    /// A lower bound that isn't yet solved leaves the variable unsolved. So does
+    /// a variable without lower bounds, rather than inventing a type. An upper
+    /// bound that isn't yet solved is checked once the default is, through the
+    /// obligations that pair it with the lower bounds. Any other upper bound the
+    /// default can't be shown to satisfy leaves the variable unsolved; if the
+    /// bounds contradict each other, those obligations report it.
+    pub(crate) fn default(&mut self, id: InferVarId) -> Result<TypeId, Residual> {
+        if let Some(ty) = self.solution(id) {
+            return Ok(ty);
+        }
+        let bounds = &self.bounds[id.0];
+        let lower = bounds
+            .lower()
+            .map(|term| self.reify(term))
+            .collect::<Result<Vec<_>, _>>()?;
+        if lower.is_empty() {
+            return Err(Residual::Inference);
+        }
+        let kind = self.inference[id.0].kind;
+        let unknown = self.db.unknown_of(kind);
+        let candidate = if lower.contains(&unknown) {
+            unknown
+        } else {
+            self.join(kind, &lower).ok_or(Residual::Unsupported)?
+        };
+        for upper in bounds.upper() {
+            let upper = match self.reify(upper) {
+                Ok(upper) => upper,
+                Err(Residual::Inference) => continue,
+                Err(issue) => return Err(issue),
+            };
+            if self.probe(candidate, upper)? != Status::Proven {
+                return Err(Residual::Unsupported);
+            }
+        }
+        self.inference[id.0].defaulted.set(true);
+        self.commit(id, candidate);
+        Ok(candidate)
+    }
+
+    /// Whether a variable's solution was chosen by [`Self::default`], not forced
+    pub(crate) fn defaulted(&self, id: InferVarId) -> bool {
+        self.inference[id.0].defaulted.get()
     }
 
     /// The least candidate above nonempty lower bounds: their union, or for a
@@ -1330,47 +1392,26 @@ impl<'db> Solver<'db> {
     }
 
     /// Relate a quantified function to a function type through fresh variables
-    /// for its binders. An implicit binder that is the body's ambient channel
-    /// takes the expected function's channel instead: a callee runs in its
-    /// caller's ambient. The variables are created once per obligation, so
+    /// for its binders, including implicit ambient ones: a call's own channels
+    /// bound them from below. The variables are created once per obligation, so
     /// reprocessing it derives the same obligations.
     fn instantiation(
         &self,
         view: TypeView,
         binders: &[Binder],
         body: TypeId,
-        bv: TypeView,
-        expected: &Function,
+        expected: Term,
         obligation: ObligationId,
     ) -> Result<(), Issue> {
         let known = self.instantiations.borrow().get(&obligation).copied();
         let environment = match known {
             Some(environment) => environment,
             None => {
-                let slot = |channel: Option<TypeId>| match channel.map(|ty| self.db.ty(ty)) {
-                    Some(&Type::Bound { reference, .. }) if reference.depth == 0 => {
-                        Some(usize::from(reference.slot))
-                    }
-                    _ => None,
-                };
-                let (input, output) = match self.db.ty(body) {
-                    Type::Function(function) => (slot(function.input), slot(function.output)),
-                    _ => (None, None),
-                };
                 let group = binders
                     .iter()
-                    .enumerate()
-                    .map(|(index, binder)| {
-                        let channel = match binder.binding {
-                            Binding::Implicit if input == Some(index) => expected.input,
-                            Binding::Implicit if output == Some(index) => expected.output,
-                            _ => None,
-                        };
-                        match (channel, binder.binding) {
-                            (Some(channel), _) => bv.child(channel),
-                            (None, Binding::Rest(rest)) => self.fresh(binder.kind, rest),
-                            (None, _) => self.fresh(binder.kind, Rest::All),
-                        }
+                    .map(|binder| match binder.binding {
+                        Binding::Rest(rest) => self.fresh(binder.kind, rest),
+                        _ => self.fresh(binder.kind, Rest::All),
                     })
                     .collect();
                 let environment = self.intern_environment(view.environment, group);
@@ -1387,9 +1428,6 @@ impl<'db> Solver<'db> {
             .group
             .clone();
         for (index, (binder, term)) in binders.iter().zip(group).enumerate() {
-            if !matches!(term, Term::Infer(_)) {
-                continue;
-            }
             let bound = match (binder.bound, binder.binding) {
                 (Some(bound), _) => self.view(bound, environment),
                 (None, Binding::Rest(rest)) => self.closed(self.db.rest_shape(rest)),
@@ -1400,7 +1438,7 @@ impl<'db> Solver<'db> {
         self.derive(
             obligation,
             self.view(body, environment),
-            Term::View(bv),
+            expected,
             Step::Instantiation,
         );
         Ok(())
@@ -1588,8 +1626,8 @@ impl<'db> Solver<'db> {
                     (Type::Function(a_func), Type::Function(b_func)) => {
                         self.functions(a, a_func, b, b_func, obligation)
                     }
-                    (Type::Quantified { binders, body }, Type::Function(b_func)) => {
-                        self.instantiation(a, binders, *body, b, b_func, obligation)
+                    (Type::Quantified { binders, body }, Type::Function(_)) => {
+                        self.instantiation(a, binders, *body, expected, obligation)
                     }
                     (Type::Schema(xs), Type::Schema(ys)) => {
                         self.schemas(a, xs, b, ys, expected, obligation)

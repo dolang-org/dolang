@@ -281,13 +281,13 @@ A quantified function type on the left of a function type is instantiated: each
 binder gets a fresh variable of its kind, and a schema variable records the
 lanes its rest mode allows. Each variable must be below its binder's bound,
 interpreted in the instantiation's environment, and the body below the expected
-function. An implicit binder that is the body's ambient channel takes the
-expected function's channel instead of a variable, so a callee runs in its
-caller's ambient. A call instantiates its callee this way, and so do lifted
-binders. The environment is recorded by obligation, so reprocessing derives the
-same obligations without creating variables. Variables never leave the solver:
-flow analysis creates a solver per step and exports only reified types. A
-quantifier on the right, which needs skolems, is residual.
+function. Implicit ambient binders and lifted binders are instantiated the same
+way; a call's channels bound a callee's channel variables from below, and
+defaulting settles them on the caller's channels. The environment is recorded by
+obligation, so reprocessing derives the same obligations without creating
+variables. Variables never leave the solver: flow analysis creates a solver per
+step and exports only reified types. A quantifier on the right, which needs
+skolems, is residual.
 
 ### Assignments and fixed point
 
@@ -310,6 +310,19 @@ Unsupported concrete compatibility checks defer commitment. There are no
 intersection nodes, speculative assignments, rollback, or defaults to top or
 bottom. Closed proof queries reuse the subtype engine and charge their work to
 the caller's lifetime budget.
+
+Forcing alone rarely settles a call: its result variable and most of its
+callee's variables have only lower bounds and binder bounds. `default` is a
+separate, caller-driven choice: it assigns the join of a variable's lower
+bounds, all of which must be solved, or `Unknown` if one of them is. The
+default must satisfy every solved upper bound; the obligations pairing lower and
+upper bounds check the rest once it commits. A variable without lower bounds is
+never defaulted. The caller defaults a variable's lower bounds before it, such
+as a call's binders before its result, and solves between defaults so that
+their consequences can force later variables. Defaulted assignments are marked
+as such, so a contradiction reached through one can be reported as an inference
+choice. Widening literals and choosing collection element types are separate
+policies.
 
 Exact candidate dependencies receive a scope-aware occurs check. Recursive
 substitutions remain recursive residuals; variable-only cycles remain unsolved

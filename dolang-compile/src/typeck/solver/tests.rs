@@ -2841,8 +2841,24 @@ fn instantiated_binders_are_below_their_bounds() {
     }
 }
 
+/// Default every variable whose lower bounds are solved, repeatedly, solving
+/// between rounds, as a flow driver would
+fn default_all(s: &mut Solver<'_>) -> Vec<Outcome> {
+    loop {
+        let unsolved: Vec<_> = s.unresolved().collect();
+        let progress = unsolved
+            .into_iter()
+            .filter(|&id| s.default(id).is_ok())
+            .count();
+        let outcomes = s.solve();
+        if progress == 0 {
+            return outcomes;
+        }
+    }
+}
+
 #[test]
-fn ambient_binders_take_the_callers_channels() {
+fn ambient_binders_are_bounded_by_the_callers_channels() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
     let iter = nominal(&mut db, "Iter", vec![binder(Variance::Covariant)], vec![]);
@@ -2864,11 +2880,78 @@ fn ambient_binders_take_the_callers_channels() {
     );
     db.seal();
     let mut s = Solver::new(&db);
-    let expected = s.call(&[], s.closed(iter_int), Some(s.closed(iter_int)), None);
+    let result = s.infer();
+    let expected = s.call(&[], result, Some(s.closed(iter_int)), None);
     s.constrain(s.closed(f), expected, Provenance::default());
+    assert_eq!(s.solve()[0].status, Status::Unresolved);
+    // The channel's variable defaults to the caller's channel, and the result to it
+    assert!(
+        default_all(&mut s)
+            .iter()
+            .all(|o| o.status == Status::Proven)
+    );
+    assert_eq!(s.reify(result), Ok(iter_int));
+}
+
+#[test]
+fn defaults_are_the_join_of_solved_lower_bounds() {
+    let mut db = Database::new();
+    let int = nominal(&mut db, "Int", vec![], vec![]);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let one = literal(&db, 1);
+    let t = reference(&db, 0, 0);
+    let f = function(&db, &[int], str);
+    let id = quantified(
+        &db,
+        vec![binder(Variance::Invariant)],
+        function(&db, &[t], t),
+    );
+    db.seal();
+
+    // A monomorphic call's result
+    let (mut s, result, outcome) = solve_call(&db, f, &[int], None);
+    assert_eq!(outcome.status, Status::Unresolved);
+    let result = variable_id(result);
+    assert_eq!(s.default(result), Ok(str));
+    assert!(s.defaulted(result));
     assert_eq!(s.solve()[0].status, Status::Proven);
-    // The channel is substituted, so the call creates no variable
-    assert_eq!(s.bounds.len(), 0);
+
+    // A generic call's binder defaults first; literals are not widened here
+    let (mut s, result, _) = solve_call(&db, id, &[one], None);
+    assert_eq!(s.default(variable_id(result)), Err(Residual::Inference));
+    assert!(
+        default_all(&mut s)
+            .iter()
+            .all(|o| o.status == Status::Proven)
+    );
+    assert_eq!(s.reify(result), Ok(one));
+
+    // Several lower bounds join, and `Unknown` makes the join dynamic
+    let mut s = Solver::new(&db);
+    let [joined, dynamic, empty, conflicted] = [(); 4].map(|()| s.infer());
+    for (variable, lower) in [
+        (joined, int),
+        (joined, str),
+        (dynamic, int),
+        (dynamic, db.unknown()),
+        (conflicted, str),
+    ] {
+        s.constrain(s.closed(lower), variable, Provenance::default());
+    }
+    s.constrain(conflicted, s.closed(int), Provenance::default());
+    s.solve();
+    let union = db.intern(Type::Union(
+        vec![UnionMember::Type(int), UnionMember::Type(str)].into(),
+    ));
+    assert_eq!(s.default(variable_id(joined)), Ok(union));
+    assert_eq!(s.default(variable_id(dynamic)), Ok(db.unknown()));
+    assert_eq!(s.default(variable_id(empty)), Err(Residual::Inference));
+    assert_eq!(
+        s.default(variable_id(conflicted)),
+        Err(Residual::Unsupported)
+    );
+    assert_eq!(s.solution(variable_id(conflicted)), None);
+    assert!(!s.defaulted(variable_id(conflicted)));
 }
 
 #[test]
@@ -2921,9 +3004,14 @@ fn pack_binders_take_the_remaining_arguments() {
             .map(|term| s.reify(term))
             .collect::<Vec<_>>()
     };
-    let (s, _, outcome) = solve_call(&db, pack, &[int, str, int], Some(db.top()));
+    let (mut s, _, outcome) = solve_call(&db, pack, &[int, str, int], Some(db.top()));
     assert_eq!(outcome.status, Status::Unresolved);
     assert_eq!(lower_schema(&s), vec![Ok(rest)]);
+    assert!(
+        default_all(&mut s)
+            .iter()
+            .all(|o| o.status == Status::Proven)
+    );
     let (_, _, outcome) = solve_call(&db, pack, &[], Some(db.top()));
     assert!(contradiction(&outcome, Contradiction::Missing(0)));
     let (_, _, outcome) = solve_call(&db, pack, &[str], Some(db.top()));
