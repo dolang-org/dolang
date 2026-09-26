@@ -1,0 +1,7 @@
+import shapes:
+  - @Crate
+import geo:
+  - @Boxes
+
+let _c @ Crate[Boxes[Crate[nil]]] = nil
+#        ^~~~~~~~~~~~~~~~~~~~~~~~: type shapes.Crate[geo.Boxes[shapes.Crate[nil]]]

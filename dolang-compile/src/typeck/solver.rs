@@ -9,10 +9,14 @@
 //! binder assumptions. Nested declarations have their captured binders lambda-lifted
 //! and are closed outside their own binder groups. Exposure performs substitution
 //! without rechecking bounds or scanning declarations for free references.
+//!
+//! A declaration is checked by assuming it: its binders become rigids, whose bounds
+//! are the only binder bounds taken as facts. Any other declaration's rigid has
+//! escaped its check.
 
 use std::{
     cell::{Cell, RefCell},
-    collections::HashSet,
+    collections::{HashMap, HashSet},
 };
 
 use dolang_util::{
@@ -24,7 +28,7 @@ use crate::typeck::r#type::UnitSpan;
 
 use super::r#type::{
     Argument, Binder, Binding, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
-    Multiplicity, Type, TypeId, UnionMember, Variance,
+    Multiplicity, SchemaItem, Type, TypeId, UnionMember, Variance,
 };
 
 macro_rules! id {
@@ -95,6 +99,8 @@ pub(crate) enum Residual {
     /// A work or traversal-depth limit prevented completion. Also used for
     /// obligations left pending when solving exhausted its work budget.
     Limit,
+    /// A rigid of a declaration this solver does not check has escaped its own check.
+    Escape,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,6 +108,10 @@ pub(crate) enum Contradiction {
     DistinctLiterals,
     UnrelatedNominals,
     Arity,
+    /// A rigid is related to something other than itself, and its bound can't show it
+    Rigid,
+    /// A schema item that the expected rest shape does not admit
+    Item,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,6 +135,24 @@ pub(crate) enum Step {
     BoundPropagation,
     Assignment,
     UnionMember(usize),
+    /// A rigid reduced to its written or default bound
+    RigidBound,
+    /// A rigid reduced to the default bound of an omitted ambient channel
+    ImplicitBound,
+    /// A schema item's positional type, keyed value or included schema
+    Item(usize),
+    /// A schema item's key
+    Key(usize),
+}
+
+/// Where an ancestor query ends
+#[derive(Clone, Debug)]
+pub(crate) enum Reach {
+    /// The target, with its arguments
+    Reached(Vec<Term>),
+    Unreached,
+    /// The dynamic type, which reaches anything
+    Dynamic,
 }
 
 #[derive(Clone, Debug)]
@@ -263,6 +291,10 @@ pub(crate) struct Solver<'db> {
     limits: Limits,
     work: Cell<usize>,
     exhausted: Cell<bool>,
+    /// The declarations being checked, whose rigids' bounds are assumptions
+    scope: HashSet<DeclId>,
+    /// Each rigid's bound, once computed
+    rigid_bounds: RefCell<HashMap<TypeId, Option<TypeId>>>,
 }
 
 impl<'db> Solver<'db> {
@@ -289,7 +321,92 @@ impl<'db> Solver<'db> {
             limits,
             work: Cell::new(0),
             exhausted: Cell::new(false),
+            scope: HashSet::new(),
+            rigid_bounds: RefCell::new(HashMap::new()),
         }
+    }
+
+    /// Check `decl`: its rigids' bounds become assumptions. The rigids of any other
+    /// declaration have escaped their own check.
+    pub(crate) fn assume(&mut self, decl: DeclId) {
+        self.scope.insert(decl);
+    }
+
+    /// Assume `decl`, and return an environment that interprets its group as its
+    /// rigids. Its type, supertypes and members viewed there are what is checked.
+    pub(crate) fn rigid_environment(&mut self, decl: DeclId) -> EnvironmentId {
+        self.assume(decl);
+        let group = self
+            .db
+            .rigids(decl)
+            .into_iter()
+            .map(|ty| self.closed(ty))
+            .collect();
+        self.intern_environment(self.empty_environment(), group)
+    }
+
+    /// A rigid in scope, and the binder it stands for
+    fn rigid(&self, ty: TypeId) -> Result<Option<&Binder>, Residual> {
+        let Type::Rigid { decl, slot, .. } = *self.db.ty(ty) else {
+            return Ok(None);
+        };
+        if !self.scope.contains(&decl) {
+            return Err(Residual::Escape);
+        }
+        let Type::Quantified { binders, .. } = self.db.ty(self.db.declaration(decl).ty) else {
+            unreachable!("a rigid of a declaration without binders")
+        };
+        Ok(Some(&binders[usize::from(slot)]))
+    }
+
+    /// A rigid's bound, with its declaration's rigids for its group. A rest binder
+    /// without one is bounded by its rest mode's shape.
+    fn rigid_bound(&self, ty: TypeId) -> Option<TypeId> {
+        if let Some(&bound) = self.rigid_bounds.borrow().get(&ty) {
+            return bound;
+        }
+        let Type::Rigid { decl, slot, .. } = *self.db.ty(ty) else {
+            unreachable!()
+        };
+        let Type::Quantified { binders, .. } = self.db.ty(self.db.declaration(decl).ty) else {
+            unreachable!("a rigid of a declaration without binders")
+        };
+        let binder = &binders[usize::from(slot)];
+        let bound = self.db.binder_bound(binder, &self.db.rigids(decl));
+        self.rigid_bounds.borrow_mut().insert(ty, bound);
+        bound
+    }
+
+    /// Walk a term to the target declaration, carrying substitutions. A rigid in
+    /// scope continues through its bound.
+    pub(crate) fn reach(&self, mut term: Term, target: DeclId) -> Result<Reach, Issue> {
+        for depth in 0.. {
+            self.depth(depth)?;
+            self.spend()?;
+            match self.head(term)? {
+                Head::Infer(_) => return Err(Residual::Inference.into()),
+                Head::Nominal(nominal) => {
+                    return Ok(
+                        match self.ancestor(nominal, target, &mut HashSet::new(), 0)? {
+                            Some(found) => Reach::Reached(found.arguments),
+                            None => Reach::Unreached,
+                        },
+                    );
+                }
+                Head::Structural(view) => match self.db.ty(view.ty) {
+                    Type::Unknown(_) => return Ok(Reach::Dynamic),
+                    Type::Rigid { .. } => {
+                        self.rigid(view.ty)?;
+                        match self.rigid_bound(view.ty) {
+                            Some(bound) => term = self.closed(bound),
+                            None => return Ok(Reach::Unreached),
+                        }
+                    }
+                    _ => return Ok(Reach::Unreached),
+                },
+            }
+        }
+        unreachable!()
     }
 
     pub(crate) fn empty_environment(&self) -> EnvironmentId {
@@ -378,6 +495,7 @@ impl<'db> Solver<'db> {
                     // Replacements carry their own context, not the caller's local scope.
                     return self.reify_scoped(replacement, 0, depth + 1);
                 }
+                self.rigid(view.ty)?;
                 let mapped = ty.map_children(|child, groups| {
                     self.reify_scoped(view.child(child), local + groups, depth + 1)
                 })?;
@@ -459,6 +577,7 @@ impl<'db> Solver<'db> {
                 depth: self.limits.depth - 1,
             },
         );
+        proof.scope = self.scope.clone();
         proof.constrain(
             proof.closed(actual),
             proof.closed(expected),
@@ -578,6 +697,9 @@ impl<'db> Solver<'db> {
                 }
             }
         }
+        // Consistency with the dynamic type is not antisymmetric, so a bound containing
+        // it never builds a candidate or forces one. It must still admit the candidate.
+        lower.retain(|&ty| !self.contains_unknown(ty));
         if lower.is_empty() || upper.is_empty() {
             return Ok(false);
         }
@@ -589,7 +711,7 @@ impl<'db> Solver<'db> {
             if self.probe(candidate, ty)? != Status::Proven {
                 return Ok(false);
             }
-            forced |= self.probe(ty, candidate)? == Status::Proven;
+            forced |= !self.contains_unknown(ty) && self.probe(ty, candidate)? == Status::Proven;
         }
         if !forced {
             return Ok(false);
@@ -766,6 +888,28 @@ impl<'db> Solver<'db> {
         unreachable!()
     }
 
+    /// Whether an exposed head is the dynamic type or schema
+    fn is_unknown(&self, head: &Head) -> bool {
+        matches!(head, Head::Structural(view) if matches!(self.db.ty(view.ty), Type::Unknown(_)))
+    }
+
+    /// Whether a term resolves to the dynamic type or schema
+    fn unknown(&self, term: Term) -> Result<bool, Residual> {
+        Ok(match self.resolve(term)? {
+            Term::View(view) => matches!(self.db.ty(view.ty), Type::Unknown(_)),
+            Term::Infer(_) => false,
+        })
+    }
+
+    /// Whether a closed type contains the dynamic type or schema anywhere
+    fn contains_unknown(&self, ty: TypeId) -> bool {
+        let mut found = false;
+        self.db.walk(ty, |node, _| {
+            found |= matches!(self.db.ty(node), Type::Unknown(_));
+        });
+        found
+    }
+
     /// Compare structure without substituting into the canonical database. Local
     /// quantifier references stay local; only free references consult a telescope.
     fn same(&self, a: Term, b: Term) -> Result<bool, Residual> {
@@ -837,7 +981,10 @@ impl<'db> Solver<'db> {
         Ok(true)
     }
 
-    /// Substitute fixed positional arguments whose binder bounds the caller has established.
+    /// Substitute fixed arguments whose binder bounds the caller has established.
+    /// Population places every argument in its binder's slot, whatever the
+    /// binder's kind or binding; only arguments after an expansion of unknown
+    /// reach stay as written.
     fn instantiate(
         &self,
         binders: &[Binder],
@@ -845,12 +992,13 @@ impl<'db> Solver<'db> {
         view: TypeView,
         parent: EnvironmentId,
     ) -> Result<(Vec<Term>, EnvironmentId), Issue> {
-        if binders
+        assert!(
+            binders.iter().all(|b| b.binding != Binding::Implicit),
+            "implicit binder applied"
+        );
+        if arguments
             .iter()
-            .any(|b| b.kind != Kind::Type || b.binding != Binding::Positional)
-            || arguments
-                .iter()
-                .any(|a| !matches!(a, Argument::Positional(_)))
+            .any(|a| !matches!(a, Argument::Positional(_)))
         {
             return Err(Residual::GenericArguments.into());
         }
@@ -870,13 +1018,14 @@ impl<'db> Solver<'db> {
         );
         let args: Vec<_> = arguments
             .iter()
-            .map(|arg| {
+            .zip(binders)
+            .map(|(arg, binder)| {
                 let Argument::Positional(ty) = *arg else {
                     unreachable!()
                 };
                 // Resolving keeps environments from nesting through forwarded binders.
                 let term = self.resolve(view.child(ty))?;
-                assert_eq!(self.kind(term), Kind::Type, "argument kind mismatch");
+                assert_eq!(self.kind(term), binder.kind, "argument kind mismatch");
                 Ok(term)
             })
             .collect::<Result<_, Residual>>()?;
@@ -1079,8 +1228,63 @@ impl<'db> Solver<'db> {
         for (a, b) in [(a.input, b.input), (a.output, b.output)] {
             match (a, b) {
                 (None, None) => {}
-                (Some(a), Some(b)) if self.same(av.child(a), bv.child(b))? => {}
+                (Some(a), Some(b))
+                    if self.same(av.child(a), bv.child(b))?
+                        || self.unknown(av.child(a))?
+                        || self.unknown(bv.child(b))? => {}
                 _ => return Err(Residual::AmbientChannels.into()),
+            }
+        }
+        Ok(())
+    }
+
+    /// Include a schema in one whose items are all repeated: at most one
+    /// positional and one keyed. Each of `xs`'s items must fit the matching
+    /// repeated item, whatever its multiplicity, and each inclusion must fit
+    /// the whole expected schema. Any other expected schema is unsupported.
+    fn schemas(
+        &self,
+        av: TypeView,
+        xs: &[SchemaItem],
+        bv: TypeView,
+        ys: &[SchemaItem],
+        expected: Term,
+        obligation: ObligationId,
+    ) -> Result<(), Issue> {
+        let (mut positional, mut keyed) = (None, None);
+        for item in ys {
+            let slot = match (item.multiplicity, &item.element) {
+                (Multiplicity::Repeated, Element::Positional(_)) => &mut positional,
+                (Multiplicity::Repeated, Element::Keyed { .. }) => &mut keyed,
+                _ => return Err(Residual::Unsupported.into()),
+            };
+            if slot.replace(&item.element).is_some() {
+                return Err(Residual::Unsupported.into());
+            }
+        }
+        for item in xs {
+            let admitted = match item.element {
+                Element::Positional(_) => positional.is_some(),
+                Element::Keyed { .. } => keyed.is_some(),
+                Element::Include(_) => true,
+            };
+            if !admitted {
+                return Err(Issue::Contradiction(Contradiction::Item));
+            }
+        }
+        for (index, item) in xs.iter().enumerate() {
+            match (&item.element, positional, keyed) {
+                (&Element::Positional(ty), Some(&Element::Positional(p)), _) => {
+                    self.derive(obligation, av.child(ty), bv.child(p), Step::Item(index));
+                }
+                (&Element::Keyed { key, value }, _, Some(&Element::Keyed { key: k, value: v })) => {
+                    self.derive(obligation, av.child(key), bv.child(k), Step::Key(index));
+                    self.derive(obligation, av.child(value), bv.child(v), Step::Item(index));
+                }
+                (&Element::Include(schema), _, _) => {
+                    self.derive(obligation, av.child(schema), expected, Step::Item(index));
+                }
+                _ => unreachable!(),
             }
         }
         Ok(())
@@ -1111,12 +1315,17 @@ impl<'db> Solver<'db> {
                 }
             }
         }
-        let a = self.head(actual)?;
+        // Anything is below top and the dynamic type, even what can't be exposed
         let b = self.head(expected)?;
-        if let Head::Structural(view) = &b
-            && view.ty == self.db.top()
-            && self.kind(actual) == Kind::Type
+        if self.is_unknown(&b)
+            || matches!(&b, Head::Structural(view) if view.ty == self.db.top())
+                && self.kind(actual) == Kind::Type
         {
+            return Ok(());
+        }
+        let a = self.head(actual)?;
+        // The dynamic type or schema is consistent with anything of its kind
+        if self.is_unknown(&a) {
             return Ok(());
         }
         if let Head::Structural(view) = &a
@@ -1129,6 +1338,44 @@ impl<'db> Solver<'db> {
             && self.same(Term::View(*a), Term::View(*b))?
         {
             return Ok(());
+        }
+        // Past identity, a rigid of a declaration not being checked has escaped
+        for head in [&a, &b] {
+            if let Head::Structural(view) = head {
+                self.rigid(view.ty)?;
+            }
+        }
+        if !matches!(a, Head::Infer(_))
+            && let Head::Structural(view) = &b
+            && let Type::Union(members) = self.db.ty(view.ty)
+        {
+            for member in members.iter() {
+                if let UnionMember::Type(ty) = *member
+                    && self.same(actual, view.child(ty))?
+                {
+                    return Ok(());
+                }
+            }
+        }
+        // A rigid is below whatever its bound is below
+        if !matches!(b, Head::Infer(_))
+            && let Head::Structural(view) = &a
+            && let Some(binder) = self.rigid(view.ty)?
+        {
+            let step = match binder.binding {
+                Binding::Implicit => Step::ImplicitBound,
+                _ => Step::RigidBound,
+            };
+            match self.rigid_bound(view.ty) {
+                Some(bound) => {
+                    self.derive(obligation, self.closed(bound), expected, step);
+                    return Ok(());
+                }
+                // A union may still have a member that admits anything
+                None if matches!(&b, Head::Structural(view)
+                    if matches!(self.db.ty(view.ty), Type::Union(_))) => {}
+                None => return Err(Issue::Contradiction(Contradiction::Rigid)),
+            }
         }
         if !matches!(b, Head::Infer(_))
             && let Head::Structural(view) = &a
@@ -1149,6 +1396,13 @@ impl<'db> Solver<'db> {
                 );
             }
             return Ok(());
+        }
+        // Only itself, bottom and the dynamic type are below a rigid
+        if !matches!(a, Head::Infer(_))
+            && let Head::Structural(view) = &b
+            && self.rigid(view.ty)?.is_some()
+        {
+            return Err(Issue::Contradiction(Contradiction::Rigid));
         }
         if !matches!(a, Head::Infer(_))
             && let Head::Structural(view) = &b
@@ -1192,6 +1446,9 @@ impl<'db> Solver<'db> {
                     }
                     (Type::Function(a_func), Type::Function(b_func)) => {
                         self.functions(a, a_func, b, b_func, obligation)
+                    }
+                    (Type::Schema(xs), Type::Schema(ys)) => {
+                        self.schemas(a, xs, b, ys, expected, obligation)
                     }
                     _ => Err(Residual::Unsupported.into()),
                 }

@@ -118,6 +118,11 @@ pub(crate) fn collect<'u>(
         designated: HashMap::new(),
         variance: HashMap::new(),
         captured: HashMap::new(),
+        lifted: HashMap::new(),
+        sig_decls: HashMap::new(),
+        groups: HashMap::new(),
+        site_types: HashMap::new(),
+        expr_types: HashMap::new(),
     };
     (tables, diags)
 }
@@ -561,6 +566,7 @@ impl<'u> Walk<'_, 'u> {
             ty,
             role,
             ambient: self.sig,
+            owner: self.owner,
         });
         ty.names(&mut |head, res, fields| self.name(frame, head, res, fields));
     }

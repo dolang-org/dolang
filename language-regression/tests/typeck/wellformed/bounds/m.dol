@@ -1,0 +1,101 @@
+# Type arguments satisfy their binders' bounds wherever they are written, and a
+# binder's default satisfies its own bound.
+
+pub class Num
+pub class Int: Num
+pub class Text
+
+pub class Box[T @ Num]
+  pub def get _self -> T
+    nil
+
+pub let good @ Box[Int] = nil
+pub let bad @ Box[Text] = nil
+# error: this does not satisfy `T @ Num`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let bad @ Box[Text] = nil
+#    |                   ^^^^
+
+pub @let Boxed = Box[Text]
+# error: this does not satisfy `T @ Num`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @let Boxed = Box[Text]
+#    |                      ^^^^
+
+pub class Sub: Box[Text]
+# error: this does not satisfy `T @ Num`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Sub: Box[Text]
+#    |                    ^^^^
+
+pub def bounded[T @ Box[Text]] x @ T
+  # error: this does not satisfy `T @ Num`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def bounded[T @ Box[Text]] x @ T
+  #    |                         ^^^^
+  x
+
+pub def defaulted[T @ Num = Text] x @ T
+  # error: the default does not satisfy `T @ Num`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def defaulted[T @ Num = Text] x @ T
+  #    |                             ^^^^
+  x
+
+# An omitted argument takes its default, substituted with the arguments before it.
+pub class Pair[A @ Num, B @ Num = A]
+  pub def first _self -> A
+    nil
+  pub def second _self -> B
+    nil
+
+pub let pair @ Pair[Int] = nil
+pub let unpaired @ Pair[Text] = nil
+# error: this does not satisfy `A @ Num`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let unpaired @ Pair[Text] = nil
+#    |                         ^^^^
+# error: this does not satisfy `B @ Num`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let unpaired @ Pair[Text] = nil
+#    |                    ^^^^^^^^^^
+
+# F-bounded and sibling-referencing bounds hold under the declaration's rigids.
+pub class Cmp[T]
+  pub def cmp _self _other @ T
+    nil
+
+pub class Sorted[T @ Cmp[T]]
+  pub def first _self -> T
+    nil
+
+pub class Word: Cmp[Word]
+
+pub let sorted @ Sorted[Word] = nil
+pub let unsorted @ Sorted[Text] = nil
+# error: this does not satisfy `T @ Cmp[T]`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let unsorted @ Sorted[Text] = nil
+#    |                           ^^^^
+
+pub class Within[U, T @ U]
+  pub def outer _self -> U
+    nil
+  pub def inner _self -> T
+    nil
+
+pub let within @ Within[Num, Int] = nil
+pub let outside @ Within[Int, Num] = nil
+# error: this does not satisfy `T @ U`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let outside @ Within[Int, Num] = nil
+#    |                               ^^^

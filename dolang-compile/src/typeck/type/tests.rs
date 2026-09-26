@@ -100,6 +100,7 @@ fn definition(source: DeclSource, ty: TypeId) -> Declaration {
         ty,
         binders: alias::Box::default(),
         supertypes: alias::Box::default(),
+        members: alias::Box::default(),
     }
 }
 
@@ -301,9 +302,11 @@ fn generic_definitions_remain_quantified_and_metadata_is_parallel() {
                     span,
                     bound: None,
                     default: None,
+                    origin: BinderOrigin::Written,
                 }]
                 .into(),
                 supertypes: alias::Box::default(),
+                members: alias::Box::default(),
             },
         );
         assert_eq!(db.expose(ty).unwrap().ty, poly);
@@ -353,6 +356,7 @@ fn nominal_supertypes_use_the_structural_binder_scope() {
             span: src.span,
             bound: None,
             default: None,
+            origin: BinderOrigin::Written,
         };
         db.populate(
             id,
@@ -361,6 +365,7 @@ fn nominal_supertypes_use_the_structural_binder_scope() {
                 ty,
                 binders: vec![metadata].into(),
                 supertypes: supers.into(),
+                members: alias::Box::default(),
             },
         );
     }
@@ -403,7 +408,7 @@ fn unions_normalize_without_exposing_or_expanding() {
 fn unknown_is_a_type_that_unions_do_not_absorb() {
     let mut db = Database::new();
     let unknown = db.unknown();
-    assert_eq!(intern(&mut db, Type::Unknown), unknown);
+    assert_eq!(intern(&mut db, Type::Unknown(Kind::Type)), unknown);
     assert_ne!(unknown, db.top());
     assert_eq!(db.kind(unknown), Kind::Type);
     let a = intern(&mut db, Type::Literal(Literal::Int(1)));
@@ -412,6 +417,149 @@ fn unknown_is_a_type_that_unions_do_not_absorb() {
     assert_eq!(union(&mut db, &[unknown, unknown]), unknown);
     let top = db.top();
     assert_eq!(union(&mut db, &[unknown, top]), top);
+}
+
+#[test]
+fn unknown_schema_is_a_distinct_schema() {
+    let mut db = Database::new();
+    let unknown = db.unknown_schema();
+    assert_eq!(intern(&mut db, Type::Unknown(Kind::Schema)), unknown);
+    assert_ne!(unknown, db.unknown());
+    assert_eq!(db.kind(unknown), Kind::Schema);
+    assert_eq!(db.unknown_of(Kind::Schema), unknown);
+    assert_eq!(db.unknown_of(Kind::Type), db.unknown());
+    // It stands where a schema must, as in a function's parameters
+    let result = db.unknown();
+    let func = Type::Function(Function {
+        params: unknown,
+        result,
+        input: None,
+        output: None,
+    });
+    intern(&mut db, func);
+    assert_panics(|| {
+        db.intern(Type::Union(vec![UnionMember::Type(unknown)].into()));
+    });
+}
+
+#[test]
+fn substitution_replaces_the_outer_group_and_shifts_under_quantifiers() {
+    let mut db = Database::new();
+    let a = reference(&mut db, 0, 0, Kind::Type);
+    let b = reference(&mut db, 0, 1, Kind::Type);
+    let one = intern(&mut db, Type::Literal(Literal::Int(1)));
+    // The arguments are themselves open, in the scope where the result is used
+    let outer = reference(&mut db, 0, 3, Kind::Type);
+    let body = function(&mut db, &[a], b);
+    assert_eq!(
+        db.substitute(body, &[one, outer]),
+        function(&mut db, &[one], outer)
+    );
+    // Under a nested quantifier, local references stay and arguments shift
+    let local = reference(&mut db, 0, 0, Kind::Type);
+    let a_inner = reference(&mut db, 1, 0, Kind::Type);
+    let inner = function(&mut db, &[local], a_inner);
+    let nested = quantify(&mut db, vec![binder(Kind::Type)], inner);
+    let outer_inner = reference(&mut db, 1, 3, Kind::Type);
+    let expected = function(&mut db, &[local], outer_inner);
+    let expected = quantify(&mut db, vec![binder(Kind::Type)], expected);
+    assert_eq!(db.substitute(nested, &[outer, one]), expected);
+    // A closed type has no reference beyond its group
+    let beyond = reference(&mut db, 1, 0, Kind::Type);
+    assert_panics(|| {
+        db.substitute(beyond, &[one]);
+    });
+}
+
+#[test]
+fn members_and_overloads_are_checked() {
+    let mut db = Database::new();
+    let (class, class_ty, class_source) = declare(&mut db, DeclKind::Class, "Box");
+    let (method, _, method_source) = declare(&mut db, DeclKind::Function, "get");
+    let (overload, _, overload_source) = declare(&mut db, DeclKind::Function, "get");
+    let name = db.intern_symbol("get");
+    let field = db.intern_symbol("item");
+    let schema = db.unknown_schema();
+    let int = intern(&mut db, Type::Literal(Literal::Int(1)));
+    let field_of = |ty| Member::Field {
+        ty,
+        scope: Scope::Instance,
+        public: true,
+    };
+    // A field is a type, and only a class has members
+    let mut bad = definition(class_source.clone(), class_ty);
+    bad.members = vec![(
+        MemberKey {
+            name: field,
+            special: false,
+        },
+        field_of(schema),
+    )]
+    .into();
+    assert_panics(|| db.populate(class, bad.clone()));
+    let mut not_class = definition(method_source.clone(), int);
+    not_class.members = bad.members.clone();
+    assert_panics(|| db.populate(method, not_class.clone()));
+
+    let mut good = definition(class_source, class_ty);
+    good.members = vec![
+        (
+            MemberKey {
+                name: field,
+                special: false,
+            },
+            field_of(int),
+        ),
+        (
+            MemberKey {
+                name,
+                special: false,
+            },
+            Member::Method {
+                decl: method,
+                scope: Scope::Instance,
+                public: true,
+            },
+        ),
+    ]
+    .into();
+    db.populate(class, good);
+    db.populate(method, definition(method_source, int));
+    db.populate(overload, definition(overload_source, int));
+    assert_panics(|| {
+        let mut db = Database::new();
+        let id = db.allocate();
+        db.set_overloads(id, vec![]);
+    });
+    db.set_overloads(method, vec![overload, method]);
+    db.seal();
+    assert_eq!(db.overloads(method), [overload, method]);
+    assert!(db.overloads(overload).is_empty());
+    assert_eq!(db.declarations().count(), 3);
+    assert_eq!(db.declaration(class).members.len(), 2);
+}
+
+#[test]
+#[should_panic(expected = "is not a function")]
+fn a_method_member_must_be_a_function() {
+    let mut db = Database::new();
+    let (class, class_ty, class_source) = declare(&mut db, DeclKind::Class, "Box");
+    let name = db.intern_symbol("get");
+    let mut declaration = definition(class_source, class_ty);
+    declaration.members = vec![(
+        MemberKey {
+            name,
+            special: false,
+        },
+        Member::Method {
+            decl: class,
+            scope: Scope::Instance,
+            public: true,
+        },
+    )]
+    .into();
+    db.populate(class, declaration);
+    db.seal();
 }
 
 #[test]
@@ -948,4 +1096,121 @@ fn intrinsic_associations_require_type_kind() {
     source.result_kind = Kind::Schema;
     db.populate(id, definition(source, schema));
     assert_panics(|| db.seal());
+}
+
+/// A generic declaration of `count` type binders
+fn generic(db: &mut Database, name: &str, count: usize, body: TypeId) -> DeclId {
+    let (id, _, source) = declare(db, DeclKind::Annotation, name);
+    let ty = quantify(db, vec![binder(Kind::Type); count], body);
+    let binders = (0..count)
+        .map(|_| BinderSource {
+            name: source.name.unwrap(),
+            span: source.span,
+            bound: None,
+            default: None,
+            origin: BinderOrigin::Written,
+        })
+        .collect();
+    db.populate(
+        id,
+        Declaration {
+            binders,
+            ..definition(source, ty)
+        },
+    );
+    id
+}
+
+#[test]
+fn rigids_abstract_back_to_their_group() {
+    let mut db = Database::new();
+    let t = reference(&mut db, 0, 0, Kind::Type);
+    let u = reference(&mut db, 0, 1, Kind::Type);
+    let outer = reference(&mut db, 1, 1, Kind::Type);
+    let local = reference(&mut db, 0, 0, Kind::Type);
+    let nested_body = union(&mut db, &[outer, local]);
+    let nested = quantify(&mut db, vec![binder(Kind::Type)], nested_body);
+    let body = function(&mut db, &[t, nested], u);
+    let f = generic(&mut db, "f", 2, body);
+    let g = generic(&mut db, "g", 1, t);
+
+    let rigids = db.rigids(f);
+    assert_eq!(rigids, db.rigids(f), "rigids are interned");
+    assert_eq!(
+        db.ty(rigids[1]),
+        &Type::Rigid {
+            decl: f,
+            slot: 1,
+            kind: Kind::Type
+        }
+    );
+    let checked = db.substitute(body, &rigids);
+    assert_ne!(checked, body);
+    assert_eq!(db.abstract_rigids(checked, f), Ok(body));
+
+    let foreign = db.rigids(g)[0];
+    let escaped = union(&mut db, &[checked, foreign]);
+    assert_eq!(db.abstract_rigids(escaped, f), Err(Escape(foreign)));
+}
+
+#[test]
+#[should_panic(expected = "rigid in a declaration")]
+fn declarations_never_contain_rigids() {
+    let mut db = Database::new();
+    let t = reference(&mut db, 0, 0, Kind::Type);
+    let f = generic(&mut db, "f", 1, t);
+    let rigid = db.rigids(f)[0];
+    let (id, _, source) = declare(&mut db, DeclKind::Annotation, "leak");
+    db.populate(id, definition(source, rigid));
+}
+
+#[test]
+fn binder_bounds_substitute_arguments_or_take_rest_shapes() {
+    let mut db = Database::new();
+    let t = reference(&mut db, 0, 0, Kind::Type);
+    let bounded = Binder {
+        bound: Some(t),
+        ..binder(Kind::Type)
+    };
+    let top = db.top();
+    assert_eq!(db.binder_bound(&bounded, &[top]), Some(top));
+    assert_eq!(db.binder_bound(&binder(Kind::Type), &[top]), None);
+    // Without a designated `Sym`, keys are dynamic
+    let (key, value) = (db.unknown(), db.top());
+    let item = |element| SchemaItem {
+        multiplicity: Multiplicity::Repeated,
+        element,
+    };
+    let positional = item(Element::Positional(value));
+    let keyed = item(Element::Keyed { key, value });
+    for (rest, items) in [
+        (Rest::Positional, vec![positional.clone()]),
+        (Rest::Keyed, vec![keyed.clone()]),
+        (Rest::All, vec![positional, keyed]),
+    ] {
+        let shape = intern(&mut db, Type::Schema(items.into()));
+        let pack = Binder {
+            binding: Binding::Rest(rest),
+            ..binder(Kind::Schema)
+        };
+        assert_eq!(db.rest_shape(rest), shape);
+        assert_eq!(db.binder_bound(&pack, &[]), Some(shape));
+    }
+}
+
+#[test]
+fn sealed_declarations_can_be_retyped_and_are_revalidated() {
+    let mut db = Database::new();
+    let t = reference(&mut db, 0, 0, Kind::Type);
+    let f = generic(&mut db, "f", 1, t);
+    let top = db.top();
+    let constant = quantify(&mut db, vec![binder(Kind::Type)], top);
+    db.seal();
+    db.retype(f, constant);
+    assert_eq!(db.declaration(f).ty, constant);
+    let rigid = db.rigids(f)[0];
+    let leak = quantify(&mut db, vec![binder(Kind::Type)], rigid);
+    assert_panics(|| db.retype(f, leak));
+    let unquantified = db.top();
+    assert_panics(|| db.retype(f, unquantified));
 }

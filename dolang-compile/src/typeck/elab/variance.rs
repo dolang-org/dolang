@@ -17,7 +17,7 @@
 //! is used contravariantly there. Defaults, bodies and closures do not count.
 //!
 //! A type argument is used as the binder it fills varies, and a type declared
-//! within a generic declaration takes the binders it captures as implicit
+//! within a generic declaration takes the binders it is lifted over as implicit
 //! arguments. Those equations are solved for their least solution, which does not
 //! depend on the order of declarations or units. A binder with no use, including
 //! one used only through itself, is invariant, and so is a use through it.
@@ -273,7 +273,12 @@ impl<'t, 'u> Collect<'t, 'u> {
                 None => method.pub_span.is_some(),
             })
         {
-            for binder in self.scope(class, 0) {
+            let written = (0..tables.binders(class, 0).len()).map(|slot| BinderRef {
+                decl: class,
+                sig: 0,
+                slot,
+            });
+            for binder in tables.lifted[&class].iter().copied().chain(written) {
                 self.constraints
                     .push(((class, binder), Source::Join((id, binder))));
             }
@@ -293,20 +298,6 @@ impl<'t, 'u> Collect<'t, 'u> {
                     .push(((id, binder), Source::Path(Use::CO, Vec::new())));
             }
         }
-    }
-
-    /// The written binders of a signature and of every declaration enclosing it,
-    /// innermost first
-    fn scope(&self, decl: DeclId, sig: usize) -> Vec<BinderRef> {
-        let mut binders = Vec::new();
-        let mut at = Some((decl, sig));
-        while let Some((decl, sig)) = at {
-            binders.extend(
-                (0..self.tables.binders(decl, sig).len()).map(|slot| BinderRef { decl, sig, slot }),
-            );
-            at = self.tables.decls[decl.index()].outer;
-        }
-        binders
     }
 
     fn sig(&mut self, decl: DeclId, sig: usize) {
@@ -396,10 +387,8 @@ impl<'t, 'u> Collect<'t, 'u> {
     /// Record the uses of the binders a type declaration captures, as its implicit
     /// arguments.
     fn captures(&mut self, decl: DeclId, u: Use) {
-        let Some((outer, sig)) = self.tables.decls[decl.index()].outer else {
-            return;
-        };
-        for binder in self.scope(outer, sig) {
+        let tables = self.tables;
+        for &binder in &tables.lifted[&decl] {
             self.path.push((decl, binder));
             self.uses(binder, u);
             self.path.pop();

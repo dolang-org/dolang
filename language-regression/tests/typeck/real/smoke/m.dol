@@ -19,7 +19,9 @@ pub @let IterableOf[T] = Iterable[T]
 pub @let IterOf[T] = Iter[T]
 #               ^: variance covariant
 pub @let SinkOf[T] = Sink[T]
-#               ^: variance invariant
+#               ^: variance contravariant
+pub @let SinkableOf[T] = Sinkable[T]
+#                   ^: variance contravariant
 pub @let SeqOf[T] = Seq[T]
 #              ^: variance covariant
 pub @let ArrayOf[T] = Array[T]
@@ -38,3 +40,8 @@ pub @let SpreadOf[S @ {...}] = Spread[S]
 #                 ^: variance covariant
 pub @let DictOf[S @ {...}] = Dict[S]
 #               ^: variance invariant
+
+# An omitted ambient channel is bounded by the standard library's channels.
+pub def relay()
+  #     ^~~~~: quantifier in @ std.Iter[Unknown] contravariant, out @ std.Sink[Unknown] contravariant
+  nil

@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 use crate::{
     Error, ErrorInfo, Mode, Unit, UnitId,
-    diag::{self, Diag},
+    diag::{self, Diag, Severity},
     source,
 };
 
@@ -88,21 +88,37 @@ impl<'u, 's> Builder<'u, 's> {
         let (mut tables, mut diags) = elab::collect(&mut db, &units, &order);
         elab::kinds(&mut tables, &mut diags);
         elab::signatures(&mut tables, &mut diags);
+        elab::captures(&mut tables);
         elab::variances(&mut tables);
+        elab::populate(&mut db, &mut tables, &mut diags);
+        db.seal();
+        elab::specialize(&mut db, &tables, &mut diags);
+        let unresolved = elab::wellformed(&db, &tables, &mut diags);
         Check {
             diagnostics: diags
                 .iter()
                 .map(|(unit, diag)| diag.resolve_in(&units[unit.index()].compiler, Some(*unit)))
                 .collect(),
             tables,
+            db,
+            unresolved,
         }
     }
 }
 
 /// The result of checking a set of units.
+///
+/// A check is *validated* when every well-formedness check passed: the checker
+/// reported no errors, and could decide every check it ran. Otherwise it is
+/// *partial*: its declarations are usable for diagnostics and tooling, but
+/// checking code against them proves nothing. Units that could not be checked at
+/// all are refused by [`Builder::unit`].
 pub struct Check<'u> {
     diagnostics: Vec<Diag>,
     tables: elab::Tables<'u>,
+    db: r#type::Database,
+    /// Well-formedness checks the checker could not decide
+    unresolved: Vec<elab::Unresolved>,
 }
 
 /// The names of the judgments [`Check::judgments`] reports.
@@ -126,12 +142,21 @@ impl Check<'_> {
         self.diagnostics.iter()
     }
 
+    /// Whether every well-formedness check passed. See [`Check`].
+    pub fn validated(&self) -> bool {
+        self.unresolved.is_empty()
+            && self
+                .diagnostics
+                .iter()
+                .all(|diag| diag.severity() != Severity::Error)
+    }
+
     /// The judgments about spans of `unit`, in source order.
     #[doc(hidden)]
     pub fn judgments(&self, unit: UnitId) -> Vec<Judgment> {
         let compiler = &self.tables.units[unit.index()].compiler;
         self.tables
-            .judgments(unit)
+            .judgments(&self.db, unit, &self.unresolved)
             .into_iter()
             .map(|(name, span, value)| Judgment {
                 name,
@@ -139,5 +164,53 @@ impl Check<'_> {
                 value,
             })
             .collect()
+    }
+
+    /// Relate every type the database holds to itself and to top, interpreting each
+    /// binder as the dynamic type or schema of its kind, to show that the solver can
+    /// judge the sealed database without panicking. The outcomes are discarded.
+    #[doc(hidden)]
+    pub fn smoke(&self) {
+        use solver::{Provenance, Solver};
+
+        let db = &self.db;
+        let mut solver = Solver::new(db);
+        let relate = |solver: &mut Solver<'_>, ty, kinds: &[r#type::Kind]| {
+            let group = kinds
+                .iter()
+                .map(|&kind| solver.closed(db.unknown_of(kind)))
+                .collect();
+            let environment = solver.environment(solver.empty_environment(), group);
+            let view = solver.view(ty, environment);
+            solver.constrain(view, view, Provenance::default());
+            if db.kind(ty) == r#type::Kind::Type {
+                solver.constrain(view, solver.closed(db.top()), Provenance::default());
+            }
+        };
+        for (_, declaration) in db.declarations() {
+            let kinds: Vec<_> = match db.ty(declaration.ty) {
+                r#type::Type::Quantified { binders, .. } => {
+                    binders.iter().map(|binder| binder.kind).collect()
+                }
+                _ => Vec::new(),
+            };
+            let body = match db.ty(declaration.ty) {
+                r#type::Type::Quantified { body, .. } => *body,
+                _ => declaration.ty,
+            };
+            relate(&mut solver, body, &kinds);
+            for &supertype in declaration.supertypes.iter() {
+                relate(&mut solver, supertype, &kinds);
+            }
+            for (_, member) in declaration.members.iter() {
+                if let r#type::Member::Field { ty, .. } = member {
+                    relate(&mut solver, *ty, &kinds);
+                }
+            }
+        }
+        for (ty, kinds) in self.tables.site_kinds() {
+            relate(&mut solver, ty, &kinds);
+        }
+        solver.solve();
     }
 }

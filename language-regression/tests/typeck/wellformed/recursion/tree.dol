@@ -1,0 +1,12 @@
+# Mutually recursive aliases across units.
+
+import forest:
+  - @Forest
+
+pub class Node[T, C]
+  pub def value _self -> T
+    nil
+  pub def children _self -> C
+    nil
+
+pub @let Tree[T] = Node[T, Forest[T]]

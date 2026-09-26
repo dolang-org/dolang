@@ -406,16 +406,16 @@ pub @class FlagSet[F]: Iterable[F]
   pub def contains self flag @ F -> Bool
 
   # Returns the flags set in either.
-  pub def (bor)[S] self@S other@S -> S
+  pub def (bor)[S @ FlagSet[F]] self@S other@S -> S
 
   # Returns the flags set in both.
-  pub def (band)[S] self@S other@S -> S
+  pub def (band)[S @ FlagSet[F]] self@S other@S -> S
 
   # Returns the flags set in exactly one.
-  pub def (bxor)[S] self@S other@S -> S
+  pub def (bxor)[S @ FlagSet[F]] self@S other@S -> S
 
   # Returns the flags of the type that are not set.
-  pub def (bnot)[S] self @ S -> S
+  pub def (bnot)[S @ FlagSet[F]] self @ S -> S
 
 
 #
@@ -485,7 +485,7 @@ pub class Iterable[T]: @BaseIterable[T] @Spread[T]
     ...
 
   # Returns an iterator of tuples across this and additional iterables.
-  pub def zip[...Us] self ...values @ ...Iterable[Us] -> Iter[Tuple[T, ...Us]]
+  pub def zip[*Us] self *values @ ...Iterable[Us] -> Iter[Tuple[T, ...Us]]
     ...
 
 
@@ -512,7 +512,7 @@ pub class Sinkable[T]: @BaseSinkable[T]
     ...
 
   # Returns a sink that writes only values for which `pred` is truthy.
-  pub def prefilter self pred @ (T -> Value) -> Sink[T]
+  pub def prefilter[U @ T] self pred @ (U -> Value) -> Sink[U]
     ...
 
   # Returns a sink that transforms each value with `func` before writing it.
@@ -594,7 +594,7 @@ pub class Sink[T]: Sinkable[T] @BaseSink[T]
   # assert_eq $acc [2]
   # ```
   #
-  pub def prefilter self pred @ (T -> Value) -> Sink[T]
+  pub def prefilter[U @ T] self pred @ (U -> Value) -> Sink[U]
     ...
 
   #
@@ -3059,7 +3059,7 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Unpack[T]
   # Returns an iterator that yields one tuple for each step across this iterator
   # and the additional iterables.
   # The zipped iterator stops as soon as any input is exhausted.
-  pub def zip[...Us] self ...values @ ...Iterable[Us] -> Iter[Tuple[T, ...Us]]
+  pub def zip[*Us] self *values @ ...Iterable[Us] -> Iter[Tuple[T, ...Us]]
     ...
 
 

@@ -1,0 +1,56 @@
+# Keyword, variadic and expanded arguments are checked against the binders
+# population placed them in.
+
+pub class Num
+pub class Int: Num
+pub class Text
+
+pub class Named[:T @ Num]
+  pub def get _self -> T
+    nil
+
+pub let named @ Named[T: Int] = nil
+pub let misnamed @ Named[T: Text] = nil
+# error: this does not satisfy `:T @ Num`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let misnamed @ Named[T: Text] = nil
+#    |                             ^^^^
+
+pub class Tuple[*Ts]
+  pub def items _self -> Tuple[...Ts]
+    nil
+
+pub class Record[**Ks]
+  pub def items _self -> Record[...Ks]
+    nil
+
+pub class Numbers[*Ns @ Num]
+  pub def items _self -> Numbers[...Ns]
+    nil
+
+pub let numbers @ Numbers[Int, Num] = nil
+pub let words @ Numbers[Int, Text] = nil
+# error: this does not satisfy `*Ns @ Num`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let words @ Numbers[Int, Text] = nil
+#    |                         ^^^^^^^^^
+
+# A pack expanded into a positional-only rest has no keyed items, and the
+# reverse.
+pub def positional[**Ks] x @ Tuple[...Ks]
+  # error: this does not satisfy `*Ts @ {*Value}`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def positional[**Ks] x @ Tuple[...Ks]
+  #    |                                       ^^
+  x
+
+pub def keyed[*Ps] x @ Record[...Ps]
+  # error: this does not satisfy `**Ks @ {**Value}`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def keyed[*Ps] x @ Record[...Ps]
+  #    |                                  ^^
+  x

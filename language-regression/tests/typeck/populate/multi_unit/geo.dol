@@ -1,0 +1,5 @@
+# A generic class, an alias of it, and a subclass, across units
+
+pub class Box[T]
+  pub field item @ T = nil
+pub @let Boxes[T] = Box[Box[T]]

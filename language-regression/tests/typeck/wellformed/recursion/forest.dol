@@ -1,0 +1,5 @@
+import tree:
+  - @Node
+  - @Tree
+
+pub @let Forest[T] = (nil | Node[Tree[T], Forest[T]])

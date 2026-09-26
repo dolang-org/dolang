@@ -1,0 +1,50 @@
+# A class records its fields and methods by name, and each signature of an
+# overloaded def or method is a declaration of its own.
+
+pub class Num
+pub class Text
+
+pub class Counter[T]
+  pub field count @ Num = nil
+  #         ^~~~~: member field instance pub m.Num
+  field secret @ T = nil
+  #     ^~~~~~: member field instance private T
+  pub field loose = nil
+  #         ^~~~~: member field instance pub Unknown
+  #[class]
+  pub field made = nil
+  #         ^~~~: member field class pub Unknown
+
+  def (init) self x @ T
+    #  ^~~~: member method instance private m.Counter.init
+    #  ^~~~: decl (m.Counter[T], T) <in >out -> Unknown
+    self.#secret = x
+
+  @def pick _self x @ Num -> Num
+  #    ^~~~: member method instance pub m.Counter.pick
+  #    ^~~~: decl (m.Counter[T], m.Num) <in >out -> m.Num
+  @def pick _self x @ Text -> Text
+  #    ^~~~: decl (m.Counter[T], m.Text) <in >out -> m.Text
+  pub def pick _self x
+    #     ^~~~: decl (m.Counter[T], Unknown) <in >out -> Unknown
+    x
+
+  #[static]
+  pub def make x @ T -> Counter[T]
+    #     ^~~~: member method static pub m.Counter.make
+    #     ^~~~: decl (T) <in >out -> m.Counter[T]
+    Counter(x)
+
+# A closure is lifted over the implicit channels of the def whose channels its
+# function types take.
+pub def run f @ (Num -> Num)
+  let g = do |h @ (Num -> Num)| h
+  #               ^~~~~~~~~~~~: type (m.Num) <in >out -> m.Num
+  g(f)
+
+@def overload x @ Num -> Num
+#    ^~~~~~~~: decl (m.Num) <in >out -> m.Num
+@def overload x @ Text -> Text
+pub def overload x
+  #     ^~~~~~~~: quantifier in contravariant, out contravariant
+  x

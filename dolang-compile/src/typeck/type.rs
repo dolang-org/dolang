@@ -10,8 +10,17 @@
 //! then selects a slot in declaration order. Declarations' binder metadata is
 //! parallel to the outer structural group, never a second quantifier.
 //!
+//! A source declaration is closed: its outer group is one flat group of the outer
+//! binders it captures (lifted), then its written binders, then its implicit ambient
+//! binders. Where each slot came from is metadata only.
+//!
+//! A rigid stands for a binder of a declaration while it is checked. Rigids are
+//! closed and interned like any type, but never appear in a declaration.
+//!
 //! Solver variables, skolems, and flow state do not belong here. `Unknown` is the
-//! dynamic type an omitted `def` annotation stands for, not a marker of the omission. Consumers interpret free references through their own environments.
+//! dynamic type an omitted `def` annotation stands for, and what an erroneous site
+//! is interned as; it is not a marker of either. It has a schema-kinded twin.
+//! Consumers interpret free references through their own environments.
 //! Invalid construction, lifecycle misuse, and representation overflow panic.
 //! Source complexity limits must be enforced before constructing these structures.
 //! Exposure returns definitions in their defining environment: a consumer must
@@ -109,6 +118,8 @@ pub(crate) enum Binding {
     Positional,
     Keyword(SymbolId),
     Rest(Rest),
+    /// An implicit ambient binder, which no type application fills
+    Implicit,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -170,12 +181,19 @@ pub(crate) enum UnionMember {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Type {
     Top,
-    /// The dynamic type, consistent with every type
-    Unknown,
+    /// The dynamic type or schema, consistent with every type or schema of its kind
+    Unknown(Kind),
     Literal(Literal),
     Decl(DeclId),
     Bound {
         reference: BoundRef,
+        kind: Kind,
+    },
+    /// Binder `slot` of a declaration's group, held abstract while that declaration
+    /// is checked. Closed, unlike a reference; never part of a declaration.
+    Rigid {
+        decl: DeclId,
+        slot: u16,
         kind: Kind,
     },
     /// The result kind is supplied by elaboration; argument matching is deferred.
@@ -198,7 +216,12 @@ impl Type {
     /// quantifier boundaries crossed, including those around bounds/defaults.
     pub(crate) fn visit_children(&self, mut visit: impl FnMut(TypeId, u32)) {
         match self {
-            Self::Top | Self::Unknown | Self::Literal(_) | Self::Decl(_) | Self::Bound { .. } => {}
+            Self::Top
+            | Self::Unknown(_)
+            | Self::Literal(_)
+            | Self::Decl(_)
+            | Self::Bound { .. }
+            | Self::Rigid { .. } => {}
             Self::Apply { base, args, .. } => {
                 visit(*base, 0);
                 for arg in args.iter() {
@@ -302,7 +325,12 @@ impl Type {
     ) -> Result<Self, E> {
         let mut mapped = self.clone();
         match &mut mapped {
-            Self::Top | Self::Unknown | Self::Literal(_) | Self::Decl(_) | Self::Bound { .. } => {}
+            Self::Top
+            | Self::Unknown(_)
+            | Self::Literal(_)
+            | Self::Decl(_)
+            | Self::Bound { .. }
+            | Self::Rigid { .. } => {}
             Self::Apply { base, args, .. } => {
                 *base = f(*base, 0)?;
                 for arg in args.iter_mut() {
@@ -359,12 +387,57 @@ pub(crate) struct UnitSpan {
     pub(crate) span: Span,
 }
 
+/// Where a slot of a declaration's outer group came from
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BinderOrigin {
+    /// A binder of an enclosing declaration, which diagnostics hide
+    Lifted,
+    Written,
+    /// A signature's omitted ambient channel, which diagnostics hide
+    Implicit,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct BinderSource {
     pub(crate) name: SymbolId,
     pub(crate) span: UnitSpan,
     pub(crate) bound: Option<UnitSpan>,
     pub(crate) default: Option<UnitSpan>,
+    pub(crate) origin: BinderOrigin,
+}
+
+/// Which namespace a class member belongs to
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Scope {
+    Instance,
+    /// The type object's, inherited by subclasses
+    Class,
+    /// The type object's, not inherited
+    Static,
+}
+
+/// A member's name. A special method such as `(init)` is named without its
+/// parentheses, apart from an ordinary member of the same name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct MemberKey {
+    pub(crate) name: SymbolId,
+    pub(crate) special: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum Member {
+    /// Its type is interpreted in the scope of the class's outer binder group.
+    Field {
+        ty: TypeId,
+        scope: Scope,
+        public: bool,
+    },
+    /// A function declaration, lifted over all of the class's binders
+    Method {
+        decl: DeclId,
+        scope: Scope,
+        public: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -399,6 +472,8 @@ pub(crate) struct Declaration {
     pub(crate) binders: alias::Box<[BinderSource]>,
     /// Interpreted in the scope of `ty`'s outer binder group, when present.
     pub(crate) supertypes: alias::Box<[TypeId]>,
+    /// A class's or protocol's members, in source order
+    pub(crate) members: alias::Box<[(MemberKey, Member)]>,
 }
 
 enum Declarations {
@@ -430,6 +505,10 @@ pub(crate) struct ExposureCycle(pub(crate) Vec<DeclId>);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RemovedBinder(pub(crate) BoundRef);
 
+/// A rigid of a declaration other than the one being abstracted over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Escape(pub(crate) TypeId);
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Exposure {
     pub(crate) ty: TypeId,
@@ -448,6 +527,10 @@ pub(crate) enum Intrinsic {
     Sym,
     Nil,
     Str,
+    /// Bounds an omitted ambient input channel, as `Iter[Unknown]`
+    Iter,
+    /// Bounds an omitted ambient output channel, as `Sink[Unknown]`
+    Sink,
 }
 
 /// Optional associations to elaborated stub types, populated before sealing.
@@ -460,6 +543,8 @@ struct Intrinsics {
     sym: Option<TypeId>,
     nil: Option<TypeId>,
     str: Option<TypeId>,
+    iter: Option<TypeId>,
+    sink: Option<TypeId>,
 }
 
 impl Intrinsics {
@@ -472,6 +557,8 @@ impl Intrinsics {
             Intrinsic::Sym => self.sym,
             Intrinsic::Nil => self.nil,
             Intrinsic::Str => self.str,
+            Intrinsic::Iter => self.iter,
+            Intrinsic::Sink => self.sink,
         }
     }
 
@@ -484,6 +571,8 @@ impl Intrinsics {
             Intrinsic::Sym => &mut self.sym,
             Intrinsic::Nil => &mut self.nil,
             Intrinsic::Str => &mut self.str,
+            Intrinsic::Iter => &mut self.iter,
+            Intrinsic::Sink => &mut self.sink,
         }
     }
 }
@@ -492,11 +581,14 @@ pub(crate) struct Database {
     top: TypeId,
     bottom: TypeId,
     unknown: TypeId,
+    unknown_schema: TypeId,
     intrinsics: Intrinsics,
     types: intern::Table<Type, TypeTag>,
     symbols: intern::Table<String, SymbolTag>,
     unit_count: usize,
     declarations: Declarations,
+    /// Each function's signatures, when it has more than one
+    overloads: HashMap<DeclId, alias::Box<[DeclId]>>,
     pending_kinds: RefCell<Vec<(TypeId, Kind)>>,
 }
 
@@ -506,12 +598,14 @@ impl Default for Database {
         Self {
             top: types.id_owned(Type::Top),
             bottom: types.id_owned(Type::Union(alias::Box::default())),
-            unknown: types.id_owned(Type::Unknown),
+            unknown: types.id_owned(Type::Unknown(Kind::Type)),
+            unknown_schema: types.id_owned(Type::Unknown(Kind::Schema)),
             intrinsics: Intrinsics::default(),
             types,
             symbols: intern::Table::new(),
             unit_count: 0,
             declarations: Declarations::Building(Vec::new()),
+            overloads: HashMap::new(),
             pending_kinds: RefCell::new(Vec::new()),
         }
     }
@@ -540,6 +634,35 @@ impl Database {
         self.unknown
     }
 
+    /// The dynamic schema, interned before any source declarations.
+    pub(crate) fn unknown_schema(&self) -> TypeId {
+        self.unknown_schema
+    }
+
+    /// The dynamic type or schema of a kind
+    pub(crate) fn unknown_of(&self, kind: Kind) -> TypeId {
+        match kind {
+            Kind::Type => self.unknown,
+            Kind::Schema => self.unknown_schema,
+        }
+    }
+
+    /// The signatures of an overloaded function, in source order, including its
+    /// own. Empty for a function with one signature.
+    pub(crate) fn overloads(&self, id: DeclId) -> &[DeclId] {
+        self.overloads.get(&id).map_or(&[], |overloads| overloads)
+    }
+
+    /// Record the signatures of an overloaded function once, before sealing.
+    pub(crate) fn set_overloads(&mut self, id: DeclId, overloads: Vec<DeclId>) {
+        self.require_open();
+        assert!(overloads.contains(&id), "overloads omit their function");
+        assert!(
+            self.overloads.insert(id, overloads.into()).is_none(),
+            "overloads already set: {id:?}"
+        );
+    }
+
     pub(crate) fn intrinsic(&self, intrinsic: Intrinsic) -> Option<TypeId> {
         self.intrinsics.get(intrinsic)
     }
@@ -557,6 +680,17 @@ impl Database {
 
     pub(crate) fn ty(&self, id: TypeId) -> &Type {
         &self.types[id]
+    }
+
+    /// Every declaration of a sealed database
+    pub(crate) fn declarations(&self) -> impl Iterator<Item = (DeclId, &Declaration)> {
+        let Declarations::Frozen(declarations) = &self.declarations else {
+            panic!("declaration database is not sealed");
+        };
+        declarations
+            .iter()
+            .enumerate()
+            .map(|(index, declaration)| (DeclId::from_index(index), declaration))
     }
 
     pub(crate) fn declaration(&self, id: DeclId) -> &Declaration {
@@ -599,6 +733,20 @@ impl Database {
         self.declarations.building_mut()[id.index()] = Some(declaration);
     }
 
+    /// Replace a sealed declaration's type, validating it as population does.
+    /// Sealing closes the set of declarations; a checked one may still be refined.
+    pub(crate) fn retype(&mut self, id: DeclId, ty: TypeId) {
+        let Declarations::Frozen(declarations) = &mut self.declarations else {
+            panic!("declaration database is not sealed");
+        };
+        declarations[id.index()].ty = ty;
+        self.validate_declaration(self.declaration(id));
+        assert!(
+            self.pending_kinds.borrow().is_empty(),
+            "every kind is known once sealed"
+        );
+    }
+
     fn validate_declaration(&self, declaration: &Declaration) {
         assert!(
             declaration.source.span.unit.index() < self.unit_count,
@@ -621,6 +769,37 @@ impl Database {
         for &supertype in declaration.supertypes.iter() {
             self.expect_kind(supertype, Kind::Type);
         }
+        assert!(
+            matches!(
+                declaration.source.kind,
+                DeclKind::Class | DeclKind::Protocol
+            ) || declaration.members.is_empty(),
+            "unexpected members on a declaration that is not a class"
+        );
+        for (_, member) in declaration.members.iter() {
+            if let Member::Field { ty, .. } = member {
+                self.expect_kind(*ty, Kind::Type);
+            }
+        }
+        let fields = declaration
+            .members
+            .iter()
+            .filter_map(|(_, member)| match member {
+                Member::Field { ty, .. } => Some(*ty),
+                Member::Method { .. } => None,
+            });
+        for root in [declaration.ty]
+            .into_iter()
+            .chain(declaration.supertypes.iter().copied())
+            .chain(fields)
+        {
+            self.walk(root, |id, _| {
+                assert!(
+                    !matches!(self.ty(id), Type::Rigid { .. }),
+                    "rigid in a declaration"
+                );
+            });
+        }
     }
 
     pub(crate) fn seal(&mut self) {
@@ -633,6 +812,44 @@ impl Database {
                 "unpopulated declaration: {:?}",
                 DeclId::from_index(index)
             );
+        }
+        for (index, slot) in slots.iter().enumerate() {
+            let declaration = slot.as_ref().unwrap();
+            for (_, member) in declaration.members.iter() {
+                if let Member::Method { decl, .. } = member {
+                    assert!(
+                        matches!(
+                            slots.get(decl.index()),
+                            Some(Some(Declaration {
+                                source: DeclSource {
+                                    kind: DeclKind::Function,
+                                    ..
+                                },
+                                ..
+                            }))
+                        ),
+                        "method of {:?} is not a function",
+                        DeclId::from_index(index)
+                    );
+                }
+            }
+        }
+        for (id, overloads) in &self.overloads {
+            for overload in overloads.iter().chain([id]) {
+                assert!(
+                    matches!(
+                        slots.get(overload.index()),
+                        Some(Some(Declaration {
+                            source: DeclSource {
+                                kind: DeclKind::Function,
+                                ..
+                            },
+                            ..
+                        }))
+                    ),
+                    "overload of {id:?} is not a function"
+                );
+            }
         }
         // Keep these checks even when normalization discarded the original node.
         for &(ty, expected) in self.pending_kinds.borrow().iter() {
@@ -661,12 +878,15 @@ impl Database {
     fn known_kind(&self, id: TypeId) -> Option<Kind> {
         match self.ty(id) {
             Type::Schema(_) => Some(Kind::Schema),
-            Type::Bound { kind, .. } | Type::Apply { kind, .. } => Some(*kind),
+            Type::Bound { kind, .. } | Type::Rigid { kind, .. } | Type::Apply { kind, .. } => {
+                Some(*kind)
+            }
             Type::Decl(id) => self
                 .declarations
                 .get(*id)
                 .map(|decl| decl.source.result_kind),
             Type::Quantified { body, .. } => self.known_kind(*body),
+            Type::Unknown(kind) => Some(*kind),
             _ => Some(Kind::Type),
         }
     }
@@ -713,8 +933,8 @@ impl Database {
 
     fn validate(&self, ty: &Type) {
         match ty {
-            Type::Top | Type::Unknown | Type::Literal(_) | Type::Bound { .. } => {}
-            Type::Decl(id) => {
+            Type::Top | Type::Unknown(_) | Type::Literal(_) | Type::Bound { .. } => {}
+            Type::Decl(id) | Type::Rigid { decl: id, .. } => {
                 self.declarations.get(*id);
             }
             Type::Apply { base, args, .. } => {
@@ -878,6 +1098,153 @@ impl Database {
             })?
         };
         let result = self.intern(mapped);
+        memo.insert((id, cutoff), result);
+        Ok(result)
+    }
+
+    /// Replace the references to the group a closed type is interpreted in, as a
+    /// declaration's binder bounds, defaults and body are, with `args`. The result
+    /// is interpreted where `args` are.
+    pub(crate) fn substitute(&self, root: TypeId, args: &[TypeId]) -> TypeId {
+        self.substitute_inner(root, 0, args, &mut HashMap::new())
+    }
+
+    fn substitute_inner(
+        &self,
+        id: TypeId,
+        cutoff: u32,
+        args: &[TypeId],
+        memo: &mut HashMap<(TypeId, u32), TypeId>,
+    ) -> TypeId {
+        if let Some(result) = memo.get(&(id, cutoff)) {
+            return *result;
+        }
+        let ty = self.ty(id);
+        let result = match *ty {
+            Type::Bound { reference, kind } => {
+                let depth = u32::from(reference.depth);
+                if depth < cutoff {
+                    id
+                } else {
+                    assert_eq!(depth, cutoff, "reference beyond a closed type's group");
+                    let arg = args[usize::from(reference.slot)];
+                    self.expect_kind(arg, kind);
+                    let cutoff = u16::try_from(cutoff).expect("binder depth overflow");
+                    self.shift(arg, 0, i32::from(cutoff))
+                        .expect("inserting groups removes none")
+                }
+            }
+            _ => {
+                let mapped = ty
+                    .map_children(|child, groups| {
+                        Ok::<_, std::convert::Infallible>(self.substitute_inner(
+                            child,
+                            cutoff.checked_add(groups).expect("binder cutoff overflow"),
+                            args,
+                            memo,
+                        ))
+                    })
+                    .unwrap_or_else(|never| match never {});
+                self.intern(mapped)
+            }
+        };
+        memo.insert((id, cutoff), result);
+        result
+    }
+
+    /// The shape of a rest mode: `{*Value}`, `{**Sym: Value}` or both. The key is
+    /// `Unknown` when `Sym` is not designated.
+    pub(crate) fn rest_shape(&self, rest: Rest) -> TypeId {
+        let top = self.top();
+        let key = self.intrinsic(Intrinsic::Sym).unwrap_or(self.unknown());
+        let positional = SchemaItem {
+            multiplicity: Multiplicity::Repeated,
+            element: Element::Positional(top),
+        };
+        let keyed = SchemaItem {
+            multiplicity: Multiplicity::Repeated,
+            element: Element::Keyed { key, value: top },
+        };
+        let items = match rest {
+            Rest::Positional => vec![positional],
+            Rest::Keyed => vec![keyed],
+            Rest::All => vec![positional, keyed],
+        };
+        self.intern(Type::Schema(items.into()))
+    }
+
+    /// A binder's bound with `args` for its group, or its rest mode's shape for an
+    /// unbounded rest binder
+    pub(crate) fn binder_bound(&self, binder: &Binder, args: &[TypeId]) -> Option<TypeId> {
+        match (binder.bound, binder.binding) {
+            (Some(bound), _) => Some(self.substitute(bound, args)),
+            (None, Binding::Rest(rest)) => Some(self.rest_shape(rest)),
+            (None, _) => None,
+        }
+    }
+
+    /// The rigids of a declaration's binders, in slot order. Substituting them for
+    /// its group gives the declaration as checked.
+    pub(crate) fn rigids(&self, decl: DeclId) -> Vec<TypeId> {
+        let Type::Quantified { binders, .. } = self.ty(self.declaration(decl).ty) else {
+            return Vec::new();
+        };
+        binders
+            .iter()
+            .enumerate()
+            .map(|(slot, binder)| {
+                self.intern(Type::Rigid {
+                    decl,
+                    slot: slot.try_into().expect("binder slot overflow"),
+                    kind: binder.kind,
+                })
+            })
+            .collect()
+    }
+
+    /// Replace `decl`'s rigids with references to its group, undoing [`Self::substitute`]
+    /// with [`Self::rigids`]. Another declaration's rigid has escaped its check.
+    pub(crate) fn abstract_rigids(&self, root: TypeId, decl: DeclId) -> Result<TypeId, Escape> {
+        self.abstract_inner(root, 0, decl, &mut HashMap::new())
+    }
+
+    fn abstract_inner(
+        &self,
+        id: TypeId,
+        cutoff: u32,
+        decl: DeclId,
+        memo: &mut HashMap<(TypeId, u32), TypeId>,
+    ) -> Result<TypeId, Escape> {
+        if let Some(result) = memo.get(&(id, cutoff)) {
+            return Ok(*result);
+        }
+        let ty = self.ty(id);
+        let result = match *ty {
+            Type::Rigid {
+                decl: owner,
+                slot,
+                kind,
+            } => {
+                if owner != decl {
+                    return Err(Escape(id));
+                }
+                self.intern(Type::Bound {
+                    reference: BoundRef {
+                        depth: cutoff.try_into().expect("binder depth overflow"),
+                        slot,
+                    },
+                    kind,
+                })
+            }
+            _ => self.intern(ty.map_children(|child, groups| {
+                self.abstract_inner(
+                    child,
+                    cutoff.checked_add(groups).expect("binder cutoff overflow"),
+                    decl,
+                    memo,
+                )
+            })?),
+        };
         memo.insert((id, cutoff), result);
         Ok(result)
     }

@@ -1,0 +1,65 @@
+# Each structural error is interned as the dynamic type or schema its position
+# requires, so the sealed database stays consistent.
+
+import @ext
+
+pub class Num
+pub class Pair[A, B]
+  pub field items @ Phantom[A, B] = nil
+pub class Two[S @ {...}, T]
+  pub field items @ Phantom[...S, T] = nil
+pub @let Phantom[...Ts] = ...
+
+pub let missing @ Pair[Num] = nil
+#                 ^~~~~~~~~: type m.Pair[m.Num, Unknown]
+# error: missing type arguments for `B`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let missing @ Pair[Num] = nil
+#    |                   ^^^^^^^^^
+pub let bare @ Pair = nil
+#              ^~~~: type Unknown
+# error: `Pair` needs type arguments
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let bare @ Pair = nil
+#    |                ^^^^
+pub let not_generic @ Num[Num] = nil
+#                     ^~~~~~~~: type Unknown
+# error: type takes no type arguments
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let not_generic @ Num[Num] = nil
+#    |                       ^^^^^^^^
+pub let mis_kinded @ Two[Num, Num] = nil
+#                    ^~~~~~~~~~~~~: type m.Two[Unknown{}, m.Num]
+# error: expected a schema, found a type
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Num
+#    |           --- declared here
+# ...
+# LL | pub let mis_kinded @ Two[Num, Num] = nil
+#    |                          ^^^
+pub let flexible @ Two[ext.S, Num] = nil
+#                  ^~~~~~~~~~~~~~~: type m.Two[Unknown{}, m.Num]
+
+pub @let Loop = Loop2
+#        ^~~~: decl Unknown
+# error: alias refers to itself
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @let Loop = Loop2
+#    |          ^^^^
+pub @let Loop2 = Loop
+#        ^~~~~: decl Unknown
+
+pub class Chicken: @Egg
+#         ^~~~~~~: decl nominal <: m.Egg
+pub class Egg: @Chicken
+# error: class inherits from itself
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Egg: @Chicken
+#    |                 ^^^^^^^
+

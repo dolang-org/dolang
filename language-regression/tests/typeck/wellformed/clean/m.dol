@@ -1,0 +1,33 @@
+# Declarations whose every check passes are validated.
+
+pub class Num
+pub class Int: Num
+
+pub class Box[T @ Num]
+  pub def get _self -> T
+    nil
+
+pub class Cmp[T]
+  pub def cmp _self _other @ T
+    nil
+
+pub class Sorted[T @ Cmp[T]]
+  pub def first _self -> T
+    nil
+
+pub class Word: Cmp[Word]
+
+pub class Pair[A, B]
+  pub def first _self -> A
+    nil
+  pub def second _self -> B
+    nil
+
+pub @let List[T] = (nil | Pair[T, List[T]])
+
+pub let boxed @ Box[Int] = nil
+pub let sorted @ Sorted[Word] = nil
+pub let words @ List[Word] = nil
+
+pub def numbers[N @ Num = Int] x @ Box[N] -> N
+  x.get()

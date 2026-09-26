@@ -7,13 +7,16 @@ use std::{collections::HashMap, fmt::Write};
 
 use super::{
     Ambient, BinderRef, DeclNode, Designated, Head, KindOf, ModuleRef, ParamTy, Referent, RestSlot,
-    Sig, Slot, Tables,
+    Sig, Slot, Tables, Unresolved,
 };
 use crate::{
     Mode, RestKind,
-    ast::{Param, TypeExpr, visit::Node},
+    ast::{ClassMember, Param, TypeExpr, visit::Node},
     source::Span,
-    typeck::r#type::{DeclId, Kind, UnitId, Variance},
+    typeck::r#type::{
+        Argument, BinderOrigin, Database, DeclId, Declaration, Element, Kind, Literal, Member,
+        Multiplicity, Scope, Type, TypeId, UnionMember, UnitId, UnitSpan, Variance,
+    },
 };
 
 /// The judgments the tables record, by the name a fixture writes
@@ -26,6 +29,11 @@ pub(crate) const JUDGMENTS: &[&str] = &[
     "designated",
     "variance",
     "captured",
+    "quantifier",
+    "decl",
+    "member",
+    "type",
+    "wf",
 ];
 
 fn variance(variance: Variance) -> &'static str {
@@ -37,9 +45,16 @@ fn variance(variance: Variance) -> &'static str {
 }
 
 impl Tables<'_> {
-    /// Every judgment about spans of `unit`, in source order
-    pub(crate) fn judgments(&self, unit: UnitId) -> Vec<(&'static str, Span, String)> {
+    /// Every judgment about spans of `unit`, in source order, including the
+    /// well-formedness checks left unresolved
+    pub(crate) fn judgments(
+        &self,
+        db: &Database,
+        unit: UnitId,
+        unresolved: &[Unresolved],
+    ) -> Vec<(&'static str, Span, String)> {
         let mut judgments = Vec::new();
+        self.populated(db, unit, &mut judgments);
         for (head, referent) in &self.referents {
             if head.unit == unit {
                 judgments.push(("ref", head.span, self.referent(referent)));
@@ -142,6 +157,12 @@ impl Tables<'_> {
                     Designated::Intrinsic(intrinsic) => format!("intrinsic {intrinsic:?}"),
                 };
                 judgments.push(("designated", name, value));
+            }
+        }
+        for unresolved in unresolved {
+            if unresolved.span.unit == unit {
+                let value = format!("undecided {:?}", unresolved.residual);
+                judgments.push(("wf", unresolved.span.span, value));
             }
         }
         judgments.sort_by_key(|(name, span, _)| (span.start, span.end, *name));
@@ -289,5 +310,336 @@ impl Tables<'_> {
         let unit = self.decls[binder.decl.index()].unit;
         let ident = &self.binders(binder.decl, binder.sig)[binder.slot].ident;
         format!("binder {}", self.text(unit, ident.span))
+    }
+
+    /// The judgments about what population interned
+    fn populated(
+        &self,
+        db: &Database,
+        unit: UnitId,
+        judgments: &mut Vec<(&'static str, Span, String)>,
+    ) {
+        for (&(id, sig), &db_id) in &self.sig_decls {
+            let decl = &self.decls[id.index()];
+            if decl.unit != unit {
+                continue;
+            }
+            let span = match &decl.node {
+                DeclNode::Defs(defs) => defs[sig].ident.span,
+                DeclNode::Methods(methods) => methods[sig].name_span,
+                _ => continue,
+            };
+            let declaration = db.declaration(db_id);
+            let names = self.names(db, declaration);
+            judgments.push(("quantifier", span, self.quantifier(db, declaration, &names)));
+            judgments.push(("decl", span, self.decl(db, declaration, &names)));
+        }
+        for (index, decl) in self.decls.iter().enumerate() {
+            let id = DeclId::from_index(index);
+            if decl.unit != unit {
+                continue;
+            }
+            match decl.node {
+                DeclNode::Class(class) => {
+                    let declaration = db.declaration(id);
+                    let names = self.names(db, declaration);
+                    let span = decl.name.expect("a class is named");
+                    judgments.push(("quantifier", span, self.quantifier(db, declaration, &names)));
+                    judgments.push(("decl", span, self.decl(db, declaration, &names)));
+                    let mut spans = Vec::new();
+                    for member in &class.body.members {
+                        match member {
+                            ClassMember::Field(field) => {
+                                spans.extend(field.fields.iter().map(|name| name.ident.span))
+                            }
+                            ClassMember::Method(method) => spans.push(method.name_span),
+                        }
+                    }
+                    for (key, member) in declaration.members.iter() {
+                        // The first member of a name is the one recorded
+                        let Some(span) = spans
+                            .iter()
+                            .copied()
+                            .find(|&span| self.text(unit, span) == db.symbol(key.name))
+                        else {
+                            continue;
+                        };
+                        judgments.push(("member", span, self.member(db, member, &names)));
+                    }
+                }
+                DeclNode::Alias(_) => {
+                    let declaration = db.declaration(id);
+                    let names = self.names(db, declaration);
+                    let span = decl.name.expect("an alias is named");
+                    judgments.push(("quantifier", span, self.quantifier(db, declaration, &names)));
+                    judgments.push(("decl", span, self.decl(db, declaration, &names)));
+                }
+                DeclNode::Defs(_) | DeclNode::Methods(_) | DeclNode::Closure(_) => {}
+            }
+        }
+        for site in &self.sites {
+            if site.unit != unit {
+                continue;
+            }
+            let span = site.ty.span();
+            let ty = self.site_types[&UnitSpan { unit, span }];
+            let names = match site.group() {
+                Some(key) => self.groups[&key]
+                    .iter()
+                    .map(|binder| self.binder_name(*binder))
+                    .collect(),
+                None => Vec::new(),
+            };
+            judgments.push(("type", span, self.render(db, ty, &names)));
+        }
+    }
+
+    /// The name of a binder, or `in` or `out` for an implicit one
+    fn binder_name(&self, binder: BinderRef) -> String {
+        let unit = self.decls[binder.decl.index()].unit;
+        match self.binders(binder.decl, binder.sig).get(binder.slot) {
+            Some(written) => self.text(unit, written.ident.span).to_owned(),
+            None => match self.sigs[&(binder.decl, binder.sig)].input {
+                Ambient::Implicit(input) if input == binder => "in".to_owned(),
+                _ => "out".to_owned(),
+            },
+        }
+    }
+
+    /// The names of a declaration's outer group
+    fn names(&self, db: &Database, declaration: &Declaration) -> Vec<String> {
+        declaration
+            .binders
+            .iter()
+            .map(|binder| match (binder.origin, db.symbol(binder.name)) {
+                (BinderOrigin::Implicit, "<") => "in".to_owned(),
+                (BinderOrigin::Implicit, _) => "out".to_owned(),
+                (_, name) => name.to_owned(),
+            })
+            .collect()
+    }
+
+    /// A declaration's outer group: each slot's origin, name, bound and variance
+    fn quantifier(&self, db: &Database, declaration: &Declaration, names: &[String]) -> String {
+        let Type::Quantified { binders, .. } = db.ty(declaration.ty) else {
+            return "none".to_owned();
+        };
+        binders
+            .iter()
+            .zip(declaration.binders.iter())
+            .zip(names)
+            .map(|((binder, source), name)| {
+                let mut out = match source.origin {
+                    BinderOrigin::Lifted => format!("^{name}"),
+                    BinderOrigin::Written | BinderOrigin::Implicit => name.clone(),
+                };
+                if let Some(bound) = binder.bound {
+                    let _ = write!(out, " @ {}", self.render(db, bound, names));
+                }
+                if let Some(default) = binder.default {
+                    let _ = write!(out, " = {}", self.render(db, default, names));
+                }
+                let _ = write!(out, " {}", variance(binder.variance));
+                out
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// A declaration's body: a class's supertypes, an alias's definition, or a
+    /// function's type
+    fn decl(&self, db: &Database, declaration: &Declaration, names: &[String]) -> String {
+        let body = match db.ty(declaration.ty) {
+            Type::Quantified { body, .. } => *body,
+            _ => declaration.ty,
+        };
+        if declaration.source.kind.nominal() {
+            let supertypes: Vec<_> = declaration
+                .supertypes
+                .iter()
+                .map(|&ty| self.render(db, ty, names))
+                .collect();
+            match supertypes.is_empty() {
+                true => "nominal".to_owned(),
+                false => format!("nominal <: {}", supertypes.join(", ")),
+            }
+        } else {
+            self.render(db, body, names)
+        }
+    }
+
+    fn member(&self, db: &Database, member: &Member, names: &[String]) -> String {
+        let (what, scope, public) = match member {
+            Member::Field { scope, public, .. } => ("field", scope, public),
+            Member::Method { scope, public, .. } => ("method", scope, public),
+        };
+        let scope = match scope {
+            Scope::Instance => "instance",
+            Scope::Class => "class",
+            Scope::Static => "static",
+        };
+        let visibility = if *public { "pub" } else { "private" };
+        let mut out = format!("{what} {scope} {visibility}");
+        match member {
+            Member::Field { ty, .. } => {
+                let _ = write!(out, " {}", self.render(db, *ty, names));
+            }
+            Member::Method { decl, .. } => {
+                let _ = write!(out, " {}", self.qualified(*decl));
+            }
+        }
+        out
+    }
+
+    /// A type as interned, with the binders of the group it is interpreted in named
+    /// by `names`
+    fn render(&self, db: &Database, ty: TypeId, names: &[String]) -> String {
+        let mut out = String::new();
+        self.render_into(db, ty, names, 0, &mut out);
+        out
+    }
+
+    fn render_into(
+        &self,
+        db: &Database,
+        ty: TypeId,
+        names: &[String],
+        depth: u16,
+        out: &mut String,
+    ) {
+        match db.ty(ty) {
+            Type::Top => out.push_str("Value"),
+            Type::Unknown(Kind::Type) => out.push_str("Unknown"),
+            Type::Unknown(Kind::Schema) => out.push_str("Unknown{}"),
+            Type::Literal(literal) => {
+                let _ = match literal {
+                    Literal::Nil => write!(out, "nil"),
+                    Literal::Bool(value) => write!(out, "{value}"),
+                    Literal::Int(value) => write!(out, "{value}"),
+                    Literal::Str(value) => write!(out, "{value:?}"),
+                    Literal::Sym(sym) => write!(out, ":{}:", db.symbol(*sym)),
+                };
+            }
+            Type::Decl(id) => out.push_str(&self.qualified(*id)),
+            Type::Rigid { decl, slot, .. } => {
+                let _ = write!(out, "{}.#{slot}", self.qualified(*decl));
+            }
+            Type::Bound { reference, .. } => match names.get(usize::from(reference.slot)) {
+                Some(name) if reference.depth == depth => out.push_str(name),
+                _ => {
+                    let _ = write!(out, "#{}.{}", reference.depth, reference.slot);
+                }
+            },
+            Type::Apply { base, args, .. } => {
+                self.render_into(db, *base, names, depth, out);
+                // Lifted arguments are marked
+                let lifted = match db.ty(*base) {
+                    Type::Decl(id) => db
+                        .declaration(*id)
+                        .binders
+                        .iter()
+                        .take_while(|binder| binder.origin == BinderOrigin::Lifted)
+                        .count(),
+                    _ => 0,
+                };
+                out.push('[');
+                for (index, arg) in args.iter().enumerate() {
+                    if index != 0 {
+                        out.push_str(", ");
+                    }
+                    if index < lifted {
+                        out.push('^');
+                    }
+                    match arg {
+                        Argument::Positional(ty) => self.render_into(db, *ty, names, depth, out),
+                        Argument::Keyword(name, ty) => {
+                            let _ = write!(out, "{}: ", db.symbol(*name));
+                            self.render_into(db, *ty, names, depth, out);
+                        }
+                        Argument::Expand(ty) => {
+                            out.push_str("...");
+                            self.render_into(db, *ty, names, depth, out);
+                        }
+                    }
+                }
+                out.push(']');
+            }
+            Type::Union(members) => {
+                if members.is_empty() {
+                    out.push_str("Never");
+                }
+                for (index, member) in members.iter().enumerate() {
+                    if index != 0 {
+                        out.push_str(" | ");
+                    }
+                    match member {
+                        UnionMember::Type(ty) => self.render_into(db, *ty, names, depth, out),
+                        UnionMember::Expand(ty) => {
+                            out.push_str("...");
+                            self.render_into(db, *ty, names, depth, out);
+                        }
+                    }
+                }
+            }
+            Type::Function(func) => {
+                out.push('(');
+                self.items(db, func.params, names, depth, out);
+                out.push(')');
+                for (sigil, channel) in [('<', func.input), ('>', func.output)] {
+                    if let Some(channel) = channel {
+                        let _ = write!(out, " {sigil}");
+                        self.render_into(db, channel, names, depth, out);
+                    }
+                }
+                out.push_str(" -> ");
+                self.render_into(db, func.result, names, depth, out);
+            }
+            Type::Schema(_) => {
+                out.push('{');
+                self.items(db, ty, names, depth, out);
+                out.push('}');
+            }
+            Type::Quantified { body, .. } => {
+                out.push_str("forall ");
+                self.render_into(db, *body, names, depth + 1, out);
+            }
+        }
+    }
+
+    /// The items of a schema, or what stands for one
+    fn items(&self, db: &Database, ty: TypeId, names: &[String], depth: u16, out: &mut String) {
+        let Type::Schema(items) = db.ty(ty) else {
+            out.push_str("...");
+            return self.render_into(db, ty, names, depth, out);
+        };
+        for (index, item) in items.iter().enumerate() {
+            if index != 0 {
+                out.push_str(", ");
+            }
+            out.push_str(match item.multiplicity {
+                Multiplicity::Required => "",
+                Multiplicity::Optional => "?",
+                Multiplicity::Repeated => "*",
+            });
+            match item.element {
+                Element::Positional(ty) => self.render_into(db, ty, names, depth, out),
+                Element::Keyed { key, value } => {
+                    match db.ty(key) {
+                        Type::Literal(Literal::Sym(sym)) => out.push_str(db.symbol(*sym)),
+                        _ => {
+                            out.push('(');
+                            self.render_into(db, key, names, depth, out);
+                            out.push(')');
+                        }
+                    }
+                    out.push_str(": ");
+                    self.render_into(db, value, names, depth, out);
+                }
+                Element::Include(ty) => {
+                    out.push_str("...");
+                    self.render_into(db, ty, names, depth, out);
+                }
+            }
+        }
     }
 }

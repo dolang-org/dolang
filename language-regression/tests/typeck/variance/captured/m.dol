@@ -1,6 +1,6 @@
-# A type declared within a generic def takes the outer binders as implicit
-# arguments, and varies with those it uses. A use through one that uses none of
-# them is invariant.
+# A type declared within a generic def takes the outer binders it uses as
+# implicit arguments, and varies with them. A declaration that uses none of them
+# takes none.
 
 pub def outer[T] _x @ T
   @let Inner = (T -> nil)
@@ -14,6 +14,6 @@ pub def outer[T] _x @ T
     # ^~~~~: captured T covariant
     nil
   def plain _p @ Plain
-    # ^~~~~: captured T invariant
+    # ^~~~~: quantifier in contravariant, out contravariant
     nil
   (reads, plain, Local)

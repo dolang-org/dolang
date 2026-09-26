@@ -1,0 +1,48 @@
+# A method whose receiver is annotated is specialized: the arguments its receiver
+# reaches the class with replace the class's binders throughout its signature.
+
+pub class Num
+pub class Int: Num
+
+pub class Array[T]
+  pub def first _self -> T
+    nil
+
+pub class Box[T]
+  pub def get _self -> T
+    #     ^~~: decl (m.Box[T]) <in >out -> T
+    nil
+
+  pub def int _self @ Box[Int] -> T
+    #     ^~~: decl (m.Box[m.Int]) <in >out -> m.Int
+    #     ^~~: quantifier ^T covariant, in contravariant, out contravariant
+    nil
+
+  pub def nested[U] _self @ Box[Array[U]] -> T
+    #     ^~~~~~: decl (m.Box[m.Array[U]]) <in >out -> m.Array[U]
+    nil
+
+  # Through the bound of a binder
+  pub def bounded[N @ Box[Int]] _self @ N -> T
+    #     ^~~~~~~: decl (N) <in >out -> m.Int
+    nil
+
+  pub def same _self @ Box[T] -> T
+    #     ^~~~: decl (m.Box[T]) <in >out -> T
+    nil
+
+  # A receiver that doesn't reach its class keeps the unspecialized signature.
+  pub def wrong _self @ Int -> T
+    #     ^~~~~: decl (m.Int) <in >out -> T
+    # error: `self` must be a `Box` or a subtype of it
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def wrong _self @ Int -> T
+    #    |                         ^^^
+    nil
+
+# A class without binders has nothing to specialize.
+pub class Real: Num
+  pub def abs[N @ Real] _self @ N -> N
+    #     ^~~: decl (N) <in >out -> N
+    nil
