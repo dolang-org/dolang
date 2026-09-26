@@ -170,31 +170,82 @@ be skipped to find a later match. This follows runtime member lookup's left-wins
 ordering and avoids speculative inference or combining bounds from alternative
 paths.
 
-Monomorphic functions support required positional parameters, contravariant
-parameter types, covariant results, and arity checks. Ambient input/output
-declarations must match in presence and either contextual structural identity
-or `Unknown` on one side; other channel judgments, including `Unknown` nested
-within a channel, remain residual and are retried when their inference
-variables receive assignments. Union-left judgments require every member;
-union-right judgments accept a member proved by an isolated, closed subtype
-query. Alternative queries cannot add inference bounds or diagnostic edges to
-the calling solver. Expanded union packs and alternatives that cannot be proved
-remain residual. Optional, keyed and variadic parameter matching and
-higher-rank rules remain deferred. Contextual identity and top/bottom rules can
-still settle some judgments involving otherwise unsupported forms: anything is
-below top and `Unknown`, even a type that can't be exposed.
+A function type is a subtype of another when its parameter list includes the
+other's (see [Schemas](#schemas)), its result is a subtype of the other's, and
+its ambient channels are supertypes of the other's. Channels are implicit
+arguments, so both are contravariant; since `Sink` is contravariant in its
+element type, a function that writes `Int`s can be given a `Sink[Num]`.
+An omitted channel stands for its default bound, `Iter[Unknown]` or
+`Sink[Unknown]`, or `Unknown` when `std` doesn't designate one. Union-left
+judgments require every member; union-right judgments accept a member proved by
+an isolated, closed subtype query. Alternative queries cannot add inference
+bounds or diagnostic edges to the calling solver. Expanded union packs and
+alternatives that cannot be proved remain residual. Higher-rank rules remain
+deferred. Contextual identity and top/bottom rules can still settle some
+judgments involving otherwise unsupported forms: anything is below top and
+`Unknown`, even a type that can't be exposed.
 
-A schema is included in a rest-shaped one, whose items are all repeated, with at
-most one positional item `*P` and one keyed item `*(K): V`, as in `{*T}`,
-`{**V}` and `{...}`. Each positional item's type must be a subtype of `P`, and
-each keyed item's key of `K` and value of `V`. An item the shape has no
-counterpart for contradicts the judgment. Multiplicities don't matter, since the
-shape admits any number of each. An included schema must itself be included in
-the whole shape, so inclusions flatten through the ordinary rules: a rigid
-reduces to its bound, and `Unknown` is consistent. This decides schema binder
-bounds, symbol keys in parameter lists (`<: {*Value, **Value}`), and packs
-expanded into a positional-only rest (`<: {*Value}`). Every other schema
-judgment is residual.
+### Schemas
+
+`typeck/solver/schema.rs` relates schemas. A schema admits item sequences whose
+positional and keyed items are independent. Positional items are distributed by
+count, as the runtime binds positional arguments: each required item takes one,
+optional items take what is left over from left to right, and a repeated item
+takes the rest. Keyed items are unordered. A literal key owns every item with
+that key, as a named parameter does, and other keys go to a key domain
+`(K): V`. Data schemas and parameter lists mean the same thing, which requires
+duplicate keywords for a named parameter to be a runtime error.
+
+Both sides flatten into lanes of positional and keyed atoms. A required
+inclusion splices its items; an optional or repeated one gives its single item
+that multiplicity, and correlating several items' counts is residual. A schema
+that can't be exposed stays opaque, occupying the lanes its bound allows. The
+same rigid on both sides pairs up and splits the positional lanes into segments.
+Only the last segment's expected items may vary in count, since counts are
+distributed over the whole lane. An actual rigid without a counterpart stands
+for its bound, and an expected one contradicts the judgment. `Unknown` leaves
+the lanes it occupies unchecked, except that the actual side's items with
+literal keys must still fit the expected side's items with those keys.
+
+Positional inclusion tries every way of filling the actual side's
+multiplicities, up to one overflow past the expected items. Each actual atom
+must be a subtype of every expected atom its items can land on. Too few or too
+many items contradict the judgment, naming the expected item that can go missing
+or the actual item that can be excess. So does a literal key whose count can
+fall outside its item's multiplicity, where a domain on the actual side may hold
+the key any number of times. Keys not named on the expected side go to its
+single repeated domain; several domains are residual. When several expected
+repeated items could take the overflow, the judgment is residual.
+
+A positional item may someday be admitted as an `Int`-keyed item. Until that
+rule exists, positional items against an expected schema with none but a domain
+that might admit `Int` are residual rather than contradictions.
+
+An expected schema whose items are all repeated, with at most one positional
+item `*P` and one keyed item `*(K): V`, as in `{*T}`, `{**V}` and `{...}`,
+admits each actual item independently. Each positional item's type must be a
+subtype of `P`, and each keyed item's key of `K` and value of `V`. An included
+schema must itself be included in the whole shape, through the ordinary rules
+for rigids and `Unknown`. This decides schema binder bounds, symbol keys in
+parameter lists (`<: {*Value, **Value}`), and packs expanded into a
+positional-only rest (`<: {*Value}`) without flattening.
+
+A schema variable is opaque like a rigid. The same variable on both sides pairs
+up. An expected variable without a counterpart takes what the actual side has
+left: it must end its positional lane, after required items only, and it takes
+the keyed items the expected side doesn't name, or is residual beside a key
+domain. What it takes becomes a schema built around the atoms' solver terms,
+which is its lower bound. An actual variable without a counterpart is bounded
+only by a rest-shaped expected schema; otherwise the judgment is residual.
+
+A call is checked as an ordinary judgment: the callee's type must be a subtype
+of the function type the call expects, `(args) <input >output -> result`.
+`Solver::call` builds that type around solver terms, since canonical types
+can't hold them. Its parameter list has a required item for each positional or
+keyword argument, whose key is the literal name, and includes each spread
+value's schema. Contradictions and derivations under the parameter list name the
+argument by its index, so the caller can point at it. Omitting an optional
+argument adds no item, while passing `nil` is checked like any other value.
 
 ### Rigids
 
@@ -224,6 +275,20 @@ inheritance walk, continuing through an assumed rigid's bound, and returns the
 target's arguments. It reports a term that doesn't reach the target, and
 `Unknown` as reaching anything.
 
+### Instantiation
+
+A quantified function type on the left of a function type is instantiated: each
+binder gets a fresh variable of its kind, and a schema variable records the
+lanes its rest mode allows. Each variable must be below its binder's bound,
+interpreted in the instantiation's environment, and the body below the expected
+function. Implicit ambient binders and lifted binders are instantiated the same
+way; a call's channels bound a callee's channel variables from below, and
+defaulting settles them on the caller's channels. The environment is recorded by
+obligation, so reprocessing derives the same obligations without creating
+variables. Variables never leave the solver: flow analysis creates a solver per
+step and exports only reified types. A quantifier on the right, which needs
+skolems, is residual.
+
 ### Assignments and fixed point
 
 Each variable retains append-only lower/upper bound terms and all introducing
@@ -245,6 +310,19 @@ Unsupported concrete compatibility checks defer commitment. There are no
 intersection nodes, speculative assignments, rollback, or defaults to top or
 bottom. Closed proof queries reuse the subtype engine and charge their work to
 the caller's lifetime budget.
+
+Forcing alone rarely settles a call: its result variable and most of its
+callee's variables have only lower bounds and binder bounds. `default` is a
+separate, caller-driven choice: it assigns the join of a variable's lower
+bounds, all of which must be solved, or `Unknown` if one of them is. The
+default must satisfy every solved upper bound; the obligations pairing lower and
+upper bounds check the rest once it commits. A variable without lower bounds is
+never defaulted. The caller defaults a variable's lower bounds before it, such
+as a call's binders before its result, and solves between defaults so that
+their consequences can force later variables. Defaulted assignments are marked
+as such, so a contradiction reached through one can be reported as an inference
+choice. Widening literals and choosing collection element types are separate
+policies.
 
 Exact candidate dependencies receive a scope-aware occurs check. Recursive
 substitutions remain recursive residuals; variable-only cycles remain unsolved

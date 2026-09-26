@@ -1,8 +1,9 @@
 //! A deliberately incomplete subtype engine over a sealed declaration database.
 //!
 //! Views capture immutable substitution environments. Append-only bounds constrain
-//! inference variables; separate assignments commit only forced, fully resolved
-//! solutions. Assignments wake dependent judgments without rewriting stored terms.
+//! inference variables; separate assignments commit fully resolved solutions,
+//! either forced or defaulted at the caller's request. Assignments wake dependent
+//! judgments without rewriting stored terms.
 //!
 //! Subtype judgments assume well-formed inputs. Callers must establish generic
 //! argument bounds and validate declaration bodies and supertypes under their
@@ -27,8 +28,8 @@ use dolang_util::{
 use crate::typeck::r#type::UnitSpan;
 
 use super::r#type::{
-    Argument, Binder, Binding, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
-    Multiplicity, SchemaItem, Type, TypeId, UnionMember, Variance,
+    Argument, Binder, Binding, BoundRef, Database, DeclId, Element, Function, Intrinsic, Kind,
+    Literal, Multiplicity, Rest, SchemaItem, SymbolId, Type, TypeId, UnionMember, Variance,
 };
 
 macro_rules! id {
@@ -72,6 +73,15 @@ pub(crate) struct Relation {
     pub(crate) expected: Term,
 }
 
+/// An argument of a call, by how it is passed
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CallArgument {
+    Positional(Term),
+    Keyword(SymbolId, Term),
+    /// The schema of a spread value's items
+    Spread(Term),
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Provenance {
     pub(crate) actual: Option<UnitSpan>,
@@ -90,9 +100,6 @@ pub(crate) enum Residual {
     GenericArguments,
     /// An intrinsic subtype rule needs a backing type that the database has not registered.
     MissingIntrinsic(Intrinsic),
-    /// Function ambient input/output channels differ in presence or cannot be
-    /// shown equal by contextual structural comparison.
-    AmbientChannels,
     /// A candidate contains a recursive substitution, inheritance revisited a
     /// declaration, or current proof dependencies cycle. None establishes a proof.
     Recursive,
@@ -101,17 +108,21 @@ pub(crate) enum Residual {
     Limit,
     /// A rigid of a declaration this solver does not check has escaped its own check.
     Escape,
+    /// Positional schema items can't be matched up by count: several expected
+    /// items repeat, or an opaque schema precedes items of varying count.
+    Alignment,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Contradiction {
     DistinctLiterals,
     UnrelatedNominals,
-    Arity,
     /// A rigid is related to something other than itself, and its bound can't show it
     Rigid,
-    /// A schema item that the expected rest shape does not admit
-    Item,
+    /// The actual schema's item can be more than the expected schema admits
+    Excess(usize),
+    /// The expected schema's item can be missing from the actual schema
+    Missing(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -129,8 +140,13 @@ impl From<Residual> for Issue {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Step {
     Argument(usize),
-    Parameter(usize),
+    /// A function's parameter list, related contravariantly
+    Parameters,
     Return,
+    /// A function's ambient input channel, related contravariantly
+    Input,
+    /// A function's ambient output channel, related contravariantly
+    Output,
     IntrinsicBacking(Intrinsic),
     BoundPropagation,
     Assignment,
@@ -143,6 +159,10 @@ pub(crate) enum Step {
     Item(usize),
     /// A schema item's key
     Key(usize),
+    /// A quantified type's body under fresh variables for its binders
+    Instantiation,
+    /// A fresh variable below its binder's bound
+    InstantiationBound(usize),
 }
 
 /// Where an ancestor query ends
@@ -213,10 +233,14 @@ struct Root {
 type BoundSet = MonoHashMap<Term, MonoHashSet<ObligationId>>;
 
 /// Solver-local resolution and wake-up state, independent of accumulated bounds.
-#[derive(Default)]
 struct Inference {
+    kind: Kind,
+    /// For a schema variable, the lanes its items can occupy
+    lanes: Rest,
     // Solutions are closed canonical types; no solver-local identity can escape.
     assignment: Cell<Option<TypeId>>,
+    /// Whether the assignment is a default rather than forced
+    defaulted: Cell<bool>,
     support: MonoHashSet<ObligationId>,
     subscribers: MonoHashSet<ObligationId>,
     dirty: Cell<bool>,
@@ -280,8 +304,11 @@ enum Head {
 pub(crate) struct Solver<'db> {
     db: &'db Database,
     environments: intern::Table<Environment, EnvironmentId>,
-    bounds: Vec<Bounds>,
-    inference: Vec<Inference>,
+    bounds: MonoVec<Bounds>,
+    inference: MonoVec<Inference>,
+    /// The environment each quantifier instantiation created, by the obligation
+    /// that instantiated it, so reprocessing reuses its variables
+    instantiations: RefCell<HashMap<ObligationId, EnvironmentId>>,
     // Intern only the relation; processing state and diagnostic edges do not
     // participate in identity and can grow while existing nodes are borrowed.
     obligations: MonoVec<Obligation>,
@@ -312,8 +339,9 @@ impl<'db> Solver<'db> {
         Self {
             db,
             environments,
-            bounds: Vec::new(),
-            inference: Vec::new(),
+            bounds: MonoVec::new(),
+            inference: MonoVec::new(),
+            instantiations: RefCell::new(HashMap::new()),
             obligations: MonoVec::new(),
             obligation_index: MonoHashMap::new(),
             queue: MonoVec::new(),
@@ -443,10 +471,77 @@ impl<'db> Solver<'db> {
         self.view(ty, self.empty_environment())
     }
 
+    /// The function type a call expects of its callee: `(args) <input >output ->
+    /// result`. Constraining the callee's type below it checks the call.
+    /// Contradictions and derivations under the parameter list name an argument
+    /// by its index in `args`, through [`Step::Item`] and [`Step::Key`].
+    pub(crate) fn call(
+        &self,
+        args: &[CallArgument],
+        result: Term,
+        input: Option<Term>,
+        output: Option<Term>,
+    ) -> Term {
+        let mut group = Vec::new();
+        let mut slot = |term: Term, kind| {
+            group.push(term);
+            self.db.intern(Type::Bound {
+                reference: BoundRef::new(0, group.len() - 1),
+                kind,
+            })
+        };
+        let items: Vec<_> = args
+            .iter()
+            .map(|arg| match *arg {
+                CallArgument::Positional(term) => SchemaItem {
+                    multiplicity: Multiplicity::Required,
+                    element: Element::Positional(slot(term, Kind::Type)),
+                },
+                CallArgument::Keyword(name, term) => SchemaItem {
+                    multiplicity: Multiplicity::Required,
+                    element: Element::Keyed {
+                        key: self.db.intern(Type::Literal(Literal::Sym(name))),
+                        value: slot(term, Kind::Type),
+                    },
+                },
+                CallArgument::Spread(term) => SchemaItem {
+                    multiplicity: Multiplicity::Required,
+                    element: Element::Include(slot(term, Kind::Schema)),
+                },
+            })
+            .collect();
+        let function = Function {
+            params: self.db.intern(Type::Schema(items.into())),
+            result: slot(result, Kind::Type),
+            input: input.map(|term| slot(term, Kind::Type)),
+            output: output.map(|term| slot(term, Kind::Type)),
+        };
+        let ty = self.db.intern(Type::Function(function));
+        let environment = self.intern_environment(self.empty_environment(), group);
+        self.view(ty, environment)
+    }
+
     pub(crate) fn infer(&mut self) -> Term {
+        self.fresh(Kind::Type, Rest::All)
+    }
+
+    /// A fresh variable of `kind`. A schema variable's items occupy `lanes`.
+    pub(crate) fn infer_kind(&mut self, kind: Kind, lanes: Rest) -> Term {
+        self.fresh(kind, lanes)
+    }
+
+    fn fresh(&self, kind: Kind, lanes: Rest) -> Term {
         let id = InferVarId(self.bounds.len());
         self.bounds.push(Bounds::default());
-        self.inference.push(Inference::default());
+        self.inference.push(Inference {
+            kind,
+            lanes,
+            assignment: Cell::new(None),
+            defaulted: Cell::new(false),
+            support: MonoHashSet::new(),
+            subscribers: MonoHashSet::new(),
+            dirty: Cell::new(false),
+        });
         Term::Infer(id)
     }
 
@@ -703,9 +798,9 @@ impl<'db> Solver<'db> {
         if lower.is_empty() || upper.is_empty() {
             return Ok(false);
         }
-        let candidate = self.db.intern(Type::Union(
-            lower.iter().copied().map(UnionMember::Type).collect(),
-        ));
+        let Some(candidate) = self.join(inference.kind, &lower) else {
+            return Ok(false);
+        };
         let mut forced = false;
         for &ty in &upper {
             if self.probe(candidate, ty)? != Status::Proven {
@@ -716,7 +811,15 @@ impl<'db> Solver<'db> {
         if !forced {
             return Ok(false);
         }
-        // Only closed candidates can commit, so substitution cycles cannot be introduced.
+        self.commit(id, candidate);
+        Ok(true)
+    }
+
+    /// Assign a closed candidate and wake what depends on it. Only closed
+    /// candidates can commit, so substitution cycles cannot be introduced.
+    fn commit(&self, id: InferVarId, candidate: TypeId) {
+        let bounds = &self.bounds[id.0];
+        let inference = &self.inference[id.0];
         for (_, sources) in bounds.lower.iter().chain(bounds.upper.iter()) {
             for &source in sources.iter() {
                 let _ = inference.support.try_insert(source);
@@ -727,12 +830,73 @@ impl<'db> Solver<'db> {
             self.schedule(obligation);
         }
         // A bound may contain the assigned variable deeply in a contextual view.
-        for other in &self.inference {
+        for other in self.inference.iter() {
             if other.assignment.get().is_none() {
                 other.dirty.set(true);
             }
         }
-        Ok(true)
+    }
+
+    /// Default an unsolved variable to the join of its lower bounds: the least
+    /// choice, not one its constraints force. The caller decides which variables
+    /// to default and in what order, defaulting a variable's lower bounds first,
+    /// then solves again. `Unknown` among the lower bounds makes the default
+    /// `Unknown`.
+    ///
+    /// A lower bound that isn't yet solved leaves the variable unsolved. So does
+    /// a variable without lower bounds, rather than inventing a type. An upper
+    /// bound that isn't yet solved is checked once the default is, through the
+    /// obligations that pair it with the lower bounds. Any other upper bound the
+    /// default can't be shown to satisfy leaves the variable unsolved; if the
+    /// bounds contradict each other, those obligations report it.
+    pub(crate) fn default(&mut self, id: InferVarId) -> Result<TypeId, Residual> {
+        if let Some(ty) = self.solution(id) {
+            return Ok(ty);
+        }
+        let bounds = &self.bounds[id.0];
+        let lower = bounds
+            .lower()
+            .map(|term| self.reify(term))
+            .collect::<Result<Vec<_>, _>>()?;
+        if lower.is_empty() {
+            return Err(Residual::Inference);
+        }
+        let kind = self.inference[id.0].kind;
+        let unknown = self.db.unknown_of(kind);
+        let candidate = if lower.contains(&unknown) {
+            unknown
+        } else {
+            self.join(kind, &lower).ok_or(Residual::Unsupported)?
+        };
+        for upper in bounds.upper() {
+            let upper = match self.reify(upper) {
+                Ok(upper) => upper,
+                Err(Residual::Inference) => continue,
+                Err(issue) => return Err(issue),
+            };
+            if self.probe(candidate, upper)? != Status::Proven {
+                return Err(Residual::Unsupported);
+            }
+        }
+        self.inference[id.0].defaulted.set(true);
+        self.commit(id, candidate);
+        Ok(candidate)
+    }
+
+    /// Whether a variable's solution was chosen by [`Self::default`], not forced
+    pub(crate) fn defaulted(&self, id: InferVarId) -> bool {
+        self.inference[id.0].defaulted.get()
+    }
+
+    /// The least candidate above nonempty lower bounds: their union, or for a
+    /// schema the one they all are, since there are no schema unions
+    fn join(&self, kind: Kind, lower: &[TypeId]) -> Option<TypeId> {
+        match kind {
+            Kind::Type => Some(self.db.intern(Type::Union(
+                lower.iter().copied().map(UnionMember::Type).collect(),
+            ))),
+            Kind::Schema => lower.iter().all(|&ty| ty == lower[0]).then_some(lower[0]),
+        }
     }
 
     pub(crate) fn bounds(&self, id: InferVarId) -> &Bounds {
@@ -747,13 +911,10 @@ impl<'db> Solver<'db> {
         &self.roots[id.0].provenance
     }
 
-    /// Check the term IDs and return their kind; inference variables have type kind.
+    /// Check the term IDs and return their kind
     fn kind(&self, term: Term) -> Kind {
         match term {
-            Term::Infer(id) => {
-                let _ = &self.bounds[id.0];
-                Kind::Type
-            }
+            Term::Infer(id) => self.inference[id.0].kind,
             Term::View(view) => {
                 assert!(self.environments.get_by_index(view.environment.0).is_some());
                 self.db.kind(view.ty)
@@ -1183,26 +1344,10 @@ impl<'db> Solver<'db> {
         Ok(())
     }
 
-    /// Expose a parameter schema and extract required positional types.
-    fn parameters(&self, view: TypeView, function: &Function) -> Result<Vec<Term>, Issue> {
-        let Head::Structural(params) = self.head(view.child(function.params))? else {
-            return Err(Residual::Unsupported.into());
-        };
-        let Type::Schema(items) = self.db.ty(params.ty) else {
-            return Err(Residual::Unsupported.into());
-        };
-        items
-            .iter()
-            .map(|item| match item.element {
-                Element::Positional(ty) if item.multiplicity == Multiplicity::Required => {
-                    Ok(params.child(ty))
-                }
-                _ => Err(Residual::Unsupported.into()),
-            })
-            .collect()
-    }
-
-    /// Derive contravariant parameter and covariant result obligations; check ambient channels.
+    /// Derive a contravariant parameter list and a covariant result. The ambient
+    /// channels are implicit arguments, so they are contravariant too; `Sink`'s
+    /// own contravariance makes the element types written covariant. An omitted
+    /// channel stands for its default bound.
     fn functions(
         &self,
         av: TypeView,
@@ -1211,83 +1356,117 @@ impl<'db> Solver<'db> {
         b: &Function,
         obligation: ObligationId,
     ) -> Result<(), Issue> {
-        let ap = self.parameters(av, a)?;
-        let bp = self.parameters(bv, b)?;
-        if ap.len() != bp.len() {
-            return Err(Issue::Contradiction(Contradiction::Arity));
-        }
-        for (index, (a, b)) in ap.into_iter().zip(bp).enumerate() {
-            self.derive(obligation, b, a, Step::Parameter(index));
-        }
+        self.derive(
+            obligation,
+            bv.child(b.params),
+            av.child(a.params),
+            Step::Parameters,
+        );
         self.derive(
             obligation,
             av.child(a.result),
             bv.child(b.result),
             Step::Return,
         );
-        for (a, b) in [(a.input, b.input), (a.output, b.output)] {
-            match (a, b) {
-                (None, None) => {}
-                (Some(a), Some(b))
-                    if self.same(av.child(a), bv.child(b))?
-                        || self.unknown(av.child(a))?
-                        || self.unknown(bv.child(b))? => {}
-                _ => return Err(Residual::AmbientChannels.into()),
-            }
+        let channel = |view: TypeView, ty: Option<TypeId>, intrinsic| match ty {
+            Some(ty) => view.child(ty),
+            None => self.channel_bound(intrinsic),
+        };
+        if a.input.is_some() || b.input.is_some() {
+            self.derive(
+                obligation,
+                channel(bv, b.input, Intrinsic::Iter),
+                channel(av, a.input, Intrinsic::Iter),
+                Step::Input,
+            );
+        }
+        if a.output.is_some() || b.output.is_some() {
+            self.derive(
+                obligation,
+                channel(bv, b.output, Intrinsic::Sink),
+                channel(av, a.output, Intrinsic::Sink),
+                Step::Output,
+            );
         }
         Ok(())
     }
 
-    /// Include a schema in one whose items are all repeated: at most one
-    /// positional and one keyed. Each of `xs`'s items must fit the matching
-    /// repeated item, whatever its multiplicity, and each inclusion must fit
-    /// the whole expected schema. Any other expected schema is unsupported.
-    fn schemas(
+    /// Relate a quantified function to a function type through fresh variables
+    /// for its binders, including implicit ambient ones: a call's own channels
+    /// bound them from below. The variables are created once per obligation, so
+    /// reprocessing it derives the same obligations.
+    fn instantiation(
         &self,
-        av: TypeView,
-        xs: &[SchemaItem],
-        bv: TypeView,
-        ys: &[SchemaItem],
+        view: TypeView,
+        binders: &[Binder],
+        body: TypeId,
         expected: Term,
         obligation: ObligationId,
     ) -> Result<(), Issue> {
-        let (mut positional, mut keyed) = (None, None);
-        for item in ys {
-            let slot = match (item.multiplicity, &item.element) {
-                (Multiplicity::Repeated, Element::Positional(_)) => &mut positional,
-                (Multiplicity::Repeated, Element::Keyed { .. }) => &mut keyed,
-                _ => return Err(Residual::Unsupported.into()),
+        let known = self.instantiations.borrow().get(&obligation).copied();
+        let environment = match known {
+            Some(environment) => environment,
+            None => {
+                let group = binders
+                    .iter()
+                    .map(|binder| match binder.binding {
+                        Binding::Rest(rest) => self.fresh(binder.kind, rest),
+                        _ => self.fresh(binder.kind, Rest::All),
+                    })
+                    .collect();
+                let environment = self.intern_environment(view.environment, group);
+                self.instantiations
+                    .borrow_mut()
+                    .insert(obligation, environment);
+                environment
+            }
+        };
+        let group = self
+            .environments
+            .get_by_index(environment.0)
+            .unwrap()
+            .group
+            .clone();
+        for (index, (binder, term)) in binders.iter().zip(group).enumerate() {
+            let bound = match (binder.bound, binder.binding) {
+                (Some(bound), _) => self.view(bound, environment),
+                (None, Binding::Rest(rest)) => self.closed(self.db.rest_shape(rest)),
+                (None, _) => continue,
             };
-            if slot.replace(&item.element).is_some() {
-                return Err(Residual::Unsupported.into());
-            }
+            self.derive(obligation, term, bound, Step::InstantiationBound(index));
         }
-        for item in xs {
-            let admitted = match item.element {
-                Element::Positional(_) => positional.is_some(),
-                Element::Keyed { .. } => keyed.is_some(),
-                Element::Include(_) => true,
-            };
-            if !admitted {
-                return Err(Issue::Contradiction(Contradiction::Item));
-            }
-        }
-        for (index, item) in xs.iter().enumerate() {
-            match (&item.element, positional, keyed) {
-                (&Element::Positional(ty), Some(&Element::Positional(p)), _) => {
-                    self.derive(obligation, av.child(ty), bv.child(p), Step::Item(index));
-                }
-                (&Element::Keyed { key, value }, _, Some(&Element::Keyed { key: k, value: v })) => {
-                    self.derive(obligation, av.child(key), bv.child(k), Step::Key(index));
-                    self.derive(obligation, av.child(value), bv.child(v), Step::Item(index));
-                }
-                (&Element::Include(schema), _, _) => {
-                    self.derive(obligation, av.child(schema), expected, Step::Item(index));
-                }
-                _ => unreachable!(),
-            }
-        }
+        self.derive(
+            obligation,
+            self.view(body, environment),
+            expected,
+            Step::Instantiation,
+        );
         Ok(())
+    }
+
+    /// The default bound of an omitted ambient channel, `Iter[Unknown]` or
+    /// `Sink[Unknown]`, or `Unknown` when `std` doesn't designate one with a
+    /// single positional type binder
+    fn channel_bound(&self, intrinsic: Intrinsic) -> Term {
+        let unknown = self.closed(self.db.unknown());
+        let Some(base) = self.db.intrinsic(intrinsic) else {
+            return unknown;
+        };
+        let Type::Decl(decl) = *self.db.ty(base) else {
+            return unknown;
+        };
+        let Type::Quantified { binders, .. } = self.db.ty(self.db.declaration(decl).ty) else {
+            return unknown;
+        };
+        if !matches!(&binders[..], [binder] if binder.binding == Binding::Positional && binder.kind == Kind::Type)
+        {
+            return unknown;
+        }
+        self.closed(self.db.intern(Type::Apply {
+            base,
+            args: vec![Argument::Positional(self.db.unknown())].into(),
+            kind: Kind::Type,
+        }))
     }
 
     /// Reduce one relation, recording bounds or child obligations, or return a diagnostic issue.
@@ -1446,6 +1625,9 @@ impl<'db> Solver<'db> {
                     }
                     (Type::Function(a_func), Type::Function(b_func)) => {
                         self.functions(a, a_func, b, b_func, obligation)
+                    }
+                    (Type::Quantified { binders, body }, Type::Function(_)) => {
+                        self.instantiation(a, binders, *body, expected, obligation)
                     }
                     (Type::Schema(xs), Type::Schema(ys)) => {
                         self.schemas(a, xs, b, ys, expected, obligation)
@@ -1666,6 +1848,8 @@ impl<'db> Solver<'db> {
         }
     }
 }
+
+mod schema;
 
 #[cfg(test)]
 mod tests;
