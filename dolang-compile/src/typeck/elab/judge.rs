@@ -11,7 +11,7 @@ use super::{
 };
 use crate::{
     Mode, RestKind,
-    ast::{ClassMember, Param, TypeExpr, visit::Node},
+    ast::{ClassMember, MemberScope, Param, TypeExpr, visit::Node},
     source::Span,
     typeck::r#type::{
         Argument, BinderOrigin, Database, DeclId, Declaration, Element, Kind, Literal, Member,
@@ -154,6 +154,8 @@ impl Tables<'_> {
                 let value = match designated {
                     Designated::Value => "top".to_owned(),
                     Designated::Phantom => "phantom".to_owned(),
+                    Designated::Getter => "getter".to_owned(),
+                    Designated::Setter => "setter".to_owned(),
                     Designated::Intrinsic(intrinsic) => format!("intrinsic {intrinsic:?}"),
                 };
                 judgments.push(("designated", name, value));
@@ -346,25 +348,30 @@ impl Tables<'_> {
                     let span = decl.name.expect("a class is named");
                     judgments.push(("quantifier", span, self.quantifier(db, declaration, &names)));
                     judgments.push(("decl", span, self.decl(db, declaration, &names)));
-                    let mut spans = Vec::new();
-                    for member in &class.body.members {
-                        match member {
-                            ClassMember::Field(field) => {
-                                spans.extend(field.fields.iter().map(|name| name.ident.span))
-                            }
-                            ClassMember::Method(method) => spans.push(method.name_span),
-                        }
-                    }
                     for (key, member) in declaration.members.iter() {
-                        // The first member of a name is the one recorded
-                        let Some(span) = spans
-                            .iter()
-                            .copied()
-                            .find(|&span| self.text(unit, span) == db.symbol(key.name))
-                        else {
-                            continue;
+                        // A method member is judged at its function's name, and a field at
+                        // the first field its key and namespace record
+                        let span = match member.decls().next() {
+                            Some(decl) => self.decls[decl.index()].name,
+                            None => class.body.members.iter().find_map(|source| {
+                                let ClassMember::Field(field) = source else {
+                                    return None;
+                                };
+                                let instance = matches!(field.scope, MemberScope::Instance);
+                                field
+                                    .fields
+                                    .iter()
+                                    .map(|name| name.ident.span)
+                                    .find(|&span| {
+                                        self.text(unit, span) == db.symbol(key.name)
+                                            && field.pub_span.is_none() == key.private
+                                            && instance == (member.scope() == Scope::Instance)
+                                    })
+                            }),
                         };
-                        judgments.push(("member", span, self.member(db, member, &names)));
+                        if let Some(span) = span {
+                            judgments.push(("member", span, self.member(db, member, &names)));
+                        }
                     }
                 }
                 DeclNode::Alias(_) => {
@@ -469,23 +476,32 @@ impl Tables<'_> {
     }
 
     fn member(&self, db: &Database, member: &Member, names: &[String]) -> String {
-        let (what, scope, public) = match member {
-            Member::Field { scope, public, .. } => ("field", scope, public),
-            Member::Method { scope, public, .. } => ("method", scope, public),
+        let what = match member {
+            Member::Field { .. } => "field",
+            Member::Method { .. } => "method",
+            Member::Property { .. } => "property",
+            Member::Decorated { .. } => "decorated",
         };
-        let scope = match scope {
+        let scope = match member.scope() {
             Scope::Instance => "instance",
             Scope::Class => "class",
             Scope::Static => "static",
         };
-        let visibility = if *public { "pub" } else { "private" };
+        let visibility = if member.public() { "pub" } else { "private" };
         let mut out = format!("{what} {scope} {visibility}");
         match member {
             Member::Field { ty, .. } => {
                 let _ = write!(out, " {}", self.render(db, *ty, names));
             }
-            Member::Method { decl, .. } => {
+            Member::Method { decl, .. } | Member::Decorated { decl, .. } => {
                 let _ = write!(out, " {}", self.qualified(*decl));
+            }
+            Member::Property { getter, setter, .. } => {
+                for (what, decl) in [("get", getter), ("set", setter)] {
+                    if let Some(decl) = decl {
+                        let _ = write!(out, " {what} {}", self.qualified(*decl));
+                    }
+                }
             }
         }
         out

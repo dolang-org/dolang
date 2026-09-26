@@ -417,13 +417,18 @@ pub(crate) enum Scope {
 }
 
 /// A member's name. A special method such as `(init)` is named without its
-/// parentheses, apart from an ordinary member of the same name.
+/// parentheses, apart from an ordinary member of the same name. A private member
+/// is named apart from public ones, as the runtime names it by a symbol of its
+/// class's own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct MemberKey {
     pub(crate) name: SymbolId,
     pub(crate) special: bool,
+    pub(crate) private: bool,
 }
 
+/// A class member. Methods are function declarations, lifted over all of the
+/// class's binders.
 #[derive(Clone, Debug)]
 pub(crate) enum Member {
     /// Its type is interpreted in the scope of the class's outer binder group.
@@ -432,12 +437,54 @@ pub(crate) enum Member {
         scope: Scope,
         public: bool,
     },
-    /// A function declaration, lifted over all of the class's binders
     Method {
         decl: DeclId,
         scope: Scope,
         public: bool,
     },
+    /// A computed field, read and written through methods
+    Property {
+        getter: Option<DeclId>,
+        setter: Option<DeclId>,
+        scope: Scope,
+        public: bool,
+    },
+    /// A method its decorators replace with a value of unknown type
+    Decorated {
+        decl: DeclId,
+        scope: Scope,
+        public: bool,
+    },
+}
+
+impl Member {
+    pub(crate) fn scope(&self) -> Scope {
+        match *self {
+            Self::Field { scope, .. }
+            | Self::Method { scope, .. }
+            | Self::Property { scope, .. }
+            | Self::Decorated { scope, .. } => scope,
+        }
+    }
+
+    pub(crate) fn public(&self) -> bool {
+        match *self {
+            Self::Field { public, .. }
+            | Self::Method { public, .. }
+            | Self::Property { public, .. }
+            | Self::Decorated { public, .. } => public,
+        }
+    }
+
+    /// The function declarations it holds
+    pub(crate) fn decls(&self) -> impl Iterator<Item = DeclId> {
+        let (first, second) = match *self {
+            Self::Field { .. } => (None, None),
+            Self::Method { decl, .. } | Self::Decorated { decl, .. } => (Some(decl), None),
+            Self::Property { getter, setter, .. } => (getter, setter),
+        };
+        first.into_iter().chain(second)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -531,6 +578,8 @@ pub(crate) enum Intrinsic {
     Iter,
     /// Bounds an omitted ambient output channel, as `Sink[Unknown]`
     Sink,
+    /// `Type[C]`, the type of the class object whose instances are `C`
+    Type,
 }
 
 /// Optional associations to elaborated stub types, populated before sealing.
@@ -545,6 +594,7 @@ struct Intrinsics {
     str: Option<TypeId>,
     iter: Option<TypeId>,
     sink: Option<TypeId>,
+    ty: Option<TypeId>,
 }
 
 impl Intrinsics {
@@ -559,6 +609,7 @@ impl Intrinsics {
             Intrinsic::Str => self.str,
             Intrinsic::Iter => self.iter,
             Intrinsic::Sink => self.sink,
+            Intrinsic::Type => self.ty,
         }
     }
 
@@ -573,6 +624,7 @@ impl Intrinsics {
             Intrinsic::Str => &mut self.str,
             Intrinsic::Iter => &mut self.iter,
             Intrinsic::Sink => &mut self.sink,
+            Intrinsic::Type => &mut self.ty,
         }
     }
 }
@@ -786,7 +838,7 @@ impl Database {
             .iter()
             .filter_map(|(_, member)| match member {
                 Member::Field { ty, .. } => Some(*ty),
-                Member::Method { .. } => None,
+                _ => None,
             });
         for root in [declaration.ty]
             .into_iter()
@@ -815,23 +867,25 @@ impl Database {
         }
         for (index, slot) in slots.iter().enumerate() {
             let declaration = slot.as_ref().unwrap();
-            for (_, member) in declaration.members.iter() {
-                if let Member::Method { decl, .. } = member {
-                    assert!(
-                        matches!(
-                            slots.get(decl.index()),
-                            Some(Some(Declaration {
-                                source: DeclSource {
-                                    kind: DeclKind::Function,
-                                    ..
-                                },
+            for decl in declaration
+                .members
+                .iter()
+                .flat_map(|(_, member)| member.decls())
+            {
+                assert!(
+                    matches!(
+                        slots.get(decl.index()),
+                        Some(Some(Declaration {
+                            source: DeclSource {
+                                kind: DeclKind::Function,
                                 ..
-                            }))
-                        ),
-                        "method of {:?} is not a function",
-                        DeclId::from_index(index)
-                    );
-                }
+                            },
+                            ..
+                        }))
+                    ),
+                    "method of {:?} is not a function",
+                    DeclId::from_index(index)
+                );
             }
         }
         for (id, overloads) in &self.overloads {
@@ -1150,6 +1204,52 @@ impl Database {
         };
         memo.insert((id, cutoff), result);
         result
+    }
+
+    /// Split the first `count` binders off a quantified type's group. The result is
+    /// quantified over the rest, and is interpreted where a group of the first
+    /// `count` binders is, so viewing it where they are bound applies them. A method,
+    /// lifted over its class's binders, is applied to a class's arguments this way.
+    pub(crate) fn split(&self, ty: TypeId, count: usize) -> TypeId {
+        if count == 0 {
+            return ty;
+        }
+        let Type::Quantified { binders, body } = self.ty(ty) else {
+            panic!("splitting binders off a type without them")
+        };
+        assert!(count <= binders.len(), "splitting off too many binders");
+        let rest = &binders[count..];
+        let outer = usize::from(!rest.is_empty());
+        let args: Vec<_> = binders
+            .iter()
+            .enumerate()
+            .map(|(slot, binder)| {
+                let reference = if slot < count {
+                    BoundRef::new(outer, slot)
+                } else {
+                    BoundRef::new(0, slot - count)
+                };
+                self.intern(Type::Bound {
+                    reference,
+                    kind: binder.kind,
+                })
+            })
+            .collect();
+        let body = self.substitute(*body, &args);
+        if rest.is_empty() {
+            return body;
+        }
+        let binders = rest
+            .iter()
+            .map(|binder| Binder {
+                bound: binder.bound.map(|bound| self.substitute(bound, &args)),
+                default: binder
+                    .default
+                    .map(|default| self.substitute(default, &args)),
+                ..binder.clone()
+            })
+            .collect();
+        self.intern(Type::Quantified { binders, body })
     }
 
     /// The shape of a rest mode: `{*Value}`, `{**Sym: Value}` or both. The key is

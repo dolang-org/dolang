@@ -9,14 +9,14 @@
 //! method once the database is sealed.
 
 use super::{
-    Ambient, BinderRef, DeclNode, Designated, KindOf, MisdeclaredIntrinsic, ParamTy, RestSlot, Sig,
-    Slot, Tables, UnitDiag,
+    Ambient, BinderRef, DeclNode, Designated, KindOf, MisdeclaredIntrinsic, ParamTy, Referent,
+    RestSlot, Sig, Slot, Tables, UnitDiag,
 };
 use crate::{
     Mode,
     ast::{ClassMember, Expr, Function, Method, Param},
     source,
-    typeck::r#type::{DeclId, DeclKind, Intrinsic, Kind, Scope, UnitId},
+    typeck::r#type::{DeclId, DeclKind, Intrinsic, Kind, Scope, UnitId, UnitSpan},
 };
 
 /// Complete every def and method signature, record every field's type, and find
@@ -172,6 +172,46 @@ pub(crate) fn method_scope(tables: &Tables<'_>, unit: UnitId, method: &Method) -
     scope
 }
 
+/// What a method's decorators make of it
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Form {
+    Plain,
+    Getter,
+    Setter,
+    /// A value of unknown type
+    Unknown,
+}
+
+/// The form of a method, from its decorators. Only `class` and `static` have a
+/// meaning fixed by syntax. Any other decorator may replace the method with any
+/// value; until decorator applications are evaluated, std's `getter` and `setter`
+/// are recognized by what their names resolve to, and anything else leaves a value
+/// of unknown type.
+pub(crate) fn method_form(tables: &Tables<'_>, unit: UnitId, method: &Method) -> Form {
+    let mut form = Form::Plain;
+    for decorator in &method.decorators {
+        let designated = match &decorator.expr {
+            Expr::Ident(ident) => match tables.text(unit, ident.span) {
+                "class" | "static" => continue,
+                _ => match tables.referents.get(&UnitSpan {
+                    unit,
+                    span: ident.span,
+                }) {
+                    Some(Referent::Decl(decl)) => tables.designated.get(decl).copied(),
+                    _ => None,
+                },
+            },
+            _ => None,
+        };
+        form = match (form, designated) {
+            (Form::Plain, Some(Designated::Getter)) => Form::Getter,
+            (Form::Plain, Some(Designated::Setter)) => Form::Setter,
+            _ => return Form::Unknown,
+        };
+    }
+    form
+}
+
 /// Designate a top-level declaration of `std` that the checker treats specially.
 /// A declaration of another module with the same name is only a lookalike.
 fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
@@ -197,6 +237,9 @@ fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
         "Str" => (Designated::Intrinsic(Intrinsic::Str), DeclKind::Class),
         "Iter" => (Designated::Intrinsic(Intrinsic::Iter), DeclKind::Class),
         "Sink" => (Designated::Intrinsic(Intrinsic::Sink), DeclKind::Class),
+        "Type" => (Designated::Intrinsic(Intrinsic::Type), DeclKind::Class),
+        "getter" => (Designated::Getter, DeclKind::Function),
+        "setter" => (Designated::Setter, DeclKind::Function),
         _ => return,
     };
     if owner.kind == expected {
@@ -204,6 +247,7 @@ fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
     } else {
         let expected = match expected {
             DeclKind::OpaqueAlias => "an opaque alias",
+            DeclKind::Function => "a def",
             _ => "a class",
         };
         diags.push((

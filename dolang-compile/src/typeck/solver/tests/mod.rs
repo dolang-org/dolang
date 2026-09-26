@@ -8,6 +8,7 @@ mod basics;
 mod functions;
 mod inference;
 mod instantiation;
+mod members;
 mod nominal;
 mod rigids;
 mod schemas;
@@ -204,4 +205,20 @@ fn include(multiplicity: Multiplicity, schema: TypeId) -> SchemaItem {
 
 fn contradiction(outcome: &Outcome, contradiction: Contradiction) -> bool {
     outcome.status == Status::Contradicted && has(outcome, Issue::Contradiction(contradiction))
+}
+
+/// Default every variable whose lower bounds are solved, repeatedly, solving
+/// between rounds, as a flow driver would
+fn default_all(s: &mut Solver<'_>) -> Vec<Outcome> {
+    loop {
+        let unsolved: Vec<_> = s.unresolved().collect();
+        let progress = unsolved
+            .into_iter()
+            .filter(|&id| s.default(id).is_ok())
+            .count();
+        let outcomes = s.solve();
+        if progress == 0 {
+            return outcomes;
+        }
+    }
 }

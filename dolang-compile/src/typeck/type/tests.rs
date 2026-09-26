@@ -492,6 +492,7 @@ fn members_and_overloads_are_checked() {
         MemberKey {
             name: field,
             special: false,
+            private: false,
         },
         field_of(schema),
     )]
@@ -507,6 +508,7 @@ fn members_and_overloads_are_checked() {
             MemberKey {
                 name: field,
                 special: false,
+                private: false,
             },
             field_of(int),
         ),
@@ -514,6 +516,7 @@ fn members_and_overloads_are_checked() {
             MemberKey {
                 name,
                 special: false,
+                private: false,
             },
             Member::Method {
                 decl: method,
@@ -550,6 +553,7 @@ fn a_method_member_must_be_a_function() {
         MemberKey {
             name,
             special: false,
+            private: false,
         },
         Member::Method {
             decl: class,

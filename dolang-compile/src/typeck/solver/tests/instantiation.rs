@@ -29,22 +29,6 @@ fn solve_call<'db>(
     (s, result, outcome)
 }
 
-/// Default every variable whose lower bounds are solved, repeatedly, solving
-/// between rounds, as a flow driver would
-fn default_all(s: &mut Solver<'_>) -> Vec<Outcome> {
-    loop {
-        let unsolved: Vec<_> = s.unresolved().collect();
-        let progress = unsolved
-            .into_iter()
-            .filter(|&id| s.default(id).is_ok())
-            .count();
-        let outcomes = s.solve();
-        if progress == 0 {
-            return outcomes;
-        }
-    }
-}
-
 #[test]
 fn generic_callees_are_instantiated_once_per_use() {
     let mut db = Database::new();

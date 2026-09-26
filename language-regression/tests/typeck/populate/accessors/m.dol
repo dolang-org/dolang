@@ -1,0 +1,46 @@
+# A getter and a setter of one name make one computed field, apart from a private
+# member of the same spelling. A decorator the checker doesn't know leaves a value
+# of unknown type.
+
+pub class Num
+
+def wrap f
+  f
+
+pub class Config
+  field port @ Num = nil
+  #     ^~~~: member field instance private m.Num
+
+  #[getter]
+  pub def port obj -> Num
+    #     ^~~~: member property instance pub get m.Config.port set m.Config.port
+    #     ^~~~: decl (m.Config) <in >out -> m.Num
+    obj.#port
+
+  #[setter]
+  pub def port obj value @ Num
+    #     ^~~~: decl (m.Config, m.Num) <in >out -> Unknown
+    obj.#port = value
+
+  #[getter]
+  pub def only obj -> Num
+    #     ^~~~: member property instance pub get m.Config.only
+    obj.#port
+
+  #[wrap]
+  pub def wrapped _self
+    #     ^~~~~~~: member decorated instance pub m.Config.wrapped
+    nil
+
+  #[getter]
+  #[wrap]
+  pub def both _self
+    #     ^~~~: member decorated instance pub m.Config.both
+    nil
+
+  @def pick _self x @ Num -> Num
+  #    ^~~~: member method instance pub m.Config.pick
+  #    ^~~~: decl (m.Config, m.Num) <in >out -> m.Num
+  pub def pick _self x
+    #     ^~~~: decl (m.Config, Unknown) <in >out -> Unknown
+    x

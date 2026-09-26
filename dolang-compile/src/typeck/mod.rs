@@ -212,5 +212,72 @@ impl Check<'_> {
             relate(&mut solver, ty, &kinds);
         }
         solver.solve();
+        self.smoke_members();
+    }
+
+    /// Look up every member a class or its direct supertypes declare, through the
+    /// receiver of one of its instance methods under that method's rigids.
+    fn smoke_members(&self) {
+        use solver::Solver;
+        use r#type::{Element, Member, Scope, Type};
+
+        let db = &self.db;
+        let declared = |ty| match *db.ty(ty) {
+            Type::Decl(decl) => Some(decl),
+            Type::Apply { base, .. } => match *db.ty(base) {
+                Type::Decl(decl) => Some(decl),
+                _ => None,
+            },
+            _ => None,
+        };
+        for (class, declaration) in db.declarations() {
+            let mut keys: Vec<_> = declaration.members.iter().map(|(key, _)| *key).collect();
+            for decl in declaration.supertypes.iter().filter_map(|&ty| declared(ty)) {
+                let members = &db.declaration(decl).members;
+                keys.extend(
+                    members
+                        .iter()
+                        .map(|(key, _)| *key)
+                        .filter(|key| !key.private),
+                );
+            }
+            let receiver = declaration.members.iter().find_map(|(_, member)| {
+                let Member::Method {
+                    decl,
+                    scope: Scope::Instance,
+                    ..
+                } = *member
+                else {
+                    return None;
+                };
+                let mut ty = db.declaration(decl).ty;
+                if let Type::Quantified { body, .. } = db.ty(ty) {
+                    ty = *body;
+                }
+                let Type::Function(function) = db.ty(ty) else {
+                    return None;
+                };
+                let Type::Schema(items) = db.ty(function.params) else {
+                    return None;
+                };
+                match items.first()?.element {
+                    Element::Positional(receiver) => Some((decl, receiver)),
+                    _ => None,
+                }
+            });
+            let Some((method, receiver)) = receiver else {
+                continue;
+            };
+            let mut solver = Solver::new(db);
+            let environment = solver.rigid_environment(method);
+            let receiver = solver.view(receiver, environment);
+            for key in keys {
+                let _ = if key.private {
+                    solver.private_member(receiver, class, key)
+                } else {
+                    solver.member(receiver, key)
+                };
+            }
+        }
     }
 }
