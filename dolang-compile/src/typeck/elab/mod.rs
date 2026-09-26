@@ -10,6 +10,7 @@ mod judge;
 mod kind;
 mod populate;
 mod sig;
+mod specialize;
 mod variance;
 
 use std::{
@@ -31,6 +32,7 @@ pub(crate) use judge::JUDGMENTS;
 pub(crate) use kind::{Fill, kinds};
 pub(crate) use populate::populate;
 pub(crate) use sig::signatures;
+pub(crate) use specialize::specialize;
 pub(crate) use variance::variances;
 
 /// What collection learns of the checked units
@@ -536,6 +538,35 @@ impl Diagnose for UnknownTypeKeyword {
             "no binder takes the keyword type argument `{}`",
             self.name
         )
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+/// A receiver annotation that doesn't reach its method's class
+struct BadReceiver {
+    span: Span,
+    class: String,
+    /// The walk to the class could not be decided either way
+    undecided: bool,
+}
+
+impl Diagnose for BadReceiver {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        match self.undecided {
+            false => write!(w, "`self` must be a `{}` or a subtype of it", self.class),
+            true => write!(
+                w,
+                "cannot tell whether this is a `{}` or a subtype of it",
+                self.class
+            ),
+        }
     }
 
     fn span(&self) -> Span {

@@ -92,6 +92,7 @@ impl<'u, 's> Builder<'u, 's> {
         elab::variances(&mut tables);
         elab::populate(&mut db, &mut tables, &mut diags);
         db.seal();
+        elab::specialize(&mut db, &tables, &mut diags);
         Check {
             diagnostics: diags
                 .iter()

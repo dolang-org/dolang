@@ -1163,3 +1163,20 @@ fn declarations_never_contain_rigids() {
     let (id, _, source) = declare(&mut db, DeclKind::Annotation, "leak");
     db.populate(id, definition(source, rigid));
 }
+
+#[test]
+fn sealed_declarations_can_be_retyped_and_are_revalidated() {
+    let mut db = Database::new();
+    let t = reference(&mut db, 0, 0, Kind::Type);
+    let f = generic(&mut db, "f", 1, t);
+    let top = db.top();
+    let constant = quantify(&mut db, vec![binder(Kind::Type)], top);
+    db.seal();
+    db.retype(f, constant);
+    assert_eq!(db.declaration(f).ty, constant);
+    let rigid = db.rigids(f)[0];
+    let leak = quantify(&mut db, vec![binder(Kind::Type)], rigid);
+    assert_panics(|| db.retype(f, leak));
+    let unquantified = db.top();
+    assert_panics(|| db.retype(f, unquantified));
+}

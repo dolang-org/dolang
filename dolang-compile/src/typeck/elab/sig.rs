@@ -4,8 +4,9 @@
 //!
 //! An omitted annotation on a def is dynamic, whatever the def's visibility. An
 //! omitted ambient channel is an implicit binder of the signature, following its
-//! written binders, and bounded by nothing. A method's unannotated receiver is its
-//! class applied to the class's own binders.
+//! written binders; population bounds it. A method's unannotated receiver is its
+//! class applied to the class's own binders; an annotated one specializes the
+//! method once the database is sealed.
 
 use super::{
     Ambient, BinderRef, DeclNode, Designated, KindOf, MisdeclaredIntrinsic, ParamTy, RestSlot, Sig,

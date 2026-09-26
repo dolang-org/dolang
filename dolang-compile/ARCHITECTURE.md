@@ -448,3 +448,18 @@ separate step. `Check`'s hidden `smoke` method relates every type the database
 holds to itself and to top, to show that the solver judges it without
 panicking. The `quantifier`, `decl`, `member` and `type` judgments report what
 was interned.
+
+Sealing closes the set of declarations, but a declaration can still be retyped
+through `&mut Database`, which validates it as population does. Right after
+sealing, each instance method with an annotated receiver `self @ U` is
+specialized. A solver assuming the method runs `reach` from `U` to the method's
+class, walking a rigid through its bound. The class arguments it reaches with,
+reified over the method's rigids, replace the class's binders throughout the
+method's type, which is abstracted back to its group:
+`def int self @ Box[Int] -> T` in `class Box[T]` becomes `(Box[Int]) -> Int`.
+`self` keeps `U` verbatim. The method stays lifted over every class binder; a
+replaced one is unused, which affects neither variance, computed long before,
+nor member lookup, which stays positional. Walks read only class supertypes and
+the method's own bounds, so the order of methods doesn't matter. A receiver that
+doesn't reach its class, or whose walk is undecided, is diagnosed and keeps the
+unspecialized type.

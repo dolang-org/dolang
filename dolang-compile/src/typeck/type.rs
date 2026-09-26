@@ -733,6 +733,20 @@ impl Database {
         self.declarations.building_mut()[id.index()] = Some(declaration);
     }
 
+    /// Replace a sealed declaration's type, validating it as population does.
+    /// Sealing closes the set of declarations; a checked one may still be refined.
+    pub(crate) fn retype(&mut self, id: DeclId, ty: TypeId) {
+        let Declarations::Frozen(declarations) = &mut self.declarations else {
+            panic!("declaration database is not sealed");
+        };
+        declarations[id.index()].ty = ty;
+        self.validate_declaration(self.declaration(id));
+        assert!(
+            self.pending_kinds.borrow().is_empty(),
+            "every kind is known once sealed"
+        );
+    }
+
     fn validate_declaration(&self, declaration: &Declaration) {
         assert!(
             declaration.source.span.unit.index() < self.unit_count,
