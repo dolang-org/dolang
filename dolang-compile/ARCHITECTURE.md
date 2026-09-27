@@ -359,8 +359,18 @@ never defaulted. The caller defaults a variable's lower bounds before it, such
 as a call's binders before its result, and solves between defaults so that
 their consequences can force later variables. Defaulted assignments are marked
 as such, so a contradiction reached through one can be reported as an inference
-choice. Widening literals and choosing collection element types are separate
-policies.
+choice. A default decays the join's literals to their classes, except in exact
+schema keys and binder bounds, unless the decayed join violates a bound; a
+forced assignment keeps its literals, since its bounds require them.
+
+Joins, for defaults and for flow state, drop union members proven below another
+member. A member containing `Unknown` neither subsumes nor is subsumed, since
+consistency isn't antisymmetric, and `Unknown` itself absorbs the join. A join
+alone doesn't converge on a type that keeps growing, so a widening point counts
+a variable's increases and widens in two stages: first to the least ancestor the
+union's members share, found through the first member's MRO with arguments
+combined by variance, then to `Unknown`. Sharing only `Value` widens to
+`Unknown`, since a static top would make every later use a contradiction.
 
 Exact candidate dependencies receive a scope-aware occurs check. Recursive
 substitutions remain recursive residuals; variable-only cycles remain unsolved
@@ -441,14 +451,27 @@ expressions stay trees. Expressions mirror the AST. Only checking rules carry a
 `RuleId`: calls, method invocations (lookup and call in one rule), member
 accesses, subscripts, operators and collection literals. Comprehensions are
 expression items, since they neither break nor assign. `&&` and `||` are
-control flow, so a narrowing test's successors begin with `Assume` steps.
+control flow, so a narrowing test's successors begin with `Assume` steps. Inside
+a comprehension item they stay in the tree as `Logical`, since an operand may
+read the item's own bindings, and narrowing there stays inside the
+comprehension's rule. An interpolation is a `FmtValue`, which a string formats
+in place, and a `t"..."` sequence is a `Fmt` of text, `FmtValue`s and
+`FmtParam`s; std's classes of those names are designated for their types.
 
-Values that must cross blocks, such as an evaluated callee before a short
-circuit or a statement's value, go on an operand stack. `Operand` and `If`
-peek at it, and `Pop` discards. Statements are never nested in expressions, so
-an exceptional edge discards the whole stack. A handler is an ordinary block
-entered with the exception alone on the stack; `Catch` dispatches it to clauses
-by class.
+Only short circuits cross blocks mid-expression. A short circuit's left operand
+goes on an operand stack, and its result is there at the join; the rest of the
+expression stays a tree with an `Operand` hole in its place. This is a
+post-order linearization frozen partway: the stack holds completed subtrees and
+the remaining tree pops them in order. A step or terminal pops one entry per
+hole, in evaluation order, which empties the stack. `If` pops its condition, so
+a short circuit `Dup`s its left operand, and its long path `Pop`s it before
+pushing the right operand. A rule evaluated before a short circuit is thus
+judged after it; flow state can't observe the difference, since expressions
+neither assign nor bind, narrowing in the right operand is rejoined at the join,
+and calls change only captures, which are never narrowed. Statements are never
+nested in expressions, so an exceptional edge discards the whole stack. A
+handler is an ordinary block entered with the exception alone on the stack;
+`Catch` dispatches it to clauses by class.
 
 `Leave` enters a `finally` with a tag saying how to continue after
 `EndFinally`: at a block, or by rethrowing. Lowering routes each exit once,
@@ -472,6 +495,23 @@ depths only grow by `Leave`, returns come from exit blocks, non-local terminals
 leave for enclosing functions, variables are owned or captured, closures are
 instantiated by their parent, and rules are unique. Stack depths are checked by
 flow analysis.
+
+`typeck::lower` builds a unit's graph from its elaborated syntax tree, following
+the bytecode lowerer's shape: a focused block is extended and switched as
+control flow requires, and function bodies and statement blocks are queued, each
+with its context. Lexical frames mirror the resolver's scopes, so a variable's
+`(index, depth)` resolution decodes directly, and each allocates its variables
+in the enclosing function. A `try`'s parts and an `NlGuard`, closures only at
+runtime, are lowered inline, so a jump out of one is local. Only lambdas, defs,
+methods and field initializers are functions, and captures are found by
+comparing a variable's owner with the function reading it. Declarations are
+found by the address of their node. Imports and prelude names resolve to
+`Import` expressions, including a dotted path through a module. A statement's
+value, needed by `let x = if …` or as a function's implicit result, goes in a
+variable rather than on the stack, so every statement starts and ends with an
+empty one. Where a statement would need a value twice, the value is bound to a
+synthetic variable first, so that each step pops exactly what was pushed since
+the one before.
 
 ## Checking units and diagnostic locations
 

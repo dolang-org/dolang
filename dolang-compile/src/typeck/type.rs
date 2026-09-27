@@ -99,6 +99,19 @@ pub(crate) enum Literal {
     Sym(SymbolId),
 }
 
+impl Literal {
+    /// The class of the literal's value
+    pub(crate) fn intrinsic(&self) -> Intrinsic {
+        match self {
+            Self::Nil => Intrinsic::Nil,
+            Self::Bool(_) => Intrinsic::Bool,
+            Self::Int(_) => Intrinsic::Int,
+            Self::Str(_) => Intrinsic::Str,
+            Self::Sym(_) => Intrinsic::Sym,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Variance {
     Invariant,
@@ -1203,6 +1216,55 @@ impl Database {
             }
         };
         memo.insert((id, cutoff), result);
+        result
+    }
+
+    /// Replace each literal type with its class, where that is registered. Exact
+    /// schema keys and binder bounds and defaults keep their literals, since
+    /// decaying them would change what they mean.
+    pub(crate) fn decay(&self, root: TypeId) -> TypeId {
+        self.decay_inner(root, &mut HashMap::new())
+    }
+
+    fn decay_inner(&self, id: TypeId, memo: &mut HashMap<TypeId, TypeId>) -> TypeId {
+        if let Some(result) = memo.get(&id) {
+            return *result;
+        }
+        let result = match self.ty(id) {
+            Type::Literal(literal) => self.intrinsic(literal.intrinsic()).unwrap_or(id),
+            Type::Schema(items) => {
+                let items = items
+                    .iter()
+                    .map(|item| SchemaItem {
+                        multiplicity: item.multiplicity,
+                        element: match item.element {
+                            Element::Positional(ty) => {
+                                Element::Positional(self.decay_inner(ty, memo))
+                            }
+                            Element::Include(ty) => Element::Include(self.decay_inner(ty, memo)),
+                            Element::Keyed { key, value } => Element::Keyed {
+                                key,
+                                value: self.decay_inner(value, memo),
+                            },
+                        },
+                    })
+                    .collect();
+                self.intern(Type::Schema(items))
+            }
+            Type::Quantified { binders, body } => self.intern(Type::Quantified {
+                binders: binders.clone(),
+                body: self.decay_inner(*body, memo),
+            }),
+            ty => {
+                let mapped = ty
+                    .map_children(|child, _| {
+                        Ok::<_, std::convert::Infallible>(self.decay_inner(child, memo))
+                    })
+                    .unwrap_or_else(|never| match never {});
+                self.intern(mapped)
+            }
+        };
+        memo.insert(id, result);
         result
     }
 

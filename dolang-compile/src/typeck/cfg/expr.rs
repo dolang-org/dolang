@@ -23,6 +23,26 @@ pub(crate) enum ExprKind {
     Bin,
     /// A string built from parts, each of which may be any value
     Concat(Vec<Expr>),
+    /// A binary string built from parts, each of which must be binary
+    BinConcat {
+        parts: Vec<Expr>,
+        rule: RuleId,
+    },
+    /// A `t"..."` sequence: a `Fmt` of literal text and interpolations, each a
+    /// [`ExprKind::FmtValue`] or [`ExprKind::FmtParam`]
+    Fmt(Vec<Expr>),
+    /// An interpolation: a `FmtValue` binding a value to a specification. A string
+    /// formats it in place.
+    FmtValue {
+        value: Box<Expr>,
+        spec: FmtSpec,
+        rule: RuleId,
+    },
+    /// A `${#...}` interpolation: a `FmtParam`, which a `Fmt` fills later
+    FmtParam {
+        spec: FmtSpec,
+        rule: RuleId,
+    },
     Var(VarId),
     /// The class object a class statement defines, of type `Type[C]`
     Class(DeclId),
@@ -66,6 +86,13 @@ pub(crate) enum ExprKind {
         operands: Box<[Expr; 2]>,
         rule: RuleId,
     },
+    /// `&&` or `||` inside a comprehension item, whose operands may read the item's
+    /// own bindings and so can't be moved to blocks before it. Narrowing by its left
+    /// operand stays inside the comprehension's rule.
+    Logical {
+        op: Op,
+        operands: Box<[Expr; 2]>,
+    },
     Range {
         bounds: Box<[Option<Expr>; 2]>,
         rule: RuleId,
@@ -77,13 +104,33 @@ pub(crate) enum ExprKind {
     },
     /// The strand's ambient input, iterated by a `for` with no iteratee
     AmbientInput,
-    /// Peek at a slot of the operand stack, counted from the bottom
-    Operand(u32),
+    /// A value popped from the operand stack. The operands of a step or terminal pop
+    /// bottom-up, in evaluation order.
+    Operand,
     /// A value of the bottom type, standing in for a value that another edge
     /// supplies, such as the result a phantom return assigns
     Never,
+    /// The namespace `import a.b` binds `a` to, which only a dotted path through it
+    /// can be typed by
+    Namespace,
     /// Recovery from an expression that failed to elaborate
     Error,
+}
+
+/// The parts of a format specification that are evaluated, its width and precision,
+/// which must be `Int`s. The rest is constant.
+pub(crate) struct FmtSpec {
+    pub(crate) width: Option<Box<Expr>>,
+    pub(crate) precision: Option<Box<Expr>>,
+}
+
+impl FmtSpec {
+    fn walk<'a>(&'a self, visit: &mut impl FnMut(&'a Expr)) {
+        [&self.width, &self.precision]
+            .into_iter()
+            .flatten()
+            .for_each(|expr| expr.walk(visit));
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,8 +161,12 @@ pub(crate) enum Item {
         iter: Expr,
         items: Vec<Item>,
     },
+    /// A comprehension's filter. With a pattern, as in `if let`, the condition's
+    /// value is matched on the `then` edge: a name binds it when it's truthy, and
+    /// an unpacking pattern takes `then` when the value's shape matches.
     If {
         cond: Expr,
+        bind: Option<Pattern>,
         then: Vec<Item>,
         else_: Vec<Item>,
     },
@@ -142,7 +193,14 @@ impl Expr {
     pub(crate) fn walk<'a>(&'a self, visit: &mut impl FnMut(&'a Expr)) {
         visit(self);
         match &self.kind {
-            ExprKind::Concat(parts) => parts.iter().for_each(|part| part.walk(visit)),
+            ExprKind::Concat(parts) | ExprKind::BinConcat { parts, .. } | ExprKind::Fmt(parts) => {
+                parts.iter().for_each(|part| part.walk(visit))
+            }
+            ExprKind::FmtValue { value, spec, .. } => {
+                value.walk(visit);
+                spec.walk(visit);
+            }
+            ExprKind::FmtParam { spec, .. } => spec.walk(visit),
             ExprKind::Call { callee, args, .. } => {
                 callee.walk(visit);
                 Item::walk_all(args, visit);
@@ -157,7 +215,9 @@ impl Expr {
                 index.walk(visit);
             }
             ExprKind::Unary { operand, .. } => operand.walk(visit),
-            ExprKind::Binary { operands, .. } => operands.iter().for_each(|expr| expr.walk(visit)),
+            ExprKind::Binary { operands, .. } | ExprKind::Logical { operands, .. } => {
+                operands.iter().for_each(|expr| expr.walk(visit))
+            }
             ExprKind::Range { bounds, .. } => {
                 bounds.iter().flatten().for_each(|expr| expr.walk(visit))
             }
@@ -170,8 +230,9 @@ impl Expr {
             | ExprKind::Import { .. }
             | ExprKind::Lambda(_)
             | ExprKind::AmbientInput
-            | ExprKind::Operand(_)
+            | ExprKind::Operand
             | ExprKind::Never
+            | ExprKind::Namespace
             | ExprKind::Error => {}
         }
     }
@@ -186,7 +247,10 @@ impl Expr {
             | ExprKind::Unary { rule, .. }
             | ExprKind::Binary { rule, .. }
             | ExprKind::Range { rule, .. }
-            | ExprKind::Collection { rule, .. } => Some(rule),
+            | ExprKind::Collection { rule, .. }
+            | ExprKind::BinConcat { rule, .. }
+            | ExprKind::FmtValue { rule, .. }
+            | ExprKind::FmtParam { rule, .. } => Some(rule),
             _ => None,
         }
     }
@@ -210,8 +274,16 @@ impl Item {
                     pattern.walk(visit);
                     Item::walk_all(items, visit);
                 }
-                Item::If { cond, then, else_ } => {
+                Item::If {
+                    cond,
+                    bind,
+                    then,
+                    else_,
+                } => {
                     cond.walk(visit);
+                    if let Some(bind) = bind {
+                        bind.walk(visit);
+                    }
                     Item::walk_all(then, visit);
                     Item::walk_all(else_, visit);
                 }

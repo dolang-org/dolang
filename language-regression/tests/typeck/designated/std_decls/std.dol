@@ -29,6 +29,12 @@ pub class Sink[T]
 pub class Type[T]
   #       ^~~~: designated intrinsic Type
   field instance @ Phantom[T]
+pub class Fmt
+#         ^~~: designated fmt
+pub class FmtValue
+#         ^~~~~~~~: designated fmt value
+pub class FmtParam
+#         ^~~~~~~~: designated fmt param
 pub def getter func
   #     ^~~~~~: designated getter
   func

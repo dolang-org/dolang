@@ -4,7 +4,8 @@
 use std::collections::HashSet;
 
 use super::{
-    Against, BlockId, Expr, ExprKind, FuncId, Ir, Item, RuleId, Step, Tag, Target, Terminal, VarId,
+    Against, BlockId, Expr, ExprKind, FuncId, Ir, Item, Pattern, RuleId, Step, Tag, Target,
+    Terminal, VarId,
 };
 
 /// Why a graph is malformed
@@ -109,7 +110,7 @@ impl Ir {
                         exprs.push(value);
                     }
                     Step::Eval(expr) | Step::Push(expr) => exprs.push(expr),
-                    Step::Pop(_) => {}
+                    Step::Dup | Step::Pop => {}
                     Step::Assume(assume) => {
                         vars.push(assume.var);
                         match &assume.against {
@@ -227,7 +228,12 @@ impl Check<'_> {
                             vars.extend(pattern.vars());
                             stack.extend(items);
                         }
-                        Item::If { then, else_, .. } => stack.extend(then.iter().chain(else_)),
+                        Item::If {
+                            bind, then, else_, ..
+                        } => {
+                            vars.extend(bind.iter().flat_map(Pattern::vars));
+                            stack.extend(then.iter().chain(else_));
+                        }
                         _ => {}
                     }
                 }

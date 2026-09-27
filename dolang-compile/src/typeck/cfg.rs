@@ -6,12 +6,16 @@
 //! steps whose expressions stay tree-shaped, and ends in a terminal. Only
 //! short-circuit operators, statements and exceptions introduce control flow.
 //!
-//! Each function's locals are hoisted to the function, starting unassigned. A
-//! value evaluated before a short circuit, or a statement's value, crosses blocks
-//! on an operand stack: [`ExprKind::Operand`] and [`Terminal::If`] peek at it and
-//! [`Step::Pop`] discards. Statements are never nested in expressions, so an
-//! exceptional edge discards the whole stack and enters its handler, an ordinary
-//! block, with the exception alone on it.
+//! Each function's locals are hoisted to the function, starting unassigned. Only
+//! short circuits cross blocks mid-expression: a short circuit's left operand is
+//! pushed on an operand stack, and its result is there at the join. The rest of
+//! the expression stays a tree, with an [`ExprKind::Operand`] hole where the stack
+//! supplies a value. A step or terminal pops one entry per hole, in evaluation
+//! order, and since only earlier short circuits of the same statement lie below,
+//! that is the whole stack. [`Terminal::If`] pops its condition, so a short circuit
+//! duplicates its left operand first. Statements are never nested in expressions,
+//! so an exceptional edge discards the whole stack and enters its handler, an
+//! ordinary block, with the exception alone on it.
 //!
 //! A `finally` is entered by [`Terminal::Leave`] with a tag saying how to continue
 //! once [`Terminal::EndFinally`] ends it: at a block, or by rethrowing. Lowering
@@ -32,6 +36,7 @@
 //! [`ExprKind::Never`] to the result before continuing to the exit, so the exit
 //! joins the returned value with the guard point's state.
 
+mod dump;
 mod expr;
 #[cfg(test)]
 mod tests;
@@ -41,7 +46,7 @@ use std::cell::{Cell, Ref, RefCell, RefMut};
 
 use dolang_util::mono::MonoVec;
 
-pub(crate) use expr::{Expr, ExprKind, Item, Target};
+pub(crate) use expr::{Collection, Expr, ExprKind, FmtSpec, Item, Member, Target};
 
 use super::r#type::{DeclId, MemberKey, SymbolId, TypeId, UnitId};
 use crate::{RestKind, source::Span};
@@ -156,14 +161,18 @@ pub(crate) enum Step {
         value: Expr,
     },
     Eval(Expr),
+    /// Push a short circuit's left operand, or the right operand on its long path
     Push(Expr),
-    Pop(u32),
+    /// Duplicate the top of the stack, for the condition that [`Terminal::If`] pops
+    Dup,
+    /// Discard the top of the stack: the left operand on a short circuit's long path
+    Pop,
     Assume(Assume),
 }
 
 pub(crate) enum Terminal {
     Branch(BlockId),
-    /// Test a condition, which may peek at the stack
+    /// Test a condition, popping it if it's an [`ExprKind::Operand`]
     If {
         cond: Expr,
         then: BlockId,

@@ -154,11 +154,7 @@ impl Solver<'_> {
                     }
                 }
                 Type::Function(_) => Intrinsic::Func,
-                Type::Literal(Literal::Nil) => Intrinsic::Nil,
-                Type::Literal(Literal::Bool(_)) => Intrinsic::Bool,
-                Type::Literal(Literal::Int(_)) => Intrinsic::Int,
-                Type::Literal(Literal::Str(_)) => Intrinsic::Str,
-                Type::Literal(Literal::Sym(_)) => Intrinsic::Sym,
+                Type::Literal(literal) => literal.intrinsic(),
                 // A union's members are judged by #742's policy
                 _ => return Err(Residual::Unsupported.into()),
             };
