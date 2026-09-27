@@ -1,0 +1,22 @@
+# By default, the pipe placeholders stand for `Sender` and `Receiver`, passing
+# their type arguments through.
+
+pub @let PipeSender[I] = ...
+#        ^~~~~~~~~~: designated pipe sender
+#        ^~~~~~~~~~: decl strand.Sender[I]
+#                   ^: variance contravariant
+pub @let PipeReceiver[I] = ...
+#        ^~~~~~~~~~~~: designated pipe receiver
+#        ^~~~~~~~~~~~: decl strand.Receiver[I]
+#                     ^: variance covariant
+
+pub class Sender[T]: Sink[T]
+pub class Receiver[T]: Iter[T]
+
+pub def stream[R, I, O]
+  func @ ((<PipeReceiver[I], >PipeSender[O]) -> R)
+do -> R
+  ...
+
+# A middle pipeline stage
+pub @let Stage = ((<PipeReceiver[Value], >PipeSender[Value]) -> Value)

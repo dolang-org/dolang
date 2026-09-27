@@ -942,6 +942,10 @@ do -> Unit
 # Modules that aren't among the units are treated as unknown. A unit that failed
 # to compile is skipped; its own diagnostics report why.
 #
+# The pipes `strand` gives pipeline and stream stages are checked as
+# [`proc.PipeSender`](proc.PipeSender) and
+# [`proc.PipeReceiver`](proc.PipeReceiver), which the shell's pipelines use.
+#
 # ## Errors
 #
 # | Exception          | Condition                                           |

@@ -28,6 +28,7 @@
 //! | `stubs` | Modules to add from `tests/typeck/stub/` | none |
 //! | `repo-stubs` | Modules to add from the repository's native module stubs | none |
 //! | `prelude` | `default` for the default prelude, `none` for an empty one | `default` |
+//! | `pipes` | The types `strand`'s pipe placeholders stand for, sender then receiver, each `module.Item` | `strand.Sender strand.Receiver` |
 //! | `validated` | `true` or `false`: whether every well-formedness check must pass | not asserted |
 //! | `skip` | `miri` to skip under Miri | none |
 
@@ -49,6 +50,8 @@ struct Settings {
     stubs: Vec<String>,
     repo_stubs: Vec<String>,
     prelude_none: bool,
+    /// Each nominee's module and item, sender first
+    pipes: Option<[(String, String); 2]>,
     validated: Option<bool>,
 }
 
@@ -94,6 +97,19 @@ impl Settings {
                         "none" => true,
                         _ => panic!("{}: unknown prelude `{value}`", path.display()),
                     }
+                }
+                "pipes" => {
+                    let nominee = |name: &str| {
+                        let (module, item) = name.rsplit_once('.').unwrap_or_else(|| {
+                            panic!("{}: expected `module.Item`, found `{name}`", path.display())
+                        });
+                        (module.to_owned(), item.to_owned())
+                    };
+                    let [sender, receiver] = value.split_whitespace().collect::<Vec<_>>()[..]
+                    else {
+                        panic!("{}: expected a sender and a receiver", path.display());
+                    };
+                    self.pipes = Some([nominee(sender), nominee(receiver)]);
                 }
                 "validated" => {
                     self.validated = Some(match value {
@@ -229,6 +245,9 @@ fn run(case: &Path) {
         .collect();
 
     let mut checker = typeck::Builder::new();
+    if let Some([(sender_module, sender), (receiver_module, receiver)]) = &settings.pipes {
+        checker.pipes((sender_module, sender), (receiver_module, receiver));
+    }
     // The source each checked unit came from
     let mut checked: HashMap<UnitId, usize> = HashMap::new();
     let mut ids: Vec<Option<UnitId>> = Vec::new();

@@ -600,7 +600,13 @@ of a checked `std` module named `Value`, `Phantom`, `Union`, `Func`, `Int`,
 treatment; the same name in another module is only a lookalike. So are the
 classes that literal and constructor expressions produce, `Float`, `Bin`,
 `Array`, `Dict`, `Tuple`, `Record`, `Range` and the `Fmt` classes, which the
-check tables record without the database needing them. The `kind`,
+check tables record without the database needing them. A checked `strand`
+module's opaque `PipeSender` and `PipeReceiver` are designated too: each
+stands for the class the `Builder` nominates, resolved as if the placeholder
+imported it, and is populated as a transparent alias of that class applied to
+its binders, whose variance it takes. A nominee in no checked module leaves the
+placeholder `Unknown`; one that isn't a class, or can't take the placeholder's
+type arguments positionally, is diagnosed on the placeholder. The `kind`,
 `sig`, `ambient` and `designated` judgments report these results.
 
 Variance is inferred for every binder, and for each outer binder a nested

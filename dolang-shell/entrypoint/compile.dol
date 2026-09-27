@@ -899,6 +899,10 @@ def check p
       if (module != nil)
         break
     add $file $module
+  # `proc` holds the pipe types `strand`'s placeholders stand for
+  if !seen.contains("proc")
+    seen.add proc
+    pending.push proc
   while (pending.len > 0)
     let name = pending.pop()
     let relative = "$(name.replace(".", "/")).dol"

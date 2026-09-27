@@ -1,0 +1,5 @@
+pub class PipeReceiver[T]: Iter[T]
+  pub def lines self -> PipeReceiver[T]
+    ...
+
+pub class PipeSender[T]: Sink[T]

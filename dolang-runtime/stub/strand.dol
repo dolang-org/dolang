@@ -365,7 +365,7 @@ pub def map count func ...options
   # override strand-local output for the last stage
   :output @ Sinkable[Value] = nil
   # pipeline stages
-  ...stages @ ...(() -> Value)
+  ...stages @ (() -> Value)
   # final stage
   final @ (() -> R)
 do -> R

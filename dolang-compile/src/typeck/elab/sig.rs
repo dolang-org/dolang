@@ -9,12 +9,12 @@
 //! method once the database is sealed.
 
 use super::{
-    Ambient, BinderRef, DeclNode, Designated, KindOf, MisdeclaredIntrinsic, ParamTy, Referent,
-    RestSlot, Sig, Slot, Tables, UnitDiag,
+    Ambient, BadNominee, BinderRef, DeclNode, Designated, KindOf, MisdeclaredIntrinsic, PIPES,
+    ParamTy, Referent, RestSlot, Sig, Slot, Tables, UnitDiag,
 };
 use crate::{
     Mode,
-    ast::{ClassMember, Expr, Function, Method, Param},
+    ast::{BinderKind, ClassMember, Expr, Function, Method, Param},
     source,
     typeck::r#type::{DeclId, DeclKind, Intrinsic, Kind, Scope, UnitId, UnitSpan},
 };
@@ -59,6 +59,20 @@ pub(crate) fn signatures(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
             DeclNode::Alias(_) | DeclNode::Closure(_) => {}
         }
         designate(tables, decl, diags);
+    }
+    let mut placeholders: Vec<_> = tables
+        .designated
+        .iter()
+        .filter_map(|(&decl, designated)| match designated {
+            Designated::PipeSender => Some((decl, PIPES[0])),
+            Designated::PipeReceiver => Some((decl, PIPES[1])),
+            _ => None,
+        })
+        .collect();
+    placeholders.sort();
+    for (placeholder, name) in placeholders {
+        let nominee = nominate(tables, placeholder, name, diags);
+        tables.pipes.insert(placeholder, nominee);
     }
 }
 
@@ -212,44 +226,47 @@ pub(crate) fn method_form(tables: &Tables<'_>, unit: UnitId, method: &Method) ->
     form
 }
 
-/// Designate a top-level declaration of `std` that the checker treats specially.
-/// A declaration of another module with the same name is only a lookalike.
+/// Designate a top-level declaration of `std` or `strand` that the checker treats
+/// specially. A declaration of another module with the same name is only a
+/// lookalike.
 fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
     let owner = &tables.decls[decl.index()];
-    let Mode::Module { name: "std" } = tables.units[owner.unit.index()].compiler.mode else {
+    let Mode::Module { name: module } = tables.units[owner.unit.index()].compiler.mode else {
         return;
     };
     let Some(name) = owner.name.filter(|_| owner.outer.is_none()) else {
         return;
     };
-    let (designated, expected) = match tables.text(owner.unit, name) {
-        "Value" => (Designated::Value, DeclKind::Class),
-        "Phantom" => (Designated::Phantom, DeclKind::OpaqueAlias),
-        "Union" => (
+    let (designated, expected) = match (module, tables.text(owner.unit, name)) {
+        ("strand", "PipeSender") => (Designated::PipeSender, DeclKind::OpaqueAlias),
+        ("strand", "PipeReceiver") => (Designated::PipeReceiver, DeclKind::OpaqueAlias),
+        ("std", "Value") => (Designated::Value, DeclKind::Class),
+        ("std", "Phantom") => (Designated::Phantom, DeclKind::OpaqueAlias),
+        ("std", "Union") => (
             Designated::Intrinsic(Intrinsic::Union),
             DeclKind::OpaqueAlias,
         ),
-        "Func" => (Designated::Intrinsic(Intrinsic::Func), DeclKind::Class),
-        "Int" => (Designated::Intrinsic(Intrinsic::Int), DeclKind::Class),
-        "Bool" => (Designated::Intrinsic(Intrinsic::Bool), DeclKind::Class),
-        "Sym" => (Designated::Intrinsic(Intrinsic::Sym), DeclKind::Class),
-        "Nil" => (Designated::Intrinsic(Intrinsic::Nil), DeclKind::Class),
-        "Str" => (Designated::Intrinsic(Intrinsic::Str), DeclKind::Class),
-        "Iter" => (Designated::Intrinsic(Intrinsic::Iter), DeclKind::Class),
-        "Sink" => (Designated::Intrinsic(Intrinsic::Sink), DeclKind::Class),
-        "Type" => (Designated::Intrinsic(Intrinsic::Type), DeclKind::Class),
-        "Fmt" => (Designated::Fmt, DeclKind::Class),
-        "FmtValue" => (Designated::FmtValue, DeclKind::Class),
-        "FmtParam" => (Designated::FmtParam, DeclKind::Class),
-        "Float" => (Designated::Float, DeclKind::Class),
-        "Bin" => (Designated::Bin, DeclKind::Class),
-        "Array" => (Designated::Array, DeclKind::Class),
-        "Dict" => (Designated::Dict, DeclKind::Class),
-        "Tuple" => (Designated::Tuple, DeclKind::Class),
-        "Record" => (Designated::Record, DeclKind::Class),
-        "Range" => (Designated::Range, DeclKind::Class),
-        "getter" => (Designated::Getter, DeclKind::Function),
-        "setter" => (Designated::Setter, DeclKind::Function),
+        ("std", "Func") => (Designated::Intrinsic(Intrinsic::Func), DeclKind::Class),
+        ("std", "Int") => (Designated::Intrinsic(Intrinsic::Int), DeclKind::Class),
+        ("std", "Bool") => (Designated::Intrinsic(Intrinsic::Bool), DeclKind::Class),
+        ("std", "Sym") => (Designated::Intrinsic(Intrinsic::Sym), DeclKind::Class),
+        ("std", "Nil") => (Designated::Intrinsic(Intrinsic::Nil), DeclKind::Class),
+        ("std", "Str") => (Designated::Intrinsic(Intrinsic::Str), DeclKind::Class),
+        ("std", "Iter") => (Designated::Intrinsic(Intrinsic::Iter), DeclKind::Class),
+        ("std", "Sink") => (Designated::Intrinsic(Intrinsic::Sink), DeclKind::Class),
+        ("std", "Type") => (Designated::Intrinsic(Intrinsic::Type), DeclKind::Class),
+        ("std", "Fmt") => (Designated::Fmt, DeclKind::Class),
+        ("std", "FmtValue") => (Designated::FmtValue, DeclKind::Class),
+        ("std", "FmtParam") => (Designated::FmtParam, DeclKind::Class),
+        ("std", "Float") => (Designated::Float, DeclKind::Class),
+        ("std", "Bin") => (Designated::Bin, DeclKind::Class),
+        ("std", "Array") => (Designated::Array, DeclKind::Class),
+        ("std", "Dict") => (Designated::Dict, DeclKind::Class),
+        ("std", "Tuple") => (Designated::Tuple, DeclKind::Class),
+        ("std", "Record") => (Designated::Record, DeclKind::Class),
+        ("std", "Range") => (Designated::Range, DeclKind::Class),
+        ("std", "getter") => (Designated::Getter, DeclKind::Function),
+        ("std", "setter") => (Designated::Setter, DeclKind::Function),
         _ => return,
     };
     if owner.kind == expected {
@@ -268,4 +285,98 @@ fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
             }),
         ));
     }
+}
+
+/// The type a designated pipe placeholder stands for: its nominee, when that is a
+/// class the placeholder's type arguments can be passed to positionally. A nominee
+/// that isn't checked is `None`, as is one diagnosed here.
+fn nominate(
+    tables: &Tables<'_>,
+    placeholder: DeclId,
+    name: &'static str,
+    diags: &mut Vec<UnitDiag>,
+) -> Option<DeclId> {
+    // An external nominee is unknown, and an erroneous one already diagnosed
+    let Some(&Referent::Decl(nominee)) = tables.nominees.get(name) else {
+        return None;
+    };
+    let owner = &tables.decls[placeholder.index()];
+    let target = &tables.decls[nominee.index()];
+    let span = owner.name.expect("a designated declaration is named");
+    let described = match (
+        &tables.units[target.unit.index()].compiler.mode,
+        target.name,
+    ) {
+        (Mode::Module { name: module }, Some(item)) => {
+            format!("{module}.{}", tables.text(target.unit, item))
+        }
+        (_, Some(item)) => tables.text(target.unit, item).to_owned(),
+        (_, None) => unreachable!("an export is named"),
+    };
+    let reason = match target.kind {
+        // A class can't reach the placeholder again, so the alias can't cycle
+        DeclKind::Class | DeclKind::Protocol => {
+            (!passes(tables, placeholder, nominee)).then_some(false)
+        }
+        _ => Some(true),
+    };
+    let Some(not_class) = reason else {
+        return Some(nominee);
+    };
+    diags.push((
+        owner.unit,
+        source::Diag::new(BadNominee {
+            span,
+            nominee: described,
+            placeholder: name,
+            declared: (target.unit == owner.unit).then_some(target.name).flatten(),
+            not_class,
+        }),
+    ));
+    None
+}
+
+/// Whether a placeholder's type arguments can be passed to `nominee` in order,
+/// each filling a positional binder of kind `Type` with no bound, while every
+/// binder left over has a default or is a rest
+fn passes(tables: &Tables<'_>, placeholder: DeclId, nominee: DeclId) -> bool {
+    let given = tables.binders(placeholder, 0);
+    if given
+        .iter()
+        .any(|binder| !matches!(binder.kind, BinderKind::Pos))
+    {
+        return false;
+    }
+    let slots = positional(tables, nominee);
+    if slots.len() < given.len() {
+        return false;
+    }
+    let written = tables.binders(nominee, 0);
+    let filled = &slots[..given.len()];
+    written.iter().enumerate().all(|(slot, binder)| {
+        if filled.contains(&slot) {
+            binder.bound.is_none()
+                && tables.binder_kinds[&BinderRef {
+                    decl: nominee,
+                    sig: 0,
+                    slot,
+                }]
+                    .kind
+                    == Kind::Type
+        } else {
+            binder.default.is_some() || matches!(binder.kind, BinderKind::Rest { .. })
+        }
+    })
+}
+
+/// The slots of a declaration's positional binders, which a pipe placeholder's type
+/// arguments fill in order
+pub(crate) fn positional(tables: &Tables<'_>, decl: DeclId) -> Vec<usize> {
+    tables
+        .binders(decl, 0)
+        .iter()
+        .enumerate()
+        .filter(|(_, binder)| matches!(binder.kind, BinderKind::Pos))
+        .map(|(slot, _)| slot)
+        .collect()
 }

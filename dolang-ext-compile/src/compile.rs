@@ -883,6 +883,8 @@ fn check_units<'v, 's>(
 
             let checked = outcome.and_then(|()| {
                 let mut builder = compile::typeck::Builder::new();
+                // The shell's pipelines connect stages with `proc`'s pipes
+                builder.pipes(("proc", "PipeSender"), ("proc", "PipeReceiver"));
                 // The paths of the units the checker accepted, by unit ID
                 let mut paths = Vec::new();
                 for (position, (_, path, unit)) in taken.iter().enumerate() {

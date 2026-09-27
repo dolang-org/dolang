@@ -166,6 +166,8 @@ impl Tables<'_> {
                     Designated::Tuple => "tuple".to_owned(),
                     Designated::Record => "record".to_owned(),
                     Designated::Range => "range".to_owned(),
+                    Designated::PipeSender => "pipe sender".to_owned(),
+                    Designated::PipeReceiver => "pipe receiver".to_owned(),
                     Designated::Intrinsic(intrinsic) => format!("intrinsic {intrinsic:?}"),
                 };
                 judgments.push(("designated", name, value));

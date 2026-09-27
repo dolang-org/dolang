@@ -11,8 +11,8 @@ use std::{
 };
 
 use super::{
-    AliasCycle, BinderRef, Decl, DeclNode, Head, ImportCycle, MissingExport, ModuleRef, Referent,
-    Role, Site, Tables, Target,
+    AliasCycle, BinderRef, Decl, DeclNode, Head, ImportCycle, MissingExport, ModuleRef, PIPES,
+    Referent, Role, Site, Tables, Target,
 };
 use crate::{
     Mode, PreludeImport, Unit,
@@ -32,11 +32,13 @@ pub(crate) type UnitDiag = (UnitId, source::Diag);
 
 /// Collect the declarations of `units`, allocating each in `db`, and resolve every
 /// type name in them. The units are walked in `order`, which fixes the order of
-/// declarations and diagnostics.
+/// declarations and diagnostics. `pipes` nominates the types `strand`'s pipe
+/// placeholders stand for, by module and item.
 pub(crate) fn collect<'u>(
     db: &mut Database,
     units: &[&'u Unit<'u>],
     order: &[UnitId],
+    pipes: [(&'u str, &'u str); 2],
 ) -> (Tables<'u>, Vec<UnitDiag>) {
     let mut decls = Vec::new();
     let mut pending = Vec::new();
@@ -82,6 +84,21 @@ pub(crate) fn collect<'u>(
         .into_iter()
         .map(|pending| (pending.head, fixup.pending(&pending)))
         .collect();
+    // Each nominee is resolved as if its placeholder imported it. A placeholder
+    // that isn't an opaque alias is diagnosed when designated.
+    let mut nominees = HashMap::new();
+    if let Some(&strand) = fixup.modules.get("strand") {
+        for (placeholder, (module, item)) in PIPES.into_iter().zip(pipes) {
+            if let Some(&(span, Target::Local(Referent::Decl(decl)))) =
+                exports[strand.index()].get(placeholder)
+                && decls[decl.index()].kind == DeclKind::OpaqueAlias
+            {
+                let site = UnitSpan { unit: strand, span };
+                let nominee = fixup.target(&Target::Import { module, item }, site);
+                nominees.insert(placeholder, nominee);
+            }
+        }
+    }
     let mut diags = fixup.diags;
 
     let mut aliases = Aliases {
@@ -116,6 +133,8 @@ pub(crate) fn collect<'u>(
         fields: HashMap::new(),
         func_ambients: HashMap::new(),
         designated: HashMap::new(),
+        nominees,
+        pipes: HashMap::new(),
         variance: HashMap::new(),
         captured: HashMap::new(),
         lifted: HashMap::new(),

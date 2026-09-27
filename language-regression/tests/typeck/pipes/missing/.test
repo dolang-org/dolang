@@ -1,0 +1,2 @@
+pipes: absent.PipeSender absent.PipeReceiver
+validated: true

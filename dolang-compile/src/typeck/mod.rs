@@ -22,6 +22,9 @@ use crate::{
 pub struct Builder<'u, 's> {
     units: Vec<&'u Unit<'s>>,
     modules: HashSet<&'u str>,
+    /// The types `strand.PipeSender` and `strand.PipeReceiver` stand for, by module
+    /// and item
+    pipes: [(&'u str, &'u str); 2],
 }
 
 impl Default for Builder<'_, '_> {
@@ -35,7 +38,20 @@ impl<'u, 's> Builder<'u, 's> {
         Self {
             units: Vec::new(),
             modules: HashSet::new(),
+            pipes: [("strand", "Sender"), ("strand", "Receiver")],
         }
+    }
+
+    /// Nominate the types `strand.PipeSender` and `strand.PipeReceiver` stand for,
+    /// each by module and item: the pipes the embedding gives `strand.stream` and
+    /// `strand.pipeline` stages.
+    ///
+    /// Each placeholder becomes an alias of its nominee applied to the
+    /// placeholder's type arguments. A nominee whose module is not checked leaves
+    /// the placeholder dynamic. Defaults to `strand.Sender` and `strand.Receiver`.
+    pub fn pipes(&mut self, sender: (&'u str, &'u str), receiver: (&'u str, &'u str)) -> &mut Self {
+        self.pipes = [sender, receiver];
+        self
     }
 
     /// Add a unit to check.
@@ -88,7 +104,7 @@ impl<'u, 's> Builder<'u, 's> {
                 Mode::Script | Mode::Repl => (1, "", Some(compiler.file.path())),
             }
         });
-        let (mut tables, mut diags) = elab::collect(&mut db, &units, &order);
+        let (mut tables, mut diags) = elab::collect(&mut db, &units, &order, self.pipes);
         elab::kinds(&mut tables, &mut diags);
         elab::signatures(&mut tables, &mut diags);
         elab::captures(&mut tables);

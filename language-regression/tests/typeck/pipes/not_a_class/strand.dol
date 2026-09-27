@@ -1,0 +1,26 @@
+# A nominee must be a class, so an alias can't reach its placeholder again.
+
+pub @let PipeSender[I] = ...
+#        ^~~~~~~~~~: decl Unknown
+# error: `strand.send` must be a class to stand for `PipeSender`
+#   --> strand.dol:LL:LL
+#    |
+# LL | pub @let PipeSender[I] = ...
+#    |          ^^^^^^^^^^
+# ...
+# LL | pub def send()
+#    |         ---- declared here
+pub @let PipeReceiver[I] = ...
+#        ^~~~~~~~~~~~: decl Unknown
+# error: `strand.Receiving` must be a class to stand for `PipeReceiver`
+#   --> strand.dol:LL:LL
+#    |
+# LL | pub @let PipeReceiver[I] = ...
+#    |          ^^^^^^^^^^^^
+# ...
+# LL | pub @let Receiving[T] = PipeReceiver[T]
+#    |          --------- declared here
+
+pub def send()
+  nil
+pub @let Receiving[T] = PipeReceiver[T]

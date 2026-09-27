@@ -184,15 +184,15 @@ pub class Info
 #
 # Both framing methods reconfigure the receiver in place. They do not alter
 # values sent directly by another Do pipeline stage.
-pub class PipeReceiver: std.Iter[Value]
+pub class PipeReceiver[T]: std.Iter[T]
   # Selects arbitrary-sized [`Bin`](std.Bin) chunks when the receiver
   # reads bytes from an external program.
-  pub def chunks self -> PipeReceiver
+  pub def chunks self -> PipeReceiver[T]
     ...
 
   # Selects line framing when the receiver reads bytes from an external
   # program. This is the default.
-  pub def lines self -> PipeReceiver
+  pub def lines self -> PipeReceiver[T]
     ...
 
   # Closes the receiver and stops its sender.
@@ -205,7 +205,7 @@ pub class PipeReceiver: std.Iter[Value]
 # [`strand.pipeline`](strand.pipeline)
 # stages and for a [`strand.stream`](strand.stream) strand's
 # implicit output; it cannot be constructed directly.
-pub class PipeSender: std.Sink[Value]
+pub class PipeSender[T]: std.Sink[T]
   # Closes the sender, signaling end of input to its receiver.
   #
   # If an error is given, the receiver re-raises it after draining any buffered
