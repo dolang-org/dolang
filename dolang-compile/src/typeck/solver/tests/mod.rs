@@ -10,6 +10,7 @@ mod inference;
 mod instantiation;
 mod lattice;
 mod members;
+mod narrow;
 mod nominal;
 mod rigids;
 mod schemas;

@@ -142,7 +142,7 @@ pub class Sender[T]: std.Sink[T]
     # Optional error value to propagate
     error = nil
     # Optional backtrace for that error
-    :backtrace @ strand.Backtrace = nil
+    :backtrace @ Backtrace = nil
   do
     ...
 
@@ -217,6 +217,53 @@ pub class Stream[R, I, O]: Iterable[I] Sinkable[O]
   pub def wait self
     ...
 
+
+# A snapshot of a strand's calls, innermost first.
+#
+# Obtained from [`backtrace`](strand.backtrace) or
+# [`error_backtrace`](strand.error_backtrace). Iterating it gives a
+# [`Frame`](strand.Frame) for each call.
+pub class Backtrace: std.Iterable[Frame]
+  # The number of frames.
+  #[getter]
+  pub def len self -> Int
+    ...
+
+# One call in a [`Backtrace`](strand.Backtrace).
+pub @class Frame
+  # The module of the called code, or `<program>` for a script.
+  #[getter]
+  pub def module self -> Str
+
+  # The name of the called Do function, or the receiver of a method call.
+  #[getter]
+  pub def receiver self -> Str
+
+  # The method name, or `nil` otherwise.
+  #[getter]
+  pub def method self -> (Str | nil)
+
+  # The source file of the called code, when it has one.
+  #[getter]
+  pub def source self -> (Str | nil)
+
+  # The line being run in the source file, when there is one.
+  #[getter]
+  pub def line self -> (Int | nil)
+
+# Captures the current strand's calls.
+pub def backtrace() -> Backtrace
+  ...
+
+# Captures the calls of the exception being handled, followed by the current
+# strand's calls.
+#
+# ## Errors
+#
+# `std.StateError` if no exception is being handled, in a `catch` or `finally`
+# block.
+pub def error_backtrace() -> Backtrace
+  ...
 
 # Creates a channel for communication between strands.
 pub def channel[T]
@@ -318,7 +365,7 @@ pub def map count func ...options
   # override strand-local output for the last stage
   :output @ Sinkable[Value] = nil
   # pipeline stages
-  ...stages @ ...(() -> Value)
+  ...stages @ (() -> Value)
   # final stage
   final @ (() -> R)
 do -> R

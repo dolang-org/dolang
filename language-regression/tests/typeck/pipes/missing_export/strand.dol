@@ -1,0 +1,12 @@
+# A checked module that doesn't export its nominee is diagnosed at the
+# placeholder.
+
+pub @let PipeSender[I] = ...
+#        ^~~~~~~~~~: decl Unknown
+# error: module `proc` has no export `PipeSender`
+#   --> strand.dol:LL:LL
+#    |
+# LL | pub @let PipeSender[I] = ...
+#    |          ^^^^^^^^^^
+pub @let PipeReceiver[I] = ...
+#        ^~~~~~~~~~~~: decl proc.PipeReceiver[I]

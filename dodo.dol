@@ -3,6 +3,7 @@ import sys admin dodo exec toml
     - Path
     - copy
     - create_dir
+    - glob
     - remove
     - with_temp_dir
     - symlink_file
@@ -317,6 +318,20 @@ return $
       collect: true
     do |args|
       cargo_test (Spec args) $args.args
+
+  typecheck:
+    help: type check sources, searching the repository's modules and stubs for their imports
+    - arg: args
+      help: "arguments to `dolang -m compile check`: sources, and more `--path` directories"
+      collect: true
+    do |args|
+      let spec = Spec $args
+      spec.cargo build --bin dolang
+      let paths = $
+        for dir = ["dolang-shell-modules/lib", ...glob("*/stub")]
+          - --path
+          - $dir
+      dodo.show $spec.bin("dolang") -m compile check ...paths ...args.args
 
   "cargo-bench":
     help: run cargo benchmarks

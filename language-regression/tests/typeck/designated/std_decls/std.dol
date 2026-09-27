@@ -35,6 +35,20 @@ pub class FmtValue
 #         ^~~~~~~~: designated fmt value
 pub class FmtParam
 #         ^~~~~~~~: designated fmt param
+pub class Float
+#         ^~~~~: designated float
+pub class Bin
+#         ^~~: designated bin
+pub class Array
+#         ^~~~~: designated array
+pub class Dict
+#         ^~~~: designated dict
+pub class Tuple
+#         ^~~~~: designated tuple
+pub class Record
+#         ^~~~~~: designated record
+pub class Range
+#         ^~~~~: designated range
 pub def getter func
   #     ^~~~~~: designated getter
   func

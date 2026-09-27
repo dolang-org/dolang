@@ -1,7 +1,8 @@
 # Compiler tooling: `dolang -m compile extract` describes a Do source file as
 # JSON, for consumers such as the MkDocs syntax lexer and the mkdocstrings
 # API-reference handler. The lexer is the only consumer of the source's
-# tokens, so it asks for them with `--tokens`.
+# tokens, so it asks for them with `--tokens`. `dolang -m compile check` runs
+# the type checker over sources and the modules they import.
 
 import args compile json shell
   fs:
@@ -844,6 +845,97 @@ def serve()
     put "$(json.encode(serve_line(line)))\n"
     shell.stdout.flush()
 
+# A source's module name under a search directory, `a/b.dol` being `a.b`, or
+# `nil` when it isn't under the directory.
+def module_under file dir
+  let parts = [...file.canonical().components]
+  let base = [...dir.canonical().components]
+  if (parts.len <= base.len || parts[..base.len] != base)
+    return nil
+  let rest = parts[base.len..]
+  rest[rest.len - 1] = Path(rest[rest.len - 1]).stem
+  ".".join $rest
+
+# The modules a unit imports, its prelude's included.
+def imported_modules unit source
+  let modules = []
+  for _id node = unit.nodes()
+    if !(type(node, compile.Import) || type(node, compile.PreludeModule) || type(node, compile.PreludeItem))
+      continue
+    let module = node.module
+    if type(module, compile.Span)
+      modules.push $source[module.start.byte_offset..module.end.byte_offset]
+    else
+      modules.push $module
+  modules
+
+# Checks the entries together with the modules they import, found by searching
+# the directories for `a/b.dol` as module `a.b`. An entry under one of the
+# directories is compiled as its module, so a stub can be checked directly.
+def check p
+  let :entries :path ... = p.check
+  let dirs = [...path.map do |dir| (Path dir)]
+  let units = []
+  let seen = Set []
+  let pending = []
+  let missing = []
+
+  def add file module
+    let source = file.read()
+    let unit = compile.compile "$file" $source module: $module typecheck: true document: true
+    units.push $unit
+    if (module != nil)
+      seen.add $module
+    for name = imported_modules(unit, source)
+      if !seen.contains(name)
+        seen.add $name
+        pending.push $name
+
+  for entry = entries
+    let file = Path $entry
+    let module = nil
+    for dir = dirs
+      module = module_under $file $dir
+      if (module != nil)
+        break
+    add $file $module
+  # `proc` holds the pipe types `strand`'s placeholders stand for
+  if !seen.contains("proc")
+    seen.add proc
+    pending.push proc
+  while (pending.len > 0)
+    let name = pending.pop()
+    let relative = "$(name.replace(".", "/")).dol"
+    let found = dirs.map(do |dir| dir / relative).find (do |file| file.exists()) default: nil
+    if (found == nil)
+      missing.push $name
+    else
+      add $found $name
+
+  # The report goes to standard output, as `extract`'s does
+  let failed = false
+  for unit = units
+    for diag = unit.diagnostics()
+      if (diag.severity == :ERROR:)
+        failed = true
+      put "$(diag.render())\n"
+  let result = compile.check $units
+  for diag = result.diagnostics
+    put "$(diag.render())\n"
+  let undecided = result.undecided()
+  if (undecided != "")
+    put "undecided checks:\n$undecided"
+  missing.sort()
+  for name = missing
+    put "not found, treated as unknown: $name\n"
+  let verdict = if (result.validated && !failed)
+    "validated"
+  else
+    "partial"
+  put "$verdict: $(units.len) units, $(result.diagnostics.len) diagnostics\n"
+  if (verdict != "validated")
+    shell.exit 1
+
 args.with
   help: Describe a Do source file's compiler output as JSON.
   - cmd: extract
@@ -868,3 +960,13 @@ args.with
     help: Serve newline-delimited JSON extraction requests from stdin until stdin closes.
     do |_p|
       serve()
+  - cmd: check
+    help: Check the types of sources and the modules they import.
+    - opt: path
+      collect: true
+      help: Directory to search for imported modules, as `a/b.dol` for module `a.b`
+    - arg: entries
+      collect: true
+      help: Sources to check; one under a search directory is checked as its module
+    do |p|
+      check $p

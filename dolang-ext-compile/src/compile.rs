@@ -1,6 +1,7 @@
 use std::{
     cell::Cell,
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
+    fmt::Write as _,
     hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
@@ -53,6 +54,7 @@ pub(crate) struct Types<'v> {
     annotation: Type<'v, Annotation>,
     note: Type<'v, Note>,
     patch: Type<'v, Patch>,
+    check: Type<'v, CheckObject>,
 }
 
 pub(crate) struct Syms<'v> {
@@ -291,6 +293,7 @@ impl<'v> Global<'v> {
                 annotation: builder.register_type(),
                 note: builder.register_type(),
                 patch: builder.register_type(),
+                check: builder.register_type(),
             },
             syms: Syms {
                 quant_opt: builder.sym("OPT"),
@@ -422,6 +425,14 @@ pub(crate) struct PatchAnnex<'v> {
 
 pub(crate) struct DiagnosticIter {
     index: usize,
+}
+
+/// The result of checking units together
+pub(crate) struct CheckObject;
+pub(crate) struct CheckAnnex {
+    validated: bool,
+    /// A rendering of the checks the checker couldn't decide
+    undecided: String,
 }
 pub(crate) struct NodeIter {
     cursor: Option<compile::NodeId>,
@@ -564,6 +575,8 @@ const DIAG_ANNOTATIONS: usize = 0;
 const DIAG_NOTES: usize = 1;
 const DIAG_PATCHES: usize = 2;
 const DIAG_SOURCE: usize = 3;
+
+const CHECK_DIAGNOSTICS: usize = 0;
 
 fn pos_data(pos: compile::Pos) -> PosData {
     PosData {
@@ -714,10 +727,22 @@ fn create_patch<'v>(
     );
 }
 
+/// The sources a diagnostic's locations refer to, for rendering
+#[derive(Clone, Copy)]
+// The paths are only read for rendering
+#[cfg_attr(not(feature = "diagnostic-rendering"), allow(dead_code))]
+enum DiagSources<'a, 'v> {
+    /// One unit's path and source
+    Unit(&'a str, &'a Value<'v>),
+    /// The paths of checked units by unit ID, and an array of their sources
+    /// that is never modified
+    Checked(&'a [String], &'a Value<'v>),
+}
+
 fn create_diagnostic<'v, 's>(
     global: State<'v, Global<'v>>,
     strand: &mut Strand<'v, 's>,
-    sources: &[(&str, &Value<'v>)],
+    sources: DiagSources<'_, 'v>,
     diag: Diag,
     out: &mut Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
@@ -728,7 +753,10 @@ fn create_diagnostic<'v, 's>(
             global,
             diag,
             #[cfg(feature = "diagnostic-rendering")]
-            paths: sources.iter().map(|(path, _)| (*path).to_owned()).collect(),
+            paths: match sources {
+                DiagSources::Unit(path, _) => vec![path.to_owned()],
+                DiagSources::Checked(paths, _) => paths.to_vec(),
+            },
         },
         &mut *out,
     );
@@ -756,11 +784,16 @@ fn create_diagnostic<'v, 's>(
                     Mut::slot_mut::<DIAG_PATCHES>(&mut borrow),
                     Empty::Array,
                 );
-                Output::set(
-                    strand,
-                    Mut::slot_mut::<DIAG_SOURCE>(&mut borrow),
-                    Empty::Array,
-                );
+                match sources {
+                    DiagSources::Unit(..) => Output::set(
+                        strand,
+                        Mut::slot_mut::<DIAG_SOURCE>(&mut borrow),
+                        Empty::Array,
+                    ),
+                    DiagSources::Checked(_, array) => {
+                        Output::set(strand, Mut::slot_mut::<DIAG_SOURCE>(&mut borrow), array)
+                    }
+                }
             }
 
             let borrow = inst.borrow(strand)?;
@@ -770,12 +803,11 @@ fn create_diagnostic<'v, 's>(
             let notes = Ref::slot::<DIAG_NOTES>(&borrow).as_array(strand).unwrap();
             let patches = Ref::slot::<DIAG_PATCHES>(&borrow).as_array(strand).unwrap();
 
-            let source_array = Ref::slot::<DIAG_SOURCE>(&borrow).as_array(strand).unwrap();
+            if let DiagSources::Unit(_, source) = sources {
+                let source_array = Ref::slot::<DIAG_SOURCE>(&borrow).as_array(strand).unwrap();
+                source_array.push(strand, source)?;
+            }
             strand.with_slots_sync(|strand, [mut item]| {
-                for (_, source) in sources {
-                    Output::set(strand, &mut item, *source);
-                    source_array.push(strand, &mut item)?;
-                }
                 for annotation in inst.annex().diag.annotations() {
                     create_annotation(global, strand, annotation, Slot::reborrow(&mut item));
                     annotations.push(strand, &mut item)?;
@@ -805,6 +837,143 @@ fn with_unit<'v, 's, R>(
         .cast(value)
         .ok_or_else(|| Error::state_error(strand, "invalid unit reference"))?;
     cast.enter_sync(strand, f)
+}
+
+/// Check an array of units together. Each unit's compiler unit is taken out of
+/// its object while the checker borrows them all, and put back afterwards.
+fn check_units<'v, 's>(
+    global: State<'v, Global<'v>>,
+    strand: &mut Strand<'v, 's>,
+    units: &Value<'v>,
+    out: &mut Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    let units = units
+        .as_array(strand)
+        .expect("units are collected into an array");
+    strand.with_slots_sync(
+        |strand, [mut item, mut taken_sources, mut sources, mut diagnostics]| {
+            Output::set(strand, &mut taken_sources, Empty::Array);
+            Output::set(strand, &mut sources, Empty::Array);
+            Output::set(strand, &mut diagnostics, Empty::Array);
+            let taken_array = taken_sources.as_array(strand).unwrap();
+            let sources_array = sources.as_array(strand).unwrap();
+
+            // Each taken unit's position in `units`, path and compiler unit. Its
+            // source is at the same position in `taken_sources`.
+            let mut taken = Vec::new();
+            let mut outcome = Ok(());
+            for index in 0..units.len(strand)? {
+                units.get(strand, index, &mut item)?;
+                let unit = with_unit(strand, &item, |strand, unit| {
+                    let mut borrow = unit.borrow_mut(strand)?;
+                    let Some(inner) = borrow.unit.take() else {
+                        return Err(Error::state_error(strand, "unit was emitted"));
+                    };
+                    taken_array.push(strand, Mut::slot::<UNIT_SOURCE>(&borrow))?;
+                    Ok((borrow.path.to_string_lossy().into_owned(), inner))
+                });
+                match unit {
+                    Ok((path, inner)) => taken.push((index, path, inner)),
+                    Err(error) => {
+                        outcome = Err(error);
+                        break;
+                    }
+                }
+            }
+
+            let checked = outcome.and_then(|()| {
+                let mut builder = compile::typeck::Builder::new();
+                // The shell's pipelines connect stages with `proc`'s pipes
+                builder.pipes(("proc", "PipeSender"), ("proc", "PipeReceiver"));
+                // The paths of the units the checker accepted, by unit ID
+                let mut paths = Vec::new();
+                for (position, (_, path, unit)) in taken.iter().enumerate() {
+                    match builder.unit(unit) {
+                        Ok(_) => {
+                            taken_array.get(strand, position, &mut item)?;
+                            sources_array.push(strand, &*item)?;
+                            paths.push(path.clone());
+                        }
+                        // Its own diagnostics report it
+                        Err(error) if matches!(error.kind(), compile::ErrorKind::Fail) => {}
+                        Err(error) => return Err(Error::value(strand, error.to_string())),
+                    }
+                }
+                let check = builder.check();
+                let diags: Vec<Diag> = check.diagnostics().cloned().collect();
+                let undecided = render_undecided(&paths, check.undecided());
+                Ok((paths, diags, check.validated(), undecided))
+            });
+
+            for (index, _, inner) in taken {
+                units.get(strand, index, &mut item)?;
+                with_unit(strand, &item, |strand, unit| {
+                    unit.borrow_mut(strand)?.unit = Some(inner);
+                    Ok(())
+                })?;
+            }
+            let (paths, diags, validated, undecided) = checked?;
+
+            let diagnostics_array = diagnostics.as_array(strand).unwrap();
+            for diag in diags {
+                create_diagnostic(
+                    global,
+                    strand,
+                    DiagSources::Checked(&paths, &sources),
+                    diag,
+                    &mut item,
+                )?;
+                diagnostics_array.push(strand, &*item)?;
+            }
+            global.types.check.create_with_annex(
+                strand,
+                CheckObject,
+                CheckAnnex {
+                    validated,
+                    undecided,
+                },
+                &mut *out,
+            );
+            global
+                .types
+                .check
+                .cast(&*out)
+                .unwrap()
+                .enter_sync(strand, |strand, check| {
+                    Output::set(
+                        strand,
+                        Mut::slot_mut::<CHECK_DIAGNOSTICS>(&mut check.borrow_mut_unwrap()),
+                        &*diagnostics,
+                    );
+                });
+            Ok(())
+        },
+    )
+}
+
+/// The undecided checks grouped by the kind of reason, each group's locations
+/// sorted
+fn render_undecided(paths: &[String], undecided: Vec<(String, compile::SourceSpan)>) -> String {
+    let mut kinds: BTreeMap<String, Vec<(&str, u32, u32)>> = BTreeMap::new();
+    for (kind, location) in undecided {
+        let path = location
+            .unit()
+            .map_or("<unknown>", |unit| paths[unit.index()].as_str());
+        let start = location.span().start();
+        kinds
+            .entry(kind)
+            .or_default()
+            .push((path, start.line_number(), start.column_number()));
+    }
+    let mut out = String::new();
+    for (kind, mut locations) in kinds {
+        locations.sort_unstable();
+        let _ = writeln!(out, "{kind} ({}):", locations.len());
+        for (path, line, column) in locations {
+            let _ = writeln!(out, "  {path}:{line}:{column}");
+        }
+    }
+    out
 }
 
 fn apply_prelude_module_items<'v, 's>(
@@ -1087,6 +1256,33 @@ impl<'v> Object<'v> for UnitObject<'v> {
     }
 }
 
+impl<'v> Object<'v> for CheckObject {
+    const NAME: &'v str = "Check";
+    const MODULE: &'v str = "compile";
+    const SLOTS: usize = 1;
+    type Annex = CheckAnnex;
+    type Type = ();
+    type TypeAnnex = ();
+
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder
+            .get("diagnostics", |this, strand, out| {
+                let borrow = this.borrow(strand)?;
+                Output::set(strand, out, Ref::slot::<CHECK_DIAGNOSTICS>(&borrow));
+                Ok(())
+            })
+            .get("validated", |this, strand, out| {
+                Output::set(strand, out, this.annex().validated);
+                Ok(())
+            })
+            .method("undecided", async move |this, strand, args, out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                Output::set(strand, out, this.annex().undecided.as_str());
+                Ok(())
+            })
+    }
+}
+
 impl<'v> Object<'v> for DiagnosticIter {
     const NAME: &'v str = "DiagnosticIter";
     const MODULE: &'v str = "compile";
@@ -1124,7 +1320,13 @@ impl<'v> Object<'v> for DiagnosticIter {
             };
             let source = Ref::slot::<UNIT_SOURCE>(&unit_borrow);
             let path = unit_borrow.path.to_string_lossy();
-            create_diagnostic(strand.state(), strand, &[(&path, source)], diag, &mut out)?;
+            create_diagnostic(
+                strand.state(),
+                strand,
+                DiagSources::Unit(&path, source),
+                diag,
+                &mut out,
+            )?;
             Ok(true)
         })
     }
@@ -2688,6 +2890,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
     let prelude = builder.sym("prelude");
     let recover = builder.sym("recover");
     let document = builder.sym("document");
+    let typecheck = builder.sym("typecheck");
 
     builder
         .module("compile")
@@ -2777,8 +2980,21 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .value("Annotation", global.types.annotation)
         .value("Note", global.types.note)
         .value("Patch", global.types.patch)
+        .value("Check", global.types.check)
+        .function_with_slots(
+            "check",
+            async move |strand, args, mut out, [mut iter, mut item, mut units]| {
+                let ([iterable], []) = unpack!(strand, args, 1, 0)?;
+                Output::set(strand, &mut units, Empty::Array);
+                iterable.iter(strand, &mut iter).await?;
+                while iter.next(strand, &mut item).await? {
+                    units.as_array(strand).unwrap().push(strand, &*item)?;
+                }
+                check_units(global, strand, &units, &mut out)
+            },
+        )
         .function("compile", async move |strand, args, mut out| {
-            let ([path, source], [module, prelude, recover, document]) = unpack!(
+            let ([path, source], [module, prelude, recover, document, typecheck]) = unpack!(
                 strand,
                 args,
                 2,
@@ -2786,11 +3002,13 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                 module = None,
                 prelude = None,
                 recover = None,
-                document = None
+                document = None,
+                typecheck = None
             )?;
 
             let module = module
                 .as_ref()
+                .filter(|m| !m.is_nil())
                 .map(|m| {
                     m.as_str(strand)
                         .ok_or_else(|| Error::type_error(strand, "module: expected `Str`"))
@@ -2821,6 +3039,11 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
             });
             config.recover(recover.map(|value| value.to_bool(strand)).unwrap_or(false));
             config.document(document.map(|value| value.to_bool(strand)).unwrap_or(false));
+            config.typecheck(
+                typecheck
+                    .map(|value| value.to_bool(strand))
+                    .unwrap_or(false),
+            );
 
             if let Some(prelude) = prelude {
                 apply_prelude_value(strand, &mut config, &prelude)?;

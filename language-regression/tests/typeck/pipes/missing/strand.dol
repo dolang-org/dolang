@@ -1,0 +1,11 @@
+# A nominee whose module isn't checked leaves its placeholder dynamic.
+
+pub @let PipeSender[I] = ...
+#        ^~~~~~~~~~: decl Unknown
+pub @let PipeReceiver[I] = ...
+#        ^~~~~~~~~~~~: decl Unknown
+
+pub def stream[R, I, O]
+  func @ ((<PipeReceiver[I], >PipeSender[O]) -> R)
+do -> R
+  ...

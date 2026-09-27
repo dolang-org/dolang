@@ -37,6 +37,9 @@ pub(crate) use specialize::specialize;
 pub(crate) use variance::variances;
 pub(crate) use wellformed::{Unresolved, wellformed};
 
+/// The names of `strand`'s pipe placeholders, sender first
+pub(crate) const PIPES: [&str; 2] = ["PipeSender", "PipeReceiver"];
+
 /// What collection learns of the checked units
 pub(crate) struct Tables<'u> {
     /// The units, by [`UnitId`]
@@ -64,8 +67,14 @@ pub(crate) struct Tables<'u> {
     pub(crate) fields: HashMap<(DeclId, Span), Slot<'u>>,
     /// The ambient channels of each function type written without them, by its `->`
     pub(crate) func_ambients: HashMap<UnitSpan, [Ambient; 2]>,
-    /// The declarations of `std` the checker treats specially
+    /// The declarations of `std` and `strand` the checker treats specially
     pub(crate) designated: HashMap<DeclId, Designated>,
+    /// What each of `strand`'s pipe placeholders nominates, by name, resolved where
+    /// the placeholder is exported
+    pub(crate) nominees: HashMap<&'static str, Referent>,
+    /// The type each designated pipe placeholder stands for, or `None` for a
+    /// nominee that isn't checked or can't stand for it
+    pub(crate) pipes: HashMap<DeclId, Option<DeclId>>,
     /// The variance of each binder, including the implicit binders of omitted ambient
     /// channels
     pub(crate) variance: HashMap<BinderRef, Variance>,
@@ -245,7 +254,7 @@ pub(crate) struct Sig<'u> {
     pub(crate) ret: Slot<'u>,
 }
 
-/// A declaration of `std` the checker treats specially
+/// A declaration of `std` or `strand` the checker treats specially
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Designated {
     /// `std.Value`, which is top
@@ -262,6 +271,24 @@ pub(crate) enum Designated {
     FmtValue,
     /// `std.FmtParam`, an unbound `${#...}` interpolation
     FmtParam,
+    /// `std.Float`, the class of a float literal
+    Float,
+    /// `std.Bin`, the class of a binary string
+    Bin,
+    /// `std.Array`, the class of an array literal
+    Array,
+    /// `std.Dict`, the class of a dict literal
+    Dict,
+    /// `std.Tuple`, the class of a tuple literal
+    Tuple,
+    /// `std.Record`, the class of a record literal
+    Record,
+    /// `std.Range`, the class of a range
+    Range,
+    /// `strand.PipeSender`, which stands for the embedding's pipe sender
+    PipeSender,
+    /// `strand.PipeReceiver`, which stands for the embedding's pipe receiver
+    PipeReceiver,
     Intrinsic(Intrinsic),
 }
 
@@ -722,5 +749,65 @@ impl Diagnose for MisdeclaredIntrinsic {
 
     fn span(&self) -> Span {
         self.span
+    }
+}
+
+/// A pipe placeholder's nominee that can't stand for it
+#[derive(Clone)]
+struct BadNominee {
+    span: Span,
+    /// The nominee, qualified by its module
+    nominee: String,
+    placeholder: &'static str,
+    /// Where the nominee was declared, when in the same unit
+    declared: Option<Span>,
+    /// The nominee is not a class or protocol, rather than a class that can't take
+    /// the placeholder's type arguments
+    not_class: bool,
+}
+
+impl Diagnose for BadNominee {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        match self.not_class {
+            true => write!(
+                w,
+                "`{}` must be a class to stand for `{}`",
+                self.nominee, self.placeholder
+            ),
+            false => write!(
+                w,
+                "`{}` can't take the type arguments of `{}`",
+                self.nominee, self.placeholder
+            ),
+        }
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+
+    fn annotations(&self) -> Box<dyn Iterator<Item = Box<dyn Annotate>>> {
+        match self.declared {
+            Some(_) => Box::new(std::iter::once(Box::new(self.clone()) as Box<dyn Annotate>)),
+            None => Box::new(std::iter::empty()),
+        }
+    }
+}
+
+impl Annotate for BadNominee {
+    fn kind(&self) -> AnnotationKind {
+        AnnotationKind::Context
+    }
+
+    fn span(&self) -> Span {
+        self.declared.expect("annotated only when declared")
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "declared here")
     }
 }

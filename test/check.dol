@@ -1,0 +1,43 @@
+import proc shell
+  fs:
+    - Path
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+    - test
+
+# The fixture, relative to the workspace root the suite runs in.
+let FIXTURE = (Path "dolang-shell/tests/check")
+
+# Check a source of the fixture, from the directory holding it, returning
+# what was printed.
+def check source out
+  cd $FIXTURE do
+    run $shell.exe -m compile check $source --path lib stdout: $out mode: :CHUNK:
+
+def printed out
+  Str $out.freeze()
+
+#[test]
+def imports_are_found_on_the_search_path()
+  let out = BinBuf()
+  check main.dol $out
+  let text = printed $out
+  assert (text.contains "validated: 2 units, 0 diagnostics")
+  assert $!text.contains("not found, treated as unknown: m")
+
+#[test]
+def errors_fail_the_check()
+  let out = BinBuf()
+  let err = assert_throws $proc.Error do check bad.dol $out
+  assert_eq $err.rc 1
+  let text = printed $out
+  assert (text.contains "module `m` has no export `Absent`")
+  assert (text.contains "partial: 2 units, 1 diagnostics")
+
+#[test]
+def a_source_under_the_search_path_is_its_module()
+  let out = BinBuf()
+  check lib/m.dol $out
+  assert ((printed out).contains "validated: 1 units, 0 diagnostics")

@@ -1,0 +1,33 @@
+# A nominee that can't take a placeholder's type arguments is diagnosed, and the
+# placeholder is dynamic.
+
+pub @let PipeSender[I] = ...
+#        ^~~~~~~~~~: decl Unknown
+# error: `strand.Plain` can't take the type arguments of `PipeSender`
+#   --> strand.dol:LL:LL
+#    |
+# LL | pub @let PipeSender[I] = ...
+#    |          ^^^^^^^^^^
+# ...
+# LL | pub class Plain: Sink[Value]
+#    |           ----- declared here
+pub @let PipeReceiver[I] = ...
+#        ^~~~~~~~~~~~: decl Unknown
+# error: `strand.Pair` can't take the type arguments of `PipeReceiver`
+#   --> strand.dol:LL:LL
+#    |
+# LL | pub @let PipeReceiver[I] = ...
+#    |          ^^^^^^^^^^^^
+# ...
+# LL | pub class Pair[A, B]: Iter[A]
+#    |           ---- declared here
+
+pub class Plain: Sink[Value]
+pub class Pair[A, B]: Iter[A]
+  pub def second self -> B
+    ...
+
+pub def stream[R, I, O]
+  func @ ((<PipeReceiver[I], >PipeSender[O]) -> R)
+do -> R
+  ...

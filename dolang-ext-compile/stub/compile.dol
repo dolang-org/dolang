@@ -931,5 +931,57 @@ pub def compile
   :recover @ Bool = nil
   # Build document nodes. Defaults to `false`.
   :document @ Bool = nil
+  # Prepare the unit for [`check`](compile.check). Defaults to `false`.
+  :typecheck @ Bool = nil
 do -> Unit
   ...
+
+# Checks the types of units together.
+#
+# A unit's imports of another unit's module are checked against that module.
+# Modules that aren't among the units are treated as unknown. A unit that failed
+# to compile is skipped; its own diagnostics report why.
+#
+# The pipes `strand` gives pipeline and stream stages are checked as
+# [`proc.PipeSender`](proc.PipeSender) and
+# [`proc.PipeReceiver`](proc.PipeReceiver), which the shell's pipelines use.
+#
+# ## Errors
+#
+# | Exception          | Condition                                           |
+# | ------------------ | --------------------------------------------------- |
+# | `ValueError`       | A unit was compiled without `typecheck: true`       |
+# | `ValueError`       | Two units are compiled as the same module           |
+# | `std.StateError`   | A unit was emitted                                  |
+#
+# ## Example
+#
+# ```
+# let lib = compile "lib.dol" $lib_source module: lib typecheck: true
+# let main = compile "main.dol" $main_source typecheck: true
+# let result = check [lib, main]
+# for diag = result.diagnostics
+#   echo $diag.render()
+# ```
+pub def check units @ Iterable[Unit] -> Check
+  ...
+
+# The result of [`check`](compile.check).
+pub class Check
+  # The checker's diagnostics. Their locations may be in any of the units, and
+  # their rendering shows each one's source.
+  #[getter]
+  pub def diagnostics self -> Array[Diagnostic]
+    ...
+
+  # Whether the check reported no errors and could decide everything it
+  # checked. When it couldn't, the units' declarations are still usable, but
+  # checking proves nothing about the code using them.
+  #[getter]
+  pub def validated self -> Bool
+    ...
+
+  # Renders the checks the checker couldn't decide, grouped by the kind of
+  # reason, for developing the checker. The format may change.
+  pub def undecided self -> Str
+    ...

@@ -1,0 +1,12 @@
+# The pipe placeholders of `strand` the checker treats specially.
+
+pub @let PipeSender[I] = ...
+#        ^~~~~~~~~~: designated pipe sender
+#                   ^: variance contravariant
+pub class PipeReceiver
+# error: the checker requires this to be an opaque alias
+#   --> strand.dol:LL:LL
+#    |
+# LL | pub class PipeReceiver
+#    |           ^^^^^^^^^^^^
+pub class Sender[T]: Sink[T]

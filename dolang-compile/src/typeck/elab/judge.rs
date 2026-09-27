@@ -159,6 +159,15 @@ impl Tables<'_> {
                     Designated::Fmt => "fmt".to_owned(),
                     Designated::FmtValue => "fmt value".to_owned(),
                     Designated::FmtParam => "fmt param".to_owned(),
+                    Designated::Float => "float".to_owned(),
+                    Designated::Bin => "bin".to_owned(),
+                    Designated::Array => "array".to_owned(),
+                    Designated::Dict => "dict".to_owned(),
+                    Designated::Tuple => "tuple".to_owned(),
+                    Designated::Record => "record".to_owned(),
+                    Designated::Range => "range".to_owned(),
+                    Designated::PipeSender => "pipe sender".to_owned(),
+                    Designated::PipeReceiver => "pipe receiver".to_owned(),
                     Designated::Intrinsic(intrinsic) => format!("intrinsic {intrinsic:?}"),
                 };
                 judgments.push(("designated", name, value));

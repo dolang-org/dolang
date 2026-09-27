@@ -564,7 +564,7 @@ impl<'t, 'u> Populate<'t, 'u> {
             _ => tables.alias_kinds[&decl].kind,
         };
         let base = self.db.intern(Type::Decl(decl));
-        let mut full: Vec<_> = tables.lifted[&decl]
+        let full: Vec<_> = tables.lifted[&decl]
             .iter()
             .map(|&binder| self.binder(group, binder))
             .collect();
@@ -690,7 +690,29 @@ impl<'t, 'u> Populate<'t, 'u> {
             ),
         }
 
-        // Omitted arguments take defaults, which see the arguments before them
+        self.complete(group, decl, full, given, items, span)
+    }
+
+    /// Complete an application of a type declaration from the arguments given for
+    /// its binders, after those it is lifted over. Omitted arguments take defaults,
+    /// which see the arguments before them.
+    fn complete(
+        &mut self,
+        group: Group<'_>,
+        decl: DeclId,
+        mut full: Vec<TypeId>,
+        given: Vec<Option<TypeId>>,
+        mut items: Vec<Option<Vec<SchemaItem>>>,
+        span: Span,
+    ) -> TypeId {
+        let tables = self.tables;
+        let result = match tables.decls[decl.index()].kind {
+            DeclKind::Class | DeclKind::Protocol => Kind::Type,
+            _ => tables.alias_kinds[&decl].kind,
+        };
+        let written = tables.binders(decl, 0);
+        let count = written.len();
+        let binder = |slot| BinderRef { decl, sig: 0, slot };
         let lifted = full.len();
         let mut placeholder = full.clone();
         placeholder.extend((0..count).map(|slot| self.unknown(self.kind(binder(slot)))));
@@ -725,7 +747,42 @@ impl<'t, 'u> Populate<'t, 'u> {
             }
             self.report(group.unit, MissingTypeArgs { span, names });
         }
-        application(self.db, positional(full))
+        let base = self.db.intern(Type::Decl(decl));
+        if full.is_empty() {
+            return base;
+        }
+        let args: Vec<_> = full.into_iter().map(Argument::Positional).collect();
+        self.db.intern(Type::Apply {
+            base,
+            args: args.into(),
+            kind: result,
+        })
+    }
+
+    /// The body of a pipe placeholder: its nominee applied to the placeholder's
+    /// binders in order, or `Unknown` without one
+    fn pipe(&mut self, group: Group<'_>, placeholder: DeclId) -> TypeId {
+        let Some(nominee) = self.tables.pipes[&placeholder] else {
+            return self.unknown(Kind::Type);
+        };
+        let mut given = vec![None; self.tables.binders(nominee, 0).len()];
+        for (slot, filled) in sig::positional(self.tables, nominee)
+            .into_iter()
+            .enumerate()
+            .take(self.tables.binders(placeholder, 0).len())
+        {
+            let binder = BinderRef {
+                decl: placeholder,
+                sig: 0,
+                slot,
+            };
+            given[filled] = Some(self.binder(group, binder));
+        }
+        let items = vec![None; given.len()];
+        let span = self.tables.decls[placeholder.index()]
+            .name
+            .expect("a designated declaration is named");
+        self.complete(group, nominee, Vec::new(), given, items, span)
     }
 
     /// An expansion `...X` among type arguments: the items of a schema, or any
@@ -967,6 +1024,7 @@ impl<'t, 'u> Populate<'t, 'u> {
             DeclNode::Alias(alias) => {
                 let kind = tables.alias_kinds[&id].kind;
                 let body = match &alias.body {
+                    AliasBody::Opaque(_) if tables.pipes.contains_key(&id) => self.pipe(group, id),
                     AliasBody::Opaque(_) => self.db.intern(Type::Decl(id)),
                     // An alias on or reaching a cycle, already diagnosed
                     AliasBody::Type(_) if tables.aliases.get(&id) == Some(&Head::Error) => {
@@ -974,7 +1032,12 @@ impl<'t, 'u> Populate<'t, 'u> {
                     }
                     AliasBody::Type(body) => self.intern(group, body, kind, 0),
                 };
-                out.push((id, self.declaration((id, 0), decl.kind, kind, body)));
+                // A pipe placeholder is transparent, standing for its nominee
+                let decl_kind = match tables.pipes.contains_key(&id) {
+                    true => DeclKind::Alias,
+                    false => decl.kind,
+                };
+                out.push((id, self.declaration((id, 0), decl_kind, kind, body)));
             }
             DeclNode::Defs(_) | DeclNode::Methods(_) => {
                 for sig in 0..tables.sig_count(id) {

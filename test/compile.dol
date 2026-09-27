@@ -3,6 +3,8 @@ import compile std
     - assert
     - assert_eq
     - assert_ne
+    - assert_not
+    - assert_throws
     - assert_type
     - test
   std:
@@ -990,3 +992,57 @@ def implicit_params_are_exposed()
   assert_eq (span_text source func_type.input.span) "Iter[Int]"
 
   unit.emit()
+
+# A module and a script importing it, prepared for checking.
+def checked_units main_source
+  let lib = compile.compile "a.dol" "pub class Present\n" module: a typecheck: true
+  let main = compile.compile "user.dol" $main_source typecheck: true
+  [lib, main]
+
+#[test]
+def check_accepts_well_typed_units()
+  let source = |-
+    import a:
+      - @Present
+    pub let present @ Present = nil
+  # Any iterable of units will do
+  let lib main = checked_units $source
+  let result = compile.check (lib, main)
+  assert_type $compile.Check $result
+  assert_eq $result.diagnostics []
+  assert $result.validated
+  assert_type $Str $result.undecided()
+
+#[test]
+def check_reports_diagnostics_across_units()
+  let source = |-
+    import a:
+      - @Absent
+    pub let absent @ Absent = nil
+  let result = compile.check (checked_units source)
+  assert_not $result.validated
+  assert_eq $result.diagnostics.len 1
+  let diag = result.diagnostics[0]
+  assert_eq $diag.severity :ERROR:
+  assert_eq $diag.message "module `a` has no export `Absent`"
+  assert ("$(diag.render())".contains "user.dol")
+
+#[test]
+def check_skips_units_that_failed_to_compile()
+  let broken = compile.compile "broken.dol" "let = \n" typecheck: true
+  assert (broken.diagnostics().count() > 0)
+  let result = compile.check [broken]
+  assert_eq $result.diagnostics []
+
+#[test]
+def check_refuses_units_it_cannot_check()
+  let plain = compile.compile "plain.dol" "let x = 1\n"
+  assert_throws $std.ValueError do compile.check [plain]
+  let a = compile.compile "a.dol" "" module: a typecheck: true
+  let again = compile.compile "again.dol" "" module: a typecheck: true
+  assert_throws $std.ValueError do compile.check [a, again]
+  # Checking leaves the units usable
+  assert_type $Bin $a.emit()
+  let emitted = compile.compile "emitted.dol" "" typecheck: true
+  emitted.emit()
+  assert_throws $std.StateError do compile.check [emitted]

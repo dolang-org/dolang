@@ -372,6 +372,16 @@ union's members share, found through the first member's MRO with arguments
 combined by variance, then to `Unknown`. Sharing only `Value` widens to
 `Unknown`, since a static top would make every later use a contradiction.
 
+Narrowing a flow type by an `Assume` works member by member against a class `C`
+or a literal, and stays above each member's true intersection with the target. A
+member that `type x C` can't prove disjoint or already reaching `C` becomes `C`,
+with the member's arguments where they carry down by variance and `Unknown`
+otherwise. A reach that can't be proven keeps a member under a negative relation
+and makes it `C` under a positive one. A class's `(==)` may be user-defined, so
+a literal comparison strips only other literals, except that `Nil` and `Bool`
+members lose the literal they're unequal to. An empty result is bottom, making
+the edge unreachable.
+
 Exact candidate dependencies receive a scope-aware occurs check. Recursive
 substitutions remain recursive residuals; variable-only cycles remain unsolved
 unless concrete bounds force them. Assignments contain only closed canonical
@@ -597,7 +607,16 @@ annotations and `Unknown` for what it omits, channels included; CFG flow infers
 the omissions separately, without changing the database. Top-level declarations
 of a checked `std` module named `Value`, `Phantom`, `Union`, `Func`, `Int`,
 `Bool`, `Sym`, `Nil`, `Str`, `Iter` and `Sink` are designated for special
-treatment; the same name in another module is only a lookalike. The `kind`,
+treatment; the same name in another module is only a lookalike. So are the
+classes that literal and constructor expressions produce, `Float`, `Bin`,
+`Array`, `Dict`, `Tuple`, `Record`, `Range` and the `Fmt` classes, which the
+check tables record without the database needing them. A checked `strand`
+module's opaque `PipeSender` and `PipeReceiver` are designated too: each
+stands for the class the `Builder` nominates, resolved as if the placeholder
+imported it, and is populated as a transparent alias of that class applied to
+its binders, whose variance it takes. A nominee in no checked module leaves the
+placeholder `Unknown`; one that isn't a class, or can't take the placeholder's
+type arguments positionally, is diagnosed on the placeholder. The `kind`,
 `sig`, `ambient` and `designated` judgments report these results.
 
 Variance is inferred for every binder, and for each outer binder a nested

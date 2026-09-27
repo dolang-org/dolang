@@ -12,7 +12,8 @@
 //! arguments as used, covariantly. That privacy and `(init)` hold is elab's to
 //! enforce.
 //!
-//! A transparent alias uses its body covariantly. A binder used in a bound of its
+//! A transparent alias uses its body covariantly, and so does a pipe placeholder
+//! the nominee it stands for. A binder used in a bound of its
 //! own group is invariant, and an outer binder used in the bound of a nested group
 //! is used contravariantly there. Defaults, bodies and closures do not count.
 //!
@@ -281,6 +282,23 @@ impl<'t, 'u> Collect<'t, 'u> {
             for binder in tables.lifted[&class].iter().copied().chain(written) {
                 self.constraints
                     .push(((class, binder), Source::Join((id, binder))));
+            }
+        }
+
+        // A pipe placeholder stands for its nominee applied to its binders in order,
+        // so each varies as the binder it fills
+        if let Some(&Some(nominee)) = tables.pipes.get(&id) {
+            let given = tables.binders(id, 0).len();
+            let key = |decl, slot| BinderRef { decl, sig: 0, slot };
+            for (slot, filled) in sig::positional(tables, nominee)
+                .into_iter()
+                .enumerate()
+                .take(given)
+            {
+                self.constraints.push((
+                    (id, key(id, slot)),
+                    Source::Path(Use::CO, vec![(nominee, key(nominee, filled))]),
+                ));
             }
         }
 
