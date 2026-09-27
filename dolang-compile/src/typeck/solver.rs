@@ -666,20 +666,27 @@ impl<'db> Solver<'db> {
         }
     }
 
-    /// Closed proof queries cannot create inference bounds or leak alternative edges.
-    fn probe(&self, actual: TypeId, expected: TypeId) -> Result<Status, Residual> {
+    /// A solver for a side query, with this one's scope and remaining budget. The
+    /// caller adds its work back.
+    fn nested(&self) -> Result<Self, Residual> {
         self.spend()?;
         if self.limits.depth <= 1 {
             return Err(Residual::Limit);
         }
-        let mut proof = Self::with_limits(
+        let mut nested = Self::with_limits(
             self.db,
             Limits {
                 work: self.limits.work.saturating_sub(self.work.get()),
                 depth: self.limits.depth - 1,
             },
         );
-        proof.scope = self.scope.clone();
+        nested.scope = self.scope.clone();
+        Ok(nested)
+    }
+
+    /// Closed proof queries cannot create inference bounds or leak alternative edges.
+    fn probe(&self, actual: TypeId, expected: TypeId) -> Result<Status, Residual> {
+        let mut proof = self.nested()?;
         proof.constrain(
             proof.closed(actual),
             proof.closed(expected),
@@ -1900,6 +1907,7 @@ impl<'db> Solver<'db> {
 
 mod lattice;
 mod member;
+mod narrow;
 mod schema;
 
 #[cfg(test)]

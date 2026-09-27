@@ -10,6 +10,8 @@
 //! and widens in two stages: first to the least ancestor its union's members
 //! share, then to `Unknown`. Sharing only `Value` widens to `Unknown` directly,
 //! since a static top would make every later use a contradiction.
+//!
+//! Narrowing by a condition's relations is in [`super::narrow`].
 
 use super::*;
 
@@ -78,7 +80,7 @@ impl Solver<'_> {
     }
 
     /// The members of a closed type, as a union's
-    fn union_members(&self, ty: TypeId) -> Vec<UnionMember> {
+    pub(super) fn union_members(&self, ty: TypeId) -> Vec<UnionMember> {
         match self.db.ty(ty) {
             Type::Union(members) => members.to_vec(),
             _ => vec![UnionMember::Type(ty)],
@@ -134,7 +136,7 @@ impl Solver<'_> {
 
     /// Where a member's ancestors start: its nominal head, a literal's or a
     /// function's class, or a rigid's bound's
-    fn start(&self, ty: TypeId) -> Result<Option<Nominal>, Issue> {
+    pub(super) fn start(&self, ty: TypeId) -> Result<Option<Nominal>, Issue> {
         let mut term = self.closed(ty);
         for depth in 0.. {
             self.depth(depth)?;

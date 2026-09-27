@@ -372,6 +372,16 @@ union's members share, found through the first member's MRO with arguments
 combined by variance, then to `Unknown`. Sharing only `Value` widens to
 `Unknown`, since a static top would make every later use a contradiction.
 
+Narrowing a flow type by an `Assume` works member by member against a class `C`
+or a literal, and stays above each member's true intersection with the target. A
+member that `type x C` can't prove disjoint or already reaching `C` becomes `C`,
+with the member's arguments where they carry down by variance and `Unknown`
+otherwise. A reach that can't be proven keeps a member under a negative relation
+and makes it `C` under a positive one. A class's `(==)` may be user-defined, so
+a literal comparison strips only other literals, except that `Nil` and `Bool`
+members lose the literal they're unequal to. An empty result is bottom, making
+the edge unreachable.
+
 Exact candidate dependencies receive a scope-aware occurs check. Recursive
 substitutions remain recursive residuals; variable-only cycles remain unsolved
 unless concrete bounds force them. Assignments contain only closed canonical
