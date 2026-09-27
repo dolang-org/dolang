@@ -363,6 +363,15 @@ choice. A default decays the join's literals to their classes, except in exact
 schema keys and binder bounds, unless the decayed join violates a bound; a
 forced assignment keeps its literals, since its bounds require them.
 
+Joins, for defaults and for flow state, drop union members proven below another
+member. A member containing `Unknown` neither subsumes nor is subsumed, since
+consistency isn't antisymmetric, and `Unknown` itself absorbs the join. A join
+alone doesn't converge on a type that keeps growing, so a widening point counts
+a variable's increases and widens in two stages: first to the least ancestor the
+union's members share, found through the first member's MRO with arguments
+combined by variance, then to `Unknown`. Sharing only `Value` widens to
+`Unknown`, since a static top would make every later use a contradiction.
+
 Exact candidate dependencies receive a scope-aware occurs check. Recursive
 substitutions remain recursive residuals; variable-only cycles remain unsolved
 unless concrete bounds force them. Assignments contain only closed canonical

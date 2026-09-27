@@ -8,6 +8,7 @@ mod basics;
 mod functions;
 mod inference;
 mod instantiation;
+mod lattice;
 mod members;
 mod nominal;
 mod rigids;

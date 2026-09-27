@@ -925,13 +925,11 @@ impl<'db> Solver<'db> {
         self.inference[id.0].defaulted.get()
     }
 
-    /// The least candidate above nonempty lower bounds: their union, or for a
+    /// The least candidate above nonempty lower bounds: their join, or for a
     /// schema the one they all are, since there are no schema unions
     fn join(&self, kind: Kind, lower: &[TypeId]) -> Option<TypeId> {
         match kind {
-            Kind::Type => Some(self.db.intern(Type::Union(
-                lower.iter().copied().map(UnionMember::Type).collect(),
-            ))),
+            Kind::Type => lower.iter().copied().reduce(|a, b| self.lub(a, b)),
             Kind::Schema => lower.iter().all(|&ty| ty == lower[0]).then_some(lower[0]),
         }
     }
@@ -1900,6 +1898,7 @@ impl<'db> Solver<'db> {
     }
 }
 
+mod lattice;
 mod member;
 mod schema;
 
