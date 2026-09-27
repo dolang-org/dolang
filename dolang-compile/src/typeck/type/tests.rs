@@ -151,6 +151,59 @@ fn literals_are_exact_values_not_builtin_types() {
 }
 
 #[test]
+fn decay_keeps_exact_keys_and_binder_bounds() {
+    let mut db = Database::new();
+    let (int, int_ty, int_source) = declare(&mut db, DeclKind::Class, "Int");
+    db.populate(int, definition(int_source, int_ty));
+    db.set_intrinsic(Intrinsic::Int, int_ty);
+    let key = db.intern_symbol("name");
+    let key = intern(&mut db, Type::Literal(Literal::Sym(key)));
+    let one = intern(&mut db, Type::Literal(Literal::Int(1)));
+    let two = intern(&mut db, Type::Literal(Literal::Int(2)));
+
+    // Literals decay through unions and function types
+    let both = union(&mut db, &[one, two]);
+    assert_eq!(db.decay(both), int_ty);
+    let f = function(&mut db, &[one], two);
+    let decayed = function(&mut db, &[int_ty], int_ty);
+    assert_eq!(db.decay(f), decayed);
+
+    // An exact key keeps its literal
+    let keyed = |db: &mut Database, value| {
+        intern(
+            db,
+            Type::Schema(
+                vec![SchemaItem {
+                    multiplicity: Multiplicity::Required,
+                    element: Element::Keyed { key, value },
+                }]
+                .into(),
+            ),
+        )
+    };
+    let record = keyed(&mut db, one);
+    let decayed = keyed(&mut db, int_ty);
+    assert_eq!(db.decay(record), decayed);
+
+    // A binder's bound keeps its literal; the body decays
+    let t = reference(&mut db, 0, 0, Kind::Type);
+    let bounded = |db: &mut Database, result| {
+        let body = function(db, &[t], result);
+        quantify(
+            db,
+            vec![Binder {
+                bound: Some(both),
+                ..binder(Kind::Type)
+            }],
+            body,
+        )
+    };
+    let generic = bounded(&mut db, one);
+    let decayed = bounded(&mut db, int_ty);
+    assert_eq!(db.decay(generic), decayed);
+}
+
+#[test]
 fn symbols_are_interned_independently_of_units() {
     let mut db = Database::new();
     let mut locals = Vec::new();

@@ -850,6 +850,13 @@ impl<'db> Solver<'db> {
     /// then solves again. `Unknown` among the lower bounds makes the default
     /// `Unknown`.
     ///
+    /// The join's literals decay to their classes, so `1` and `2` give `Int`,
+    /// unless the decayed join can't be shown to lie above every lower bound and
+    /// below every solved upper bound. Then the join stays precise: an upper
+    /// bound may require the literal, and a lower bound such as `Array[1 | 2]`
+    /// can't widen, since its argument is invariant. A forced assignment keeps
+    /// its literals, since its bounds require them.
+    ///
     /// A lower bound that isn't yet solved leaves the variable unsolved. So does
     /// a variable without lower bounds, rather than inventing a type. An upper
     /// bound that isn't yet solved is checked once the default is, through the
@@ -873,21 +880,44 @@ impl<'db> Solver<'db> {
         let candidate = if lower.contains(&unknown) {
             unknown
         } else {
-            self.join(kind, &lower).ok_or(Residual::Unsupported)?
+            let precise = self.join(kind, &lower).ok_or(Residual::Unsupported)?;
+            let decayed = self.db.decay(precise);
+            let admitted = || -> Result<bool, Residual> {
+                for &ty in &lower {
+                    if self.probe(ty, decayed)? != Status::Proven {
+                        return Ok(false);
+                    }
+                }
+                self.below_upper(id, decayed)
+            };
+            if decayed != precise && admitted().unwrap_or(false) {
+                decayed
+            } else {
+                precise
+            }
         };
-        for upper in bounds.upper() {
+        if !self.below_upper(id, candidate)? {
+            return Err(Residual::Unsupported);
+        }
+        self.inference[id.0].defaulted.set(true);
+        self.commit(id, candidate);
+        Ok(candidate)
+    }
+
+    /// Whether a candidate can be shown to satisfy each of a variable's solved
+    /// upper bounds
+    fn below_upper(&self, id: InferVarId, candidate: TypeId) -> Result<bool, Residual> {
+        for upper in self.bounds[id.0].upper() {
             let upper = match self.reify(upper) {
                 Ok(upper) => upper,
                 Err(Residual::Inference) => continue,
                 Err(issue) => return Err(issue),
             };
             if self.probe(candidate, upper)? != Status::Proven {
-                return Err(Residual::Unsupported);
+                return Ok(false);
             }
         }
-        self.inference[id.0].defaulted.set(true);
-        self.commit(id, candidate);
-        Ok(candidate)
+        Ok(true)
     }
 
     /// Whether a variable's solution was chosen by [`Self::default`], not forced
@@ -1670,11 +1700,7 @@ impl<'db> Solver<'db> {
                 }
                 let intrinsic = match self.db.ty(view.ty) {
                     _ if matches!(self.db.ty(ty), Type::Function(_)) => Intrinsic::Func,
-                    Type::Literal(Literal::Nil) => Intrinsic::Nil,
-                    Type::Literal(Literal::Bool(_)) => Intrinsic::Bool,
-                    Type::Literal(Literal::Int(_)) => Intrinsic::Int,
-                    Type::Literal(Literal::Str(_)) => Intrinsic::Str,
-                    Type::Literal(Literal::Sym(_)) => Intrinsic::Sym,
+                    Type::Literal(literal) => literal.intrinsic(),
                     _ => return Err(Residual::Unsupported.into()),
                 };
                 let Some(backing) = self.db.intrinsic(intrinsic) else {

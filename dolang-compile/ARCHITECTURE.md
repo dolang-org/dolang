@@ -359,8 +359,9 @@ never defaulted. The caller defaults a variable's lower bounds before it, such
 as a call's binders before its result, and solves between defaults so that
 their consequences can force later variables. Defaulted assignments are marked
 as such, so a contradiction reached through one can be reported as an inference
-choice. Widening literals and choosing collection element types are separate
-policies.
+choice. A default decays the join's literals to their classes, except in exact
+schema keys and binder bounds, unless the decayed join violates a bound; a
+forced assignment keeps its literals, since its bounds require them.
 
 Exact candidate dependencies receive a scope-aware occurs check. Recursive
 substitutions remain recursive residuals; variable-only cycles remain unsolved

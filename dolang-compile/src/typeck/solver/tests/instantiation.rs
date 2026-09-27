@@ -193,7 +193,7 @@ fn ambient_binders_are_bounded_by_the_callers_channels() {
 #[test]
 fn defaults_are_the_join_of_solved_lower_bounds() {
     let mut db = Database::new();
-    let int = nominal(&mut db, "Int", vec![], vec![]);
+    let int = int(&mut db);
     let str = nominal(&mut db, "Str", vec![], vec![]);
     let one = literal(&db, 1);
     let t = reference(&db, 0, 0);
@@ -213,7 +213,7 @@ fn defaults_are_the_join_of_solved_lower_bounds() {
     assert!(s.defaulted(result));
     assert_eq!(s.solve()[0].status, Status::Proven);
 
-    // A generic call's binder defaults first; literals are not widened here
+    // A generic call's binder defaults first, decaying its literal
     let (mut s, result, _) = solve_call(&db, id, &[one], None);
     assert_eq!(s.default(variable_id(result)), Err(Residual::Inference));
     assert!(
@@ -221,7 +221,7 @@ fn defaults_are_the_join_of_solved_lower_bounds() {
             .iter()
             .all(|o| o.status == Status::Proven)
     );
-    assert_eq!(s.reify(result), Ok(one));
+    assert_eq!(s.reify(result), Ok(int));
 
     // Several lower bounds join, and `Unknown` makes the join dynamic
     let mut s = Solver::new(&db);
@@ -249,6 +249,87 @@ fn defaults_are_the_join_of_solved_lower_bounds() {
     );
     assert_eq!(s.solution(variable_id(conflicted)), None);
     assert!(!s.defaulted(variable_id(conflicted)));
+}
+
+#[test]
+fn defaults_decay_literals() {
+    let mut db = Database::new();
+    let sym = db.intern_symbol("a");
+    let mut kinds = vec![];
+    for (intrinsic, literal) in [
+        (Intrinsic::Nil, Literal::Nil),
+        (Intrinsic::Bool, Literal::Bool(true)),
+        (Intrinsic::Int, Literal::Int(1)),
+        (Intrinsic::Str, Literal::Str("a".into())),
+        (Intrinsic::Sym, Literal::Sym(sym)),
+    ] {
+        let class = nominal(&mut db, &format!("{intrinsic:?}"), vec![], vec![]);
+        db.set_intrinsic(intrinsic, class);
+        kinds.push((db.intern(Type::Literal(literal)), class));
+    }
+    let int = db.intrinsic(Intrinsic::Int).unwrap();
+    let array = nominal(&mut db, "Array", vec![binder(Variance::Invariant)], vec![]);
+    let t = reference(&db, 0, 0);
+    let pair = quantified(
+        &db,
+        vec![binder(Variance::Invariant)],
+        function(&db, &[t, t], apply(&db, array, &[t])),
+    );
+    let one = literal(&db, 1);
+    let two = literal(&db, 2);
+    let one_two = db.intern(Type::Union(
+        vec![UnionMember::Type(one), UnionMember::Type(two)].into(),
+    ));
+    let array_one_two = apply(&db, array, &[one_two]);
+    db.seal();
+
+    // Each kind of literal decays to its class
+    for (literal, class) in kinds {
+        let mut s = Solver::new(&db);
+        let variable = s.infer();
+        s.constrain(s.closed(literal), variable, Provenance::default());
+        s.solve();
+        assert_eq!(s.default(variable_id(variable)), Ok(class));
+    }
+
+    // Literals decay where the default fixes an invariant argument
+    let (mut s, result, _) = solve_call(&db, pair, &[one, two], None);
+    assert!(
+        default_all(&mut s)
+            .iter()
+            .all(|o| o.status == Status::Proven)
+    );
+    assert_eq!(s.reify(result), Ok(apply(&db, array, &[int])));
+
+    let mut s = Solver::new(&db);
+    let [required, existing, mixed] = [(); 3].map(|()| s.infer());
+    for (variable, lower) in [
+        (required, one),
+        (existing, array_one_two),
+        (mixed, one),
+        (mixed, int),
+    ] {
+        s.constrain(s.closed(lower), variable, Provenance::default());
+    }
+    s.constrain(required, s.closed(one_two), Provenance::default());
+    s.solve();
+    // An upper bound can require the literal
+    assert_eq!(s.default(variable_id(required)), Ok(one));
+    // An existing value's invariant argument can't widen
+    assert_eq!(s.default(variable_id(existing)), Ok(array_one_two));
+    assert_eq!(s.default(variable_id(mixed)), Ok(int));
+}
+
+#[test]
+fn literals_without_a_class_are_kept() {
+    let mut db = Database::new();
+    let one = literal(&db, 1);
+    db.seal();
+    let mut s = Solver::new(&db);
+    let variable = s.infer();
+    s.constrain(s.closed(one), variable, Provenance::default());
+    s.solve();
+    assert_eq!(s.default(variable_id(variable)), Ok(one));
 }
 
 #[test]
