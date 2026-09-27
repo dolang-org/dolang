@@ -1,8 +1,9 @@
 //! Static checking of a set of compilation units.
 
-#[allow(dead_code, reason = "built by lowering (#735)")]
+#[allow(dead_code, reason = "read by flow analysis (#736)")]
 pub(crate) mod cfg;
 pub(crate) mod elab;
+mod lower;
 pub(crate) mod solver;
 pub(crate) mod r#type;
 
@@ -96,7 +97,15 @@ impl<'u, 's> Builder<'u, 's> {
         db.seal();
         elab::specialize(&mut db, &tables, &mut diags);
         let unresolved = elab::wellformed(&db, &tables, &mut diags);
+        let cfgs = (0..units.len())
+            .map(|index| {
+                let ir = lower::lower(&tables, &db, UnitId::from_index(index));
+                debug_assert_eq!(ir.validate(), Ok(()), "lowering builds a valid graph");
+                ir
+            })
+            .collect();
         Check {
+            cfgs,
             diagnostics: diags
                 .iter()
                 .map(|(unit, diag)| diag.resolve_in(&units[unit.index()].compiler, Some(*unit)))
@@ -121,6 +130,9 @@ pub struct Check<'u> {
     db: r#type::Database,
     /// Well-formedness checks the checker could not decide
     unresolved: Vec<elab::Unresolved>,
+    /// Each unit's typing CFG, by [`UnitId`]
+    #[allow(dead_code, reason = "read by flow analysis (#736)")]
+    cfgs: Vec<cfg::Ir>,
 }
 
 /// The names of the judgments [`Check::judgments`] reports.

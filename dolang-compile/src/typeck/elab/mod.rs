@@ -256,6 +256,12 @@ pub(crate) enum Designated {
     Getter,
     /// `std.setter`, which makes a method a computed field's setter
     Setter,
+    /// `std.Fmt`, the value of a `t"..."` sequence
+    Fmt,
+    /// `std.FmtValue`, an interpolation binding a value to a specification
+    FmtValue,
+    /// `std.FmtParam`, an unbound `${#...}` interpolation
+    FmtParam,
     Intrinsic(Intrinsic),
 }
 

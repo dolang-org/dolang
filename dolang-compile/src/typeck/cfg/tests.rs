@@ -82,21 +82,21 @@ fn well_formed() {
     );
     terminate(&graph, lambda_entry, Terminal::Branch(lambda_exit));
 
-    push(&graph, entry, Step::Push(expr(ExprKind::Var(f))));
+    // Only the short circuit spills: `f` and the first `x` stay in the tree
     push(&graph, entry, Step::Push(expr(ExprKind::Var(x))));
-    push(&graph, entry, Step::Push(expr(ExprKind::Var(x))));
+    push(&graph, entry, Step::Dup);
     let rhs = graph.alloc_block(top, None, 0);
     let join = graph.alloc_block(top, None, 0);
     terminate(
         &graph,
         entry,
         Terminal::If {
-            cond: expr(ExprKind::Operand(2)),
+            cond: expr(ExprKind::Operand),
             then: rhs,
             else_: join,
         },
     );
-    push(&graph, rhs, Step::Pop(1));
+    push(&graph, rhs, Step::Pop);
     let g = call(&graph, expr(ExprKind::Lambda(lambda)), Vec::new());
     push(&graph, rhs, Step::Push(g));
     terminate(&graph, rhs, Terminal::Branch(join));
@@ -104,14 +104,13 @@ fn well_formed() {
     // `try … finally`, whose body calls and falls through
     let value = call(
         &graph,
-        expr(ExprKind::Operand(0)),
+        expr(ExprKind::Var(f)),
         vec![
-            Item::Pos(expr(ExprKind::Operand(1))),
-            Item::Pos(expr(ExprKind::Operand(2))),
+            Item::Pos(expr(ExprKind::Var(x))),
+            Item::Pos(expr(ExprKind::Operand)),
         ],
     );
     push(&graph, join, Step::Eval(value));
-    push(&graph, join, Step::Pop(3));
     let after = graph.alloc_block(top, None, 0);
     let finally = graph.alloc_block(top, None, 1);
     terminate(
