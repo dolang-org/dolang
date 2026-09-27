@@ -1,0 +1,122 @@
+import sys
+  test:
+    - assert_eq
+    - assert_throws
+    - assert_type
+    - test
+  testlib.vfs:
+    - vfs
+  std:
+    - TypeError
+    - ValueError
+  fs:
+    - Path
+    - relative
+    - create_dir
+    - symlink_dir
+import fs.unix: unix_fs
+import fs.windows: windows_fs
+
+def check path base expected
+  let result = relative $path $base
+  assert_eq $result $expected
+  assert_eq $path.relative(base) $expected
+  assert_type (type expected) $result
+
+#[test]
+def absolute_paths()
+  for path base expected = [
+    ("/a/b/c/d", "/a/b", "c/d"),
+    ("/a/x/y", "/a/b", "../x/y"),
+    ("/x/y", "/a/b", "../../x/y"),
+    ("/a", "/a/b/c", "../.."),
+    ("/a/b", "/a/b", "."),
+    ("/a/b/", "/a/b///", "."),
+    ("/a/bc", "/a/b", "../bc"),
+    ("/a/./x/../b/c/", "/a/b/./", "c"),
+    ("/../a", "/", "a"),
+    ("/", "/a/b", "../.."),
+    ("/", "/", ".")
+  ]
+    check (unix_fs.Path path) (unix_fs.Path base) (unix_fs.Path expected)
+
+#[test]
+def windows_paths()
+  for path base expected = [
+    (r"C:\a\b\c", r"C:\a\b", "c"),
+    (r"C:\a\x", r"C:\a\b", r"..\x"),
+    (r"C:\x\y", r"C:\a\b", r"..\..\x\y"),
+    (r"C:\a\b\", "C:/a/b", "."),
+    (r"C:\a\.\x\..\b\c", r"C:\a\b", "c"),
+    (r"\\server\share\x", r"\\server\share\a\b", r"..\..\x"),
+    (r"\\?\C:\a\x", r"\\?\C:\a\b", r"..\x"),
+    (r"\\?\UNC\server\share\x", r"\\?\UNC\server\share\b", r"..\x")
+  ]
+    check (windows_fs.Path path) (windows_fs.Path base) (windows_fs.Path expected)
+
+  for path base = [
+    (r"C:\a", r"D:\a"),
+    (r"\\server\one\a", r"\\server\two\a"),
+    (r"\\one\share\a", r"\\two\share\a"),
+    (r"\\?\C:\a", r"\\?\D:\a"),
+    (r"\\?\C:\a", r"C:\a")
+  ]
+    let path = windows_fs.Path $path
+    let base = windows_fs.Path $base
+    assert_throws $ValueError do relative $path $base
+    assert_throws $ValueError do path.relative $base
+
+#[test]
+#[vfs]
+def current_directory()
+  # The fixture changes the strand's directory, including through a remote VFS.
+  let cwd = cd()
+  for path base expected = [
+    ("a/b/c", "a/b", "c"),
+    ("a/x", "a/b", "../x"),
+    ("a/b", "a/b", "."),
+    ("", "", "."),
+    ("", "a", ".."),
+    ("a", "", "a"),
+    ("a/../x", "./b/", "../x")
+  ]
+    assert_eq (relative path base) (Path expected)
+    check (Path path) (Path base) (Path expected)
+    check (cwd / path) (Path base) (Path expected)
+    check (Path path) (cwd / base) (Path expected)
+
+  assert_eq (relative "missing/file") (Path "missing/file")
+  assert_eq $(Path "missing/file").relative() (Path "missing/file")
+  assert_eq (relative cwd) (Path ".")
+  assert_eq $cwd.relative() (Path ".")
+  assert_eq (relative (cwd / "missing/file")) (Path "missing/file")
+  assert_eq $(cwd / "missing/file").relative() (Path "missing/file")
+
+  if (sys.os_info().family == :WINDOWS:)
+    let other = (cwd.disk == "Z" && "Y" || "Z")
+    assert_throws $ValueError do relative "$other:child" $cwd
+    check (unix_fs.Path "a/x") (Path "a/b") (Path "../x")
+  else
+    check (windows_fs.Path r"a\x") (Path "a/b") (Path "../x")
+
+#[test]
+def incompatible_types()
+  let unix = unix_fs.Path "/a"
+  let windows = windows_fs.Path r"C:\a"
+  assert_throws $TypeError do relative $unix $windows
+  assert_throws $TypeError do unix.relative $windows
+  assert_throws $TypeError do relative $windows $unix
+  assert_throws $TypeError do windows.relative $unix
+  assert_throws $TypeError do relative 42
+  assert_throws $TypeError do (Path "a").relative 42
+
+#[test]
+#[vfs]
+def lexical_symlinks()
+  let destination = Path.join "real" "deep"
+  create_dir $destination all: true
+  symlink_dir $destination "link"
+  let base = Path "link"
+  let target = Path "real"
+  check $target $base (Path "../real")
+  check $target.canonical() $base.canonical() (Path "..")

@@ -837,6 +837,43 @@ async fn well_known_path<'v, 's>(
     Ok(())
 }
 
+/// Computes the difference between normalized absolute paths without filesystem access.
+fn relative_components(
+    path: vfs_path::Path<'_>,
+    base: vfs_path::Path<'_>,
+) -> Option<vfs_path::PathBuf> {
+    if path.kind() != base.kind()
+        || !path.is_absolute()
+        || !base.is_absolute()
+        || path.windows_prefix() != base.windows_prefix()
+    {
+        return None;
+    }
+    let mut path_components = path.components().peekable();
+    let mut base_components = base.components().peekable();
+    while path_components.peek().is_some() && path_components.peek() == base_components.peek() {
+        path_components.next();
+        base_components.next();
+    }
+    let mut relative = vfs_path::PathBuf::empty(path.kind());
+    for component in base_components {
+        if !component.is_normal() {
+            return None;
+        }
+        relative.push("..");
+    }
+    for component in path_components {
+        if !component.is_normal() {
+            return None;
+        }
+        relative.push(component.as_str());
+    }
+    if relative.as_str().is_empty() {
+        relative.push(".");
+    }
+    Some(relative)
+}
+
 /// Shared implementation for `fs.relative` and `Path.relative`.
 pub(crate) fn path_relative<'v, 's>(
     strand: &mut Strand<'v, 's>,
@@ -845,13 +882,30 @@ pub(crate) fn path_relative<'v, 's>(
     base: Option<Slot<'v, '_>>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    let relative = match base {
-        Some(b) => path.strip_prefix(path_from_value(strand, &b)?.as_str()),
-        None => path.strip_prefix(global.local.get(strand).cwd().as_str()),
+    let cwd = global.local.get(strand).cwd().clone();
+    let base = match base {
+        Some(base) => path_from_value(strand, &base)?,
+        None => cwd.clone(),
     };
-    let relative = relative
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|_| path.to_path_buf());
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        safe_concat(strand, cwd.to_path(), path)?
+    };
+    let base = if base.is_absolute() {
+        base
+    } else {
+        safe_concat(strand, cwd.to_path(), base.to_path())?
+    };
+    let base = convert_path_kind(strand, base, path.kind())?;
+    let path = path.normalize();
+    let base = base.normalize();
+    let relative = relative_components(path.to_path(), base.to_path()).ok_or_else(|| {
+        Error::value(
+            strand,
+            "paths cannot be made relative: incompatible or unresolved roots",
+        )
+    })?;
     create_path(strand, global, relative, out)?;
     Ok(())
 }
@@ -1493,19 +1547,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
         .function("relative", async move |strand, args, out| {
             let ([path], [base]) = unpack!(strand, args, 1, 1)?;
             let path = path_from_value(strand, &path)?;
-            let base_path = match base {
-                Some(slot) => path_from_value(strand, &slot)?,
-                None => {
-                    let local = global.local.get(strand);
-                    local.cwd().clone()
-                }
-            };
-            let relative = path
-                .strip_prefix(base_path.as_str())
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|_| path.clone());
-            create_path(strand, global, relative, out)?;
-            Ok(())
+            path_relative(strand, global, path.to_path(), base, out)
         })
         .function("canonical", async move |strand, args, out| {
             let ([path], []) = unpack!(strand, args, 1, 0)?;
@@ -1602,4 +1644,55 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             update_sec_desc(strand, global, path.to_path(), &descriptor, follow).await
         })
         .commit();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::relative_components;
+    use dolang_vfs::path::Path;
+
+    #[test]
+    fn relative_normalized_components() {
+        for (path, base, expected) in [
+            (Path::unix("/a/x"), Path::unix("/a/b"), "../x"),
+            (Path::unix("/a"), Path::unix("/a"), "."),
+            (Path::unix("/"), Path::unix("/a/b"), "../.."),
+            (Path::windows(r"C:\x"), Path::windows(r"C:\a"), r"..\x"),
+            (
+                Path::windows(r"\\?\C:\x"),
+                Path::windows(r"\\?\C:\a"),
+                r"..\x",
+            ),
+            (
+                Path::windows(r"\\?\UNC\server\share\x"),
+                Path::windows(r"\\?\UNC\server\share\a"),
+                r"..\x",
+            ),
+        ] {
+            let relative = relative_components(path, base).unwrap();
+            assert_eq!(relative.as_str(), expected);
+            assert_eq!(relative.kind(), path.kind());
+        }
+    }
+
+    #[test]
+    fn relative_incompatible_roots() {
+        for (path, base) in [
+            (Path::unix("/a"), Path::windows(r"C:\a")),
+            (Path::unix("a"), Path::unix("/a")),
+            (Path::windows(r"C:a"), Path::windows(r"C:\a")),
+            (Path::windows(r"C:\a"), Path::windows(r"D:\a")),
+            (
+                Path::windows(r"\\server\one\a"),
+                Path::windows(r"\\server\two\a"),
+            ),
+            (Path::windows(r"\\?\C:\a"), Path::windows(r"\\?\D:\a")),
+            (Path::windows(r"\\?\C:\a"), Path::windows(r"C:\a")),
+        ] {
+            assert!(
+                relative_components(path, base).is_none(),
+                "{path:?}, {base:?}"
+            );
+        }
+    }
 }

@@ -2670,22 +2670,32 @@ pub def normalize
 do -> Path
   ...
 
-# Returns a path relative to a base directory.
+# Computes a lexical path relative to a base directory, using `..` to
+# traverse parents when needed.
 #
-# ## Returns
+# Relative inputs are resolved against the current working directory, then
+# both paths are normalized. Equal paths produce `.`. Neither path needs
+# to exist.
 #
-# The original path if it cannot be made relative.
+# Symbolic links are not resolved, so traversing the result through a symlink
+# can reach a different location. Call [`canonical`](fs.canonical) on both
+# inputs first when a physical comparison is needed.
+#
+# ## Errors
+#
+# | Exception | Condition |
+# | --------- | --------- |
+# | `ValueError` | The paths have incompatible roots, such as different Windows drives or UNC shares, or a drive-relative path cannot be resolved. |
+# | `TypeError` | The path types cannot be converted to a common syntax. |
 #
 # ## Example
 #
 # ```
-# # Relative to the current directory
-# let rel = relative "/home/user/docs/file.txt"
-# echo $rel  # docs/file.txt (if cwd is /home/user)
-#
-# # Relative to a specific base
-# let rel2 = relative "/a/b/c/d" "/a/b"
-# echo $rel2  # c/d
+# echo (relative "/a/b/c/d" "/a/b")  # c/d
+# echo (relative "/a/x/y" "/a/b")    # ../x/y
+# echo (relative "/x/y" "/a/b")      # ../../x/y
+# echo (relative "a/x" "a/b")        # ../x
+# echo (relative "a/b" "a/b")        # .
 # ```
 pub def relative
   # Path to make relative.
