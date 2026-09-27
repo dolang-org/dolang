@@ -1,0 +1,247 @@
+//! Expressions: owned trees, mirroring the AST. A node that is a checking rule
+//! carries a [`RuleId`], which keys what flow learns about it; other nodes carry
+//! nothing.
+
+use super::{FuncId, Pattern, RuleId, VarId};
+use crate::{
+    lex::Op,
+    source::Span,
+    typeck::{
+        elab::ModuleRef,
+        r#type::{DeclId, Literal, MemberKey, SymbolId},
+    },
+};
+
+pub(crate) struct Expr {
+    pub(crate) kind: ExprKind,
+    pub(crate) span: Span,
+}
+
+pub(crate) enum ExprKind {
+    Literal(Literal),
+    Float,
+    Bin,
+    /// A string built from parts, each of which may be any value
+    Concat(Vec<Expr>),
+    Var(VarId),
+    /// The class object a class statement defines, of type `Type[C]`
+    Class(DeclId),
+    /// An imported module, or an item of one
+    Import {
+        module: ModuleRef,
+        item: Option<SymbolId>,
+    },
+    /// Instantiating a closure
+    Lambda(FuncId),
+    Call {
+        callee: Box<Expr>,
+        args: Vec<Item>,
+        rule: RuleId,
+    },
+    /// A method call, which looks the method up and calls it in one rule
+    Invoke {
+        receiver: Box<Expr>,
+        member: Member,
+        args: Vec<Item>,
+        rule: RuleId,
+    },
+    Get {
+        object: Box<Expr>,
+        member: Member,
+        rule: RuleId,
+    },
+    Index {
+        object: Box<Expr>,
+        index: Box<Expr>,
+        rule: RuleId,
+    },
+    Unary {
+        op: Op,
+        operand: Box<Expr>,
+        rule: RuleId,
+    },
+    /// Never `&&` or `||`, which are control flow
+    Binary {
+        op: Op,
+        operands: Box<[Expr; 2]>,
+        rule: RuleId,
+    },
+    Range {
+        bounds: Box<[Option<Expr>; 2]>,
+        rule: RuleId,
+    },
+    Collection {
+        kind: Collection,
+        items: Vec<Item>,
+        rule: RuleId,
+    },
+    /// The strand's ambient input, iterated by a `for` with no iteratee
+    AmbientInput,
+    /// Peek at a slot of the operand stack, counted from the bottom
+    Operand(u32),
+    /// A value of the bottom type, standing in for a value that another edge
+    /// supplies, such as the result a phantom return assigns
+    Never,
+    /// Recovery from an expression that failed to elaborate
+    Error,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Collection {
+    Array,
+    Dict,
+    Tuple,
+    Record,
+}
+
+/// A member of a receiver, by key. A private member names the class whose member it
+/// is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Member {
+    pub(crate) key: MemberKey,
+    pub(crate) class: Option<DeclId>,
+}
+
+/// An item of an argument list or collection
+pub(crate) enum Item {
+    Pos(Expr),
+    Key(SymbolId, Expr),
+    Pair(Expr, Expr),
+    Spread(Expr),
+    /// A comprehension's loop, whose pattern binds variables that live only in it
+    For {
+        pattern: Pattern,
+        iter: Expr,
+        items: Vec<Item>,
+    },
+    If {
+        cond: Expr,
+        then: Vec<Item>,
+        else_: Vec<Item>,
+    },
+}
+
+/// What an assignment writes
+pub(crate) enum Target {
+    Var(VarId),
+    Field {
+        object: Expr,
+        member: Member,
+        rule: RuleId,
+    },
+    Index {
+        object: Expr,
+        index: Expr,
+        rule: RuleId,
+    },
+}
+
+impl Expr {
+    /// Visit this expression and each one nested in it, parents first. Expressions in
+    /// a comprehension's pattern defaults are included.
+    pub(crate) fn walk<'a>(&'a self, visit: &mut impl FnMut(&'a Expr)) {
+        visit(self);
+        match &self.kind {
+            ExprKind::Concat(parts) => parts.iter().for_each(|part| part.walk(visit)),
+            ExprKind::Call { callee, args, .. } => {
+                callee.walk(visit);
+                Item::walk_all(args, visit);
+            }
+            ExprKind::Invoke { receiver, args, .. } => {
+                receiver.walk(visit);
+                Item::walk_all(args, visit);
+            }
+            ExprKind::Get { object, .. } => object.walk(visit),
+            ExprKind::Index { object, index, .. } => {
+                object.walk(visit);
+                index.walk(visit);
+            }
+            ExprKind::Unary { operand, .. } => operand.walk(visit),
+            ExprKind::Binary { operands, .. } => operands.iter().for_each(|expr| expr.walk(visit)),
+            ExprKind::Range { bounds, .. } => {
+                bounds.iter().flatten().for_each(|expr| expr.walk(visit))
+            }
+            ExprKind::Collection { items, .. } => Item::walk_all(items, visit),
+            ExprKind::Literal(_)
+            | ExprKind::Float
+            | ExprKind::Bin
+            | ExprKind::Var(_)
+            | ExprKind::Class(_)
+            | ExprKind::Import { .. }
+            | ExprKind::Lambda(_)
+            | ExprKind::AmbientInput
+            | ExprKind::Operand(_)
+            | ExprKind::Never
+            | ExprKind::Error => {}
+        }
+    }
+
+    /// The rule it is, if it's one
+    pub(crate) fn rule(&self) -> Option<RuleId> {
+        match self.kind {
+            ExprKind::Call { rule, .. }
+            | ExprKind::Invoke { rule, .. }
+            | ExprKind::Get { rule, .. }
+            | ExprKind::Index { rule, .. }
+            | ExprKind::Unary { rule, .. }
+            | ExprKind::Binary { rule, .. }
+            | ExprKind::Range { rule, .. }
+            | ExprKind::Collection { rule, .. } => Some(rule),
+            _ => None,
+        }
+    }
+}
+
+impl Item {
+    fn walk_all<'a>(items: &'a [Item], visit: &mut impl FnMut(&'a Expr)) {
+        for item in items {
+            match item {
+                Item::Pos(expr) | Item::Key(_, expr) | Item::Spread(expr) => expr.walk(visit),
+                Item::Pair(key, value) => {
+                    key.walk(visit);
+                    value.walk(visit);
+                }
+                Item::For {
+                    pattern,
+                    iter,
+                    items,
+                } => {
+                    iter.walk(visit);
+                    pattern.walk(visit);
+                    Item::walk_all(items, visit);
+                }
+                Item::If { cond, then, else_ } => {
+                    cond.walk(visit);
+                    Item::walk_all(then, visit);
+                    Item::walk_all(else_, visit);
+                }
+            }
+        }
+    }
+}
+
+impl Pattern {
+    /// Visit the expressions in its constant keys and defaults
+    pub(crate) fn walk<'a>(&'a self, visit: &mut impl FnMut(&'a Expr)) {
+        let Pattern::Unpack(items) = self else {
+            return;
+        };
+        for item in items {
+            if let super::PatternKey::ConstKey(key) = &item.key {
+                key.walk(visit);
+            }
+            if let Some(default) = &item.default {
+                default.walk(visit);
+            }
+        }
+    }
+
+    /// The variables it binds
+    pub(crate) fn vars(&self) -> impl Iterator<Item = VarId> {
+        let vars: Vec<VarId> = match self {
+            Pattern::Bind(var) => vec![*var],
+            Pattern::Unpack(items) => items.iter().filter_map(|item| item.var).collect(),
+        };
+        vars.into_iter()
+    }
+}

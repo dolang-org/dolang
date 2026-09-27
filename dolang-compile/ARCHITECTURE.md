@@ -419,6 +419,60 @@ are subtypes of this registered type and its declared supertypes. This rule does
 not desugar function syntax into a nominal application or assign generic
 semantics to `Func`; those remain undecided. A missing registration is residual.
 
+## Typing CFG
+
+`typeck::cfg` is the graph that type flow analyzes. It is separate from the
+bytecode CFG: it keeps semantic structure and ignores the runtime's
+implementation of control flow. The design, including the flow analysis over
+the graph, is recorded in issue #734.
+
+A module is one analysis region. Its top-level code is the entry function, and
+every def, method implementation, lambda and field initializer is a function
+nested in it, identified by its declaration. Each function's locals are hoisted
+to the function. A function's variables of its enclosing functions are its
+captures, and freezing the graph records each captured variable's readers.
+Every function has an exit block, the only one that returns, and a result
+variable. A return assigns the result and continues to the exit, through any
+`finally`; a variable survives the empty stack that a `finally` is entered
+with.
+
+A block owns its steps and ends in a terminal. A step is a statement whose
+expressions stay trees. Expressions mirror the AST. Only checking rules carry a
+`RuleId`: calls, method invocations (lookup and call in one rule), member
+accesses, subscripts, operators and collection literals. Comprehensions are
+expression items, since they neither break nor assign. `&&` and `||` are
+control flow, so a narrowing test's successors begin with `Assume` steps.
+
+Values that must cross blocks, such as an evaluated callee before a short
+circuit or a statement's value, go on an operand stack. `Operand` and `If`
+peek at it, and `Pop` discards. Statements are never nested in expressions, so
+an exceptional edge discards the whole stack. A handler is an ordinary block
+entered with the exception alone on the stack; `Catch` dispatches it to clauses
+by class.
+
+`Leave` enters a `finally` with a tag saying how to continue after
+`EndFinally`: at a block, or by rethrowing. Lowering routes each exit once,
+through trampoline blocks where `finally`s nest. A block records how many
+`finally` bodies of its function enclose it. During flow the tags form a stack
+of that depth, which keys the block's state, so a `finally` is analyzed once
+per continuation rather than joining them.
+
+A `break`, `continue` or `return` in a `do` block happens during the call that
+the closure is an argument of. In the closure, `Escape` ends a `break` or
+`continue`'s path: whatever it changed in enclosing functions' variables reaches
+them through captures. `ReturnFrom` merges only the returned value, as the def's
+result, into the def's exit block. The rest comes from a `Guard` in the
+enclosing function, placed before the call. Besides continuing normally, it has
+phantom edges, which discard the stack, to each target the closures in the
+statement may jump to. A return's phantom target assigns `Never` to the result,
+then continues to the exit, through `finally` blocks as any return would.
+
+`Ir::validate` checks structure: edges and handlers stay in their function,
+depths only grow by `Leave`, returns come from exit blocks, non-local terminals
+leave for enclosing functions, variables are owned or captured, closures are
+instantiated by their parent, and rules are unique. Stack depths are checked by
+flow analysis.
+
 ## Checking units and diagnostic locations
 
 `typeck::Builder` collects the units to check together. A unit must have

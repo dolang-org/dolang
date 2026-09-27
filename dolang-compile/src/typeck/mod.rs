@@ -1,5 +1,7 @@
 //! Static checking of a set of compilation units.
 
+#[allow(dead_code, reason = "built by lowering (#735)")]
+pub(crate) mod cfg;
 pub(crate) mod elab;
 pub(crate) mod solver;
 pub(crate) mod r#type;
