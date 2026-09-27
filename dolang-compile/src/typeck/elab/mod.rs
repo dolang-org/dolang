@@ -262,6 +262,20 @@ pub(crate) enum Designated {
     FmtValue,
     /// `std.FmtParam`, an unbound `${#...}` interpolation
     FmtParam,
+    /// `std.Float`, the class of a float literal
+    Float,
+    /// `std.Bin`, the class of a binary string
+    Bin,
+    /// `std.Array`, the class of an array literal
+    Array,
+    /// `std.Dict`, the class of a dict literal
+    Dict,
+    /// `std.Tuple`, the class of a tuple literal
+    Tuple,
+    /// `std.Record`, the class of a record literal
+    Record,
+    /// `std.Range`, the class of a range
+    Range,
     Intrinsic(Intrinsic),
 }
 

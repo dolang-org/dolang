@@ -597,7 +597,10 @@ annotations and `Unknown` for what it omits, channels included; CFG flow infers
 the omissions separately, without changing the database. Top-level declarations
 of a checked `std` module named `Value`, `Phantom`, `Union`, `Func`, `Int`,
 `Bool`, `Sym`, `Nil`, `Str`, `Iter` and `Sink` are designated for special
-treatment; the same name in another module is only a lookalike. The `kind`,
+treatment; the same name in another module is only a lookalike. So are the
+classes that literal and constructor expressions produce, `Float`, `Bin`,
+`Array`, `Dict`, `Tuple`, `Record`, `Range` and the `Fmt` classes, which the
+check tables record without the database needing them. The `kind`,
 `sig`, `ambient` and `designated` judgments report these results.
 
 Variance is inferred for every binder, and for each outer binder a nested
