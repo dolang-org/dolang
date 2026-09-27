@@ -165,6 +165,24 @@ impl Check<'_> {
                 .all(|diag| diag.severity() != Severity::Error)
     }
 
+    /// The checks the checker could not decide, each with the kind of reason,
+    /// for developing the checker. Reasons are internal and may change.
+    #[doc(hidden)]
+    pub fn undecided(&self) -> Vec<(String, diag::SourceSpan)> {
+        self.unresolved
+            .iter()
+            .map(|unresolved| {
+                let unit = unresolved.span.unit;
+                let compiler = &self.tables.units[unit.index()].compiler;
+                let span = source::Diag::resolve_span(compiler, unresolved.span.span);
+                (
+                    format!("{:?}", unresolved.residual),
+                    diag::SourceSpan::new(Some(unit), span),
+                )
+            })
+            .collect()
+    }
+
     /// The judgments about spans of `unit`, in source order.
     #[doc(hidden)]
     pub fn judgments(&self, unit: UnitId) -> Vec<Judgment> {

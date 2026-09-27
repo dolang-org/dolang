@@ -1,0 +1,3 @@
+import m:
+  - @Absent
+pub let absent @ Absent = nil
