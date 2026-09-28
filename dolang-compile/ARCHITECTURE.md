@@ -572,16 +572,28 @@ Captured state is flow-insensitive. Every assignment to a captured variable
 joins into one type that nested functions read, and a non-local return joins its
 value into its def's result the same way. Reading a joined type makes the block
 depend on it, and it is queued again when the type grows. A flagged variable's
-owner reverts it to the joined type after any step that can call. A `do` block
-instantiated where nothing is expected of it gets `Unknown` joined into its
-parameter and channel signature variables.
+owner reverts it to the joined type after any step that can call.
+
+A `do` block's signature variables are joined the same way. Its exit joins its
+result into its result variable. A call it's an argument of types it: it enters
+the call's solve as its declared function type (`Tables::group_rigids` closes
+lifted binders), with a fresh variable for each parameter and channel it leaves
+open. Parameters are contravariant, so those variables' lower bounds are what
+the callee passes. Once the rule is concluded, the variables are solved by
+defaulting, and their solutions join into the signature variables. The block's
+result enters as its joined type, or, while that is still bottom, as a fresh
+variable that keeps the call undecided. The call's block reads the result
+variable, so it runs again when the block's analysis grows the result. A block
+anywhere else gets `Unknown` joined into its parameter and channel variables,
+and its value is its declared type with the joined result.
 
 Checking rules (`flow/rule.rs`) are solved by a fresh solver on each run, and
 only reified types leave it:
 
 - A call constrains its callee below `Solver::call` of its arguments, passing
-  the caller's declared channels. A callee that isn't a function type, an
-  overloaded def, and a call with a comprehension give `Unknown`.
+  the caller's declared channels. A callee that isn't a function type or a
+  union of them, an overloaded def, and a call with a comprehension give
+  `Unknown`.
 - An array, dict, tuple or record literal builds its designated class over
   inference variables for its items, a spread through `Spread[S]`. A
   comprehension in a tuple or record gives `Unknown` until #793.

@@ -55,6 +55,24 @@ g()
 }
 
 #[test]
+fn lambdas_are_order_independent() {
+    agree(
+        "
+def map[T, U] xs @ Array[T] f @ ((T) -> U) -> Array[U]
+  ...
+def fold[T] init @ T f @ ((T, T) -> T) -> T
+  ...
+let ys = map [1, 2] do |x| [x]
+let zs = map $ys do |y| fold 0 do |a _b| a
+let f = do |n @ Int| n
+let g = do |n @ Int| f $n
+f = do |n @ Int| g $n
+g 1
+",
+    );
+}
+
+#[test]
 fn rounds_are_order_independent() {
     agree(
         "

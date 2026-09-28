@@ -22,15 +22,18 @@ use super::{
 use crate::{
     source::Span,
     typeck::{
-        cfg::{BlockId, Collection, Expr, ExprKind, Item, PatternItem, PatternKey, RuleId},
+        cfg::{
+            BlockId, Collection, Expr, ExprKind, FuncId, Item, Pattern, PatternItem, PatternKey,
+            RuleId, VarId,
+        },
         elab::Designated,
         solver::{
             CallArgument, Contradiction, Issue, ObligationId, Outcome, Provenance, Residual,
             Solver, Status, Step as Derivation, Term,
         },
         r#type::{
-            Argument, BoundRef, Database, DeclId, Element, Kind, Literal, Multiplicity, Rest,
-            SchemaItem, SymbolId, Type, TypeId,
+            Argument, BoundRef, Database, DeclId, Element, Function, Kind, Literal, Multiplicity,
+            Rest, SchemaItem, SymbolId, Type, TypeId, UnionMember,
         },
     },
 };
@@ -74,6 +77,11 @@ struct Rule<'s, 'a> {
     solver: &'s mut Solver<'a>,
     db: &'a Database,
     checks: Vec<Check>,
+    /// The variables standing for what a call passes the `do` blocks it's given,
+    /// by the signature variable each joins into
+    passed: Vec<(VarId, Term)>,
+    /// The variables standing for the results of `do` blocks not yet known
+    pending: Vec<Term>,
 }
 
 impl<'a> Rule<'_, 'a> {
@@ -85,6 +93,24 @@ impl<'a> Rule<'_, 'a> {
 
     fn closed(&self, ty: TypeId) -> Term {
         self.solver.closed(ty)
+    }
+
+    /// A `do` block's function type, with a fresh variable in each hole
+    fn lambda(&mut self, lambda: &Lambda) -> Term {
+        let group = (lambda.holes.iter())
+            .map(|&hole| {
+                let term = self.solver.infer();
+                match hole {
+                    Hole::Passed(var) => self.passed.push((var, term)),
+                    Hole::Result => self.pending.push(term),
+                }
+                term
+            })
+            .collect();
+        let environment = self
+            .solver
+            .environment(self.solver.empty_environment(), group);
+        self.solver.view(lambda.ty, environment)
     }
 
     /// A term for the type `build` makes, whose holes the terms it passes fill
@@ -143,6 +169,24 @@ enum Value {
     Key(SymbolId, TypeId, Span),
     Pair(TypeId, TypeId),
     Spread(TypeId, Span),
+    /// A `do` block passed to a call, positionally or by key
+    Lambda(Option<SymbolId>, Lambda, Span),
+}
+
+/// A `do` block passed to a call, which types it: its function type, with a hole
+/// at depth 0 for each item its signature leaves to the call
+pub(super) struct Lambda {
+    func: FuncId,
+    ty: TypeId,
+    holes: Vec<Hole>,
+}
+
+#[derive(Clone, Copy)]
+enum Hole {
+    /// A parameter's or channel's type, joined into its signature variable
+    Passed(VarId),
+    /// The block's result, until it's known
+    Result,
 }
 
 /// The evaluated items of an argument list or collection
@@ -185,9 +229,12 @@ impl<'a> Flow<'a, '_> {
                 solver: &mut solver,
                 db: self.db,
                 checks: Vec::new(),
+                passed: Vec::new(),
+                pending: Vec::new(),
             };
             let results = build(&mut rule);
             let checks = rule.checks;
+            let lambdas = (rule.passed, rule.pending);
             let seeded = match expected {
                 Some(expected) if seed => {
                     solver.constrain(results[0], solver.closed(expected), Provenance::default());
@@ -196,16 +243,16 @@ impl<'a> Flow<'a, '_> {
                 _ => false,
             };
             let outcomes = if frozen {
-                default_all(&mut solver, self.db)
+                default_all(&mut solver, self.db, true)
             } else {
                 solver.solve()
             };
             let rejected = seeded && outcomes[checks.len()].status == Status::Contradicted;
-            (solver, results, checks, outcomes, rejected)
+            (solver, results, checks, lambdas, outcomes, rejected)
         };
-        let (mut solver, mut results, mut checks, mut outcomes, rejected) = run(true);
+        let (mut solver, mut results, mut checks, mut lambdas, mut outcomes, rejected) = run(true);
         if rejected {
-            (solver, results, checks, outcomes, _) = run(false);
+            (solver, results, checks, lambdas, outcomes, _) = run(false);
         }
         let contradicted =
             (outcomes[..checks.len()].iter()).any(|outcome| outcome.status == Status::Contradicted);
@@ -226,6 +273,10 @@ impl<'a> Flow<'a, '_> {
                 .rules
                 .get(&key)
                 .map_or(values, |rule| rule.results.clone());
+        }
+        let (passed, pending) = lambdas;
+        for (var, ty) in self::passed(&mut solver, self.db, &passed, &pending) {
+            self.join(var, ty);
         }
         let joined = match self.rules.get(&key) {
             Some(rule) => (rule.results.iter().zip(&values))
@@ -362,7 +413,11 @@ impl<'a> Flow<'a, '_> {
     }
 
     /// A call: its callee's type below the function type its arguments call it as.
-    /// A callee that isn't a function, or whose parameters or arguments aren't
+    /// A `do` block among them enters as its function type, with a fresh variable
+    /// for each parameter and channel its signature leaves open. What the callee
+    /// passes them joins into its signature, and its result, until the block's
+    /// analysis gives it, is a variable that keeps the call undecided. A callee
+    /// that isn't a function or a union of them, or whose arguments aren't
     /// followed yet, gives the dynamic type.
     pub(super) fn call(
         &mut self,
@@ -378,19 +433,36 @@ impl<'a> Flow<'a, '_> {
         let bottom = self.db.bottom();
         let unknown = self.db.unknown();
         let callee_type = self.eval(at, state, operands, callee);
-        let params = self.params(callee_type);
-        let values = self.values(at, state, operands, args, params.as_ref());
+        let params = self.params(callee_type).unwrap_or_default();
+        let values = self.values(at, state, operands, args, Some(&params));
         if callee_type == bottom || values.never {
             return bottom;
         }
-        let mut function = callee_type;
-        if let Type::Quantified { body, .. } = self.db.ty(function) {
-            function = *body;
-        }
-        if !matches!(self.db.ty(function), Type::Function(_))
+        let function = |ty: TypeId| {
+            let ty = match self.db.ty(ty) {
+                Type::Quantified { body, .. } => *body,
+                _ => ty,
+            };
+            matches!(self.db.ty(ty), Type::Function(_))
+        };
+        // A union of functions, as a variable assigned several closures holds
+        let callable = match self.db.ty(callee_type) {
+            Type::Union(members) => members.iter().all(|member| match *member {
+                UnionMember::Type(ty) => function(ty),
+                UnionMember::Expand(_) => false,
+            }),
+            _ => function(callee_type),
+        };
+        if !callable
             || values.comprehension
             || (values.values.iter()).any(|value| matches!(value, Value::Pair(..)))
         {
+            // Nothing is expected of a `do` block the call doesn't type
+            for value in &values.values {
+                if let Value::Lambda(_, lambda, _) = value {
+                    self.lambda(at, lambda.func);
+                }
+            }
             return unknown;
         }
         let (input, output) = self.channels(at.func);
@@ -436,6 +508,13 @@ impl<'a> Flow<'a, '_> {
                         let schema = spreads.next().expect("a schema for each spread");
                         (CallArgument::Spread(schema), span)
                     }
+                    Value::Lambda(key, ref lambda, span) => {
+                        let term = rule.lambda(lambda);
+                        match key {
+                            Some(key) => (CallArgument::Keyword(key, term), span),
+                            None => (CallArgument::Positional(term), span),
+                        }
+                    }
                     Value::Pair(..) => unreachable!("a call has no pairs"),
                 };
                 arguments.push(argument);
@@ -455,6 +534,85 @@ impl<'a> Flow<'a, '_> {
             );
             vec![result]
         })[0]
+    }
+
+    /// A `do` block as a call's argument: its declared function type, with a hole
+    /// for each parameter and channel its signature leaves to the call, and for
+    /// its result until that's known. A rest's element type isn't left to the
+    /// call, so it's dynamic. `None` if the block has no signature, or its declared
+    /// type doesn't line up with its parameters.
+    fn contextual(&mut self, at: At, func: FuncId) -> Option<Lambda> {
+        let (db, ir) = (self.db, self.ir);
+        let data = ir.func(func);
+        let signature = data.signature.as_ref()?;
+        let declared = self.declared[func.index()].clone()?;
+        let (Pattern::Unpack(pattern), Type::Schema(items)) =
+            (&data.params, db.ty(declared.params))
+        else {
+            return None;
+        };
+        let mut holes = Vec::new();
+        let hole = |holes: &mut Vec<Hole>, filled| {
+            holes.push(filled);
+            db.intern(Type::Bound {
+                reference: BoundRef::new(0, holes.len() - 1),
+                kind: Kind::Type,
+            })
+        };
+        // A rest can give several schema items, and every other parameter one
+        let mut singles = (pattern.iter().zip(&signature.params))
+            .filter(|(item, _)| !matches!(item.key, PatternKey::Rest(_)))
+            .map(|(_, &var)| var);
+        let mut schema = Vec::with_capacity(items.len());
+        for item in items.iter() {
+            let rest = item.multiplicity == Multiplicity::Repeated
+                || matches!(item.element, Element::Include(_));
+            let passed = match rest {
+                true => None,
+                false => singles.next()?,
+            };
+            let element = match (passed, &item.element) {
+                (None, element) => element.clone(),
+                (Some(var), Element::Positional(_)) => {
+                    Element::Positional(hole(&mut holes, Hole::Passed(var)))
+                }
+                (Some(var), &Element::Keyed { key, .. }) => Element::Keyed {
+                    key,
+                    value: hole(&mut holes, Hole::Passed(var)),
+                },
+                (Some(_), Element::Include(_)) => unreachable!("not a rest"),
+            };
+            schema.push(self::item(item.multiplicity, element));
+        }
+        if singles.next().is_some() {
+            return None;
+        }
+        let mut channel = |var: Option<VarId>, declared: Option<TypeId>| match var {
+            Some(var) => Some(hole(&mut holes, Hole::Passed(var))),
+            None => declared,
+        };
+        let input = channel(signature.input, declared.input);
+        let output = channel(signature.output, declared.output);
+        let result = match signature.result {
+            Some(var) => match self.joined(var, at) {
+                ty if ty == db.bottom() => hole(&mut holes, Hole::Result),
+                ty => ty,
+            },
+            None => declared.result,
+        };
+        let ty = db.intern(Type::Function(Function {
+            params: db.intern(Type::Schema(schema.into())),
+            result,
+            input,
+            output,
+        }));
+        let unknown = db.unknown();
+        for (item, &var) in pattern.iter().zip(&signature.params) {
+            if let (PatternKey::Rest(_), Some(var)) = (&item.key, var) {
+                self.join(var, unknown);
+            }
+        }
+        Some(Lambda { func, ty, holes })
     }
 
     /// The parameter types a callee's signature alone gives, which don't mention its
@@ -502,7 +660,8 @@ impl<'a> Flow<'a, '_> {
     }
 
     /// Evaluate the items of an argument list or collection in order, each
-    /// expecting what `params` gives its position
+    /// expecting what `params` gives its position. A call's are given `params`,
+    /// and a `do` block among them is left for the call to type.
     fn values(
         &mut self,
         at: At,
@@ -545,6 +704,26 @@ impl<'a> Flow<'a, '_> {
             !never
         };
         for item in items {
+            // A call types a `do` block it's given
+            let lambda = match item {
+                Item::Pos(value) | Item::Key(_, value) if params.is_some() => match value.kind {
+                    ExprKind::Lambda(func) => self.contextual(at, func),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(lambda) = lambda {
+                let (key, value) = match item {
+                    Item::Pos(value) => {
+                        *position = position.map(|index| index + 1);
+                        (None, value)
+                    }
+                    &Item::Key(key, ref value) => (Some(key), value),
+                    _ => unreachable!("a positional or keyed item"),
+                };
+                values.values.push(Value::Lambda(key, lambda, value.span));
+                continue;
+            }
             match item {
                 Item::Pos(value) => {
                     let expected = params.zip(*position).and_then(|(params, index)| {
@@ -652,6 +831,7 @@ impl<'a> Flow<'a, '_> {
                         Value::Key(..) | Value::Pair(..) => {
                             rule.constrain(rule.closed(unknown), element, Check::Quiet);
                         }
+                        Value::Lambda(..) => unreachable!("only a call types a `do` block"),
                     }
                 }
                 vec![rule.term(|holes| {
@@ -685,6 +865,7 @@ impl<'a> Flow<'a, '_> {
                             });
                             spread_into(rule, spread, ty, schema, span);
                         }
+                        Value::Lambda(..) => unreachable!("only a call types a `do` block"),
                     }
                 }
                 vec![rule.term(|holes| {
@@ -721,7 +902,9 @@ impl<'a> Flow<'a, '_> {
                                 spread_into(rule, spread, ty, schema, span);
                                 elements.push((None, schema, Kind::Schema));
                             }
-                            Value::Pair(..) => unreachable!("a tuple or record has no pairs"),
+                            Value::Pair(..) | Value::Lambda(..) => {
+                                unreachable!("a tuple or record has no pairs, and only a call types a `do` block")
+                            }
                         }
                     }
                     vec![rule.term(|holes| {
@@ -952,10 +1135,33 @@ fn root(outcome: &Outcome) -> ObligationId {
         .expect("a contradicted constraint has a diagnostic")
 }
 
-/// Solve, defaulting every unsolved variable whose lower bounds are solved, and
-/// then any variable without lower bounds to the dynamic type of its kind, until
-/// nothing more can be defaulted
-fn default_all(solver: &mut Solver<'_>, db: &Database) -> Vec<Outcome> {
+/// What a call passes the `do` blocks it's given: each variable's solution, once
+/// everything that defaulting can solve is. It runs after the rule is concluded,
+/// so its defaults decide nothing. A block's result that isn't known yet is taken
+/// to be bottom here, so that a callee's binder it also bounds, as `T` in
+/// `fold[T] init@T f@((T, T) -> T)`, is solved from the other bounds.
+fn passed(
+    solver: &mut Solver<'_>,
+    db: &Database,
+    passed: &[(VarId, Term)],
+    pending: &[Term],
+) -> Vec<(VarId, TypeId)> {
+    if passed.is_empty() {
+        return Vec::new();
+    }
+    for &term in pending {
+        solver.constrain(solver.closed(db.bottom()), term, Provenance::default());
+    }
+    default_all(solver, db, false);
+    (passed.iter())
+        .filter_map(|&(var, term)| solver.reify(term).ok().map(|ty| (var, ty)))
+        .collect()
+}
+
+/// Solve, defaulting every unsolved variable whose lower bounds are solved, and,
+/// if `bare`, then any variable without lower bounds to the dynamic type of its
+/// kind, until nothing more can be defaulted
+fn default_all(solver: &mut Solver<'_>, db: &Database, bare: bool) -> Vec<Outcome> {
     let mut outcomes = solver.solve();
     // Each round solves at least one variable; the limit only guards the solver
     for _ in 0..64 {
@@ -968,6 +1174,9 @@ fn default_all(solver: &mut Solver<'_>, db: &Database) -> Vec<Outcome> {
             progress |= solver.default(id).is_ok();
         }
         if !progress {
+            if !bare {
+                break;
+            }
             let bare: Vec<_> = (unsolved.into_iter())
                 .filter(|&id| solver.bounds(id).lower().next().is_none())
                 .collect();

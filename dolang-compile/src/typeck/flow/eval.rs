@@ -79,7 +79,7 @@ impl Flow<'_, '_> {
             &ExprKind::Copy(var) => self.read(at, state, var).ty,
             &ExprKind::Class(decl) => self.class_object(decl),
             ExprKind::Import { module, item } => self.import(module, *item),
-            &ExprKind::Lambda(func) => self.lambda(func),
+            &ExprKind::Lambda(func) => self.lambda(at, func),
             ExprKind::Call { .. } => self.call(at, state, operands, expr, expected),
             ExprKind::Invoke { receiver, args, .. } => {
                 self.eval(at, state, operands, receiver);
@@ -143,11 +143,13 @@ impl Flow<'_, '_> {
         }
     }
 
-    /// Instantiate a closure. Nothing is expected of a `do` block's parameters and
-    /// channels here, so they're dynamic. Its value is its declared type, unless it's
-    /// nested in a generic declaration, whose binders it would need applied, or it's
-    /// overloaded.
-    fn lambda(&mut self, func: FuncId) -> TypeId {
+    /// Instantiate a closure outside a call that types it. Nothing is expected of a
+    /// `do` block's parameters and channels here, so they're dynamic. Its value is
+    /// its declared type under its rigids, with the result its variable joins, if
+    /// that's left to it. A nested def's value is its declared type, unless it's
+    /// nested in a generic declaration, whose binders it would need applied, or
+    /// it's overloaded.
+    pub(super) fn lambda(&mut self, at: At, func: FuncId) -> TypeId {
         let unknown = self.db.unknown();
         let data = self.ir.func(func);
         if let Some(signature) = &data.signature {
@@ -157,6 +159,13 @@ impl Flow<'_, '_> {
             for var in expected {
                 self.join(var, unknown);
             }
+            let Some(mut declared) = self.declared[func.index()].clone() else {
+                return unknown;
+            };
+            if let Some(var) = signature.result {
+                declared.result = self.joined(var, at);
+            }
+            return self.db.intern(Type::Function(declared));
         }
         let FuncKind::Decl(decl) = data.kind else {
             return unknown;

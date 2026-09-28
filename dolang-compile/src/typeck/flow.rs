@@ -17,8 +17,9 @@
 //! function, join into one type, which every nested function reads it as. Its
 //! owner keeps narrowing it, but a flagged one reverts to the joined type after any
 //! step that can call. A non-local return joins its value into its def's result the
-//! same way. A block that reads a joined type depends on it, and is queued again
-//! when it grows.
+//! same way, as does a `do` block's signature: what the calls it's passed to give
+//! its parameters and channels, and its result. A block that reads a joined type
+//! depends on it, and is queued again when it grows.
 //!
 //! A step that can throw joins its state before it into its handler, with the
 //! exception alone on the stack.
@@ -27,10 +28,11 @@
 //! unpacking patterns are checking rules, each solved by a solver of its own (see
 //! [`rule`]). Rules that look up members give the dynamic type. When the queue
 //! empties, the rules still undecided in each function's earliest block that has
-//! any are frozen to default, and iteration resumes, in rounds until none is left. Then a final pass runs every block once
-//! more over its final state, to record what each variable reference and binding
-//! saw and to report: contradicted rules, values that don't fit an annotation or a
-//! declared result, and reads that may be unassigned. A block in a `finally` is
+//! any are frozen to default, and iteration resumes, in rounds until none is left.
+//! Then a final pass runs every block once more over its final state, to record
+//! what each variable reference and binding saw and to report: contradicted rules,
+//! values that don't fit an annotation or a declared result, and reads that may be
+//! unassigned. A block in a `finally` is
 //! judged once per context, and a problem at a span is reported once.
 
 mod eval;
