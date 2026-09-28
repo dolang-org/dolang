@@ -3,6 +3,9 @@
 # and operators call special methods. A receiver the lookup can't decide, and an
 # overloaded method, are left dynamic.
 
+import std:
+  - @Index
+
 pub def drop x
   ...
 
@@ -218,10 +221,22 @@ pub def dynamic x u @ (Point | Box[Int])
   #       ^: flow Unknown
 
 # A literal key picks its own item, since the key isn't decayed
-pub def looked d @ Dict[{a: Int, b: Str}]
+pub def looked d @ Dict[{a: Int, b: Str}] k @ Sym i @ Index[{a: Int}]
   let a = d[:a:]
   let _ = a
   #       ^: flow std.Int
   let b = d[:b:]
   let _ = b
   #       ^: flow std.Str
+  # A key type owns every item whose key it admits
+  let e = d[k]
+  let _ = e
+  #       ^: flow std.Int | std.Str
+  # Nothing has the key
+  let c = d[:c:]
+  let _ = c
+  #       ^: flow Unknown
+  let j = i[:a:]
+  let _ = j
+  #       ^: flow std.Int
+  d[:a:] = 1

@@ -227,8 +227,13 @@ many items contradict the judgment, naming the expected item that can go missing
 or the actual item that can be excess. So does a literal key whose count can
 fall outside its item's multiplicity, where a domain on the actual side may hold
 the key any number of times. Keys not named on the expected side go to its
-single repeated domain; several domains are residual. When several expected
-repeated items could take the overflow, the judgment is residual.
+single repeated domain. Several repeated domains own keys as a literal key does:
+each member of an actual item's key goes to the narrowest domain admitting it,
+and to any domain lying inside it, and its value must fit each. So a lookup
+bound `{*(K): V, ...}` isn't vacuous, though its `...` admits every key. A
+domain key still to be inferred waits for its solution, and one whose relation
+to an item's key can't be decided is residual. When several expected repeated
+items could take the overflow, the judgment is residual.
 
 A positional item may someday be admitted as an `Int`-keyed item. Until that
 rule exists, positional items against an expected schema with none but a domain
