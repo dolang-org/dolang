@@ -78,6 +78,27 @@ pub def typed xs @ Array[Int]
   let _ = fs
   let _ = gs
 
+pub def make[T] f @ ((T) -> nil) -> Array[T]
+  ...
+
+# A call among the items is typed against what's expected of it, while a
+# variable read sees the body's narrowing
+pub def made xs @ Array[Int] ys @ Array[Int | nil]
+  let direct @ Array[Str] = make (do |y| drop y)
+  #                                           ^: flow std.Str
+  let zs @ Array[Array[Str]] = $
+    for _x = xs
+      - $make(do |y| drop y)
+      #                   ^: flow std.Str
+  let ss @ Array[Str] = $
+    for y = ys
+      if y
+        - "n$y"
+        #    ^: flow std.Int
+  let _ = direct
+  let _ = zs
+  let _ = ss
+
 pub def specs *ds @ Dict[{((Int) -> Int), ?name: Str, ?icon: Str}] -> nil
   ...
 

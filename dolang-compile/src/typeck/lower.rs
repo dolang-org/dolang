@@ -219,7 +219,8 @@ struct Ctx<'u> {
     guard: Option<BlockId>,
     /// The class whose private members are named here
     class: Option<DeclId>,
-    /// Lowering a comprehension body's items, whose values go in variables
+    /// Lowering a comprehension body's items, whose variable reads and short
+    /// circuits go in variables
     hoist: bool,
 }
 
