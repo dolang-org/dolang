@@ -47,9 +47,7 @@ impl Flow<'_, '_> {
                 }
                 self.intrinsic(Intrinsic::Str)
             }
-            ExprKind::BinConcat { parts, rule } => {
-                self.bin_concat(at, state, operands, parts, *rule)
-            }
+            ExprKind::BinConcat { parts, .. } => self.bin_concat(at, state, operands, parts),
             ExprKind::Fmt(parts) => {
                 let bottom = self.db.bottom();
                 let mut never = false;

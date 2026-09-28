@@ -61,7 +61,7 @@ mod expr;
 mod tests;
 mod validate;
 
-use std::cell::{Cell, Ref, RefCell, RefMut};
+use std::cell::{Ref, RefCell, RefMut};
 
 use dolang_util::mono::MonoVec;
 
@@ -90,7 +90,6 @@ macro_rules! id {
 id!(FuncId);
 id!(BlockId);
 id!(VarId);
-id!(RuleId);
 
 /// A function's source
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -333,7 +332,6 @@ pub(crate) struct Graph {
     funcs: MonoVec<RefCell<Func>>,
     blocks: MonoVec<RefCell<Block>>,
     vars: MonoVec<RefCell<Var>>,
-    rules: Cell<u32>,
 }
 
 impl Graph {
@@ -405,13 +403,6 @@ impl Graph {
         id
     }
 
-    pub(crate) fn alloc_rule(&self) -> RuleId {
-        let id = RuleId(self.rules.get());
-        self.rules
-            .set(id.0.checked_add(1).expect("graph too large"));
-        id
-    }
-
     pub(crate) fn func(&self, id: FuncId) -> Ref<'_, Func> {
         self.funcs[id.index()].borrow()
     }
@@ -449,7 +440,6 @@ impl Graph {
             funcs,
             blocks: self.blocks.drain().map(RefCell::into_inner).collect(),
             vars,
-            rules: self.rules.get(),
         }
     }
 }
@@ -459,7 +449,6 @@ pub(crate) struct Ir {
     funcs: Vec<Func>,
     blocks: Vec<Block>,
     vars: Vec<Var>,
-    rules: u32,
 }
 
 impl Ir {
@@ -486,11 +475,6 @@ impl Ir {
     /// How many variables were allocated
     pub(crate) fn var_count(&self) -> usize {
         self.vars.len()
-    }
-
-    /// How many rules were allocated
-    pub(crate) fn rules(&self) -> usize {
-        self.rules as usize
     }
 }
 

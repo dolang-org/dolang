@@ -466,9 +466,9 @@ through any `finally`; a variable survives the empty stack that a `finally` is
 entered with.
 
 A block owns its steps and ends in a terminal. A step is a statement whose
-expressions stay trees. Expressions mirror the AST. Only checking rules carry a
-`RuleId`: calls, method invocations (lookup and call in one rule), member
-accesses, subscripts, operators and collection literals. `&&` and `||` are
+expressions stay trees. Expressions mirror the AST. Checking rules are calls,
+method invocations (lookup and call in one rule), member accesses, subscripts,
+operators and collection literals. `&&` and `||` are
 control flow, so a narrowing test's successors begin with `Assume` steps. A
 pattern binds without its defaults; each default is a `Default` step after the
 binding step, or on the success edge of the terminal that binds it, which joins
@@ -640,20 +640,25 @@ doesn't mention the callee's binders. A rule contributes only once decided:
 without contradiction, with its results solved without defaulting. Until then it
 contributes bottom, and a rule with a bottom input doesn't run. A rule's results
 are its latest run's, which needn't be monotone: the analysis converges because
-states and accumulators widen. When the queue empties, the undecided
-rules of each function's earliest block that has any are frozen and requeued. A
-frozen rule defaults its variables on every run, a variable without lower bounds
-becoming `Unknown`. Rounds repeat until no rule is undecided.
+states and accumulators widen. Each (block, context) records whether its
+latest run left a rule undecided. When the queue empties, each function's
+earliest such block is marked and requeued, and its next run, once, defaults the
+variables of each rule it leaves undecided, a variable without lower bounds
+becoming `Unknown`. A marked block that reruns later, because its inputs grew,
+waits for another stuck point, so it never defaults on inputs still settling.
+Rounds repeat until no block is undecided.
 
 Lowering copies a variable's value into a statement's destination, such as a
 function's result, as `ExprKind::Copy`, which flow reads without recording it as
 a reference.
 
-Once the rounds end, a final pass reruns every block over its final state. It
-records what each variable reference and binding saw, which the `flow` judgment
-reports, and reports each problem once per span: contradicted rules, values that
-don't fit a local's annotation or a function's declared result, and reads that
-may be unassigned. Checks the solver can't decide join `Check::undecided`.
+Once the rounds end, a final pass reruns every block over its final state,
+defaulting any rule it leaves undecided, as the last run of a marked block did.
+It records what each variable reference and binding saw, which the `flow`
+judgment reports, and reports each problem once per span: contradicted rules,
+values that don't fit a local's annotation or a function's declared result, and
+reads that may be unassigned. Checks the solver can't decide join
+`Check::undecided`.
 
 ## Checking units and diagnostic locations
 

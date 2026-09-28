@@ -282,19 +282,16 @@ impl<'u> Scope<'_, '_, 'u> {
             LValue::Field { object, field, .. } => Target::Field {
                 object: self.expr(object),
                 member: self.member_key(*field, false, false),
-                rule: self.graph().alloc_rule(),
             },
             LValue::PrivateField { object, field, .. } => Target::Field {
                 object: self.expr(object),
                 member: self.member_key(*field, false, true),
-                rule: self.graph().alloc_rule(),
             },
             LValue::Index { exprs, .. } => {
                 let object = self.expr(&exprs[0]);
                 Target::Index {
                     object,
                     index: self.expr(&exprs[1]),
-                    rule: self.graph().alloc_rule(),
                 }
             }
         };
@@ -776,7 +773,6 @@ impl<'u> Scope<'_, '_, 'u> {
                 let args = ExprKind::Collection {
                     kind: Collection::Tuple,
                     items: vec![Item::Pos(operand)],
-                    rule: self.graph().alloc_rule(),
                 };
                 self.emit(Step::Let {
                     pattern: Pattern::Unpack(items),
@@ -830,7 +826,6 @@ impl<'u> Scope<'_, '_, 'u> {
                 let call = ExprKind::Call {
                     callee: Box::new(decorator),
                     args: vec![Item::Pos(value)],
-                    rule: self.graph().alloc_rule(),
                 };
                 expr(call, span)
             })
@@ -916,7 +911,6 @@ impl<'u> Scope<'_, '_, 'u> {
                 target: Target::Field {
                     object: expr(ExprKind::Copy(var), span),
                     member,
-                    rule: self.graph().alloc_rule(),
                 },
                 value: expr(ExprKind::Copy(value), span),
             });

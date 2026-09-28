@@ -1,33 +1,22 @@
 //! Structural validation of a finished graph. Stack depths are checked by flow
 //! analysis, which knows each block's tag stack.
 
-use std::collections::HashSet;
-
 use super::{
-    Against, BlockId, Expr, ExprKind, FuncId, FuncKind, Ir, Pattern, RuleId, Step, Tag, Target,
-    Terminal, VarId,
+    Against, BlockId, Expr, ExprKind, FuncId, FuncKind, Ir, Pattern, Step, Tag, Target, Terminal,
+    VarId,
 };
 
 /// Why a graph is malformed
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Invalid {
     /// An edge or handler leads to another function's block
-    ForeignEdge {
-        from: BlockId,
-        to: BlockId,
-    },
+    ForeignEdge { from: BlockId, to: BlockId },
     /// An edge within a function goes to a block inside a `finally` body the source
     /// isn't in, other than by entering it
-    Deeper {
-        from: BlockId,
-        to: BlockId,
-    },
+    Deeper { from: BlockId, to: BlockId },
     /// A `Leave` enters a block that isn't directly inside the source's `finally`
     /// bodies, or its tag continues to a block inside one the source isn't in
-    LeaveDepth {
-        from: BlockId,
-        to: BlockId,
-    },
+    LeaveDepth { from: BlockId, to: BlockId },
     /// `EndFinally` outside any `finally`
     EndOutside(BlockId),
     /// `Return` other than in its function's exit block, or an exit block that
@@ -38,25 +27,15 @@ pub(crate) enum Invalid {
     NonLocal(BlockId),
     /// A variable used by a function that neither owns it nor captures it from an
     /// enclosing one
-    Var {
-        func: FuncId,
-        var: VarId,
-    },
+    Var { func: FuncId, var: VarId },
     /// A parameter owned by another function
-    Param {
-        func: FuncId,
-        var: VarId,
-    },
+    Param { func: FuncId, var: VarId },
     /// A signature on a function other than a nested closure, with a variable its
     /// parent doesn't own or it doesn't capture, or with an entry per parameter
     /// that isn't one per pattern item
     Signature(FuncId),
     /// A closure instantiated other than directly in its parent
-    Lambda {
-        func: FuncId,
-        lambda: FuncId,
-    },
-    Rule(RuleId),
+    Lambda { func: FuncId, lambda: FuncId },
 }
 
 impl Ir {
@@ -66,7 +45,6 @@ impl Ir {
     ///
     /// The first defect found.
     pub(crate) fn validate(&self) -> Result<(), Invalid> {
-        let mut rules = HashSet::new();
         for (id, func) in self.funcs() {
             for var in func.params.vars() {
                 if self.var(var).owner != id {
@@ -110,18 +88,8 @@ impl Ir {
                     Step::Assign { target, value } => {
                         match target {
                             Target::Var(var) => vars.push(*var),
-                            Target::Field { object, rule, .. } => {
-                                exprs.push(object);
-                                check.rule(&mut rules, *rule)?;
-                            }
-                            Target::Index {
-                                object,
-                                index,
-                                rule,
-                            } => {
-                                exprs.extend([object, index]);
-                                check.rule(&mut rules, *rule)?;
-                            }
+                            Target::Field { object, .. } => exprs.push(object),
+                            Target::Index { object, index, .. } => exprs.extend([object, index]),
                         }
                         exprs.push(value);
                     }
@@ -187,9 +155,6 @@ impl Ir {
                 expr.walk(&mut |expr| nested.push(expr));
             }
             for expr in nested {
-                if let Some(rule) = expr.rule() {
-                    check.rule(&mut rules, rule)?;
-                }
                 check.expr(expr, &mut vars)?;
             }
             for var in vars {
@@ -219,13 +184,6 @@ struct Check<'a> {
 }
 
 impl Check<'_> {
-    fn rule(&self, rules: &mut HashSet<RuleId>, rule: RuleId) -> Result<(), Invalid> {
-        if rule.index() >= self.ir.rules() || !rules.insert(rule) {
-            return Err(Invalid::Rule(rule));
-        }
-        Ok(())
-    }
-
     fn expr(&self, expr: &Expr, vars: &mut Vec<VarId>) -> Result<(), Invalid> {
         match &expr.kind {
             ExprKind::Var(var) | ExprKind::Copy(var) => vars.push(*var),
