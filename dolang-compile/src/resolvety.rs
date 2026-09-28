@@ -1001,6 +1001,7 @@ impl Check<'_> {
             Expr::Ident(_)
             | Expr::Escape(..)
             | Expr::EscapeByte(..)
+            | Expr::Stub(_)
             | Expr::Literal(_)
             | Expr::Int(..)
             | Expr::VerbatimInt(..)

@@ -96,7 +96,7 @@ pub @let ArgSpec = Dict[{
 # nested [`Args`](args.Args) at `p[p.cmd]`. The result's `handler` field is the matched
 # handler.
 pub @let CmdSpec = Dict[{
-  cmd: Str, ?help: Str, ?usage: Str, ...(SpecItem | Handler),
+  cmd: Str, ?help: Str, ?usage: Str, *(SpecItem | Handler),
 }]
 
 # An item of an argument specification.

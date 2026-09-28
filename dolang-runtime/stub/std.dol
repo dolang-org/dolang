@@ -12,7 +12,7 @@ pub @let Empty = Union[]
 # The singleton [`Null`](std.Null) value.
 #
 # As an iterator it ends immediately; as a sink it discards every value.
-pub let null = nil
+pub let null = ...
 
 #
 # Creates an array from positional arguments.
@@ -1624,7 +1624,7 @@ pub class CanceledError: Error
 # See [`static`](std.static) for the uninherited counterpart, and
 # [Class and Static Members](../../language/classes.md#class-and-static-members)
 # for the full semantics.
-pub let class = nil
+pub let class = ...
 
 #
 # Raised on compilation errors.
@@ -3569,7 +3569,7 @@ pub class StateError: RuntimeError
 # See [`class`](std.class) for the inherited counterpart, and
 # [Class and Static Members](../../language/classes.md#class-and-static-members)
 # for the full semantics.
-pub let static = nil
+pub let static = ...
 
 #
 # Strings are immutable sequences of UTF-8 bytes.
@@ -4383,7 +4383,7 @@ pub class TimedOutError: RuntimeError
 # object is in the prelude, so `Tuple(iterable)` is available without an
 # explicit import.
 #
-pub class Tuple[*Ts]: Iterable[Union[...Ts]] @Seq[Union[...Ts]]
+pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}] Iterable[Union[...Ts]] @Seq[Union[...Ts]]
   #
   #
   # Builds a tuple from an iterable.

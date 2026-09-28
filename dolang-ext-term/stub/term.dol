@@ -707,7 +707,7 @@ do -> Text
 #
 # Unlike [`output()`](term.output), it is not intercepted by an enclosing
 # [`capture`](term.capture).
-pub let console = nil
+pub let console = ...
 
 # A [`Console`](term.Console) that forwards every operation to whatever
 # [`output()`](term.output) currently resolves to, resolved fresh on each
@@ -717,4 +717,4 @@ pub let console = nil
 # unnamed program output keeps following capture and `progress` takeover for
 # the life of the process -- see
 # [Terminal output](../../shell/terminal-output.md#child-process-output).
-pub let default = nil
+pub let default = ...

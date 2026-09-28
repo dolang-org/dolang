@@ -4,13 +4,13 @@
 # [`Float`](std.Float) (or their subclasses) — not arbitrary types.
 
 # The ratio of a circle's circumference to its diameter.
-pub let PI @Float = nil
+pub let PI @Float = 3.141592653589793
 
 # One full turn in radians.
-pub let TAU @Float = nil
+pub let TAU @Float = 6.283185307179586
 
 # The base of the natural logarithm.
-pub let E @Float = nil
+pub let E @Float = 2.718281828459045
 
 # Computes the square root.
 pub def sqrt x @ (Int | Float) -> Float

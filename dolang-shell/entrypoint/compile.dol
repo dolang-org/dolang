@@ -912,27 +912,26 @@ def check p
     else
       add $found $name
 
-  # The report goes to standard output, as `extract`'s does
   let failed = false
   for unit = units
     for diag = unit.diagnostics()
       if (diag.severity == :ERROR:)
         failed = true
-      put "$(diag.render())\n"
+      echo $diag.render()
   let result = compile.check $units
   for diag = result.diagnostics
-    put "$(diag.render())\n"
+    echo $diag.render()
   let undecided = result.undecided()
   if (undecided != "")
-    put "undecided checks:\n$undecided"
+    echo "undecided checks:\n$(undecided.trim_end())"
   missing.sort()
   for name = missing
-    put "not found, treated as unknown: $name\n"
+    echo "not found, treated as unknown: $name"
   let verdict = if (result.validated && !failed)
     "validated"
   else
     "partial"
-  put "$verdict: $(units.len) units, $(result.diagnostics.len) diagnostics\n"
+  echo "$verdict: $(units.len) units, $(result.diagnostics.len) diagnostics"
   if (verdict != "validated")
     shell.exit 1
 

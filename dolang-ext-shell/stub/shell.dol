@@ -491,7 +491,7 @@ pub @class Args: std.Seq[Str]
 # let first ...rest = shell.args
 # run tool ...rest
 # ```
-pub let args @ Args = nil
+pub let args @ Args = ...
 
 # The type of [`env`](shell.env), which reads, writes, iterates, spreads, and
 # destructures like a [`Dict`](std.Dict) of variable names and values.
@@ -563,32 +563,32 @@ pub @class Env: std.Index[Str, Str] std.Assign[Str, Str | nil] std.Spread[Str, S
 # for name value = env
 #   echo "$name=$value"
 # ```
-pub let env @ Env = nil
+pub let env @ Env = ...
 
 # The path the host reports for the running `dolang` executable, as an
 # [`fs.Path`](fs.Path).
 #
 # Not canonicalized.
-pub let exe = nil
+pub let exe = ...
 
 # What `dolang` is executing.
 #
 # - For `dolang script.dol`, an [`fs.Path`](fs.Path) for `script.dol`
 # - For `dolang -m foo.bar`, the string `"foo.bar"`
 # - In the REPL, `nil`
-pub let program = nil
+pub let program = ...
 
 # A [`Stdin`](shell.Stdin) handle for the process's standard input, and the
 # initial input of the main strand.
-pub let stdin = nil
+pub let stdin = ...
 
 # A [`Stdout`](shell.Stdout) handle for the process's standard output, and the
 # initial output of the main strand.
-pub let stdout = nil
+pub let stdout = ...
 
 # A [`Stderr`](shell.Stderr) handle for the process's standard error.
-pub let stderr = nil
+pub let stderr = ...
 
 # A `(major, minor, patch)` [`Tuple`](std.Tuple) with the version of the
 # running `dolang` build.
-pub let VERSION = nil
+pub let VERSION = ...

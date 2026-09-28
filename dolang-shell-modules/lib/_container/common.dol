@@ -6,7 +6,7 @@ import
 let :id ... = run
 
 pub def runtime_dir()
-  (xdg.runtime_dir() || Path "/run/user/$(sub id "-u")")
+  (xdg.runtime_dir() || Path "/run/user/$(sub do id "-u")")
 
 pub def cache_home()
   xdg.cache_home()

@@ -1,0 +1,6 @@
+let value = ... 1
+# error: `...` must be the whole value of a `let`
+#   --> stub_let.dol:LL:LL
+#    |
+# LL | let value = ... 1
+#    |                 ^

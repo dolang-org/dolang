@@ -223,6 +223,10 @@ impl Parser<'_> {
             }
         } else {
             self.expect(scope, &[ExpectKind::Indent])?;
+            // A comment line before the body leaves only its newline
+            while let Some(token!(TokenInfo::StmtSep)) = self.peek()? {
+                self.advance();
+            }
             if let Some(token!(TokenInfo::Ellipsis, span)) = self.peek()? {
                 self.advance();
                 while let Some(token!(TokenInfo::StmtSep)) = self.peek()? {

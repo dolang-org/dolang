@@ -43,6 +43,8 @@ impl<'u> Scope<'_, '_, 'u> {
             ast::Expr::Nil(_) => ExprKind::Literal(Literal::Nil),
             ast::Expr::Sym(span) => ExprKind::Literal(Literal::Sym(self.symbol(*span))),
             ast::Expr::EscapeByte(..) => ExprKind::Bin,
+            // Raises an error instead of giving a value
+            ast::Expr::Stub(_) => ExprKind::Never,
             ast::Expr::BinConcat { exprs, .. } => self.bin_concat(exprs, span),
             ast::Expr::Concat { exprs, .. } => self.concat(exprs, span),
             ast::Expr::Fmt { value, spec, .. } => ExprKind::FmtValue {
