@@ -720,8 +720,8 @@ b12 f0:
     );
 }
 
-/// Nested loops and filters with `elif` and `else`. Constants and lambdas stay in
-/// the tree; a nested collection is one value, whose own items stay in its tree.
+/// Nested loops and filters with `elif` and `else`. Constants, lambdas and nested
+/// collections stay in the tree, and a nested collection's own items are hoisted.
 #[test]
 fn comprehension_nesting() {
     check(
@@ -739,8 +739,8 @@ let ys = $
       - $x
 ",
         "
-f0 module: entry b0, exit b1, params (), bottom x t5 y t7 t9 t10 t11 t12
-f1 decl0 in f0: entry b13, exit b14, params (), signature () <t10 >t11 -> t12, captures t10 t11 t12! x
+f0 module: entry b0, exit b1, params (), bottom x t5 y t7 t8 t10 t11 t12 t13
+f1 decl0 in f0: entry b13, exit b14, params (), signature () <t11 >t12 -> t13, captures t11 t12 t13! x
 b0 f0:
   let xs = array[1, 2]
   let t2 = xs
@@ -750,7 +750,7 @@ b1 f0:
 b2 f0:
   next x in t2 then b4 else b3
 b3 f0:
-  let ys = array[for {for {t7}, if {1} else {if {f1} else {t9}}}]
+  let ys = array[for {for {array[t7, t8]}, if {1} else {if {f1} else {t10}}}]
   result0 = ys
   goto b1
 b4 f0:
@@ -761,7 +761,8 @@ b5 f0:
 b6 f0:
   if (x > 1) then b10 else b9
 b7 f0:
-  t7 = array[x, y]
+  t7 = x
+  t8 = y
   goto b6
 b8 f0:
   goto b3
@@ -770,7 +771,7 @@ b9 f0:
 b10 f0:
   goto b8
 b11 f0:
-  t9 = x
+  t10 = x
   goto b8
 b12 f0:
   goto b8
@@ -778,7 +779,7 @@ b13 f1:
   result1 = x
   goto b14
 b14 f1:
-  t12 = result1
+  t13 = result1
   return
 ",
     );

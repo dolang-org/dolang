@@ -159,6 +159,19 @@ pub(crate) enum Multiplicity {
     Repeated,
 }
 
+impl Multiplicity {
+    /// An item of multiplicity `inner` within one of multiplicity `self`
+    pub(crate) fn compose(self, inner: Multiplicity) -> Multiplicity {
+        match (self, inner) {
+            (Multiplicity::Required, inner) => inner,
+            (Multiplicity::Optional, Multiplicity::Repeated) | (Multiplicity::Repeated, _) => {
+                Multiplicity::Repeated
+            }
+            (Multiplicity::Optional, _) => Multiplicity::Optional,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Element {
     Positional(TypeId),

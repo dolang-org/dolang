@@ -78,6 +78,8 @@ pub(crate) struct Relation {
 pub(crate) enum CallArgument {
     Positional(Term),
     Keyword(SymbolId, Term),
+    /// A value by a key of the first type
+    Pair(Term, Term),
     /// The schema of a spread value's items
     Spread(Term),
 }
@@ -489,36 +491,26 @@ impl<'db> Solver<'db> {
         input: Option<Term>,
         output: Option<Term>,
     ) -> Term {
-        let mut group = Vec::new();
-        let mut slot = |term: Term, kind| {
-            group.push(term);
-            self.db.intern(Type::Bound {
-                reference: BoundRef::new(0, group.len() - 1),
-                kind,
-            })
-        };
-        let items: Vec<_> = args
-            .iter()
-            .map(|arg| match *arg {
-                CallArgument::Positional(term) => SchemaItem {
-                    multiplicity: Multiplicity::Required,
-                    element: Element::Positional(slot(term, Kind::Type)),
-                },
-                CallArgument::Keyword(name, term) => SchemaItem {
-                    multiplicity: Multiplicity::Required,
-                    element: Element::Keyed {
-                        key: self.db.intern(Type::Literal(Literal::Sym(name))),
-                        value: slot(term, Kind::Type),
-                    },
-                },
-                CallArgument::Spread(term) => SchemaItem {
-                    multiplicity: Multiplicity::Required,
-                    element: Element::Include(slot(term, Kind::Schema)),
-                },
-            })
+        let args: Vec<_> = (args.iter())
+            .map(|&arg| (Multiplicity::Required, arg))
             .collect();
+        self.call_items(&args, result, input, output)
+    }
+
+    /// [`Solver::call`] with arguments that may be passed zero or more times, as a
+    /// comprehension passes them
+    pub(crate) fn call_items(
+        &self,
+        args: &[(Multiplicity, CallArgument)],
+        result: Term,
+        input: Option<Term>,
+        output: Option<Term>,
+    ) -> Term {
+        let mut group = Vec::new();
+        let params = self.arguments(args, &mut group);
+        let mut slot = |term: Term, kind| hole(self.db, &mut group, term, kind);
         let function = Function {
-            params: self.db.intern(Type::Schema(items.into())),
+            params,
             result: slot(result, Kind::Type),
             input: input.map(|term| slot(term, Kind::Type)),
             output: output.map(|term| slot(term, Kind::Type)),
@@ -526,6 +518,38 @@ impl<'db> Solver<'db> {
         let ty = self.db.intern(Type::Function(function));
         let environment = self.intern_environment(self.empty_environment(), group);
         self.view(ty, environment)
+    }
+
+    /// The schema of items passed as arguments are
+    pub(crate) fn arguments_schema(&self, args: &[(Multiplicity, CallArgument)]) -> Term {
+        let mut group = Vec::new();
+        let schema = self.arguments(args, &mut group);
+        let environment = self.intern_environment(self.empty_environment(), group);
+        self.view(schema, environment)
+    }
+
+    /// Arguments' schema, with a hole in `group` for each term
+    fn arguments(&self, args: &[(Multiplicity, CallArgument)], group: &mut Vec<Term>) -> TypeId {
+        let mut slot = |term: Term, kind| hole(self.db, group, term, kind);
+        let items: Vec<_> = args
+            .iter()
+            .map(|&(multiplicity, arg)| SchemaItem {
+                multiplicity,
+                element: match arg {
+                    CallArgument::Positional(term) => Element::Positional(slot(term, Kind::Type)),
+                    CallArgument::Keyword(name, term) => Element::Keyed {
+                        key: self.db.intern(Type::Literal(Literal::Sym(name))),
+                        value: slot(term, Kind::Type),
+                    },
+                    CallArgument::Pair(key, value) => Element::Keyed {
+                        key: slot(key, Kind::Type),
+                        value: slot(value, Kind::Type),
+                    },
+                    CallArgument::Spread(term) => Element::Include(slot(term, Kind::Schema)),
+                },
+            })
+            .collect();
+        self.db.intern(Type::Schema(items.into()))
     }
 
     pub(crate) fn infer(&mut self) -> Term {
@@ -1908,6 +1932,15 @@ impl<'db> Solver<'db> {
             diagnostics,
         }
     }
+}
+
+/// A hole at depth 0 in `group`, filled by `term`
+fn hole(db: &Database, group: &mut Vec<Term>, term: Term, kind: Kind) -> TypeId {
+    group.push(term);
+    db.intern(Type::Bound {
+        reference: BoundRef::new(0, group.len() - 1),
+        kind,
+    })
 }
 
 mod lattice;

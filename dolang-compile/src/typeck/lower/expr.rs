@@ -393,9 +393,21 @@ impl<'u> Scope<'_, '_, 'u> {
     }
 
     /// Lower an item's value. In a comprehension's body, a value other than a
-    /// constant or lambda goes in a variable, assigned where the body runs; the
-    /// others stay in the tree, where the rule's expected type reaches them.
+    /// constant, lambda or collection goes in a variable, assigned where the body
+    /// runs; the others stay in the tree, where the rule's expected type reaches
+    /// them. A collection's own items are lowered as the body's are.
     fn item_value(&mut self, node: &'u ast::Expr) -> Expr {
+        if self.ctx.hoist
+            && matches!(
+                node,
+                ast::Expr::Array { .. }
+                    | ast::Expr::Tuple { .. }
+                    | ast::Expr::Record { .. }
+                    | ast::Expr::Dict { .. }
+            )
+        {
+            return self.expr(node);
+        }
         let hoist = mem::replace(&mut self.ctx.hoist, false);
         let value = self.expr(node);
         self.ctx.hoist = hoist;
@@ -457,7 +469,10 @@ impl<'u> Scope<'_, '_, 'u> {
         self.end(Terminal::Branch(exit));
         self.switch(exit);
         self.ctx.hoist = hoist;
-        Item::For(items)
+        Item::For {
+            items,
+            span: node.for_span,
+        }
     }
 
     /// A comprehension's filter, lowered as an `if` statement whose branches
@@ -474,6 +489,7 @@ impl<'u> Scope<'_, '_, 'u> {
             .chain(node.elif_branches.iter().map(|(branch, _)| branch))
             .collect();
         let mut arms = Vec::new();
+        let mut spans = Vec::new();
         for (index, branch) in branches.iter().enumerate() {
             let fallback = if index + 1 < branches.len() || complete {
                 self.block()
@@ -485,6 +501,7 @@ impl<'u> Scope<'_, '_, 'u> {
             self.test(&branch.expr, branch.bind.as_ref(), &frame, then, fallback);
             self.switch(then);
             arms.push(self.body_items(&frame, &branch.body.elems, items));
+            spans.push(branch.span);
             self.end(Terminal::Branch(join));
             self.switch(fallback);
         }
@@ -498,8 +515,8 @@ impl<'u> Scope<'_, '_, 'u> {
             }
             None => Vec::new(),
         };
-        for then in arms.into_iter().rev() {
-            else_ = vec![Item::If { then, else_ }];
+        for (then, span) in arms.into_iter().zip(spans).rev() {
+            else_ = vec![Item::If { then, else_, span }];
         }
         self.ctx.hoist = hoist;
         else_.pop().expect("an `if` has a first branch")

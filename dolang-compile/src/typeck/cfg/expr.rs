@@ -153,13 +153,17 @@ pub(crate) enum Item {
     Pair(Expr, Expr),
     Spread(Expr),
     /// A comprehension's loop: its items occur zero or more times. The iteratee and
-    /// pattern are lowered to blocks before the item.
-    For(Vec<Item>),
+    /// pattern are lowered to blocks before the item. `span` is its `for`'s.
+    For {
+        items: Vec<Item>,
+        span: Span,
+    },
     /// A comprehension's filter: `then`'s items occur, or `else_`'s. The condition is
-    /// lowered to blocks before the item.
+    /// lowered to blocks before the item. `span` is its `if`'s.
     If {
         then: Vec<Item>,
         else_: Vec<Item>,
+        span: Span,
     },
 }
 
@@ -254,8 +258,8 @@ impl Item {
                     key.walk(visit);
                     value.walk(visit);
                 }
-                Item::For(items) => Item::walk_all(items, visit),
-                Item::If { then, else_ } => {
+                Item::For { items, .. } => Item::walk_all(items, visit),
+                Item::If { then, else_, .. } => {
                     Item::walk_all(then, visit);
                     Item::walk_all(else_, visit);
                 }

@@ -492,8 +492,9 @@ captures, which are never narrowed.
 Comprehensions also cross blocks mid-expression. A `for` item's iteratee, an
 `if` item's condition and each item value are lowered to blocks before the
 collection or call that holds them, with the values assigned to synthetic
-variables; a constant or lambda stays in the tree, where the rule's expected
-type reaches it. Items can't assign, so no state crosses iterations: a `for`
+variables; a constant, lambda or collection literal stays in the tree, where
+the rule's expected type reaches it, with a collection's own items lowered the
+same way. Items can't assign, so no state crosses iterations: a `for`
 item is a `Next` whose body continues to its exit, with no back edge. The
 collection keeps a tree of `For` and `If` items with the variables as leaves,
 which says only how often each value occurs, and flow builds the rule's schema
@@ -597,13 +598,35 @@ variables' joined types, and depend on them.
 Checking rules (`flow/rule.rs`) are solved by a fresh solver on each run, and
 only reified types leave it:
 
-- A call constrains its callee below `Solver::call` of its arguments, passing
-  the caller's declared channels. A callee that isn't a function type or a
-  union of them, an overloaded def, and a call with a comprehension give
-  `Unknown`.
+- A call constrains its callee below `Solver::call_items` of its arguments,
+  passing the caller's declared channels. A callee that isn't a function type
+  or a union of them, and an overloaded def, give `Unknown`. Its arguments wait
+  until its callee isn't bottom, since what they're expected to be comes from
+  the callee's parameters: those that don't mention its binders, once the
+  binders it takes as channels are the caller's.
+- A comprehension's items are passed as often as its tree says. The items of an
+  outermost `for`, with everything nested in it, join into one repeated item of
+  each kind: `*T` for positional items, `*k: V` for each literal key, and
+  `*(K): V` for the rest. An `if` outside every `for` passes its branches'
+  items once if the branches are alike (the same kinds and keys, each required),
+  and otherwise makes them optional; the solver's limit on alignments bounds
+  what that costs. A spread that's repeated or optional gives its solved
+  schema's items, so that the solver never has to repeat or leave out an
+  inclusion of several items.
 - An array, dict, tuple or record literal builds its designated class over
-  inference variables for its items, a spread through `Spread[S]`. A
-  comprehension in a tuple or record gives `Unknown` until #793.
+  inference variables for its items, a spread through `Spread[S]`. An array
+  joins every item into its element type, however often it occurs, and expects
+  each item to be the element of an expected `Array[E]`. A dict joins its items
+  into `Dict[{*(K): V}]`, so that a local it's assigned to can gain entries,
+  unless it's expected to be a `Dict[S]` (alone or as one member of a union):
+  then its items' own schema, built as a call's arguments are, must be below
+  `S`, and it's `Dict[S]`. Tuples and records have no vertical form, so they
+  hold no comprehension.
+- A `do` block among a call's arguments, or a collection's items when the
+  collection has an expected type, is typed by the rule. A rule with a check it
+  couldn't resolve counts as undecided, so defaulting rounds reach it. Once no
+  undecided rule is left, a block's parameters and channels that nothing gave
+  anything become `Unknown`, which may start more rounds.
 - A `for` item is `T` of `iteratee <: BaseIterable[T]`, and an unpacking pattern
   takes `value <: Unpack[S]`, with every item optional and anything else
   admitted, since unpacking checks the count as it runs.
