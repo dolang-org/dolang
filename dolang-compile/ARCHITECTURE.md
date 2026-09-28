@@ -487,7 +487,7 @@ statement's earlier short circuits. `If` pops its condition, so a short circuit
 operand. A rule evaluated before a short circuit is thus judged after it; flow
 state can't observe the difference, since expressions neither assign nor bind,
 narrowing in the right operand is rejoined at the join, and calls change only
-captures, which are never narrowed.
+volatile variables, which are never narrowed.
 
 Comprehensions also cross blocks mid-expression. A `for` item's iteratee and an
 `if` item's condition are lowered to blocks before the collection or call that
@@ -495,9 +495,10 @@ holds them. In the items' values, only what depends on where it's evaluated is
 assigned to synthetic variables in those blocks: variable reads, which see the
 body's narrowing, and short circuits, whose results can't cross to the
 collection's operand stack. Everything else stays in the tree, where the rule's
-expected type reaches it. A read thus happens before the calls around it, as it
-does within any one tree. Items can't assign, so no state crosses iterations: a
-`for` item is a `Next` whose body continues to its exit, with no back edge. The
+expected type reaches it. A read happening before the calls around it makes no
+difference, since calls change only volatile variables. Items can't assign, so
+no state crosses iterations: a `for` item is a `Next` whose body continues to
+its exit, with no back edge. The
 collection keeps a tree of `For` and `If` items, which says only how often each
 value occurs, and flow builds the rule's schema from it. The variables, and the
 comprehension's own bindings, start as bottom
@@ -576,11 +577,17 @@ each clause's class. Parameters are bound at the entry block: a def's from its
 signature under its group's rigids (`Tables::group_rigids`, which also closes
 `Var.annotation` during lowering), a `do` block's from its signature variables.
 
-Captured state is flow-insensitive. Every assignment to a captured variable
-joins into one type that nested functions read, and a non-local return joins its
-value into its def's result the same way. Reading a joined type makes the block
-depend on it, and it is queued again when the type grows. A flagged variable's
-owner reverts it to the joined type after any step that can call.
+State shared between functions is flow-insensitive. An ivar, a variable that a
+function other than its owner reads or writes, has an accumulator: every
+assignment to it, in any function, joins into one type, which widens to its
+annotation if it has one. A non-local return joins its value into its def's
+result the same way. Its owner caches its type in its flow state, narrowing it
+there, unless it's volatile: assigned by another function, and so changed by any
+call that may run that function. A volatile variable's owner reads the
+accumulator too, and keeps only whether it may be unassigned. Only a cached type
+is narrowed; to narrow an accumulator, a program copies the variable to a local
+first. Reading an accumulator makes the block depend on it, and it is queued
+again when the type grows.
 
 A `do` block's signature variables are joined the same way. Its exit joins its
 result into its result variable. A call it's an argument of types it: it enters

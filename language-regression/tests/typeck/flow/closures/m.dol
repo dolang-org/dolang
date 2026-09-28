@@ -68,6 +68,30 @@ pub def captured()
   let _ = w
   #       ^: flow std.Int | std.Str
 
+# A variable a block assigns is volatile: its owner reads it as every value
+# assigned to it too, and a test doesn't narrow it. A copy of it narrows.
+pub def volatile()
+  let v = nil
+  let set = do v = "a"
+  if v
+    let _ = v
+    #       ^: flow std.Nil | std.Str
+  let c = v
+  if c
+    let _ = c
+    #       ^: flow std.Str
+  set()
+
+# A variable only its owner assigns stays narrowed across a call, even once a
+# block captures it
+pub def cached v @ (Str | nil)
+  let read = do v
+  if v
+    read()
+    let _ = v
+    #       ^: flow std.Str
+  v = nil
+
 # A block's omitted channels are inferred like its parameters. Here the call
 # gives it the def's own, so it can call the callback its def is given.
 pub def around[R] block @ (() -> R) -> R

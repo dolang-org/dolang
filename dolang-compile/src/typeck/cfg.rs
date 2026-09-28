@@ -164,12 +164,12 @@ pub(crate) struct Var {
     /// Closed: the binders of the group it's written in are the rigids its
     /// declaration's body is checked under
     pub(crate) annotation: Option<TypeId>,
-    /// Read or written by a nested function
-    pub(crate) captured: bool,
-    /// Assigned inside a nested function, or after being captured. Such a variable
-    /// reads as the join of its assignments inside nested functions, and its owner's
-    /// narrowing of it lasts only until a step that can call.
-    pub(crate) flagged: bool,
+    /// An ivar: read or written by a function other than its owner. Every
+    /// assignment to it joins an accumulator, which other functions read.
+    pub(crate) interprocedural: bool,
+    /// Assigned by a function other than its owner, so that its owner caches no
+    /// type for it either and reads the accumulator too
+    pub(crate) volatile: bool,
     /// Starts as bottom rather than unassigned: a comprehension's bindings and item
     /// values, which are assigned only on the paths its structure accounts for
     pub(crate) bottom: bool,
@@ -392,8 +392,8 @@ impl Graph {
             owner,
             origin,
             annotation,
-            captured: false,
-            flagged: false,
+            interprocedural: false,
+            volatile: false,
             bottom: false,
         }));
         self.func_mut(owner).vars.push(id);

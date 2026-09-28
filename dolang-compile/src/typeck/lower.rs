@@ -57,15 +57,6 @@ pub(crate) fn lower(tables: &Tables<'_>, db: &Database, unit: UnitId) -> Ir {
     lower.finish()
 }
 
-/// What each assignment to a variable reveals about it
-#[derive(Default)]
-struct Facts {
-    /// Assigned by a function other than its owner
-    nested: bool,
-    /// Assigned again by its owner after being bound
-    reassigned: bool,
-}
-
 struct Lower<'t, 'u> {
     tables: &'t Tables<'u>,
     db: &'t Database,
@@ -81,7 +72,6 @@ struct Lower<'t, 'u> {
     /// Each guard's phantom return: a block that assigns the result `Never` and
     /// continues to the exit
     returns: RefCell<HashMap<BlockId, BlockId>>,
-    facts: RefCell<HashMap<VarId, Facts>>,
     /// The binder group each type written in the unit is interpreted in, by its span
     site_groups: HashMap<Span, Option<(DeclId, usize)>>,
 }
@@ -129,7 +119,6 @@ impl<'t, 'u> Lower<'t, 'u> {
             modules,
             guards: RefCell::new(HashMap::new()),
             returns: RefCell::new(HashMap::new()),
-            facts: RefCell::new(HashMap::new()),
             site_groups: (tables.sites.iter())
                 .filter(|site| site.unit == unit)
                 .map(|site| (site.ty.span(), site.group()))
@@ -161,8 +150,7 @@ impl<'t, 'u> Lower<'t, 'u> {
         }
     }
 
-    /// Fill in the guards' targets, decide which captured variables are flagged,
-    /// and freeze the graph
+    /// Fill in the guards' targets and freeze the graph
     fn finish(self) -> Ir {
         for (guard, targets) in self.guards.take() {
             let mut seen = HashSet::new();
@@ -171,10 +159,6 @@ impl<'t, 'u> Lower<'t, 'u> {
             {
                 *slot = targets;
             }
-        }
-        for (var, facts) in self.facts.take() {
-            let mut var = self.graph.var_mut(var);
-            var.flagged = facts.nested || var.captured && facts.reassigned;
         }
         self.graph.freeze()
     }

@@ -77,11 +77,13 @@ pub let reader = do
   let _ = n
   #       ^: flow std.Int
 
+# A variable a block assigns reads as every value assigned to it, whether or not
+# a call has run the block
 let m = 1
 pub let setter = do
   m = "a"
 let _ = m
-#       ^: flow std.Int
+#       ^: flow std.Int | std.Str
 setter()
 let _ = m
 #       ^: flow std.Int | std.Str
