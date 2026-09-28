@@ -1332,6 +1332,7 @@ impl Index<'_> {
             }
             Expr::Escape(..)
             | Expr::EscapeByte(..)
+            | Expr::Stub(_)
             | Expr::Literal(_)
             | Expr::Int(..)
             | Expr::VerbatimInt(..)

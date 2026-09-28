@@ -16,6 +16,11 @@ use crate::{
 impl Parser<'_> {
     fn parse_rhs(&mut self, scope: &mut Scope) -> Result<PrimStmt> {
         self.expect(scope, &[ExpectKind::ArgSep])?;
+        self.parse_rhs_value(scope)
+    }
+
+    /// A right-hand side, after the separator following its `=`
+    fn parse_rhs_value(&mut self, scope: &mut Scope) -> Result<PrimStmt> {
         match self.peek()? {
             Some(token!(TokenInfo::Keyword(Keyword::If))) => {
                 Ok(PrimStmt::If(self.parse_if(scope)?))
@@ -78,7 +83,27 @@ impl Parser<'_> {
         }
         let bind = self.parse_pattern(scope, false)?;
         let equal_span = self.expect(scope, &[ExpectKind::Equal])?;
-        let rhs = self.parse_rhs(scope)?;
+        self.expect(scope, &[ExpectKind::ArgSep])?;
+        let rhs = match self.peek()? {
+            Some(token!(TokenInfo::Ellipsis, span)) => {
+                self.advance();
+                if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
+                    self.advance();
+                }
+                match self.peek()? {
+                    None | Some(token!(TokenInfo::StmtSep | TokenInfo::Dedent)) => {}
+                    other => {
+                        return Err(self.syntax_error(
+                            scope,
+                            other,
+                            "`...` must be the whole value of a `let`",
+                        ));
+                    }
+                }
+                PrimStmt::Expr(Expr::Stub(span))
+            }
+            _ => self.parse_rhs_value(scope)?,
+        };
         Ok(Stmt::Let(Let {
             bind,
             rhs,

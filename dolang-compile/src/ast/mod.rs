@@ -591,6 +591,9 @@ pub(crate) enum Expr {
         close: Span,
     },
     EscapeByte(u8, Span),
+    /// A `...` standing for a value a stub doesn't write, as a `let`'s whole
+    /// right-hand side. Evaluating it raises an error, as calling a stub does.
+    Stub(Span),
     Group {
         expr: Box<Expr>,
         delim: Option<GroupDelim>,
@@ -853,6 +856,9 @@ impl Expr {
             | Expr::Sym(_)
             | Expr::Escape(_, _)
             | Expr::EscapeByte(_, _) => SideEffect::None,
+
+            // Raises an error
+            Expr::Stub(_) => SideEffect::Likely,
 
             // Variable lookup - no side effects but references a variable
             Expr::Ident(_) => SideEffect::VarRef,
@@ -1178,6 +1184,7 @@ impl Node for Expr {
                 visit.token(Token::StringDelim, *close, None)
             }
             Expr::EscapeByte(_, span) => visit.token(Token::Escape, *span, None),
+            Expr::Stub(span) => visit.token(Token::Sigil, *span, None),
             Expr::Group { expr, delim } => {
                 match delim {
                     None => (),
@@ -1317,6 +1324,7 @@ impl Node for Expr {
             Expr::FmtSeq { .. } => NodeKind::FmtSeq,
             Expr::BinConcat { .. } => NodeKind::BinConcat,
             Expr::EscapeByte(_, _) => NodeKind::EscapeByte,
+            Expr::Stub(_) => NodeKind::Stub,
             Expr::Group { .. } => NodeKind::Group,
             Expr::Unary { .. } => NodeKind::Unary,
             Expr::Binary { .. } => NodeKind::Binary,

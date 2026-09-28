@@ -126,6 +126,7 @@ pub enum NodeKind {
     FmtSeq,
     BinConcat,
     EscapeByte,
+    Stub,
     Group,
     Unary,
     Binary,

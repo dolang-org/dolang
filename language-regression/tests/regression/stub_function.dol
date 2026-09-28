@@ -45,3 +45,14 @@ def required value
   ...
 
 assert_throws $std.RuntimeError str: "missing positional item: 0" do required()
+
+# A comment may precede the `...`
+def commented()
+  # Not written yet
+  ...
+
+assert_throws $std.RuntimeError str: "stub function called" do commented()
+
+# A `let` may stand in `...` for a value it doesn't write
+assert_throws $std.RuntimeError str: "stub function called" do
+  let _unwritten @ Int = ...

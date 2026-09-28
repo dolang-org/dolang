@@ -848,6 +848,9 @@ and a field's type, with names linked to their documentation:
 - Qualify a superclass from another module: `class Error: std.RuntimeError`. A
   class names one runtime supertype; name any other type it implements as a
   type-only supertype, as in `class Blake3: @State`.
+- Give a module value its literal when it has one (`pub let PI @ Float =
+  3.141592653589793`), and otherwise `...`, as in `pub let args @ Args = ...`.
+  Running such a `let` raises an error, as calling a stub function does.
 
 #### Links
 

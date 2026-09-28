@@ -501,6 +501,12 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 let cid = self.consttab.bin(self.bintab.id(&bytes));
                 self.block.insts.push(Inst(InstInfo::LoadConst(cid), *span));
             }
+            Expr::Stub(span) => {
+                let sig = self.packtab.id(&sig::Pack::new(std::iter::empty()));
+                self.block
+                    .insts
+                    .push(Inst(InstInfo::Builtin(builtin::STUB, sig), *span));
+            }
             Expr::Ident(ident) => {
                 let res = ident.res.as_ref().unwrap();
                 match self.resolve_var(res.index, res.depth) {
