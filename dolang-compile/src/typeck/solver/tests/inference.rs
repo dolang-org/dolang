@@ -512,3 +512,59 @@ fn raised_variables_are_those_at_outputs() {
         assert_eq!(raised.contains(&v), expected, "case {index}");
     }
 }
+
+#[test]
+fn locked_variables_are_those_a_literal_would_fix() {
+    let mut db = Database::new();
+    let r = reference(&db, 0, 0);
+    let one = literal(&db, 1);
+    let boxed = nominal(&mut db, "Box", vec![binder(Variance::Invariant)], vec![]);
+    let source = nominal(&mut db, "Source", vec![binder(Variance::Covariant)], vec![]);
+    let sink = nominal(
+        &mut db,
+        "Sink",
+        vec![binder(Variance::Contravariant)],
+        vec![],
+    );
+    let cases = [
+        // An invariant argument
+        (apply(&db, boxed, &[r]), true),
+        // A covariant one widens later
+        (apply(&db, source, &[r]), false),
+        (apply(&db, sink, &[r]), true),
+        // A function's parameter, unlike its result
+        (function(&db, &[r], one), true),
+        (function(&db, &[], r), false),
+    ];
+    let boxed_r = apply(&db, boxed, &[r]);
+    db.seal();
+    let mut s = Solver::new(&db);
+    let result = s.infer();
+    let mut vars = Vec::new();
+    for &(ty, locked) in &cases {
+        let v = s.infer();
+        let e = s.intern_environment(s.empty_environment(), vec![v]);
+        s.constrain(s.view(ty, e), result, Provenance::default());
+        vars.push((variable_id(v), locked));
+    }
+    // Through another variable's lower bound
+    let middle = s.infer();
+    let v = s.infer();
+    let e = s.intern_environment(s.empty_environment(), vec![v]);
+    s.constrain(middle, result, Provenance::default());
+    s.constrain(s.view(boxed_r, e), middle, Provenance::default());
+    vars.push((variable_id(v), true));
+    // Not reached from the roots at all
+    let apart = s.infer();
+    s.constrain(s.closed(one), apart, Provenance::default());
+    vars.push((variable_id(apart), false));
+    s.solve();
+    let locked = s.locked(&[(result, Variance::Covariant)]).unwrap();
+    assert!(!locked.contains(&variable_id(result)));
+    for (index, &(v, expected)) in vars.iter().enumerate() {
+        assert_eq!(locked.contains(&v), expected, "case {index}");
+    }
+    // A root taken as an input is locked itself
+    let locked = s.locked(&[(result, Variance::Contravariant)]).unwrap();
+    assert!(locked.contains(&variable_id(result)));
+}

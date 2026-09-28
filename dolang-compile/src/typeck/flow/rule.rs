@@ -32,7 +32,7 @@ use crate::{
         },
         r#type::{
             Argument, BoundRef, Database, DeclId, Element, Function, Kind, Literal, Multiplicity,
-            Rest, SchemaItem, SymbolId, Type, TypeId, UnionMember,
+            Rest, SchemaItem, SymbolId, Type, TypeId, UnionMember, Variance,
         },
     },
 };
@@ -652,7 +652,8 @@ impl<'a> Flow<'a, '_> {
                 _ => false,
             };
             let outcomes = if default {
-                default_all(&mut solver, self.db, true)
+                let roots = outputs(&results, &[]);
+                default_all(&mut solver, self.db, true, Some(&roots))
             } else {
                 solver.solve()
             };
@@ -694,7 +695,7 @@ impl<'a> Flow<'a, '_> {
             return values;
         }
         let (passed, pending) = lambdas;
-        for (var, ty) in self::passed(&mut solver, self.db, &passed, &pending) {
+        for (var, ty) in self::passed(&mut solver, self.db, &results, &passed, &pending) {
             self.join(var, ty);
         }
         values
@@ -975,7 +976,7 @@ impl<'a> Flow<'a, '_> {
         }
         let terms: Vec<Term> = held.iter().map(|&(_, term)| term).collect();
         let raised = (solver.raised(&terms)).unwrap_or_else(|_| solver.unresolved().collect());
-        default_where(&mut solver, |id| !raised.contains(&id));
+        default_where(&mut solver, |id| !raised.contains(&id), None);
         for (index, term) in held {
             expectations[index] = expectation(&solver, term);
         }
@@ -1815,6 +1816,7 @@ fn root(outcome: &Outcome) -> ObligationId {
 fn passed(
     solver: &mut Solver<'_>,
     db: &Database,
+    results: &[Term],
     passed: &[(VarId, Term)],
     pending: &[Term],
 ) -> Vec<(VarId, TypeId)> {
@@ -1824,17 +1826,36 @@ fn passed(
     for &term in pending {
         solver.constrain(solver.closed(db.bottom()), term, Provenance::default());
     }
-    default_all(solver, db, false);
+    let parameters: Vec<Term> = passed.iter().map(|&(_, term)| term).collect();
+    let roots = outputs(results, &parameters);
+    default_all(solver, db, false, Some(&roots));
     (passed.iter())
         .filter_map(|&(var, term)| solver.reify(term).ok().map(|ty| (var, ty)))
         .collect()
 }
 
+/// What a rule produces, for [`Solver::locked`]: its results, and the
+/// parameters of the `do` blocks it passes values, which are inputs of their
+/// function types
+fn outputs(results: &[Term], parameters: &[Term]) -> Vec<(Term, Variance)> {
+    let results = results.iter().map(|&term| (term, Variance::Covariant));
+    let parameters = parameters
+        .iter()
+        .map(|&term| (term, Variance::Contravariant));
+    results.chain(parameters).collect()
+}
+
 /// Solve, defaulting every unsolved variable whose lower bounds are solved, and,
 /// if `bare`, then any variable without lower bounds to the dynamic type of its
-/// kind, until nothing more can be defaulted
-fn default_all(solver: &mut Solver<'_>, db: &Database, bare: bool) -> Vec<Outcome> {
-    let mut outcomes = default_where(solver, |_| true);
+/// kind, until nothing more can be defaulted. Literals decay as
+/// [`default_where`] decays them.
+fn default_all(
+    solver: &mut Solver<'_>,
+    db: &Database,
+    bare: bool,
+    roots: Option<&[(Term, Variance)]>,
+) -> Vec<Outcome> {
+    let mut outcomes = default_where(solver, |_| true, roots);
     if !bare {
         return outcomes;
     }
@@ -1854,21 +1875,34 @@ fn default_all(solver: &mut Solver<'_>, db: &Database, bare: bool) -> Vec<Outcom
                 Provenance::default(),
             );
         }
-        outcomes = default_where(solver, |_| true);
+        outcomes = default_where(solver, |_| true, roots);
     }
     outcomes
 }
 
 /// Solve, defaulting every unsolved variable that `keep` admits whose lower
-/// bounds are solved, until nothing more can be defaulted
-fn default_where(solver: &mut Solver<'_>, keep: impl Fn(InferVarId) -> bool) -> Vec<Outcome> {
+/// bounds are solved, until nothing more can be defaulted. A default decays its
+/// literals only if a literal would lock in: if the variable is among what
+/// [`Solver::locked`] finds from `roots`, the rule's outputs, or always without
+/// them.
+fn default_where(
+    solver: &mut Solver<'_>,
+    keep: impl Fn(InferVarId) -> bool,
+    roots: Option<&[(Term, Variance)]>,
+) -> Vec<Outcome> {
     let mut outcomes = solver.solve();
     // Each round solves at least one variable; the limit only guards the solver
     for _ in 0..64 {
         let unsolved: Vec<_> = solver.unresolved().filter(|&id| keep(id)).collect();
+        // Defaults add bounds, so what's locked is found again each round
+        let locked = roots.map(|roots| solver.locked(roots));
         let mut progress = false;
         for id in unsolved {
-            progress |= solver.default(id).is_ok();
+            let decay = match &locked {
+                Some(Ok(locked)) => locked.contains(&id),
+                Some(Err(_)) | None => true,
+            };
+            progress |= solver.default_with(id, decay).is_ok();
         }
         if !progress {
             break;

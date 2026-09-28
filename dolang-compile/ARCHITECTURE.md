@@ -364,13 +364,18 @@ never defaulted. The caller defaults a variable's lower bounds before it, such
 as a call's binders before its result, and solves between defaults so that
 their consequences can force later variables. Defaulted assignments are marked
 as such, so a contradiction reached through one can be reported as an inference
-choice. A default decays the join's literals to their classes, except in exact
-schema keys and binder bounds, unless the decayed join violates a bound; a
-forced assignment keeps its literals, since its bounds require them. To help a
-caller choose, `raised` finds the variables that raising given terms could
-raise: those at a covariant or invariant position in them, or in a raised
-variable's upper bounds. A function's parameters and channels don't count, and a
-form it can't see into counts in full.
+choice. A default can decay the join's literals to their classes, except in
+exact schema keys and binder bounds, unless the decayed join violates a bound; a
+forced assignment keeps its literals, since its bounds require them. A rule
+decays only where a literal would lock in: `locked` finds the variables that its
+outputs (its results, and as inputs the parameters of the `do` blocks it passes
+values) reach at a position that isn't covariant, through variables' bounds,
+where a later value couldn't widen them; the rest keep their precise join, which
+subsumption widens as needed. To help a caller choose, `raised` finds the
+variables that raising given terms could raise: those at a covariant or
+invariant position in them, or in a raised variable's upper bounds. A function's
+parameters and channels don't count, and a form it can't see into counts in
+full.
 
 Joins, for defaults and for flow state, drop union members proven below another
 member. A member containing `Unknown` neither subsumes nor is subsumed, since

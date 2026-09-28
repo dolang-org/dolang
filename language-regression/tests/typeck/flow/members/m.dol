@@ -216,3 +216,12 @@ pub def dynamic x u @ (Point | Box[Int])
   let b = u.x
   let _ = b
   #       ^: flow Unknown
+
+# A literal key picks its own item, since the key isn't decayed
+pub def looked d @ Dict[{a: Int, b: Str}]
+  let a = d[:a:]
+  let _ = a
+  #       ^: flow std.Int
+  let b = d[:b:]
+  let _ = b
+  #       ^: flow std.Str
