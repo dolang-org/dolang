@@ -38,6 +38,12 @@ pub(crate) enum Problem {
         annotation: String,
         result: bool,
     },
+    /// A default that neither fits its variable's annotation nor is a sentinel
+    Default {
+        span: Span,
+        found: String,
+        annotation: String,
+    },
     /// A variable read where it may not be assigned yet
     Unassigned {
         span: Span,
@@ -67,6 +73,7 @@ impl Diagnose for Problem {
             | Problem::Call { span, .. }
             | Problem::Misfit { span, .. }
             | Problem::Annotation { span, .. }
+            | Problem::Default { span, .. }
             | Problem::Unassigned { span, .. } => span,
         }
     }
@@ -114,6 +121,12 @@ impl Diagnose for Problem {
             } => write!(
                 w,
                 "`{found}` does not fit the declared result `{annotation}`"
+            ),
+            Problem::Default {
+                found, annotation, ..
+            } => write!(
+                w,
+                "default `{found}` does not fit the annotation `{annotation}`, and isn't a `nil` or symbol sentinel"
             ),
             Problem::Unassigned {
                 name,

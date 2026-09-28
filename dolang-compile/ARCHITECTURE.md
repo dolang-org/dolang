@@ -561,7 +561,12 @@ join widens (`solver::Widening`) once it has grown too often, or goes to the
 local's annotation.
 
 An assignment is a strong update, and a literal assigned to a declared local
-decays to its class when that fits the annotation. An `Assume` narrows with
+decays to its class when that fits the annotation. A parameter's or pattern
+item's default is evaluated expecting the variable's annotation, and its
+literals decay. It keeps the annotation when it fits. A `nil` or symbol literal
+that doesn't is a sentinel, joined into the variable's type for the body to
+narrow away, while callers see only the annotation. Any other default is
+reported. An `Assume` narrows with
 `Solver::narrow`, and an edge left with nothing is unreachable. A step that can
 throw joins its prior state into its handler; a `Catch` narrows the exception by
 each clause's class. Parameters are bound at the entry block: a def's from its
@@ -585,7 +590,9 @@ result enters as its joined type, or, while that is still bottom, as a fresh
 variable that keeps the call undecided. The call's block reads the result
 variable, so it runs again when the block's analysis grows the result. A block
 anywhere else gets `Unknown` joined into its parameter and channel variables,
-and its value is its declared type with the joined result.
+and its value is its declared type with the joined result. A block's omitted
+channels aren't quantified as a def's are: calls in the block pass its channel
+variables' joined types, and depend on them.
 
 Checking rules (`flow/rule.rs`) are solved by a fresh solver on each run, and
 only reified types leave it:

@@ -28,8 +28,8 @@ use crate::{
         },
         elab::Designated,
         solver::{
-            CallArgument, Contradiction, Issue, ObligationId, Outcome, Provenance, Residual,
-            Solver, Status, Step as Derivation, Term,
+            CallArgument, Contradiction, Issue, ObligationId, Outcome, Provenance, Solver, Status,
+            Step as Derivation, Term,
         },
         r#type::{
             Argument, BoundRef, Database, DeclId, Element, Function, Kind, Literal, Multiplicity,
@@ -305,15 +305,7 @@ impl<'a> Flow<'a, '_> {
             };
             match outcome.status {
                 Status::Proven => {}
-                Status::Unresolved => {
-                    let residual = (outcome.diagnostics.iter())
-                        .find_map(|diagnostic| match diagnostic.issue {
-                            Issue::Residual(residual) => Some(residual),
-                            Issue::Contradiction(_) => None,
-                        })
-                        .unwrap_or(Residual::Unsupported);
-                    self.undecided(span, residual);
-                }
+                Status::Unresolved => self.undecided(span, super::residual(outcome)),
                 Status::Contradicted => {
                     let relation = solver.obligation(root(outcome)).relation;
                     // The callee, or the value that doesn't fit
@@ -465,7 +457,7 @@ impl<'a> Flow<'a, '_> {
             }
             return unknown;
         }
-        let (input, output) = self.channels(at.func);
+        let (input, output) = self.channels(at);
         let spread = self.designated(Designated::Spread);
         let span = expr.span;
         self.conclude(at, Site::Rule(*rule), expected, |rule| {

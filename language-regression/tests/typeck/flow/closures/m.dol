@@ -68,6 +68,19 @@ pub def captured()
   let _ = w
   #       ^: flow std.Int | std.Str
 
+# A block's omitted channels are inferred like its parameters. Here the call
+# gives it the def's own, so it can call the callback its def is given.
+pub def around[R] block @ (() -> R) -> R
+  apply 1 do |_x|
+    block()
+    nil
+  block()
+
+# A rest parameter isn't typed from its items yet
+pub def rested *xs @ Str
+  let _ = xs
+  #       ^~: flow Unknown
+
 # A `return` in a block returns from its def
 pub def early xs @ Array[Int] -> Int
   map $xs do |x|

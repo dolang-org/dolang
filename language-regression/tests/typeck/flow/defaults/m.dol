@@ -1,0 +1,49 @@
+# A default keeps its variable's annotation when it fits it. A `nil` or symbol
+# literal is a sentinel instead, joined into the annotation for the body to
+# narrow away. Any other default is an error. A default's literals decay.
+
+pub def apply[T] x @ T f @ ((T) -> nil) -> nil
+  ...
+
+pub def fitting :n @ Int = 1
+  let _ = n
+  #       ^: flow std.Int
+
+pub def expected :xs @ Array[Int] = []
+  let _ = xs
+  #       ^~: flow std.Array[std.Int]
+
+pub def sentinel :limit @ Int = nil
+  let _ = limit
+  #       ^~~~~: flow nil | std.Int
+  if limit
+    let _ = limit
+    #       ^~~~~: flow std.Int
+
+pub def symbol :mode @ Str = :auto:
+  let _ = mode
+  #       ^~~~: flow :auto: | std.Str
+
+pub def lambda()
+  apply 1 do |x = "a"|
+    let _ = x
+    #       ^: flow std.Int | std.Str
+    nil
+
+pub def pattern xs @ Array[Int]
+  bind xs
+    - a @ Int
+    - b @ Int = nil
+  let _ = a
+  #       ^: flow std.Int
+  let _ = b
+  #       ^: flow nil | std.Int
+
+pub def wrong :n @ Int = "a"
+  # error: default `"a"` does not fit the annotation `std.Int`, and isn't a `nil` or symbol sentinel
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def wrong :n @ Int = "a"
+  #    |                          ^^^
+  let _ = n
+  #       ^: flow std.Int

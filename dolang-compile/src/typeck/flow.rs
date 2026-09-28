@@ -10,6 +10,8 @@
 //!
 //! An assignment is a strong update along its path, and a literal assigned to a
 //! declared local decays to its class when the class fits the local's annotation.
+//! A default keeps its variable's annotation when it fits, and a `nil` or symbol
+//! literal that doesn't is a sentinel joined into the variable's type.
 //! Narrowing applies a condition's relations to the variable it tests, making the
 //! edge unreachable when nothing is left.
 //!
@@ -51,12 +53,14 @@ use state::{Contexts, CtxId, State};
 
 use super::{
     cfg::{
-        Against, Assume, BlockId, Expr, ExprKind, FuncId, FuncKind, Ir, Origin, Pattern, Step, Tag,
-        Target, Terminal, VarId,
+        Against, Assume, BlockId, Expr, ExprKind, FuncId, FuncKind, Ir, Origin, Pattern,
+        PatternItem, PatternKey, Step, Tag, Target, Terminal, VarId,
     },
     elab::{Designated, Tables},
     solver::{NarrowTarget, Outcome, Provenance, Residual, Solver, Status, Widening},
-    r#type::{Database, DeclId, Element, Function, Intrinsic, Literal, Type, TypeId, UnitId},
+    r#type::{
+        Database, DeclId, Element, Function, Intrinsic, Literal, Multiplicity, Type, TypeId, UnitId,
+    },
 };
 use crate::source::Span;
 
@@ -338,15 +342,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                     result,
                 });
             }
-            Status::Unresolved => {
-                let residual = (outcome.diagnostics.iter())
-                    .find_map(|diagnostic| match diagnostic.issue {
-                        super::solver::Issue::Residual(residual) => Some(residual),
-                        super::solver::Issue::Contradiction(_) => None,
-                    })
-                    .unwrap_or(Residual::Unsupported);
-                self.undecided(span, residual);
-            }
+            Status::Unresolved => self.undecided(span, residual(&outcome)),
         }
     }
 
@@ -369,13 +365,23 @@ impl<'a, 'u> Flow<'a, 'u> {
         (result != self.db.unknown()).then_some(result)
     }
 
-    /// The ambient channels a function's calls pass, when it declares them
-    fn channels(&self, func: FuncId) -> (Option<TypeId>, Option<TypeId>) {
-        let Some(declared) = &self.declared[func.index()] else {
+    /// The ambient channels a function's calls pass, when it declares them. A `do`
+    /// block's omitted channels are inferred like its parameters, as what the
+    /// calls it's passed to give them, which its block then depends on.
+    fn channels(&mut self, at: At) -> (Option<TypeId>, Option<TypeId>) {
+        let Some(declared) = self.declared[at.func.index()].clone() else {
             return (None, None);
         };
-        let known = |ty: Option<TypeId>| ty.filter(|&ty| ty != self.db.unknown());
-        (known(declared.input), known(declared.output))
+        let signature = self.ir.func(at.func).signature.as_ref();
+        let (input, output) = signature.map_or((None, None), |sig| (sig.input, sig.output));
+        let mut channel = |var: Option<VarId>, declared| match var {
+            Some(var) => Some(self.joined(var, at)),
+            None => declared,
+        };
+        (
+            channel(input, declared.input),
+            channel(output, declared.output),
+        )
     }
 
     fn observing(&self) -> bool {
@@ -612,8 +618,9 @@ impl<'a, 'u> Flow<'a, 'u> {
             }
             Step::Default { var, value } => {
                 let mut operands = Self::operands(state, holes(value));
-                let ty = self.eval(at, state, &mut operands, value);
-                let ty = self.settle(*var, ty);
+                let annotation = self.ir.var(*var).annotation;
+                let ty = self.expect(at, state, &mut operands, value, annotation);
+                let ty = self.default(*var, ty, value.span);
                 if self.ir.var(*var).owner == at.func {
                     let fact = state.vars[self.slots[var.index()]];
                     state.vars[self.slots[var.index()]] = Fact {
@@ -659,6 +666,38 @@ impl<'a, 'u> Flow<'a, 'u> {
             Some(annotation) if !self.below(decayed, annotation) => ty,
             _ => decayed,
         }
+    }
+
+    /// The type a default at `span` joins into its variable. Its literals decay.
+    /// An annotated variable keeps its annotation when the default fits it, and
+    /// otherwise takes a `nil` or symbol literal as a sentinel, which the body
+    /// narrows away; any other default is reported.
+    fn default(&mut self, var: VarId, ty: TypeId, span: Span) -> TypeId {
+        let decayed = self.db.decay(ty);
+        let Some(annotation) = self.ir.var(var).annotation else {
+            return decayed;
+        };
+        if ty == self.db.bottom() || self.below(decayed, annotation) {
+            return annotation;
+        }
+        if let Type::Literal(Literal::Nil | Literal::Sym(_)) = self.db.ty(ty) {
+            return self.lub(annotation, ty);
+        }
+        let outcome = self.relate(ty, annotation);
+        match outcome.status {
+            Status::Proven => {}
+            Status::Contradicted => {
+                let found = self.tables.render_type(self.db, ty);
+                let annotation = self.tables.render_type(self.db, annotation);
+                self.problem(Problem::Default {
+                    span,
+                    found,
+                    annotation,
+                });
+            }
+            Status::Unresolved => self.undecided(span, residual(&outcome)),
+        }
+        annotation
     }
 
     /// Assign a variable, strongly where its owner is analyzed, checking the value
@@ -738,7 +777,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                         .unwrap_or(unknown),
                 })
                 .collect(),
-            None => self.declared_params(at.func, items.len()),
+            None => self.declared_params(at.func, items),
         };
         for (item, ty) in items.iter().zip(types) {
             if let Some(var) = item.var {
@@ -748,24 +787,36 @@ impl<'a, 'u> Flow<'a, 'u> {
     }
 
     /// The types a def's or method's signature gives its parameters, under its
-    /// rigids; `Unknown` for a rest, or for every one if they don't line up
-    fn declared_params(&self, func: FuncId, count: usize) -> Vec<TypeId> {
+    /// rigids; `Unknown` for a rest, whose items can be several of the schema's,
+    /// or for every one if they don't line up
+    fn declared_params(&self, func: FuncId, params: &[PatternItem]) -> Vec<TypeId> {
         let unknown = self.db.unknown();
+        let fallback = vec![unknown; params.len()];
         let Some(function) = &self.declared[func.index()] else {
-            return vec![unknown; count];
+            return fallback;
         };
         let Type::Schema(items) = self.db.ty(function.params) else {
-            return vec![unknown; count];
+            return fallback;
         };
-        if items.len() != count {
-            return vec![unknown; count];
-        }
-        (items.iter())
+        let mut singles = (items.iter())
+            .filter(|item| {
+                item.multiplicity != Multiplicity::Repeated
+                    && !matches!(item.element, Element::Include(_))
+            })
             .map(|item| match item.element {
                 Element::Positional(ty) | Element::Keyed { value: ty, .. } => ty,
-                Element::Include(_) => unknown,
+                Element::Include(_) => unreachable!("not a rest"),
+            });
+        let types: Option<Vec<TypeId>> = (params.iter())
+            .map(|param| match param.key {
+                PatternKey::Rest(_) => Some(unknown),
+                _ => singles.next(),
             })
-            .collect()
+            .collect();
+        match types {
+            Some(types) if singles.next().is_none() => types,
+            _ => fallback,
+        }
     }
 
     /// What a variable holds: its fact where its owner is analyzed, and its joined
@@ -989,6 +1040,16 @@ fn declared_function(db: &Database, tables: &Tables<'_>, decl: DeclId) -> Option
         Type::Function(function) => Some(function.clone()),
         _ => None,
     }
+}
+
+/// Why a check couldn't be decided
+fn residual(outcome: &Outcome) -> Residual {
+    (outcome.diagnostics.iter())
+        .find_map(|diagnostic| match diagnostic.issue {
+            super::solver::Issue::Residual(residual) => Some(residual),
+            super::solver::Issue::Contradiction(_) => None,
+        })
+        .unwrap_or(Residual::Unsupported)
 }
 
 /// How many operand holes an expression has
