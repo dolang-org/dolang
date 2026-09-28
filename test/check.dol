@@ -14,7 +14,7 @@ let FIXTURE = (Path "dolang-shell/tests/check")
 # what was printed.
 def check source out
   cd $FIXTURE do
-    run $shell.exe -m compile check $source --path lib stdout: $out mode: :CHUNK:
+    run $shell.exe -m compile check $source --path lib stdout: $out stderr: :STDOUT: mode: :CHUNK:
 
 def printed out
   Str $out.freeze()
