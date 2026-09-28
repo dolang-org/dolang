@@ -57,6 +57,14 @@ impl<'u> Frame<'u> {
         self.parent.as_deref()
     }
 
+    /// The variables it declares
+    pub(super) fn vars(&self) -> impl Iterator<Item = VarId> {
+        self.entries.iter().filter_map(|entry| match entry {
+            Entry::Var(var) => Some(*var),
+            Entry::Modules(_) | Entry::Item { .. } => None,
+        })
+    }
+
     fn entry(&self, res: Res) -> Option<&Entry<'u>> {
         let mut frame = self;
         for _ in 0..res.depth {

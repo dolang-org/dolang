@@ -143,10 +143,10 @@ fn stack_depths(ir: &Ir) {
                 exit,
                 ..
             } => {
+                // A comprehension's loop may run above a command's earlier arguments
                 pop(&mut depth, pattern_operands(pattern));
-                empty(depth);
-                enter(*body, 0);
-                enter(*exit, 0);
+                enter(*body, depth);
+                enter(*exit, depth);
             }
             Terminal::Throw(value) | Terminal::ReturnFrom { value, .. } => {
                 pop(&mut depth, operands(value))
@@ -631,19 +631,33 @@ let xs = $
       - (a + b)
 ",
         "
-f0 module: entry b0, exit b1, params ()
+f0 module: entry b0, exit b1, params (), bottom p a b t7
 b0 f0:
   let ps = array[array[1, 2]]
-  let xs = array[for p = ps {if let (a, b) = p {(a + b)} else {}}]
-  result0 = xs
-  goto b1
+  let t2 = ps
+  goto b2
 b1 f0:
   return
+b2 f0:
+  next p in t2 then b4 else b3
+b3 f0:
+  let xs = array[for {if {t7} else {}}]
+  result0 = xs
+  goto b1
+b4 f0:
+  unpack (a, b) = p then b6 else b5
+b5 f0:
+  goto b3
+b6 f0:
+  t7 = (a + b)
+  goto b5
 ",
     );
 }
 
-/// Comprehension items stay in the tree, short circuits and all
+/// A comprehension's loop and filter are lowered to blocks before the statement,
+/// with no back edge, and the values they produce go in variables starting at
+/// bottom. Short circuits in them narrow as anywhere else.
 #[test]
 fn comprehensions() {
     check(
@@ -659,14 +673,13 @@ g $ys
   key: 2
 ",
         "
-f0 module: entry b0, exit b1, params ()
+f0 module: entry b0, exit b1, params (), bottom x t8
 f1 decl0 in f0: entry b2, exit b3, params (Mixed...a)
 b0 f0:
   let xs = array[1, 2]
   let g = f1
-  let ys = array[for x = xs {if (x && (x > 1)) {(x || 0)} else {}}]
-  result0 = g(ys, 1, key: 2)
-  goto b1
+  let t3 = xs
+  goto b4
 b1 f0:
   return
 b2 f1:
@@ -674,6 +687,293 @@ b2 f1:
   goto b3
 b3 f1:
   return
+b4 f0:
+  next x in t3 then b6 else b5
+b5 f0:
+  let ys = array[for {if {t8} else {}}]
+  result0 = g(ys, 1, key: 2)
+  goto b1
+b6 f0:
+  if x then b10 else b7
+b7 f0:
+  goto b5
+b8 f0:
+  push x
+  dup
+  if <pop> then b12 else b11
+b9 f0:
+  if (x > 1) then b8 else b7
+b10 f0:
+  assume x != nil
+  assume x != false
+  goto b9
+b11 f0:
+  pop
+  push 0
+  goto b12
+b12 f0:
+  t8 = <pop>
+  goto b7
+",
+    );
+}
+
+/// Nested loops and filters with `elif` and `else`. Constants and lambdas stay in
+/// the tree; a nested collection is one value, whose own items stay in its tree.
+#[test]
+fn comprehension_nesting() {
+    check(
+        "
+let xs = [1, 2]
+let ys = $
+  for x = xs
+    for y = xs
+      - [x, y]
+    if (x > 1)
+      - 1
+    else if (x > 0)
+      - (do x)
+    else
+      - $x
+",
+        "
+f0 module: entry b0, exit b1, params (), bottom x t5 y t7 t9
+f1 decl0 in f0: entry b13, exit b14, params (), captures x
+b0 f0:
+  let xs = array[1, 2]
+  let t2 = xs
+  goto b2
+b1 f0:
+  return
+b2 f0:
+  next x in t2 then b4 else b3
+b3 f0:
+  let ys = array[for {for {t7}, if {1} else {if {f1} else {t9}}}]
+  result0 = ys
+  goto b1
+b4 f0:
+  let t5 = xs
+  goto b5
+b5 f0:
+  next y in t5 then b7 else b6
+b6 f0:
+  if (x > 1) then b10 else b9
+b7 f0:
+  t7 = array[x, y]
+  goto b6
+b8 f0:
+  goto b3
+b9 f0:
+  if (x > 0) then b12 else b11
+b10 f0:
+  goto b8
+b11 f0:
+  t9 = x
+  goto b8
+b12 f0:
+  goto b8
+b13 f1:
+  result1 = x
+  goto b14
+b14 f1:
+  return
+",
+    );
+}
+
+/// Keyed items, pairs and spreads in a call's comprehension, after an inline
+/// argument whose short circuit stays on the stack below the loop's blocks
+#[test]
+fn comprehension_call_items() {
+    check(
+        "
+let xs = [1, 2]
+let a = 1
+let b = 2
+let g = (do |...rest| rest)
+g (a || b)
+  for x = xs
+    k: 1
+    (x): (x && a)
+    ...xs
+",
+        "
+f0 module: entry b0, exit b1, params (), bottom x t9 t10 t11
+f1 decl0 in f0: entry b2, exit b3, params (Mixed...rest)
+b0 f0:
+  let xs = array[1, 2]
+  let a = 1
+  let b = 2
+  let g = f1
+  push a
+  dup
+  if <pop> then b5 else b4
+b1 f0:
+  return
+b2 f1:
+  result1 = rest
+  goto b3
+b3 f1:
+  return
+b4 f0:
+  pop
+  push b
+  goto b5
+b5 f0:
+  let t5 = xs
+  goto b6
+b6 f0:
+  next x in t5 then b8 else b7
+b7 f0:
+  result0 = g(<pop>, for {k: 1, t9 => t10, ...t11})
+  goto b1
+b8 f0:
+  t9 = x
+  push x
+  dup
+  if <pop> then b9 else b10
+b9 f0:
+  assume x != nil
+  assume x != false
+  pop
+  push a
+  goto b10
+b10 f0:
+  t10 = <pop>
+  t11 = xs
+  goto b7
+",
+    );
+}
+
+/// A pattern's defaults are joined after it binds: after a `bind`, or on a
+/// match's success edge, in a statement or a comprehension
+#[test]
+fn pattern_defaults() {
+    check(
+        "
+let a = nil
+bind [1]
+  - x
+  - y = (a || 1)
+if bind [1]
+  - m
+  - n = 3
+do
+  m
+let zs = $
+  if bind [1]
+    - u
+    - v = (a || 5)
+  do
+    - $v
+",
+        "
+f0 module: entry b0, exit b1, params (), bottom u v t9
+b0 f0:
+  let a = nil
+  let (x, y) = array[1]
+  push a
+  dup
+  if <pop> then b3 else b2
+b1 f0:
+  return
+b2 f0:
+  pop
+  push 1
+  goto b3
+b3 f0:
+  default y = <pop>
+  unpack (m, n) = array[1] then b6 else b4
+b4 f0:
+  unpack (u, v) = array[1] then b9 else b7
+b5 f0:
+  eval m
+  goto b4
+b6 f0:
+  default n = 3
+  goto b5
+b7 f0:
+  let zs = array[if {t9} else {}]
+  result0 = zs
+  goto b1
+b8 f0:
+  t9 = v
+  goto b7
+b9 f0:
+  push a
+  dup
+  if <pop> then b11 else b10
+b10 f0:
+  pop
+  push 5
+  goto b11
+b11 f0:
+  default v = <pop>
+  goto b8
+",
+    );
+}
+
+/// A catch dispatch tries path classes in one `Catch`. A class that isn't a path
+/// is evaluated in a dispatch of its own, and the catch-all goes last.
+#[test]
+fn catch_dispatch_chain() {
+    check(
+        "
+import error
+let a = nil
+try
+  a
+catch error.Type: e
+  1
+catch (a || error.Type): e
+  2
+catch error.Value: e
+  3
+catch other
+  4
+",
+        "
+f0 module: entry b0, exit b1, params ()
+b0 f0:
+  let a = nil
+  goto b4
+b1 f0:
+  return
+b2 f0:
+  goto b1
+b3 f0:
+  catch error::Type -> b5, else b7
+b4 f0 handler b3:
+  result0 = a
+  goto b2
+b5 f0:
+  let e = <pop>
+  result0 = 1
+  goto b2
+b6 f0:
+  let e = <pop>
+  result0 = 2
+  goto b2
+b7 f0:
+  push a
+  dup
+  if <pop> then b9 else b8
+b8 f0:
+  pop
+  push error::Type
+  goto b9
+b9 f0:
+  catch <pop> -> b6, error::Value -> b10, else b11
+b10 f0:
+  let e = <pop>
+  result0 = 3
+  goto b2
+b11 f0:
+  let other = <pop>
+  result0 = 4
+  goto b2
 ",
     );
 }
@@ -693,7 +993,8 @@ for f g = [[1, 2]]
 f0 module: entry b0, exit b1, params ()
 b0 f0:
   let (a, b: b, Mixed...c) = record[1, b: 2]
-  let (d, e = 3) = tuple[1, 2]
+  let (d, e) = tuple[1, 2]
+  default e = 3
   let t6 = array[array[1, 2]]
   goto b2
 b1 f0:

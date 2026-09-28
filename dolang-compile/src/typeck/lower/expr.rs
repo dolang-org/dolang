@@ -1,8 +1,11 @@
 //! Expressions, and the conditions of statements.
 
-use std::mem;
+use std::{mem, rc::Rc};
 
-use super::{Scope, expr, scope::Entry, scope::Spelled};
+use super::{
+    Scope, expr,
+    scope::{Entry, Frame, Spelled},
+};
 use crate::{
     ast::{
         self, Arg, ArrayElem, DictElem, ExprBody, For, GetVariant, Ident, If, Key, Pair, Single,
@@ -341,15 +344,15 @@ impl<'u> Scope<'_, '_, 'u> {
     pub(super) fn args(&mut self, args: &'u [Arg]) -> Vec<Item> {
         args.iter()
             .map(|arg| match arg {
-                Arg::Pos(Single { expr, .. }) => Item::Pos(self.expr(expr)),
+                Arg::Pos(Single { expr, .. }) => Item::Pos(self.item_value(expr)),
                 Arg::Key(Key { key_span, expr, .. }) => {
-                    Item::Key(self.symbol(*key_span), self.expr(expr))
+                    Item::Key(self.symbol(*key_span), self.item_value(expr))
                 }
                 Arg::DynamicKey(Pair { key, value, .. }) => {
-                    let key = self.expr(key);
-                    Item::Pair(key, self.expr(value))
+                    let key = self.item_value(key);
+                    Item::Pair(key, self.item_value(value))
                 }
-                Arg::Expand(expand) => Item::Spread(self.expr(&expand.expr)),
+                Arg::Expand(expand) => Item::Spread(self.item_value(&expand.expr)),
                 Arg::For(node) => self.item_for(node, Self::args),
                 Arg::If(node) => self.item_if(node, Self::args),
             })
@@ -360,8 +363,8 @@ impl<'u> Scope<'_, '_, 'u> {
         elems
             .iter()
             .map(|elem| match elem {
-                ArrayElem::Single(Single { expr, .. }) => Item::Pos(self.expr(expr)),
-                ArrayElem::Expand(expand) => Item::Spread(self.expr(&expand.expr)),
+                ArrayElem::Single(Single { expr, .. }) => Item::Pos(self.item_value(expr)),
+                ArrayElem::Expand(expand) => Item::Spread(self.item_value(&expand.expr)),
                 ArrayElem::For(node) => self.item_for(node, Self::array_items),
                 ArrayElem::If(node) => self.item_if(node, Self::array_items),
             })
@@ -372,104 +375,132 @@ impl<'u> Scope<'_, '_, 'u> {
         elems
             .iter()
             .map(|elem| match elem {
-                DictElem::Single(Single { expr, .. }) => Item::Pos(self.expr(expr)),
+                DictElem::Single(Single { expr, .. }) => Item::Pos(self.item_value(expr)),
                 DictElem::Key(Key { key_span, expr, .. }) => {
-                    Item::Key(self.symbol(*key_span), self.expr(expr))
+                    Item::Key(self.symbol(*key_span), self.item_value(expr))
                 }
                 DictElem::Pair(Pair { key, value, .. }) => {
-                    let key = self.expr(key);
-                    Item::Pair(key, self.expr(value))
+                    let key = self.item_value(key);
+                    Item::Pair(key, self.item_value(value))
                 }
-                DictElem::Expand(expand) => Item::Spread(self.expr(&expand.expr)),
+                DictElem::Expand(expand) => Item::Spread(self.item_value(&expand.expr)),
                 DictElem::For(node) => self.item_for(node, Self::dict_items),
                 DictElem::If(node) => self.item_if(node, Self::dict_items),
             })
             .collect()
     }
 
-    /// Run `f` inside a comprehension item, where nothing can move to blocks
-    fn in_item<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        let item = mem::replace(&mut self.ctx.item, true);
-        let result = f(self);
-        self.ctx.item = item;
-        result
+    /// Lower an item's value. In a comprehension's body, a value other than a
+    /// constant or lambda goes in a variable, assigned where the body runs; the
+    /// others stay in the tree, where the rule's expected type reaches them.
+    fn item_value(&mut self, node: &'u ast::Expr) -> Expr {
+        let hoist = mem::replace(&mut self.ctx.hoist, false);
+        let value = self.expr(node);
+        self.ctx.hoist = hoist;
+        if !hoist
+            || matches!(
+                value.kind,
+                ExprKind::Literal(_) | ExprKind::Float | ExprKind::Bin | ExprKind::Lambda(_)
+            )
+        {
+            return value;
+        }
+        let span = value.span;
+        let var = self.synthetic();
+        self.graph().var_mut(var).bottom = true;
+        self.assign(var, value);
+        expr(ExprKind::Var(var), span)
     }
 
-    /// Run `f` in a new scope, for the body of a comprehension item
-    fn in_body<T, R>(
+    /// Lower a comprehension body's items in `frame`, marking its bindings as
+    /// starting at bottom, since the collection reads them only where the body ran
+    fn body_items<T>(
         &mut self,
-        body: &'u ExprBody<T>,
-        f: impl FnOnce(&mut Self, &'u [T]) -> R,
-    ) -> R {
-        let frame = self.lower.frame(
+        frame: &Rc<Frame<'u>>,
+        elems: &'u [T],
+        items: fn(&mut Self, &'u [T]) -> Vec<Item>,
+    ) -> Vec<Item> {
+        let hoist = mem::replace(&mut self.ctx.hoist, true);
+        let items = self.in_frame(frame, |scope| items(scope, elems));
+        self.ctx.hoist = hoist;
+        for var in frame.vars() {
+            self.graph().var_mut(var).bottom = true;
+        }
+        items
+    }
+
+    /// A new scope for a comprehension body
+    fn body_frame<T>(&self, body: &'u ExprBody<T>) -> Rc<Frame<'u>> {
+        self.lower.frame(
             self.ctx.func,
             Some(self.ctx.frame.clone()),
             &body.vars,
             &[],
             None,
-        );
-        let outer = mem::replace(&mut self.ctx.frame, frame);
-        let result = f(self, &body.elems);
-        self.ctx.frame = outer;
-        result
+        )
     }
 
+    /// A comprehension's loop. Its body runs once, from the loop's head to its
+    /// exit: nothing in it assigns, so no state crosses iterations.
     fn item_for<T>(
         &mut self,
         node: &'u For<ExprBody<T>>,
         items: fn(&mut Self, &'u [T]) -> Vec<Item>,
     ) -> Item {
-        self.in_item(|scope| {
-            let iter = match &node.expr {
-                Some(node) => scope.expr(node),
-                None => expr(ExprKind::AmbientInput, node.for_span),
-            };
-            scope.in_body(&node.body, |scope, elems| {
-                let frame = scope.ctx.frame.clone();
-                let pattern = scope.pattern(&node.bind, &frame);
-                Item::For {
-                    pattern,
-                    iter,
-                    items: items(scope, elems),
-                }
-            })
-        })
+        let hoist = mem::replace(&mut self.ctx.hoist, false);
+        let frame = self.body_frame(&node.body);
+        let (_, body, exit) = self.next_head(node, &frame);
+        self.switch(body);
+        let items = self.body_items(&frame, &node.body.elems, items);
+        self.end(Terminal::Branch(exit));
+        self.switch(exit);
+        self.ctx.hoist = hoist;
+        Item::For(items)
     }
 
+    /// A comprehension's filter, lowered as an `if` statement whose branches
+    /// assign their items' values
     fn item_if<T>(
         &mut self,
         node: &'u If<ExprBody<T>>,
         items: fn(&mut Self, &'u [T]) -> Vec<Item>,
     ) -> Item {
-        self.in_item(|scope| {
-            let branches = std::iter::once(&node.tbranch)
-                .chain(node.elif_branches.iter().map(|(branch, _)| branch));
-            let mut arms = Vec::new();
-            for branch in branches {
-                let cond = scope.expr(&branch.expr);
-                // A pattern binds names in the branch's scope
-                let (bind, then) = scope.in_body(&branch.body, |scope, elems| {
-                    let frame = scope.ctx.frame.clone();
-                    let bind =
-                        (branch.bind.as_ref()).map(|bind| scope.pattern(&bind.pattern, &frame));
-                    (bind, items(scope, elems))
-                });
-                arms.push((cond, bind, then));
-            }
-            let mut else_ = match &node.else_branch {
-                Some((body, _)) => scope.in_body(body, items),
-                None => Vec::new(),
+        let hoist = mem::replace(&mut self.ctx.hoist, false);
+        let complete = node.else_branch.is_some();
+        let join = self.block();
+        let branches: Vec<_> = std::iter::once(&node.tbranch)
+            .chain(node.elif_branches.iter().map(|(branch, _)| branch))
+            .collect();
+        let mut arms = Vec::new();
+        for (index, branch) in branches.iter().enumerate() {
+            let fallback = if index + 1 < branches.len() || complete {
+                self.block()
+            } else {
+                join
             };
-            for (cond, bind, then) in arms.into_iter().rev() {
-                else_ = vec![Item::If {
-                    cond,
-                    bind,
-                    then,
-                    else_,
-                }];
+            let frame = self.body_frame(&branch.body);
+            let then = self.block();
+            self.test(&branch.expr, branch.bind.as_ref(), &frame, then, fallback);
+            self.switch(then);
+            arms.push(self.body_items(&frame, &branch.body.elems, items));
+            self.end(Terminal::Branch(join));
+            self.switch(fallback);
+        }
+        let mut else_ = match &node.else_branch {
+            Some((body, _)) => {
+                let frame = self.body_frame(body);
+                let items = self.body_items(&frame, &body.elems, items);
+                self.end(Terminal::Branch(join));
+                self.switch(join);
+                items
             }
-            else_.pop().expect("an `if` has a first branch")
-        })
+            None => Vec::new(),
+        };
+        for then in arms.into_iter().rev() {
+            else_ = vec![Item::If { then, else_ }];
+        }
+        self.ctx.hoist = hoist;
+        else_.pop().expect("an `if` has a first branch")
     }
 
     /// A short circuit whose value is used. Its left operand is pushed, and the
@@ -481,17 +512,6 @@ impl<'u> Scope<'_, '_, 'u> {
         right: &'u ast::Expr,
         span: Span,
     ) -> Expr {
-        if self.ctx.item {
-            let left = self.expr(left);
-            let right = self.expr(right);
-            return expr(
-                ExprKind::Logical {
-                    op,
-                    operands: Box::new([left, right]),
-                },
-                span,
-            );
-        }
         let narrowing = self.narrowing(left);
         let value = self.expr(left);
         self.push(value);
@@ -690,25 +710,28 @@ impl<'u> Scope<'_, '_, 'u> {
     /// A class operand to narrow against: a name or a dotted path that involves no
     /// checking rule, since each edge evaluates it again
     fn class_operand(&mut self, node: &'u ast::Expr) -> Option<Expr> {
-        fn path(node: &ast::Expr) -> bool {
-            match node {
-                ast::Expr::Ident(_) => true,
-                ast::Expr::Group { expr, .. } => path(expr),
-                ast::Expr::Get {
-                    object,
-                    field: GetVariant::Normal(_),
-                    ..
-                } => path(object),
-                _ => false,
-            }
-        }
-        if !path(node) {
+        if !is_path(node) {
             return None;
         }
         let class = self.expr(node);
         let mut plain = true;
         class.walk(&mut |expr| plain &= expr.rule().is_none());
         plain.then_some(class)
+    }
+}
+
+/// Whether an expression is a name or a dotted path from one, which lowers to a
+/// tree without blocks
+pub(super) fn is_path(node: &ast::Expr) -> bool {
+    match node {
+        ast::Expr::Ident(_) => true,
+        ast::Expr::Group { expr, .. } => is_path(expr),
+        ast::Expr::Get {
+            object,
+            field: GetVariant::Normal(_),
+            ..
+        } => is_path(object),
+        _ => false,
     }
 }
 

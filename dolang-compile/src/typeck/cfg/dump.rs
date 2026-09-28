@@ -64,6 +64,16 @@ impl Dump<'_, '_> {
                     }
                 }
             }
+            let bottom: Vec<_> = (func.vars.iter())
+                .filter(|&&var| self.ir.var(var).bottom)
+                .collect();
+            if !bottom.is_empty() {
+                write!(out, ", bottom")?;
+                for &var in bottom {
+                    write!(out, " ")?;
+                    self.var(out, var)?;
+                }
+            }
             writeln!(out)?;
         }
         for (id, block) in self.ir.blocks() {
@@ -252,10 +262,6 @@ impl Dump<'_, '_> {
                 Some(var) => self.var(out, var)?,
                 None => write!(out, "_")?,
             }
-            if let Some(default) = &item.default {
-                write!(out, " = ")?;
-                self.expr(out, default)?;
-            }
         }
         write!(out, ")")
     }
@@ -299,33 +305,13 @@ impl Dump<'_, '_> {
                     write!(out, "...")?;
                     self.expr(out, value)?;
                 }
-                Item::For {
-                    pattern,
-                    iter,
-                    items,
-                } => {
-                    write!(out, "for ")?;
-                    self.pattern(out, pattern)?;
-                    write!(out, " = ")?;
-                    self.expr(out, iter)?;
-                    write!(out, " {{")?;
+                Item::For(items) => {
+                    write!(out, "for {{")?;
                     self.items(out, items)?;
                     write!(out, "}}")?;
                 }
-                Item::If {
-                    cond,
-                    bind,
-                    then,
-                    else_,
-                } => {
-                    write!(out, "if ")?;
-                    if let Some(bind) = bind {
-                        write!(out, "let ")?;
-                        self.pattern(out, bind)?;
-                        write!(out, " = ")?;
-                    }
-                    self.expr(out, cond)?;
-                    write!(out, " {{")?;
+                Item::If { then, else_ } => {
+                    write!(out, "if {{")?;
                     self.items(out, then)?;
                     write!(out, "}} else {{")?;
                     self.items(out, else_)?;
@@ -419,7 +405,7 @@ impl Dump<'_, '_> {
                 self.expr(out, operand)?;
                 write!(out, ")")
             }
-            ExprKind::Binary { op, operands, .. } | ExprKind::Logical { op, operands } => {
+            ExprKind::Binary { op, operands, .. } => {
                 write!(out, "(")?;
                 self.expr(out, &operands[0])?;
                 write!(out, " {op} ")?;

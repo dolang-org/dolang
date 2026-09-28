@@ -4,6 +4,7 @@ use std::{mem, rc::Rc};
 
 use super::{
     Ctx, End, Job, Scope, expr,
+    expr::is_path,
     jump::{Finally, Loop},
     nil,
     scope::{DeclKey, Entry, Frame},
@@ -28,38 +29,13 @@ impl<'u> Scope<'_, '_, 'u> {
     /// A function's parameters and body, lowered from its entry block
     pub(super) fn function(&mut self, func: &'u Function) {
         let frame = self.ctx.frame.clone();
-        let items = self.in_pattern(&frame, |scope| {
+        let items = self.in_frame(&frame, |scope| {
             (func.params.iter())
-                .map(|param| scope.pattern_item(param, false))
+                .map(|param| scope.pattern_item(param))
                 .collect()
         });
         self.graph().func_mut(self.ctx.func).params = Pattern::Unpack(items);
-        // Defaults may read captures, so they're steps, joined into the argument
-        for param in &func.params {
-            let (Param::Pos {
-                ident,
-                default: Some(default),
-                ..
-            }
-            | Param::Key {
-                ident,
-                default: Some(default),
-                ..
-            }
-            | Param::ConstKey {
-                ident,
-                default: Some(default),
-                ..
-            }) = param
-            else {
-                continue;
-            };
-            let Some(var) = self.var(ident) else {
-                continue;
-            };
-            let value = self.expr(&default.expr);
-            self.emit(Step::Default { var, value });
-        }
+        self.defaults(&func.params, &frame);
         let (result, exit) = {
             let func = self.graph().func(self.ctx.func);
             (func.result, func.exit)
@@ -217,12 +193,16 @@ impl<'u> Scope<'_, '_, 'u> {
             _ => None,
         };
         let frame = self.ctx.frame.clone();
-        let pattern = self.pattern(pattern, &frame);
-        let bound = match pattern {
+        let bound_pattern = self.pattern(pattern, &frame);
+        let bound = match bound_pattern {
             Pattern::Bind(var) => Some(var),
             Pattern::Unpack(_) => copy,
         };
-        self.emit(Step::Let { pattern, value });
+        self.emit(Step::Let {
+            pattern: bound_pattern,
+            value,
+        });
+        self.pattern_defaults(pattern, &frame);
         if let (Some(dest), Some(var)) = (dest, bound) {
             self.assign(dest, expr(ExprKind::Var(var), span));
         }
@@ -283,27 +263,91 @@ impl<'u> Scope<'_, '_, 'u> {
 
     /// Lower a pattern in `frame`, where its names are bound
     pub(super) fn pattern(&mut self, pattern: &'u ast::Pattern, frame: &Rc<Frame<'u>>) -> Pattern {
-        self.in_pattern(frame, |scope| match pattern {
+        self.in_frame(frame, |scope| match pattern {
             ast::Pattern::Ident(PatIdent { ident, ty }) => {
                 Pattern::Bind(scope.binding(ident, ty.as_deref()))
             }
             ast::Pattern::Unpack(params) => Pattern::Unpack(
                 (params.iter())
-                    .map(|param| scope.pattern_item(param, true))
+                    .map(|param| scope.pattern_item(param))
                     .collect(),
             ),
         })
     }
 
-    /// Run `f` in `frame`, where nothing moves to blocks: a pattern's parts are
-    /// evaluated only as it's matched
-    fn in_pattern<R>(&mut self, frame: &Rc<Frame<'u>>, f: impl FnOnce(&mut Self) -> R) -> R {
+    /// Run `f` in `frame`
+    pub(super) fn in_frame<R>(
+        &mut self,
+        frame: &Rc<Frame<'u>>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
         let outer = mem::replace(&mut self.ctx.frame, frame.clone());
-        let item = mem::replace(&mut self.ctx.item, true);
         let result = f(self);
-        self.ctx.item = item;
         self.ctx.frame = outer;
         result
+    }
+
+    /// Join the defaults of parameters bound in `frame` into their variables. A
+    /// default may read the pattern's earlier bindings and captures, so it's a step
+    /// after the binding.
+    fn defaults(&mut self, params: &'u [Param], frame: &Rc<Frame<'u>>) {
+        self.in_frame(frame, |scope| {
+            for param in params {
+                let (Param::Pos {
+                    ident,
+                    default: Some(default),
+                    ..
+                }
+                | Param::Key {
+                    ident,
+                    default: Some(default),
+                    ..
+                }
+                | Param::ConstKey {
+                    ident,
+                    default: Some(default),
+                    ..
+                }) = param
+                else {
+                    continue;
+                };
+                let Some(var) = scope.var(ident) else {
+                    continue;
+                };
+                let value = scope.expr(&default.expr);
+                scope.emit(Step::Default { var, value });
+            }
+        });
+    }
+
+    /// Join the defaults of a pattern bound in `frame`
+    fn pattern_defaults(&mut self, pattern: &'u ast::Pattern, frame: &Rc<Frame<'u>>) {
+        if let ast::Pattern::Unpack(params) = pattern {
+            self.defaults(params, frame);
+        }
+    }
+
+    /// The target of an edge that binds a pattern: a new block joining its defaults,
+    /// on the way to `target`, if it has any
+    fn defaulted(
+        &mut self,
+        pattern: &'u ast::Pattern,
+        frame: &Rc<Frame<'u>>,
+        target: BlockId,
+    ) -> BlockId {
+        let ast::Pattern::Unpack(params) = pattern else {
+            return target;
+        };
+        if !params.iter().any(has_default) {
+            return target;
+        }
+        let from = self.bb;
+        let block = self.block();
+        self.switch(block);
+        self.defaults(params, frame);
+        self.end(Terminal::Branch(target));
+        self.switch(from);
+        block
     }
 
     /// The variable a pattern binds a name to, or a stand-in if it's unresolved
@@ -313,48 +357,39 @@ impl<'u> Scope<'_, '_, 'u> {
         var
     }
 
-    fn pattern_item(&mut self, param: &'u Param, defaults: bool) -> PatternItem {
-        let (key, var, default) = match param {
-            Param::Pos { ident, ty, default } => {
-                (PatternKey::Pos, self.binding(ident, ty.as_deref()), default)
-            }
+    /// A pattern item, without its default, which [`Self::defaults`] joins after the
+    /// pattern binds
+    fn pattern_item(&mut self, param: &'u Param) -> PatternItem {
+        let (key, var) = match param {
+            Param::Pos { ident, ty, .. } => (PatternKey::Pos, self.binding(ident, ty.as_deref())),
             Param::Key {
                 key_span,
                 ident,
                 ty,
-                default,
                 ..
             } => (
                 PatternKey::Key(self.symbol(*key_span)),
                 self.binding(ident, ty.as_deref()),
-                default,
             ),
             Param::ConstKey {
                 key_expr,
                 ident,
                 ty,
-                default,
                 ..
             } => {
                 let key = PatternKey::ConstKey(self.expr(key_expr));
-                (key, self.binding(ident, ty.as_deref()), default)
+                (key, self.binding(ident, ty.as_deref()))
             }
             Param::Rest { kind, ident, .. } => {
                 return PatternItem {
                     key: PatternKey::Rest(*kind),
                     var: ident.as_ref().and_then(|ident| self.var(ident)),
-                    default: None,
                 };
             }
-        };
-        let default = match default {
-            Some(default) if defaults => Some(self.expr(&default.expr)),
-            _ => None,
         };
         PatternItem {
             key,
             var: Some(var),
-            default,
         }
     }
 
@@ -396,7 +431,7 @@ impl<'u> Scope<'_, '_, 'u> {
 
     /// Branch on an `if` or `while` condition, binding its pattern, if it has one,
     /// in `frame` on the success edge
-    fn test(
+    pub(super) fn test(
         &mut self,
         cond: &'u ast::Expr,
         bind: Option<&'u PatternBind>,
@@ -422,7 +457,7 @@ impl<'u> Scope<'_, '_, 'u> {
                     then: bound,
                     else_: failed,
                 });
-                let var = self.in_pattern(frame, |scope| scope.binding(ident, ty.as_deref()));
+                let var = self.in_frame(frame, |scope| scope.binding(ident, ty.as_deref()));
                 self.switch(bound);
                 self.emit(Step::Let {
                     pattern: Pattern::Bind(var),
@@ -434,9 +469,10 @@ impl<'u> Scope<'_, '_, 'u> {
                 self.end(Terminal::Branch(else_));
             }
             pattern @ ast::Pattern::Unpack(_) => {
-                let pattern = self.pattern(pattern, frame);
+                let bound = self.pattern(pattern, frame);
+                let then = self.defaulted(pattern, frame, then);
                 self.end(Terminal::Unpack {
-                    pattern,
+                    pattern: bound,
                     value,
                     then,
                     else_,
@@ -508,6 +544,21 @@ impl<'u> Scope<'_, '_, 'u> {
     }
 
     fn for_(&mut self, node: &'u For<Block>) {
+        let frame = self.block_frame(&node.body);
+        let (header, body, exit) = self.next_head(node, &frame);
+        let ctx = self.loop_ctx(frame, exit, header);
+        self.queue_block(body, ctx, &node.body, None, header);
+        self.switch(exit);
+    }
+
+    /// The head of a `for` whose body binds in `frame`: the iteratee is bound to
+    /// the iterator, and the header takes its next item. Returns the header, body
+    /// and exit blocks, with the header ended.
+    pub(super) fn next_head<B>(
+        &mut self,
+        node: &'u For<B>,
+        frame: &Rc<Frame<'u>>,
+    ) -> (BlockId, BlockId, BlockId) {
         let iter = match self.entry(node.iter) {
             Some(Entry::Var(var)) => var,
             _ => self.synthetic(),
@@ -525,17 +576,15 @@ impl<'u> Scope<'_, '_, 'u> {
         let body = self.block();
         self.end(Terminal::Branch(header));
         self.switch(header);
-        let frame = self.block_frame(&node.body);
-        let pattern = self.pattern(&node.bind, &frame);
+        let pattern = self.pattern(&node.bind, frame);
+        let entry = self.defaulted(&node.bind, frame, body);
         self.end(Terminal::Next {
             iter,
             pattern,
-            body,
+            body: entry,
             exit,
         });
-        let ctx = self.loop_ctx(frame, exit, header);
-        self.queue_block(body, ctx, &node.body, None, header);
-        self.switch(exit);
+        (header, body, exit)
     }
 
     /// A `try`, inlined: its parts are lowered in the enclosing function. The body's
@@ -602,7 +651,7 @@ impl<'u> Scope<'_, '_, 'u> {
         self.queue_block(body, ctx, &node.body.body, dest, join);
         self.end(Terminal::Branch(body));
 
-        let Some(dispatch) = dispatch else {
+        let Some(mut dispatch) = dispatch else {
             self.switch(join);
             return;
         };
@@ -610,15 +659,29 @@ impl<'u> Scope<'_, '_, 'u> {
         let mut otherwise = None;
         for clause in &node.handlers {
             let block = graph.alloc_block(func, part_handler, depth);
-            let frame = self.block_frame(&clause.func.body);
-            self.catch_binding(block, &clause.func, &frame);
-            let ctx = part_ctx(frame, part_handler);
-            self.queue_block(block, ctx, &clause.func.body, dest, join);
+            let ctx = part_ctx(self.block_frame(&clause.func.body), part_handler);
+            let body = self.catch_binding(block, &clause.func, ctx.clone());
+            self.queue_block(body, ctx, &clause.func.body, dest, join);
             match &clause.class_expr {
                 Some(class) => {
-                    // Evaluated by the dispatch, so nothing of it moves to blocks
-                    let frame = outer.frame.clone();
-                    let class = self.in_pattern(&frame, |scope| scope.expr(class));
+                    // A dispatch evaluates its classes as it tries them, so a class
+                    // that may need blocks ends it and starts the next one
+                    if !is_path(class) && !clauses.is_empty() {
+                        let next = graph.alloc_block(func, part_handler, depth);
+                        graph.block_mut(dispatch).terminal = Terminal::Catch {
+                            clauses: mem::take(&mut clauses),
+                            otherwise: next,
+                        };
+                        dispatch = next;
+                    }
+                    let from = self.bb;
+                    let caller =
+                        mem::replace(&mut self.ctx, part_ctx(outer.frame.clone(), part_handler));
+                    self.switch(dispatch);
+                    let class = self.expr(class);
+                    dispatch = self.bb;
+                    self.ctx = caller;
+                    self.switch(from);
                     clauses.push((class, block));
                 }
                 // A catch-all clause is tried last, wherever it's written
@@ -630,12 +693,17 @@ impl<'u> Scope<'_, '_, 'u> {
         self.switch(join);
     }
 
-    /// Bind a catch clause's parameters, taking the exception on the stack
-    fn catch_binding(&mut self, block: BlockId, clause: &'u Function, frame: &Rc<Frame<'u>>) {
+    /// Bind a catch clause's parameters in `block`, taking the exception on the
+    /// stack. Returns the block the clause's body continues in, after any defaults.
+    fn catch_binding(&mut self, block: BlockId, clause: &'u Function, ctx: Ctx<'u>) -> BlockId {
+        let caller = mem::replace(&mut self.ctx, ctx);
+        let from = self.bb;
+        self.switch(block);
+        let frame = self.ctx.frame.clone();
         let span = clause.span();
         let operand = expr(ExprKind::Operand, span);
-        let step = match &clause.params[..] {
-            [] => Step::Pop,
+        match &clause.params[..] {
+            [] => self.emit(Step::Pop),
             [
                 Param::Pos {
                     ident,
@@ -643,17 +711,17 @@ impl<'u> Scope<'_, '_, 'u> {
                     default: None,
                 },
             ] => {
-                let var = self.in_pattern(frame, |scope| scope.binding(ident, ty.as_deref()));
-                Step::Let {
+                let var = self.in_frame(&frame, |scope| scope.binding(ident, ty.as_deref()));
+                self.emit(Step::Let {
                     pattern: Pattern::Bind(var),
                     value: operand,
-                }
+                });
             }
             // The clause is called with the exception as its one argument
             params => {
-                let items = self.in_pattern(frame, |scope| {
+                let items = self.in_frame(&frame, |scope| {
                     (params.iter())
-                        .map(|param| scope.pattern_item(param, true))
+                        .map(|param| scope.pattern_item(param))
                         .collect()
                 });
                 let args = ExprKind::Collection {
@@ -661,13 +729,17 @@ impl<'u> Scope<'_, '_, 'u> {
                     items: vec![Item::Pos(operand)],
                     rule: self.graph().alloc_rule(),
                 };
-                Step::Let {
+                self.emit(Step::Let {
                     pattern: Pattern::Unpack(items),
                     value: expr(args, span),
-                }
+                });
+                self.defaults(params, &frame);
             }
-        };
-        self.graph().block_mut(block).steps.push(step);
+        }
+        let body = self.bb;
+        self.switch(from);
+        self.ctx = caller;
+        body
     }
 
     /// Create a nested function and queue its body
@@ -812,4 +884,20 @@ impl<'u> Scope<'_, '_, 'u> {
             self.emit(Step::Eval(value));
         }
     }
+}
+
+fn has_default(param: &Param) -> bool {
+    matches!(
+        param,
+        Param::Pos {
+            default: Some(_),
+            ..
+        } | Param::Key {
+            default: Some(_),
+            ..
+        } | Param::ConstKey {
+            default: Some(_),
+            ..
+        }
+    )
 }
