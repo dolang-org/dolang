@@ -103,8 +103,13 @@ Both are interned and cached when the database is created. Type interning and
 shifting accept shared database references; arena storage keeps borrowed types
 stable while the interning index uses interior mutability. Elaboration interns
 `std.Value` as top; `Empty` needs only its ordinary alias to `Union[]`.
-Union expansions can remain symbolic until a consumer
-supplies their schema arguments. Declaration wrappers are not normalized away.
+An application of the `Union` intrinsic interns as a union expanding its
+schema, and an expanded schema of positional items contributes their types as
+members, so `Union[...Ts]` becomes an ordinary union once `Ts` is substituted.
+Other expansions remain symbolic until a consumer supplies their schema
+arguments. `Database::normalize` gives a type the canonical form interning
+would, for callers that need it before interning. Declaration wrappers are not
+normalized away.
 Exposure follows transparent head references and reports direct cycles, stopping
 at nominal declarations, quantifiers, applications, and other structural forms.
 Recursive graphs are representable; this does not establish recursive typing
