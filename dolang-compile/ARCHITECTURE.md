@@ -455,11 +455,15 @@ A module is one analysis region. Its top-level code is the entry function, and
 every def, method implementation, lambda and field initializer is a function
 nested in it, identified by its declaration. Each function's locals are hoisted
 to the function. A function's variables of its enclosing functions are its
-captures, and freezing the graph records each captured variable's readers.
-Every function has an exit block, the only one that returns, and a result
-variable. A return assigns the result and continues to the exit, through any
-`finally`; a variable survives the empty stack that a `finally` is entered
-with.
+captures, and freezing the graph records each captured variable's readers. A
+`do` block's unannotated parameters, omitted channels and omitted return type
+are its signature: variables its parent owns and it captures, starting as
+bottom. The call it's passed to joins its expectations into them, and the
+block's exit joins its result in, so each side sees the other's changes as it
+would a capture's. Every function has an exit block, the only one that returns,
+and a result variable. A return assigns the result and continues to the exit,
+through any `finally`; a variable survives the empty stack that a `finally` is
+entered with.
 
 A block owns its steps and ends in a terminal. A step is a statement whose
 expressions stay trees. Expressions mirror the AST. Only checking rules carry a

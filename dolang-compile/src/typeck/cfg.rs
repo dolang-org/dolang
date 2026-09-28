@@ -19,6 +19,12 @@
 //! exceptional edge discards the whole stack and enters its handler, an ordinary
 //! block, with the exception alone on it.
 //!
+//! A `do` block's unannotated parameters, omitted channels and omitted return type
+//! are its [`Signature`]: variables its parent owns and it captures, which start
+//! as bottom. The call it's passed to joins what it expects of them into the
+//! parameters and channels, and its exit joins its result in, so both functions
+//! see each other's changes as they would a capture's.
+//!
 //! A comprehension's iteratee, conditions and item values are lowered to blocks
 //! before the collection or call that holds it, each value assigned to a
 //! synthetic variable. Constants and lambdas stay in the tree, where the rule's
@@ -104,13 +110,39 @@ pub(crate) struct Func {
     /// The value it returns, a variable so that it survives a `finally`, which is
     /// entered with an empty stack
     pub(crate) result: VarId,
-    /// Bound from the arguments. A parameter's default is a [`Step::Default`] in the
+    /// Bound from the arguments, or in a `do` block, an unannotated item from its
+    /// [`Signature`] variable. A parameter's default is a [`Step::Default`] in the
     /// entry block, since it may read captures.
     pub(crate) params: Pattern,
+    /// A `do` block's callable state; absent for any other function
+    pub(crate) signature: Option<Signature>,
     /// The locals of every scope in the function
     pub(crate) vars: Vec<VarId>,
     /// The variables of enclosing functions it reads or writes
     pub(crate) captures: Vec<VarId>,
+}
+
+/// A `do` block's callable state: variables its parent owns and it captures,
+/// each absent where the item is annotated. Its call joins what it expects into
+/// the parameters and channels, which the block's entry binds from; its exit
+/// joins its result into `result`.
+pub(crate) struct Signature {
+    /// By parameter item, in order
+    pub(crate) params: Vec<Option<VarId>>,
+    pub(crate) input: Option<VarId>,
+    pub(crate) output: Option<VarId>,
+    pub(crate) result: Option<VarId>,
+}
+
+impl Signature {
+    /// Its variables
+    pub(crate) fn vars(&self) -> impl Iterator<Item = VarId> {
+        let vars: Vec<VarId> = (self.params.iter().copied())
+            .chain([self.input, self.output, self.result])
+            .flatten()
+            .collect();
+        vars.into_iter()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -122,6 +154,8 @@ pub(crate) enum Origin {
     Field(MemberKey),
     /// A function's result
     Result,
+    /// Part of a `do` block's [`Signature`]
+    Signature,
 }
 
 pub(crate) struct Var {
@@ -319,6 +353,7 @@ impl Graph {
             exit,
             result,
             params: Pattern::Unpack(Vec::new()),
+            signature: None,
             vars: Vec::new(),
             captures: Vec::new(),
         }));

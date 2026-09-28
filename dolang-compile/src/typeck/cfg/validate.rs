@@ -4,7 +4,8 @@
 use std::collections::HashSet;
 
 use super::{
-    Against, BlockId, Expr, ExprKind, FuncId, Ir, RuleId, Step, Tag, Target, Terminal, VarId,
+    Against, BlockId, Expr, ExprKind, FuncId, FuncKind, Ir, Pattern, RuleId, Step, Tag, Target,
+    Terminal, VarId,
 };
 
 /// Why a graph is malformed
@@ -46,6 +47,10 @@ pub(crate) enum Invalid {
         func: FuncId,
         var: VarId,
     },
+    /// A signature on a function other than a nested closure, with a variable its
+    /// parent doesn't own or it doesn't capture, or with an entry per parameter
+    /// that isn't one per pattern item
+    Signature(FuncId),
     /// A closure instantiated other than directly in its parent
     Lambda {
         func: FuncId,
@@ -70,6 +75,22 @@ impl Ir {
             }
             if !matches!(self.block(func.exit).terminal, Terminal::Return) {
                 return Err(Invalid::Return(func.exit));
+            }
+            if let Some(signature) = &func.signature {
+                let items = match &func.params {
+                    Pattern::Unpack(items) => items.len(),
+                    Pattern::Bind(_) => usize::MAX,
+                };
+                let valid = matches!(func.kind, FuncKind::Decl(_))
+                    && func.parent.is_some_and(|parent| {
+                        signature.vars().all(|var| {
+                            self.var(var).owner == parent && func.captures.contains(&var)
+                        })
+                    })
+                    && signature.params.len() == items;
+                if !valid {
+                    return Err(Invalid::Signature(id));
+                }
             }
         }
         for (id, block) in self.blocks() {

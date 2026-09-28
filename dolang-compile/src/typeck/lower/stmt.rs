@@ -18,8 +18,8 @@ use crate::{
     source::Span,
     typeck::{
         cfg::{
-            BlockId, Collection, Expr, ExprKind, FuncId, FuncKind, Item, Pattern, PatternItem,
-            PatternKey, Step, Tag, Target, Terminal, VarId,
+            BlockId, Collection, Expr, ExprKind, FuncId, FuncKind, Item, Origin, Pattern,
+            PatternItem, PatternKey, Signature, Step, Tag, Target, Terminal, VarId,
         },
         r#type::DeclId,
     },
@@ -40,6 +40,9 @@ impl<'u> Scope<'_, '_, 'u> {
             let func = self.graph().func(self.ctx.func);
             (func.result, func.exit)
         };
+        if self.ctx.lambda {
+            self.signature(func, result, exit);
+        }
         if let Some(span) = func.stub_span {
             self.assign(result, expr(ExprKind::Never, span));
             self.end(Terminal::Branch(exit));
@@ -48,6 +51,50 @@ impl<'u> Scope<'_, '_, 'u> {
         if !self.stmts(&func.body.stmts, Some(result)) {
             self.end(Terminal::Branch(exit));
         }
+    }
+
+    /// A `do` block's signature: a variable of its parent's, which it captures, for
+    /// each item written without an annotation. Its exit joins its result into the
+    /// result's variable.
+    fn signature(&self, func: &Function, result: VarId, exit: BlockId) {
+        let graph = self.graph();
+        let parent = graph
+            .func(self.ctx.func)
+            .parent
+            .expect("a `do` block is nested");
+        let slot = |annotated: bool| {
+            (!annotated).then(|| {
+                let var = graph.alloc_var(parent, Origin::Signature, None);
+                graph.var_mut(var).bottom = true;
+                self.capture(var);
+                var
+            })
+        };
+        let params = (func.params.iter())
+            .map(|param| {
+                slot(matches!(
+                    param,
+                    Param::Pos { ty: Some(_), .. }
+                        | Param::Key { ty: Some(_), .. }
+                        | Param::ConstKey { ty: Some(_), .. }
+                        | Param::Rest { ty: Some(_), .. }
+                ))
+            })
+            .collect();
+        let signature = Signature {
+            params,
+            input: slot(func.input.is_some()),
+            output: slot(func.output.is_some()),
+            result: slot(func.ret.is_some()),
+        };
+        if let Some(var) = signature.result {
+            self.reassign(var);
+            graph.block_mut(exit).steps.push(Step::Assign {
+                target: Target::Var(var),
+                value: expr(ExprKind::Var(result), Span::INVALID),
+            });
+        }
+        graph.func_mut(self.ctx.func).signature = Some(signature);
     }
 
     /// Lower statements in order, the last one's value going to `dest`. Returns
