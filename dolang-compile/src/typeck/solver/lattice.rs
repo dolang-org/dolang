@@ -16,17 +16,14 @@
 use super::*;
 
 /// Increases a variable's join may make at a widening point before each stage
-#[allow(dead_code)] // Used by flow analysis (#736)
 pub(crate) const WIDENING_LIMIT: u32 = 3;
 
 /// A flow variable's widening state at one widening point
 #[derive(Clone, Copy, Debug, Default)]
-#[allow(dead_code)] // Used by flow analysis (#736)
 pub(crate) struct Widening {
     increases: u32,
 }
 
-#[allow(dead_code)] // Used by flow analysis (#736)
 impl Widening {
     /// Join `new` into `old`, widening once the join has grown too many times
     pub(crate) fn join(&mut self, solver: &Solver<'_>, old: TypeId, new: TypeId) -> TypeId {

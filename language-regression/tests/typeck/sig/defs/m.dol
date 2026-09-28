@@ -37,8 +37,8 @@ pub def reads <Iter[Int] x
 # A function type without its own channels shares the enclosing def's
 pub def each f @ ((Int) -> nil)
   #                     ^~: ambient <m.each#0 >m.each#1
-  let cb @ (() -> nil) = f
-  #            ^~: ambient <m.each#0 >m.each#1
+  let cb @ ((Int) -> nil) = f
+  #               ^~: ambient <m.each#0 >m.each#1
   cb
 
 pub def pipe <Iter[Int] f @ (() -> nil)

@@ -34,6 +34,7 @@ pub(crate) const JUDGMENTS: &[&str] = &[
     "member",
     "type",
     "wf",
+    "flow",
 ];
 
 fn variance(variance: Variance) -> &'static str {
@@ -166,6 +167,9 @@ impl Tables<'_> {
                     Designated::Tuple => "tuple".to_owned(),
                     Designated::Record => "record".to_owned(),
                     Designated::Range => "range".to_owned(),
+                    Designated::BaseIterable => "base iterable".to_owned(),
+                    Designated::Spread => "spread".to_owned(),
+                    Designated::Unpack => "unpack".to_owned(),
                     Designated::PipeSender => "pipe sender".to_owned(),
                     Designated::PipeReceiver => "pipe receiver".to_owned(),
                     Designated::Intrinsic(intrinsic) => format!("intrinsic {intrinsic:?}"),
@@ -519,6 +523,11 @@ impl Tables<'_> {
         out
     }
 
+    /// A closed type
+    pub(crate) fn render_type(&self, db: &Database, ty: TypeId) -> String {
+        self.render(db, ty, &[])
+    }
+
     /// A type as interned, with the binders of the group it is interpreted in named
     /// by `names`
     fn render(&self, db: &Database, ty: TypeId, names: &[String]) -> String {
@@ -596,18 +605,24 @@ impl Tables<'_> {
                 if members.is_empty() {
                     out.push_str("Never");
                 }
-                for (index, member) in members.iter().enumerate() {
-                    if index != 0 {
-                        out.push_str(" | ");
-                    }
-                    match member {
-                        UnionMember::Type(ty) => self.render_into(db, *ty, names, depth, out),
-                        UnionMember::Expand(ty) => {
-                            out.push_str("...");
-                            self.render_into(db, *ty, names, depth, out);
+                // Members are interned in ID order, which isn't stable across runs
+                let mut rendered: Vec<String> = (members.iter())
+                    .map(|member| {
+                        let mut out = String::new();
+                        match member {
+                            UnionMember::Type(ty) => {
+                                self.render_into(db, *ty, names, depth, &mut out)
+                            }
+                            UnionMember::Expand(ty) => {
+                                out.push_str("...");
+                                self.render_into(db, *ty, names, depth, &mut out);
+                            }
                         }
-                    }
-                }
+                        out
+                    })
+                    .collect();
+                rendered.sort();
+                out.push_str(&rendered.join(" | "));
             }
             Type::Function(func) => {
                 out.push('(');

@@ -19,7 +19,6 @@ use crate::typeck::cfg::Relation as Narrowing;
 
 /// What a variable is narrowed against, as flow analysis evaluates an `Against`
 #[derive(Clone, Copy, Debug)]
-#[allow(dead_code)] // Used by flow analysis (#736)
 pub(crate) enum Target {
     /// The class `C` of `Type[C]`, possibly generic and unapplied
     Class(DeclId),
@@ -38,7 +37,6 @@ enum Member {
     Opaque,
 }
 
-#[allow(dead_code)] // Used by flow analysis (#736)
 impl Solver<'_> {
     /// Narrow a closed type by `relation` against `target`, or by its negation
     pub(crate) fn narrow(

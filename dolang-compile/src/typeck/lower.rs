@@ -34,7 +34,7 @@ use super::{
 };
 use crate::{
     Mode,
-    ast::{Function, Stmt},
+    ast::{Function, Stmt, visit::Node},
     source::Span,
 };
 
@@ -82,6 +82,8 @@ struct Lower<'t, 'u> {
     /// continues to the exit
     returns: RefCell<HashMap<BlockId, BlockId>>,
     facts: RefCell<HashMap<VarId, Facts>>,
+    /// The binder group each type written in the unit is interpreted in, by its span
+    site_groups: HashMap<Span, Option<(DeclId, usize)>>,
 }
 
 impl<'t, 'u> Lower<'t, 'u> {
@@ -128,6 +130,10 @@ impl<'t, 'u> Lower<'t, 'u> {
             guards: RefCell::new(HashMap::new()),
             returns: RefCell::new(HashMap::new()),
             facts: RefCell::new(HashMap::new()),
+            site_groups: (tables.sites.iter())
+                .filter(|site| site.unit == unit)
+                .map(|site| (site.ty.span(), site.group()))
+                .collect(),
         }
     }
 

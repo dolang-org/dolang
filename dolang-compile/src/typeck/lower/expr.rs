@@ -411,7 +411,7 @@ impl<'u> Scope<'_, '_, 'u> {
         let var = self.synthetic();
         self.graph().var_mut(var).bottom = true;
         self.assign(var, value);
-        expr(ExprKind::Var(var), span)
+        expr(ExprKind::Copy(var), span)
     }
 
     /// Lower a comprehension body's items in `frame`, marking its bindings as

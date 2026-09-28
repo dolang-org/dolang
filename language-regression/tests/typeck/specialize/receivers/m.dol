@@ -6,12 +6,12 @@ pub class Int: Num
 
 pub class Array[T]
   pub def first _self -> T
-    nil
+    ...
 
 pub class Box[T]
   pub def get _self -> T
     #     ^~~: decl (m.Box[T]) <in >out -> T
-    nil
+    ...
 
   pub def int _self @ Box[Int] -> T
     #     ^~~: decl (m.Box[m.Int]) <in >out -> m.Int
@@ -29,7 +29,7 @@ pub class Box[T]
 
   pub def same _self @ Box[T] -> T
     #     ^~~~: decl (m.Box[T]) <in >out -> T
-    nil
+    ...
 
   # A receiver that doesn't reach its class keeps the unspecialized signature.
   pub def wrong _self @ Int -> T
@@ -39,10 +39,10 @@ pub class Box[T]
     #    |
     # LL |   pub def wrong _self @ Int -> T
     #    |                         ^^^
-    nil
+    ...
 
 # A class without binders has nothing to specialize.
 pub class Real: Num
   pub def abs[N @ Real] _self @ N -> N
     #     ^~~: decl (N) <in >out -> N
-    nil
+    ...

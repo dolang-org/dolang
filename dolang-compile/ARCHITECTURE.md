@@ -103,8 +103,13 @@ Both are interned and cached when the database is created. Type interning and
 shifting accept shared database references; arena storage keeps borrowed types
 stable while the interning index uses interior mutability. Elaboration interns
 `std.Value` as top; `Empty` needs only its ordinary alias to `Union[]`.
-Union expansions can remain symbolic until a consumer
-supplies their schema arguments. Declaration wrappers are not normalized away.
+An application of the `Union` intrinsic interns as a union expanding its
+schema, and an expanded schema of positional items contributes their types as
+members, so `Union[...Ts]` becomes an ordinary union once `Ts` is substituted.
+Other expansions remain symbolic until a consumer supplies their schema
+arguments. `Database::normalize` gives a type the canonical form interning
+would, for callers that need it before interning. Declaration wrappers are not
+normalized away.
 Exposure follows transparent head references and reports direct cycles, stopping
 at nominal declarations, quantifiers, applications, and other structural forms.
 Recursive graphs are representable; this does not establish recursive typing
@@ -450,11 +455,15 @@ A module is one analysis region. Its top-level code is the entry function, and
 every def, method implementation, lambda and field initializer is a function
 nested in it, identified by its declaration. Each function's locals are hoisted
 to the function. A function's variables of its enclosing functions are its
-captures, and freezing the graph records each captured variable's readers.
-Every function has an exit block, the only one that returns, and a result
-variable. A return assigns the result and continues to the exit, through any
-`finally`; a variable survives the empty stack that a `finally` is entered
-with.
+captures, and freezing the graph records each captured variable's readers. A
+`do` block's unannotated parameters, omitted channels and omitted return type
+are its signature: variables its parent owns and it captures, starting as
+bottom. The call it's passed to joins its expectations into them, and the
+block's exit joins its result in, so each side sees the other's changes as it
+would a capture's. Every function has an exit block, the only one that returns,
+and a result variable. A return assigns the result and continues to the exit,
+through any `finally`; a variable survives the empty stack that a `finally` is
+entered with.
 
 A block owns its steps and ends in a terminal. A step is a statement whose
 expressions stay trees. Expressions mirror the AST. Only checking rules carry a
@@ -537,6 +546,91 @@ variable rather than on the stack, so every statement starts and ends with an
 empty one. Where a statement would need a value twice, the value is bound to a
 synthetic variable first, so that no step needs an entry buried below another
 step's.
+
+## Type flow
+
+`typeck/flow.rs` runs over each unit's graph once it is lowered, iterating to a
+fixed point with one work queue for the region, ordered by reverse postorder so
+the result is deterministic. A block's state holds a fact for each variable its
+function owns (the join of the types it may hold, and whether it may be
+unassigned) and the operand stack's types. It is stored per context, the stack
+of `finally` tags the block was entered with, so a `finally`'s normal and
+rethrow entries are never joined. States only grow: they join where control
+merges, and at the target of an edge that retreats in the queue's order the
+join widens (`solver::Widening`) once it has grown too often, or goes to the
+local's annotation.
+
+An assignment is a strong update, and a literal assigned to a declared local
+decays to its class when that fits the annotation. A parameter's or pattern
+item's default is evaluated expecting the variable's annotation, and its
+literals decay. It keeps the annotation when it fits. A `nil` or symbol literal
+that doesn't is a sentinel, joined into the variable's type for the body to
+narrow away, while callers see only the annotation. Any other default is
+reported. An `Assume` narrows with
+`Solver::narrow`, and an edge left with nothing is unreachable. A step that can
+throw joins its prior state into its handler; a `Catch` narrows the exception by
+each clause's class. Parameters are bound at the entry block: a def's from its
+signature under its group's rigids (`Tables::group_rigids`, which also closes
+`Var.annotation` during lowering), a `do` block's from its signature variables.
+
+Captured state is flow-insensitive. Every assignment to a captured variable
+joins into one type that nested functions read, and a non-local return joins its
+value into its def's result the same way. Reading a joined type makes the block
+depend on it, and it is queued again when the type grows. A flagged variable's
+owner reverts it to the joined type after any step that can call.
+
+A `do` block's signature variables are joined the same way. Its exit joins its
+result into its result variable. A call it's an argument of types it: it enters
+the call's solve as its declared function type (`Tables::group_rigids` closes
+lifted binders), with a fresh variable for each parameter and channel it leaves
+open. Parameters are contravariant, so those variables' lower bounds are what
+the callee passes. Once the rule is concluded, the variables are solved by
+defaulting, and their solutions join into the signature variables. The block's
+result enters as its joined type, or, while that is still bottom, as a fresh
+variable that keeps the call undecided. The call's block reads the result
+variable, so it runs again when the block's analysis grows the result. A block
+anywhere else gets `Unknown` joined into its parameter and channel variables,
+and its value is its declared type with the joined result. A block's omitted
+channels aren't quantified as a def's are: calls in the block pass its channel
+variables' joined types, and depend on them.
+
+Checking rules (`flow/rule.rs`) are solved by a fresh solver on each run, and
+only reified types leave it:
+
+- A call constrains its callee below `Solver::call` of its arguments, passing
+  the caller's declared channels. A callee that isn't a function type or a
+  union of them, an overloaded def, and a call with a comprehension give
+  `Unknown`.
+- An array, dict, tuple or record literal builds its designated class over
+  inference variables for its items, a spread through `Spread[S]`. A
+  comprehension in a tuple or record gives `Unknown` until #793.
+- A `for` item is `T` of `iteratee <: BaseIterable[T]`, and an unpacking pattern
+  takes `value <: Unpack[S]`, with every item optional and anything else
+  admitted, since unpacking checks the count as it runs.
+- A binary string's parts must be `Bin`, and an interpolation's width and
+  precision `Int`.
+- Member lookups (`Get`, `Invoke`, `Index`, operators, ranges, field and index
+  targets) give `Unknown` until #794.
+
+A type fixed before the fixed point is pre-seeded as an upper bound on a rule's
+result: a local's annotation, a def's declared result, or a parameter type that
+doesn't mention the callee's binders. A rule contributes only once decided:
+without contradiction, with its results solved without defaulting. Until then it
+contributes bottom, and a rule with a bottom input doesn't run. A rule's results
+are joined over its runs in each context. When the queue empties, the undecided
+rules of each function's earliest block that has any are frozen and requeued. A
+frozen rule defaults its variables on every run, a variable without lower bounds
+becoming `Unknown`. Rounds repeat until no rule is undecided.
+
+Lowering copies a variable's value into a statement's destination, such as a
+function's result, as `ExprKind::Copy`, which flow reads without recording it as
+a reference.
+
+Once the rounds end, a final pass reruns every block over its final state. It
+records what each variable reference and binding saw, which the `flow` judgment
+reports, and reports each problem once per span: contradicted rules, values that
+don't fit a local's annotation or a function's declared result, and reads that
+may be unassigned. Checks the solver can't decide join `Check::undecided`.
 
 ## Checking units and diagnostic locations
 
@@ -739,14 +833,16 @@ A bare `**` or `...` in a schema admits any keyed item, so `Dict[Str, Int]`
 satisfies `S @ {...}`; in a parameter list it admits only named ones. A written
 `**T` item, and every rest binder's shape, has symbol keys.
 
-Recursion among transparent aliases must be contractive and regular. Within a
-cycle of aliases, a reference to one of them must be guarded by a class's
-arguments, a function type or a schema's items: a union member, an argument of a
-transparent alias and a schema inclusion don't guard, since each is flattened
-into its surroundings. A guarded reference must pass the referring alias's
-binders unchanged, so `E[T] = nil | Box[E[Array[T]]]` is rejected, as OCaml
-rejects irregular abbreviations. Recursion through class supertypes is left to
-the solver, which reports expanding inheritance as residual.
+Recursion among transparent aliases must be contractive and regular. Every cycle
+of aliases must pass through a reference guarded by a class's arguments, a
+function type or a schema's items: a union member, an argument of a transparent
+alias and a schema inclusion don't guard, since each is flattened into its
+surroundings. So `Item = Leaf | Node` with `Node = Dict[{*Item}]` is accepted,
+though `Item`'s reference to `Node` is bare. Each reference within a cycle must
+pass the referring alias's binders unchanged, so `E[T] = nil | Box[E[Array[T]]]`
+is rejected, as OCaml rejects irregular abbreviations. Recursion through class
+supertypes is left to the solver, which reports expanding inheritance as
+residual.
 
 `Check::validated` holds when the checker reported no errors and decided every
 check. Otherwise the result is partial: usable for diagnostics and tooling, but

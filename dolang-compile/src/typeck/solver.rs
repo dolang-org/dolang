@@ -932,6 +932,11 @@ impl<'db> Solver<'db> {
         self.inference[id.0].defaulted.get()
     }
 
+    /// A variable's kind
+    pub(crate) fn variable_kind(&self, id: InferVarId) -> Kind {
+        self.inference[id.0].kind
+    }
+
     /// The least candidate above nonempty lower bounds: their join, or for a
     /// schema the one they all are, since there are no schema unions
     fn join(&self, kind: Kind, lower: &[TypeId]) -> Option<TypeId> {
@@ -1909,6 +1914,9 @@ mod lattice;
 mod member;
 mod narrow;
 mod schema;
+
+pub(crate) use lattice::Widening;
+pub(crate) use narrow::Target as NarrowTarget;
 
 #[cfg(test)]
 mod tests;

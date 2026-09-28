@@ -968,34 +968,76 @@ impl Database {
 
     pub(crate) fn intern(&self, ty: Type) -> TypeId {
         self.validate(&ty);
-        let ty = match ty {
-            Type::Quantified { binders, body } if binders.is_empty() => return body,
+        let ty = self.normalize(ty);
+        self.types.id_owned(ty)
+    }
+
+    /// A type's canonical outer form, which interning gives it: a quantifier
+    /// without binders is its body, and an application of the `Union` intrinsic is
+    /// a union. A union is flattened, with its members sorted and deduplicated, and
+    /// an expanded schema of positional items among them contributes the items'
+    /// types. A union with `Top` is `Top`, and one with a single member is it.
+    /// Children are assumed canonical already.
+    pub(crate) fn normalize(&self, ty: Type) -> Type {
+        match ty {
+            Type::Quantified { binders, body } if binders.is_empty() => self.ty(body).clone(),
+            Type::Apply { base, args, kind } if Some(base) == self.intrinsic(Intrinsic::Union) => {
+                let members = (args.iter())
+                    .map(|arg| match *arg {
+                        Argument::Positional(schema) | Argument::Expand(schema) => {
+                            Some(UnionMember::Expand(schema))
+                        }
+                        Argument::Keyword(..) => None,
+                    })
+                    .collect::<Option<Vec<_>>>();
+                match members {
+                    Some(members) => self.normalize(Type::Union(members.into())),
+                    None => Type::Apply { base, args, kind },
+                }
+            }
             Type::Union(members) => {
                 let mut normalized = Vec::new();
-                let mut top = None;
-                for member in members.iter().copied() {
+                let mut pending: Vec<UnionMember> = members.iter().rev().copied().collect();
+                while let Some(member) = pending.pop() {
                     match member {
                         UnionMember::Type(id) => match self.ty(id) {
-                            Type::Top => top = Some(id),
+                            Type::Top => return Type::Top,
                             Type::Union(nested) => normalized.extend_from_slice(nested),
                             _ => normalized.push(member),
                         },
-                        UnionMember::Expand(_) => normalized.push(member),
+                        UnionMember::Expand(schema) => match self.positional_items(schema) {
+                            Some(items) => {
+                                pending.extend(items.into_iter().rev().map(UnionMember::Type));
+                            }
+                            None => normalized.push(member),
+                        },
                     }
-                }
-                if let Some(top) = top {
-                    return top;
                 }
                 normalized.sort_unstable();
                 normalized.dedup();
                 match normalized.as_slice() {
-                    [UnionMember::Type(id)] => return *id,
+                    [UnionMember::Type(id)] => self.ty(*id).clone(),
                     _ => Type::Union(normalized.into()),
                 }
             }
             ty => ty,
+        }
+    }
+
+    /// The types of a schema's items, if each is positional, through inclusions
+    fn positional_items(&self, schema: TypeId) -> Option<Vec<TypeId>> {
+        let Type::Schema(items) = self.ty(schema) else {
+            return None;
         };
-        self.types.id_owned(ty)
+        let mut types = Vec::new();
+        for item in items.iter() {
+            match item.element {
+                Element::Positional(ty) => types.push(ty),
+                Element::Include(schema) => types.extend(self.positional_items(schema)?),
+                Element::Keyed { .. } => return None,
+            }
+        }
+        Some(types)
     }
 
     fn validate(&self, ty: &Type) {

@@ -7,7 +7,7 @@ pub class Text
 
 pub class Box[T @ Num]
   pub def get _self -> T
-    nil
+    ...
 
 pub let good @ Box[Int] = nil
 pub let bad @ Box[Text] = nil
@@ -50,9 +50,9 @@ pub def defaulted[T @ Num = Text] x @ T
 # An omitted argument takes its default, substituted with the arguments before it.
 pub class Pair[A @ Num, B @ Num = A]
   pub def first _self -> A
-    nil
+    ...
   pub def second _self -> B
-    nil
+    ...
 
 pub let pair @ Pair[Int] = nil
 pub let unpaired @ Pair[Text] = nil
@@ -74,7 +74,7 @@ pub class Cmp[T]
 
 pub class Sorted[T @ Cmp[T]]
   pub def first _self -> T
-    nil
+    ...
 
 pub class Word: Cmp[Word]
 
@@ -88,9 +88,9 @@ pub let unsorted @ Sorted[Text] = nil
 
 pub class Within[U, T @ U]
   pub def outer _self -> U
-    nil
+    ...
   pub def inner _self -> T
-    nil
+    ...
 
 pub let within @ Within[Num, Int] = nil
 pub let outside @ Within[Int, Num] = nil

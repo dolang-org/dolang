@@ -1,0 +1,139 @@
+# Calls, collections, `for` items and unpacking are checked by rules. A result
+# that only defaulting decides waits for a round, so literals decay.
+
+pub def length s @ Str -> Int
+  ...
+
+pub def first[T] xs @ Array[T] -> T
+  ...
+
+pub def keyed :n @ Int -> Str
+  ...
+
+pub def ints xs @ Array[Int | nil] -> nil
+  ...
+
+pub def pair n @ Int s @ Str -> nil
+  ...
+
+pub def called()
+  let n = length "a"
+  let _ = n
+  #       ^: flow std.Int
+  let f = first [1, 2]
+  let _ = f
+  #       ^: flow std.Int
+  let k = keyed n: 1
+  let _ = k
+  #       ^: flow std.Str
+  # The parameter's type is expected of the array, which can't widen later
+  ints [1]
+  # A tuple spreads as its items, each in its position
+  let t = (1, "a")
+  pair ...t
+
+pub def collected()
+  let xs = [1, "a"]
+  let _ = xs
+  #       ^~: flow std.Array[std.Int | std.Str]
+  let d = {a: 1}
+  let _ = d
+  #       ^: flow std.Dict[{*(std.Sym): std.Int}]
+  let t = (1, "a")
+  let _ = t
+  #       ^: flow std.Tuple[{std.Int, std.Str}]
+  let r = (a: 1)
+  let _ = r
+  #       ^: flow std.Record[{a: std.Int}]
+  let e = []
+  let _ = e
+  #       ^: flow std.Array[Unknown]
+  let s = [...xs, :k:]
+  let _ = s
+  #       ^: flow std.Array[std.Int | std.Str | std.Sym]
+  let c = $
+    for x = xs
+      - $x
+  let _ = c
+  #       ^: flow std.Array[std.Int | std.Str]
+  # An annotated local's array takes the annotation's element type
+  let ys @ Array[Int | nil] = [1]
+  let _ = ys
+  #       ^~: flow std.Array[nil | std.Int]
+
+pub def iterated()
+  for x = [1, 2]
+    let _ = x
+    #       ^: flow std.Int
+
+pub def unpacked()
+  let a b = [1, 2]
+  let _ = a
+  #       ^: flow std.Int
+  let _ = b
+  #       ^: flow std.Int
+  # A tuple unpacks as its items
+  let p q = (1, "a")
+  let _ = p
+  #       ^: flow std.Int
+  let _ = q
+  #       ^: flow std.Str
+
+pub def wrong()
+  length 1
+  # error: expected `std.Str`, found `1`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   length 1
+  #    |          ^
+  length "a" "b"
+  # error: the callee takes no such argument
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   length "a" "b"
+  #    |              ^^^
+  length()
+  # error: this call is missing an argument
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   length()
+  #    |   ^^^^^^^^
+  let _ @ Str = 1
+  # error: `1` does not fit the annotation `std.Str`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ @ Str = 1
+  #    |                 ^
+  for _ = 1
+    # error: `1` is not iterable
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   for _ = 1
+    #    |           ^
+    nil
+  let _ _ = 1
+# error: `1` is not unpackable
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ _ = 1
+#    |             ^
+
+pub def declared() -> Int
+  "a"
+# error: `"a"` does not fit the declared result `std.Int`
+#   --> m.dol:LL:LL
+#    |
+# LL |   "a"
+#    |   ^^^
+
+# A `finally` is judged in each context it's entered in, but reported once
+pub def finished()
+  try
+    length "a"
+  finally
+    length 2
+    # error: expected `std.Str`, found `2`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     length 2
+    #    |            ^

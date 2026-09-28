@@ -43,7 +43,11 @@ pub(crate) enum ExprKind {
         spec: FmtSpec,
         rule: RuleId,
     },
+    /// A reference to a variable
     Var(VarId),
+    /// A variable's value that lowering copies, spanned as the source it stands
+    /// for, such as a statement's value, rather than a reference
+    Copy(VarId),
     /// The class object a class statement defines, of type `Type[C]`
     Class(DeclId),
     /// An imported module, or an item of one
@@ -210,6 +214,7 @@ impl Expr {
             | ExprKind::Float
             | ExprKind::Bin
             | ExprKind::Var(_)
+            | ExprKind::Copy(_)
             | ExprKind::Class(_)
             | ExprKind::Import { .. }
             | ExprKind::Lambda(_)

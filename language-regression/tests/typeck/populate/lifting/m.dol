@@ -28,7 +28,7 @@ pub def outer[A, B] _a @ A _b @ B
     #   ^~~~~: quantifier ^B covariant
     pub def get _self -> B
       #     ^~~: quantifier ^B covariant, in contravariant, out contravariant
-      nil
+      ...
   class Via
     #   ^~~: quantifier ^B invariant
     pub field local @ Local = nil
@@ -37,9 +37,9 @@ pub def outer[A, B] _a @ A _b @ B
     # ^~~~~~~~~~: quantifier ^A contravariant, in contravariant, out contravariant
     #                ^~~~~: type m.outer.OnlyA[^A]
     x
-  def body_only _x
+  def body_only x
     # ^~~~~~~~~: quantifier ^B invariant, in contravariant, out contravariant
-    let y @ B = nil
+    let y @ B = x
     #       ^: type B
     y
   let f = do |x @ A| x

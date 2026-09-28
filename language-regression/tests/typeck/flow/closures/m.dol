@@ -1,0 +1,98 @@
+# A call types the `do` blocks it's given: each parameter written without an
+# annotation takes what the callee passes it, and the block's result joins into
+# the call's. Elsewhere a block's parameters are dynamic.
+
+pub def map[T, U] xs @ Array[T] f @ ((T) -> U) -> Array[U]
+  ...
+
+pub def apply[T] x @ T f @ ((T) -> nil) -> nil
+  ...
+
+pub def keyed :each @ ((Str) -> nil) -> nil
+  ...
+
+pub def fold[T] init @ T f @ ((T, T) -> T) -> T
+  ...
+
+pub def mapped()
+  let ys = map [1, 2] do |x| [x]
+  #                       ^: flow std.Int
+  let _ = ys
+  #       ^~: flow std.Array[std.Array[std.Int]]
+
+pub def applied()
+  apply 1 do |y|
+    let _ = y
+    #       ^: flow std.Int
+    nil
+  keyed each: do |s|
+    let _ = s
+    #       ^: flow std.Str
+    nil
+
+# A block's result, while unknown, doesn't hold up what the call passes it
+pub def folded()
+  let total = fold 0 do |a _b| a
+  #                      ^: flow std.Int
+  let _ = total
+  #       ^~~~~: flow std.Int
+
+pub def bound()
+  let f = do |_x| 1
+  #           ^~: flow Unknown
+  let r = f 2
+  let _ = r
+  #       ^: flow std.Int
+
+# A block's result is known once the block is analyzed, however the blocks that
+# give it depend on each other
+pub def mutual()
+  let a = do 1
+  let b = do a()
+  let c = b()
+  let _ = c
+  #       ^: flow std.Int
+  let f = do |n @ Int| n
+  let g = do |n @ Int| f $n
+  f = do |n @ Int| g $n
+  let h = g 1
+  let _ = h
+  #       ^: flow std.Int
+
+# A block reads a captured variable as every value assigned to it
+pub def captured()
+  let v = 1
+  let read = do v
+  v = "a"
+  let w = read()
+  let _ = w
+  #       ^: flow std.Int | std.Str
+
+# A block's omitted channels are inferred like its parameters. Here the call
+# gives it the def's own, so it can call the callback its def is given.
+pub def around[R] block @ (() -> R) -> R
+  apply 1 do |_x|
+    block()
+    nil
+  block()
+
+# A rest parameter isn't typed from its items yet
+pub def rested *xs @ Str
+  let _ = xs
+  #       ^~: flow Unknown
+
+# A `return` in a block returns from its def
+pub def early xs @ Array[Int] -> Int
+  map $xs do |x|
+    return x
+  0
+
+pub def wrong xs @ Array[Int] -> Int
+  map $xs do |_x|
+    return "a"
+  # error: `"a"` does not fit the declared result `std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |     return "a"
+  #    |            ^^^
+  0

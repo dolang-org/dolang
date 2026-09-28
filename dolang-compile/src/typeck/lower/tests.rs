@@ -191,8 +191,8 @@ let x = 1
 f $x (x && x.y) (x || 2)
 ",
         "
-f0 module: entry b0, exit b1, params ()
-f1 decl0 in f0: entry b2, exit b3, params (a, b, c)
+f0 module: entry b0, exit b1, params (), bottom t7 t8 t9 t10 t11 t12
+f1 decl0 in f0: entry b2, exit b3, params (a, b, c), signature (t7, t8, t9) <t10 >t11 -> t12, captures t7 t8 t9 t10 t11 t12!
 b0 f0:
   let f = f1
   let x = 1
@@ -205,6 +205,7 @@ b2 f1:
   result1 = a
   goto b3
 b3 f1:
+  t12 = result1
   return
 b4 f0:
   assume x != nil
@@ -673,8 +674,8 @@ g $ys
   key: 2
 ",
         "
-f0 module: entry b0, exit b1, params (), bottom x t8
-f1 decl0 in f0: entry b2, exit b3, params (Mixed...a)
+f0 module: entry b0, exit b1, params (), bottom x t8 t9 t10 t11 t12
+f1 decl0 in f0: entry b2, exit b3, params (Mixed...a), signature (t9) <t10 >t11 -> t12, captures t9 t10 t11 t12!
 b0 f0:
   let xs = array[1, 2]
   let g = f1
@@ -686,6 +687,7 @@ b2 f1:
   result1 = a
   goto b3
 b3 f1:
+  t12 = result1
   return
 b4 f0:
   next x in t3 then b6 else b5
@@ -737,8 +739,8 @@ let ys = $
       - $x
 ",
         "
-f0 module: entry b0, exit b1, params (), bottom x t5 y t7 t9
-f1 decl0 in f0: entry b13, exit b14, params (), captures x
+f0 module: entry b0, exit b1, params (), bottom x t5 y t7 t9 t10 t11 t12
+f1 decl0 in f0: entry b13, exit b14, params (), signature () <t10 >t11 -> t12, captures t10 t11 t12! x
 b0 f0:
   let xs = array[1, 2]
   let t2 = xs
@@ -776,6 +778,7 @@ b13 f1:
   result1 = x
   goto b14
 b14 f1:
+  t12 = result1
   return
 ",
     );
@@ -798,8 +801,8 @@ g (a || b)
     ...xs
 ",
         "
-f0 module: entry b0, exit b1, params (), bottom x t9 t10 t11
-f1 decl0 in f0: entry b2, exit b3, params (Mixed...rest)
+f0 module: entry b0, exit b1, params (), bottom x t9 t10 t11 t12 t13 t14 t15
+f1 decl0 in f0: entry b2, exit b3, params (Mixed...rest), signature (t12) <t13 >t14 -> t15, captures t12 t13 t14 t15!
 b0 f0:
   let xs = array[1, 2]
   let a = 1
@@ -814,6 +817,7 @@ b2 f1:
   result1 = rest
   goto b3
 b3 f1:
+  t15 = result1
   return
 b4 f0:
   pop
@@ -1023,8 +1027,8 @@ let inc = do
 m
 ",
         "
-f0 module: entry b0, exit b1, params ()
-f1 decl0 in f0: entry b2, exit b3, params (), captures n! m
+f0 module: entry b0, exit b1, params (), bottom t5 t6 t7
+f1 decl0 in f0: entry b2, exit b3, params (), signature () <t5 >t6 -> t7, captures t5 t6 t7! n! m
 b0 f0:
   let n = 0
   let m = 1
@@ -1038,6 +1042,62 @@ b2 f1:
   result1 = n
   goto b3
 b3 f1:
+  t7 = result1
+  return
+",
+    );
+}
+
+/// A `do` block's signature has a variable of its parent's for each item written
+/// without an annotation, and its exit joins its result into the result's. A def
+/// and a method have none.
+#[test]
+fn lambda_signature() {
+    check(
+        "
+def d x
+  x
+class C
+  pub def m self
+    nil
+let f = do |a b@Int :k :j@Str *pos@Int **kw| a
+let g = (do |x <Iter[Int]| -> Int x)
+",
+        "
+f0 module: entry b0, exit b1, params (), bottom t18 t19 t20 t21 t22 t23 t24 t25
+f1 decl0 in f0: entry b2, exit b3, params (x)
+f2 decl2 in f0: entry b4, exit b5, params (self)
+f3 decl3 in f0: entry b6, exit b7, params (a, b, k: k, j: j, Pos...pos, Key...kw), signature (t20, _, t21, _, _, t22) <t23 >t24 -> t25, captures t20 t21 t22 t23 t24 t25!
+f4 decl4 in f0: entry b8, exit b9, params (x), signature (t18) <_ >t19 -> _, captures t18 t19
+b0 f0:
+  let d = f1
+  let C = class1
+  let f = f3
+  let g = f4
+  result0 = g
+  goto b1
+b1 f0:
+  return
+b2 f1:
+  result1 = x
+  goto b3
+b3 f1:
+  return
+b4 f2:
+  result2 = nil
+  goto b5
+b5 f2:
+  return
+b6 f3:
+  result3 = a
+  goto b7
+b7 f3:
+  t25 = result3
+  return
+b8 f4:
+  result4 = x
+  goto b9
+b9 f4:
   return
 ",
     );
@@ -1059,8 +1119,8 @@ def f xs
 ",
         "
 f0 module: entry b0, exit b1, params ()
-f1 decl0 in f0: entry b2, exit b3, params (xs)
-f2 decl1 in f1: entry b8, exit b9, params (y)
+f1 decl0 in f0: entry b2, exit b3, params (xs), bottom t9 t10 t11 t12
+f2 decl1 in f1: entry b8, exit b9, params (y), signature (t9) <t10 >t11 -> t12, captures t9 t10 t11 t12!
 b0 f0:
   let f = f1
   result0 = f
@@ -1085,6 +1145,7 @@ b7 f1:
 b8 f2:
   if y then b12 else b10
 b9 f2:
+  t12 = result2
   return
 b10 f2:
   return from f1 y

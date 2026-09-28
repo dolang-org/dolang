@@ -458,6 +458,65 @@ fn unions_normalize_without_exposing_or_expanding() {
 }
 
 #[test]
+fn union_applications_normalize_to_unions() {
+    let mut db = Database::new();
+    let (id, union_alias, source) = declare(&mut db, DeclKind::OpaqueAlias, "Union");
+    db.set_intrinsic(Intrinsic::Union, union_alias);
+    db.populate(id, definition(source, union_alias));
+    let a = intern(&mut db, Type::Literal(Literal::Int(1)));
+    let b = intern(&mut db, Type::Literal(Literal::Int(2)));
+    let apply = |db: &mut Database, schema| {
+        intern(
+            db,
+            Type::Apply {
+                base: union_alias,
+                args: vec![Argument::Positional(schema)].into(),
+                kind: Kind::Type,
+            },
+        )
+    };
+    // Positional items, through inclusions, are the union's members
+    let ab = schema(&mut db, &[a, b]);
+    let included = intern(
+        &mut db,
+        Type::Schema(
+            vec![SchemaItem {
+                multiplicity: Multiplicity::Required,
+                element: Element::Include(ab),
+            }]
+            .into(),
+        ),
+    );
+    let expected = union(&mut db, &[a, b]);
+    assert_eq!(apply(&mut db, ab), expected);
+    assert_eq!(apply(&mut db, included), expected);
+    let single = schema(&mut db, &[a]);
+    assert_eq!(apply(&mut db, single), a);
+    // A pack that isn't known yet stays expanded
+    let pack = reference(&mut db, 0, 0, Kind::Schema);
+    let expanded = intern(&mut db, Type::Union(vec![UnionMember::Expand(pack)].into()));
+    assert_eq!(apply(&mut db, pack), expanded);
+    // As does a schema with keyed items
+    let key = intern(&mut db, Type::Literal(Literal::Int(3)));
+    let keyed = intern(
+        &mut db,
+        Type::Schema(
+            vec![SchemaItem {
+                multiplicity: Multiplicity::Required,
+                element: Element::Keyed { key, value: a },
+            }]
+            .into(),
+        ),
+    );
+    let kept = apply(&mut db, keyed);
+    assert!(matches!(
+        db.ty(kept),
+        Type::Union(members) if members[..] == [UnionMember::Expand(keyed)]
+    ));
+    db.seal();
+}
+
+#[test]
 fn unknown_is_a_type_that_unions_do_not_absorb() {
     let mut db = Database::new();
     let unknown = db.unknown();

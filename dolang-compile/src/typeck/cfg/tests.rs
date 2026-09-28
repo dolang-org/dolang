@@ -218,6 +218,7 @@ fn non_local() {
             pattern: Pattern::Unpack(Vec::new()),
             body,
             exit: loop_exit,
+            span: Span::INVALID,
         },
     );
     terminate(
@@ -502,4 +503,55 @@ fn lambdas_and_rules() {
         graph.block_mut(entry).steps.insert(0, Step::Eval(get));
     }
     assert_eq!(graph.freeze().validate(), Err(Invalid::Rule(rule)));
+}
+
+#[test]
+fn signatures() {
+    /// Validate a module with a parameterless closure whose signature has a result
+    /// variable, owned by the module or else the closure, captured or not, and
+    /// `params` parameter entries
+    fn signed(owner_is_parent: bool, captured: bool, params: usize) -> Result<(), Invalid> {
+        let graph = Graph::new();
+        let top = returning(&graph);
+        let lambda = closure(&graph, top);
+        let owner = if owner_is_parent { top } else { lambda };
+        let var = graph.alloc_var(owner, Origin::Signature, None);
+        let (entry, exit) = {
+            let mut func = graph.func_mut(lambda);
+            if captured {
+                func.captures.push(var);
+            }
+            func.signature = Some(Signature {
+                params: vec![None; params],
+                input: None,
+                output: None,
+                result: Some(var),
+            });
+            (func.entry, func.exit)
+        };
+        terminate(&graph, entry, Terminal::Branch(exit));
+        graph.freeze().validate()
+    }
+
+    assert_eq!(signed(true, true, 0), Ok(()));
+    // A variable the closure owns itself
+    assert!(matches!(
+        signed(false, false, 0),
+        Err(Invalid::Signature(_))
+    ));
+    // A variable it doesn't capture
+    assert!(matches!(signed(true, false, 0), Err(Invalid::Signature(_))));
+    // An entry for a parameter it doesn't have
+    assert!(matches!(signed(true, true, 1), Err(Invalid::Signature(_))));
+
+    // A signature on the module function
+    let graph = Graph::new();
+    let top = returning(&graph);
+    graph.func_mut(top).signature = Some(Signature {
+        params: Vec::new(),
+        input: None,
+        output: None,
+        result: None,
+    });
+    assert_eq!(graph.freeze().validate(), Err(Invalid::Signature(top)));
 }

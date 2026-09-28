@@ -298,16 +298,22 @@ impl<'u> Scope<'_, '_, 'u> {
         }
     }
 
+    /// An annotation's type, with its group's binders as the rigids its body is
+    /// checked under
     fn annotation(&self, annot: &ast::Annot) -> Option<TypeId> {
         use crate::ast::visit::Node;
 
-        self.lower
-            .tables
-            .site_types
-            .get(&UnitSpan {
-                unit: self.lower.unit,
-                span: annot.ty.span(),
-            })
-            .copied()
+        let span = annot.ty.span();
+        let lower = self.lower;
+        let ty = *lower.tables.site_types.get(&UnitSpan {
+            unit: lower.unit,
+            span,
+        })?;
+        Some(match lower.site_groups.get(&span) {
+            Some(&Some(group)) => lower
+                .db
+                .substitute(ty, &lower.tables.group_rigids(lower.db, group)),
+            _ => ty,
+        })
     }
 }

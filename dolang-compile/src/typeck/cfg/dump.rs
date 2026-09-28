@@ -54,6 +54,21 @@ impl Dump<'_, '_> {
             )?;
             write!(out, ", params ")?;
             self.pattern(out, &func.params)?;
+            if let Some(signature) = &func.signature {
+                write!(out, ", signature (")?;
+                for (index, &param) in signature.params.iter().enumerate() {
+                    if index != 0 {
+                        write!(out, ", ")?;
+                    }
+                    self.slot(out, param)?;
+                }
+                write!(out, ") <")?;
+                self.slot(out, signature.input)?;
+                write!(out, " >")?;
+                self.slot(out, signature.output)?;
+                write!(out, " -> ")?;
+                self.slot(out, signature.result)?;
+            }
             if !func.captures.is_empty() {
                 write!(out, ", captures")?;
                 for &var in &func.captures {
@@ -101,7 +116,17 @@ impl Dump<'_, '_> {
         match self.ir.var(var).origin {
             Origin::Source(span) => write!(out, "{}", (self.text)(span)),
             Origin::Result => write!(out, "result{}", self.ir.var(var).owner.index()),
-            Origin::Synthetic | Origin::Field(_) => write!(out, "t{}", var.index()),
+            Origin::Synthetic | Origin::Field(_) | Origin::Signature => {
+                write!(out, "t{}", var.index())
+            }
+        }
+    }
+
+    /// A signature's variable, or `_` for an annotated item
+    fn slot(&self, out: &mut String, var: Option<VarId>) -> fmt::Result {
+        match var {
+            Some(var) => self.var(out, var),
+            None => write!(out, "_"),
         }
     }
 
@@ -202,6 +227,7 @@ impl Dump<'_, '_> {
                 pattern,
                 body,
                 exit,
+                ..
             } => {
                 write!(out, "next ")?;
                 self.pattern(out, pattern)?;
@@ -359,7 +385,7 @@ impl Dump<'_, '_> {
                 self.spec(out, spec, false)?;
                 write!(out, ")")
             }
-            ExprKind::Var(var) => self.var(out, *var),
+            ExprKind::Var(var) | ExprKind::Copy(var) => self.var(out, *var),
             ExprKind::Class(decl) => write!(out, "class{}", decl.index()),
             ExprKind::Import { module, item } => {
                 match module {
