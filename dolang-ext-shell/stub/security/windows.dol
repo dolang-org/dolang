@@ -313,6 +313,39 @@ pub class AccessMask: Iterable[AccessRight] @FlagSet[AccessRight]
   pub def int self -> Int
     ...
 
+  # Constructs a flag set from symbols.
+  #[class]
+  @def (call) cls ...flags@AccessRight -> AccessMask
+
+  # Constructs a flag set from one iterable of symbols.
+  #[class]
+  @def (call) cls flags@Iterable[AccessRight] -> AccessMask
+
+  #[class]
+  pub def (call) cls ...flags
+    ...
+
+  # Tests whether all flags named by `flag` are set.
+  pub def contains self flag @ AccessRight -> Bool
+    ...
+
+  # Returns the flags set in either.
+  pub def (bor)[S @ AccessMask] self@S other@S -> S
+    ...
+
+  # Returns the flags set in both.
+  pub def (band)[S @ AccessMask] self@S other@S -> S
+    ...
+
+  # Returns the flags set in exactly one.
+  pub def (bxor)[S @ AccessMask] self@S other@S -> S
+    ...
+
+  # Returns the flags of the type that are not set.
+  pub def (bnot)[S @ AccessMask] self @ S -> S
+    ...
+
+
 # A symbol naming a flag of an [`AceFlags`](security.windows.AceFlags).
 #
 # The trust-protected-filter flag occupies the same bit as
@@ -356,6 +389,39 @@ pub class AceFlags: Iterable[AceFlag] @FlagSet[AceFlag]
   pub def int self -> Int
     ...
 
+  # Constructs a flag set from symbols.
+  #[class]
+  @def (call) cls ...flags@AceFlag -> AceFlags
+
+  # Constructs a flag set from one iterable of symbols.
+  #[class]
+  @def (call) cls flags@Iterable[AceFlag] -> AceFlags
+
+  #[class]
+  pub def (call) cls ...flags
+    ...
+
+  # Tests whether all flags named by `flag` are set.
+  pub def contains self flag @ AceFlag -> Bool
+    ...
+
+  # Returns the flags set in either.
+  pub def (bor)[S @ AceFlags] self@S other@S -> S
+    ...
+
+  # Returns the flags set in both.
+  pub def (band)[S @ AceFlags] self@S other@S -> S
+    ...
+
+  # Returns the flags set in exactly one.
+  pub def (bxor)[S @ AceFlags] self@S other@S -> S
+    ...
+
+  # Returns the flags of the type that are not set.
+  pub def (bnot)[S @ AceFlags] self @ S -> S
+    ...
+
+
 # A symbol naming a flag of a [`SecDescControl`](security.windows.SecDescControl).
 #
 # | Symbol                         | Meaning                               |
@@ -384,6 +450,39 @@ pub @let SecDescControlFlag = (
 # Security descriptor control flags.
 pub class SecDescControl: Iterable[SecDescControlFlag] @FlagSet[SecDescControlFlag]
 
+  # Constructs a flag set from symbols.
+  #[class]
+  @def (call) cls ...flags@SecDescControlFlag -> SecDescControl
+
+  # Constructs a flag set from one iterable of symbols.
+  #[class]
+  @def (call) cls flags@Iterable[SecDescControlFlag] -> SecDescControl
+
+  #[class]
+  pub def (call) cls ...flags
+    ...
+
+  # Tests whether all flags named by `flag` are set.
+  pub def contains self flag @ SecDescControlFlag -> Bool
+    ...
+
+  # Returns the flags set in either.
+  pub def (bor)[S @ SecDescControl] self@S other@S -> S
+    ...
+
+  # Returns the flags set in both.
+  pub def (band)[S @ SecDescControl] self@S other@S -> S
+    ...
+
+  # Returns the flags set in exactly one.
+  pub def (bxor)[S @ SecDescControl] self@S other@S -> S
+    ...
+
+  # Returns the flags of the type that are not set.
+  pub def (bnot)[S @ SecDescControl] self @ S -> S
+    ...
+
+
 # A symbol naming components of a [`SecInfo`](security.windows.SecInfo).
 #
 # | Symbol    | Component                |
@@ -399,6 +498,39 @@ pub @let SecInfoComponent = (
 
 # Security descriptor components loaded by a query.
 pub class SecInfo: Iterable[SecInfoComponent] @FlagSet[SecInfoComponent]
+
+  # Constructs a flag set from symbols.
+  #[class]
+  @def (call) cls ...flags@SecInfoComponent -> SecInfo
+
+  # Constructs a flag set from one iterable of symbols.
+  #[class]
+  @def (call) cls flags@Iterable[SecInfoComponent] -> SecInfo
+
+  #[class]
+  pub def (call) cls ...flags
+    ...
+
+  # Tests whether all flags named by `flag` are set.
+  pub def contains self flag @ SecInfoComponent -> Bool
+    ...
+
+  # Returns the flags set in either.
+  pub def (bor)[S @ SecInfo] self@S other@S -> S
+    ...
+
+  # Returns the flags set in both.
+  pub def (band)[S @ SecInfo] self@S other@S -> S
+    ...
+
+  # Returns the flags set in exactly one.
+  pub def (bxor)[S @ SecInfo] self@S other@S -> S
+    ...
+
+  # Returns the flags of the type that are not set.
+  pub def (bnot)[S @ SecInfo] self @ S -> S
+    ...
+
 
 # A symbol naming an attribute of a [`TokenGroupAttributes`](security.windows.TokenGroupAttributes).
 #
@@ -421,6 +553,39 @@ pub @let TokenGroupAttribute = (
 
 # Windows access-token group attributes.
 pub class TokenGroupAttributes: Iterable[TokenGroupAttribute] @FlagSet[TokenGroupAttribute]
+
+  # Constructs a flag set from symbols.
+  #[class]
+  @def (call) cls ...flags@TokenGroupAttribute -> TokenGroupAttributes
+
+  # Constructs a flag set from one iterable of symbols.
+  #[class]
+  @def (call) cls flags@Iterable[TokenGroupAttribute] -> TokenGroupAttributes
+
+  #[class]
+  pub def (call) cls ...flags
+    ...
+
+  # Tests whether all flags named by `flag` are set.
+  pub def contains self flag @ TokenGroupAttribute -> Bool
+    ...
+
+  # Returns the flags set in either.
+  pub def (bor)[S @ TokenGroupAttributes] self@S other@S -> S
+    ...
+
+  # Returns the flags set in both.
+  pub def (band)[S @ TokenGroupAttributes] self@S other@S -> S
+    ...
+
+  # Returns the flags set in exactly one.
+  pub def (bxor)[S @ TokenGroupAttributes] self@S other@S -> S
+    ...
+
+  # Returns the flags of the type that are not set.
+  pub def (bnot)[S @ TokenGroupAttributes] self @ S -> S
+    ...
+
 
 # Windows security identifier.
 #

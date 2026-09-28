@@ -192,6 +192,9 @@ pub class Node: @Index[{*(Str): Str, *(Int): Node | Str, *(Range[Int]): Array[No
   # Reads an unnamespaced attribute by string or a child by integer index.
   #
   # Negative integer indexes count from the end.
+  @def (index) self key@Str -> Str
+  @def (index) self index@Int -> (Node | Str)
+  @def (index) self range@Range[Int] -> Array[Node | Str]
   pub def (index) self key
     ...
 

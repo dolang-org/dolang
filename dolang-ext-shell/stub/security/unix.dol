@@ -54,6 +54,39 @@ pub @let PermissionBit = (:READ: | :WRITE: | :EXECUTE:)
 # ```
 pub class Permission: Iterable[PermissionBit] @FlagSet[PermissionBit]
 
+  # Constructs a flag set from symbols.
+  #[class]
+  @def (call) cls ...flags@PermissionBit -> Permission
+
+  # Constructs a flag set from one iterable of symbols.
+  #[class]
+  @def (call) cls flags@Iterable[PermissionBit] -> Permission
+
+  #[class]
+  pub def (call) cls ...flags
+    ...
+
+  # Tests whether all flags named by `flag` are set.
+  pub def contains self flag @ PermissionBit -> Bool
+    ...
+
+  # Returns the flags set in either.
+  pub def (bor)[S @ Permission] self@S other@S -> S
+    ...
+
+  # Returns the flags set in both.
+  pub def (band)[S @ Permission] self@S other@S -> S
+    ...
+
+  # Returns the flags set in exactly one.
+  pub def (bxor)[S @ Permission] self@S other@S -> S
+    ...
+
+  # Returns the flags of the type that are not set.
+  pub def (bnot)[S @ Permission] self @ S -> S
+    ...
+
+
 # Immutable POSIX.1e access-control entry.
 #
 # The class methods below accept only a built [`Permission`](security.unix.Permission);

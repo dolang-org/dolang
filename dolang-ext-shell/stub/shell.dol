@@ -253,7 +253,7 @@ pub class Vfs
   pub def unix_socket
     self
     # Unix socket path.
-    path @ Path
+    path @ (Str | Path)
     # Pre-shared key that both
     # ends prove knowledge of during the handshake.
     #
@@ -302,7 +302,7 @@ pub class Vfs
     self
     # Initial working directory. Defaults to the
     # calling strand's.
-    :cd @ Path = nil
+    :cd @ (Str | Path) = nil
     # Environment overrides. Keys may be strings or
     # symbols; `nil` unsets a variable and `:INHERIT:` captures the calling
     # strand's current value.

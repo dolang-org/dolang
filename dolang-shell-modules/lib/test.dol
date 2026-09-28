@@ -68,10 +68,11 @@ def to_test_def x
 
 # A parametrize value paired with tags contributed only when that value is
 # selected. Not constructed directly; use `tagged`.
-class TaggedValue
-  pub field value tags
+class TaggedValue[T]: @Tagged[T]
+  pub field value @ T
+  pub field tags
 
-  def (init) self value tags = []
+  def (init) self value @ T tags = []
     self.value = value
     self.tags = tags
 
@@ -83,7 +84,8 @@ def normalize_param_value v
 
 # A [`parametrize`](test.parametrize) value carrying tags, made by
 # [`tagged`](test.tagged).
-pub @let Tagged[T] = ...
+pub @class Tagged[T]
+  field _ @ T
 
 # Attaches tags to a single `parametrize` value, honored only in cases that
 # select it.

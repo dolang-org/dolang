@@ -1745,7 +1745,7 @@ class DomainImpl
   # `chmod:` sets `dest`s mode if given
   pub def upload self source dest :chmod = nil
     let source = Path $source
-    let message = (source.name || source)
+    let message = (source.name || str source)
     source.open rb do |input|
       let total = input.metadata().size
       progress.show :message :total icon: ⬆️ units: :BYTES: do |ind|
@@ -1767,7 +1767,7 @@ class DomainImpl
       self.with do
         # The guest's path, so built in the guest's context — see `upload`.
         let remote = Path $source
-        let message = (remote.name || remote)
+        let message = (remote.name || str remote)
         remote.open rb do |input|
           let total = input.metadata().size
           progress.show :message :total icon: ⬇️ units: :BYTES: do |ind|

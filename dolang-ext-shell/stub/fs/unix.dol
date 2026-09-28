@@ -1,5 +1,6 @@
 # Unix filesystem types.
 
+import fs
 import
   security.unix:
     - @Permission
@@ -98,10 +99,43 @@ pub class Mode: Iterable[ModeBit] @FlagSet[ModeBit]
   pub def int self -> Int
     ...
 
+  # Constructs a flag set from symbols.
+  #[class]
+  @def (call) cls ...flags@ModeBit -> Mode
+
+  # Constructs a flag set from one iterable of symbols.
+  #[class]
+  @def (call) cls flags@Iterable[ModeBit] -> Mode
+
+  #[class]
+  pub def (call) cls ...flags
+    ...
+
+  # Tests whether all flags named by `flag` are set.
+  pub def contains self flag @ ModeBit -> Bool
+    ...
+
+  # Returns the flags set in either.
+  pub def (bor)[S @ Mode] self@S other@S -> S
+    ...
+
+  # Returns the flags set in both.
+  pub def (band)[S @ Mode] self@S other@S -> S
+    ...
+
+  # Returns the flags set in exactly one.
+  pub def (bxor)[S @ Mode] self@S other@S -> S
+    ...
+
+  # Returns the flags of the type that are not set.
+  pub def (bnot)[S @ Mode] self @ S -> S
+    ...
+
+
 # [`fs.Path`](fs.Path) using Unix path syntax.
 #
 # See [`fs.Path`](fs.Path) for fields, methods, and operators.
-pub class Path
+pub class Path: fs.Path
   # Converts a string or another path to a Unix path.
   #
   # Converting a Windows path is allowed only when it is relative and has no

@@ -46,6 +46,10 @@ pub class Key
   pub def value self
     ...
 
+  #[setter]
+  pub def value self value
+    ...
+
 
 #
 # Receives values from a channel. As an [`Iter`](std.Iter), it can be used

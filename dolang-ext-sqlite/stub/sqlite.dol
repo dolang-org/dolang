@@ -412,8 +412,13 @@ pub class Row: @Index[Int | Str, Value] @Unpack[{...}]
     # Column position or
     # name.
     key @ (Int | Str)
-  do
+  do -> Value
     ...
+
+  # Destructures the row by position or by column name.
+  pub def (unpack) self -> Unpack[{...}]
+    ...
+
 
 # A database transaction in progress.
 #

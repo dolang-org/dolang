@@ -141,6 +141,39 @@ pub class AccessMask: WindowsAccessMask @FlagSet[AccessRight]
   pub def int self -> Int
     ...
 
+  # Constructs a flag set from symbols.
+  #[class]
+  @def (call) cls ...flags@AccessRight -> AccessMask
+
+  # Constructs a flag set from one iterable of symbols.
+  #[class]
+  @def (call) cls flags@Iterable[AccessRight] -> AccessMask
+
+  #[class]
+  pub def (call) cls ...flags
+    ...
+
+  # Tests whether all flags named by `flag` are set.
+  pub def contains self flag @ AccessRight -> Bool
+    ...
+
+  # Returns the flags set in either.
+  pub def (bor)[S @ AccessMask] self@S other@S -> S
+    ...
+
+  # Returns the flags set in both.
+  pub def (band)[S @ AccessMask] self@S other@S -> S
+    ...
+
+  # Returns the flags set in exactly one.
+  pub def (bxor)[S @ AccessMask] self@S other@S -> S
+    ...
+
+  # Returns the flags of the type that are not set.
+  pub def (bnot)[S @ AccessMask] self @ S -> S
+    ...
+
+
 # Rights, given as an [`AccessMask`](winreg.AccessMask), one right, or an
 # iterable of rights.
 pub @let AccessMaskSpec = (AccessMask | AccessRight | Iterable[AccessRight])
