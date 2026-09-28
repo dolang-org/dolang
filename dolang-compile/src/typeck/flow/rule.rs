@@ -6,8 +6,9 @@
 //! contributes bottom, which adds nothing and never has to be retracted. Once the
 //! queue empties, every rule still undecided is frozen and its block queued again.
 //! From then on each of its runs defaults its unsolved variables, upstream first,
-//! and a variable with no lower bounds becomes dynamic. A rule's results in a
-//! context are joined over its runs.
+//! and a variable with no lower bounds becomes dynamic. A rule's results are its
+//! latest run's: the analysis converges because the joins at block entries and
+//! accumulators widen.
 //!
 //! A value of bottom type is never produced, so a rule with such an input doesn't
 //! run: its results are bottom. An item of a comprehension is the exception, since
@@ -50,10 +51,8 @@ pub(super) enum Site {
     Next(BlockId),
 }
 
-/// What a rule concluded in one context
+/// A rule's state in one context, for defaulting
 pub(super) struct Conclusion {
-    /// Joined over every run
-    results: Vec<TypeId>,
     /// Whether its latest run was decided
     pub(super) decided: bool,
     pub(super) frozen: bool,
@@ -566,7 +565,7 @@ struct Params {
 
 impl<'a> Flow<'a, '_> {
     /// Run a rule: solve the constraints `build` makes and conclude its results in
-    /// this context, joined with what its earlier runs concluded. `expected` is
+    /// this context, replacing what its earlier runs concluded. `expected` is
     /// pre-seeded as an upper bound on the first result, unless that contradicts:
     /// then the check against the expectation reports it instead.
     fn conclude(
@@ -627,30 +626,19 @@ impl<'a> Flow<'a, '_> {
         };
         if self.observing() {
             self.blame(&solver, &checks, &outcomes[..checks.len()]);
-            return self
-                .rules
-                .get(&key)
-                .map_or(values, |rule| rule.results.clone());
+            return values;
         }
         let (passed, pending) = lambdas;
         for (var, ty) in self::passed(&mut solver, self.db, &passed, &pending) {
             self.join(var, ty);
         }
-        let joined = match self.rules.get(&key) {
-            Some(rule) => (rule.results.iter().zip(&values))
-                .map(|(&old, &new)| self.lub(old, new))
-                .collect(),
-            None => values,
-        };
         let rule = self.rules.entry(key).or_insert(Conclusion {
-            results: Vec::new(),
             decided,
             frozen: false,
             block: at.block,
         });
-        rule.results.clone_from(&joined);
         rule.decided = decided;
-        joined
+        values
     }
 
     /// Diagnose the checks a rule's final run contradicted, and record the ones it
@@ -789,20 +777,10 @@ impl<'a> Flow<'a, '_> {
         let bottom = self.db.bottom();
         let unknown = self.db.unknown();
         let callee_type = self.eval(at, state, operands, callee);
-        if callee_type == bottom {
-            // A rule with a bottom input doesn't run, and the arguments belong to the
-            // call. What they're expected to be comes from the callee, and a rule
-            // run without it would keep what it concluded, since rules join their
-            // results over their runs (#799).
-            for _ in 0..super::holes(expr) - super::holes(callee) {
-                operands.pop_front();
-            }
-            return bottom;
-        }
         let (input, output) = self.channels(at);
         let params = self.params(callee_type, input, output).unwrap_or_default();
         let values = self.values(at, state, operands, args, Some(&params), true);
-        if values.never {
+        if callee_type == bottom || values.never {
             return bottom;
         }
         let function = |ty: TypeId| {

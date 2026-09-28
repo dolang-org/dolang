@@ -600,10 +600,9 @@ only reified types leave it:
 
 - A call constrains its callee below `Solver::call_items` of its arguments,
   passing the caller's declared channels. A callee that isn't a function type
-  or a union of them, and an overloaded def, give `Unknown`. Its arguments wait
-  until its callee isn't bottom, since what they're expected to be comes from
-  the callee's parameters: those that don't mention its binders, once the
-  binders it takes as channels are the caller's.
+  or a union of them, and an overloaded def, give `Unknown`. What its arguments
+  are expected to be comes from the callee's parameters: those that don't
+  mention its binders, once the binders it takes as channels are the caller's.
 - A comprehension's items are passed as often as its tree says. The items of an
   outermost `for`, with everything nested in it, join into one repeated item of
   each kind: `*T` for positional items, `*k: V` for each literal key, and
@@ -640,7 +639,8 @@ result: a local's annotation, a def's declared result, or a parameter type that
 doesn't mention the callee's binders. A rule contributes only once decided:
 without contradiction, with its results solved without defaulting. Until then it
 contributes bottom, and a rule with a bottom input doesn't run. A rule's results
-are joined over its runs in each context. When the queue empties, the undecided
+are its latest run's, which needn't be monotone: the analysis converges because
+states and accumulators widen. When the queue empties, the undecided
 rules of each function's earliest block that has any are frozen and requeued. A
 frozen rule defaults its variables on every run, a variable without lower bounds
 becoming `Unknown`. Rounds repeat until no rule is undecided.
