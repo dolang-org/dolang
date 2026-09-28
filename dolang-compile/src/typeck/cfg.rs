@@ -4,18 +4,30 @@
 //! top-level code is its entry function, and every def, method, lambda and field
 //! initializer in it is a function nested in that one. A block holds statement
 //! steps whose expressions stay tree-shaped, and ends in a terminal. Only
-//! short-circuit operators, statements and exceptions introduce control flow.
+//! short-circuit operators, comprehensions, statements and exceptions introduce
+//! control flow.
 //!
 //! Each function's locals are hoisted to the function, starting unassigned. Only
-//! short circuits cross blocks mid-expression: a short circuit's left operand is
-//! pushed on an operand stack, and its result is there at the join. The rest of
-//! the expression stays a tree, with an [`ExprKind::Operand`] hole where the stack
-//! supplies a value. A step or terminal pops one entry per hole, in evaluation
-//! order, and since only earlier short circuits of the same statement lie below,
-//! that is the whole stack. [`Terminal::If`] pops its condition, so a short circuit
-//! duplicates its left operand first. Statements are never nested in expressions,
-//! so an exceptional edge discards the whole stack and enters its handler, an
-//! ordinary block, with the exception alone on it.
+//! short circuits and comprehensions cross blocks mid-expression. A short
+//! circuit's left operand is pushed on an operand stack, and its result is there
+//! at the join. The rest of the expression stays a tree, with an
+//! [`ExprKind::Operand`] hole where the stack supplies a value. A step or terminal
+//! pops one entry per hole, in evaluation order. Below those lie only the pending
+//! results of the same statement's earlier short circuits, which a later step
+//! pops. [`Terminal::If`] pops its condition, so a short circuit duplicates its
+//! left operand first. Statements are never nested in expressions, so an
+//! exceptional edge discards the whole stack and enters its handler, an ordinary
+//! block, with the exception alone on it.
+//!
+//! A comprehension's iteratee, conditions and item values are lowered to blocks
+//! before the collection or call that holds it, each value assigned to a
+//! synthetic variable. Constants and lambdas stay in the tree, where the rule's
+//! expected type reaches them. Items can't assign, so no state crosses iterations:
+//! a `for` item is a [`Terminal::Next`] whose body continues to its exit, with no
+//! back edge. The collection keeps an [`Item::For`] and [`Item::If`] tree with
+//! the variables as its leaves, which says only how often each value occurs.
+//! The variables and the comprehension's bindings start as bottom
+//! ([`Var::bottom`]), so a path that doesn't assign one adds nothing to it.
 //!
 //! A `finally` is entered by [`Terminal::Leave`] with a tag saying how to continue
 //! once [`Terminal::EndFinally`] ends it: at a block, or by rethrowing. Lowering
@@ -124,6 +136,9 @@ pub(crate) struct Var {
     pub(crate) flagged: bool,
     /// The nested functions that capture it. Filled by [`Graph::freeze`].
     pub(crate) readers: Vec<FuncId>,
+    /// Starts as bottom rather than unassigned: a comprehension's bindings and item
+    /// values, which are assigned only on the paths its structure accounts for
+    pub(crate) bottom: bool,
 }
 
 pub(crate) struct Block {
@@ -154,8 +169,8 @@ pub(crate) enum Step {
         target: Target,
         value: Expr,
     },
-    /// Join a parameter's default into its state, since the argument may have been
-    /// passed
+    /// Join a pattern item's default into its variable's state, since the item may
+    /// have been present. It follows the step or edge that binds the pattern.
     Default {
         var: VarId,
         value: Expr,
@@ -186,8 +201,9 @@ pub(crate) enum Terminal {
         then: BlockId,
         else_: BlockId,
     },
-    /// Dispatch the exception on top of the stack to the first clause whose class it
-    /// is an instance of, narrowing it there, or else to `otherwise`
+    /// Dispatch the exception to the first clause whose class it is an instance of,
+    /// narrowing it there, or else to `otherwise`. The classes pop their operands,
+    /// which lie above the exception.
     Catch {
         clauses: Vec<(Expr, BlockId)>,
         otherwise: BlockId,
@@ -262,8 +278,6 @@ pub(crate) struct PatternItem {
     pub(crate) key: PatternKey,
     /// Absent for a rest that binds nothing
     pub(crate) var: Option<VarId>,
-    /// Joined into the binding when the item is missing
-    pub(crate) default: Option<Expr>,
 }
 
 pub(crate) enum PatternKey {
@@ -345,6 +359,7 @@ impl Graph {
             captured: false,
             flagged: false,
             readers: Vec::new(),
+            bottom: false,
         }));
         self.func_mut(owner).vars.push(id);
         id

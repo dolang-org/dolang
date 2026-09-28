@@ -459,12 +459,11 @@ with.
 A block owns its steps and ends in a terminal. A step is a statement whose
 expressions stay trees. Expressions mirror the AST. Only checking rules carry a
 `RuleId`: calls, method invocations (lookup and call in one rule), member
-accesses, subscripts, operators and collection literals. Comprehensions are
-expression items, since they neither break nor assign. `&&` and `||` are
-control flow, so a narrowing test's successors begin with `Assume` steps. Inside
-a comprehension item they stay in the tree as `Logical`, since an operand may
-read the item's own bindings, and narrowing there stays inside the
-comprehension's rule. An interpolation is a `FmtValue`, which a string formats
+accesses, subscripts, operators and collection literals. `&&` and `||` are
+control flow, so a narrowing test's successors begin with `Assume` steps. A
+pattern binds without its defaults; each default is a `Default` step after the
+binding step, or on the success edge of the terminal that binds it, which joins
+it into the variable. An interpolation is a `FmtValue`, which a string formats
 in place, and a `t"..."` sequence is a `Fmt` of text, `FmtValue`s and
 `FmtParam`s; std's classes of those names are designated for their types.
 
@@ -473,15 +472,31 @@ goes on an operand stack, and its result is there at the join; the rest of the
 expression stays a tree with an `Operand` hole in its place. This is a
 post-order linearization frozen partway: the stack holds completed subtrees and
 the remaining tree pops them in order. A step or terminal pops one entry per
-hole, in evaluation order, which empties the stack. `If` pops its condition, so
-a short circuit `Dup`s its left operand, and its long path `Pop`s it before
-pushing the right operand. A rule evaluated before a short circuit is thus
-judged after it; flow state can't observe the difference, since expressions
-neither assign nor bind, narrowing in the right operand is rejoined at the join,
-and calls change only captures, which are never narrowed. Statements are never
+hole, in evaluation order; below those lie only the pending results of the
+statement's earlier short circuits. `If` pops its condition, so a short circuit
+`Dup`s its left operand, and its long path `Pop`s it before pushing the right
+operand. A rule evaluated before a short circuit is thus judged after it; flow
+state can't observe the difference, since expressions neither assign nor bind,
+narrowing in the right operand is rejoined at the join, and calls change only
+captures, which are never narrowed.
+
+Comprehensions also cross blocks mid-expression. A `for` item's iteratee, an
+`if` item's condition and each item value are lowered to blocks before the
+collection or call that holds them, with the values assigned to synthetic
+variables; a constant or lambda stays in the tree, where the rule's expected
+type reaches it. Items can't assign, so no state crosses iterations: a `for`
+item is a `Next` whose body continues to its exit, with no back edge. The
+collection keeps a tree of `For` and `If` items with the variables as leaves,
+which says only how often each value occurs, and flow builds the rule's schema
+from it. The variables, and the comprehension's own bindings, start as bottom
+rather than unassigned, so the loop's exit edge and an `if`'s other branch add
+nothing to them. Statements are never
 nested in expressions, so an exceptional edge discards the whole stack. A
 handler is an ordinary block entered with the exception alone on the stack;
-`Catch` dispatches it to clauses by class.
+`Catch` dispatches it to clauses by class. A class that is a name or a dotted
+path stays in the `Catch` that tries it; any other is evaluated in blocks of its
+own, above the exception, and begins the next `Catch`, which the previous one's
+`otherwise` reaches.
 
 `Leave` enters a `finally` with a tag saying how to continue after
 `EndFinally`: at a block, or by rethrowing. Lowering routes each exit once,
@@ -520,8 +535,8 @@ found by the address of their node. Imports and prelude names resolve to
 value, needed by `let x = if …` or as a function's implicit result, goes in a
 variable rather than on the stack, so every statement starts and ends with an
 empty one. Where a statement would need a value twice, the value is bound to a
-synthetic variable first, so that each step pops exactly what was pushed since
-the one before.
+synthetic variable first, so that no step needs an entry buried below another
+step's.
 
 ## Checking units and diagnostic locations
 

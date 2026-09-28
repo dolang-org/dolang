@@ -86,13 +86,6 @@ pub(crate) enum ExprKind {
         operands: Box<[Expr; 2]>,
         rule: RuleId,
     },
-    /// `&&` or `||` inside a comprehension item, whose operands may read the item's
-    /// own bindings and so can't be moved to blocks before it. Narrowing by its left
-    /// operand stays inside the comprehension's rule.
-    Logical {
-        op: Op,
-        operands: Box<[Expr; 2]>,
-    },
     Range {
         bounds: Box<[Option<Expr>; 2]>,
         rule: RuleId,
@@ -155,18 +148,12 @@ pub(crate) enum Item {
     Key(SymbolId, Expr),
     Pair(Expr, Expr),
     Spread(Expr),
-    /// A comprehension's loop, whose pattern binds variables that live only in it
-    For {
-        pattern: Pattern,
-        iter: Expr,
-        items: Vec<Item>,
-    },
-    /// A comprehension's filter. With a pattern, as in `if let`, the condition's
-    /// value is matched on the `then` edge: a name binds it when it's truthy, and
-    /// an unpacking pattern takes `then` when the value's shape matches.
+    /// A comprehension's loop: its items occur zero or more times. The iteratee and
+    /// pattern are lowered to blocks before the item.
+    For(Vec<Item>),
+    /// A comprehension's filter: `then`'s items occur, or `else_`'s. The condition is
+    /// lowered to blocks before the item.
     If {
-        cond: Expr,
-        bind: Option<Pattern>,
         then: Vec<Item>,
         else_: Vec<Item>,
     },
@@ -188,8 +175,7 @@ pub(crate) enum Target {
 }
 
 impl Expr {
-    /// Visit this expression and each one nested in it, parents first. Expressions in
-    /// a comprehension's pattern defaults are included.
+    /// Visit this expression and each one nested in it, parents first
     pub(crate) fn walk<'a>(&'a self, visit: &mut impl FnMut(&'a Expr)) {
         visit(self);
         match &self.kind {
@@ -215,9 +201,7 @@ impl Expr {
                 index.walk(visit);
             }
             ExprKind::Unary { operand, .. } => operand.walk(visit),
-            ExprKind::Binary { operands, .. } | ExprKind::Logical { operands, .. } => {
-                operands.iter().for_each(|expr| expr.walk(visit))
-            }
+            ExprKind::Binary { operands, .. } => operands.iter().for_each(|expr| expr.walk(visit)),
             ExprKind::Range { bounds, .. } => {
                 bounds.iter().flatten().for_each(|expr| expr.walk(visit))
             }
@@ -265,25 +249,8 @@ impl Item {
                     key.walk(visit);
                     value.walk(visit);
                 }
-                Item::For {
-                    pattern,
-                    iter,
-                    items,
-                } => {
-                    iter.walk(visit);
-                    pattern.walk(visit);
-                    Item::walk_all(items, visit);
-                }
-                Item::If {
-                    cond,
-                    bind,
-                    then,
-                    else_,
-                } => {
-                    cond.walk(visit);
-                    if let Some(bind) = bind {
-                        bind.walk(visit);
-                    }
+                Item::For(items) => Item::walk_all(items, visit),
+                Item::If { then, else_ } => {
                     Item::walk_all(then, visit);
                     Item::walk_all(else_, visit);
                 }
@@ -293,7 +260,7 @@ impl Item {
 }
 
 impl Pattern {
-    /// Visit the expressions in its constant keys and defaults
+    /// Visit the expressions in its constant keys
     pub(crate) fn walk<'a>(&'a self, visit: &mut impl FnMut(&'a Expr)) {
         let Pattern::Unpack(items) = self else {
             return;
@@ -301,9 +268,6 @@ impl Pattern {
         for item in items {
             if let super::PatternKey::ConstKey(key) = &item.key {
                 key.walk(visit);
-            }
-            if let Some(default) = &item.default {
-                default.walk(visit);
             }
         }
     }

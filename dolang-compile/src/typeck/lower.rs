@@ -6,9 +6,10 @@
 //! expressions are lowered recursively.
 //!
 //! A step or terminal pops one operand stack entry per [`ExprKind::Operand`] in it,
-//! so every step must consume exactly the entries pushed since the previous one.
-//! Where a statement needs its value twice, the value goes in a synthetic variable
-//! first, before anything else of the statement is lowered.
+//! the most recent entries first, so it must be emitted after everything its
+//! operands' entries lie on top of. Where a statement needs its value twice, the
+//! value goes in a synthetic variable first, before anything else of the statement
+//! is lowered.
 
 mod expr;
 mod jump;
@@ -212,8 +213,8 @@ struct Ctx<'u> {
     guard: Option<BlockId>,
     /// The class whose private members are named here
     class: Option<DeclId>,
-    /// Inside a comprehension item, where nothing can move to blocks
-    item: bool,
+    /// Lowering a comprehension body's items, whose values go in variables
+    hoist: bool,
 }
 
 impl<'u> Ctx<'u> {
@@ -228,7 +229,7 @@ impl<'u> Ctx<'u> {
             loop_: None,
             guard: None,
             class,
-            item: false,
+            hoist: false,
         }
     }
 }

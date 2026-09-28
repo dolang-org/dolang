@@ -4,8 +4,7 @@
 use std::collections::HashSet;
 
 use super::{
-    Against, BlockId, Expr, ExprKind, FuncId, Ir, Item, Pattern, RuleId, Step, Tag, Target,
-    Terminal, VarId,
+    Against, BlockId, Expr, ExprKind, FuncId, Ir, RuleId, Step, Tag, Target, Terminal, VarId,
 };
 
 /// Why a graph is malformed
@@ -209,34 +208,11 @@ impl Check<'_> {
     fn expr(&self, expr: &Expr, vars: &mut Vec<VarId>) -> Result<(), Invalid> {
         match &expr.kind {
             ExprKind::Var(var) => vars.push(*var),
-            ExprKind::Lambda(lambda) => {
-                if self.ir.func(*lambda).parent != Some(self.func) {
-                    return Err(Invalid::Lambda {
-                        func: self.func,
-                        lambda: *lambda,
-                    });
-                }
-            }
-            ExprKind::Collection { items, .. }
-            | ExprKind::Call { args: items, .. }
-            | ExprKind::Invoke { args: items, .. } => {
-                // A comprehension's own bindings
-                let mut stack: Vec<_> = items.iter().collect();
-                while let Some(item) = stack.pop() {
-                    match item {
-                        Item::For { pattern, items, .. } => {
-                            vars.extend(pattern.vars());
-                            stack.extend(items);
-                        }
-                        Item::If {
-                            bind, then, else_, ..
-                        } => {
-                            vars.extend(bind.iter().flat_map(Pattern::vars));
-                            stack.extend(then.iter().chain(else_));
-                        }
-                        _ => {}
-                    }
-                }
+            ExprKind::Lambda(lambda) if self.ir.func(*lambda).parent != Some(self.func) => {
+                return Err(Invalid::Lambda {
+                    func: self.func,
+                    lambda: *lambda,
+                });
             }
             _ => {}
         }
