@@ -455,7 +455,7 @@ A module is one analysis region. Its top-level code is the entry function, and
 every def, method implementation, lambda and field initializer is a function
 nested in it, identified by its declaration. Each function's locals are hoisted
 to the function. A function's variables of its enclosing functions are its
-captures, and freezing the graph records each captured variable's readers. A
+captures. A
 `do` block's unannotated parameters, omitted channels and omitted return type
 are its signature: variables its parent owns and it captures, starting as
 bottom. The call it's passed to joins its expectations into them, and the
@@ -466,9 +466,9 @@ through any `finally`; a variable survives the empty stack that a `finally` is
 entered with.
 
 A block owns its steps and ends in a terminal. A step is a statement whose
-expressions stay trees. Expressions mirror the AST. Only checking rules carry a
-`RuleId`: calls, method invocations (lookup and call in one rule), member
-accesses, subscripts, operators and collection literals. `&&` and `||` are
+expressions stay trees. Expressions mirror the AST. Checking rules are calls,
+method invocations (lookup and call in one rule), member accesses, subscripts,
+operators and collection literals. `&&` and `||` are
 control flow, so a narrowing test's successors begin with `Assume` steps. A
 pattern binds without its defaults; each default is a `Default` step after the
 binding step, or on the success edge of the terminal that binds it, which joins
@@ -600,10 +600,9 @@ only reified types leave it:
 
 - A call constrains its callee below `Solver::call_items` of its arguments,
   passing the caller's declared channels. A callee that isn't a function type
-  or a union of them, and an overloaded def, give `Unknown`. Its arguments wait
-  until its callee isn't bottom, since what they're expected to be comes from
-  the callee's parameters: those that don't mention its binders, once the
-  binders it takes as channels are the caller's.
+  or a union of them, and an overloaded def, give `Unknown`. What its arguments
+  are expected to be comes from the callee's parameters: those that don't
+  mention its binders, once the binders it takes as channels are the caller's.
 - A comprehension's items are passed as often as its tree says. The items of an
   outermost `for`, with everything nested in it, join into one repeated item of
   each kind: `*T` for positional items, `*k: V` for each literal key, and
@@ -640,20 +639,26 @@ result: a local's annotation, a def's declared result, or a parameter type that
 doesn't mention the callee's binders. A rule contributes only once decided:
 without contradiction, with its results solved without defaulting. Until then it
 contributes bottom, and a rule with a bottom input doesn't run. A rule's results
-are joined over its runs in each context. When the queue empties, the undecided
-rules of each function's earliest block that has any are frozen and requeued. A
-frozen rule defaults its variables on every run, a variable without lower bounds
-becoming `Unknown`. Rounds repeat until no rule is undecided.
+are its latest run's, which needn't be monotone: the analysis converges because
+states and accumulators widen. Each (block, context) records whether its
+latest run left a rule undecided. When the queue empties, each function's
+earliest such block is marked and requeued, and its next run, once, defaults the
+variables of each rule it leaves undecided, a variable without lower bounds
+becoming `Unknown`. A marked block that reruns later, because its inputs grew,
+waits for another stuck point, so it never defaults on inputs still settling.
+Rounds repeat until no block is undecided.
 
 Lowering copies a variable's value into a statement's destination, such as a
 function's result, as `ExprKind::Copy`, which flow reads without recording it as
 a reference.
 
-Once the rounds end, a final pass reruns every block over its final state. It
-records what each variable reference and binding saw, which the `flow` judgment
-reports, and reports each problem once per span: contradicted rules, values that
-don't fit a local's annotation or a function's declared result, and reads that
-may be unassigned. Checks the solver can't decide join `Check::undecided`.
+Once the rounds end, a final pass reruns every block over its final state,
+defaulting any rule it leaves undecided, as the last run of a marked block did.
+It records what each variable reference and binding saw, which the `flow`
+judgment reports, and reports each problem once per span: contradicted rules,
+values that don't fit a local's annotation or a function's declared result, and
+reads that may be unassigned. Checks the solver can't decide join
+`Check::undecided`.
 
 ## Checking units and diagnostic locations
 

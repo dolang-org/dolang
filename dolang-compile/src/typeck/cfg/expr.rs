@@ -1,8 +1,6 @@
-//! Expressions: owned trees, mirroring the AST. A node that is a checking rule
-//! carries a [`RuleId`], which keys what flow learns about it; other nodes carry
-//! nothing.
+//! Expressions: owned trees, mirroring the AST.
 
-use super::{FuncId, Pattern, RuleId, VarId};
+use super::{FuncId, Pattern, VarId};
 use crate::{
     lex::Op,
     source::Span,
@@ -26,7 +24,6 @@ pub(crate) enum ExprKind {
     /// A binary string built from parts, each of which must be binary
     BinConcat {
         parts: Vec<Expr>,
-        rule: RuleId,
     },
     /// A `t"..."` sequence: a `Fmt` of literal text and interpolations, each a
     /// [`ExprKind::FmtValue`] or [`ExprKind::FmtParam`]
@@ -36,12 +33,10 @@ pub(crate) enum ExprKind {
     FmtValue {
         value: Box<Expr>,
         spec: FmtSpec,
-        rule: RuleId,
     },
     /// A `${#...}` interpolation: a `FmtParam`, which a `Fmt` fills later
     FmtParam {
         spec: FmtSpec,
-        rule: RuleId,
     },
     /// A reference to a variable
     Var(VarId),
@@ -60,44 +55,36 @@ pub(crate) enum ExprKind {
     Call {
         callee: Box<Expr>,
         args: Vec<Item>,
-        rule: RuleId,
     },
     /// A method call, which looks the method up and calls it in one rule
     Invoke {
         receiver: Box<Expr>,
         member: Member,
         args: Vec<Item>,
-        rule: RuleId,
     },
     Get {
         object: Box<Expr>,
         member: Member,
-        rule: RuleId,
     },
     Index {
         object: Box<Expr>,
         index: Box<Expr>,
-        rule: RuleId,
     },
     Unary {
         op: Op,
         operand: Box<Expr>,
-        rule: RuleId,
     },
     /// Never `&&` or `||`, which are control flow
     Binary {
         op: Op,
         operands: Box<[Expr; 2]>,
-        rule: RuleId,
     },
     Range {
         bounds: Box<[Option<Expr>; 2]>,
-        rule: RuleId,
     },
     Collection {
         kind: Collection,
         items: Vec<Item>,
-        rule: RuleId,
     },
     /// The strand's ambient input, iterated by a `for` with no iteratee
     AmbientInput,
@@ -170,16 +157,8 @@ pub(crate) enum Item {
 /// What an assignment writes
 pub(crate) enum Target {
     Var(VarId),
-    Field {
-        object: Expr,
-        member: Member,
-        rule: RuleId,
-    },
-    Index {
-        object: Expr,
-        index: Expr,
-        rule: RuleId,
-    },
+    Field { object: Expr, member: Member },
+    Index { object: Expr, index: Expr },
 }
 
 impl Expr {
@@ -230,22 +209,22 @@ impl Expr {
         }
     }
 
-    /// The rule it is, if it's one
-    pub(crate) fn rule(&self) -> Option<RuleId> {
-        match self.kind {
-            ExprKind::Call { rule, .. }
-            | ExprKind::Invoke { rule, .. }
-            | ExprKind::Get { rule, .. }
-            | ExprKind::Index { rule, .. }
-            | ExprKind::Unary { rule, .. }
-            | ExprKind::Binary { rule, .. }
-            | ExprKind::Range { rule, .. }
-            | ExprKind::Collection { rule, .. }
-            | ExprKind::BinConcat { rule, .. }
-            | ExprKind::FmtValue { rule, .. }
-            | ExprKind::FmtParam { rule, .. } => Some(rule),
-            _ => None,
-        }
+    /// Whether it's a checking rule
+    pub(crate) fn is_rule(&self) -> bool {
+        matches!(
+            self.kind,
+            ExprKind::Call { .. }
+                | ExprKind::Invoke { .. }
+                | ExprKind::Get { .. }
+                | ExprKind::Index { .. }
+                | ExprKind::Unary { .. }
+                | ExprKind::Binary { .. }
+                | ExprKind::Range { .. }
+                | ExprKind::Collection { .. }
+                | ExprKind::BinConcat { .. }
+                | ExprKind::FmtValue { .. }
+                | ExprKind::FmtParam { .. }
+        )
     }
 }
 

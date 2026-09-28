@@ -3,11 +3,13 @@
 //!
 //! A rule contributes its results only once it's decided: solved without
 //! contradiction, with every result solved without defaulting. Until then it
-//! contributes bottom, which adds nothing and never has to be retracted. Once the
-//! queue empties, every rule still undecided is frozen and its block queued again.
-//! From then on each of its runs defaults its unsolved variables, upstream first,
-//! and a variable with no lower bounds becomes dynamic. A rule's results in a
-//! context are joined over its runs.
+//! contributes bottom, which adds nothing and never has to be retracted. When the
+//! queue empties, the earliest block of each function whose latest run left a rule
+//! undecided runs again, once, defaulting the unsolved variables of each rule it
+//! leaves undecided, upstream first; a variable with no lower bounds becomes
+//! dynamic. The final pass defaults every rule it leaves undecided. A rule's
+//! results are its latest run's: the analysis converges because the joins at block
+//! entries and accumulators widen.
 //!
 //! A value of bottom type is never produced, so a rule with such an input doesn't
 //! run: its results are bottom. An item of a comprehension is the exception, since
@@ -22,10 +24,7 @@ use super::{
 use crate::{
     source::Span,
     typeck::{
-        cfg::{
-            BlockId, Collection, Expr, ExprKind, FuncId, Item, Pattern, PatternItem, PatternKey,
-            RuleId, VarId,
-        },
+        cfg::{Collection, Expr, ExprKind, FuncId, Item, Pattern, PatternItem, PatternKey, VarId},
         elab::Designated,
         solver::{
             CallArgument, Contradiction, Issue, ObligationId, Outcome, Provenance, Solver, Status,
@@ -37,29 +36,6 @@ use crate::{
         },
     },
 };
-
-/// Where a rule is
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(super) enum Site {
-    /// An expression's rule
-    Rule(RuleId),
-    /// A pattern that unpacks a value: a step's, by index, or else its block's
-    /// terminal's
-    Pattern(BlockId, Option<usize>),
-    /// A `for`'s next item
-    Next(BlockId),
-}
-
-/// What a rule concluded in one context
-pub(super) struct Conclusion {
-    /// Joined over every run
-    results: Vec<TypeId>,
-    /// Whether its latest run was decided
-    pub(super) decided: bool,
-    pub(super) frozen: bool,
-    /// The block it runs in
-    pub(super) block: BlockId,
-}
 
 /// What a constraint of a rule checks, to diagnose it by
 #[derive(Clone)]
@@ -566,19 +542,18 @@ struct Params {
 
 impl<'a> Flow<'a, '_> {
     /// Run a rule: solve the constraints `build` makes and conclude its results in
-    /// this context, joined with what its earlier runs concluded. `expected` is
+    /// this context, replacing what its earlier runs concluded. `expected` is
     /// pre-seeded as an upper bound on the first result, unless that contradicts:
-    /// then the check against the expectation reports it instead.
+    /// then the check against the expectation reports it instead. A rule left
+    /// undecided is solved again with defaulting if its block defaults, or in the
+    /// final pass; otherwise it marks its block undecided.
     fn conclude(
         &mut self,
         at: At,
-        site: Site,
         expected: Option<TypeId>,
         build: impl Fn(&mut Rule<'_, 'a>) -> Vec<Term>,
     ) -> Vec<TypeId> {
-        let key = (site, at.ctx);
-        let frozen = self.rules.get(&key).is_some_and(|rule| rule.frozen);
-        let run = |seed: bool| {
+        let run = |seed: bool, default: bool| {
             let mut solver = self.solver();
             let mut rule = Rule {
                 solver: &mut solver,
@@ -597,7 +572,7 @@ impl<'a> Flow<'a, '_> {
                 }
                 _ => false,
             };
-            let outcomes = if frozen {
+            let outcomes = if default {
                 default_all(&mut solver, self.db, true)
             } else {
                 solver.solve()
@@ -605,10 +580,15 @@ impl<'a> Flow<'a, '_> {
             let rejected = seeded && outcomes[checks.len()].status == Status::Contradicted;
             (solver, results, checks, lambdas, outcomes, rejected)
         };
-        let (mut solver, mut results, mut checks, mut lambdas, mut outcomes, rejected) = run(true);
-        if rejected {
-            (solver, results, checks, lambdas, outcomes, _) = run(false);
-        }
+        let attempt = |default: bool| {
+            let (solver, results, checks, lambdas, outcomes, rejected) = run(true, default);
+            if rejected {
+                let (solver, results, checks, lambdas, outcomes, _) = run(false, default);
+                return (solver, results, checks, lambdas, outcomes);
+            }
+            (solver, results, checks, lambdas, outcomes)
+        };
+        let (mut solver, mut results, mut checks, mut lambdas, mut outcomes) = attempt(false);
         let contradicted =
             (outcomes[..checks.len()].iter()).any(|outcome| outcome.status == Status::Contradicted);
         // A check left unresolved may be decided by defaulting
@@ -617,40 +597,28 @@ impl<'a> Flow<'a, '_> {
         let reified: Option<Vec<TypeId>> = (results.iter())
             .map(|&term| solver.reify(term).ok())
             .collect();
-        let decided = frozen || (!contradicted && !unresolved && reified.is_some());
         let values: Vec<TypeId> = match reified {
-            Some(values) if decided => values,
-            _ if frozen => (results.iter())
-                .map(|&term| solver.reify(term).unwrap_or(self.db.unknown()))
-                .collect(),
-            _ => vec![self.db.bottom(); results.len()],
+            Some(values) if !contradicted && !unresolved => values,
+            _ if self.defaulting || self.observing() => {
+                (solver, results, checks, lambdas, outcomes) = attempt(true);
+                (results.iter())
+                    .map(|&term| solver.reify(term).unwrap_or(self.db.unknown()))
+                    .collect()
+            }
+            _ => {
+                self.unsettled.insert((at.block, at.ctx));
+                vec![self.db.bottom(); results.len()]
+            }
         };
         if self.observing() {
             self.blame(&solver, &checks, &outcomes[..checks.len()]);
-            return self
-                .rules
-                .get(&key)
-                .map_or(values, |rule| rule.results.clone());
+            return values;
         }
         let (passed, pending) = lambdas;
         for (var, ty) in self::passed(&mut solver, self.db, &passed, &pending) {
             self.join(var, ty);
         }
-        let joined = match self.rules.get(&key) {
-            Some(rule) => (rule.results.iter().zip(&values))
-                .map(|(&old, &new)| self.lub(old, new))
-                .collect(),
-            None => values,
-        };
-        let rule = self.rules.entry(key).or_insert(Conclusion {
-            results: Vec::new(),
-            decided,
-            frozen: false,
-            block: at.block,
-        });
-        rule.results.clone_from(&joined);
-        rule.decided = decided;
-        joined
+        values
     }
 
     /// Diagnose the checks a rule's final run contradicted, and record the ones it
@@ -783,26 +751,16 @@ impl<'a> Flow<'a, '_> {
         expr: &Expr,
         expected: Option<TypeId>,
     ) -> TypeId {
-        let ExprKind::Call { callee, args, rule } = &expr.kind else {
+        let ExprKind::Call { callee, args, .. } = &expr.kind else {
             unreachable!("a call")
         };
         let bottom = self.db.bottom();
         let unknown = self.db.unknown();
         let callee_type = self.eval(at, state, operands, callee);
-        if callee_type == bottom {
-            // A rule with a bottom input doesn't run, and the arguments belong to the
-            // call. What they're expected to be comes from the callee, and a rule
-            // run without it would keep what it concluded, since rules join their
-            // results over their runs (#799).
-            for _ in 0..super::holes(expr) - super::holes(callee) {
-                operands.pop_front();
-            }
-            return bottom;
-        }
         let (input, output) = self.channels(at);
         let params = self.params(callee_type, input, output).unwrap_or_default();
         let values = self.values(at, state, operands, args, Some(&params), true);
-        if values.never {
+        if callee_type == bottom || values.never {
             return bottom;
         }
         let function = |ty: TypeId| {
@@ -826,7 +784,7 @@ impl<'a> Flow<'a, '_> {
         }
         let spread = self.designated(Designated::Spread);
         let span = expr.span;
-        self.conclude(at, Site::Rule(*rule), expected, |rule| {
+        self.conclude(at, expected, |rule| {
             let (arguments, spans) = rule.arguments(&values, spread, span);
             let result = rule.solver.infer();
             let call = rule.solver.call_items(
@@ -1237,7 +1195,7 @@ impl<'a> Flow<'a, '_> {
         expr: &Expr,
         expected: Option<TypeId>,
     ) -> TypeId {
-        let ExprKind::Collection { kind, items, rule } = &expr.kind else {
+        let ExprKind::Collection { kind, items, .. } = &expr.kind else {
             unreachable!("a collection")
         };
         let unknown = self.db.unknown();
@@ -1281,9 +1239,8 @@ impl<'a> Flow<'a, '_> {
             Collection::Dict => expected.and_then(|ty| self.applied(class, ty)),
             _ => None,
         };
-        let site = Site::Rule(*rule);
         let result = match (kind, expected_dict) {
-            (Collection::Array, _) => self.conclude(at, site, expected, |rule| {
+            (Collection::Array, _) => self.conclude(at, expected, |rule| {
                 let element = rule.solver.infer();
                 for placed in &values.values {
                     match placed.value {
@@ -1318,13 +1275,13 @@ impl<'a> Flow<'a, '_> {
             }),
             // What's expected of a dict checks its items one by one, where joining
             // them would lose which is where
-            (Collection::Dict, Some((ty, schema))) => self.conclude(at, site, expected, |rule| {
+            (Collection::Dict, Some((ty, schema))) => self.conclude(at, expected, |rule| {
                 let (arguments, _) = rule.arguments(&values, spread, expr.span);
                 let exact = rule.solver.arguments_schema(&arguments);
                 rule.constrain(exact, rule.closed(schema), Check::Expected(expr.span));
                 vec![rule.closed(ty)]
             }),
-            (Collection::Dict, None) => self.conclude(at, site, expected, |rule| {
+            (Collection::Dict, None) => self.conclude(at, expected, |rule| {
                 let keys = rule.solver.infer();
                 let entries = rule.solver.infer();
                 let entry = |rule: &mut Rule<'_, 'a>, key: TypeId, value: Term| {
@@ -1369,7 +1326,7 @@ impl<'a> Flow<'a, '_> {
                     Collection::Tuple => Rest::Positional,
                     _ => Rest::All,
                 };
-                self.conclude(at, site, expected, |rule| {
+                self.conclude(at, expected, |rule| {
                     let mut elements = Vec::new();
                     for placed in &values.values {
                         match placed.value {
@@ -1447,7 +1404,6 @@ impl<'a> Flow<'a, '_> {
     fn fits(
         &mut self,
         at: At,
-        rule: RuleId,
         values: &[(TypeId, Span)],
         ty: Option<TypeId>,
         misfit: Misfit,
@@ -1460,7 +1416,7 @@ impl<'a> Flow<'a, '_> {
         let Some(ty) = ty else {
             return result;
         };
-        self.conclude(at, Site::Rule(rule), None, |rule| {
+        self.conclude(at, None, |rule| {
             for &(value, span) in values {
                 rule.constrain(
                     rule.closed(value),
@@ -1479,7 +1435,6 @@ impl<'a> Flow<'a, '_> {
         state: &mut State,
         operands: &mut VecDeque<TypeId>,
         parts: &[Expr],
-        rule: RuleId,
     ) -> TypeId {
         let values: Vec<_> = (parts.iter())
             .map(|part| (self.eval(at, state, operands, part), part.span))
@@ -1487,7 +1442,7 @@ impl<'a> Flow<'a, '_> {
         let bin = self.designated(Designated::Bin);
         let result = self.designated_type(Designated::Bin);
         let bin = bin.map(|decl| self.db.intern(Type::Decl(decl)));
-        self.fits(at, rule, &values, bin, Misfit::Binary, result)
+        self.fits(at, &values, bin, Misfit::Binary, result)
     }
 
     /// An interpolation or a parameter hole: its specification's width and precision
@@ -1499,11 +1454,9 @@ impl<'a> Flow<'a, '_> {
         operands: &mut VecDeque<TypeId>,
         expr: &Expr,
     ) -> TypeId {
-        let (value, spec, rule, role) = match &expr.kind {
-            ExprKind::FmtValue { value, spec, rule } => {
-                (Some(&**value), spec, *rule, Designated::FmtValue)
-            }
-            ExprKind::FmtParam { spec, rule } => (None, spec, *rule, Designated::FmtParam),
+        let (value, spec, role) = match &expr.kind {
+            ExprKind::FmtValue { value, spec, .. } => (Some(&**value), spec, Designated::FmtValue),
+            ExprKind::FmtParam { spec, .. } => (None, spec, Designated::FmtParam),
             _ => unreachable!("an interpolation or parameter hole"),
         };
         let bottom = self.db.bottom();
@@ -1519,7 +1472,7 @@ impl<'a> Flow<'a, '_> {
         }
         let int = self.db.intrinsic(crate::typeck::r#type::Intrinsic::Int);
         let result = self.designated_type(role);
-        self.fits(at, rule, &values, int, Misfit::Int, result)
+        self.fits(at, &values, int, Misfit::Int, result)
     }
 
     /// The type of the items a `for` iterates: its iteratee must be a
@@ -1531,7 +1484,7 @@ impl<'a> Flow<'a, '_> {
         let Some(base) = self.designated(Designated::BaseIterable) else {
             return self.db.unknown();
         };
-        self.conclude(at, Site::Next(at.block), None, |rule| {
+        self.conclude(at, None, |rule| {
             let element = rule.solver.infer();
             let target = rule.term(|holes| {
                 let element = holes.hole(element, Kind::Type);
@@ -1553,7 +1506,6 @@ impl<'a> Flow<'a, '_> {
     pub(super) fn unpack(
         &mut self,
         at: At,
-        site: Site,
         items: &[PatternItem],
         value: TypeId,
         span: Option<Span>,
@@ -1569,7 +1521,7 @@ impl<'a> Flow<'a, '_> {
             Some(span) => Check::Fits(span, Misfit::Unpackable),
             None => Check::Quiet,
         };
-        self.conclude(at, site, None, |rule| {
+        self.conclude(at, None, |rule| {
             let vars: Vec<Option<Term>> = (items.iter())
                 .map(|item| match item.key {
                     PatternKey::Pos | PatternKey::Key(_) => Some(rule.solver.infer()),

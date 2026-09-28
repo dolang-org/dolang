@@ -24,11 +24,10 @@ fn push(graph: &Graph, block: BlockId, step: Step) {
     graph.block_mut(block).steps.push(step);
 }
 
-fn call(graph: &Graph, callee: Expr, args: Vec<Item>) -> Expr {
+fn call(callee: Expr, args: Vec<Item>) -> Expr {
     expr(ExprKind::Call {
         callee: Box::new(callee),
         args,
-        rule: graph.alloc_rule(),
     })
 }
 
@@ -97,13 +96,12 @@ fn well_formed() {
         },
     );
     push(&graph, rhs, Step::Pop);
-    let g = call(&graph, expr(ExprKind::Lambda(lambda)), Vec::new());
+    let g = call(expr(ExprKind::Lambda(lambda)), Vec::new());
     push(&graph, rhs, Step::Push(g));
     terminate(&graph, rhs, Terminal::Branch(join));
 
     // `try … finally`, whose body calls and falls through
     let value = call(
-        &graph,
         expr(ExprKind::Var(f)),
         vec![
             Item::Pos(expr(ExprKind::Var(x))),
@@ -127,8 +125,6 @@ fn well_formed() {
 
     let ir = graph.freeze();
     assert_eq!(ir.validate(), Ok(()));
-    assert_eq!(ir.var(x).readers, [lambda]);
-    assert!(ir.var(f).readers.is_empty());
 }
 
 #[test]
@@ -174,7 +170,7 @@ fn non_local() {
             tag: Tag::Goto(exit),
         },
     );
-    let each = call(&graph, expr(ExprKind::Lambda(lambda)), Vec::new());
+    let each = call(expr(ExprKind::Lambda(lambda)), Vec::new());
     push(&graph, call_block, Step::Eval(each));
     push(
         &graph,
@@ -231,7 +227,7 @@ fn non_local() {
     );
     let breaking = closure(&graph, func);
     terminate(&graph, graph.func(breaking).entry, Terminal::Escape);
-    let each = call(&graph, expr(ExprKind::Lambda(breaking)), Vec::new());
+    let each = call(expr(ExprKind::Lambda(breaking)), Vec::new());
     push(&graph, call_block, Step::Eval(each));
     terminate(&graph, call_block, Terminal::Branch(header));
     push(
@@ -463,7 +459,7 @@ fn variables() {
 }
 
 #[test]
-fn lambdas_and_rules() {
+fn lambdas() {
     // A closure instantiated by its grandparent
     let graph = Graph::new();
     let top = returning(&graph);
@@ -488,21 +484,6 @@ fn lambdas_and_rules() {
             lambda: inner
         })
     );
-
-    // A rule used twice
-    let graph = Graph::new();
-    let top = returning(&graph);
-    let entry = graph.func(top).entry;
-    let rule = graph.alloc_rule();
-    for _ in 0..2 {
-        let get = expr(ExprKind::Index {
-            object: Box::new(expr(ExprKind::Literal(Literal::Nil))),
-            index: Box::new(expr(ExprKind::Literal(Literal::Int(0)))),
-            rule,
-        });
-        graph.block_mut(entry).steps.insert(0, Step::Eval(get));
-    }
-    assert_eq!(graph.freeze().validate(), Err(Invalid::Rule(rule)));
 }
 
 #[test]

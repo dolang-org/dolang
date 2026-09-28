@@ -91,3 +91,22 @@ def pick a @ A b @ B
 ",
     );
 }
+
+#[test]
+fn rebuilt_collections_are_order_independent() {
+    agree(
+        "
+def first[T] xs @ Array[T] -> T
+  ...
+def rebuilt c @ Bool n @ Int s @ Str
+  let x = n
+  while c
+    let ys = [x]
+    let d = {k: x}
+    if c
+      x = first [s]
+    else
+      x = first [ys, d]
+",
+    );
+}

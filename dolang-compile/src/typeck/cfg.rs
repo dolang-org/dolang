@@ -61,7 +61,7 @@ mod expr;
 mod tests;
 mod validate;
 
-use std::cell::{Cell, Ref, RefCell, RefMut};
+use std::cell::{Ref, RefCell, RefMut};
 
 use dolang_util::mono::MonoVec;
 
@@ -90,7 +90,6 @@ macro_rules! id {
 id!(FuncId);
 id!(BlockId);
 id!(VarId);
-id!(RuleId);
 
 /// A function's source
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -171,8 +170,6 @@ pub(crate) struct Var {
     /// reads as the join of its assignments inside nested functions, and its owner's
     /// narrowing of it lasts only until a step that can call.
     pub(crate) flagged: bool,
-    /// The nested functions that capture it. Filled by [`Graph::freeze`].
-    pub(crate) readers: Vec<FuncId>,
     /// Starts as bottom rather than unassigned: a comprehension's bindings and item
     /// values, which are assigned only on the paths its structure accounts for
     pub(crate) bottom: bool,
@@ -333,7 +330,6 @@ pub(crate) struct Graph {
     funcs: MonoVec<RefCell<Func>>,
     blocks: MonoVec<RefCell<Block>>,
     vars: MonoVec<RefCell<Var>>,
-    rules: Cell<u32>,
 }
 
 impl Graph {
@@ -398,17 +394,9 @@ impl Graph {
             annotation,
             captured: false,
             flagged: false,
-            readers: Vec::new(),
             bottom: false,
         }));
         self.func_mut(owner).vars.push(id);
-        id
-    }
-
-    pub(crate) fn alloc_rule(&self) -> RuleId {
-        let id = RuleId(self.rules.get());
-        self.rules
-            .set(id.0.checked_add(1).expect("graph too large"));
         id
     }
 
@@ -436,20 +424,12 @@ impl Graph {
         self.vars[id.index()].borrow_mut()
     }
 
-    /// Finish the graph, recording each captured variable's readers
+    /// Finish the graph
     pub(crate) fn freeze(mut self) -> Ir {
-        let funcs: Vec<Func> = self.funcs.drain().map(RefCell::into_inner).collect();
-        let mut vars: Vec<Var> = self.vars.drain().map(RefCell::into_inner).collect();
-        for (index, func) in funcs.iter().enumerate() {
-            for &var in &func.captures {
-                vars[var.index()].readers.push(FuncId::from_index(index));
-            }
-        }
         Ir {
-            funcs,
+            funcs: self.funcs.drain().map(RefCell::into_inner).collect(),
             blocks: self.blocks.drain().map(RefCell::into_inner).collect(),
-            vars,
-            rules: self.rules.get(),
+            vars: self.vars.drain().map(RefCell::into_inner).collect(),
         }
     }
 }
@@ -459,7 +439,6 @@ pub(crate) struct Ir {
     funcs: Vec<Func>,
     blocks: Vec<Block>,
     vars: Vec<Var>,
-    rules: u32,
 }
 
 impl Ir {
@@ -486,11 +465,6 @@ impl Ir {
     /// How many variables were allocated
     pub(crate) fn var_count(&self) -> usize {
         self.vars.len()
-    }
-
-    /// How many rules were allocated
-    pub(crate) fn rules(&self) -> usize {
-        self.rules as usize
     }
 }
 

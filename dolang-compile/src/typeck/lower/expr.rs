@@ -50,11 +50,9 @@ impl<'u> Scope<'_, '_, 'u> {
             ast::Expr::Fmt { value, spec, .. } => ExprKind::FmtValue {
                 value: Box::new(self.expr(value)),
                 spec: self.spec(spec),
-                rule: self.graph().alloc_rule(),
             },
             ast::Expr::FmtParam { spec, .. } => ExprKind::FmtParam {
                 spec: self.spec(spec),
-                rule: self.graph().alloc_rule(),
             },
             ast::Expr::FmtSeq { exprs, .. } => self.fmt_seq(exprs, span),
             ast::Expr::Group { expr, .. } => return self.expr(expr),
@@ -62,7 +60,6 @@ impl<'u> Scope<'_, '_, 'u> {
             ast::Expr::Unary { op, expr, .. } => ExprKind::Unary {
                 op: *op,
                 operand: Box::new(self.expr(expr)),
-                rule: self.graph().alloc_rule(),
             },
             ast::Expr::Binary {
                 op: op @ (Op::AmpAmp | Op::BarBar),
@@ -75,7 +72,6 @@ impl<'u> Scope<'_, '_, 'u> {
                 ExprKind::Binary {
                     op: *op,
                     operands: Box::new([left, right]),
-                    rule: self.graph().alloc_rule(),
                 }
             }
             ast::Expr::Range { exprs, .. } => {
@@ -83,7 +79,6 @@ impl<'u> Scope<'_, '_, 'u> {
                 let end = exprs[1].as_ref().map(|expr| self.expr(expr));
                 ExprKind::Range {
                     bounds: Box::new([start, end]),
-                    rule: self.graph().alloc_rule(),
                 }
             }
             ast::Expr::Call { arg0, args, .. } => self.call(arg0, args),
@@ -96,7 +91,6 @@ impl<'u> Scope<'_, '_, 'u> {
                 None => ExprKind::Get {
                     object: Box::new(self.expr(object)),
                     member: self.member(field),
-                    rule: self.graph().alloc_rule(),
                 },
             },
             ast::Expr::Index { exprs, .. } => {
@@ -105,7 +99,6 @@ impl<'u> Scope<'_, '_, 'u> {
                 ExprKind::Index {
                     object: Box::new(object),
                     index: Box::new(index),
-                    rule: self.graph().alloc_rule(),
                 }
             }
             ast::Expr::Array { elems, .. } => {
@@ -185,7 +178,6 @@ impl<'u> Scope<'_, '_, 'u> {
                         width: None,
                         precision: None,
                     },
-                    rule: scope.graph().alloc_rule(),
                 };
                 expr(kind, node.span())
             }
@@ -220,10 +212,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 run = false;
             }
         }
-        ExprKind::BinConcat {
-            parts,
-            rule: self.graph().alloc_rule(),
-        }
+        ExprKind::BinConcat { parts }
     }
 
     fn collection(
@@ -234,7 +223,6 @@ impl<'u> Scope<'_, '_, 'u> {
         ExprKind::Collection {
             kind,
             items: items(self),
-            rule: self.graph().alloc_rule(),
         }
     }
 
@@ -303,7 +291,6 @@ impl<'u> Scope<'_, '_, 'u> {
             return ExprKind::Call {
                 callee: Box::new(callee),
                 args: self.args(args),
-                rule: self.graph().alloc_rule(),
             };
         }
         if let ast::Expr::Get { object, field, .. } = callee {
@@ -312,14 +299,12 @@ impl<'u> Scope<'_, '_, 'u> {
                 receiver: Box::new(receiver),
                 member: self.member(field),
                 args: self.args(args),
-                rule: self.graph().alloc_rule(),
             };
         }
         let callee = self.expr(callee);
         ExprKind::Call {
             callee: Box::new(callee),
             args: self.args(args),
-            rule: self.graph().alloc_rule(),
         }
     }
 
@@ -734,7 +719,7 @@ impl<'u> Scope<'_, '_, 'u> {
         }
         let class = self.expr(node);
         let mut plain = true;
-        class.walk(&mut |expr| plain &= expr.rule().is_none());
+        class.walk(&mut |expr| plain &= !expr.is_rule());
         plain.then_some(class)
     }
 }

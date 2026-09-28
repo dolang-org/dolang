@@ -126,6 +126,20 @@ pub def declared() -> Int
 # LL |   "a"
 #    |   ^^^
 
+# A rule's result is its latest run's, so a collection rebuilt in a loop from a
+# local that grows in a later round is of one type
+pub def rebuilt c @ Bool n @ Int s @ Str
+  let x = n
+  while c
+    let ys = [x]
+    let _ = ys
+    #       ^~: flow std.Array[std.Int | std.Str]
+    let d = {k: x}
+    let _ = d
+    #       ^: flow std.Dict[{*(std.Sym): std.Int | std.Str}]
+    if c
+      x = first [s]
+
 # A `finally` is judged in each context it's entered in, but reported once
 pub def finished()
   try

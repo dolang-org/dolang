@@ -29,16 +29,16 @@
 //! Calls, collection literals, binary strings, interpolations, `for` items and
 //! unpacking patterns are checking rules, each solved by a solver of its own (see
 //! [`rule`]). Rules that look up members give the dynamic type. When the queue
-//! empties, the rules still undecided in each function's earliest block that has
-//! any are frozen to default, and iteration resumes, in rounds until none is left.
-//! A rule with a check it couldn't resolve counts as undecided. Once none is left,
-//! the `do` block parameters and channels that nothing gave anything become
-//! dynamic, which may start more rounds.
-//! Then a final pass runs every block once more over its final state, to record
-//! what each variable reference and binding saw and to report: contradicted rules,
-//! values that don't fit an annotation or a declared result, and reads that may be
-//! unassigned. A block in a `finally` is
-//! judged once per context, and a problem at a span is reported once.
+//! empties, each function's earliest block whose latest run left a rule undecided
+//! runs again, once, defaulting the rules it leaves undecided, and iteration
+//! resumes, in rounds until no block has one. A rule with a check it couldn't
+//! resolve counts as undecided. Once none is left, the `do` block parameters and
+//! channels that nothing gave anything become dynamic, which may start more
+//! rounds. Then a final pass runs every block once more over its final state,
+//! defaulting any rule it leaves undecided, to record what each variable reference
+//! and binding saw and to report: contradicted rules, values that don't fit an
+//! annotation or a declared result, and reads that may be unassigned. A block in a
+//! `finally` is judged once per context, and a problem at a span is reported once.
 
 mod eval;
 mod problem;
@@ -47,10 +47,9 @@ mod state;
 #[cfg(test)]
 mod tests;
 
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 pub(crate) use problem::Problem;
-use rule::{Conclusion, Site};
 pub(crate) use state::Fact;
 use state::{Contexts, CtxId, State};
 
@@ -121,7 +120,12 @@ struct Flow<'a, 'u> {
     joined: HashMap<VarId, (TypeId, Widening)>,
     /// The blocks that read each joined type
     readers: HashMap<VarId, BTreeSet<(BlockId, CtxId)>>,
-    rules: HashMap<(Site, CtxId), Conclusion>,
+    /// The blocks whose latest run left a rule undecided
+    unsettled: HashSet<(BlockId, CtxId)>,
+    /// The blocks whose next run defaults the rules it leaves undecided
+    marked: HashSet<(BlockId, CtxId)>,
+    /// Whether the running block defaults the rules it leaves undecided
+    defaulting: bool,
     /// Filled by the final pass, which leaves states alone
     results: Option<Results>,
 }
@@ -181,7 +185,9 @@ impl<'a, 'u> Flow<'a, 'u> {
             widenings: HashMap::new(),
             joined: HashMap::new(),
             readers: HashMap::new(),
-            rules: HashMap::new(),
+            unsettled: HashSet::new(),
+            marked: HashSet::new(),
+            defaulting: false,
             results: None,
         }
     }
@@ -215,16 +221,13 @@ impl<'a, 'u> Flow<'a, 'u> {
                 };
                 self.run(block, ctx);
             }
-            // Upstream first: in each function, the undecided rules of its earliest
-            // block with any. A later rule in that block runs after its inputs.
+            // Upstream first: in each function, its earliest block with an undecided
+            // rule. A later rule in that block runs after its inputs.
             let mut earliest: HashMap<FuncId, u32> = HashMap::new();
-            for rule in self.rules.values() {
-                if !rule.decided && !rule.frozen {
-                    let rank = self.rank[rule.block.index()];
-                    let func = self.ir.block(rule.block).func;
-                    let entry = earliest.entry(func).or_insert(rank);
-                    *entry = (*entry).min(rank);
-                }
+            for &(block, _) in &self.unsettled {
+                let rank = self.rank[block.index()];
+                let entry = earliest.entry(self.ir.block(block).func).or_insert(rank);
+                *entry = (*entry).min(rank);
             }
             if earliest.is_empty() {
                 // Nothing gave these `do` block parameters and channels anything
@@ -233,18 +236,13 @@ impl<'a, 'u> Flow<'a, 'u> {
                 }
                 break;
             }
-            let mut frozen = Vec::new();
-            for (&(_, ctx), rule) in &mut self.rules {
-                let func = self.ir.block(rule.block).func;
-                if !rule.decided
-                    && !rule.frozen
-                    && earliest.get(&func) == Some(&self.rank[rule.block.index()])
-                {
-                    rule.frozen = true;
-                    frozen.push((rule.block, ctx));
-                }
-            }
-            for (block, ctx) in frozen {
+            let marked: Vec<_> = (self.unsettled.iter().copied())
+                .filter(|&(block, _)| {
+                    earliest.get(&self.ir.block(block).func) == Some(&self.rank[block.index()])
+                })
+                .collect();
+            for (block, ctx) in marked {
+                self.marked.insert((block, ctx));
                 self.enqueue(block, ctx);
             }
         }
@@ -547,6 +545,10 @@ impl<'a, 'u> Flow<'a, 'u> {
         let Some(mut state) = self.states.get(&(block, ctx)).cloned() else {
             return;
         };
+        if !self.observing() {
+            self.unsettled.remove(&(block, ctx));
+        }
+        self.defaulting = self.marked.remove(&(block, ctx));
         let ir = self.ir;
         let data = ir.block(block);
         let func = ir.func(data.func);
@@ -564,11 +566,11 @@ impl<'a, 'u> Flow<'a, 'u> {
             let fact = &mut state.vars[self.slots[func.result.index()]];
             fact.ty = self.lub(fact.ty, returned);
         }
-        for (index, step) in data.steps.iter().enumerate() {
+        for step in &data.steps {
             if throws(step) {
                 self.raise(at.ctx, data.handler, &state, self.db.unknown());
             }
-            if !self.step(at, &mut state, index, step) {
+            if !self.step(at, &mut state, step) {
                 return;
             }
             if calls(step) {
@@ -601,8 +603,8 @@ impl<'a, 'u> Flow<'a, 'u> {
         state.stack.split_off(at).into()
     }
 
-    /// Apply the step at `index`. Returns whether its end is reachable.
-    fn step(&mut self, at: At, state: &mut State, index: usize, step: &Step) -> bool {
+    /// Apply a step. Returns whether its end is reachable.
+    fn step(&mut self, at: At, state: &mut State, step: &Step) -> bool {
         match step {
             Step::Let { pattern, value } => {
                 let mut operands = Self::operands(state, holes(value));
@@ -611,8 +613,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                     Pattern::Unpack(_) => None,
                 };
                 let ty = self.expect(at, state, &mut operands, value, expected);
-                let site = Site::Pattern(at.block, Some(index));
-                self.bind(at, state, pattern, ty, site, value.span, true);
+                self.bind(at, state, pattern, ty, value.span, true);
             }
             Step::Assign { target, value } => {
                 let count = match target {
@@ -745,15 +746,13 @@ impl<'a, 'u> Flow<'a, 'u> {
     }
 
     /// Bind a pattern to a value at `span`, recording each binding. Unpacking is
-    /// the rule at `site`, diagnosed if `strict`: a pattern that is a test isn't.
-    #[expect(clippy::too_many_arguments, reason = "a pattern's context")]
+    /// a rule, diagnosed if `strict`: a pattern that is a test isn't.
     fn bind(
         &mut self,
         at: At,
         state: &mut State,
         pattern: &Pattern,
         ty: TypeId,
-        site: Site,
         span: Span,
         strict: bool,
     ) {
@@ -761,7 +760,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             &Pattern::Bind(var) => self.binding(at, state, var, ty, span),
             Pattern::Unpack(items) => {
                 let blame = strict.then_some(span);
-                let types = self.unpack(at, site, items, ty, blame);
+                let types = self.unpack(at, items, ty, blame);
                 for (item, ty) in items.iter().zip(types) {
                     if let Some(var) = item.var {
                         let span = match self.ir.var(var).origin {
@@ -935,8 +934,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 self.raise(at.ctx, data.handler, &state, unknown);
                 let ty = self.eval(at, &mut state, &mut operands, value);
                 let mut bound = state.clone();
-                let site = Site::Pattern(at.block, None);
-                self.bind(at, &mut bound, pattern, ty, site, value.span, false);
+                self.bind(at, &mut bound, pattern, ty, value.span, false);
                 self.flow(at.ctx, *then, bound);
                 self.flow(at.ctx, *else_, state);
             }
@@ -980,8 +978,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let iterable = self.read(at, &state, *iter).ty;
                 let item = self.next(at, iterable, *span);
                 let mut bound = state.clone();
-                let site = Site::Pattern(at.block, None);
-                self.bind(at, &mut bound, pattern, item, site, *span, true);
+                self.bind(at, &mut bound, pattern, item, *span, true);
                 self.flow(at.ctx, *body, bound);
                 self.flow(at.ctx, *exit, state);
             }
@@ -1088,7 +1085,7 @@ fn holes(expr: &Expr) -> usize {
 
 fn has_rule(expr: &Expr) -> bool {
     let mut found = false;
-    expr.walk(&mut |expr| found |= expr.rule().is_some());
+    expr.walk(&mut |expr| found |= expr.is_rule());
     found
 }
 
