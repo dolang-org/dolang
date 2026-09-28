@@ -1,0 +1,97 @@
+# Flow analysis joins branches and loops, narrows by conditions, decays literals
+# assigned to declared locals, and keeps a `finally`'s contexts apart.
+
+pub def g()
+  nil
+
+pub let x = 1
+#       ^: flow std.Int
+pub let s = "a"
+#       ^: flow std.Str
+
+pub def joined c @ Bool
+  let y = if c
+    1
+  else
+    "a"
+  let _ = y
+  #       ^: flow std.Int | std.Str
+
+pub def looped c @ Bool
+  let y = 1
+  while c
+    y = :k:
+  let _ = y
+  #       ^: flow std.Int | std.Sym
+
+pub def truthy v @ (Int | nil)
+  if v
+    let _ = v
+    #       ^: flow std.Int
+  else
+    let _ = v
+    #       ^: flow std.Int | std.Nil
+
+pub def compared v @ (Int | nil)
+  if (v == nil)
+    let _ = v
+    #       ^: flow std.Int | std.Nil
+  else
+    let _ = v
+    #       ^: flow std.Int
+
+pub def typed v @ (Int | Str)
+  if (type(v, Int))
+    let _ = v
+    #       ^: flow std.Int
+  else
+    let _ = v
+    #       ^: flow std.Str
+
+pub def caught()
+  let y = 1
+  try
+    y = "a"
+    g()
+    y = :k:
+  catch _
+    let _ = y
+    #       ^: flow std.Str
+  let _ = y
+  #       ^: flow std.Str | std.Sym
+
+pub def finished()
+  let y = 1
+  try
+    y = "a"
+    g()
+    y = :k:
+  finally
+    let _ = y
+    #       ^: flow std.Str | std.Sym
+  let _ = y
+  #       ^: flow std.Sym
+
+let n = 0
+pub let reader = do
+  let _ = n
+  #       ^: flow std.Int
+
+let m = 1
+pub let setter = do
+  m = "a"
+let _ = m
+#       ^: flow std.Int
+setter()
+let _ = m
+#       ^: flow std.Int | std.Str
+
+pub let id = do |a| a
+#                ^: flow Unknown
+
+pub let i = Int
+#       ^: flow std.Type[std.Int]
+class P
+  pub field q = 1
+pub let p = P
+#       ^: flow std.Type[m.P]

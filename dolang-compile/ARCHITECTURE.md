@@ -547,6 +547,39 @@ empty one. Where a statement would need a value twice, the value is bound to a
 synthetic variable first, so that no step needs an entry buried below another
 step's.
 
+## Type flow
+
+`typeck/flow.rs` runs over each unit's graph once it is lowered, iterating to a
+fixed point with one work queue for the region, ordered by reverse postorder so
+the result is deterministic. A block's state holds a fact for each variable its
+function owns (the join of the types it may hold, and whether it may be
+unassigned) and the operand stack's types. It is stored per context, the stack
+of `finally` tags the block was entered with, so a `finally`'s normal and
+rethrow entries are never joined. States only grow: they join where control
+merges, and at the target of an edge that retreats in the queue's order the
+join widens (`solver::Widening`) once it has grown too often, or goes to the
+local's annotation.
+
+An assignment is a strong update, and a literal assigned to a declared local
+decays to its class when that fits the annotation. An `Assume` narrows with
+`Solver::narrow`, and an edge left with nothing is unreachable. A step that can
+throw joins its prior state into its handler; a `Catch` narrows the exception by
+each clause's class. Parameters are bound at the entry block: a def's from its
+signature under its group's rigids (`Tables::group_rigids`, which also closes
+`Var.annotation` during lowering), a `do` block's from its signature variables.
+
+Captured state is flow-insensitive. Every assignment to a captured variable
+joins into one type that nested functions read, and a non-local return joins its
+value into its def's result the same way. Reading a joined type makes the block
+depend on it, and it is queued again when the type grows. A flagged variable's
+owner reverts it to the joined type after any step that can call. A `do` block
+instantiated where nothing is expected of it gets `Unknown` joined into its
+parameter and channel signature variables.
+
+Once the queue empties, a final pass reruns every block over its final state and
+records what each variable reference and binding saw, which the `flow` judgment
+reports. Checking rules aren't evaluated yet; each gives `Unknown`.
+
 ## Checking units and diagnostic locations
 
 `typeck::Builder` collects the units to check together. A unit must have

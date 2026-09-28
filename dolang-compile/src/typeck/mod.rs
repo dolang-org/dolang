@@ -1,8 +1,8 @@
 //! Static checking of a set of compilation units.
 
-#[allow(dead_code, reason = "read by flow analysis (#736)")]
 pub(crate) mod cfg;
 pub(crate) mod elab;
+mod flow;
 mod lower;
 pub(crate) mod solver;
 pub(crate) mod r#type;
@@ -119,9 +119,14 @@ impl<'u, 's> Builder<'u, 's> {
                 debug_assert_eq!(ir.validate(), Ok(()), "lowering builds a valid graph");
                 ir
             })
+            .collect::<Vec<_>>();
+        let flows = cfgs
+            .iter()
+            .map(|ir| flow::analyze(ir, &db, &tables))
             .collect();
         Check {
             cfgs,
+            flows,
             diagnostics: diags
                 .iter()
                 .map(|(unit, diag)| diag.resolve_in(&units[unit.index()].compiler, Some(*unit)))
@@ -147,8 +152,10 @@ pub struct Check<'u> {
     /// Well-formedness checks the checker could not decide
     unresolved: Vec<elab::Unresolved>,
     /// Each unit's typing CFG, by [`UnitId`]
-    #[allow(dead_code, reason = "read by flow analysis (#736)")]
+    #[cfg_attr(not(test), allow(dead_code, reason = "dumped by tests"))]
     cfgs: Vec<cfg::Ir>,
+    /// What flow analysis concluded about each unit, by [`UnitId`]
+    flows: Vec<flow::Results>,
 }
 
 /// The names of the judgments [`Check::judgments`] reports.
@@ -203,8 +210,18 @@ impl Check<'_> {
     #[doc(hidden)]
     pub fn judgments(&self, unit: UnitId) -> Vec<Judgment> {
         let compiler = &self.tables.units[unit.index()].compiler;
-        self.tables
-            .judgments(&self.db, unit, &self.unresolved)
+        let mut judgments = self.tables.judgments(&self.db, unit, &self.unresolved);
+        judgments.extend(self.flows[unit.index()].facts.iter().map(|(&span, fact)| {
+            let ty = self.tables.render_type(&self.db, fact.ty);
+            let value = match (fact.unassigned, fact.ty == self.db.bottom()) {
+                (false, _) => ty,
+                (true, true) => "unassigned".to_owned(),
+                (true, false) => format!("{ty} | unassigned"),
+            };
+            ("flow", span, value)
+        }));
+        judgments.sort_by_key(|&(name, span, _)| (span.start, span.end, name));
+        judgments
             .into_iter()
             .map(|(name, span, value)| Judgment {
                 name,

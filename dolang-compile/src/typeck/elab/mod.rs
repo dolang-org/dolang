@@ -19,7 +19,9 @@ use std::{
     fmt::{self, Write},
 };
 
-use super::r#type::{DeclId, DeclKind, Intrinsic, Kind, TypeId, UnitId, UnitSpan, Variance};
+use super::r#type::{
+    Database, DeclId, DeclKind, Intrinsic, Kind, TypeId, UnitId, UnitSpan, Variance,
+};
 use crate::{
     Compiler, RestKind, Unit,
     ast::{Binder, Class, Def, Function, Method, Param, TypeAlias, TypeExpr, visit::Node},
@@ -135,6 +137,39 @@ impl<'u> Tables<'u> {
             });
             (ty, kinds)
         })
+    }
+
+    /// The rigids a declaration signature's body is checked under, one for each
+    /// binder of its group. A binder lifted from an enclosing declaration is that
+    /// declaration's rigid, so a closure's types agree with its enclosing def's.
+    pub(crate) fn group_rigids(&self, db: &Database, key: (DeclId, usize)) -> Vec<TypeId> {
+        let Some(group) = self.groups.get(&key) else {
+            return Vec::new();
+        };
+        group
+            .iter()
+            .map(|binder| {
+                let owner = (binder.decl, binder.sig);
+                let slot = self.groups[&owner]
+                    .iter()
+                    .position(|other| other == binder)
+                    .expect("a binder is in its own declaration's group");
+                let rigids = db.rigids(self.sig_decls[&owner]);
+                // A group too large to populate left its declaration without binders
+                rigids
+                    .get(slot)
+                    .copied()
+                    .unwrap_or_else(|| db.unknown_of(self.binder_kinds[binder].kind))
+            })
+            .collect()
+    }
+
+    /// The signature whose database declaration a declaration's own ID holds: its
+    /// implementation, or its first signature when it has none
+    pub(crate) fn primary_sig(&self, decl: DeclId) -> usize {
+        (0..self.sig_count(decl))
+            .find(|&sig| self.sig_decls.get(&(decl, sig)) == Some(&decl))
+            .unwrap_or(0)
     }
 
     /// The source text of a span of a unit

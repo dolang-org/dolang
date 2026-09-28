@@ -1,0 +1,18 @@
+# A `break` out of a `do` block continues at the loop's exit with the state at the
+# call it's an argument of. A comprehension's binding holds each item.
+
+pub def broken xs
+  let y = 1
+  for _ = xs
+    y = :k:
+    xs.each do |_|
+      break
+    y = "s"
+  let _ = y
+  #       ^: flow std.Int | std.Str | std.Sym
+
+pub def listed xs
+  $
+    for x = xs
+      - $x
+#        ^: flow Unknown

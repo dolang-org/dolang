@@ -161,6 +161,8 @@ pub(crate) enum Origin {
 pub(crate) struct Var {
     pub(crate) owner: FuncId,
     pub(crate) origin: Origin,
+    /// Closed: the binders of the group it's written in are the rigids its
+    /// declaration's body is checked under
     pub(crate) annotation: Option<TypeId>,
     /// Read or written by a nested function
     pub(crate) captured: bool,
@@ -476,6 +478,11 @@ impl Ir {
 
     pub(crate) fn blocks(&self) -> impl Iterator<Item = (BlockId, &Block)> {
         (self.blocks.iter().enumerate()).map(|(index, block)| (BlockId::from_index(index), block))
+    }
+
+    /// How many variables were allocated
+    pub(crate) fn var_count(&self) -> usize {
+        self.vars.len()
     }
 
     /// How many rules were allocated
