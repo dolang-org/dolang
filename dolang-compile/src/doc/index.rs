@@ -1195,7 +1195,7 @@ impl Index<'_> {
         span: Span,
         visit: fn(&mut Self, &Scope<'_>, &mut [T::Element]),
     ) {
-        let is_loop = matches!(kind, Kind::While | Kind::For | Kind::ForElem);
+        let is_loop = matches!(kind, Kind::While | Kind::For);
         let id = self.push(scope, kind, span);
         let (vars, elems) = body.parts();
         let mut inner = scope.nested(vars, Some(id));

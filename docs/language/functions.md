@@ -251,6 +251,12 @@ assert_eq ((do |x| x * 2) 5) 10
 - `continue` skips to the next iteration of the innermost enclosing loop
 - `return` exits the innermost enclosing `def`
 
+A `for` in vertical layout builds collection items or call arguments; it is not
+a loop target. A `break` or `continue` in a `do` block inside one targets the
+enclosing statement loop, and is an error if there is none. A closure stored in
+a comprehension can run after the comprehension finishes, so its iteration
+cannot be a jump target.
+
 This allows natural flow control in callbacks and higher-order functions:
 
 ```

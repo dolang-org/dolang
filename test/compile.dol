@@ -297,6 +297,31 @@ def nonlocal_jumps_target_the_construct_they_leave()
     assert_ne $pair[0] $the_function[0]
 
 #[test]
+def jumps_in_comprehensions_target_the_enclosing_statement_loop()
+  let source = r|-
+    def call f
+      f()
+    for _round = [1, 2]
+      let _values = $
+        for _x = [1, 2]
+          - $ call do
+              break
+          - $ call do
+              continue
+  let unit = compile.compile "comprehension-jumps.dol" $source document: true
+  assert_no_errors $unit
+
+  let loops = [...unit.nodes().filter(do |pair| type(pair[1], compile.For))]
+  let comprehensions = [...unit.nodes().filter(do |pair| type(pair[1], compile.ForElem))]
+  assert_eq $loops.len 1
+  assert_eq $comprehensions.len 1
+
+  let the_break = unit.nodes().find(do |pair| type(pair[1], compile.Break))
+  let the_continue = unit.nodes().find(do |pair| type(pair[1], compile.Continue))
+  assert_eq $the_break[1].target $loops[0][0]
+  assert_eq $the_continue[1].target $loops[0][0]
+
+#[test]
 def static_field_initializers_see_the_enclosing_scope_not_a_method_scope()
   let source = "let x = 1\nclass C\n  #[static]\n  pub field y = str(x)\nC\n"
   let unit = compile.compile "static.dol" $source document: true
