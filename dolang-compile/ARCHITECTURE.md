@@ -744,14 +744,16 @@ A bare `**` or `...` in a schema admits any keyed item, so `Dict[Str, Int]`
 satisfies `S @ {...}`; in a parameter list it admits only named ones. A written
 `**T` item, and every rest binder's shape, has symbol keys.
 
-Recursion among transparent aliases must be contractive and regular. Within a
-cycle of aliases, a reference to one of them must be guarded by a class's
-arguments, a function type or a schema's items: a union member, an argument of a
-transparent alias and a schema inclusion don't guard, since each is flattened
-into its surroundings. A guarded reference must pass the referring alias's
-binders unchanged, so `E[T] = nil | Box[E[Array[T]]]` is rejected, as OCaml
-rejects irregular abbreviations. Recursion through class supertypes is left to
-the solver, which reports expanding inheritance as residual.
+Recursion among transparent aliases must be contractive and regular. Every cycle
+of aliases must pass through a reference guarded by a class's arguments, a
+function type or a schema's items: a union member, an argument of a transparent
+alias and a schema inclusion don't guard, since each is flattened into its
+surroundings. So `Item = Leaf | Node` with `Node = Dict[{*Item}]` is accepted,
+though `Item`'s reference to `Node` is bare. Each reference within a cycle must
+pass the referring alias's binders unchanged, so `E[T] = nil | Box[E[Array[T]]]`
+is rejected, as OCaml rejects irregular abbreviations. Recursion through class
+supertypes is left to the solver, which reports expanding inheritance as
+residual.
 
 `Check::validated` holds when the checker reported no errors and decided every
 check. Otherwise the result is partial: usable for diagnostics and tooling, but

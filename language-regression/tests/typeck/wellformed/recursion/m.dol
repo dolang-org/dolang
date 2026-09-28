@@ -18,6 +18,23 @@ pub @let List[T] = (nil | Pair[T, List[T]])
 
 pub @let Callback = (Callback -> nil)
 
+# A cycle needs only one guard
+pub @let Item = (Int | Node)
+pub @let Node = Box[Item]
+
+pub @let Ping = (nil | Pong)
+# error: recursive reference to `Pong` must be inside a class's arguments, a function type or a schema
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @let Ping = (nil | Pong)
+#    |                        ^^^^
+pub @let Pong = (Int | Ping)
+# error: recursive reference to `Ping` must be inside a class's arguments, a function type or a schema
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @let Pong = (Int | Ping)
+#    |                        ^^^^
+
 pub @let Bad = (nil | Bad)
 # error: recursive reference to `Bad` must be inside a class's arguments, a function type or a schema
 #   --> m.dol:LL:LL

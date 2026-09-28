@@ -423,10 +423,10 @@ impl Check<'_, '_> {
         }
     }
 
-    /// Check recursion among transparent aliases: within a cycle, each reference to
-    /// one of its aliases must be guarded by a nominal application's arguments, a
-    /// function type or a schema's items (contractive), and must pass the
-    /// referring alias's binders unchanged (regular)
+    /// Check recursion among transparent aliases: every cycle must pass through a
+    /// reference guarded by a nominal application's arguments, a function type or
+    /// a schema's items (contractive), and each reference within a cycle must pass
+    /// the referring alias's binders unchanged (regular)
     fn recursion(&mut self) {
         let mut aliases: Vec<DeclId> = self
             .tables
@@ -461,34 +461,66 @@ impl Check<'_, '_> {
                 continue;
             }
             let members: HashSet<DeclId> = component.iter().copied().collect();
+            let mut found = Vec::new();
             for &id in &component {
                 let decl = &self.tables.decls[id.index()];
                 if let Some(body) = alias_body(&decl.node) {
-                    self.guarded(decl.unit, id, &members, body, false);
+                    self.guarded(decl.unit, id, &members, body, false, &mut found);
+                }
+            }
+            // A cycle needs one guard, so an unguarded reference is only wrong on a
+            // cycle of unguarded references
+            let mut bare: HashMap<DeclId, Vec<DeclId>> = HashMap::new();
+            for reference in found.iter().filter(|reference| !reference.guarded) {
+                bare.entry(reference.alias)
+                    .or_default()
+                    .push(reference.target);
+            }
+            let mut unguarded = HashMap::new();
+            for bare_component in components(&component, &bare) {
+                for &id in &bare_component {
+                    unguarded.insert(id, bare_component.clone());
+                }
+            }
+            for reference in found {
+                let cyclic = !reference.guarded
+                    && (reference.alias == reference.target
+                        || unguarded[&reference.alias].contains(&reference.target));
+                if cyclic || !reference.regular {
+                    self.diags.push((
+                        reference.unit,
+                        source::Diag::new(BadRecursion {
+                            span: reference.span,
+                            alias: reference.name,
+                            irregular: !cyclic,
+                        }),
+                    ));
                 }
             }
         }
     }
 
-    /// Walk a recursive alias's body for references to its cycle
+    /// Walk a recursive alias's body for references to its cycle, adding each to
+    /// `found`
     fn guarded(
-        &mut self,
+        &self,
         unit: UnitId,
         alias: DeclId,
         members: &HashSet<DeclId>,
         ty: &TypeExpr,
         guarded: bool,
+        found: &mut Vec<Recursive>,
     ) {
         match ty {
             TypeExpr::Const { .. } | TypeExpr::Error => {}
-            TypeExpr::Group { ty, .. } => self.guarded(unit, alias, members, ty, guarded),
+            TypeExpr::Group { ty, .. } => self.guarded(unit, alias, members, ty, guarded, found),
             TypeExpr::Union { members: union, .. } => {
                 for member in union {
-                    self.guarded(unit, alias, members, member, guarded);
+                    self.guarded(unit, alias, members, member, guarded, found);
                 }
             }
             TypeExpr::Name { head, .. } => {
-                self.reference(unit, alias, members, *head, ty.span(), None, guarded);
+                self.reference(unit, alias, members, *head, ty.span(), None, guarded, found);
             }
             TypeExpr::App { base, args, .. } => {
                 let mut base = &**base;
@@ -498,14 +530,22 @@ impl Check<'_, '_> {
                 let TypeExpr::Name { head, .. } = base else {
                     return;
                 };
-                let target =
-                    self.reference(unit, alias, members, *head, ty.span(), Some(ty), guarded);
+                let target = self.reference(
+                    unit,
+                    alias,
+                    members,
+                    *head,
+                    ty.span(),
+                    Some(ty),
+                    guarded,
+                    found,
+                );
                 let nominal = target.is_some_and(|target| {
                     !self.tables.aliases.contains_key(&target)
                         && self.db.declaration(target).source.kind.nominal()
                 });
                 for arg in args {
-                    self.guarded(unit, alias, members, arg.ty(), guarded || nominal);
+                    self.guarded(unit, alias, members, arg.ty(), guarded || nominal, found);
                 }
             }
             TypeExpr::Schema { params, .. } => {
@@ -514,7 +554,7 @@ impl Check<'_, '_> {
                     let guarded =
                         guarded || !matches!(param.kind, Some(TypeParamKind::Include { .. }));
                     for ty in param.tys() {
-                        self.guarded(unit, alias, members, ty, guarded);
+                        self.guarded(unit, alias, members, ty, guarded, found);
                     }
                 }
             }
@@ -526,21 +566,21 @@ impl Check<'_, '_> {
                 ..
             } => {
                 for ty in params.iter().flat_map(TypeParam::tys) {
-                    self.guarded(unit, alias, members, ty, true);
+                    self.guarded(unit, alias, members, ty, true, found);
                 }
                 for implicit in [input, output].into_iter().flatten() {
-                    self.guarded(unit, alias, members, &implicit.ty, true);
+                    self.guarded(unit, alias, members, &implicit.ty, true, found);
                 }
-                self.guarded(unit, alias, members, ret, true);
+                self.guarded(unit, alias, members, ret, true, found);
             }
         }
     }
 
-    /// Check a name in a recursive alias's body, applied as `app` if it is. Returns
-    /// the declaration it names.
+    /// Note a name in a recursive alias's body, applied as `app` if it is, if it
+    /// refers to the cycle. Returns the declaration it names.
     #[allow(clippy::too_many_arguments)]
     fn reference(
-        &mut self,
+        &self,
         unit: UnitId,
         alias: DeclId,
         members: &HashSet<DeclId>,
@@ -548,29 +588,24 @@ impl Check<'_, '_> {
         span: Span,
         app: Option<&TypeExpr>,
         guarded: bool,
+        found: &mut Vec<Recursive>,
     ) -> Option<DeclId> {
         let Some(&Referent::Decl(target)) =
             self.tables.referents.get(&UnitSpan { unit, span: head })
         else {
             return None;
         };
-        if !members.contains(&target) {
-            return Some(target);
-        }
-        let name = self.tables.text(unit, head).to_owned();
-        let irregular = match guarded {
-            false => false,
-            true if self.regular(unit, alias, target, app) => return Some(target),
-            true => true,
-        };
-        self.diags.push((
-            unit,
-            source::Diag::new(BadRecursion {
+        if members.contains(&target) {
+            found.push(Recursive {
+                unit,
+                alias,
+                target,
                 span,
-                alias: name,
-                irregular,
-            }),
-        ));
+                name: self.tables.text(unit, head).to_owned(),
+                guarded,
+                regular: self.regular(unit, alias, target, app),
+            });
+        }
         Some(target)
     }
 
@@ -623,6 +658,19 @@ impl Check<'_, '_> {
                     if reference == BoundRef::new(0, slot))
             })
     }
+}
+
+/// A reference to an alias of a cycle, in the body of one
+struct Recursive {
+    unit: UnitId,
+    /// The alias it's written in
+    alias: DeclId,
+    target: DeclId,
+    span: Span,
+    name: String,
+    guarded: bool,
+    /// Whether it passes the referring alias's binders unchanged
+    regular: bool,
 }
 
 /// The written body of a transparent alias
