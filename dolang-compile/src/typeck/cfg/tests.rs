@@ -218,6 +218,7 @@ fn non_local() {
             pattern: Pattern::Unpack(Vec::new()),
             body,
             exit: loop_exit,
+            span: Span::INVALID,
         },
     );
     terminate(

@@ -21,19 +21,29 @@
 //! when it grows.
 //!
 //! A step that can throw joins its state before it into its handler, with the
-//! exception alone on the stack. Once the queue empties, a final pass runs every
-//! block once more over its final state to record what each variable reference and
-//! binding saw.
+//! exception alone on the stack.
 //!
-//! Checking rules aren't evaluated yet: each gives the dynamic type.
+//! Calls, collection literals, binary strings, interpolations, `for` items and
+//! unpacking patterns are checking rules, each solved by a solver of its own (see
+//! [`rule`]). Rules that look up members give the dynamic type. When the queue
+//! empties, the rules still undecided in each function's earliest block that has
+//! any are frozen to default, and iteration resumes, in rounds until none is left. Then a final pass runs every block once
+//! more over its final state, to record what each variable reference and binding
+//! saw and to report: contradicted rules, values that don't fit an annotation or a
+//! declared result, and reads that may be unassigned. A block in a `finally` is
+//! judged once per context, and a problem at a span is reported once.
 
 mod eval;
+mod problem;
+mod rule;
 mod state;
 #[cfg(test)]
 mod tests;
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 
+pub(crate) use problem::Problem;
+use rule::{Conclusion, Site};
 pub(crate) use state::Fact;
 use state::{Contexts, CtxId, State};
 
@@ -43,8 +53,8 @@ use super::{
         Target, Terminal, VarId,
     },
     elab::{Designated, Tables},
-    solver::{NarrowTarget, Provenance, Solver, Status, Widening},
-    r#type::{Database, DeclId, Element, Intrinsic, Literal, Type, TypeId, UnitId},
+    solver::{NarrowTarget, Outcome, Provenance, Residual, Solver, Status, Widening},
+    r#type::{Database, DeclId, Element, Function, Intrinsic, Literal, Type, TypeId, UnitId},
 };
 use crate::source::Span;
 
@@ -54,6 +64,10 @@ pub(crate) struct Results {
     /// What each variable reference read and each binding bound, joined over every
     /// context, by span
     pub(crate) facts: HashMap<Span, Fact>,
+    /// What the reporting pass diagnosed, each once
+    pub(crate) problems: Vec<Problem>,
+    /// The checks it couldn't decide, each once
+    pub(crate) unresolved: Vec<(Span, Residual)>,
 }
 
 /// Analyze a unit's graph
@@ -73,6 +87,9 @@ struct Flow<'a, 'u> {
     ir: &'a Ir,
     db: &'a Database,
     tables: &'a Tables<'u>,
+    unit: UnitId,
+    /// Each function's declared type, under its rigids, if it's a function type
+    declared: Vec<Option<Function>>,
     /// The declarations whose rigids states may hold, which every solver assumes
     scope: Vec<DeclId>,
     /// Each block's place in the queue: its reverse postorder index
@@ -95,6 +112,7 @@ struct Flow<'a, 'u> {
     joined: HashMap<VarId, (TypeId, Widening)>,
     /// The blocks that read each joined type
     readers: HashMap<VarId, BTreeSet<(BlockId, CtxId)>>,
+    rules: HashMap<(Site, CtxId), Conclusion>,
     /// Filled by the final pass, which leaves states alone
     results: Option<Results>,
 }
@@ -118,6 +136,18 @@ impl<'a, 'u> Flow<'a, 'u> {
                 }
             }
         }
+        let unit = (ir.funcs())
+            .find_map(|(_, func)| match func.kind {
+                FuncKind::Module(unit) => Some(unit),
+                FuncKind::Decl(_) => None,
+            })
+            .expect("a unit's graph has its module function");
+        let declared = (ir.funcs())
+            .map(|(_, func)| match func.kind {
+                FuncKind::Decl(decl) => declared_function(db, tables, decl),
+                FuncKind::Module(_) => None,
+            })
+            .collect();
         let modules = (tables.units.iter().enumerate())
             .filter_map(|(index, unit)| match unit.compiler.mode {
                 crate::Mode::Module { name } => Some((name, UnitId::from_index(index))),
@@ -128,6 +158,8 @@ impl<'a, 'u> Flow<'a, 'u> {
             ir,
             db,
             tables,
+            unit,
+            declared,
             scope,
             rank,
             widens,
@@ -140,11 +172,13 @@ impl<'a, 'u> Flow<'a, 'u> {
             widenings: HashMap::new(),
             joined: HashMap::new(),
             readers: HashMap::new(),
+            rules: HashMap::new(),
             results: None,
         }
     }
 
-    /// Iterate to a fixed point, then record what each reference and binding saw
+    /// Iterate to a fixed point in rounds, then record what each reference and
+    /// binding saw, and report
     fn analyze(mut self) -> Results {
         let bottom = self.db.bottom();
         for (_, func) in self.ir.funcs() {
@@ -161,15 +195,45 @@ impl<'a, 'u> Flow<'a, 'u> {
             self.merge(func.entry, CtxId::ROOT, state);
         }
         loop {
-            let next = if self.reversed {
-                self.queue.pop_last()
-            } else {
-                self.queue.pop_first()
-            };
-            let Some((_, block, ctx)) = next else {
+            loop {
+                let next = if self.reversed {
+                    self.queue.pop_last()
+                } else {
+                    self.queue.pop_first()
+                };
+                let Some((_, block, ctx)) = next else {
+                    break;
+                };
+                self.run(block, ctx);
+            }
+            // Upstream first: in each function, the undecided rules of its earliest
+            // block with any. A later rule in that block runs after its inputs.
+            let mut earliest: HashMap<FuncId, u32> = HashMap::new();
+            for rule in self.rules.values() {
+                if !rule.decided && !rule.frozen {
+                    let rank = self.rank[rule.block.index()];
+                    let func = self.ir.block(rule.block).func;
+                    let entry = earliest.entry(func).or_insert(rank);
+                    *entry = (*entry).min(rank);
+                }
+            }
+            if earliest.is_empty() {
                 break;
-            };
-            self.run(block, ctx);
+            }
+            let mut frozen = Vec::new();
+            for (&(_, ctx), rule) in &mut self.rules {
+                let func = self.ir.block(rule.block).func;
+                if !rule.decided
+                    && !rule.frozen
+                    && earliest.get(&func) == Some(&self.rank[rule.block.index()])
+                {
+                    rule.frozen = true;
+                    frozen.push((rule.block, ctx));
+                }
+            }
+            for (block, ctx) in frozen {
+                self.enqueue(block, ctx);
+            }
         }
         self.results = Some(Results::default());
         let mut keys: Vec<_> = self.states.keys().copied().collect();
@@ -177,7 +241,15 @@ impl<'a, 'u> Flow<'a, 'u> {
         for (block, ctx) in keys {
             self.run(block, ctx);
         }
-        self.results.take().expect("recorded by the final pass")
+        let mut results = self.results.take().expect("recorded by the final pass");
+        results.problems.sort_by_key(|problem| {
+            let span = crate::source::Diagnose::span(problem);
+            (span.start, span.end)
+        });
+        results
+            .unresolved
+            .sort_by_key(|&(span, _)| (span.start, span.end));
+        results
     }
 
     /// A solver that holds the region's rigids as its assumptions
@@ -200,15 +272,108 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
     }
 
-    /// Whether `actual` can be shown to be a subtype of `expected`
-    fn below(&self, actual: TypeId, expected: TypeId) -> bool {
+    /// Relate two closed types
+    fn relate(&self, actual: TypeId, expected: TypeId) -> Outcome {
         let mut solver = self.solver();
         solver.constrain(
             solver.closed(actual),
             solver.closed(expected),
             Provenance::default(),
         );
-        solver.solve().remove(0).status == Status::Proven
+        solver.solve().remove(0)
+    }
+
+    /// Whether `actual` can be shown to be a subtype of `expected`
+    fn below(&self, actual: TypeId, expected: TypeId) -> bool {
+        self.relate(actual, expected).status == Status::Proven
+    }
+
+    /// Report a problem, once
+    fn problem(&mut self, problem: Problem) {
+        let Some(results) = &mut self.results else {
+            return;
+        };
+        if crate::source::Diagnose::span(&problem) != Span::INVALID
+            && !results.problems.contains(&problem)
+        {
+            results.problems.push(problem);
+        }
+    }
+
+    /// Record a check that couldn't be decided, once
+    fn undecided(&mut self, span: Span, residual: Residual) {
+        let Some(results) = &mut self.results else {
+            return;
+        };
+        if span != Span::INVALID && !results.unresolved.contains(&(span, residual)) {
+            results.unresolved.push((span, residual));
+        }
+    }
+
+    /// Check a value against a variable's annotation, or a function's declared
+    /// result, when reporting
+    fn check(&mut self, var: VarId, ty: TypeId, span: Span) {
+        if !self.observing() || span == Span::INVALID || ty == self.db.bottom() {
+            return;
+        }
+        let (annotation, result) = match self.ir.var(var).annotation {
+            Some(annotation) => (annotation, false),
+            None => match self.result_annotation(var) {
+                Some(annotation) => (annotation, true),
+                None => return,
+            },
+        };
+        let outcome = self.relate(ty, annotation);
+        match outcome.status {
+            Status::Proven => {}
+            Status::Contradicted => {
+                let found = self.tables.render_type(self.db, ty);
+                let annotation = self.tables.render_type(self.db, annotation);
+                self.problem(Problem::Annotation {
+                    span,
+                    found,
+                    annotation,
+                    result,
+                });
+            }
+            Status::Unresolved => {
+                let residual = (outcome.diagnostics.iter())
+                    .find_map(|diagnostic| match diagnostic.issue {
+                        super::solver::Issue::Residual(residual) => Some(residual),
+                        super::solver::Issue::Contradiction(_) => None,
+                    })
+                    .unwrap_or(Residual::Unsupported);
+                self.undecided(span, residual);
+            }
+        }
+    }
+
+    /// The declared result a function's result variable is checked against: a
+    /// def's, or a `do` block's written one
+    fn result_annotation(&self, var: VarId) -> Option<TypeId> {
+        let data = self.ir.var(var);
+        if data.origin != Origin::Result {
+            return None;
+        }
+        let func = self.ir.func(data.owner);
+        if func
+            .signature
+            .as_ref()
+            .is_some_and(|sig| sig.result.is_some())
+        {
+            return None;
+        }
+        let result = self.declared[data.owner.index()].as_ref()?.result;
+        (result != self.db.unknown()).then_some(result)
+    }
+
+    /// The ambient channels a function's calls pass, when it declares them
+    fn channels(&self, func: FuncId) -> (Option<TypeId>, Option<TypeId>) {
+        let Some(declared) = &self.declared[func.index()] else {
+            return (None, None);
+        };
+        let known = |ty: Option<TypeId>| ty.filter(|&ty| ty != self.db.unknown());
+        (known(declared.input), known(declared.output))
     }
 
     fn observing(&self) -> bool {
@@ -364,11 +529,11 @@ impl<'a, 'u> Flow<'a, 'u> {
             let fact = &mut state.vars[self.slots[func.result.index()]];
             fact.ty = self.lub(fact.ty, returned);
         }
-        for step in &data.steps {
+        for (index, step) in data.steps.iter().enumerate() {
             if throws(step) {
                 self.raise(at.ctx, data.handler, &state, self.db.unknown());
             }
-            if !self.step(at, &mut state, step) {
+            if !self.step(at, &mut state, index, step) {
                 return;
             }
             if calls(step) {
@@ -401,13 +566,18 @@ impl<'a, 'u> Flow<'a, 'u> {
         state.stack.split_off(at).into()
     }
 
-    /// Apply a step. Returns whether its end is reachable.
-    fn step(&mut self, at: At, state: &mut State, step: &Step) -> bool {
+    /// Apply the step at `index`. Returns whether its end is reachable.
+    fn step(&mut self, at: At, state: &mut State, index: usize, step: &Step) -> bool {
         match step {
             Step::Let { pattern, value } => {
                 let mut operands = Self::operands(state, holes(value));
-                let ty = self.eval(at, state, &mut operands, value);
-                self.bind(at, state, pattern, ty);
+                let expected = match *pattern {
+                    Pattern::Bind(var) => self.ir.var(var).annotation,
+                    Pattern::Unpack(_) => None,
+                };
+                let ty = self.expect(at, state, &mut operands, value, expected);
+                let site = Site::Pattern(at.block, Some(index));
+                self.bind(at, state, pattern, ty, site, value.span, true);
             }
             Step::Assign { target, value } => {
                 let count = match target {
@@ -416,16 +586,22 @@ impl<'a, 'u> Flow<'a, 'u> {
                     Target::Index { object, index, .. } => holes(object) + holes(index),
                 };
                 let mut operands = Self::operands(state, count + holes(value));
-                match target {
+                match *target {
                     Target::Var(var) => {
-                        let ty = self.eval(at, state, &mut operands, value);
-                        self.assign(at, state, *var, ty);
+                        let expected =
+                            (self.ir.var(var).annotation).or_else(|| self.result_annotation(var));
+                        let ty = self.expect(at, state, &mut operands, value, expected);
+                        self.assign(at, state, var, ty, value.span);
                     }
-                    Target::Field { object, .. } => {
+                    Target::Field { ref object, .. } => {
                         self.eval(at, state, &mut operands, object);
                         self.eval(at, state, &mut operands, value);
                     }
-                    Target::Index { object, index, .. } => {
+                    Target::Index {
+                        ref object,
+                        ref index,
+                        ..
+                    } => {
                         self.eval(at, state, &mut operands, object);
                         self.eval(at, state, &mut operands, index);
                         self.eval(at, state, &mut operands, value);
@@ -483,9 +659,11 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
     }
 
-    /// Assign a variable, strongly where its owner is analyzed
-    fn assign(&mut self, at: At, state: &mut State, var: VarId, ty: TypeId) {
+    /// Assign a variable, strongly where its owner is analyzed, checking the value
+    /// at `span` against its annotation
+    fn assign(&mut self, at: At, state: &mut State, var: VarId, ty: TypeId, span: Span) {
         let ty = self.settle(var, ty);
+        self.check(var, ty, span);
         let data = self.ir.var(var);
         if data.owner == at.func {
             state.vars[self.slots[var.index()]] = Fact {
@@ -498,21 +676,40 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
     }
 
-    /// Bind a pattern to a value, recording each binding
-    fn bind(&mut self, at: At, state: &mut State, pattern: &Pattern, ty: TypeId) {
+    /// Bind a pattern to a value at `span`, recording each binding. Unpacking is
+    /// the rule at `site`, diagnosed if `strict`: a pattern that is a test isn't.
+    #[expect(clippy::too_many_arguments, reason = "a pattern's context")]
+    fn bind(
+        &mut self,
+        at: At,
+        state: &mut State,
+        pattern: &Pattern,
+        ty: TypeId,
+        site: Site,
+        span: Span,
+        strict: bool,
+    ) {
         match pattern {
-            Pattern::Bind(var) => self.binding(at, state, *var, ty),
-            // An unpacked item's type isn't found yet
+            &Pattern::Bind(var) => self.binding(at, state, var, ty, span),
             Pattern::Unpack(items) => {
-                for var in items.iter().filter_map(|item| item.var) {
-                    self.binding(at, state, var, self.db.unknown());
+                let blame = strict.then_some(span);
+                let types = self.unpack(at, site, items, ty, blame);
+                for (item, ty) in items.iter().zip(types) {
+                    if let Some(var) = item.var {
+                        let span = match self.ir.var(var).origin {
+                            Origin::Source(span) => span,
+                            _ => Span::INVALID,
+                        };
+                        self.binding(at, state, var, ty, span);
+                    }
                 }
             }
         }
     }
 
-    fn binding(&mut self, at: At, state: &mut State, var: VarId, ty: TypeId) {
-        self.assign(at, state, var, ty);
+    /// Bind a variable, checking the value at `span` against its annotation
+    fn binding(&mut self, at: At, state: &mut State, var: VarId, ty: TypeId, span: Span) {
+        self.assign(at, state, var, ty, span);
         if let Origin::Source(span) = self.ir.var(var).origin {
             let fact = self.read(at, state, var);
             self.record(span, fact);
@@ -523,9 +720,9 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// and a `do` block's from its signature variables, or else their annotations.
     fn bind_params(&mut self, at: At, state: &mut State) {
         let func = self.ir.func(at.func);
-        let FuncKind::Decl(decl) = func.kind else {
+        if !matches!(func.kind, FuncKind::Decl(_)) {
             return;
-        };
+        }
         let Pattern::Unpack(items) = &func.params else {
             unreachable!("parameters are a pattern of items")
         };
@@ -539,27 +736,20 @@ impl<'a, 'u> Flow<'a, 'u> {
                         .unwrap_or(unknown),
                 })
                 .collect(),
-            None => self.declared_params(decl, items.len()),
+            None => self.declared_params(at.func, items.len()),
         };
         for (item, ty) in items.iter().zip(types) {
             if let Some(var) = item.var {
-                self.binding(at, state, var, ty);
+                self.binding(at, state, var, ty, Span::INVALID);
             }
         }
     }
 
     /// The types a def's or method's signature gives its parameters, under its
     /// rigids; `Unknown` for a rest, or for every one if they don't line up
-    fn declared_params(&self, decl: DeclId, count: usize) -> Vec<TypeId> {
+    fn declared_params(&self, func: FuncId, count: usize) -> Vec<TypeId> {
         let unknown = self.db.unknown();
-        let mut ty = self.db.declaration(decl).ty;
-        if let Type::Quantified { body, .. } = self.db.ty(ty) {
-            let rigids = self
-                .tables
-                .group_rigids(self.db, (decl, self.tables.primary_sig(decl)));
-            ty = self.db.substitute(*body, &rigids);
-        }
-        let Type::Function(function) = self.db.ty(ty) else {
+        let Some(function) = &self.declared[func.index()] else {
             return vec![unknown; count];
         };
         let Type::Schema(items) = self.db.ty(function.params) else {
@@ -665,7 +855,8 @@ impl<'a, 'u> Flow<'a, 'u> {
                 self.raise(at.ctx, data.handler, &state, unknown);
                 let ty = self.eval(at, &mut state, &mut operands, value);
                 let mut bound = state.clone();
-                self.bind(at, &mut bound, pattern, ty);
+                let site = Site::Pattern(at.block, None);
+                self.bind(at, &mut bound, pattern, ty, site, value.span, false);
                 self.flow(at.ctx, *then, bound);
                 self.flow(at.ctx, *else_, state);
             }
@@ -703,12 +894,14 @@ impl<'a, 'u> Flow<'a, 'u> {
                 pattern,
                 body,
                 exit,
+                span,
             } => {
                 self.raise(at.ctx, data.handler, &state, unknown);
-                self.read(at, &state, *iter);
-                // An item's type isn't found yet
+                let iterable = self.read(at, &state, *iter).ty;
+                let item = self.next(at, iterable, *span);
                 let mut bound = state.clone();
-                self.bind(at, &mut bound, pattern, unknown);
+                let site = Site::Pattern(at.block, None);
+                self.bind(at, &mut bound, pattern, item, site, *span, true);
                 self.flow(at.ctx, *body, bound);
                 self.flow(at.ctx, *exit, state);
             }
@@ -746,9 +939,12 @@ impl<'a, 'u> Flow<'a, 'u> {
                 if has_rule(value) {
                     self.raise(at.ctx, data.handler, &state, unknown);
                 }
+                let result = self.ir.func(*func).result;
+                let expected = self.result_annotation(result);
                 let mut operands = Self::operands(&mut state, holes(value));
-                let ty = self.eval(at, &mut state, &mut operands, value);
-                self.join(self.ir.func(*func).result, ty);
+                let ty = self.expect(at, &mut state, &mut operands, value, expected);
+                self.check(result, ty, value.span);
+                self.join(result, ty);
             }
             Terminal::Return | Terminal::Escape | Terminal::Unreachable => {}
         }
@@ -773,6 +969,23 @@ impl<'a, 'u> Flow<'a, 'u> {
 
     fn literal(&self, literal: &Literal) -> TypeId {
         self.db.intern(Type::Literal(literal.clone()))
+    }
+}
+
+/// A declaration's type under its rigids, if it's a function type. An overloaded
+/// def's implementation isn't described by its type until overloads are resolved.
+fn declared_function(db: &Database, tables: &Tables<'_>, decl: DeclId) -> Option<Function> {
+    if tables.sig_count(decl) != 1 {
+        return None;
+    }
+    let mut ty = db.declaration(decl).ty;
+    if let Type::Quantified { body, .. } = db.ty(ty) {
+        let rigids = tables.group_rigids(db, (decl, tables.primary_sig(decl)));
+        ty = db.substitute(*body, &rigids);
+    }
+    match db.ty(ty) {
+        Type::Function(function) => Some(function.clone()),
+        _ => None,
     }
 }
 

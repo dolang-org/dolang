@@ -1003,8 +1003,8 @@ def checked_units main_source
 def check_accepts_well_typed_units()
   let source = |-
     import a:
-      - @Present
-    pub let present @ Present = nil
+      - Present
+    pub let present @ Present = Present()
   # Any iterable of units will do
   let lib main = checked_units $source
   let result = compile.check (lib, main)

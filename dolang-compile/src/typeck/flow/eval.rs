@@ -2,9 +2,11 @@
 
 use std::collections::VecDeque;
 
-use super::{At, Flow, State};
+use crate::source::Span;
+
+use super::{At, Flow, State, problem::Problem};
 use crate::typeck::{
-    cfg::{Expr, ExprKind, FmtSpec, FuncId, FuncKind, Item},
+    cfg::{Expr, ExprKind, FuncId, FuncKind, Item},
     elab::{Designated, ModuleRef, Referent, Target},
     r#type::{
         Argument, BoundRef, DeclId, DeclKind, Intrinsic, Kind, SymbolId, Type, TypeId, UnitId,
@@ -20,6 +22,20 @@ impl Flow<'_, '_> {
         operands: &mut VecDeque<TypeId>,
         expr: &Expr,
     ) -> TypeId {
+        self.expect(at, state, operands, expr, None)
+    }
+
+    /// An expression's type, where a type is expected of it that the fixed point
+    /// can't revise: a local's annotation, or the parameter of a callee known from
+    /// its signature alone. The expression's rule may solve toward it.
+    pub(super) fn expect(
+        &mut self,
+        at: At,
+        state: &mut State,
+        operands: &mut VecDeque<TypeId>,
+        expr: &Expr,
+        expected: Option<TypeId>,
+    ) -> TypeId {
         let unknown = self.db.unknown();
         match &expr.kind {
             ExprKind::Literal(literal) => self.literal(literal),
@@ -31,40 +47,40 @@ impl Flow<'_, '_> {
                 }
                 self.intrinsic(Intrinsic::Str)
             }
-            ExprKind::BinConcat { parts, .. } => {
-                for part in parts {
-                    self.eval(at, state, operands, part);
-                }
-                self.designated_type(Designated::Bin)
+            ExprKind::BinConcat { parts, rule } => {
+                self.bin_concat(at, state, operands, parts, *rule)
             }
             ExprKind::Fmt(parts) => {
+                let bottom = self.db.bottom();
+                let mut never = false;
                 for part in parts {
-                    self.eval(at, state, operands, part);
+                    never |= self.eval(at, state, operands, part) == bottom;
                 }
-                unknown
+                match never {
+                    true => bottom,
+                    false => self.designated_type(Designated::Fmt),
+                }
             }
-            ExprKind::FmtValue { value, spec, .. } => {
-                self.eval(at, state, operands, value);
-                self.spec(at, state, operands, spec);
-                unknown
-            }
-            ExprKind::FmtParam { spec, .. } => {
-                self.spec(at, state, operands, spec);
-                unknown
+            ExprKind::FmtValue { .. } | ExprKind::FmtParam { .. } => {
+                self.fmt(at, state, operands, expr)
             }
             &ExprKind::Var(var) => {
                 let fact = self.read(at, state, var);
                 self.record(expr.span, fact);
+                if fact.unassigned && self.observing() && expr.span != Span::INVALID {
+                    self.problem(Problem::Unassigned {
+                        span: expr.span,
+                        name: self.tables.text(self.unit, expr.span).to_owned(),
+                        definitely: fact.ty == self.db.bottom(),
+                    });
+                }
                 fact.ty
             }
+            &ExprKind::Copy(var) => self.read(at, state, var).ty,
             &ExprKind::Class(decl) => self.class_object(decl),
             ExprKind::Import { module, item } => self.import(module, *item),
             &ExprKind::Lambda(func) => self.lambda(func),
-            ExprKind::Call { callee, args, .. } => {
-                self.eval(at, state, operands, callee);
-                self.items(at, state, operands, args);
-                unknown
-            }
+            ExprKind::Call { .. } => self.call(at, state, operands, expr, expected),
             ExprKind::Invoke { receiver, args, .. } => {
                 self.eval(at, state, operands, receiver);
                 self.items(at, state, operands, args);
@@ -95,19 +111,10 @@ impl Flow<'_, '_> {
                 }
                 unknown
             }
-            ExprKind::Collection { items, .. } => {
-                self.items(at, state, operands, items);
-                unknown
-            }
+            ExprKind::Collection { .. } => self.collection(at, state, operands, expr, expected),
             ExprKind::Operand => operands.pop_front().expect("an operand for each hole"),
             ExprKind::Never => self.db.bottom(),
             ExprKind::AmbientInput | ExprKind::Namespace | ExprKind::Error => unknown,
-        }
-    }
-
-    fn spec(&mut self, at: At, state: &mut State, operands: &mut VecDeque<TypeId>, spec: &FmtSpec) {
-        for part in [&spec.width, &spec.precision].into_iter().flatten() {
-            self.eval(at, state, operands, part);
         }
     }
 
@@ -138,7 +145,8 @@ impl Flow<'_, '_> {
 
     /// Instantiate a closure. Nothing is expected of a `do` block's parameters and
     /// channels here, so they're dynamic. Its value is its declared type, unless it's
-    /// nested in a generic declaration, whose binders it would need applied.
+    /// nested in a generic declaration, whose binders it would need applied, or it's
+    /// overloaded.
     fn lambda(&mut self, func: FuncId) -> TypeId {
         let unknown = self.db.unknown();
         let data = self.ir.func(func);
@@ -161,7 +169,15 @@ impl Flow<'_, '_> {
         {
             return unknown;
         }
-        self.db.declaration(decl).ty
+        self.function_value(decl)
+    }
+
+    /// A def's value: its type, unless it's overloaded, which isn't resolved yet
+    fn function_value(&self, decl: DeclId) -> TypeId {
+        match self.tables.sig_count(decl) {
+            1 => self.db.declaration(decl).ty,
+            _ => self.db.unknown(),
+        }
     }
 
     /// The value of a class object: `Type[C]`, with a generic class's binders
@@ -270,7 +286,7 @@ impl Flow<'_, '_> {
         let declaration = self.db.declaration(decl);
         match declaration.source.kind {
             DeclKind::Class | DeclKind::Protocol => self.class_object(decl),
-            DeclKind::Function => declaration.ty,
+            DeclKind::Function => self.function_value(decl),
             DeclKind::OpaqueAlias | DeclKind::Alias | DeclKind::Closure | DeclKind::Annotation => {
                 self.db.unknown()
             }

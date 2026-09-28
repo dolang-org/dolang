@@ -6,13 +6,13 @@ pub class Int
 
 pub class Box[T]
   pub def get _self -> T
-    nil
+    ...
 
 pub class Pair[A, B]
   pub def first _self -> A
-    nil
+    ...
   pub def second _self -> B
-    nil
+    ...
 
 pub @let List[T] = (nil | Pair[T, List[T]])
 

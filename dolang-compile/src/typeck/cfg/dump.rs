@@ -227,6 +227,7 @@ impl Dump<'_, '_> {
                 pattern,
                 body,
                 exit,
+                ..
             } => {
                 write!(out, "next ")?;
                 self.pattern(out, pattern)?;
@@ -384,7 +385,7 @@ impl Dump<'_, '_> {
                 self.spec(out, spec, false)?;
                 write!(out, ")")
             }
-            ExprKind::Var(var) => self.var(out, *var),
+            ExprKind::Var(var) | ExprKind::Copy(var) => self.var(out, *var),
             ExprKind::Class(decl) => write!(out, "class{}", decl.index()),
             ExprKind::Import { module, item } => {
                 match module {

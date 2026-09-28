@@ -30,12 +30,12 @@ pub def truthy v @ (Int | nil)
     #       ^: flow std.Int
   else
     let _ = v
-    #       ^: flow std.Int | std.Nil
+    #       ^: flow nil | std.Int
 
 pub def compared v @ (Int | nil)
   if (v == nil)
     let _ = v
-    #       ^: flow std.Int | std.Nil
+    #       ^: flow nil | std.Int
   else
     let _ = v
     #       ^: flow std.Int

@@ -251,6 +251,8 @@ pub(crate) enum Terminal {
         pattern: Pattern,
         body: BlockId,
         exit: BlockId,
+        /// The iteratee's
+        span: Span,
     },
     /// Return the function's result
     Return,

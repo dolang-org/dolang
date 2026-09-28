@@ -576,9 +576,42 @@ owner reverts it to the joined type after any step that can call. A `do` block
 instantiated where nothing is expected of it gets `Unknown` joined into its
 parameter and channel signature variables.
 
-Once the queue empties, a final pass reruns every block over its final state and
+Checking rules (`flow/rule.rs`) are solved by a fresh solver on each run, and
+only reified types leave it:
+
+- A call constrains its callee below `Solver::call` of its arguments, passing
+  the caller's declared channels. A callee that isn't a function type, an
+  overloaded def, and a call with a comprehension give `Unknown`.
+- An array, dict, tuple or record literal builds its designated class over
+  inference variables for its items, a spread through `Spread[S]`. A
+  comprehension in a tuple or record gives `Unknown` until #793.
+- A `for` item is `T` of `iteratee <: BaseIterable[T]`, and an unpacking pattern
+  takes `value <: Unpack[S]`, with every item optional and anything else
+  admitted, since unpacking checks the count as it runs.
+- A binary string's parts must be `Bin`, and an interpolation's width and
+  precision `Int`.
+- Member lookups (`Get`, `Invoke`, `Index`, operators, ranges, field and index
+  targets) give `Unknown` until #794.
+
+A type fixed before the fixed point is pre-seeded as an upper bound on a rule's
+result: a local's annotation, a def's declared result, or a parameter type that
+doesn't mention the callee's binders. A rule contributes only once decided:
+without contradiction, with its results solved without defaulting. Until then it
+contributes bottom, and a rule with a bottom input doesn't run. A rule's results
+are joined over its runs in each context. When the queue empties, the undecided
+rules of each function's earliest block that has any are frozen and requeued. A
+frozen rule defaults its variables on every run, a variable without lower bounds
+becoming `Unknown`. Rounds repeat until no rule is undecided.
+
+Lowering copies a variable's value into a statement's destination, such as a
+function's result, as `ExprKind::Copy`, which flow reads without recording it as
+a reference.
+
+Once the rounds end, a final pass reruns every block over its final state. It
 records what each variable reference and binding saw, which the `flow` judgment
-reports. Checking rules aren't evaluated yet; each gives `Unknown`.
+reports, and reports each problem once per span: contradicted rules, values that
+don't fit a local's annotation or a function's declared result, and reads that
+may be unassigned. Checks the solver can't decide join `Check::undecided`.
 
 ## Checking units and diagnostic locations
 

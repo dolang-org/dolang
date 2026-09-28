@@ -112,7 +112,7 @@ impl<'u, 's> Builder<'u, 's> {
         elab::populate(&mut db, &mut tables, &mut diags);
         db.seal();
         elab::specialize(&mut db, &tables, &mut diags);
-        let unresolved = elab::wellformed(&db, &tables, &mut diags);
+        let mut unresolved = elab::wellformed(&db, &tables, &mut diags);
         let cfgs = (0..units.len())
             .map(|index| {
                 let ir = lower::lower(&tables, &db, UnitId::from_index(index));
@@ -120,10 +120,22 @@ impl<'u, 's> Builder<'u, 's> {
                 ir
             })
             .collect::<Vec<_>>();
-        let flows = cfgs
+        let flows: Vec<flow::Results> = cfgs
             .iter()
             .map(|ir| flow::analyze(ir, &db, &tables))
             .collect();
+        for (index, results) in flows.iter().enumerate() {
+            let unit = UnitId::from_index(index);
+            for problem in &results.problems {
+                diags.push((unit, source::Diag::new(problem.clone())));
+            }
+            unresolved.extend(results.unresolved.iter().map(|&(span, residual)| {
+                elab::Unresolved {
+                    span: r#type::UnitSpan { unit, span },
+                    residual,
+                }
+            }));
+        }
         Check {
             cfgs,
             flows,

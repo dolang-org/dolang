@@ -91,7 +91,7 @@ impl<'u> Scope<'_, '_, 'u> {
             self.reassign(var);
             graph.block_mut(exit).steps.push(Step::Assign {
                 target: Target::Var(var),
-                value: expr(ExprKind::Var(result), Span::INVALID),
+                value: expr(ExprKind::Copy(result), Span::INVALID),
             });
         }
         graph.func_mut(self.ctx.func).signature = Some(signature);
@@ -212,7 +212,7 @@ impl<'u> Scope<'_, '_, 'u> {
             PrimStmt::If(_) | PrimStmt::Try(_) => {
                 let var = self.synthetic();
                 self.prim(prim, Some(var));
-                expr(ExprKind::Var(var), prim.span())
+                expr(ExprKind::Copy(var), prim.span())
             }
         }
     }
@@ -232,11 +232,11 @@ impl<'u> Scope<'_, '_, 'u> {
         let span = value.span;
         // A destructured value is needed again for `dest`
         let value = match (dest, pattern) {
-            (Some(_), ast::Pattern::Unpack(_)) => expr(ExprKind::Var(self.temporary(value)), span),
+            (Some(_), ast::Pattern::Unpack(_)) => expr(ExprKind::Copy(self.temporary(value)), span),
             _ => value,
         };
         let copy = match value.kind {
-            ExprKind::Var(var) => Some(var),
+            ExprKind::Var(var) | ExprKind::Copy(var) => Some(var),
             _ => None,
         };
         let frame = self.ctx.frame.clone();
@@ -251,7 +251,7 @@ impl<'u> Scope<'_, '_, 'u> {
         });
         self.pattern_defaults(pattern, &frame);
         if let (Some(dest), Some(var)) = (dest, bound) {
-            self.assign(dest, expr(ExprKind::Var(var), span));
+            self.assign(dest, expr(ExprKind::Copy(var), span));
         }
     }
 
@@ -267,7 +267,7 @@ impl<'u> Scope<'_, '_, 'u> {
             self.reassign(var);
             self.assign(var, value);
             if let Some(dest) = dest {
-                self.assign(dest, expr(ExprKind::Var(var), span));
+                self.assign(dest, expr(ExprKind::Copy(var), span));
             }
             return;
         }
@@ -299,12 +299,12 @@ impl<'u> Scope<'_, '_, 'u> {
             }
         };
         let value = match early {
-            Some(var) => expr(ExprKind::Var(var), span),
+            Some(var) => expr(ExprKind::Copy(var), span),
             None => self.prim_value(&node.rhs),
         };
         self.emit(Step::Assign { target, value });
         if let (Some(dest), Some(var)) = (dest, early) {
-            self.assign(dest, expr(ExprKind::Var(var), span));
+            self.assign(dest, expr(ExprKind::Copy(var), span));
         }
     }
 
@@ -614,6 +614,7 @@ impl<'u> Scope<'_, '_, 'u> {
             Some(value) => self.expr(value),
             None => expr(ExprKind::AmbientInput, node.for_span),
         };
+        let span = value.span;
         self.emit(Step::Let {
             pattern: Pattern::Bind(iter),
             value,
@@ -630,6 +631,7 @@ impl<'u> Scope<'_, '_, 'u> {
             pattern,
             body: entry,
             exit,
+            span,
         });
         (header, body, exit)
     }
@@ -854,7 +856,7 @@ impl<'u> Scope<'_, '_, 'u> {
             value,
         });
         if let Some(dest) = dest {
-            self.assign(dest, expr(ExprKind::Var(var), span));
+            self.assign(dest, expr(ExprKind::Copy(var), span));
         }
     }
 
@@ -912,15 +914,15 @@ impl<'u> Scope<'_, '_, 'u> {
         for (member, value) in statics {
             self.emit(Step::Assign {
                 target: Target::Field {
-                    object: expr(ExprKind::Var(var), span),
+                    object: expr(ExprKind::Copy(var), span),
                     member,
                     rule: self.graph().alloc_rule(),
                 },
-                value: expr(ExprKind::Var(value), span),
+                value: expr(ExprKind::Copy(value), span),
             });
         }
         if let Some(dest) = dest {
-            self.assign(dest, expr(ExprKind::Var(var), span));
+            self.assign(dest, expr(ExprKind::Copy(var), span));
         }
     }
 

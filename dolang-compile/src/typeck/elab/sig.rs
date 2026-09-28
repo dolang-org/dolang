@@ -265,6 +265,9 @@ fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
         ("std", "Tuple") => (Designated::Tuple, DeclKind::Class),
         ("std", "Record") => (Designated::Record, DeclKind::Class),
         ("std", "Range") => (Designated::Range, DeclKind::Class),
+        ("std", "BaseIterable") => (Designated::BaseIterable, DeclKind::Protocol),
+        ("std", "Spread") => (Designated::Spread, DeclKind::Protocol),
+        ("std", "Unpack") => (Designated::Unpack, DeclKind::Protocol),
         ("std", "getter") => (Designated::Getter, DeclKind::Function),
         ("std", "setter") => (Designated::Setter, DeclKind::Function),
         _ => return,
@@ -275,6 +278,7 @@ fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
         let expected = match expected {
             DeclKind::OpaqueAlias => "an opaque alias",
             DeclKind::Function => "a def",
+            DeclKind::Protocol => "a protocol",
             _ => "a class",
         };
         diags.push((

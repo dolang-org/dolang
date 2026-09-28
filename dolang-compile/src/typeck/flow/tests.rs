@@ -53,3 +53,23 @@ g()
 ",
     );
 }
+
+#[test]
+fn rounds_are_order_independent() {
+    agree(
+        "
+class A
+class B: A
+def id[T] x @ T -> T
+  x
+def pick a @ A b @ B
+  let x = id a
+  while x
+    x = id b
+    let y = pick x b
+    for z = [x, y]
+      x = id z
+  x
+",
+    );
+}

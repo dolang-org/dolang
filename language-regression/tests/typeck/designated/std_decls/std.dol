@@ -49,6 +49,16 @@ pub class Record
 #         ^~~~~~: designated record
 pub class Range
 #         ^~~~~: designated range
+pub @class BaseIterable
+#          ^~~~~~~~~~~~: designated base iterable
+pub @class Spread
+#          ^~~~~~: designated spread
+pub class Unpack
+# error: the checker requires this to be a protocol
+#   --> std.dol:LL:LL
+#    |
+# LL | pub class Unpack
+#    |           ^^^^^^
 pub def getter func
   #     ^~~~~~: designated getter
   func

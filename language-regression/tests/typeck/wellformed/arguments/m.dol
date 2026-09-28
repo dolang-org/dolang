@@ -7,7 +7,7 @@ pub class Text
 
 pub class Named[:T @ Num]
   pub def get _self -> T
-    nil
+    ...
 
 pub let named @ Named[T: Int] = nil
 pub let misnamed @ Named[T: Text] = nil

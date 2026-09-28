@@ -320,6 +320,12 @@ pub(crate) enum Designated {
     Record,
     /// `std.Range`, the class of a range
     Range,
+    /// `std.BaseIterable`, which a `for` iterates
+    BaseIterable,
+    /// `std.Spread`, which a spread item spreads
+    Spread,
+    /// `std.Unpack`, which a pattern unpacks
+    Unpack,
     /// `strand.PipeSender`, which stands for the embedding's pipe sender
     PipeSender,
     /// `strand.PipeReceiver`, which stands for the embedding's pipe receiver

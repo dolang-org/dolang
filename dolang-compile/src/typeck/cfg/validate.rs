@@ -228,7 +228,7 @@ impl Check<'_> {
 
     fn expr(&self, expr: &Expr, vars: &mut Vec<VarId>) -> Result<(), Invalid> {
         match &expr.kind {
-            ExprKind::Var(var) => vars.push(*var),
+            ExprKind::Var(var) | ExprKind::Copy(var) => vars.push(*var),
             ExprKind::Lambda(lambda) if self.ir.func(*lambda).parent != Some(self.func) => {
                 return Err(Invalid::Lambda {
                     func: self.func,
