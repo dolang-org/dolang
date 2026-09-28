@@ -13,7 +13,8 @@
 //! A default keeps its variable's annotation when it fits, and a `nil` or symbol
 //! literal that doesn't is a sentinel joined into the variable's type.
 //! Narrowing applies a condition's relations to the variable it tests, making the
-//! edge unreachable when nothing is left.
+//! edge unreachable when nothing is left. A branch on a duplicated stack entry
+//! also narrows the entry it copied, which a short circuit leaves as its result.
 //!
 //! State shared between functions isn't flow-sensitive. An ivar's assignments, in
 //! any function, join into an accumulator, which every function but its owner
@@ -210,6 +211,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             let state = State {
                 vars,
                 stack: Vec::new(),
+                dup: false,
             };
             self.merge(func.entry, CtxId::ROOT, state);
         }
@@ -467,7 +469,11 @@ impl<'a, 'u> Flow<'a, 'u> {
         let stack = (old.stack.iter().zip(&state.stack))
             .map(|(&old, &new)| self.lub(old, new))
             .collect();
-        let joined = State { vars, stack };
+        let joined = State {
+            vars,
+            stack,
+            dup: old.dup && state.dup,
+        };
         if joined != old {
             self.states.insert(key, joined);
             self.enqueue(block, ctx);
@@ -596,6 +602,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         let state = State {
             vars: state.vars.clone(),
             stack: vec![exception],
+            dup: false,
         };
         self.flow(ctx, handler, state);
     }
@@ -613,6 +620,7 @@ impl<'a, 'u> Flow<'a, 'u> {
 
     /// Apply a step. Returns whether its end is reachable.
     fn step(&mut self, at: At, state: &mut State, step: &Step) -> bool {
+        state.dup = false;
         match step {
             Step::Let { pattern, value } => {
                 let mut operands = Self::operands(state, holes(value));
@@ -680,6 +688,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             Step::Dup => {
                 let top = *state.stack.last().expect("a value to duplicate");
                 state.stack.push(top);
+                state.dup = true;
             }
             Step::Pop => {
                 state.stack.pop().expect("a value to discard");
@@ -920,6 +929,18 @@ impl<'a, 'u> Flow<'a, 'u> {
         narrowed != bottom
     }
 
+    /// A type narrowed to its truthy values: without `nil` and `false`, the only
+    /// values always falsy
+    fn truthy(&self, ty: TypeId) -> TypeId {
+        let solver = self.solver();
+        [Literal::Nil, Literal::Bool(false)]
+            .into_iter()
+            .fold(ty, |ty, literal| {
+                let target = NarrowTarget::Literal(self.db.intern(Type::Literal(literal)));
+                solver.narrow(ty, super::cfg::Relation::Exact, true, target)
+            })
+    }
+
     fn terminal(&mut self, at: At, mut state: State) {
         let data = self.ir.block(at.block);
         let unknown = self.db.unknown();
@@ -929,9 +950,24 @@ impl<'a, 'u> Flow<'a, 'u> {
                 if has_rule(cond) {
                     self.raise(at.ctx, data.handler, &state, unknown);
                 }
+                let dup = state.dup && matches!(cond.kind, ExprKind::Operand);
+                state.dup = false;
                 let mut operands = Self::operands(&mut state, holes(cond));
                 self.eval(at, &mut state, &mut operands, cond);
-                self.flow(at.ctx, *then, state.clone());
+                let mut truthy = state.clone();
+                if dup {
+                    // The value copied for the test is the one left
+                    let top = truthy.stack.last_mut().expect("the copied value");
+                    let bottom = self.db.bottom();
+                    let narrowed = self.truthy(*top);
+                    let empty = narrowed == bottom && *top != bottom;
+                    *top = narrowed;
+                    if empty {
+                        self.flow(at.ctx, *else_, state);
+                        return;
+                    }
+                }
+                self.flow(at.ctx, *then, truthy);
                 self.flow(at.ctx, *else_, state);
             }
             Terminal::Unpack {
@@ -1018,6 +1054,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 for &target in targets {
                     let mut jumped = state.clone();
                     jumped.stack.clear();
+                    jumped.dup = false;
                     self.flow(at.ctx, target, jumped);
                 }
                 self.flow(at.ctx, *next, state);

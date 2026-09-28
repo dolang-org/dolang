@@ -19,6 +19,9 @@ pub(crate) struct Fact {
 pub(super) struct State {
     pub(super) vars: Vec<Fact>,
     pub(super) stack: Vec<TypeId>,
+    /// Whether the top of the stack is a `Dup` of the slot below it, which a
+    /// branch on it narrows too
+    pub(super) dup: bool,
 }
 
 /// The `finally` tags a block is entered with, innermost last, identifying its state

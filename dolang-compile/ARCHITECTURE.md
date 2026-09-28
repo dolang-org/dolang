@@ -575,7 +575,11 @@ literals decay. It keeps the annotation when it fits. A `nil` or symbol literal
 that doesn't is a sentinel, joined into the variable's type for the body to
 narrow away, while callers see only the annotation. Any other default is
 reported. An `Assume` narrows with
-`Solver::narrow`, and an edge left with nothing is unreachable. A step that can
+`Solver::narrow`, and an edge left with nothing is unreachable. Flow state marks
+a stack entry that a `Dup` copied from the one below it, and any other step
+clears the mark. An `If` on a marked copy narrows the original on its `then`
+edge to its truthy values, dropping `nil` and `false`, so a short circuit's
+result is narrowed by the test it passed. A step that can
 throw joins its prior state into its handler; a `Catch` narrows the exception by
 each clause's class. Parameters are bound at the entry block: a def's from its
 signature under its group's rigids (`Tables::group_rigids`, which also closes

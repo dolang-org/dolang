@@ -32,6 +32,18 @@ pub def truthy v @ (Int | nil)
     let _ = v
     #       ^: flow nil | std.Int
 
+pub class Named
+  pub field name @ (Str | nil) = nil
+
+# A short circuit's value is narrowed by the test it passes
+pub def either v @ (Int | nil) n @ Named
+  let _ = (v || "b")
+  #   ^: flow std.Int | std.Str
+  let _ = (v && "b")
+  #   ^: flow std.Int | std.Nil | std.Str
+  let _ = (n.name || "b")
+  #   ^: flow std.Str
+
 pub def compared v @ (Int | nil)
   if (v == nil)
     let _ = v
