@@ -1138,7 +1138,9 @@ pub def unpack
 do -> nil
   source = parse_location $source
   if (type source Url)
-    source = get $source app: $app
+    source = get $source
+      if (app != nil)
+        app: $app
   destination = parse_location $destination
   if (type destination Url)
     throw std.ValueError "unpack destination must be a path"
