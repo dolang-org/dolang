@@ -455,7 +455,7 @@ A module is one analysis region. Its top-level code is the entry function, and
 every def, method implementation, lambda and field initializer is a function
 nested in it, identified by its declaration. Each function's locals are hoisted
 to the function. A function's variables of its enclosing functions are its
-captures, and freezing the graph records each captured variable's readers. A
+captures. A
 `do` block's unannotated parameters, omitted channels and omitted return type
 are its signature: variables its parent owns and it captures, starting as
 bottom. The call it's passed to joins its expectations into them, and the

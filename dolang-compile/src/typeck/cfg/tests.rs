@@ -125,8 +125,6 @@ fn well_formed() {
 
     let ir = graph.freeze();
     assert_eq!(ir.validate(), Ok(()));
-    assert_eq!(ir.var(x).readers, [lambda]);
-    assert!(ir.var(f).readers.is_empty());
 }
 
 #[test]
