@@ -757,6 +757,7 @@ pub(crate) struct Elaborater<'a> {
 
 enum ScopeKind {
     Normal,
+    Element,
     Lambda,
     Function,
     Loop,
@@ -908,6 +909,24 @@ impl<'s> Scope<'s> {
         }
     }
 
+    /// A vertical-layout body has bindings but cannot host a statement guard.
+    fn nested_element(&'s self) -> Self {
+        Self::Nested {
+            kind: ScopeKind::Element,
+            receiver: None,
+            constructor: false,
+            can_break: self.can_break(),
+            can_continue: self.can_continue(),
+            can_return: self.can_return(),
+            nl_break: Cell::new(false),
+            nl_continue: Cell::new(false),
+            nl_return: Cell::new(None),
+            vars: MonoVec::new(),
+            parent: self,
+            index: HashMap::new(),
+        }
+    }
+
     fn nested_loop(&'s self) -> Self {
         Self::Nested {
             kind: ScopeKind::Loop,
@@ -957,8 +976,8 @@ impl<'s> Scope<'s> {
     /// loop scope. Returns 0 if no function boundary is crossed
     /// (break/continue is local).
     fn nl_break_scope_depth(&self) -> usize {
-        let mut depth = 0;
-        let mut last_func_depth = 0;
+        let mut scope_depth = 0;
+        let mut guard_depth = 0;
         let mut crossed_function = false;
         let mut scope = self;
         loop {
@@ -969,18 +988,17 @@ impl<'s> Scope<'s> {
                     match kind {
                         ScopeKind::Function | ScopeKind::Lambda => {
                             crossed_function = true;
-                            last_func_depth = depth;
+                            guard_depth = scope_depth + 1;
                         }
                         ScopeKind::Loop => {
-                            return if crossed_function {
-                                last_func_depth + 1
-                            } else {
-                                0
-                            };
+                            return if crossed_function { guard_depth } else { 0 };
                         }
-                        ScopeKind::Normal => (),
+                        ScopeKind::Element if crossed_function && guard_depth == scope_depth => {
+                            guard_depth += 1;
+                        }
+                        ScopeKind::Normal | ScopeKind::Element => (),
                     }
-                    depth += 1;
+                    scope_depth += 1;
                     scope = parent;
                 }
             }
@@ -990,33 +1008,32 @@ impl<'s> Scope<'s> {
     /// Count scope depth between the current scope and the nearest enclosing
     /// def scope. Returns 0 if return is local.
     fn nl_return_scope_depth(&self) -> usize {
-        let mut depth: usize = 0;
+        let mut scope_depth: usize = 0;
         let mut crossed_lambda = false;
-        let mut last_func_depth = 0;
+        let mut guard_depth = 0;
         let mut scope = self;
         loop {
             match scope {
                 Scope::Base => return 0,
                 Scope::Class { parent, .. } => {
-                    depth += 1;
+                    scope_depth += 1;
                     scope = parent;
                 }
                 Scope::Nested { kind, parent, .. } => {
                     match kind {
                         ScopeKind::Function => {
-                            return if crossed_lambda {
-                                last_func_depth + 1
-                            } else {
-                                0
-                            };
+                            return if crossed_lambda { guard_depth } else { 0 };
                         }
                         ScopeKind::Lambda => {
                             crossed_lambda = true;
-                            last_func_depth = depth;
+                            guard_depth = scope_depth + 1;
                         }
-                        ScopeKind::Loop | ScopeKind::Normal => (),
+                        ScopeKind::Element if crossed_lambda && guard_depth == scope_depth => {
+                            guard_depth += 1;
+                        }
+                        ScopeKind::Loop | ScopeKind::Normal | ScopeKind::Element => (),
                     }
-                    depth += 1;
+                    scope_depth += 1;
                     scope = parent;
                 }
             }
@@ -1525,7 +1542,7 @@ impl<'a> Elaborater<'a> {
                     node: None,
                 });
                 {
-                    let mut scope = scope.nested_loop();
+                    let mut scope = scope.nested_element();
                     // Inject loop binds into inner scope
                     match bind {
                         Pattern::Ident(PatIdent { ident, .. }) => {
@@ -1592,7 +1609,7 @@ impl<'a> Elaborater<'a> {
                     node: None,
                 });
                 {
-                    let mut scope = scope.nested_loop();
+                    let mut scope = scope.nested_element();
                     // Inject loop binds into inner scope
                     match bind {
                         Pattern::Ident(PatIdent { ident, .. }) => {
@@ -2003,7 +2020,7 @@ impl<'a> Elaborater<'a> {
                     node: None,
                 });
                 {
-                    let mut scope = scope.nested_loop();
+                    let mut scope = scope.nested_element();
                     // Inject loop binds into inner scope
                     match bind {
                         Pattern::Ident(PatIdent { ident, .. }) => {
@@ -2264,7 +2281,7 @@ impl<'a> Elaborater<'a> {
         is_arg: bool,
         visit_elem: fn(&mut Self, &mut Scope<'_>, &mut T, bool) -> Result<()>,
     ) -> Result<()> {
-        let mut inner = scope.nested();
+        let mut inner = scope.nested_element();
         if let Some(bind) = bind {
             self.bind_pattern(&mut inner, &mut bind.pattern)?;
         }

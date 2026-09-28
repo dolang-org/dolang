@@ -1,0 +1,12 @@
+def call f
+  f()
+
+let _values = $
+  for _x = [1, 2]
+    - $ call do
+        break
+# error: break outside of loop
+#   --> comprehension_break_outside_loop.dol:LL:LL
+#    |
+# LL |         break
+#    |         ^^^^^

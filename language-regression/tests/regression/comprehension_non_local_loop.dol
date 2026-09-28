@@ -1,0 +1,70 @@
+def call f
+  f()
+
+def consume ...args
+  args
+
+# An array comprehension cannot intercept a non-local break.
+let rounds = []
+for round = [1, 2]
+  rounds.push $round
+  let _ys = $
+    for x = [1, 2, 3]
+      - $x
+      if (x == 2)
+        - $ call do
+            break
+  assert false
+assert_eq $rounds [1]
+
+# A dict comprehension cannot intercept a non-local continue.
+let visits = []
+let finished = []
+for round = [1, 2, 3]
+  visits.push $round
+  let _dict = $
+    for x = [1, 2]
+      key: $ call do
+        if (round == 2 && x == 1)
+          continue
+        x
+  finished.push $round
+assert_eq $visits [1, 2, 3]
+assert_eq $finished [1, 3]
+
+# An argument comprehension has the same rule.
+let arg_rounds = []
+for round = [1, 2]
+  arg_rounds.push $round
+  consume
+    for x = [1, 2]
+      - $ call do
+          if (x == 2)
+            break
+          x
+  assert false
+assert_eq $arg_rounds [1]
+
+# Nested comprehensions still jump to the statement loop.
+let nested_rounds = []
+for round = [1, 2]
+  nested_rounds.push $round
+  let _values = $
+    for x = [1, 2]
+      for y = [1, 2]
+        - $ call do
+            if (x == 1 && y == 2)
+              break
+            y
+  assert false
+assert_eq $nested_rounds [1]
+
+# Return uses the same statement guard across comprehension scopes.
+def return_from_comprehension()
+  let _values = $
+    for _x = [1, 2]
+      - $ call do
+          return "early"
+  assert false
+
+assert_eq $return_from_comprehension() "early"
