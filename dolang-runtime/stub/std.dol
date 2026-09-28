@@ -4383,7 +4383,7 @@ pub class TimedOutError: RuntimeError
 # object is in the prelude, so `Tuple(iterable)` is available without an
 # explicit import.
 #
-pub class Tuple[*Ts]: Iterable[Union[...Ts]] @Seq[Union[...Ts]]
+pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}] Iterable[Union[...Ts]] @Seq[Union[...Ts]]
   #
   #
   # Builds a tuple from an iterable.
