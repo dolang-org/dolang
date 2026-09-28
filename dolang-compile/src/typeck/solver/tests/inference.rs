@@ -463,3 +463,52 @@ fn explicit_exact_extreme_bounds_are_solutions_without_defaulting() {
         assert_eq!(s.solution(variable_id(unused)), None);
     }
 }
+
+#[test]
+fn raised_variables_are_those_at_outputs() {
+    let mut db = Database::new();
+    let r = reference(&db, 0, 0);
+    let one = literal(&db, 1);
+    let boxed = nominal(&mut db, "Box", vec![binder(Variance::Invariant)], vec![]);
+    let source = nominal(&mut db, "Source", vec![binder(Variance::Covariant)], vec![]);
+    let sink = nominal(
+        &mut db,
+        "Sink",
+        vec![binder(Variance::Contravariant)],
+        vec![],
+    );
+    let cases = [
+        // An invariant argument
+        (apply(&db, boxed, &[r]), true),
+        // A callback's parameter, whatever the variance around it
+        (apply(&db, boxed, &[function(&db, &[r], one)]), false),
+        // A callback's result
+        (apply(&db, boxed, &[function(&db, &[], r)]), true),
+        // Contravariant twice over
+        (apply(&db, sink, &[apply(&db, sink, &[r])]), true),
+        (apply(&db, sink, &[r]), false),
+    ];
+    let chained = apply(&db, source, &[r]);
+    db.seal();
+    let mut s = Solver::new(&db);
+    let held = s.infer();
+    let mut vars = Vec::new();
+    for &(ty, raised) in &cases {
+        let v = s.infer();
+        let e = s.intern_environment(s.empty_environment(), vec![v]);
+        s.constrain(held, s.view(ty, e), Provenance::default());
+        vars.push((variable_id(v), raised));
+    }
+    // Through another variable's upper bound
+    let middle = s.infer();
+    let v = s.infer();
+    let e = s.intern_environment(s.empty_environment(), vec![v]);
+    s.constrain(held, middle, Provenance::default());
+    s.constrain(middle, s.view(chained, e), Provenance::default());
+    vars.push((variable_id(v), true));
+    s.solve();
+    let raised = s.raised(&[held]).unwrap();
+    for (index, &(v, expected)) in vars.iter().enumerate() {
+        assert_eq!(raised.contains(&v), expected, "case {index}");
+    }
+}

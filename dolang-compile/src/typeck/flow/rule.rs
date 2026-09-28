@@ -15,7 +15,7 @@
 //! run: its results are bottom. An item of a comprehension is the exception, since
 //! bottom only says that it occurs zero times.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use super::{
     At, Flow, State,
@@ -27,8 +27,8 @@ use crate::{
         cfg::{Collection, Expr, ExprKind, FuncId, Item, Pattern, PatternItem, PatternKey, VarId},
         elab::Designated,
         solver::{
-            CallArgument, Contradiction, Issue, ObligationId, Outcome, Provenance, Solver, Status,
-            Step as Derivation, Term,
+            CallArgument, Contradiction, InferVarId, Issue, ObligationId, Outcome, Provenance,
+            Solver, Status, Step as Derivation, Term,
         },
         r#type::{
             Argument, BoundRef, Database, DeclId, Element, Function, Kind, Literal, Multiplicity,
@@ -60,6 +60,9 @@ struct Rule<'s, 'a> {
     passed: Vec<(VarId, Term)>,
     /// The variables standing for the results of `do` blocks not yet known
     pending: Vec<Term>,
+    /// The variables standing for the arguments held back, by index into
+    /// [`Values::held`]
+    held: Vec<(usize, Term)>,
 }
 
 impl<'a> Rule<'_, 'a> {
@@ -91,11 +94,18 @@ impl<'a> Rule<'_, 'a> {
         self.solver.view(lambda.ty, environment)
     }
 
+    /// A fresh variable standing for an argument held back
+    fn held(&mut self, index: usize) -> Term {
+        let term = self.solver.infer();
+        self.held.push((index, term));
+        term
+    }
+
     /// A call's arguments, or a collection's items, as often as each is passed,
     /// with the span each is diagnosed at: its own, its group's, or `fallback`
     fn arguments(
         &mut self,
-        values: &Values,
+        values: &Values<'_>,
         spread: Option<DeclId>,
         fallback: Span,
     ) -> (Vec<(Multiplicity, CallArgument)>, Vec<Span>) {
@@ -157,6 +167,13 @@ impl<'a> Rule<'_, 'a> {
                             None => joined.positional.add(rule, term),
                         }
                     }
+                    Value::Held(key, index, _) => {
+                        let term = Part::Term(rule.held(index));
+                        match key {
+                            Some(key) => joined.keyed(rule, symbol(key), term),
+                            None => joined.positional.add(rule, term),
+                        }
+                    }
                     Value::Spread(..) => {
                         for (_, atom) in flat {
                             joined.atom(rule, atom);
@@ -186,6 +203,14 @@ impl<'a> Rule<'_, 'a> {
                 }
                 Value::Lambda(key, ref lambda, span) => {
                     let term = rule.lambda(lambda);
+                    let argument = match key {
+                        Some(key) => CallArgument::Keyword(key, term),
+                        None => CallArgument::Positional(term),
+                    };
+                    vec![(multiplicity, argument, span)]
+                }
+                Value::Held(key, index, span) => {
+                    let term = rule.held(index);
                     let argument = match key {
                         Some(key) => CallArgument::Keyword(key, term),
                         None => CallArgument::Positional(term),
@@ -287,6 +312,15 @@ enum Value {
     Spread(TypeId, Span),
     /// A `do` block that the rule types, positional or keyed
     Lambda(Option<SymbolId>, Lambda, Span),
+    /// An argument held back until the call's parameters give it an expectation,
+    /// positional or keyed, by its index into [`Values::held`]
+    Held(Option<SymbolId>, usize, Span),
+}
+
+/// An argument held back, with the operands its holes pop
+struct Held<'e> {
+    expr: &'e Expr,
+    operands: VecDeque<TypeId>,
 }
 
 /// A `do` block passed to a rule, which types it: its function type, with a hole
@@ -316,7 +350,7 @@ struct Placed {
 
 /// The evaluated items of an argument list or collection
 #[derive(Default)]
-struct Values {
+struct Values<'e> {
     values: Vec<Placed>,
     /// Each outermost `for`'s span
     groups: Vec<Span>,
@@ -324,9 +358,11 @@ struct Values {
     never: bool,
     /// Whether it has a comprehension
     comprehension: bool,
+    /// The arguments held back, in order
+    held: Vec<Held<'e>>,
 }
 
-impl Values {
+impl Values<'_> {
     fn lambdas(&self) -> impl Iterator<Item = &Lambda> {
         (self.values.iter()).filter_map(|placed| match &placed.value {
             Value::Lambda(_, lambda, _) => Some(lambda),
@@ -352,6 +388,9 @@ struct Gathering<'p> {
     params: Option<&'p Params>,
     /// Whether a `do` block among them is left for the rule to type
     contextual: bool,
+    /// Whether an item whose parameter isn't known yet is held back, to be
+    /// expected to be what the call's pre-solve gives it
+    hold: bool,
     /// The next positional item's position, or, unless `exact`, the least it
     /// can be
     position: usize,
@@ -530,6 +569,37 @@ fn atoms(
     }
 }
 
+/// Hold an item back, if it takes an expectation that its position doesn't give
+/// yet: a collection literal or a call. Its operands are set aside with it. One in
+/// an `if` outside every `for` isn't, since the `if`'s branches are compared as
+/// they're gathered. Returns its index into [`Values::held`].
+fn hold<'e>(
+    gathering: &Gathering<'_>,
+    place: Place,
+    expected: Option<TypeId>,
+    value: &'e Expr,
+    operands: &mut VecDeque<TypeId>,
+    values: &mut Values<'e>,
+) -> Option<usize> {
+    let takes = matches!(
+        value.kind,
+        ExprKind::Collection { .. } | ExprKind::Call { .. }
+    );
+    if !gathering.hold
+        || expected.is_some()
+        || !takes
+        || (place.comprehension && place.group.is_none())
+    {
+        return None;
+    }
+    let operands = operands.drain(..super::holes(value)).collect();
+    values.held.push(Held {
+        expr: value,
+        operands,
+    });
+    Some(values.held.len() - 1)
+}
+
 /// What a call can pass its arguments against, when the callee's parameters are
 /// known from its signature alone
 #[derive(Default)]
@@ -561,6 +631,7 @@ impl<'a> Flow<'a, '_> {
                 checks: Vec::new(),
                 passed: Vec::new(),
                 pending: Vec::new(),
+                held: Vec::new(),
             };
             let results = build(&mut rule);
             let checks = rule.checks;
@@ -739,8 +810,10 @@ impl<'a> Flow<'a, '_> {
     /// A `do` block among them enters as its function type, with a fresh variable
     /// for each parameter and channel its signature leaves open. What the callee
     /// passes them joins into its signature, and its result, until the block's
-    /// analysis gives it, is a variable that keeps the call undecided. A
-    /// comprehension's arguments are passed as often as it says: see
+    /// analysis gives it, is a variable that keeps the call undecided. An argument
+    /// that takes an expectation its generic callee's signature alone doesn't give
+    /// is held back until the call's pre-solve does (see [`Flow::expectations`]).
+    /// A comprehension's arguments are passed as often as it says: see
     /// [`Flow::gather`]. A callee that isn't a function or a union of them gives
     /// the dynamic type.
     pub(super) fn call(
@@ -758,11 +831,42 @@ impl<'a> Flow<'a, '_> {
         let unknown = self.db.unknown();
         let callee_type = self.eval(at, state, operands, callee);
         let (input, output) = self.channels(at);
-        let params = self.params(callee_type, input, output).unwrap_or_default();
-        let values = self.values(at, state, operands, args, Some(&params), true);
+        let params = self.params(callee_type).unwrap_or_default();
+        let generic = matches!(self.db.ty(callee_type), Type::Quantified { .. });
+        let mut values = self.values(at, state, operands, args, Some(&params), true, generic);
+        let callable = self.callable(callee_type);
+        let spread = self.designated(Designated::Spread);
+        let span = expr.span;
+        if !values.held.is_empty() {
+            let expectations = match callee_type != bottom && !values.never && callable {
+                true => self.expectations(callee_type, &values, input, output, expected, span),
+                false => vec![None; values.held.len()],
+            };
+            self.release(at, state, &mut values, &expectations);
+        }
         if callee_type == bottom || values.never {
             return bottom;
         }
+        if !callable {
+            self.untyped(at, &values);
+            return unknown;
+        }
+        self.conclude(at, expected, |rule| {
+            vec![call_constraint(
+                rule,
+                &values,
+                spread,
+                span,
+                callee_type,
+                input,
+                output,
+            )]
+        })[0]
+    }
+
+    /// Whether a callee is a function, or a union of them, as a variable assigned
+    /// several closures holds
+    fn callable(&self, callee: TypeId) -> bool {
         let function = |ty: TypeId| {
             let ty = match self.db.ty(ty) {
                 Type::Quantified { body, .. } => *body,
@@ -770,36 +874,102 @@ impl<'a> Flow<'a, '_> {
             };
             matches!(self.db.ty(ty), Type::Function(_))
         };
-        // A union of functions, as a variable assigned several closures holds
-        let callable = match self.db.ty(callee_type) {
+        match self.db.ty(callee) {
             Type::Union(members) => members.iter().all(|member| match *member {
                 UnionMember::Type(ty) => function(ty),
                 UnionMember::Expand(_) => false,
             }),
-            _ => function(callee_type),
-        };
-        if !callable {
-            self.untyped(at, &values);
-            return unknown;
+            _ => function(callee),
         }
+    }
+
+    /// The expectations a call's pre-solve gives the arguments held back, by index
+    /// into [`Values::held`]. It solves the call with a fresh variable for each held
+    /// argument, and never makes a variable dynamic. A variable the held arguments
+    /// can't raise takes its least solution (see [`Solver::raised`]): one they
+    /// can raise would make the expectation too narrow. A held argument's
+    /// expectation is its parameter, if what's forced or chosen solves it.
+    fn expectations(
+        &self,
+        callee: TypeId,
+        values: &Values<'_>,
+        input: Option<TypeId>,
+        output: Option<TypeId>,
+        expected: Option<TypeId>,
+        span: Span,
+    ) -> Vec<Option<TypeId>> {
         let spread = self.designated(Designated::Spread);
-        let span = expr.span;
-        self.conclude(at, expected, |rule| {
-            let (arguments, spans) = rule.arguments(&values, spread, span);
-            let result = rule.solver.infer();
-            let call = rule.solver.call_items(
-                &arguments,
-                result,
-                input.map(|ty| rule.closed(ty)),
-                output.map(|ty| rule.closed(ty)),
-            );
-            rule.constrain(
-                rule.closed(callee_type),
-                call,
-                Check::Call { span, args: spans },
-            );
-            vec![result]
-        })[0]
+        let attempt = |seed: bool| {
+            let mut solver = self.solver();
+            let mut rule = Rule {
+                solver: &mut solver,
+                db: self.db,
+                checks: Vec::new(),
+                passed: Vec::new(),
+                pending: Vec::new(),
+                held: Vec::new(),
+            };
+            let result = call_constraint(&mut rule, values, spread, span, callee, input, output);
+            let held = rule.held;
+            if let (true, Some(expected)) = (seed, expected) {
+                solver.constrain(result, solver.closed(expected), Provenance::default());
+            }
+            let contradicted =
+                (solver.solve().iter()).any(|outcome| outcome.status == Status::Contradicted);
+            (solver, held, contradicted)
+        };
+        let mut expectations = vec![None; values.held.len()];
+        let (mut solver, mut held, contradicted) = attempt(true);
+        if contradicted {
+            let contradicted;
+            (solver, held, contradicted) = attempt(false);
+            if contradicted {
+                return expectations;
+            }
+        }
+        let terms: Vec<Term> = held.iter().map(|&(_, term)| term).collect();
+        let raised = (solver.raised(&terms)).unwrap_or_else(|_| solver.unresolved().collect());
+        default_where(&mut solver, |id| !raised.contains(&id));
+        for (index, term) in held {
+            expectations[index] = expectation(&solver, term);
+        }
+        expectations
+    }
+
+    /// Evaluate the arguments held back, each expecting what `expectations` gives
+    /// it, in place of their placeholders
+    fn release(
+        &mut self,
+        at: At,
+        state: &mut State,
+        values: &mut Values<'_>,
+        expectations: &[Option<TypeId>],
+    ) {
+        let bottom = self.db.bottom();
+        let types: Vec<TypeId> = (std::mem::take(&mut values.held).into_iter())
+            .zip(expectations)
+            .map(|(mut held, &expected)| {
+                self.expect(at, state, &mut held.operands, held.expr, expected)
+            })
+            .collect();
+        let mut never = false;
+        values.values.retain_mut(|placed| {
+            let Value::Held(key, index, span) = placed.value else {
+                return true;
+            };
+            let ty = types[index];
+            if ty == bottom {
+                // One in a comprehension occurs zero times
+                never |= placed.group.is_none();
+                return false;
+            }
+            placed.value = match key {
+                Some(key) => Value::Key(key, ty, span),
+                None => Value::Pos(ty, span),
+            };
+            true
+        });
+        values.never |= never;
     }
 
     /// A `do` block as a call's argument: its declared function type, with a hole
@@ -882,49 +1052,14 @@ impl<'a> Flow<'a, '_> {
     }
 
     /// The parameter types a callee's signature alone gives, which don't mention its
-    /// binders. Any other parameter's type is only known once the call is solved.
-    /// The binders a callee takes as its channels are the caller's `input` and
-    /// `output`, as the call passes them, so a callback sharing them is known;
-    /// other binders wait for expectations from the call's solve (#801).
-    fn params(
-        &self,
-        callee: TypeId,
-        input: Option<TypeId>,
-        output: Option<TypeId>,
-    ) -> Option<Params> {
-        let db = self.db;
-        let mut ty = callee;
-        if let Type::Quantified { binders, body } = db.ty(ty) {
-            let Type::Function(function) = db.ty(*body) else {
-                return None;
-            };
-            let channel = |channel: Option<TypeId>, slot: usize| {
-                matches!(
-                    channel.map(|ty| db.ty(ty)),
-                    Some(&Type::Bound { reference, .. })
-                        if reference.depth == 0 && usize::from(reference.slot) == slot
-                )
-            };
-            // Each other binder stays a reference to its own slot, so it's not fixed
-            let args: Vec<TypeId> = (binders.iter().enumerate())
-                .map(|(slot, binder)| {
-                    let caller = if channel(function.input, slot) {
-                        input
-                    } else if channel(function.output, slot) {
-                        output
-                    } else {
-                        None
-                    };
-                    caller.unwrap_or_else(|| {
-                        db.intern(Type::Bound {
-                            reference: BoundRef::new(0, slot),
-                            kind: binder.kind,
-                        })
-                    })
-                })
-                .collect();
-            ty = db.substitute(*body, &args);
-        }
+    /// binders. Any other parameter's type is only known once the call is solved,
+    /// so an argument that takes an expectation there is held back.
+    fn params(&self, callee: TypeId) -> Option<Params> {
+        let ty = match self.db.ty(callee) {
+            // Its binders stay references, so a parameter mentioning one isn't fixed
+            Type::Quantified { body, .. } => *body,
+            _ => callee,
+        };
         let Type::Function(function) = self.db.ty(ty) else {
             return None;
         };
@@ -964,20 +1099,25 @@ impl<'a> Flow<'a, '_> {
 
     /// Evaluate the items of an argument list or collection in order, each
     /// expecting what `params` gives its position. With `contextual`, a `do` block
-    /// among them is left for the rule to type.
-    fn values(
+    /// among them is left for the rule to type. With `hold`, an item that takes an
+    /// expectation, but whose position `params` doesn't know, is held back (see
+    /// [`Flow::expectations`]).
+    #[expect(clippy::too_many_arguments, reason = "how items are gathered")]
+    fn values<'e>(
         &mut self,
         at: At,
         state: &mut State,
         operands: &mut VecDeque<TypeId>,
-        items: &[Item],
+        items: &'e [Item],
         params: Option<&Params>,
         contextual: bool,
-    ) -> Values {
+        hold: bool,
+    ) -> Values<'e> {
         let mut values = Values::default();
         let mut gathering = Gathering {
             params,
             contextual,
+            hold,
             position: 0,
             exact: true,
         };
@@ -1005,19 +1145,19 @@ impl<'a> Flow<'a, '_> {
     /// `for` gives its branches' items once each, if they're alike, and otherwise
     /// makes them optional.
     #[expect(clippy::too_many_arguments, reason = "one recursion's state")]
-    fn gather(
+    fn gather<'e>(
         &mut self,
         at: At,
         state: &mut State,
         operands: &mut VecDeque<TypeId>,
-        items: &[Item],
+        items: &'e [Item],
         gathering: &mut Gathering<'_>,
         place: Place,
-        values: &mut Values,
+        values: &mut Values<'e>,
         out: &mut Vec<Placed>,
     ) {
         let bottom = self.db.bottom();
-        let produced = |values: &mut Values, ty: TypeId| {
+        let produced = |values: &mut Values<'_>, ty: TypeId| {
             let never = ty == bottom;
             values.never |= never && !place.comprehension;
             !never
@@ -1054,6 +1194,10 @@ impl<'a> Flow<'a, '_> {
                 Item::Pos(value) => {
                     let expected = gathering.expected();
                     gathering.advance(place);
+                    if let Some(index) = hold(gathering, place, expected, value, operands, values) {
+                        out.push(placed(Value::Held(None, index, value.span)));
+                        continue;
+                    }
                     let ty = self.expect(at, state, operands, value, expected);
                     if produced(values, ty) {
                         out.push(placed(Value::Pos(ty, value.span)));
@@ -1063,6 +1207,10 @@ impl<'a> Flow<'a, '_> {
                     let expected = gathering.params.and_then(|params| {
                         (params.keyed.iter()).find_map(|&(name, ty)| (name == key).then_some(ty))
                     });
+                    if let Some(index) = hold(gathering, place, expected, value, operands, values) {
+                        out.push(placed(Value::Held(Some(key), index, value.span)));
+                        continue;
+                    }
                     let ty = self.expect(at, state, operands, value, expected);
                     if produced(values, ty) {
                         out.push(placed(Value::Key(key, ty, value.span)));
@@ -1174,7 +1322,7 @@ impl<'a> Flow<'a, '_> {
     }
 
     /// Instantiate each `do` block among values that no rule types
-    fn untyped(&mut self, at: At, values: &Values) {
+    fn untyped(&mut self, at: At, values: &Values<'_>) {
         for lambda in values.lambdas() {
             self.lambda(at, lambda.func);
         }
@@ -1222,6 +1370,7 @@ impl<'a> Flow<'a, '_> {
             items,
             params.as_ref(),
             expected.is_some(),
+            false,
         );
         if values.never {
             return self.db.bottom();
@@ -1266,6 +1415,7 @@ impl<'a> Flow<'a, '_> {
                         Value::Key(..) | Value::Pair(..) => {
                             rule.constrain(rule.closed(unknown), element, Check::Quiet);
                         }
+                        Value::Held(..) => unreachable!("only a call holds arguments back"),
                     }
                 }
                 vec![rule.term(|holes| {
@@ -1309,6 +1459,7 @@ impl<'a> Flow<'a, '_> {
                             });
                             spread_into(rule, spread, ty, schema, span);
                         }
+                        Value::Held(..) => unreachable!("only a call holds arguments back"),
                     }
                 }
                 vec![rule.term(|holes| {
@@ -1349,6 +1500,7 @@ impl<'a> Flow<'a, '_> {
                                 elements.push((None, schema, Kind::Schema));
                             }
                             Value::Pair(..) => unreachable!("a tuple or record has no pairs"),
+                            Value::Held(..) => unreachable!("only a call holds arguments back"),
                         }
                     }
                     vec![rule.term(|holes| {
@@ -1625,37 +1777,100 @@ fn passed(
 /// if `bare`, then any variable without lower bounds to the dynamic type of its
 /// kind, until nothing more can be defaulted
 fn default_all(solver: &mut Solver<'_>, db: &Database, bare: bool) -> Vec<Outcome> {
+    let mut outcomes = default_where(solver, |_| true);
+    if !bare {
+        return outcomes;
+    }
+    // Each round solves at least one variable; the limit only guards the solver
+    for _ in 0..64 {
+        let bare: Vec<_> = (solver.unresolved())
+            .filter(|&id| solver.bounds(id).lower().next().is_none())
+            .collect();
+        if bare.is_empty() {
+            break;
+        }
+        for id in bare {
+            let unknown = db.unknown_of(solver.variable_kind(id));
+            solver.constrain(
+                solver.closed(unknown),
+                Term::Infer(id),
+                Provenance::default(),
+            );
+        }
+        outcomes = default_where(solver, |_| true);
+    }
+    outcomes
+}
+
+/// Solve, defaulting every unsolved variable that `keep` admits whose lower
+/// bounds are solved, until nothing more can be defaulted
+fn default_where(solver: &mut Solver<'_>, keep: impl Fn(InferVarId) -> bool) -> Vec<Outcome> {
     let mut outcomes = solver.solve();
     // Each round solves at least one variable; the limit only guards the solver
     for _ in 0..64 {
-        let unsolved: Vec<_> = solver.unresolved().collect();
-        if unsolved.is_empty() {
-            break;
-        }
+        let unsolved: Vec<_> = solver.unresolved().filter(|&id| keep(id)).collect();
         let mut progress = false;
-        for &id in &unsolved {
+        for id in unsolved {
             progress |= solver.default(id).is_ok();
         }
         if !progress {
-            if !bare {
-                break;
-            }
-            let bare: Vec<_> = (unsolved.into_iter())
-                .filter(|&id| solver.bounds(id).lower().next().is_none())
-                .collect();
-            if bare.is_empty() {
-                break;
-            }
-            for id in bare {
-                let unknown = db.unknown_of(solver.variable_kind(id));
-                solver.constrain(
-                    solver.closed(unknown),
-                    Term::Infer(id),
-                    Provenance::default(),
-                );
-            }
+            break;
         }
         outcomes = solver.solve();
     }
     outcomes
+}
+
+/// The constraint of a call: its callee below the function type its arguments
+/// call it as. Returns the variable standing for its result.
+fn call_constraint(
+    rule: &mut Rule<'_, '_>,
+    values: &Values<'_>,
+    spread: Option<DeclId>,
+    span: Span,
+    callee: TypeId,
+    input: Option<TypeId>,
+    output: Option<TypeId>,
+) -> Term {
+    let (arguments, spans) = rule.arguments(values, spread, span);
+    let result = rule.solver.infer();
+    let call = rule.solver.call_items(
+        &arguments,
+        result,
+        input.map(|ty| rule.closed(ty)),
+        output.map(|ty| rule.closed(ty)),
+    );
+    rule.constrain(rule.closed(callee), call, Check::Call { span, args: spans });
+    result
+}
+
+/// What a held argument is expected to be: its parameter, if it's solved. The
+/// variable of a `for`'s joined items stands between them.
+fn expectation(solver: &Solver<'_>, held: Term) -> Option<TypeId> {
+    let mut found = None;
+    let mut pending = vec![held];
+    let mut seen = HashSet::new();
+    while let Some(term) = pending.pop() {
+        let Term::Infer(id) = term else {
+            unreachable!("a variable stands for a held argument")
+        };
+        if !seen.insert(id) {
+            continue;
+        }
+        for upper in solver.bounds(id).upper() {
+            let ty = match (upper, solver.reify(upper)) {
+                (_, Ok(ty)) => ty,
+                (Term::Infer(_), Err(_)) => {
+                    pending.push(upper);
+                    continue;
+                }
+                (Term::View(_), Err(_)) => return None,
+            };
+            match found {
+                Some(other) if other != ty => return None,
+                _ => found = Some(ty),
+            }
+        }
+    }
+    found
 }
