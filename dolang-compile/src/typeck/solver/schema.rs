@@ -96,17 +96,6 @@ fn range(multiplicity: Multiplicity) -> (usize, Option<usize>) {
     }
 }
 
-/// An item of multiplicity `inner` in a subschema included with `outer`
-fn compose(outer: Multiplicity, inner: Multiplicity) -> Multiplicity {
-    match (outer, inner) {
-        (Multiplicity::Required, inner) => inner,
-        (Multiplicity::Optional, Multiplicity::Repeated) | (Multiplicity::Repeated, _) => {
-            Multiplicity::Repeated
-        }
-        (Multiplicity::Optional, _) => Multiplicity::Optional,
-    }
-}
-
 impl Solver<'_> {
     /// Relate two exposed schemas.
     pub(super) fn schemas(
@@ -469,11 +458,11 @@ impl Solver<'_> {
                 self.flatten(view, items, Some(item), keep, &mut inner, depth + 1)?;
                 match (&inner.positional[..], &inner.keyed[..]) {
                     ([Slot::Atom(atom)], []) => shape.positional.push(Slot::Atom(Atom {
-                        multiplicity: compose(multiplicity, atom.multiplicity),
+                        multiplicity: multiplicity.compose(atom.multiplicity),
                         ..*atom
                     })),
                     ([], [atom]) => shape.keyed.push(KeyedAtom {
-                        multiplicity: compose(multiplicity, atom.multiplicity),
+                        multiplicity: multiplicity.compose(atom.multiplicity),
                         ..*atom
                     }),
                     _ => return Err(Residual::Unsupported.into()),

@@ -134,8 +134,8 @@ impl Flow<'_, '_> {
                     self.eval(at, state, operands, key);
                     self.eval(at, state, operands, value);
                 }
-                Item::For(items) => self.items(at, state, operands, items),
-                Item::If { then, else_ } => {
+                Item::For { items, .. } => self.items(at, state, operands, items),
+                Item::If { then, else_, .. } => {
                     self.items(at, state, operands, then);
                     self.items(at, state, operands, else_);
                 }
@@ -143,8 +143,9 @@ impl Flow<'_, '_> {
         }
     }
 
-    /// Instantiate a closure outside a call that types it. Nothing is expected of a
-    /// `do` block's parameters and channels here, so they're dynamic. Its value is
+    /// Instantiate a closure outside a rule that types it. Nothing here gives a
+    /// `do` block's parameters and channels anything; once the analysis is stuck,
+    /// those still bottom are dynamic (see [`Flow::analyze`]). Its value is
     /// its declared type under its rigids, with the result its variable joins, if
     /// that's left to it. A nested def's value is its declared type, unless it's
     /// nested in a generic declaration, whose binders it would need applied, or
@@ -153,12 +154,6 @@ impl Flow<'_, '_> {
         let unknown = self.db.unknown();
         let data = self.ir.func(func);
         if let Some(signature) = &data.signature {
-            let expected = (signature.params.iter().copied())
-                .chain([signature.input, signature.output])
-                .flatten();
-            for var in expected {
-                self.join(var, unknown);
-            }
             let Some(mut declared) = self.declared[func.index()].clone() else {
                 return unknown;
             };

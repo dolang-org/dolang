@@ -331,12 +331,12 @@ impl Dump<'_, '_> {
                     write!(out, "...")?;
                     self.expr(out, value)?;
                 }
-                Item::For(items) => {
+                Item::For { items, .. } => {
                     write!(out, "for {{")?;
                     self.items(out, items)?;
                     write!(out, "}}")?;
                 }
-                Item::If { then, else_ } => {
+                Item::If { then, else_, .. } => {
                     write!(out, "if {{")?;
                     self.items(out, then)?;
                     write!(out, "}} else {{")?;

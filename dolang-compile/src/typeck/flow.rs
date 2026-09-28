@@ -31,6 +31,9 @@
 //! [`rule`]). Rules that look up members give the dynamic type. When the queue
 //! empties, the rules still undecided in each function's earliest block that has
 //! any are frozen to default, and iteration resumes, in rounds until none is left.
+//! A rule with a check it couldn't resolve counts as undecided. Once none is left,
+//! the `do` block parameters and channels that nothing gave anything become
+//! dynamic, which may start more rounds.
 //! Then a final pass runs every block once more over its final state, to record
 //! what each variable reference and binding saw and to report: contradicted rules,
 //! values that don't fit an annotation or a declared result, and reads that may be
@@ -224,6 +227,10 @@ impl<'a, 'u> Flow<'a, 'u> {
                 }
             }
             if earliest.is_empty() {
+                // Nothing gave these `do` block parameters and channels anything
+                if self.dynamic_signatures() {
+                    continue;
+                }
                 break;
             }
             let mut frozen = Vec::new();
@@ -503,6 +510,26 @@ impl<'a, 'u> Flow<'a, 'u> {
         for (block, ctx) in self.readers.get(&var).cloned().into_iter().flatten() {
             self.enqueue(block, ctx);
         }
+    }
+
+    /// Make each `do` block parameter and channel that's still bottom dynamic,
+    /// saying whether there was one
+    fn dynamic_signatures(&mut self) -> bool {
+        let bottom = self.db.bottom();
+        let unknown = self.db.unknown();
+        let vars: Vec<VarId> = (self.ir.funcs())
+            .filter_map(|(_, func)| func.signature.as_ref())
+            .flat_map(|signature| {
+                (signature.params.iter().copied())
+                    .chain([signature.input, signature.output])
+                    .flatten()
+            })
+            .filter(|var| self.joined.get(var).is_none_or(|&(ty, _)| ty == bottom))
+            .collect();
+        for &var in &vars {
+            self.join(var, unknown);
+        }
+        !vars.is_empty()
     }
 
     /// A variable's joined type, making the block depend on it

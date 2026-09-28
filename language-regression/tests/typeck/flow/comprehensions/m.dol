@@ -1,0 +1,139 @@
+# A comprehension's items occur as often as its structure says. A `for`'s items
+# join into one repeated item of each kind. An `if` outside every `for` passes
+# its branches' items once if they're alike, and otherwise makes them optional.
+
+pub def ints *xs @ Int -> nil
+  ...
+
+pub def named **kw @ Str -> nil
+  ...
+
+pub def one x @ Int -> nil
+  ...
+
+pub def calls *fs @ ((Int) -> nil) -> nil
+  ...
+
+pub def drop _x -> nil
+  ...
+
+pub def repeated xs @ Array[Int] xss @ Array[Array[Int]]
+  ints
+    - 1
+    for x = xs
+      - $x
+      for y = xs
+        - $y
+    for ys = xss
+      ...ys
+  named
+    for _x = xs
+      key: a
+      other: b
+
+pub def filtered c @ Bool xs @ Array[Int]
+  one
+    if c
+      - 1
+    else
+      - 2
+  ints
+    if c
+      - 1
+    else
+      - 1
+      - 2
+  ints
+    if c
+      ...xs
+
+pub def collected xs @ Array[Int]
+  let d = $
+    for x = xs
+      "k": $x
+      key: a
+  let _ = d
+  #       ^: flow std.Dict[{*(std.Str | std.Sym): std.Int | std.Str}]
+  let ys = $
+    for x = xs
+      if (x > 0)
+        - $x
+      else
+        - a
+  let _ = ys
+  #       ^~: flow std.Array[std.Int | std.Str]
+
+# A `do` block among the items is typed against what's expected of it
+pub def typed xs @ Array[Int]
+  let fs @ Array[(Int) -> Int] = $
+    for _x = xs
+      - (do |y| y)
+      #         ^: flow std.Int
+  let gs @ Array[(Int) -> Int] = [do |y| y]
+  #                                      ^: flow std.Int
+  calls
+    for _x = xs
+      - (do |y| drop y)
+      #              ^: flow std.Int
+  let _ = fs
+  let _ = gs
+
+pub def specs *ds @ Dict[{((Int) -> Int), ?name: Str, ?icon: Str}] -> nil
+  ...
+
+pub def spec d @ Dict[{((Int) -> Int), ?name: Str, ?icon: Str}] -> nil
+  ...
+
+# A dict checks its items one by one against what's expected of it
+pub def specified xs @ Array[Int]
+  spec $
+    - (do |y| y)
+    #         ^: flow std.Int
+    name: a
+  let d @ Dict[{name: Str, ?port: Int}] = {name: "a"}
+  let _ = d
+  #       ^: flow std.Dict[{name: std.Str, ?port: std.Int}]
+  specs
+    for _x = xs
+      - icon: b
+        do |y|
+          let _ = y
+          #       ^: flow std.Int
+          y
+  let ds @ Array[Dict[{((Int) -> Int), ?name: Str, ?icon: Str}]] = $
+    for _x = xs
+      - name: c
+        do |y|
+          let _ = y
+          #       ^: flow std.Int
+          y
+  let _ = ds
+
+pub def wrong c @ Bool xs @ Array[Int]
+  one
+    if c
+      - 1
+  # error: this call is missing an argument
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | /   one
+  # LL | |     if c
+  # LL | |       - 1
+  #    | |_________^
+  ints
+    for _x = xs
+      # error: expected `std.Int`, found `"a"`
+      #   --> m.dol:LL:LL
+      #    |
+      # LL |     for _x = xs
+      #    |     ^^^
+      - a
+  spec $
+    - (do |y| y)
+    name: 1
+# error: expected `{(std.Int) <m.wrong.#0 >m.wrong.#1 -> std.Int, ?name: std.Str, ?icon: std.Str}`, found `{(std.Int) <m.wrong.#0 >m.wrong.#1 -> std.Int, name: 1}`
+#   --> m.dol:LL:LL
+#    |
+# LL | /     - (do |y| y)
+# LL | |     name: 1
+#    | |___________^

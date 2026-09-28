@@ -68,6 +68,8 @@ enum Check {
     Call { span: Span, args: Vec<Span> },
     /// A value that must be something
     Fits(Span, Misfit),
+    /// A value that must be what's expected of it
+    Expected(Span),
     /// Nothing that can fail
     Quiet,
 }
@@ -111,6 +113,144 @@ impl<'a> Rule<'_, 'a> {
             .solver
             .environment(self.solver.empty_environment(), group);
         self.solver.view(lambda.ty, environment)
+    }
+
+    /// A call's arguments, or a collection's items, as often as each is passed,
+    /// with the span each is diagnosed at: its own, its group's, or `fallback`
+    fn arguments(
+        &mut self,
+        values: &Values,
+        spread: Option<DeclId>,
+        fallback: Span,
+    ) -> (Vec<(Multiplicity, CallArgument)>, Vec<Span>) {
+        let rule = self;
+        // A spread's schema is the least its value spreads as, solved before the
+        // rest, which can't show that an unsolved schema supplies what's expected
+        let spreads: Vec<Term> = (values.values.iter())
+            .filter_map(|placed| match placed.value {
+                Value::Spread(ty, span) => {
+                    let schema = rule.solver.infer_kind(Kind::Schema, Rest::All);
+                    spread_into(rule, spread, ty, schema, span);
+                    Some(schema)
+                }
+                _ => None,
+            })
+            .collect();
+        if !spreads.is_empty() {
+            rule.solver.solve();
+        }
+        let mut solved = Vec::new();
+        for schema in spreads {
+            if let Term::Infer(id) = schema {
+                let _ = rule.solver.default(id);
+            }
+            let reified = rule.solver.reify(schema).ok();
+            solved.push((reified.map_or(schema, |ty| rule.closed(ty)), reified));
+        }
+        let mut spreads = solved.into_iter();
+        let unknown_schema = rule.db.unknown_of(Kind::Schema);
+        let mut groups: Vec<Option<Joined>> = (values.groups.iter()).map(|_| None).collect();
+        // Each argument, or a group whose arguments go where its first item is
+        let mut entries = Vec::new();
+        let symbol = |key| rule.db.intern(Type::Literal(Literal::Sym(key)));
+        for placed in &values.values {
+            let multiplicity = placed.multiplicity;
+            // A spread gives its schema's items, unless it's passed once, so
+            // that none is an inclusion the solver can't repeat or leave out
+            let mut flat = Vec::new();
+            if let Value::Spread(_, span) = placed.value {
+                let (term, schema) = spreads.next().expect("a schema for each spread");
+                if multiplicity == Multiplicity::Required {
+                    let argument = CallArgument::Spread(term);
+                    entries.push(Entry::Argument(multiplicity, argument, span));
+                    continue;
+                }
+                let schema = schema.unwrap_or(unknown_schema);
+                atoms(rule.db, schema, multiplicity, &mut flat);
+            }
+            if let Some(group) = placed.group {
+                let joined = group_entry(&mut groups, &mut entries, group);
+                match placed.value {
+                    Value::Pos(ty, _) => joined.positional.add(rule, Part::Closed(ty)),
+                    Value::Key(key, ty, _) => joined.keyed(rule, symbol(key), Part::Closed(ty)),
+                    Value::Pair(key, ty) => joined.keyed(rule, key, Part::Closed(ty)),
+                    Value::Lambda(key, ref lambda, _) => {
+                        let term = Part::Term(rule.lambda(lambda));
+                        match key {
+                            Some(key) => joined.keyed(rule, symbol(key), term),
+                            None => joined.positional.add(rule, term),
+                        }
+                    }
+                    Value::Spread(..) => {
+                        for (_, atom) in flat {
+                            joined.atom(rule, atom);
+                        }
+                    }
+                }
+                continue;
+            }
+            let arguments = match placed.value {
+                Value::Pos(ty, span) => {
+                    vec![(
+                        multiplicity,
+                        CallArgument::Positional(rule.closed(ty)),
+                        span,
+                    )]
+                }
+                Value::Key(key, ty, span) => {
+                    vec![(
+                        multiplicity,
+                        CallArgument::Keyword(key, rule.closed(ty)),
+                        span,
+                    )]
+                }
+                Value::Pair(key, ty) => {
+                    let argument = CallArgument::Pair(rule.closed(key), rule.closed(ty));
+                    vec![(multiplicity, argument, fallback)]
+                }
+                Value::Lambda(key, ref lambda, span) => {
+                    let term = rule.lambda(lambda);
+                    let argument = match key {
+                        Some(key) => CallArgument::Keyword(key, term),
+                        None => CallArgument::Positional(term),
+                    };
+                    vec![(multiplicity, argument, span)]
+                }
+                Value::Spread(_, span) => (flat.into_iter())
+                    .map(|(multiplicity, atom)| {
+                        let argument = match atom {
+                            Atom::Positional(ty) => CallArgument::Positional(rule.closed(ty)),
+                            Atom::Keyed(key, ty) => {
+                                CallArgument::Pair(rule.closed(key), rule.closed(ty))
+                            }
+                            Atom::Unknown => CallArgument::Spread(rule.closed(unknown_schema)),
+                        };
+                        (multiplicity, argument, span)
+                    })
+                    .collect(),
+            };
+            for (multiplicity, argument, span) in arguments {
+                entries.push(Entry::Argument(multiplicity, argument, span));
+            }
+        }
+        let mut arguments = Vec::new();
+        let mut spans = Vec::new();
+        for entry in entries {
+            match entry {
+                Entry::Argument(multiplicity, argument, span) => {
+                    arguments.push((multiplicity, argument));
+                    spans.push(span);
+                }
+                Entry::Group(group) => {
+                    let joined = groups[group].as_ref().expect("a group's items");
+                    for argument in joined.arguments(rule) {
+                        arguments.push((Multiplicity::Repeated, argument));
+                        spans.push(values.groups[group]);
+                    }
+                }
+            }
+        }
+        (arguments, spans)
     }
 
     /// A term for the type `build` makes, whose holes the terms it passes fill
@@ -169,12 +309,12 @@ enum Value {
     Key(SymbolId, TypeId, Span),
     Pair(TypeId, TypeId),
     Spread(TypeId, Span),
-    /// A `do` block passed to a call, positionally or by key
+    /// A `do` block that the rule types, positional or keyed
     Lambda(Option<SymbolId>, Lambda, Span),
 }
 
-/// A `do` block passed to a call, which types it: its function type, with a hole
-/// at depth 0 for each item its signature leaves to the call
+/// A `do` block passed to a rule, which types it: its function type, with a hole
+/// at depth 0 for each item its signature leaves to the rule
 pub(super) struct Lambda {
     func: FuncId,
     ty: TypeId,
@@ -189,14 +329,229 @@ enum Hole {
     Result,
 }
 
+/// An evaluated item, and how often it occurs
+struct Placed {
+    value: Value,
+    multiplicity: Multiplicity,
+    /// The outermost `for` it's in, by index into [`Values::groups`]. The items of
+    /// a `for` join into one repeated item of each kind.
+    group: Option<usize>,
+}
+
 /// The evaluated items of an argument list or collection
 #[derive(Default)]
 struct Values {
-    values: Vec<Value>,
+    values: Vec<Placed>,
+    /// Each outermost `for`'s span
+    groups: Vec<Span>,
     /// Whether a value isn't produced, so neither is the whole
     never: bool,
     /// Whether it has a comprehension
     comprehension: bool,
+}
+
+impl Values {
+    fn lambdas(&self) -> impl Iterator<Item = &Lambda> {
+        (self.values.iter()).filter_map(|placed| match &placed.value {
+            Value::Lambda(_, lambda, _) => Some(lambda),
+            _ => None,
+        })
+    }
+}
+
+/// Where items are gathered: how often they occur, relative to the `if` branch
+/// they're in, unless they're in a `for`
+#[derive(Clone, Copy)]
+struct Place {
+    multiplicity: Multiplicity,
+    group: Option<usize>,
+    /// Whether they're in a comprehension, where a value that isn't produced
+    /// occurs zero times
+    comprehension: bool,
+}
+
+/// What items are gathered against
+struct Gathering<'p> {
+    /// What each positional or keyed item is expected to be
+    params: Option<&'p Params>,
+    /// Whether a `do` block among them is left for the rule to type
+    contextual: bool,
+    /// The next positional item's position, or, unless `exact`, the least it
+    /// can be
+    position: usize,
+    exact: bool,
+}
+
+impl Gathering<'_> {
+    /// What the next positional item is expected to be. Past the parameters that
+    /// take one item each, every item is expected to be the rest's, wherever
+    /// exactly it lands.
+    fn expected(&self) -> Option<TypeId> {
+        let params = self.params?;
+        match params.positional.get(self.position) {
+            Some(&ty) if self.exact => ty,
+            Some(_) => None,
+            None => params.rest,
+        }
+    }
+
+    /// Count a positional item. One in a comprehension may not occur.
+    fn advance(&mut self, place: Place) {
+        if !place.comprehension {
+            self.position += 1;
+        }
+    }
+}
+
+/// A `for`'s items in a call, each kind joined into one repeated item
+#[derive(Default)]
+struct Joined {
+    positional: Slot,
+    /// By literal key
+    keyed: Vec<(TypeId, Slot)>,
+    /// Every other key, and its values
+    pair: Option<(TypeId, Slot)>,
+    /// Whether it spreads a schema whose items aren't known
+    unknown: bool,
+}
+
+/// Values joined into one: their closed types' join, so that a mismatch names it,
+/// and the terms of `do` blocks, which only a variable can join
+#[derive(Default)]
+struct Slot {
+    closed: Option<TypeId>,
+    terms: Vec<Term>,
+}
+
+/// A value joined into a [`Slot`]
+#[derive(Clone, Copy)]
+enum Part {
+    Closed(TypeId),
+    Term(Term),
+}
+
+impl Slot {
+    fn add(&mut self, rule: &Rule<'_, '_>, part: Part) {
+        match part {
+            Part::Closed(ty) => {
+                self.closed = Some(match self.closed {
+                    Some(joined) => rule.solver.lub(joined, ty),
+                    None => ty,
+                });
+            }
+            Part::Term(term) => self.terms.push(term),
+        }
+    }
+
+    /// Its values' join, if any value reaches it
+    fn term(&self, rule: &mut Rule<'_, '_>) -> Option<Term> {
+        let closed = self.closed.map(|ty| rule.closed(ty));
+        if self.terms.is_empty() {
+            return closed;
+        }
+        let var = rule.solver.infer();
+        for &term in closed.iter().chain(&self.terms) {
+            rule.constrain(term, var, Check::Quiet);
+        }
+        Some(var)
+    }
+}
+
+impl Joined {
+    fn keyed(&mut self, rule: &Rule<'_, '_>, key: TypeId, value: Part) {
+        if let Type::Literal(_) = rule.db.ty(key) {
+            let index = match self.keyed.iter().position(|&(other, _)| other == key) {
+                Some(index) => index,
+                None => {
+                    self.keyed.push((key, Slot::default()));
+                    self.keyed.len() - 1
+                }
+            };
+            self.keyed[index].1.add(rule, value);
+            return;
+        }
+        let (keys, values) = self.pair.get_or_insert_with(|| (key, Slot::default()));
+        *keys = rule.solver.lub(*keys, key);
+        values.add(rule, value);
+    }
+
+    fn atom(&mut self, rule: &Rule<'_, '_>, atom: Atom) {
+        match atom {
+            Atom::Positional(ty) => self.positional.add(rule, Part::Closed(ty)),
+            Atom::Keyed(key, value) => self.keyed(rule, key, Part::Closed(value)),
+            Atom::Unknown => self.unknown = true,
+        }
+    }
+
+    /// Its repeated arguments
+    fn arguments(&self, rule: &mut Rule<'_, '_>) -> Vec<CallArgument> {
+        let mut arguments: Vec<_> = (self.positional.term(rule))
+            .map(CallArgument::Positional)
+            .into_iter()
+            .collect();
+        for (key, slot) in &self.keyed {
+            let value = slot.term(rule).expect("a value for each key");
+            arguments.push(CallArgument::Pair(rule.closed(*key), value));
+        }
+        if let Some((key, slot)) = &self.pair {
+            let value = slot.term(rule).expect("a value for each key");
+            arguments.push(CallArgument::Pair(rule.closed(*key), value));
+        }
+        if self.unknown {
+            let unknown = rule.db.unknown_of(Kind::Schema);
+            arguments.push(CallArgument::Spread(rule.closed(unknown)));
+        }
+        arguments
+    }
+}
+
+/// An argument of a call, or where a group's go
+enum Entry {
+    Argument(Multiplicity, CallArgument, Span),
+    Group(usize),
+}
+
+/// A group's joined items, entered where its first item is
+fn group_entry<'g>(
+    groups: &'g mut [Option<Joined>],
+    entries: &mut Vec<Entry>,
+    group: usize,
+) -> &'g mut Joined {
+    groups[group].get_or_insert_with(|| {
+        entries.push(Entry::Group(group));
+        Joined::default()
+    })
+}
+
+/// An item of a solved schema, flattened
+#[derive(Clone, Copy)]
+enum Atom {
+    Positional(TypeId),
+    Keyed(TypeId, TypeId),
+    /// A schema whose items aren't known
+    Unknown,
+}
+
+/// A solved schema's items included `multiplicity` times, flattened, so that none
+/// is an inclusion that the solver can't repeat or make optional
+fn atoms(
+    db: &Database,
+    schema: TypeId,
+    multiplicity: Multiplicity,
+    atoms: &mut Vec<(Multiplicity, Atom)>,
+) {
+    let Type::Schema(items) = db.ty(schema) else {
+        atoms.push((multiplicity, Atom::Unknown));
+        return;
+    };
+    for item in items.iter() {
+        let multiplicity = multiplicity.compose(item.multiplicity);
+        match item.element {
+            Element::Positional(ty) => atoms.push((multiplicity, Atom::Positional(ty))),
+            Element::Keyed { key, value } => atoms.push((multiplicity, Atom::Keyed(key, value))),
+            Element::Include(schema) => self::atoms(db, schema, multiplicity, atoms),
+        }
+    }
 }
 
 /// What a call can pass its arguments against, when the callee's parameters are
@@ -256,10 +611,13 @@ impl<'a> Flow<'a, '_> {
         }
         let contradicted =
             (outcomes[..checks.len()].iter()).any(|outcome| outcome.status == Status::Contradicted);
+        // A check left unresolved may be decided by defaulting
+        let unresolved =
+            (outcomes[..checks.len()].iter()).any(|outcome| outcome.status == Status::Unresolved);
         let reified: Option<Vec<TypeId>> = (results.iter())
             .map(|&term| solver.reify(term).ok())
             .collect();
-        let decided = frozen || (!contradicted && reified.is_some());
+        let decided = frozen || (!contradicted && !unresolved && reified.is_some());
         let values: Vec<TypeId> = match reified {
             Some(values) if decided => values,
             _ if frozen => (results.iter())
@@ -300,7 +658,7 @@ impl<'a> Flow<'a, '_> {
     fn blame(&mut self, solver: &Solver<'_>, checks: &[Check], outcomes: &[Outcome]) {
         for (check, outcome) in checks.iter().zip(outcomes) {
             let span = match *check {
-                Check::Call { span, .. } | Check::Fits(span, _) => span,
+                Check::Call { span, .. } | Check::Fits(span, _) | Check::Expected(span) => span,
                 Check::Quiet => continue,
             };
             match outcome.status {
@@ -330,6 +688,11 @@ impl<'a> Flow<'a, '_> {
                             span,
                             found: actual.clone().unwrap_or_else(|| "?".to_owned()),
                             misfit,
+                        }],
+                        &Check::Expected(span) => vec![Problem::Argument {
+                            span,
+                            found: actual.clone().unwrap_or_else(|| "?".to_owned()),
+                            expected: self.render_term(solver, relation.expected),
                         }],
                         Check::Quiet => Vec::new(),
                     };
@@ -408,9 +771,10 @@ impl<'a> Flow<'a, '_> {
     /// A `do` block among them enters as its function type, with a fresh variable
     /// for each parameter and channel its signature leaves open. What the callee
     /// passes them joins into its signature, and its result, until the block's
-    /// analysis gives it, is a variable that keeps the call undecided. A callee
-    /// that isn't a function or a union of them, or whose arguments aren't
-    /// followed yet, gives the dynamic type.
+    /// analysis gives it, is a variable that keeps the call undecided. A
+    /// comprehension's arguments are passed as often as it says: see
+    /// [`Flow::gather`]. A callee that isn't a function or a union of them gives
+    /// the dynamic type.
     pub(super) fn call(
         &mut self,
         at: At,
@@ -425,9 +789,20 @@ impl<'a> Flow<'a, '_> {
         let bottom = self.db.bottom();
         let unknown = self.db.unknown();
         let callee_type = self.eval(at, state, operands, callee);
-        let params = self.params(callee_type).unwrap_or_default();
-        let values = self.values(at, state, operands, args, Some(&params));
-        if callee_type == bottom || values.never {
+        if callee_type == bottom {
+            // A rule with a bottom input doesn't run, and the arguments belong to the
+            // call. What they're expected to be comes from the callee, and a rule
+            // run without it would keep what it concluded, since rules join their
+            // results over their runs (#799).
+            for _ in 0..super::holes(expr) - super::holes(callee) {
+                operands.pop_front();
+            }
+            return bottom;
+        }
+        let (input, output) = self.channels(at);
+        let params = self.params(callee_type, input, output).unwrap_or_default();
+        let values = self.values(at, state, operands, args, Some(&params), true);
+        if values.never {
             return bottom;
         }
         let function = |ty: TypeId| {
@@ -445,75 +820,16 @@ impl<'a> Flow<'a, '_> {
             }),
             _ => function(callee_type),
         };
-        if !callable
-            || values.comprehension
-            || (values.values.iter()).any(|value| matches!(value, Value::Pair(..)))
-        {
-            // Nothing is expected of a `do` block the call doesn't type
-            for value in &values.values {
-                if let Value::Lambda(_, lambda, _) = value {
-                    self.lambda(at, lambda.func);
-                }
-            }
+        if !callable {
+            self.untyped(at, &values);
             return unknown;
         }
-        let (input, output) = self.channels(at);
         let spread = self.designated(Designated::Spread);
         let span = expr.span;
         self.conclude(at, Site::Rule(*rule), expected, |rule| {
-            // A spread's schema is the least its value spreads as, solved before the
-            // call, which can't show an unsolved schema supplies its parameters
-            let spreads: Vec<Term> = (values.values.iter())
-                .filter_map(|value| match *value {
-                    Value::Spread(ty, span) => {
-                        let schema = rule.solver.infer_kind(Kind::Schema, Rest::All);
-                        spread_into(rule, spread, ty, schema, span);
-                        Some(schema)
-                    }
-                    _ => None,
-                })
-                .collect();
-            if !spreads.is_empty() {
-                rule.solver.solve();
-            }
-            let mut solved = Vec::new();
-            for schema in spreads {
-                if let Term::Infer(id) = schema {
-                    let _ = rule.solver.default(id);
-                }
-                solved.push(
-                    rule.solver
-                        .reify(schema)
-                        .map_or(schema, |ty| rule.closed(ty)),
-                );
-            }
-            let mut spreads = solved.into_iter();
-            let mut arguments = Vec::new();
-            let mut spans = Vec::new();
-            for value in &values.values {
-                let (argument, span) = match *value {
-                    Value::Pos(ty, span) => (CallArgument::Positional(rule.closed(ty)), span),
-                    Value::Key(key, ty, span) => {
-                        (CallArgument::Keyword(key, rule.closed(ty)), span)
-                    }
-                    Value::Spread(_, span) => {
-                        let schema = spreads.next().expect("a schema for each spread");
-                        (CallArgument::Spread(schema), span)
-                    }
-                    Value::Lambda(key, ref lambda, span) => {
-                        let term = rule.lambda(lambda);
-                        match key {
-                            Some(key) => (CallArgument::Keyword(key, term), span),
-                            None => (CallArgument::Positional(term), span),
-                        }
-                    }
-                    Value::Pair(..) => unreachable!("a call has no pairs"),
-                };
-                arguments.push(argument);
-                spans.push(span);
-            }
+            let (arguments, spans) = rule.arguments(&values, spread, span);
             let result = rule.solver.infer();
-            let call = rule.solver.call(
+            let call = rule.solver.call_items(
                 &arguments,
                 result,
                 input.map(|ty| rule.closed(ty)),
@@ -609,10 +925,47 @@ impl<'a> Flow<'a, '_> {
 
     /// The parameter types a callee's signature alone gives, which don't mention its
     /// binders. Any other parameter's type is only known once the call is solved.
-    fn params(&self, callee: TypeId) -> Option<Params> {
+    /// The binders a callee takes as its channels are the caller's `input` and
+    /// `output`, as the call passes them, so a callback sharing them is known;
+    /// other binders wait for expectations from the call's solve (#801).
+    fn params(
+        &self,
+        callee: TypeId,
+        input: Option<TypeId>,
+        output: Option<TypeId>,
+    ) -> Option<Params> {
+        let db = self.db;
         let mut ty = callee;
-        if let Type::Quantified { body, .. } = self.db.ty(ty) {
-            ty = *body;
+        if let Type::Quantified { binders, body } = db.ty(ty) {
+            let Type::Function(function) = db.ty(*body) else {
+                return None;
+            };
+            let channel = |channel: Option<TypeId>, slot: usize| {
+                matches!(
+                    channel.map(|ty| db.ty(ty)),
+                    Some(&Type::Bound { reference, .. })
+                        if reference.depth == 0 && usize::from(reference.slot) == slot
+                )
+            };
+            // Each other binder stays a reference to its own slot, so it's not fixed
+            let args: Vec<TypeId> = (binders.iter().enumerate())
+                .map(|(slot, binder)| {
+                    let caller = if channel(function.input, slot) {
+                        input
+                    } else if channel(function.output, slot) {
+                        output
+                    } else {
+                        None
+                    };
+                    caller.unwrap_or_else(|| {
+                        db.intern(Type::Bound {
+                            reference: BoundRef::new(0, slot),
+                            kind: binder.kind,
+                        })
+                    })
+                })
+                .collect();
+            ty = db.substitute(*body, &args);
         }
         let Type::Function(function) = self.db.ty(ty) else {
             return None;
@@ -652,8 +1005,8 @@ impl<'a> Flow<'a, '_> {
     }
 
     /// Evaluate the items of an argument list or collection in order, each
-    /// expecting what `params` gives its position. A call's are given `params`,
-    /// and a `do` block among them is left for the call to type.
+    /// expecting what `params` gives its position. With `contextual`, a `do` block
+    /// among them is left for the rule to type.
     fn values(
         &mut self,
         at: At,
@@ -661,22 +1014,38 @@ impl<'a> Flow<'a, '_> {
         operands: &mut VecDeque<TypeId>,
         items: &[Item],
         params: Option<&Params>,
+        contextual: bool,
     ) -> Values {
         let mut values = Values::default();
-        let mut position = Some(0);
+        let mut gathering = Gathering {
+            params,
+            contextual,
+            position: 0,
+            exact: true,
+        };
+        let place = Place {
+            multiplicity: Multiplicity::Required,
+            group: None,
+            comprehension: false,
+        };
+        let mut placed = Vec::new();
         self.gather(
             at,
             state,
             operands,
             items,
-            params,
-            &mut position,
-            false,
+            &mut gathering,
+            place,
             &mut values,
+            &mut placed,
         );
+        values.values = placed;
         values
     }
 
+    /// Gather items into `out`, as they occur at `place`. An `if` outside every
+    /// `for` gives its branches' items once each, if they're alike, and otherwise
+    /// makes them optional.
     #[expect(clippy::too_many_arguments, reason = "one recursion's state")]
     fn gather(
         &mut self,
@@ -684,95 +1053,182 @@ impl<'a> Flow<'a, '_> {
         state: &mut State,
         operands: &mut VecDeque<TypeId>,
         items: &[Item],
-        params: Option<&Params>,
-        position: &mut Option<usize>,
-        comprehension: bool,
+        gathering: &mut Gathering<'_>,
+        place: Place,
         values: &mut Values,
+        out: &mut Vec<Placed>,
     ) {
         let bottom = self.db.bottom();
         let produced = |values: &mut Values, ty: TypeId| {
             let never = ty == bottom;
-            values.never |= never && !comprehension;
+            values.never |= never && !place.comprehension;
             !never
         };
+        let placed = |value| Placed {
+            value,
+            multiplicity: place.multiplicity,
+            group: place.group,
+        };
         for item in items {
-            // A call types a `do` block it's given
+            // A rule types a `do` block it's given
             let lambda = match item {
-                Item::Pos(value) | Item::Key(_, value) if params.is_some() => match value.kind {
-                    ExprKind::Lambda(func) => self.contextual(at, func),
-                    _ => None,
-                },
+                Item::Pos(value) | Item::Key(_, value) if gathering.contextual => {
+                    match value.kind {
+                        ExprKind::Lambda(func) => self.contextual(at, func),
+                        _ => None,
+                    }
+                }
                 _ => None,
             };
             if let Some(lambda) = lambda {
                 let (key, value) = match item {
                     Item::Pos(value) => {
-                        *position = position.map(|index| index + 1);
+                        gathering.advance(place);
                         (None, value)
                     }
                     &Item::Key(key, ref value) => (Some(key), value),
                     _ => unreachable!("a positional or keyed item"),
                 };
-                values.values.push(Value::Lambda(key, lambda, value.span));
+                out.push(placed(Value::Lambda(key, lambda, value.span)));
                 continue;
             }
             match item {
                 Item::Pos(value) => {
-                    let expected = params.zip(*position).and_then(|(params, index)| {
-                        match params.positional.get(index) {
-                            Some(&ty) => ty,
-                            None => params.rest,
-                        }
-                    });
-                    *position = position.map(|index| index + 1);
+                    let expected = gathering.expected();
+                    gathering.advance(place);
                     let ty = self.expect(at, state, operands, value, expected);
                     if produced(values, ty) {
-                        values.values.push(Value::Pos(ty, value.span));
+                        out.push(placed(Value::Pos(ty, value.span)));
                     }
                 }
                 &Item::Key(key, ref value) => {
-                    let expected = params.and_then(|params| {
+                    let expected = gathering.params.and_then(|params| {
                         (params.keyed.iter()).find_map(|&(name, ty)| (name == key).then_some(ty))
                     });
                     let ty = self.expect(at, state, operands, value, expected);
                     if produced(values, ty) {
-                        values.values.push(Value::Key(key, ty, value.span));
+                        out.push(placed(Value::Key(key, ty, value.span)));
                     }
                 }
                 Item::Pair(key, value) => {
                     let key_type = self.eval(at, state, operands, key);
                     let ty = self.eval(at, state, operands, value);
                     if produced(values, key_type) && produced(values, ty) {
-                        values.values.push(Value::Pair(key_type, ty));
+                        out.push(placed(Value::Pair(key_type, ty)));
                     }
                 }
                 Item::Spread(value) => {
-                    *position = None;
+                    gathering.exact = false;
                     let ty = self.eval(at, state, operands, value);
                     if produced(values, ty) {
-                        values.values.push(Value::Spread(ty, value.span));
+                        out.push(placed(Value::Spread(ty, value.span)));
                     }
                 }
-                Item::For(items) => {
+                &Item::For { ref items, span } => {
                     values.comprehension = true;
-                    *position = None;
-                    self.gather(at, state, operands, items, None, position, true, values);
+                    gathering.exact = false;
+                    let group = place.group.unwrap_or_else(|| {
+                        values.groups.push(span);
+                        values.groups.len() - 1
+                    });
+                    let inner = Place {
+                        multiplicity: Multiplicity::Repeated,
+                        group: Some(group),
+                        comprehension: true,
+                    };
+                    self.gather(at, state, operands, items, gathering, inner, values, out);
                 }
-                Item::If { then, else_ } => {
+                &Item::If {
+                    ref then,
+                    ref else_,
+                    span,
+                } => {
                     values.comprehension = true;
-                    *position = None;
-                    for items in [then, else_] {
-                        self.gather(at, state, operands, items, None, position, true, values);
+                    gathering.exact = false;
+                    if place.group.is_some() {
+                        let inner = Place {
+                            comprehension: true,
+                            ..place
+                        };
+                        for items in [then, else_] {
+                            self.gather(at, state, operands, items, gathering, inner, values, out);
+                        }
+                        continue;
                     }
+                    let inner = Place {
+                        multiplicity: Multiplicity::Required,
+                        group: None,
+                        comprehension: true,
+                    };
+                    let mut branches = [Vec::new(), Vec::new()];
+                    for (items, branch) in [then, else_].into_iter().zip(&mut branches) {
+                        self.gather(at, state, operands, items, gathering, inner, values, branch);
+                    }
+                    let [then, else_] = branches;
+                    let arms = match self.alike(&then, &else_, span) {
+                        Some(arms) => arms,
+                        None => (then.into_iter().chain(else_))
+                            .map(|placed| Placed {
+                                multiplicity: Multiplicity::Optional.compose(placed.multiplicity),
+                                ..placed
+                            })
+                            .collect(),
+                    };
+                    out.extend(arms.into_iter().map(|arm| Placed {
+                        multiplicity: place.multiplicity.compose(arm.multiplicity),
+                        ..arm
+                    }));
                 }
             }
         }
     }
 
-    /// A collection literal of a designated class. An array or dict joins its items
-    /// into its element types, whether a comprehension repeats them or not. A tuple
-    /// or record takes its items' schema, so a comprehension in one gives the
-    /// dynamic type until its schema is built from the comprehension's structure.
+    /// An `if`'s branches as one set of required items, if they're alike: each
+    /// branch's items are required, and pairwise of the same kind and key. A joined
+    /// value is diagnosed at the `if`.
+    fn alike(&self, then: &[Placed], else_: &[Placed], span: Span) -> Option<Vec<Placed>> {
+        if then.len() != else_.len() {
+            return None;
+        }
+        (then.iter().zip(else_))
+            .map(|(a, b)| {
+                let required = Multiplicity::Required;
+                if a.multiplicity != required || b.multiplicity != required {
+                    return None;
+                }
+                let value = match (&a.value, &b.value) {
+                    (&Value::Pos(x, _), &Value::Pos(y, _)) => Value::Pos(self.lub(x, y), span),
+                    (&Value::Key(k, x, _), &Value::Key(l, y, _)) if k == l => {
+                        Value::Key(k, self.lub(x, y), span)
+                    }
+                    (&Value::Pair(k, x), &Value::Pair(l, y)) => {
+                        Value::Pair(self.lub(k, l), self.lub(x, y))
+                    }
+                    _ => return None,
+                };
+                Some(Placed {
+                    value,
+                    multiplicity: required,
+                    group: None,
+                })
+            })
+            .collect()
+    }
+
+    /// Instantiate each `do` block among values that no rule types
+    fn untyped(&mut self, at: At, values: &Values) {
+        for lambda in values.lambdas() {
+            self.lambda(at, lambda.func);
+        }
+    }
+
+    /// A collection literal of a designated class. An array joins its items into
+    /// its element type, whether a comprehension repeats them or not, and so does a
+    /// dict, unless something is expected of it: then its schema is its items'. A
+    /// tuple
+    /// or record takes its items' schema; neither has a vertical form, so neither
+    /// holds a comprehension. With an expected type, the collection types the `do`
+    /// blocks among its items.
     pub(super) fn collection(
         &mut self,
         at: At,
@@ -785,31 +1241,61 @@ impl<'a> Flow<'a, '_> {
             unreachable!("a collection")
         };
         let unknown = self.db.unknown();
-        let values = self.values(at, state, operands, items, None);
-        if values.never {
-            return self.db.bottom();
-        }
         let role = match kind {
             Collection::Array => Designated::Array,
             Collection::Dict => Designated::Dict,
             Collection::Tuple => Designated::Tuple,
             Collection::Record => Designated::Record,
         };
-        let Some(class) = self.designated(role) else {
+        let class = self.designated(role);
+        // An array expected to be `Array[E]` expects each item to be `E`
+        let params = match kind {
+            Collection::Array => expected.and_then(|ty| self.applied(class?, ty)),
+            _ => None,
+        }
+        .map(|(_, element)| Params {
+            rest: Some(element),
+            ..Params::default()
+        });
+        let values = self.values(
+            at,
+            state,
+            operands,
+            items,
+            params.as_ref(),
+            expected.is_some(),
+        );
+        if values.never {
+            return self.db.bottom();
+        }
+        let class = class.filter(|_| {
+            !values.comprehension || matches!(kind, Collection::Array | Collection::Dict)
+        });
+        let Some(class) = class else {
+            self.untyped(at, &values);
             return unknown;
         };
-        if values.comprehension && matches!(kind, Collection::Tuple | Collection::Record) {
-            return unknown;
-        }
         let spread = self.designated(Designated::Spread);
         let int = self.intrinsic(crate::typeck::r#type::Intrinsic::Int);
+        let expected_dict = match kind {
+            Collection::Dict => expected.and_then(|ty| self.applied(class, ty)),
+            _ => None,
+        };
         let site = Site::Rule(*rule);
-        let result = match kind {
-            Collection::Array => self.conclude(at, site, expected, |rule| {
+        let result = match (kind, expected_dict) {
+            (Collection::Array, _) => self.conclude(at, site, expected, |rule| {
                 let element = rule.solver.infer();
-                for value in &values.values {
-                    match *value {
+                for placed in &values.values {
+                    match placed.value {
                         Value::Pos(ty, _) => rule.constrain(rule.closed(ty), element, Check::Quiet),
+                        Value::Lambda(key, ref lambda, _) => {
+                            let term = rule.lambda(lambda);
+                            let element = match key {
+                                Some(_) => rule.closed(unknown),
+                                None => element,
+                            };
+                            rule.constrain(term, element, Check::Quiet);
+                        }
                         Value::Spread(ty, span) => {
                             let schema = rule.term(|holes| {
                                 let element = holes.hole(element, Kind::Type);
@@ -823,7 +1309,6 @@ impl<'a> Flow<'a, '_> {
                         Value::Key(..) | Value::Pair(..) => {
                             rule.constrain(rule.closed(unknown), element, Check::Quiet);
                         }
-                        Value::Lambda(..) => unreachable!("only a call types a `do` block"),
                     }
                 }
                 vec![rule.term(|holes| {
@@ -831,21 +1316,31 @@ impl<'a> Flow<'a, '_> {
                     holes.apply(class, vec![element])
                 })]
             }),
-            Collection::Dict => self.conclude(at, site, expected, |rule| {
+            // What's expected of a dict checks its items one by one, where joining
+            // them would lose which is where
+            (Collection::Dict, Some((ty, schema))) => self.conclude(at, site, expected, |rule| {
+                let (arguments, _) = rule.arguments(&values, spread, expr.span);
+                let exact = rule.solver.arguments_schema(&arguments);
+                rule.constrain(exact, rule.closed(schema), Check::Expected(expr.span));
+                vec![rule.closed(ty)]
+            }),
+            (Collection::Dict, None) => self.conclude(at, site, expected, |rule| {
                 let keys = rule.solver.infer();
                 let entries = rule.solver.infer();
-                let entry = |rule: &mut Rule<'_, 'a>, key: Term, ty: TypeId| {
-                    rule.constrain(key, keys, Check::Quiet);
-                    rule.constrain(rule.closed(ty), entries, Check::Quiet);
+                let entry = |rule: &mut Rule<'_, 'a>, key: TypeId, value: Term| {
+                    rule.constrain(rule.closed(key), keys, Check::Quiet);
+                    rule.constrain(value, entries, Check::Quiet);
                 };
-                for value in &values.values {
-                    match *value {
-                        Value::Pos(ty, _) => entry(rule, rule.closed(int), ty),
-                        Value::Key(name, ty, _) => {
-                            let name = rule.db.intern(Type::Literal(Literal::Sym(name)));
-                            entry(rule, rule.closed(name), ty);
+                let symbol = |name| rule.db.intern(Type::Literal(Literal::Sym(name)));
+                for placed in &values.values {
+                    match placed.value {
+                        Value::Pos(ty, _) => entry(rule, int, rule.closed(ty)),
+                        Value::Key(name, ty, _) => entry(rule, symbol(name), rule.closed(ty)),
+                        Value::Pair(key_type, ty) => entry(rule, key_type, rule.closed(ty)),
+                        Value::Lambda(key, ref lambda, _) => {
+                            let term = rule.lambda(lambda);
+                            entry(rule, key.map_or(int, symbol), term);
                         }
-                        Value::Pair(key_type, ty) => entry(rule, rule.closed(key_type), ty),
                         Value::Spread(ty, span) => {
                             let schema = rule.term(|holes| {
                                 let key = holes.hole(keys, Kind::Type);
@@ -857,7 +1352,6 @@ impl<'a> Flow<'a, '_> {
                             });
                             spread_into(rule, spread, ty, schema, span);
                         }
-                        Value::Lambda(..) => unreachable!("only a call types a `do` block"),
                     }
                 }
                 vec![rule.term(|holes| {
@@ -870,15 +1364,18 @@ impl<'a> Flow<'a, '_> {
                     holes.apply(class, vec![schema])
                 })]
             }),
-            Collection::Tuple | Collection::Record => {
+            (Collection::Tuple | Collection::Record, _) => {
                 let lanes = match kind {
                     Collection::Tuple => Rest::Positional,
                     _ => Rest::All,
                 };
                 self.conclude(at, site, expected, |rule| {
                     let mut elements = Vec::new();
-                    for value in &values.values {
-                        match *value {
+                    for placed in &values.values {
+                        match placed.value {
+                            Value::Lambda(key, ref lambda, _) => {
+                                elements.push((key, rule.lambda(lambda), Kind::Type));
+                            }
                             Value::Pos(ty, _) => {
                                 let var = rule.solver.infer();
                                 rule.constrain(rule.closed(ty), var, Check::Quiet);
@@ -894,9 +1391,7 @@ impl<'a> Flow<'a, '_> {
                                 spread_into(rule, spread, ty, schema, span);
                                 elements.push((None, schema, Kind::Schema));
                             }
-                            Value::Pair(..) | Value::Lambda(..) => {
-                                unreachable!("a tuple or record has no pairs, and only a call types a `do` block")
-                            }
+                            Value::Pair(..) => unreachable!("a tuple or record has no pairs"),
                         }
                     }
                     vec![rule.term(|holes| {
@@ -921,6 +1416,30 @@ impl<'a> Flow<'a, '_> {
             }
         };
         result[0]
+    }
+
+    /// The one application of `class` to a single argument that `expected` is, or
+    /// that is a member of it: the application, and its argument
+    fn applied(&self, class: DeclId, expected: TypeId) -> Option<(TypeId, TypeId)> {
+        let db = self.db;
+        let applied = |ty: TypeId| match db.ty(ty) {
+            Type::Apply { base, args, .. } if *db.ty(*base) == Type::Decl(class) => {
+                match args[..] {
+                    [Argument::Positional(arg)] => Some((ty, arg)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let Type::Union(members) = db.ty(expected) else {
+            return applied(expected);
+        };
+        let mut found = (members.iter()).filter_map(|member| match *member {
+            UnionMember::Type(ty) => applied(ty),
+            UnionMember::Expand(_) => None,
+        });
+        let first = found.next()?;
+        found.next().is_none().then_some(first)
     }
 
     /// Values that must each fit a type, giving a known result. Without the type,
@@ -1127,7 +1646,7 @@ fn root(outcome: &Outcome) -> ObligationId {
         .expect("a contradicted constraint has a diagnostic")
 }
 
-/// What a call passes the `do` blocks it's given: each variable's solution, once
+/// What a rule passes the `do` blocks it's given: each variable's solution, once
 /// everything that defaulting can solve is. It runs after the rule is concluded,
 /// so its defaults decide nothing. A block's result that isn't known yet is taken
 /// to be bottom here, so that a callee's binder it also bounds, as `T` in

@@ -27,8 +27,9 @@
 //!
 //! A comprehension's iteratee, conditions and item values are lowered to blocks
 //! before the collection or call that holds it, each value assigned to a
-//! synthetic variable. Constants and lambdas stay in the tree, where the rule's
-//! expected type reaches them. Items can't assign, so no state crosses iterations:
+//! synthetic variable. Constants, lambdas and collection literals stay in the
+//! tree, where the rule's expected type reaches them, with a collection's own
+//! items lowered the same way. Items can't assign, so no state crosses iterations:
 //! a `for` item is a [`Terminal::Next`] whose body continues to its exit, with no
 //! back edge. The collection keeps an [`Item::For`] and [`Item::If`] tree with
 //! the variables as its leaves, which says only how often each value occurs.
