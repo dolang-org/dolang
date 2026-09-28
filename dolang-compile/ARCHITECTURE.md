@@ -366,7 +366,11 @@ their consequences can force later variables. Defaulted assignments are marked
 as such, so a contradiction reached through one can be reported as an inference
 choice. A default decays the join's literals to their classes, except in exact
 schema keys and binder bounds, unless the decayed join violates a bound; a
-forced assignment keeps its literals, since its bounds require them.
+forced assignment keeps its literals, since its bounds require them. To help a
+caller choose, `raised` finds the variables that raising given terms could
+raise: those at a covariant or invariant position in them, or in a raised
+variable's upper bounds. A function's parameters and channels don't count, and a
+form it can't see into counts in full.
 
 Joins, for defaults and for flow state, drop union members proven below another
 member. A member containing `Unknown` neither subsumes nor is subsumed, since
@@ -610,8 +614,16 @@ only reified types leave it:
 - A call constrains its callee below `Solver::call_items` of its arguments,
   passing the caller's declared channels. A callee that isn't a function type
   or a union of them, and an overloaded def, give `Unknown`. What its arguments
-  are expected to be comes from the callee's parameters: those that don't
-  mention its binders, once the binders it takes as channels are the caller's.
+  are expected to be comes from the callee's parameters. A parameter that
+  mentions the callee's binders gives an expectation only once the call is
+  solved, so a collection literal or call passed to it is held back: a
+  pre-solve stands a fresh variable for it and solves the call without it. A
+  variable the held arguments can't raise takes its least solution
+  (`Solver::raised`), since whatever supplies a function takes its parameters
+  and channels from what's expected of it. Then each held argument is evaluated
+  expecting its parameter, if what's forced or chosen solves it. The pre-solve
+  never makes a variable dynamic, so a binder only a held argument determines
+  gives it no expectation.
 - A comprehension's items are passed as often as its tree says. The items of an
   outermost `for`, with everything nested in it, join into one repeated item of
   each kind: `*T` for positional items, `*k: V` for each literal key, and

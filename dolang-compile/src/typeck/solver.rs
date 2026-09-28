@@ -797,6 +797,125 @@ impl<'db> Solver<'db> {
         }
     }
 
+    /// The unsolved variables that raising the given terms could raise: those at
+    /// an output position of theirs, covariant or invariant, including through
+    /// the upper bounds of a variable raised. A function's parameters and channels
+    /// are inputs, which whatever supplies the function takes from its expected
+    /// type and never raises. A form the walk can't see into counts as an output.
+    pub(crate) fn raised(&self, terms: &[Term]) -> Result<HashSet<InferVarId>, Residual> {
+        let mut raised = HashSet::new();
+        for &term in terms {
+            self.raise(term, Variance::Covariant, 0, &mut raised, 0)?;
+        }
+        Ok(raised)
+    }
+
+    fn raise(
+        &self,
+        term: Term,
+        variance: Variance,
+        local: u32,
+        raised: &mut HashSet<InferVarId>,
+        depth: usize,
+    ) -> Result<(), Residual> {
+        self.depth(depth)?;
+        let view = match term {
+            Term::Infer(id) => {
+                if self.solution(id).is_some()
+                    || variance == Variance::Contravariant
+                    || !raised.insert(id)
+                {
+                    return Ok(());
+                }
+                for upper in self.bounds(id).upper() {
+                    self.raise(upper, variance, 0, raised, depth + 1)?;
+                }
+                return Ok(());
+            }
+            Term::View(view) => view,
+        };
+        let mut walk = |ty: TypeId, variance: Variance, groups: u32| {
+            self.raise(view.child(ty), variance, local + groups, raised, depth + 1)
+        };
+        match *self.db.ty(view.ty) {
+            Type::Bound { reference, kind } => {
+                if u32::from(reference.depth) < local {
+                    return Ok(());
+                }
+                let value = self.lookup(
+                    view.environment,
+                    (u32::from(reference.depth) - local) as u16,
+                    reference.slot,
+                    kind,
+                );
+                self.raise(value, variance, 0, raised, depth + 1)
+            }
+            Type::Top
+            | Type::Unknown(_)
+            | Type::Literal(_)
+            | Type::Decl(_)
+            | Type::Rigid { .. } => Ok(()),
+            Type::Apply { base, ref args, .. } => {
+                let binders = match *self.db.ty(base) {
+                    Type::Decl(id) if self.db.declaration(id).source.kind.nominal() => {
+                        match self.db.ty(self.db.declaration(id).ty) {
+                            Type::Quantified { binders, .. } if binders.len() == args.len() => {
+                                Some(binders)
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                for (index, arg) in args.iter().enumerate() {
+                    let (Argument::Positional(ty)
+                    | Argument::Keyword(_, ty)
+                    | Argument::Expand(ty)) = *arg;
+                    let binder = match (binders, arg) {
+                        (Some(binders), Argument::Positional(_)) => binders[index].variance,
+                        _ => Variance::Invariant,
+                    };
+                    walk(ty, compose(variance, binder), 0)?;
+                }
+                Ok(())
+            }
+            Type::Function(ref function) => walk(function.result, variance, 0),
+            Type::Schema(ref items) => {
+                for item in items.iter() {
+                    match item.element {
+                        Element::Positional(ty) | Element::Include(ty) => walk(ty, variance, 0)?,
+                        Element::Keyed { key, value } => {
+                            walk(key, variance, 0)?;
+                            walk(value, variance, 0)?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Type::Union(ref members) => {
+                for member in members.iter() {
+                    match *member {
+                        UnionMember::Type(ty) => walk(ty, variance, 0)?,
+                        UnionMember::Expand(ty) => {
+                            walk(ty, compose(variance, Variance::Invariant), 0)?
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Type::Quantified { .. } => {
+                let mut children = Vec::new();
+                self.db
+                    .ty(view.ty)
+                    .visit_children(|ty, groups| children.push((ty, groups)));
+                for (ty, groups) in children {
+                    walk(ty, compose(variance, Variance::Invariant), groups)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
     fn try_assign(&self, id: InferVarId) -> Result<bool, Residual> {
         let bounds = &self.bounds[id.0];
         let inference = &self.inference[id.0];
@@ -1941,6 +2060,16 @@ fn hole(db: &Database, group: &mut Vec<Term>, term: Term, kind: Kind) -> TypeId 
         reference: BoundRef::new(0, group.len() - 1),
         kind,
     })
+}
+
+/// The variance of a position `inner` to one that is itself `outer`
+fn compose(outer: Variance, inner: Variance) -> Variance {
+    match (outer, inner) {
+        (Variance::Invariant, _) | (_, Variance::Invariant) => Variance::Invariant,
+        (Variance::Covariant, inner) => inner,
+        (Variance::Contravariant, Variance::Covariant) => Variance::Contravariant,
+        (Variance::Contravariant, Variance::Contravariant) => Variance::Covariant,
+    }
 }
 
 mod lattice;

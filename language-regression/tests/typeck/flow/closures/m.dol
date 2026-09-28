@@ -100,6 +100,44 @@ pub def around[R] block @ (() -> R) -> R
     nil
   block()
 
+pub def drop _x -> nil
+  ...
+
+pub def each[T] xs @ Array[T] fs @ Array[(T) -> nil] -> nil
+  ...
+
+pub def every[T] x @ T fs @ Array[(T) -> nil] -> nil
+  ...
+
+pub def table[T] xs @ Array[T] d @ Dict[{f: (T) -> nil}] -> nil
+  ...
+
+pub def made[T] f @ ((T) -> nil) -> Array[T]
+  ...
+
+pub def both[T] xs @ Array[T] ys @ Array[T] -> nil
+  ...
+
+pub def twice[T] x @ T fs @ Array[(T) -> T] -> T
+  ...
+
+# An argument that takes an expectation its generic callee's parameter gives only
+# once the call is solved waits for the call's pre-solve. A binder the argument
+# can't raise, as when it occurs only in a callback's parameters, takes what the
+# other arguments give it.
+pub def held ints @ Array[Int] strs @ Array[Str]
+  each $ints [(do |y| drop y)]
+  #                        ^: flow std.Int
+  every 1 [(do |y| drop y)]
+  #                     ^: flow std.Int
+  table $strs {f: (do |y| drop y)}
+  #                            ^: flow std.Str
+  both $strs $made(do |y| drop y)
+  #                            ^: flow std.Str
+  # A callback's result can raise its binder, so the call gives no expectation
+  let _ = twice 1 [(do |y| y)]
+  #                        ^: flow Unknown
+
 # A rest parameter isn't typed from its items yet
 pub def rested *xs @ Str
   let _ = xs
