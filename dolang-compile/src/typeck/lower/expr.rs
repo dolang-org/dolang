@@ -56,7 +56,10 @@ impl<'u> Scope<'_, '_, 'u> {
             },
             ast::Expr::FmtSeq { exprs, .. } => self.fmt_seq(exprs, span),
             ast::Expr::Group { expr, .. } => return self.expr(expr),
-            ast::Expr::Ident(ident) => self.ident(ident),
+            ast::Expr::Ident(ident) => match self.ident(ident) {
+                kind @ ExprKind::Var(_) => return self.spill(expr(kind, span)),
+                kind => kind,
+            },
             ast::Expr::Unary { op, expr, .. } => ExprKind::Unary {
                 op: *op,
                 operand: Box::new(self.expr(expr)),
@@ -65,7 +68,12 @@ impl<'u> Scope<'_, '_, 'u> {
                 op: op @ (Op::AmpAmp | Op::BarBar),
                 exprs,
                 ..
-            } => return self.short_circuit(*op, &exprs[0], &exprs[1], span),
+            } => {
+                let hoist = mem::replace(&mut self.ctx.hoist, false);
+                let value = self.short_circuit(*op, &exprs[0], &exprs[1], span);
+                self.ctx.hoist = hoist;
+                return self.spill(value);
+            }
             ast::Expr::Binary { op, exprs, .. } => {
                 let left = self.expr(&exprs[0]);
                 let right = self.expr(&exprs[1]);
@@ -331,15 +339,15 @@ impl<'u> Scope<'_, '_, 'u> {
     pub(super) fn args(&mut self, args: &'u [Arg]) -> Vec<Item> {
         args.iter()
             .map(|arg| match arg {
-                Arg::Pos(Single { expr, .. }) => Item::Pos(self.item_value(expr)),
+                Arg::Pos(Single { expr, .. }) => Item::Pos(self.expr(expr)),
                 Arg::Key(Key { key_span, expr, .. }) => {
-                    Item::Key(self.symbol(*key_span), self.item_value(expr))
+                    Item::Key(self.symbol(*key_span), self.expr(expr))
                 }
                 Arg::DynamicKey(Pair { key, value, .. }) => {
-                    let key = self.item_value(key);
-                    Item::Pair(key, self.item_value(value))
+                    let key = self.expr(key);
+                    Item::Pair(key, self.expr(value))
                 }
-                Arg::Expand(expand) => Item::Spread(self.item_value(&expand.expr)),
+                Arg::Expand(expand) => Item::Spread(self.expr(&expand.expr)),
                 Arg::For(node) => self.item_for(node, Self::args),
                 Arg::If(node) => self.item_if(node, Self::args),
             })
@@ -350,8 +358,8 @@ impl<'u> Scope<'_, '_, 'u> {
         elems
             .iter()
             .map(|elem| match elem {
-                ArrayElem::Single(Single { expr, .. }) => Item::Pos(self.item_value(expr)),
-                ArrayElem::Expand(expand) => Item::Spread(self.item_value(&expand.expr)),
+                ArrayElem::Single(Single { expr, .. }) => Item::Pos(self.expr(expr)),
+                ArrayElem::Expand(expand) => Item::Spread(self.expr(&expand.expr)),
                 ArrayElem::For(node) => self.item_for(node, Self::array_items),
                 ArrayElem::If(node) => self.item_if(node, Self::array_items),
             })
@@ -362,46 +370,28 @@ impl<'u> Scope<'_, '_, 'u> {
         elems
             .iter()
             .map(|elem| match elem {
-                DictElem::Single(Single { expr, .. }) => Item::Pos(self.item_value(expr)),
+                DictElem::Single(Single { expr, .. }) => Item::Pos(self.expr(expr)),
                 DictElem::Key(Key { key_span, expr, .. }) => {
-                    Item::Key(self.symbol(*key_span), self.item_value(expr))
+                    Item::Key(self.symbol(*key_span), self.expr(expr))
                 }
                 DictElem::Pair(Pair { key, value, .. }) => {
-                    let key = self.item_value(key);
-                    Item::Pair(key, self.item_value(value))
+                    let key = self.expr(key);
+                    Item::Pair(key, self.expr(value))
                 }
-                DictElem::Expand(expand) => Item::Spread(self.item_value(&expand.expr)),
+                DictElem::Expand(expand) => Item::Spread(self.expr(&expand.expr)),
                 DictElem::For(node) => self.item_for(node, Self::dict_items),
                 DictElem::If(node) => self.item_if(node, Self::dict_items),
             })
             .collect()
     }
 
-    /// Lower an item's value. In a comprehension's body, a value other than a
-    /// constant, lambda or collection goes in a variable, assigned where the body
-    /// runs; the others stay in the tree, where the rule's expected type reaches
-    /// them. A collection's own items are lowered as the body's are.
-    fn item_value(&mut self, node: &'u ast::Expr) -> Expr {
-        if self.ctx.hoist
-            && matches!(
-                node,
-                ast::Expr::Array { .. }
-                    | ast::Expr::Tuple { .. }
-                    | ast::Expr::Record { .. }
-                    | ast::Expr::Dict { .. }
-            )
-        {
-            return self.expr(node);
-        }
-        let hoist = mem::replace(&mut self.ctx.hoist, false);
-        let value = self.expr(node);
-        self.ctx.hoist = hoist;
-        if !hoist
-            || matches!(
-                value.kind,
-                ExprKind::Literal(_) | ExprKind::Float | ExprKind::Bin | ExprKind::Lambda(_)
-            )
-        {
+    /// In a comprehension's body, put a value that depends on where it's evaluated
+    /// in a variable, assigned where the body runs: a variable read, which sees the
+    /// body's narrowing, or a short circuit's result, which can't cross from the
+    /// body's operand stack to the collection's. Everything else stays in the tree,
+    /// where the rule's expected type reaches it.
+    fn spill(&self, value: Expr) -> Expr {
+        if !self.ctx.hoist {
             return value;
         }
         let span = value.span;

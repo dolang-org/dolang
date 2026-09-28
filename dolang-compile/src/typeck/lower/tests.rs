@@ -632,7 +632,7 @@ let xs = $
       - (a + b)
 ",
         "
-f0 module: entry b0, exit b1, params (), bottom p a b t7
+f0 module: entry b0, exit b1, params (), bottom p a b t7 t8
 b0 f0:
   let ps = array[array[1, 2]]
   let t2 = ps
@@ -642,7 +642,7 @@ b1 f0:
 b2 f0:
   next p in t2 then b4 else b3
 b3 f0:
-  let xs = array[for {if {t7} else {}}]
+  let xs = array[for {if {(t7 + t8)} else {}}]
   result0 = xs
   goto b1
 b4 f0:
@@ -650,7 +650,8 @@ b4 f0:
 b5 f0:
   goto b3
 b6 f0:
-  t7 = (a + b)
+  t7 = a
+  t8 = b
   goto b5
 ",
     );
@@ -720,8 +721,9 @@ b12 f0:
     );
 }
 
-/// Nested loops and filters with `elif` and `else`. Constants, lambdas and nested
-/// collections stay in the tree, and a nested collection's own items are hoisted.
+/// Nested loops and filters with `elif` and `else`. Only variable reads go in
+/// variables: constants, lambdas, calls, strings and nested collections stay in
+/// the tree.
 #[test]
 fn comprehension_nesting() {
     check(
@@ -731,6 +733,7 @@ let ys = $
   for x = xs
     for y = xs
       - [x, y]
+      - $str(t\"$x-$y\")
     if (x > 1)
       - 1
     else if (x > 0)
@@ -739,8 +742,8 @@ let ys = $
       - $x
 ",
         "
-f0 module: entry b0, exit b1, params (), bottom x t5 y t7 t8 t10 t11 t12 t13
-f1 decl0 in f0: entry b13, exit b14, params (), signature () <t11 >t12 -> t13, captures t11 t12 t13! x
+f0 module: entry b0, exit b1, params (), bottom x t5 y t7 t8 t9 t10 t12 t13 t14 t15
+f1 decl0 in f0: entry b13, exit b14, params (), signature () <t13 >t14 -> t15, captures t13 t14 t15! x
 b0 f0:
   let xs = array[1, 2]
   let t2 = xs
@@ -750,7 +753,7 @@ b1 f0:
 b2 f0:
   next x in t2 then b4 else b3
 b3 f0:
-  let ys = array[for {for {array[t7, t8]}, if {1} else {if {f1} else {t10}}}]
+  let ys = array[for {for {array[t7, t8], std::str(fmt(fmt_value(t9), \"-\", fmt_value(t10)))}, if {1} else {if {f1} else {t12}}}]
   result0 = ys
   goto b1
 b4 f0:
@@ -763,6 +766,8 @@ b6 f0:
 b7 f0:
   t7 = x
   t8 = y
+  t9 = x
+  t10 = y
   goto b6
 b8 f0:
   goto b3
@@ -771,7 +776,7 @@ b9 f0:
 b10 f0:
   goto b8
 b11 f0:
-  t10 = x
+  t12 = x
   goto b8
 b12 f0:
   goto b8
@@ -779,7 +784,7 @@ b13 f1:
   result1 = x
   goto b14
 b14 f1:
-  t13 = result1
+  t15 = result1
   return
 ",
     );

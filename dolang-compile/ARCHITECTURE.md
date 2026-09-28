@@ -489,16 +489,18 @@ state can't observe the difference, since expressions neither assign nor bind,
 narrowing in the right operand is rejoined at the join, and calls change only
 captures, which are never narrowed.
 
-Comprehensions also cross blocks mid-expression. A `for` item's iteratee, an
-`if` item's condition and each item value are lowered to blocks before the
-collection or call that holds them, with the values assigned to synthetic
-variables; a constant, lambda or collection literal stays in the tree, where
-the rule's expected type reaches it, with a collection's own items lowered the
-same way. Items can't assign, so no state crosses iterations: a `for`
-item is a `Next` whose body continues to its exit, with no back edge. The
-collection keeps a tree of `For` and `If` items with the variables as leaves,
-which says only how often each value occurs, and flow builds the rule's schema
-from it. The variables, and the comprehension's own bindings, start as bottom
+Comprehensions also cross blocks mid-expression. A `for` item's iteratee and an
+`if` item's condition are lowered to blocks before the collection or call that
+holds them. In the items' values, only what depends on where it's evaluated is
+assigned to synthetic variables in those blocks: variable reads, which see the
+body's narrowing, and short circuits, whose results can't cross to the
+collection's operand stack. Everything else stays in the tree, where the rule's
+expected type reaches it. A read thus happens before the calls around it, as it
+does within any one tree. Items can't assign, so no state crosses iterations: a
+`for` item is a `Next` whose body continues to its exit, with no back edge. The
+collection keeps a tree of `For` and `If` items, which says only how often each
+value occurs, and flow builds the rule's schema from it. The variables, and the
+comprehension's own bindings, start as bottom
 rather than unassigned, so the loop's exit edge and an `if`'s other branch add
 nothing to them. Statements are never
 nested in expressions, so an exceptional edge discards the whole stack. A
