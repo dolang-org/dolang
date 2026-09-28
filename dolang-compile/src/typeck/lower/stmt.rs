@@ -296,7 +296,7 @@ impl<'u> Scope<'_, '_, 'u> {
             }
         };
         let value = match early {
-            Some(var) => expr(ExprKind::Copy(var), span),
+            Some(var) => expr(ExprKind::Copy(var), node.rhs.span()),
             None => self.prim_value(&node.rhs),
         };
         self.emit(Step::Assign { target, value });

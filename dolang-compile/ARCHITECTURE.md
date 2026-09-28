@@ -652,8 +652,28 @@ only reified types leave it:
   admitted, since unpacking checks the count as it runs.
 - A binary string's parts must be `Bin`, and an interpolation's width and
   precision `Int`.
-- Member lookups (`Get`, `Invoke`, `Index`, operators, ranges, field and index
-  targets) give `Unknown` until #794.
+- A member use (`flow/member.rs`) looks its member up (see "Member lookup") and
+  is checked as the runtime makes it, as a call through the member where there
+  is one. A method call passes the receiver first to an instance's method, and
+  calls a field's value or a getter's result as it is. A read gives a field's
+  type, a getter's or `(get)`'s result, or a method bound to its receiver, which
+  is its signature without the receiver parameter unless that mentions the
+  method's own binders. A write must fit a field's type, or calls the setter or
+  `(set)`. Indexing calls `(index)`, and an index target `(assign)`. An operator
+  calls its special method on its left operand, or, as the runtime does, when
+  that lacks it, on its right: the same method with the operands swapped for a
+  commutative operator, and the reflected one (`(rsub)`, `(rdiv)`, `(rediv)`,
+  `(rmod)`) otherwise. `==`, `!=` and `!` are `Bool`, and the comparisons
+  require `(lt)` and are `Bool`. A missing member, and a
+  read or write its kind doesn't allow, are reported. A lookup that can't
+  decide, such as on a union receiver, is an unresolved check, and an overloaded
+  method is dynamic until overloads are resolved (#742).
+- A class object is called as its class-level `(call)`, if it has one, and
+  otherwise as its constructor: `(init)`, looked up on the class applied to its
+  rigids, without its receiver and giving the instance, with the rigids
+  abstracted again and the class's binders merged into `(init)`'s own
+  (`Database::merge_groups`, the inverse of `split`). A class without `(init)`
+  takes no arguments. A range constructs `Range` from its bounds.
 
 A type fixed before the fixed point is pre-seeded as an upper bound on a rule's
 result: a local's annotation, a def's declared result, or a parameter type that

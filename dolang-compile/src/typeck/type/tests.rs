@@ -584,6 +584,31 @@ fn substitution_replaces_the_outer_group_and_shifts_under_quantifiers() {
 }
 
 #[test]
+fn merging_groups_undoes_splitting() {
+    let mut db = Database::new();
+    let a = reference(&mut db, 0, 0, Kind::Type);
+    let b = reference(&mut db, 0, 1, Kind::Type);
+    let c = reference(&mut db, 0, 2, Kind::Type);
+    // The last binder's bound mentions the first, and a nested quantifier refers
+    // past its own group
+    let bounded = Binder {
+        bound: Some(a),
+        ..binder(Kind::Type)
+    };
+    let local = reference(&mut db, 0, 0, Kind::Type);
+    let b_inner = reference(&mut db, 1, 1, Kind::Type);
+    let inner = function(&mut db, &[local], b_inner);
+    let inner = quantify(&mut db, vec![binder(Kind::Type)], inner);
+    let body = function(&mut db, &[a, b, inner], c);
+    let binders = vec![binder(Kind::Type), binder(Kind::Type), bounded];
+    let flat = quantify(&mut db, binders.clone(), body);
+    for count in 0..=binders.len() {
+        let split = db.split(flat, count);
+        assert_eq!(db.merge_groups(&binders[..count], split), flat, "{count}");
+    }
+}
+
+#[test]
 fn members_and_overloads_are_checked() {
     let mut db = Database::new();
     let (class, class_ty, class_source) = declare(&mut db, DeclKind::Class, "Box");

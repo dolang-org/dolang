@@ -6,7 +6,7 @@ use crate::source::Span;
 
 use super::{At, Flow, State, problem::Problem};
 use crate::typeck::{
-    cfg::{Expr, ExprKind, FuncId, FuncKind, Item},
+    cfg::{Expr, ExprKind, FuncId, FuncKind},
     elab::{Designated, ModuleRef, Referent, Target},
     r#type::{
         Argument, BoundRef, DeclId, DeclKind, Intrinsic, Kind, SymbolId, Type, TypeId, UnitId,
@@ -79,65 +79,16 @@ impl Flow<'_, '_> {
             ExprKind::Import { module, item } => self.import(module, *item),
             &ExprKind::Lambda(func) => self.lambda(at, func),
             ExprKind::Call { .. } => self.call(at, state, operands, expr, expected),
-            ExprKind::Invoke { receiver, args, .. } => {
-                self.eval(at, state, operands, receiver);
-                self.items(at, state, operands, args);
-                unknown
-            }
-            ExprKind::Get { object, .. } => {
-                self.eval(at, state, operands, object);
-                unknown
-            }
-            ExprKind::Index { object, index, .. } => {
-                self.eval(at, state, operands, object);
-                self.eval(at, state, operands, index);
-                unknown
-            }
-            ExprKind::Unary { operand, .. } => {
-                self.eval(at, state, operands, operand);
-                unknown
-            }
-            ExprKind::Binary { operands: pair, .. } => {
-                for operand in pair.iter() {
-                    self.eval(at, state, operands, operand);
-                }
-                unknown
-            }
-            ExprKind::Range { bounds, .. } => {
-                for bound in bounds.iter().flatten() {
-                    self.eval(at, state, operands, bound);
-                }
-                unknown
-            }
+            ExprKind::Invoke { .. } => self.invoke(at, state, operands, expr, expected),
+            ExprKind::Get { .. } => self.get(at, state, operands, expr, expected),
+            ExprKind::Index { .. } => self.index(at, state, operands, expr, expected),
+            ExprKind::Unary { .. } => self.unary(at, state, operands, expr),
+            ExprKind::Binary { .. } => self.binary(at, state, operands, expr),
+            ExprKind::Range { .. } => self.range(at, state, operands, expr),
             ExprKind::Collection { .. } => self.collection(at, state, operands, expr, expected),
             ExprKind::Operand => operands.pop_front().expect("an operand for each hole"),
             ExprKind::Never => self.db.bottom(),
             ExprKind::AmbientInput | ExprKind::Namespace | ExprKind::Error => unknown,
-        }
-    }
-
-    fn items(
-        &mut self,
-        at: At,
-        state: &mut State,
-        operands: &mut VecDeque<TypeId>,
-        items: &[Item],
-    ) {
-        for item in items {
-            match item {
-                Item::Pos(value) | Item::Key(_, value) | Item::Spread(value) => {
-                    self.eval(at, state, operands, value);
-                }
-                Item::Pair(key, value) => {
-                    self.eval(at, state, operands, key);
-                    self.eval(at, state, operands, value);
-                }
-                Item::For { items, .. } => self.items(at, state, operands, items),
-                Item::If { then, else_, .. } => {
-                    self.items(at, state, operands, then);
-                    self.items(at, state, operands, else_);
-                }
-            }
         }
     }
 

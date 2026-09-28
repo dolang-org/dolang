@@ -44,6 +44,7 @@
 //! `finally` is judged once per context, and a problem at a span is reported once.
 
 mod eval;
+mod member;
 mod problem;
 mod rule;
 mod state;
@@ -636,18 +637,17 @@ impl<'a, 'u> Flow<'a, 'u> {
                         let ty = self.expect(at, state, &mut operands, value, expected);
                         self.assign(at, state, var, ty, value.span);
                     }
-                    Target::Field { ref object, .. } => {
-                        self.eval(at, state, &mut operands, object);
-                        self.eval(at, state, &mut operands, value);
+                    Target::Field { ref object, member } => {
+                        let span = object.span | value.span;
+                        self.set(at, state, &mut operands, object, member, value, span);
                     }
                     Target::Index {
                         ref object,
                         ref index,
-                        ..
                     } => {
-                        self.eval(at, state, &mut operands, object);
-                        self.eval(at, state, &mut operands, index);
-                        self.eval(at, state, &mut operands, value);
+                        let parts = [object, index, value];
+                        let span = object.span | value.span;
+                        self.assign_index(at, state, &mut operands, parts, span);
                     }
                 }
             }
