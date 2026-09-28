@@ -1021,7 +1021,8 @@ b4 f0:
     );
 }
 
-/// A variable assigned in a closure is flagged; one it only reads isn't
+/// A variable a closure assigns is volatile; one only its owner assigns isn't, even
+/// once captured
 #[test]
 fn captures() {
     check(
@@ -1030,6 +1031,7 @@ let n = 0
 let m = 1
 let inc = do
   n = (n + m)
+m = 2
 m
 ",
         "
@@ -1039,6 +1041,7 @@ b0 f0:
   let n = 0
   let m = 1
   let inc = f1
+  m = 2
   result0 = m
   goto b1
 b1 f0:

@@ -88,7 +88,7 @@ impl<'u> Scope<'_, '_, 'u> {
             result: slot(func.ret.is_some()),
         };
         if let Some(var) = signature.result {
-            self.reassign(var);
+            self.assigned(var);
             graph.block_mut(exit).steps.push(Step::Assign {
                 target: Target::Var(var),
                 value: expr(ExprKind::Copy(result), Span::INVALID),
@@ -264,7 +264,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 self.value_nil(dest, span);
                 return;
             };
-            self.reassign(var);
+            self.assigned(var);
             self.assign(var, value);
             if let Some(dest) = dest {
                 self.assign(dest, expr(ExprKind::Copy(var), span));

@@ -74,7 +74,7 @@ impl Dump<'_, '_> {
                 for &var in &func.captures {
                     write!(out, " ")?;
                     self.var(out, var)?;
-                    if self.ir.var(var).flagged {
+                    if self.ir.var(var).volatile {
                         write!(out, "!")?;
                     }
                 }

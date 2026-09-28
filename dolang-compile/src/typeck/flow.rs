@@ -15,13 +15,16 @@
 //! Narrowing applies a condition's relations to the variable it tests, making the
 //! edge unreachable when nothing is left.
 //!
-//! Captured state isn't flow-sensitive. A captured variable's assignments, in any
-//! function, join into one type, which every nested function reads it as. Its
-//! owner keeps narrowing it, but a flagged one reverts to the joined type after any
-//! step that can call. A non-local return joins its value into its def's result the
-//! same way, as does a `do` block's signature: what the calls it's passed to give
-//! its parameters and channels, and its result. A block that reads a joined type
-//! depends on it, and is queued again when it grows.
+//! State shared between functions isn't flow-sensitive. An ivar's assignments, in
+//! any function, join into an accumulator, which every function but its owner
+//! reads it as. Its owner caches its type in its state, and narrows it there,
+//! unless it's volatile: assigned by another function, whose calls could change it
+//! at any time. A volatile variable's owner reads the accumulator too, and keeps
+//! only whether it may be unassigned; to narrow it, copy it to a local first. A
+//! non-local return joins its value into its def's result the same way, as does a
+//! `do` block's signature: what the calls it's passed to give its parameters and
+//! channels, and its result. A block that reads a joined type depends on it, and
+//! is queued again when it grows.
 //!
 //! A step that can throw joins its state before it into its handler, with the
 //! exception alone on the stack.
@@ -115,7 +118,7 @@ struct Flow<'a, 'u> {
     /// doesn't depend on the order
     reversed: bool,
     widenings: HashMap<(BlockId, CtxId, VarId), Widening>,
-    /// The joined type of each captured variable, and of each result a non-local
+    /// The accumulator of each ivar, and of each result a non-local
     /// return gives a value
     joined: HashMap<VarId, (TypeId, Widening)>,
     /// The blocks that read each joined type
@@ -489,18 +492,25 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
     }
 
-    /// Join a value into a variable's joined type, queueing its readers if it grew
+    /// Join a value into a variable's joined type, queueing its readers if it grew.
+    /// It widens as a join at a widening point does, an annotated variable to its
+    /// annotation.
     fn join(&mut self, var: VarId, ty: TypeId) {
         if self.observing() {
             return;
         }
         let solver = self.solver();
         let bottom = self.db.bottom();
+        let annotation = self.ir.var(var).annotation;
         let (old, widening) = self
             .joined
             .entry(var)
             .or_insert((bottom, Widening::default()));
-        let new = widening.join(&solver, *old, ty);
+        let joined = solver.lub(*old, ty);
+        let new = match (widening.join(&solver, *old, ty), annotation) {
+            (widened, Some(annotation)) if widened != joined => annotation,
+            (widened, _) => widened,
+        };
         if new == *old {
             return;
         }
@@ -572,9 +582,6 @@ impl<'a, 'u> Flow<'a, 'u> {
             }
             if !self.step(at, &mut state, step) {
                 return;
-            }
-            if calls(step) {
-                self.forget(at, &mut state);
             }
         }
         self.terminal(at, state);
@@ -649,14 +656,15 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let annotation = self.ir.var(*var).annotation;
                 let ty = self.expect(at, state, &mut operands, value, annotation);
                 let ty = self.default(*var, ty, value.span);
-                if self.ir.var(*var).owner == at.func {
+                let data = self.ir.var(*var);
+                if data.owner == at.func && !data.volatile {
                     let fact = state.vars[self.slots[var.index()]];
                     state.vars[self.slots[var.index()]] = Fact {
                         ty: self.lub(fact.ty, ty),
                         unassigned: fact.unassigned,
                     };
                 }
-                if self.ir.var(*var).captured {
+                if data.interprocedural {
                     self.join(*var, ty);
                 }
             }
@@ -728,21 +736,22 @@ impl<'a, 'u> Flow<'a, 'u> {
         annotation
     }
 
-    /// Assign a variable, strongly where its owner is analyzed, checking the value
-    /// at `span` against its annotation
-    fn assign(&mut self, at: At, state: &mut State, var: VarId, ty: TypeId, span: Span) {
+    /// Assign a variable, strongly where its owner caches its type, checking the
+    /// value at `span` against its annotation. Returns the type stored.
+    fn assign(&mut self, at: At, state: &mut State, var: VarId, ty: TypeId, span: Span) -> TypeId {
         let ty = self.settle(var, ty);
         self.check(var, ty, span);
         let data = self.ir.var(var);
         if data.owner == at.func {
             state.vars[self.slots[var.index()]] = Fact {
-                ty,
+                ty: if data.volatile { self.db.bottom() } else { ty },
                 unassigned: false,
             };
         }
-        if data.captured {
+        if data.interprocedural {
             self.join(var, ty);
         }
+        ty
     }
 
     /// Bind a pattern to a value at `span`, recording each binding. Unpacking is
@@ -776,9 +785,12 @@ impl<'a, 'u> Flow<'a, 'u> {
 
     /// Bind a variable, checking the value at `span` against its annotation
     fn binding(&mut self, at: At, state: &mut State, var: VarId, ty: TypeId, span: Span) {
-        self.assign(at, state, var, ty, span);
+        let ty = self.assign(at, state, var, ty, span);
         if let Origin::Source(span) = self.ir.var(var).origin {
-            let fact = self.read(at, state, var);
+            let fact = Fact {
+                ty,
+                unassigned: false,
+            };
             self.record(span, fact);
         }
     }
@@ -845,34 +857,32 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
     }
 
-    /// What a variable holds: its fact where its owner is analyzed, and its joined
-    /// type elsewhere
+    /// What a variable holds: its fact where its owner caches its type, and its
+    /// joined type elsewhere. Its owner still knows whether it may be unassigned.
     fn read(&mut self, at: At, state: &State, var: VarId) -> Fact {
-        if self.ir.var(var).owner == at.func {
-            return state.vars[self.slots[var.index()]];
+        let data = self.ir.var(var);
+        if data.owner != at.func {
+            return Fact {
+                ty: self.joined(var, at),
+                unassigned: false,
+            };
+        }
+        let fact = state.vars[self.slots[var.index()]];
+        if !data.volatile {
+            return fact;
         }
         Fact {
             ty: self.joined(var, at),
-            unassigned: false,
+            unassigned: fact.unassigned,
         }
     }
 
-    /// Revert the owner's flagged variables to their joined types, after a step
-    /// that may have run a closure assigning them
-    fn forget(&mut self, at: At, state: &mut State) {
-        let func = self.ir.func(at.func);
-        for (slot, &var) in func.vars.iter().enumerate() {
-            if self.ir.var(var).flagged {
-                let joined = self.joined(var, at);
-                state.vars[slot].ty = joined;
-            }
-        }
-    }
-
-    /// Narrow a variable its function owns. Returns whether anything is left.
+    /// Narrow a variable whose type its function caches. Returns whether anything
+    /// is left.
     fn assume(&mut self, at: At, state: &mut State, assume: &Assume) -> bool {
-        if self.ir.var(assume.var).owner != at.func {
-            // Captured state isn't narrowed
+        let data = self.ir.var(assume.var);
+        if data.owner != at.func || data.volatile {
+            // An accumulator isn't narrowed: a copy of the variable is
             return true;
         }
         let mut none = VecDeque::new();
@@ -1096,14 +1106,6 @@ fn throws(step: &Step) -> bool {
         Step::Assign { target, value } => !matches!(target, Target::Var(_)) || has_rule(value),
         Step::Default { value, .. } | Step::Eval(value) | Step::Push(value) => has_rule(value),
         Step::Dup | Step::Pop | Step::Assume(_) => false,
-    }
-}
-
-/// Whether a step can call arbitrary code, which may run a closure
-fn calls(step: &Step) -> bool {
-    match step {
-        Step::Assign { target, .. } if !matches!(target, Target::Var(_)) => true,
-        step => throws(step),
     }
 }
 

@@ -73,7 +73,7 @@ fn well_formed() {
         func.captures.push(x);
         (func.entry, func.exit)
     };
-    graph.var_mut(x).captured = true;
+    graph.var_mut(x).interprocedural = true;
     push(
         &graph,
         lambda_entry,

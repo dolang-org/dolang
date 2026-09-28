@@ -3,7 +3,7 @@
 
 use std::{ptr, rc::Rc};
 
-use super::{Ctx, Facts, Lower, Scope};
+use super::{Ctx, Lower, Scope};
 use crate::{
     PreludeImport,
     ast::{self, Class, Def, Function, Ident, ImportElement, Method, Res, Stmt},
@@ -273,21 +273,19 @@ impl<'u> Scope<'_, '_, 'u> {
         if graph.var(var).owner == self.ctx.func {
             return;
         }
-        graph.var_mut(var).captured = true;
+        graph.var_mut(var).interprocedural = true;
         let mut func = graph.func_mut(self.ctx.func);
         if !func.captures.contains(&var) {
             func.captures.push(var);
         }
     }
 
-    /// Record an assignment to a variable after it was bound
-    pub(super) fn reassign(&self, var: VarId) {
-        let mut facts = self.lower.facts.borrow_mut();
-        let facts: &mut Facts = facts.entry(var).or_default();
-        if self.graph().var(var).owner == self.ctx.func {
-            facts.reassigned = true;
-        } else {
-            facts.nested = true;
+    /// Record an assignment to a variable after it was bound. One by a function
+    /// other than its owner makes it volatile.
+    pub(super) fn assigned(&self, var: VarId) {
+        let graph = self.graph();
+        if graph.var(var).owner != self.ctx.func {
+            graph.var_mut(var).volatile = true;
         }
     }
 
