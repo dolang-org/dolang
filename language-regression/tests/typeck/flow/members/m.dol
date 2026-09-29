@@ -220,23 +220,61 @@ pub def dynamic x u @ (Point | Box[Int])
   let _ = b
   #       ^: flow Unknown
 
-# A literal key picks its own item, since the key isn't decayed
-pub def looked d @ Dict[{a: Int, b: Str}] k @ Sym i @ Index[{a: Int}]
+# A literal key picks its own item, since the key isn't decayed. A key must be
+# one of the schema's.
+pub def looked d @ Dict[{a: Int, b: Str}] k @ Sym i @ Index[{a: Int}] o @ Dict[{...}]
   let a = d[:a:]
   let _ = a
   #       ^: flow std.Int
   let b = d[:b:]
   let _ = b
   #       ^: flow std.Str
-  # A key type owns every item whose key it admits
-  let e = d[k]
-  let _ = e
-  #       ^: flow std.Int | std.Str
-  # Nothing has the key
-  let c = d[:c:]
-  let _ = c
-  #       ^: flow Unknown
+  let _ = d[:c:]
+  # error: expected `:a: | :b:`, found `:c:`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = d[:c:]
+  #    |             ^^^
+  let _ = d[k]
+  # error: expected `:a: | :b:`, found `std.Sym`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = d[k]
+  #    |             ^
   let j = i[:a:]
   let _ = j
   #       ^: flow std.Int
+  # An open schema has every key
+  let x = o[k]
+  let _ = x
+  #       ^: flow Value
   d[:a:] = 1
+
+# Iterating a dict gives its entries, each key with its own value. A literal
+# bound to a variable decays, so a key does too.
+pub def iterated d @ Dict[{a: Int, b: Str}] s @ Dict[{*(Str): Int}]
+  for p = d
+    let _ = p
+    #       ^: flow std.Tuple[{std.Sym, std.Int}] | std.Tuple[{std.Sym, std.Str}]
+  for k v = d
+    let _ = k
+    #       ^: flow std.Sym
+    let _ = v
+    #       ^: flow std.Int | std.Str
+  let ks = s.keys()
+  let _ = ks
+  #       ^~: flow std.Iter[std.Str]
+  let vs = d.values()
+  let _ = vs
+  #       ^~: flow std.Iter[std.Int | std.Str]
+  # Passed directly, the keys are still the schema's
+  keyed $d.keys()
+  keyed $s.keys()
+# error: expected `std.Iter[std.Sym]`, found `std.Iter[std.Str]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   keyed $s.keys()
+#    |          ^^^^^^^^
+
+pub def keyed ks @ Iter[(:a: | :b:)]
+  ...

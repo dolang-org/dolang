@@ -55,10 +55,10 @@ impl Solver<'_> {
         };
         let mut result = self.db.bottom();
         for member in self.union_members(ty) {
-            // A pack's members are unknown, so it's kept
+            // A projection's members are unknown, so it's kept
             let member = match member {
                 UnionMember::Type(member) => member,
-                UnionMember::Expand(_) => {
+                _ => {
                     let pack = self.db.intern(Type::Union(vec![member].into()));
                     result = self.lub(result, pack);
                     continue;

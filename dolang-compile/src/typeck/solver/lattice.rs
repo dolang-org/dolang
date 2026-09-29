@@ -51,7 +51,7 @@ impl Solver<'_> {
         let below = |x: TypeId, y: TypeId| self.probe(x, y) == Ok(Status::Proven);
         let comparable = |member: &UnionMember| match *member {
             UnionMember::Type(ty) => (!self.contains_unknown(ty)).then_some(ty),
-            UnionMember::Expand(_) => None,
+            _ => None,
         };
         let mut kept: Vec<UnionMember> = Vec::new();
         for member in self
@@ -95,7 +95,7 @@ impl Solver<'_> {
             .iter()
             .map(|member| match *member {
                 UnionMember::Type(ty) => self.start(ty).ok().flatten(),
-                UnionMember::Expand(_) => None,
+                _ => None,
             })
             .collect::<Option<Vec<_>>>()?;
         let mut candidates = Vec::new();

@@ -517,6 +517,117 @@ fn union_applications_normalize_to_unions() {
 }
 
 #[test]
+fn projections_fold_what_their_schemas_are_known_to_hold() {
+    let mut db = Database::new();
+    let project = |db: &mut Database, intrinsic, name| {
+        let (id, alias, source) = declare(db, DeclKind::OpaqueAlias, name);
+        db.set_intrinsic(intrinsic, alias);
+        db.populate(id, definition(source, alias));
+        move |db: &mut Database, schema| {
+            intern(
+                db,
+                Type::Apply {
+                    base: alias,
+                    args: vec![Argument::Positional(schema)].into(),
+                    kind: Kind::Type,
+                },
+            )
+        }
+    };
+    let keys = project(&mut db, Intrinsic::Keys, "Keys");
+    let values = project(&mut db, Intrinsic::Values, "Values");
+    let entries = project(&mut db, Intrinsic::Entries, "Entries");
+    let item = |multiplicity, element| SchemaItem {
+        multiplicity,
+        element,
+    };
+    let items = |db: &mut Database, items: Vec<SchemaItem>| intern(db, Type::Schema(items.into()));
+    let sym = |db: &mut Database, name| {
+        let name = db.intern_symbol(name);
+        intern(db, Type::Literal(Literal::Sym(name)))
+    };
+    let (a, b) = (sym(&mut db, "a"), sym(&mut db, "b"));
+    let one = intern(&mut db, Type::Literal(Literal::Int(1)));
+    let two = intern(&mut db, Type::Literal(Literal::Int(2)));
+    let three = intern(&mut db, Type::Literal(Literal::Int(3)));
+    let (top, bottom, unknown) = (db.top(), db.bottom(), db.unknown());
+    let keyed = |key, value| Element::Keyed { key, value };
+    // `{a: 1, *(b): 2, 3}`, whose items' multiplicities don't matter
+    let closed = items(
+        &mut db,
+        vec![
+            item(Multiplicity::Required, keyed(a, one)),
+            item(Multiplicity::Repeated, keyed(b, two)),
+            item(Multiplicity::Optional, Element::Positional(three)),
+        ],
+    );
+    let ab = union(&mut db, &[a, b]);
+    assert_eq!(keys(&mut db, closed), ab);
+    let values_expected = union(&mut db, &[one, two, three]);
+    assert_eq!(values(&mut db, closed), values_expected);
+    // Without a designated `Tuple`, entries stay whole
+    let kept = entries(&mut db, closed);
+    assert!(matches!(
+        db.ty(kept),
+        Type::Union(members) if members[..] == [UnionMember::Entries(closed)]
+    ));
+    // Positions have no keys, and an empty schema projects to nothing
+    let positional = schema(&mut db, &[three]);
+    assert_eq!(keys(&mut db, positional), bottom);
+    let empty = schema(&mut db, &[]);
+    assert_eq!(values(&mut db, empty), bottom);
+    // `{...}` has every key and value
+    let open = items(
+        &mut db,
+        vec![
+            item(Multiplicity::Repeated, Element::Positional(top)),
+            item(Multiplicity::Repeated, keyed(top, top)),
+        ],
+    );
+    assert_eq!(keys(&mut db, open), top);
+    assert_eq!(values(&mut db, open), top);
+    // The dynamic schema projects to the dynamic type
+    let dynamic = db.unknown_schema();
+    assert_eq!(keys(&mut db, dynamic), unknown);
+    // An inclusion not known yet stays a projection of it, beside what is known
+    let pack = reference(&mut db, 0, 0, Kind::Schema);
+    let partial = items(
+        &mut db,
+        vec![
+            item(Multiplicity::Required, keyed(a, one)),
+            item(Multiplicity::Required, Element::Include(pack)),
+        ],
+    );
+    let expected = intern(
+        &mut db,
+        Type::Union(vec![UnionMember::Type(a), UnionMember::Keys(pack)].into()),
+    );
+    assert_eq!(keys(&mut db, partial), expected);
+    // Substituting the pack evaluates the rest
+    let substituted = db.substitute(expected, &[positional]);
+    assert_eq!(substituted, a);
+    // With `Tuple`, each keyed item is an entry
+    let (id, tuple, source) = declare(&mut db, DeclKind::Class, "Tuple");
+    db.set_intrinsic(Intrinsic::Tuple, tuple);
+    db.populate(id, definition(source, tuple));
+    let pair = |db: &mut Database, key, value| {
+        let items = schema(db, &[key, value]);
+        intern(
+            db,
+            Type::Apply {
+                base: tuple,
+                args: vec![Argument::Positional(items)].into(),
+                kind: Kind::Type,
+            },
+        )
+    };
+    let pairs = [pair(&mut db, a, one), pair(&mut db, b, two)];
+    let expected = union(&mut db, &pairs);
+    assert_eq!(entries(&mut db, closed), expected);
+    db.seal();
+}
+
+#[test]
 fn unknown_is_a_type_that_unions_do_not_absorb() {
     let mut db = Database::new();
     let unknown = db.unknown();
@@ -1197,6 +1308,10 @@ fn intrinsic_associations_are_optional_and_write_once() {
         Intrinsic::Sym,
         Intrinsic::Nil,
         Intrinsic::Str,
+        Intrinsic::Keys,
+        Intrinsic::Values,
+        Intrinsic::Entries,
+        Intrinsic::Tuple,
     ];
     let mut db = Database::new();
     let mut registered = Vec::new();

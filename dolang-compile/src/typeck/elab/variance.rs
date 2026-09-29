@@ -303,8 +303,12 @@ impl<'t, 'u> Collect<'t, 'u> {
         }
 
         // Designated opaque aliases take their binders covariantly
-        if let Some(Designated::Phantom | Designated::Intrinsic(Intrinsic::Union)) =
-            tables.designated.get(&id)
+        if let Some(
+            Designated::Phantom
+            | Designated::Intrinsic(
+                Intrinsic::Union | Intrinsic::Keys | Intrinsic::Values | Intrinsic::Entries,
+            ),
+        ) = tables.designated.get(&id)
         {
             for slot in 0..tables.binders(id, 0).len() {
                 let binder = BinderRef {

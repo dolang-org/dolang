@@ -31,8 +31,8 @@ use crate::{
             Solver, Status, Step as Derivation, Term,
         },
         r#type::{
-            Argument, BoundRef, Database, DeclId, Element, Function, Kind, Literal, Multiplicity,
-            Rest, SchemaItem, SymbolId, Type, TypeId, UnionMember, Variance,
+            Argument, BoundRef, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
+            Multiplicity, Rest, SchemaItem, SymbolId, Type, TypeId, UnionMember, Variance,
         },
     },
 };
@@ -792,10 +792,21 @@ impl<'a> Flow<'a, '_> {
                 let Some(found) = self.render_term(solver, relation.actual) else {
                     return fallback;
                 };
+                // A parameter whose type is left unsolved shows the bound of it
+                // that the argument doesn't fit
+                let expected = self
+                    .render_term(solver, relation.expected)
+                    .or_else(|| match steps.get(params + 2) {
+                        Some(Derivation::BoundPropagation) => {
+                            let bound = solver.obligation(path[params + 3]).relation;
+                            self.render_term(solver, bound.expected)
+                        }
+                        _ => None,
+                    });
                 Problem::Argument {
                     span: arg,
                     found,
-                    expected: self.render_term(solver, relation.expected),
+                    expected,
                 }
             }
             None => match contradiction {
@@ -924,7 +935,7 @@ impl<'a> Flow<'a, '_> {
         match self.db.ty(callee) {
             Type::Union(members) => members.iter().all(|member| match *member {
                 UnionMember::Type(ty) => function(ty),
-                UnionMember::Expand(_) => false,
+                _ => false,
             }),
             _ => function(callee),
         }
@@ -1397,7 +1408,7 @@ impl<'a> Flow<'a, '_> {
         let role = match kind {
             Collection::Array => Designated::Array,
             Collection::Dict => Designated::Dict,
-            Collection::Tuple => Designated::Tuple,
+            Collection::Tuple => Designated::Intrinsic(Intrinsic::Tuple),
             Collection::Record => Designated::Record,
         };
         let class = self.designated(role);
@@ -1430,7 +1441,7 @@ impl<'a> Flow<'a, '_> {
             return unknown;
         };
         let spread = self.designated(Designated::Spread);
-        let int = self.intrinsic(crate::typeck::r#type::Intrinsic::Int);
+        let int = self.intrinsic(Intrinsic::Int);
         let expected_dict = match kind {
             Collection::Dict => expected.and_then(|ty| self.applied(class, ty)),
             _ => None,
@@ -1592,7 +1603,7 @@ impl<'a> Flow<'a, '_> {
         };
         let mut found = (members.iter()).filter_map(|member| match *member {
             UnionMember::Type(ty) => applied(ty),
-            UnionMember::Expand(_) => None,
+            _ => None,
         });
         let first = found.next()?;
         found.next().is_none().then_some(first)
@@ -1680,7 +1691,7 @@ impl<'a> Flow<'a, '_> {
         if never {
             return bottom;
         }
-        let int = self.db.intrinsic(crate::typeck::r#type::Intrinsic::Int);
+        let int = self.db.intrinsic(Intrinsic::Int);
         let result = self.designated_type(role);
         self.fits(at, &values, int, Misfit::Int, result)
     }

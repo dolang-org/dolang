@@ -63,7 +63,8 @@ identity must be preserved.
 `TypeId` identifies a normalized structural expression in one database. Ordinary
 types such as `Int` and `Sym` are declaration references, not builtin nodes.
 Literal nodes describe exact values only. Optional intrinsic slots associate
-`Union`, `Int`, `Bool`, `Sym`, `Nil`, and `Str` with their stub types. Each slot
+`Union`, `Keys`, `Values`, `Entries`, `Tuple`, `Int`, `Bool`, `Sym`, `Nil`,
+`Str` and a few more with their stub types. Each slot
 may be set once before sealing; missing associations are allowed. Elaboration
 supplies these associations, and the solver can use the literal backing types to
 enter the declared supertype hierarchy. Schemas and ordinary types share the ID
@@ -107,7 +108,14 @@ An application of the `Union` intrinsic interns as a union expanding its
 schema, and an expanded schema of positional items contributes their types as
 members, so `Union[...Ts]` becomes an ordinary union once `Ts` is substituted.
 Other expansions remain symbolic until a consumer supplies their schema
-arguments. `Database::normalize` gives a type the canonical form interning
+arguments. The projections `Keys`, `Values` and `Entries` intern as unions the
+same way, each a member projecting its schema. Once the schema is known, they
+fold its items, whatever their multiplicity. `Keys` takes each keyed item's key,
+`Values` every item's value, and `Entries` a keyed item's `Tuple[key, value]`,
+while `Keys` and `Entries` skip positions. An included schema is projected in
+turn, so one not yet known stays a member beside what is known. The dynamic
+schema projects to `Unknown`, and without a designated `Tuple`, `Entries`
+stays whole. `Database::normalize` gives a type the canonical form interning
 would, for callers that need it before interning. Declaration wrappers are not
 normalized away.
 Exposure follows transparent head references and reports direct cycles, stopping
@@ -193,7 +201,13 @@ An omitted channel stands for its default bound, `Iter[Unknown]` or
 judgments require every member; union-right judgments accept a member proved by
 an isolated, closed subtype query. Alternative queries cannot add inference
 bounds or diagnostic edges to the calling solver. Expanded union packs and
-alternatives that cannot be proved remain residual. Higher-rank rules remain
+alternatives that cannot be proved remain residual. The exception is a literal
+on the left, or `Int`, `Str` or `Sym`, which have infinitely many: when every
+member refutes it, apart from a class's literals, which are finitely many, it
+contradicts the union. A projection is exposed by reifying it once its schema's
+environment is substituted, which waits on the schema's variables. One of a
+rigid's schema that is left on the left reduces to the same projection of the
+rigid's bound. Higher-rank rules remain
 deferred. Contextual identity and top/bottom rules can still settle some
 judgments involving otherwise unsupported forms: anything is below top and
 `Unknown`, even a type that can't be exposed.
@@ -424,7 +438,9 @@ Each submitted root retains actual/expected source spans. Obligations retain
 original operands and historical labeled edges for arguments, parameters,
 returns, union members, bound propagation, and assignments. Current proof
 premises are tracked separately and replaced on reprocessing. Historical edges
-explain contradictions to every contributing root, but historical cycles and
+explain contradictions to every contributing root, preferring a path without an
+assignment edge, which explains only by what the assignment was drawn from.
+Historical cycles and
 obsolete residuals do not prevent a current proof. Cycles in current proof
 premises remain unresolved. Reports distinguish proven, contradicted, and
 unresolved roots; quiescence alone is not proof.
@@ -797,12 +813,13 @@ signature or body, but not in a nested class or alias, shares that def's
 channels; elsewhere they are `Unknown`. A closure is populated with its
 annotations and `Unknown` for what it omits, channels included; CFG flow infers
 the omissions separately, without changing the database. Top-level declarations
-of a checked `std` module named `Value`, `Phantom`, `Union`, `Func`, `Int`,
-`Bool`, `Sym`, `Nil`, `Str`, `Iter` and `Sink` are designated for special
-treatment; the same name in another module is only a lookalike. So are the
-classes that literal and constructor expressions produce, `Float`, `Bin`,
-`Array`, `Dict`, `Tuple`, `Record`, `Range` and the `Fmt` classes, which the
-check tables record without the database needing them. A checked `strand`
+of a checked `std` module named `Value`, `Phantom`, `Union`, `Keys`, `Values`,
+`Entries`, `Func`, `Int`, `Bool`, `Sym`, `Nil`, `Str`, `Iter` and `Sink` are
+designated for special treatment; the same name in another module is only a
+lookalike. So are the classes that literal and constructor expressions produce,
+`Float`, `Bin`, `Array`, `Dict`, `Tuple`, `Record`, `Range` and the `Fmt`
+classes, which the check tables record without the database needing them, except
+`Tuple`, which `Entries` builds. A checked `strand`
 module's opaque `PipeSender` and `PipeReceiver` are designated too: each
 stands for the class the `Builder` nominates, resolved as if the placeholder
 imported it, and is populated as a transparent alias of that class applied to
@@ -827,7 +844,8 @@ on anything but its `self`. A field whose type is an application of `Phantom`
 always counts, whatever its visibility, using its arguments covariantly as
 Rust's `PhantomData` does, so `Phantom[(T -> nil)]` marks a class
 contravariant. A transparent alias uses
-its body covariantly; `Union` and `Phantom` take their binders covariantly, and
+its body covariantly; `Union`, the projections and `Phantom` take their binders
+covariantly, and
 any other opaque alias uses none. A binder used in a bound of its own group is
 invariant, and an outer binder used in the bound of a nested group is used
 contravariantly there. Defaults and bodies do not count. A type argument is used

@@ -164,7 +164,6 @@ impl Tables<'_> {
                     Designated::Bin => "bin".to_owned(),
                     Designated::Array => "array".to_owned(),
                     Designated::Dict => "dict".to_owned(),
-                    Designated::Tuple => "tuple".to_owned(),
                     Designated::Record => "record".to_owned(),
                     Designated::Range => "range".to_owned(),
                     Designated::BaseIterable => "base iterable".to_owned(),
@@ -616,6 +615,18 @@ impl Tables<'_> {
                             UnionMember::Expand(ty) => {
                                 out.push_str("...");
                                 self.render_into(db, *ty, names, depth, &mut out);
+                            }
+                            UnionMember::Keys(ty)
+                            | UnionMember::Values(ty)
+                            | UnionMember::Entries(ty) => {
+                                let name = match member {
+                                    UnionMember::Keys(_) => "Keys",
+                                    UnionMember::Values(_) => "Values",
+                                    _ => "Entries",
+                                };
+                                let _ = write!(out, "{name}[...");
+                                self.render_into(db, *ty, names, depth, &mut out);
+                                out.push(']');
                             }
                         }
                         out

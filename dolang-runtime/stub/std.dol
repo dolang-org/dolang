@@ -9,6 +9,19 @@ pub @let Union[...Ts] = ...
 # its result.
 pub @let Empty = Union[]
 
+# The union of the keys of a schema's keyed items. `Keys[{a: Int, b: Str}]` is
+# `(:a: | :b:)`, and `Keys[{**Int}]` is `Sym`. Positional items have no keys.
+pub @let Keys[S @ {...}] = ...
+
+# The union of the values of a schema's items, positional or keyed.
+# `Values[{Bool, a: Int, b: Str}]` is `(Bool | Int | Str)`.
+pub @let Values[S @ {...}] = ...
+
+# The union of a `Tuple` of key and value for each of a schema's keyed items,
+# which keeps each key with its own value. `Entries[{a: Int, b: Str}]` is
+# `(Tuple[:a:, Int] | Tuple[:b:, Str])`.
+pub @let Entries[S @ {...}] = ...
+
 # The singleton [`Null`](std.Null) value.
 #
 # As an iterator it ends immediately; as a sink it discards every value.
@@ -287,13 +300,13 @@ pub @let Phantom[...Ts] = ...
 
 # A value that implements the
 # [`(index)`](../../language/classes.md#index-and-assign-subscript-access)
-# protocol for the keys in `S`. A key's presence is not checked, only that the
-# value has such a key.
+# protocol for the keys in `S`. A key must be one of `S`'s, though an item
+# `S` may omit can still be missing.
 pub @class Index[S @ {...}]
   field schema @Phantom[...S]
 
   # Returns the value at `key`.
-  pub def (index)[K, V, U @ {*(K): V, ...}] self@Index[U] key@K -> V
+  pub def (index)[K @ Keys[U], V, U @ {*(K): V, ...}] self@Index[U] key@K -> V
 
 
 # A value that implements the
@@ -1717,7 +1730,7 @@ pub class CyclicImportError: RuntimeError
 #   values by their position (0-indexed) among values for that key; negative
 #   instance indexes count from the end
 #
-pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[Tuple[Value, Value]]
+pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[Entries[S]]
   #
   #
   # Builds a dictionary from one spreadable source of key-value pairs. The
@@ -1872,7 +1885,7 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[T
   # If duplicate-key iteration is needed, use [`pairs`](#pairs) instead.
   #
   #
-  pub def keys self -> Iter[Value]
+  pub def keys self -> Iter[Keys[S]]
     ...
 
   #
@@ -1881,7 +1894,7 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[T
   # over both [`Dict`](std.Dict) and [`Array`](std.Array).
   #
   #
-  pub def pairs self -> Iter[Tuple[Value, Value]]
+  pub def pairs self -> Iter[Entries[S]]
     ...
 
   #
@@ -1924,7 +1937,7 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[T
   # Missing keys return an empty iterator.
   #
   #
-  pub def values self key = nil -> Iter[Value]
+  pub def values self key = nil -> Iter[Values[S]]
     ...
 
   #
@@ -1939,7 +1952,7 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[T
   #
   # [`Range`](std.Range) values are treated as ordinary keys, not as slices.
   #
-  pub def (index)[K, V, U @ {*(K): V, ...}] self@Dict[U] key@K -> V
+  pub def (index)[K @ Keys[U], V, U @ {*(K): V, ...}] self@Dict[U] key@K -> V
     ...
 
   # Replaces every value of `key`.
@@ -1957,7 +1970,7 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[T
   #   echo $pair
   # ```
   #
-  pub def (iter) self -> Iter[Tuple[Value, Value]]
+  pub def (iter) self -> Iter[Entries[S]]
     ...
 
   # Destructures the dictionary by key.

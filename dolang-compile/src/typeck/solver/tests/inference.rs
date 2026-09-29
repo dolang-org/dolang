@@ -363,9 +363,10 @@ fn unsupported_upper_bounds_block_commitment_without_becoming_proofs() {
     let mut db = Database::new();
     let one = literal(&db, 1);
     let two = literal(&db, 2);
-    let params = schema(&db, &[]);
     let function = function(&db, &[], one);
-    let expanded = db.intern(Type::Union(vec![UnionMember::Expand(params)].into()));
+    // A keyed item's key isn't a positional item's type, so the expansion stays
+    let keyed = items(&db, vec![keyed(Multiplicity::Required, one, two)]);
+    let expanded = db.intern(Type::Union(vec![UnionMember::Expand(keyed)].into()));
     let alternatives = db.intern(Type::Union(
         vec![UnionMember::Type(two), UnionMember::Type(function)].into(),
     ));

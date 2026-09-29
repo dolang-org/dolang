@@ -314,8 +314,6 @@ pub(crate) enum Designated {
     Array,
     /// `std.Dict`, the class of a dict literal
     Dict,
-    /// `std.Tuple`, the class of a tuple literal
-    Tuple,
     /// `std.Record`, the class of a record literal
     Record,
     /// `std.Range`, the class of a range

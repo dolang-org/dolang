@@ -125,6 +125,9 @@ pub(crate) enum Contradiction {
     Excess(usize),
     /// The expected schema's item can be missing from the actual schema
     Missing(usize),
+    /// A literal, or a class with infinitely many, has a value outside every
+    /// member of a union
+    Outside,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -942,9 +945,7 @@ impl<'db> Solver<'db> {
                 for member in members.iter() {
                     match *member {
                         UnionMember::Type(ty) => walk(ty, variance, 0)?,
-                        UnionMember::Expand(ty) => {
-                            walk(ty, compose(variance, Variance::Invariant), 0)?
-                        }
+                        _ => walk(member.id(), compose(variance, Variance::Invariant), 0)?,
                     }
                 }
                 Ok(())
@@ -1510,6 +1511,13 @@ impl<'db> Solver<'db> {
                     }
                     term = self.view(*body, environment);
                 }
+                // A projection is evaluated once its schema is substituted
+                Type::Union(ref members)
+                    if view.environment != self.empty_environment()
+                        && members.iter().any(|member| member.projected().is_some()) =>
+                {
+                    term = self.closed(self.reify(term)?);
+                }
                 _ => return Ok(Head::Structural(view)),
             }
         }
@@ -1821,19 +1829,26 @@ impl<'db> Solver<'db> {
             && let Head::Structural(view) = &a
             && let Type::Union(members) = self.db.ty(view.ty)
         {
-            if members.iter().any(|m| matches!(m, UnionMember::Expand(_))) {
-                return Err(Residual::Unsupported.into());
-            }
-            for (index, member) in members.iter().enumerate() {
-                let UnionMember::Type(ty) = *member else {
-                    unreachable!()
+            // A projection left is of a rigid's schema, or can't be evaluated. The
+            // former is below the same projection of the rigid's bound.
+            let mut derived = Vec::new();
+            for (index, &member) in members.iter().enumerate() {
+                let (term, step) = match member {
+                    UnionMember::Type(ty) => (view.child(ty), Step::UnionMember(index)),
+                    _ if self.rigid(member.id())?.is_some() => {
+                        let Some(bound) = self.rigid_bound(member.id()) else {
+                            return Err(Residual::Unsupported.into());
+                        };
+                        let projected =
+                            self.db.intern(Type::Union(vec![member.with(bound)].into()));
+                        (self.closed(projected), Step::RigidBound)
+                    }
+                    _ => return Err(Residual::Unsupported.into()),
                 };
-                self.derive(
-                    obligation,
-                    view.child(ty),
-                    expected,
-                    Step::UnionMember(index),
-                );
+                derived.push((term, step));
+            }
+            for (term, step) in derived {
+                self.derive(obligation, term, expected, step);
             }
             return Ok(());
         }
@@ -1850,15 +1865,36 @@ impl<'db> Solver<'db> {
         {
             // Testing alternatives must never add bounds to this solver.
             let actual = self.reify(actual)?;
+            // A literal is outside a union if it's outside each member. So is a
+            // class with infinitely many literals, if it's outside each member but
+            // its literals, which are finitely many: one of its literals is below
+            // a nominal member only if the class is.
+            let infinite = [Intrinsic::Int, Intrinsic::Str, Intrinsic::Sym]
+                .into_iter()
+                .any(|intrinsic| self.db.intrinsic(intrinsic) == Some(actual));
+            let mut outside = infinite || matches!(self.db.ty(actual), Type::Literal(_));
             for member in members.iter() {
-                if let UnionMember::Type(ty) = *member
-                    && let Ok(expected) = self.reify(view.child(ty))
-                    && self.probe(actual, expected)? == Status::Proven
-                {
-                    return Ok(());
+                let UnionMember::Type(ty) = *member else {
+                    outside = false;
+                    continue;
+                };
+                let Ok(expected) = self.reify(view.child(ty)) else {
+                    outside = false;
+                    continue;
+                };
+                if infinite && matches!(self.db.ty(expected), Type::Literal(_)) {
+                    continue;
+                }
+                match self.probe(actual, expected)? {
+                    Status::Proven => return Ok(()),
+                    Status::Contradicted => {}
+                    Status::Unresolved => outside = false,
                 }
             }
-            return Err(Residual::Unsupported.into());
+            return Err(match outside {
+                true => Issue::Contradiction(Contradiction::Outside),
+                false => Residual::Unsupported.into(),
+            });
         }
         match (a, b) {
             (Head::Infer(a), Head::Infer(b)) if a == b => Ok(()),
@@ -2058,28 +2094,36 @@ impl<'db> Solver<'db> {
                 stack.push((dependency.obligation, false));
             }
         }
-        // Historical edges explain contradictions, but are not current proof premises.
-        let mut history = vec![(root, vec![root])];
-        let mut seen = HashSet::new();
-        while let Some((id, path)) = history.pop() {
-            if !seen.insert(id) {
-                continue;
-            }
-            if let State::Issue(issue @ Issue::Contradiction(_)) =
-                self.obligations[id.0].state.get()
-                && !diagnostics
-                    .iter()
-                    .any(|d| d.path.last() == Some(&id) && d.issue == issue)
-            {
-                diagnostics.push(Diagnostic {
-                    issue,
-                    path: path.clone(),
-                });
-            }
-            for dependency in self.obligations[id.0].dependencies.iter() {
-                let mut next = path.clone();
-                next.push(dependency.obligation);
-                history.push((dependency.obligation, next));
+        // Historical edges explain contradictions, but are not current proof
+        // premises. A path through an assignment explains a contradiction only by
+        // what the assignment was drawn from, so one is taken only where no other
+        // reaches it.
+        for assignments in [false, true] {
+            let mut history = vec![(root, vec![root])];
+            let mut seen = HashSet::new();
+            while let Some((id, path)) = history.pop() {
+                if !seen.insert(id) {
+                    continue;
+                }
+                if let State::Issue(issue @ Issue::Contradiction(_)) =
+                    self.obligations[id.0].state.get()
+                    && !diagnostics
+                        .iter()
+                        .any(|d| d.path.last() == Some(&id) && d.issue == issue)
+                {
+                    diagnostics.push(Diagnostic {
+                        issue,
+                        path: path.clone(),
+                    });
+                }
+                for dependency in self.obligations[id.0].dependencies.iter() {
+                    if !assignments && dependency.step == Step::Assignment {
+                        continue;
+                    }
+                    let mut next = path.clone();
+                    next.push(dependency.obligation);
+                    history.push((dependency.obligation, next));
+                }
             }
         }
         if self.exhausted.get() {

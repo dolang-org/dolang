@@ -246,6 +246,18 @@ fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
             Designated::Intrinsic(Intrinsic::Union),
             DeclKind::OpaqueAlias,
         ),
+        ("std", "Keys") => (
+            Designated::Intrinsic(Intrinsic::Keys),
+            DeclKind::OpaqueAlias,
+        ),
+        ("std", "Values") => (
+            Designated::Intrinsic(Intrinsic::Values),
+            DeclKind::OpaqueAlias,
+        ),
+        ("std", "Entries") => (
+            Designated::Intrinsic(Intrinsic::Entries),
+            DeclKind::OpaqueAlias,
+        ),
         ("std", "Func") => (Designated::Intrinsic(Intrinsic::Func), DeclKind::Class),
         ("std", "Int") => (Designated::Intrinsic(Intrinsic::Int), DeclKind::Class),
         ("std", "Bool") => (Designated::Intrinsic(Intrinsic::Bool), DeclKind::Class),
@@ -262,7 +274,7 @@ fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
         ("std", "Bin") => (Designated::Bin, DeclKind::Class),
         ("std", "Array") => (Designated::Array, DeclKind::Class),
         ("std", "Dict") => (Designated::Dict, DeclKind::Class),
-        ("std", "Tuple") => (Designated::Tuple, DeclKind::Class),
+        ("std", "Tuple") => (Designated::Intrinsic(Intrinsic::Tuple), DeclKind::Class),
         ("std", "Record") => (Designated::Record, DeclKind::Class),
         ("std", "Range") => (Designated::Range, DeclKind::Class),
         ("std", "BaseIterable") => (Designated::BaseIterable, DeclKind::Protocol),
