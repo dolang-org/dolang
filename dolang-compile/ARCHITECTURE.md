@@ -227,8 +227,13 @@ many items contradict the judgment, naming the expected item that can go missing
 or the actual item that can be excess. So does a literal key whose count can
 fall outside its item's multiplicity, where a domain on the actual side may hold
 the key any number of times. Keys not named on the expected side go to its
-single repeated domain; several domains are residual. When several expected
-repeated items could take the overflow, the judgment is residual.
+single repeated domain. Several repeated domains own keys as a literal key does:
+each member of an actual item's key goes to the narrowest domain admitting it,
+and to any domain lying inside it, and its value must fit each. So a lookup
+bound `{*(K): V, ...}` isn't vacuous, though its `...` admits every key. A
+domain key still to be inferred waits for its solution, and one whose relation
+to an item's key can't be decided is residual. When several expected repeated
+items could take the overflow, the judgment is residual.
 
 A positional item may someday be admitted as an `Int`-keyed item. Until that
 rule exists, positional items against an expected schema with none but a domain
@@ -364,13 +369,18 @@ never defaulted. The caller defaults a variable's lower bounds before it, such
 as a call's binders before its result, and solves between defaults so that
 their consequences can force later variables. Defaulted assignments are marked
 as such, so a contradiction reached through one can be reported as an inference
-choice. A default decays the join's literals to their classes, except in exact
-schema keys and binder bounds, unless the decayed join violates a bound; a
-forced assignment keeps its literals, since its bounds require them. To help a
-caller choose, `raised` finds the variables that raising given terms could
-raise: those at a covariant or invariant position in them, or in a raised
-variable's upper bounds. A function's parameters and channels don't count, and a
-form it can't see into counts in full.
+choice. A default can decay the join's literals to their classes, except in
+exact schema keys and binder bounds, unless the decayed join violates a bound; a
+forced assignment keeps its literals, since its bounds require them. A rule
+decays only where a literal would lock in: `locked` finds the variables that its
+outputs (its results, and as inputs the parameters of the `do` blocks it passes
+values) reach at a position that isn't covariant, through variables' bounds,
+where a later value couldn't widen them; the rest keep their precise join, which
+subsumption widens as needed. To help a caller choose, `raised` finds the
+variables that raising given terms could raise: those at a covariant or
+invariant position in them, or in a raised variable's upper bounds. A function's
+parameters and channels don't count, and a form it can't see into counts in
+full.
 
 Joins, for defaults and for flow state, drop union members proven below another
 member. A member containing `Unknown` neither subsumes nor is subsumed, since
@@ -575,7 +585,11 @@ literals decay. It keeps the annotation when it fits. A `nil` or symbol literal
 that doesn't is a sentinel, joined into the variable's type for the body to
 narrow away, while callers see only the annotation. Any other default is
 reported. An `Assume` narrows with
-`Solver::narrow`, and an edge left with nothing is unreachable. A step that can
+`Solver::narrow`, and an edge left with nothing is unreachable. Flow state marks
+a stack entry that a `Dup` copied from the one below it, and any other step
+clears the mark. An `If` on a marked copy narrows the original on its `then`
+edge to its truthy values, dropping `nil` and `false`, so a short circuit's
+result is narrowed by the test it passed. A step that can
 throw joins its prior state into its handler; a `Catch` narrows the exception by
 each clause's class. Parameters are bound at the entry block: a def's from its
 signature under its group's rigids (`Tables::group_rigids`, which also closes
@@ -652,8 +666,28 @@ only reified types leave it:
   admitted, since unpacking checks the count as it runs.
 - A binary string's parts must be `Bin`, and an interpolation's width and
   precision `Int`.
-- Member lookups (`Get`, `Invoke`, `Index`, operators, ranges, field and index
-  targets) give `Unknown` until #794.
+- A member use (`flow/member.rs`) looks its member up (see "Member lookup") and
+  is checked as the runtime makes it, as a call through the member where there
+  is one. A method call passes the receiver first to an instance's method, and
+  calls a field's value or a getter's result as it is. A read gives a field's
+  type, a getter's or `(get)`'s result, or a method bound to its receiver, which
+  is its signature without the receiver parameter unless that mentions the
+  method's own binders. A write must fit a field's type, or calls the setter or
+  `(set)`. Indexing calls `(index)`, and an index target `(assign)`. An operator
+  calls its special method on its left operand, or, as the runtime does, when
+  that lacks it, on its right: the same method with the operands swapped for a
+  commutative operator, and the reflected one (`(rsub)`, `(rdiv)`, `(rediv)`,
+  `(rmod)`) otherwise. `==`, `!=` and `!` are `Bool`, and the comparisons
+  require `(lt)` and are `Bool`. A missing member, and a
+  read or write its kind doesn't allow, are reported. A lookup that can't
+  decide, such as on a union receiver, is an unresolved check, and an overloaded
+  method is dynamic until overloads are resolved (#742).
+- A class object is called as its class-level `(call)`, if it has one, and
+  otherwise as its constructor: `(init)`, looked up on the class applied to its
+  rigids, without its receiver and giving the instance, with the rigids
+  abstracted again and the class's binders merged into `(init)`'s own
+  (`Database::merge_groups`, the inverse of `split`). A class without `(init)`
+  takes no arguments. A range constructs `Range` from its bounds.
 
 A type fixed before the fixed point is pre-seeded as an upper bound on a rule's
 result: a local's annotation, a def's declared result, or a parameter type that

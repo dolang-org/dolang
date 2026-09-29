@@ -1,6 +1,6 @@
 # Windows filesystem types and security descriptor access.
 
-import @fs
+import fs
 import security.windows:
   - @SecDesc
   - @SecDescSpec
@@ -47,7 +47,7 @@ import security.windows:
 # let path = Path r"dir:zone:$DATA"
 # echo (path / "file.txt")  # dir\file.txt
 # ```
-pub class Path
+pub class Path: fs.Path
   # Converts a string or another path to a Windows path.
   #
   # Converting a Unix path is allowed only when it is relative.

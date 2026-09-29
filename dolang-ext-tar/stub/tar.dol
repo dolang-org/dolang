@@ -97,7 +97,7 @@ pub class Entry: Iter[Bin]
 
   # Yields the next content chunk, ending iteration once the entry is
   # exhausted.
-  pub def (next) self
+  pub def (next) self -> Bin
     ...
 
 # Content sink for one scoped TAR entry.
@@ -148,7 +148,7 @@ pub class Reader: Iter[Entry]
 
   # Yields the next [`Entry`](tar.Entry), ending iteration at the end of the
   # archive.
-  pub def (next) self
+  pub def (next) self -> Entry
     ...
 
 # Sequential writer for a new TAR archive.

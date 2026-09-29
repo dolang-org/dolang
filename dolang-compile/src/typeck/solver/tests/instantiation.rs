@@ -318,6 +318,13 @@ fn defaults_decay_literals() {
     // An existing value's invariant argument can't widen
     assert_eq!(s.default(variable_id(existing)), Ok(array_one_two));
     assert_eq!(s.default(variable_id(mixed)), Ok(int));
+
+    // A default that wouldn't lock the literal in keeps it
+    let mut s = Solver::new(&db);
+    let variable = s.infer();
+    s.constrain(s.closed(one), variable, Provenance::default());
+    s.solve();
+    assert_eq!(s.default_with(variable_id(variable), false), Ok(one));
 }
 
 #[test]

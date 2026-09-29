@@ -1,0 +1,242 @@
+# Member use is checked through the member lookup, as the runtime makes it: a
+# method call passes the receiver first, a class call runs `(init)`, and indexing
+# and operators call special methods. A receiver the lookup can't decide, and an
+# overloaded method, are left dynamic.
+
+import std:
+  - @Index
+
+pub def drop x
+  ...
+
+pub class Point
+  pub field x @ Int = 0
+  field secret @ Str = ""
+
+  def (init) self x @ Int
+    self.x = x
+
+  pub def moved self by @ Int -> Point
+    Point (self.x + by)
+
+  pub def peek self -> Str
+    self.#secret
+
+  #[getter]
+  pub def norm self -> Int
+    self.x
+
+  #[setter]
+  pub def label self value @ Str
+    self.#secret = value
+
+  @def pick _self x @ Int -> Int
+  @def pick _self x @ Str -> Str
+  pub def pick _self x
+    x
+
+  #[class]
+  pub def origin cls -> Point
+    ...
+
+pub class Origin: Point
+
+pub class Box[T]
+  pub field item @ T = nil
+
+  def (init) self item @ T
+    self.item = item
+
+  pub def map[U] self f @ ((T) -> U) -> Box[U]
+    ...
+
+  pub def (index) self key @ Int -> T
+    ...
+
+  pub def (assign) self key @ Int value @ T
+    ...
+
+  pub def (add) self other @ Box[T] -> Box[T]
+    ...
+
+  pub def (lt) self other @ Box[T] -> Bool
+    ...
+
+pub class Made
+  #[class]
+  pub def (call) _cls n @ Int -> Str
+    ...
+
+pub class Dir
+  pub def (div) self other @ Str -> Dir
+    ...
+
+  pub def (rdiv) self other @ Str -> Dir
+    ...
+
+pub class Bag
+  pub def (get) self name @ Sym -> Int
+    ...
+
+  pub def (set) self name @ Sym value @ Int
+    ...
+
+pub def fields p @ Point
+  let x = p.x
+  let _ = x
+  #       ^: flow std.Int
+  p.x = 1
+  p.x = "a"
+  # error: expected `std.Int`, found `"a"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   p.x = "a"
+  #    |         ^^^
+  let s = p.peek()
+  let _ = s
+  #       ^: flow std.Str
+  let n = p.norm
+  let _ = n
+  #       ^: flow std.Int
+  p.label = "a"
+  let _ = p.missing
+  # error: `m.Point` has no member `missing`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = p.missing
+  #    |           ^^^^^^^^^
+  p.norm = 1
+  # error: `norm` has no setter
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   p.norm = 1
+  #    |   ^^^^^^^^^^
+  p.moved = 1
+# error: `moved` is a method, which can't be assigned
+#   --> m.dol:LL:LL
+#    |
+# LL |   p.moved = 1
+#    |   ^^^^^^^^^^^
+
+pub def methods p @ Point
+  let q = p.moved 1
+  let _ = q
+  #       ^: flow m.Point
+  p.moved "a"
+  # error: expected `std.Int`, found `"a"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   p.moved "a"
+  #    |           ^^^
+  let m = p.moved
+  let _ = m
+  #       ^: flow forall (std.Int) <#0.0 >#0.1 -> m.Point
+  let o = Point.origin()
+  let _ = o
+  #       ^: flow m.Point
+  let k = p.pick 1
+  let _ = k
+  #       ^: flow Unknown
+
+pub def generic b @ Box[Int]
+  let i = b.item
+  let _ = i
+  #       ^: flow std.Int
+  let c = b.map do |y|
+    let _ = y
+    #       ^: flow std.Int
+    "a"
+  let _ = c
+  #       ^: flow m.Box[std.Str]
+  let e = b[0]
+  let _ = e
+  #       ^: flow std.Int
+  b[0] = 1
+  b[0] = "a"
+  # error: expected `std.Int`, found `"a"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   b[0] = "a"
+  #    |          ^^^
+  let d = (b + b)
+  let _ = d
+  #       ^: flow m.Box[std.Int]
+  let l = (b > b)
+  let _ = l
+  #       ^: flow std.Bool
+  let q = (b == 1)
+  let _ = q
+  #       ^: flow std.Bool
+
+pub def reflected d @ Dir
+  let a = (d / "x")
+  let _ = a
+  #       ^: flow m.Dir
+  # `Str` has no `(div)`, so the right operand's `(rdiv)` is called
+  let b = ("x" / d)
+  let _ = b
+  #       ^: flow m.Dir
+
+pub def fallback g @ Bag
+  let n = g.anything
+  let _ = n
+  #       ^: flow std.Int
+  g.anything = 1
+  g.anything = "a"
+# error: expected `std.Int`, found `"a"`
+#   --> m.dol:LL:LL
+#    |
+# LL |   g.anything = "a"
+#    |                ^^^
+
+pub def constructed()
+  let p = Point 1
+  let _ = p
+  #       ^: flow m.Point
+  Point "a"
+  # error: expected `std.Int`, found `"a"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   Point "a"
+  #    |         ^^^
+  let m = Made 1
+  let _ = m
+  #       ^: flow std.Str
+  let o = Origin 1
+  let _ = o
+  #       ^: flow m.Origin
+  let b = Box "a"
+  let _ = b
+  #       ^: flow m.Box[std.Str]
+  let r = 1..3
+  let _ = r
+  #       ^: flow std.Range[std.Int]
+
+pub def dynamic x u @ (Point | Box[Int])
+  let a = x.anything
+  let _ = a
+  #       ^: flow Unknown
+  let b = u.x
+  let _ = b
+  #       ^: flow Unknown
+
+# A literal key picks its own item, since the key isn't decayed
+pub def looked d @ Dict[{a: Int, b: Str}] k @ Sym i @ Index[{a: Int}]
+  let a = d[:a:]
+  let _ = a
+  #       ^: flow std.Int
+  let b = d[:b:]
+  let _ = b
+  #       ^: flow std.Str
+  # A key type owns every item whose key it admits
+  let e = d[k]
+  let _ = e
+  #       ^: flow std.Int | std.Str
+  # Nothing has the key
+  let c = d[:c:]
+  let _ = c
+  #       ^: flow Unknown
+  let j = i[:a:]
+  let _ = j
+  #       ^: flow std.Int
+  d[:a:] = 1

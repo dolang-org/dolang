@@ -44,12 +44,35 @@ pub(crate) enum Problem {
         found: String,
         annotation: String,
     },
+    /// A member the receiver doesn't have
+    MissingMember {
+        span: Span,
+        receiver: String,
+        name: String,
+    },
+    /// A member used in a way its kind doesn't allow
+    MemberUse {
+        span: Span,
+        name: String,
+        misuse: MemberUse,
+    },
     /// A variable read where it may not be assigned yet
     Unassigned {
         span: Span,
         name: String,
         definitely: bool,
     },
+}
+
+/// How a member is misused
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MemberUse {
+    /// Reading a property without a getter
+    Read,
+    /// Writing a property without a setter
+    Write,
+    /// Assigning to a method
+    Method,
 }
 
 /// What a value is required to be
@@ -74,6 +97,8 @@ impl Diagnose for Problem {
             | Problem::Misfit { span, .. }
             | Problem::Annotation { span, .. }
             | Problem::Default { span, .. }
+            | Problem::MissingMember { span, .. }
+            | Problem::MemberUse { span, .. }
             | Problem::Unassigned { span, .. } => span,
         }
     }
@@ -128,6 +153,14 @@ impl Diagnose for Problem {
                 w,
                 "default `{found}` does not fit the annotation `{annotation}`, and isn't a `nil` or symbol sentinel"
             ),
+            Problem::MissingMember { receiver, name, .. } => {
+                write!(w, "`{receiver}` has no member `{name}`")
+            }
+            Problem::MemberUse { name, misuse, .. } => match misuse {
+                MemberUse::Read => write!(w, "`{name}` has no getter"),
+                MemberUse::Write => write!(w, "`{name}` has no setter"),
+                MemberUse::Method => write!(w, "`{name}` is a method, which can't be assigned"),
+            },
             Problem::Unassigned {
                 name,
                 definitely: true,

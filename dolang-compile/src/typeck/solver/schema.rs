@@ -13,6 +13,12 @@
 //! the lanes it occupies unchecked. Inclusion holds when every way of filling
 //! the actual side's multiplicities fits the expected side; each actual atom
 //! must then fit every expected atom its items can land on.
+//!
+//! Where the expected side has several keyed domains, as a lookup's
+//! `{*(K): V, ...}` does, an item belongs to the narrowest domain that admits
+//! its key, as a literal key owns its items, rather than to any domain that
+//! would take it: otherwise a domain of every key would leave the others
+//! nothing to check.
 
 use std::collections::BTreeSet;
 
@@ -707,6 +713,14 @@ impl Solver<'_> {
             .partition(|(literal, _)| *literal);
         let literals: Vec<&KeyedAtom> = literals.into_iter().map(|(_, y)| y).collect();
         let domains: Vec<&KeyedAtom> = domains.into_iter().map(|(_, y)| y).collect();
+        // Several domains own items by their keys, so each key must be known
+        if domains.len() > 1 {
+            for domain in &domains {
+                if let Head::Infer(_) = self.head(domain.key)? {
+                    return Err(Residual::Inference.into());
+                }
+            }
+        }
         for (i, y) in literals.iter().enumerate() {
             for other in &literals[..i] {
                 if self.same(y.key, other.key)? {
@@ -766,7 +780,76 @@ impl Solver<'_> {
                     self.derive(obligation, x.key, domain.key, Step::Key(x.item));
                     self.derive(obligation, x.value, domain.value, Step::Item(x.item));
                 }
+                [_, _, ..]
+                    if (domains.iter()).all(|d| d.multiplicity == Multiplicity::Repeated) =>
+                {
+                    self.owners(x, &domains, open_expected, obligation)?;
+                }
                 _ => return Err(Residual::Unsupported.into()),
+            }
+        }
+        Ok(())
+    }
+
+    /// Give an actual keyed atom to the expected domains that own its keys. Each
+    /// member of its key goes to the narrowest domain that admits it, and to any
+    /// domain lying inside it, which owns part of it; its value must fit each.
+    fn owners(
+        &self,
+        x: &KeyedAtom,
+        domains: &[&KeyedAtom],
+        open_expected: bool,
+        obligation: ObligationId,
+    ) -> Result<(), Issue> {
+        let keys: Vec<TypeId> = (domains.iter())
+            .map(|domain| self.reify(domain.key))
+            .collect::<Result<_, _>>()?;
+        for member in self.union_members(self.reify(x.key)?) {
+            let UnionMember::Type(member) = member else {
+                return Err(Residual::Unsupported.into());
+            };
+            // Each overlapping domain, and whether it admits the whole member. A
+            // domain lies inside a member only if the member isn't a literal.
+            let literal = matches!(self.db.ty(member), Type::Literal(_));
+            let mut overlapping = Vec::new();
+            for (d, &key) in keys.iter().enumerate() {
+                let whole = self.probe(member, key)?;
+                if whole == Status::Proven {
+                    overlapping.push((d, true));
+                    continue;
+                }
+                let inside = match literal {
+                    true => Status::Contradicted,
+                    false => self.probe(key, member)?,
+                };
+                match (whole, inside) {
+                    (_, Status::Proven) => overlapping.push((d, false)),
+                    (Status::Contradicted, Status::Contradicted) => {}
+                    _ => return Err(Residual::Unsupported.into()),
+                }
+            }
+            if overlapping.is_empty() {
+                let view = self.closed(member);
+                if open_expected {
+                    continue;
+                }
+                if self.literal(view)? || self.nominal_head(view)? {
+                    return Err(Issue::Contradiction(Contradiction::Excess(x.item)));
+                }
+                return Err(Residual::Unsupported.into());
+            }
+            for &(d, _) in &overlapping {
+                // A narrower domain admitting the whole member owns it instead
+                let mut narrowed = false;
+                for &(e, whole) in &overlapping {
+                    narrowed |= whole
+                        && keys[e] != keys[d]
+                        && self.probe(keys[e], keys[d])? == Status::Proven;
+                }
+                if !narrowed {
+                    let item = Step::Item(x.item);
+                    self.derive(obligation, x.value, domains[d].value, item);
+                }
             }
         }
         Ok(())

@@ -804,38 +804,75 @@ impl<'db> Solver<'db> {
     /// type and never raises. A form the walk can't see into counts as an output.
     pub(crate) fn raised(&self, terms: &[Term]) -> Result<HashSet<InferVarId>, Residual> {
         let mut raised = HashSet::new();
+        let mut visit = |id: InferVarId, variance: Variance| {
+            if variance == Variance::Contravariant || !raised.insert(id) {
+                return Vec::new();
+            }
+            self.bounds(id).upper().collect()
+        };
         for &term in terms {
-            self.raise(term, Variance::Covariant, 0, &mut raised, 0)?;
+            self.variances(term, Variance::Covariant, false, &mut visit, 0, 0)?;
         }
         Ok(raised)
     }
 
-    fn raise(
+    /// The unsolved variables a default would lock in by choosing a literal: those
+    /// that the given terms, at the given variances, reach at a position that
+    /// isn't covariant, where a later value can't widen them. A variable's bounds
+    /// are walked at its own position, since its default is the join of its lower
+    /// bounds; its upper bounds are walked too, which can only lock more. A form
+    /// the walk can't see into counts as invariant.
+    pub(crate) fn locked(
+        &self,
+        roots: &[(Term, Variance)],
+    ) -> Result<HashSet<InferVarId>, Residual> {
+        let mut locked = HashSet::new();
+        let mut seen = HashSet::new();
+        let mut visit = |id: InferVarId, variance: Variance| {
+            if !seen.insert((id, variance)) {
+                return Vec::new();
+            }
+            if variance != Variance::Covariant {
+                locked.insert(id);
+            }
+            let bounds = self.bounds(id);
+            bounds.lower().chain(bounds.upper()).collect()
+        };
+        for &(term, variance) in roots {
+            self.variances(term, variance, true, &mut visit, 0, 0)?;
+        }
+        Ok(locked)
+    }
+
+    /// Walk a term's unsolved variables with the variance of each position they
+    /// occur at, composed from `variance`. `visit` gives the terms to walk next,
+    /// at the same variance. A function's parameters and channels are walked
+    /// contravariantly if `inputs`, and otherwise not at all.
+    fn variances(
         &self,
         term: Term,
         variance: Variance,
+        inputs: bool,
+        visit: &mut impl FnMut(InferVarId, Variance) -> Vec<Term>,
         local: u32,
-        raised: &mut HashSet<InferVarId>,
         depth: usize,
     ) -> Result<(), Residual> {
         self.depth(depth)?;
         let view = match term {
             Term::Infer(id) => {
-                if self.solution(id).is_some()
-                    || variance == Variance::Contravariant
-                    || !raised.insert(id)
-                {
+                if self.solution(id).is_some() {
                     return Ok(());
                 }
-                for upper in self.bounds(id).upper() {
-                    self.raise(upper, variance, 0, raised, depth + 1)?;
+                for next in visit(id, variance) {
+                    self.variances(next, variance, inputs, visit, 0, depth + 1)?;
                 }
                 return Ok(());
             }
             Term::View(view) => view,
         };
         let mut walk = |ty: TypeId, variance: Variance, groups: u32| {
-            self.raise(view.child(ty), variance, local + groups, raised, depth + 1)
+            let child = view.child(ty);
+            self.variances(child, variance, inputs, visit, local + groups, depth + 1)
         };
         match *self.db.ty(view.ty) {
             Type::Bound { reference, kind } => {
@@ -848,7 +885,7 @@ impl<'db> Solver<'db> {
                     reference.slot,
                     kind,
                 );
-                self.raise(value, variance, 0, raised, depth + 1)
+                self.variances(value, variance, inputs, visit, 0, depth + 1)
             }
             Type::Top
             | Type::Unknown(_)
@@ -879,7 +916,16 @@ impl<'db> Solver<'db> {
                 }
                 Ok(())
             }
-            Type::Function(ref function) => walk(function.result, variance, 0),
+            Type::Function(ref function) => {
+                if inputs {
+                    let flipped = compose(variance, Variance::Contravariant);
+                    walk(function.params, flipped, 0)?;
+                    for channel in [function.input, function.output].into_iter().flatten() {
+                        walk(channel, flipped, 0)?;
+                    }
+                }
+                walk(function.result, variance, 0)
+            }
             Type::Schema(ref items) => {
                 for item in items.iter() {
                     match item.element {
@@ -1014,6 +1060,13 @@ impl<'db> Solver<'db> {
     /// default can't be shown to satisfy leaves the variable unsolved; if the
     /// bounds contradict each other, those obligations report it.
     pub(crate) fn default(&mut self, id: InferVarId) -> Result<TypeId, Residual> {
+        self.default_with(id, true)
+    }
+
+    /// [`Self::default`], keeping the precise join unless `decay`: a caller
+    /// decays only the variables whose choice a literal would lock in (see
+    /// [`Self::locked`])
+    pub(crate) fn default_with(&mut self, id: InferVarId, decay: bool) -> Result<TypeId, Residual> {
         if let Some(ty) = self.solution(id) {
             return Ok(ty);
         }
@@ -1040,7 +1093,7 @@ impl<'db> Solver<'db> {
                 }
                 self.below_upper(id, decayed)
             };
-            if decayed != precise && admitted().unwrap_or(false) {
+            if decay && decayed != precise && admitted().unwrap_or(false) {
                 decayed
             } else {
                 precise
@@ -2078,6 +2131,7 @@ mod narrow;
 mod schema;
 
 pub(crate) use lattice::Widening;
+pub(crate) use member::{FoundKind, Lookup};
 pub(crate) use narrow::Target as NarrowTarget;
 
 #[cfg(test)]

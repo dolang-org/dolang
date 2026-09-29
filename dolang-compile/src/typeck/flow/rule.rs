@@ -32,7 +32,7 @@ use crate::{
         },
         r#type::{
             Argument, BoundRef, Database, DeclId, Element, Function, Kind, Literal, Multiplicity,
-            Rest, SchemaItem, SymbolId, Type, TypeId, UnionMember,
+            Rest, SchemaItem, SymbolId, Type, TypeId, UnionMember, Variance,
         },
     },
 };
@@ -600,6 +600,14 @@ fn hold<'e>(
     Some(values.held.len() - 1)
 }
 
+/// A call's own arguments, what its result is expected to be, and where it is
+#[derive(Clone, Copy)]
+pub(super) struct Call<'e> {
+    pub(super) args: &'e [Item],
+    pub(super) expected: Option<TypeId>,
+    pub(super) span: Span,
+}
+
 /// What a call can pass its arguments against, when the callee's parameters are
 /// known from its signature alone
 #[derive(Default)]
@@ -644,7 +652,8 @@ impl<'a> Flow<'a, '_> {
                 _ => false,
             };
             let outcomes = if default {
-                default_all(&mut solver, self.db, true)
+                let roots = outputs(&results, &[]);
+                default_all(&mut solver, self.db, true, Some(&roots))
             } else {
                 solver.solve()
             };
@@ -686,7 +695,7 @@ impl<'a> Flow<'a, '_> {
             return values;
         }
         let (passed, pending) = lambdas;
-        for (var, ty) in self::passed(&mut solver, self.db, &passed, &pending) {
+        for (var, ty) in self::passed(&mut solver, self.db, &results, &passed, &pending) {
             self.join(var, ty);
         }
         values
@@ -814,8 +823,9 @@ impl<'a> Flow<'a, '_> {
     /// that takes an expectation its generic callee's signature alone doesn't give
     /// is held back until the call's pre-solve does (see [`Flow::expectations`]).
     /// A comprehension's arguments are passed as often as it says: see
-    /// [`Flow::gather`]. A callee that isn't a function or a union of them gives
-    /// the dynamic type.
+    /// [`Flow::gather`]. A class object is called as its constructor (see
+    /// [`Flow::construct`]). A callee that isn't a function or a union of them
+    /// gives the dynamic type.
     pub(super) fn call(
         &mut self,
         at: At,
@@ -827,16 +837,53 @@ impl<'a> Flow<'a, '_> {
         let ExprKind::Call { callee, args, .. } = &expr.kind else {
             unreachable!("a call")
         };
+        let callee_type = self.eval(at, state, operands, callee);
+        let call = Call {
+            args,
+            expected,
+            span: expr.span,
+        };
+        if let Some(class) = self.class_of(callee_type) {
+            return self.construct(at, state, operands, callee_type, class, call);
+        }
+        self.call_with(at, state, operands, callee_type, &[], call)
+    }
+
+    /// A call of `callee`, passing `receivers` before the call's own arguments, as
+    /// a method call passes its receiver
+    pub(super) fn call_with(
+        &mut self,
+        at: At,
+        state: &mut State,
+        operands: &mut VecDeque<TypeId>,
+        callee_type: TypeId,
+        receivers: &[(TypeId, Span)],
+        call: Call<'_>,
+    ) -> TypeId {
+        let Call {
+            args,
+            expected,
+            span,
+        } = call;
         let bottom = self.db.bottom();
         let unknown = self.db.unknown();
-        let callee_type = self.eval(at, state, operands, callee);
         let (input, output) = self.channels(at);
-        let params = self.params(callee_type).unwrap_or_default();
+        let mut params = self.params(callee_type).unwrap_or_default();
+        let skipped = receivers.len().min(params.positional.len());
+        params.positional.drain(..skipped);
         let generic = matches!(self.db.ty(callee_type), Type::Quantified { .. });
         let mut values = self.values(at, state, operands, args, Some(&params), true, generic);
+        values.never |= receivers.iter().any(|&(ty, _)| ty == bottom);
+        values.values.splice(
+            0..0,
+            receivers.iter().map(|&(ty, span)| Placed {
+                value: Value::Pos(ty, span),
+                multiplicity: Multiplicity::Required,
+                group: None,
+            }),
+        );
         let callable = self.callable(callee_type);
         let spread = self.designated(Designated::Spread);
-        let span = expr.span;
         if !values.held.is_empty() {
             let expectations = match callee_type != bottom && !values.never && callable {
                 true => self.expectations(callee_type, &values, input, output, expected, span),
@@ -929,7 +976,7 @@ impl<'a> Flow<'a, '_> {
         }
         let terms: Vec<Term> = held.iter().map(|&(_, term)| term).collect();
         let raised = (solver.raised(&terms)).unwrap_or_else(|_| solver.unresolved().collect());
-        default_where(&mut solver, |id| !raised.contains(&id));
+        default_where(&mut solver, |id| !raised.contains(&id), None);
         for (index, term) in held {
             expectations[index] = expectation(&solver, term);
         }
@@ -1580,6 +1627,17 @@ impl<'a> Flow<'a, '_> {
         })[0]
     }
 
+    /// A value stored where its type must be `ty`, as a field is
+    pub(super) fn store(&mut self, at: At, value: TypeId, ty: TypeId, span: Span) {
+        if value == self.db.bottom() {
+            return;
+        }
+        self.conclude(at, None, |rule| {
+            rule.constrain(rule.closed(value), rule.closed(ty), Check::Expected(span));
+            Vec::new()
+        });
+    }
+
     /// A binary string: each interpolated part must be binary
     pub(super) fn bin_concat(
         &mut self,
@@ -1758,6 +1816,7 @@ fn root(outcome: &Outcome) -> ObligationId {
 fn passed(
     solver: &mut Solver<'_>,
     db: &Database,
+    results: &[Term],
     passed: &[(VarId, Term)],
     pending: &[Term],
 ) -> Vec<(VarId, TypeId)> {
@@ -1767,17 +1826,36 @@ fn passed(
     for &term in pending {
         solver.constrain(solver.closed(db.bottom()), term, Provenance::default());
     }
-    default_all(solver, db, false);
+    let parameters: Vec<Term> = passed.iter().map(|&(_, term)| term).collect();
+    let roots = outputs(results, &parameters);
+    default_all(solver, db, false, Some(&roots));
     (passed.iter())
         .filter_map(|&(var, term)| solver.reify(term).ok().map(|ty| (var, ty)))
         .collect()
 }
 
+/// What a rule produces, for [`Solver::locked`]: its results, and the
+/// parameters of the `do` blocks it passes values, which are inputs of their
+/// function types
+fn outputs(results: &[Term], parameters: &[Term]) -> Vec<(Term, Variance)> {
+    let results = results.iter().map(|&term| (term, Variance::Covariant));
+    let parameters = parameters
+        .iter()
+        .map(|&term| (term, Variance::Contravariant));
+    results.chain(parameters).collect()
+}
+
 /// Solve, defaulting every unsolved variable whose lower bounds are solved, and,
 /// if `bare`, then any variable without lower bounds to the dynamic type of its
-/// kind, until nothing more can be defaulted
-fn default_all(solver: &mut Solver<'_>, db: &Database, bare: bool) -> Vec<Outcome> {
-    let mut outcomes = default_where(solver, |_| true);
+/// kind, until nothing more can be defaulted. Literals decay as
+/// [`default_where`] decays them.
+fn default_all(
+    solver: &mut Solver<'_>,
+    db: &Database,
+    bare: bool,
+    roots: Option<&[(Term, Variance)]>,
+) -> Vec<Outcome> {
+    let mut outcomes = default_where(solver, |_| true, roots);
     if !bare {
         return outcomes;
     }
@@ -1797,21 +1875,34 @@ fn default_all(solver: &mut Solver<'_>, db: &Database, bare: bool) -> Vec<Outcom
                 Provenance::default(),
             );
         }
-        outcomes = default_where(solver, |_| true);
+        outcomes = default_where(solver, |_| true, roots);
     }
     outcomes
 }
 
 /// Solve, defaulting every unsolved variable that `keep` admits whose lower
-/// bounds are solved, until nothing more can be defaulted
-fn default_where(solver: &mut Solver<'_>, keep: impl Fn(InferVarId) -> bool) -> Vec<Outcome> {
+/// bounds are solved, until nothing more can be defaulted. A default decays its
+/// literals only if a literal would lock in: if the variable is among what
+/// [`Solver::locked`] finds from `roots`, the rule's outputs, or always without
+/// them.
+fn default_where(
+    solver: &mut Solver<'_>,
+    keep: impl Fn(InferVarId) -> bool,
+    roots: Option<&[(Term, Variance)]>,
+) -> Vec<Outcome> {
     let mut outcomes = solver.solve();
     // Each round solves at least one variable; the limit only guards the solver
     for _ in 0..64 {
         let unsolved: Vec<_> = solver.unresolved().filter(|&id| keep(id)).collect();
+        // Defaults add bounds, so what's locked is found again each round
+        let locked = roots.map(|roots| solver.locked(roots));
         let mut progress = false;
         for id in unsolved {
-            progress |= solver.default(id).is_ok();
+            let decay = match &locked {
+                Some(Ok(locked)) => locked.contains(&id),
+                Some(Err(_)) | None => true,
+            };
+            progress |= solver.default_with(id, decay).is_ok();
         }
         if !progress {
             break;

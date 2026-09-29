@@ -1161,6 +1161,18 @@ pub class Path
   do -> Path
     ...
 
+  # Joins a path, or derives the path of a directory entry or stream.
+  pub def (div) self other @ (Str | Path | DirEntry | StreamEntry) -> Path
+    ...
+
+  # Joins this path onto a string or path.
+  pub def (rdiv) self other @ (Str | Path) -> Path
+    ...
+
+  # Orders paths lexically.
+  pub def (lt) self other @ Path -> Bool
+    ...
+
   # Joins path components into a single path.
   #
   # If any component is an absolute path, it replaces everything before it.
@@ -1434,8 +1446,72 @@ pub class Path
   # which documents the metadata keyword arguments.
   pub def update_metadata
     self
-    # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
+    :max_depth @ Int = nil
+    :resolve @ Resolve = nil
+    :all @ Bool = nil
+    :all @ Bool = nil
+    :ignore @ Bool = nil
+    :all @ Bool = nil
+    :ignore @ Bool = nil
+    :all @ Bool = nil
+    :all @ Bool = nil
+    :replace @ Bool = nil
+    :kind @ (:POSIX: | :NFS4: | :MACOS:) = nil
+    :default @ Bool = nil
+    :resolve @ Resolve = nil
+    :kind @ (:POSIX: | :NFS4: | :MACOS:) = nil
+    :default @ Bool = nil
+    :resolve @ Resolve = nil
+    :namespace @ (XattrNamespace | :ANY:) = nil
+    :resolve @ Resolve = nil
+    :namespace @ XattrNamespace = nil
+    :resolve @ Resolve = nil
+    :namespace @ XattrNamespace = nil
+    :resolve @ Resolve = nil
+    :namespace @ XattrNamespace = nil
+    :resolve @ Resolve = nil
+    :range @ Range[Int] = nil
+    :size @ Int = nil
+    :offset @ Int = nil
+    :clone @ CloneMode = nil
+    :data @ Bool = nil
+    :resolve @ Resolve = nil
+    :resolve @ Resolve = nil
+    :resolve @ Resolve = nil
+    :mode @ (Int | Mode) = nil
+    :owner @ (Int | Str | Sid) = nil
+    :group @ (Int | Str | Sid) = nil
+    :modified @ DateTime = nil
+    :accessed @ DateTime = nil
+    :created @ DateTime = nil
+    :readonly @ Bool = nil
+    :hidden @ Bool = nil
+    :system @ Bool = nil
+    :archive @ Bool = nil
+    :compressed @ Bool = nil
+    :sparse @ Bool = nil
+    :temporary @ Bool = nil
+    :offline @ Bool = nil
+    :not_content_indexed @ Bool = nil
+    :immutable @ Bool = nil
+    :append_only @ Bool = nil
+    :no_dump @ Bool = nil
+    :no_atime @ Bool = nil
+    :no_copy_on_write @ Bool = nil
+    :dir_sync @ Bool = nil
+    :casefold @ Bool = nil
+    :data_journaling @ Bool = nil
+    :no_compress @ Bool = nil
+    :project_inherit @ Bool = nil
+    :secure_delete @ Bool = nil
+    :sync @ Bool = nil
+    :no_tail_merge @ Bool = nil
+    :top_dir @ Bool = nil
+    :undelete @ Bool = nil
+    :direct_access @ Bool = nil
+    :extent_format @ Bool = nil
+    :opaque @ Bool = nil
   do
     ...
 

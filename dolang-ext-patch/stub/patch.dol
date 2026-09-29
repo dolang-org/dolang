@@ -127,7 +127,7 @@ pub class Patch
 pub class PatchIter: Iter[Patch]
   # Yields the next [`Patch`](patch.Patch), ending iteration once the stream is
   # exhausted.
-  pub def (next) self
+  pub def (next) self -> Patch
     ...
 
 # Parses a patch stream.

@@ -38,6 +38,39 @@ pub @let MaskBit = (
 # ```
 pub class Mask: Iterable[MaskBit] @FlagSet[MaskBit]
 
+  # Constructs a flag set from symbols.
+  #[class]
+  @def (call) cls ...flags@MaskBit -> Mask
+
+  # Constructs a flag set from one iterable of symbols.
+  #[class]
+  @def (call) cls flags@Iterable[MaskBit] -> Mask
+
+  #[class]
+  pub def (call) cls ...flags
+    ...
+
+  # Tests whether all flags named by `flag` are set.
+  pub def contains self flag @ MaskBit -> Bool
+    ...
+
+  # Returns the flags set in either.
+  pub def (bor)[S @ Mask] self@S other@S -> S
+    ...
+
+  # Returns the flags set in both.
+  pub def (band)[S @ Mask] self@S other@S -> S
+    ...
+
+  # Returns the flags set in exactly one.
+  pub def (bxor)[S @ Mask] self@S other@S -> S
+    ...
+
+  # Returns the flags of the type that are not set.
+  pub def (bnot)[S @ Mask] self @ S -> S
+    ...
+
+
 # A symbol naming a flag of a [`Flags`](security.nfs4.Flags).
 #
 # | Symbol                   | Meaning                                                                          |
@@ -62,6 +95,39 @@ pub @let FlagBit = (
 # let inherit = Flags(:FILE_INHERIT:, :DIRECTORY_INHERIT:)
 # ```
 pub class Flags: Iterable[FlagBit] @FlagSet[FlagBit]
+
+  # Constructs a flag set from symbols.
+  #[class]
+  @def (call) cls ...flags@FlagBit -> Flags
+
+  # Constructs a flag set from one iterable of symbols.
+  #[class]
+  @def (call) cls flags@Iterable[FlagBit] -> Flags
+
+  #[class]
+  pub def (call) cls ...flags
+    ...
+
+  # Tests whether all flags named by `flag` are set.
+  pub def contains self flag @ FlagBit -> Bool
+    ...
+
+  # Returns the flags set in either.
+  pub def (bor)[S @ Flags] self@S other@S -> S
+    ...
+
+  # Returns the flags set in both.
+  pub def (band)[S @ Flags] self@S other@S -> S
+    ...
+
+  # Returns the flags set in exactly one.
+  pub def (bxor)[S @ Flags] self@S other@S -> S
+    ...
+
+  # Returns the flags of the type that are not set.
+  pub def (bnot)[S @ Flags] self @ S -> S
+    ...
+
 
 # The type of an entry.
 pub @let AceType = (:ALLOW: | :DENY: | :AUDIT: | :ALARM:)

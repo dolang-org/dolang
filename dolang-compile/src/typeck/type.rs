@@ -1369,6 +1369,84 @@ impl Database {
         self.intern(Type::Quantified { binders, body })
     }
 
+    /// Quantify a type interpreted where a group of `outer` is over that group,
+    /// undoing [`Self::split`]: a type quantified over its own binders is
+    /// quantified over `outer` followed by them.
+    pub(crate) fn merge_groups(&self, outer: &[Binder], ty: TypeId) -> TypeId {
+        if outer.is_empty() {
+            return ty;
+        }
+        let Type::Quantified { binders, body } = self.ty(ty) else {
+            return self.intern(Type::Quantified {
+                binders: outer.iter().cloned().collect(),
+                body: ty,
+            });
+        };
+        // The inner group's bounds, defaults and body see it at depth 0 and the
+        // outer group at depth 1
+        let count = outer.len();
+        let mut memo = HashMap::new();
+        let mut merge = |ty| self.merge_inner(ty, 0, count, &mut memo);
+        let inner: Vec<_> = binders
+            .iter()
+            .map(|binder| Binder {
+                bound: binder.bound.map(&mut merge),
+                default: binder.default.map(&mut merge),
+                ..binder.clone()
+            })
+            .collect();
+        let body = merge(*body);
+        self.intern(Type::Quantified {
+            binders: outer.iter().cloned().chain(inner).collect(),
+            body,
+        })
+    }
+
+    fn merge_inner(
+        &self,
+        id: TypeId,
+        cutoff: u32,
+        count: usize,
+        memo: &mut HashMap<(TypeId, u32), TypeId>,
+    ) -> TypeId {
+        if let Some(result) = memo.get(&(id, cutoff)) {
+            return *result;
+        }
+        let ty = self.ty(id);
+        let mapped = match *ty {
+            Type::Bound { reference, kind } => {
+                let depth = u32::from(reference.depth);
+                let reference = if depth < cutoff {
+                    reference
+                } else if depth == cutoff {
+                    BoundRef {
+                        slot: reference.slot + u16::try_from(count).expect("binder slot overflow"),
+                        ..reference
+                    }
+                } else {
+                    BoundRef {
+                        depth: reference.depth - 1,
+                        ..reference
+                    }
+                };
+                Type::Bound { reference, kind }
+            }
+            _ => ty
+                .map_children(|child, groups| {
+                    Ok::<_, std::convert::Infallible>(self.merge_inner(
+                        child,
+                        cutoff.checked_add(groups).expect("binder cutoff overflow"),
+                        count,
+                        memo,
+                    ))
+                })
+                .unwrap_or_else(|never| match never {}),
+        };
+        let result = self.intern(mapped);
+        memo.insert((id, cutoff), result);
+        result
+    }
+
     /// The shape of a rest mode: `{*Value}`, `{**Sym: Value}` or both. The key is
     /// `Unknown` when `Sym` is not designated.
     pub(crate) fn rest_shape(&self, rest: Rest) -> TypeId {

@@ -406,6 +406,79 @@ fn literal_keys_own_their_items_and_others_go_to_the_domain() {
 }
 
 #[test]
+fn domains_own_what_they_admit_narrowest_first() {
+    use Multiplicity::{Repeated as Rep, Required as Req};
+    let mut db = Database::new();
+    let int = nominal(&mut db, "Int", vec![], vec![]);
+    let sym = nominal(&mut db, "Sym", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Sym, sym);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Str, str);
+    let top = db.top();
+    let [a, b, c] =
+        ["a", "b", "c"].map(|k| db.intern(Type::Literal(Literal::Sym(db.intern_symbol(k)))));
+    let text = db.intern(Type::Literal(Literal::Str("x".into())));
+    // A lookup of `key`'s values as `value`: `{*(key): value, ...}`
+    let lookup =
+        |db: &Database, key, value| items(db, vec![keyed(Rep, key, value), keyed(Rep, top, top)]);
+    let a_b = items(&db, vec![keyed(Req, a, int), keyed(Req, b, str)]);
+    let a_once = items(&db, vec![keyed(Req, a, int)]);
+    let syms = items(&db, vec![keyed(Rep, sym, int)]);
+    let mixed = items(&db, vec![keyed(Req, a, int), keyed(Req, text, str)]);
+    let open = items(&db, vec![keyed(Rep, top, top)]);
+    let [a_int, a_str, c_int, sym_int, sym_str] =
+        [(a, int), (a, str), (c, int), (sym, int), (sym, str)]
+            .map(|(key, value)| lookup(&db, key, value));
+    let k = reference(&db, 0, 0);
+    let v = reference(&db, 0, 1);
+    let variable = lookup(&db, k, v);
+    db.seal();
+    for (x, y) in [
+        (a_b, a_int),
+        (syms, a_int),
+        // The key no domain but the widest admits goes there
+        (mixed, sym_int),
+        // Nothing has the key
+        (a_once, c_int),
+    ] {
+        let outcome = check(&db, x, y);
+        assert_eq!(
+            outcome.status,
+            Status::Proven,
+            "{x:?} <: {y:?}: {outcome:?}"
+        );
+    }
+    for (x, y) in [
+        (a_b, a_str),
+        // `Sym` owns the items, though the widest domain would take them
+        (syms, sym_str),
+    ] {
+        assert!(
+            contradiction(&check(&db, x, y), Contradiction::UnrelatedNominals),
+            "{x:?} <: {y:?}"
+        );
+    }
+    // Items of an open schema may have keys `Sym` owns, and `Top <: Int` isn't
+    // decided
+    let outcome = check(&db, open, sym_int);
+    assert!(residual(&outcome, Residual::Unsupported), "{outcome:?}");
+
+    // An unsolved key waits for its solution
+    let mut s = Solver::new(&db);
+    let (key, value) = (s.infer(), s.infer());
+    let e = s.intern_environment(s.empty_environment(), vec![key, value]);
+    s.constrain(s.closed(a_b), s.view(variable, e), Provenance::default());
+    assert!(residual(&s.solve()[0], Residual::Inference));
+    s.constrain(s.closed(a), key, Provenance::default());
+    s.solve();
+    assert_eq!(s.default_with(variable_id(key), false), Ok(a));
+    s.solve();
+    // The key's item gives the value
+    assert_eq!(s.default(variable_id(value)), Ok(int));
+    assert_eq!(s.solve()[0].status, Status::Proven);
+}
+
+#[test]
 fn inclusions_splice_or_take_on_their_multiplicity() {
     use Multiplicity::{Optional as Opt, Repeated as Rep, Required as Req};
     let mut db = Database::new();

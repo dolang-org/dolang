@@ -129,6 +129,39 @@ pub class ManagerAccessMask: AccessMask @FlagSet[ManagerAccessRight]
   pub def int self -> Int
     ...
 
+  # Constructs a flag set from symbols.
+  #[class]
+  @def (call) cls ...flags@ManagerAccessRight -> ManagerAccessMask
+
+  # Constructs a flag set from one iterable of symbols.
+  #[class]
+  @def (call) cls flags@Iterable[ManagerAccessRight] -> ManagerAccessMask
+
+  #[class]
+  pub def (call) cls ...flags
+    ...
+
+  # Tests whether all flags named by `flag` are set.
+  pub def contains self flag @ ManagerAccessRight -> Bool
+    ...
+
+  # Returns the flags set in either.
+  pub def (bor)[S @ ManagerAccessMask] self@S other@S -> S
+    ...
+
+  # Returns the flags set in both.
+  pub def (band)[S @ ManagerAccessMask] self@S other@S -> S
+    ...
+
+  # Returns the flags set in exactly one.
+  pub def (bxor)[S @ ManagerAccessMask] self@S other@S -> S
+    ...
+
+  # Returns the flags of the type that are not set.
+  pub def (bnot)[S @ ManagerAccessMask] self @ S -> S
+    ...
+
+
 # A right of a [`ServiceAccessMask`](winscm.ServiceAccessMask): a
 # service-specific right, or a generic Windows
 # [`AccessRight`](security.windows.AccessRight).
@@ -185,6 +218,39 @@ pub class ServiceAccessMask: AccessMask @FlagSet[ServiceAccessRight]
   pub def int self -> Int
     ...
 
+  # Constructs a flag set from symbols.
+  #[class]
+  @def (call) cls ...flags@ServiceAccessRight -> ServiceAccessMask
+
+  # Constructs a flag set from one iterable of symbols.
+  #[class]
+  @def (call) cls flags@Iterable[ServiceAccessRight] -> ServiceAccessMask
+
+  #[class]
+  pub def (call) cls ...flags
+    ...
+
+  # Tests whether all flags named by `flag` are set.
+  pub def contains self flag @ ServiceAccessRight -> Bool
+    ...
+
+  # Returns the flags set in either.
+  pub def (bor)[S @ ServiceAccessMask] self@S other@S -> S
+    ...
+
+  # Returns the flags set in both.
+  pub def (band)[S @ ServiceAccessMask] self@S other@S -> S
+    ...
+
+  # Returns the flags set in exactly one.
+  pub def (bxor)[S @ ServiceAccessMask] self@S other@S -> S
+    ...
+
+  # Returns the flags of the type that are not set.
+  pub def (bnot)[S @ ServiceAccessMask] self @ S -> S
+    ...
+
+
 # A flag of a [`ServiceType`](winscm.ServiceType).
 #
 # | Symbol                  | Meaning                                             |
@@ -226,6 +292,39 @@ pub class ServiceType: Iterable[ServiceTypeFlag] @FlagSet[ServiceTypeFlag]
   #[getter]
   pub def int self -> Int
     ...
+
+  # Constructs a flag set from symbols.
+  #[class]
+  @def (call) cls ...flags@ServiceTypeFlag -> ServiceType
+
+  # Constructs a flag set from one iterable of symbols.
+  #[class]
+  @def (call) cls flags@Iterable[ServiceTypeFlag] -> ServiceType
+
+  #[class]
+  pub def (call) cls ...flags
+    ...
+
+  # Tests whether all flags named by `flag` are set.
+  pub def contains self flag @ ServiceTypeFlag -> Bool
+    ...
+
+  # Returns the flags set in either.
+  pub def (bor)[S @ ServiceType] self@S other@S -> S
+    ...
+
+  # Returns the flags set in both.
+  pub def (band)[S @ ServiceType] self@S other@S -> S
+    ...
+
+  # Returns the flags set in exactly one.
+  pub def (bxor)[S @ ServiceType] self@S other@S -> S
+    ...
+
+  # Returns the flags of the type that are not set.
+  pub def (bnot)[S @ ServiceType] self @ S -> S
+    ...
+
 
 # A status change in a [`NotifyMask`](winscm.NotifyMask).
 #
@@ -273,6 +372,39 @@ pub class NotifyMask: Iterable[NotifyChange] @FlagSet[NotifyChange]
   #[getter]
   pub def int self -> Int
     ...
+
+  # Constructs a flag set from symbols.
+  #[class]
+  @def (call) cls ...flags@NotifyChange -> NotifyMask
+
+  # Constructs a flag set from one iterable of symbols.
+  #[class]
+  @def (call) cls flags@Iterable[NotifyChange] -> NotifyMask
+
+  #[class]
+  pub def (call) cls ...flags
+    ...
+
+  # Tests whether all flags named by `flag` are set.
+  pub def contains self flag @ NotifyChange -> Bool
+    ...
+
+  # Returns the flags set in either.
+  pub def (bor)[S @ NotifyMask] self@S other@S -> S
+    ...
+
+  # Returns the flags set in both.
+  pub def (band)[S @ NotifyMask] self@S other@S -> S
+    ...
+
+  # Returns the flags set in exactly one.
+  pub def (bxor)[S @ NotifyMask] self@S other@S -> S
+    ...
+
+  # Returns the flags of the type that are not set.
+  pub def (bnot)[S @ NotifyMask] self @ S -> S
+    ...
+
 
 # A control in a [`ServiceControlsAccepted`](winscm.ServiceControlsAccepted).
 #
@@ -323,6 +455,39 @@ pub class ServiceControlsAccepted: Iterable[AcceptedControl] @FlagSet[AcceptedCo
   #[getter]
   pub def int self -> Int
     ...
+
+  # Constructs a flag set from symbols.
+  #[class]
+  @def (call) cls ...flags@AcceptedControl -> ServiceControlsAccepted
+
+  # Constructs a flag set from one iterable of symbols.
+  #[class]
+  @def (call) cls flags@Iterable[AcceptedControl] -> ServiceControlsAccepted
+
+  #[class]
+  pub def (call) cls ...flags
+    ...
+
+  # Tests whether all flags named by `flag` are set.
+  pub def contains self flag @ AcceptedControl -> Bool
+    ...
+
+  # Returns the flags set in either.
+  pub def (bor)[S @ ServiceControlsAccepted] self@S other@S -> S
+    ...
+
+  # Returns the flags set in both.
+  pub def (band)[S @ ServiceControlsAccepted] self@S other@S -> S
+    ...
+
+  # Returns the flags set in exactly one.
+  pub def (bxor)[S @ ServiceControlsAccepted] self@S other@S -> S
+    ...
+
+  # Returns the flags of the type that are not set.
+  pub def (bnot)[S @ ServiceControlsAccepted] self @ S -> S
+    ...
+
 
 # Manager rights, given as a [`ManagerAccessMask`](winscm.ManagerAccessMask),
 # one right, or an iterable of rights.
