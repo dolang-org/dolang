@@ -774,6 +774,14 @@ impl<'a> Flow<'a, '_> {
                     .map(|dependency| dependency.step.clone())
             })
             .collect();
+        match contradiction {
+            Contradiction::Conflict => return Problem::Conflict(span),
+            Contradiction::Unadmitted(key) => {
+                let key = self.tables.render_type(self.db, key);
+                return Problem::Unadmitted { span, key };
+            }
+            _ => {}
+        }
         let fallback = Problem::Call {
             span,
             callee: callee.clone().unwrap_or_else(|| "?".to_owned()),

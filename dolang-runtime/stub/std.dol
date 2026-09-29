@@ -9,18 +9,34 @@ pub @let Union[...Ts] = ...
 # its result.
 pub @let Empty = Union[]
 
-# The union of the keys of a schema's keyed items. `Keys[{a: Int, b: Str}]` is
-# `(:a: | :b:)`, and `Keys[{**Int}]` is `Sym`. Positional items have no keys.
+# The union of a schema's keys, as a collection indexes it: a positional item's
+# key is its index. `Keys[{a: Int, b: Str}]` is `(:a: | :b:)`, `Keys[{**Int}]`
+# is `Sym`, `Keys[{Int, Str}]` is `(0 | 1)`, and `Keys[{*Int}]` is `Int`.
 pub @let Keys[S @ {...}] = ...
 
 # The union of the values of a schema's items, positional or keyed.
 # `Values[{Bool, a: Int, b: Str}]` is `(Bool | Int | Str)`.
 pub @let Values[S @ {...}] = ...
 
-# The union of a `Tuple` of key and value for each of a schema's keyed items,
-# which keeps each key with its own value. `Entries[{a: Int, b: Str}]` is
+# The union of a `Tuple` of key and value for each of a schema's items, which
+# keeps each key with its own value. A positional item's key is its index, as in
+# `Keys`. `Entries[{a: Int, b: Str}]` is
 # `(Tuple[:a:, Int] | Tuple[:b:, Str])`.
 pub @let Entries[S @ {...}] = ...
+
+# The union of the values of the items of `S` that a key selects, which a read
+# at a key of type `K` may give. A positional item's key is its index, as in
+# `Keys`. `IndexItem[{a: Int, b: Str}, :a:]` is `Int`, and
+# `IndexItem[{a: Int, b: Str}, (:a: | :b:)]` is `(Int | Str)`. A key `S` doesn't
+# admit is an error.
+pub @let IndexItem[S @ {...}, K] = ...
+
+# The meet of the values of the items of `S` that a key selects, which a write at
+# a key of type `K` must fit. `AssignItem[{a: Int, b: Str}, :a:]` is `Int`, and
+# `AssignItem[{a: Int, b: Str}, (:a: | :b:)]` is `Empty`, since no value fits
+# both. A meet that would take an intersection is unchecked. A key `S` doesn't
+# admit is an error.
+pub @let AssignItem[S @ {...}, K] = ...
 
 # The singleton [`Null`](std.Null) value.
 #
@@ -306,7 +322,7 @@ pub @class Index[S @ {...}]
   field schema @Phantom[...S]
 
   # Returns the value at `key`.
-  pub def (index)[K @ Keys[U], V, U @ {*(K): V, ...}] self@Index[U] key@K -> V
+  pub def (index)[K] self key@K -> IndexItem[S, K]
 
 
 # A value that implements the
@@ -316,7 +332,7 @@ pub @class Assign[S @ {...}]
   field schema @Phantom[((...S) -> nil)]
 
   # Sets the value at `key`.
-  pub def (assign)[K, V, U @ {*(K): V, ...}] self@Assign[U] key@K value@V
+  pub def (assign)[K] self key@K value@AssignItem[S, K]
 
 
 # A value that implements the
@@ -1952,11 +1968,11 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[E
   #
   # [`Range`](std.Range) values are treated as ordinary keys, not as slices.
   #
-  pub def (index)[K @ Keys[U], V, U @ {*(K): V, ...}] self@Dict[U] key@K -> V
+  pub def (index)[K] self key@K -> IndexItem[S, K]
     ...
 
   # Replaces every value of `key`.
-  pub def (assign)[K, V, U @ {*(K): V, ...}] self@Dict[U] key@K value@V
+  pub def (assign)[K] self key@K value@AssignItem[S, K]
     ...
 
   # Spreads the dictionary's entries.
@@ -3369,7 +3385,7 @@ pub class Record[...Ts]: Iterable[Tuple[Sym | Int, Value]] @Index[{...Ts}] @Spre
     ...
 
   # Returns the value at a position or key.
-  pub def (index) self key
+  pub def (index)[K] self key@K -> IndexItem[{...Ts}, K]
     ...
 
   # Spreads the record's items.
@@ -4515,7 +4531,7 @@ pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}] Iterable[Union[...Ts]] @
   pub def pairs self -> Iter[Tuple[Int, Value]]
     ...
 
-  @def (index) self index@Int -> Union[...Ts]
+  @def (index)[K @ Int] self index@K -> IndexItem[{...Ts}, K]
   @def (index) self range@Range[Int] -> Tuple[...Union[...Ts]]
 
   #

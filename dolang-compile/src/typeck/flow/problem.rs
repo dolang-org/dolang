@@ -24,6 +24,11 @@ pub(crate) enum Problem {
     ExtraArgument(Span),
     /// A call that doesn't fit its callee in some other way
     Call { span: Span, callee: String },
+    /// A call whose types index a schema with a key that may be one of its
+    /// positions' indexes
+    Conflict(Span),
+    /// A call whose types select by a key its schema doesn't admit
+    Unadmitted { span: Span, key: String },
     /// A value that doesn't fit what its use requires of it
     Misfit {
         span: Span,
@@ -94,6 +99,8 @@ impl Diagnose for Problem {
             | Problem::MissingArgument(span)
             | Problem::ExtraArgument(span)
             | Problem::Call { span, .. }
+            | Problem::Conflict(span)
+            | Problem::Unadmitted { span, .. }
             | Problem::Misfit { span, .. }
             | Problem::Annotation { span, .. }
             | Problem::Default { span, .. }
@@ -122,6 +129,16 @@ impl Diagnose for Problem {
             Problem::MissingArgument(_) => write!(w, "this call is missing an argument"),
             Problem::ExtraArgument(_) => write!(w, "the callee takes no such argument"),
             Problem::Call { callee, .. } => write!(w, "this call does not fit `{callee}`"),
+            Problem::Conflict(_) => write!(
+                w,
+                "this call indexes a schema with a key that may be one of its positions' indexes"
+            ),
+            Problem::Unadmitted { key, .. } => {
+                write!(
+                    w,
+                    "this call selects by `{key}`, which isn't one of the schema's keys"
+                )
+            }
             Problem::Misfit { found, misfit, .. } => {
                 let required = match misfit {
                     Misfit::Binary => "binary",

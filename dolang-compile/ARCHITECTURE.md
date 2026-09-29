@@ -114,13 +114,24 @@ schema, and an expanded schema of positional items contributes their types as
 members, so `Union[...Ts]` becomes an ordinary union once `Ts` is substituted.
 Other expansions remain symbolic until a consumer supplies their schema
 arguments. The projections `Keys`, `Values` and `Entries` intern as unions the
-same way, each a member projecting its schema. Once the schema is known, they
-fold its items, whatever their multiplicity. `Keys` takes each keyed item's key,
-`Values` every item's value, and `Entries` a keyed item's `Tuple[key, value]`,
-while `Keys` and `Entries` skip positions. An included schema is projected in
-turn, so one not yet known stays a member beside what is known. The dynamic
-schema projects to `Unknown`, and without a designated `Tuple`, `Entries`
-stays whole. `Database::normalize` gives a type the canonical form interning
+same way, each a member projecting its schema. Once the schema is known,
+`Values` folds every item's value, whatever its multiplicity, projecting an
+included schema in turn. `Keys` and `Entries` fold the schema's keyed view, as a
+collection indexes it (`Database::promoted`): each position is keyed by its
+index, a literal `Int` while the positions before it are all required, and `Int`
+from the first that may be missing or repeated on. `Keys` takes each key, and
+`Entries` each `Tuple[key, value]`. An included schema not yet known stays a
+member beside what is known, unless positions, or keys that may be indexes, lie
+beside it: their indexes, or collisions, depend on it, so the whole projection
+waits. A key that may be a position's index conflicts with it: a non-negative
+`Int` literal a position may have, or a domain of `Int` alongside positions.
+A conflicting projection stays unevaluated, and a judgment exposing it is
+contradicted. The dynamic schema projects to `Unknown`. Without a designated
+`Tuple`, `Entries` stays whole, and so does a projection of a varying position
+without a designated `Int`. The item projections `IndexItem[S, K]` and
+`AssignItem[S, K]` intern as union members of a schema and a key, and only the
+dynamic schema reduces them there: selecting by a key takes the solver.
+`Database::normalize` gives a type the canonical form interning
 would, for callers that need it before interning. Declaration wrappers are not
 normalized away.
 Exposure follows transparent head references and reports direct cycles, stopping
@@ -212,7 +223,22 @@ member refutes it, apart from a class's literals, which are finitely many, it
 contradicts the union. A projection is exposed by reifying it once its schema's
 environment is substituted, which waits on the schema's variables. One of a
 rigid's schema that is left on the left reduces to the same projection of the
-rigid's bound. Higher-rank rules remain
+rigid's bound. An item projection is evaluated once its schema and key are
+closed, by exposing or reifying it (`solver/item.rs`). The key selects items of
+the schema's keyed view: each member of the key goes to the literal item it is,
+or else to the literal items inside it and the domains that own it, as an actual
+keyed item goes to an expected schema's domains. `IndexItem` joins the selected
+values. `AssignItem` meets them without intersection types: the lower of two
+ordered values, the bottom type for two literals or classes that can't share a
+value, and otherwise `Unknown`, which leaves the write unchecked. A key member
+the schema doesn't admit whole contradicts the projection, as a conflicting
+schema does. A rigid key selects only by its bound, so exactly only where each
+item the bound selects has the same value; otherwise the projection is
+residual. One left unevaluated is below an item projection of the same kind and
+schema on the right whose key is proven wider for `IndexItem`, or narrower for
+`AssignItem`. A function's result that is an item projection is exposed where
+the function is related, so a call reports a key its schema doesn't admit even
+when nothing uses the result. Higher-rank rules remain
 deferred. Contextual identity and top/bottom rules can still settle some
 judgments involving otherwise unsupported forms: anything is below top and
 `Unknown`, even a type that can't be exposed.
@@ -254,9 +280,10 @@ domain key still to be inferred waits for its solution, and one whose relation
 to an item's key can't be decided is residual. When several expected repeated
 items could take the overflow, the judgment is residual.
 
-A positional item may someday be admitted as an `Int`-keyed item. Until that
-rule exists, positional items against an expected schema with none but a domain
-that might admit `Int` are residual rather than contradictions.
+Subtyping never admits a positional item as an `Int`-keyed item; only the
+projections key positions by their indexes. Positional items against an expected
+schema with none but a domain that might admit `Int` are residual rather than
+contradictions.
 
 An expected schema whose items are all repeated, with at most one positional
 item `*P` and one keyed item `*(K): V`, as in `{*T}`, `{**V}` and `{...}`,
@@ -389,17 +416,19 @@ call's binders before its result, and solves between defaults so that their
 consequences can force later variables. Defaulted assignments are marked as
 such, so a contradiction reached through one can be reported as an inference
 choice. A default can decay the join's fresh literals to their classes, except
-in exact schema keys and binder bounds, unless the decayed join violates a
-bound; a forced assignment keeps its literals, since its bounds require them. A
-rule decays only where a literal would lock in: `locked` finds the variables
-that its outputs (its results, and as inputs the parameters of the `do` blocks
-it passes values) reach at a position that isn't covariant, through variables'
-bounds, where a later value couldn't widen them; the rest keep their precise
-join, which subsumption widens as needed. To help a caller choose, `raised`
-finds the variables that raising given terms could raise: those at a covariant
-or invariant position in them, or in a raised variable's upper bounds. A
-function's parameters and channels don't count, and a form it can't see into
-counts in full.
+in exact schema keys, the keys of item projections, and binder bounds, unless
+the decayed join violates a bound. Nor does a variable instantiating a binder
+that an item projection in its signature selects by decay, since a decayed key
+selects differently (`Database::item_keys`). A forced assignment keeps its
+literals, since its bounds require them. A rule decays only where a literal
+would lock in: `locked` finds the variables that its outputs (its results, and
+as inputs the parameters of the `do` blocks it passes values) reach at a
+position that isn't covariant, through variables' bounds, where a later value
+couldn't widen them; the rest keep their precise join, which subsumption widens
+as needed. To help a caller choose, `raised` finds the variables that raising
+given terms could raise: those at a covariant or invariant position in them, or
+in a raised variable's upper bounds. A function's parameters and channels don't
+count, and a form it can't see into counts in full.
 
 Joins, for defaults and for flow state, drop union members proven below another
 member. A member containing `Unknown` neither subsumes nor is subsumed, since

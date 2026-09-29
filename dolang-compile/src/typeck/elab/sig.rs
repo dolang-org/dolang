@@ -258,6 +258,14 @@ fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
             Designated::Intrinsic(Intrinsic::Entries),
             DeclKind::OpaqueAlias,
         ),
+        ("std", "IndexItem") => (
+            Designated::Intrinsic(Intrinsic::IndexItem),
+            DeclKind::OpaqueAlias,
+        ),
+        ("std", "AssignItem") => (
+            Designated::Intrinsic(Intrinsic::AssignItem),
+            DeclKind::OpaqueAlias,
+        ),
         ("std", "Func") => (Designated::Intrinsic(Intrinsic::Func), DeclKind::Class),
         ("std", "Int") => (Designated::Intrinsic(Intrinsic::Int), DeclKind::Class),
         ("std", "Bool") => (Designated::Intrinsic(Intrinsic::Bool), DeclKind::Class),

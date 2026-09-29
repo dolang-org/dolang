@@ -808,27 +808,8 @@ impl Solver<'_> {
             let UnionMember::Type(member) = member else {
                 return Err(Residual::Unsupported.into());
             };
-            // Each overlapping domain, and whether it admits the whole member. A
-            // domain lies inside a member only if the member isn't a literal.
-            let literal = self.db.literal(member).is_some();
-            let mut overlapping = Vec::new();
-            for (d, &key) in keys.iter().enumerate() {
-                let whole = self.probe(member, key)?;
-                if whole == Status::Proven {
-                    overlapping.push((d, true));
-                    continue;
-                }
-                let inside = match literal {
-                    true => Status::Contradicted,
-                    false => self.probe(key, member)?,
-                };
-                match (whole, inside) {
-                    (_, Status::Proven) => overlapping.push((d, false)),
-                    (Status::Contradicted, Status::Contradicted) => {}
-                    _ => return Err(Residual::Unsupported.into()),
-                }
-            }
-            if overlapping.is_empty() {
+            let owning = self.owning(member, &keys)?;
+            if owning.is_empty() {
                 let view = self.closed(member);
                 if open_expected {
                     continue;
@@ -838,21 +819,50 @@ impl Solver<'_> {
                 }
                 return Err(Residual::Unsupported.into());
             }
-            for &(d, _) in &overlapping {
-                // A narrower domain admitting the whole member owns it instead
-                let mut narrowed = false;
-                for &(e, whole) in &overlapping {
-                    narrowed |= whole
-                        && keys[e] != keys[d]
-                        && self.probe(keys[e], keys[d])? == Status::Proven;
-                }
-                if !narrowed {
-                    let item = Step::Item(x.item);
-                    self.derive(obligation, x.value, domains[d].value, item);
-                }
+            for (d, _) in owning {
+                let item = Step::Item(x.item);
+                self.derive(obligation, x.value, domains[d].value, item);
             }
         }
         Ok(())
+    }
+
+    /// The domains among `keys` that own a key: the narrowest that admits it
+    /// whole, and any lying inside it, which owns part of it. Each is given with
+    /// whether it admits the key whole. A domain lies inside a key only if the key
+    /// isn't a literal. None own a key no domain overlaps.
+    pub(super) fn owning(&self, key: TypeId, keys: &[TypeId]) -> Result<Vec<(usize, bool)>, Issue> {
+        let literal = self.db.literal(key).is_some();
+        let mut overlapping = Vec::new();
+        for (d, &domain) in keys.iter().enumerate() {
+            let whole = self.probe(key, domain)?;
+            if whole == Status::Proven {
+                overlapping.push((d, true));
+                continue;
+            }
+            let inside = match literal {
+                true => Status::Contradicted,
+                false => self.probe(domain, key)?,
+            };
+            match (whole, inside) {
+                (_, Status::Proven) => overlapping.push((d, false)),
+                (Status::Contradicted, Status::Contradicted) => {}
+                _ => return Err(Residual::Unsupported.into()),
+            }
+        }
+        let mut owning = Vec::new();
+        for &(d, whole) in &overlapping {
+            // A narrower domain admitting the whole key owns it instead
+            let mut narrowed = false;
+            for &(e, whole) in &overlapping {
+                narrowed |=
+                    whole && keys[e] != keys[d] && self.probe(keys[e], keys[d])? == Status::Proven;
+            }
+            if !narrowed {
+                owning.push((d, whole));
+            }
+        }
+        Ok(owning)
     }
 
     /// Whether a key is a single literal

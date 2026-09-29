@@ -17,6 +17,14 @@ pub @let Values[S @ {...}] = ...
 pub @let Entries[S @ {...}] = ...
 #        ^~~~~~~: designated intrinsic Entries
 #                ^: variance covariant
+pub @let IndexItem[S @ {...}, K] = ...
+#        ^~~~~~~~~: designated intrinsic IndexItem
+#                  ^: variance covariant
+#                             ^: variance covariant
+pub @let AssignItem[S @ {...}, K] = ...
+#        ^~~~~~~~~~: designated intrinsic AssignItem
+#                   ^: variance covariant
+#                              ^: variance contravariant
 pub class Func
 #         ^~~~: designated intrinsic Func
 pub class Int

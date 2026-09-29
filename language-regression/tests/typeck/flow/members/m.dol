@@ -230,17 +230,17 @@ pub def looked d @ Dict[{a: Int, b: Str}] k @ Sym i @ Index[{a: Int}] o @ Dict[{
   let _ = b
   #       ^: flow std.Str
   let _ = d[:c:]
-  # error: expected `:a: | :b:`, found `:c:`
+  # error: this call selects by `:c:`, which isn't one of the schema's keys
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _ = d[:c:]
-  #    |             ^^^
+  #    |           ^^^^^^
   let _ = d[k]
-  # error: expected `:a: | :b:`, found `std.Sym`
+  # error: this call selects by `std.Sym`, which isn't one of the schema's keys
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _ = d[k]
-  #    |             ^
+  #    |           ^^^^
   let j = i[:a:]
   let _ = j
   #       ^: flow std.Int
@@ -277,4 +277,98 @@ pub def iterated d @ Dict[{a: Int, b: Str}] s @ Dict[{*(Str): Int}]
 #    |          ^^^^^^^^
 
 pub def keyed ks @ Iter[(:a: | :b:)]
+  ...
+
+# A collection keys a schema's positions by their indexes, so a key that may be
+# one of them conflicts.
+pub def promoted p @ Dict[{Int, Str}] v @ Dict[{Int, *Bool}] c @ Dict[{Int, 0: Str}]
+  for k x = p
+    let _ = k
+    #       ^: flow 0 | 1
+    let _ = x
+    #       ^: flow std.Int | std.Str
+  let pk = p.keys()
+  let _ = pk
+  #       ^~: flow std.Iter[0 | 1]
+  let vk = v.keys()
+  let _ = vk
+  #       ^~: flow std.Iter[std.Int]
+  indexes $c.keys()
+# error: this call indexes a schema with a key that may be one of its positions' indexes
+#   --> m.dol:LL:LL
+#    |
+# LL |   indexes $c.keys()
+#    |   ^^^^^^^^^^^^^^^^^
+
+pub def indexes ks @ Iter[Int]
+  ...
+
+# A key selects items, positions by their indexes. A read gives the join of what
+# it selects, and a write must fit their meet.
+pub def selected
+  r @ Record[Int, a: Str]
+  w @ Dict[{Int, *Str}]
+  d @ Dict[{a: Int, b: Str}]
+  s @ Dict[{*(Sym): Int}]
+  p @ Dict[{Int, Str}]
+  c @ Dict[{Int, 0: Str}]
+  k @ (:a: | :b:)
+  y @ Sym
+do
+  # A narrower record passes where a wider one is expected
+  widened $r
+  let _ = r[0]
+  #   ^: flow std.Int
+  let _ = r[:a:]
+  #   ^: flow std.Str
+  let _ = r[5]
+  # error: this call selects by `5`, which isn't one of the schema's keys
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = r[5]
+  #    |           ^^^^
+  let _ = r[y]
+  # error: this call selects by `std.Sym`, which isn't one of the schema's keys
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = r[y]
+  #    |           ^^^^
+  let _ = w[1]
+  #   ^: flow std.Str
+  let _ = d[k]
+  #   ^: flow std.Int | std.Str
+  d[:a:] = "x"
+  # error: expected `std.Int`, found `"x"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   d[:a:] = "x"
+  #    |            ^^^
+  d[:c:] = 1
+  # error: this call selects by `:c:`, which isn't one of the schema's keys
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   d[:c:] = 1
+  #    |   ^^^^^^^^^^
+  s[:c:] = 1
+  p[0] = "x"
+  # error: expected `std.Int`, found `"x"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   p[0] = "x"
+  #    |          ^^^
+  p[1] = "x"
+  d[k] = "x"
+  # error: expected `Never`, found `"x"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   d[k] = "x"
+  #    |          ^^^
+  let _ = c[0]
+# error: this call indexes a schema with a key that may be one of its positions' indexes
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ = c[0]
+#    |           ^^^^
+
+pub def widened r @ Record[Int, a: Value]
   ...

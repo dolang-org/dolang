@@ -28,8 +28,9 @@ use dolang_util::{
 use crate::typeck::r#type::UnitSpan;
 
 use super::r#type::{
-    Argument, Binder, Binding, BoundRef, Database, DeclId, Element, Function, Intrinsic, Kind,
-    Literal, Multiplicity, Rest, SchemaItem, SymbolId, Type, TypeId, UnionMember, Variance,
+    Argument, Binder, Binding, BoundRef, Database, DeclId, DeclKind, Element, Function, Intrinsic,
+    Kind, Literal, Multiplicity, Projected, Promotion, Rest, SchemaItem, SymbolId, Type, TypeId,
+    UnionMember, Variance,
 };
 
 macro_rules! id {
@@ -128,6 +129,10 @@ pub(crate) enum Contradiction {
     /// A literal, or a class with infinitely many, has a value outside every
     /// member of a union
     Outside,
+    /// A projection's schema has a key that may be a position's index
+    Conflict,
+    /// An item projection's key has a member its schema doesn't admit
+    Unadmitted(TypeId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -246,6 +251,8 @@ struct Inference {
     assignment: Cell<Option<TypeId>>,
     /// Whether the assignment is a default rather than forced
     defaulted: Cell<bool>,
+    /// Whether a default keeps its literals, as an item projection's key does
+    exact: Cell<bool>,
     support: MonoHashSet<ObligationId>,
     subscribers: MonoHashSet<ObligationId>,
     dirty: Cell<bool>,
@@ -572,6 +579,7 @@ impl<'db> Solver<'db> {
             lanes,
             assignment: Cell::new(None),
             defaulted: Cell::new(false),
+            exact: Cell::new(false),
             support: MonoHashSet::new(),
             subscribers: MonoHashSet::new(),
             dirty: Cell::new(false),
@@ -628,7 +636,14 @@ impl<'db> Solver<'db> {
                 let mapped = ty.map_children(|child, groups| {
                     self.reify_scoped(view.child(child), local + groups, depth + 1)
                 })?;
-                Ok(self.db.intern(mapped))
+                let reified = self.db.intern(mapped);
+                // Item projections are evaluated where they're closed
+                if local == 0
+                    && let Ok(Some(evaluated)) = self.evaluate_items(reified)
+                {
+                    return Ok(evaluated);
+                }
+                Ok(reified)
             }
         }
     }
@@ -946,7 +961,12 @@ impl<'db> Solver<'db> {
                 for member in members.iter() {
                     match *member {
                         UnionMember::Type(ty) => walk(ty, variance, 0)?,
-                        _ => walk(member.id(), compose(variance, Variance::Invariant), 0)?,
+                        _ => {
+                            walk(member.id(), compose(variance, Variance::Invariant), 0)?;
+                            if let Some(key) = member.key() {
+                                walk(key, compose(variance, Variance::Invariant), 0)?;
+                            }
+                        }
                     }
                 }
                 Ok(())
@@ -1067,7 +1087,8 @@ impl<'db> Solver<'db> {
 
     /// [`Self::default`], keeping the precise join unless `decay`: a caller
     /// decays only the variables whose choice a literal would lock in (see
-    /// [`Self::locked`])
+    /// [`Self::locked`]). A variable standing for the key of an item projection
+    /// never decays (see [`Database::item_keys`]).
     pub(crate) fn default_with(&mut self, id: InferVarId, decay: bool) -> Result<TypeId, Residual> {
         if let Some(ty) = self.solution(id) {
             return Ok(ty);
@@ -1095,6 +1116,7 @@ impl<'db> Solver<'db> {
                 }
                 self.below_upper(id, decayed)
             };
+            let decay = decay && !self.inference[id.0].exact.get();
             if decay && decayed != precise && admitted().unwrap_or(false) {
                 decayed
             } else {
@@ -1447,6 +1469,51 @@ impl<'db> Solver<'db> {
         Ok((args, environment))
     }
 
+    /// Whether an item projection on the left is below an item projection of the
+    /// same kind and schema on the right: `IndexItem` is monotone in its key,
+    /// and `AssignItem` antitone
+    fn congruent(&self, view: TypeView, member: UnionMember, b: &Head) -> Result<bool, Issue> {
+        let (Some(key), Head::Structural(other_view)) = (member.key(), b) else {
+            return Ok(false);
+        };
+        let Type::Union(others) = self.db.ty(other_view.ty) else {
+            return Ok(false);
+        };
+        for &other in others.iter() {
+            let Some(other_key) = other.key() else {
+                continue;
+            };
+            if std::mem::discriminant(&member) != std::mem::discriminant(&other)
+                || !self.same(view.child(member.id()), other_view.child(other.id()))?
+            {
+                continue;
+            }
+            let (key, other_key) = (
+                self.reify(view.child(key))?,
+                self.reify(other_view.child(other_key))?,
+            );
+            let (lower, upper) = match member {
+                UnionMember::IndexItem(..) => (key, other_key),
+                _ => (other_key, key),
+            };
+            if self.probe(lower, upper)? == Status::Proven {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// A contradiction if a union's projection has a schema whose keyed view has
+    /// a key that may be a position's index (see [`Database::promoted`])
+    fn conflicting(&self, members: &[UnionMember]) -> Result<(), Issue> {
+        let conflict =
+            (members.iter()).any(|&member| matches!(self.db.project(member), Projected::Conflict));
+        match conflict {
+            true => Err(Issue::Contradiction(Contradiction::Conflict)),
+            false => Ok(()),
+        }
+    }
+
     /// Expose the head form of a solver term. Transparent declarations must be
     /// acyclic; well-formedness checking rejects cycles before solving, so
     /// exposing the same declaration or application twice panics.
@@ -1528,6 +1595,15 @@ impl<'db> Solver<'db> {
                         && members.iter().any(|member| member.projected().is_some()) =>
                 {
                     term = self.closed(self.reify(term)?);
+                }
+                // An item projection takes the solver to select by its key. One that
+                // can't be evaluated is left for the rules of unions.
+                Type::Union(ref members) if members.iter().any(|member| member.key().is_some()) => {
+                    match self.evaluate_items(view.ty) {
+                        Ok(Some(evaluated)) => term = self.closed(evaluated),
+                        Ok(None) | Err(Issue::Residual(_)) => return Ok(Head::Structural(view)),
+                        Err(issue) => return Err(issue),
+                    }
                 }
                 _ => return Ok(Head::Structural(view)),
             }
@@ -1648,6 +1724,18 @@ impl<'db> Solver<'db> {
             bv.child(b.result),
             Step::Return,
         );
+        // A result that selects by a key is exposed, so a key its schema doesn't
+        // admit is reported though nothing uses the result
+        if let Type::Union(members) = self.db.ty(a.result)
+            && members.iter().any(|member| member.key().is_some())
+        {
+            self.derive(
+                obligation,
+                self.closed(self.db.bottom()),
+                av.child(a.result),
+                Step::Return,
+            );
+        }
         let channel = |view: TypeView, ty: Option<TypeId>, intrinsic| match ty {
             Some(ty) => view.child(ty),
             None => self.channel_bound(intrinsic),
@@ -1687,13 +1775,18 @@ impl<'db> Solver<'db> {
         let environment = match known {
             Some(environment) => environment,
             None => {
-                let group = binders
+                let group: Vec<Term> = binders
                     .iter()
                     .map(|binder| match binder.binding {
                         Binding::Rest(rest) => self.fresh(binder.kind, rest),
                         _ => self.fresh(binder.kind, Rest::All),
                     })
                     .collect();
+                for slot in self.db.item_keys(view.ty) {
+                    if let Some(&Term::Infer(id)) = group.get(usize::from(slot)) {
+                        self.inference[id.0].exact.set(true);
+                    }
+                }
                 let environment = self.intern_environment(view.environment, group);
                 self.instantiations
                     .borrow_mut()
@@ -1840,12 +1933,16 @@ impl<'db> Solver<'db> {
             && let Head::Structural(view) = &a
             && let Type::Union(members) = self.db.ty(view.ty)
         {
+            self.conflicting(members)?;
             // A projection left is of a rigid's schema, or can't be evaluated. The
-            // former is below the same projection of the rigid's bound.
+            // former is below the same projection of the rigid's bound. An item
+            // projection is also below one of the same schema whose key selects
+            // as much, or for `AssignItem`, as little.
             let mut derived = Vec::new();
             for (index, &member) in members.iter().enumerate() {
                 let (term, step) = match member {
                     UnionMember::Type(ty) => (view.child(ty), Step::UnionMember(index)),
+                    _ if self.congruent(*view, member, &b)? => continue,
                     _ if self.rigid(member.id())?.is_some() => {
                         let Some(bound) = self.rigid_bound(member.id()) else {
                             return Err(Residual::Unsupported.into());
@@ -1874,6 +1971,7 @@ impl<'db> Solver<'db> {
             && let Head::Structural(view) = &b
             && let Type::Union(members) = self.db.ty(view.ty)
         {
+            self.conflicting(members)?;
             // Testing alternatives must never add bounds to this solver.
             let actual = self.reify(actual)?;
             // A literal is outside a union if it's outside each member. So is a
@@ -2180,6 +2278,7 @@ fn compose(outer: Variance, inner: Variance) -> Variance {
     }
 }
 
+mod item;
 mod lattice;
 mod member;
 mod narrow;

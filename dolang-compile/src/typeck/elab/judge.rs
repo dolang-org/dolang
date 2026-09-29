@@ -629,6 +629,18 @@ impl Tables<'_> {
                                 self.render_into(db, *ty, names, depth, &mut out);
                                 out.push(']');
                             }
+                            UnionMember::IndexItem(schema, key)
+                            | UnionMember::AssignItem(schema, key) => {
+                                let name = match member {
+                                    UnionMember::IndexItem(..) => "IndexItem",
+                                    _ => "AssignItem",
+                                };
+                                let _ = write!(out, "{name}[");
+                                self.render_into(db, *schema, names, depth, &mut out);
+                                out.push_str(", ");
+                                self.render_into(db, *key, names, depth, &mut out);
+                                out.push(']');
+                            }
                         }
                         out
                     })
