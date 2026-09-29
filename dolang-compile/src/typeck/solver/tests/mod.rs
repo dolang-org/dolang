@@ -21,6 +21,11 @@ fn literal(db: &Database, n: i128) -> TypeId {
     db.intern(Type::Literal(Literal::Int(n)))
 }
 
+/// An `Int` literal a term gave
+fn fresh(db: &Database, n: i128) -> TypeId {
+    db.intern(Type::Fresh(Literal::Int(n)))
+}
+
 fn reference(db: &Database, depth: usize, slot: usize) -> TypeId {
     db.intern(Type::Bound {
         reference: BoundRef::new(depth, slot),

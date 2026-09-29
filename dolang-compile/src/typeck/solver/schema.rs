@@ -810,7 +810,7 @@ impl Solver<'_> {
             };
             // Each overlapping domain, and whether it admits the whole member. A
             // domain lies inside a member only if the member isn't a literal.
-            let literal = matches!(self.db.ty(member), Type::Literal(_));
+            let literal = self.db.literal(member).is_some();
             let mut overlapping = Vec::new();
             for (d, &key) in keys.iter().enumerate() {
                 let whole = self.probe(member, key)?;

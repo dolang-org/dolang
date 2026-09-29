@@ -547,7 +547,8 @@ impl Tables<'_> {
             Type::Top => out.push_str("Value"),
             Type::Unknown(Kind::Type) => out.push_str("Unknown"),
             Type::Unknown(Kind::Schema) => out.push_str("Unknown{}"),
-            Type::Literal(literal) => {
+            // Freshness is the checker's concern, not the reader's
+            Type::Literal(literal) | Type::Fresh(literal) => {
                 let _ = match literal {
                     Literal::Nil => write!(out, "nil"),
                     Literal::Bool(value) => write!(out, "{value}"),

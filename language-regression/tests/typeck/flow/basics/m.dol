@@ -40,7 +40,7 @@ pub def either v @ (Int | nil) n @ Named
   let _ = (v || "b")
   #   ^: flow std.Int | std.Str
   let _ = (v && "b")
-  #   ^: flow std.Int | std.Nil | std.Str
+  #   ^: flow nil | std.Int | std.Str
   let _ = (n.name || "b")
   #   ^: flow std.Str
 

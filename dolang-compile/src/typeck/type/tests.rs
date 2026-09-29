@@ -151,22 +151,29 @@ fn literals_are_exact_values_not_builtin_types() {
 }
 
 #[test]
-fn decay_keeps_exact_keys_and_binder_bounds() {
+fn decay_keeps_regular_literals_exact_keys_and_binder_bounds() {
     let mut db = Database::new();
     let (int, int_ty, int_source) = declare(&mut db, DeclKind::Class, "Int");
     db.populate(int, definition(int_source, int_ty));
     db.set_intrinsic(Intrinsic::Int, int_ty);
     let key = db.intern_symbol("name");
     let key = intern(&mut db, Type::Literal(Literal::Sym(key)));
-    let one = intern(&mut db, Type::Literal(Literal::Int(1)));
-    let two = intern(&mut db, Type::Literal(Literal::Int(2)));
+    let one = intern(&mut db, Type::Fresh(Literal::Int(1)));
+    let two = intern(&mut db, Type::Fresh(Literal::Int(2)));
+    let exact = intern(&mut db, Type::Literal(Literal::Int(1)));
 
-    // Literals decay through unions and function types
+    // Fresh literals decay through unions and function types
     let both = union(&mut db, &[one, two]);
     assert_eq!(db.decay(both), int_ty);
     let f = function(&mut db, &[one], two);
     let decayed = function(&mut db, &[int_ty], int_ty);
     assert_eq!(db.decay(f), decayed);
+
+    // A regular literal was written in a type, as a parameter's annotation is
+    assert_eq!(db.decay(exact), exact);
+    let g = function(&mut db, &[exact], two);
+    let decayed = function(&mut db, &[exact], int_ty);
+    assert_eq!(db.decay(g), decayed);
 
     // An exact key keeps its literal
     let keyed = |db: &mut Database, value| {
@@ -201,6 +208,26 @@ fn decay_keeps_exact_keys_and_binder_bounds() {
     let generic = bounded(&mut db, one);
     let decayed = bounded(&mut db, int_ty);
     assert_eq!(db.decay(generic), decayed);
+}
+
+#[test]
+fn fresh_literals_give_way_to_their_regular_twins() {
+    let mut db = Database::new();
+    let fresh = intern(&mut db, Type::Fresh(Literal::Int(1)));
+    let regular = intern(&mut db, Type::Literal(Literal::Int(1)));
+    let two = intern(&mut db, Type::Fresh(Literal::Int(2)));
+    assert_ne!(fresh, regular);
+    assert_eq!(db.literal(fresh), Some(&Literal::Int(1)));
+    assert_eq!(db.literal(regular), Some(&Literal::Int(1)));
+    assert_eq!(db.regular(fresh), regular);
+    assert_eq!(db.regular(regular), regular);
+    let top = db.top();
+    assert_eq!(db.regular(top), top);
+    // A union keeps the regular twin, whatever the order
+    assert_eq!(union(&mut db, &[fresh, regular]), regular);
+    assert_eq!(union(&mut db, &[regular, fresh]), regular);
+    let kept = union(&mut db, &[regular, two]);
+    assert_eq!(union(&mut db, &[fresh, two, regular]), kept);
 }
 
 #[test]

@@ -893,6 +893,7 @@ impl<'db> Solver<'db> {
             Type::Top
             | Type::Unknown(_)
             | Type::Literal(_)
+            | Type::Fresh(_)
             | Type::Decl(_)
             | Type::Rigid { .. } => Ok(()),
             Type::Apply { base, ref args, .. } => {
@@ -1344,6 +1345,14 @@ impl<'db> Solver<'db> {
             }
             _ => b,
         };
+        // A fresh literal is the same as its regular twin
+        let regular = |term: Term| match term {
+            Term::View(view) if matches!(self.db.ty(view.ty), Type::Fresh(_)) => {
+                self.closed(self.db.regular(view.ty))
+            }
+            _ => term,
+        };
+        let (a, b) = (regular(a), regular(b));
         for (term, local, other, other_local, left) in [(a, ad, b, bd, true), (b, bd, a, ad, false)]
         {
             if let Term::View(view) = term
@@ -1511,6 +1520,8 @@ impl<'db> Solver<'db> {
                     }
                     term = self.view(*body, environment);
                 }
+                // A fresh literal relates as its regular twin
+                Type::Fresh(_) => term = self.closed(self.db.regular(view.ty)),
                 // A projection is evaluated once its schema is substituted
                 Type::Union(ref members)
                     if view.environment != self.empty_environment()
@@ -1872,7 +1883,7 @@ impl<'db> Solver<'db> {
             let infinite = [Intrinsic::Int, Intrinsic::Str, Intrinsic::Sym]
                 .into_iter()
                 .any(|intrinsic| self.db.intrinsic(intrinsic) == Some(actual));
-            let mut outside = infinite || matches!(self.db.ty(actual), Type::Literal(_));
+            let mut outside = infinite || self.db.literal(actual).is_some();
             for member in members.iter() {
                 let UnionMember::Type(ty) = *member else {
                     outside = false;
@@ -1882,7 +1893,7 @@ impl<'db> Solver<'db> {
                     outside = false;
                     continue;
                 };
-                if infinite && matches!(self.db.ty(expected), Type::Literal(_)) {
+                if infinite && self.db.literal(expected).is_some() {
                     continue;
                 }
                 match self.probe(actual, expected)? {

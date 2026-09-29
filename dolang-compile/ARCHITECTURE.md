@@ -62,7 +62,12 @@ identity must be preserved.
 
 `TypeId` identifies a normalized structural expression in one database. Ordinary
 types such as `Int` and `Sym` are declaration references, not builtin nodes.
-Literal nodes describe exact values only. Optional intrinsic slots associate
+Literal nodes describe exact values only. A literal is regular when written in
+a type, or fresh when a literal term gave it, as TypeScript's widening literal
+types are. Only a fresh literal decays to its class, so a signature's or a
+schema's literals are never lost. A union keeps a regular twin over a fresh one;
+otherwise the two relate alike, since the solver exposes a fresh literal as its
+regular twin, and `same` treats them as one. Optional intrinsic slots associate
 `Union`, `Keys`, `Values`, `Entries`, `Tuple`, `Int`, `Bool`, `Sym`, `Nil`,
 `Str` and a few more with their stub types. Each slot
 may be set once before sealing; missing associations are allowed. Elaboration
@@ -376,25 +381,25 @@ the caller's lifetime budget.
 Forcing alone rarely settles a call: its result variable and most of its
 callee's variables have only lower bounds and binder bounds. `default` is a
 separate, caller-driven choice: it assigns the join of a variable's lower
-bounds, all of which must be solved, or `Unknown` if one of them is. The
-default must satisfy every solved upper bound; the obligations pairing lower and
-upper bounds check the rest once it commits. A variable without lower bounds is
-never defaulted. The caller defaults a variable's lower bounds before it, such
-as a call's binders before its result, and solves between defaults so that
-their consequences can force later variables. Defaulted assignments are marked
-as such, so a contradiction reached through one can be reported as an inference
-choice. A default can decay the join's literals to their classes, except in
-exact schema keys and binder bounds, unless the decayed join violates a bound; a
-forced assignment keeps its literals, since its bounds require them. A rule
-decays only where a literal would lock in: `locked` finds the variables that its
-outputs (its results, and as inputs the parameters of the `do` blocks it passes
-values) reach at a position that isn't covariant, through variables' bounds,
-where a later value couldn't widen them; the rest keep their precise join, which
-subsumption widens as needed. To help a caller choose, `raised` finds the
-variables that raising given terms could raise: those at a covariant or
-invariant position in them, or in a raised variable's upper bounds. A function's
-parameters and channels don't count, and a form it can't see into counts in
-full.
+bounds, all of which must be solved, or `Unknown` if one of them is. The default
+must satisfy every solved upper bound; the obligations pairing lower and upper
+bounds check the rest once it commits. A variable without lower bounds is never
+defaulted. The caller defaults a variable's lower bounds before it, such as a
+call's binders before its result, and solves between defaults so that their
+consequences can force later variables. Defaulted assignments are marked as
+such, so a contradiction reached through one can be reported as an inference
+choice. A default can decay the join's fresh literals to their classes, except
+in exact schema keys and binder bounds, unless the decayed join violates a
+bound; a forced assignment keeps its literals, since its bounds require them. A
+rule decays only where a literal would lock in: `locked` finds the variables
+that its outputs (its results, and as inputs the parameters of the `do` blocks
+it passes values) reach at a position that isn't covariant, through variables'
+bounds, where a later value couldn't widen them; the rest keep their precise
+join, which subsumption widens as needed. To help a caller choose, `raised`
+finds the variables that raising given terms could raise: those at a covariant
+or invariant position in them, or in a raised variable's upper bounds. A
+function's parameters and channels don't count, and a form it can't see into
+counts in full.
 
 Joins, for defaults and for flow state, drop union members proven below another
 member. A member containing `Unknown` neither subsumes nor is subsumed, since
@@ -594,22 +599,23 @@ merges, and at the target of an edge that retreats in the queue's order the
 join widens (`solver::Widening`) once it has grown too often, or goes to the
 local's annotation.
 
-An assignment is a strong update, and a literal assigned to a declared local
-decays to its class when that fits the annotation. A parameter's or pattern
-item's default is evaluated expecting the variable's annotation, and its
-literals decay. It keeps the annotation when it fits. A `nil` or symbol literal
-that doesn't is a sentinel, joined into the variable's type for the body to
-narrow away, while callers see only the annotation. Any other default is
-reported. An `Assume` narrows with
+An assignment is a strong update, and a fresh literal assigned to a declared
+local decays to its class when that fits the annotation. A parameter's or
+pattern item's default is evaluated expecting the variable's annotation, and its
+fresh literals decay. Constants and a dict literal's keys are fresh; exact keys,
+such as a keyword's or one passed as a pair, are regular. It keeps the
+annotation when it fits. A `nil` or symbol literal that doesn't is a sentinel,
+joined into the variable's type for the body to narrow away, while callers see
+only the annotation. Any other default is reported. An `Assume` narrows with
 `Solver::narrow`, and an edge left with nothing is unreachable. Flow state marks
 a stack entry that a `Dup` copied from the one below it, and any other step
 clears the mark. An `If` on a marked copy narrows the original on its `then`
 edge to its truthy values, dropping `nil` and `false`, so a short circuit's
-result is narrowed by the test it passed. A step that can
-throw joins its prior state into its handler; a `Catch` narrows the exception by
-each clause's class. Parameters are bound at the entry block: a def's from its
-signature under its group's rigids (`Tables::group_rigids`, which also closes
-`Var.annotation` during lowering), a `do` block's from its signature variables.
+result is narrowed by the test it passed. A step that can throw joins its prior
+state into its handler; a `Catch` narrows the exception by each clause's class.
+Parameters are bound at the entry block: a def's from its signature under its
+group's rigids (`Tables::group_rigids`, which also closes `Var.annotation`
+during lowering), a `do` block's from its signature variables.
 
 State shared between functions is flow-insensitive. An ivar, a variable that a
 function other than its owner reads or writes, has an accumulator: every

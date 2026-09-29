@@ -159,7 +159,9 @@ impl<'a> Rule<'_, 'a> {
                 match placed.value {
                     Value::Pos(ty, _) => joined.positional.add(rule, Part::Closed(ty)),
                     Value::Key(key, ty, _) => joined.keyed(rule, symbol(key), Part::Closed(ty)),
-                    Value::Pair(key, ty) => joined.keyed(rule, key, Part::Closed(ty)),
+                    Value::Pair(key, ty) => {
+                        joined.keyed(rule, rule.db.regular(key), Part::Closed(ty))
+                    }
                     Value::Lambda(key, ref lambda, _) => {
                         let term = Part::Term(rule.lambda(lambda));
                         match key {
@@ -197,8 +199,10 @@ impl<'a> Rule<'_, 'a> {
                         span,
                     )]
                 }
+                // A key passed is exact, as a keyword's is
                 Value::Pair(key, ty) => {
-                    let argument = CallArgument::Pair(rule.closed(key), rule.closed(ty));
+                    let key = rule.closed(rule.db.regular(key));
+                    let argument = CallArgument::Pair(key, rule.closed(ty));
                     vec![(multiplicity, argument, fallback)]
                 }
                 Value::Lambda(key, ref lambda, span) => {
@@ -1496,7 +1500,8 @@ impl<'a> Flow<'a, '_> {
                     rule.constrain(rule.closed(key), keys, Check::Quiet);
                     rule.constrain(value, entries, Check::Quiet);
                 };
-                let symbol = |name| rule.db.intern(Type::Literal(Literal::Sym(name)));
+                // A key written in a dict literal is a term, which decays as its value would
+                let symbol = |name| rule.db.intern(Type::Fresh(Literal::Sym(name)));
                 for placed in &values.values {
                     match placed.value {
                         Value::Pos(ty, _) => entry(rule, int, rule.closed(ty)),

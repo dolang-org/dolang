@@ -48,9 +48,9 @@ impl Solver<'_> {
     ) -> TypeId {
         let literal = match target {
             Target::Class(_) => None,
-            Target::Literal(literal) => match self.db.ty(literal) {
-                Type::Literal(literal) => Some(literal),
-                _ => return ty,
+            Target::Literal(literal) => match self.db.literal(literal) {
+                Some(literal) => Some(literal),
+                None => return ty,
             },
         };
         let mut result = self.db.bottom();
@@ -155,7 +155,7 @@ impl Solver<'_> {
         match self.db.ty(ty) {
             Type::Unknown(_) => return Member::Unknown,
             Type::Top => return Member::Top,
-            Type::Literal(literal) => {
+            Type::Literal(literal) | Type::Fresh(literal) => {
                 return Member::Literal(literal.clone(), self.start(ty).ok().flatten());
             }
             _ => {}

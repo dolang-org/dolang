@@ -65,6 +65,15 @@ impl Solver<'_> {
             if kept.contains(&member) {
                 continue;
             }
+            // A regular literal replaces its fresh twin, as normalization keeps it
+            if let UnionMember::Type(ty) = member
+                && let Some(twin) = kept.iter_mut().find(|kept| {
+                    matches!(**kept, UnionMember::Type(kept) if kept != ty && self.db.regular(kept) == ty)
+                })
+            {
+                *twin = member;
+                continue;
+            }
             if let Some(ty) = comparable(&member) {
                 if kept.iter().filter_map(comparable).any(|k| below(ty, k)) {
                     continue;

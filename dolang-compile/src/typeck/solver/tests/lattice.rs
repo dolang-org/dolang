@@ -189,3 +189,34 @@ fn widening_goes_to_a_common_supertype_then_unknown() {
     }
     assert_eq!(state, int);
 }
+
+#[test]
+fn a_fresh_literal_relates_as_its_regular_twin() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let (one, two) = (literal(&db, 1), literal(&db, 2));
+    let one_two = union(&db, &[one, two]);
+    db.seal();
+    let (fresh_one, fresh_three) = (fresh(&db, 1), fresh(&db, 3));
+    for (actual, expected) in [
+        (fresh_one, one),
+        (one, fresh_one),
+        (fresh_one, int),
+        (fresh_one, one_two),
+    ] {
+        assert_eq!(check(&db, actual, expected).status, Status::Proven);
+    }
+    assert!(contradiction(
+        &check(&db, fresh_three, two),
+        Contradiction::DistinctLiterals
+    ));
+    assert!(contradiction(
+        &check(&db, fresh_three, one_two),
+        Contradiction::Outside
+    ));
+    // A join keeps the regular twin, whatever the order
+    let s = Solver::new(&db);
+    assert_eq!(s.lub(fresh_one, one), one);
+    assert_eq!(s.lub(one, fresh_one), one);
+    assert_eq!(s.lub(fresh_one, fresh_one), fresh_one);
+}

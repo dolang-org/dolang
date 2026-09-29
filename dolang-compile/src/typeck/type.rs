@@ -247,7 +247,12 @@ pub(crate) enum Type {
     Top,
     /// The dynamic type or schema, consistent with every type or schema of its kind
     Unknown(Kind),
+    /// A literal type written in a type, or derived from one, which is exact
     Literal(Literal),
+    /// A literal type a literal term gave, which decays to its class where a
+    /// variable or collection holds it (see [`Database::decay`]). It relates as its
+    /// regular twin does.
+    Fresh(Literal),
     Decl(DeclId),
     Bound {
         reference: BoundRef,
@@ -283,6 +288,7 @@ impl Type {
             Self::Top
             | Self::Unknown(_)
             | Self::Literal(_)
+            | Self::Fresh(_)
             | Self::Decl(_)
             | Self::Bound { .. }
             | Self::Rigid { .. } => {}
@@ -391,6 +397,7 @@ impl Type {
             Self::Top
             | Self::Unknown(_)
             | Self::Literal(_)
+            | Self::Fresh(_)
             | Self::Decl(_)
             | Self::Bound { .. }
             | Self::Rigid { .. } => {}
@@ -816,6 +823,22 @@ impl Database {
         &self.types[id]
     }
 
+    /// The literal a literal type is, fresh or regular
+    pub(crate) fn literal(&self, id: TypeId) -> Option<&Literal> {
+        match self.ty(id) {
+            Type::Literal(literal) | Type::Fresh(literal) => Some(literal),
+            _ => None,
+        }
+    }
+
+    /// A fresh literal's regular twin, or any other type itself
+    pub(crate) fn regular(&self, id: TypeId) -> TypeId {
+        match self.ty(id) {
+            Type::Fresh(literal) => self.intern(Type::Literal(literal.clone())),
+            _ => id,
+        }
+    }
+
     /// Every declaration of a sealed database
     pub(crate) fn declarations(&self) -> impl Iterator<Item = (DeclId, &Declaration)> {
         let Declarations::Frozen(declarations) = &self.declarations else {
@@ -1073,6 +1096,23 @@ impl Database {
                 }
                 normalized.sort_unstable();
                 normalized.dedup();
+                // A fresh literal is its regular twin's, which is kept
+                let regular: Vec<TypeId> = (normalized.iter())
+                    .filter_map(|member| match *member {
+                        UnionMember::Type(id) if matches!(self.ty(id), Type::Literal(_)) => {
+                            Some(id)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if !regular.is_empty() {
+                    normalized.retain(|member| match *member {
+                        UnionMember::Type(id) if matches!(self.ty(id), Type::Fresh(_)) => {
+                            !regular.contains(&self.regular(id))
+                        }
+                        _ => true,
+                    });
+                }
                 match normalized.as_slice() {
                     [UnionMember::Type(id)] => self.ty(*id).clone(),
                     _ => Type::Union(normalized.into()),
@@ -1177,7 +1217,11 @@ impl Database {
 
     fn validate(&self, ty: &Type) {
         match ty {
-            Type::Top | Type::Unknown(_) | Type::Literal(_) | Type::Bound { .. } => {}
+            Type::Top
+            | Type::Unknown(_)
+            | Type::Literal(_)
+            | Type::Fresh(_)
+            | Type::Bound { .. } => {}
             Type::Decl(id) | Type::Rigid { decl: id, .. } => {
                 self.declarations.get(*id);
             }
@@ -1396,9 +1440,10 @@ impl Database {
         result
     }
 
-    /// Replace each literal type with its class, where that is registered. Exact
-    /// schema keys and binder bounds and defaults keep their literals, since
-    /// decaying them would change what they mean.
+    /// Replace each fresh literal type with its class, where that is registered.
+    /// A regular literal was written in a type, so it's kept, as are exact schema
+    /// keys and binder bounds and defaults, since decaying them would change what
+    /// they mean.
     pub(crate) fn decay(&self, root: TypeId) -> TypeId {
         self.decay_inner(root, &mut HashMap::new())
     }
@@ -1408,7 +1453,8 @@ impl Database {
             return *result;
         }
         let result = match self.ty(id) {
-            Type::Literal(literal) => self.intrinsic(literal.intrinsic()).unwrap_or(id),
+            Type::Fresh(literal) => self.intrinsic(literal.intrinsic()).unwrap_or(id),
+            Type::Literal(_) => id,
             Type::Schema(items) => {
                 let items = items
                     .iter()
