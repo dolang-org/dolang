@@ -1,0 +1,110 @@
+# A class claiming a protocol provides each of its members, and inherits at
+# runtime each class the protocol names.
+
+pub class Num
+pub class Int: Num
+pub class Other
+
+pub @class Shape
+  pub field name @ Num
+  pub def area self -> Num
+
+pub class Square: @Shape
+  pub field name @ Num = nil
+  pub def area _self -> Int
+    ...
+
+pub class Blob: @Shape
+  # error: `Blob` does not provide `area`, which `Shape` requires
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub class Blob: @Shape
+  #    |                  ^^^^^
+  pub field name @ Num = nil
+
+pub class Wrong: @Shape
+  pub field name @ Num = nil
+  pub def area _self -> Other
+    # error: `area` does not match `Shape.area`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def area _self -> Other
+    #    |           ^^^^
+    ...
+
+# A protocol's field is upheld by a property that reads and writes it
+pub class Computed: @Shape
+  #[getter]
+  pub def name _self -> Int
+    ...
+
+  #[setter]
+  pub def name _self value @ Num
+    ...
+
+  pub def area _self -> Num
+    ...
+
+pub class ReadOnly: @Shape
+  #[getter]
+  pub def name _self -> Num
+    # error: `name` is a read-only property, but `Shape.name` is a field
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def name _self -> Num
+    #    |           ^^^^
+    ...
+
+  pub def area _self -> Num
+    ...
+
+# An implementation may come from a superclass the runtime inherits
+pub class Named
+  pub field name @ Num = nil
+
+pub class Tile: Named @Shape
+  pub def area _self -> Num
+    ...
+
+# A protocol extending a protocol, and naming a class
+pub class Base
+  pub def base _self -> Num
+    ...
+
+pub @class Solid: Shape Base
+  pub def volume self -> Num
+
+pub class Cube: Base @Solid
+  pub field name @ Num = nil
+  pub def area _self -> Num
+    ...
+  pub def volume _self -> Num
+    ...
+
+pub class Loose: @Solid
+  # error: `Solid` requires `Base`, which `Loose` does not inherit
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub class Loose: @Solid
+  #    |                   ^^^^^
+  pub field name @ Num = nil
+  pub def area _self -> Num
+    ...
+  pub def volume _self -> Num
+    ...
+  pub def base _self -> Num
+    ...
+
+pub class Holder[T]
+  pub field value @ T = nil
+
+pub @class IntHolder: Holder[Int]
+
+pub class Ints: Holder[Int] @IntHolder
+
+pub class Nums: Holder[Num] @IntHolder
+# error: `Nums` inherits `Holder` with arguments `IntHolder` does not allow
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Nums: Holder[Num] @IntHolder
+#    |                              ^^^^^^^^^

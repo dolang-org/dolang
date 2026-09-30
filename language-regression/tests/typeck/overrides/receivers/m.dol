@@ -1,0 +1,26 @@
+# An overridden method is called on the subclass's instances, so its receiver is
+# narrowed to the subclass: a specialized receiver `Box[U]` becomes `Kept[U]`.
+
+pub class Num
+pub class Int: Num
+
+pub class Box[T]
+  pub field item @ T = nil
+  pub def only[U @ Num] self @ Box[U] -> U
+    ...
+
+pub class Kept[T]: Box[T]
+  pub def only[U @ Num] self @ Kept[U] -> U
+    ...
+
+pub class Inherited[T]: Box[T]
+
+# An override callable on fewer of the instances
+pub class Pinned[T]: Box[T]
+  pub def only[U @ Num] self @ Pinned[Int] -> U
+    # error: `only` does not match `Box.only`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def only[U @ Num] self @ Pinned[Int] -> U
+    #    |           ^^^^
+    ...

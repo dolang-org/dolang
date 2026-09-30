@@ -85,7 +85,10 @@ that an omitted `def` annotation stands for, and what an erroneous site is
 interned as. It is interned once like top, with a schema-kinded twin for
 erroneous schema positions, and a union keeps it as an ordinary member. How
 checker strictness treats an omission is decided where it was written, not by
-finding `Unknown`.
+finding `Unknown`. A written type the database can't represent yet, such as a
+rest pattern mapped over packs, is an `Unsupported` stand-in instead: each is
+unique, since what it stands for can't be compared, and the solver reports a
+judgment reaching one as unsupported rather than consistent.
 
 Quantifiers own structural binder groups. References use relative group depth
 and declaration-order slot, each a checked `u16`. The whole group is in scope in
@@ -145,7 +148,9 @@ Structural walking and rebuilding report quantifier boundaries and visit
 bounds/defaults along with all other children. Declaration references are
 leaves; definitions and declared supertypes must be visited explicitly. A
 nominal definition's supertypes are interpreted inside its outer structural
-binder group. Shifting inserts/removes groups at a cutoff and refuses to remove
+binder group. Each records whether the runtime inherits from it: a class's `@`
+supertypes, and all of a protocol's, are only claims, even one naming a class.
+Shifting inserts/removes groups at a cutoff and refuses to remove
 a group that is referenced. Memoization includes the scope as well as the node
 identity.
 
@@ -297,12 +302,15 @@ parameter lists (`<: {*Value, **Value}`), and packs expanded into a
 positional-only rest (`<: {*Value}`) without flattening.
 
 A schema variable is opaque like a rigid. The same variable on both sides pairs
-up. An expected variable without a counterpart takes what the actual side has
-left: it must end its positional lane, after required items only, and it takes
-the keyed items the expected side doesn't name, or is residual beside a key
-domain. What it takes becomes a schema built around the atoms' solver terms,
-which is its lower bound. An actual variable without a counterpart is bounded
-only by a rest-shaped expected schema; otherwise the judgment is residual.
+up. So does a variable with a rigid or skolem across from it, when both sides
+have their opaques in the same places, as a quantified signature related to its
+own instantiation does: the variable is bounded by the rigid. An expected
+variable without a counterpart takes what the actual side has left: it must end
+its positional lane, after required items only, and it takes the keyed items the
+expected side doesn't name, or is residual beside a key domain. What it takes
+becomes a schema built around the atoms' solver terms, which is its lower bound.
+An actual variable without a counterpart is bounded only by a rest-shaped
+expected schema; otherwise the judgment is residual.
 
 A call is checked as an ordinary judgment: the callee's type must be a subtype
 of the function type the call expects, `(args) <input >output -> result`.
@@ -331,7 +339,9 @@ judgment. Forwarding an omitted ambient channel to a callee is identity and
 never consults its default bound; using its elements reduces through the bound,
 so a strict mode can reject proofs carrying that label and ask for the channel
 to be annotated. A union on the right is proved by a member identical to the
-left side before alternatives are probed. Rigids are closed, so they reify to
+left side before alternatives are probed. A positional pack's items are each
+below a union that expands the same pack, so `{...Ts}` is below
+`{*Union[...Ts]}` without the pack's bound. Rigids are closed, so they reify to
 themselves and assignments may contain them. A rigid of a declaration not
 assumed has escaped its own check: it is related only to itself and top, and
 reifying it is residual.
@@ -339,7 +349,8 @@ reifying it is residual.
 `reach` walks a term to a target declaration through the substitution-carrying
 inheritance walk, continuing through an assumed rigid's bound, and returns the
 target's arguments. It reports a term that doesn't reach the target, and
-`Unknown` as reaching anything.
+`Unknown` as reaching anything. `inherits` walks only the supertypes the runtime
+inherits from.
 
 ### Instantiation
 
@@ -388,7 +399,8 @@ are never joined or probed. A scope's variables are invisible outside its
 judgment, so the solver settles them itself: at quiescence, it defaults one at a
 time, innermost scope first and in creation order, and solves again. A variable
 nothing is below takes bottom. Variables of the root scope are left to the
-caller.
+caller, unless the solver is closed: a judgment between declarations' types,
+whose variables no caller sees, settles them last in the same way.
 
 The supported higher-rank fragment is a prenex quantifier on either side of any
 obligation, including quantifiers reached through function parameters and
@@ -398,8 +410,10 @@ quantifier on the right by contravariance. Residual forms are:
 - a quantified type on the right of a variable, which would need impredicative
   instantiation; the bound is not recorded;
 - a quantified type on the right of a class instance;
-- an item projection whose schema or key holds a skolem, since projections are
-  evaluated by reifying them.
+- a projection whose schema or key holds a skolem, since projections are
+  evaluated by reifying them. It stays unevaluated and relates only to an
+  identical projection, a member of a union on the left proved by the same
+  member on the right.
 
 ### Member lookup
 
@@ -431,6 +445,43 @@ method, its overloads and its implementation, is applied alike. A property's
 getter and setter are methods. A result says whether the member is public, since
 only a public member can be replaced in a subclass, so only access to one may
 dispatch.
+
+A search can follow only the supertypes the runtime inherits from. A class's `@`
+supertypes and all of a protocol's are claims, so what a class reaches only
+through one is not an implementation of its own.
+
+### Conformance
+
+`typeck/solver/conform.rs` states what a supertype's members require of a class
+or protocol. Its answer is a set of ordinary subtype judgments for the caller
+to constrain, so conformance can become a subtyping rule for structural
+protocols (#828) without caching a verdict. For each public, non-static member
+of the supertype's MRO, `(init)` aside, the member the supertype has is
+required, and the declaration's own is provided: the first in its runtime MRO
+for a class, or in its whole MRO for a protocol. Members compare by kind:
+
+- fields invariantly, both ways, as they are mutable;
+- methods by their implementations, the provided below the required; overloads
+  narrow calls where they are made and are not compared;
+- properties accessor by accessor, and a property may not drop an accessor the
+  required one has;
+- a protocol's field by a property with both accessors, the getter's result
+  below the field's type and the setter accepting it.
+
+Any other change of kind is reported, as the runtime refuses a class that
+replaces a field with a method or property. A protocol's member that nothing
+provides is missing; a claimed class's member is covered by `claimed_classes`,
+which reports each class a claim names, down its ancestry, that the declaration
+doesn't inherit at runtime, or inherits with arguments the claim doesn't allow.
+
+A required method is called on the declaration's instances, so its receiver is
+narrowed to them. A receiver `C[a…]` becomes the declaration's class applied to
+the arguments that make it reach `C[a…]` along the supertype the member was
+found through: a default receiver becomes the declaration's own type, and
+`chomp[U] self @ Iterable[U]` checked for `Iter[T]` takes `self @ Iter[U]`. The
+provided method keeps its receiver, so one callable on fewer instances fails.
+A receiver that isn't a class application, or can't be matched, stays as
+written.
 
 ### Assignments and fixed point
 
@@ -1043,7 +1094,17 @@ is rejected, as OCaml rejects irregular abbreviations. Recursion through class
 supertypes is left to the solver, which reports expanding inheritance as
 residual.
 
+Overrides and protocol conformance are checked after well-formedness, in
+`elab/overrides.rs`. Each class and protocol is checked against each supertype
+it names, under its own rigids, in one closed solver whose variables it settles
+itself. Every requirement the solver states is constrained there, and a
+contradicted one is reported: an override where it is declared, and an
+inherited member, a missing one or a class a claim needs at the supertype
+reference. The checks are local, as well-formedness's are.
+
 `Check::validated` holds when the checker reported no errors and decided every
-check. Otherwise the result is partial: usable for diagnostics and tooling, but
-checking code against it proves nothing. Undecided checks are not diagnosed
-until a strictness policy decides how, but a `wf` judgment reports each.
+check, except those that need a form it doesn't support yet, which are
+provisionally accepted. Otherwise the result is partial: usable for diagnostics
+and tooling, but checking code against it proves nothing. Undecided checks are
+not diagnosed until a strictness policy decides how, but a `wf` judgment
+reports each.

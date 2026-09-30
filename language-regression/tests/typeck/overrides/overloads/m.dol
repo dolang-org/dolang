@@ -1,0 +1,25 @@
+# Overrides compare implementations; overloads narrow calls where they're made.
+
+pub class Num
+pub class Int: Num
+pub class Other
+
+pub class Base
+  @def pick _self x @ Int -> Int
+  @def pick _self x @ Num -> Num
+  pub def pick _self x @ Num -> Num
+    ...
+
+pub class Same: Base
+  @def pick _self x @ Other -> Other
+  pub def pick _self x @ Num -> Num
+    ...
+
+pub class Narrow: Base
+  pub def pick _self x @ Int -> Num
+    # error: `pick` does not match `Base.pick`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def pick _self x @ Int -> Num
+    #    |           ^^^^
+    ...

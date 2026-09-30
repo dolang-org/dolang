@@ -1,7 +1,7 @@
 use super::*;
 use crate::typeck::{
     solver::member::{Found, FoundKind, Lookup},
-    r#type::{Member, MemberKey, Scope},
+    r#type::{Member, MemberKey, Scope, Supertype},
 };
 
 /// A class whose members are added before it is populated
@@ -79,6 +79,11 @@ impl Class {
     }
 
     fn finish(self, db: &mut Database, supers: Vec<TypeId>) -> TypeId {
+        self.finish_with(db, inherited(supers).to_vec())
+    }
+
+    /// Populate it with supertypes that may be only claims
+    fn finish_with(self, db: &mut Database, supers: Vec<Supertype>) -> TypeId {
         let binders = (0..self.binders.len())
             .map(|_| BinderSource {
                 name: self.source.name.unwrap(),
@@ -456,4 +461,80 @@ fn every_signature_of_an_overloaded_method_is_applied() {
     );
     let Term::Infer(r) = r else { unreachable!() };
     assert_eq!(s.solution(r), Some(str));
+}
+
+#[test]
+fn only_runtime_supertypes_provide_implementations() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let claim = |ty| Supertype { ty, runtime: false };
+    let inherit = |ty| Supertype { ty, runtime: true };
+    // class Base: pub field x @ Int; #[class] pub field made; #[static] pub field only
+    let mut base = Class::new(&mut db, "Base", vec![]);
+    base.field(key(&db, "x"), int, Scope::Instance);
+    base.field(key(&db, "made"), int, Scope::Class);
+    base.field(key(&db, "only"), int, Scope::Static);
+    let base_id = base.id;
+    let base = base.finish(&mut db, vec![]);
+    // @class Proto: Base; pub field y @ Int
+    let mut proto = Class::new(&mut db, "Proto", vec![]);
+    proto.field(key(&db, "y"), int, Scope::Instance);
+    let proto_id = proto.id;
+    let proto = proto.finish_with(&mut db, vec![claim(base)]);
+    // class Claim: @Proto
+    let claims = Class::new(&mut db, "Claim", vec![]);
+    let claims_id = claims.id;
+    let claims = claims.finish_with(&mut db, vec![claim(proto)]);
+    // class Real: Base @Proto
+    let real =
+        Class::new(&mut db, "Real", vec![]).finish_with(&mut db, vec![inherit(base), claim(proto)]);
+    db.seal();
+
+    let s = Solver::new(&db);
+    let lookup = |class, name, scope, runtime| {
+        s.inherited_member(s.closed(class), key(&db, name), scope, runtime)
+    };
+    assert_eq!(
+        found(lookup(claims, "y", Scope::Instance, false)).class,
+        proto_id
+    );
+    assert!(missing(lookup(claims, "y", Scope::Instance, true)));
+    assert_eq!(
+        found(lookup(claims, "x", Scope::Instance, false)).class,
+        base_id
+    );
+    assert!(missing(lookup(claims, "x", Scope::Instance, true)));
+    assert_eq!(
+        found(lookup(real, "x", Scope::Instance, true)).class,
+        base_id
+    );
+    // A class member is inherited in its own namespace, and a static one isn't
+    assert!(missing(lookup(real, "made", Scope::Instance, true)));
+    assert_eq!(
+        found(lookup(real, "made", Scope::Class, true)).scope,
+        Scope::Class
+    );
+    assert!(missing(lookup(real, "only", Scope::Static, true)));
+    assert_eq!(
+        found(lookup(base, "only", Scope::Static, true)).class,
+        base_id
+    );
+
+    assert_eq!(
+        s.lineage(s.closed(claims)),
+        Ok(vec![claims_id, proto_id, base_id])
+    );
+    // Claiming a protocol doesn't inherit the classes it names
+    assert!(matches!(
+        s.reach(s.closed(claims), base_id),
+        Ok(Reach::Reached(_))
+    ));
+    assert!(matches!(
+        s.inherits(s.closed(claims), base_id),
+        Ok(Reach::Unreached)
+    ));
+    assert!(matches!(
+        s.inherits(s.closed(real), base_id),
+        Ok(Reach::Reached(_))
+    ));
 }

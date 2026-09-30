@@ -1,0 +1,22 @@
+# A member merged from several supertypes is the leftmost's, which must agree
+# with each other supertype's.
+
+pub class Num
+pub class Int: Num
+
+pub class Left
+  pub def id _self -> Int
+    ...
+
+pub class Right
+  pub def id _self -> Num
+    ...
+
+pub class Both: Left Right
+
+pub class Crossed: Right Left
+# error: `id` from `Right` does not match `Left.id`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Crossed: Right Left
+#    |                          ^^^^

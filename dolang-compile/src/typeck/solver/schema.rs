@@ -121,7 +121,8 @@ impl Solver<'_> {
         self.flatten(bv, ys, None, None, &mut b, 0)?;
         let mut a = Shape::default();
         self.flatten(av, xs, None, None, &mut a, 0)?;
-        let pairs = self.pair(&a, &b)?;
+        let mut pairs = self.pair(&a, &b)?;
+        self.cross(&a, &b, &mut pairs, obligation)?;
         // Every actual rigid without a counterpart stands for its bound
         let paired: HashSet<Term> = pairs
             .iter()
@@ -330,6 +331,53 @@ impl Solver<'_> {
     /// positional and one keyed. Each of `xs`'s items must fit the matching
     /// repeated item, whatever its multiplicity, and each inclusion must fit
     /// the whole expected schema.
+    /// Whether `pack`, a positional rigid or skolem pack, is below `expected`
+    /// because each of its items is: `expected` is a rest-shaped schema whose
+    /// repeated positional item is a union expanding the same pack, as
+    /// `{...Ts}` is below `{*Union[...Ts]}`
+    pub(super) fn expands_into(&self, pack: Term, expected: &Head) -> Result<bool, Issue> {
+        let Head::Structural(view) = expected else {
+            return Ok(false);
+        };
+        let Type::Schema(items) = self.db.ty(view.ty) else {
+            return Ok(false);
+        };
+        let Some(RestShape {
+            positional: Some(item),
+            ..
+        }) = rest_shape(items)
+        else {
+            return Ok(false);
+        };
+        let item = view.child(item);
+        let Head::Structural(union) = self.head(item)? else {
+            return Ok(false);
+        };
+        let Type::Union(members) = self.db.ty(union.ty) else {
+            return Ok(false);
+        };
+        for &member in members.iter() {
+            let UnionMember::Expand(mut expanded) = member else {
+                continue;
+            };
+            // `Union[...Ts]` expands `{...Ts}`
+            if let Type::Schema(items) = self.db.ty(expanded)
+                && let [
+                    SchemaItem {
+                        multiplicity: Multiplicity::Required,
+                        element: Element::Include(included),
+                    },
+                ] = items[..]
+            {
+                expanded = included;
+            }
+            if self.same(pack, union.child(expanded))? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn rest_shaped(
         &self,
         av: TypeView,
@@ -465,6 +513,7 @@ impl Solver<'_> {
                 opaque(shape, Opacity::Unknown, Rest::All);
                 Ok(())
             }
+            Type::Unsupported { .. } => Err(UNREPRESENTED.into()),
             Type::Schema(items) if multiplicity == Multiplicity::Required => {
                 self.flatten(view, items, Some(item), keep, shape, depth + 1)
             }
@@ -572,6 +621,43 @@ impl Solver<'_> {
             return Err(Residual::Alignment.into());
         }
         Ok(pairs)
+    }
+
+    /// Pair a variable with a rigid or skolem across from it, each without a
+    /// counterpart, when both sides have their opaques in the same places, as a
+    /// quantified signature related to its own instantiation does. The variable
+    /// stands for the rigid, so it is bounded by it.
+    fn cross(
+        &self,
+        a: &Shape,
+        b: &Shape,
+        pairs: &mut Vec<(usize, usize)>,
+        obligation: ObligationId,
+    ) -> Result<(), Issue> {
+        if a.opaque.len() != b.opaque.len() {
+            return Ok(());
+        }
+        let mut crossed = false;
+        for (index, (x, y)) in a.opaque.iter().zip(&b.opaque).enumerate() {
+            if x.lanes != y.lanes || pairs.iter().any(|&(i, j)| i == index || j == index) {
+                continue;
+            }
+            let (actual, expected) = match (x.opacity, y.opacity) {
+                (Opacity::Infer(id), Opacity::Rigid(rigid)) => (Term::Infer(id), rigid),
+                (Opacity::Rigid(rigid), Opacity::Infer(id)) => (rigid, Term::Infer(id)),
+                _ => continue,
+            };
+            self.derive(obligation, actual, expected, Step::Item(x.item));
+            pairs.push((index, index));
+            crossed = true;
+        }
+        if crossed {
+            pairs.sort();
+            if !pairs.is_sorted_by_key(|&(_, j)| j) {
+                return Err(Residual::Alignment.into());
+            }
+        }
+        Ok(())
     }
 
     /// Relate the positional lanes, segment by segment between paired opaques

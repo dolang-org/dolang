@@ -27,7 +27,7 @@
 //! preserve that environment when instantiating or substituting an open type.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     num::NonZeroU32,
 };
@@ -309,6 +309,14 @@ pub(crate) enum Type {
     Top,
     /// The dynamic type or schema, consistent with every type or schema of its kind
     Unknown(Kind),
+    /// A written type the database can't represent yet, such as a rest pattern
+    /// mapped over packs (#764). Judgments involving it are unsupported rather than
+    /// consistent, so it never passes for `Unknown`. Each is unique (see
+    /// [`Database::unsupported`]), since what it stands for can't be compared.
+    Unsupported {
+        kind: Kind,
+        occurrence: u32,
+    },
     /// A literal type written in a type, or derived from one, which is exact
     Literal(Literal),
     /// A literal type a literal term gave, which decays to its class where a
@@ -349,6 +357,7 @@ impl Type {
         match self {
             Self::Top
             | Self::Unknown(_)
+            | Self::Unsupported { .. }
             | Self::Literal(_)
             | Self::Fresh(_)
             | Self::Decl(_)
@@ -461,6 +470,7 @@ impl Type {
         match &mut mapped {
             Self::Top
             | Self::Unknown(_)
+            | Self::Unsupported { .. }
             | Self::Literal(_)
             | Self::Fresh(_)
             | Self::Decl(_)
@@ -649,13 +659,23 @@ pub(crate) struct DeclSource {
     pub(crate) span: UnitSpan,
 }
 
+/// A nominal declaration's supertype
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Supertype {
+    /// Interpreted in the scope of the declaration's outer binder group, when
+    /// present.
+    pub(crate) ty: TypeId,
+    /// Whether the runtime inherits from it. A class's `@` supertypes, and all
+    /// of a protocol's, are only claims the type checker holds it to.
+    pub(crate) runtime: bool,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct Declaration {
     pub(crate) source: DeclSource,
     pub(crate) ty: TypeId,
     pub(crate) binders: alias::Box<[BinderSource]>,
-    /// Interpreted in the scope of `ty`'s outer binder group, when present.
-    pub(crate) supertypes: alias::Box<[TypeId]>,
+    pub(crate) supertypes: alias::Box<[Supertype]>,
     /// A class's or protocol's members, in source order
     pub(crate) members: alias::Box<[(MemberKey, Member)]>,
 }
@@ -809,6 +829,8 @@ pub(crate) struct Database {
     /// Each function's signatures, when it has more than one
     overloads: HashMap<DeclId, alias::Box<[DeclId]>>,
     pending_kinds: RefCell<Vec<(TypeId, Kind)>>,
+    /// How many unsupported stand-ins have been interned
+    unsupported: Cell<u32>,
 }
 
 impl Default for Database {
@@ -826,6 +848,7 @@ impl Default for Database {
             declarations: Declarations::Building(Vec::new()),
             overloads: HashMap::new(),
             pending_kinds: RefCell::new(Vec::new()),
+            unsupported: Cell::new(0),
         }
     }
 }
@@ -856,6 +879,14 @@ impl Database {
     /// The dynamic schema, interned before any source declarations.
     pub(crate) fn unknown_schema(&self) -> TypeId {
         self.unknown_schema
+    }
+
+    /// A new stand-in for a written type the database can't represent, distinct
+    /// from every other
+    pub(crate) fn unsupported(&self, kind: Kind) -> TypeId {
+        let occurrence = self.unsupported.get();
+        self.unsupported.set(occurrence + 1);
+        self.intern(Type::Unsupported { kind, occurrence })
     }
 
     /// The dynamic type or schema of a kind
@@ -1012,8 +1043,8 @@ impl Database {
             declaration.source.kind.nominal() || declaration.supertypes.is_empty(),
             "unexpected supertypes on transparent declaration"
         );
-        for &supertype in declaration.supertypes.iter() {
-            self.expect_kind(supertype, Kind::Type);
+        for supertype in declaration.supertypes.iter() {
+            self.expect_kind(supertype.ty, Kind::Type);
         }
         assert!(
             matches!(
@@ -1036,7 +1067,7 @@ impl Database {
             });
         for root in [declaration.ty]
             .into_iter()
-            .chain(declaration.supertypes.iter().copied())
+            .chain(declaration.supertypes.iter().map(|supertype| supertype.ty))
             .chain(fields)
         {
             self.walk(root, |id, _| {
@@ -1134,7 +1165,7 @@ impl Database {
                 .get(*id)
                 .map(|decl| decl.source.result_kind),
             Type::Quantified { body, .. } => self.known_kind(*body),
-            Type::Unknown(kind) => Some(*kind),
+            Type::Unknown(kind) | Type::Unsupported { kind, .. } => Some(*kind),
             _ => Some(Kind::Type),
         }
     }
@@ -1465,6 +1496,7 @@ impl Database {
         match ty {
             Type::Top
             | Type::Unknown(_)
+            | Type::Unsupported { .. }
             | Type::Literal(_)
             | Type::Fresh(_)
             | Type::Bound { .. } => {}

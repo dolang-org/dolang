@@ -113,6 +113,7 @@ impl<'u, 's> Builder<'u, 's> {
         db.seal();
         elab::specialize(&mut db, &tables, &mut diags);
         let mut unresolved = elab::wellformed(&db, &tables, &mut diags);
+        unresolved.extend(elab::overrides(&db, &tables, &mut diags));
         let cfgs = (0..units.len())
             .map(|index| {
                 let ir = lower::lower(&tables, &db, UnitId::from_index(index));
@@ -153,10 +154,11 @@ impl<'u, 's> Builder<'u, 's> {
 /// The result of checking a set of units.
 ///
 /// A check is *validated* when every well-formedness check passed: the checker
-/// reported no errors, and could decide every check it ran. Otherwise it is
-/// *partial*: its declarations are usable for diagnostics and tooling, but
-/// checking code against them proves nothing. Units that could not be checked at
-/// all are refused by [`Builder::unit`].
+/// reported no errors, and could decide every check it ran, except those that
+/// need a form it doesn't support yet. Those are provisionally accepted.
+/// Otherwise it is *partial*: its declarations are usable for diagnostics and
+/// tooling, but checking code against them proves nothing. Units that could not
+/// be checked at all are refused by [`Builder::unit`].
 pub struct Check<'u> {
     diagnostics: Vec<Diag>,
     tables: elab::Tables<'u>,
@@ -193,7 +195,9 @@ impl Check<'_> {
 
     /// Whether every well-formedness check passed. See [`Check`].
     pub fn validated(&self) -> bool {
-        self.unresolved.is_empty()
+        self.unresolved
+            .iter()
+            .all(|unresolved| matches!(unresolved.residual, solver::Residual::Unsupported(_)))
             && self
                 .diagnostics
                 .iter()
@@ -276,8 +280,8 @@ impl Check<'_> {
                 _ => declaration.ty,
             };
             relate(&mut solver, body, &kinds);
-            for &supertype in declaration.supertypes.iter() {
-                relate(&mut solver, supertype, &kinds);
+            for supertype in declaration.supertypes.iter() {
+                relate(&mut solver, supertype.ty, &kinds);
             }
             for (_, member) in declaration.members.iter() {
                 if let r#type::Member::Field { ty, .. } = member {
@@ -309,7 +313,11 @@ impl Check<'_> {
         };
         for (class, declaration) in db.declarations() {
             let mut keys: Vec<_> = declaration.members.iter().map(|(key, _)| *key).collect();
-            for decl in declaration.supertypes.iter().filter_map(|&ty| declared(ty)) {
+            for decl in declaration
+                .supertypes
+                .iter()
+                .filter_map(|supertype| declared(supertype.ty))
+            {
                 let members = &db.declaration(decl).members;
                 keys.extend(
                     members

@@ -1,0 +1,56 @@
+# An override is checked under the arguments its class passes to the supertype,
+# which relate as the supertype's binders vary.
+
+pub class Num
+pub class Int: Num
+
+# Covariant: an override may return less
+pub class Source[T]
+  pub def get _self -> T
+    ...
+
+pub class Ints: Source[Int]
+  pub def get _self -> Int
+    ...
+
+pub class Loose: Source[Int]
+  pub def get _self -> Num
+    # error: `get` does not match `Source.get`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def get _self -> Num
+    #    |           ^^^
+    ...
+
+# Contravariant: an override may accept more
+pub class Drain[T]
+  pub def put _self x @ T
+    ...
+
+pub class Nums: Drain[Int]
+  pub def put _self x @ Num
+    ...
+
+pub class Picky: Drain[Num]
+  pub def put _self x @ Int
+    # error: `put` does not match `Drain.put`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def put _self x @ Int
+    #    |           ^^^
+    ...
+
+# Invariant: a field keeps its type exactly
+pub class Cell[T]
+  pub field value @ T = nil
+
+pub class IntCell: Cell[Int]
+  pub field value @ Int = nil
+
+pub class Widened: Cell[Int]
+  pub field value @ Num = nil
+# error: `value` does not match `Cell.value`
+#   --> m.dol:LL:LL
+#    |
+# LL |   pub field value @ Num = nil
+#    |             ^^^^^

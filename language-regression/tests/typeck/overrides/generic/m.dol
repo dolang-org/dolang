@@ -1,0 +1,49 @@
+# Generic methods override generic methods: the overridden method's binders are
+# held abstract, and the override's are inferred.
+
+pub class Num
+pub class Int: Num
+
+pub class Tup[*Ts]
+  pub def items self -> Tup[...Ts]
+    ...
+
+pub class Base[T]
+  pub def get self -> T
+    ...
+  pub def map[U] self f @ (T -> U) -> Base[U]
+    ...
+  pub def zip[*Us] self *values @ ...Base[Us] -> Base[Tup[T, ...Us]]
+    ...
+  pub def first[D = T] self :default @ D = nil -> (T | D)
+    ...
+
+# Renamed binders, and a narrower result
+pub class Same[T]: Base[T]
+  pub def map[V] self f @ (T -> V) -> Same[V]
+    ...
+
+# A plain signature below the generic one it overrides
+pub class Plain: Base[Int]
+  pub def get self -> Int
+    ...
+
+# A bound the overridden method doesn't have
+pub class Bounded[T]: Base[T]
+  pub def map[U @ Num] self f @ (T -> U) -> Base[U]
+    # error: `map` does not match `Base.map`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def map[U @ Num] self f @ (T -> U) -> Base[U]
+    #    |           ^^^
+    ...
+
+# A plain signature doesn't cover every choice of the overridden binder
+pub class Fixed: Base[Int]
+  pub def map self f @ (Int -> Int) -> Base[Int]
+    # error: `map` does not match `Base.map`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def map self f @ (Int -> Int) -> Base[Int]
+    #    |           ^^^
+    ...

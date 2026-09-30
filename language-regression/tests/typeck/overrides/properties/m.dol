@@ -1,0 +1,47 @@
+# A property's getter and setter are overridden as methods, and a property
+# someone can write stays writable.
+
+pub class Num
+pub class Int: Num
+
+pub class Base
+  #[getter]
+  pub def size _self -> Num
+    ...
+
+  #[setter]
+  pub def size _self value @ Num
+    ...
+
+pub class Narrow: Base
+  #[getter]
+  pub def size _self -> Int
+    ...
+
+  #[setter]
+  pub def size _self value @ Num
+    ...
+
+pub class Picky: Base
+  #[getter]
+  pub def size _self -> Num
+    # error: `size` does not match `Base.size`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def size _self -> Num
+    #    |           ^^^^
+    ...
+
+  #[setter]
+  pub def size _self value @ Int
+    ...
+
+pub class ReadOnly: Base
+  #[getter]
+  pub def size _self -> Num
+    # error: `size` is a read-only property, but `Base.size` is a property
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def size _self -> Num
+    #    |           ^^^^
+    ...

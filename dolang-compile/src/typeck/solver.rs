@@ -122,6 +122,9 @@ pub(crate) enum Residual {
     Alignment,
 }
 
+/// What relating a [`Type::Unsupported`] stand-in is
+const UNREPRESENTED: Residual = Residual::Unsupported("a type the checker can't represent yet");
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Contradiction {
     DistinctLiterals,
@@ -385,6 +388,9 @@ pub(crate) struct Solver<'db> {
     scope: HashSet<DeclId>,
     /// Each rigid's bound, once computed
     rigid_bounds: RefCell<HashMap<TypeId, Option<TypeId>>>,
+    /// Whether the judgments own the root scope's variables, so solving settles
+    /// them as it settles a skolem scope's
+    closed: bool,
 }
 
 impl<'db> Solver<'db> {
@@ -422,7 +428,15 @@ impl<'db> Solver<'db> {
             exhausted: Cell::new(false),
             scope: HashSet::new(),
             rigid_bounds: RefCell::new(HashMap::new()),
+            closed: false,
         }
+    }
+
+    /// Declare that no caller will default the root scope's variables, as in a
+    /// judgment between two declarations' types. Solving then settles them after
+    /// every skolem scope's, as it settles those.
+    pub(crate) fn close(&mut self) {
+        self.closed = true;
     }
 
     /// Check `decl`: its rigids' bounds become assumptions. The rigids of any other
@@ -478,7 +492,18 @@ impl<'db> Solver<'db> {
 
     /// Walk a term to the target declaration, carrying substitutions. A rigid in
     /// scope continues through its bound.
-    pub(crate) fn reach(&self, mut term: Term, target: DeclId) -> Result<Reach, Issue> {
+    pub(crate) fn reach(&self, term: Term, target: DeclId) -> Result<Reach, Issue> {
+        self.reach_in(term, target, false)
+    }
+
+    /// Walk a term to the target declaration as [`Self::reach`] does, but only
+    /// through the supertypes the runtime inherits from, so a class claiming a
+    /// protocol reaches only what it inherits
+    pub(crate) fn inherits(&self, term: Term, target: DeclId) -> Result<Reach, Issue> {
+        self.reach_in(term, target, true)
+    }
+
+    fn reach_in(&self, mut term: Term, target: DeclId, runtime: bool) -> Result<Reach, Issue> {
         for depth in 0.. {
             self.depth(depth)?;
             self.spend()?;
@@ -490,7 +515,7 @@ impl<'db> Solver<'db> {
                 },
                 Head::Nominal(nominal) => {
                     return Ok(
-                        match self.ancestor(nominal, target, &mut HashSet::new(), 0)? {
+                        match self.ancestor_in(nominal, target, runtime, &mut HashSet::new(), 0)? {
                             Some(found) => Reach::Reached(found.arguments),
                             None => Reach::Unreached,
                         },
@@ -1010,6 +1035,7 @@ impl<'db> Solver<'db> {
             }
             Type::Top
             | Type::Unknown(_)
+            | Type::Unsupported { .. }
             | Type::Literal(_)
             | Type::Fresh(_)
             | Type::Decl(_)
@@ -1677,6 +1703,27 @@ impl<'db> Solver<'db> {
         Ok((args, environment))
     }
 
+    /// Whether a projection on the left is also a member of the union on the
+    /// right, as a projection of a skolem's schema must be to be below it
+    fn shares(&self, view: TypeView, member: UnionMember, b: &Head) -> Result<bool, Issue> {
+        let Head::Structural(other_view) = b else {
+            return Ok(false);
+        };
+        let Type::Union(others) = self.db.ty(other_view.ty) else {
+            return Ok(false);
+        };
+        let single = |member: UnionMember| self.db.intern(Type::Union(vec![member].into()));
+        let left = view.child(single(member));
+        for &other in others.iter() {
+            if std::mem::discriminant(&member) == std::mem::discriminant(&other)
+                && self.same(left, other_view.child(single(other)))?
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Whether an item projection on the left is below an item projection of the
     /// same kind and schema on the right: `IndexItem` is monotone in its key,
     /// and `AssignItem` antitone
@@ -1803,7 +1850,13 @@ impl<'db> Solver<'db> {
                     if view.environment != self.empty_environment()
                         && members.iter().any(|member| member.projected().is_some()) =>
                 {
-                    term = self.closed(self.reify(term)?);
+                    match self.reify(term) {
+                        Ok(reified) => term = self.closed(reified),
+                        // A skolem's projection is never evaluated, so it relates
+                        // only as itself
+                        Err(Residual::Escape) => return Ok(Head::Structural(view)),
+                        Err(residual) => return Err(residual.into()),
+                    }
                 }
                 // An item projection takes the solver to select by its key. One that
                 // can't be evaluated is left for the rules of unions.
@@ -1830,14 +1883,35 @@ impl<'db> Solver<'db> {
         path: &mut HashSet<DeclId>,
         depth: usize,
     ) -> Result<Option<Nominal>, Issue> {
-        self.preorder(current, path, depth, &mut |visited| match visited {
-            Visited::Nominal(nominal) if nominal.declaration == target => Ok(Some(nominal.clone())),
-            Visited::Nominal(_) => Ok(None),
-            Visited::Structural => Err(Residual::Unsupported(
-                "an ancestor search through a structural supertype",
-            )
-            .into()),
-        })
+        self.ancestor_in(current, target, false, path, depth)
+    }
+
+    /// [`Self::ancestor`], following only the supertypes the runtime inherits
+    /// from when `runtime`
+    fn ancestor_in(
+        &self,
+        current: Nominal,
+        target: DeclId,
+        runtime: bool,
+        path: &mut HashSet<DeclId>,
+        depth: usize,
+    ) -> Result<Option<Nominal>, Issue> {
+        self.mro(
+            current,
+            runtime,
+            path,
+            depth,
+            &mut |visited| match visited {
+                Visited::Nominal(nominal) if nominal.declaration == target => {
+                    Ok(Some(nominal.clone()))
+                }
+                Visited::Nominal(_) => Ok(None),
+                Visited::Structural => Err(Residual::Unsupported(
+                    "an ancestor search through a structural supertype",
+                )
+                .into()),
+            },
+        )
     }
 
     /// Visit `current` and its ancestors in MRO order, left to right and depth
@@ -1846,6 +1920,19 @@ impl<'db> Solver<'db> {
     fn preorder<T>(
         &self,
         current: Nominal,
+        path: &mut HashSet<DeclId>,
+        depth: usize,
+        visit: &mut impl FnMut(Visited<'_>) -> Result<Option<T>, Issue>,
+    ) -> Result<Option<T>, Issue> {
+        self.mro(current, false, path, depth, visit)
+    }
+
+    /// [`Self::preorder`], following only the supertypes the runtime inherits
+    /// from when `runtime`
+    fn mro<T>(
+        &self,
+        current: Nominal,
+        runtime: bool,
         path: &mut HashSet<DeclId>,
         depth: usize,
         visit: &mut impl FnMut(Visited<'_>) -> Result<Option<T>, Issue>,
@@ -1859,10 +1946,13 @@ impl<'db> Solver<'db> {
             return Err(Residual::Recursive.into());
         }
         let supers = &self.db.declaration(current.declaration).supertypes;
-        for &ty in supers.iter() {
-            let head = self.head(self.view(ty, current.environment))?;
+        for supertype in supers
+            .iter()
+            .filter(|supertype| supertype.runtime || !runtime)
+        {
+            let head = self.head(self.view(supertype.ty, current.environment))?;
             let found = match head {
-                Head::Nominal(next) => self.preorder(next, path, depth + 1, visit)?,
+                Head::Nominal(next) => self.mro(next, runtime, path, depth + 1, visit)?,
                 _ => visit(Visited::Structural)?,
             };
             if found.is_some() {
@@ -2174,6 +2264,14 @@ impl<'db> Solver<'db> {
         {
             return Ok(());
         }
+        // Past identity, a type the database can't represent can't be judged
+        for head in [&a, &b] {
+            if let Head::Structural(view) = head
+                && let Type::Unsupported { .. } = self.db.ty(view.ty)
+            {
+                return Err(UNREPRESENTED.into());
+            }
+        }
         // Past identity, a rigid of a declaration not being checked has escaped
         for head in [&a, &b] {
             if let Head::Structural(view) = head {
@@ -2191,6 +2289,17 @@ impl<'db> Solver<'db> {
                     return Ok(());
                 }
             }
+        }
+        // A positional pack's items are each below a union that expands it
+        let pack = match &a {
+            Head::Skolem(id) => self.skolems[id.0].binding == Binding::Rest(Rest::Positional),
+            Head::Structural(view) => self
+                .rigid(view.ty)?
+                .is_some_and(|binder| binder.binding == Binding::Rest(Rest::Positional)),
+            _ => false,
+        };
+        if pack && self.expands_into(actual, &b)? {
+            return Ok(());
         }
         // A rigid is below whatever its bound is below
         if !matches!(b, Head::Infer(_))
@@ -2241,6 +2350,7 @@ impl<'db> Solver<'db> {
             for (index, &member) in members.iter().enumerate() {
                 let (term, step) = match member {
                     UnionMember::Type(ty) => (view.child(ty), Step::UnionMember(index)),
+                    _ if self.shares(*view, member, &b)? => continue,
                     _ if self.congruent(*view, member, &b)? => continue,
                     _ if self.rigid(member.id())?.is_some() => {
                         let Some(bound) = self.rigid_bound(member.id()) else {
@@ -2577,16 +2687,17 @@ impl<'db> Solver<'db> {
     }
 
     /// Commit a choice for one variable of a skolem scope, which nothing outside
-    /// its judgment sees: a default, innermost scope first and in creation
-    /// order, so each follows what an earlier one forces. Without one, a
-    /// variable nothing is below takes bottom, the least choice. Whether one was
-    /// committed.
+    /// its judgment sees, or of the root scope in a closed solver: a default,
+    /// innermost scope first and in creation order, so each follows what an
+    /// earlier one forces. Without one, a variable nothing is below takes bottom,
+    /// the least choice. Whether one was committed.
     fn settle(&self) -> bool {
         let mut pending: Vec<InferVarId> = (0..self.inference.len())
             .map(InferVarId)
             .filter(|&id| {
                 let inference = &self.inference[id.0];
-                inference.scope != ScopeId(0) && inference.assignment.get().is_none()
+                (self.closed || inference.scope != ScopeId(0))
+                    && inference.assignment.get().is_none()
             })
             .collect();
         pending
@@ -2732,12 +2843,14 @@ fn compose(outer: Variance, inner: Variance) -> Variance {
     }
 }
 
+mod conform;
 mod item;
 mod lattice;
 mod member;
 mod narrow;
 mod schema;
 
+pub(crate) use conform::{Inheritance, Requirement, RequirementKind};
 pub(crate) use lattice::Widening;
 pub(crate) use member::{FoundKind, Lookup, Signatures};
 pub(crate) use narrow::Target as NarrowTarget;

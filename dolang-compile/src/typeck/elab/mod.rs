@@ -8,6 +8,7 @@ mod capture;
 mod collect;
 mod judge;
 mod kind;
+mod overrides;
 mod populate;
 mod sig;
 mod specialize;
@@ -33,6 +34,7 @@ pub(crate) use capture::captures;
 pub(crate) use collect::{UnitDiag, collect};
 pub(crate) use judge::JUDGMENTS;
 pub(crate) use kind::{Fill, kinds};
+pub(crate) use overrides::overrides;
 pub(crate) use populate::populate;
 pub(crate) use sig::signatures;
 pub(crate) use specialize::specialize;
@@ -752,6 +754,27 @@ impl Diagnose for BadRecursion {
                 self.alias
             ),
         }
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+/// A member that doesn't conform to a supertype's, or a class a supertype names
+/// that isn't inherited
+struct Nonconforming {
+    span: Span,
+    message: String,
+}
+
+impl Diagnose for Nonconforming {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        w.write_str(&self.message)
     }
 
     fn span(&self) -> Span {
