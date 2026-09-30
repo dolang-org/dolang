@@ -755,6 +755,7 @@ impl<'a> Flow<'a, '_> {
                             span,
                             found: actual.clone().unwrap_or_else(|| "?".to_owned()),
                             expected: self.render_term(solver, relation.expected),
+                            inner: None,
                         }],
                         Check::Quiet => Vec::new(),
                     };
@@ -825,10 +826,30 @@ impl<'a> Flow<'a, '_> {
                         }
                         _ => None,
                     });
+                // What fails may lie deeper than the argument's own relation, as
+                // in a binder's bound its type solves. A literal's class only
+                // restates the literal.
+                let mut end = path.len();
+                while end > params + 3 && matches!(steps[end - 2], Derivation::IntrinsicBacking(_))
+                {
+                    end -= 1;
+                }
+                let deepest = solver.obligation(path[end - 1]).relation;
+                let inner = (end > params + 3)
+                    .then(|| {
+                        let part = self.render_term(solver, deepest.actual)?;
+                        let bound = self.render_term(solver, deepest.expected)?;
+                        Some((part, bound))
+                    })
+                    .flatten()
+                    .filter(|(part, bound)| {
+                        (Some(part), Some(bound)) != (Some(&found), expected.as_ref())
+                    });
                 Problem::Argument {
                     span: arg,
                     found,
                     expected,
+                    inner,
                 }
             }
             None => match contradiction {
