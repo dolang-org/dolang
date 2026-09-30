@@ -876,11 +876,15 @@ impl Solver<'_> {
         }
         let mut owning = Vec::new();
         for &(d, whole) in &overlapping {
-            // A narrower domain admitting the whole key owns it instead
+            // A strictly narrower domain admitting the whole key owns it instead.
+            // Domains each below the other, as the dynamic type is below any, both
+            // own it.
             let mut narrowed = false;
             for &(e, whole) in &overlapping {
-                narrowed |=
-                    whole && keys[e] != keys[d] && self.probe(keys[e], keys[d])? == Status::Proven;
+                narrowed |= whole
+                    && keys[e] != keys[d]
+                    && self.probe(keys[e], keys[d])? == Status::Proven
+                    && self.probe(keys[d], keys[e])? != Status::Proven;
             }
             if !narrowed {
                 owning.push((d, whole));

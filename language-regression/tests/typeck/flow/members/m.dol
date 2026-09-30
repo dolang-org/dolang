@@ -372,3 +372,7 @@ do
 
 pub def widened r @ Record[Int, a: Value]
   ...
+
+# A key of unknown type may be any of the dict's keys
+pub def unknown_key d @ Dict[Sym, Str] k
+  let _ = d.get $k
