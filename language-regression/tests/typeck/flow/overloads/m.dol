@@ -1,9 +1,11 @@
 # A call through an overloaded function takes the one overload its arguments
 # don't contradict. Without exactly one, it takes the implementation's
-# signature, which is dynamic here.
+# signature, which is dynamic for `Picker`'s and checks std's indexing.
 
 import std:
   - @Fmt
+  - @Index
+  - @Seq
 import lib:
   - double
 
@@ -37,16 +39,26 @@ do
   #   ^: flow std.Array[std.Int]
   let _ = r[i]
   #   ^: flow std.Str
-  # An `Int` doesn't select from fixed positions, so no overload takes it
+  # An `Int` doesn't select from fixed positions, so no overload takes it, and
+  # the implementation reports it
   let _ = t[i]
-  #   ^: flow Unknown
+  # error: this call selects by `std.Int`, which isn't one of the schema's keys
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = t[i]
+  #    |           ^^^^
   let _ = t[0]
   #   ^: flow std.Int
   let _ = b[0]
   #   ^: flow std.Int
   b[0] = 1
-  # A call no overload takes falls back, unchecked
+  # Nor does any overload take this, and the implementation reports it
   b[0] = "x"
+  # error: expected `std.Int`, found `"x"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   b[0] = "x"
+  #    |          ^^^
   let _ = f[0]
   #   ^: flow std.FmtSegment
 
@@ -108,3 +120,21 @@ pub def functions()
   #   ^: flow std.Str
   let _ = apply $twice
   #   ^: flow std.Int
+
+# A protocol's overloads are chosen among as a class's are
+pub def sequenced s @ Seq[Int]
+  let _ = s[0]
+  #   ^: flow std.Int
+  let _ = s[1..3]
+  #   ^: flow std.Seq[std.Int]
+
+pub def indexes _i @ Index[{Int, Str}]
+  ...
+
+pub def sequences _s @ Seq[(Int | Str)]
+  ...
+
+# A tuple is an index of its own items, and a sequence of their union
+pub def tuples t @ Tuple[Int, Str]
+  indexes $t
+  sequences $t

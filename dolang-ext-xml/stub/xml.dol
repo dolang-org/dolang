@@ -2,7 +2,9 @@
 
 import std:
   - @Assign
+  - @AssignItem
   - @Index
+  - @IndexItem
   - @MutSeq
 
 # An XML attribute.
@@ -54,7 +56,7 @@ pub class Attr
 #
 # Nodes can be shared or inserted into different trees. Serialization derives
 # namespace declarations from each node rather than from parent pointers.
-pub class Node: @Index[{*(Str): Str, *(Int): Node | Str, *(Range[Int]): Array[Node | Str]}] @Assign[Str, Str]
+pub class Node: @Index[{*(Str): Str, *(Int): Node | Str}] @Assign[Str, Str]
   # Creates an element, optionally with attributes and children.
   #
   # Children are not checked here, matching `children.push`; [`verify`](xml.verify)
@@ -192,14 +194,13 @@ pub class Node: @Index[{*(Str): Str, *(Int): Node | Str, *(Range[Int]): Array[No
   # Reads an unnamespaced attribute by string or a child by integer index.
   #
   # Negative integer indexes count from the end.
-  @def (index) self key@Str -> Str
-  @def (index) self index@Int -> (Node | Str)
+  @def (index)[K] self key@K -> IndexItem[{*(Str): Str, *(Int): Node | Str}, K]
   @def (index) self range@Range[Int] -> Array[Node | Str]
-  pub def (index) self key
+  pub def (index)[K] self key@K -> IndexItem[{*(Str): Str, *(Int): Node | Str}, K]
     ...
 
   # Sets an unnamespaced attribute, adding it if it is missing.
-  pub def (assign) self key@Str value@Str
+  pub def (assign)[K] self key@K value@AssignItem[{*(Str): Str}, K]
     ...
 
   # Iterates the children.

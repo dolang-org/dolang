@@ -362,8 +362,11 @@ pub @class Seq[T]: Iterable[T] Index[Int, T] Spread[T] Unpack[T]
   #[getter]
   pub def len self -> Int
 
-  # Returns the items in `range`.
-  pub def (index) self range@Range[Int] -> Seq[T]
+  @def (index)[K] self key@K -> IndexItem[{*(Int): T}, K]
+  @def (index) self range@Range[Int] -> Seq[T]
+
+  # Returns the item at an index, or the items in a range.
+  pub def (index)[K] self key@K -> IndexItem[{*(Int): T}, K]
 
 
 # A [`Seq`](std.Seq) whose items can be replaced, but not added or removed.
@@ -892,7 +895,7 @@ pub class Array[T]: Iterable[T] Sinkable[T] @MutSeq[T]
   do
     ...
 
-  @def (index) self index@Int -> T
+  @def (index)[K] self key@K -> IndexItem[{*(Int): T}, K]
   @def (index) self range@Range[Int] -> Array[T]
 
   #
@@ -926,8 +929,11 @@ pub class Array[T]: Iterable[T] Sinkable[T] @MutSeq[T]
   # Omitted `start` means `0`, omitted `end` means the array length, and negative
   # `start` and `end` values count from the end. Negative steps reverse the slice.
   #
-  pub def (index) self index
+  pub def (index)[K] self key@K -> IndexItem[{*(Int): T}, K]
     ...
+
+  @def (assign)[K] self key@K value@AssignItem[{*(Int): T}, K]
+  @def (assign) self range@Range[Int] value@(Array[T] | Tuple[...T])
 
   #
   # ```
@@ -945,7 +951,7 @@ pub class Array[T]: Iterable[T] Sinkable[T] @MutSeq[T]
   # type error rather than being drained or wrapped. Stepped slices are read-only;
   # assignment with a non-unity step is rejected.
   #
-  pub def (assign) self index value
+  pub def (assign)[K] self key@K value@AssignItem[{*(Int): T}, K]
     ...
 
   # ```
@@ -1304,7 +1310,7 @@ pub class Bin: @Index[Range[Int], Bin]
 #
 # Mutable byte buffer; the mutable counterpart to [`Bin`](std.Bin).
 #
-pub class BinBuf: @Index[{*(Int): Int, *(Range[Int]): Bin}] @Assign[{*(Int): Int, *(Range[Int]): Bin}]
+pub class BinBuf: @Index[Int, Int] @Assign[Int, Int]
   #
   #
   # Builds a buffer, optionally seeded with the contents of existing binary data.
@@ -1583,9 +1589,9 @@ pub class BinBuf: @Index[{*(Int): Int, *(Range[Int]): Bin}] @Assign[{*(Int): Int
   # assert_eq $buf[0] 102
   # assert_eq $buf[2..4] b"ob"
   # ```
-  @def (index) self index@Int -> Int
+  @def (index)[K] self key@K -> IndexItem[{*(Int): Int}, K]
   @def (index) self range@Range[Int] -> Bin
-  pub def (index) self index
+  pub def (index)[K] self key@K -> IndexItem[{*(Int): Int}, K]
     ...
 
   # Assigns a byte or byte range. Range assignment may grow or shrink the buffer.
@@ -1596,9 +1602,9 @@ pub class BinBuf: @Index[{*(Int): Int, *(Range[Int]): Bin}] @Assign[{*(Int): Int
   # buf[1..3] = b"XYZ"
   # assert_eq $buf.freeze() b"FXYZbar"
   # ```
-  @def (assign) self index@Int value@Int
+  @def (assign)[K] self key@K value@AssignItem[{*(Int): Int}, K]
   @def (assign) self range@Range[Int] value@Bin
-  pub def (assign) self index value
+  pub def (assign)[K] self key@K value@AssignItem[{*(Int): Int}, K]
     ...
 
   # Returns this buffer as a [sink](std.Sink). Values are appended verbatim,
@@ -2619,7 +2625,7 @@ pub class FmtValue
 # assert_eq $seq[1].value $user
 # assert_eq $seq[1].width 8
 # ```
-pub class Fmt: @Index[{*(Int): FmtSegment, *(Range[Int]): Array[FmtSegment]}] @Spread[FmtSegment] @Unpack[FmtSegment]
+pub class Fmt: @Index[Int, FmtSegment] @Spread[FmtSegment] @Unpack[FmtSegment]
   #
   #
   # Builds a sequence from an iterable of segments.
@@ -2705,9 +2711,9 @@ pub class Fmt: @Index[{*(Int): FmtSegment, *(Range[Int]): Array[FmtSegment]}] @S
   #
   # Assigning to a segment raises an [`ImmutableError`](std.ImmutableError).
   #
-  @def (index) self index@Int -> FmtSegment
+  @def (index)[K] self key@K -> IndexItem[{*(Int): FmtSegment}, K]
   @def (index) self range@Range[Int] -> Array[FmtSegment]
-  pub def (index) self index
+  pub def (index)[K] self key@K -> IndexItem[{*(Int): FmtSegment}, K]
     ...
 
   #
@@ -4457,7 +4463,7 @@ pub class TimedOutError: RuntimeError
 # object is in the prelude, so `Tuple(iterable)` is available without an
 # explicit import.
 #
-pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}] Iterable[Union[...Ts]] @Seq[Union[...Ts]]
+pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}] Iterable[Union[...Ts]] @Index[{...Ts}] @Seq[Union[...Ts]]
   #
   #
   # Builds a tuple from an iterable.
@@ -4531,7 +4537,7 @@ pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}] Iterable[Union[...Ts]] @
   pub def pairs self -> Iter[Tuple[Int, Value]]
     ...
 
-  @def (index)[K @ Int] self index@K -> IndexItem[{...Ts}, K]
+  @def (index)[K] self key@K -> IndexItem[{...Ts}, K]
   @def (index) self range@Range[Int] -> Tuple[...Union[...Ts]]
 
   #
@@ -4559,7 +4565,7 @@ pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}] Iterable[Union[...Ts]] @
   # Slice indexing returns a new tuple. Omitted `start` means `0`, omitted `end`
   # means the tuple length, and negative endpoints count from the end. Negative
   # steps reverse the slice.
-  pub def (index) self index
+  pub def (index)[K] self key@K -> IndexItem[{...Ts}, K]
     ...
 
   # Unpacks tuple elements.
