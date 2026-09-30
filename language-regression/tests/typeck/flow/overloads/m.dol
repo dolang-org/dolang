@@ -40,13 +40,9 @@ do
   let _ = r[i]
   #   ^: flow std.Str
   # An `Int` doesn't select from fixed positions, so no overload takes it, and
-  # the implementation reports it
+  # the implementation indexes the tuple as a sequence of its items
   let _ = t[i]
-  # error: this call selects by `std.Int`, which isn't one of the schema's keys
-  #   --> m.dol:LL:LL
-  #    |
-  # LL |   let _ = t[i]
-  #    |           ^^^^
+  #   ^: flow std.Int | std.Str
   let _ = t[0]
   #   ^: flow std.Int
   let _ = b[0]

@@ -6,7 +6,9 @@
 //! inherits, so a member it only claims through a protocol is missing. Members
 //! are compared by kind: fields invariantly, as they are mutable, methods and
 //! property accessors by their implementations' signatures, and a protocol's
-//! field by a getter and a setter as well as a field. The supertype's signature
+//! field by a getter and a setter as well as a field. An overload below a
+//! required signature satisfies it in place of the implementation, as overloads
+//! are unchecked assertions narrowing it. The supertype's signature
 //! takes the conforming declaration's own type as its receiver, since only calls
 //! on its instances matter.
 //!
@@ -147,10 +149,23 @@ impl Solver<'_> {
             required: describe(&required.kind),
         };
         let mut pairs = Vec::new();
+        // An overload below the required signature satisfies it, since an
+        // overload is an unchecked assertion that narrows the implementation.
+        // Otherwise the implementation must be below it.
         let relate = |pairs: &mut Vec<_>, actual: &Signatures, expected: Option<Term>| {
-            if let (Some(actual), Some(expected)) = (actual.implementation, expected) {
-                pairs.push((actual, expected));
+            let (Some(implementation), Some(expected)) = (actual.implementation, expected) else {
+                return Ok::<_, Issue>(());
+            };
+            if !actual.overloads.is_empty() {
+                let required = self.reify(expected)?;
+                for &overload in &actual.overloads {
+                    if self.probe(self.reify(overload)?, required) == Ok(Status::Proven) {
+                        return Ok(());
+                    }
+                }
             }
+            pairs.push((implementation, expected));
+            Ok(())
         };
         match (&provided.kind, &required.kind) {
             (FoundKind::Unknown, _) | (_, FoundKind::Unknown) => {}
@@ -159,7 +174,7 @@ impl Solver<'_> {
                 pairs.push((expected, actual));
             }
             (FoundKind::Method(actual), FoundKind::Method(required)) => {
-                relate(&mut pairs, actual, expected(required)?);
+                relate(&mut pairs, actual, expected(required)?)?;
             }
             (
                 FoundKind::Property { getter, setter },
@@ -175,7 +190,7 @@ impl Solver<'_> {
                 }
                 for (actual, required) in [(getter, required_getter), (setter, required_setter)] {
                     if let (Some(actual), Some(required)) = (actual, required) {
-                        relate(&mut pairs, actual, expected(required)?);
+                        relate(&mut pairs, actual, expected(required)?)?;
                     }
                 }
             }

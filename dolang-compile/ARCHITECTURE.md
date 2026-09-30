@@ -461,8 +461,12 @@ required, and the declaration's own is provided: the first in its runtime MRO
 for a class, or in its whole MRO for a protocol. Members compare by kind:
 
 - fields invariantly, both ways, as they are mutable;
-- methods by their implementations, the provided below the required; overloads
-  narrow calls where they are made and are not compared;
+- methods by their implementations, the provided below the required. The
+  required side's overloads are not compared. On the provided side, an overload
+  below the required implementation satisfies it in place of the implementation
+  (found by a probe). An overload is an unchecked assertion narrowing its
+  implementation, so it can state what the solver can't prove, such as
+  `Tuple.(index)`'s precise result for `Index[{...Ts}]`;
 - properties accessor by accessor, and a property may not drop an accessor the
   required one has;
 - a protocol's field by a property with both accessors, the getter's result
