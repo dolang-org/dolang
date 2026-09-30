@@ -151,22 +151,29 @@ fn literals_are_exact_values_not_builtin_types() {
 }
 
 #[test]
-fn decay_keeps_exact_keys_and_binder_bounds() {
+fn decay_keeps_regular_literals_exact_keys_and_binder_bounds() {
     let mut db = Database::new();
     let (int, int_ty, int_source) = declare(&mut db, DeclKind::Class, "Int");
     db.populate(int, definition(int_source, int_ty));
     db.set_intrinsic(Intrinsic::Int, int_ty);
     let key = db.intern_symbol("name");
     let key = intern(&mut db, Type::Literal(Literal::Sym(key)));
-    let one = intern(&mut db, Type::Literal(Literal::Int(1)));
-    let two = intern(&mut db, Type::Literal(Literal::Int(2)));
+    let one = intern(&mut db, Type::Fresh(Literal::Int(1)));
+    let two = intern(&mut db, Type::Fresh(Literal::Int(2)));
+    let exact = intern(&mut db, Type::Literal(Literal::Int(1)));
 
-    // Literals decay through unions and function types
+    // Fresh literals decay through unions and function types
     let both = union(&mut db, &[one, two]);
     assert_eq!(db.decay(both), int_ty);
     let f = function(&mut db, &[one], two);
     let decayed = function(&mut db, &[int_ty], int_ty);
     assert_eq!(db.decay(f), decayed);
+
+    // A regular literal was written in a type, as a parameter's annotation is
+    assert_eq!(db.decay(exact), exact);
+    let g = function(&mut db, &[exact], two);
+    let decayed = function(&mut db, &[exact], int_ty);
+    assert_eq!(db.decay(g), decayed);
 
     // An exact key keeps its literal
     let keyed = |db: &mut Database, value| {
@@ -201,6 +208,26 @@ fn decay_keeps_exact_keys_and_binder_bounds() {
     let generic = bounded(&mut db, one);
     let decayed = bounded(&mut db, int_ty);
     assert_eq!(db.decay(generic), decayed);
+}
+
+#[test]
+fn fresh_literals_give_way_to_their_regular_twins() {
+    let mut db = Database::new();
+    let fresh = intern(&mut db, Type::Fresh(Literal::Int(1)));
+    let regular = intern(&mut db, Type::Literal(Literal::Int(1)));
+    let two = intern(&mut db, Type::Fresh(Literal::Int(2)));
+    assert_ne!(fresh, regular);
+    assert_eq!(db.literal(fresh), Some(&Literal::Int(1)));
+    assert_eq!(db.literal(regular), Some(&Literal::Int(1)));
+    assert_eq!(db.regular(fresh), regular);
+    assert_eq!(db.regular(regular), regular);
+    let top = db.top();
+    assert_eq!(db.regular(top), top);
+    // A union keeps the regular twin, whatever the order
+    assert_eq!(union(&mut db, &[fresh, regular]), regular);
+    assert_eq!(union(&mut db, &[regular, fresh]), regular);
+    let kept = union(&mut db, &[regular, two]);
+    assert_eq!(union(&mut db, &[fresh, two, regular]), kept);
 }
 
 #[test]
@@ -517,6 +544,216 @@ fn union_applications_normalize_to_unions() {
 }
 
 #[test]
+fn projections_fold_what_their_schemas_are_known_to_hold() {
+    let mut db = Database::new();
+    let project = |db: &mut Database, intrinsic, name| {
+        let (id, alias, source) = declare(db, DeclKind::OpaqueAlias, name);
+        db.set_intrinsic(intrinsic, alias);
+        db.populate(id, definition(source, alias));
+        move |db: &mut Database, schema| {
+            intern(
+                db,
+                Type::Apply {
+                    base: alias,
+                    args: vec![Argument::Positional(schema)].into(),
+                    kind: Kind::Type,
+                },
+            )
+        }
+    };
+    let keys = project(&mut db, Intrinsic::Keys, "Keys");
+    let values = project(&mut db, Intrinsic::Values, "Values");
+    let entries = project(&mut db, Intrinsic::Entries, "Entries");
+    let item = |multiplicity, element| SchemaItem {
+        multiplicity,
+        element,
+    };
+    let items = |db: &mut Database, items: Vec<SchemaItem>| intern(db, Type::Schema(items.into()));
+    let sym = |db: &mut Database, name| {
+        let name = db.intern_symbol(name);
+        intern(db, Type::Literal(Literal::Sym(name)))
+    };
+    let (a, b) = (sym(&mut db, "a"), sym(&mut db, "b"));
+    let [zero, one, two, three] =
+        [0, 1, 2, 3].map(|i| intern(&mut db, Type::Literal(Literal::Int(i))));
+    let (top, bottom, unknown) = (db.top(), db.bottom(), db.unknown());
+    let keyed = |key, value| Element::Keyed { key, value };
+    // `{a: 1, *(b): 2, 3}`, whose position has a fixed index
+    let closed = items(
+        &mut db,
+        vec![
+            item(Multiplicity::Required, keyed(a, one)),
+            item(Multiplicity::Repeated, keyed(b, two)),
+            item(Multiplicity::Required, Element::Positional(three)),
+        ],
+    );
+    let keys_expected = union(&mut db, &[a, b, zero]);
+    assert_eq!(keys(&mut db, closed), keys_expected);
+    let values_expected = union(&mut db, &[one, two, three]);
+    assert_eq!(values(&mut db, closed), values_expected);
+    // Without a designated `Tuple`, entries stay whole
+    let kept = entries(&mut db, closed);
+    assert!(matches!(
+        db.ty(kept),
+        Type::Union(members) if members[..] == [UnionMember::Entries(closed)]
+    ));
+    // A position's key is its index, and an empty schema projects to nothing
+    let positional = schema(&mut db, &[three]);
+    assert_eq!(keys(&mut db, positional), zero);
+    let empty = schema(&mut db, &[]);
+    assert_eq!(values(&mut db, empty), bottom);
+    // A position that may be missing varies, so its key is `Int`, which stays a
+    // projection until `Int` is designated
+    let varying = items(
+        &mut db,
+        vec![
+            item(Multiplicity::Required, Element::Positional(one)),
+            item(Multiplicity::Optional, Element::Positional(two)),
+        ],
+    );
+    let kept = keys(&mut db, varying);
+    assert!(matches!(
+        db.ty(kept),
+        Type::Union(members) if members[..] == [UnionMember::Keys(varying)]
+    ));
+    let (id, int, source) = declare(&mut db, DeclKind::Class, "Int");
+    db.set_intrinsic(Intrinsic::Int, int);
+    db.populate(id, definition(source, int));
+    assert_eq!(keys(&mut db, varying), int);
+    // `{...}` has every key and value
+    let open = items(
+        &mut db,
+        vec![
+            item(Multiplicity::Repeated, Element::Positional(top)),
+            item(Multiplicity::Repeated, keyed(top, top)),
+        ],
+    );
+    assert_eq!(keys(&mut db, open), top);
+    assert_eq!(values(&mut db, open), top);
+    // The dynamic schema projects to the dynamic type
+    let dynamic = db.unknown_schema();
+    assert_eq!(keys(&mut db, dynamic), unknown);
+    // An inclusion not known yet stays a projection of it, beside what is known
+    let pack = reference(&mut db, 0, 0, Kind::Schema);
+    let partial = items(
+        &mut db,
+        vec![
+            item(Multiplicity::Required, keyed(a, one)),
+            item(Multiplicity::Required, Element::Include(pack)),
+        ],
+    );
+    let expected = intern(
+        &mut db,
+        Type::Union(vec![UnionMember::Type(a), UnionMember::Keys(pack)].into()),
+    );
+    assert_eq!(keys(&mut db, partial), expected);
+    // Substituting the pack evaluates the rest
+    let substituted = db.substitute(expected, &[positional]);
+    let a_zero = union(&mut db, &[a, zero]);
+    assert_eq!(substituted, a_zero);
+    // Beside a position, its positions' indexes depend on it, so the whole
+    // projection waits
+    let after = items(
+        &mut db,
+        vec![
+            item(Multiplicity::Required, Element::Positional(one)),
+            item(Multiplicity::Required, Element::Include(pack)),
+        ],
+    );
+    let kept = keys(&mut db, after);
+    assert!(matches!(
+        db.ty(kept),
+        Type::Union(members) if members[..] == [UnionMember::Keys(after)]
+    ));
+    // With `Tuple`, each keyed item and position is an entry
+    let (id, tuple, source) = declare(&mut db, DeclKind::Class, "Tuple");
+    db.set_intrinsic(Intrinsic::Tuple, tuple);
+    db.populate(id, definition(source, tuple));
+    let pair = |db: &mut Database, key, value| {
+        let items = schema(db, &[key, value]);
+        intern(
+            db,
+            Type::Apply {
+                base: tuple,
+                args: vec![Argument::Positional(items)].into(),
+                kind: Kind::Type,
+            },
+        )
+    };
+    let pairs = [
+        pair(&mut db, a, one),
+        pair(&mut db, b, two),
+        pair(&mut db, zero, three),
+    ];
+    let expected = union(&mut db, &pairs);
+    assert_eq!(entries(&mut db, closed), expected);
+    let pairs = [pair(&mut db, zero, one), pair(&mut db, int, two)];
+    let expected = union(&mut db, &pairs);
+    assert_eq!(entries(&mut db, varying), expected);
+    db.seal();
+}
+
+#[test]
+fn keys_that_may_be_indexes_conflict_with_positions() {
+    let mut db = Database::new();
+    let (id, int, source) = declare(&mut db, DeclKind::Class, "Int");
+    db.set_intrinsic(Intrinsic::Int, int);
+    db.populate(id, definition(source, int));
+    let (id, str, source) = declare(&mut db, DeclKind::Class, "Str");
+    db.populate(id, definition(source, str));
+    let item = |multiplicity, element| SchemaItem {
+        multiplicity,
+        element,
+    };
+    let items = |db: &mut Database, items: Vec<SchemaItem>| intern(db, Type::Schema(items.into()));
+    let [minus, zero, three] = [-1, 0, 3].map(|i| intern(&mut db, Type::Literal(Literal::Int(i))));
+    let top = db.top();
+    let keyed = |key, value| Element::Keyed { key, value };
+    let positional = |ty| item(Multiplicity::Required, Element::Positional(ty));
+    let repeated = |ty| item(Multiplicity::Repeated, Element::Positional(ty));
+    let promotion = |db: &mut Database, list| {
+        let schema = items(db, list);
+        db.promoted(schema)
+    };
+    let conflicts = [
+        // `{Int, 0: Str}`
+        vec![
+            positional(int),
+            item(Multiplicity::Required, keyed(zero, str)),
+        ],
+        // `{*Int, 3: Str}`, where position 3 may exist
+        vec![
+            repeated(int),
+            item(Multiplicity::Required, keyed(three, str)),
+        ],
+        // `{*Int, *(Int): Str}`
+        vec![repeated(int), item(Multiplicity::Repeated, keyed(int, str))],
+    ];
+    for list in conflicts {
+        assert_eq!(promotion(&mut db, list), Promotion::Conflict);
+    }
+    let fine = [
+        // `{Int, 3: Str}`, where position 3 can't exist
+        vec![
+            positional(int),
+            item(Multiplicity::Required, keyed(three, str)),
+        ],
+        // `{*Int, -1: Str}`: negative keys are never indexes
+        vec![
+            repeated(int),
+            item(Multiplicity::Required, keyed(minus, str)),
+        ],
+        // `{...}`
+        vec![repeated(top), item(Multiplicity::Repeated, keyed(top, top))],
+        // `{0: Str}` has no positions
+        vec![item(Multiplicity::Required, keyed(zero, str))],
+    ];
+    for list in fine {
+        assert!(matches!(promotion(&mut db, list), Promotion::Promoted(_)));
+    }
+}
+
+#[test]
 fn unknown_is_a_type_that_unions_do_not_absorb() {
     let mut db = Database::new();
     let unknown = db.unknown();
@@ -671,9 +908,10 @@ fn members_and_overloads_are_checked() {
         let id = db.allocate();
         db.set_overloads(id, vec![]);
     });
-    db.set_overloads(method, vec![overload, method]);
+    db.set_overloads(method, vec![overload]);
     db.seal();
-    assert_eq!(db.overloads(method), [overload, method]);
+    assert_eq!(db.overloads(method), [overload]);
+    assert_eq!(db.implementation(method), Some(method));
     assert!(db.overloads(overload).is_empty());
     assert_eq!(db.declarations().count(), 3);
     assert_eq!(db.declaration(class).members.len(), 2);
@@ -1197,6 +1435,10 @@ fn intrinsic_associations_are_optional_and_write_once() {
         Intrinsic::Sym,
         Intrinsic::Nil,
         Intrinsic::Str,
+        Intrinsic::Keys,
+        Intrinsic::Values,
+        Intrinsic::Entries,
+        Intrinsic::Tuple,
     ];
     let mut db = Database::new();
     let mut registered = Vec::new();

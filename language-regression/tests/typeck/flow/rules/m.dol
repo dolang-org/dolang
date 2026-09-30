@@ -151,3 +151,16 @@ pub def finished()
     #    |
     # LL |     length 2
     #    |            ^
+
+def bounded[U @ {a: Int}] _d @ Dict[U]
+  ...
+
+# A binder's bound that the argument's type solves it past shows what inside it
+# doesn't fit
+pub def outside_bound d @ Dict[{b: Int}]
+  bounded $d
+# error: `std.Dict[{b: std.Int}]` does not fit this parameter: `{b: std.Int}` does not fit `{a: std.Int}`
+#   --> m.dol:LL:LL
+#    |
+# LL |   bounded $d
+#    |            ^

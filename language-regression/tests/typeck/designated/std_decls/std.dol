@@ -2,12 +2,31 @@
 
 pub class Value
 #         ^~~~~: designated top
+pub @let Never = Union[]
+#        ^~~~~: designated bottom
 pub @let Union[...Ts] = ...
 #        ^~~~~: designated intrinsic Union
 #                 ^~: variance covariant
 pub @let Phantom[...Ts] = ...
 #        ^~~~~~~: designated phantom
 #                   ^~: variance covariant
+pub @let Keys[S @ {...}] = ...
+#        ^~~~: designated intrinsic Keys
+#             ^: variance covariant
+pub @let Values[S @ {...}] = ...
+#        ^~~~~~: designated intrinsic Values
+#               ^: variance covariant
+pub @let Entries[S @ {...}] = ...
+#        ^~~~~~~: designated intrinsic Entries
+#                ^: variance covariant
+pub @let IndexItem[S @ {...}, K] = ...
+#        ^~~~~~~~~: designated intrinsic IndexItem
+#                  ^: variance covariant
+#                             ^: variance covariant
+pub @let AssignItem[S @ {...}, K] = ...
+#        ^~~~~~~~~~: designated intrinsic AssignItem
+#                   ^: variance covariant
+#                              ^: variance contravariant
 pub class Func
 #         ^~~~: designated intrinsic Func
 pub class Int
@@ -43,8 +62,10 @@ pub class Array
 #         ^~~~~: designated array
 pub class Dict
 #         ^~~~: designated dict
+pub class BaseDict
+#         ^~~~~~~~: designated base dict
 pub class Tuple
-#         ^~~~~: designated tuple
+#         ^~~~~: designated intrinsic Tuple
 pub class Record
 #         ^~~~~~: designated record
 pub class Range

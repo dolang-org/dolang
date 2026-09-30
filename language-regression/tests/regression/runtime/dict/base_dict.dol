@@ -1,0 +1,7 @@
+# `BaseDict` is the type checker's read-only half of `Dict`; at runtime it is
+# `Dict` itself
+import std:
+  - BaseDict
+
+assert_eq $BaseDict $Dict
+assert (type {a: 1} BaseDict)

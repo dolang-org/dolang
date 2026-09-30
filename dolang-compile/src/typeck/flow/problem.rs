@@ -12,11 +12,12 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Problem {
     /// An argument that doesn't fit its parameter, whose type is shown when it's
-    /// known
+    /// known, with the part of it that doesn't fit what, when that's deeper
     Argument {
         span: Span,
         found: String,
         expected: Option<String>,
+        inner: Option<(String, String)>,
     },
     /// A call that doesn't pass one of its callee's required parameters
     MissingArgument(Span),
@@ -24,6 +25,11 @@ pub(crate) enum Problem {
     ExtraArgument(Span),
     /// A call that doesn't fit its callee in some other way
     Call { span: Span, callee: String },
+    /// A call whose types index a schema with a key that may be one of its
+    /// positions' indexes
+    Conflict(Span),
+    /// A call whose types select by a key its schema doesn't admit
+    Unadmitted { span: Span, key: String },
     /// A value that doesn't fit what its use requires of it
     Misfit {
         span: Span,
@@ -94,6 +100,8 @@ impl Diagnose for Problem {
             | Problem::MissingArgument(span)
             | Problem::ExtraArgument(span)
             | Problem::Call { span, .. }
+            | Problem::Conflict(span)
+            | Problem::Unadmitted { span, .. }
             | Problem::Misfit { span, .. }
             | Problem::Annotation { span, .. }
             | Problem::Default { span, .. }
@@ -109,19 +117,53 @@ impl Diagnose for Problem {
 
     fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
         match self {
+            // Where the argument's type and the parameter's look alike, only what's
+            // inside them shows what doesn't fit
             Problem::Argument {
                 found,
                 expected: Some(expected),
+                inner: Some((part, bound)),
                 ..
-            } => write!(w, "expected `{expected}`, found `{found}`"),
+            } if found == expected => {
+                write!(w, "`{part}` does not fit `{bound}` in `{found}`")
+            }
+            Problem::Argument {
+                found,
+                expected: Some(expected),
+                inner,
+                ..
+            } => {
+                write!(w, "expected `{expected}`, found `{found}`")?;
+                match inner {
+                    Some((part, bound)) => write!(w, ": `{part}` does not fit `{bound}`"),
+                    None => Ok(()),
+                }
+            }
             Problem::Argument {
                 found,
                 expected: None,
+                inner,
                 ..
-            } => write!(w, "`{found}` does not fit this parameter"),
+            } => {
+                write!(w, "`{found}` does not fit this parameter")?;
+                match inner {
+                    Some((part, bound)) => write!(w, ": `{part}` does not fit `{bound}`"),
+                    None => Ok(()),
+                }
+            }
             Problem::MissingArgument(_) => write!(w, "this call is missing an argument"),
             Problem::ExtraArgument(_) => write!(w, "the callee takes no such argument"),
             Problem::Call { callee, .. } => write!(w, "this call does not fit `{callee}`"),
+            Problem::Conflict(_) => write!(
+                w,
+                "this call indexes a schema with a key that may be one of its positions' indexes"
+            ),
+            Problem::Unadmitted { key, .. } => {
+                write!(
+                    w,
+                    "this call selects by `{key}`, which isn't one of the schema's keys"
+                )
+            }
             Problem::Misfit { found, misfit, .. } => {
                 let required = match misfit {
                     Misfit::Binary => "binary",

@@ -28,8 +28,9 @@ use dolang_util::{
 use crate::typeck::r#type::UnitSpan;
 
 use super::r#type::{
-    Argument, Binder, Binding, BoundRef, Database, DeclId, Element, Function, Intrinsic, Kind,
-    Literal, Multiplicity, Rest, SchemaItem, SymbolId, Type, TypeId, UnionMember, Variance,
+    Argument, Binder, Binding, BoundRef, Database, DeclId, DeclKind, Element, Function, Intrinsic,
+    Kind, Literal, Multiplicity, Projected, Promotion, Rest, SchemaItem, SymbolId, Type, TypeId,
+    UnionMember, Variance,
 };
 
 macro_rules! id {
@@ -95,8 +96,9 @@ pub(crate) struct Provenance {
 pub(crate) enum Residual {
     /// An inference variable has no committed solution.
     Inference,
-    /// No implemented rule handles this combination of exposed type forms.
-    Unsupported,
+    /// No implemented rule handles this combination of exposed type forms. It
+    /// names what wasn't handled.
+    Unsupported(&'static str),
     /// Generic application needs unsupported argument matching or a constructor
     /// that cannot yet be exposed. Also covers unapplied generic declarations.
     GenericArguments,
@@ -125,6 +127,13 @@ pub(crate) enum Contradiction {
     Excess(usize),
     /// The expected schema's item can be missing from the actual schema
     Missing(usize),
+    /// A literal, or a class with infinitely many, has a value outside every
+    /// member of a union
+    Outside,
+    /// A projection's schema has a key that may be a position's index
+    Conflict,
+    /// An item projection's key has a member its schema doesn't admit
+    Unadmitted(TypeId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -243,6 +252,11 @@ struct Inference {
     assignment: Cell<Option<TypeId>>,
     /// Whether the assignment is a default rather than forced
     defaulted: Cell<bool>,
+    /// Whether a default keeps its literals, as an item projection's key does
+    exact: Cell<bool>,
+    /// The default of the binder it instantiates, which it takes when nothing
+    /// bounds it from below
+    fallback: Cell<Option<Term>>,
     support: MonoHashSet<ObligationId>,
     subscribers: MonoHashSet<ObligationId>,
     dirty: Cell<bool>,
@@ -569,6 +583,8 @@ impl<'db> Solver<'db> {
             lanes,
             assignment: Cell::new(None),
             defaulted: Cell::new(false),
+            exact: Cell::new(false),
+            fallback: Cell::new(None),
             support: MonoHashSet::new(),
             subscribers: MonoHashSet::new(),
             dirty: Cell::new(false),
@@ -625,7 +641,14 @@ impl<'db> Solver<'db> {
                 let mapped = ty.map_children(|child, groups| {
                     self.reify_scoped(view.child(child), local + groups, depth + 1)
                 })?;
-                Ok(self.db.intern(mapped))
+                let reified = self.db.intern(mapped);
+                // Item projections are evaluated where they're closed
+                if local == 0
+                    && let Ok(Some(evaluated)) = self.evaluate_items(reified)
+                {
+                    return Ok(evaluated);
+                }
+                Ok(reified)
             }
         }
     }
@@ -890,6 +913,7 @@ impl<'db> Solver<'db> {
             Type::Top
             | Type::Unknown(_)
             | Type::Literal(_)
+            | Type::Fresh(_)
             | Type::Decl(_)
             | Type::Rigid { .. } => Ok(()),
             Type::Apply { base, ref args, .. } => {
@@ -942,8 +966,11 @@ impl<'db> Solver<'db> {
                 for member in members.iter() {
                     match *member {
                         UnionMember::Type(ty) => walk(ty, variance, 0)?,
-                        UnionMember::Expand(ty) => {
-                            walk(ty, compose(variance, Variance::Invariant), 0)?
+                        _ => {
+                            walk(member.id(), compose(variance, Variance::Invariant), 0)?;
+                            if let Some(key) = member.key() {
+                                walk(key, compose(variance, Variance::Invariant), 0)?;
+                            }
                         }
                     }
                 }
@@ -1065,7 +1092,8 @@ impl<'db> Solver<'db> {
 
     /// [`Self::default`], keeping the precise join unless `decay`: a caller
     /// decays only the variables whose choice a literal would lock in (see
-    /// [`Self::locked`])
+    /// [`Self::locked`]). A variable standing for the key of an item projection
+    /// never decays (see [`Database::item_keys`]).
     pub(crate) fn default_with(&mut self, id: InferVarId, decay: bool) -> Result<TypeId, Residual> {
         if let Some(ty) = self.solution(id) {
             return Ok(ty);
@@ -1083,7 +1111,9 @@ impl<'db> Solver<'db> {
         let candidate = if lower.contains(&unknown) {
             unknown
         } else {
-            let precise = self.join(kind, &lower).ok_or(Residual::Unsupported)?;
+            let precise = self
+                .join(kind, &lower)
+                .ok_or(Residual::Unsupported("joining a variable's lower bounds"))?;
             let decayed = self.db.decay(precise);
             let admitted = || -> Result<bool, Residual> {
                 for &ty in &lower {
@@ -1093,6 +1123,7 @@ impl<'db> Solver<'db> {
                 }
                 self.below_upper(id, decayed)
             };
+            let decay = decay && !self.inference[id.0].exact.get();
             if decay && decayed != precise && admitted().unwrap_or(false) {
                 decayed
             } else {
@@ -1100,7 +1131,9 @@ impl<'db> Solver<'db> {
             }
         };
         if !self.below_upper(id, candidate)? {
-            return Err(Residual::Unsupported);
+            return Err(Residual::Unsupported(
+                "a default above a variable's upper bounds",
+            ));
         }
         self.inference[id.0].defaulted.set(true);
         self.commit(id, candidate);
@@ -1131,6 +1164,11 @@ impl<'db> Solver<'db> {
     /// A variable's kind
     pub(crate) fn variable_kind(&self, id: InferVarId) -> Kind {
         self.inference[id.0].kind
+    }
+
+    /// The default of the binder a variable instantiates, if it has one
+    pub(crate) fn fallback(&self, id: InferVarId) -> Option<Term> {
+        self.inference[id.0].fallback.get()
     }
 
     /// The least candidate above nonempty lower bounds: their join, or for a
@@ -1343,6 +1381,14 @@ impl<'db> Solver<'db> {
             }
             _ => b,
         };
+        // A fresh literal is the same as its regular twin
+        let regular = |term: Term| match term {
+            Term::View(view) if matches!(self.db.ty(view.ty), Type::Fresh(_)) => {
+                self.closed(self.db.regular(view.ty))
+            }
+            _ => term,
+        };
+        let (a, b) = (regular(a), regular(b));
         for (term, local, other, other_local, left) in [(a, ad, b, bd, true), (b, bd, a, ad, false)]
         {
             if let Term::View(view) = term
@@ -1437,6 +1483,51 @@ impl<'db> Solver<'db> {
         Ok((args, environment))
     }
 
+    /// Whether an item projection on the left is below an item projection of the
+    /// same kind and schema on the right: `IndexItem` is monotone in its key,
+    /// and `AssignItem` antitone
+    fn congruent(&self, view: TypeView, member: UnionMember, b: &Head) -> Result<bool, Issue> {
+        let (Some(key), Head::Structural(other_view)) = (member.key(), b) else {
+            return Ok(false);
+        };
+        let Type::Union(others) = self.db.ty(other_view.ty) else {
+            return Ok(false);
+        };
+        for &other in others.iter() {
+            let Some(other_key) = other.key() else {
+                continue;
+            };
+            if std::mem::discriminant(&member) != std::mem::discriminant(&other)
+                || !self.same(view.child(member.id()), other_view.child(other.id()))?
+            {
+                continue;
+            }
+            let (key, other_key) = (
+                self.reify(view.child(key))?,
+                self.reify(other_view.child(other_key))?,
+            );
+            let (lower, upper) = match member {
+                UnionMember::IndexItem(..) => (key, other_key),
+                _ => (other_key, key),
+            };
+            if self.probe(lower, upper)? == Status::Proven {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// A contradiction if a union's projection has a schema whose keyed view has
+    /// a key that may be a position's index (see [`Database::promoted`])
+    fn conflicting(&self, members: &[UnionMember]) -> Result<(), Issue> {
+        let conflict =
+            (members.iter()).any(|&member| matches!(self.db.project(member), Projected::Conflict));
+        match conflict {
+            true => Err(Issue::Contradiction(Contradiction::Conflict)),
+            false => Ok(()),
+        }
+    }
+
     /// Expose the head form of a solver term. Transparent declarations must be
     /// acyclic; well-formedness checking rejects cycles before solving, so
     /// exposing the same declaration or application twice panics.
@@ -1510,6 +1601,24 @@ impl<'db> Solver<'db> {
                     }
                     term = self.view(*body, environment);
                 }
+                // A fresh literal relates as its regular twin
+                Type::Fresh(_) => term = self.closed(self.db.regular(view.ty)),
+                // A projection is evaluated once its schema is substituted
+                Type::Union(ref members)
+                    if view.environment != self.empty_environment()
+                        && members.iter().any(|member| member.projected().is_some()) =>
+                {
+                    term = self.closed(self.reify(term)?);
+                }
+                // An item projection takes the solver to select by its key. One that
+                // can't be evaluated is left for the rules of unions.
+                Type::Union(ref members) if members.iter().any(|member| member.key().is_some()) => {
+                    match self.evaluate_items(view.ty) {
+                        Ok(Some(evaluated)) => term = self.closed(evaluated),
+                        Ok(None) | Err(Issue::Residual(_)) => return Ok(Head::Structural(view)),
+                        Err(issue) => return Err(issue),
+                    }
+                }
                 _ => return Ok(Head::Structural(view)),
             }
         }
@@ -1529,7 +1638,10 @@ impl<'db> Solver<'db> {
         self.preorder(current, path, depth, &mut |visited| match visited {
             Visited::Nominal(nominal) if nominal.declaration == target => Ok(Some(nominal.clone())),
             Visited::Nominal(_) => Ok(None),
-            Visited::Structural => Err(Residual::Unsupported.into()),
+            Visited::Structural => Err(Residual::Unsupported(
+                "an ancestor search through a structural supertype",
+            )
+            .into()),
         })
     }
 
@@ -1629,6 +1741,18 @@ impl<'db> Solver<'db> {
             bv.child(b.result),
             Step::Return,
         );
+        // A result that selects by a key is exposed, so a key its schema doesn't
+        // admit is reported though nothing uses the result
+        if let Type::Union(members) = self.db.ty(a.result)
+            && members.iter().any(|member| member.key().is_some())
+        {
+            self.derive(
+                obligation,
+                self.closed(self.db.bottom()),
+                av.child(a.result),
+                Step::Return,
+            );
+        }
         let channel = |view: TypeView, ty: Option<TypeId>, intrinsic| match ty {
             Some(ty) => view.child(ty),
             None => self.channel_bound(intrinsic),
@@ -1668,14 +1792,25 @@ impl<'db> Solver<'db> {
         let environment = match known {
             Some(environment) => environment,
             None => {
-                let group = binders
+                let group: Vec<Term> = binders
                     .iter()
                     .map(|binder| match binder.binding {
                         Binding::Rest(rest) => self.fresh(binder.kind, rest),
                         _ => self.fresh(binder.kind, Rest::All),
                     })
                     .collect();
-                let environment = self.intern_environment(view.environment, group);
+                for slot in self.db.item_keys(view.ty) {
+                    if let Some(&Term::Infer(id)) = group.get(usize::from(slot)) {
+                        self.inference[id.0].exact.set(true);
+                    }
+                }
+                let environment = self.intern_environment(view.environment, group.clone());
+                for (binder, term) in binders.iter().zip(&group) {
+                    if let (Some(default), &Term::Infer(id)) = (binder.default, term) {
+                        let default = self.view(default, environment);
+                        self.inference[id.0].fallback.set(Some(default));
+                    }
+                }
                 self.instantiations
                     .borrow_mut()
                     .insert(obligation, environment);
@@ -1821,19 +1956,33 @@ impl<'db> Solver<'db> {
             && let Head::Structural(view) = &a
             && let Type::Union(members) = self.db.ty(view.ty)
         {
-            if members.iter().any(|m| matches!(m, UnionMember::Expand(_))) {
-                return Err(Residual::Unsupported.into());
-            }
-            for (index, member) in members.iter().enumerate() {
-                let UnionMember::Type(ty) = *member else {
-                    unreachable!()
+            self.conflicting(members)?;
+            // A projection left is of a rigid's schema, or can't be evaluated. The
+            // former is below the same projection of the rigid's bound. An item
+            // projection is also below one of the same schema whose key selects
+            // as much, or for `AssignItem`, as little.
+            let mut derived = Vec::new();
+            for (index, &member) in members.iter().enumerate() {
+                let (term, step) = match member {
+                    UnionMember::Type(ty) => (view.child(ty), Step::UnionMember(index)),
+                    _ if self.congruent(*view, member, &b)? => continue,
+                    _ if self.rigid(member.id())?.is_some() => {
+                        let Some(bound) = self.rigid_bound(member.id()) else {
+                            return Err(Residual::Unsupported(
+                                "a projection of a rigid without a bound",
+                            )
+                            .into());
+                        };
+                        let projected =
+                            self.db.intern(Type::Union(vec![member.with(bound)].into()));
+                        (self.closed(projected), Step::RigidBound)
+                    }
+                    _ => return Err(Residual::Unsupported("an unevaluated projection").into()),
                 };
-                self.derive(
-                    obligation,
-                    view.child(ty),
-                    expected,
-                    Step::UnionMember(index),
-                );
+                derived.push((term, step));
+            }
+            for (term, step) in derived {
+                self.derive(obligation, term, expected, step);
             }
             return Ok(());
         }
@@ -1848,17 +1997,39 @@ impl<'db> Solver<'db> {
             && let Head::Structural(view) = &b
             && let Type::Union(members) = self.db.ty(view.ty)
         {
+            self.conflicting(members)?;
             // Testing alternatives must never add bounds to this solver.
             let actual = self.reify(actual)?;
+            // A literal is outside a union if it's outside each member. So is a
+            // class with infinitely many literals, if it's outside each member but
+            // its literals, which are finitely many: one of its literals is below
+            // a nominal member only if the class is.
+            let infinite = [Intrinsic::Int, Intrinsic::Str, Intrinsic::Sym]
+                .into_iter()
+                .any(|intrinsic| self.db.intrinsic(intrinsic) == Some(actual));
+            let mut outside = infinite || self.db.literal(actual).is_some();
             for member in members.iter() {
-                if let UnionMember::Type(ty) = *member
-                    && let Ok(expected) = self.reify(view.child(ty))
-                    && self.probe(actual, expected)? == Status::Proven
-                {
-                    return Ok(());
+                let UnionMember::Type(ty) = *member else {
+                    outside = false;
+                    continue;
+                };
+                let Ok(expected) = self.reify(view.child(ty)) else {
+                    outside = false;
+                    continue;
+                };
+                if infinite && self.db.literal(expected).is_some() {
+                    continue;
+                }
+                match self.probe(actual, expected)? {
+                    Status::Proven => return Ok(()),
+                    Status::Contradicted => {}
+                    Status::Unresolved => outside = false,
                 }
             }
-            return Err(Residual::Unsupported.into());
+            return Err(match outside {
+                true => Issue::Contradiction(Contradiction::Outside),
+                false => Residual::Unsupported("a type that may be inside a union member").into(),
+            });
         }
         match (a, b) {
             (Head::Infer(a), Head::Infer(b)) if a == b => Ok(()),
@@ -1893,7 +2064,7 @@ impl<'db> Solver<'db> {
                     (Type::Schema(xs), Type::Schema(ys)) => {
                         self.schemas(a, xs, b, ys, expected, obligation)
                     }
-                    _ => Err(Residual::Unsupported.into()),
+                    _ => Err(Residual::Unsupported("these structural types").into()),
                 }
             }
             (Head::Structural(view), Head::Nominal(_)) => {
@@ -1904,10 +2075,27 @@ impl<'db> Solver<'db> {
                     self.spend()?;
                     ty = *body;
                 }
+                // A generic class's object, `[S] Type[C[S]]`, is its class applied
+                // to unknown arguments, as a type test narrows to: written alone,
+                // the class says nothing of them, so they aren't inferred
+                if let Type::Quantified { binders, body } = self.db.ty(view.ty)
+                    && let Type::Apply { base, .. } = self.db.ty(*body)
+                    && Some(*base) == self.db.intrinsic(Intrinsic::Type)
+                {
+                    let unknowns: Vec<TypeId> = (binders.iter())
+                        .map(|binder| self.db.unknown_of(binder.kind))
+                        .collect();
+                    let applied = self.db.substitute(*body, &unknowns);
+                    let applied = self.view(applied, view.environment);
+                    self.derive(obligation, applied, expected, Step::Instantiation);
+                    return Ok(());
+                }
                 let intrinsic = match self.db.ty(view.ty) {
                     _ if matches!(self.db.ty(ty), Type::Function(_)) => Intrinsic::Func,
                     Type::Literal(literal) => literal.intrinsic(),
-                    _ => return Err(Residual::Unsupported.into()),
+                    _ => {
+                        return Err(Residual::Unsupported("a structural type below a class").into());
+                    }
                 };
                 let Some(backing) = self.db.intrinsic(intrinsic) else {
                     return Err(Residual::MissingIntrinsic(intrinsic).into());
@@ -1920,7 +2108,7 @@ impl<'db> Solver<'db> {
                 );
                 Ok(())
             }
-            _ => Err(Residual::Unsupported.into()),
+            _ => Err(Residual::Unsupported("these kinds of type").into()),
         }
     }
 
@@ -2058,28 +2246,36 @@ impl<'db> Solver<'db> {
                 stack.push((dependency.obligation, false));
             }
         }
-        // Historical edges explain contradictions, but are not current proof premises.
-        let mut history = vec![(root, vec![root])];
-        let mut seen = HashSet::new();
-        while let Some((id, path)) = history.pop() {
-            if !seen.insert(id) {
-                continue;
-            }
-            if let State::Issue(issue @ Issue::Contradiction(_)) =
-                self.obligations[id.0].state.get()
-                && !diagnostics
-                    .iter()
-                    .any(|d| d.path.last() == Some(&id) && d.issue == issue)
-            {
-                diagnostics.push(Diagnostic {
-                    issue,
-                    path: path.clone(),
-                });
-            }
-            for dependency in self.obligations[id.0].dependencies.iter() {
-                let mut next = path.clone();
-                next.push(dependency.obligation);
-                history.push((dependency.obligation, next));
+        // Historical edges explain contradictions, but are not current proof
+        // premises. A path through an assignment explains a contradiction only by
+        // what the assignment was drawn from, so one is taken only where no other
+        // reaches it.
+        for assignments in [false, true] {
+            let mut history = vec![(root, vec![root])];
+            let mut seen = HashSet::new();
+            while let Some((id, path)) = history.pop() {
+                if !seen.insert(id) {
+                    continue;
+                }
+                if let State::Issue(issue @ Issue::Contradiction(_)) =
+                    self.obligations[id.0].state.get()
+                    && !diagnostics
+                        .iter()
+                        .any(|d| d.path.last() == Some(&id) && d.issue == issue)
+                {
+                    diagnostics.push(Diagnostic {
+                        issue,
+                        path: path.clone(),
+                    });
+                }
+                for dependency in self.obligations[id.0].dependencies.iter() {
+                    if !assignments && dependency.step == Step::Assignment {
+                        continue;
+                    }
+                    let mut next = path.clone();
+                    next.push(dependency.obligation);
+                    history.push((dependency.obligation, next));
+                }
             }
         }
         if self.exhausted.get() {
@@ -2125,13 +2321,14 @@ fn compose(outer: Variance, inner: Variance) -> Variance {
     }
 }
 
+mod item;
 mod lattice;
 mod member;
 mod narrow;
 mod schema;
 
 pub(crate) use lattice::Widening;
-pub(crate) use member::{FoundKind, Lookup};
+pub(crate) use member::{FoundKind, Lookup, Signatures};
 pub(crate) use narrow::Target as NarrowTarget;
 
 #[cfg(test)]

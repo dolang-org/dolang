@@ -48,17 +48,17 @@ impl Solver<'_> {
     ) -> TypeId {
         let literal = match target {
             Target::Class(_) => None,
-            Target::Literal(literal) => match self.db.ty(literal) {
-                Type::Literal(literal) => Some(literal),
-                _ => return ty,
+            Target::Literal(literal) => match self.db.literal(literal) {
+                Some(literal) => Some(literal),
+                None => return ty,
             },
         };
         let mut result = self.db.bottom();
         for member in self.union_members(ty) {
-            // A pack's members are unknown, so it's kept
+            // A projection's members are unknown, so it's kept
             let member = match member {
                 UnionMember::Type(member) => member,
-                UnionMember::Expand(_) => {
+                _ => {
                     let pack = self.db.intern(Type::Union(vec![member].into()));
                     result = self.lub(result, pack);
                     continue;
@@ -155,7 +155,7 @@ impl Solver<'_> {
         match self.db.ty(ty) {
             Type::Unknown(_) => return Member::Unknown,
             Type::Top => return Member::Top,
-            Type::Literal(literal) => {
+            Type::Literal(literal) | Type::Fresh(literal) => {
                 return Member::Literal(literal.clone(), self.start(ty).ok().flatten());
             }
             _ => {}

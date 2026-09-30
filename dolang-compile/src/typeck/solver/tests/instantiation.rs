@@ -195,7 +195,7 @@ fn defaults_are_the_join_of_solved_lower_bounds() {
     let mut db = Database::new();
     let int = int(&mut db);
     let str = nominal(&mut db, "Str", vec![], vec![]);
-    let one = literal(&db, 1);
+    let one = fresh(&db, 1);
     let t = reference(&db, 0, 0);
     let f = function(&db, &[int], str);
     let id = quantified(
@@ -245,7 +245,9 @@ fn defaults_are_the_join_of_solved_lower_bounds() {
     assert_eq!(s.default(variable_id(empty)), Err(Residual::Inference));
     assert_eq!(
         s.default(variable_id(conflicted)),
-        Err(Residual::Unsupported)
+        Err(Residual::Unsupported(
+            "a default above a variable's upper bounds"
+        ))
     );
     assert_eq!(s.solution(variable_id(conflicted)), None);
     assert!(!s.defaulted(variable_id(conflicted)));
@@ -265,7 +267,7 @@ fn defaults_decay_literals() {
     ] {
         let class = nominal(&mut db, &format!("{intrinsic:?}"), vec![], vec![]);
         db.set_intrinsic(intrinsic, class);
-        kinds.push((db.intern(Type::Literal(literal)), class));
+        kinds.push((db.intern(Type::Fresh(literal)), class));
     }
     let int = db.intrinsic(Intrinsic::Int).unwrap();
     let array = nominal(&mut db, "Array", vec![binder(Variance::Invariant)], vec![]);
@@ -275,15 +277,17 @@ fn defaults_decay_literals() {
         vec![binder(Variance::Invariant)],
         function(&db, &[t, t], apply(&db, array, &[t])),
     );
-    let one = literal(&db, 1);
-    let two = literal(&db, 2);
+    let one = fresh(&db, 1);
+    let two = fresh(&db, 2);
+    let exact = literal(&db, 1);
+    // What was written in a type, as an existing value's is
     let one_two = db.intern(Type::Union(
-        vec![UnionMember::Type(one), UnionMember::Type(two)].into(),
+        vec![UnionMember::Type(exact), UnionMember::Type(literal(&db, 2))].into(),
     ));
     let array_one_two = apply(&db, array, &[one_two]);
     db.seal();
 
-    // Each kind of literal decays to its class
+    // Each kind of fresh literal decays to its class
     for (literal, class) in kinds {
         let mut s = Solver::new(&db);
         let variable = s.infer();
@@ -302,12 +306,13 @@ fn defaults_decay_literals() {
     assert_eq!(s.reify(result), Ok(apply(&db, array, &[int])));
 
     let mut s = Solver::new(&db);
-    let [required, existing, mixed] = [(); 3].map(|()| s.infer());
+    let [required, existing, mixed, written] = [(); 4].map(|()| s.infer());
     for (variable, lower) in [
         (required, one),
         (existing, array_one_two),
         (mixed, one),
         (mixed, int),
+        (written, exact),
     ] {
         s.constrain(s.closed(lower), variable, Provenance::default());
     }
@@ -318,6 +323,8 @@ fn defaults_decay_literals() {
     // An existing value's invariant argument can't widen
     assert_eq!(s.default(variable_id(existing)), Ok(array_one_two));
     assert_eq!(s.default(variable_id(mixed)), Ok(int));
+    // A literal written in a type never decays
+    assert_eq!(s.default(variable_id(written)), Ok(exact));
 
     // A default that wouldn't lock the literal in keeps it
     let mut s = Solver::new(&db);

@@ -51,7 +51,7 @@ impl Solver<'_> {
         let below = |x: TypeId, y: TypeId| self.probe(x, y) == Ok(Status::Proven);
         let comparable = |member: &UnionMember| match *member {
             UnionMember::Type(ty) => (!self.contains_unknown(ty)).then_some(ty),
-            UnionMember::Expand(_) => None,
+            _ => None,
         };
         let mut kept: Vec<UnionMember> = Vec::new();
         for member in self
@@ -63,6 +63,15 @@ impl Solver<'_> {
                 return unknown;
             }
             if kept.contains(&member) {
+                continue;
+            }
+            // A regular literal replaces its fresh twin, as normalization keeps it
+            if let UnionMember::Type(ty) = member
+                && let Some(twin) = kept.iter_mut().find(|kept| {
+                    matches!(**kept, UnionMember::Type(kept) if kept != ty && self.db.regular(kept) == ty)
+                })
+            {
+                *twin = member;
                 continue;
             }
             if let Some(ty) = comparable(&member) {
@@ -95,7 +104,7 @@ impl Solver<'_> {
             .iter()
             .map(|member| match *member {
                 UnionMember::Type(ty) => self.start(ty).ok().flatten(),
-                UnionMember::Expand(_) => None,
+                _ => None,
             })
             .collect::<Option<Vec<_>>>()?;
         let mut candidates = Vec::new();

@@ -208,7 +208,8 @@ pub def double x
 
 An overload has no runtime binding. It doesn't take `pub`; it's exported if
 its implementation is. A method, including a special method such as `(init)`,
-takes overloads in its class body the same way.
+takes overloads in its class body the same way, and so does a protocol's
+method.
 
 Since an overload receives no arguments, its parameters are not ordered as a
 function's are: rest parameters may appear anywhere and more than once, and a
@@ -221,14 +222,15 @@ required parameter may follow an optional one.
 ## Protocols
 
 `@class` declares a protocol, which describes the fields and methods exposed by
-implementing types. Its methods have no bodies, its fields have no defaults,
-and methods sharing a name are implicitly overloads:
+implementing types. Its methods have no bodies, and its fields have no defaults.
+A method's overloads are declared with `@def`, as a class's are:
 
 ```
 pub @class Shape
   pub field name @ Str
-  pub def area self -> Int
-  pub def area self scale @ Int -> Int
+  @def area self -> Int
+  @def area self scale @ Int -> Int
+  pub def area self scale @ Int = 1 -> Int
 ```
 
 Protocols have no corresponding type objects at runtime. A class can indicate

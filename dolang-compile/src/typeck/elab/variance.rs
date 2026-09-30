@@ -302,9 +302,20 @@ impl<'t, 'u> Collect<'t, 'u> {
             }
         }
 
-        // Designated opaque aliases take their binders covariantly
-        if let Some(Designated::Phantom | Designated::Intrinsic(Intrinsic::Union)) =
-            tables.designated.get(&id)
+        // Designated opaque aliases take their binders covariantly, but for
+        // `AssignItem`'s key: a wider key selects more items, whose meet is lower
+        let assign_item = Designated::Intrinsic(Intrinsic::AssignItem);
+        if let Some(
+            designated @ (Designated::Phantom
+            | Designated::Intrinsic(
+                Intrinsic::Union
+                | Intrinsic::Keys
+                | Intrinsic::Values
+                | Intrinsic::Entries
+                | Intrinsic::IndexItem
+                | Intrinsic::AssignItem,
+            )),
+        ) = tables.designated.get(&id)
         {
             for slot in 0..tables.binders(id, 0).len() {
                 let binder = BinderRef {
@@ -312,8 +323,12 @@ impl<'t, 'u> Collect<'t, 'u> {
                     sig: 0,
                     slot,
                 };
+                let used = match slot {
+                    1 if *designated == assign_item => Use::CONTRA,
+                    _ => Use::CO,
+                };
                 self.constraints
-                    .push(((id, binder), Source::Path(Use::CO, Vec::new())));
+                    .push(((id, binder), Source::Path(used, Vec::new())));
             }
         }
     }

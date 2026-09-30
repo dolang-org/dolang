@@ -98,10 +98,13 @@ do
 # Something with an area.
 pub @class Shaped
   # The area.
-  pub def area self -> Int
+  @def area self -> Int
 
   # The area, scaled.
-  pub def area self scale @ Int -> Int
+  @def area self scale @ Int -> Int
+
+  # The area, scaled if a scale is given.
+  pub def area self scale @ Int = 1 -> Int
 
 # A point with an area.
 pub class Plot: Point @Shaped

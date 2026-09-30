@@ -40,7 +40,7 @@ pub def either v @ (Int | nil) n @ Named
   let _ = (v || "b")
   #   ^: flow std.Int | std.Str
   let _ = (v && "b")
-  #   ^: flow std.Int | std.Nil | std.Str
+  #   ^: flow nil | std.Int | std.Str
   let _ = (n.name || "b")
   #   ^: flow std.Str
 
@@ -59,6 +59,15 @@ pub def typed v @ (Int | Str)
   else
     let _ = v
     #       ^: flow std.Str
+
+# A generic class's object tests for the class with any arguments
+pub def generic v @ (Int | Array[Str])
+  if (type(v, Array))
+    let _ = v
+    #       ^: flow std.Array[std.Str]
+  else
+    let _ = v
+    #       ^: flow std.Int
 
 pub def caught()
   let y = 1

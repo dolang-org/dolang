@@ -154,6 +154,7 @@ impl Tables<'_> {
             {
                 let value = match designated {
                     Designated::Value => "top".to_owned(),
+                    Designated::Never => "bottom".to_owned(),
                     Designated::Phantom => "phantom".to_owned(),
                     Designated::Getter => "getter".to_owned(),
                     Designated::Setter => "setter".to_owned(),
@@ -164,7 +165,7 @@ impl Tables<'_> {
                     Designated::Bin => "bin".to_owned(),
                     Designated::Array => "array".to_owned(),
                     Designated::Dict => "dict".to_owned(),
-                    Designated::Tuple => "tuple".to_owned(),
+                    Designated::BaseDict => "base dict".to_owned(),
                     Designated::Record => "record".to_owned(),
                     Designated::Range => "range".to_owned(),
                     Designated::BaseIterable => "base iterable".to_owned(),
@@ -548,7 +549,8 @@ impl Tables<'_> {
             Type::Top => out.push_str("Value"),
             Type::Unknown(Kind::Type) => out.push_str("Unknown"),
             Type::Unknown(Kind::Schema) => out.push_str("Unknown{}"),
-            Type::Literal(literal) => {
+            // Freshness is the checker's concern, not the reader's
+            Type::Literal(literal) | Type::Fresh(literal) => {
                 let _ = match literal {
                     Literal::Nil => write!(out, "nil"),
                     Literal::Bool(value) => write!(out, "{value}"),
@@ -616,6 +618,30 @@ impl Tables<'_> {
                             UnionMember::Expand(ty) => {
                                 out.push_str("...");
                                 self.render_into(db, *ty, names, depth, &mut out);
+                            }
+                            UnionMember::Keys(ty)
+                            | UnionMember::Values(ty)
+                            | UnionMember::Entries(ty) => {
+                                let name = match member {
+                                    UnionMember::Keys(_) => "Keys",
+                                    UnionMember::Values(_) => "Values",
+                                    _ => "Entries",
+                                };
+                                let _ = write!(out, "{name}[...");
+                                self.render_into(db, *ty, names, depth, &mut out);
+                                out.push(']');
+                            }
+                            UnionMember::IndexItem(schema, key)
+                            | UnionMember::AssignItem(schema, key) => {
+                                let name = match member {
+                                    UnionMember::IndexItem(..) => "IndexItem",
+                                    _ => "AssignItem",
+                                };
+                                let _ = write!(out, "{name}[");
+                                self.render_into(db, *schema, names, depth, &mut out);
+                                out.push_str(", ");
+                                self.render_into(db, *key, names, depth, &mut out);
+                                out.push(']');
                             }
                         }
                         out

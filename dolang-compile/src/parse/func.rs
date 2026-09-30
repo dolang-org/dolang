@@ -1,7 +1,5 @@
 use super::{
-    ExprMode, Parser, Result, Scope,
-    diag::{RedundantTypeOnly, SpecialMethodOutsideClass},
-    params::ParamMode,
+    ExprMode, Parser, Result, Scope, diag::SpecialMethodOutsideClass, params::ParamMode,
     stream::ExpectKind,
 };
 use crate::{
@@ -151,7 +149,7 @@ impl Parser<'_> {
     }
 
     /// Parse a `def`, which has no body when it is type-only: marked with `@`, or a
-    /// protocol member.
+    /// protocol member. In a protocol, `@` marks an overload of a member.
     fn parse_def_common(
         &mut self,
         scope: &mut Scope,
@@ -160,10 +158,6 @@ impl Parser<'_> {
     ) -> Result<DefCommon> {
         let def_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Def)])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
-        if protocol && let Some(span) = at_span {
-            self.fail = true;
-            self.diags.push(RedundantTypeOnly(span));
-        }
         let type_only = protocol || at_span.is_some();
         // A declaration names what it defines; nothing after `def` is read as
         // the keyword it spells, so a function may take the name of one.

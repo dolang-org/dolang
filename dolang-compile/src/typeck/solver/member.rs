@@ -44,15 +44,23 @@ pub(crate) struct Found {
 #[derive(Clone, Debug)]
 pub(crate) enum FoundKind {
     Field(Term),
-    /// Each signature of the method, with its receiver parameter
-    Method(Vec<Term>),
+    Method(Signatures),
     /// The signatures of a computed field's getter and setter
     Property {
-        getter: Option<Vec<Term>>,
-        setter: Option<Vec<Term>>,
+        getter: Option<Signatures>,
+        setter: Option<Signatures>,
     },
     /// A method its decorators replace with a value of unknown type
     Unknown,
+}
+
+/// A method's signatures, each with its receiver parameter
+#[derive(Clone, Debug)]
+pub(crate) struct Signatures {
+    /// Its `@def` signatures, empty unless it's overloaded
+    pub(crate) overloads: Vec<Term>,
+    /// Its implementation's signature, unless it's overloaded without one
+    pub(crate) implementation: Option<Term>,
 }
 
 /// Where a receiver's members are looked up
@@ -117,7 +125,9 @@ impl Solver<'_> {
                         return Ok(Receiver::Instance(nominal));
                     }
                     let [class] = nominal.arguments[..] else {
-                        return Err(Residual::Unsupported.into());
+                        return Err(
+                            Residual::Unsupported("a type object with several arguments").into(),
+                        );
                     };
                     return match self.head(class)? {
                         Head::Infer(_) => Err(Residual::Inference.into()),
@@ -127,7 +137,9 @@ impl Solver<'_> {
                         {
                             Ok(Receiver::Dynamic)
                         }
-                        Head::Structural(_) => Err(Residual::Unsupported.into()),
+                        Head::Structural(_) => {
+                            Err(Residual::Unsupported("a type object of a structural type").into())
+                        }
                     };
                 }
                 Head::Structural(view) => view,
@@ -156,7 +168,7 @@ impl Solver<'_> {
                 Type::Function(_) => Intrinsic::Func,
                 Type::Literal(literal) => literal.intrinsic(),
                 // A union's members are judged by #742's policy
-                _ => return Err(Residual::Unsupported.into()),
+                _ => return Err(Residual::Unsupported("a member of a union receiver").into()),
             };
             let Some(backing) = self.db.intrinsic(intrinsic) else {
                 return Err(Residual::MissingIntrinsic(intrinsic).into());
@@ -277,25 +289,26 @@ impl Solver<'_> {
         }
     }
 
-    /// Each signature of a method of `nominal`'s class, with the class's binders
+    /// The signatures of a method of `nominal`'s class, with the class's binders
     /// split off and applied
-    fn signatures(&self, nominal: &Nominal, decl: DeclId) -> Vec<Term> {
+    fn signatures(&self, nominal: &Nominal, decl: DeclId) -> Signatures {
         let class = match self.db.ty(self.db.declaration(nominal.declaration).ty) {
             Type::Quantified { binders, .. } => binders.len(),
             _ => 0,
         };
-        let overloads = self.db.overloads(decl);
-        let decls = if overloads.is_empty() {
-            &[decl][..]
-        } else {
-            overloads
+        let signature = |decl: DeclId| {
+            let ty = self.db.split(self.db.declaration(decl).ty, class);
+            self.view(ty, nominal.environment)
         };
-        decls
-            .iter()
-            .map(|&decl| {
-                let ty = self.db.split(self.db.declaration(decl).ty, class);
-                self.view(ty, nominal.environment)
-            })
-            .collect()
+        Signatures {
+            overloads: self
+                .db
+                .overloads(decl)
+                .iter()
+                .copied()
+                .map(signature)
+                .collect(),
+            implementation: self.db.implementation(decl).map(signature),
+        }
     }
 }

@@ -1,0 +1,45 @@
+# A literal term's type decays to its class where a variable or collection holds
+# it. A literal written in a type is exact, and never decays.
+
+def plain x @ (:a: | :b:)
+  ...
+
+# A function keeps the literals of its signature, however it's reached
+pub def called y @ Sym
+  plain :a:
+  plain :c:
+  # error: expected `:a: | :b:`, found `:c:`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   plain :c:
+  #    |         ^^^
+  plain $y
+  # error: expected `:a: | :b:`, found `std.Sym`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   plain $y
+  #    |          ^
+  let f = plain
+  f :c:
+# error: expected `:a: | :b:`, found `:c:`
+#   --> m.dol:LL:LL
+#    |
+# LL |   f :c:
+#    |     ^^^
+
+pub def held p @ :a:
+  let x = 1
+  let _ = x
+  #       ^: flow std.Int
+  let y = p
+  let _ = y
+  #       ^: flow :a:
+  let terms = [1, 2]
+  let _ = terms
+  #       ^~~~~: flow std.Array[std.Int]
+  let written = [p]
+  let _ = written
+  #       ^~~~~~~: flow std.Array[:a:]
+  let d = {a: 1}
+  let _ = d
+  #       ^: flow std.Dict[{*(std.Sym): std.Int}]

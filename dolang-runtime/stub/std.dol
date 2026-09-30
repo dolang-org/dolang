@@ -7,7 +7,36 @@ pub @let Union[...Ts] = ...
 
 # The type with no values, which a function that never returns can declare as
 # its result.
-pub @let Empty = Union[]
+pub @let Never = Union[]
+
+# The union of a schema's keys, as a collection indexes it: a positional item's
+# key is its index. `Keys[{a: Int, b: Str}]` is `(:a: | :b:)`, `Keys[{**Int}]`
+# is `Sym`, `Keys[{Int, Str}]` is `(0 | 1)`, and `Keys[{*Int}]` is `Int`.
+pub @let Keys[S @ {...}] = ...
+
+# The union of the values of a schema's items, positional or keyed.
+# `Values[{Bool, a: Int, b: Str}]` is `(Bool | Int | Str)`.
+pub @let Values[S @ {...}] = ...
+
+# The union of a `Tuple` of key and value for each of a schema's items, which
+# keeps each key with its own value. A positional item's key is its index, as in
+# `Keys`. `Entries[{a: Int, b: Str}]` is
+# `(Tuple[:a:, Int] | Tuple[:b:, Str])`.
+pub @let Entries[S @ {...}] = ...
+
+# The union of the values of the items of `S` that a key selects, which a read
+# at a key of type `K` may give. A positional item's key is its index, as in
+# `Keys`. `IndexItem[{a: Int, b: Str}, :a:]` is `Int`, and
+# `IndexItem[{a: Int, b: Str}, (:a: | :b:)]` is `(Int | Str)`. A key `S` doesn't
+# admit is an error.
+pub @let IndexItem[S @ {...}, K] = ...
+
+# The meet of the values of the items of `S` that a key selects, which a write at
+# a key of type `K` must fit. `AssignItem[{a: Int, b: Str}, :a:]` is `Int`, and
+# `AssignItem[{a: Int, b: Str}, (:a: | :b:)]` is `Never`, since no value fits
+# both. A meet that would take an intersection is unchecked. A key `S` doesn't
+# admit is an error.
+pub @let AssignItem[S @ {...}, K] = ...
 
 # The singleton [`Null`](std.Null) value.
 #
@@ -172,8 +201,7 @@ pub def tuple[*Ts] *values@Ts -> Tuple[...Ts]
 # ```
 # assert_eq (type 42) $Int
 # ```
-pub def type[T] value @ T -> Type[T]
-  ...
+@def type[T] value @ T -> Type[T]
 
 #
 # Tests whether `value` is an instance of `type`.
@@ -184,7 +212,10 @@ pub def type[T] value @ T -> Type[T]
 # ```
 # assert (type 42 Int)
 # ```
-pub def type[T] value@Value type@Type[T] -> Bool
+@def type[T] value@Value type@Type[T] -> Bool
+
+# Returns a value's type, or tests whether it's an instance of a type.
+pub def type value *type
   ...
 
 #
@@ -287,13 +318,13 @@ pub @let Phantom[...Ts] = ...
 
 # A value that implements the
 # [`(index)`](../../language/classes.md#index-and-assign-subscript-access)
-# protocol for the keys in `S`. A key's presence is not checked, only that the
-# value has such a key.
+# protocol for the keys in `S`. A key must be one of `S`'s, though an item
+# `S` may omit can still be missing.
 pub @class Index[S @ {...}]
   field schema @Phantom[...S]
 
   # Returns the value at `key`.
-  pub def (index)[K, V, U @ {*(K): V, ...}] self@Index[U] key@K -> V
+  pub def (index)[K] self key@K -> IndexItem[S, K]
 
 
 # A value that implements the
@@ -303,7 +334,7 @@ pub @class Assign[S @ {...}]
   field schema @Phantom[((...S) -> nil)]
 
   # Sets the value at `key`.
-  pub def (assign)[K, V, U @ {*(K): V, ...}] self@Assign[U] key@K value@V
+  pub def (assign)[K] self key@K value@AssignItem[S, K]
 
 
 # A value that implements the
@@ -333,8 +364,11 @@ pub @class Seq[T]: Iterable[T] Index[Int, T] Spread[T] Unpack[T]
   #[getter]
   pub def len self -> Int
 
-  # Returns the items in `range`.
-  pub def (index) self range@Range[Int] -> Seq[T]
+  @def (index)[K] self key@K -> IndexItem[{*(Int): T}, K]
+  @def (index) self range@Range[Int] -> Seq[T]
+
+  # Returns the item at an index, or the items in a range.
+  pub def (index)[K] self key@K -> IndexItem[{*(Int): T}, K]
 
 
 # A [`Seq`](std.Seq) whose items can be replaced, but not added or removed.
@@ -365,7 +399,7 @@ pub @class MutSeq[T]: AssignSeq[T]
   #
   # [`IndexError`](std.IndexError) if the item does not exist and there is no
   # `default` or `else`.
-  pub def pop[D = Empty]
+  pub def pop[D = Never]
     self
     # The position to remove. Negative indexes count from the end.
     index @ Int = nil
@@ -396,11 +430,15 @@ pub @class MutSeq[T]: AssignSeq[T]
 pub @class FlagSet[F]: Iterable[F]
   # Constructs a flag set from symbols.
   #[class]
-  pub def (call)[S] cls@Type[S] ...flags@F -> S
+  @def (call)[S] cls@Type[S] ...flags@F -> S
 
   # Constructs a flag set from one iterable of symbols.
   #[class]
-  pub def (call)[S] cls@Type[S] flags@Iterable[F] -> S
+  @def (call)[S] cls@Type[S] flags@Iterable[F] -> S
+
+  # Constructs a flag set from symbols, or from one iterable of them.
+  #[class]
+  pub def (call)[S] cls@Type[S] *flags -> S
 
   # Tests whether all flags named by `flag` are set.
   pub def contains self flag @ F -> Bool
@@ -813,7 +851,7 @@ pub class Array[T]: Iterable[T] Sinkable[T] @MutSeq[T]
   # assert_eq (empty.pop default: "none") "none"
   # ```
   #
-  pub def pop[D = Empty]
+  pub def pop[D = Never]
     self
     # optional index to remove; defaults to the last element
     index @ Int = nil
@@ -863,7 +901,7 @@ pub class Array[T]: Iterable[T] Sinkable[T] @MutSeq[T]
   do
     ...
 
-  @def (index) self index@Int -> T
+  @def (index)[K] self key@K -> IndexItem[{*(Int): T}, K]
   @def (index) self range@Range[Int] -> Array[T]
 
   #
@@ -897,8 +935,11 @@ pub class Array[T]: Iterable[T] Sinkable[T] @MutSeq[T]
   # Omitted `start` means `0`, omitted `end` means the array length, and negative
   # `start` and `end` values count from the end. Negative steps reverse the slice.
   #
-  pub def (index) self index
+  pub def (index)[K] self key@K -> IndexItem[{*(Int): T}, K]
     ...
+
+  @def (assign)[K] self key@K value@AssignItem[{*(Int): T}, K]
+  @def (assign) self range@Range[Int] value@(Array[T] | Tuple[...T])
 
   #
   # ```
@@ -916,7 +957,7 @@ pub class Array[T]: Iterable[T] Sinkable[T] @MutSeq[T]
   # type error rather than being drained or wrapped. Stepped slices are read-only;
   # assignment with a non-unity step is rejected.
   #
-  pub def (assign) self index value
+  pub def (assign)[K] self key@K value@AssignItem[{*(Int): T}, K]
     ...
 
   # ```
@@ -1275,7 +1316,7 @@ pub class Bin: @Index[Range[Int], Bin]
 #
 # Mutable byte buffer; the mutable counterpart to [`Bin`](std.Bin).
 #
-pub class BinBuf: @Index[{*(Int): Int, *(Range[Int]): Bin}] @Assign[{*(Int): Int, *(Range[Int]): Bin}]
+pub class BinBuf: @Index[Int, Int] @Assign[Int, Int]
   #
   #
   # Builds a buffer, optionally seeded with the contents of existing binary data.
@@ -1554,9 +1595,9 @@ pub class BinBuf: @Index[{*(Int): Int, *(Range[Int]): Bin}] @Assign[{*(Int): Int
   # assert_eq $buf[0] 102
   # assert_eq $buf[2..4] b"ob"
   # ```
-  @def (index) self index@Int -> Int
+  @def (index)[K] self key@K -> IndexItem[{*(Int): Int}, K]
   @def (index) self range@Range[Int] -> Bin
-  pub def (index) self index
+  pub def (index)[K] self key@K -> IndexItem[{*(Int): Int}, K]
     ...
 
   # Assigns a byte or byte range. Range assignment may grow or shrink the buffer.
@@ -1567,9 +1608,9 @@ pub class BinBuf: @Index[{*(Int): Int, *(Range[Int]): Bin}] @Assign[{*(Int): Int
   # buf[1..3] = b"XYZ"
   # assert_eq $buf.freeze() b"FXYZbar"
   # ```
-  @def (assign) self index@Int value@Int
+  @def (assign)[K] self key@K value@AssignItem[{*(Int): Int}, K]
   @def (assign) self range@Range[Int] value@Bin
-  pub def (assign) self index value
+  pub def (assign)[K] self key@K value@AssignItem[{*(Int): Int}, K]
     ...
 
   # Returns this buffer as a [sink](std.Sink). Values are appended verbatim,
@@ -1691,42 +1732,13 @@ pub class CyclicImportError: RuntimeError
 
 
 #
-# Dictionaries are **ordered**, mutable key-value mappings. They preserve
-# insertion order and are **multi-maps**: a single key can have multiple values.
+# The read-only half of a [`Dict`](std.Dict), whose items it holds covariantly:
+# a `Dict[{a: Int}]` is a `BaseDict[{a: (Int | Str)}]`. A parameter that only
+# reads a dict takes a `BaseDict`, so it accepts dicts with narrower items.
 #
-# Keys can be any hashable type.
+# `BaseDict` is `Dict` at runtime, so only a dict is a `BaseDict`.
 #
-#
-# ## Ordering
-#
-# Dictionaries preserve insertion order. Iteration yields entries in the order
-# they were inserted.
-#
-# ## Multi-Map Semantics
-#
-# A dict can store multiple values per key. This is primarily relevant when
-# constructing dicts from spreading or using methods with the `instance`
-# parameter:
-#
-# - **Construction** with duplicate keys preserves all values
-# - **Plain indexing** (`d[key]`) returns the last value for a key, so a
-#   duplicate key overrides the values before it: last wins
-# - **Plain assignment** (`d[key] = value`) replaces all values for a key
-# - **`insert`** adds a new value without removing existing ones for that key
-# - **`get`** and **`pop`** accept an `instance` parameter to access specific
-#   values by their position (0-indexed) among values for that key; negative
-#   instance indexes count from the end
-#
-pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[Tuple[Value, Value]]
-  #
-  #
-  # Builds a dictionary from one spreadable source of key-value pairs. The
-  # lowercase `dict` factory instead assigns integer keys to positional arguments
-  # and symbol keys to key arguments.
-  #
-  pub def (init) self source
-    ...
-
+pub class BaseDict[S @ {...}]: @Index[S] @Spread[S] @Unpack[S] Iterable[Entries[S]]
   #
   # Returns the number of key-value pairs (counting each value in a multi-map
   # separately).
@@ -1734,18 +1746,6 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[T
   #
   #[getter]
   pub def len self -> Int
-    ...
-
-  #
-  # Removes all key-value pairs.
-  #
-  # ```
-  # let d = {a: 1, b: 2}
-  # d.clear()
-  # assert_eq $d.len 0
-  # ```
-  #
-  pub def clear self
     ...
 
   #
@@ -1792,7 +1792,7 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[T
   # When inherited by a Do subclass, `copy()` calls the subclass constructor with
   # the source dict as a single positional argument.
   #
-  pub def copy self -> Dict[S]
+  pub def copy self -> BaseDict[S]
     ...
 
   #
@@ -1805,6 +1805,151 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[T
   #
   #
   pub def count self key = nil -> Int
+    ...
+
+  #
+  # Retrieves the value for a key. Returns `nil` if the key is missing and no
+  # alternative is provided. Negative `instance` indexes count from the end.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let d = {name: "Alice"}
+  # assert_eq (d.get :name:) "Alice"
+  # assert_eq ({name: "Alice", name: "Bob"}.get :name: -1) "Bob"
+  # assert_eq (d.get :missing: default: "unknown") "unknown"
+  # ```
+  #
+  pub def get[K, D = nil]
+    self
+    # the key to look up
+    key @ K
+    # which value to retrieve when a key has multiple values (0-indexed; negative counts from end; default: last)
+    instance @ Int = nil
+    :default @ D = nil
+    :else @ (() -> D) = nil
+  do -> (IndexItem[S, K] | D)
+    ...
+
+  #
+  # Returns an iterator of keys. Each distinct key is yielded exactly once, in the
+  # order its first pair was inserted.
+  #
+  # If duplicate-key iteration is needed, use [`pairs`](#pairs) instead.
+  #
+  #
+  pub def keys self -> Iter[Keys[S]]
+    ...
+
+  #
+  # Returns an iterator yielding `[key, value]` pairs, the same as ordinary
+  # iteration. This method is present to allow uniform key/value iteration
+  # over both [`Dict`](std.Dict) and [`Array`](std.Array).
+  #
+  #
+  pub def pairs self -> Iter[Entries[S]]
+    ...
+
+  #
+  # Returns an iterator of values. With no argument, it yields all stored values in
+  # pair insertion order. With a `key`, it yields only the values associated with
+  # that key, in that key's insertion order.
+  #
+  # Missing keys return an empty iterator.
+  @def values self -> Iter[Values[S]]
+  @def values[K] self key@K -> Iter[IndexItem[S, K]]
+  pub def values self key = nil -> Iter[Values[S]]
+    ...
+
+  #
+  # ```
+  # let d = {name: "Alice"}
+  # assert_eq $d[:name:] "Alice"
+  # ```
+  #
+  # A missing key raises an error.
+  #
+  # [`Range`](std.Range) values are treated as ordinary keys, not as slices.
+  #
+  pub def (index)[K] self key@K -> IndexItem[S, K]
+    ...
+
+  # Spreads the dictionary's entries.
+  pub def (spread) self -> Spread[S]
+    ...
+
+  # Iterating over a dictionary yields `[key, value]` pairs:
+  #
+  # ```
+  # for pair = {a: 1, b: 2}
+  #   echo $pair
+  # ```
+  #
+  pub def (iter) self -> Iter[Entries[S]]
+    ...
+
+  # Destructures the dictionary by key.
+  #
+  # ```
+  # let :name age: years = {name: "Alice", age: 30}
+  # ```
+  pub def (unpack) self -> Unpack[S]
+    ...
+
+
+#
+# Dictionaries are **ordered**, mutable key-value mappings. They preserve
+# insertion order and are **multi-maps**: a single key can have multiple values.
+#
+# Keys can be any hashable type.
+#
+#
+# ## Ordering
+#
+# Dictionaries preserve insertion order. Iteration yields entries in the order
+# they were inserted.
+#
+# ## Multi-Map Semantics
+#
+# A dict can store multiple values per key. This is primarily relevant when
+# constructing dicts from spreading or using methods with the `instance`
+# parameter:
+#
+# - **Construction** with duplicate keys preserves all values
+# - **Plain indexing** (`d[key]`) returns the last value for a key, so a
+#   duplicate key overrides the values before it: last wins
+# - **Plain assignment** (`d[key] = value`) replaces all values for a key
+# - **`insert`** adds a new value without removing existing ones for that key
+# - **`get`** and **`pop`** accept an `instance` parameter to access specific
+#   values by their position (0-indexed) among values for that key; negative
+#   instance indexes count from the end
+#
+pub class Dict[S @ {...}]: BaseDict[S] @Assign[S]
+  #
+  #
+  # Builds a dictionary from one spreadable source of key-value pairs. The
+  # lowercase `dict` factory instead assigns integer keys to positional arguments
+  # and symbol keys to key arguments.
+  #
+  pub def (init) self source
+    ...
+
+  #
+  # Removes all key-value pairs.
+  #
+  # ```
+  # let d = {a: 1, b: 2}
+  # d.clear()
+  # assert_eq $d.len 0
+  # ```
+  #
+  pub def clear self
+    ...
+
+  # Returns a shallow copy of the dictionary, as
+  # [`BaseDict.copy`](std.BaseDict.copy) does.
+  pub def copy self -> Dict[S]
     ...
 
   #
@@ -1828,60 +1973,16 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[T
     ...
 
   #
-  # Retrieves the value for a key. Returns `nil` if the key is missing and no
-  # alternative is provided. Negative `instance` indexes count from the end.
-  #
-  #
-  # ## Example
-  #
-  # ```
-  # let d = {name: "Alice"}
-  # assert_eq (d.get :name:) "Alice"
-  # assert_eq ({name: "Alice", name: "Bob"}.get :name: -1) "Bob"
-  # assert_eq (d.get :missing: default: "unknown") "unknown"
-  # ```
-  #
-  pub def get[K, V, U @ {*(K): V, ...}, D = nil]
-    self @ Dict[U]
-    # the key to look up
-    key @ K
-    # which value to retrieve when a key has multiple values (0-indexed; negative counts from end; default: last)
-    instance @ Int = nil
-    :default @ D = nil
-    :else @ (() -> D) = nil
-  do -> (V | D)
-    ...
-
-  #
   # Adds a key-value pair. Does **not** remove existing values for the same key
   # (multi-map insert).
   #
-  pub def insert
+  pub def insert[K]
     self
     # the key
-    key
+    key @ K
     # the value
-    value
+    value @ AssignItem[S, K]
   do
-    ...
-
-  #
-  # Returns an iterator of keys. Each distinct key is yielded exactly once, in the
-  # order its first pair was inserted.
-  #
-  # If duplicate-key iteration is needed, use [`pairs`](#pairs) instead.
-  #
-  #
-  pub def keys self -> Iter[Value]
-    ...
-
-  #
-  # Returns an iterator yielding `[key, value]` pairs, the same as ordinary
-  # iteration. This method is present to allow uniform key/value iteration
-  # over both [`Dict`](std.Dict) and [`Array`](std.Array).
-  #
-  #
-  pub def pairs self -> Iter[Tuple[Value, Value]]
     ...
 
   #
@@ -1905,67 +2006,24 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[T
   # assert_eq (d.pop "multi" 0) "second"
   # ```
   #
-  pub def pop[D = Empty]
+  pub def pop[K, D = Never]
     self
     # the key to remove
-    key
+    key @ K
     # which value to remove when a key has multiple values (0-indexed; negative counts from end; default: first)
     instance @ Int = nil
     :default @ D = nil
     :else @ (() -> D) = nil
-  do -> (Value | D)
-    ...
-
-  #
-  # Returns an iterator of values. With no argument, it yields all stored values in
-  # pair insertion order. With a `key`, it yields only the values associated with
-  # that key, in that key's insertion order.
-  #
-  # Missing keys return an empty iterator.
-  #
-  #
-  pub def values self key = nil -> Iter[Value]
-    ...
-
-  #
-  # ```
-  # let d = {name: "Alice"}
-  # assert_eq $d[:name:] "Alice"
-  # d[:age:] = 30
-  # ```
-  #
-  # Missing keys raise an error on access. Assignment replaces all values for the
-  # key.
-  #
-  # [`Range`](std.Range) values are treated as ordinary keys, not as slices.
-  #
-  pub def (index)[K, V, U @ {*(K): V, ...}] self@Dict[U] key@K -> V
+  do -> (IndexItem[S, K] | D)
     ...
 
   # Replaces every value of `key`.
-  pub def (assign)[K, V, U @ {*(K): V, ...}] self@Dict[U] key@K value@V
-    ...
-
-  # Spreads the dictionary's entries.
-  pub def (spread) self -> Spread[S]
-    ...
-
-  # Iterating over a dictionary yields `[key, value]` pairs:
   #
   # ```
-  # for pair = {a: 1, b: 2}
-  #   echo $pair
+  # let d = {name: "Alice"}
+  # d[:age:] = 30
   # ```
-  #
-  pub def (iter) self -> Iter[Tuple[Value, Value]]
-    ...
-
-  # Destructures the dictionary by key.
-  #
-  # ```
-  # let :name age: years = {name: "Alice", age: 30}
-  # ```
-  pub def (unpack) self -> Unpack[S]
+  pub def (assign)[K] self key@K value@AssignItem[S, K]
     ...
 
 
@@ -2590,7 +2648,7 @@ pub class FmtValue
 # assert_eq $seq[1].value $user
 # assert_eq $seq[1].width 8
 # ```
-pub class Fmt: @Index[{*(Int): FmtSegment, *(Range[Int]): Array[FmtSegment]}] @Spread[FmtSegment] @Unpack[FmtSegment]
+pub class Fmt: @Index[Int, FmtSegment] @Spread[FmtSegment] @Unpack[FmtSegment]
   #
   #
   # Builds a sequence from an iterable of segments.
@@ -2676,9 +2734,9 @@ pub class Fmt: @Index[{*(Int): FmtSegment, *(Range[Int]): Array[FmtSegment]}] @S
   #
   # Assigning to a segment raises an [`ImmutableError`](std.ImmutableError).
   #
-  @def (index) self index@Int -> FmtSegment
+  @def (index)[K] self key@K -> IndexItem[{*(Int): FmtSegment}, K]
   @def (index) self range@Range[Int] -> Array[FmtSegment]
-  pub def (index) self index
+  pub def (index)[K] self key@K -> IndexItem[{*(Int): FmtSegment}, K]
     ...
 
   #
@@ -3153,7 +3211,7 @@ pub class Nil
 # run tool stdin: $null stdout: $null
 # ```
 #
-pub class Null: Iter[Empty] Sink[Value]
+pub class Null: Iter[Never] Sink[Value]
   # Ends the iteration immediately without yielding a value.
   pub def (next) self
     ...
@@ -3356,7 +3414,7 @@ pub class Record[...Ts]: Iterable[Tuple[Sym | Int, Value]] @Index[{...Ts}] @Spre
     ...
 
   # Returns the value at a position or key.
-  pub def (index) self key
+  pub def (index)[K] self key@K -> IndexItem[{...Ts}, K]
     ...
 
   # Spreads the record's items.
@@ -4428,7 +4486,7 @@ pub class TimedOutError: RuntimeError
 # object is in the prelude, so `Tuple(iterable)` is available without an
 # explicit import.
 #
-pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}] Iterable[Union[...Ts]] @Seq[Union[...Ts]]
+pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}] Iterable[Union[...Ts]] @Index[{...Ts}] @Seq[Union[...Ts]]
   #
   #
   # Builds a tuple from an iterable.
@@ -4502,7 +4560,7 @@ pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}] Iterable[Union[...Ts]] @
   pub def pairs self -> Iter[Tuple[Int, Value]]
     ...
 
-  @def (index) self index@Int -> Union[...Ts]
+  @def (index)[K] self key@K -> IndexItem[{...Ts}, K]
   @def (index) self range@Range[Int] -> Tuple[...Union[...Ts]]
 
   #
@@ -4530,7 +4588,7 @@ pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}] Iterable[Union[...Ts]] @
   # Slice indexing returns a new tuple. Omitted `start` means `0`, omitted `end`
   # means the tuple length, and negative endpoints count from the end. Negative
   # steps reverse the slice.
-  pub def (index) self index
+  pub def (index)[K] self key@K -> IndexItem[{...Ts}, K]
     ...
 
   # Unpacks tuple elements.

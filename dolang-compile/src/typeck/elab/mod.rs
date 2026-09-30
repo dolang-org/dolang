@@ -294,6 +294,8 @@ pub(crate) struct Sig<'u> {
 pub(crate) enum Designated {
     /// `std.Value`, which is top
     Value,
+    /// `std.Never`, which is bottom
+    Never,
     /// `std.Phantom`, which marks its arguments as used covariantly
     Phantom,
     /// `std.getter`, which makes a method a computed field's getter
@@ -314,8 +316,9 @@ pub(crate) enum Designated {
     Array,
     /// `std.Dict`, the class of a dict literal
     Dict,
-    /// `std.Tuple`, the class of a tuple literal
-    Tuple,
+    /// `std.BaseDict`, the read-only half of `std.Dict` that a dict literal may be
+    /// expected to be
+    BaseDict,
     /// `std.Record`, the class of a record literal
     Record,
     /// `std.Range`, the class of a range

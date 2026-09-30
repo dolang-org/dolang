@@ -461,7 +461,13 @@ fn domains_own_what_they_admit_narrowest_first() {
     // Items of an open schema may have keys `Sym` owns, and `Top <: Int` isn't
     // decided
     let outcome = check(&db, open, sym_int);
-    assert!(residual(&outcome, Residual::Unsupported), "{outcome:?}");
+    assert!(
+        residual(
+            &outcome,
+            Residual::Unsupported("a structural type below a class")
+        ),
+        "{outcome:?}"
+    );
 
     // An unsolved key waits for its solution
     let mut s = Solver::new(&db);
@@ -498,7 +504,14 @@ fn inclusions_splice_or_take_on_their_multiplicity() {
         &check(&db, many, one),
         Contradiction::Missing(0)
     ));
-    assert!(residual(&check(&db, pairs, prefix), Residual::Unsupported));
+    let outcome = check(&db, pairs, prefix);
+    assert!(
+        residual(
+            &outcome,
+            Residual::Unsupported("a repeated inclusion of several items")
+        ),
+        "{outcome:?}"
+    );
 }
 
 #[test]
@@ -600,11 +613,12 @@ fn positional_items_under_int_keys_are_not_yet_decided() {
     let a = db.intern(Type::Literal(Literal::Sym(db.intern_symbol("a"))));
     let named_by_int = items(&db, vec![keyed(Req, a, int), keyed(Rep, int, int)]);
     db.seal();
-    assert!(residual(&check(&db, one, by_int), Residual::Unsupported));
-    assert!(residual(
-        &check(&db, one, named_by_int),
-        Residual::Unsupported
-    ));
+    let int_keyed = Residual::Unsupported("a position that may be an Int-keyed item");
+    let outcome = check(&db, one, by_int);
+    assert!(residual(&outcome, int_keyed), "{outcome:?}");
+    let outcome = check(&db, one, named_by_int);
+    let int_keyed = Residual::Unsupported("positions that may be Int-keyed items");
+    assert!(residual(&outcome, int_keyed), "{outcome:?}");
     assert!(contradiction(
         &check(&db, one, by_sym),
         Contradiction::Excess(0)

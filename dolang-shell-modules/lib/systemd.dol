@@ -14,18 +14,18 @@ import shlex term
 
 let ESC = str b"\x1b"
 
-let RELEASE_TYPES = $
+let RELEASE_TYPES @ Dict[Str, ReleaseType] = $
   "stable": :STABLE:
   "lts": :LTS:
   "development": :DEVELOPMENT:
   "experiment": :EXPERIMENT:
 
-let PORTABLE_SCOPES = $
+let PORTABLE_SCOPES @ Dict[Str, PortableScope] = $
   "system": :SYSTEM:
   "user": :USER:
   "any": :ANY:
 
-let EXTENSION_SCOPES = $
+let EXTENSION_SCOPES @ Dict[Str, ExtensionScope] = $
   "system": :SYSTEM:
   "initrd": :INITRD:
   "portable": :PORTABLE:
@@ -161,6 +161,12 @@ def fancy_value value
 # written.
 pub @let ExtensionScope = (:SYSTEM: | :INITRD: | :PORTABLE: | Str)
 
+# An operating system's release channel.
+pub @let ReleaseType = (:STABLE: | :LTS: | :DEVELOPMENT: | :EXPERIMENT:)
+
+# A portable-service scope. An unrecognized scope is kept as written.
+pub @let PortableScope = (:SYSTEM: | :USER: | :ANY: | Str)
+
 # Parsed operating-system identification data with standard-aware projections.
 #
 # Named fields apply the defaults and conversions prescribed by the
@@ -222,13 +228,13 @@ pub class OsRelease: @Index[Str, Str] @Unpack[Str, Str] Iterable[Tuple[Str, Str]
 
   # The release channel symbol, defaulting to `:STABLE:`.
   #[getter]
-  pub def release_type self -> (:STABLE: | :LTS: | :DEVELOPMENT: | :EXPERIMENT:)
+  pub def release_type self -> ReleaseType
     let value = self.#values.get "RELEASE_TYPE" default: "stable"
     RELEASE_TYPES.get $value default: :STABLE:
 
   # The portable-service scope, defaulting to `:SYSTEM:`.
   #[getter]
-  pub def portable_scope self -> (:SYSTEM: | :USER: | :ANY: | Str)
+  pub def portable_scope self -> PortableScope
     let value = self.#values.get "PORTABLE_SCOPE" default: nil
     if (value == nil)
       return :SYSTEM:

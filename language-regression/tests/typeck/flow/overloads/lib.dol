@@ -1,0 +1,4 @@
+@def double x @ Int -> Int
+@def double x @ Str -> Str
+pub def double x
+  (x + x)

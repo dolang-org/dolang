@@ -725,7 +725,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         if ty == self.db.bottom() || self.below(decayed, annotation) {
             return annotation;
         }
-        if let Type::Literal(Literal::Nil | Literal::Sym(_)) = self.db.ty(ty) {
+        if let Some(Literal::Nil | Literal::Sym(_)) = self.db.literal(ty) {
             return self.lub(annotation, ty);
         }
         let outcome = self.relate(ty, annotation);
@@ -902,10 +902,11 @@ impl<'a, 'u> Flow<'a, 'u> {
             }
             Against::Value(value) => {
                 let ty = self.eval(at, state, &mut none, value);
-                matches!(self.db.ty(ty), Type::Literal(_)).then_some(NarrowTarget::Literal(ty))
+                let literal = self.db.literal(ty).is_some();
+                literal.then(|| NarrowTarget::Literal(self.db.regular(ty)))
             }
-            &Against::Type(ty) => match self.db.ty(ty) {
-                Type::Literal(_) => Some(NarrowTarget::Literal(ty)),
+            &Against::Type(ty) => match self.db.literal(ty) {
+                Some(_) => Some(NarrowTarget::Literal(self.db.regular(ty))),
                 _ => self.class_of_instance(ty).map(NarrowTarget::Class),
             },
         };
@@ -1091,8 +1092,9 @@ impl<'a, 'u> Flow<'a, 'u> {
         self.db.intrinsic(intrinsic).unwrap_or(self.db.unknown())
     }
 
+    /// A literal term's type, which is fresh
     fn literal(&self, literal: &Literal) -> TypeId {
-        self.db.intern(Type::Literal(literal.clone()))
+        self.db.intern(Type::Fresh(literal.clone()))
     }
 }
 
@@ -1120,7 +1122,7 @@ fn residual(outcome: &Outcome) -> Residual {
             super::solver::Issue::Residual(residual) => Some(residual),
             super::solver::Issue::Contradiction(_) => None,
         })
-        .unwrap_or(Residual::Unsupported)
+        .unwrap_or(Residual::Unsupported("no reason recorded"))
 }
 
 /// How many operand holes an expression has

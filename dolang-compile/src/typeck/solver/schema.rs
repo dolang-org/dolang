@@ -349,7 +349,9 @@ impl Solver<'_> {
                     && let Some((key, _)) = keyed
                     && self.int_keyed(bv.child(key))?
                 {
-                    return Err(Residual::Unsupported.into());
+                    return Err(
+                        Residual::Unsupported("a position that may be an Int-keyed item").into(),
+                    );
                 }
                 return Err(Issue::Contradiction(Contradiction::Excess(index)));
             }
@@ -439,7 +441,9 @@ impl Solver<'_> {
                 return Ok(());
             }
             Head::Infer(_) => return Err(Residual::Inference.into()),
-            Head::Nominal(_) => return Err(Residual::Unsupported.into()),
+            Head::Nominal(_) => {
+                return Err(Residual::Unsupported("a class included in a schema").into());
+            }
         };
         let opaque = |shape: &mut Shape, opacity, lanes| {
             shape.positional.push(Slot::Opaque(shape.opaque.len()));
@@ -471,14 +475,18 @@ impl Solver<'_> {
                         multiplicity: multiplicity.compose(atom.multiplicity),
                         ..*atom
                     }),
-                    _ => return Err(Residual::Unsupported.into()),
+                    _ => {
+                        return Err(
+                            Residual::Unsupported("a repeated inclusion of several items").into(),
+                        );
+                    }
                 }
                 Ok(())
             }
             Type::Rigid { .. } => {
                 self.rigid(view.ty)?;
                 let Some(bound) = self.rigid_bound(view.ty) else {
-                    return Err(Residual::Unsupported.into());
+                    return Err(Residual::Unsupported("an included rigid without a bound").into());
                 };
                 if keep.is_some_and(|keep| !keep.contains(&view.ty)) {
                     return self.include(
@@ -491,13 +499,15 @@ impl Solver<'_> {
                     );
                 }
                 if multiplicity != Multiplicity::Required {
-                    return Err(Residual::Unsupported.into());
+                    return Err(
+                        Residual::Unsupported("an optional or repeated included rigid").into(),
+                    );
                 }
                 let lanes = self.lanes(bound, depth + 1)?;
                 opaque(shape, Opacity::Rigid(view.ty), lanes);
                 Ok(())
             }
-            _ => Err(Residual::Unsupported.into()),
+            _ => Err(Residual::Unsupported("this kind of included schema").into()),
         }
     }
 
@@ -574,7 +584,9 @@ impl Solver<'_> {
         {
             for domain in &b.keyed {
                 if !self.literal(domain.key)? && self.int_keyed(domain.key)? {
-                    return Err(Residual::Unsupported.into());
+                    return Err(
+                        Residual::Unsupported("positions that may be Int-keyed items").into(),
+                    );
                 }
             }
         }
@@ -724,7 +736,7 @@ impl Solver<'_> {
         for (i, y) in literals.iter().enumerate() {
             for other in &literals[..i] {
                 if self.same(y.key, other.key)? {
-                    return Err(Residual::Unsupported.into());
+                    return Err(Residual::Unsupported("two literal keys that are the same").into());
                 }
             }
         }
@@ -785,7 +797,12 @@ impl Solver<'_> {
                 {
                     self.owners(x, &domains, open_expected, obligation)?;
                 }
-                _ => return Err(Residual::Unsupported.into()),
+                _ => {
+                    return Err(Residual::Unsupported(
+                        "several key domains that aren't all repeated",
+                    )
+                    .into());
+                }
             }
         }
         Ok(())
@@ -806,29 +823,10 @@ impl Solver<'_> {
             .collect::<Result<_, _>>()?;
         for member in self.union_members(self.reify(x.key)?) {
             let UnionMember::Type(member) = member else {
-                return Err(Residual::Unsupported.into());
+                return Err(Residual::Unsupported("a key with projections").into());
             };
-            // Each overlapping domain, and whether it admits the whole member. A
-            // domain lies inside a member only if the member isn't a literal.
-            let literal = matches!(self.db.ty(member), Type::Literal(_));
-            let mut overlapping = Vec::new();
-            for (d, &key) in keys.iter().enumerate() {
-                let whole = self.probe(member, key)?;
-                if whole == Status::Proven {
-                    overlapping.push((d, true));
-                    continue;
-                }
-                let inside = match literal {
-                    true => Status::Contradicted,
-                    false => self.probe(key, member)?,
-                };
-                match (whole, inside) {
-                    (_, Status::Proven) => overlapping.push((d, false)),
-                    (Status::Contradicted, Status::Contradicted) => {}
-                    _ => return Err(Residual::Unsupported.into()),
-                }
-            }
-            if overlapping.is_empty() {
+            let owning = self.owning(member, &keys)?;
+            if owning.is_empty() {
                 let view = self.closed(member);
                 if open_expected {
                     continue;
@@ -836,23 +834,63 @@ impl Solver<'_> {
                 if self.literal(view)? || self.nominal_head(view)? {
                     return Err(Issue::Contradiction(Contradiction::Excess(x.item)));
                 }
-                return Err(Residual::Unsupported.into());
+                return Err(
+                    Residual::Unsupported("a key no domain of a closed schema owns").into(),
+                );
             }
-            for &(d, _) in &overlapping {
-                // A narrower domain admitting the whole member owns it instead
-                let mut narrowed = false;
-                for &(e, whole) in &overlapping {
-                    narrowed |= whole
-                        && keys[e] != keys[d]
-                        && self.probe(keys[e], keys[d])? == Status::Proven;
-                }
-                if !narrowed {
-                    let item = Step::Item(x.item);
-                    self.derive(obligation, x.value, domains[d].value, item);
-                }
+            for (d, _) in owning {
+                let item = Step::Item(x.item);
+                self.derive(obligation, x.value, domains[d].value, item);
             }
         }
         Ok(())
+    }
+
+    /// The domains among `keys` that own a key: the narrowest that admits it
+    /// whole, and any lying inside it, which owns part of it. Each is given with
+    /// whether it admits the key whole. A domain lies inside a key only if the key
+    /// isn't a literal. None own a key no domain overlaps.
+    pub(super) fn owning(&self, key: TypeId, keys: &[TypeId]) -> Result<Vec<(usize, bool)>, Issue> {
+        let literal = self.db.literal(key).is_some();
+        let mut overlapping = Vec::new();
+        for (d, &domain) in keys.iter().enumerate() {
+            let whole = self.probe(key, domain)?;
+            if whole == Status::Proven {
+                overlapping.push((d, true));
+                continue;
+            }
+            let inside = match literal {
+                true => Status::Contradicted,
+                false => self.probe(domain, key)?,
+            };
+            match (whole, inside) {
+                (_, Status::Proven) => overlapping.push((d, false)),
+                (Status::Contradicted, Status::Contradicted) => {}
+                _ => {
+                    return Err(Residual::Unsupported(
+                        "a key that may or may not overlap a domain",
+                    )
+                    .into());
+                }
+            }
+        }
+        let mut owning = Vec::new();
+        for &(d, whole) in &overlapping {
+            // A strictly narrower domain admitting the whole key owns it instead.
+            // Domains each below the other, as the dynamic type is below any, both
+            // own it.
+            let mut narrowed = false;
+            for &(e, whole) in &overlapping {
+                narrowed |= whole
+                    && keys[e] != keys[d]
+                    && self.probe(keys[e], keys[d])? == Status::Proven
+                    && self.probe(keys[d], keys[e])? != Status::Proven;
+            }
+            if !narrowed {
+                owning.push((d, whole));
+            }
+        }
+        Ok(owning)
     }
 
     /// Whether a key is a single literal
@@ -882,7 +920,9 @@ impl Solver<'_> {
         match self.probe(self.reify(literal)?, self.reify(domain)?)? {
             Status::Proven => Ok(true),
             Status::Contradicted => Ok(false),
-            Status::Unresolved => Err(Residual::Unsupported.into()),
+            Status::Unresolved => {
+                Err(Residual::Unsupported("a literal key a domain may or may not admit").into())
+            }
         }
     }
 }

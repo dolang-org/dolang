@@ -53,8 +53,9 @@ fixed by syntax; until decorator applications are evaluated, std's `getter` and
 `setter`, found by what their names resolve to, make a method half of a computed
 field's property, and any other decorator leaves a member of unknown type. Each
 implementation of a method name is a function of its own, so a getter and a
-setter are two. An overloaded function records each of its signatures, which are
-declarations of their own, with its first implementation. Unit IDs
+setter are two. An overloaded function records its `@def` signatures, which are
+declarations of their own; its own ID is its implementation, and without one,
+which name resolution reports, its first `@def`. Unit IDs
 are allocated from a counter and checked when declarations are populated.
 Filenames and local symbol mappings belong to upper layers. Ordinary symbols are
 interned by spelling; callers can allocate fresh symbols separately when source
@@ -62,8 +63,14 @@ identity must be preserved.
 
 `TypeId` identifies a normalized structural expression in one database. Ordinary
 types such as `Int` and `Sym` are declaration references, not builtin nodes.
-Literal nodes describe exact values only. Optional intrinsic slots associate
-`Union`, `Int`, `Bool`, `Sym`, `Nil`, and `Str` with their stub types. Each slot
+Literal nodes describe exact values only. A literal is regular when written in
+a type, or fresh when a literal term gave it, as TypeScript's widening literal
+types are. Only a fresh literal decays to its class, so a signature's or a
+schema's literals are never lost. A union keeps a regular twin over a fresh one;
+otherwise the two relate alike, since the solver exposes a fresh literal as its
+regular twin, and `same` treats them as one. Optional intrinsic slots associate
+`Union`, `Keys`, `Values`, `Entries`, `Tuple`, `Int`, `Bool`, `Sym`, `Nil`,
+`Str` and a few more with their stub types. Each slot
 may be set once before sealing; missing associations are allowed. Elaboration
 supplies these associations, and the solver can use the literal backing types to
 enter the declared supertype hierarchy. Schemas and ordinary types share the ID
@@ -102,12 +109,31 @@ not subtype reasoning. Bottom is the empty union; top has an explicit node.
 Both are interned and cached when the database is created. Type interning and
 shifting accept shared database references; arena storage keeps borrowed types
 stable while the interning index uses interior mutability. Elaboration interns
-`std.Value` as top; `Empty` needs only its ordinary alias to `Union[]`.
+`std.Value` as top and `std.Never` as bottom, so a union absorbs a written
+`Never` as it does an empty union.
 An application of the `Union` intrinsic interns as a union expanding its
 schema, and an expanded schema of positional items contributes their types as
 members, so `Union[...Ts]` becomes an ordinary union once `Ts` is substituted.
 Other expansions remain symbolic until a consumer supplies their schema
-arguments. `Database::normalize` gives a type the canonical form interning
+arguments. The projections `Keys`, `Values` and `Entries` intern as unions the
+same way, each a member projecting its schema. Once the schema is known,
+`Values` folds every item's value, whatever its multiplicity, projecting an
+included schema in turn. `Keys` and `Entries` fold the schema's keyed view, as a
+collection indexes it (`Database::promoted`): each position is keyed by its
+index, a literal `Int` while the positions before it are all required, and `Int`
+from the first that may be missing or repeated on. `Keys` takes each key, and
+`Entries` each `Tuple[key, value]`. An included schema not yet known stays a
+member beside what is known, unless positions, or keys that may be indexes, lie
+beside it: their indexes, or collisions, depend on it, so the whole projection
+waits. A key that may be a position's index conflicts with it: a non-negative
+`Int` literal a position may have, or a domain of `Int` alongside positions.
+A conflicting projection stays unevaluated, and a judgment exposing it is
+contradicted. The dynamic schema projects to `Unknown`. Without a designated
+`Tuple`, `Entries` stays whole, and so does a projection of a varying position
+without a designated `Int`. The item projections `IndexItem[S, K]` and
+`AssignItem[S, K]` intern as union members of a schema and a key, and only the
+dynamic schema reduces them there: selecting by a key takes the solver.
+`Database::normalize` gives a type the canonical form interning
 would, for callers that need it before interning. Declaration wrappers are not
 normalized away.
 Exposure follows transparent head references and reports direct cycles, stopping
@@ -193,7 +219,28 @@ An omitted channel stands for its default bound, `Iter[Unknown]` or
 judgments require every member; union-right judgments accept a member proved by
 an isolated, closed subtype query. Alternative queries cannot add inference
 bounds or diagnostic edges to the calling solver. Expanded union packs and
-alternatives that cannot be proved remain residual. Higher-rank rules remain
+alternatives that cannot be proved remain residual. The exception is a literal
+on the left, or `Int`, `Str` or `Sym`, which have infinitely many: when every
+member refutes it, apart from a class's literals, which are finitely many, it
+contradicts the union. A projection is exposed by reifying it once its schema's
+environment is substituted, which waits on the schema's variables. One of a
+rigid's schema that is left on the left reduces to the same projection of the
+rigid's bound. An item projection is evaluated once its schema and key are
+closed, by exposing or reifying it (`solver/item.rs`). The key selects items of
+the schema's keyed view: each member of the key goes to the literal item it is,
+or else to the literal items inside it and the domains that own it, as an actual
+keyed item goes to an expected schema's domains. `IndexItem` joins the selected
+values. `AssignItem` meets them without intersection types: the lower of two
+ordered values, the bottom type for two literals or classes that can't share a
+value, and otherwise `Unknown`, which leaves the write unchecked. A key member
+the schema doesn't admit whole contradicts the projection, as a conflicting
+schema does. A rigid key selects only by its bound, so exactly only where each
+item the bound selects has the same value; otherwise the projection is
+residual. One left unevaluated is below an item projection of the same kind and
+schema on the right whose key is proven wider for `IndexItem`, or narrower for
+`AssignItem`. A function's result that is an item projection is exposed where
+the function is related, so a call reports a key its schema doesn't admit even
+when nothing uses the result. Higher-rank rules remain
 deferred. Contextual identity and top/bottom rules can still settle some
 judgments involving otherwise unsupported forms: anything is below top and
 `Unknown`, even a type that can't be exposed.
@@ -235,9 +282,10 @@ domain key still to be inferred waits for its solution, and one whose relation
 to an item's key can't be decided is residual. When several expected repeated
 items could take the overflow, the judgment is residual.
 
-A positional item may someday be admitted as an `Int`-keyed item. Until that
-rule exists, positional items against an expected schema with none but a domain
-that might admit `Int` are residual rather than contradictions.
+Subtyping never admits a positional item as an `Int`-keyed item; only the
+projections key positions by their indexes. Positional items against an expected
+schema with none but a domain that might admit `Int` are residual rather than
+contradictions.
 
 An expected schema whose items are all repeated, with at most one positional
 item `*P` and one keyed item `*(K): V`, as in `{*T}`, `{**V}` and `{...}`,
@@ -333,9 +381,10 @@ from its own and the class's arguments are applied, leaving it quantified over
 the rest: `map[U] self f @ (T -> U) -> U` found through `Box[Int]` is
 `[U] (Box[Int], (Int -> U)) -> U`. Its receiver parameter stays, so a call
 passes the receiver as its first argument, and each signature of an overloaded
-method is applied alike. A property's getter and setter are methods. A
-result says whether the member is public, since only a public member can be
-replaced in a subclass, so only access to one may dispatch.
+method, its overloads and its implementation, is applied alike. A property's
+getter and setter are methods. A result says whether the member is public, since
+only a public member can be replaced in a subclass, so only access to one may
+dispatch.
 
 ### Assignments and fixed point
 
@@ -362,25 +411,27 @@ the caller's lifetime budget.
 Forcing alone rarely settles a call: its result variable and most of its
 callee's variables have only lower bounds and binder bounds. `default` is a
 separate, caller-driven choice: it assigns the join of a variable's lower
-bounds, all of which must be solved, or `Unknown` if one of them is. The
-default must satisfy every solved upper bound; the obligations pairing lower and
-upper bounds check the rest once it commits. A variable without lower bounds is
-never defaulted. The caller defaults a variable's lower bounds before it, such
-as a call's binders before its result, and solves between defaults so that
-their consequences can force later variables. Defaulted assignments are marked
-as such, so a contradiction reached through one can be reported as an inference
-choice. A default can decay the join's literals to their classes, except in
-exact schema keys and binder bounds, unless the decayed join violates a bound; a
-forced assignment keeps its literals, since its bounds require them. A rule
-decays only where a literal would lock in: `locked` finds the variables that its
-outputs (its results, and as inputs the parameters of the `do` blocks it passes
-values) reach at a position that isn't covariant, through variables' bounds,
-where a later value couldn't widen them; the rest keep their precise join, which
-subsumption widens as needed. To help a caller choose, `raised` finds the
-variables that raising given terms could raise: those at a covariant or
-invariant position in them, or in a raised variable's upper bounds. A function's
-parameters and channels don't count, and a form it can't see into counts in
-full.
+bounds, all of which must be solved, or `Unknown` if one of them is. The default
+must satisfy every solved upper bound; the obligations pairing lower and upper
+bounds check the rest once it commits. A variable without lower bounds is never
+defaulted. The caller defaults a variable's lower bounds before it, such as a
+call's binders before its result, and solves between defaults so that their
+consequences can force later variables. Defaulted assignments are marked as
+such, so a contradiction reached through one can be reported as an inference
+choice. A default can decay the join's fresh literals to their classes, except
+in exact schema keys, the keys of item projections, and binder bounds, unless
+the decayed join violates a bound. Nor does a variable instantiating a binder
+that an item projection in its signature selects by decay, since a decayed key
+selects differently (`Database::item_keys`). A forced assignment keeps its
+literals, since its bounds require them. A rule decays only where a literal
+would lock in: `locked` finds the variables that its outputs (its results, and
+as inputs the parameters of the `do` blocks it passes values) reach at a
+position that isn't covariant, through variables' bounds, where a later value
+couldn't widen them; the rest keep their precise join, which subsumption widens
+as needed. To help a caller choose, `raised` finds the variables that raising
+given terms could raise: those at a covariant or invariant position in them, or
+in a raised variable's upper bounds. A function's parameters and channels don't
+count, and a form it can't see into counts in full.
 
 Joins, for defaults and for flow state, drop union members proven below another
 member. A member containing `Unknown` neither subsumes nor is subsumed, since
@@ -424,7 +475,9 @@ Each submitted root retains actual/expected source spans. Obligations retain
 original operands and historical labeled edges for arguments, parameters,
 returns, union members, bound propagation, and assignments. Current proof
 premises are tracked separately and replaced on reprocessing. Historical edges
-explain contradictions to every contributing root, but historical cycles and
+explain contradictions to every contributing root, preferring a path without an
+assignment edge, which explains only by what the assignment was drawn from.
+Historical cycles and
 obsolete residuals do not prevent a current proof. Cycles in current proof
 premises remain unresolved. Reports distinguish proven, contradicted, and
 unresolved roots; quiescence alone is not proof.
@@ -578,22 +631,23 @@ merges, and at the target of an edge that retreats in the queue's order the
 join widens (`solver::Widening`) once it has grown too often, or goes to the
 local's annotation.
 
-An assignment is a strong update, and a literal assigned to a declared local
-decays to its class when that fits the annotation. A parameter's or pattern
-item's default is evaluated expecting the variable's annotation, and its
-literals decay. It keeps the annotation when it fits. A `nil` or symbol literal
-that doesn't is a sentinel, joined into the variable's type for the body to
-narrow away, while callers see only the annotation. Any other default is
-reported. An `Assume` narrows with
+An assignment is a strong update, and a fresh literal assigned to a declared
+local decays to its class when that fits the annotation. A parameter's or
+pattern item's default is evaluated expecting the variable's annotation, and its
+fresh literals decay. Constants and a dict literal's keys are fresh; exact keys,
+such as a keyword's or one passed as a pair, are regular. It keeps the
+annotation when it fits. A `nil` or symbol literal that doesn't is a sentinel,
+joined into the variable's type for the body to narrow away, while callers see
+only the annotation. Any other default is reported. An `Assume` narrows with
 `Solver::narrow`, and an edge left with nothing is unreachable. Flow state marks
 a stack entry that a `Dup` copied from the one below it, and any other step
 clears the mark. An `If` on a marked copy narrows the original on its `then`
 edge to its truthy values, dropping `nil` and `false`, so a short circuit's
-result is narrowed by the test it passed. A step that can
-throw joins its prior state into its handler; a `Catch` narrows the exception by
-each clause's class. Parameters are bound at the entry block: a def's from its
-signature under its group's rigids (`Tables::group_rigids`, which also closes
-`Var.annotation` during lowering), a `do` block's from its signature variables.
+result is narrowed by the test it passed. A step that can throw joins its prior
+state into its handler; a `Catch` narrows the exception by each clause's class.
+Parameters are bound at the entry block: a def's from its signature under its
+group's rigids (`Tables::group_rigids`, which also closes `Var.annotation`
+during lowering), a `do` block's from its signature variables.
 
 State shared between functions is flow-insensitive. An ivar, a variable that a
 function other than its owner reads or writes, has an accumulator: every
@@ -627,7 +681,7 @@ only reified types leave it:
 
 - A call constrains its callee below `Solver::call_items` of its arguments,
   passing the caller's declared channels. A callee that isn't a function type
-  or a union of them, and an overloaded def, give `Unknown`. What its arguments
+  or a union of them gives `Unknown`. What its arguments
   are expected to be comes from the callee's parameters. A parameter that
   mentions the callee's binders gives an expectation only once the call is
   solved, so a collection literal or call passed to it is held back: a
@@ -638,6 +692,17 @@ only reified types leave it:
   expecting its parameter, if what's forced or chosen solves it. The pre-solve
   never makes a variable dynamic, so a binder only a held argument determines
   gives it no expectation.
+- A call through an overloaded function, a method or a def, chooses among its
+  `@def` overloads, a stopgap until union calls are solved (#742). Its
+  arguments are evaluated once, each one that takes an expectation held back,
+  and each overload is pre-solved without the expected result, then defaulted
+  as the call's own solve would be, so a key still to be solved can't hide
+  one the overload can't select by. A `do` block's result is a fresh variable
+  there even once it's known, so a block never rejects an overload. The one
+  overload not contradicted, if exactly one is, is the callee; otherwise the
+  implementation is, or `Unknown` without one. Only the implementation's own
+  check reports a call no overload takes (#821). An overloaded def's value is
+  `Type::Decl` of it, which the solver relates as its implementation's type.
 - A comprehension's items are passed as often as its tree says. The items of an
   outermost `for`, with everything nested in it, join into one repeated item of
   each kind: `*T` for positional items, `*k: V` for each literal key, and
@@ -652,10 +717,12 @@ only reified types leave it:
   joins every item into its element type, however often it occurs, and expects
   each item to be the element of an expected `Array[E]`. A dict joins its items
   into `Dict[{*(K): V}]`, so that a local it's assigned to can gain entries,
-  unless it's expected to be a `Dict[S]` (alone or as one member of a union):
-  then its items' own schema, built as a call's arguments are, must be below
-  `S`, and it's `Dict[S]`. Tuples and records have no vertical form, so they
-  hold no comprehension.
+  unless it's expected to be a `Dict[S]` or a `BaseDict[S]` (alone or as one
+  member of a union): then its items' own schema, built as a call's arguments
+  are, must be below `S`, and it's `Dict[S]`. `std.BaseDict` is `Dict`'s
+  covariant, read-only half, a separate class only to the checker: the runtime
+  exports `Dict` under both names. Tuples and records have no vertical form, so
+  they hold no comprehension.
 - A `do` block among a call's arguments, or a collection's items when the
   collection has an expected type, is typed by the rule. A rule with a check it
   couldn't resolve counts as undecided, so defaulting rounds reach it. Once no
@@ -680,8 +747,8 @@ only reified types leave it:
   `(rmod)`) otherwise. `==`, `!=` and `!` are `Bool`, and the comparisons
   require `(lt)` and are `Bool`. A missing member, and a
   read or write its kind doesn't allow, are reported. A lookup that can't
-  decide, such as on a union receiver, is an unresolved check, and an overloaded
-  method is dynamic until overloads are resolved (#742).
+  decide, such as on a union receiver, is an unresolved check. An overloaded
+  method is dynamic except where it's called.
 - A class object is called as its class-level `(call)`, if it has one, and
   otherwise as its constructor: `(init)`, looked up on the class applied to its
   rigids, without its receiver and giving the instance, with the rigids
@@ -797,12 +864,13 @@ signature or body, but not in a nested class or alias, shares that def's
 channels; elsewhere they are `Unknown`. A closure is populated with its
 annotations and `Unknown` for what it omits, channels included; CFG flow infers
 the omissions separately, without changing the database. Top-level declarations
-of a checked `std` module named `Value`, `Phantom`, `Union`, `Func`, `Int`,
-`Bool`, `Sym`, `Nil`, `Str`, `Iter` and `Sink` are designated for special
-treatment; the same name in another module is only a lookalike. So are the
-classes that literal and constructor expressions produce, `Float`, `Bin`,
-`Array`, `Dict`, `Tuple`, `Record`, `Range` and the `Fmt` classes, which the
-check tables record without the database needing them. A checked `strand`
+of a checked `std` module named `Value`, `Phantom`, `Union`, `Keys`, `Values`,
+`Entries`, `Func`, `Int`, `Bool`, `Sym`, `Nil`, `Str`, `Iter` and `Sink` are
+designated for special treatment; the same name in another module is only a
+lookalike. So are the classes that literal and constructor expressions produce,
+`Float`, `Bin`, `Array`, `Dict`, `Tuple`, `Record`, `Range` and the `Fmt`
+classes, which the check tables record without the database needing them, except
+`Tuple`, which `Entries` builds. A checked `strand`
 module's opaque `PipeSender` and `PipeReceiver` are designated too: each
 stands for the class the `Builder` nominates, resolved as if the placeholder
 imported it, and is populated as a transparent alias of that class applied to
@@ -827,7 +895,8 @@ on anything but its `self`. A field whose type is an application of `Phantom`
 always counts, whatever its visibility, using its arguments covariantly as
 Rust's `PhantomData` does, so `Phantom[(T -> nil)]` marks a class
 contravariant. A transparent alias uses
-its body covariantly; `Union` and `Phantom` take their binders covariantly, and
+its body covariantly; `Union`, the projections and `Phantom` take their binders
+covariantly, and
 any other opaque alias uses none. A binder used in a bound of its own group is
 invariant, and an outer binder used in the bound of a nested group is used
 contravariantly there. Defaults and bodies do not count. A type argument is used

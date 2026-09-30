@@ -241,9 +241,30 @@ fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
         ("strand", "PipeSender") => (Designated::PipeSender, DeclKind::OpaqueAlias),
         ("strand", "PipeReceiver") => (Designated::PipeReceiver, DeclKind::OpaqueAlias),
         ("std", "Value") => (Designated::Value, DeclKind::Class),
+        ("std", "Never") => (Designated::Never, DeclKind::Alias),
         ("std", "Phantom") => (Designated::Phantom, DeclKind::OpaqueAlias),
         ("std", "Union") => (
             Designated::Intrinsic(Intrinsic::Union),
+            DeclKind::OpaqueAlias,
+        ),
+        ("std", "Keys") => (
+            Designated::Intrinsic(Intrinsic::Keys),
+            DeclKind::OpaqueAlias,
+        ),
+        ("std", "Values") => (
+            Designated::Intrinsic(Intrinsic::Values),
+            DeclKind::OpaqueAlias,
+        ),
+        ("std", "Entries") => (
+            Designated::Intrinsic(Intrinsic::Entries),
+            DeclKind::OpaqueAlias,
+        ),
+        ("std", "IndexItem") => (
+            Designated::Intrinsic(Intrinsic::IndexItem),
+            DeclKind::OpaqueAlias,
+        ),
+        ("std", "AssignItem") => (
+            Designated::Intrinsic(Intrinsic::AssignItem),
             DeclKind::OpaqueAlias,
         ),
         ("std", "Func") => (Designated::Intrinsic(Intrinsic::Func), DeclKind::Class),
@@ -262,7 +283,8 @@ fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
         ("std", "Bin") => (Designated::Bin, DeclKind::Class),
         ("std", "Array") => (Designated::Array, DeclKind::Class),
         ("std", "Dict") => (Designated::Dict, DeclKind::Class),
-        ("std", "Tuple") => (Designated::Tuple, DeclKind::Class),
+        ("std", "BaseDict") => (Designated::BaseDict, DeclKind::Class),
+        ("std", "Tuple") => (Designated::Intrinsic(Intrinsic::Tuple), DeclKind::Class),
         ("std", "Record") => (Designated::Record, DeclKind::Class),
         ("std", "Range") => (Designated::Range, DeclKind::Class),
         ("std", "BaseIterable") => (Designated::BaseIterable, DeclKind::Protocol),

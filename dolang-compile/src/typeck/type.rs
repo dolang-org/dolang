@@ -201,7 +201,107 @@ pub(crate) struct Function {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum UnionMember {
     Type(TypeId),
+    /// A schema's positional items' types, as `Union[...S]` expands it
     Expand(TypeId),
+    /// A schema's keys, as `Keys[S]`
+    Keys(TypeId),
+    /// A schema's items' values, positional or keyed, as `Values[S]`
+    Values(TypeId),
+    /// A `Tuple[key, value]` for each of a schema's items, as `Entries[S]`
+    Entries(TypeId),
+    /// The join of the values of a schema's items a key selects, as
+    /// `IndexItem[S, K]`
+    IndexItem(TypeId, TypeId),
+    /// The meet of the values of a schema's items a key selects, as
+    /// `AssignItem[S, K]`
+    AssignItem(TypeId, TypeId),
+}
+
+impl UnionMember {
+    /// The member's type, or the schema it projects
+    pub(crate) fn id(self) -> TypeId {
+        let (Self::Type(id)
+        | Self::Expand(id)
+        | Self::Keys(id)
+        | Self::Values(id)
+        | Self::Entries(id)
+        | Self::IndexItem(id, _)
+        | Self::AssignItem(id, _)) = self;
+        id
+    }
+
+    /// The key an item projection selects by
+    pub(crate) fn key(self) -> Option<TypeId> {
+        match self {
+            Self::IndexItem(_, key) | Self::AssignItem(_, key) => Some(key),
+            _ => None,
+        }
+    }
+
+    /// The schema it projects, if it's a projection
+    pub(crate) fn projected(self) -> Option<TypeId> {
+        match self {
+            Self::Type(_) => None,
+            _ => Some(self.id()),
+        }
+    }
+
+    /// The same kind of member of another type or schema
+    pub(crate) fn with(self, id: TypeId) -> Self {
+        match self {
+            Self::Type(_) => Self::Type(id),
+            Self::Expand(_) => Self::Expand(id),
+            Self::Keys(_) => Self::Keys(id),
+            Self::Values(_) => Self::Values(id),
+            Self::Entries(_) => Self::Entries(id),
+            Self::IndexItem(_, key) => Self::IndexItem(id, key),
+            Self::AssignItem(_, key) => Self::AssignItem(id, key),
+        }
+    }
+
+    /// The same member with its key replaced, if it's an item projection
+    pub(crate) fn with_key(self, key: TypeId) -> Self {
+        match self {
+            Self::IndexItem(schema, _) => Self::IndexItem(schema, key),
+            Self::AssignItem(schema, _) => Self::AssignItem(schema, key),
+            _ => self,
+        }
+    }
+}
+
+/// What a projection member of a union stands for (see [`Database::project`])
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Projected {
+    /// The members it reduces to
+    Reduced(Vec<UnionMember>),
+    /// Its schema isn't known well enough yet
+    Pending,
+    /// Its schema's keyed view has a key that may be a position's index
+    Conflict,
+}
+
+/// A schema's keyed view (see [`Database::promoted`])
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Promotion {
+    Promoted(Promoted),
+    /// The schema isn't known well enough yet
+    Pending,
+    /// A key may be a position's index
+    Conflict,
+}
+
+/// A schema's items as a collection indexes them, each position keyed by its
+/// index
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Promoted {
+    /// The value of each position whose index is fixed, in order
+    pub(crate) fixed: Vec<TypeId>,
+    /// The values of the positions after them, whose indexes vary
+    pub(crate) varying: Vec<TypeId>,
+    /// Each keyed item's multiplicity, through inclusions, key and value
+    pub(crate) keyed: Vec<(Multiplicity, TypeId, TypeId)>,
+    /// The included schemas not yet known
+    pub(crate) opaque: Vec<TypeId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -209,7 +309,12 @@ pub(crate) enum Type {
     Top,
     /// The dynamic type or schema, consistent with every type or schema of its kind
     Unknown(Kind),
+    /// A literal type written in a type, or derived from one, which is exact
     Literal(Literal),
+    /// A literal type a literal term gave, which decays to its class where a
+    /// variable or collection holds it (see [`Database::decay`]). It relates as its
+    /// regular twin does.
+    Fresh(Literal),
     Decl(DeclId),
     Bound {
         reference: BoundRef,
@@ -245,6 +350,7 @@ impl Type {
             Self::Top
             | Self::Unknown(_)
             | Self::Literal(_)
+            | Self::Fresh(_)
             | Self::Decl(_)
             | Self::Bound { .. }
             | Self::Rigid { .. } => {}
@@ -259,8 +365,10 @@ impl Type {
             }
             Self::Union(members) => {
                 for member in members.iter() {
-                    let (UnionMember::Type(ty) | UnionMember::Expand(ty)) = member;
-                    visit(*ty, 0);
+                    visit(member.id(), 0);
+                    if let Some(key) = member.key() {
+                        visit(key, 0);
+                    }
                 }
             }
             Self::Function(func) => {
@@ -354,6 +462,7 @@ impl Type {
             Self::Top
             | Self::Unknown(_)
             | Self::Literal(_)
+            | Self::Fresh(_)
             | Self::Decl(_)
             | Self::Bound { .. }
             | Self::Rigid { .. } => {}
@@ -368,8 +477,10 @@ impl Type {
             }
             Self::Union(members) => {
                 for member in members.iter_mut() {
-                    let (UnionMember::Type(ty) | UnionMember::Expand(ty)) = member;
-                    *ty = f(*ty, 0)?;
+                    *member = member.with(f(member.id(), 0)?);
+                    if let Some(key) = member.key() {
+                        *member = member.with_key(f(key, 0)?);
+                    }
                 }
             }
             Self::Function(func) => {
@@ -593,6 +704,18 @@ pub(crate) struct Exposure {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Intrinsic {
     Union,
+    /// `Keys[S]`, the union of a schema's keys
+    Keys,
+    /// `Values[S]`, the union of a schema's values
+    Values,
+    /// `Entries[S]`, the union of a schema's keyed items as key-value tuples
+    Entries,
+    /// `IndexItem[S, K]`, the join of the values of a schema's items a key selects
+    IndexItem,
+    /// `AssignItem[S, K]`, the meet of the values of a schema's items a key selects
+    AssignItem,
+    /// The class of a tuple, which `Entries` builds
+    Tuple,
     /// Nominal supertype of structural function types; generic semantics are deferred.
     Func,
     Int,
@@ -612,6 +735,12 @@ pub(crate) enum Intrinsic {
 #[derive(Default)]
 struct Intrinsics {
     union: Option<TypeId>,
+    keys: Option<TypeId>,
+    values: Option<TypeId>,
+    entries: Option<TypeId>,
+    index_item: Option<TypeId>,
+    assign_item: Option<TypeId>,
+    tuple: Option<TypeId>,
     func: Option<TypeId>,
     int: Option<TypeId>,
     bool: Option<TypeId>,
@@ -627,6 +756,12 @@ impl Intrinsics {
     fn get(&self, intrinsic: Intrinsic) -> Option<TypeId> {
         match intrinsic {
             Intrinsic::Union => self.union,
+            Intrinsic::Keys => self.keys,
+            Intrinsic::Values => self.values,
+            Intrinsic::Entries => self.entries,
+            Intrinsic::IndexItem => self.index_item,
+            Intrinsic::AssignItem => self.assign_item,
+            Intrinsic::Tuple => self.tuple,
             Intrinsic::Func => self.func,
             Intrinsic::Int => self.int,
             Intrinsic::Bool => self.bool,
@@ -642,6 +777,12 @@ impl Intrinsics {
     fn slot_mut(&mut self, intrinsic: Intrinsic) -> &mut Option<TypeId> {
         match intrinsic {
             Intrinsic::Union => &mut self.union,
+            Intrinsic::Keys => &mut self.keys,
+            Intrinsic::Values => &mut self.values,
+            Intrinsic::Entries => &mut self.entries,
+            Intrinsic::IndexItem => &mut self.index_item,
+            Intrinsic::AssignItem => &mut self.assign_item,
+            Intrinsic::Tuple => &mut self.tuple,
             Intrinsic::Func => &mut self.func,
             Intrinsic::Int => &mut self.int,
             Intrinsic::Bool => &mut self.bool,
@@ -725,16 +866,27 @@ impl Database {
         }
     }
 
-    /// The signatures of an overloaded function, in source order, including its
-    /// own. Empty for a function with one signature.
+    /// The `@def` signatures of an overloaded function, in source order. Empty for
+    /// a function with one signature. The function's own ID is its implementation,
+    /// unless it's among these: then it has none (see [`Self::implementation`]).
     pub(crate) fn overloads(&self, id: DeclId) -> &[DeclId] {
         self.overloads.get(&id).map_or(&[], |overloads| overloads)
     }
 
-    /// Record the signatures of an overloaded function once, before sealing.
+    /// A function's implementation signature: its own ID, unless it's overloaded
+    /// without one
+    pub(crate) fn implementation(&self, id: DeclId) -> Option<DeclId> {
+        (!self.overloads(id).contains(&id)).then_some(id)
+    }
+
+    /// Record the `@def` signatures of an overloaded function once, before
+    /// sealing.
     pub(crate) fn set_overloads(&mut self, id: DeclId, overloads: Vec<DeclId>) {
         self.require_open();
-        assert!(overloads.contains(&id), "overloads omit their function");
+        assert!(
+            !overloads.is_empty(),
+            "an overloaded function has overloads"
+        );
         assert!(
             self.overloads.insert(id, overloads.into()).is_none(),
             "overloads already set: {id:?}"
@@ -758,6 +910,22 @@ impl Database {
 
     pub(crate) fn ty(&self, id: TypeId) -> &Type {
         &self.types[id]
+    }
+
+    /// The literal a literal type is, fresh or regular
+    pub(crate) fn literal(&self, id: TypeId) -> Option<&Literal> {
+        match self.ty(id) {
+            Type::Literal(literal) | Type::Fresh(literal) => Some(literal),
+            _ => None,
+        }
+    }
+
+    /// A fresh literal's regular twin, or any other type itself
+    pub(crate) fn regular(&self, id: TypeId) -> TypeId {
+        match self.ty(id) {
+            Type::Fresh(literal) => self.intern(Type::Literal(literal.clone())),
+            _ => id,
+        }
     }
 
     /// Every declaration of a sealed database
@@ -986,28 +1154,19 @@ impl Database {
     }
 
     /// A type's canonical outer form, which interning gives it: a quantifier
-    /// without binders is its body, and an application of the `Union` intrinsic is
-    /// a union. A union is flattened, with its members sorted and deduplicated, and
-    /// an expanded schema of positional items among them contributes the items'
-    /// types. A union with `Top` is `Top`, and one with a single member is it.
-    /// Children are assumed canonical already.
+    /// without binders is its body, and an application of the `Union`, `Keys`,
+    /// `Values` or `Entries` intrinsic is a union of its projection. A union is
+    /// flattened, with its members sorted and deduplicated, and each projection of
+    /// a schema among them is evaluated as far as the schema is known (see
+    /// [`Self::project`]). A union with `Top` is `Top`, and one with a single
+    /// member is it. Children are assumed canonical already.
     pub(crate) fn normalize(&self, ty: Type) -> Type {
         match ty {
             Type::Quantified { binders, body } if binders.is_empty() => self.ty(body).clone(),
-            Type::Apply { base, args, kind } if Some(base) == self.intrinsic(Intrinsic::Union) => {
-                let members = (args.iter())
-                    .map(|arg| match *arg {
-                        Argument::Positional(schema) | Argument::Expand(schema) => {
-                            Some(UnionMember::Expand(schema))
-                        }
-                        Argument::Keyword(..) => None,
-                    })
-                    .collect::<Option<Vec<_>>>();
-                match members {
-                    Some(members) => self.normalize(Type::Union(members.into())),
-                    None => Type::Apply { base, args, kind },
-                }
-            }
+            Type::Apply { base, args, kind } => match self.projection(base, &args) {
+                Some(members) => self.normalize(Type::Union(members.into())),
+                None => Type::Apply { base, args, kind },
+            },
             Type::Union(members) => {
                 let mut normalized = Vec::new();
                 let mut pending: Vec<UnionMember> = members.iter().rev().copied().collect();
@@ -1018,16 +1177,33 @@ impl Database {
                             Type::Union(nested) => normalized.extend_from_slice(nested),
                             _ => normalized.push(member),
                         },
-                        UnionMember::Expand(schema) => match self.positional_items(schema) {
-                            Some(items) => {
-                                pending.extend(items.into_iter().rev().map(UnionMember::Type));
+                        _ => match self.project(member) {
+                            Projected::Reduced(members) => {
+                                pending.extend(members.into_iter().rev())
                             }
-                            None => normalized.push(member),
+                            Projected::Pending | Projected::Conflict => normalized.push(member),
                         },
                     }
                 }
                 normalized.sort_unstable();
                 normalized.dedup();
+                // A fresh literal is its regular twin's, which is kept
+                let regular: Vec<TypeId> = (normalized.iter())
+                    .filter_map(|member| match *member {
+                        UnionMember::Type(id) if matches!(self.ty(id), Type::Literal(_)) => {
+                            Some(id)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if !regular.is_empty() {
+                    normalized.retain(|member| match *member {
+                        UnionMember::Type(id) if matches!(self.ty(id), Type::Fresh(_)) => {
+                            !regular.contains(&self.regular(id))
+                        }
+                        _ => true,
+                    });
+                }
                 match normalized.as_slice() {
                     [UnionMember::Type(id)] => self.ty(*id).clone(),
                     _ => Type::Union(normalized.into()),
@@ -1035,6 +1211,238 @@ impl Database {
             }
             ty => ty,
         }
+    }
+
+    /// The union members an application of a projecting intrinsic stands for, one
+    /// for each schema argument
+    fn projection(&self, base: TypeId, args: &[Argument]) -> Option<Vec<UnionMember>> {
+        for (intrinsic, member) in [
+            (
+                Intrinsic::IndexItem,
+                UnionMember::IndexItem as fn(TypeId, TypeId) -> UnionMember,
+            ),
+            (Intrinsic::AssignItem, UnionMember::AssignItem),
+        ] {
+            if self.intrinsic(intrinsic) == Some(base) {
+                return match *args {
+                    [Argument::Positional(schema), Argument::Positional(key)] => {
+                        Some(vec![member(schema, key)])
+                    }
+                    _ => None,
+                };
+            }
+        }
+        let member = [
+            (
+                Intrinsic::Union,
+                UnionMember::Expand as fn(TypeId) -> UnionMember,
+            ),
+            (Intrinsic::Keys, UnionMember::Keys),
+            (Intrinsic::Values, UnionMember::Values),
+            (Intrinsic::Entries, UnionMember::Entries),
+        ]
+        .into_iter()
+        .find(|&(intrinsic, _)| self.intrinsic(intrinsic) == Some(base))?
+        .1;
+        (args.iter())
+            .map(|arg| match *arg {
+                Argument::Positional(schema) | Argument::Expand(schema) => Some(member(schema)),
+                Argument::Keyword(..) => None,
+            })
+            .collect()
+    }
+
+    /// What a projection member of a union stands for, as far as its schema is
+    /// known, or `None` to keep it. `Union[...S]` expands only a schema of
+    /// positional items, through inclusions, into their types. `Values` folds each
+    /// item's value, ignoring its multiplicity, and projects an included schema
+    /// the same way in turn. `Keys` and `Entries` fold the schema's keyed view
+    /// (see [`Self::promoted`]): `Keys` takes each key, and `Entries` each
+    /// `Tuple[key, value]`. A schema not yet known keeps the projection, and the
+    /// dynamic schema projects to the dynamic type. `Entries` stays whole without
+    /// a designated `Tuple`, and a projection with a varying position without a
+    /// designated `Int`.
+    pub(crate) fn project(&self, member: UnionMember) -> Projected {
+        let Some(schema) = member.projected() else {
+            return Projected::Pending;
+        };
+        if let UnionMember::Expand(_) = member {
+            return match self.positional_items(schema) {
+                Some(items) => {
+                    Projected::Reduced(items.into_iter().map(UnionMember::Type).collect())
+                }
+                None => Projected::Pending,
+            };
+        }
+        let items = match self.ty(schema) {
+            Type::Unknown(_) => return Projected::Reduced(vec![UnionMember::Type(self.unknown)]),
+            // Selecting by a key takes the solver
+            _ if member.key().is_some() => return Projected::Pending,
+            Type::Schema(items) => items,
+            _ => return Projected::Pending,
+        };
+        if let UnionMember::Values(_) = member {
+            let members = (items.iter())
+                .map(|item| match item.element {
+                    Element::Include(inner) => member.with(inner),
+                    Element::Positional(ty) | Element::Keyed { value: ty, .. } => {
+                        UnionMember::Type(ty)
+                    }
+                })
+                .collect();
+            return Projected::Reduced(members);
+        }
+        let promoted = match self.promoted(schema) {
+            Promotion::Promoted(promoted) => promoted,
+            Promotion::Pending => return Projected::Pending,
+            Promotion::Conflict => return Projected::Conflict,
+        };
+        let int = self.intrinsic(Intrinsic::Int);
+        let index = |i: usize| self.intern(Type::Literal(Literal::Int(i as i128)));
+        let mut members = Vec::new();
+        match member {
+            UnionMember::Keys(_) => {
+                match (promoted.varying.is_empty(), int) {
+                    (true, _) => members
+                        .extend((0..promoted.fixed.len()).map(|i| UnionMember::Type(index(i)))),
+                    (false, Some(int)) => members.push(UnionMember::Type(int)),
+                    (false, None) => return Projected::Pending,
+                }
+                members.extend(
+                    promoted
+                        .keyed
+                        .iter()
+                        .map(|&(_, key, _)| UnionMember::Type(key)),
+                );
+            }
+            _ => {
+                let mut pairs: Vec<(TypeId, TypeId)> = (promoted.fixed.iter().enumerate())
+                    .map(|(i, &value)| (index(i), value))
+                    .collect();
+                if !promoted.varying.is_empty() {
+                    let Some(int) = int else {
+                        return Projected::Pending;
+                    };
+                    pairs.extend(promoted.varying.iter().map(|&value| (int, value)));
+                }
+                pairs.extend(promoted.keyed.iter().map(|&(_, key, value)| (key, value)));
+                for (key, value) in pairs {
+                    let Some(entry) = self.entry(key, value) else {
+                        return Projected::Pending;
+                    };
+                    members.push(UnionMember::Type(entry));
+                }
+            }
+        }
+        members.extend(promoted.opaque.iter().map(|&inner| member.with(inner)));
+        Projected::Reduced(members)
+    }
+
+    /// A schema's keyed view, which a collection indexes: each position is keyed
+    /// by its index, through inclusions. The positions before the first that may
+    /// be missing or repeated have fixed indexes; the rest vary, as do those
+    /// after an included schema not yet known. Such a schema stays opaque, unless
+    /// it's alongside positions or a key that may be an index, since the view
+    /// depends on its positions: then the view is pending.
+    ///
+    /// A key that may be the index of a position conflicts with it: a
+    /// non-negative `Int` literal that a position may have, or a domain of `Int`
+    /// alongside positions. So does a union with such a member. Whether any
+    /// other domain holds an index isn't decided here, so it doesn't conflict.
+    pub(crate) fn promoted(&self, schema: TypeId) -> Promotion {
+        let mut promoted = Promoted::default();
+        let mut varies = false;
+        let mut pending = false;
+        if !self.promote_into(
+            schema,
+            Multiplicity::Required,
+            &mut promoted,
+            &mut varies,
+            &mut pending,
+        ) {
+            return Promotion::Pending;
+        }
+        let positions = !promoted.fixed.is_empty() || !promoted.varying.is_empty();
+        let collides = |key| self.collides(key, promoted.fixed.len(), !promoted.varying.is_empty());
+        if (promoted.keyed.iter()).any(|&(_, key, _)| collides(key)) {
+            return Promotion::Conflict;
+        }
+        if pending
+            && (positions
+                || promoted
+                    .keyed
+                    .iter()
+                    .any(|&(_, key, _)| self.collides(key, 0, true)))
+        {
+            return Promotion::Pending;
+        }
+        Promotion::Promoted(promoted)
+    }
+
+    /// Add a schema's items to its keyed view, as items of an item of
+    /// `multiplicity`. Returns whether it's a schema.
+    fn promote_into(
+        &self,
+        schema: TypeId,
+        multiplicity: Multiplicity,
+        promoted: &mut Promoted,
+        varies: &mut bool,
+        pending: &mut bool,
+    ) -> bool {
+        let Type::Schema(items) = self.ty(schema) else {
+            return false;
+        };
+        for item in items.iter() {
+            let multiplicity = multiplicity.compose(item.multiplicity);
+            match item.element {
+                Element::Positional(value) => {
+                    *varies |= multiplicity != Multiplicity::Required;
+                    match *varies {
+                        true => promoted.varying.push(value),
+                        false => promoted.fixed.push(value),
+                    }
+                }
+                Element::Keyed { key, value } => promoted.keyed.push((multiplicity, key, value)),
+                Element::Include(inner) => {
+                    if !self.promote_into(inner, multiplicity, promoted, varies, pending) {
+                        *pending |= !matches!(self.ty(inner), Type::Unknown(_));
+                        *varies = true;
+                        promoted.opaque.push(inner);
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    /// Whether a key may be the index of a position, given how many positions
+    /// have fixed indexes and whether more follow
+    fn collides(&self, key: TypeId, fixed: usize, varying: bool) -> bool {
+        match self.ty(key) {
+            Type::Literal(Literal::Int(i)) | Type::Fresh(Literal::Int(i)) => {
+                *i >= 0 && (varying || usize::try_from(*i).is_ok_and(|i| i < fixed))
+            }
+            Type::Union(members) => members.iter().any(|member| match *member {
+                UnionMember::Type(ty) => self.collides(ty, fixed, varying),
+                _ => false,
+            }),
+            _ => (fixed > 0 || varying) && Some(key) == self.intrinsic(Intrinsic::Int),
+        }
+    }
+
+    /// `Tuple[key, value]`, if `Tuple` is designated
+    fn entry(&self, key: TypeId, value: TypeId) -> Option<TypeId> {
+        let tuple = self.intrinsic(Intrinsic::Tuple)?;
+        let item = |ty| SchemaItem {
+            multiplicity: Multiplicity::Required,
+            element: Element::Positional(ty),
+        };
+        let items = self.intern(Type::Schema(vec![item(key), item(value)].into()));
+        Some(self.intern(Type::Apply {
+            base: tuple,
+            args: vec![Argument::Positional(items)].into(),
+            kind: Kind::Type,
+        }))
     }
 
     /// The types of a schema's items, if each is positional, through inclusions
@@ -1055,7 +1463,11 @@ impl Database {
 
     fn validate(&self, ty: &Type) {
         match ty {
-            Type::Top | Type::Unknown(_) | Type::Literal(_) | Type::Bound { .. } => {}
+            Type::Top
+            | Type::Unknown(_)
+            | Type::Literal(_)
+            | Type::Fresh(_)
+            | Type::Bound { .. } => {}
             Type::Decl(id) | Type::Rigid { decl: id, .. } => {
                 self.declarations.get(*id);
             }
@@ -1076,7 +1488,12 @@ impl Database {
                 for member in members.iter() {
                     match member {
                         UnionMember::Type(id) => self.expect_kind(*id, Kind::Type),
-                        UnionMember::Expand(id) => self.expect_kind(*id, Kind::Schema),
+                        _ => {
+                            self.expect_kind(member.id(), Kind::Schema);
+                            if let Some(key) = member.key() {
+                                self.expect_kind(key, Kind::Type);
+                            }
+                        }
                     }
                 }
             }
@@ -1274,9 +1691,10 @@ impl Database {
         result
     }
 
-    /// Replace each literal type with its class, where that is registered. Exact
-    /// schema keys and binder bounds and defaults keep their literals, since
-    /// decaying them would change what they mean.
+    /// Replace each fresh literal type with its class, where that is registered.
+    /// A regular literal was written in a type, so it's kept, as are exact schema
+    /// keys, the keys item projections select by, and binder bounds and defaults,
+    /// since decaying them would change what they mean.
     pub(crate) fn decay(&self, root: TypeId) -> TypeId {
         self.decay_inner(root, &mut HashMap::new())
     }
@@ -1286,7 +1704,8 @@ impl Database {
             return *result;
         }
         let result = match self.ty(id) {
-            Type::Literal(literal) => self.intrinsic(literal.intrinsic()).unwrap_or(id),
+            Type::Fresh(literal) => self.intrinsic(literal.intrinsic()).unwrap_or(id),
+            Type::Literal(_) => id,
             Type::Schema(items) => {
                 let items = items
                     .iter()
@@ -1310,6 +1729,12 @@ impl Database {
                 binders: binders.clone(),
                 body: self.decay_inner(*body, memo),
             }),
+            Type::Union(members) => {
+                let members = (members.iter())
+                    .map(|member| member.with(self.decay_inner(member.id(), memo)))
+                    .collect();
+                self.intern(Type::Union(members))
+            }
             ty => {
                 let mapped = ty
                     .map_children(|child, _| {
@@ -1321,6 +1746,36 @@ impl Database {
         };
         memo.insert(id, result);
         result
+    }
+
+    /// The binders of a quantified type's group that an item projection in its
+    /// body selects by, by slot. Its variables keep the literals they're given,
+    /// since a decayed key would select differently.
+    pub(crate) fn item_keys(&self, quantified: TypeId) -> Vec<u16> {
+        let Type::Quantified { body, .. } = self.ty(quantified) else {
+            return Vec::new();
+        };
+        let mut slots = Vec::new();
+        let mut pending = vec![(*body, 0u32)];
+        let mut seen = HashSet::new();
+        while let Some((ty, depth)) = pending.pop() {
+            if !seen.insert((ty, depth)) {
+                continue;
+            }
+            if let Type::Union(members) = self.ty(ty) {
+                for key in members.iter().filter_map(|member| member.key()) {
+                    if let Type::Bound { reference, .. } = *self.ty(key)
+                        && u32::from(reference.depth) == depth
+                        && !slots.contains(&reference.slot)
+                    {
+                        slots.push(reference.slot);
+                    }
+                }
+            }
+            self.ty(ty)
+                .visit_children(|child, groups| pending.push((child, depth + groups)));
+        }
+        slots
     }
 
     /// Split the first `count` binders off a quantified type's group. The result is
