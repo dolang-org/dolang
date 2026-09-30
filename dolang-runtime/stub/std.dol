@@ -201,8 +201,7 @@ pub def tuple[*Ts] *values@Ts -> Tuple[...Ts]
 # ```
 # assert_eq (type 42) $Int
 # ```
-pub def type[T] value @ T -> Type[T]
-  ...
+@def type[T] value @ T -> Type[T]
 
 #
 # Tests whether `value` is an instance of `type`.
@@ -213,7 +212,10 @@ pub def type[T] value @ T -> Type[T]
 # ```
 # assert (type 42 Int)
 # ```
-pub def type[T] value@Value type@Type[T] -> Bool
+@def type[T] value@Value type@Type[T] -> Bool
+
+# Returns a value's type, or tests whether it's an instance of a type.
+pub def type value *type
   ...
 
 #
@@ -428,11 +430,15 @@ pub @class MutSeq[T]: AssignSeq[T]
 pub @class FlagSet[F]: Iterable[F]
   # Constructs a flag set from symbols.
   #[class]
-  pub def (call)[S] cls@Type[S] ...flags@F -> S
+  @def (call)[S] cls@Type[S] ...flags@F -> S
 
   # Constructs a flag set from one iterable of symbols.
   #[class]
-  pub def (call)[S] cls@Type[S] flags@Iterable[F] -> S
+  @def (call)[S] cls@Type[S] flags@Iterable[F] -> S
+
+  # Constructs a flag set from symbols, or from one iterable of them.
+  #[class]
+  pub def (call)[S] cls@Type[S] *flags -> S
 
   # Tests whether all flags named by `flag` are set.
   pub def contains self flag @ F -> Bool

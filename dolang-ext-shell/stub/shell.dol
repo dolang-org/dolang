@@ -521,7 +521,7 @@ pub @class Env: std.Index[Str, Str] std.Assign[Str, Str | nil] std.Spread[Str, S
 
   # Calls `body` with overrides from a dict in place, restoring them when it
   # returns.
-  pub def (call)[R]
+  @def (call)[R]
     self
     # The overrides, as for keyword arguments.
     vars @ Dict[Str | Sym, Str | :INHERIT: | nil]
@@ -544,13 +544,17 @@ pub @class Env: std.Index[Str, Str] std.Assign[Str, Str | nil] std.Spread[Str, S
   # env {LANG: "C", TZ: nil} do
   #   run tool
   # ```
-  pub def (call)[R]
+  @def (call)[R]
     self
     # The block to call.
     body @ (() -> R)
     # Overrides by variable name.
     ...vars
   do -> R
+
+  # Calls a block with variables overridden in place, restoring them when it
+  # returns.
+  pub def (call)[R] self *args ...vars -> R
 
 
 # The environment of the current context.
