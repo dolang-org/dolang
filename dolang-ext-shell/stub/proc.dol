@@ -11,6 +11,8 @@ import
     - @Identity
   security.windows:
     - @TokenInfo
+  std:
+    - @BaseDict
   time:
     - @Duration
 
@@ -346,7 +348,7 @@ pub class Program
     # Per-launch termination overrides: `signal`,
     # `grace` and `force`, as
     # [`with_policy`](proc.with_policy) takes them.
-    :policy @ Dict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
     # Output framing. Defaults to `:LINE:`.
     :mode @ (:LINE: | :CHUNK:) = nil
     # Command-line arguments.

@@ -184,12 +184,12 @@ pub def run
   :app @ Str = nil
   # Imports to bind before the source, as
   # [`compile.compile`](compile.compile) takes them.
-  :prelude @ Dict[Str | Sym, compile.PreludeBinding] = {}
+  :prelude @ std.BaseDict[Str | Sym, compile.PreludeBinding] = {}
   # Global bindings visible to the source when compiled and run.
-  :inject @ Dict[Sym, Value] = {}
+  :inject @ std.BaseDict[Sym, Value] = {}
   # Modules supplied by name while running. A dictionary with symbol keys is
   # exposed as a module whose fields are its entries.
-  :import @ Dict[Str | Sym, Value] = {}
+  :import @ std.BaseDict[Str | Sym, Value] = {}
   # Arguments the script sees as [`shell.args`](shell.args). Defaults to the
   # caller's.
   :args @ Iterable[Value] = nil
@@ -222,12 +222,12 @@ pub def module
   :app @ Str = nil
   # Imports to bind before the source, as
   # [`compile.compile`](compile.compile) takes them.
-  :prelude @ Dict[Str | Sym, compile.PreludeBinding] = {}
+  :prelude @ std.BaseDict[Str | Sym, compile.PreludeBinding] = {}
   # Global bindings visible to the source when compiled and run.
-  :inject @ Dict[Sym, Value] = {}
+  :inject @ std.BaseDict[Sym, Value] = {}
   # Modules supplied by name while running. A dictionary with symbol keys is
   # exposed as a module whose fields are its entries.
-  :import @ Dict[Str | Sym, Value] = {}
+  :import @ std.BaseDict[Str | Sym, Value] = {}
   # Arguments the module sees as [`shell.args`](shell.args) while it loads.
   # Defaults to the caller's.
   :args @ Iterable[Value] = nil

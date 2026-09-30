@@ -1579,8 +1579,21 @@ impl<'a> Flow<'a, '_> {
         };
         let spread = self.designated(Designated::Spread);
         let int = self.intrinsic(Intrinsic::Int);
+        // A dict expected to be a `BaseDict[S]` is a `Dict[S]`, which only a fresh
+        // dict can be
         let expected_dict = match kind {
-            Collection::Dict => expected.and_then(|ty| self.applied(class, ty)),
+            Collection::Dict => expected.and_then(|ty| {
+                self.applied(class, ty).or_else(|| {
+                    let base = self.designated(Designated::BaseDict)?;
+                    let (_, schema) = self.applied(base, ty)?;
+                    let dict = self.db.intern(Type::Apply {
+                        base: self.db.intern(Type::Decl(class)),
+                        args: vec![Argument::Positional(schema)].into(),
+                        kind: Kind::Type,
+                    });
+                    Some((dict, schema))
+                })
+            }),
             _ => None,
         };
         let result = match (kind, expected_dict) {

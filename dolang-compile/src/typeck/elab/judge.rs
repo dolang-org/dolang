@@ -165,6 +165,7 @@ impl Tables<'_> {
                     Designated::Bin => "bin".to_owned(),
                     Designated::Array => "array".to_owned(),
                     Designated::Dict => "dict".to_owned(),
+                    Designated::BaseDict => "base dict".to_owned(),
                     Designated::Record => "record".to_owned(),
                     Designated::Range => "range".to_owned(),
                     Designated::BaseIterable => "base iterable".to_owned(),

@@ -62,6 +62,8 @@ pub class Array
 #         ^~~~~: designated array
 pub class Dict
 #         ^~~~: designated dict
+pub class BaseDict
+#         ^~~~~~~~: designated base dict
 pub class Tuple
 #         ^~~~~: designated intrinsic Tuple
 pub class Record

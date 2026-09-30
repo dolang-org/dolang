@@ -5,6 +5,7 @@ import _wsl sys
   fs:
     - @Path
 import std:
+  - @BaseDict
   - RuntimeError
 
 def require_windows()
@@ -43,7 +44,7 @@ pub def with_linux[R]
   # Initial Linux working directory.
   :cd @ (Str | Path) = nil
   # Initial Linux environment overrides.
-  :env @ Dict[Str | Sym, Value] = {}
+  :env @ BaseDict[Str | Sym, Value] = {}
 do -> R
   require_windows()
   let executable = run["wsl.exe"].which()
@@ -65,7 +66,7 @@ pub def with_windows[R]
   # Initial Windows working directory.
   :cd @ (Str | Path) = nil
   # Initial Windows environment overrides.
-  :env @ Dict[Str | Sym, Value] = {}
+  :env @ BaseDict[Str | Sym, Value] = {}
 do -> R
   require_linux()
   let argv = _wsl.build_windows_command $command :cd :env

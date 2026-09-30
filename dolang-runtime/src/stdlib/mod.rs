@@ -94,6 +94,8 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .value("Sym", &sym)
         .value("Array", &array)
         .value("Dict", &dict)
+        // A type-only split of `Dict` for the type checker; the same class at runtime
+        .value("BaseDict", &dict)
         .value("Set", &set)
         .value("Tuple", &tuple)
         .value("Func", &func)

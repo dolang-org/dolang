@@ -1,0 +1,51 @@
+# A `BaseDict` is the read-only half of `Dict`, so it holds its items
+# covariantly: it takes a dict with narrower items, where a `Dict` can't.
+
+import std:
+  - @BaseDict
+
+pub def reads _d @ BaseDict[{a: (Int | Str)}]
+  ...
+
+pub def writes _d @ Dict[{a: (Int | Str)}]
+  ...
+
+pub def passed d @ Dict[{a: Int}]
+  reads $d
+  writes $d
+# error: expected `std.Dict[{a: std.Int | std.Str}]`, found `std.Dict[{a: std.Int}]`: `std.Str` does not fit `std.Int`
+#   --> m.dol:LL:LL
+#    |
+# LL |   writes $d
+#    |           ^
+
+# It reads as a dict does, but a copy is only as writable as the original
+pub def read b @ BaseDict[{a: Int}]
+  let _ = b[:a:]
+  #   ^: flow std.Int
+  let _ = b.get :a:
+  #   ^: flow nil | std.Int
+  let _ = b.copy()
+  #   ^: flow std.BaseDict[{a: std.Int}]
+  b[:a:] = 1
+# error: `std.BaseDict[{a: std.Int}]` has no member `(assign)`
+#   --> m.dol:LL:LL
+#    |
+# LL |   b[:a:] = 1
+#    |   ^^^^^^^^^^
+
+pub def options _o @ BaseDict[{?port: Int, ?host: Str}]
+  ...
+
+# A literal is checked item by item against the schema, and is a `Dict` of it
+pub def literal()
+  options {port: 1}
+  options {port: "x"}
+  # error: expected `{?port: std.Int, ?host: std.Str}`, found `{port: "x"}`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   options {port: "x"}
+  #    |           ^^^^^^^^^^^
+  let d @ BaseDict[{?port: Int}] = {port: 1}
+  let _ = d
+  #       ^: flow std.Dict[{?port: std.Int}]

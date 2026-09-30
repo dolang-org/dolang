@@ -1732,42 +1732,13 @@ pub class CyclicImportError: RuntimeError
 
 
 #
-# Dictionaries are **ordered**, mutable key-value mappings. They preserve
-# insertion order and are **multi-maps**: a single key can have multiple values.
+# The read-only half of a [`Dict`](std.Dict), whose items it holds covariantly:
+# a `Dict[{a: Int}]` is a `BaseDict[{a: (Int | Str)}]`. A parameter that only
+# reads a dict takes a `BaseDict`, so it accepts dicts with narrower items.
 #
-# Keys can be any hashable type.
+# `BaseDict` is `Dict` at runtime, so only a dict is a `BaseDict`.
 #
-#
-# ## Ordering
-#
-# Dictionaries preserve insertion order. Iteration yields entries in the order
-# they were inserted.
-#
-# ## Multi-Map Semantics
-#
-# A dict can store multiple values per key. This is primarily relevant when
-# constructing dicts from spreading or using methods with the `instance`
-# parameter:
-#
-# - **Construction** with duplicate keys preserves all values
-# - **Plain indexing** (`d[key]`) returns the last value for a key, so a
-#   duplicate key overrides the values before it: last wins
-# - **Plain assignment** (`d[key] = value`) replaces all values for a key
-# - **`insert`** adds a new value without removing existing ones for that key
-# - **`get`** and **`pop`** accept an `instance` parameter to access specific
-#   values by their position (0-indexed) among values for that key; negative
-#   instance indexes count from the end
-#
-pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[Entries[S]]
-  #
-  #
-  # Builds a dictionary from one spreadable source of key-value pairs. The
-  # lowercase `dict` factory instead assigns integer keys to positional arguments
-  # and symbol keys to key arguments.
-  #
-  pub def (init) self source
-    ...
-
+pub class BaseDict[S @ {...}]: @Index[S] @Spread[S] @Unpack[S] Iterable[Entries[S]]
   #
   # Returns the number of key-value pairs (counting each value in a multi-map
   # separately).
@@ -1775,18 +1746,6 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[E
   #
   #[getter]
   pub def len self -> Int
-    ...
-
-  #
-  # Removes all key-value pairs.
-  #
-  # ```
-  # let d = {a: 1, b: 2}
-  # d.clear()
-  # assert_eq $d.len 0
-  # ```
-  #
-  pub def clear self
     ...
 
   #
@@ -1833,7 +1792,7 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[E
   # When inherited by a Do subclass, `copy()` calls the subclass constructor with
   # the source dict as a single positional argument.
   #
-  pub def copy self -> Dict[S]
+  pub def copy self -> BaseDict[S]
     ...
 
   #
@@ -1846,26 +1805,6 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[E
   #
   #
   pub def count self key = nil -> Int
-    ...
-
-  #
-  # Indicates whether any values were removed. Removes all values for the key.
-  #
-  #
-  # ## Example
-  #
-  # ```
-  # let d = {a: 1, b: 2}
-  # assert (d.delete :a:)
-  # assert (!(d.delete :missing:))
-  # assert_eq $d.len 1
-  # ```
-  #
-  pub def delete
-    self
-    # the key to remove
-    key
-  do -> Bool
     ...
 
   #
@@ -1894,19 +1833,6 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[E
     ...
 
   #
-  # Adds a key-value pair. Does **not** remove existing values for the same key
-  # (multi-map insert).
-  #
-  pub def insert[K]
-    self
-    # the key
-    key @ K
-    # the value
-    value @ AssignItem[S, K]
-  do
-    ...
-
-  #
   # Returns an iterator of keys. Each distinct key is yielded exactly once, in the
   # order its first pair was inserted.
   #
@@ -1923,6 +1849,140 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[E
   #
   #
   pub def pairs self -> Iter[Entries[S]]
+    ...
+
+  #
+  # Returns an iterator of values. With no argument, it yields all stored values in
+  # pair insertion order. With a `key`, it yields only the values associated with
+  # that key, in that key's insertion order.
+  #
+  # Missing keys return an empty iterator.
+  @def values self -> Iter[Values[S]]
+  @def values[K] self key@K -> Iter[IndexItem[S, K]]
+  pub def values self key = nil -> Iter[Values[S]]
+    ...
+
+  #
+  # ```
+  # let d = {name: "Alice"}
+  # assert_eq $d[:name:] "Alice"
+  # ```
+  #
+  # A missing key raises an error.
+  #
+  # [`Range`](std.Range) values are treated as ordinary keys, not as slices.
+  #
+  pub def (index)[K] self key@K -> IndexItem[S, K]
+    ...
+
+  # Spreads the dictionary's entries.
+  pub def (spread) self -> Spread[S]
+    ...
+
+  # Iterating over a dictionary yields `[key, value]` pairs:
+  #
+  # ```
+  # for pair = {a: 1, b: 2}
+  #   echo $pair
+  # ```
+  #
+  pub def (iter) self -> Iter[Entries[S]]
+    ...
+
+  # Destructures the dictionary by key.
+  #
+  # ```
+  # let :name age: years = {name: "Alice", age: 30}
+  # ```
+  pub def (unpack) self -> Unpack[S]
+    ...
+
+
+#
+# Dictionaries are **ordered**, mutable key-value mappings. They preserve
+# insertion order and are **multi-maps**: a single key can have multiple values.
+#
+# Keys can be any hashable type.
+#
+#
+# ## Ordering
+#
+# Dictionaries preserve insertion order. Iteration yields entries in the order
+# they were inserted.
+#
+# ## Multi-Map Semantics
+#
+# A dict can store multiple values per key. This is primarily relevant when
+# constructing dicts from spreading or using methods with the `instance`
+# parameter:
+#
+# - **Construction** with duplicate keys preserves all values
+# - **Plain indexing** (`d[key]`) returns the last value for a key, so a
+#   duplicate key overrides the values before it: last wins
+# - **Plain assignment** (`d[key] = value`) replaces all values for a key
+# - **`insert`** adds a new value without removing existing ones for that key
+# - **`get`** and **`pop`** accept an `instance` parameter to access specific
+#   values by their position (0-indexed) among values for that key; negative
+#   instance indexes count from the end
+#
+pub class Dict[S @ {...}]: BaseDict[S] @Assign[S]
+  #
+  #
+  # Builds a dictionary from one spreadable source of key-value pairs. The
+  # lowercase `dict` factory instead assigns integer keys to positional arguments
+  # and symbol keys to key arguments.
+  #
+  pub def (init) self source
+    ...
+
+  #
+  # Removes all key-value pairs.
+  #
+  # ```
+  # let d = {a: 1, b: 2}
+  # d.clear()
+  # assert_eq $d.len 0
+  # ```
+  #
+  pub def clear self
+    ...
+
+  # Returns a shallow copy of the dictionary, as
+  # [`BaseDict.copy`](std.BaseDict.copy) does.
+  pub def copy self -> Dict[S]
+    ...
+
+  #
+  # Indicates whether any values were removed. Removes all values for the key.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let d = {a: 1, b: 2}
+  # assert (d.delete :a:)
+  # assert (!(d.delete :missing:))
+  # assert_eq $d.len 1
+  # ```
+  #
+  pub def delete
+    self
+    # the key to remove
+    key
+  do -> Bool
+    ...
+
+  #
+  # Adds a key-value pair. Does **not** remove existing values for the same key
+  # (multi-map insert).
+  #
+  pub def insert[K]
+    self
+    # the key
+    key @ K
+    # the value
+    value @ AssignItem[S, K]
+  do
     ...
 
   #
@@ -1957,56 +2017,13 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[E
   do -> (IndexItem[S, K] | D)
     ...
 
-  #
-  # Returns an iterator of values. With no argument, it yields all stored values in
-  # pair insertion order. With a `key`, it yields only the values associated with
-  # that key, in that key's insertion order.
-  #
-  # Missing keys return an empty iterator.
-  @def values self -> Iter[Values[S]]
-  @def values[K] self key@K -> Iter[IndexItem[S, K]]
-  pub def values self key = nil -> Iter[Values[S]]
-    ...
-
+  # Replaces every value of `key`.
   #
   # ```
   # let d = {name: "Alice"}
-  # assert_eq $d[:name:] "Alice"
   # d[:age:] = 30
   # ```
-  #
-  # Missing keys raise an error on access. Assignment replaces all values for the
-  # key.
-  #
-  # [`Range`](std.Range) values are treated as ordinary keys, not as slices.
-  #
-  pub def (index)[K] self key@K -> IndexItem[S, K]
-    ...
-
-  # Replaces every value of `key`.
   pub def (assign)[K] self key@K value@AssignItem[S, K]
-    ...
-
-  # Spreads the dictionary's entries.
-  pub def (spread) self -> Spread[S]
-    ...
-
-  # Iterating over a dictionary yields `[key, value]` pairs:
-  #
-  # ```
-  # for pair = {a: 1, b: 2}
-  #   echo $pair
-  # ```
-  #
-  pub def (iter) self -> Iter[Entries[S]]
-    ...
-
-  # Destructures the dictionary by key.
-  #
-  # ```
-  # let :name age: years = {name: "Alice", age: 30}
-  # ```
-  pub def (unpack) self -> Unpack[S]
     ...
 
 

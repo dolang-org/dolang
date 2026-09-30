@@ -3,6 +3,7 @@
 import std:
   - @Assign
   - @AssignItem
+  - @BaseDict
   - @Index
   - @IndexItem
   - @MutSeq
@@ -86,7 +87,7 @@ pub class Node: @Index[{*(Str): Str, *(Int): Node | Str}] @Assign[Str, Str]
     # Preferred namespace prefix.
     :prefix @ Str = nil
     # Unnamespaced attributes with `Sym` or `Str` keys and `Str` values.
-    :attrs @ Dict[Sym | Str, Str] = nil
+    :attrs @ BaseDict[Sym | Str, Str] = nil
     # Attributes or children.
     *items @ (Attr | Value)
   do

@@ -5,6 +5,8 @@ import
   fs:
     - @Path
   _container.dockman: dockman
+  std:
+    - @BaseDict
 
 pub import _container.dockman:
   - Image
@@ -61,7 +63,7 @@ pub def run
   # Mounts.
   :mounts @ Iterable[ContainerMount] = []
   # Container labels.
-  :labels @ Dict[Str | Sym, Value] = {}
+  :labels @ BaseDict[Str | Sym, Value] = {}
   # Ports to publish.
   :ports @ Iterable[PortSpec] = []
   # Networks to connect to, by name or ID.
@@ -93,7 +95,7 @@ pub def create
   # Mounts.
   :mounts @ Iterable[ContainerMount] = []
   # Container labels.
-  :labels @ Dict[Str | Sym, Value] = {}
+  :labels @ BaseDict[Str | Sym, Value] = {}
   # Ports to publish.
   :ports @ Iterable[PortSpec] = []
   # Networks to connect to, by name or ID.

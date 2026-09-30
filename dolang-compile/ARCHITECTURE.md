@@ -717,10 +717,12 @@ only reified types leave it:
   joins every item into its element type, however often it occurs, and expects
   each item to be the element of an expected `Array[E]`. A dict joins its items
   into `Dict[{*(K): V}]`, so that a local it's assigned to can gain entries,
-  unless it's expected to be a `Dict[S]` (alone or as one member of a union):
-  then its items' own schema, built as a call's arguments are, must be below
-  `S`, and it's `Dict[S]`. Tuples and records have no vertical form, so they
-  hold no comprehension.
+  unless it's expected to be a `Dict[S]` or a `BaseDict[S]` (alone or as one
+  member of a union): then its items' own schema, built as a call's arguments
+  are, must be below `S`, and it's `Dict[S]`. `std.BaseDict` is `Dict`'s
+  covariant, read-only half, a separate class only to the checker: the runtime
+  exports `Dict` under both names. Tuples and records have no vertical form, so
+  they hold no comprehension.
 - A `do` block among a call's arguments, or a collection's items when the
   collection has an expected type, is typed by the rule. A rule with a check it
   couldn't resolve counts as undecided, so defaulting rounds reach it. Once no

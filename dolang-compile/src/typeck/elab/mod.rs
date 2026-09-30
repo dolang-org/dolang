@@ -316,6 +316,9 @@ pub(crate) enum Designated {
     Array,
     /// `std.Dict`, the class of a dict literal
     Dict,
+    /// `std.BaseDict`, the read-only half of `std.Dict` that a dict literal may be
+    /// expected to be
+    BaseDict,
     /// `std.Record`, the class of a record literal
     Record,
     /// `std.Range`, the class of a range

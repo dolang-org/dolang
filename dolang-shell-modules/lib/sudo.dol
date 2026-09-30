@@ -3,6 +3,8 @@
 import _vfs shell proc time
   fs:
     - @Path
+  std:
+    - @BaseDict
   strand:
     - pipeline
 
@@ -71,7 +73,7 @@ pub def run
   # sudo.
   :cd @ (Str | Path) = nil
   # Environment requested via sudo policy.
-  :env @ Dict[Str | Sym, Value] = {}
+  :env @ BaseDict[Str | Sym, Value] = {}
   # Arguments passed verbatim to `cmd`.
   *args
 do -> nil
@@ -95,6 +97,6 @@ pub def with[R]
   # Initial elevated directory.
   :cd @ (Str | Path) = nil
   # Initial environment overrides.
-  :env @ Dict[Str | Sym, Value] = {}
+  :env @ BaseDict[Str | Sym, Value] = {}
 do -> R
   run_agent $func :user :cd :env
