@@ -1446,38 +1446,7 @@ pub class Path
   # which documents the metadata keyword arguments.
   pub def update_metadata
     self
-    :resolve @ Resolve = nil
-    :max_depth @ Int = nil
-    :resolve @ Resolve = nil
-    :all @ Bool = nil
-    :all @ Bool = nil
-    :ignore @ Bool = nil
-    :all @ Bool = nil
-    :ignore @ Bool = nil
-    :all @ Bool = nil
-    :all @ Bool = nil
-    :replace @ Bool = nil
-    :kind @ (:POSIX: | :NFS4: | :MACOS:) = nil
-    :default @ Bool = nil
-    :resolve @ Resolve = nil
-    :kind @ (:POSIX: | :NFS4: | :MACOS:) = nil
-    :default @ Bool = nil
-    :resolve @ Resolve = nil
-    :namespace @ (XattrNamespace | :ANY:) = nil
-    :resolve @ Resolve = nil
-    :namespace @ XattrNamespace = nil
-    :resolve @ Resolve = nil
-    :namespace @ XattrNamespace = nil
-    :resolve @ Resolve = nil
-    :namespace @ XattrNamespace = nil
-    :resolve @ Resolve = nil
-    :range @ Range[Int] = nil
-    :size @ Int = nil
-    :offset @ Int = nil
-    :clone @ CloneMode = nil
-    :data @ Bool = nil
-    :resolve @ Resolve = nil
-    :resolve @ Resolve = nil
+    # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
     :mode @ (Int | Mode) = nil
     :owner @ (Int | Str | Sid) = nil

@@ -421,47 +421,12 @@ pub @class MutSeq[T]: AssignSeq[T]
   pub def clear self
 
 
-# A set of flags, each named by a symbol in `F`, such as
-# [`fs.unix.Mode`](fs.unix.Mode).
-#
-# Iterating a flag set yields symbols naming the flags it has set. Flag sets of
-# the same type are equal when the same flags are set, and combine with `|`,
-# `&`, `^`, and `~`.
-pub @class FlagSet[F]: Iterable[F]
-  # Constructs a flag set from symbols.
-  #[class]
-  @def (call)[S] cls@Type[S] ...flags@F -> S
-
-  # Constructs a flag set from one iterable of symbols.
-  #[class]
-  @def (call)[S] cls@Type[S] flags@Iterable[F] -> S
-
-  # Constructs a flag set from symbols, or from one iterable of them.
-  #[class]
-  pub def (call)[S] cls@Type[S] *flags -> S
-
-  # Tests whether all flags named by `flag` are set.
-  pub def contains self flag @ F -> Bool
-
-  # Returns the flags set in either.
-  pub def (bor)[S @ FlagSet[F]] self@S other@S -> S
-
-  # Returns the flags set in both.
-  pub def (band)[S @ FlagSet[F]] self@S other@S -> S
-
-  # Returns the flags set in exactly one.
-  pub def (bxor)[S @ FlagSet[F]] self@S other@S -> S
-
-  # Returns the flags of the type that are not set.
-  pub def (bnot)[S @ FlagSet[F]] self @ S -> S
-
-
 #
 # Abstract type for iterable values, whose instances have the methods below.
 # Arrays, dicts, and ranges are `Iterable`; a [`Record`](std.Record), or a
 # class that only implements [`(iter)`](std.BaseIterable), is not.
 #
-pub class Iterable[T]: @BaseIterable[T] @Spread[T]
+pub class Iterable[T]: @BaseIterable[T]
   # Returns an iterator over the value.
   pub def iter self -> Iter[T]
     ...
@@ -530,10 +495,6 @@ pub class Iterable[T]: @BaseIterable[T] @Spread[T]
   pub def (iter) self -> BaseIter[T]
     ...
 
-  # Spreads the items.
-  pub def (spread) self -> Spread[T]
-    ...
-
 
 #
 # Abstract type for values that sinks can be obtained from, whose instances have
@@ -563,6 +524,10 @@ pub class Sinkable[T]: @BaseSinkable[T]
 
   # Returns a sink that transforms each value with `func` before writing it.
   pub def premap[U] self func @ (U -> T) -> Sink[U]
+    ...
+
+  # Returns a sink that writes to the value.
+  pub def (sink) self -> Sink[T]
     ...
 
 
@@ -978,6 +943,10 @@ pub class Array[T]: Iterable[T] Sinkable[T] @MutSeq[T]
   pub def (unpack) self -> Unpack[T]
     ...
 
+  # Spreads the items positionally.
+  pub def (spread) self -> Spread[T]
+    ...
+
 
 #
 # Binary data; an immutable sequence of bytes.
@@ -1277,7 +1246,7 @@ pub class Bin: @Index[Range[Int], Bin]
   # endpoints count from the end. Negative steps reverse the slice.
   #
   # Indexes the value.
-  pub def (index) self range@Range[Int] -> Bin
+  pub def (index)[K] self key@K -> IndexItem[{*(Range[Int]): Bin}, K]
     ...
 
   #
@@ -2943,7 +2912,7 @@ pub class IterStop: Error
 # assert_eq (type $ [1, 2, 3].iter()) $Iter
 # ```
 #
-pub class Iter[T]: Iterable[T] @BaseIter[T] @Unpack[T]
+pub class Iter[T]: Iterable[T] @BaseIter[T] @Unpack[T] @Spread[T]
   #
   #
   # Returns `true` if every yielded value is truthy.
@@ -3161,6 +3130,10 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Unpack[T]
   pub def (unpack) self -> Unpack[T]
     ...
 
+  # Spreads the remaining items positionally.
+  pub def (spread) self -> Spread[T]
+    ...
+
 
 #
 # Raised when a required key argument is not provided.
@@ -3235,7 +3208,7 @@ pub class OverflowError: RuntimeError
 
 #
 # Describes a numeric interval for iteration and slicing.
-pub class Range[T @ Num]: Iterable[T]
+pub class Range[T @ Num]: Iterable[T] @Spread[T]
   #
   # ```
   # let bounded = (1..5)
@@ -3304,6 +3277,10 @@ pub class Range[T @ Num]: Iterable[T]
 
   # Iterates the interval. Open-ended ranges require a concrete start.
   pub def (iter) self -> Iter[T]
+    ...
+
+  # Spreads the interval's values positionally.
+  pub def (spread) self -> Spread[T]
     ...
 
 
@@ -3428,7 +3405,7 @@ pub class Record[...Ts]: Iterable[Tuple[Sym | Int, Value]] @Index[{...Ts}] @Spre
 # Iteration preserves insertion order. Reinserting an existing value is a no-op
 # and does not move it to the end.
 #
-pub class Set[T]: Iterable[T]
+pub class Set[T]: Iterable[T] @Spread[T]
   #
   #
   # Builds a set, from one iterable if given.
@@ -3585,6 +3562,10 @@ pub class Set[T]: Iterable[T]
   # ```
   # Returns an iterator.
   pub def (iter) self -> Iter[T]
+    ...
+
+  # Spreads the values positionally, in insertion order.
+  pub def (spread) self -> Spread[T]
     ...
 
 
@@ -4103,7 +4084,7 @@ pub class Str: @Index[Range[Int], Str]
   # boundaries. Omitted `start` means `0`, omitted `end` means the string length,
   # and negative endpoints count from the end.
   # Indexes the value.
-  pub def (index) self range@Range[Int] -> Str
+  pub def (index)[K] self key@K -> IndexItem[{*(Range[Int]): Str}, K]
     ...
 
   # Returns an iterator.
@@ -4382,11 +4363,11 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str]
   # to be the same length as the range it replaces. Both the range and the
   # assigned value's boundaries must land on UTF-8 code point boundaries.
   #
-  pub def (index) self range@Range[Int] -> Str
+  pub def (index)[K] self key@K -> IndexItem[{*(Range[Int]): Str}, K]
     ...
 
   # Assigns through an index.
-  pub def (assign) self range@Range[Int] value@Str
+  pub def (assign)[K] self key@K value@AssignItem[{*(Range[Int]): Str}, K]
     ...
 
   #
@@ -4588,7 +4569,7 @@ pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}] Iterable[Union[...Ts]] @
   # Slice indexing returns a new tuple. Omitted `start` means `0`, omitted `end`
   # means the tuple length, and negative endpoints count from the end. Negative
   # steps reverse the slice.
-  pub def (index)[K] self key@K -> IndexItem[{...Ts}, K]
+  pub def (index)[K] self key@K -> IndexItem[{*(Int): Union[...Ts]}, K]
     ...
 
   # Unpacks tuple elements.

@@ -112,6 +112,51 @@ impl Solver<'_> {
         })
     }
 
+    /// The first member of `key` in `scope` along an instance's MRO, as a
+    /// subclass inherits it: a class-scope member is its type object's, and a
+    /// static member is only its own class's. With `runtime`, only what the
+    /// runtime inherits is searched, so what a class claims to be is not an
+    /// implementation. Nothing falls back to `(get)` or `(set)`.
+    pub(crate) fn inherited_member(
+        &self,
+        instance: Term,
+        key: MemberKey,
+        scope: Scope,
+        runtime: bool,
+    ) -> Result<Lookup, Issue> {
+        let nominal = match self.receiver(instance)? {
+            Receiver::Instance(nominal) => nominal,
+            Receiver::Object(_) => {
+                return Err(Residual::Unsupported("the members a type object inherits").into());
+            }
+            Receiver::Missing => return Ok(Lookup::Missing),
+            Receiver::Dynamic => return Ok(Lookup::Dynamic),
+        };
+        let class = nominal.declaration;
+        self.search_in(nominal, key, runtime, |owner, member| {
+            member.scope() == scope && (scope != Scope::Static || owner == class)
+        })
+    }
+
+    /// The declarations along an instance's MRO, in order, each once. A supertype
+    /// that isn't nominal contributes none.
+    pub(crate) fn lineage(&self, instance: Term) -> Result<Vec<DeclId>, Issue> {
+        let nominal = match self.receiver(instance)? {
+            Receiver::Instance(nominal) => nominal,
+            Receiver::Object(_) | Receiver::Missing | Receiver::Dynamic => return Ok(Vec::new()),
+        };
+        let mut lineage = Vec::new();
+        self.preorder(nominal, &mut HashSet::new(), 0, &mut |visited| {
+            if let Visited::Nominal(nominal) = visited
+                && !lineage.contains(&nominal.declaration)
+            {
+                lineage.push(nominal.declaration);
+            }
+            Ok(None::<()>)
+        })?;
+        Ok(lineage)
+    }
+
     /// Where a receiver's members are looked up, walking a rigid through its bound
     /// and a literal or function to its intrinsic class
     fn receiver(&self, mut term: Term) -> Result<Receiver, Issue> {
@@ -131,6 +176,9 @@ impl Solver<'_> {
                     };
                     return match self.head(class)? {
                         Head::Infer(_) => Err(Residual::Inference.into()),
+                        Head::Skolem(_) => {
+                            Err(Residual::Unsupported("a type object of a skolem").into())
+                        }
                         Head::Nominal(class) => Ok(Receiver::Object(class)),
                         Head::Structural(view)
                             if matches!(self.db.ty(view.ty), Type::Unknown(_)) =>
@@ -142,6 +190,13 @@ impl Solver<'_> {
                         }
                     };
                 }
+                Head::Skolem(id) => match self.skolems[id.0].bound.get() {
+                    Some(bound) => {
+                        term = bound;
+                        continue;
+                    }
+                    None => return Ok(Receiver::Missing),
+                },
                 Head::Structural(view) => view,
             };
             let mut ty = view.ty;
@@ -249,7 +304,19 @@ impl Solver<'_> {
         key: MemberKey,
         admits: impl Fn(DeclId, &Member) -> bool,
     ) -> Result<Lookup, Issue> {
-        let found = self.preorder(nominal, &mut HashSet::new(), 0, &mut |visited| {
+        self.search_in(nominal, key, false, admits)
+    }
+
+    /// [`Self::search`], following only the supertypes the runtime inherits from
+    /// when `runtime`
+    fn search_in(
+        &self,
+        nominal: Nominal,
+        key: MemberKey,
+        runtime: bool,
+        admits: impl Fn(DeclId, &Member) -> bool,
+    ) -> Result<Lookup, Issue> {
+        let found = self.mro(nominal, runtime, &mut HashSet::new(), 0, &mut |visited| {
             Ok(match visited {
                 Visited::Nominal(nominal) => self
                     .members(nominal)

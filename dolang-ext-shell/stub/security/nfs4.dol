@@ -1,7 +1,6 @@
 # NFSv4 access-control-list types.
 
 import std:
-  - @FlagSet
   - @Seq
 
 # A symbol naming a bit of a [`Mask`](security.nfs4.Mask).
@@ -36,7 +35,7 @@ pub @let MaskBit = (
 # ```
 # let rw = Mask :READ_DATA: :WRITE_DATA:
 # ```
-pub class Mask: Iterable[MaskBit] @FlagSet[MaskBit]
+pub class Mask: Iterable[MaskBit]
 
   # Constructs a flag set from symbols.
   #[class]
@@ -94,7 +93,7 @@ pub @let FlagBit = (
 # ```
 # let inherit = Flags(:FILE_INHERIT:, :DIRECTORY_INHERIT:)
 # ```
-pub class Flags: Iterable[FlagBit] @FlagSet[FlagBit]
+pub class Flags: Iterable[FlagBit]
 
   # Constructs a flag set from symbols.
   #[class]

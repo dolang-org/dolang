@@ -2129,7 +2129,7 @@ fn expectation(solver: &Solver<'_>, held: Term) -> Option<TypeId> {
                     pending.push(upper);
                     continue;
                 }
-                (Term::View(_), Err(_)) => return None,
+                (_, Err(_)) => return None,
             };
             match found {
                 Some(other) if other != ty => return None,

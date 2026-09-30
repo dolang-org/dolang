@@ -481,7 +481,7 @@ impl Tables<'_> {
             let supertypes: Vec<_> = declaration
                 .supertypes
                 .iter()
-                .map(|&ty| self.render(db, ty, names))
+                .map(|supertype| self.render(db, supertype.ty, names))
                 .collect();
             match supertypes.is_empty() {
                 true => "nominal".to_owned(),
@@ -549,6 +549,12 @@ impl Tables<'_> {
             Type::Top => out.push_str("Value"),
             Type::Unknown(Kind::Type) => out.push_str("Unknown"),
             Type::Unknown(Kind::Schema) => out.push_str("Unknown{}"),
+            Type::Unsupported {
+                kind: Kind::Type, ..
+            } => out.push_str("Unsupported"),
+            Type::Unsupported {
+                kind: Kind::Schema, ..
+            } => out.push_str("Unsupported{}"),
             // Freshness is the checker's concern, not the reader's
             Type::Literal(literal) | Type::Fresh(literal) => {
                 let _ = match literal {

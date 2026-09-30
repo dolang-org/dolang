@@ -85,7 +85,10 @@ that an omitted `def` annotation stands for, and what an erroneous site is
 interned as. It is interned once like top, with a schema-kinded twin for
 erroneous schema positions, and a union keeps it as an ordinary member. How
 checker strictness treats an omission is decided where it was written, not by
-finding `Unknown`.
+finding `Unknown`. A written type the database can't represent yet, such as a
+rest pattern mapped over packs, is an `Unsupported` stand-in instead: each is
+unique, since what it stands for can't be compared, and the solver reports a
+judgment reaching one as unsupported rather than consistent.
 
 Quantifiers own structural binder groups. References use relative group depth
 and declaration-order slot, each a checked `u16`. The whole group is in scope in
@@ -145,7 +148,9 @@ Structural walking and rebuilding report quantifier boundaries and visit
 bounds/defaults along with all other children. Declaration references are
 leaves; definitions and declared supertypes must be visited explicitly. A
 nominal definition's supertypes are interpreted inside its outer structural
-binder group. Shifting inserts/removes groups at a cutoff and refuses to remove
+binder group. Each records whether the runtime inherits from it: a class's `@`
+supertypes, and all of a protocol's, are only claims, even one naming a class.
+Shifting inserts/removes groups at a cutoff and refuses to remove
 a group that is referenced. Memoization includes the scope as well as the node
 identity.
 
@@ -213,8 +218,8 @@ A function type is a subtype of another when its parameter list includes the
 other's (see [Schemas](#schemas)), its result is a subtype of the other's, and
 its ambient channels are supertypes of the other's. Channels are implicit
 arguments, so both are contravariant; since `Sink` is contravariant in its
-element type, a function that writes `Int`s can be given a `Sink[Num]`.
-An omitted channel stands for its default bound, `Iter[Unknown]` or
+element type, a function that writes `Int`s can be given a `Sink[Num]`. An
+omitted channel stands for its default bound, `Iter[Unknown]` or
 `Sink[Unknown]`, or `Unknown` when `std` doesn't designate one. Union-left
 judgments require every member; union-right judgments accept a member proved by
 an isolated, closed subtype query. Alternative queries cannot add inference
@@ -235,15 +240,15 @@ ordered values, the bottom type for two literals or classes that can't share a
 value, and otherwise `Unknown`, which leaves the write unchecked. A key member
 the schema doesn't admit whole contradicts the projection, as a conflicting
 schema does. A rigid key selects only by its bound, so exactly only where each
-item the bound selects has the same value; otherwise the projection is
-residual. One left unevaluated is below an item projection of the same kind and
-schema on the right whose key is proven wider for `IndexItem`, or narrower for
+item the bound selects has the same value; otherwise the projection is residual.
+One left unevaluated is below an item projection of the same kind and schema on
+the right whose key is proven wider for `IndexItem`, or narrower for
 `AssignItem`. A function's result that is an item projection is exposed where
 the function is related, so a call reports a key its schema doesn't admit even
-when nothing uses the result. Higher-rank rules remain
-deferred. Contextual identity and top/bottom rules can still settle some
-judgments involving otherwise unsupported forms: anything is below top and
-`Unknown`, even a type that can't be exposed.
+when nothing uses the result. Quantified types on the right are related through
+skolems (see [Skolems and scopes](#skolems-and-scopes)). Contextual identity and
+top/bottom rules can still settle some judgments involving otherwise unsupported
+forms: anything is below top and `Unknown`, even a type that can't be exposed.
 
 ### Schemas
 
@@ -297,12 +302,15 @@ parameter lists (`<: {*Value, **Value}`), and packs expanded into a
 positional-only rest (`<: {*Value}`) without flattening.
 
 A schema variable is opaque like a rigid. The same variable on both sides pairs
-up. An expected variable without a counterpart takes what the actual side has
-left: it must end its positional lane, after required items only, and it takes
-the keyed items the expected side doesn't name, or is residual beside a key
-domain. What it takes becomes a schema built around the atoms' solver terms,
-which is its lower bound. An actual variable without a counterpart is bounded
-only by a rest-shaped expected schema; otherwise the judgment is residual.
+up. So does a variable with a rigid or skolem across from it, when both sides
+have their opaques in the same places, as a quantified signature related to its
+own instantiation does: the variable is bounded by the rigid. An expected
+variable without a counterpart takes what the actual side has left: it must end
+its positional lane, after required items only, and it takes the keyed items the
+expected side doesn't name, or is residual beside a key domain. What it takes
+becomes a schema built around the atoms' solver terms, which is its lower bound.
+An actual variable without a counterpart is bounded only by a rest-shaped
+expected schema; otherwise the judgment is residual.
 
 A call is checked as an ordinary judgment: the callee's type must be a subtype
 of the function type the call expects, `(args) <input >output -> result`.
@@ -331,7 +339,9 @@ judgment. Forwarding an omitted ambient channel to a callee is identity and
 never consults its default bound; using its elements reduces through the bound,
 so a strict mode can reject proofs carrying that label and ask for the channel
 to be annotated. A union on the right is proved by a member identical to the
-left side before alternatives are probed. Rigids are closed, so they reify to
+left side before alternatives are probed. A positional pack's items are each
+below a union that expands the same pack, so `{...Ts}` is below
+`{*Union[...Ts]}` without the pack's bound. Rigids are closed, so they reify to
 themselves and assignments may contain them. A rigid of a declaration not
 assumed has escaped its own check: it is related only to itself and top, and
 reifying it is residual.
@@ -339,7 +349,8 @@ reifying it is residual.
 `reach` walks a term to a target declaration through the substitution-carrying
 inheritance walk, continuing through an assumed rigid's bound, and returns the
 target's arguments. It reports a term that doesn't reach the target, and
-`Unknown` as reaching anything.
+`Unknown` as reaching anything. `inherits` walks only the supertypes the runtime
+inherits from.
 
 ### Instantiation
 
@@ -352,8 +363,57 @@ way; a call's channels bound a callee's channel variables from below, and
 defaulting settles them on the caller's channels. The environment is recorded by
 obligation, so reprocessing derives the same obligations without creating
 variables. Variables never leave the solver: flow analysis creates a solver per
-step and exports only reified types. A quantifier on the right, which needs
-skolems, is residual.
+step and exports only reified types. Each variable belongs to the innermost
+scope among the variables and skolems of the obligation that created it, so a
+quantified type instantiated against a skolemized body may take its skolems.
+
+### Skolems and scopes
+
+A quantified type on the right of a structural type is skolemized: each binder
+becomes a skolem, `Term::Skolem`, and the actual side is related to the body
+under an environment of them. The body must hold for every choice of the
+binders, so it must hold for these. A skolem is solver-local and never enters a
+canonical type; reifying one is an escape. Its bound is the binder's bound read
+in the skolemization's environment, which carries F-bounds and outer
+substitutions, and a rest binder without one is bounded by its shape. Skolems
+follow the rules of rigids: a skolem is below itself, top and `Unknown`, and
+bottom and `Unknown` are below it; on the left it reduces to its bound, labeled
+as a rigid's is, and otherwise it contradicts the judgment. One without a bound
+is below a union only through a member that is itself, top or `Unknown`. The
+skolems are created once per obligation, as instantiations are. Contextually
+identical quantified types are proved before either rule applies.
+
+Each skolemization opens a scope inside the obligation's innermost one. A
+variable sees the skolems of its scope and the scopes around it, and a bound
+holding any other has escaped. A skolem that is a whole lower bound is promoted:
+the variable is bounded below by the skolem's bound instead, or by top if it has
+none, which is the least type above it without it. Any other escaping bound is
+not recorded, and its judgment is residual; if the variable is solved
+otherwise, its solution is related to the skolem directly, which can contradict
+it.
+
+A variable's solution may hold skolems it sees. Such a solution is chosen only
+by identity: every lower bound must be the same term, holding no unsolved
+variable. A bound the same as it forces it; otherwise it is a default. Skolems
+are never joined or probed. A scope's variables are invisible outside its
+judgment, so the solver settles them itself: at quiescence, it defaults one at a
+time, innermost scope first and in creation order, and solves again. A variable
+nothing is below takes bottom. Variables of the root scope are left to the
+caller, unless the solver is closed: a judgment between declarations' types,
+whose variables no caller sees, settles them last in the same way.
+
+The supported higher-rank fragment is a prenex quantifier on either side of any
+obligation, including quantifiers reached through function parameters and
+results, which the rules reach recursively: a quantified parameter becomes a
+quantifier on the right by contravariance. Residual forms are:
+
+- a quantified type on the right of a variable, which would need impredicative
+  instantiation; the bound is not recorded;
+- a quantified type on the right of a class instance;
+- a projection whose schema or key holds a skolem, since projections are
+  evaluated by reifying them. It stays unevaluated and relates only to an
+  identical projection, a member of a union on the left proved by the same
+  member on the right.
 
 ### Member lookup
 
@@ -385,6 +445,47 @@ method, its overloads and its implementation, is applied alike. A property's
 getter and setter are methods. A result says whether the member is public, since
 only a public member can be replaced in a subclass, so only access to one may
 dispatch.
+
+A search can follow only the supertypes the runtime inherits from. A class's `@`
+supertypes and all of a protocol's are claims, so what a class reaches only
+through one is not an implementation of its own.
+
+### Conformance
+
+`typeck/solver/conform.rs` states what a supertype's members require of a class
+or protocol. Its answer is a set of ordinary subtype judgments for the caller
+to constrain, so conformance can become a subtyping rule for structural
+protocols (#828) without caching a verdict. For each public, non-static member
+of the supertype's MRO, `(init)` aside, the member the supertype has is
+required, and the declaration's own is provided: the first in its runtime MRO
+for a class, or in its whole MRO for a protocol. Members compare by kind:
+
+- fields invariantly, both ways, as they are mutable;
+- methods by their implementations, the provided below the required. The
+  required side's overloads are not compared. On the provided side, an overload
+  below the required implementation satisfies it in place of the implementation
+  (found by a probe). An overload is an unchecked assertion narrowing its
+  implementation, so it can state what the solver can't prove, such as
+  `Tuple.(index)`'s precise result for `Index[{...Ts}]`;
+- properties accessor by accessor, and a property may not drop an accessor the
+  required one has;
+- a protocol's field by a property with both accessors, the getter's result
+  below the field's type and the setter accepting it.
+
+Any other change of kind is reported, as the runtime refuses a class that
+replaces a field with a method or property. A protocol's member that nothing
+provides is missing; a claimed class's member is covered by `claimed_classes`,
+which reports each class a claim names, down its ancestry, that the declaration
+doesn't inherit at runtime, or inherits with arguments the claim doesn't allow.
+
+A required method is called on the declaration's instances, so its receiver is
+narrowed to them. A receiver `C[a…]` becomes the declaration's class applied to
+the arguments that make it reach `C[a…]` along the supertype the member was
+found through: a default receiver becomes the declaration's own type, and
+`chomp[U] self @ Iterable[U]` checked for `Iter[T]` takes `self @ Iter[U]`. The
+provided method keeps its receiver, so one callable on fewer instances fails.
+A receiver that isn't a class application, or can't be matched, stays as
+written.
 
 ### Assignments and fixed point
 
@@ -454,8 +555,8 @@ the edge unreachable.
 
 Exact candidate dependencies receive a scope-aware occurs check. Recursive
 substitutions remain recursive residuals; variable-only cycles remain unsolved
-unless concrete bounds force them. Assignments contain only closed canonical
-types, so they cannot introduce assignment cycles. Declaration wrappers remain
+unless concrete bounds force them. Assignments hold no unsolved variables, so
+they cannot introduce assignment cycles. Declaration wrappers remain
 opaque to this check: supported recursion through declarations is distinct from
 substitution recursion.
 
@@ -482,7 +583,8 @@ obsolete residuals do not prevent a current proof. Cycles in current proof
 premises remain unresolved. Reports distinguish proven, contradicted, and
 unresolved roots; quiescence alone is not proof.
 
-`solution` exposes a committed canonical type, `solution_sources` exposes its
+`solution` exposes a committed canonical type, or nothing for a solution
+holding skolems, `solution_sources` exposes its
 supporting obligations, and `unresolved` enumerates variables available for
 later inference or generalization. `reify` rebuilds a fully resolved contextual
 view using the database's scope-aware child mapping. It preserves local binder
@@ -996,7 +1098,17 @@ is rejected, as OCaml rejects irregular abbreviations. Recursion through class
 supertypes is left to the solver, which reports expanding inheritance as
 residual.
 
+Overrides and protocol conformance are checked after well-formedness, in
+`elab/overrides.rs`. Each class and protocol is checked against each supertype
+it names, under its own rigids, in one closed solver whose variables it settles
+itself. Every requirement the solver states is constrained there, and a
+contradicted one is reported: an override where it is declared, and an
+inherited member, a missing one or a class a claim needs at the supertype
+reference. The checks are local, as well-formedness's are.
+
 `Check::validated` holds when the checker reported no errors and decided every
-check. Otherwise the result is partial: usable for diagnostics and tooling, but
-checking code against it proves nothing. Undecided checks are not diagnosed
-until a strictness policy decides how, but a `wf` judgment reports each.
+check, except those that need a form it doesn't support yet, which are
+provisionally accepted. Otherwise the result is partial: usable for diagnostics
+and tooling, but checking code against it proves nothing. Undecided checks are
+not diagnosed until a strictness policy decides how, but a `wf` judgment
+reports each.

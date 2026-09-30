@@ -47,7 +47,8 @@ struct KeyedAtom {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Opacity {
     Unknown,
-    Rigid(TypeId),
+    /// A rigid, as its closed view, or a skolem
+    Rigid(Term),
     Infer(InferVarId),
 }
 
@@ -120,9 +121,10 @@ impl Solver<'_> {
         self.flatten(bv, ys, None, None, &mut b, 0)?;
         let mut a = Shape::default();
         self.flatten(av, xs, None, None, &mut a, 0)?;
-        let pairs = self.pair(&a, &b)?;
+        let mut pairs = self.pair(&a, &b)?;
+        self.cross(&a, &b, &mut pairs, obligation)?;
         // Every actual rigid without a counterpart stands for its bound
-        let paired: HashSet<TypeId> = pairs
+        let paired: HashSet<Term> = pairs
             .iter()
             .filter_map(|&(i, _)| match a.opaque[i].opacity {
                 Opacity::Rigid(ty) => Some(ty),
@@ -329,6 +331,53 @@ impl Solver<'_> {
     /// positional and one keyed. Each of `xs`'s items must fit the matching
     /// repeated item, whatever its multiplicity, and each inclusion must fit
     /// the whole expected schema.
+    /// Whether `pack`, a positional rigid or skolem pack, is below `expected`
+    /// because each of its items is: `expected` is a rest-shaped schema whose
+    /// repeated positional item is a union expanding the same pack, as
+    /// `{...Ts}` is below `{*Union[...Ts]}`
+    pub(super) fn expands_into(&self, pack: Term, expected: &Head) -> Result<bool, Issue> {
+        let Head::Structural(view) = expected else {
+            return Ok(false);
+        };
+        let Type::Schema(items) = self.db.ty(view.ty) else {
+            return Ok(false);
+        };
+        let Some(RestShape {
+            positional: Some(item),
+            ..
+        }) = rest_shape(items)
+        else {
+            return Ok(false);
+        };
+        let item = view.child(item);
+        let Head::Structural(union) = self.head(item)? else {
+            return Ok(false);
+        };
+        let Type::Union(members) = self.db.ty(union.ty) else {
+            return Ok(false);
+        };
+        for &member in members.iter() {
+            let UnionMember::Expand(mut expanded) = member else {
+                continue;
+            };
+            // `Union[...Ts]` expands `{...Ts}`
+            if let Type::Schema(items) = self.db.ty(expanded)
+                && let [
+                    SchemaItem {
+                        multiplicity: Multiplicity::Required,
+                        element: Element::Include(included),
+                    },
+                ] = items[..]
+            {
+                expanded = included;
+            }
+            if self.same(pack, union.child(expanded))? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn rest_shaped(
         &self,
         av: TypeView,
@@ -375,14 +424,14 @@ impl Solver<'_> {
     }
 
     /// Flatten items into `shape`. `item` is the top-level item they belong to,
-    /// if they are nested. With `keep`, a rigid outside it is replaced by its
-    /// bound; otherwise every rigid is opaque.
+    /// if they are nested. With `keep`, a rigid or skolem outside it is replaced
+    /// by its bound; otherwise every one is opaque.
     fn flatten(
         &self,
         view: TypeView,
         items: &[SchemaItem],
         item: Option<usize>,
-        keep: Option<&HashSet<TypeId>>,
+        keep: Option<&HashSet<Term>>,
         shape: &mut Shape,
         depth: usize,
     ) -> Result<(), Issue> {
@@ -424,7 +473,7 @@ impl Solver<'_> {
         term: Term,
         multiplicity: Multiplicity,
         item: usize,
-        keep: Option<&HashSet<TypeId>>,
+        keep: Option<&HashSet<Term>>,
         shape: &mut Shape,
         depth: usize,
     ) -> Result<(), Issue> {
@@ -441,6 +490,12 @@ impl Solver<'_> {
                 return Ok(());
             }
             Head::Infer(_) => return Err(Residual::Inference.into()),
+            Head::Skolem(id) => {
+                let Some(bound) = self.skolems[id.0].bound.get() else {
+                    return Err(Residual::Unsupported("an included skolem without a bound").into());
+                };
+                return self.include_rigid(term, bound, multiplicity, item, keep, shape, depth);
+            }
             Head::Nominal(_) => {
                 return Err(Residual::Unsupported("a class included in a schema").into());
             }
@@ -458,6 +513,7 @@ impl Solver<'_> {
                 opaque(shape, Opacity::Unknown, Rest::All);
                 Ok(())
             }
+            Type::Unsupported { .. } => Err(UNREPRESENTED.into()),
             Type::Schema(items) if multiplicity == Multiplicity::Required => {
                 self.flatten(view, items, Some(item), keep, shape, depth + 1)
             }
@@ -488,40 +544,47 @@ impl Solver<'_> {
                 let Some(bound) = self.rigid_bound(view.ty) else {
                     return Err(Residual::Unsupported("an included rigid without a bound").into());
                 };
-                if keep.is_some_and(|keep| !keep.contains(&view.ty)) {
-                    return self.include(
-                        self.closed(bound),
-                        multiplicity,
-                        item,
-                        keep,
-                        shape,
-                        depth + 1,
-                    );
-                }
-                if multiplicity != Multiplicity::Required {
-                    return Err(
-                        Residual::Unsupported("an optional or repeated included rigid").into(),
-                    );
-                }
-                let lanes = self.lanes(bound, depth + 1)?;
-                opaque(shape, Opacity::Rigid(view.ty), lanes);
-                Ok(())
+                let rigid = self.closed(view.ty);
+                let bound = self.closed(bound);
+                self.include_rigid(rigid, bound, multiplicity, item, keep, shape, depth)
             }
             _ => Err(Residual::Unsupported("this kind of included schema").into()),
         }
     }
 
+    /// Flatten an included rigid or skolem into `shape`: opaque, or its bound if
+    /// `keep` leaves it out
+    #[expect(clippy::too_many_arguments, reason = "an inclusion's parts")]
+    fn include_rigid(
+        &self,
+        rigid: Term,
+        bound: Term,
+        multiplicity: Multiplicity,
+        item: usize,
+        keep: Option<&HashSet<Term>>,
+        shape: &mut Shape,
+        depth: usize,
+    ) -> Result<(), Issue> {
+        if keep.is_some_and(|keep| !keep.contains(&rigid)) {
+            return self.include(bound, multiplicity, item, keep, shape, depth + 1);
+        }
+        if multiplicity != Multiplicity::Required {
+            return Err(Residual::Unsupported("an optional or repeated included rigid").into());
+        }
+        let lanes = self.lanes(bound, depth + 1)?;
+        shape.positional.push(Slot::Opaque(shape.opaque.len()));
+        shape.opaque.push(Opaque {
+            opacity: Opacity::Rigid(rigid),
+            lanes,
+            item,
+        });
+        Ok(())
+    }
+
     /// Which lanes the schemas below a bound can occupy
-    fn lanes(&self, bound: TypeId, depth: usize) -> Result<Rest, Issue> {
+    fn lanes(&self, bound: Term, depth: usize) -> Result<Rest, Issue> {
         let mut shape = Shape::default();
-        self.include(
-            self.closed(bound),
-            Multiplicity::Required,
-            0,
-            None,
-            &mut shape,
-            depth,
-        )?;
+        self.include(bound, Multiplicity::Required, 0, None, &mut shape, depth)?;
         let mut positional = shape
             .positional
             .iter()
@@ -558,6 +621,43 @@ impl Solver<'_> {
             return Err(Residual::Alignment.into());
         }
         Ok(pairs)
+    }
+
+    /// Pair a variable with a rigid or skolem across from it, each without a
+    /// counterpart, when both sides have their opaques in the same places, as a
+    /// quantified signature related to its own instantiation does. The variable
+    /// stands for the rigid, so it is bounded by it.
+    fn cross(
+        &self,
+        a: &Shape,
+        b: &Shape,
+        pairs: &mut Vec<(usize, usize)>,
+        obligation: ObligationId,
+    ) -> Result<(), Issue> {
+        if a.opaque.len() != b.opaque.len() {
+            return Ok(());
+        }
+        let mut crossed = false;
+        for (index, (x, y)) in a.opaque.iter().zip(&b.opaque).enumerate() {
+            if x.lanes != y.lanes || pairs.iter().any(|&(i, j)| i == index || j == index) {
+                continue;
+            }
+            let (actual, expected) = match (x.opacity, y.opacity) {
+                (Opacity::Infer(id), Opacity::Rigid(rigid)) => (Term::Infer(id), rigid),
+                (Opacity::Rigid(rigid), Opacity::Infer(id)) => (rigid, Term::Infer(id)),
+                _ => continue,
+            };
+            self.derive(obligation, actual, expected, Step::Item(x.item));
+            pairs.push((index, index));
+            crossed = true;
+        }
+        if crossed {
+            pairs.sort();
+            if !pairs.is_sorted_by_key(|&(_, j)| j) {
+                return Err(Residual::Alignment.into());
+            }
+        }
+        Ok(())
     }
 
     /// Relate the positional lanes, segment by segment between paired opaques
@@ -744,35 +844,79 @@ impl Solver<'_> {
         for y in &literals {
             let (mut low, mut high) = (0, Some(0));
             let mut last = None;
+            // The items of the key from actual literals, whose count is at most
+            // `literal_high`, and from actual domains
+            let (mut literal, mut literal_high) = (Vec::new(), Some(0));
+            let mut domain = Vec::new();
             for (i, x) in xs.iter().enumerate() {
-                let contributes = if self.literal(x.key)? {
-                    self.same(x.key, y.key)?
-                } else {
-                    self.admits(x.key, y.key)?
+                let is_literal = self.literal(x.key)?;
+                let contributes = match is_literal {
+                    true => self.same(x.key, y.key)?,
+                    false => self.admits(x.key, y.key)?,
                 };
                 if !contributes {
                     continue;
                 }
-                let (lo, hi) = if self.literal(x.key)? {
+                let (lo, hi) = range(x.multiplicity);
+                if is_literal {
                     claimed[i] = true;
-                    range(x.multiplicity)
+                    literal.push(x);
+                    low += lo;
+                    high = high.zip(hi).map(|(a, b)| a + b);
+                    literal_high = literal_high.zip(hi).map(|(a, b)| a + b);
                 } else {
-                    (0, None)
-                };
-                low += lo;
-                high = high.zip(hi).map(|(a, b)| a + b);
+                    domain.push(x);
+                    high = None;
+                }
                 last = Some(x.item);
+            }
+            let (min, max) = range(y.multiplicity);
+            let excess =
+                !open_expected && max.is_some_and(|max| high.is_none_or(|high| high > max));
+            // More items of the key than the literal admits go to a repeated
+            // domain beside it that admits the key
+            let mut absorbing = Vec::new();
+            if excess && overflow.is_none() {
+                for domain in &domains {
+                    if domain.multiplicity == Multiplicity::Repeated
+                        && self.admits(domain.key, y.key)?
+                    {
+                        absorbing.push(*domain);
+                    }
+                }
+            }
+            // When the actual literals' items alone fit the literal, it takes
+            // them and the domain takes the actual domains' items. Otherwise any
+            // item may land in either.
+            let split = !absorbing.is_empty()
+                && low >= min
+                && max.zip(literal_high).is_some_and(|(max, high)| high <= max);
+            for x in &literal {
                 self.derive(obligation, x.value, y.value, Step::Item(x.item));
+            }
+            if !split {
+                for x in &domain {
+                    self.derive(obligation, x.value, y.value, Step::Item(x.item));
+                }
             }
             if open_expected {
                 continue;
             }
-            let (min, max) = range(y.multiplicity);
             if low < min && !open_actual {
                 return Err(Issue::Contradiction(Contradiction::Missing(y.item)));
             }
-            if max.is_some_and(|max| high.is_none_or(|high| high > max)) {
-                return Err(Issue::Contradiction(Contradiction::Excess(last.unwrap())));
+            if excess {
+                if absorbing.is_empty() {
+                    return Err(Issue::Contradiction(Contradiction::Excess(last.unwrap())));
+                }
+                if !split {
+                    domain.append(&mut literal);
+                }
+                for x in domain {
+                    for d in &absorbing {
+                        self.derive(obligation, x.value, d.value, Step::Item(x.item));
+                    }
+                }
             }
         }
         for (i, x) in xs.iter().enumerate() {

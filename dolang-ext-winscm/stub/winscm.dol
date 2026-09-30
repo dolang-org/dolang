@@ -13,8 +13,6 @@ import
     - @AccessRight
     - @SecDesc
     - @SecDescSpec
-  std:
-    - @FlagSet
 
 # A control request for [`Service.control`](winscm.Service.control).
 #
@@ -113,7 +111,7 @@ pub @let ManagerAccessRight = (
 # let a = ManagerAccessMask :SC_MANAGER_CONNECT: :SC_MANAGER_LOCK:
 # let b = ManagerAccessMask [:SC_MANAGER_CONNECT:, :SC_MANAGER_LOCK:]
 # ```
-pub class ManagerAccessMask: AccessMask @FlagSet[ManagerAccessRight]
+pub class ManagerAccessMask: AccessMask
   # Builds a mask from a native integer, preserving every bit including ones
   # this type does not name.
   pub def from_int
@@ -143,22 +141,6 @@ pub class ManagerAccessMask: AccessMask @FlagSet[ManagerAccessRight]
 
   # Tests whether all flags named by `flag` are set.
   pub def contains self flag @ ManagerAccessRight -> Bool
-    ...
-
-  # Returns the flags set in either.
-  pub def (bor)[S @ ManagerAccessMask] self@S other@S -> S
-    ...
-
-  # Returns the flags set in both.
-  pub def (band)[S @ ManagerAccessMask] self@S other@S -> S
-    ...
-
-  # Returns the flags set in exactly one.
-  pub def (bxor)[S @ ManagerAccessMask] self@S other@S -> S
-    ...
-
-  # Returns the flags of the type that are not set.
-  pub def (bnot)[S @ ManagerAccessMask] self @ S -> S
     ...
 
 
@@ -202,7 +184,7 @@ pub @let ServiceAccessRight = (
 # let a = ServiceAccessMask :SERVICE_START: :SERVICE_STOP:
 # let b = ServiceAccessMask [:SERVICE_START:, :SERVICE_STOP:]
 # ```
-pub class ServiceAccessMask: AccessMask @FlagSet[ServiceAccessRight]
+pub class ServiceAccessMask: AccessMask
   # Builds a mask from a native integer, preserving every bit including ones
   # this type does not name.
   pub def from_int
@@ -234,22 +216,6 @@ pub class ServiceAccessMask: AccessMask @FlagSet[ServiceAccessRight]
   pub def contains self flag @ ServiceAccessRight -> Bool
     ...
 
-  # Returns the flags set in either.
-  pub def (bor)[S @ ServiceAccessMask] self@S other@S -> S
-    ...
-
-  # Returns the flags set in both.
-  pub def (band)[S @ ServiceAccessMask] self@S other@S -> S
-    ...
-
-  # Returns the flags set in exactly one.
-  pub def (bxor)[S @ ServiceAccessMask] self@S other@S -> S
-    ...
-
-  # Returns the flags of the type that are not set.
-  pub def (bnot)[S @ ServiceAccessMask] self @ S -> S
-    ...
-
 
 # A flag of a [`ServiceType`](winscm.ServiceType).
 #
@@ -277,7 +243,7 @@ pub @let ServiceTypeFlag = (
 # ```
 # let types = ServiceType :WIN32_OWN_PROCESS: :INTERACTIVE_PROCESS:
 # ```
-pub class ServiceType: Iterable[ServiceTypeFlag] @FlagSet[ServiceTypeFlag]
+pub class ServiceType: Iterable[ServiceTypeFlag]
   # Builds a value from a native integer, preserving every bit including ones
   # this type does not name.
   pub def from_int
@@ -357,7 +323,7 @@ pub @let NotifyChange = (
 # ```
 # let mask = NotifyMask :RUNNING: :STOPPED:
 # ```
-pub class NotifyMask: Iterable[NotifyChange] @FlagSet[NotifyChange]
+pub class NotifyMask: Iterable[NotifyChange]
   # Builds a mask from a native integer, preserving every bit including ones
   # this type does not name.
   pub def from_int
@@ -440,7 +406,7 @@ pub @let AcceptedControl = (
 # if status.controls_accepted.contains(:STOP:)
 #   service.control :STOP:
 # ```
-pub class ServiceControlsAccepted: Iterable[AcceptedControl] @FlagSet[AcceptedControl]
+pub class ServiceControlsAccepted: Iterable[AcceptedControl]
   # Builds a value from a native integer, preserving every bit including ones
   # this type does not name.
   pub def from_int

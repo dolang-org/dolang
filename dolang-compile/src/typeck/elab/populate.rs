@@ -33,8 +33,8 @@ use crate::{
     typeck::r#type::{
         Argument, Binder, BinderOrigin, BinderSource, Binding, BoundRef, Database, DeclId,
         DeclKind, DeclSource, Declaration, Element, Function, Intrinsic, Kind, Literal, Member,
-        MemberKey, Multiplicity, Rest, SchemaItem, Scope, Type, TypeId, UnionMember, UnitId,
-        UnitSpan, Variance,
+        MemberKey, Multiplicity, Rest, SchemaItem, Scope, Supertype, Type, TypeId, UnionMember,
+        UnitId, UnitSpan, Variance,
     },
 };
 
@@ -1023,7 +1023,9 @@ impl<'t, 'u> Populate<'t, 'u> {
                             Some(Referent::External { .. })
                         );
                     if ty != self.db.top() && !erroneous {
-                        supertypes.push(ty);
+                        // A protocol's supertypes are all claims
+                        let runtime = decl.kind == DeclKind::Class && !super_ref.type_only;
+                        supertypes.push(Supertype { ty, runtime });
                     }
                 }
                 declaration.supertypes = supertypes.into();
@@ -1184,7 +1186,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                     // Mapping a pattern over packs has no representation yet
                     RestSlot::Pattern(_) => items.push(Self::item(
                         Multiplicity::Required,
-                        Element::Include(self.db.unknown_schema()),
+                        Element::Include(self.db.unsupported(Kind::Schema)),
                     )),
                 },
                 _ => unreachable!("a parameter's type matches its kind"),

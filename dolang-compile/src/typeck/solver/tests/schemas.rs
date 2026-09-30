@@ -373,11 +373,9 @@ fn literal_keys_own_their_items_and_others_go_to_the_domain() {
         &check(&db, empty, a_once),
         Contradiction::Missing(0)
     ));
-    // A repeated literal key is still the named item's
-    assert!(contradiction(
-        &check(&db, a_twice, required),
-        Contradiction::Excess(1)
-    ));
+    // Items of a literal key past its count go to a remainder that admits it
+    let outcome = check(&db, a_twice, required);
+    assert_eq!(outcome.status, Status::Proven, "{outcome:?}");
     assert!(contradiction(
         &check(&db, a_many, a_maybe),
         Contradiction::Excess(0)
@@ -386,9 +384,12 @@ fn literal_keys_own_their_items_and_others_go_to_the_domain() {
         &check(&db, b_once, a_maybe),
         Contradiction::Excess(0)
     ));
-    // A domain might hold the literal key any number of times
+    // A domain might hold the literal key any number of times, which only a
+    // remainder admitting it can take
+    let outcome = check(&db, options, optional);
+    assert_eq!(outcome.status, Status::Proven, "{outcome:?}");
     assert!(contradiction(
-        &check(&db, options, optional),
+        &check(&db, options, a_maybe),
         Contradiction::Excess(0)
     ));
     assert!(contradiction(
@@ -622,5 +623,60 @@ fn positional_items_under_int_keys_are_not_yet_decided() {
     assert!(contradiction(
         &check(&db, one, by_sym),
         Contradiction::Excess(0)
+    ));
+}
+
+#[test]
+fn a_remainder_admitting_a_literal_key_takes_its_further_items() {
+    use Multiplicity::{Repeated as Rep, Required as Req};
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let sym = nominal(&mut db, "Sym", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Sym, sym);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let base = nominal(&mut db, "A", vec![], vec![]);
+    let derived = nominal(&mut db, "B", vec![], vec![base]);
+    let from = db.intern(Type::Literal(Literal::Sym(db.intern_symbol("from"))));
+    // A method's `(self, :from, ...args)`: the rest may hold another `from`,
+    // which the other's rest admits
+    let method = |receiver| {
+        let params = items(
+            &db,
+            vec![
+                positional(Req, receiver),
+                keyed(Req, from, str),
+                positional(Rep, int),
+                keyed(Rep, sym, int),
+            ],
+        );
+        db.intern(Type::Function(Function {
+            params,
+            result: int,
+            input: None,
+            output: None,
+        }))
+    };
+    let on_base = method(base);
+    let on_derived = method(derived);
+    let with_rest = items(&db, vec![keyed(Req, from, str), keyed(Rep, sym, int)]);
+    let only = items(&db, vec![keyed(Req, from, str)]);
+    let twice = items(&db, vec![keyed(Req, from, str), keyed(Req, from, str)]);
+    db.seal();
+    let outcome = check(&db, on_base, on_derived);
+    assert_eq!(outcome.status, Status::Proven, "{outcome:?}");
+    // The rest's other keys still need somewhere to go
+    assert!(contradiction(
+        &check(&db, with_rest, only),
+        Contradiction::Excess(1)
+    ));
+    // Without a remainder there is nowhere for another `from` to go
+    assert!(contradiction(
+        &check(&db, twice, only),
+        Contradiction::Excess(1)
+    ));
+    // Either `from` may be the one the remainder takes, so both must fit it
+    assert!(contradiction(
+        &check(&db, twice, with_rest),
+        Contradiction::UnrelatedNominals
     ));
 }

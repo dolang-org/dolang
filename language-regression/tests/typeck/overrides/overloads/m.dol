@@ -1,0 +1,45 @@
+# Overrides compare implementations; overloads narrow calls where they're made.
+# An overload below a required signature satisfies it in the implementation's
+# place, as an assertion the checker can't prove otherwise.
+
+pub class Num
+pub class Int: Num
+pub class Other
+
+pub class Base
+  @def pick _self x @ Int -> Int
+  @def pick _self x @ Num -> Num
+  pub def pick _self x @ Num -> Num
+    ...
+
+pub class Same: Base
+  @def pick _self x @ Other -> Other
+  pub def pick _self x @ Num -> Num
+    ...
+
+pub class Narrow: Base
+  pub def pick _self x @ Int -> Num
+    # error: `pick` does not match `Base.pick`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def pick _self x @ Int -> Num
+    #    |           ^^^^
+    ...
+
+pub @class Picks
+  pub def pick self x @ Int -> Int
+
+pub class Asserted: @Picks
+  @def pick _self x @ Int -> Int
+  pub def pick _self x @ Num -> Num
+    ...
+
+pub class Unasserted: @Picks
+  @def pick _self x @ Other -> Other
+  pub def pick _self x @ Num -> Num
+    # error: `pick` does not match `Picks.pick`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def pick _self x @ Num -> Num
+    #    |           ^^^^
+    ...

@@ -41,3 +41,10 @@ def a_source_under_the_search_path_is_its_module()
   let out = BinBuf()
   check lib/m.dol $out
   assert ((printed out).contains "validated: 1 units, 0 diagnostics")
+
+#[test]
+def an_imported_entry_is_checked_once()
+  let out = BinBuf()
+  cd $FIXTURE do
+    run $shell.exe -m compile check main.dol lib/m.dol lib/m.dol --path lib stdout: $out stderr: :STDOUT: mode: :CHUNK:
+  assert ((printed out).contains "validated: 2 units, 0 diagnostics")

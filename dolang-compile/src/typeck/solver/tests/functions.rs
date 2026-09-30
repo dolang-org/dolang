@@ -228,9 +228,20 @@ fn calls_bind_arguments_as_the_runtime_does() {
         &[Positional(int), Positional(nil_value), Keyword(k, int)],
         Contradiction::UnrelatedNominals,
     );
+    // A repeated keyword goes to the keyed rest (the runtime's #832)
+    assert_eq!(
+        call(
+            &db,
+            f,
+            &[Positional(int), Keyword(k, int), Keyword(k, int)],
+            db.top()
+        )
+        .status,
+        Status::Proven
+    );
     fails(
-        &[Positional(int), Keyword(k, int), Keyword(k, int)],
-        Contradiction::Excess(2),
+        &[Positional(int), Keyword(k, int), Keyword(k, str)],
+        Contradiction::UnrelatedNominals,
     );
     fails(
         &[Positional(int), Keyword(k, int), Keyword(z, str)],

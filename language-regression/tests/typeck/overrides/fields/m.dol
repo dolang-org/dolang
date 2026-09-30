@@ -1,0 +1,36 @@
+# A member keeps its kind when a subclass redeclares it: the runtime rejects a
+# field replaced by a method or property, and a method replaced by a field.
+
+pub class Num
+
+pub class Base
+  pub field name @ Num = nil
+  pub def run _self -> Num
+    ...
+
+pub class Method: Base
+  pub def name _self -> Num
+    # error: `name` is a method, but `Base.name` is a field
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def name _self -> Num
+    #    |           ^^^^
+    ...
+
+pub class Property: Base
+  #[getter]
+  pub def name _self -> Num
+    # error: `name` is a read-only property, but `Base.name` is a field
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def name _self -> Num
+    #    |           ^^^^
+    ...
+
+pub class Field: Base
+  pub field run @ Num = nil
+# error: `run` is a field, but `Base.run` is a method
+#   --> m.dol:LL:LL
+#    |
+# LL |   pub field run @ Num = nil
+#    |             ^^^

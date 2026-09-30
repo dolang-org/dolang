@@ -476,8 +476,11 @@ do -> R
 #
 # Assigning to an index raises [`ImmutableError`](std.ImmutableError).
 pub @class Args: std.Seq[Str]
-  # Returns the arguments in `range`.
-  pub def (index) self range@Range[Int] -> Array[Str]
+  @def (index)[K] self key@K -> std.IndexItem[{*(Int): Str}, K]
+  @def (index) self range@Range[Int] -> Array[Str]
+
+  # Returns the argument at an index, or the arguments in a range.
+  pub def (index)[K] self key@K -> std.IndexItem[{*(Int): Str}, K]
 
 
 # The command-line arguments of the current invocation.

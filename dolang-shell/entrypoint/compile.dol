@@ -871,7 +871,8 @@ def imported_modules unit source
 
 # Checks the entries together with the modules they import, found by searching
 # the directories for `a/b.dol` as module `a.b`. An entry under one of the
-# directories is compiled as its module, so a stub can be checked directly.
+# directories is compiled as its module, so a stub can be checked directly, and
+# meets the other entries' imports of that module.
 def check p
   let :entries :path ... = p.check
   let dirs = [...path.map do |dir| (Path dir)]
@@ -891,6 +892,9 @@ def check p
         seen.add $name
         pending.push $name
 
+  # Every entry's module is known before any is compiled, so an import of one
+  # is met by the entry rather than found again
+  let roots = []
   for entry = entries
     let file = Path $entry
     let module = nil
@@ -898,7 +902,13 @@ def check p
       module = module_under $file $dir
       if (module != nil)
         break
-    add $file $module
+    if (module != nil)
+      if seen.contains(module)
+        continue
+      seen.add $module
+    roots.push [file, module]
+  for root = roots
+    add $root[0] $root[1]
   # `proc` holds the pipe types `strand`'s placeholders stand for
   if !seen.contains("proc")
     seen.add proc

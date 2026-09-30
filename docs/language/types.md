@@ -243,6 +243,10 @@ class Square: @Shape
     1
 ```
 
+The type checker holds the class to the claim: it must provide each of the
+protocol's members with a compatible type, and a field may be provided by a
+getter and a setter.
+
 A protocol's own supertypes are type-only already, so they are written without
 `@`:
 
@@ -250,6 +254,9 @@ A protocol's own supertypes are type-only already, so they are written without
 pub @class Solid: Shape
   pub def volume self -> Int
 ```
+
+A protocol may name a class as a supertype, but claiming the protocol doesn't
+inherit it: a class claiming the protocol must inherit that class itself.
 
 ## Type Syntax
 

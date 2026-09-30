@@ -1,0 +1,21 @@
+# Consistent overrides and a conforming class validate.
+
+pub class Num
+pub class Int: Num
+
+pub @class Shape
+  pub def area self -> Num
+
+pub class Base[T]: @Shape
+  pub field item @ T = nil
+  pub def get self -> T
+    ...
+  pub def area _self -> Num
+    ...
+
+pub class Sub: Base[Int]
+  pub field item @ Int = nil
+  pub def get _self -> Int
+    ...
+  pub def area _self -> Int
+    ...

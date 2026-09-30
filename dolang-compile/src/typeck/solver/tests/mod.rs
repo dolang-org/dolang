@@ -1,8 +1,9 @@
 use super::*;
 use crate::typeck::r#type::{
     BinderOrigin, BinderSource, BoundRef, DeclKind, DeclSource, Declaration, Rest, SchemaItem,
-    UnionMember,
+    Supertype, UnionMember,
 };
+use dolang_util::alias;
 
 mod basics;
 mod functions;
@@ -15,6 +16,7 @@ mod nominal;
 mod projections;
 mod rigids;
 mod schemas;
+mod skolems;
 mod unknown;
 
 fn literal(db: &Database, n: i128) -> TypeId {
@@ -119,10 +121,19 @@ fn populate(
             source,
             ty,
             binders,
-            supertypes: supertypes.into(),
+            supertypes: inherited(supertypes),
             members: Default::default(),
         },
     );
+}
+
+/// Supertypes the runtime inherits from
+fn inherited(supertypes: Vec<TypeId>) -> alias::Box<[Supertype]> {
+    supertypes
+        .into_iter()
+        .map(|ty| Supertype { ty, runtime: true })
+        .collect::<Vec<_>>()
+        .into()
 }
 
 fn nominal(db: &mut Database, name: &str, binders: Vec<Binder>, supers: Vec<TypeId>) -> TypeId {

@@ -22,6 +22,7 @@ import
     - RuntimeError
     - @Fmt
     - @Index
+    - @IndexItem
     - @Unpack
 
 # Raised when a SQLite operation fails for any reason other than the database
@@ -407,12 +408,12 @@ pub class Row: @Index[Int | Str, Value] @Unpack[{...}]
   # echo $ str row[0]
   # echo $ str row["name"]
   # ```
-  pub def (index)
+  pub def (index)[K]
     self
     # Column position or
     # name.
-    key @ (Int | Str)
-  do -> Value
+    key @ K
+  do -> IndexItem[{*(Int | Str): Value}, K]
     ...
 
   # Destructures the row by position or by column name.

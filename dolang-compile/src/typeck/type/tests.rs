@@ -444,12 +444,22 @@ fn nominal_supertypes_use_the_structural_binder_scope() {
                 source: src,
                 ty,
                 binders: vec![metadata].into(),
-                supertypes: supers.into(),
+                supertypes: supers
+                    .into_iter()
+                    .map(|ty| Supertype { ty, runtime: true })
+                    .collect::<Vec<_>>()
+                    .into(),
                 members: alias::Box::default(),
             },
         );
     }
-    assert_eq!(db.declaration(child).supertypes.as_ref(), &[supertype]);
+    assert_eq!(
+        db.declaration(child).supertypes.as_ref(),
+        &[Supertype {
+            ty: supertype,
+            runtime: true
+        }]
+    );
     assert_eq!(db.expose(cr).unwrap().ty, cr);
     // A structural walk must not follow declarations into recursive definitions.
     let mut seen = Vec::new();
@@ -1137,7 +1147,11 @@ fn local_kind_checks_reject_invalid_shapes() {
         db.populate(a, definition(a_source.clone(), empty));
     });
     let mut def = definition(a_source, top);
-    def.supertypes = vec![top].into();
+    def.supertypes = vec![Supertype {
+        ty: top,
+        runtime: true,
+    }]
+    .into();
     assert_panics(|| {
         db.populate(a, def);
     });

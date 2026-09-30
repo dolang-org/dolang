@@ -67,7 +67,7 @@ fn generic_callees_are_instantiated_once_per_use() {
             .iter()
             .filter_map(|term| match term {
                 Term::Infer(id) => Some(*id),
-                Term::View(_) => None,
+                _ => None,
             })
             .collect::<Vec<_>>()[..]
         else {
@@ -424,4 +424,35 @@ fn pack_binders_take_the_remaining_arguments() {
     s.constrain(s.closed(options), expected, Provenance::default());
     assert_eq!(s.solve()[0].status, Status::Unresolved);
     assert_eq!(lower_schema(&s), vec![Ok(named_rest)]);
+}
+
+#[test]
+fn closed_solvers_settle_their_own_variables() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let t = reference(&db, 0, 0);
+    // id[T] x@T -> T
+    let id = quantified(
+        &db,
+        vec![binder(Variance::Invariant)],
+        function(&db, &[t], t),
+    );
+    db.seal();
+    let judge = |expected: TypeId, close: bool| {
+        let mut s = Solver::new(&db);
+        if close {
+            s.close();
+        }
+        s.constrain(s.closed(id), s.closed(expected), Provenance::default());
+        let status = s.solve().remove(0).status;
+        (status, s.unresolved().count())
+    };
+    // An instantiation's variables are the caller's to default
+    let loose = function(&db, &[int], db.top());
+    assert_eq!(judge(loose, false), (Status::Unresolved, 1));
+    // A closed solver defaults them itself
+    assert_eq!(judge(loose, true), (Status::Proven, 0));
+    let crossed = function(&db, &[int], str);
+    assert_eq!(judge(crossed, true).0, Status::Contradicted);
 }

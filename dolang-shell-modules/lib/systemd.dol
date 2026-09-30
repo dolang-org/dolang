@@ -10,6 +10,7 @@ import shlex term
     - Url
   std:
     - @Index
+    - @IndexItem
     - @Unpack
 
 let ESC = str b"\x1b"
@@ -178,7 +179,7 @@ pub class OsRelease: @Index[Str, Str] @Unpack[Str, Str] Iterable[Tuple[Str, Str]
     self.#values = values
 
   # Reads a parsed `os-release` assignment by key.
-  pub def (index) self key @ Str -> Str
+  pub def (index)[K] self key @ K -> IndexItem[{*(Str): Str}, K]
     self.#values[key]
 
   # Iterates the parsed `os-release` assignments.
