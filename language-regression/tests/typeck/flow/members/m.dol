@@ -380,13 +380,13 @@ pub def unknown_key d @ Dict[Sym, Str] k
 # A dict's methods that take a key select by it, as indexing does
 pub def dict_methods d @ Dict[{a: Int, ?b: Str}] k @ (:a: | :b:)
   # A binder nothing determines takes its default: `get`'s `nil`, `pop`'s
-  # `Empty`
+  # `Never`
   let _ = d.get :a:
   #   ^: flow nil | std.Int
   let _ = d.get $k default: 0
   #   ^: flow std.Int | std.Str
   let _ = d.pop :b:
-  #   ^: flow std.Empty | std.Str
+  #   ^: flow std.Str
   let _ = d.values :b:
   #   ^: flow std.Iter[std.Str]
   let _ = d.values()

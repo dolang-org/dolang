@@ -2,6 +2,8 @@
 
 pub class Value
 #         ^~~~~: designated top
+pub @let Never = Union[]
+#        ^~~~~: designated bottom
 pub @let Union[...Ts] = ...
 #        ^~~~~: designated intrinsic Union
 #                 ^~: variance covariant

@@ -294,6 +294,8 @@ pub(crate) struct Sig<'u> {
 pub(crate) enum Designated {
     /// `std.Value`, which is top
     Value,
+    /// `std.Never`, which is bottom
+    Never,
     /// `std.Phantom`, which marks its arguments as used covariantly
     Phantom,
     /// `std.getter`, which makes a method a computed field's getter

@@ -241,6 +241,7 @@ fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
         ("strand", "PipeSender") => (Designated::PipeSender, DeclKind::OpaqueAlias),
         ("strand", "PipeReceiver") => (Designated::PipeReceiver, DeclKind::OpaqueAlias),
         ("std", "Value") => (Designated::Value, DeclKind::Class),
+        ("std", "Never") => (Designated::Never, DeclKind::Alias),
         ("std", "Phantom") => (Designated::Phantom, DeclKind::OpaqueAlias),
         ("std", "Union") => (
             Designated::Intrinsic(Intrinsic::Union),

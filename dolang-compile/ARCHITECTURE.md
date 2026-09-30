@@ -109,7 +109,8 @@ not subtype reasoning. Bottom is the empty union; top has an explicit node.
 Both are interned and cached when the database is created. Type interning and
 shifting accept shared database references; arena storage keeps borrowed types
 stable while the interning index uses interior mutability. Elaboration interns
-`std.Value` as top; `Empty` needs only its ordinary alias to `Union[]`.
+`std.Value` as top and `std.Never` as bottom, so a union absorbs a written
+`Never` as it does an empty union.
 An application of the `Union` intrinsic interns as a union expanding its
 schema, and an expanded schema of positional items contributes their types as
 members, so `Union[...Ts]` becomes an ordinary union once `Ts` is substituted.

@@ -547,8 +547,10 @@ impl<'t, 'u> Populate<'t, 'u> {
                 if result != expected || self.broken.contains(&(decl, 0)) || group.broken {
                     return self.unknown(expected);
                 }
-                if tables.designated.get(&decl) == Some(&Designated::Value) && args.is_none() {
-                    return self.db.top();
+                match (tables.designated.get(&decl), args) {
+                    (Some(Designated::Value), None) => return self.db.top(),
+                    (Some(Designated::Never), None) => return self.db.bottom(),
+                    _ => {}
                 }
                 self.apply(group, decl, args, span, depth)
             }

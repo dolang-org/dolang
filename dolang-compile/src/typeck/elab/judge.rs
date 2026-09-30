@@ -154,6 +154,7 @@ impl Tables<'_> {
             {
                 let value = match designated {
                     Designated::Value => "top".to_owned(),
+                    Designated::Never => "bottom".to_owned(),
                     Designated::Phantom => "phantom".to_owned(),
                     Designated::Getter => "getter".to_owned(),
                     Designated::Setter => "setter".to_owned(),
