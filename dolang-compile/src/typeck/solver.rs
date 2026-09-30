@@ -2049,6 +2049,21 @@ impl<'db> Solver<'db> {
                     self.spend()?;
                     ty = *body;
                 }
+                // A generic class's object, `[S] Type[C[S]]`, is its class applied
+                // to unknown arguments, as a type test narrows to: written alone,
+                // the class says nothing of them, so they aren't inferred
+                if let Type::Quantified { binders, body } = self.db.ty(view.ty)
+                    && let Type::Apply { base, .. } = self.db.ty(*body)
+                    && Some(*base) == self.db.intrinsic(Intrinsic::Type)
+                {
+                    let unknowns: Vec<TypeId> = (binders.iter())
+                        .map(|binder| self.db.unknown_of(binder.kind))
+                        .collect();
+                    let applied = self.db.substitute(*body, &unknowns);
+                    let applied = self.view(applied, view.environment);
+                    self.derive(obligation, applied, expected, Step::Instantiation);
+                    return Ok(());
+                }
                 let intrinsic = match self.db.ty(view.ty) {
                     _ if matches!(self.db.ty(ty), Type::Function(_)) => Intrinsic::Func,
                     Type::Literal(literal) => literal.intrinsic(),
