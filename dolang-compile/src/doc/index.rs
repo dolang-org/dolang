@@ -1073,13 +1073,16 @@ impl Index<'_> {
                 self.super_node(id, super_ref);
             }
         }
-        // Whether each implementation is `pub`, by name, which its overloads follow
+        // Whether each implementation is `pub`, by name, which its overloads
+        // follow. A protocol's own member is its overloads' implementation.
         let impls: HashMap<&str, bool> = class
             .body
             .members
             .iter()
             .filter_map(|member| match member {
-                ClassMember::Method(method) if !method.type_only && method.special.is_none() => {
+                ClassMember::Method(method)
+                    if method.at_span.is_none() && method.special.is_none() =>
+                {
                     Some((file.str(method.name_span), method.pub_span.is_some()))
                 }
                 _ => None,

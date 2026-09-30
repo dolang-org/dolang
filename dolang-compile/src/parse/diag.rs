@@ -641,7 +641,7 @@ impl Diagnose for SpecialMethodOutsideClass {
     }
 }
 
-/// `@` within a protocol, whose members and supertypes are type-only already
+/// `@` on a protocol's supertype, which is type-only already
 pub(super) struct RedundantTypeOnly(pub(super) Span);
 
 impl Diagnose for RedundantTypeOnly {
@@ -654,10 +654,7 @@ impl Diagnose for RedundantTypeOnly {
     }
 
     fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(
-            w,
-            "a protocol's members and supertypes are already type-only"
-        )
+        write!(w, "a protocol's supertypes are already type-only")
     }
 }
 

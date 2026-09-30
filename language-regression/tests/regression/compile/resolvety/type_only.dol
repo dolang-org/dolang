@@ -2,6 +2,15 @@
 pub @class Shape
   pub def area self -> Int
   pub def area self scale@Int -> Int
+  @def size self -> Int
+  @def size self scale@Int -> Int
+  pub def size self *scale@Int -> Int
+  @def orphan self -> Int
+# error: type-only def has no implementation
+#   --> type_only.dol:LL:LL
+#    |
+# LL |   @def orphan self -> Int
+#    |        ^^^^^^
 
 pub class Square: @Shape @Missing
   # warning: unbound type name

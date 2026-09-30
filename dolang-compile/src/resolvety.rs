@@ -835,7 +835,8 @@ impl Check<'_> {
             .members
             .iter()
             .filter_map(|member| match member {
-                ClassMember::Method(method) if !method.type_only => {
+                // A protocol's own member is its overloads' implementation
+                ClassMember::Method(method) if method.at_span.is_none() => {
                     Some((method.special.is_some(), self.file.str(method.name_span)))
                 }
                 _ => None,
@@ -844,7 +845,6 @@ impl Check<'_> {
         for member in &mut class.body.members {
             match member {
                 ClassMember::Method(method) => {
-                    // Protocol members have no implementation to find
                     if method.at_span.is_some()
                         && !impls
                             .contains(&(method.special.is_some(), self.file.str(method.name_span)))
