@@ -254,6 +254,9 @@ struct Inference {
     defaulted: Cell<bool>,
     /// Whether a default keeps its literals, as an item projection's key does
     exact: Cell<bool>,
+    /// The default of the binder it instantiates, which it takes when nothing
+    /// bounds it from below
+    fallback: Cell<Option<Term>>,
     support: MonoHashSet<ObligationId>,
     subscribers: MonoHashSet<ObligationId>,
     dirty: Cell<bool>,
@@ -581,6 +584,7 @@ impl<'db> Solver<'db> {
             assignment: Cell::new(None),
             defaulted: Cell::new(false),
             exact: Cell::new(false),
+            fallback: Cell::new(None),
             support: MonoHashSet::new(),
             subscribers: MonoHashSet::new(),
             dirty: Cell::new(false),
@@ -1160,6 +1164,11 @@ impl<'db> Solver<'db> {
     /// A variable's kind
     pub(crate) fn variable_kind(&self, id: InferVarId) -> Kind {
         self.inference[id.0].kind
+    }
+
+    /// The default of the binder a variable instantiates, if it has one
+    pub(crate) fn fallback(&self, id: InferVarId) -> Option<Term> {
+        self.inference[id.0].fallback.get()
     }
 
     /// The least candidate above nonempty lower bounds: their join, or for a
@@ -1795,7 +1804,13 @@ impl<'db> Solver<'db> {
                         self.inference[id.0].exact.set(true);
                     }
                 }
-                let environment = self.intern_environment(view.environment, group);
+                let environment = self.intern_environment(view.environment, group.clone());
+                for (binder, term) in binders.iter().zip(&group) {
+                    if let (Some(default), &Term::Infer(id)) = (binder.default, term) {
+                        let default = self.view(default, environment);
+                        self.inference[id.0].fallback.set(Some(default));
+                    }
+                }
                 self.instantiations
                     .borrow_mut()
                     .insert(obligation, environment);

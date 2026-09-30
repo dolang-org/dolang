@@ -1995,8 +1995,9 @@ fn outputs(results: &[Term], parameters: &[Term]) -> Vec<(Term, Variance)> {
 }
 
 /// Solve, defaulting every unsolved variable whose lower bounds are solved, and,
-/// if `bare`, then any variable without lower bounds to the dynamic type of its
-/// kind, until nothing more can be defaulted. Literals decay as
+/// if `bare`, then any variable without lower bounds to its binder's default, or
+/// without one, to the dynamic type of its kind, until nothing more can be
+/// defaulted. Literals decay as
 /// [`default_where`] decays them.
 fn default_all(
     solver: &mut Solver<'_>,
@@ -2017,12 +2018,9 @@ fn default_all(
             break;
         }
         for id in bare {
-            let unknown = db.unknown_of(solver.variable_kind(id));
-            solver.constrain(
-                solver.closed(unknown),
-                Term::Infer(id),
-                Provenance::default(),
-            );
+            let default = (solver.fallback(id))
+                .unwrap_or_else(|| solver.closed(db.unknown_of(solver.variable_kind(id))));
+            solver.constrain(default, Term::Infer(id), Provenance::default());
         }
         outcomes = default_where(solver, |_| true, roots);
     }
