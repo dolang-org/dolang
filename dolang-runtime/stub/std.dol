@@ -1882,27 +1882,27 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[E
   # assert_eq (d.get :missing: default: "unknown") "unknown"
   # ```
   #
-  pub def get[K, V, U @ {*(K): V, ...}, D = nil]
-    self @ Dict[U]
+  pub def get[K, D = nil]
+    self
     # the key to look up
     key @ K
     # which value to retrieve when a key has multiple values (0-indexed; negative counts from end; default: last)
     instance @ Int = nil
     :default @ D = nil
     :else @ (() -> D) = nil
-  do -> (V | D)
+  do -> (IndexItem[S, K] | D)
     ...
 
   #
   # Adds a key-value pair. Does **not** remove existing values for the same key
   # (multi-map insert).
   #
-  pub def insert
+  pub def insert[K]
     self
     # the key
-    key
+    key @ K
     # the value
-    value
+    value @ AssignItem[S, K]
   do
     ...
 
@@ -1946,15 +1946,15 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[E
   # assert_eq (d.pop "multi" 0) "second"
   # ```
   #
-  pub def pop[D = Empty]
+  pub def pop[K, D = Empty]
     self
     # the key to remove
-    key
+    key @ K
     # which value to remove when a key has multiple values (0-indexed; negative counts from end; default: first)
     instance @ Int = nil
     :default @ D = nil
     :else @ (() -> D) = nil
-  do -> (Value | D)
+  do -> (IndexItem[S, K] | D)
     ...
 
   #
@@ -1963,8 +1963,8 @@ pub class Dict[S @ {...}]: @Index[S] @Assign[S] @Spread[S] @Unpack[S] Iterable[E
   # that key, in that key's insertion order.
   #
   # Missing keys return an empty iterator.
-  #
-  #
+  @def values self -> Iter[Values[S]]
+  @def values[K] self key@K -> Iter[IndexItem[S, K]]
   pub def values self key = nil -> Iter[Values[S]]
     ...
 

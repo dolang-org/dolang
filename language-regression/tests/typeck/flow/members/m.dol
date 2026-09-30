@@ -376,3 +376,29 @@ pub def widened r @ Record[Int, a: Value]
 # A key of unknown type may be any of the dict's keys
 pub def unknown_key d @ Dict[Sym, Str] k
   let _ = d.get $k
+
+# A dict's methods that take a key select by it, as indexing does
+pub def dict_methods d @ Dict[{a: Int, ?b: Str}] k @ (:a: | :b:)
+  # A binder nothing determines takes its default: `get`'s `nil`, `pop`'s
+  # `Empty`
+  let _ = d.get :a:
+  #   ^: flow nil | std.Int
+  let _ = d.get $k default: 0
+  #   ^: flow std.Int | std.Str
+  let _ = d.pop :b:
+  #   ^: flow std.Empty | std.Str
+  let _ = d.values :b:
+  #   ^: flow std.Iter[std.Str]
+  let _ = d.values()
+  #   ^: flow std.Iter[std.Int | std.Str]
+  d.insert :a: 1
+  d.insert :a: "x"
+# error: expected `std.Int`, found `"x"`
+#   --> m.dol:LL:LL
+#    |
+# LL |   d.insert :a: "x"
+#    |                ^^^
+
+pub def tuple_get t @ Tuple[Int, Str]
+  let _ = t.get 0
+  #   ^: flow nil | std.Int | std.Str
