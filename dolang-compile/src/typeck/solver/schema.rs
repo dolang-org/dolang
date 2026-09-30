@@ -844,35 +844,79 @@ impl Solver<'_> {
         for y in &literals {
             let (mut low, mut high) = (0, Some(0));
             let mut last = None;
+            // The items of the key from actual literals, whose count is at most
+            // `literal_high`, and from actual domains
+            let (mut literal, mut literal_high) = (Vec::new(), Some(0));
+            let mut domain = Vec::new();
             for (i, x) in xs.iter().enumerate() {
-                let contributes = if self.literal(x.key)? {
-                    self.same(x.key, y.key)?
-                } else {
-                    self.admits(x.key, y.key)?
+                let is_literal = self.literal(x.key)?;
+                let contributes = match is_literal {
+                    true => self.same(x.key, y.key)?,
+                    false => self.admits(x.key, y.key)?,
                 };
                 if !contributes {
                     continue;
                 }
-                let (lo, hi) = if self.literal(x.key)? {
+                let (lo, hi) = range(x.multiplicity);
+                if is_literal {
                     claimed[i] = true;
-                    range(x.multiplicity)
+                    literal.push(x);
+                    low += lo;
+                    high = high.zip(hi).map(|(a, b)| a + b);
+                    literal_high = literal_high.zip(hi).map(|(a, b)| a + b);
                 } else {
-                    (0, None)
-                };
-                low += lo;
-                high = high.zip(hi).map(|(a, b)| a + b);
+                    domain.push(x);
+                    high = None;
+                }
                 last = Some(x.item);
+            }
+            let (min, max) = range(y.multiplicity);
+            let excess =
+                !open_expected && max.is_some_and(|max| high.is_none_or(|high| high > max));
+            // More items of the key than the literal admits go to a repeated
+            // domain beside it that admits the key
+            let mut absorbing = Vec::new();
+            if excess && overflow.is_none() {
+                for domain in &domains {
+                    if domain.multiplicity == Multiplicity::Repeated
+                        && self.admits(domain.key, y.key)?
+                    {
+                        absorbing.push(*domain);
+                    }
+                }
+            }
+            // When the actual literals' items alone fit the literal, it takes
+            // them and the domain takes the actual domains' items. Otherwise any
+            // item may land in either.
+            let split = !absorbing.is_empty()
+                && low >= min
+                && max.zip(literal_high).is_some_and(|(max, high)| high <= max);
+            for x in &literal {
                 self.derive(obligation, x.value, y.value, Step::Item(x.item));
+            }
+            if !split {
+                for x in &domain {
+                    self.derive(obligation, x.value, y.value, Step::Item(x.item));
+                }
             }
             if open_expected {
                 continue;
             }
-            let (min, max) = range(y.multiplicity);
             if low < min && !open_actual {
                 return Err(Issue::Contradiction(Contradiction::Missing(y.item)));
             }
-            if max.is_some_and(|max| high.is_none_or(|high| high > max)) {
-                return Err(Issue::Contradiction(Contradiction::Excess(last.unwrap())));
+            if excess {
+                if absorbing.is_empty() {
+                    return Err(Issue::Contradiction(Contradiction::Excess(last.unwrap())));
+                }
+                if !split {
+                    domain.append(&mut literal);
+                }
+                for x in domain {
+                    for d in &absorbing {
+                        self.derive(obligation, x.value, d.value, Step::Item(x.item));
+                    }
+                }
             }
         }
         for (i, x) in xs.iter().enumerate() {
