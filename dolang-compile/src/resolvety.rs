@@ -1,6 +1,6 @@
 //! Resolve the names within types, and warn about types that cannot mean what they say.
 //!
-//! This runs only when documenting, after elaboration. It must not change anything
+//! This runs only when documenting or type checking, after elaboration. It must not change anything
 //! lowering reads, so it records resolutions on type names alone and marks bindings
 //! only as named by a type. A resolution counts frames outward, each a binder group or
 //! a lexical scope, and the document index pushes the same frames, so its depth means
@@ -18,10 +18,10 @@ use dolang_util::intern::BinTable;
 use crate::{
     Compiler,
     ast::{
-        AliasBody, Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, Def, DictElem, Expr,
-        ExprBody, FieldInit, For, Function, Ident, If, ImportElement, LValue, Origin, Param,
-        PatIdent, Pattern, PrimStmt, Res, Root, Stmt, TypeArg, TypeDecl, TypeEntry, TypeExpr,
-        TypeRes, Var, implicit_tys_mut, visit::Node,
+        AliasBody, Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, Decorator, Def,
+        DictElem, Expr, ExprBody, FieldInit, For, Function, Ident, If, ImportElement, LValue,
+        Origin, Param, PatIdent, Pattern, PrimStmt, Res, Root, Stmt, TypeArg, TypeDecl, TypeEntry,
+        TypeExpr, TypeRes, Var, implicit_tys_mut, visit::Node,
     },
     diag::Severity,
     source::{Diagnose, Diags, File, Span},
@@ -101,6 +101,25 @@ impl Diagnose for OverloadWithoutImpl {
 
     fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "type-only def has no implementation")
+    }
+
+    fn span(&self) -> Span {
+        self.0
+    }
+}
+
+struct RepeatedMethod(Span);
+
+impl Diagnose for RepeatedMethod {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "method is already declared; declare overloads with `@def`"
+        )
     }
 
     fn span(&self) -> Span {
@@ -842,6 +861,30 @@ impl Check<'_> {
                 _ => None,
             })
             .collect();
+        // Methods of one name merge only through their decorators, as a getter and
+        // a setter do. A plain method's decorators only say its namespace.
+        let mut plain = HashSet::new();
+        for member in &class.body.members {
+            let ClassMember::Method(method) = member else {
+                continue;
+            };
+            let namespace = |decorator: &Decorator| {
+                matches!(&decorator.expr, Expr::Ident(ident)
+                    if matches!(self.file.str(ident.span), "class" | "static"))
+            };
+            if method.at_span.is_some() || !method.decorators.iter().all(namespace) {
+                continue;
+            }
+            let instance = method.decorators.is_empty();
+            let key = (
+                method.special.is_some(),
+                self.file.str(method.name_span),
+                instance,
+            );
+            if !plain.insert(key) {
+                self.diags.push(RepeatedMethod(method.name_span));
+            }
+        }
         for member in &mut class.body.members {
             match member {
                 ClassMember::Method(method) => {

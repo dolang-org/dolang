@@ -1,0 +1,29 @@
+# document
+# Runtime class creation rejects a repeated member too, so the class is never made
+def _never()
+  class Counter
+    field count = 0
+
+    #[getter]
+    pub def value self
+      self.#count
+
+    #[setter]
+    pub def value self value
+      self.#count = value
+
+    pub def reset self
+      self.#count = 0
+
+    #[class]
+    pub def reset _cls
+      nil
+
+    pub def reset self
+      # error: method is already declared; declare overloads with `@def`
+      #   --> repeated_method.dol:LL:LL
+      #    |
+      # LL |     pub def reset self
+      #    |             ^^^^^
+      self.#count = 1
+  Counter

@@ -2,6 +2,11 @@
 pub @class Shape
   pub def area self -> Int
   pub def area self scale@Int -> Int
+  # error: method is already declared; declare overloads with `@def`
+  #   --> type_only.dol:LL:LL
+  #    |
+  # LL |   pub def area self scale@Int -> Int
+  #    |           ^^^^
   @def size self -> Int
   @def size self scale@Int -> Int
   pub def size self *scale@Int -> Int
