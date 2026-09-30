@@ -1,0 +1,110 @@
+# A call through an overloaded function takes the one overload its arguments
+# don't contradict. Without exactly one, it takes the implementation's
+# signature, which is dynamic here.
+
+import std:
+  - @Fmt
+import lib:
+  - double
+
+pub class Picker
+  @def pick self x @ Int -> Int
+  @def pick self x @ Str -> Str
+  pub def pick _self x
+    x
+
+  @def each self n @ Int f @ (Int -> Str) -> Str
+  @def each self s @ Str f @ (Str -> Int) -> Int
+  pub def each _self x _f
+    x
+
+  @def tag self n @ Int xs @ Array[(:a: | :b:)] -> Int
+  @def tag self s @ Str xs @ Array[Str] -> Str
+  pub def tag _self x _xs
+    x
+
+pub def indexed
+  a @ Array[Int]
+  t @ Tuple[Int, Str]
+  r @ Tuple[...Str]
+  i @ Int
+  b @ BinBuf
+  f @ Fmt
+do
+  let _ = a[0]
+  #   ^: flow std.Int
+  let _ = a[1..3]
+  #   ^: flow std.Array[std.Int]
+  let _ = r[i]
+  #   ^: flow std.Str
+  # An `Int` doesn't select from fixed positions, so no overload takes it
+  let _ = t[i]
+  #   ^: flow Unknown
+  let _ = t[0]
+  #   ^: flow std.Int
+  let _ = b[0]
+  #   ^: flow std.Int
+  b[0] = 1
+  # A call no overload takes falls back, unchecked
+  b[0] = "x"
+  let _ = f[0]
+  #   ^: flow std.FmtSegment
+
+pub def chosen p @ Picker x u @ (Int | Str)
+  let _ = p.pick 1
+  #   ^: flow std.Int
+  let _ = p.pick "s"
+  #   ^: flow std.Str
+  # A dynamic argument leaves both overloads, and a union argument neither
+  let _ = p.pick $x
+  #   ^: flow Unknown
+  let _ = p.pick $u
+  #   ^: flow Unknown
+  # What's expected doesn't choose, but is checked against what's chosen
+  let _s @ Str = p.pick 1
+  # error: `std.Int` does not fit the annotation `std.Str`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _s @ Str = p.pick 1
+  #    |                  ^^^^^^^^
+
+  # A block and a collection are expected to be what the chosen overload takes
+  let _ = p.each 1 do |v|
+    let _ = v
+    #       ^: flow std.Int
+    "a"
+  let _ = p.tag 1 [:a:]
+  #   ^: flow std.Int
+  # A block's result doesn't choose, but is checked against what's chosen
+  let _ = p.each 1 do |v| v
+  #   ^: flow std.Str
+# error: expected `(std.Int) <m.chosen.#0 >m.chosen.#1 -> std.Str`, found `(std.Int) <m.chosen.#0 >m.chosen.#1 -> std.Int`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ = p.each 1 do |v| v
+#    |                    ^^^^^^^^
+
+@def twice x @ Int -> Int
+@def twice x @ Str -> Str
+pub def twice x
+  x
+
+pub def apply f @ (Int -> Int) -> Int
+  ...
+
+# An overloaded def's value is the def, which a call through it, however it's
+# reached, chooses an overload of. Anything else relates it as its implementation.
+pub def functions()
+  let _ = twice 1
+  #   ^: flow std.Int
+  let _ = twice "s"
+  #   ^: flow std.Str
+  let t = twice
+  let _ = t
+  #   ^: flow m.twice
+  let _ = t 1
+  #   ^: flow std.Int
+  let _ = double "s"
+  #   ^: flow std.Str
+  let _ = apply $twice
+  #   ^: flow std.Int

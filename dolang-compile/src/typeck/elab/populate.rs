@@ -57,16 +57,23 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
                 methods.iter().position(|method| method.at_span.is_none())
             }
             _ => None,
-        }
-        .unwrap_or(0);
-        let mut all = Vec::new();
+        };
+        // Without an implementation, which resolution reports, the first overload
+        // holds the function's own ID
+        let mut signatures = Vec::new();
         for sig in 0..count {
-            let decl = if sig == primary { id } else { db.allocate() };
+            let decl = if sig == primary.unwrap_or(0) {
+                id
+            } else {
+                db.allocate()
+            };
             sig_decls.insert((id, sig), decl);
-            all.push(decl);
+            if Some(sig) != primary {
+                signatures.push(decl);
+            }
         }
         if count > 1 {
-            overloads.push((id, all));
+            overloads.push((id, signatures));
         }
     }
     for (id, all) in overloads {

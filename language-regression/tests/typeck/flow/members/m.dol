@@ -1,7 +1,7 @@
 # Member use is checked through the member lookup, as the runtime makes it: a
 # method call passes the receiver first, a class call runs `(init)`, and indexing
-# and operators call special methods. A receiver the lookup can't decide, and an
-# overloaded method, are left dynamic.
+# and operators call special methods. A receiver the lookup can't decide is left
+# dynamic, and a call through an overloaded method takes one of its overloads.
 
 import std:
   - @Index
@@ -136,7 +136,7 @@ pub def methods p @ Point
   #       ^: flow m.Point
   let k = p.pick 1
   let _ = k
-  #       ^: flow Unknown
+  #       ^: flow std.Int
 
 pub def generic b @ Box[Int]
   let i = b.item

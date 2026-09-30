@@ -192,7 +192,8 @@ fn members_are_found_in_mro_order_with_their_class_arguments() {
     let FoundKind::Method(signatures) = get.kind else {
         panic!("a method")
     };
-    let [signature] = signatures[..] else {
+    let (true, Some(signature)) = (signatures.overloads.is_empty(), signatures.implementation)
+    else {
         panic!("one signature")
     };
     let expected = function(&db, &[base_int], int);
@@ -256,7 +257,11 @@ fn private_members_are_their_class_own() {
         panic!("a getter")
     };
     let expected = function(&db, &[config], str);
-    assert!(same_type(&mut s, getter[0], expected));
+    assert!(same_type(
+        &mut s,
+        getter.implementation.expect("a getter"),
+        expected
+    ));
 
     let field = found(s.private_member(s.closed(sub), config_id, private(&db, "port")));
     assert!(!field.public);
@@ -401,7 +406,7 @@ fn every_signature_of_an_overloaded_method_is_applied() {
     let mut boxed = Class::new(&mut db, "Box", vec![binder(Variance::Invariant)]);
     let pick = boxed.function(&mut db, vec![], &[int], t);
     let overload = boxed.function(&mut db, vec![], &[str], str);
-    db.set_overloads(pick, vec![overload, pick]);
+    db.set_overloads(pick, vec![overload]);
     boxed.method(key(&db, "pick"), pick, Scope::Instance);
     // map[U] self f @ (T -> U) -> U
     let u = reference(&db, 0, 1);
@@ -418,9 +423,14 @@ fn every_signature_of_an_overloaded_method_is_applied() {
     let FoundKind::Method(signatures) = pick.kind else {
         panic!("a method")
     };
-    assert_eq!(signatures.len(), 2);
+    let [overload] = signatures.overloads[..] else {
+        panic!("one overload")
+    };
+    let implementation = signatures.implementation.expect("an implementation");
     let expected = function(&db, &[box_int, int], int);
-    assert!(same_type(&mut s, signatures[1], expected));
+    assert!(same_type(&mut s, implementation, expected));
+    let expected = function(&db, &[box_int, str], str);
+    assert!(same_type(&mut s, overload, expected));
 
     // The method's own binder is still instantiated at the call
     let map = found(s.member(s.closed(box_int), key(&db, "map")));
@@ -433,7 +443,8 @@ fn every_signature_of_an_overloaded_method_is_applied() {
         CallArgument::Positional(s.closed(show)),
     ];
     let call = s.call(&args, r, None, None);
-    s.constrain(signatures[0], call, Provenance::default());
+    let map = signatures.implementation.expect("an implementation");
+    s.constrain(map, call, Provenance::default());
     s.solve();
     let outcomes = default_all(&mut s);
     assert!(

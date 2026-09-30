@@ -866,16 +866,27 @@ impl Database {
         }
     }
 
-    /// The signatures of an overloaded function, in source order, including its
-    /// own. Empty for a function with one signature.
+    /// The `@def` signatures of an overloaded function, in source order. Empty for
+    /// a function with one signature. The function's own ID is its implementation,
+    /// unless it's among these: then it has none (see [`Self::implementation`]).
     pub(crate) fn overloads(&self, id: DeclId) -> &[DeclId] {
         self.overloads.get(&id).map_or(&[], |overloads| overloads)
     }
 
-    /// Record the signatures of an overloaded function once, before sealing.
+    /// A function's implementation signature: its own ID, unless it's overloaded
+    /// without one
+    pub(crate) fn implementation(&self, id: DeclId) -> Option<DeclId> {
+        (!self.overloads(id).contains(&id)).then_some(id)
+    }
+
+    /// Record the `@def` signatures of an overloaded function once, before
+    /// sealing.
     pub(crate) fn set_overloads(&mut self, id: DeclId, overloads: Vec<DeclId>) {
         self.require_open();
-        assert!(overloads.contains(&id), "overloads omit their function");
+        assert!(
+            !overloads.is_empty(),
+            "an overloaded function has overloads"
+        );
         assert!(
             self.overloads.insert(id, overloads.into()).is_none(),
             "overloads already set: {id:?}"

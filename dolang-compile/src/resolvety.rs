@@ -96,7 +96,7 @@ struct OverloadWithoutImpl(Span);
 
 impl Diagnose for OverloadWithoutImpl {
     fn severity(&self) -> Severity {
-        Severity::Warning
+        Severity::Error
     }
 
     fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
@@ -617,7 +617,7 @@ impl Check<'_> {
         self.unused_types(&frame);
     }
 
-    /// Warn about a type-only def that no def of the same name among its block's
+    /// Report a type-only def that no def of the same name among its block's
     /// statements implements.
     fn overloads<T: Element>(&self, elems: &[T]) {
         let impls: HashSet<&str> = elems

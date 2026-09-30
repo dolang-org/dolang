@@ -13,14 +13,14 @@ pub class Square: @Shape @Missing
   pub def area _self
     1
   @def perimeter self -> Int
-# warning: type-only def has no implementation
+# error: type-only def has no implementation
 #   --> type_only.dol:LL:LL
 #    |
 # LL |   @def perimeter self -> Int
 #    |        ^^^^^^^^^
 
 @def lonely x @ Shape -> Shape
-# warning: type-only def has no implementation
+# error: type-only def has no implementation
 #   --> type_only.dol:LL:LL
 #    |
 # LL | @def lonely x @ Shape -> Shape

@@ -53,8 +53,9 @@ fixed by syntax; until decorator applications are evaluated, std's `getter` and
 `setter`, found by what their names resolve to, make a method half of a computed
 field's property, and any other decorator leaves a member of unknown type. Each
 implementation of a method name is a function of its own, so a getter and a
-setter are two. An overloaded function records each of its signatures, which are
-declarations of their own, with its first implementation. Unit IDs
+setter are two. An overloaded function records its `@def` signatures, which are
+declarations of their own; its own ID is its implementation, and without one,
+which name resolution reports, its first `@def`. Unit IDs
 are allocated from a counter and checked when declarations are populated.
 Filenames and local symbol mappings belong to upper layers. Ordinary symbols are
 interned by spelling; callers can allocate fresh symbols separately when source
@@ -379,9 +380,10 @@ from its own and the class's arguments are applied, leaving it quantified over
 the rest: `map[U] self f @ (T -> U) -> U` found through `Box[Int]` is
 `[U] (Box[Int], (Int -> U)) -> U`. Its receiver parameter stays, so a call
 passes the receiver as its first argument, and each signature of an overloaded
-method is applied alike. A property's getter and setter are methods. A
-result says whether the member is public, since only a public member can be
-replaced in a subclass, so only access to one may dispatch.
+method, its overloads and its implementation, is applied alike. A property's
+getter and setter are methods. A result says whether the member is public, since
+only a public member can be replaced in a subclass, so only access to one may
+dispatch.
 
 ### Assignments and fixed point
 
@@ -678,7 +680,7 @@ only reified types leave it:
 
 - A call constrains its callee below `Solver::call_items` of its arguments,
   passing the caller's declared channels. A callee that isn't a function type
-  or a union of them, and an overloaded def, give `Unknown`. What its arguments
+  or a union of them gives `Unknown`. What its arguments
   are expected to be comes from the callee's parameters. A parameter that
   mentions the callee's binders gives an expectation only once the call is
   solved, so a collection literal or call passed to it is held back: a
@@ -689,6 +691,17 @@ only reified types leave it:
   expecting its parameter, if what's forced or chosen solves it. The pre-solve
   never makes a variable dynamic, so a binder only a held argument determines
   gives it no expectation.
+- A call through an overloaded function, a method or a def, chooses among its
+  `@def` overloads, a stopgap until union calls are solved (#742). Its
+  arguments are evaluated once, each one that takes an expectation held back,
+  and each overload is pre-solved without the expected result, then defaulted
+  as the call's own solve would be, so a key still to be solved can't hide
+  one the overload can't select by. A `do` block's result is a fresh variable
+  there even once it's known, so a block never rejects an overload. The one
+  overload not contradicted, if exactly one is, is the callee; otherwise the
+  implementation is, or `Unknown` without one. Only the implementation's own
+  check reports a call no overload takes (#821). An overloaded def's value is
+  `Type::Decl` of it, which the solver relates as its implementation's type.
 - A comprehension's items are passed as often as its tree says. The items of an
   outermost `for`, with everything nested in it, join into one repeated item of
   each kind: `*T` for positional items, `*k: V` for each literal key, and
@@ -731,8 +744,8 @@ only reified types leave it:
   `(rmod)`) otherwise. `==`, `!=` and `!` are `Bool`, and the comparisons
   require `(lt)` and are `Bool`. A missing member, and a
   read or write its kind doesn't allow, are reported. A lookup that can't
-  decide, such as on a union receiver, is an unresolved check, and an overloaded
-  method is dynamic until overloads are resolved (#742).
+  decide, such as on a union receiver, is an unresolved check. An overloaded
+  method is dynamic except where it's called.
 - A class object is called as its class-level `(call)`, if it has one, and
   otherwise as its constructor: `(init)`, looked up on the class applied to its
   rigids, without its receiver and giving the instance, with the rigids

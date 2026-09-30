@@ -63,6 +63,9 @@ struct Rule<'s, 'a> {
     /// The variables standing for the arguments held back, by index into
     /// [`Values::held`]
     held: Vec<(usize, Term)>,
+    /// Whether a `do` block's result is left to a variable even once it's known,
+    /// so that choosing an overload doesn't depend on it
+    blind: bool,
 }
 
 impl<'a> Rule<'_, 'a> {
@@ -78,7 +81,11 @@ impl<'a> Rule<'_, 'a> {
 
     /// A `do` block's function type, with a fresh variable in each hole
     fn lambda(&mut self, lambda: &Lambda) -> Term {
-        let group = (lambda.holes.iter())
+        let (ty, holes) = match (self.blind, &lambda.blinded) {
+            (true, Some((ty, holes))) => (*ty, holes),
+            _ => (lambda.ty, &lambda.holes),
+        };
+        let group = (holes.iter())
             .map(|&hole| {
                 let term = self.solver.infer();
                 match hole {
@@ -91,7 +98,7 @@ impl<'a> Rule<'_, 'a> {
         let environment = self
             .solver
             .environment(self.solver.empty_environment(), group);
-        self.solver.view(lambda.ty, environment)
+        self.solver.view(ty, environment)
     }
 
     /// A fresh variable standing for an argument held back
@@ -333,6 +340,8 @@ pub(super) struct Lambda {
     func: FuncId,
     ty: TypeId,
     holes: Vec<Hole>,
+    /// Its type and holes with a hole for its result, once that's known
+    blinded: Option<(TypeId, Vec<Hole>)>,
 }
 
 #[derive(Clone, Copy)]
@@ -644,6 +653,7 @@ impl<'a> Flow<'a, '_> {
                 passed: Vec::new(),
                 pending: Vec::new(),
                 held: Vec::new(),
+                blind: false,
             };
             let results = build(&mut rule);
             let checks = rule.checks;
@@ -869,6 +879,17 @@ impl<'a> Flow<'a, '_> {
         if let Some(class) = self.class_of(callee_type) {
             return self.construct(at, state, operands, callee_type, class, call);
         }
+        if let Some((overloads, implementation)) = self.overloaded(callee_type) {
+            return self.call_overloaded(
+                at,
+                state,
+                operands,
+                &overloads,
+                Some(implementation),
+                &[],
+                call,
+            );
+        }
         self.call_with(at, state, operands, callee_type, &[], call)
     }
 
@@ -883,28 +904,69 @@ impl<'a> Flow<'a, '_> {
         receivers: &[(TypeId, Span)],
         call: Call<'_>,
     ) -> TypeId {
-        let Call {
-            args,
-            expected,
-            span,
-        } = call;
-        let bottom = self.db.bottom();
-        let unknown = self.db.unknown();
-        let (input, output) = self.channels(at);
         let mut params = self.params(callee_type).unwrap_or_default();
         let skipped = receivers.len().min(params.positional.len());
         params.positional.drain(..skipped);
         let generic = matches!(self.db.ty(callee_type), Type::Quantified { .. });
-        let mut values = self.values(at, state, operands, args, Some(&params), true, generic);
-        values.never |= receivers.iter().any(|&(ty, _)| ty == bottom);
-        values.values.splice(
-            0..0,
-            receivers.iter().map(|&(ty, span)| Placed {
-                value: Value::Pos(ty, span),
-                multiplicity: Multiplicity::Required,
-                group: None,
-            }),
-        );
+        let mut values = self.values(at, state, operands, call.args, Some(&params), true, generic);
+        received(&mut values, receivers, self.db.bottom());
+        self.finish_call(at, state, callee_type, values, call)
+    }
+
+    /// A call of an overloaded function, passing `receivers` as
+    /// [`Self::call_with`] does. The call takes the one overload whose pre-solve
+    /// isn't contradicted, if exactly one is, and otherwise `implementation`, or is
+    /// dynamic without one. Every argument that takes an expectation is held back
+    /// until it's chosen. The expected result doesn't choose, so a call that
+    /// doesn't give what's expected is reported against its overload.
+    ///
+    /// A stopgap for resolving overloads with union calls in the solver: the
+    /// pre-solve sees a `do` block's result only as a variable, even once it's
+    /// known, so an overload isn't rejected by what a block gives it.
+    #[expect(clippy::too_many_arguments, reason = "a call's parts")]
+    pub(super) fn call_overloaded(
+        &mut self,
+        at: At,
+        state: &mut State,
+        operands: &mut VecDeque<TypeId>,
+        overloads: &[TypeId],
+        implementation: Option<TypeId>,
+        receivers: &[(TypeId, Span)],
+        call: Call<'_>,
+    ) -> TypeId {
+        let mut values = self.values(at, state, operands, call.args, None, true, true);
+        received(&mut values, receivers, self.db.bottom());
+        let mut chosen = None;
+        if !values.never {
+            let (input, output) = self.channels(at);
+            let mut survivors = (overloads.iter()).filter(|&&overload| {
+                let (_, _, contradicted) =
+                    self.presolve(overload, &values, input, output, None, call.span, true);
+                !contradicted
+            });
+            if let (Some(&survivor), None) = (survivors.next(), survivors.next()) {
+                chosen = Some(survivor);
+            }
+        }
+        let callee = chosen.or(implementation).unwrap_or(self.db.unknown());
+        self.finish_call(at, state, callee, values, call)
+    }
+
+    /// Finish a call of `callee` with its arguments evaluated: release the ones
+    /// held back, with what the call's pre-solve expects of them, and check the
+    /// call
+    fn finish_call(
+        &mut self,
+        at: At,
+        state: &mut State,
+        callee_type: TypeId,
+        mut values: Values<'_>,
+        call: Call<'_>,
+    ) -> TypeId {
+        let Call { expected, span, .. } = call;
+        let bottom = self.db.bottom();
+        let unknown = self.db.unknown();
+        let (input, output) = self.channels(at);
         let callable = self.callable(callee_type);
         let spread = self.designated(Designated::Spread);
         if !values.held.is_empty() {
@@ -968,31 +1030,12 @@ impl<'a> Flow<'a, '_> {
         expected: Option<TypeId>,
         span: Span,
     ) -> Vec<Option<TypeId>> {
-        let spread = self.designated(Designated::Spread);
-        let attempt = |seed: bool| {
-            let mut solver = self.solver();
-            let mut rule = Rule {
-                solver: &mut solver,
-                db: self.db,
-                checks: Vec::new(),
-                passed: Vec::new(),
-                pending: Vec::new(),
-                held: Vec::new(),
-            };
-            let result = call_constraint(&mut rule, values, spread, span, callee, input, output);
-            let held = rule.held;
-            if let (true, Some(expected)) = (seed, expected) {
-                solver.constrain(result, solver.closed(expected), Provenance::default());
-            }
-            let contradicted =
-                (solver.solve().iter()).any(|outcome| outcome.status == Status::Contradicted);
-            (solver, held, contradicted)
-        };
+        let attempt = |seed| self.presolve(callee, values, input, output, seed, span, false);
         let mut expectations = vec![None; values.held.len()];
-        let (mut solver, mut held, contradicted) = attempt(true);
+        let (mut solver, mut held, contradicted) = attempt(expected);
         if contradicted {
             let contradicted;
-            (solver, held, contradicted) = attempt(false);
+            (solver, held, contradicted) = attempt(None);
             if contradicted {
                 return expectations;
             }
@@ -1004,6 +1047,52 @@ impl<'a> Flow<'a, '_> {
             expectations[index] = expectation(&solver, term);
         }
         expectations
+    }
+
+    /// Solve a call of `callee` with a fresh variable for each argument held back,
+    /// and `expected`, if given, as an upper bound on its result. Returns the
+    /// solver, each held argument's variable by its index into [`Values::held`],
+    /// and whether anything was contradicted.
+    ///
+    /// With `choosing`, it decides whether an overload takes the call: a fresh
+    /// variable also stands for each `do` block's result, and what's left
+    /// unsolved is defaulted, as the call's own solve would, so that an overload
+    /// isn't taken only because a key it can't select by is still a variable.
+    #[expect(clippy::too_many_arguments, reason = "a call's parts")]
+    fn presolve(
+        &self,
+        callee: TypeId,
+        values: &Values<'_>,
+        input: Option<TypeId>,
+        output: Option<TypeId>,
+        expected: Option<TypeId>,
+        span: Span,
+        choosing: bool,
+    ) -> (Solver<'a>, Vec<(usize, Term)>, bool) {
+        let spread = self.designated(Designated::Spread);
+        let mut solver = self.solver();
+        let mut rule = Rule {
+            solver: &mut solver,
+            db: self.db,
+            checks: Vec::new(),
+            passed: Vec::new(),
+            pending: Vec::new(),
+            held: Vec::new(),
+            blind: choosing,
+        };
+        let result = call_constraint(&mut rule, values, spread, span, callee, input, output);
+        let held = rule.held;
+        if let Some(expected) = expected {
+            solver.constrain(result, solver.closed(expected), Provenance::default());
+        }
+        let contradicted = |outcomes: &[Outcome]| {
+            (outcomes.iter()).any(|outcome| outcome.status == Status::Contradicted)
+        };
+        let mut rejected = contradicted(&solver.solve());
+        if choosing && !rejected {
+            rejected = contradicted(&default_where(&mut solver, |_| true, None));
+        }
+        (solver, held, rejected)
     }
 
     /// Evaluate the arguments held back, each expecting what `expectations` gives
@@ -1099,26 +1188,41 @@ impl<'a> Flow<'a, '_> {
         };
         let input = channel(signature.input, declared.input);
         let output = channel(signature.output, declared.output);
+        let params = db.intern(Type::Schema(schema.into()));
+        let function = |result| {
+            db.intern(Type::Function(Function {
+                params,
+                result,
+                input,
+                output,
+            }))
+        };
+        let mut blinded = None;
         let result = match signature.result {
             Some(var) => match self.joined(var, at) {
                 ty if ty == db.bottom() => hole(&mut holes, Hole::Result),
-                ty => ty,
+                ty => {
+                    let mut holes = holes.clone();
+                    let result = hole(&mut holes, Hole::Result);
+                    blinded = Some((function(result), holes));
+                    ty
+                }
             },
             None => declared.result,
         };
-        let ty = db.intern(Type::Function(Function {
-            params: db.intern(Type::Schema(schema.into())),
-            result,
-            input,
-            output,
-        }));
+        let ty = function(result);
         let unknown = db.unknown();
         for (item, &var) in pattern.iter().zip(&signature.params) {
             if let (PatternKey::Rest(_), Some(var)) = (&item.key, var) {
                 self.join(var, unknown);
             }
         }
-        Some(Lambda { func, ty, holes })
+        Some(Lambda {
+            func,
+            ty,
+            holes,
+            blinded,
+        })
     }
 
     /// The parameter types a callee's signature alone gives, which don't mention its
@@ -1934,6 +2038,20 @@ fn default_where(
         outcomes = solver.solve();
     }
     outcomes
+}
+
+/// Pass `receivers` before a call's own arguments. A receiver that never has a
+/// value means the call never happens.
+fn received(values: &mut Values<'_>, receivers: &[(TypeId, Span)], bottom: TypeId) {
+    values.never |= receivers.iter().any(|&(ty, _)| ty == bottom);
+    values.values.splice(
+        0..0,
+        receivers.iter().map(|&(ty, span)| Placed {
+            value: Value::Pos(ty, span),
+            multiplicity: Multiplicity::Required,
+            group: None,
+        }),
+    );
 }
 
 /// The constraint of a call: its callee below the function type its arguments

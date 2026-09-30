@@ -908,9 +908,10 @@ fn members_and_overloads_are_checked() {
         let id = db.allocate();
         db.set_overloads(id, vec![]);
     });
-    db.set_overloads(method, vec![overload, method]);
+    db.set_overloads(method, vec![overload]);
     db.seal();
-    assert_eq!(db.overloads(method), [overload, method]);
+    assert_eq!(db.overloads(method), [overload]);
+    assert_eq!(db.implementation(method), Some(method));
     assert!(db.overloads(overload).is_empty());
     assert_eq!(db.declarations().count(), 3);
     assert_eq!(db.declaration(class).members.len(), 2);

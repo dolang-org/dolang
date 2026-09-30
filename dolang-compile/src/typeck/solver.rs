@@ -2285,7 +2285,7 @@ mod narrow;
 mod schema;
 
 pub(crate) use lattice::Widening;
-pub(crate) use member::{FoundKind, Lookup};
+pub(crate) use member::{FoundKind, Lookup, Signatures};
 pub(crate) use narrow::Target as NarrowTarget;
 
 #[cfg(test)]

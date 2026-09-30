@@ -2,8 +2,9 @@
 //! operators, ranges and constructors. Each finds its member with the solver's
 //! lookup ([`Solver::member`]) and checks the use as the runtime makes it: as a
 //! call through the member, passing the receiver first to a method. A receiver
-//! the lookup can't decide, such as a union, is an explicit residual, and an
-//! overloaded method is dynamic until overloads are resolved.
+//! the lookup can't decide, such as a union, is an explicit residual. A call
+//! through an overloaded method chooses among its overloads (see
+//! [`Flow::call_overloaded`]); any other use of one is dynamic.
 //!
 //! [`Solver::member`]: crate::typeck::solver::Solver::member
 
@@ -20,7 +21,7 @@ use crate::{
     typeck::{
         cfg::{Expr, ExprKind, Member},
         elab::Designated,
-        solver::{FoundKind, Issue, Lookup},
+        solver::{FoundKind, Issue, Lookup, Signatures},
         r#type::{
             Argument, Binder, BoundRef, DeclId, Element, Function, Intrinsic, Kind, Literal,
             MemberKey, Multiplicity, Scope, Type, TypeId,
@@ -28,9 +29,23 @@ use crate::{
     },
 };
 
-/// A method's one signature, with its receiver parameter. `None` if it's
-/// overloaded, which isn't resolved yet, so a call through it is dynamic.
-type Signature = Option<TypeId>;
+/// A method's signatures, each with its receiver parameter. A call through an
+/// overloaded method chooses among its overloads (see [`Flow::call_overloaded`]);
+/// any other use of one is dynamic.
+#[derive(Clone, Default)]
+struct Signature {
+    /// Its `@def` signatures, empty unless it's overloaded
+    overloads: Vec<TypeId>,
+    /// Its implementation's signature, if it has one
+    implementation: Option<TypeId>,
+}
+
+impl Signature {
+    /// Its one signature, unless it's overloaded
+    fn single(&self) -> Option<TypeId> {
+        self.overloads.is_empty().then_some(self.implementation)?
+    }
+}
 
 /// A receiver's member, as a use sees it
 enum Resolved {
@@ -54,8 +69,9 @@ enum Resolved {
 
 /// How a class object is called
 enum Constructor {
-    /// Its class-level `(call)`, which is passed the class object first
-    Call(Signature),
+    /// Its class-level `(call)`, which is passed the class object first. `None`
+    /// if it's overloaded.
+    Call(Option<TypeId>),
     /// Instantiation, running `(init)`: a function from `(init)`'s arguments to
     /// the instance, quantified over the class's binders. `None` if `(init)` is
     /// overloaded or its signature doesn't take a receiver.
@@ -97,16 +113,31 @@ impl Flow<'_, '_> {
                 return Resolved::Dynamic;
             }
         };
-        let signature = |kind: &FoundKind| match kind {
-            FoundKind::Method(signatures) => match signatures[..] {
-                [signature] => solver.reify(signature).ok(),
-                _ => None,
-            },
-            _ => None,
+        // A method whose signatures don't all reify is dynamic
+        let signature = |signatures: &Signatures| {
+            let reify = |&term| solver.reify(term).ok();
+            let overloads = (signatures.overloads.iter())
+                .map(reify)
+                .collect::<Option<_>>();
+            let implementation = signatures.implementation.as_ref().map(reify);
+            match (overloads, implementation) {
+                (Some(overloads), None) => Signature {
+                    overloads,
+                    implementation: None,
+                },
+                (Some(overloads), Some(Some(implementation))) => Signature {
+                    overloads,
+                    implementation: Some(implementation),
+                },
+                _ => Signature::default(),
+            }
         };
-        let signatures = |signatures: Option<Vec<_>>| {
-            signatures.map(|signatures| signature(&FoundKind::Method(signatures)))
+        let method = |kind: &FoundKind| match kind {
+            FoundKind::Method(signatures) => signature(signatures),
+            _ => Signature::default(),
         };
+        let signatures =
+            |signatures: Option<Signatures>| signatures.map(|signatures| signature(&signatures));
         match lookup {
             Lookup::Found(found) => match found.kind {
                 FoundKind::Field(ty) => solver.reify(ty).map_or(Resolved::Dynamic, Resolved::Field),
@@ -118,7 +149,7 @@ impl Flow<'_, '_> {
                         Scope::Class => true,
                         Scope::Static => false,
                     };
-                    Resolved::Method(signature(kind), bound)
+                    Resolved::Method(method(kind), bound)
                 }
                 FoundKind::Property { getter, setter } => Resolved::Property {
                     getter: signatures(getter),
@@ -127,8 +158,8 @@ impl Flow<'_, '_> {
                 FoundKind::Unknown => Resolved::Dynamic,
             },
             Lookup::Fallback { get, set } => Resolved::Fallback {
-                get: get.map(|found| signature(&found.kind)),
-                set: set.map(|found| signature(&found.kind)),
+                get: get.map(|found| method(&found.kind)),
+                set: set.map(|found| method(&found.kind)),
             },
             Lookup::Missing => Resolved::Missing,
             Lookup::Dynamic => Resolved::Dynamic,
@@ -170,8 +201,33 @@ impl Flow<'_, '_> {
         self.db.intern(Type::Literal(Literal::Sym(member.key.name)))
     }
 
-    fn signature_callee(&self, signature: Signature) -> TypeId {
-        signature.unwrap_or(self.db.unknown())
+    /// A call through a method's signatures, passing `receivers` first
+    fn call_signature(
+        &mut self,
+        at: At,
+        state: &mut State,
+        operands: &mut VecDeque<TypeId>,
+        signature: &Signature,
+        receivers: &[(TypeId, Span)],
+        call: Call<'_>,
+    ) -> TypeId {
+        let Signature {
+            overloads,
+            implementation,
+        } = signature;
+        if overloads.is_empty() {
+            let callee = implementation.unwrap_or(self.db.unknown());
+            return self.call_with(at, state, operands, callee, receivers, call);
+        }
+        self.call_overloaded(
+            at,
+            state,
+            operands,
+            overloads,
+            *implementation,
+            receivers,
+            call,
+        )
     }
 
     /// Reading a member: a field's value, a getter's or `(get)`'s result, or a
@@ -206,26 +262,22 @@ impl Flow<'_, '_> {
                 unknown
             }
             Resolved::Field(ty) => ty,
-            Resolved::Method(None, _) => unknown,
-            Resolved::Method(Some(signature), true) => {
-                self.bound_method(signature).unwrap_or(unknown)
-            }
-            Resolved::Method(Some(signature), false) => signature,
+            Resolved::Method(signature, bound) => match (signature.single(), bound) {
+                (None, _) => unknown,
+                (Some(signature), true) => self.bound_method(signature).unwrap_or(unknown),
+                (Some(signature), false) => signature,
+            },
             Resolved::Property {
                 getter: Some(getter),
                 ..
-            } => {
-                let callee = self.signature_callee(getter);
-                self.call_with(at, state, operands, callee, &leading, call)
-            }
+            } => self.call_signature(at, state, operands, &getter, &leading, call),
             Resolved::Property { getter: None, .. } => {
                 self.misuse(member, span, MemberUse::Read);
                 unknown
             }
             Resolved::Fallback { get: Some(get), .. } => {
-                let callee = self.signature_callee(get);
                 let name = (self.name_literal(member), span);
-                self.call_with(at, state, operands, callee, &[leading[0], name], call)
+                self.call_signature(at, state, operands, &get, &[leading[0], name], call)
             }
         }
     }
@@ -346,26 +398,23 @@ impl Flow<'_, '_> {
             span,
         };
         match self.resolve(receiver.0, member, span) {
-            Resolved::Dynamic | Resolved::Method(None, _) => {
-                self.call_with(at, state, operands, unknown, leading, call)
-            }
+            Resolved::Dynamic => self.call_with(at, state, operands, unknown, leading, call),
             Resolved::Missing | Resolved::Fallback { get: None, .. } => {
                 self.missing(receiver.0, member, span);
                 self.call_with(at, state, operands, unknown, leading, call)
             }
             Resolved::Field(ty) => self.call_with(at, state, operands, ty, leading, call),
-            Resolved::Method(Some(signature), true) => {
-                self.call_with(at, state, operands, signature, &with_receiver, call)
+            Resolved::Method(signature, true) => {
+                self.call_signature(at, state, operands, &signature, &with_receiver, call)
             }
-            Resolved::Method(Some(signature), false) => {
-                self.call_with(at, state, operands, signature, leading, call)
+            Resolved::Method(signature, false) => {
+                self.call_signature(at, state, operands, &signature, leading, call)
             }
             Resolved::Property {
                 getter: Some(getter),
                 ..
             } => {
-                let getter = self.signature_callee(getter);
-                let value = self.call_with(at, state, operands, getter, &[receiver], got);
+                let value = self.call_signature(at, state, operands, &getter, &[receiver], got);
                 self.call_with(at, state, operands, value, leading, call)
             }
             Resolved::Property { getter: None, .. } => {
@@ -373,9 +422,8 @@ impl Flow<'_, '_> {
                 self.call_with(at, state, operands, unknown, leading, call)
             }
             Resolved::Fallback { get: Some(get), .. } => {
-                let get = self.signature_callee(get);
                 let name = (self.name_literal(member), span);
-                let value = self.call_with(at, state, operands, get, &[receiver, name], got);
+                let value = self.call_signature(at, state, operands, &get, &[receiver, name], got);
                 self.call_with(at, state, operands, value, leading, call)
             }
         }
@@ -422,16 +470,15 @@ impl Flow<'_, '_> {
                 setter: Some(setter),
                 ..
             } => {
-                let setter = self.signature_callee(setter);
-                self.call_with(at, state, operands, setter, &[receiver, written], call);
+                let receivers = [receiver, written];
+                self.call_signature(at, state, operands, &setter, &receivers, call);
             }
             Resolved::Property { setter: None, .. } => {
                 self.misuse(member, span, MemberUse::Write);
             }
             Resolved::Fallback { set: Some(set), .. } => {
-                let set = self.signature_callee(set);
-                let name = (self.name_literal(member), span);
-                self.call_with(at, state, operands, set, &[receiver, name, written], call);
+                let receivers = [receiver, (self.name_literal(member), span), written];
+                self.call_signature(at, state, operands, &set, &receivers, call);
             }
         }
     }
@@ -709,10 +756,10 @@ impl Flow<'_, '_> {
             private: false,
         };
         let signature = |kind: &FoundKind| match kind {
-            FoundKind::Method(signatures) => match signatures[..] {
-                [signature] => solver.reify(signature).ok(),
-                _ => None,
-            },
+            FoundKind::Method(Signatures {
+                overloads,
+                implementation: Some(signature),
+            }) if overloads.is_empty() => solver.reify(*signature).ok(),
             _ => None,
         };
         match solver.member(solver.closed(object), key("call")) {
