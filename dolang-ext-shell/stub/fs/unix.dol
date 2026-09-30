@@ -4,8 +4,6 @@ import fs
 import
   security.unix:
     - @Permission
-  std:
-    - @FlagSet
 
 # A symbol naming bits of a [`Mode`](fs.unix.Mode).
 #
@@ -53,7 +51,7 @@ pub @let ModeBit = (
 # ```
 # let rw = Mode(:OWNER_READ:, :OWNER_WRITE:)
 # ```
-pub class Mode: Iterable[ModeBit] @FlagSet[ModeBit]
+pub class Mode: Iterable[ModeBit]
   # Constructs a mode from a raw `st_mode` value, preserving unknown bits.
   #
   # ## Example

@@ -827,6 +827,9 @@ def record_path parts
 
 def resolve_link output_parts target
   let output = unix_fs.Path.join ...output_parts
+  let parent = output.parent
+  if !parent
+    throw std.ValueError "empty output path"
   unix_fs.Path.join(output.parent, target).normalize()
 
 def normalize_manifest records strip

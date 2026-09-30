@@ -2,7 +2,6 @@
 
 import
   std:
-    - @FlagSet
     - @Seq
   uuid:
     - @Uuid
@@ -52,7 +51,7 @@ pub @let PermissionBit = (:READ: | :WRITE: | :EXECUTE:)
 # ```
 # let rw = Permission(:READ:, :WRITE:)
 # ```
-pub class Permission: Iterable[PermissionBit] @FlagSet[PermissionBit]
+pub class Permission: Iterable[PermissionBit]
 
   # Constructs a flag set from symbols.
   #[class]

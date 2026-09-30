@@ -23,7 +23,6 @@
 
 import
   std:
-    - @FlagSet
     - @Seq
   uuid:
     - @Guid
@@ -283,7 +282,7 @@ pub @let AccessRight = (
 #
 # Domain-specific rights such as [`winreg.AccessMask`](winreg.AccessMask) are
 # subtypes. This type names generically applicable rights only.
-pub class AccessMask: Iterable[AccessRight] @FlagSet[AccessRight]
+pub class AccessMask: Iterable[AccessRight]
   # Constructs a mask from a native integer, preserving unknown bits.
   #[class]
   pub def from_int
@@ -374,7 +373,7 @@ pub @let AceFlag = (
 )
 
 # Flags stored in an ACE header.
-pub class AceFlags: Iterable[AceFlag] @FlagSet[AceFlag]
+pub class AceFlags: Iterable[AceFlag]
   # Constructs flags from a native integer, preserving unknown bits.
   #[class]
   pub def from_int
@@ -448,7 +447,7 @@ pub @let SecDescControlFlag = (
 )
 
 # Security descriptor control flags.
-pub class SecDescControl: Iterable[SecDescControlFlag] @FlagSet[SecDescControlFlag]
+pub class SecDescControl: Iterable[SecDescControlFlag]
 
   # Constructs a flag set from symbols.
   #[class]
@@ -497,7 +496,7 @@ pub @let SecInfoComponent = (
 )
 
 # Security descriptor components loaded by a query.
-pub class SecInfo: Iterable[SecInfoComponent] @FlagSet[SecInfoComponent]
+pub class SecInfo: Iterable[SecInfoComponent]
 
   # Constructs a flag set from symbols.
   #[class]
@@ -552,7 +551,7 @@ pub @let TokenGroupAttribute = (
 )
 
 # Windows access-token group attributes.
-pub class TokenGroupAttributes: Iterable[TokenGroupAttribute] @FlagSet[TokenGroupAttribute]
+pub class TokenGroupAttributes: Iterable[TokenGroupAttribute]
 
   # Constructs a flag set from symbols.
   #[class]

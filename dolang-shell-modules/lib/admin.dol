@@ -60,4 +60,6 @@ do -> R
           shell.cd $cd $block
         else
           block()
-    sudo.with $block :cd :env
+    sudo.with $block :env
+      if cd
+        :cd

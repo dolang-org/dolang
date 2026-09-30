@@ -12,8 +12,6 @@ import
     - @SecDesc
     - @SecDescSpec
     AccessMask: WindowsAccessMask
-  std:
-    - @FlagSet
 
 # A registry root.
 #
@@ -118,7 +116,7 @@ pub @let AccessRight = (
 # let a = AccessMask :QUERY_VALUE: :SET_VALUE:
 # let b = AccessMask [:QUERY_VALUE:, :SET_VALUE:]
 # ```
-pub class AccessMask: WindowsAccessMask @FlagSet[AccessRight]
+pub class AccessMask: WindowsAccessMask
   # Builds a mask from a native integer, preserving every bit including ones
   # this type does not name.
   #
@@ -155,22 +153,6 @@ pub class AccessMask: WindowsAccessMask @FlagSet[AccessRight]
 
   # Tests whether all flags named by `flag` are set.
   pub def contains self flag @ AccessRight -> Bool
-    ...
-
-  # Returns the flags set in either.
-  pub def (bor)[S @ AccessMask] self@S other@S -> S
-    ...
-
-  # Returns the flags set in both.
-  pub def (band)[S @ AccessMask] self@S other@S -> S
-    ...
-
-  # Returns the flags set in exactly one.
-  pub def (bxor)[S @ AccessMask] self@S other@S -> S
-    ...
-
-  # Returns the flags of the type that are not set.
-  pub def (bnot)[S @ AccessMask] self @ S -> S
     ...
 
 
