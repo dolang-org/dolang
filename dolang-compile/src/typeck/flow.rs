@@ -1122,7 +1122,7 @@ fn residual(outcome: &Outcome) -> Residual {
             super::solver::Issue::Residual(residual) => Some(residual),
             super::solver::Issue::Contradiction(_) => None,
         })
-        .unwrap_or(Residual::Unsupported)
+        .unwrap_or(Residual::Unsupported("no reason recorded"))
 }
 
 /// How many operand holes an expression has

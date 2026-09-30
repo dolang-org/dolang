@@ -116,7 +116,7 @@ impl Check<'_, '_> {
                         Issue::Residual(residual) => Some(residual),
                         Issue::Contradiction(_) => None,
                     })
-                    .unwrap_or(Residual::Unsupported),
+                    .unwrap_or(Residual::Unsupported("no reason recorded")),
             ),
         }
     }

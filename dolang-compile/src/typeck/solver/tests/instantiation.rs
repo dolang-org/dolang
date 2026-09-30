@@ -245,7 +245,9 @@ fn defaults_are_the_join_of_solved_lower_bounds() {
     assert_eq!(s.default(variable_id(empty)), Err(Residual::Inference));
     assert_eq!(
         s.default(variable_id(conflicted)),
-        Err(Residual::Unsupported)
+        Err(Residual::Unsupported(
+            "a default above a variable's upper bounds"
+        ))
     );
     assert_eq!(s.solution(variable_id(conflicted)), None);
     assert!(!s.defaulted(variable_id(conflicted)));

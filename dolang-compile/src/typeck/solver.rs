@@ -96,8 +96,9 @@ pub(crate) struct Provenance {
 pub(crate) enum Residual {
     /// An inference variable has no committed solution.
     Inference,
-    /// No implemented rule handles this combination of exposed type forms.
-    Unsupported,
+    /// No implemented rule handles this combination of exposed type forms. It
+    /// names what wasn't handled.
+    Unsupported(&'static str),
     /// Generic application needs unsupported argument matching or a constructor
     /// that cannot yet be exposed. Also covers unapplied generic declarations.
     GenericArguments,
@@ -1106,7 +1107,9 @@ impl<'db> Solver<'db> {
         let candidate = if lower.contains(&unknown) {
             unknown
         } else {
-            let precise = self.join(kind, &lower).ok_or(Residual::Unsupported)?;
+            let precise = self
+                .join(kind, &lower)
+                .ok_or(Residual::Unsupported("joining a variable's lower bounds"))?;
             let decayed = self.db.decay(precise);
             let admitted = || -> Result<bool, Residual> {
                 for &ty in &lower {
@@ -1124,7 +1127,9 @@ impl<'db> Solver<'db> {
             }
         };
         if !self.below_upper(id, candidate)? {
-            return Err(Residual::Unsupported);
+            return Err(Residual::Unsupported(
+                "a default above a variable's upper bounds",
+            ));
         }
         self.inference[id.0].defaulted.set(true);
         self.commit(id, candidate);
@@ -1624,7 +1629,10 @@ impl<'db> Solver<'db> {
         self.preorder(current, path, depth, &mut |visited| match visited {
             Visited::Nominal(nominal) if nominal.declaration == target => Ok(Some(nominal.clone())),
             Visited::Nominal(_) => Ok(None),
-            Visited::Structural => Err(Residual::Unsupported.into()),
+            Visited::Structural => Err(Residual::Unsupported(
+                "an ancestor search through a structural supertype",
+            )
+            .into()),
         })
     }
 
@@ -1945,13 +1953,16 @@ impl<'db> Solver<'db> {
                     _ if self.congruent(*view, member, &b)? => continue,
                     _ if self.rigid(member.id())?.is_some() => {
                         let Some(bound) = self.rigid_bound(member.id()) else {
-                            return Err(Residual::Unsupported.into());
+                            return Err(Residual::Unsupported(
+                                "a projection of a rigid without a bound",
+                            )
+                            .into());
                         };
                         let projected =
                             self.db.intern(Type::Union(vec![member.with(bound)].into()));
                         (self.closed(projected), Step::RigidBound)
                     }
-                    _ => return Err(Residual::Unsupported.into()),
+                    _ => return Err(Residual::Unsupported("an unevaluated projection").into()),
                 };
                 derived.push((term, step));
             }
@@ -2002,7 +2013,7 @@ impl<'db> Solver<'db> {
             }
             return Err(match outside {
                 true => Issue::Contradiction(Contradiction::Outside),
-                false => Residual::Unsupported.into(),
+                false => Residual::Unsupported("a type that may be inside a union member").into(),
             });
         }
         match (a, b) {
@@ -2038,7 +2049,7 @@ impl<'db> Solver<'db> {
                     (Type::Schema(xs), Type::Schema(ys)) => {
                         self.schemas(a, xs, b, ys, expected, obligation)
                     }
-                    _ => Err(Residual::Unsupported.into()),
+                    _ => Err(Residual::Unsupported("these structural types").into()),
                 }
             }
             (Head::Structural(view), Head::Nominal(_)) => {
@@ -2067,7 +2078,9 @@ impl<'db> Solver<'db> {
                 let intrinsic = match self.db.ty(view.ty) {
                     _ if matches!(self.db.ty(ty), Type::Function(_)) => Intrinsic::Func,
                     Type::Literal(literal) => literal.intrinsic(),
-                    _ => return Err(Residual::Unsupported.into()),
+                    _ => {
+                        return Err(Residual::Unsupported("a structural type below a class").into());
+                    }
                 };
                 let Some(backing) = self.db.intrinsic(intrinsic) else {
                     return Err(Residual::MissingIntrinsic(intrinsic).into());
@@ -2080,7 +2093,7 @@ impl<'db> Solver<'db> {
                 );
                 Ok(())
             }
-            _ => Err(Residual::Unsupported.into()),
+            _ => Err(Residual::Unsupported("these kinds of type").into()),
         }
     }
 

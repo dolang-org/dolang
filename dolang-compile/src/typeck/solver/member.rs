@@ -125,7 +125,9 @@ impl Solver<'_> {
                         return Ok(Receiver::Instance(nominal));
                     }
                     let [class] = nominal.arguments[..] else {
-                        return Err(Residual::Unsupported.into());
+                        return Err(
+                            Residual::Unsupported("a type object with several arguments").into(),
+                        );
                     };
                     return match self.head(class)? {
                         Head::Infer(_) => Err(Residual::Inference.into()),
@@ -135,7 +137,9 @@ impl Solver<'_> {
                         {
                             Ok(Receiver::Dynamic)
                         }
-                        Head::Structural(_) => Err(Residual::Unsupported.into()),
+                        Head::Structural(_) => {
+                            Err(Residual::Unsupported("a type object of a structural type").into())
+                        }
                     };
                 }
                 Head::Structural(view) => view,
@@ -164,7 +168,7 @@ impl Solver<'_> {
                 Type::Function(_) => Intrinsic::Func,
                 Type::Literal(literal) => literal.intrinsic(),
                 // A union's members are judged by #742's policy
-                _ => return Err(Residual::Unsupported.into()),
+                _ => return Err(Residual::Unsupported("a member of a union receiver").into()),
             };
             let Some(backing) = self.db.intrinsic(intrinsic) else {
                 return Err(Residual::MissingIntrinsic(intrinsic).into());

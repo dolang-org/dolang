@@ -388,7 +388,9 @@ fn receivers_are_walked_to_a_class_or_left_undecided() {
     assert!(missing(s.member(s.closed(db.top()), area)));
     assert_eq!(
         s.member(s.closed(union), area).err(),
-        Some(Issue::Residual(Residual::Unsupported))
+        Some(Issue::Residual(Residual::Unsupported(
+            "a member of a union receiver"
+        )))
     );
     assert!(matches!(
         s.member(s.closed(one), key(&db, "abs")),

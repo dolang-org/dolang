@@ -50,14 +50,16 @@ impl Solver<'_> {
         }
         let promoted = match self.db.promoted(schema) {
             Promotion::Promoted(promoted) => promoted,
-            Promotion::Pending => return Err(Residual::Unsupported.into()),
+            Promotion::Pending => {
+                return Err(Residual::Unsupported("a schema whose keyed view is pending").into());
+            }
             Promotion::Conflict => return Err(Issue::Contradiction(Contradiction::Conflict)),
         };
         // An included schema not yet known may hold any item
         if let Some(&opaque) = promoted.opaque.first() {
             return match self.db.ty(opaque) {
                 Type::Unknown(_) => Ok(self.db.unknown()),
-                _ => Err(Residual::Unsupported.into()),
+                _ => Err(Residual::Unsupported("a schema including a schema not yet known").into()),
             };
         }
         let mut literals: Vec<(TypeId, TypeId)> = (promoted.fixed.iter().enumerate())
@@ -86,17 +88,19 @@ impl Solver<'_> {
         let mut values = Vec::new();
         for member in self.union_members(key) {
             let UnionMember::Type(member) = member else {
-                return Err(Residual::Unsupported.into());
+                return Err(Residual::Unsupported("a key with projections").into());
             };
             // A rigid key is known only by its bound. Where each item the bound
             // selects has the same value, the rigid selects that value too.
             if self.rigid(member)?.is_some() {
                 let Some(bound) = self.rigid_bound(member) else {
-                    return Err(Residual::Unsupported.into());
+                    return Err(Residual::Unsupported("a rigid key without a bound").into());
                 };
                 let joined = self.item(schema, bound, false)?;
                 if joined != self.item(schema, bound, true)? {
-                    return Err(Residual::Unsupported.into());
+                    return Err(
+                        Residual::Unsupported("a rigid key selecting different values").into(),
+                    );
                 }
                 values.push(joined);
                 continue;
@@ -112,7 +116,12 @@ impl Solver<'_> {
                     match self.probe(key, member)? {
                         Status::Proven => values.push(value),
                         Status::Contradicted => {}
-                        Status::Unresolved => return Err(Residual::Unsupported.into()),
+                        Status::Unresolved => {
+                            return Err(Residual::Unsupported(
+                                "a literal item a key may or may not select",
+                            )
+                            .into());
+                        }
                     }
                 }
             }
@@ -127,7 +136,7 @@ impl Solver<'_> {
                 {
                     return Err(Issue::Contradiction(Contradiction::Unadmitted(member)));
                 }
-                return Err(Residual::Unsupported.into());
+                return Err(Residual::Unsupported("a key the schema may or may not admit").into());
             }
         }
         if !meet {
