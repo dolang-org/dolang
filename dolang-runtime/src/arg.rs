@@ -290,7 +290,10 @@ impl<'v, 'a> Args<'v, 'a> {
                         for (i, ksym) in kparam.iter().enumerate() {
                             if sym == *ksym {
                                 if seen[i + N] {
-                                    return Err(Error::duplicate_key(strand, sym));
+                                    if !KEY {
+                                        return Err(Error::duplicate_key(strand, sym));
+                                    }
+                                    break 'search false;
                                 }
                                 seen[i + N] = true;
                                 unsafe {
@@ -304,7 +307,10 @@ impl<'v, 'a> Args<'v, 'a> {
                         for (i, ksym) in koparam.iter().enumerate() {
                             if sym == *ksym {
                                 if optional[i + NO].is_some() {
-                                    return Err(Error::duplicate_key(strand, sym));
+                                    if !KEY {
+                                        return Err(Error::duplicate_key(strand, sym));
+                                    }
+                                    break 'search false;
                                 }
                                 optional[i + NO] = Some(value);
                                 break 'search true;
@@ -427,8 +433,9 @@ impl<'v, 'a> ExactSizeIterator for KeyArgs<'v, 'a> {}
 /// - `req1`, ...: required arguments; positional first, then key arguments in provided order
 /// - `opt1`, ...: optional arguments; positional first, then key arguments in provided order
 ///
-/// Repeating a named keyword raises `UnexpectedKeyError`. Unmatched keywords
-/// captured by a rest may repeat and retain their order.
+/// The first occurrence of a named keyword binds its parameter. Further occurrences
+/// go to the keyed rest (`**` or `...`), or raise `UnexpectedKeyError` without one.
+/// Keywords captured by a rest retain their order.
 ///
 /// Required arguments are of type [`Slot`] and optional are of type [`Option<Slot>`].
 ///
