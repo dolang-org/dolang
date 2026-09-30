@@ -43,6 +43,8 @@ id!(InferVarId);
 id!(EnvironmentId);
 id!(ObligationId);
 id!(ConstraintId);
+id!(SkolemId);
+id!(ScopeId);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct TypeView {
@@ -54,6 +56,9 @@ pub(crate) struct TypeView {
 pub(crate) enum Term {
     View(TypeView),
     Infer(InferVarId),
+    /// A binder of a quantified type on the right of a judgment, held abstract
+    /// while its body is related. It never enters a canonical type.
+    Skolem(SkolemId),
 }
 
 impl TypeView {
@@ -121,7 +126,8 @@ pub(crate) enum Residual {
 pub(crate) enum Contradiction {
     DistinctLiterals,
     UnrelatedNominals,
-    /// A rigid is related to something other than itself, and its bound can't show it
+    /// A rigid or skolem is related to something other than itself, and its bound
+    /// can't show it
     Rigid,
     /// The actual schema's item can be more than the expected schema admits
     Excess(usize),
@@ -174,6 +180,13 @@ pub(crate) enum Step {
     Instantiation,
     /// A fresh variable below its binder's bound
     InstantiationBound(usize),
+    /// A quantified type's body under skolems for its binders
+    Skolemization,
+    /// A skolem reduced to its binder's bound
+    SkolemBound,
+    /// A skolem outside a variable's scope replaced by its bound, as the
+    /// variable's lower bound
+    Promotion,
 }
 
 /// Where an ancestor query ends
@@ -248,8 +261,9 @@ struct Inference {
     kind: Kind,
     /// For a schema variable, the lanes its items can occupy
     lanes: Rest,
-    // Solutions are closed canonical types; no solver-local identity can escape.
-    assignment: Cell<Option<TypeId>>,
+    /// The solution: a closed type, or a term holding skolems of the scopes it
+    /// sees. Either way it holds no unsolved variable, so assignments can't cycle.
+    assignment: Cell<Option<Term>>,
     /// Whether the assignment is a default rather than forced
     defaulted: Cell<bool>,
     /// Whether a default keeps its literals, as an item projection's key does
@@ -260,6 +274,26 @@ struct Inference {
     support: MonoHashSet<ObligationId>,
     subscribers: MonoHashSet<ObligationId>,
     dirty: Cell<bool>,
+    /// The scope it was created in, which bounds the skolems it may take
+    scope: ScopeId,
+}
+
+/// A binder of a quantified type on the right, held abstract while its body is
+/// related (see [`Solver::skolemization`])
+struct Skolem {
+    kind: Kind,
+    binding: Binding,
+    /// The binder's bound in the skolemization's environment, or a rest binder's
+    /// shape. Set once the environment exists.
+    bound: Cell<Option<Term>>,
+    scope: ScopeId,
+}
+
+/// A skolemization's extent: its skolems are visible to variables of this scope
+/// and the scopes inside it. The root scope has no skolems.
+struct Scope {
+    parent: ScopeId,
+    depth: usize,
 }
 
 /// Accumulated constraints on one inference variable `V`.
@@ -319,6 +353,7 @@ enum Visited<'a> {
 #[derive(Clone, Debug)]
 enum Head {
     Infer(InferVarId),
+    Skolem(SkolemId),
     Structural(TypeView),
     Nominal(Nominal),
 }
@@ -332,6 +367,11 @@ pub(crate) struct Solver<'db> {
     /// The environment each quantifier instantiation created, by the obligation
     /// that instantiated it, so reprocessing reuses its variables
     instantiations: RefCell<HashMap<ObligationId, EnvironmentId>>,
+    /// The environment of skolems each skolemization created, by the obligation
+    /// that skolemized, so reprocessing reuses its skolems
+    skolemizations: RefCell<HashMap<ObligationId, EnvironmentId>>,
+    skolems: MonoVec<Skolem>,
+    scopes: MonoVec<Scope>,
     // Intern only the relation; processing state and diagnostic edges do not
     // participate in identity and can grow while existing nodes are borrowed.
     obligations: MonoVec<Obligation>,
@@ -359,12 +399,20 @@ impl<'db> Solver<'db> {
             parent: EnvironmentId(0),
             group: vec![],
         });
+        let scopes = MonoVec::new();
+        scopes.push(Scope {
+            parent: ScopeId(0),
+            depth: 0,
+        });
         Self {
             db,
             environments,
             bounds: MonoVec::new(),
             inference: MonoVec::new(),
             instantiations: RefCell::new(HashMap::new()),
+            skolemizations: RefCell::new(HashMap::new()),
+            skolems: MonoVec::new(),
+            scopes,
             obligations: MonoVec::new(),
             obligation_index: MonoHashMap::new(),
             queue: MonoVec::new(),
@@ -436,6 +484,10 @@ impl<'db> Solver<'db> {
             self.spend()?;
             match self.head(term)? {
                 Head::Infer(_) => return Err(Residual::Inference.into()),
+                Head::Skolem(id) => match self.skolems[id.0].bound.get() {
+                    Some(bound) => term = bound,
+                    None => return Ok(Reach::Unreached),
+                },
                 Head::Nominal(nominal) => {
                     return Ok(
                         match self.ancestor(nominal, target, &mut HashSet::new(), 0)? {
@@ -567,15 +619,15 @@ impl<'db> Solver<'db> {
     }
 
     pub(crate) fn infer(&mut self) -> Term {
-        self.fresh(Kind::Type, Rest::All)
+        self.fresh(Kind::Type, Rest::All, ScopeId(0))
     }
 
     /// A fresh variable of `kind`. A schema variable's items occupy `lanes`.
     pub(crate) fn infer_kind(&mut self, kind: Kind, lanes: Rest) -> Term {
-        self.fresh(kind, lanes)
+        self.fresh(kind, lanes, ScopeId(0))
     }
 
-    fn fresh(&self, kind: Kind, lanes: Rest) -> Term {
+    fn fresh(&self, kind: Kind, lanes: Rest, scope: ScopeId) -> Term {
         let id = InferVarId(self.bounds.len());
         self.bounds.push(Bounds::default());
         self.inference.push(Inference {
@@ -588,12 +640,47 @@ impl<'db> Solver<'db> {
             support: MonoHashSet::new(),
             subscribers: MonoHashSet::new(),
             dirty: Cell::new(false),
+            scope,
         });
         Term::Infer(id)
     }
 
+    /// A new scope inside `parent`
+    fn enter(&self, parent: ScopeId) -> ScopeId {
+        let id = ScopeId(self.scopes.len());
+        let depth = self.scopes[parent.0].depth + 1;
+        self.scopes.push(Scope { parent, depth });
+        id
+    }
+
+    /// The innermost scope of the variables and skolems in `terms`, where what
+    /// relating them creates belongs. Scopes that meet are nested, since a
+    /// variable never takes a skolem from outside its own.
+    fn scope(&self, terms: &[Term]) -> Result<ScopeId, Residual> {
+        let mut leaves = HashSet::new();
+        for &term in terms {
+            self.leaves(term, 0, 0, &mut leaves)?;
+        }
+        let scope = |leaf: &Term| match *leaf {
+            Term::Infer(id) => self.inference[id.0].scope,
+            Term::Skolem(id) => self.skolems[id.0].scope,
+            Term::View(_) => unreachable!("a view is not a leaf"),
+        };
+        Ok((leaves.iter().map(scope))
+            .max_by_key(|scope| self.scopes[scope.0].depth)
+            .unwrap_or(ScopeId(0)))
+    }
+
     /// A committed, fully resolved solution. Bounds remain available independently.
     pub(crate) fn solution(&self, id: InferVarId) -> Option<TypeId> {
+        match self.inference[id.0].assignment.get()? {
+            Term::View(view) if view.environment == self.empty_environment() => Some(view.ty),
+            _ => None,
+        }
+    }
+
+    /// A variable's committed solution as a term, which may hold skolems
+    fn assignment(&self, id: InferVarId) -> Option<Term> {
         self.inference[id.0].assignment.get()
     }
 
@@ -621,7 +708,12 @@ impl<'db> Solver<'db> {
         self.depth(depth)?;
         self.spend()?;
         match term {
-            Term::Infer(id) => self.solution(id).ok_or(Residual::Inference),
+            Term::Infer(id) => match self.assignment(id) {
+                Some(term) => self.reify_scoped(term, 0, depth + 1),
+                None => Err(Residual::Inference),
+            },
+            // A skolem has no canonical form; nothing leaves its judgment with one
+            Term::Skolem(_) => Err(Residual::Escape),
             Term::View(view) => {
                 let ty = self.db.ty(view.ty);
                 if let Type::Bound { reference, kind } = *ty {
@@ -653,18 +745,19 @@ impl<'db> Solver<'db> {
         }
     }
 
-    fn variables(
+    /// Collect the variables and skolems a term contains, through its environments
+    fn leaves(
         &self,
         term: Term,
         local: u32,
         depth: usize,
-        found: &mut HashSet<InferVarId>,
+        found: &mut HashSet<Term>,
     ) -> Result<(), Residual> {
         self.depth(depth)?;
         self.spend()?;
         match term {
-            Term::Infer(id) => {
-                found.insert(id);
+            Term::Infer(_) | Term::Skolem(_) => {
+                found.insert(term);
             }
             Term::View(view) => {
                 let ty = self.db.ty(view.ty);
@@ -676,13 +769,13 @@ impl<'db> Solver<'db> {
                             reference.slot,
                             kind,
                         );
-                        self.variables(value, 0, depth + 1, found)?;
+                        self.leaves(value, 0, depth + 1, found)?;
                     }
                 } else {
                     let mut children = Vec::new();
                     ty.visit_children(|child, groups| children.push((child, groups)));
                     for (child, groups) in children {
-                        self.variables(view.child(child), local + groups, depth + 1, found)?;
+                        self.leaves(view.child(child), local + groups, depth + 1, found)?;
                     }
                 }
             }
@@ -692,10 +785,13 @@ impl<'db> Solver<'db> {
 
     fn subscribe(&self, obligation: ObligationId) -> Result<(), Residual> {
         let relation = self.obligation(obligation).relation;
-        let mut variables = HashSet::new();
-        self.variables(relation.actual, 0, 0, &mut variables)?;
-        self.variables(relation.expected, 0, 0, &mut variables)?;
-        for variable in variables {
+        let mut leaves = HashSet::new();
+        self.leaves(relation.actual, 0, 0, &mut leaves)?;
+        self.leaves(relation.expected, 0, 0, &mut leaves)?;
+        for leaf in leaves {
+            let Term::Infer(variable) = leaf else {
+                continue;
+            };
             let bounds = &self.inference[variable.0];
             let _ = bounds.subscribers.try_insert(obligation);
             if bounds.assignment.get().is_some() {
@@ -770,7 +866,7 @@ impl<'db> Solver<'db> {
                 if id == target {
                     return Ok(nested);
                 }
-                if self.solution(id).is_some() || !visiting.insert(id) {
+                if self.assignment(id).is_some() || !visiting.insert(id) {
                     return Ok(false);
                 }
                 let bounds = self.bounds(id);
@@ -787,6 +883,7 @@ impl<'db> Solver<'db> {
                 visiting.remove(&id);
                 Ok(false)
             }
+            Term::Skolem(_) => Ok(false),
             Term::View(view) => {
                 let ty = self.db.ty(view.ty);
                 if let Type::Bound { reference, kind } = *ty {
@@ -883,7 +980,7 @@ impl<'db> Solver<'db> {
         self.depth(depth)?;
         let view = match term {
             Term::Infer(id) => {
-                if self.solution(id).is_some() {
+                if self.assignment(id).is_some() {
                     return Ok(());
                 }
                 for next in visit(id, variance) {
@@ -891,6 +988,7 @@ impl<'db> Solver<'db> {
                 }
                 return Ok(());
             }
+            Term::Skolem(_) => return Ok(()),
             Term::View(view) => view,
         };
         let mut walk = |ty: TypeId, variance: Variance, groups: u32| {
@@ -1011,6 +1109,25 @@ impl<'db> Solver<'db> {
                 }
             }
         }
+        // A bound holding a skolem has no closed form. Only identity forces one.
+        if bounds
+            .lower()
+            .chain(bounds.upper())
+            .map(|term| self.skolemic(term))
+            .collect::<Result<Vec<_>, _>>()?
+            .contains(&true)
+        {
+            let Some(candidate) = self.open_candidate(id)? else {
+                return Ok(false);
+            };
+            for upper in bounds.upper() {
+                if self.same(candidate, upper)? {
+                    self.commit(id, candidate);
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
         let mut lower = Vec::new();
         let mut upper = Vec::new();
         for (set, values) in [(&bounds.lower, &mut lower), (&bounds.upper, &mut upper)] {
@@ -1041,13 +1158,64 @@ impl<'db> Solver<'db> {
         if !forced {
             return Ok(false);
         }
-        self.commit(id, candidate);
+        self.commit(id, self.closed(candidate));
         Ok(true)
     }
 
-    /// Assign a closed candidate and wake what depends on it. Only closed
-    /// candidates can commit, so substitution cycles cannot be introduced.
-    fn commit(&self, id: InferVarId, candidate: TypeId) {
+    /// The candidate of a variable with a lower bound holding a skolem: the one
+    /// term every lower bound is, if it holds no unsolved variable. Skolems
+    /// aren't joined, since a join would need their canonical forms.
+    fn open_candidate(&self, id: InferVarId) -> Result<Option<Term>, Residual> {
+        let mut lower = self.bounds[id.0].lower();
+        let Some(candidate) = lower.next() else {
+            return Ok(None);
+        };
+        for other in lower {
+            if !self.same(candidate, other)? {
+                return Ok(None);
+            }
+        }
+        let mut leaves = HashSet::new();
+        self.solved_leaves(candidate, &mut leaves)?;
+        Ok((!leaves.iter().any(|leaf| matches!(leaf, Term::Infer(_)))).then_some(candidate))
+    }
+
+    /// Whether a term holds a skolem, through assignments
+    fn skolemic(&self, term: Term) -> Result<bool, Residual> {
+        let mut leaves = HashSet::new();
+        self.solved_leaves(term, &mut leaves)?;
+        Ok(leaves.iter().any(|leaf| matches!(leaf, Term::Skolem(_))))
+    }
+
+    /// The skolems and unsolved variables a term holds, through assignments
+    fn solved_leaves(&self, term: Term, found: &mut HashSet<Term>) -> Result<(), Residual> {
+        let mut leaves = HashSet::new();
+        self.leaves(term, 0, 0, &mut leaves)?;
+        for leaf in leaves {
+            match leaf {
+                Term::Infer(id) if let Some(assigned) = self.assignment(id) => {
+                    self.solved_leaves(assigned, found)?;
+                }
+                _ => {
+                    found.insert(leaf);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Assign a candidate and wake what depends on it. A candidate holds no
+    /// unsolved variable, so substitution cycles cannot be introduced.
+    fn commit(&self, id: InferVarId, candidate: Term) {
+        debug_assert!({
+            let mut leaves = HashSet::new();
+            let scope = self.inference[id.0].scope;
+            self.solved_leaves(candidate, &mut leaves).is_err()
+                || leaves.iter().all(|leaf| match *leaf {
+                    Term::Skolem(skolem) => self.visible(scope, self.skolems[skolem.0].scope),
+                    _ => true,
+                })
+        });
         let bounds = &self.bounds[id.0];
         let inference = &self.inference[id.0];
         for (_, sources) in bounds.lower.iter().chain(bounds.upper.iter()) {
@@ -1095,10 +1263,31 @@ impl<'db> Solver<'db> {
     /// [`Self::locked`]). A variable standing for the key of an item projection
     /// never decays (see [`Database::item_keys`]).
     pub(crate) fn default_with(&mut self, id: InferVarId, decay: bool) -> Result<TypeId, Residual> {
-        if let Some(ty) = self.solution(id) {
-            return Ok(ty);
+        let term = self.default_term(id, decay)?;
+        self.reify(term)
+    }
+
+    /// [`Self::default_with`], committing a term. A variable with a lower bound
+    /// holding a skolem takes it if it's the only one, and its upper bounds are
+    /// left to the obligations pairing them with it; a skolem can't be probed.
+    fn default_term(&self, id: InferVarId, decay: bool) -> Result<Term, Residual> {
+        if let Some(term) = self.assignment(id) {
+            return Ok(term);
         }
         let bounds = &self.bounds[id.0];
+        if bounds
+            .lower()
+            .map(|term| self.skolemic(term))
+            .collect::<Result<Vec<_>, _>>()?
+            .contains(&true)
+        {
+            let candidate = self
+                .open_candidate(id)?
+                .ok_or(Residual::Unsupported("joining a variable's lower bounds"))?;
+            self.inference[id.0].defaulted.set(true);
+            self.commit(id, candidate);
+            return Ok(candidate);
+        }
         let lower = bounds
             .lower()
             .map(|term| self.reify(term))
@@ -1136,17 +1325,19 @@ impl<'db> Solver<'db> {
             ));
         }
         self.inference[id.0].defaulted.set(true);
-        self.commit(id, candidate);
-        Ok(candidate)
+        self.commit(id, self.closed(candidate));
+        Ok(self.closed(candidate))
     }
 
     /// Whether a candidate can be shown to satisfy each of a variable's solved
     /// upper bounds
     fn below_upper(&self, id: InferVarId, candidate: TypeId) -> Result<bool, Residual> {
         for upper in self.bounds[id.0].upper() {
+            // An upper bound holding a skolem is checked by the obligations
+            // pairing it with the lower bounds
             let upper = match self.reify(upper) {
                 Ok(upper) => upper,
-                Err(Residual::Inference) => continue,
+                Err(Residual::Inference | Residual::Escape) => continue,
                 Err(issue) => return Err(issue),
             };
             if self.probe(candidate, upper)? != Status::Proven {
@@ -1196,6 +1387,7 @@ impl<'db> Solver<'db> {
     fn kind(&self, term: Term) -> Kind {
         match term {
             Term::Infer(id) => self.inference[id.0].kind,
+            Term::Skolem(id) => self.skolems[id.0].kind,
             Term::View(view) => {
                 assert!(self.environments.get_by_index(view.environment.0).is_some());
                 self.db.kind(view.ty)
@@ -1313,14 +1505,14 @@ impl<'db> Solver<'db> {
             self.depth(depth)?;
             self.spend()?;
             if let Term::Infer(id) = term {
-                if let Some(ty) = self.solution(id) {
-                    term = self.closed(ty);
+                if let Some(assigned) = self.assignment(id) {
+                    term = assigned;
                     continue;
                 }
                 return Ok(term);
             }
             let Term::View(view) = term else {
-                unreachable!()
+                return Ok(term);
             };
             let Type::Bound { reference, kind } = *self.db.ty(view.ty) else {
                 return Ok(term);
@@ -1339,7 +1531,7 @@ impl<'db> Solver<'db> {
     fn unknown(&self, term: Term) -> Result<bool, Residual> {
         Ok(match self.resolve(term)? {
             Term::View(view) => matches!(self.db.ty(view.ty), Type::Unknown(_)),
-            Term::Infer(_) => false,
+            Term::Infer(_) | Term::Skolem(_) => false,
         })
     }
 
@@ -1369,18 +1561,17 @@ impl<'db> Solver<'db> {
     ) -> Result<bool, Residual> {
         self.depth(depth)?;
         self.spend()?;
-        let a = match a {
-            Term::Infer(id) if self.solution(id).is_some() => {
-                self.closed(self.solution(id).unwrap())
-            }
-            _ => a,
-        };
-        let b = match b {
-            Term::Infer(id) if self.solution(id).is_some() => {
-                self.closed(self.solution(id).unwrap())
-            }
-            _ => b,
-        };
+        // An assignment carries its own context, not the caller's local scope
+        if let Term::Infer(id) = a
+            && let Some(assigned) = self.assignment(id)
+        {
+            return self.same_scoped(assigned, 0, b, bd, depth + 1);
+        }
+        if let Term::Infer(id) = b
+            && let Some(assigned) = self.assignment(id)
+        {
+            return self.same_scoped(a, ad, assigned, 0, depth + 1);
+        }
         // A fresh literal is the same as its regular twin
         let regular = |term: Term| match term {
             Term::View(view) if matches!(self.db.ty(view.ty), Type::Fresh(_)) => {
@@ -1407,6 +1598,9 @@ impl<'db> Solver<'db> {
                     self.same_scoped(other, other_local, value, 0, depth + 1)
                 };
             }
+        }
+        if let (Term::Skolem(_), _) | (_, Term::Skolem(_)) = (a, b) {
+            return Ok(a == b);
         }
         if a == b && ad == bd {
             return Ok(true);
@@ -1539,6 +1733,7 @@ impl<'db> Solver<'db> {
             let view = match term {
                 Term::View(view) => view,
                 Term::Infer(id) => return Ok(Head::Infer(id)),
+                Term::Skolem(id) => return Ok(Head::Skolem(id)),
             };
             match *self.db.ty(view.ty) {
                 Type::Decl(id) => {
@@ -1779,7 +1974,8 @@ impl<'db> Solver<'db> {
     /// Relate a quantified function to a function type through fresh variables
     /// for its binders, including implicit ambient ones: a call's own channels
     /// bound them from below. The variables are created once per obligation, so
-    /// reprocessing it derives the same obligations.
+    /// reprocessing it derives the same obligations. They belong to the
+    /// obligation's scope, so they may take the skolems it relates.
     fn instantiation(
         &self,
         view: TypeView,
@@ -1792,11 +1988,12 @@ impl<'db> Solver<'db> {
         let environment = match known {
             Some(environment) => environment,
             None => {
+                let scope = self.scope(&[Term::View(view), expected])?;
                 let group: Vec<Term> = binders
                     .iter()
                     .map(|binder| match binder.binding {
-                        Binding::Rest(rest) => self.fresh(binder.kind, rest),
-                        _ => self.fresh(binder.kind, Rest::All),
+                        Binding::Rest(rest) => self.fresh(binder.kind, rest, scope),
+                        _ => self.fresh(binder.kind, Rest::All, scope),
                     })
                     .collect();
                 for slot in self.db.item_keys(view.ty) {
@@ -1836,6 +2033,63 @@ impl<'db> Solver<'db> {
             self.view(body, environment),
             expected,
             Step::Instantiation,
+        );
+        Ok(())
+    }
+
+    /// Relate a type to a quantified type through a skolem for each of its
+    /// binders, bounded by the binder's bound, in a new scope inside the
+    /// obligation's. Its body must hold for every choice of binders, so it must
+    /// hold for these. The skolems are created once per obligation, so
+    /// reprocessing it derives the same obligation.
+    fn skolemization(
+        &self,
+        view: TypeView,
+        binders: &[Binder],
+        body: TypeId,
+        actual: Term,
+        obligation: ObligationId,
+    ) -> Result<(), Issue> {
+        let known = self.skolemizations.borrow().get(&obligation).copied();
+        let environment = match known {
+            Some(environment) => environment,
+            None => {
+                let scope = self.enter(self.scope(&[actual, Term::View(view)])?);
+                let group: Vec<Term> = (binders.iter())
+                    .map(|binder| {
+                        let id = SkolemId(self.skolems.len());
+                        self.skolems.push(Skolem {
+                            kind: binder.kind,
+                            binding: binder.binding,
+                            bound: Cell::new(None),
+                            scope,
+                        });
+                        Term::Skolem(id)
+                    })
+                    .collect();
+                let environment = self.intern_environment(view.environment, group.clone());
+                for (binder, term) in binders.iter().zip(&group) {
+                    let bound = match (binder.bound, binder.binding) {
+                        (Some(bound), _) => Some(self.view(bound, environment)),
+                        (None, Binding::Rest(rest)) => Some(self.closed(self.db.rest_shape(rest))),
+                        (None, _) => None,
+                    };
+                    let &Term::Skolem(id) = term else {
+                        unreachable!()
+                    };
+                    self.skolems[id.0].bound.set(bound);
+                }
+                self.skolemizations
+                    .borrow_mut()
+                    .insert(obligation, environment);
+                environment
+            }
+        };
+        self.derive(
+            obligation,
+            actual,
+            self.view(body, environment),
+            Step::Skolemization,
         );
         Ok(())
     }
@@ -1881,6 +2135,7 @@ impl<'db> Solver<'db> {
                         }
                         break;
                     }
+                    Term::Skolem(_) => break,
                     Term::View(view) => {
                         let Type::Bound { reference, kind } = *self.db.ty(view.ty) else {
                             break;
@@ -1911,6 +2166,11 @@ impl<'db> Solver<'db> {
         }
         if let (Head::Structural(a), Head::Structural(b)) = (&a, &b)
             && self.same(Term::View(*a), Term::View(*b))?
+        {
+            return Ok(());
+        }
+        if let (Head::Skolem(a), Head::Skolem(b)) = (&a, &b)
+            && a == b
         {
             return Ok(());
         }
@@ -1952,6 +2212,22 @@ impl<'db> Solver<'db> {
                 None => return Err(Issue::Contradiction(Contradiction::Rigid)),
             }
         }
+        // So is a skolem. One without a bound is below only a union with a member
+        // that admits anything, since it can't be a member's alternative.
+        if !matches!(b, Head::Infer(_))
+            && let Head::Skolem(id) = a
+        {
+            let skolem = &self.skolems[id.0];
+            let step = match skolem.binding {
+                Binding::Implicit => Step::ImplicitBound,
+                _ => Step::SkolemBound,
+            };
+            if let Some(bound) = skolem.bound.get() {
+                self.derive(obligation, bound, expected, step);
+                return Ok(());
+            }
+            return self.unbounded_skolem(&b);
+        }
         if !matches!(b, Head::Infer(_))
             && let Head::Structural(view) = &a
             && let Type::Union(members) = self.db.ty(view.ty)
@@ -1986,11 +2262,14 @@ impl<'db> Solver<'db> {
             }
             return Ok(());
         }
-        // Only itself, bottom and the dynamic type are below a rigid
+        // Only itself, bottom and the dynamic type are below a rigid or skolem
         if !matches!(a, Head::Infer(_))
             && let Head::Structural(view) = &b
             && self.rigid(view.ty)?.is_some()
         {
+            return Err(Issue::Contradiction(Contradiction::Rigid));
+        }
+        if !matches!(a, Head::Infer(_)) && matches!(b, Head::Skolem(_)) {
             return Err(Issue::Contradiction(Contradiction::Rigid));
         }
         if !matches!(a, Head::Infer(_))
@@ -2061,6 +2340,9 @@ impl<'db> Solver<'db> {
                     (Type::Quantified { binders, body }, Type::Function(_)) => {
                         self.instantiation(a, binders, *body, expected, obligation)
                     }
+                    (_, Type::Quantified { binders, body }) => {
+                        self.skolemization(b, binders, *body, actual, obligation)
+                    }
                     (Type::Schema(xs), Type::Schema(ys)) => {
                         self.schemas(a, xs, b, ys, expected, obligation)
                     }
@@ -2112,8 +2394,76 @@ impl<'db> Solver<'db> {
         }
     }
 
+    /// Whether a skolem of `skolem`'s scope is visible in `scope`: `skolem` is it
+    /// or a scope it's inside
+    fn visible(&self, mut scope: ScopeId, skolem: ScopeId) -> bool {
+        loop {
+            if scope == skolem {
+                return true;
+            }
+            if scope == ScopeId(0) {
+                return false;
+            }
+            scope = self.scopes[scope.0].parent;
+        }
+    }
+
+    /// Whether a term is a quantified type, directly or as a declaration's
+    fn quantified(&self, term: Term) -> Result<bool, Residual> {
+        let Term::View(view) = self.resolve(term)? else {
+            return Ok(false);
+        };
+        let ty = match *self.db.ty(view.ty) {
+            Type::Decl(id) if !self.db.declaration(id).source.kind.nominal() => {
+                self.db.declaration(id).ty
+            }
+            _ => view.ty,
+        };
+        Ok(matches!(self.db.ty(ty), Type::Quantified { .. }))
+    }
+
+    /// Whether a skolem without a bound is below an expected head that isn't
+    /// itself: only top, `Unknown`, or a union with a member that is either
+    fn unbounded_skolem(&self, expected: &Head) -> Result<(), Issue> {
+        let Head::Structural(view) = expected else {
+            return Err(Issue::Contradiction(Contradiction::Rigid));
+        };
+        let Type::Union(members) = self.db.ty(view.ty) else {
+            return Err(Issue::Contradiction(Contradiction::Rigid));
+        };
+        let mut unresolved = false;
+        for member in members.iter() {
+            let UnionMember::Type(ty) = *member else {
+                unresolved = true;
+                continue;
+            };
+            match self.head(view.child(ty))? {
+                Head::Structural(member)
+                    if member.ty == self.db.top()
+                        || matches!(self.db.ty(member.ty), Type::Unknown(_)) =>
+                {
+                    return Ok(());
+                }
+                Head::Infer(_) => unresolved = true,
+                _ => {}
+            }
+        }
+        Err(match unresolved {
+            true => Residual::Unsupported("a type that may be inside a union member").into(),
+            false => Issue::Contradiction(Contradiction::Rigid),
+        })
+    }
+
     /// Every new bound is paired with the opposite bounds. Variable-to-variable
     /// bounds use this same rule; derived obligations carry propagation onward.
+    ///
+    /// A bound may only hold skolems the variable's scope sees. A skolem from
+    /// inside it that is a whole lower bound is promoted: the variable is above
+    /// its bound instead, the least type above it without it. Any other escape
+    /// leaves the bound unrecorded and the judgment residual; a solution found
+    /// for the variable otherwise is then related to the skolem directly. A
+    /// quantified upper bound would need impredicative instantiation, so it is
+    /// residual too.
     fn add_bound(
         &self,
         id: InferVarId,
@@ -2121,6 +2471,29 @@ impl<'db> Solver<'db> {
         lower: bool,
         source: ObligationId,
     ) -> Result<(), Residual> {
+        let scope = self.inference[id.0].scope;
+        let mut leaves = HashSet::new();
+        self.solved_leaves(term, &mut leaves)?;
+        let escaped = leaves.iter().any(|leaf| {
+            matches!(*leaf, Term::Skolem(skolem)
+                if !self.visible(scope, self.skolems[skolem.0].scope))
+        });
+        if escaped {
+            // A solution is related to the skolem directly
+            if self.assignment(id).is_some() {
+                return Ok(());
+            }
+            if lower && let Term::Skolem(skolem) = self.resolve(term)? {
+                let bound = (self.skolems[skolem.0].bound.get())
+                    .unwrap_or_else(|| self.closed(self.db.top()));
+                self.derive(source, bound, Term::Infer(id), Step::Promotion);
+                return Ok(());
+            }
+            return Err(Residual::Escape);
+        }
+        if !lower && self.quantified(term)? {
+            return Err(Residual::Unsupported("a variable below a quantified type"));
+        }
         let bounds = &self.bounds[id.0];
         let (same, opposite) = if lower {
             (&bounds.lower, &bounds.upper)
@@ -2148,52 +2521,90 @@ impl<'db> Solver<'db> {
 
     /// Process queued obligations to quiescence or exhaustion and report each submitted root.
     pub(crate) fn solve(&mut self) -> Vec<Outcome> {
+        // Settling a scope's variables commits choices, so solving resumes after
+        // each one
         loop {
-            while !self.exhausted.get() && !self.queue.is_empty() {
-                let mut batch = std::mem::take(&mut self.queue);
-                for id in batch.drain() {
-                    let node = &self.obligations[id.0];
-                    node.queued.set(false);
-                    node.active.borrow_mut().clear();
-                    let result = self
-                        .spend()
-                        .map_err(Issue::from)
-                        .and_then(|()| self.subscribe(id).map_err(Issue::from))
-                        .and_then(|()| self.reduce(id));
-                    node.state.set(match result {
-                        Ok(()) => State::Reduced,
-                        Err(issue) => State::Issue(issue),
-                    });
-                    if self.exhausted.get() {
-                        break;
-                    }
-                }
-            }
-            if self.exhausted.get() {
-                break;
-            }
-            let mut assigned = false;
-            for index in 0..self.bounds.len() {
-                if self.inference[index].dirty.replace(false)
-                    && self.inference[index].assignment.get().is_none()
-                {
-                    match self.try_assign(InferVarId(index)) {
-                        Ok(changed) => assigned |= changed,
-                        Err(Residual::Limit) => {
-                            self.exhausted.set(true);
+            loop {
+                while !self.exhausted.get() && !self.queue.is_empty() {
+                    let mut batch = std::mem::take(&mut self.queue);
+                    for id in batch.drain() {
+                        let node = &self.obligations[id.0];
+                        node.queued.set(false);
+                        node.active.borrow_mut().clear();
+                        let result = self
+                            .spend()
+                            .map_err(Issue::from)
+                            .and_then(|()| self.subscribe(id).map_err(Issue::from))
+                            .and_then(|()| self.reduce(id));
+                        node.state.set(match result {
+                            Ok(()) => State::Reduced,
+                            Err(issue) => State::Issue(issue),
+                        });
+                        if self.exhausted.get() {
                             break;
                         }
-                        Err(_) => {}
                     }
                 }
+                if self.exhausted.get() {
+                    break;
+                }
+                let mut assigned = false;
+                for index in 0..self.bounds.len() {
+                    if self.inference[index].dirty.replace(false)
+                        && self.inference[index].assignment.get().is_none()
+                    {
+                        match self.try_assign(InferVarId(index)) {
+                            Ok(changed) => assigned |= changed,
+                            Err(Residual::Limit) => {
+                                self.exhausted.set(true);
+                                break;
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                }
+                if !assigned && self.queue.is_empty() {
+                    break;
+                }
             }
-            if !assigned && self.queue.is_empty() {
+            if self.exhausted.get() || !self.settle() {
                 break;
             }
         }
         (0..self.roots.len())
             .map(|index| self.outcome(ConstraintId(index)))
             .collect()
+    }
+
+    /// Commit a choice for one variable of a skolem scope, which nothing outside
+    /// its judgment sees: a default, innermost scope first and in creation
+    /// order, so each follows what an earlier one forces. Without one, a
+    /// variable nothing is below takes bottom, the least choice. Whether one was
+    /// committed.
+    fn settle(&self) -> bool {
+        let mut pending: Vec<InferVarId> = (0..self.inference.len())
+            .map(InferVarId)
+            .filter(|&id| {
+                let inference = &self.inference[id.0];
+                inference.scope != ScopeId(0) && inference.assignment.get().is_none()
+            })
+            .collect();
+        pending
+            .sort_by_key(|id| std::cmp::Reverse(self.scopes[self.inference[id.0].scope.0].depth));
+        for &id in &pending {
+            if self.default_term(id, false).is_ok() {
+                return true;
+            }
+        }
+        for &id in &pending {
+            let inference = &self.inference[id.0];
+            if inference.kind == Kind::Type && self.bounds[id.0].lower().next().is_none() {
+                inference.defaulted.set(true);
+                self.commit(id, self.closed(self.db.bottom()));
+                return true;
+            }
+        }
+        false
     }
 
     /// Trace a root through its dependencies to collect issues and determine its status.

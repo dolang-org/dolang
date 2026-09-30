@@ -67,7 +67,7 @@ fn generic_callees_are_instantiated_once_per_use() {
             .iter()
             .filter_map(|term| match term {
                 Term::Infer(id) => Some(*id),
-                Term::View(_) => None,
+                _ => None,
             })
             .collect::<Vec<_>>()[..]
         else {

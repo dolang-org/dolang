@@ -148,7 +148,7 @@ impl Solver<'_> {
             self.depth(depth)?;
             let view = match self.head(term)? {
                 Head::Nominal(nominal) => return Ok(Some(nominal)),
-                Head::Infer(_) => return Ok(None),
+                Head::Infer(_) | Head::Skolem(_) => return Ok(None),
                 Head::Structural(view) => view,
             };
             let mut body = view.ty;

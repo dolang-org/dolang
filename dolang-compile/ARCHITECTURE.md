@@ -213,8 +213,8 @@ A function type is a subtype of another when its parameter list includes the
 other's (see [Schemas](#schemas)), its result is a subtype of the other's, and
 its ambient channels are supertypes of the other's. Channels are implicit
 arguments, so both are contravariant; since `Sink` is contravariant in its
-element type, a function that writes `Int`s can be given a `Sink[Num]`.
-An omitted channel stands for its default bound, `Iter[Unknown]` or
+element type, a function that writes `Int`s can be given a `Sink[Num]`. An
+omitted channel stands for its default bound, `Iter[Unknown]` or
 `Sink[Unknown]`, or `Unknown` when `std` doesn't designate one. Union-left
 judgments require every member; union-right judgments accept a member proved by
 an isolated, closed subtype query. Alternative queries cannot add inference
@@ -235,15 +235,15 @@ ordered values, the bottom type for two literals or classes that can't share a
 value, and otherwise `Unknown`, which leaves the write unchecked. A key member
 the schema doesn't admit whole contradicts the projection, as a conflicting
 schema does. A rigid key selects only by its bound, so exactly only where each
-item the bound selects has the same value; otherwise the projection is
-residual. One left unevaluated is below an item projection of the same kind and
-schema on the right whose key is proven wider for `IndexItem`, or narrower for
+item the bound selects has the same value; otherwise the projection is residual.
+One left unevaluated is below an item projection of the same kind and schema on
+the right whose key is proven wider for `IndexItem`, or narrower for
 `AssignItem`. A function's result that is an item projection is exposed where
 the function is related, so a call reports a key its schema doesn't admit even
-when nothing uses the result. Higher-rank rules remain
-deferred. Contextual identity and top/bottom rules can still settle some
-judgments involving otherwise unsupported forms: anything is below top and
-`Unknown`, even a type that can't be exposed.
+when nothing uses the result. Quantified types on the right are related through
+skolems (see [Skolems and scopes](#skolems-and-scopes)). Contextual identity and
+top/bottom rules can still settle some judgments involving otherwise unsupported
+forms: anything is below top and `Unknown`, even a type that can't be exposed.
 
 ### Schemas
 
@@ -352,8 +352,54 @@ way; a call's channels bound a callee's channel variables from below, and
 defaulting settles them on the caller's channels. The environment is recorded by
 obligation, so reprocessing derives the same obligations without creating
 variables. Variables never leave the solver: flow analysis creates a solver per
-step and exports only reified types. A quantifier on the right, which needs
-skolems, is residual.
+step and exports only reified types. Each variable belongs to the innermost
+scope among the variables and skolems of the obligation that created it, so a
+quantified type instantiated against a skolemized body may take its skolems.
+
+### Skolems and scopes
+
+A quantified type on the right of a structural type is skolemized: each binder
+becomes a skolem, `Term::Skolem`, and the actual side is related to the body
+under an environment of them. The body must hold for every choice of the
+binders, so it must hold for these. A skolem is solver-local and never enters a
+canonical type; reifying one is an escape. Its bound is the binder's bound read
+in the skolemization's environment, which carries F-bounds and outer
+substitutions, and a rest binder without one is bounded by its shape. Skolems
+follow the rules of rigids: a skolem is below itself, top and `Unknown`, and
+bottom and `Unknown` are below it; on the left it reduces to its bound, labeled
+as a rigid's is, and otherwise it contradicts the judgment. One without a bound
+is below a union only through a member that is itself, top or `Unknown`. The
+skolems are created once per obligation, as instantiations are. Contextually
+identical quantified types are proved before either rule applies.
+
+Each skolemization opens a scope inside the obligation's innermost one. A
+variable sees the skolems of its scope and the scopes around it, and a bound
+holding any other has escaped. A skolem that is a whole lower bound is promoted:
+the variable is bounded below by the skolem's bound instead, or by top if it has
+none, which is the least type above it without it. Any other escaping bound is
+not recorded, and its judgment is residual; if the variable is solved
+otherwise, its solution is related to the skolem directly, which can contradict
+it.
+
+A variable's solution may hold skolems it sees. Such a solution is chosen only
+by identity: every lower bound must be the same term, holding no unsolved
+variable. A bound the same as it forces it; otherwise it is a default. Skolems
+are never joined or probed. A scope's variables are invisible outside its
+judgment, so the solver settles them itself: at quiescence, it defaults one at a
+time, innermost scope first and in creation order, and solves again. A variable
+nothing is below takes bottom. Variables of the root scope are left to the
+caller.
+
+The supported higher-rank fragment is a prenex quantifier on either side of any
+obligation, including quantifiers reached through function parameters and
+results, which the rules reach recursively: a quantified parameter becomes a
+quantifier on the right by contravariance. Residual forms are:
+
+- a quantified type on the right of a variable, which would need impredicative
+  instantiation; the bound is not recorded;
+- a quantified type on the right of a class instance;
+- an item projection whose schema or key holds a skolem, since projections are
+  evaluated by reifying them.
 
 ### Member lookup
 
@@ -454,8 +500,8 @@ the edge unreachable.
 
 Exact candidate dependencies receive a scope-aware occurs check. Recursive
 substitutions remain recursive residuals; variable-only cycles remain unsolved
-unless concrete bounds force them. Assignments contain only closed canonical
-types, so they cannot introduce assignment cycles. Declaration wrappers remain
+unless concrete bounds force them. Assignments hold no unsolved variables, so
+they cannot introduce assignment cycles. Declaration wrappers remain
 opaque to this check: supported recursion through declarations is distinct from
 substitution recursion.
 
@@ -482,7 +528,8 @@ obsolete residuals do not prevent a current proof. Cycles in current proof
 premises remain unresolved. Reports distinguish proven, contradicted, and
 unresolved roots; quiescence alone is not proof.
 
-`solution` exposes a committed canonical type, `solution_sources` exposes its
+`solution` exposes a committed canonical type, or nothing for a solution
+holding skolems, `solution_sources` exposes its
 supporting obligations, and `unresolved` enumerates variables available for
 later inference or generalization. `reify` rebuilds a fully resolved contextual
 view using the database's scope-aware child mapping. It preserves local binder

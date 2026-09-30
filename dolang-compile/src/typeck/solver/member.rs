@@ -131,6 +131,9 @@ impl Solver<'_> {
                     };
                     return match self.head(class)? {
                         Head::Infer(_) => Err(Residual::Inference.into()),
+                        Head::Skolem(_) => {
+                            Err(Residual::Unsupported("a type object of a skolem").into())
+                        }
                         Head::Nominal(class) => Ok(Receiver::Object(class)),
                         Head::Structural(view)
                             if matches!(self.db.ty(view.ty), Type::Unknown(_)) =>
@@ -142,6 +145,13 @@ impl Solver<'_> {
                         }
                     };
                 }
+                Head::Skolem(id) => match self.skolems[id.0].bound.get() {
+                    Some(bound) => {
+                        term = bound;
+                        continue;
+                    }
+                    None => return Ok(Receiver::Missing),
+                },
                 Head::Structural(view) => view,
             };
             let mut ty = view.ty;

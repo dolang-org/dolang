@@ -15,6 +15,7 @@ mod nominal;
 mod projections;
 mod rigids;
 mod schemas;
+mod skolems;
 mod unknown;
 
 fn literal(db: &Database, n: i128) -> TypeId {

@@ -47,7 +47,8 @@ struct KeyedAtom {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Opacity {
     Unknown,
-    Rigid(TypeId),
+    /// A rigid, as its closed view, or a skolem
+    Rigid(Term),
     Infer(InferVarId),
 }
 
@@ -122,7 +123,7 @@ impl Solver<'_> {
         self.flatten(av, xs, None, None, &mut a, 0)?;
         let pairs = self.pair(&a, &b)?;
         // Every actual rigid without a counterpart stands for its bound
-        let paired: HashSet<TypeId> = pairs
+        let paired: HashSet<Term> = pairs
             .iter()
             .filter_map(|&(i, _)| match a.opaque[i].opacity {
                 Opacity::Rigid(ty) => Some(ty),
@@ -375,14 +376,14 @@ impl Solver<'_> {
     }
 
     /// Flatten items into `shape`. `item` is the top-level item they belong to,
-    /// if they are nested. With `keep`, a rigid outside it is replaced by its
-    /// bound; otherwise every rigid is opaque.
+    /// if they are nested. With `keep`, a rigid or skolem outside it is replaced
+    /// by its bound; otherwise every one is opaque.
     fn flatten(
         &self,
         view: TypeView,
         items: &[SchemaItem],
         item: Option<usize>,
-        keep: Option<&HashSet<TypeId>>,
+        keep: Option<&HashSet<Term>>,
         shape: &mut Shape,
         depth: usize,
     ) -> Result<(), Issue> {
@@ -424,7 +425,7 @@ impl Solver<'_> {
         term: Term,
         multiplicity: Multiplicity,
         item: usize,
-        keep: Option<&HashSet<TypeId>>,
+        keep: Option<&HashSet<Term>>,
         shape: &mut Shape,
         depth: usize,
     ) -> Result<(), Issue> {
@@ -441,6 +442,12 @@ impl Solver<'_> {
                 return Ok(());
             }
             Head::Infer(_) => return Err(Residual::Inference.into()),
+            Head::Skolem(id) => {
+                let Some(bound) = self.skolems[id.0].bound.get() else {
+                    return Err(Residual::Unsupported("an included skolem without a bound").into());
+                };
+                return self.include_rigid(term, bound, multiplicity, item, keep, shape, depth);
+            }
             Head::Nominal(_) => {
                 return Err(Residual::Unsupported("a class included in a schema").into());
             }
@@ -488,40 +495,47 @@ impl Solver<'_> {
                 let Some(bound) = self.rigid_bound(view.ty) else {
                     return Err(Residual::Unsupported("an included rigid without a bound").into());
                 };
-                if keep.is_some_and(|keep| !keep.contains(&view.ty)) {
-                    return self.include(
-                        self.closed(bound),
-                        multiplicity,
-                        item,
-                        keep,
-                        shape,
-                        depth + 1,
-                    );
-                }
-                if multiplicity != Multiplicity::Required {
-                    return Err(
-                        Residual::Unsupported("an optional or repeated included rigid").into(),
-                    );
-                }
-                let lanes = self.lanes(bound, depth + 1)?;
-                opaque(shape, Opacity::Rigid(view.ty), lanes);
-                Ok(())
+                let rigid = self.closed(view.ty);
+                let bound = self.closed(bound);
+                self.include_rigid(rigid, bound, multiplicity, item, keep, shape, depth)
             }
             _ => Err(Residual::Unsupported("this kind of included schema").into()),
         }
     }
 
+    /// Flatten an included rigid or skolem into `shape`: opaque, or its bound if
+    /// `keep` leaves it out
+    #[expect(clippy::too_many_arguments, reason = "an inclusion's parts")]
+    fn include_rigid(
+        &self,
+        rigid: Term,
+        bound: Term,
+        multiplicity: Multiplicity,
+        item: usize,
+        keep: Option<&HashSet<Term>>,
+        shape: &mut Shape,
+        depth: usize,
+    ) -> Result<(), Issue> {
+        if keep.is_some_and(|keep| !keep.contains(&rigid)) {
+            return self.include(bound, multiplicity, item, keep, shape, depth + 1);
+        }
+        if multiplicity != Multiplicity::Required {
+            return Err(Residual::Unsupported("an optional or repeated included rigid").into());
+        }
+        let lanes = self.lanes(bound, depth + 1)?;
+        shape.positional.push(Slot::Opaque(shape.opaque.len()));
+        shape.opaque.push(Opaque {
+            opacity: Opacity::Rigid(rigid),
+            lanes,
+            item,
+        });
+        Ok(())
+    }
+
     /// Which lanes the schemas below a bound can occupy
-    fn lanes(&self, bound: TypeId, depth: usize) -> Result<Rest, Issue> {
+    fn lanes(&self, bound: Term, depth: usize) -> Result<Rest, Issue> {
         let mut shape = Shape::default();
-        self.include(
-            self.closed(bound),
-            Multiplicity::Required,
-            0,
-            None,
-            &mut shape,
-            depth,
-        )?;
+        self.include(bound, Multiplicity::Required, 0, None, &mut shape, depth)?;
         let mut positional = shape
             .positional
             .iter()
