@@ -38,18 +38,26 @@ let native_mixed = do |...args| mixed_rest $record ...args
 for f = [keys, mixed, native_keys, native_mixed]
   assert_eq (f msg: 1 x: 2 y: 3 x: 4) (x: 2, y: 3, x: 4)
   assert_eq (f msg: 1 ...(x: 2, y: 3, x: 4)) (x: 2, y: 3, x: 4)
-  assert_throws $UnexpectedKeyError str: "duplicate keyword argument: msg" do
-    f msg: 1 msg: 2
-  assert_throws $UnexpectedKeyError str: "duplicate keyword argument: optional" do
-    f msg: 1 optional: nil ...{optional: 2}
+  assert_eq (f msg: 1 msg: 2) (msg: 2,)
+  assert_eq (f ...(msg: 1, msg: 2, msg: 3)) (msg: 2, msg: 3)
+  assert_eq (f msg: 1 optional: nil ...{optional: 2}) (optional: 2,)
 for f = [mixed, native_mixed]
   assert_eq (f 1 msg: 2 x: 3 4 x: 5) (1, x: 3, 4, x: 5)
 
 def discard :msg **
   msg
 assert_eq (discard msg: 1 x: 2 x: 3) 1
+assert_eq (discard msg: 1 msg: 2) 1
+
+def first a :k **rest
+  [a, k, rest]
+assert_eq (first 1 k: 2 k: 3) [1, 2, (k: 3,)]
+
+def positional_only :msg *rest
+  let _ = msg
+  rest
 assert_throws $UnexpectedKeyError str: "duplicate keyword argument: msg" do
-  discard msg: 1 msg: 2
+  positional_only msg: 1 msg: 2
 
 # Errors clean up the frame and don't affect subsequent invocations.
 assert_eq (required msg: 9) 9

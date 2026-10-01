@@ -150,32 +150,34 @@ impl<'v> CallFrame<'v> {
                         Arg::Key(sym, mut value) => {
                             if let Some(i) = unpack.sym_offset(sym) {
                                 let dest = &mut *slots.get_unchecked(offset + i).get();
-                                if !dest.is_uninit() {
+                                if dest.is_uninit() {
+                                    dest.store(value.take());
+                                    continue;
+                                }
+                                if unpack.variadic.keyed() == Rest::None {
                                     return Err(Error::duplicate_key_raw(inner, sym));
                                 }
-                                dest.store(value.take());
-                            } else {
-                                match unpack.variadic {
-                                    Variadic::Capture => {
-                                        // Capture extra key arguments in rest
-                                        rest.as_mut().unwrap().push_back(Some((
-                                            Some(inner.vm().sym_obj(sym)),
-                                            value.take(),
-                                        )));
-                                    }
-                                    variadic => match variadic.keyed() {
-                                        Rest::None => {
-                                            return Err(Error::unexpected_key_raw(inner, sym));
-                                        }
-                                        // Allow but discard extra key arguments
-                                        Rest::Discard => {}
-                                        // Capture extra key arguments in `**name`
-                                        Rest::Capture => key_rest
-                                            .as_mut()
-                                            .unwrap()
-                                            .push((inner.vm().sym_obj(sym), value.take())),
-                                    },
+                            }
+                            match unpack.variadic {
+                                Variadic::Capture => {
+                                    // Capture extra key arguments in rest
+                                    rest.as_mut().unwrap().push_back(Some((
+                                        Some(inner.vm().sym_obj(sym)),
+                                        value.take(),
+                                    )));
                                 }
+                                variadic => match variadic.keyed() {
+                                    Rest::None => {
+                                        return Err(Error::unexpected_key_raw(inner, sym));
+                                    }
+                                    // Allow but discard extra key arguments
+                                    Rest::Discard => {}
+                                    // Capture extra key arguments in `**name`
+                                    Rest::Capture => key_rest
+                                        .as_mut()
+                                        .unwrap()
+                                        .push((inner.vm().sym_obj(sym), value.take())),
+                                },
                             }
                         }
                     }
