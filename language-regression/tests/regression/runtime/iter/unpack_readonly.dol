@@ -1,0 +1,57 @@
+# Retained in-memory iterator unpack is read-only, even after advancing.
+def check_readonly it expected
+  assert_throws $std.MissingPosError do let _a _b _c _d = it
+  let a b ...rest = it
+  let c d ...again = it
+  assert_eq [a, b, ...rest] $expected
+  assert_eq [c, d, ...again] $expected
+  assert_eq (it.next()) $expected[0]
+  let first ...tail = it
+  assert_eq [first, ...tail] [...expected.iter().skip(1)]
+  assert_eq [...it] [...expected.iter().skip(1)]
+
+check_readonly $[1, 2, 3].iter() [1, 2, 3]
+check_readonly $(1, 2, 3).iter() [1, 2, 3]
+check_readonly $[10, 20, 30].pairs() [(0, 10), (1, 20), (2, 30)]
+check_readonly $"a,b,c".split(",") ["a", "b", "c"]
+check_readonly $"a,b,c".rsplit(",") ["c", "b", "a"]
+check_readonly $b"a,b,c".split(b",") [b"a", b"b", b"c"]
+check_readonly $b"a,b,c".rsplit(b",") [b"c", b"b", b"a"]
+check_readonly $"abc".scalars().iter() ["a", "b", "c"]
+check_readonly $"abc".graphemes().iter() ["a", "b", "c"]
+
+# Missing pair items use binding defaults unchanged, including keyed defaults.
+def check_pair_defaults value expected
+  bind value
+    - item
+    - positional = 99
+    :keyed = 77
+  assert_eq $item $expected
+  assert_eq $positional 99
+  assert_eq $keyed 77
+
+def check_empty_pair_defaults value
+  bind value
+    - positional = 99
+    :keyed = 77
+  assert_eq $positional 99
+  assert_eq $keyed 77
+
+for source = [[10], (10,)]
+  let it = source.pairs()
+  check_pair_defaults $it (0, 10)
+  check_pair_defaults $it (0, 10)
+  assert_eq (it.next()) (0, 10)
+  check_empty_pair_defaults $it
+
+for source = [[10, 20], (10, 20)]
+  let it = source.pairs()
+  let first ...tail = it
+  assert_eq $first (0, 10)
+  check_pair_defaults $tail (1, 20)
+  check_pair_defaults $tail (1, 20)
+  let second ...empty = tail
+  assert_eq $second (1, 20)
+  check_empty_pair_defaults $empty
+  check_empty_pair_defaults $empty
+  assert_eq (it.next()) (0, 10)

@@ -555,18 +555,10 @@ impl<'v> Protocol<'v> for Iter<'v> {
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        context: SpreadContext,
+        _context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        let borrow = this.borrow(strand)?;
-        Dict::iter_op_spread(
-            &borrow.index,
-            borrow.epoch,
-            &borrow.dict,
-            strand,
-            context,
-            sink,
-        )
+        super::iter::spread_iter(strand, this, sink).await
     }
 }
 
@@ -714,42 +706,6 @@ impl<'v> Dict<'v> {
         }
     }
 
-    fn iter_unpack_values<'s>(
-        strand: &mut Strand<'v, 's>,
-        sig: &sig::Unpack<'v, '_>,
-        out: &mut Slots<'v, '_>,
-        mut index: usize,
-        mut next: impl FnMut(usize) -> Option<(usize, Value<'v>)>,
-    ) -> Result<'v, 's, usize> {
-        let pos_count = sig.required + sig.optional.len();
-        for i in 0..(pos_count + sig.keys.len()) {
-            if i < pos_count {
-                if let Some((next_index, value)) = next(index) {
-                    out.at(i).store(value);
-                    index = next_index;
-                } else if i >= sig.required {
-                    out.at(i).store(sig.optional[i - sig.required].dup());
-                } else {
-                    return Err(Error::missing_positional(strand, i));
-                }
-            } else {
-                let key = &sig.keys[i - pos_count];
-                if let Some(default) = &key.default {
-                    out.at(i).store(default.dup());
-                } else {
-                    return Err(match &key.kind {
-                        UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
-                        UnpackKeyKind::Const(value) => Error::missing_key(strand, value),
-                    });
-                }
-            }
-        }
-        if sig.pos_rest() == Rest::None && next(index).is_some() {
-            return Err(Error::unexpected_positional(strand, pos_count));
-        }
-        Ok(index)
-    }
-
     fn values_iter_op_next<'s>(
         index: &Cell<usize>,
         epoch: u64,
@@ -812,43 +768,6 @@ impl<'v> Dict<'v> {
             }
         })
     }
-
-    fn iter_op_spread<'s>(
-        index: &Cell<usize>,
-        epoch: u64,
-        container: &GcObj<'v, Dict<'v>>,
-        strand: &mut Strand<'v, 's>,
-        context: SpreadContext,
-        sink: &mut dyn Spread<'v, 's>,
-    ) -> Result<'v, 's, ()> {
-        let dict = container
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        if dict.epoch != epoch {
-            return Err(Error::concurrency_msg(
-                strand,
-                "collection was modified during iteration",
-            ));
-        }
-        let mut next_pos = Some(0i64);
-        loop {
-            let Some(bucket) = dict.index.get(index.get()) else {
-                return Ok(());
-            };
-            index.update(|i| i + 1);
-            if let Some((bucket, subindex)) = bucket {
-                let bucket = unsafe { bucket.as_ref() };
-                Self::spread_key_value(
-                    strand,
-                    &mut next_pos,
-                    bucket.key.dup(),
-                    bucket.value.at(*subindex).dup(),
-                    context,
-                    sink,
-                )?;
-            }
-        }
-    }
 }
 
 impl<'v> Protocol<'v> for Values<'v> {
@@ -895,16 +814,32 @@ impl<'v> Protocol<'v> for Values<'v> {
                     "collection was modified during iteration",
                 ));
             }
-            Dict::iter_unpack_values(strand, sig, &mut out, borrow.index.get(), |i| {
+            super::iter::unpack_cursor(strand, sig, &mut out, borrow.index.get(), |_, i| {
                 Dict::next_value_from_index(&dict, i)
             })?
         };
-        borrow.index.set(next_index);
         if let Some(i) = sig.pos_rest_slot() {
-            out.at(i).store(Value::from_input(strand, &this))
+            strand.builtin_types().dict_values.create(
+                strand,
+                Values {
+                    index: Cell::new(next_index),
+                    epoch: borrow.epoch,
+                    container: borrow.container.clone(),
+                },
+                out.at(i),
+            );
         }
         sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
+    }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::spread_iter(strand, this, sink).await
     }
 
     async fn op_next<'a, 's>(
@@ -969,7 +904,7 @@ impl<'v> Protocol<'v> for KeyValues<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        {
+        let next_index = {
             let dict = borrow
                 .container
                 .borrow()
@@ -980,17 +915,33 @@ impl<'v> Protocol<'v> for KeyValues<'v> {
                     "collection was modified during iteration",
                 ));
             }
-        }
-        let next_index =
-            Dict::iter_unpack_values(strand, sig, &mut out, borrow.index.get(), |i| {
+            super::iter::unpack_cursor(strand, sig, &mut out, borrow.index.get(), |_, i| {
                 Dict::next_value_from_bucket(borrow.bucket.clone(), i)
-            })?;
-        borrow.index.set(next_index);
+            })?
+        };
         if let Some(i) = sig.pos_rest_slot() {
-            out.at(i).store(Value::from_input(strand, &this))
+            strand.builtin_types().dict_key_values.create(
+                strand,
+                KeyValues {
+                    index: Cell::new(next_index),
+                    epoch: borrow.epoch,
+                    container: borrow.container.clone(),
+                    bucket: borrow.bucket.clone(),
+                },
+                out.at(i),
+            );
         }
         sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
+    }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::spread_iter(strand, this, sink).await
     }
 
     async fn op_next<'a, 's>(
@@ -1062,7 +1013,8 @@ impl<'v> Protocol<'v> for Keys<'v> {
         mut out: Slots<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        let (next_index, pending) = {
+        let mut visited = borrow.visited.borrow().clone();
+        let next_index = {
             let dict = borrow
                 .container
                 .borrow()
@@ -1073,26 +1025,39 @@ impl<'v> Protocol<'v> for Keys<'v> {
                     "collection was modified during iteration",
                 ));
             }
-            let visited = borrow.visited.borrow();
             let mut pending = Vec::new();
             let next_index =
-                Dict::iter_unpack_values(strand, sig, &mut out, borrow.index.get(), |i| {
+                super::iter::unpack_cursor(strand, sig, &mut out, borrow.index.get(), |_, i| {
                     Dict::next_key_from_index(&dict, i, &visited, &mut pending)
                 })?;
-            (next_index, pending)
-        };
-        borrow.index.set(next_index);
-        {
-            let mut visited = borrow.visited.borrow_mut();
             for bucket_index in pending {
                 visited.set(bucket_index, true);
             }
-        }
+            next_index
+        };
         if let Some(i) = sig.pos_rest_slot() {
-            out.at(i).store(Value::from_input(strand, &this))
+            strand.builtin_types().dict_keys.create(
+                strand,
+                Keys {
+                    index: Cell::new(next_index),
+                    epoch: borrow.epoch,
+                    container: borrow.container.clone(),
+                    visited: RefCell::new(visited),
+                },
+                out.at(i),
+            );
         }
         sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
+    }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::spread_iter(strand, this, sink).await
     }
 
     async fn op_next<'a, 's>(
@@ -1280,6 +1245,7 @@ fn leftover_instance<'v>(
 ///
 /// A rest delivers its positional items, the run of integer keys from the
 /// next position, before its keyed ones, which follow insertion order.
+#[derive(Clone)]
 enum UnpackState<'v> {
     /// Delivering the positional run from `int`, before resuming the keyed
     /// items at `resume`.
@@ -1459,7 +1425,7 @@ impl<'v> Protocol<'v> for Unpack<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        Output::set(strand, out, TypeObject::Value)
     }
 
     fn op_debug<'a, 's>(
@@ -1467,16 +1433,7 @@ impl<'v> Protocol<'v> for Unpack<'v> {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<dict unpack iter>")
-    }
-
-    async fn op_iter<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
-        Ok(())
+        crate::fmt!(strand, w, "<dict rest>")
     }
 
     async fn op_unpack<'a, 's>(
@@ -1485,7 +1442,7 @@ impl<'v> Protocol<'v> for Unpack<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let mut borrow = this.borrow_mut(strand)?;
+        let borrow = this.borrow(strand)?;
         borrow.check_epoch(strand)?;
         let container = borrow.dict.clone();
         let dict = container
@@ -1498,18 +1455,24 @@ impl<'v> Protocol<'v> for Unpack<'v> {
             UnpackState::Run { int } => {
                 // A positional run unpacks as a sequence
                 let values = dict.run_values(strand, *int)?;
-                let taken = Dict::iter_unpack_values(strand, sig, &mut out, 0, |i| {
+                let taken = super::iter::unpack_cursor(strand, sig, &mut out, 0, |_, i| {
                     values.get(i).map(|value| (i + 1, value.dup()))
                 })?;
                 let next = match *int {
                     Some(int) if taken < values.len() => Some(offset(strand, int, taken)?),
                     _ => None,
                 };
-                borrow.state = UnpackState::Run { int: next };
+                let epoch = borrow.epoch;
                 drop(dict);
                 drop(borrow);
                 if let Some(i) = sig.pos_rest_slot() {
-                    Output::set(strand, out.at(i), &this);
+                    out.at(i).store(make_unpack(
+                        strand,
+                        container,
+                        epoch,
+                        UnpackState::Run { int: next },
+                        false,
+                    ));
                 }
                 sig.fill_empty_key_rest(strand, &mut out);
                 return Ok(());
@@ -1529,13 +1492,13 @@ impl<'v> Protocol<'v> for Unpack<'v> {
             (i, state)
         });
 
-        // Commit, consuming a positional run that a `*` rest took
+        // Build the child view, excluding a positional run that a `*` rest took
         let next = if sig.variadic == Variadic::Capture || sig.pos_rest() == Rest::None {
             matched.start
         } else {
             matched.end
         };
-        borrow.state = match next {
+        let state = match next {
             Some(int) => UnpackState::Int { int, resume, skip },
             None => UnpackState::Resume {
                 index: resume,
@@ -1552,58 +1515,13 @@ impl<'v> Protocol<'v> for Unpack<'v> {
             out.at(i).store(rest);
         }
         if let Some((i, state)) = key_rest {
-            let rest = make_unpack(strand, container, epoch, state, true);
+            let rest = make_unpack(strand, container.clone(), epoch, state, true);
             out.at(i).store(rest);
         } else if sig.variadic == Variadic::Capture {
-            Output::set(strand, out.at(sig.len() - 1), &this);
+            out.at(sig.len() - 1)
+                .store(make_unpack(strand, container, epoch, state, false));
         }
         Ok(())
-    }
-
-    async fn op_next<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, bool> {
-        let mut borrow = this.borrow_mut(strand)?;
-        let container = borrow.dict.clone();
-        let dict = container
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        if dict.epoch != borrow.epoch {
-            return Err(Error::concurrency(strand));
-        }
-        match borrow.state.next_pair(strand, &dict)? {
-            // A positional run yields its values, as a sequence does
-            Some((_, value)) if borrow.state.is_run() => {
-                out.store(value);
-                Ok(true)
-            }
-            Some((key, value)) => {
-                out.store(Value::from_object(tuple::tuple(strand, [key, value])));
-                Ok(true)
-            }
-            None => Ok(false),
-        }
-    }
-
-    fn op_get<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        field: Sym<'v, 'a>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        iter::iter_get(strand, &this, field, out)
-    }
-
-    async fn op_mcall<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        method: Sym<'v, 'a>,
-        args: Args<'v, 'a>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        iter::iter_mcall(strand, &this, method, args, out).await
     }
 
     async fn op_spread<'a, 's>(
@@ -1612,7 +1530,7 @@ impl<'v> Protocol<'v> for Unpack<'v> {
         context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        let mut borrow = this.borrow_mut(strand)?;
+        let borrow = this.borrow(strand)?;
         let container = borrow.dict.clone();
         if container
             .borrow()
@@ -1627,6 +1545,7 @@ impl<'v> Protocol<'v> for Unpack<'v> {
             UnpackState::Int { int, .. } | UnpackState::Order { int, .. } => Some(*int),
             UnpackState::Run { .. } | UnpackState::Resume { .. } => None,
         };
+        let mut state = borrow.state.clone();
         let mut counter = 0usize;
         loop {
             counter += 1;
@@ -1637,12 +1556,15 @@ impl<'v> Protocol<'v> for Unpack<'v> {
                 let dict = container
                     .borrow()
                     .ok_or_else(|| Error::concurrency(strand))?;
-                borrow.state.next_pair(strand, &dict)?
+                if dict.epoch != borrow.epoch {
+                    return Err(Error::concurrency(strand));
+                }
+                state.next_pair(strand, &dict)?
             };
             let Some((key, mut value)) = pair else {
                 return Ok(());
             };
-            if borrow.state.is_run() {
+            if state.is_run() {
                 sink.positional(strand, Slot::new(&mut value))?;
             } else {
                 Dict::spread_key_value(strand, &mut next_pos, key, value, context, sink)?;

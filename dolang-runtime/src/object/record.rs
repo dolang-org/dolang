@@ -8,7 +8,7 @@ use crate::value::fmt::Format;
 
 use crate::{
     arg::{Arg, Args},
-    bytecode::{Rest, Variadic},
+    bytecode::{Rest as RestKind, Variadic},
     call,
     error::{Error, Result},
     gc::{Collect, arena::Visit},
@@ -183,8 +183,8 @@ fn unpack_plan<'v, 'a, 's>(
     let mut keys_left = sig.keys.len();
     let mut seen_keys = vec![false; keys_left];
     let split = !matches!(sig.variadic, Variadic::Discard | Variadic::Capture);
-    let collect_pos = split && sig.pos_rest() == Rest::Capture;
-    let collect_keys = split && sig.key_rest() == Rest::Capture;
+    let collect_pos = split && sig.pos_rest() == RestKind::Capture;
+    let collect_keys = split && sig.key_rest() == RestKind::Capture;
     let mut pos_rest = Vec::new();
     let mut key_rest = Vec::new();
     // Reported after any missing item
@@ -197,8 +197,8 @@ fn unpack_plan<'v, 'a, 's>(
         }
         if pos == pos_count
             && keys_left == 0
-            && sig.pos_rest() != Rest::None
-            && sig.key_rest() != Rest::None
+            && sig.pos_rest() != RestKind::None
+            && sig.key_rest() != RestKind::None
             && !collect_pos
             && !collect_keys
         {
@@ -221,7 +221,7 @@ fn unpack_plan<'v, 'a, 's>(
                     continue 'top;
                 }
             }
-            if sig.key_rest() == Rest::None {
+            if sig.key_rest() == RestKind::None {
                 unexpected_key.get_or_insert(sym.tag);
                 continue;
             }
@@ -234,7 +234,7 @@ fn unpack_plan<'v, 'a, 's>(
                 dest_slot: pos,
             });
             pos += 1;
-        } else if sig.pos_rest() == Rest::None {
+        } else if sig.pos_rest() == RestKind::None {
             unexpected_pos = true;
         } else if collect_pos {
             pos_rest.push(idx);
@@ -330,7 +330,7 @@ fn fill_unpack_defaults<'v, 'a>(
     }
 }
 
-/// Unpacks `record` against `sig`. A `...name` rest captures an iterator over
+/// Unpacks `record` against `sig`. A `...name` rest captures a view of
 /// the items left over.
 pub(crate) fn unpack<'v, 'a, 's>(
     strand: &mut Strand<'v, 's>,
@@ -360,9 +360,9 @@ pub(crate) fn unpack<'v, 'a, 's>(
         let positional_matched =
             i64::try_from(plan.pos_matched).map_err(|_| Error::overflow(strand))?;
         drop(borrow);
-        strand.builtin_types().record_iter.create(
+        strand.builtin_types().record_rest.create(
             strand,
-            Iter::new(record, skip, pos, positional_matched),
+            Rest::new(record, skip, pos, positional_matched),
             out.at(sig.len() - 1),
         );
     }
@@ -372,8 +372,7 @@ pub(crate) fn unpack<'v, 'a, 's>(
 
 // ── Iter ────────────────────────────────────────────────────────────
 
-/// An iterator over a record's `(key, value)` pairs, which is also the rest a
-/// `...name` captures from one. Unpacking it consumes the items it matches.
+/// An iterator over a record's `(key, value)` pairs.
 pub(crate) struct Iter<'v> {
     record: GcObj<'v, Record<'v>>,
     skip: HashSet<usize>,
@@ -403,6 +402,16 @@ impl<'v> Iter<'v> {
             let (key, value) = &record.items[index];
             (index, key.clone(), value.dup())
         })
+    }
+
+    /// Advances past the next item, returning it as a `(key, value)` pair
+    fn next_pair(&mut self, strand: &mut Strand<'v, '_>) -> Option<Value<'v>> {
+        let (index, key, value) = self.next_item()?;
+        self.pos = index + 1;
+        let positional = key.is_none();
+        let key = key_value(strand, &key, self.int);
+        self.int += i64::from(positional);
+        Some(Value::from_object(tuple::tuple(strand, [key, value])))
     }
 }
 
@@ -450,39 +459,20 @@ impl<'v> Protocol<'v> for Iter<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let mut iter = this.borrow_mut(strand)?;
-        let record_obj = iter.record.clone();
-        let record = record_obj
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        let items = &record.items;
-        let plan = unpack_plan(strand, items, &iter.skip, iter.pos, sig)?;
-
-        for action in &plan.actions {
-            iter.skip.insert(action.source_index);
-            out.at(action.dest_slot)
-                .store(items[action.source_index].1.dup());
+        let iter = this.borrow(strand)?;
+        let mut cursor = Iter::new(iter.record.clone(), iter.skip.clone(), iter.pos, iter.int);
+        super::iter::unpack_cursor(strand, sig, &mut out, iter.pos, |strand, pos| {
+            cursor.pos = pos;
+            let pair = cursor.next_pair(strand)?;
+            Some((cursor.pos, pair))
+        })?;
+        if let Some(i) = sig.pos_rest_slot() {
+            strand
+                .builtin_types()
+                .record_iter
+                .create(strand, cursor, out.at(i));
         }
-        fill_unpack_defaults(strand, sig, &mut out, plan.pos_matched, &plan.actions);
-        // The rests take their items
-        store_split_rests(strand, sig, &mut out, items, &plan);
-        iter.skip.extend(plan.pos_rest.iter().chain(&plan.key_rest));
-
-        iter.pos = first_visible_index(items, &iter.skip, iter.pos).unwrap_or(items.len());
-        iter.int = iter
-            .int
-            .checked_add(
-                i64::try_from(plan.pos_matched + plan.pos_rest.len())
-                    .map_err(|_| Error::overflow(strand))?,
-            )
-            .ok_or_else(|| Error::overflow(strand))?;
-        drop(record);
-        drop(iter);
-
-        if sig.variadic == Variadic::Capture {
-            Output::set(strand, out.at(sig.len() - 1), &this);
-        }
-
+        sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
     }
 
@@ -491,41 +481,20 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        let mut iter = this.borrow_mut(strand)?;
-        let Some((index, key, value)) = iter.next_item() else {
+        let Some(pair) = this.borrow_mut(strand)?.next_pair(strand) else {
             return Ok(false);
         };
-        iter.pos = index + 1;
-        let positional = key.is_none();
-        let key = key_value(strand, &key, iter.int);
-        iter.int += i64::from(positional);
-        out.store(Value::from_object(tuple::tuple(strand, [key, value])));
+        out.store(pair);
         Ok(true)
     }
 
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        context: SpreadContext,
+        _context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        let mut iter = this.borrow_mut(strand)?;
-        while let Some((index, key, mut value)) = iter.next_item() {
-            if context == SpreadContext::Sequence {
-                let positional = key.is_none();
-                let key = key_value(strand, &key, iter.int);
-                iter.int += i64::from(positional);
-                let mut pair = Value::from_object(tuple::tuple(strand, [key, value]));
-                sink.positional(strand, Slot::new(&mut pair))?;
-            } else if let Some(key) = key {
-                let key = unsafe { Sym::from_obj(&key) };
-                sink.symbol(strand, key, Slot::new(&mut value))?;
-            } else {
-                sink.positional(strand, Slot::new(&mut value))?;
-            }
-            iter.pos = index + 1;
-        }
-        Ok(())
+        super::iter::spread_iter(strand, this, sink).await
     }
 
     fn op_get<'a, 's>(
@@ -558,6 +527,151 @@ impl<'v> Protocol<'v> for Iter<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         iter::iter_mcall(strand, &this, method, args, out).await
+    }
+}
+
+/// Read-only view of the unmatched items of a record.
+pub(crate) struct Rest<'v> {
+    record: GcObj<'v, Record<'v>>,
+    skip: HashSet<usize>,
+    pos: usize,
+    int: i64,
+}
+
+impl<'v> Rest<'v> {
+    pub(crate) fn new(
+        record: GcObj<'v, Record<'v>>,
+        skip: HashSet<usize>,
+        pos: usize,
+        int: i64,
+    ) -> Self {
+        Self {
+            record,
+            skip,
+            pos,
+            int,
+        }
+    }
+
+    /// The next item not yet consumed, and its index
+    fn next_item(&self) -> Option<(usize, Option<GcObj<'v, SymObj>>, Value<'v>)> {
+        let record = self.record.borrow()?;
+        first_visible_index(&record.items, &self.skip, self.pos).map(|index| {
+            let (key, value) = &record.items[index];
+            (index, key.clone(), value.dup())
+        })
+    }
+}
+
+unsafe impl<'v> Collect for Rest<'v> {
+    const CYCLIC: bool = true;
+    const IMMUTABLE: bool = false;
+    type Annex = ();
+
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        self.record.accept(visit)
+    }
+
+    fn clear(&mut self) {}
+}
+
+impl<'v> Protocol<'v> for Rest<'v> {
+    fn op_type<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) {
+        Output::set(strand, out, TypeObject::Value)
+    }
+
+    fn op_debug<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        crate::fmt!(strand, w, "<record rest>")
+    }
+
+    async fn op_unpack<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        sig: &'a sig::Unpack<'v, 'a>,
+        mut out: Slots<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let borrow = this.borrow(strand)?;
+        let mut iter = Rest::new(
+            borrow.record.clone(),
+            borrow.skip.clone(),
+            borrow.pos,
+            borrow.int,
+        );
+        let record_obj = iter.record.clone();
+        let record = record_obj
+            .borrow()
+            .ok_or_else(|| Error::concurrency(strand))?;
+        let items = &record.items;
+        let plan = unpack_plan(strand, items, &iter.skip, iter.pos, sig)?;
+
+        for action in &plan.actions {
+            iter.skip.insert(action.source_index);
+            out.at(action.dest_slot)
+                .store(items[action.source_index].1.dup());
+        }
+        fill_unpack_defaults(strand, sig, &mut out, plan.pos_matched, &plan.actions);
+        // The rests take their items
+        store_split_rests(strand, sig, &mut out, items, &plan);
+        iter.skip.extend(plan.pos_rest.iter().chain(&plan.key_rest));
+
+        iter.pos = first_visible_index(items, &iter.skip, iter.pos).unwrap_or(items.len());
+        iter.int = iter
+            .int
+            .checked_add(
+                i64::try_from(plan.pos_matched + plan.pos_rest.len())
+                    .map_err(|_| Error::overflow(strand))?,
+            )
+            .ok_or_else(|| Error::overflow(strand))?;
+        drop(record);
+        let child = iter;
+
+        if sig.variadic == Variadic::Capture {
+            strand
+                .builtin_types()
+                .record_rest
+                .create(strand, child, out.at(sig.len() - 1));
+        }
+
+        Ok(())
+    }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        let borrow = this.borrow(strand)?;
+        let mut iter = Rest::new(
+            borrow.record.clone(),
+            borrow.skip.clone(),
+            borrow.pos,
+            borrow.int,
+        );
+        while let Some((index, key, mut value)) = iter.next_item() {
+            if context == SpreadContext::Sequence {
+                let positional = key.is_none();
+                let key = key_value(strand, &key, iter.int);
+                iter.int += i64::from(positional);
+                let mut pair = Value::from_object(tuple::tuple(strand, [key, value]));
+                sink.positional(strand, Slot::new(&mut pair))?;
+            } else if let Some(key) = key {
+                let key = unsafe { Sym::from_obj(&key) };
+                sink.symbol(strand, key, Slot::new(&mut value))?;
+            } else {
+                sink.positional(strand, Slot::new(&mut value))?;
+            }
+            iter.pos = index + 1;
+        }
+        Ok(())
     }
 }
 

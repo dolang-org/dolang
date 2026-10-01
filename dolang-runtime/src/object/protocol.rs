@@ -103,28 +103,6 @@ pub trait Spread<'v, 's> {
     ) -> Result<'v, 's, ()>;
 }
 
-pub(crate) async fn default_spread<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    value: impl Input<'v>,
-    context: SpreadContext,
-    sink: &mut dyn Spread<'v, 's>,
-) -> Result<'v, 's, ()> {
-    strand
-        .with_slots(async move |strand, [mut root, mut iter, mut item]| {
-            Output::set(strand, Slot::reborrow(&mut root), value);
-            root.op_iter(strand, Slot::reborrow(&mut iter)).await?;
-            while iter.op_next(strand, Slot::reborrow(&mut item)).await? {
-                match context {
-                    SpreadContext::Args | SpreadContext::Sequence | SpreadContext::Pairs => {
-                        sink.positional(strand, Slot::reborrow(&mut item))?
-                    }
-                }
-            }
-            Ok(())
-        })
-        .await
-}
-
 pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
     async fn op_call<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -520,7 +498,11 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        default_spread(strand, this.clone(), context, sink).await
+        let _ = (this, context, sink);
+        Err(Error::type_error(
+            strand,
+            "spreading protocol not supported",
+        ))
     }
 
     #[allow(unused_variables)]

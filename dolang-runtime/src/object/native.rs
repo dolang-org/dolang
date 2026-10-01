@@ -105,10 +105,10 @@ impl<'v, T: Object<'v>> gc::Annex for ObjectAnnex<'v, T> {
 /// 3. If the value is missing and required, return an error
 /// 4. If the value is missing and optional, use the provided default
 ///
-/// # Atomicity
+/// # Read-only contract
 ///
-/// Unpack operations should be **atomic** when practical: if unpacking fails partway through,
-/// the object's observable state should remain unchanged.
+/// Unpacking must not change the receiver, on success or failure. Captured rests
+/// must be separate values that can be unpacked and spread without consuming them.
 pub struct Unpack<'v, 'a> {
     inner: &'a sig::Unpack<'v, 'a>,
     slots: Slots<'v, 'a>,
@@ -1031,16 +1031,16 @@ pub trait Object<'v>: Sized + 'v {
     ///
     /// # Default
     ///
-    /// Returns [`Error::not_supported`], which causes the runtime to fall back to the
-    /// generic protocol adapter based on iteration.
-    #[allow(unused_variables)]
+    /// Dispatches to a `(spread)` inherited from an abstract supertype, such as
+    /// [`Iter`](TypeObject::Iter)'s positional spreading. Otherwise returns
+    /// [`Error::not_supported`]; iterable types must implement spreading explicitly.
     fn spread<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> impl Future<Output = Result<'v, 's, ()>> {
-        future::ready(Err(Error::not_supported(strand)))
+        default_object_spread(this, strand, context, sink)
     }
 
     /// Computes a hash for this object.
@@ -1427,12 +1427,11 @@ pub trait Object<'v>: Sized + 'v {
     ///
     /// # Default Implementation
     ///
-    /// Unpacks registered readable fields.
+    /// Unpacks registered readable fields. Iterators must opt in explicitly.
     ///
-    /// # Atomicity
+    /// # Read-only contract
     ///
-    /// When practical, implementations should make unpacking **atomic**: if the operation
-    /// fails partway through, the object's observable state should remain unchanged.
+    /// Implementations must leave the receiver unchanged on success and failure.
     /// See [`Unpack`] documentation for patterns and examples.
     fn unpack<'a, 's>(
         this: Instance<'v, 'a, Self>,
@@ -1465,11 +1464,37 @@ fn readable_entry(entry: &Entry<'_>) -> bool {
     )
 }
 
+async fn default_object_spread<'v, 'a, 's, T: Object<'v>>(
+    this: Instance<'v, 'a, T>,
+    strand: &'a mut Strand<'v, 's>,
+    context: SpreadContext,
+    sink: &'a mut dyn Spread<'v, 's>,
+) -> Result<'v, 's, ()> {
+    let recv = Recv::<ObjectWrap<'v, T>>::new(this.receiver);
+    let Some(&Entry::Delegate(supertype_index, MemberKind::Method)) =
+        recv.vtbl().entry(Sym::well_known(sym::SPREAD_METHOD))
+    else {
+        return Err(Error::not_supported(strand));
+    };
+    let supertype = instance_supertype::<T>(recv, strand, supertype_index);
+    strand
+        .with_slots(async |strand, [mut delegator]| {
+            Output::set(strand, Slot::reborrow(&mut delegator), this);
+            Delegated::new(supertype, &delegator)
+                .op_spread(strand, context, sink)
+                .await
+        })
+        .await
+}
+
 async fn default_object_unpack<'v, 'a, 's, T: Object<'v>>(
     this: Instance<'v, 'a, T>,
     strand: &'a mut Strand<'v, 's>,
     unpack: Unpack<'v, 'a>,
 ) -> Result<'v, 's, ()> {
+    if Value::from_input(strand, this).is_instance_of(strand, TypeObject::Iter) {
+        return Err(Error::not_supported(strand));
+    }
     let sig = unpack.inner;
     let mut out = unpack.slots;
     let pos_count = sig.required + sig.optional.len();
@@ -2464,7 +2489,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         context: protocol::SpreadContext,
         sink: &'a mut dyn protocol::Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        match Strand::async_for_native_frame(
+        Strand::async_for_native_frame(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
@@ -2472,12 +2497,6 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             async |strand| T::spread(Instance::from_recv(&this), strand, context, sink).await,
         )
         .await
-        {
-            Err(err) if err.kind() == crate::error::ErrorKind::Unsupported => {
-                protocol::default_spread(strand, this.clone(), context, sink).await
-            }
-            other => other,
-        }
     }
 }
 
@@ -4561,10 +4580,7 @@ mod tests {
                         }
                     }
                     let mut sink = NullSpread;
-                    // The default `spread` returns `Unsupported`, which `op_spread` catches
-                    // and retries via the generic `default_spread` adapter based on
-                    // iteration; since `Fixture` also doesn't support iteration, that
-                    // fails too, but with a `Type` error surfaced from `op_iter`.
+                    // Spreading does not fall back to iteration.
                     let err = ObjectWrap::<Fixture>::op_spread(
                         recv,
                         strand,
@@ -4573,7 +4589,7 @@ mod tests {
                     )
                     .await
                     .unwrap_err();
-                    assert_eq!(err.kind(), ErrorKind::Type);
+                    assert_eq!(err.kind(), ErrorKind::Unsupported);
                 })
                 .await;
             let _ = &mut out;
@@ -4625,8 +4641,8 @@ mod tests {
                         .await
                         .unwrap();
                     assert_eq!(out.at(0).to_i64(strand).unwrap(), 17);
-                    // Recursive capture returns the same stateful iterator.
-                    assert!(out.at(1).repr_eq(strand, &tail));
+                    // Recursive capture creates an independent read-only view.
+                    assert!(!out.at(1).repr_eq(strand, &tail));
                 })
                 .await;
             owner

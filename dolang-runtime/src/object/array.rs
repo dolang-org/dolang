@@ -79,6 +79,15 @@ unsafe impl<'v> Collect for Iter<'v> {
 }
 
 impl<'v> Protocol<'v> for Iter<'v> {
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: crate::object::protocol::SpreadContext,
+        sink: &'a mut dyn crate::object::protocol::Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::spread_iter(strand, &this, sink).await
+    }
+
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -102,16 +111,21 @@ impl<'v> Protocol<'v> for Iter<'v> {
         sig: &'a Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let mut borrow = this.borrow_mut(strand)?;
+        let borrow = this.borrow(strand)?;
         let array_borrow = borrow
             .array
             .borrow()
             .ok_or_else(|| Error::concurrency(strand))?;
         let count = unpack_from(strand, sig, &mut out, &array_borrow, borrow.index, false)?;
-        drop(array_borrow);
-        borrow.index += count;
         if let Some(i) = sig.pos_rest_slot() {
-            Output::set(strand, out.at(i), &this);
+            strand.builtin_types().array_iter.create(
+                strand,
+                Iter {
+                    array: borrow.array.clone(),
+                    index: borrow.index + count,
+                },
+                out.at(i),
+            );
         }
         sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
@@ -272,6 +286,15 @@ unsafe impl<'v> Collect for Pairs<'v> {
 }
 
 impl<'v> Protocol<'v> for Pairs<'v> {
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: crate::object::protocol::SpreadContext,
+        sink: &'a mut dyn crate::object::protocol::Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::spread_iter(strand, &this, sink).await
+    }
+
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -303,16 +326,21 @@ impl<'v> Protocol<'v> for Pairs<'v> {
         sig: &'a Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let mut borrow = this.borrow_mut(strand)?;
+        let borrow = this.borrow(strand)?;
         let array_borrow = borrow
             .array
             .borrow()
             .ok_or_else(|| Error::concurrency(strand))?;
         let count = unpack_from(strand, sig, &mut out, &array_borrow, borrow.index, true)?;
-        mem::drop(array_borrow);
-        borrow.index += count;
         if let Some(i) = sig.pos_rest_slot() {
-            Output::set(strand, out.at(i), &this);
+            strand.builtin_types().array_pairs.create(
+                strand,
+                Pairs {
+                    array: borrow.array.clone(),
+                    index: borrow.index + count,
+                },
+                out.at(i),
+            );
         }
         sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
@@ -1099,6 +1127,7 @@ fn unpack_from<'v, 's>(
     start: usize,
     pair: bool,
 ) -> Result<'v, 's, usize> {
+    let start = start.min(borrow.inner.len());
     let len = borrow.inner.len() - start;
     let pos_count = sig.required + sig.optional.len();
     if sig.required > len {
@@ -1107,19 +1136,10 @@ fn unpack_from<'v, 's>(
     if pos_count < len && sig.pos_rest() == Rest::None {
         return Err(Error::unexpected_positional(strand, sig.required));
     }
-    let backfill = if len < pos_count {
-        &sig.optional[(len - sig.required)..]
-    } else {
-        &[]
-    };
     let min = pos_count.min(len);
-    for (i, elem) in borrow.inner[start..(start + min)]
-        .iter()
-        .chain(backfill.iter())
-        .enumerate()
-    {
+    for (i, elem) in borrow.inner[start..(start + min)].iter().enumerate() {
         if pair {
-            let value = i64::try_from(i).map_err(|_| Error::overflow(strand))?;
+            let value = i64::try_from(start + i).map_err(|_| Error::overflow(strand))?;
             out.at(i).store(Value::from_object(tuple::tuple(
                 strand,
                 [Value::from_i64(strand, value), elem.dup()],
@@ -1128,20 +1148,14 @@ fn unpack_from<'v, 's>(
             out.at(i).store(elem.dup())
         }
     }
+    if len < pos_count {
+        for (i, default) in sig.optional[(len - sig.required)..].iter().enumerate() {
+            out.at(min + i).store(default.dup());
+        }
+    }
     for (i, key) in sig.keys.iter().enumerate() {
         if let Some(default) = &key.default {
-            if pair {
-                let key_value = match &key.kind {
-                    UnpackKeyKind::Sym(sym) => Value::from_object(strand.sym_obj(*sym)),
-                    UnpackKeyKind::Const(value) => value.dup(),
-                };
-                out.at(pos_count + i).store(Value::from_object(tuple::tuple(
-                    strand,
-                    [key_value, default.dup()],
-                )))
-            } else {
-                out.at(pos_count + i).store(default.dup())
-            }
+            out.at(pos_count + i).store(default.dup());
         } else {
             return Err(match &key.kind {
                 UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
@@ -1224,6 +1238,7 @@ impl<'v> Protocol<'v> for Type {
                 Method(sym::CALL_METHOD),
             ],
             members: members![
+                Method(sym::SPREAD_METHOD),
                 Method(sym::STR_METHOD),
                 Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),

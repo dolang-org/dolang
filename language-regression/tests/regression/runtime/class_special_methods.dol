@@ -35,7 +35,7 @@ class NumberRange
     (Range start: self.start end: self.end).iter()
 
 let r = NumberRange 0 5
-assert_eq [...r] [0, 1, 2, 3, 4]
+assert_eq [...std.Iterable.iter(r)] [0, 1, 2, 3, 4]
 
 # Test (sink) special method - forwards to a list
 class ListCollector

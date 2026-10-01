@@ -123,6 +123,67 @@ def split_unpack_atomic()
   assert_eq $failed true
 
 #[test]
+def split_unpack_readonly()
+  let re = Regex r"\s+"
+  let cases = [
+    re.split("a b c d"),
+    re.split("a b c d", limit: 2),
+    re.split("a b c d", limit: -2),
+    re.rsplit("a b c d"),
+  ]
+  let expected = [
+    ["a", "b", "c", "d"],
+    ["a", "b", "c d"],
+    ["a b", "c", "d"],
+    ["d", "c", "b", "a"],
+  ]
+  for i = std.Range $cases.len
+    let parts = cases[i]
+    let e0 e1 ...tail_items = expected[i]
+    let e_tail = [...tail_items]
+    let head ...rest = parts
+    assert_eq $head $e0
+    let again ...other = parts
+    assert_eq $again $head
+    assert_throws $std.MissingPosError do
+      let _a _b _c _d _e = parts
+    let second ...child = rest
+    assert_eq $second $e1
+    assert_eq [...child] [...e_tail]
+    assert_eq [...rest] [e1, ...e_tail]
+    assert_eq [...other] [e1, ...e_tail]
+    assert_eq [...parts] $expected[i]
+
+  let parts = re.split "a b c"
+  assert_eq $parts.next() "a"
+  let second ...tail = parts
+  assert_eq $second "b"
+  assert_eq $parts.next() "b"
+  assert_eq [...tail] ["c"]
+  assert_eq [...parts] ["c"]
+
+#[test]
+def iterator_spreads_are_positional()
+  let re = Regex r"\s+"
+  let parts = re.split "a b"
+  assert_eq (record ...parts) (record "a" "b")
+  let parts = re.split "a b"
+  assert_eq (dict ...parts) {0: "a", 1: "b"}
+  let words = Regex r"\w+"
+  let matches = words.find "a b"
+  let found = record ...matches
+  assert_eq $found.len 2
+  assert_eq (str found[0]) "a"
+  assert_eq (str found[1]) "b"
+  assert_throws $std.UnsupportedError do
+    let _ _ = words.find "a"
+  let matches = words.find "a b"
+  assert_throws $std.UnsupportedError do
+    let ..._rest = matches
+  let matched = matches.next()
+  assert_eq (str matched) "a"
+
+#[test]
 def replace()
   let re = Regex r"\d+"
   assert_eq (re.replace "abc 123 def 456" "X") "abc X def X"

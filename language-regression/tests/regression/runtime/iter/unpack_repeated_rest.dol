@@ -1,0 +1,17 @@
+# Rests can be unpacked repeatedly and nested without consuming their source.
+let first ...rest = [1, 2, 3, 4]
+assert_eq $first 1
+let second ...tail = rest
+let second_again ...tail_again = rest
+assert_eq [second, ...tail] [2, 3, 4]
+assert_eq [second_again, ...tail_again] [2, 3, 4]
+assert_eq [...rest] [2, 3, 4]
+
+let a: _a ...keyed = {a: 1, b: 2, b: 3}
+let :b ...remaining = keyed
+let b: repeated ...remaining_again = keyed
+assert_eq $b 2
+assert_eq $repeated 2
+assert_eq (Dict remaining) {b: 3}
+assert_eq (Dict remaining_again) {b: 3}
+assert_eq (Record keyed) (record b: 2 b: 3)

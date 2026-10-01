@@ -347,6 +347,36 @@ impl<'v> Protocol<'v> for NilType {
     }
 }
 
+/// Private type identity for adapters that expose only type-only protocols.
+pub(crate) struct AdapterType(pub(crate) &'static str);
+
+unsafe impl Collect for AdapterType {
+    const CYCLIC: bool = false;
+    const IMMUTABLE: bool = true;
+    type Annex = ();
+    fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
+        ControlFlow::Continue(())
+    }
+    fn clear(&mut self) {}
+}
+
+impl<'v> Protocol<'v> for AdapterType {
+    fn op_type<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) {
+        Output::set(strand, out, &strand.singletons().type_obj);
+    }
+    fn op_debug<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        crate::fmt!(strand, w, "<type {}>", this.get().0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{call, error::ErrorKind, method, test_support::with_vm};

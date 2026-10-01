@@ -97,6 +97,9 @@ impl<'v> Drop for TypeTable<'v> {
 }
 
 pub(crate) struct BuiltinTypes<'v> {
+    pub(crate) adapter_type: TypeHandle<'v, types::AdapterType>,
+    pub(crate) dict_view_rest: TypeHandle<'v, dict_view::Rest<'v>>,
+    pub(crate) record_rest: TypeHandle<'v, record::Rest<'v>>,
     pub(crate) arg_pack: TypeHandle<'v, arg::ArgPack<'v>>,
     pub(crate) array_iter: TypeHandle<'v, array::Iter<'v>>,
     pub(crate) array_sink: TypeHandle<'v, array::Sink<'v>>,
@@ -217,6 +220,9 @@ pub(crate) struct BuiltinTypes<'v> {
 impl<'v> BuiltinTypes<'v> {
     pub(crate) fn new(types: &mut TypeTable<'v>) -> Self {
         Self {
+            adapter_type: types.register_type_handle(),
+            dict_view_rest: types.register_type_handle(),
+            record_rest: types.register_type_handle(),
             arg_pack: types.register_type_handle(),
             array_iter: types.register_type_handle(),
             array_sink: types.register_type_handle(),
@@ -335,6 +341,7 @@ impl<'v> BuiltinTypes<'v> {
 }
 
 pub(crate) struct Singletons<'v> {
+    pub(crate) kv: Value<'v>,
     // Singleton type objects (GC-allocated)
     pub(crate) value: Value<'v>,
     pub(crate) type_obj: Value<'v>,
@@ -413,6 +420,7 @@ impl<'v> Singletons<'v> {
         }
 
         Self {
+            kv: v!(builtin_types.adapter_type, types::AdapterType("std.Kv")),
             value: v!(builtin_types.value_type, types::Value),
             type_obj: v!(builtin_types.type_type, types::Type),
             iterable: v!(builtin_types.iterable, iter::Iterable),

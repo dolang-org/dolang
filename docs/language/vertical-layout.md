@@ -214,13 +214,18 @@ assert_eq $all [1, 2, 3, 4, 5, 6]
 
 The behavior of the spread depends on the context:
 
-| Context    | Spread input                                       | Behavior                                                                                       |
-| ---------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Arguments  | [`Iterable`](std.Iterable)                         | Positional arguments                                                                           |
-| Arguments  | Dict-like object or [`Iter`](std.Iter) from `kv()` | Mixed arguments. Monotonic integer keys starting from `0` are positional, symbol keys are keys |
-| Array      | [`Iterable`](std.Iterable)                         | Expanded as individual items in place                                                          |
-| Dictionary | [`Iterable`](std.Iterable)                         | Items assigned incrementing integer keys                                                       |
-| Dictionary | Dict-like object or [`Iter`](std.Iter) from `kv()` | Key/value pairs, preserving ordering and multiplicity                                          |
+| Context              | Spread input       | Behavior                                                                          |
+| -------------------- | ------------------ | --------------------------------------------------------------------------------- |
+| Arguments            | [`Iter`](std.Iter) | Positional arguments, including pair elements                                     |
+| Arguments            | Dict or Record     | Mixed arguments: sequential integer keys are positional, symbol keys are keywords |
+| Array or tuple       | [`Iter`](std.Iter) | Positional elements                                                               |
+| Array or tuple       | Dict or Record     | Key/value pairs                                                                   |
+| Dictionary or record | [`Iter`](std.Iter) | Elements assigned incrementing positional keys                                    |
+| Dictionary or record | Dict or Record     | Preserves keyed and positional entries                                            |
+| Any                  | `kv()` adapter     | Keyed entries; arrays and tuples reject them                                      |
+
+`Iterable` alone does not support spreading. Use `iter()` explicitly. Structural
+rests support repeated spreading without advancing their source.
 
 Note that a dictionary is only produced if at least one static key exists in
 addition to any spreads; otherwise, an array results.

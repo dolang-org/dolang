@@ -249,6 +249,7 @@ impl<'v> Object<'v> for Groups {
     fn build<'a>(b: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         b.supertype(TypeObject::Iter)
     }
+
     async fn iter<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -285,6 +286,7 @@ impl<'v> Object<'v> for GroupMembers {
     fn build<'a>(b: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         b.supertype(TypeObject::Iter)
     }
+
     async fn iter<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

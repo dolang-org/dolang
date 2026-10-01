@@ -1,0 +1,25 @@
+# Every iterator spreads pair elements positionally; kv switches to keys.
+def capture ...args
+  args
+assert_eq (capture(...{a: 1, b: 2}.iter())) (record (:a:, 1) (:b:, 2))
+assert_eq {...{a: 1, b: 2}.iter()} {(:a:, 1), (:b:, 2)}
+assert_eq (capture(...[10, 20].pairs())) (record (0, 10) (1, 20))
+assert_eq (capture(...[(:a:, 1), (:b:, 2)].iter().kv())) (record a: 1 b: 2)
+assert_eq {...[(:a:, 1), (:a:, 2)].iter().kv()} {a: 1, a: 2}
+assert_eq (Dict([(0, "zero"), (1, "one")].iter().kv())) {0: "zero", 1: "one"}
+assert_throws $std.UnexpectedKeyError do [...[(:a:, 1)].iter().kv()]
+assert_throws $std.UnexpectedKeyError do tuple(...[(:a:, 1)].iter().kv())
+let adapter = [(:a:, 1)].iter().kv()
+assert (!type(adapter, Iter))
+assert (!type(adapter, Iterable))
+assert_throws $std.TypeError do for pair = adapter
+  pair
+assert_throws $std.TypeError do adapter.next()
+assert_throws $std.TypeError do adapter.map(do |x| x)
+
+# Containers retain pair conversion, while their iterators spread positionally.
+assert_eq [...{a: 1, b: 2}] [(:a:, 1), (:b:, 2)]
+assert_eq (Tuple(record(a: 1, b: 2))) ((:a:, 1), (:b:, 2))
+assert_eq (capture(...Iterable.iter(record(a: 1, b: 2)))) (record (:a:, 1) (:b:, 2))
+assert_eq {...Iterable.iter(record(a: 1, b: 2))} {(:a:, 1), (:b:, 2)}
+assert_throws $std.UnexpectedKeyError do capture ...[(0, "zero")].iter().kv()

@@ -190,6 +190,10 @@ pub class OsRelease: @Index[Str, Str] @Unpack[Str, Str] Iterable[Tuple[Str, Str]
   pub def (unpack) self
     self.#values
 
+  # Spreads the parsed `os-release` assignments.
+  pub def (spread) self
+    self.#values
+
   # The operating system name, defaulting to `Linux`.
   #[getter]
   pub def name self -> Str

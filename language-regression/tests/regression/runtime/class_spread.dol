@@ -19,5 +19,6 @@ class Numbers
   def (iter) _self
     [3, 4].iter()
 
-# Without `(spread)`, an instance spreads its iterator's items.
-assert_eq [...Numbers()] [3, 4]
+# `(iter)` alone does not enable spreading.
+assert_throws $std.UnsupportedError do [...Numbers()]
+assert_eq [...std.Iterable.iter(Numbers())] [3, 4]

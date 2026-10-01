@@ -7,17 +7,17 @@ use bitvec::{bitbox, boxed::BitBox};
 use crate::{
     error::{Error, ErrorKind, Result},
     gc::{Collect, arena::Visit},
-    object::{iter, sym::SymObj, tuple},
+    object::{sym::SymObj, tuple},
     sig::{self, UnpackKeyKind},
     strand::Strand,
     sym::Sym,
-    value::{Output, Slot, Slots, Value},
+    value::{Output, Slot, Slots, TypeObject, Value},
 };
 use dolang_bytecode::{Rest, Variadic};
 
 use super::protocol::{GcObj, Protocol, Recv, Spread, SpreadContext};
 
-/// Lazy iterator over the unmatched readable fields of an object.
+/// Read-only rest over the unmatched readable fields of an object.
 pub(crate) struct FieldIter<'v> {
     receiver: Value<'v>,
     symbols: VecDeque<GcObj<'v, SymObj>>,
@@ -74,7 +74,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        Output::set(strand, out, TypeObject::Value)
     }
 
     fn op_debug<'a, 's>(
@@ -82,42 +82,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
         strand: &mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<field iter>")
-    }
-
-    async fn op_iter<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
-        Ok(())
-    }
-
-    async fn op_next<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, bool> {
-        loop {
-            let mut iter = this.borrow_mut(strand)?;
-            let Some(symbol) = iter.symbols.front().cloned() else {
-                return Ok(false);
-            };
-            let receiver = iter.receiver.dup();
-            let present = strand.with_slots_sync(|strand, [mut value]| {
-                let present = resolve(strand, &receiver, &symbol, Slot::reborrow(&mut value))?;
-                Ok((present, value.take()))
-            })?;
-            iter.symbols.pop_front();
-            if present.0 {
-                out.store(Value::from_object(tuple::tuple(
-                    strand,
-                    [Value::from_object(symbol), present.1],
-                )));
-                return Ok(true);
-            }
-        }
+        crate::fmt!(strand, w, "<field rest>")
     }
 
     async fn op_unpack<'a, 's>(
@@ -137,16 +102,16 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
                     staged.at(index).store(default.dup());
                 }
 
-                let mut iter = this.borrow_mut(strand)?;
+                let iter = this.borrow(strand)?;
                 let receiver = iter.receiver.dup();
-                let symbols = iter.symbols.make_contiguous();
+                let symbols: Vec<_> = iter.symbols.iter().cloned().collect();
                 let track = sig.key_rest() != Rest::Discard || !sig.keys.is_empty();
                 let mut consumed: Option<BitBox> = track.then(|| bitbox![0; symbols.len()]);
 
                 for (key_index, key) in sig.keys.iter().enumerate() {
                     let dest = pos_count + key_index;
                     let found = match &key.kind {
-                        UnpackKeyKind::Sym(wanted) => find_symbol(symbols, *wanted),
+                        UnpackKeyKind::Sym(wanted) => find_symbol(&symbols, *wanted),
                         UnpackKeyKind::Const(_) => None,
                     };
                     let present = if let Some(index) = found {
@@ -187,15 +152,20 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
                     }
                 }
 
-                if let Some(consumed) = &consumed {
-                    for index in consumed.iter_ones().rev() {
-                        iter.symbols.remove(index);
-                    }
-                }
-                // Fields are keyed items: a `...` or `**` rest is this
-                // iterator, and a `*` rest gets nothing
+                let symbols = symbols
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(index, symbol)| {
+                        (!consumed.as_ref().is_some_and(|bits| bits[index])).then_some(symbol)
+                    })
+                    .collect();
+                let child = FieldIter::new(receiver, symbols);
                 if sig.variadic == Variadic::Capture {
-                    Output::set(strand, staged.at(sig.len() - 1), &this);
+                    strand.builtin_types().field_iter.create(
+                        strand,
+                        child,
+                        staged.at(sig.len() - 1),
+                    );
                 } else {
                     if let Some(i) = sig.pos_rest_slot() {
                         staged
@@ -203,7 +173,10 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
                             .store(Value::from_object(tuple::tuple(strand, [])));
                     }
                     if let Some(i) = sig.key_rest_slot() {
-                        Output::set(strand, staged.at(i), &this);
+                        strand
+                            .builtin_types()
+                            .field_iter
+                            .create(strand, child, staged.at(i));
                     }
                 }
                 for index in 0..sig.len() {
@@ -220,17 +193,14 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
         context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        loop {
-            let mut iter = this.borrow_mut(strand)?;
-            let Some(symbol) = iter.symbols.front().cloned() else {
-                return Ok(());
-            };
+        let iter = this.borrow(strand)?;
+        for symbol in iter.symbols.iter().cloned() {
             let receiver = iter.receiver.dup();
             let (present, mut value) = strand.with_slots_sync(|strand, [mut value]| {
                 let present = resolve(strand, &receiver, &symbol, Slot::reborrow(&mut value))?;
                 Ok((present, value.take()))
             })?;
-            iter.symbols.pop_front();
+
             if !present {
                 continue;
             }
@@ -248,24 +218,6 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
                 sink.positional(strand, Slot::new(&mut value))?;
             }
         }
-    }
-
-    fn op_get<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &mut Strand<'v, 's>,
-        field: Sym<'v, 'a>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        iter::iter_get(strand, &this, field, out)
-    }
-
-    async fn op_mcall<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        method: Sym<'v, 'a>,
-        args: crate::arg::Args<'v, 'a>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        iter::iter_mcall(strand, &this, method, args, out).await
+        Ok(())
     }
 }

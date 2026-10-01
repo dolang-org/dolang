@@ -8,7 +8,7 @@ use std::{
 use crate::value::fmt::Format;
 
 use bitvec::{bitbox, boxed::BitBox};
-use dolang_bytecode::{Rest, Variadic};
+use dolang_bytecode::{Rest as RestKind, Variadic};
 
 use crate::{
     arg::{Arg, Args},
@@ -365,6 +365,27 @@ pub(crate) struct Iter<'v> {
     index: usize,
 }
 
+/// A keyed rest: a snapshot of the pairs left over.
+pub(crate) struct Rest<'v> {
+    pairs: Vec<(Value<'v>, Value<'v>)>,
+}
+
+unsafe impl<'v> Collect for Rest<'v> {
+    const CYCLIC: bool = true;
+    const IMMUTABLE: bool = false;
+    type Annex = ();
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        for (key, value) in &self.pairs {
+            key.accept(visit)?;
+            value.accept(visit)?;
+        }
+        ControlFlow::Continue(())
+    }
+    fn clear(&mut self) {
+        self.pairs.clear()
+    }
+}
+
 unsafe impl<'v> Collect for View<'v> {
     const CYCLIC: bool = true;
     const IMMUTABLE: bool = true;
@@ -538,11 +559,10 @@ fn unpack_pairs<'v, 's>(
         match rest {
             UnpackItem::Rest { slot } | UnpackItem::KeyRest { slot } => {
                 let pairs = unconsumed(&pairs, &consumed);
-                strand.builtin_types().dict_view_iter.create(
-                    strand,
-                    Iter { pairs, index: 0 },
-                    slot,
-                );
+                strand
+                    .builtin_types()
+                    .dict_view_rest
+                    .create(strand, Rest { pairs }, slot);
             }
             UnpackItem::PosRest { slot } => {
                 let tuple = run_tuple(strand, &pairs, &run);
@@ -567,8 +587,8 @@ fn settle_leftovers<'v, 's>(
     pairs: &[(Value<'v>, Value<'v>)],
     consumed: &mut BitBox,
     start: usize,
-    pos_rest: Rest,
-    key_rest: Rest,
+    pos_rest: RestKind,
+    key_rest: RestKind,
     mixed: bool,
 ) -> Result<'v, 's, Vec<usize>> {
     if mixed {
@@ -582,8 +602,8 @@ fn settle_leftovers<'v, 's>(
         run.push(index);
         next += 1;
     }
-    if pos_rest == Rest::None {
-        if key_rest == Rest::None && !run.is_empty() {
+    if pos_rest == RestKind::None {
+        if key_rest == RestKind::None && !run.is_empty() {
             return Err(Error::unexpected_positional(strand, start));
         }
         run.clear();
@@ -591,7 +611,7 @@ fn settle_leftovers<'v, 's>(
     for &index in &run {
         consumed.set(index, true);
     }
-    if key_rest == Rest::None
+    if key_rest == RestKind::None
         && let Some(index) = consumed.first_zero()
     {
         return Err(Error::unexpected_key(strand, &pairs[index].0));
@@ -639,7 +659,7 @@ fn run_tuple<'v>(
     Value::from_object(super::tuple::tuple(strand, values))
 }
 
-/// Stores a `*name` rest's tuple and a `**name` rest's iterator.
+/// Stores a `*name` rest's tuple and a `**name` rest's view.
 fn store_split_rests<'v>(
     strand: &mut Strand<'v, '_>,
     sig: &sig::Unpack<'v, '_>,
@@ -658,8 +678,8 @@ fn store_split_rests<'v>(
         let pairs = unconsumed(pairs, consumed);
         strand
             .builtin_types()
-            .dict_view_iter
-            .create(strand, Iter { pairs, index: 0 }, out.at(i));
+            .dict_view_rest
+            .create(strand, Rest { pairs }, out.at(i));
     }
 }
 
@@ -669,8 +689,7 @@ fn store_split_rests<'v>(
 /// Returns the mask of pairs that were consumed; the caller settles the
 /// leftovers with [`settle_leftovers`] and owns producing the
 /// [`Variadic::Capture`] tail, since how the leftovers are best represented
-/// depends on where the pairs came from (a fresh snapshot can be moved into a
-/// new iterator, an existing iterator can just drop them).
+/// depends on where the pairs came from.
 fn unpack_sig_pairs<'v, 's>(
     strand: &mut Strand<'v, 's>,
     pairs: &[(Value<'v>, Value<'v>)],
@@ -911,15 +930,10 @@ impl<'v> Protocol<'v> for View<'v> {
         let run = settle_pairs(strand, sig, &pairs, &mut consumed)?;
         store_split_rests(strand, sig, &mut out, &pairs, &consumed, &run);
         if sig.variadic == Variadic::Capture {
-            // The snapshot is ours, so the tail moves into the iterator.
-            let pairs = pairs
-                .into_iter()
-                .zip(consumed.iter().by_vals())
-                .filter_map(|(pair, consumed)| (!consumed).then_some(pair))
-                .collect();
-            strand.builtin_types().dict_view_iter.create(
+            let pairs = unconsumed(&pairs, &consumed);
+            strand.builtin_types().dict_view_rest.create(
                 strand,
-                Iter { pairs, index: 0 },
+                Rest { pairs },
                 out.at(sig.len() - 1),
             );
         }
@@ -972,60 +986,33 @@ impl<'v> Protocol<'v> for Iter<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        // Unpack against the remaining pairs in place: no copy of the tail,
-        // and the iterator is only advanced once the unpack has succeeded, so
-        // a failure leaves it exactly where it was. The shared borrow is held
-        // across the unpack, so re-entering this iterator from a key
-        // comparison is reported as a concurrency error rather than seeing a
-        // half-consumed iterator.
-        let consumed = {
-            let iter = this.borrow(strand)?;
-            let pairs = &iter.pairs[iter.index..];
-            let mut consumed = unpack_sig_pairs(strand, pairs, sig, &mut out)?;
-            let run = settle_pairs(strand, sig, pairs, &mut consumed)?;
-            store_split_rests(strand, sig, &mut out, pairs, &consumed, &run);
-            consumed
-        };
-        {
-            let mut iter = this.borrow_mut(strand)?;
-            if sig.variadic == Variadic::Capture {
-                // The capture is this same iterator, rewound over whatever the
-                // unpack left behind: drop the pairs it took (along with
-                // everything consumed by earlier operations) and keep the rest
-                // in place.
-                let start = iter.index;
-                let mut index = 0;
-                iter.pairs.retain(|_| {
-                    let keep = index >= start && !consumed[index - start];
-                    index += 1;
-                    keep
-                });
-                iter.index = 0;
-            } else {
-                iter.index = iter.pairs.len();
-            }
+        let iter = this.borrow(strand)?;
+        let next = super::iter::unpack_cursor(strand, sig, &mut out, iter.index, |strand, i| {
+            let (key, value) = iter.pairs.get(i)?;
+            let pair = super::tuple::tuple(strand, [key.dup(), value.dup()]);
+            Some((i + 1, Value::from_object(pair)))
+        })?;
+        if let Some(i) = sig.pos_rest_slot() {
+            let pairs = iter.pairs[next..]
+                .iter()
+                .map(|(key, value)| (key.dup(), value.dup()))
+                .collect();
+            strand.builtin_types().dict_view_iter.create(
+                strand,
+                Iter { pairs, index: 0 },
+                out.at(i),
+            );
         }
-        if sig.variadic == Variadic::Capture {
-            Output::set(strand, out.at(sig.len() - 1), &this);
-        }
+        sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
     }
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        context: SpreadContext,
+        _context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        // As in `op_unpack`: spread the remaining pairs in place rather than
-        // copying the tail out, and only mark them consumed once the whole
-        // spread has succeeded.
-        let end = {
-            let iter = this.borrow(strand)?;
-            spread_pairs(strand, &iter.pairs[iter.index..], context, sink)?;
-            iter.pairs.len()
-        };
-        this.borrow_mut(strand)?.index = end;
-        Ok(())
+        super::iter::spread_iter(strand, this, sink).await
     }
     fn op_get<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -1108,5 +1095,53 @@ impl<'v> Protocol<'v> for Type {
                 Method(sym::DBG_METHOD),
             ],
         })
+    }
+}
+
+impl<'v> Protocol<'v> for Rest<'v> {
+    fn op_debug<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        crate::fmt!(strand, w, "<dictionary view rest>")
+    }
+
+    async fn op_unpack<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        sig: &'a sig::Unpack<'v, 'a>,
+        mut out: Slots<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let rest = this.borrow(strand)?;
+        let mut consumed = unpack_sig_pairs(strand, &rest.pairs, sig, &mut out)?;
+        let run = settle_pairs(strand, sig, &rest.pairs, &mut consumed)?;
+        store_split_rests(strand, sig, &mut out, &rest.pairs, &consumed, &run);
+        if sig.variadic == Variadic::Capture {
+            let pairs = unconsumed(&rest.pairs, &consumed);
+            strand.builtin_types().dict_view_rest.create(
+                strand,
+                Rest { pairs },
+                out.at(sig.len() - 1),
+            );
+        }
+        Ok(())
+    }
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        let rest = this.borrow(strand)?;
+        spread_pairs(strand, &rest.pairs, context, sink)
+    }
+
+    fn op_type<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) {
+        Output::set(strand, out, TypeObject::Value)
     }
 }

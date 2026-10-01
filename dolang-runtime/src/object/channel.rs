@@ -298,6 +298,15 @@ impl<'v> Protocol<'v> for Receiver<'v> {
             iter::iter_get(strand, &this, field, out)
         }
     }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: super::protocol::SpreadContext,
+        sink: &'a mut dyn super::protocol::Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::spread_iter(strand, this.clone(), sink).await
+    }
 }
 
 pub(crate) struct Sender<'v> {

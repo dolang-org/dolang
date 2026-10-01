@@ -325,6 +325,15 @@ impl<'v> Protocol<'v> for StreamIter<'v> {
             iter::iter_mcall(strand, &this, method, args, out).await
         }
     }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: super::protocol::SpreadContext,
+        sink: &'a mut dyn super::protocol::Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::spread_iter(strand, this.clone(), sink).await
+    }
 }
 
 /// Wraps the channel `Value` returned by `Stream::sink()`. See [`StreamIter`]
@@ -538,6 +547,15 @@ impl<'v> Protocol<'v> for Stream<'v> {
                 None => Err(Error::field(strand, field)),
             },
         }
+    }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: super::protocol::SpreadContext,
+        sink: &'a mut dyn super::protocol::Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::spread_iter(strand, this.clone(), sink).await
     }
 }
 

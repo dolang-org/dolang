@@ -257,6 +257,7 @@ impl<'v> Object<'v> for Connections {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder.supertype(TypeObject::Iter)
     }
+
     async fn iter<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

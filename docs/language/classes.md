@@ -621,8 +621,9 @@ echo "$x, $y"   # 3, 4
 
 ### `(spread)`: Spreading
 
-Return a value for `...` to spread in place of `self`. Without `(spread)`, an
-instance spreads the items of its iterator:
+Return a value for `...` to spread in place of `self`. An instance of
+[`Iter`](std.Iter) spreads its elements positionally. Implementing `(iter)`
+alone does not enable spreading:
 
 ```playground
 #> import test:

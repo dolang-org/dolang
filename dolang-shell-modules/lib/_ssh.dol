@@ -82,7 +82,7 @@ do
       -o StrictHostKeyChecking=accept-new
     if (known_hosts != nil)
       -o UserKnownHostsFile=$known_hosts
-    -- $host ...command ...vfs_args --stdio
+    -- $host ...Iterable.iter(command) ...vfs_args --stdio
 
 pub def with_program
   executable

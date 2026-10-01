@@ -5,7 +5,7 @@ import
 
 def pairs source
   $
-    for k v = source
+    for k v = Dict(source)
       - (Tuple [k, v])
 
 def args ...rest
@@ -44,8 +44,7 @@ let dd = {0: "x", 1: "y", n: 1}
 let *dp **dk = dd
 assert_eq (record ...dp ...dk) (record ...dd)
 
-# A `*` rest is a lazy rest over the positional run, which iterates, spreads,
-# and unpacks as a sequence
+# A `*` rest spreads and unpacks the positional run; materialize to iterate
 let _ *pa **_ = {0: "a", 1: "b", 2: "c", n: 1}
 let pb *pc **pk = pa
 assert_eq $pb b
@@ -53,7 +52,7 @@ assert_eq [...pc] ["c"]
 assert_eq $pk $record()
 let _ *pd = {0: "a", 1: "b", 2: "c"}
 let pv = $
-  for v = pd
+  for v = [...pd]
     - $v
 assert_eq $pv ["b", "c"]
 let _ *pe = {0: "a", 1: "b"}

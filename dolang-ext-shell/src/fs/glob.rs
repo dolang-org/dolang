@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand,
-    object::{Rest, TypeBuilder, Unpack, UnpackItem},
+    Instance, Object, Output, Result, Slot, State, Strand,
+    object::{ArrayLike, ArrayView, TypeBuilder, Unpack},
     value::TypeObject,
 };
 
@@ -35,7 +35,7 @@ impl<'v> Object<'v> for GlobIter {
         builder.supertype(TypeObject::Iter)
     }
 
-    /// GlobIter is both an iterator and a sink
+    /// Returns this iterator.
     async fn iter<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -69,51 +69,47 @@ impl<'v> Object<'v> for GlobIter {
     async fn unpack<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut unpack: Unpack<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        // Reject unpacks with required keys
-        if let Some(key) = unpack.first_required_key() {
-            return Err(Error::missing_key(strand, key));
+        let len = this.borrow(strand)?.paths.len();
+        ArrayView::unpack(this, GlobPaths { len }, strand, unpack)
+    }
+}
+
+struct GlobPaths {
+    len: usize,
+}
+
+impl<'v> ArrayLike<'v> for GlobPaths {
+    type Object = GlobIter;
+    const MODULE: &'v str = "fs";
+    const NAME: &'v str = "GlobRest";
+
+    fn len(&self, _this: Instance<'v, '_, GlobIter>, _strand: &mut Strand<'v, '_>) -> usize {
+        self.len
+    }
+
+    fn get<'a, 's>(
+        &self,
+        this: Instance<'v, '_, GlobIter>,
+        strand: &'a mut Strand<'v, 's>,
+        index: usize,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let borrow = this.borrow(strand)?;
+        if borrow.paths.len() != self.len {
+            return Err(dolang::runtime::Error::concurrency_msg(
+                strand,
+                "glob rest invalidated by iterator advancement",
+            ));
         }
-
-        let required_pos = unpack.required();
-        let optional_pos = unpack.optional();
-        let total_pos = required_pos + optional_pos;
-
-        let available = this.borrow(strand)?.paths.len();
-
-        if available < required_pos {
-            return Err(Error::missing_positional(strand, available));
-        }
-
-        if unpack.pos_rest() == Rest::None && available > total_pos {
-            return Err(Error::unexpected_positional(strand, total_pos));
-        }
-
-        let mut pos_index: usize = 0;
-        for item in unpack.iter() {
-            match item {
-                UnpackItem::Pos { mut slot, default } => {
-                    if pos_index < available {
-                        if !Self::next(this, strand, Slot::reborrow(&mut slot)).await? {
-                            unreachable!("checked availability above")
-                        }
-                    } else {
-                        Output::set(strand, slot, default.unwrap());
-                    }
-                    pos_index += 1;
-                }
-                UnpackItem::SymKey { slot, default, .. }
-                | UnpackItem::ConstKey { slot, default, .. } => {
-                    // All keyed items must have defaults (checked above)
-                    Output::set(strand, slot, default.unwrap());
-                }
-                UnpackItem::Rest { slot } | UnpackItem::PosRest { slot } => {
-                    Output::set(strand, slot, this)
-                }
-                UnpackItem::KeyRest { slot } => Unpack::empty_key_rest(strand, slot),
-            }
-        }
+        let path = borrow
+            .paths
+            .get(index)
+            .ok_or_else(|| dolang::runtime::Error::index(strand))?;
+        let annex = this.annex();
+        let annex = PathAnnex::try_new(strand, annex.prefix.join(path.as_str()), annex.global)?;
+        create_path_annex(strand, annex, out);
         Ok(())
     }
 }

@@ -14,11 +14,15 @@ assert_eq $b 2
 
 By default, the pattern must exhaustively match the entire structure or an
 error will result. Use `...` to capture surplus items instead. The specified
-variable will be bound to an iterator over them.
+variable receives a structural rest that can be unpacked or spread again.
+Unpacking reads the source without advancing an iterator. In-memory iterators
+such as array, tuple, pair, view, split, and dict key/value iterators support
+this read-only operation; generic `map` and `filter` iterators do not.
 
 ```
 let first ...rest = [1, 2, 3, 4]
 assert_eq $first 1
+assert_eq [...rest] [2, 3, 4]
 ```
 
 Specify nothing after `...` to simply ignore surplus items:
@@ -60,6 +64,11 @@ assert_eq {...options} {color: "red"}
 ```
 
 `*` or `**` alone discards surplus items entirely.
+
+Source-backed rests are neither iterators nor iterable. Materialize a positional
+rest with `[...rest]` before iterating. Materialize a keyed or mixed rest with
+`Dict(rest)` or `Record(rest)`, then iterate the resulting container. A rest can
+be unpacked and spread repeatedly; these operations do not consume it.
 
 ### Non-symbol Keys
 

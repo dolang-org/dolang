@@ -1,8 +1,9 @@
-import fs
+import fs std
   testlib.vfs:
     - vfs
   test:
     - assert
+    - assert_throws
     - assert_eq
     - fixture
     - test
@@ -64,3 +65,18 @@ def literal_dir()
 #[populate]
 def literal_missing()
   assert_eq [...glob "nonexistent.rs"] []
+
+#[test]
+#[vfs]
+#[populate]
+def unpack_readonly()
+  let paths = glob "src/*.rs"
+  let first ...rest = paths
+  let again ...other = paths
+  let _ ...stale = paths
+  assert_eq $first $again
+  assert_eq ([...rest]) [Path "src/lib.rs"]
+  assert_eq ([...other]) [Path "src/lib.rs"]
+  assert_eq ([...paths]) [Path "src/foo.rs", Path "src/lib.rs"]
+  assert_throws $std.ConcurrencyError do
+    [...stale]

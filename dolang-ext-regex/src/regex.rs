@@ -832,10 +832,10 @@ impl RegexSplitInner {
         };
     }
 
-    /// Returns the number of remaining items. Only valid for `Buffered`.
-    fn remaining(&self) -> usize {
+    /// Returns the remaining items. Only valid for `Buffered`.
+    fn remaining(&self) -> &[String] {
         match self {
-            RegexSplitInner::Buffered { segments, index } => segments.len() - index,
+            RegexSplitInner::Buffered { segments, index } => &segments[*index..],
             _ => panic!("remaining() called on non-buffered iterator"),
         }
     }
@@ -896,39 +896,71 @@ impl<'v> Object<'v> for RegexSplit<'v> {
             return Err(Error::missing_key(strand, key));
         }
 
-        let exhaustive = unpack.pos_rest() == Rest::None;
-        let fallible = unpack.required() > 0 || exhaustive;
+        // Materializing changes only the representation, not the remaining
+        // items, so unpacking still leaves the iterator observably unchanged.
         let mut borrow = this.borrow_mut(strand)?;
-
-        if fallible {
-            // Materialize lazy iterators so we can validate before writing slots
-            borrow.inner.materialize();
-
-            let remaining = borrow.inner.remaining();
-            if remaining < unpack.required() {
-                return Err(Error::missing_positional(strand, unpack.required()));
-            }
-            if exhaustive && remaining > unpack.required() + unpack.optional() {
-                return Err(Error::unexpected_positional(
-                    strand,
-                    unpack.required() + unpack.optional(),
-                ));
-            }
+        borrow.inner.materialize();
+        let remaining = borrow.inner.remaining();
+        if remaining.len() < unpack.required() {
+            return Err(Error::missing_positional(strand, unpack.required()));
+        }
+        if unpack.pos_rest() == Rest::None
+            && remaining.len() > unpack.required() + unpack.optional()
+        {
+            return Err(Error::unexpected_positional(
+                strand,
+                unpack.required() + unpack.optional(),
+            ));
         }
 
         // All validation passed — proceed without possibility of failure
+        let mut pos = 0;
         for item in unpack.iter() {
             match item {
-                UnpackItem::Pos { slot, default } => match borrow.inner.next_str() {
-                    Some(segment) => Output::set(strand, slot, segment),
+                UnpackItem::Pos { slot, default } => match remaining.get(pos) {
+                    Some(segment) => {
+                        Output::set(strand, slot, segment.as_str());
+                        pos += 1;
+                    }
                     None => Output::set(strand, slot, default.unwrap()),
                 },
                 UnpackItem::SymKey { slot, default, .. }
                 | UnpackItem::ConstKey { slot, default, .. } => {
                     Output::set(strand, slot, default.unwrap());
                 }
-                UnpackItem::Rest { slot } | UnpackItem::PosRest { slot } => {
-                    Output::set(strand, slot, this);
+                UnpackItem::Rest { mut slot } | UnpackItem::PosRest { mut slot } => {
+                    // The rest is a fresh iterator over the remainder
+                    let segments = remaining[pos..].to_vec();
+                    let haystack = unsafe {
+                        Mut::slot::<1>(&borrow)
+                            .as_str(strand.vm())
+                            .unwrap()
+                            .pin()
+                            .into_static_unchecked()
+                    };
+                    let ty = strand.state::<Global<'v>>().types.split;
+                    ty.create_with_annex(
+                        strand,
+                        RegexSplit {
+                            inner: RegexSplitInner::Buffered { segments, index: 0 },
+                            _haystack: haystack,
+                        },
+                        RegexSplitAnnex,
+                        &mut slot,
+                    );
+                    ty.cast(&slot).unwrap().enter_sync(strand, |strand, inst| {
+                        let mut rest = inst.borrow_mut_unwrap();
+                        Output::set(
+                            strand,
+                            Mut::slot_mut::<0>(&mut rest),
+                            Mut::slot::<0>(&borrow),
+                        );
+                        Output::set(
+                            strand,
+                            Mut::slot_mut::<1>(&mut rest),
+                            Mut::slot::<1>(&borrow),
+                        );
+                    });
                 }
                 UnpackItem::KeyRest { slot } => Unpack::empty_key_rest(strand, slot),
             }

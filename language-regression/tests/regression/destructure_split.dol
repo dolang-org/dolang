@@ -30,11 +30,12 @@ assert_eq $tk $record()
 let c * = [1, 2, 3]
 assert_eq $c 1
 
-# An iterator continues where the pattern stopped
+# Unpack leaves the iterator at its original position
 let it = ([1, 2, 3, 4].iter())
 let d *dr = it
 assert_eq $d 1
 assert_eq [...dr] [2, 3, 4]
+assert_eq [...it] [1, 2, 3, 4]
 
 # Strings, binaries, and their split iterators
 let s *sr = "xyz".scalars()

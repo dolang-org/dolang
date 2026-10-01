@@ -55,7 +55,7 @@ const ITERABLE_METHODS: &[sym::Tag] = &[
 ///   already define `count` with unrelated semantics.
 /// - `kv` describes the pair shape of an iterator; spread behavior belongs to
 ///   the iterable itself.
-const ITER_ONLY_METHODS: &[sym::Tag] = &[sym::NEXT, sym::COUNT, sym::KV];
+const ITER_ONLY_METHODS: &[sym::Tag] = &[sym::NEXT, sym::COUNT, sym::KV, sym::SPREAD_METHOD];
 
 /// Methods of [`Sink`], all of which [`Sinkable`] forwards by materializing a
 /// sink from the receiver with `sink` and re-dispatching onto it.
@@ -111,6 +111,7 @@ fn iter_members<'v, 'a>() -> &'a [Member<'v, 'a>] {
         Method(sym::NEXT),
         Method(sym::COUNT),
         Method(sym::KV),
+        Method(sym::SPREAD_METHOD),
     ]
 }
 
@@ -148,6 +149,74 @@ fn sinkable_members<'v, 'a>() -> &'a [Member<'v, 'a>] {
         Method(sym::PRECHOMP),
         Method(sym::PRECRIMP),
     ]
+}
+
+/// Spreads the items of `value`'s iterator positionally.
+///
+/// Native objects inherit this from `Iter`; raw protocol types whose spreading
+/// is their iteration forward to it by hand.
+pub(crate) async fn spread_iter<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: impl Input<'v>,
+    sink: &mut dyn Spread<'v, 's>,
+) -> Result<'v, 's, ()> {
+    strand
+        .with_slots(async move |strand, [mut root, mut iter, mut item]| {
+            Output::set(strand, Slot::reborrow(&mut root), value);
+            root.op_iter(strand, Slot::reborrow(&mut iter)).await?;
+            let mut count = 0usize;
+            while iter.op_next(strand, Slot::reborrow(&mut item)).await? {
+                sink.positional(strand, Slot::reborrow(&mut item))?;
+                count += 1;
+                if count.is_multiple_of(crate::INTERRUPT_INTERVAL) {
+                    strand.check_trap_gc()?;
+                }
+            }
+            Ok(())
+        })
+        .await
+}
+
+/// Unpacks `sig` positionally from a cursor, returning the cursor after the
+/// items bound.
+///
+/// `next` yields the item at a cursor and the cursor following it. Keys take
+/// their defaults, since a sequence has no keyed items, and the caller stores
+/// any rest.
+pub(crate) fn unpack_cursor<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    sig: &sig::Unpack<'v, '_>,
+    out: &mut Slots<'v, '_>,
+    mut index: usize,
+    mut next: impl FnMut(&mut Strand<'v, 's>, usize) -> Option<(usize, Value<'v>)>,
+) -> Result<'v, 's, usize> {
+    let pos_count = sig.required + sig.optional.len();
+    for i in 0..(pos_count + sig.keys.len()) {
+        if i < pos_count {
+            if let Some((next_index, value)) = next(strand, index) {
+                out.at(i).store(value);
+                index = next_index;
+            } else if i >= sig.required {
+                out.at(i).store(sig.optional[i - sig.required].dup());
+            } else {
+                return Err(Error::missing_positional(strand, i));
+            }
+        } else {
+            let key = &sig.keys[i - pos_count];
+            if let Some(default) = &key.default {
+                out.at(i).store(default.dup());
+            } else {
+                return Err(match &key.kind {
+                    sig::UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
+                    sig::UnpackKeyKind::Const(value) => Error::missing_key(strand, value),
+                });
+            }
+        }
+    }
+    if sig.pos_rest() == crate::bytecode::Rest::None && next(strand, index).is_some() {
+        return Err(Error::unexpected_positional(strand, pos_count));
+    }
+    Ok(index)
 }
 
 pub(crate) fn iter_get<'v, 'a, 's>(
@@ -880,6 +949,15 @@ impl<'v> Protocol<'v> for Chain<'v> {
     ) -> Result<'v, 's, ()> {
         iter_mcall(strand, &this, method, args, out).await
     }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        spread_iter(strand, this.clone(), sink).await
+    }
 }
 
 impl<'v> Protocol<'v> for Zip<'v> {
@@ -951,6 +1029,15 @@ impl<'v> Protocol<'v> for Zip<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         iter_mcall(strand, &this, method, args, out).await
+    }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        spread_iter(strand, this.clone(), sink).await
     }
 }
 
@@ -1099,6 +1186,15 @@ impl<'v> Protocol<'v> for Take<'v> {
     ) -> Result<'v, 's, ()> {
         iter_mcall(strand, &this, method, args, out).await
     }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        spread_iter(strand, this.clone(), sink).await
+    }
 }
 
 impl<'v> Protocol<'v> for Skip<'v> {
@@ -1173,6 +1269,15 @@ impl<'v> Protocol<'v> for Skip<'v> {
     ) -> Result<'v, 's, ()> {
         iter_mcall(strand, &this, method, args, out).await
     }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        spread_iter(strand, this.clone(), sink).await
+    }
 }
 
 impl<'v> Protocol<'v> for Enumerate<'v> {
@@ -1246,6 +1351,15 @@ impl<'v> Protocol<'v> for Enumerate<'v> {
     ) -> Result<'v, 's, ()> {
         iter_mcall(strand, &this, method, args, out).await
     }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        spread_iter(strand, this.clone(), sink).await
+    }
 }
 
 impl<'v> Protocol<'v> for Kv<'v> {
@@ -1254,7 +1368,7 @@ impl<'v> Protocol<'v> for Kv<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        Output::set(strand, out, &strand.singletons().kv)
     }
 
     fn op_debug<'a, 's>(
@@ -1265,85 +1379,52 @@ impl<'v> Protocol<'v> for Kv<'v> {
         crate::fmt!(strand, w, "<std.Kv>")
     }
 
-    async fn op_iter<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
-        Ok(())
-    }
-
-    async fn op_next<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, bool> {
-        let source = this.borrow(strand)?.source.dup();
-        source.next(strand, out).await
-    }
-
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        context: SpreadContext,
+        _context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
+        let unpack = sig::Unpack {
+            required: 2,
+            optional: vec![],
+            keys: vec![],
+            sym_index: vec![],
+            variadic: Variadic::NONE,
+        };
         strand
             .with_slots(
                 async move |strand, [mut iter, mut item, mut key, mut value]| {
                     let source = this.borrow(strand)?.source.dup();
                     source.iter(strand, &mut iter).await?;
                     while iter.next(strand, &mut item).await? {
-                        if context == SpreadContext::Pairs {
-                            let unpack = sig::Unpack {
-                                required: 2,
-                                optional: vec![],
-                                keys: vec![],
-                                sym_index: vec![],
-                                variadic: Variadic::NONE,
-                            };
-                            let cells = [UnsafeCell::new(Value::NIL), UnsafeCell::new(Value::NIL)];
-                            item.op_unpack(strand, &unpack, unsafe { Slots::new(&cells) })
-                                .await?;
-                            key.store(unsafe { (*cells[0].get()).take() });
-                            value.store(unsafe { (*cells[1].get()).take() });
-                            sink.keyed(
-                                strand,
-                                Slot::reborrow(&mut key),
-                                Slot::reborrow(&mut value),
-                            )?;
-                        } else {
-                            sink.positional(strand, Slot::reborrow(&mut item))?;
-                        }
+                        let cells = [UnsafeCell::new(Value::NIL), UnsafeCell::new(Value::NIL)];
+                        item.op_unpack(strand, &unpack, unsafe { Slots::new(&cells) })
+                            .await?;
+                        key.store(unsafe { (*cells[0].get()).take() });
+                        value.store(unsafe { (*cells[1].get()).take() });
+                        sink.keyed(strand, Slot::reborrow(&mut key), Slot::reborrow(&mut value))?;
                     }
                     Ok(())
                 },
             )
             .await
     }
-
-    fn op_get<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        field: Sym<'v, 'a>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        iter_get(strand, &this, field, out)
-    }
-
-    async fn op_mcall<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        method: Sym<'v, 'a>,
-        args: Args<'v, 'a>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        iter_mcall(strand, &this, method, args, out).await
-    }
 }
 
 impl<'v> Protocol<'v> for Iter {
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        let Some(delegator) = this.delegator() else {
+            return Err(Error::not_supported(strand));
+        };
+        spread_iter(strand, delegator, sink).await
+    }
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1411,6 +1492,11 @@ impl<'v> Protocol<'v> for Iter {
         match method.tag() {
             sym::INIT_METHOD => {
                 let ([_self_val], []) = unpack!(strand, args, 1, 0)?;
+                Ok(())
+            }
+            sym::SPREAD_METHOD => {
+                let ([obj], []) = unpack!(strand, args, 1, 0)?;
+                Output::set(strand, out, obj);
                 Ok(())
             }
             sym::NEXT => {
@@ -1695,6 +1781,15 @@ impl<'v> Protocol<'v> for Map<'v> {
             _ => iter_mcall(strand, &this, method, args, out).await,
         }
     }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        spread_iter(strand, this.clone(), sink).await
+    }
 }
 
 /// Sink adapter applying a function to each item on its way to the downstream
@@ -1899,6 +1994,15 @@ impl<'v> Protocol<'v> for Filter<'v> {
             }
             _ => iter_mcall(strand, &this, method, args, out).await,
         }
+    }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        spread_iter(strand, this.clone(), sink).await
     }
 }
 
@@ -2196,6 +2300,15 @@ impl<'v> Protocol<'v> for Chomp<'v> {
             _ => iter_mcall(strand, &this, method, args, out).await,
         }
     }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        spread_iter(strand, this.clone(), sink).await
+    }
 }
 
 /// Sink adapter removing one trailing line terminator from each item on its way
@@ -2404,6 +2517,15 @@ impl<'v> Protocol<'v> for Crimp<'v> {
             }
             _ => iter_mcall(strand, &this, method, args, out).await,
         }
+    }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        spread_iter(strand, this.clone(), sink).await
     }
 }
 
@@ -2977,6 +3099,15 @@ impl<'v> Protocol<'v> for Null {
             _ => iter_mcall(strand, &this, method, args, out).await,
         }
     }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        spread_iter(strand, this.clone(), sink).await
+    }
 }
 
 #[cfg(test)]
@@ -3146,26 +3277,6 @@ mod tests {
                     items.push(item.to_i64(strand)?);
                 }
                 Ok(items)
-            })
-            .await
-    }
-
-    /// Drains a `Kv`-tagged iterator's `[k, v]` pairs into a `Vec<(i64, i64)>`,
-    /// via `.next()` + indexing (not `op_spread` -- see the dedicated
-    /// `kv_op_spread_*` test for that).
-    async fn collect_pairs<'v, 's>(
-        strand: &mut Strand<'v, 's>,
-        value: &Value<'v>,
-    ) -> Result<'v, 's, Vec<(i64, i64)>> {
-        strand
-            .with_slots(async move |strand, [mut item, mut k, mut v]| {
-                let mut pairs = Vec::new();
-                while value.next(strand, &mut item).await? {
-                    item.index(strand, 0i64, &mut k)?;
-                    item.index(strand, 1i64, &mut v)?;
-                    pairs.push((k.to_i64(strand)?, v.to_i64(strand)?));
-                }
-                Ok(pairs)
             })
             .await
     }
@@ -3563,35 +3674,25 @@ mod tests {
     }
 
     #[test]
-    fn kv_forwards_next_unchanged() {
+    fn kv_is_spread_only_and_does_not_consume_at_construction() {
         with_vm(async |strand, [mut arr, mut item, mut inner, mut kv]| {
-            // `.kv()` doesn't transform items -- it only tags the iterator so that
-            // spreading it treats items as pairs (see the `op_spread` test below).
-            Output::set(strand, &mut arr, Empty::Array);
-            let array = arr.as_array(strand).unwrap();
-            for (k, v) in [(1i64, 10i64), (2, 20)] {
-                Output::set(strand, &mut item, Empty::Array);
-                let pair = item.as_array(strand).unwrap();
-                pair.push(strand, k).unwrap();
-                pair.push(strand, v).unwrap();
-                array.push(strand, &item).unwrap();
-            }
+            make_int_array(strand, &[1, 2], Slot::reborrow(&mut arr));
             arr.iter(strand, &mut inner).await.unwrap();
-            create_kv(strand, inner.take(), &mut kv);
-            assert_eq!(
-                collect_pairs(strand, &kv).await.unwrap(),
-                vec![(1, 10), (2, 20)]
+            create_kv(strand, Value::from_input(strand, &inner), &mut kv);
+            assert!(!kv.is_instance_of(strand, TypeObject::Iter));
+            assert!(kv.iter(strand, &mut item).await.is_err());
+            assert!(kv.next(strand, &mut item).await.is_err());
+            assert!(
+                kv.get(strand, Sym::well_known(sym::NEXT), &mut item)
+                    .is_err()
             );
-
-            make_int_array(strand, &[], Slot::reborrow(&mut arr));
-            arr.iter(strand, &mut inner).await.unwrap();
-            create_kv(strand, inner.take(), &mut kv);
-            assert!(!kv.next(strand, &mut item).await.unwrap());
+            assert!(inner.next(strand, &mut item).await.unwrap());
+            assert_eq!(item.to_i64(strand).unwrap(), 1);
         });
     }
 
     #[test]
-    fn kv_op_spread_reports_pairs_context_as_keyed_and_others_as_positional() {
+    fn kv_op_spread_reports_pairs_context_as_keyed() {
         with_vm(async |strand, [mut arr, mut item, mut inner, mut kv]| {
             Output::set(strand, &mut arr, Empty::Array);
             let array = arr.as_array(strand).unwrap();
@@ -4029,24 +4130,14 @@ mod tests {
                 item.index(strand, 0i64, &mut out).unwrap();
                 assert_eq!(out.to_i64(strand).unwrap(), 0);
 
-                // Kv (over a plain int source -- `.kv()` only tags spread behavior,
-                // it doesn't transform `next` output; see `kv_forwards_next_unchanged`).
+                // The keyed adapter deliberately has no iterator surface.
                 make_int_array(strand, &[1, 2], Slot::reborrow(&mut arr));
                 arr.iter(strand, &mut it_a).await.unwrap();
                 create_kv(strand, it_a.take(), &mut wrapper);
                 assert_eq!(wrapper.to_debug(strand).unwrap(), "<std.Kv>");
-                // `Kv::op_iter` (unlike `next`, which every other case above already
-                // exercises via `method!`) is only reached through `Value::iter`.
-                wrapper.iter(strand, &mut out).await.unwrap();
-                wrapper.get(strand, next_sym, &mut out).unwrap();
-                assert!(out.to_debug(strand).unwrap().contains("bound method"));
-                let err = wrapper.get(strand, bogus_sym, &mut out).unwrap_err();
-                assert_eq!(err.kind(), ErrorKind::Field);
-                method!(strand, &wrapper, init_sym, &mut out).await.unwrap();
-                method!(strand, &wrapper, next_sym, &mut item)
-                    .await
-                    .unwrap();
-                assert_eq!(item.to_i64(strand).unwrap(), 1);
+                assert!(wrapper.iter(strand, &mut out).await.is_err());
+                assert!(wrapper.get(strand, next_sym, &mut out).is_err());
+                assert!(wrapper.next(strand, &mut item).await.is_err());
             },
         );
     }
@@ -4388,28 +4479,32 @@ mod tests {
     }
 
     #[test]
-    fn kv_op_spread_reports_non_pairs_context_as_positional() {
-        with_vm(async |strand, [mut arr, mut inner, mut kv]| {
-            make_int_array(strand, &[1, 2, 3], Slot::reborrow(&mut arr));
-            arr.iter(strand, &mut inner).await.unwrap();
-            create_kv(strand, inner.take(), &mut kv);
-
-            let kv_value: &Value = &kv;
-            let mut sink = CollectSpread::default();
-            strand
-                .builtin_types()
-                .kv_iter
-                .cast(kv_value)
-                .unwrap()
-                .enter(strand, async |strand, recv| {
-                    Kv::op_spread(recv, strand, SpreadContext::Sequence, &mut sink)
-                        .await
-                        .unwrap();
-                })
-                .await;
-            assert_eq!(sink.positional, vec![1, 2, 3]);
-            assert!(sink.pairs.is_empty());
-        });
+    fn kv_op_spread_reports_every_context_as_keyed() {
+        for context in [
+            SpreadContext::Args,
+            SpreadContext::Sequence,
+            SpreadContext::Pairs,
+        ] {
+            with_vm(
+                async move |strand, [mut arr, mut item, mut inner, mut kv]| {
+                    Output::set(strand, &mut arr, Empty::Array);
+                    let array = arr.as_array(strand).unwrap();
+                    for (k, v) in [(1i64, 10i64), (2, 20)] {
+                        Output::set(strand, &mut item, Empty::Array);
+                        let pair = item.as_array(strand).unwrap();
+                        pair.push(strand, k).unwrap();
+                        pair.push(strand, v).unwrap();
+                        array.push(strand, &item).unwrap();
+                    }
+                    arr.iter(strand, &mut inner).await.unwrap();
+                    create_kv(strand, inner.take(), &mut kv);
+                    let mut sink = CollectSpread::default();
+                    kv.op_spread(strand, context, &mut sink).await.unwrap();
+                    assert!(sink.positional.is_empty());
+                    assert_eq!(sink.pairs, vec![(1, 10), (2, 20)]);
+                },
+            );
+        }
     }
 
     // ── `Sinkable`/`Sink`'s own `op_mcall` catch-all `Field` error, and

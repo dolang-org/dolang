@@ -23,8 +23,7 @@ use crate::{
         field_iter::FieldIter,
         native,
         protocol::{
-            Delegated, Dispatch, Inspect, MemberKind, Recv, Spread, SpreadContext, default_spread,
-            members,
+            Delegated, Dispatch, Inspect, MemberKind, Recv, Spread, SpreadContext, members,
         },
         sym::SymObj,
         tuple,
@@ -2369,6 +2368,11 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     })
                     .await
             }
+            _ if Value::from_object(this.to_strong())
+                .is_instance_of(strand, crate::value::TypeObject::Iter) =>
+            {
+                Err(Error::not_supported(strand))
+            }
             _ => default_class_unpack(this, strand, sig, out).await,
         }
     }
@@ -2453,7 +2457,17 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     })
                     .await
             }
-            _ => default_spread(strand, this.clone(), context, sink).await,
+            Some(ClassEntry::Abstract(type_obj, MemberKind::Method)) => {
+                strand
+                    .with_slots(async move |strand, [mut delegator]| {
+                        Output::set(strand, Slot::reborrow(&mut delegator), &this);
+                        Delegated::new(type_obj, &delegator)
+                            .op_spread(strand, context, sink)
+                            .await
+                    })
+                    .await
+            }
+            _ => Err(Error::not_supported(strand)),
         }
     }
 
