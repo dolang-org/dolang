@@ -1,0 +1,62 @@
+# Arguments bind to a parameter list by count, as the runtime binds them, while
+# the items a value holds may fill a schema's multiplicities any way that fits.
+# A literal key takes as many items with its key as it admits, in order, and
+# the rest go to a domain.
+
+import std:
+  - @Unpack
+
+pub def keyword :key @ Int ...rest @ Str -> nil
+  ...
+
+pub def optional a @ Int b @ Str = "" *c @ Bool -> nil
+  ...
+
+pub def keys()
+  keyword key: 1 key: "a"
+  keyword key: 1 key: 2
+# error: expected `std.Str`, found `2`
+#   --> m.dol:LL:LL
+#    |
+# LL |   keyword key: 1 key: 2
+#    |                       ^
+
+pub def counted()
+  optional 1 "a" true
+  optional 1 true
+  # error: expected `std.Str`, found `true`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   optional 1 true
+  #    |              ^^^^
+  let _ @ ((Int, ?Str, *Bool) -> nil) = optional
+  let _ @ ((Int, *Bool) -> nil) = optional
+# error: `forall (std.Int, ?std.Str, *std.Bool) <#0.0 >#0.1 -> nil` does not fit the annotation `(std.Int, *std.Bool) <m.counted.#0 >m.counted.#1 -> nil`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ @ ((Int, *Bool) -> nil) = optional
+#    |                                   ^^^^^^^^
+
+pub def held()
+  let _ @ Unpack[{Int, ?Str, *Bool}] = (1, true)
+  let _ @ Unpack[{Int, ?Str, *Bool}] = (1, "a", true, false)
+  let _ @ Unpack[{Int, ?Str, *Bool}] = (1, 2)
+# error: `std.Tuple[{1, 2}]` does not fit the annotation `std.Unpack[{std.Int, ?std.Str, *std.Bool}]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ @ Unpack[{Int, ?Str, *Bool}] = (1, 2)
+#    |                                        ^^^^^^
+
+pub def destructured r @ Unpack[{key: Int, *key: Str}]
+  let :key ...rest = r
+  let _ = key
+  #       ^~~: flow std.Int
+  let _ = rest
+  #       ^~~~: flow std.Spread[{*key: std.Str}]
+
+pub def domain_first r @ Unpack[{**Str, key: Int}]
+  let :key ...rest = r
+  let _ = key
+  #       ^~~: flow std.Int | std.Str
+  let _ = rest
+  #       ^~~~: flow std.Spread[{*(std.Sym): std.Str, ?key: std.Int}]

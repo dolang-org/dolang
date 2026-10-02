@@ -77,6 +77,10 @@ struct Environment {
 pub(crate) struct Relation {
     pub(crate) actual: Term,
     pub(crate) expected: Term,
+    /// Whether schemas relate as the items a value holds, which may fill the
+    /// expected side's multiplicities any way that fits, rather than as
+    /// arguments bound to a parameter list by count
+    pub(crate) language: bool,
 }
 
 /// An argument of a call, by how it is passed
@@ -1433,7 +1437,11 @@ impl<'db> Solver<'db> {
             self.kind(expected),
             "constraint kind mismatch"
         );
-        let obligation = self.enqueue(Relation { actual, expected });
+        let obligation = self.enqueue(Relation {
+            actual,
+            expected,
+            language: false,
+        });
         let id = ConstraintId(self.roots.len());
         self.roots.push(Root {
             obligation,
@@ -1467,7 +1475,18 @@ impl<'db> Solver<'db> {
             self.kind(expected),
             "derived constraint kind mismatch"
         );
-        let child = self.enqueue(Relation { actual, expected });
+        // A type argument's schema is the items a value holds, and a parameter
+        // list binds by count. Bounds settle by count, the stricter reading.
+        let language = match step {
+            Step::Argument(_) => true,
+            Step::Parameters | Step::BoundPropagation | Step::Assignment => false,
+            _ => self.obligations[parent.0].relation.language,
+        };
+        let child = self.enqueue(Relation {
+            actual,
+            expected,
+            language,
+        });
         if step != Step::BoundPropagation && step != Step::Assignment {
             self.obligations[parent.0]
                 .active
@@ -2212,7 +2231,9 @@ impl<'db> Solver<'db> {
     /// Reduce one relation, recording bounds or child obligations, or return a diagnostic issue.
     /// Success means local reduction succeeded; child obligations may still fail or remain unresolved.
     fn reduce(&self, obligation: ObligationId) -> Result<(), Issue> {
-        let Relation { actual, expected } = self.obligations[obligation.0].relation;
+        let Relation {
+            actual, expected, ..
+        } = self.obligations[obligation.0].relation;
         for (term, other, lower) in [(actual, expected, false), (expected, actual, true)] {
             let mut term = term;
             for depth in 0.. {

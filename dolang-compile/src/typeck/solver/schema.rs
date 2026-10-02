@@ -3,9 +3,14 @@
 //! A schema admits item sequences. Positional items are distributed by count,
 //! as the runtime binds positional arguments: each required item takes one,
 //! optional items take what is left over from left to right, and a repeated
-//! item takes the rest. Keyed items are unordered, and a literal key owns every
-//! item with that key, as a named parameter does. Positional and keyed items are
+//! item takes the rest. Keyed items are unordered across keys; within a key, a
+//! literal key takes as many items as it admits, in order, as a named parameter
+//! does, and a domain takes the rest. Positional and keyed items are
 //! independent.
+//!
+//! A parameter list binds by count. The schema a value holds may fill its
+//! multiplicities any way that fits, so where counting is refuted, a filling
+//! still fits when its types prove some path ([`Relation::language`]).
 //!
 //! Both sides are flattened into lanes of atoms, splicing inclusions. Schemas
 //! that can't be exposed stay opaque: the same rigid on both sides pairs up, an
@@ -737,6 +742,8 @@ impl Solver<'_> {
         if combinations.is_none() {
             return Err(Residual::Alignment.into());
         }
+        let language = self.obligations[obligation.0].relation.language;
+        let mut decided = HashMap::new();
         let mut pairs = BTreeSet::new();
         let mut digits = vec![0; xs.len()];
         loop {
@@ -749,39 +756,23 @@ impl Solver<'_> {
                     _ => digit,
                 })
                 .collect();
-            let n: usize = counts.iter().sum();
-            if n < required {
-                let missing = ys
-                    .iter()
-                    .filter(|y| y.multiplicity == Multiplicity::Required)
-                    .nth(n)
-                    .unwrap();
-                return Err(Issue::Contradiction(Contradiction::Missing(missing.item)));
-            }
-            let filled = optional.min(n - required);
-            let extra = n - required - filled;
-            if extra > 0 && repeated == 0 {
-                let (excess, _) = owner(&counts, required + optional);
-                return Err(Issue::Contradiction(Contradiction::Excess(xs[excess].item)));
-            }
-            if extra > 0 && repeated > 1 {
-                return Err(Residual::Alignment.into());
-            }
-            let mut position = 0;
-            let mut optionals = 0;
-            for (j, y) in ys.iter().enumerate() {
-                let take = match y.multiplicity {
-                    Multiplicity::Required => 1,
-                    Multiplicity::Optional => {
-                        optionals += 1;
-                        usize::from(optionals <= filled)
+            let counted = self.count(xs, &counts, ys, required, optional, repeated);
+            // The items a value holds fit when any filling of the expected side
+            // fits them, which counting may miss: it suffices that its types
+            // prove a path when counting is refuted
+            let refuted = match &counted {
+                Err(Issue::Contradiction(_)) => true,
+                Err(_) => false,
+                Ok(found) => {
+                    let mut refuted = false;
+                    for &(i, j) in found {
+                        refuted |= self.decide(&mut decided, xs, ys, i, j)? == Status::Contradicted;
                     }
-                    Multiplicity::Repeated => extra,
-                };
-                for p in position..position + take {
-                    pairs.insert((owner(&counts, p).0, j));
+                    refuted
                 }
-                position += take;
+            };
+            if !(language && refuted && self.filled(&mut decided, xs, &counts, ys)?) {
+                pairs.extend(counted?);
             }
             // Advance to the next combination
             let mut index = 0;
@@ -800,6 +791,121 @@ impl Solver<'_> {
                 index += 1;
             }
         }
+    }
+
+    /// The pairs of actual and expected atoms that one filling of the actual
+    /// atoms, with `counts` items each, lands on by count
+    fn count(
+        &self,
+        xs: &[Atom],
+        counts: &[usize],
+        ys: &[Atom],
+        required: usize,
+        optional: usize,
+        repeated: usize,
+    ) -> Result<Vec<(usize, usize)>, Issue> {
+        let n: usize = counts.iter().sum();
+        if n < required {
+            let missing = ys
+                .iter()
+                .filter(|y| y.multiplicity == Multiplicity::Required)
+                .nth(n)
+                .unwrap();
+            return Err(Issue::Contradiction(Contradiction::Missing(missing.item)));
+        }
+        let filled = optional.min(n - required);
+        let extra = n - required - filled;
+        if extra > 0 && repeated == 0 {
+            let (excess, _) = owner(counts, required + optional);
+            return Err(Issue::Contradiction(Contradiction::Excess(xs[excess].item)));
+        }
+        if extra > 0 && repeated > 1 {
+            return Err(Residual::Alignment.into());
+        }
+        let mut pairs = Vec::new();
+        let mut position = 0;
+        let mut optionals = 0;
+        for (j, y) in ys.iter().enumerate() {
+            let take = match y.multiplicity {
+                Multiplicity::Required => 1,
+                Multiplicity::Optional => {
+                    optionals += 1;
+                    usize::from(optionals <= filled)
+                }
+                Multiplicity::Repeated => extra,
+            };
+            for p in position..position + take {
+                pairs.push((owner(counts, p).0, j));
+            }
+            position += take;
+        }
+        Ok(pairs)
+    }
+
+    /// Whether some filling of the expected atoms takes one filling of the
+    /// actual atoms, with `counts` items each, with every item proven to fit
+    /// where it lands
+    fn filled(
+        &self,
+        decided: &mut HashMap<(usize, usize), Status>,
+        xs: &[Atom],
+        counts: &[usize],
+        ys: &[Atom],
+    ) -> Result<bool, Issue> {
+        // The expected atoms that may take the next item, skipping those that
+        // need not take any
+        let close = |states: &mut BTreeSet<usize>| {
+            let mut j = 0;
+            while j < ys.len() {
+                if states.contains(&j) && ys[j].multiplicity != Multiplicity::Required {
+                    states.insert(j + 1);
+                }
+                j += 1;
+            }
+        };
+        let mut states = BTreeSet::from([0]);
+        close(&mut states);
+        for (i, &count) in counts.iter().enumerate() {
+            for _ in 0..count {
+                let mut next = BTreeSet::new();
+                for &j in states.iter().filter(|&&j| j < ys.len()) {
+                    if self.decide(decided, xs, ys, i, j)? != Status::Proven {
+                        continue;
+                    }
+                    next.insert(match ys[j].multiplicity {
+                        Multiplicity::Repeated => j,
+                        _ => j + 1,
+                    });
+                }
+                close(&mut next);
+                if next.is_empty() {
+                    return Ok(false);
+                }
+                states = next;
+            }
+        }
+        Ok(states.contains(&ys.len()))
+    }
+
+    /// Whether an actual atom's type fits an expected atom's, decided without
+    /// adding bounds; unresolved while either involves a variable
+    fn decide(
+        &self,
+        decided: &mut HashMap<(usize, usize), Status>,
+        xs: &[Atom],
+        ys: &[Atom],
+        i: usize,
+        j: usize,
+    ) -> Result<Status, Issue> {
+        if let Some(&status) = decided.get(&(i, j)) {
+            return Ok(status);
+        }
+        let status = match (self.reify(xs[i].ty), self.reify(ys[j].ty)) {
+            (Ok(x), Ok(y)) => self.probe(x, y)?,
+            _ => Status::Unresolved,
+        };
+        decided.insert((i, j), status);
+        Ok(status)
     }
 
     /// Relate keyed items. `open_actual` and `open_expected` say that the dynamic
@@ -842,12 +948,10 @@ impl Solver<'_> {
         }
         let mut claimed = vec![false; xs.len()];
         for y in &literals {
+            // The actual atoms with items of the key, in order, each with the
+            // fewest and most items of the key before it
+            let mut contributing = Vec::new();
             let (mut low, mut high) = (0, Some(0));
-            let mut last = None;
-            // The items of the key from actual literals, whose count is at most
-            // `literal_high`, and from actual domains
-            let (mut literal, mut literal_high) = (Vec::new(), Some(0));
-            let mut domain = Vec::new();
             for (i, x) in xs.iter().enumerate() {
                 let is_literal = self.literal(x.key)?;
                 let contributes = match is_literal {
@@ -857,18 +961,16 @@ impl Solver<'_> {
                 if !contributes {
                     continue;
                 }
-                let (lo, hi) = range(x.multiplicity);
-                if is_literal {
-                    claimed[i] = true;
-                    literal.push(x);
-                    low += lo;
-                    high = high.zip(hi).map(|(a, b)| a + b);
-                    literal_high = literal_high.zip(hi).map(|(a, b)| a + b);
-                } else {
-                    domain.push(x);
-                    high = None;
-                }
-                last = Some(x.item);
+                contributing.push((x, low, high));
+                let (lo, hi) = match is_literal {
+                    true => {
+                        claimed[i] = true;
+                        range(x.multiplicity)
+                    }
+                    false => (0, None),
+                };
+                low += lo;
+                high = high.zip(hi).map(|(a, b)| a + b);
             }
             let (min, max) = range(y.multiplicity);
             let excess =
@@ -885,18 +987,21 @@ impl Solver<'_> {
                     }
                 }
             }
-            // When the actual literals' items alone fit the literal, it takes
-            // them and the domain takes the actual domains' items. Otherwise any
-            // item may land in either.
-            let split = !absorbing.is_empty()
-                && low >= min
-                && max.zip(literal_high).is_some_and(|(max, high)| high <= max);
-            for x in &literal {
-                self.derive(obligation, x.value, y.value, Step::Item(x.item));
-            }
-            if !split {
-                for x in &domain {
+            // The literal takes the first items of the key, as many as it admits,
+            // and the domains take the rest
+            for &(x, before_low, before_high) in &contributing {
+                if max.is_none_or(|max| before_low < max) {
                     self.derive(obligation, x.value, y.value, Step::Item(x.item));
+                }
+                let (_, hi) = match self.literal(x.key)? {
+                    true => range(x.multiplicity),
+                    false => (0, None),
+                };
+                let past = before_high.zip(hi).map(|(a, b)| a + b);
+                if max.is_some_and(|max| past.is_none_or(|past| past > max)) {
+                    for d in &absorbing {
+                        self.derive(obligation, x.value, d.value, Step::Item(x.item));
+                    }
                 }
             }
             if open_expected {
@@ -905,18 +1010,9 @@ impl Solver<'_> {
             if low < min && !open_actual {
                 return Err(Issue::Contradiction(Contradiction::Missing(y.item)));
             }
-            if excess {
-                if absorbing.is_empty() {
-                    return Err(Issue::Contradiction(Contradiction::Excess(last.unwrap())));
-                }
-                if !split {
-                    domain.append(&mut literal);
-                }
-                for x in domain {
-                    for d in &absorbing {
-                        self.derive(obligation, x.value, d.value, Step::Item(x.item));
-                    }
-                }
+            if excess && absorbing.is_empty() {
+                let (last, _, _) = contributing.last().unwrap();
+                return Err(Issue::Contradiction(Contradiction::Excess(last.item)));
             }
         }
         for (i, x) in xs.iter().enumerate() {
