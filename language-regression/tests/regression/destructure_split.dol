@@ -17,14 +17,14 @@ let only *none = [1]
 assert_eq $only 1
 assert_eq [...none] []
 
-# `**rest` gets an empty record, since there are no keys
+# `**rest` is empty, since there are no keys
 let b *br **bk = [1, 2]
 assert_eq $b 1
 assert_eq [...br] [2]
-assert_eq $bk $record()
+assert_eq {...bk} {}
 
 let * **tk = (1, 2)
-assert_eq $tk $record()
+assert_eq {...tk} {}
 
 # Bare `*` discards
 let c * = [1, 2, 3]
@@ -49,7 +49,7 @@ assert_eq [...pr] ["b", "c"]
 let q *qr **qk = (b"a,b".split(b","))
 assert_eq $q b"a"
 assert_eq [...qr] [b"b"]
-assert_eq $qk $record()
+assert_eq {...qk} {}
 
 # `bind` and `for` take them too
 bind [1, 2, 3]
@@ -82,3 +82,17 @@ assert_throws $error.UnexpectedPosError do
   let _y **_yk = [1, 2]
 assert_throws $error.UnexpectedPosError do
   let _z _w = (1, 2, 3)
+
+# `std.null` destructures as no items: defaults fill in, and each rest is empty
+bind std.null
+  a = 1
+  :b = 2
+assert_eq $a 1
+assert_eq $b 2
+let *np **nk = std.null
+assert_eq [...np] []
+assert_eq {...nk} {}
+assert_throws $error.MissingPosError do
+  let _n *_ = std.null
+assert_throws $error.MissingKeyError do
+  let :_n = std.null

@@ -49,7 +49,7 @@ let _ *pa **_ = {0: "a", 1: "b", 2: "c", n: 1}
 let pb *pc **pk = pa
 assert_eq $pb b
 assert_eq [...pc] ["c"]
-assert_eq $pk $record()
+assert_eq {...pk} {}
 let _ *pd = {0: "a", 1: "b", 2: "c"}
 let pv = $
   for v = [...pd]
