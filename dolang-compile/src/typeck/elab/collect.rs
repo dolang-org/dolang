@@ -24,8 +24,8 @@ use crate::{
     ast::{
         self, AliasBody, Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, Const,
         DictElem, Expr, ExprBody, FieldInit, For, Function, Ident, If, ImportElement, LValue,
-        Method, Param, PatIdent, Pattern, PrimStmt, Res, Stmt, TypeDecl, TypeEntry, TypeRes, Var,
-        visit::Node,
+        Method, Param, ParamBind, PatIdent, Pattern, PrimStmt, Res, Stmt, TypeDecl, TypeEntry,
+        TypeRes, Var, visit::Node,
     },
     resolvety::names_type_in,
     source::{File, Span},
@@ -943,6 +943,17 @@ impl<'u> Walk<'_, 'u> {
         *self.node(id) = DeclNode::Closure(surface::Closure { span, sig });
     }
 
+    /// The name an item binds, walking a sub-pattern, which binds none of its own
+    fn bind(&mut self, frame: &Frame<'_, 'u>, bind: &'u ParamBind) -> Option<Name> {
+        match bind {
+            ParamBind::Ident(ident) => Some(self.name(ident.span)),
+            ParamBind::Pattern { pattern, .. } => {
+                self.pattern(frame, pattern);
+                None
+            }
+        }
+    }
+
     /// Walk a parameter, of a signature or a pattern, returning its surface.
     fn param(&mut self, frame: &Frame<'_, 'u>, param: &'u Param) -> surface::Param {
         use surface::ParamKind;
@@ -954,7 +965,7 @@ impl<'u> Walk<'_, 'u> {
                 }
                 surface::Param {
                     kind: ParamKind::Pos,
-                    name: Some(self.name(bind.unwrap_ident().span)),
+                    name: self.bind(frame, bind),
                     default: default.is_some(),
                     annot: self.annot(frame, ty, Role::Type),
                 }
@@ -973,7 +984,7 @@ impl<'u> Walk<'_, 'u> {
                     kind: ParamKind::Key {
                         key: self.name(*key_span),
                     },
-                    name: Some(self.name(bind.unwrap_ident().span)),
+                    name: self.bind(frame, bind),
                     default: default.is_some(),
                     annot: self.annot(frame, ty, Role::Type),
                 }
@@ -1000,7 +1011,7 @@ impl<'u> Walk<'_, 'u> {
                 };
                 surface::Param {
                     kind: ParamKind::ConstKey { key },
-                    name: Some(self.name(bind.unwrap_ident().span)),
+                    name: self.bind(frame, bind),
                     default: default.is_some(),
                     annot: self.annot(frame, ty, Role::Type),
                 }
@@ -1446,22 +1457,7 @@ impl<'u> Walk<'_, 'u> {
                     });
                     add(ident.span, Target::Local(value));
                 };
-                match &node.bind {
-                    Pattern::Ident(PatIdent { ident, .. }) => value(ident),
-                    Pattern::Unpack(params) => {
-                        for param in params {
-                            match param {
-                                Param::Pos { bind, .. }
-                                | Param::Key { bind, .. }
-                                | Param::ConstKey { bind, .. } => value(bind.unwrap_ident()),
-                                Param::Rest {
-                                    ident: Some(ident), ..
-                                } => value(ident),
-                                Param::Rest { ident: None, .. } => {}
-                            }
-                        }
-                    }
-                }
+                pattern_names(&node.bind, &mut value);
             }
             // A public import re-exports what it binds
             Stmt::Import(import) if import.pub_span.is_some() => {
@@ -1486,6 +1482,28 @@ impl<'u> Walk<'_, 'u> {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// Call `f` on each name a pattern binds, at any level
+fn pattern_names(pattern: &Pattern, f: &mut impl FnMut(&Ident)) {
+    let params = match pattern {
+        Pattern::Ident(PatIdent { ident, .. }) => return f(ident),
+        Pattern::Unpack(params) => params,
+    };
+    for param in params {
+        match param {
+            Param::Pos { bind, .. } | Param::Key { bind, .. } | Param::ConstKey { bind, .. } => {
+                match bind {
+                    ParamBind::Ident(ident) => f(ident),
+                    ParamBind::Pattern { pattern, .. } => pattern_names(pattern, f),
+                }
+            }
+            Param::Rest {
+                ident: Some(ident), ..
+            } => f(ident),
+            Param::Rest { ident: None, .. } => {}
         }
     }
 }

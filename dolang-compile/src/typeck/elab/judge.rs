@@ -229,7 +229,12 @@ impl Tables<'_> {
             if index != 0 {
                 out.push_str(", ");
             }
-            let spelled = param.name.map_or("", |name| self.name(unit, name));
+            // Only a rest or a sub-pattern is nameless
+            let spelled = match (param.name, &param.kind) {
+                (Some(name), _) => self.name(unit, name),
+                (None, ParamKind::Rest { .. }) => "",
+                (None, _) => "()",
+            };
             let (name, optional) = match param.kind {
                 ParamKind::Pos => (spelled.to_owned(), param.default),
                 ParamKind::Key { .. } | ParamKind::ConstKey { .. } => {

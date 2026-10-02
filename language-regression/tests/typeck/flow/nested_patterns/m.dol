@@ -1,0 +1,94 @@
+# A sub-pattern is matched against the type its item binds, level by level
+
+pub def lets()
+  let a (b c) = (1, ("x", true))
+  let _ = a
+  #       ^: flow std.Int
+  let _ = b
+  #       ^: flow std.Str
+  let _ = c
+  #       ^: flow std.Bool
+  let (_p (q r)) s = ((1, ("x", nil)), true)
+  let _ = q
+  #       ^: flow std.Str
+  let _ = r
+  #       ^: flow std.Nil
+  let _ = s
+  #       ^: flow std.Bool
+
+pub def keyed()
+  let k: (x ...rest) :n = (k: (1, "a"), n: true)
+  let _ = x
+  #       ^: flow std.Int
+  let _ = rest
+  #       ^~~~: flow std.Unpack[{std.Str}]
+  let _ = n
+  #       ^: flow std.Bool
+  bind (k: (a: 1, b: "x"))
+    k:
+      a: _a
+      :b
+  let _ = b
+  #       ^: flow std.Str
+
+pub def nested_defaults xs @ Array[Int]
+  let _x (d1 d2 = "none") = (1, xs)
+  let _ = d1
+  #       ^~: flow std.Int
+  let _ = d2
+  #       ^~: flow std.Int | std.Str
+
+pub def annotated()
+  let _x (i@Int s) = (nil, (1, "a"))
+  let _ = i
+  #       ^: flow std.Int
+  let _ = s
+  #       ^: flow std.Str
+  let _y (_j@Str) = (nil, (1,))
+# error: `1` does not fit the annotation `std.Str`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _y (_j@Str) = (nil, (1,))
+#    |           ^^
+
+pub def conditional v @ (Tuple[Int, Tuple[Str, Bool]] | Tuple[Int, Tuple[Str]])
+  if let a (_b c) = v
+    let _ = a
+    #       ^: flow std.Int
+    let _ = c
+    #       ^: flow std.Bool
+    nil
+  if let _a (_b _c) = (1, (2,))
+    # error: `std.Tuple[{2}]` can never unpack as this pattern
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   if let _a (_b _c) = (1, (2,))
+    #    |             ^^^^^^^
+    nil
+
+pub def loops xs @ Array[Tuple[Str, Tuple[Int, Int]]]
+  for key (lo _hi) = xs
+    let _ = key
+    #       ^~~: flow std.Str
+    let _ = lo
+    #       ^~: flow std.Int
+  let ys = $
+    for _key (_lo hi) = xs
+      - $hi
+  let _ = ys
+  #       ^~: flow std.Array[std.Int]
+  let zs = $
+    for x = xs
+      if let _k (lo _hi) = x
+        - $lo
+  let _ = zs
+  #       ^~: flow std.Array[std.Int]
+
+pub def params a (b c = 0)
+  let _ = c
+  #       ^: flow Unknown
+  (a, b)
+
+pub def lambda()
+  let f = (do |(m n)| (m, n))
+  f((1, "a"))

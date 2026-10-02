@@ -298,7 +298,7 @@ pub(crate) enum BinderKind {
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Param {
     pub(crate) kind: ParamKind,
-    /// The bound name; absent only for an anonymous rest
+    /// The bound name; absent for an anonymous rest or a sub-pattern
     pub(crate) name: Option<Name>,
     /// Whether it has a default, which makes it optional
     pub(crate) default: bool,

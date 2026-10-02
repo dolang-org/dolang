@@ -1514,18 +1514,6 @@ pub(crate) enum ParamBind {
     },
 }
 
-impl ParamBind {
-    /// The bound name, for consumers that don't support nested patterns yet
-    pub(crate) fn unwrap_ident(&self) -> &Ident {
-        match self {
-            ParamBind::Ident(ident) => ident,
-            ParamBind::Pattern { .. } => {
-                unimplemented!("nested patterns in the type checker (#854)")
-            }
-        }
-    }
-}
-
 impl Node for ParamBind {
     const TRANSPARENT: bool = true;
 
