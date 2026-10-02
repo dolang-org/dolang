@@ -457,7 +457,7 @@ def cross_domain_pipeline_relays_between_two_remote_vfs()
   # concurrently, and a stage that loses the pipe negotiation race attaches
   # its relay to the *other* stage's child, so it can still be reading or
   # writing through this session after "its own" stage has finished. Stopping
-  # the session drains those endpoints rather than severing them.
+  # the session waits for receivers to drain.
   let res = sub do pipeline
     do with_remote_vfs do echo "foo"
     do with_remote_vfs do

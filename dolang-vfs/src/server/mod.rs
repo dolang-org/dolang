@@ -68,14 +68,16 @@ struct Connection {
     drain: Arc<Drain>,
 }
 
-/// Tracks outstanding stdio endpoints so a stop request can drain them.
+/// Tracks outstanding stdio receivers so a stop request can drain them.
 ///
 /// A stop request must not sever the connection while a peer is still relaying
-/// through a pipe endpoint it obtained from this session: a stdio relay may
+/// from a pipe receiver it obtained from this session: a stdio relay may
 /// outlive the lexical scope of the session it was created in, since pipe
 /// negotiation decides which side of a cross-domain pipeline ends up owning it.
 /// Instead, a stop marks the session as stopping (so no *new* endpoints can be
-/// created) and waits for the endpoints already handed out to be closed.
+/// created) and waits for the receivers already handed out to be closed.
+/// Senders do not delay shutdown: their destination is going away, and waiting
+/// for them can cycle with a relay waiting for transport EOF before closing.
 struct Drain {
     /// Outstanding endpoint count in the upper bits, stopping flag in the LSB.
     state: AtomicUsize,
@@ -242,8 +244,6 @@ impl OpaqueResource for RetainedFile {
 
 struct RetainedStdioSend {
     stdio: Mutex<StdioSend>,
-    /// Returned to the drain when the endpoint dies, however it ends.
-    _slot: DrainSlot,
 }
 
 impl OpaqueResource for RetainedStdioSend {
@@ -1112,10 +1112,8 @@ impl Connection {
                 ))))
             }
             StdioRecvTarget::Opaque(stdio) => {
-                // Consuming the endpoint hands it to the child, which takes
-                // its drain slot along with it: once a child owns an endpoint
-                // the peer is no longer relaying through it, which is the only
-                // thing the drain protects.
+                // Consuming the receiver releases its drain slot: once a child
+                // owns it, the peer is no longer relaying through it.
                 let stdio = context
                     .unregister::<RetainedStdioRecv>(stdio)
                     .map_err(|_| Self::invalid_opaque("stdio receive"))?;
@@ -1146,10 +1144,6 @@ impl Connection {
                 ))))
             }
             StdioSendTarget::Opaque(stdio) => {
-                // Consuming the endpoint hands it to the child, which takes
-                // its drain slot along with it: once a child owns an endpoint
-                // the peer is no longer relaying through it, which is the only
-                // thing the drain protects.
                 let stdio = context
                     .unregister::<RetainedStdioSend>(stdio)
                     .map_err(|_| Self::invalid_opaque("stdio send"))?;
@@ -1261,15 +1255,15 @@ impl Connection {
         }))
     }
 
-    /// Reserves a drain slot for an endpoint about to be handed to the peer.
+    /// Gates endpoint creation, reserving a drain slot only for receivers.
     ///
     /// Only endpoint creation is gated this way. `Spawn` and `Open` stay
     /// available while stopping: they create no stdio endpoint of their own,
     /// and refusing a spawn could break the very in-flight pipeline stage the
     /// drain exists to protect.
-    fn reserve_stdio(&self) -> Result<DrainSlot> {
-        if self.drain.try_acquire(1) {
-            Ok(DrainSlot(self.drain.clone()))
+    fn reserve_stdio(&self, receiver: bool) -> Result<()> {
+        if self.drain.try_acquire(usize::from(receiver)) {
+            Ok(())
         } else {
             Err(Error::new(
                 ErrorKind::NotConnected,
@@ -1284,12 +1278,11 @@ impl Connection {
         buf_size: Option<usize>,
     ) -> Result<PipeResponse> {
         let (send, recv) = self.server.vfs.pipe(buf_size).await?;
-        let send_slot = self.reserve_stdio()?;
-        let recv_slot = self.reserve_stdio()?;
+        self.reserve_stdio(true)?;
+        let recv_slot = DrainSlot(self.drain.clone());
         Ok(PipeResponse {
             send: context.register(RetainedStdioSend {
                 stdio: Mutex::new(send),
-                _slot: send_slot,
             }),
             recv: context.register(RetainedStdioRecv {
                 stdio: Mutex::new(recv),
@@ -1325,7 +1318,7 @@ impl Connection {
     /// alive until that operation finishes, and the registration alive until
     /// the peer drops its last reference. Neither is worth reporting: a peer
     /// closing while its own I/O is in flight has no flush guarantee to lose,
-    /// and the drain slot is returned when the endpoint actually dies rather
+    /// and a receiver's drain slot is returned when it actually dies rather
     /// than when this request happens to be served.
     fn close_stdio_send(
         &self,
@@ -1378,10 +1371,9 @@ impl Connection {
     ) -> Result<Gift<StdioSendMarker>> {
         let stdio = self.retained_stdio_send(context, stdio)?;
         let clone = stdio.stdio.lock().await.try_clone().await?;
-        let slot = self.reserve_stdio()?;
+        self.reserve_stdio(false)?;
         Ok(context.register(RetainedStdioSend {
             stdio: Mutex::new(clone),
-            _slot: slot,
         }))
     }
 
@@ -1429,7 +1421,8 @@ impl Connection {
     ) -> Result<Gift<StdioRecvMarker>> {
         let stdio = self.retained_stdio_recv(context, stdio)?;
         let clone = stdio.stdio.lock().await.try_clone().await?;
-        let slot = self.reserve_stdio()?;
+        self.reserve_stdio(true)?;
+        let slot = DrainSlot(self.drain.clone());
         Ok(context.register(RetainedStdioRecv {
             stdio: Mutex::new(clone),
             _slot: slot,
@@ -1667,9 +1660,8 @@ impl Connection {
         file: Cite<FileMarker>,
         offset: u64,
     ) -> Result<Gift<StdioSendMarker>> {
-        // Before the file is taken, so that running out of endpoint slots
-        // leaves the peer's handle alone.
-        let slot = self.reserve_stdio()?;
+        // Check before taking the file so stopping leaves the peer's handle alone.
+        self.reserve_stdio(false)?;
         let file = self.take_file(context, file)?;
         // The peer's cursor is the one that matters, and the descriptor the
         // child inherits carries a position of its own, so plant it explicitly
@@ -1681,7 +1673,6 @@ impl Connection {
             .map_err(handoff_error)?;
         Ok(context.register(RetainedStdioSend {
             stdio: Mutex::new(stdio),
-            _slot: slot,
         }))
     }
 
@@ -1691,7 +1682,8 @@ impl Connection {
         file: Cite<FileMarker>,
         offset: u64,
     ) -> Result<Gift<StdioRecvMarker>> {
-        let slot = self.reserve_stdio()?;
+        self.reserve_stdio(true)?;
+        let slot = DrainSlot(self.drain.clone());
         let file = self.take_file(context, file)?;
         // The peer's cursor is the one that matters, and the descriptor the
         // child inherits carries a position of its own, so plant it explicitly
