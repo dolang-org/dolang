@@ -1,15 +1,23 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use dolang::{
     compile::Mode,
     runtime::{Bytecode, Result, Strand},
 };
 
-use crate::{cli::PreludeImport, load};
+use crate::{Config, cli::PreludeImport, load};
 
 pub enum Action {
     Run,
-    Check,
+    /// Check the script, finding modules on the module paths, else among the
+    /// configuration's bundled typelibs
+    Check {
+        module_paths: Vec<PathBuf>,
+        config: Arc<dyn Config>,
+    },
     Compile(PathBuf),
 }
 
@@ -34,7 +42,21 @@ pub(crate) async fn main<'v, 's>(
                 })
                 .await
         }
-        Action::Check => load::compile_only(strand, path, prelude, strict).await,
+        Action::Check {
+            module_paths,
+            config,
+        } => {
+            let bundled_typelib = |name: &str| crate::bundled_typelib(&*config, name);
+            load::check(
+                strand,
+                path,
+                prelude,
+                strict,
+                &module_paths,
+                bundled_typelib,
+            )
+            .await
+        }
         Action::Compile(output) => {
             load::compile_to_file(strand, path, &output, prelude, strict).await
         }

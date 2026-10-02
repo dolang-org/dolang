@@ -1,7 +1,7 @@
 use annotate_snippets::{
     AnnotationKind as SnippetAnnotationKind, Group, Level, Patch as SnippetPatch, Renderer, Snippet,
 };
-use dolang::compile::{self, Diag};
+use dolang_compile::diag::{self as compile, Diag};
 
 fn render_report<'a>(file: &'a str, source: &'a str, diag: &'a Diag) -> Vec<Group<'a>> {
     let level = match diag.severity() {

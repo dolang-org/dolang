@@ -12,6 +12,7 @@ impl Extension for WinnetExt {
     type Error = Infallible;
     const NAME: &str = "dolang-winnet";
     const VERSION: Version = dolang::package_version!();
+    const TYPELIBS: &'static [(&'static str, &'static [u8])] = dolang::typelibs!();
     const DESCRIPTION: &str = "Do Windows NetAPI Extension";
     const DEPENDS: &'static [&'static str] = &[<dolang_ext_shell::Shell as Extension>::NAME];
     fn apply_compiler(&self, _config: &mut Config) -> Result<(), Self::Error> {

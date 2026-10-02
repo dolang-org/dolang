@@ -18,6 +18,7 @@ impl Extension for TarExt {
     type Error = Infallible;
     const NAME: &str = "dolang-tar";
     const VERSION: Version = dolang::package_version!();
+    const TYPELIBS: &'static [(&'static str, &'static [u8])] = dolang::typelibs!();
     const DESCRIPTION: &str = "Do Streaming TAR Archive Extension";
 
     fn apply_compiler(&self, _config: &mut Config) -> Result<(), Self::Error> {

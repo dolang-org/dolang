@@ -39,6 +39,7 @@ impl Extension for Shell {
     type Error = Infallible;
     const NAME: &str = "shell";
     const VERSION: Version = dolang::package_version!();
+    const TYPELIBS: &'static [(&'static str, &'static [u8])] = dolang::typelibs!();
     const DESCRIPTION: &str = "Do Shell Extension";
     const DEPENDS: &'static [&'static str] = &[
         <dolang_ext_time::TimeExt as Extension>::NAME,

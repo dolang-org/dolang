@@ -33,6 +33,7 @@ impl Extension for TimeExt {
     type Error = Infallible;
     const NAME: &str = "dolang-time";
     const VERSION: Version = dolang::package_version!();
+    const TYPELIBS: &'static [(&'static str, &'static [u8])] = dolang::typelibs!();
     const DESCRIPTION: &str = "Do Time Extension";
 
     fn apply_compiler(&self, _config: &mut Config) -> Result<(), Infallible> {

@@ -51,7 +51,10 @@ use tokio::io::AsyncWriteExt;
 
 use crate::global::{FsGlobal, Global, ShellGlobal, WindowsSecurityGlobal};
 
-pub use diagnostic::{print_compile_diag_stderr, print_error_stderr, render_message_backtrace};
+pub use diagnostic::{
+    print_check_diag_stderr, print_compile_diag_stderr, print_error_stderr,
+    render_message_backtrace,
+};
 use dolang_vfs::path as vfs_path;
 #[doc(hidden)]
 pub use syntax::{

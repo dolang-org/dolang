@@ -1,7 +1,7 @@
 [package]
 name = "dolang-private-bundle"
 version = "0.1.1"
-description = "Build script helpers for bundling Do bytecode resources."
+description = "Build script helpers for bundling Do bytecode and typelibs."
 edition = "2024"
 license.workspace = true
 repository.workspace = true
@@ -13,11 +13,7 @@ test = false
 doctest = false
 
 
-[dependencies.dolang]
-workspace = true
-
-
-[dependencies.dolang-ext-shell]
+[dependencies.dolang-compile]
 workspace = true
 
 
@@ -25,4 +21,4 @@ workspace = true
 workspace = true
 
 [features]
-debug = ["dolang/debug"]
+debug = ["dolang-compile/debug"]

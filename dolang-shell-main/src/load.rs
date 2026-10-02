@@ -1,10 +1,13 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use directories::ProjectDirs;
 use tokio::fs;
 
 use dolang::{
-    compile::{self, Config, Mode, Severity},
+    compile::{self, Config, Mode, Severity, typeck},
     extension::CompilerExt,
     runtime::{
         Bytecode, Error, Result, Slot, Strand,
@@ -257,14 +260,166 @@ pub(crate) async fn compile_script_cached<'v, 's>(
     Ok(data)
 }
 
-pub(crate) async fn compile_only<'v, 's>(
+/// A source to check, as found: the script, or a module on the search path.
+struct Source {
+    path: PathBuf,
+    text: String,
+    /// The module's name, or `None` for the script
+    module: Option<String>,
+}
+
+impl Source {
+    fn config(&self, prelude: &[PreludeImport]) -> Config<'_> {
+        let mut config = match &self.module {
+            None => compile_setup(None, prelude, Mode::Script),
+            // Modules are loaded without the command line's prelude
+            Some(name) => compile_setup(None, &[], Mode::Module { name }),
+        };
+        config.typecheck(true);
+        config
+    }
+}
+
+/// Check a script and the modules it imports, without running it. A module is
+/// found as source on the search path, else among the bundled typelibs; one found
+/// neither way is unknown to the checker.
+pub(crate) async fn check<'v, 's>(
     strand: &mut Strand<'v, 's>,
     path: &Path,
     prelude: &[PreludeImport],
     strict: bool,
+    module_paths: &[PathBuf],
+    bundled_typelib: impl Fn(&str) -> Option<&'static [u8]>,
 ) -> Result<'v, 's, ()> {
-    compile_script(strand, path, prelude, strict).await?;
-    Ok(())
+    if !fs::try_exists(path).await.into_do(strand)? {
+        return Err(Error::runtime(
+            strand,
+            format!("could not find file: {}", path.display()),
+        ));
+    }
+    let data = fs::read(path).await.into_do(strand)?;
+    // Bytecode has nothing left to check
+    if is_bytecode(path, &data) {
+        return Ok(());
+    }
+    let text = String::from_utf8(data)
+        .map_err(|_| Error::runtime(strand, format!("not valid UTF-8: {}", path.display())))?;
+
+    // Find the sources and typelibs, following imports. `proc` holds the pipe
+    // types `strand`'s placeholders stand for.
+    let mut sources = vec![Source {
+        path: path.to_owned(),
+        text,
+        module: None,
+    }];
+    let mut typelibs = Vec::new();
+    let mut seen = HashSet::from(["proc".to_owned()]);
+    let mut pending = vec!["proc".to_owned()];
+    let mut queue = |imports: Vec<&str>, pending: &mut Vec<String>| {
+        for name in imports {
+            if seen.insert(name.to_owned()) {
+                pending.push(name.to_owned());
+            }
+        }
+    };
+    let mut config = sources[0].config(prelude);
+    config.document(true);
+    let unit = config.unit(path, sources[0].text.as_bytes());
+    queue(unit.imports(), &mut pending);
+    drop(unit);
+    while let Some(name) = pending.pop() {
+        if let Ok(found) = find_module_file(strand, &name, module_paths).await {
+            let text = fs::read_to_string(&found).await.into_do(strand)?;
+            let source = Source {
+                path: found,
+                text,
+                module: Some(name),
+            };
+            let mut config = source.config(prelude);
+            config.document(true);
+            let unit = config.unit(&source.path, source.text.as_bytes());
+            queue(unit.imports(), &mut pending);
+            drop(unit);
+            sources.push(source);
+        } else if let Some(bytes) = bundled_typelib(&name) {
+            let typelib =
+                typeck::Typelib::read(bytes).map_err(|error| Error::compile(strand, error))?;
+            queue(typelib.imports(), &mut pending);
+            typelibs.push(typelib);
+        }
+    }
+
+    // Compile and check them
+    let units: Vec<_> = sources
+        .iter()
+        .map(|source| {
+            source
+                .config(prelude)
+                .unit(&source.path, source.text.as_bytes())
+        })
+        .collect();
+    let mut errors = 0usize;
+    let mut warnings = 0usize;
+    for (source, unit) in sources.iter().zip(&units) {
+        let disp = source.path.display().to_string();
+        for diag in unit.diagnostics() {
+            match diag.severity() {
+                Severity::Error => errors += 1,
+                Severity::Warning => warnings += 1,
+                _ => (),
+            }
+            if errors <= MAX_ERRORS {
+                dolang_ext_shell::print_compile_diag_stderr(strand, &disp, &source.text, &diag)
+                    .await?;
+            }
+        }
+    }
+    let mut builder = typeck::Builder::new();
+    builder.pipes(("proc", "PipeSender"), ("proc", "PipeReceiver"));
+    // Each checked unit's ID, with its text if it has one, in the order assigned
+    let mut checked = Vec::new();
+    for (source, unit) in sources.iter().zip(&units) {
+        // A unit that failed to compile has told why
+        if let Ok(id) = builder.unit(unit) {
+            checked.push((id, Some(source.text.as_str())));
+        }
+    }
+    for typelib in &typelibs {
+        let id = builder
+            .typelib(typelib)
+            .map_err(|error| Error::compile(strand, error))?;
+        checked.push((id, None));
+    }
+    let check = builder.check();
+    let texts: Vec<_> = checked.iter().map(|&(_, text)| text).collect();
+    let paths: Vec<_> = checked
+        .iter()
+        .map(|&(id, _)| check.path(id).display().to_string())
+        .collect();
+    let paths: Vec<_> = paths.iter().map(String::as_str).collect();
+    for diag in check.diagnostics() {
+        match diag.severity() {
+            Severity::Error => errors += 1,
+            Severity::Warning => warnings += 1,
+            _ => (),
+        }
+        if errors <= MAX_ERRORS {
+            dolang_ext_shell::print_check_diag_stderr(strand, &paths, &texts, diag).await?;
+        }
+    }
+
+    if errors != 0 {
+        Err(Error::compile(strand, "check failed"))
+    } else if warnings != 0 && strict {
+        Err(Error::compile(
+            strand,
+            "warnings treated as errors due to --strict flag",
+        ))
+    } else if !check.validated() {
+        Err(Error::compile(strand, "some checks could not be decided"))
+    } else {
+        Ok(())
+    }
 }
 
 pub(crate) async fn compile_to_file<'v, 's>(

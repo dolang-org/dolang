@@ -113,3 +113,15 @@ fn judgments_do_not_depend_on_the_order_units_are_added() {
     assert!(!forward.is_empty());
     assert_eq!(forward, judge([("user", &user), ("geo", &geo)]));
 }
+
+#[test]
+fn imports_lists_statement_and_prelude_modules() {
+    let source = b"import zeta\nimport alpha.beta:\n  - Item\ndef f()\n  import zeta: z\n  import @gamma\n  spawn f\n";
+    let mut config = config(Mode::Script);
+    config.document(true);
+    let unit = config.unit(Path::new("unit.dol"), source);
+    assert_eq!(unit.imports(), ["alpha.beta", "gamma", "strand", "zeta"]);
+    // The list comes from the document index
+    let unit = Config::new().unit(Path::new("unit.dol"), source);
+    assert!(unit.imports().is_empty());
+}

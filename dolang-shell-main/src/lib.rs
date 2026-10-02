@@ -43,9 +43,26 @@ pub trait Config: Send + Sync + 'static {
         None
     }
 
+    /// The typelib of a bundled module, for checking code that imports it. The
+    /// typelibs of `dolang` and its extensions are found without this.
+    fn bundled_typelib(&self, name: &str) -> Option<&'static [u8]> {
+        let _ = name;
+        None
+    }
+
     fn default_entrypoint(&self) -> Option<&str> {
         None
     }
+}
+
+/// The typelib of the module named `name`, from the embedder's bundle, else from
+/// `dolang` and its extensions.
+fn bundled_typelib(config: &dyn Config, name: &str) -> Option<&'static [u8]> {
+    config.bundled_typelib(name).or_else(|| {
+        compile::typelibs()
+            .find(|(module, _)| *module == name)
+            .map(|(_, bytes)| bytes)
+    })
 }
 
 /// Unpack the single name argument of a bundled resource lookup.
@@ -60,9 +77,12 @@ fn bundled_name<'v, 's>(
     Ok(name.to_string())
 }
 
-fn get_action(cli: &Cli) -> Action {
+fn get_action(cli: &Cli, config: &Arc<dyn Config>) -> Action {
     if cli.check {
-        Action::Check
+        Action::Check {
+            module_paths: cli.module_paths.clone(),
+            config: config.clone(),
+        }
     } else if let Some(output) = &cli.compile {
         Action::Compile(output.clone())
     } else {
@@ -164,7 +184,7 @@ fn run(config: Arc<dyn Config>) -> Outcome {
             return Outcome::Exit(2);
         }
     };
-    let action = get_action(&cli);
+    let action = get_action(&cli, &config);
 
     let rt = Builder::new_current_thread().enable_all().build().unwrap();
 
@@ -186,6 +206,7 @@ fn run(config: Arc<dyn Config>) -> Outcome {
             let batch_config = config.clone();
             let module_config = config.clone();
             let entrypoint_config = config.clone();
+            let typelib_config = config.clone();
             let backtrace_sym = builder.sym("backtrace");
 
             builder
@@ -214,6 +235,14 @@ fn run(config: Arc<dyn Config>) -> Outcome {
                     let name = bundled_name(strand, args)?;
                     match module_config.bundled_module(&name) {
                         Some(bytecode) => Output::set(strand, out, bytecode),
+                        None => Output::set(strand, out, Nil),
+                    }
+                    Ok(())
+                })
+                .function("bundled_typelib", async move |strand, args, out| {
+                    let name = bundled_name(strand, args)?;
+                    match bundled_typelib(&*typelib_config, &name) {
+                        Some(typelib) => Output::set(strand, out, typelib),
                         None => Output::set(strand, out, Nil),
                     }
                     Ok(())

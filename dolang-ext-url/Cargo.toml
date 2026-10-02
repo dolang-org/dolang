@@ -22,3 +22,7 @@ workspace = true
 
 [dependencies.dolang]
 workspace = true
+
+
+[build-dependencies.dolang-private-bundle]
+workspace = true

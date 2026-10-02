@@ -116,3 +116,35 @@ def a_typelib_needs_a_module_name()
     cd $FIXTURE do
       run $shell.exe -m compile typelib main.dol stdout: $out stderr: :STDOUT: mode: :CHUNK:
   assert ((printed out).contains "name the module with --module")
+
+#[test]
+def bundled_modules_are_found_without_a_path()
+  with_temp_dir do |dir|
+    (dir / "main.dol").write r|
+      import json
+      let count @ Int = json.encode [1]
+      echo $count
+    let out = BinBuf()
+    assert_throws $proc.Error do
+      cd $dir do
+        run $shell.exe -m compile check main.dol stdout: $out stderr: :STDOUT: mode: :CHUNK:
+    let text = printed $out
+    assert (text.contains "main.dol:2:19")
+    assert $!text.contains("treated as unknown: json")
+    assert (text.contains "partial: 1 units, 1 diagnostics")
+
+#[test]
+def a_module_on_the_path_overrides_its_typelib()
+  with_temp_dir do |dir|
+    (dir / "lib").create_dir()
+    (dir / "lib/json.dol").write r|
+      pub def encode _value -> Int
+        0
+    (dir / "main.dol").write r|
+      import json
+      let count @ Int = json.encode [1]
+      echo $count
+    let out = BinBuf()
+    cd $dir do
+      run $shell.exe -m compile check main.dol --path lib stdout: $out stderr: :STDOUT: mode: :CHUNK:
+    assert ((printed out).contains "validated: 2 units, 0 diagnostics")

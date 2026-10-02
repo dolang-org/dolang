@@ -31,6 +31,7 @@ impl Extension for TomlExt {
     type Error = Infallible;
     const NAME: &str = "dolang-toml";
     const VERSION: Version = dolang::package_version!();
+    const TYPELIBS: &'static [(&'static str, &'static [u8])] = dolang::typelibs!();
     const DESCRIPTION: &str = "Do TOML Extension";
 
     fn apply_compiler(&self, _config: &mut Config) -> Result<(), Infallible> {

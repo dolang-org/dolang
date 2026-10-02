@@ -30,6 +30,7 @@ impl Extension for LoadExt {
     type Error = Infallible;
     const NAME: &str = "dolang-load";
     const VERSION: Version = dolang::package_version!();
+    const TYPELIBS: &'static [(&'static str, &'static [u8])] = dolang::typelibs!();
     const DESCRIPTION: &str = "Do Load Extension";
 
     fn apply_compiler(&self, _config: &mut Config) -> Result<(), Infallible> {

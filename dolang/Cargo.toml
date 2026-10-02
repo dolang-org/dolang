@@ -23,6 +23,10 @@ workspace = true
 workspace = true
 
 
+[build-dependencies.dolang-private-bundle]
+workspace = true
+
+
 [features]
 default = []
 debug = ["dolang-runtime/debug", "dolang-compile/debug"]

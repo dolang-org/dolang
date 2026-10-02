@@ -2,6 +2,7 @@ import load
   _shell:
     - bundled_entrypoint
     - bundled_module
+    - bundled_typelib
     - compile_script
   fs:
     - with_temp_dir
@@ -61,6 +62,13 @@ def runs_a_precompiled_script()
 def looks_up_bundled_modules()
   assert_type $Bin (bundled_module "test")
   assert_eq (bundled_module "no.such.module") nil
+
+#[test]
+def looks_up_bundled_typelibs()
+  # From the shell's bundle, `dolang` and its extensions
+  for name = ["test", "std", "json"]
+    assert_type $Bin (bundled_typelib name)
+  assert_eq (bundled_typelib "no.such.module") nil
 
 #[test]
 def looks_up_bundled_entrypoints()

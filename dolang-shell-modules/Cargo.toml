@@ -17,6 +17,10 @@ doctest = false
 workspace = true
 
 
+[build-dependencies.dolang]
+workspace = true
+
+
 [build-dependencies.dolang-ext-shell]
 workspace = true
 

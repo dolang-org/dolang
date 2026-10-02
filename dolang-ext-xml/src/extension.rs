@@ -28,6 +28,7 @@ impl Extension for XmlExt {
     type Error = Infallible;
     const NAME: &str = "dolang-xml";
     const VERSION: Version = dolang::package_version!();
+    const TYPELIBS: &'static [(&'static str, &'static [u8])] = dolang::typelibs!();
     const DESCRIPTION: &str = "Do XML Extension";
 
     fn apply_compiler(&self, _config: &mut Config) -> Result<(), Infallible> {

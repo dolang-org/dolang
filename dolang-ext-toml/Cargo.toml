@@ -23,3 +23,7 @@ features = ["parse", "display", "serde"]
 
 [dependencies.dolang]
 workspace = true
+
+
+[build-dependencies.dolang-private-bundle]
+workspace = true
