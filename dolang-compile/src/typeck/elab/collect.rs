@@ -10,70 +10,142 @@ use std::{
     iter,
 };
 
+use serde::{Deserialize, Serialize};
+
 use super::{
-    AliasCycle, BinderRef, Decl, DeclNode, Head, ImportCycle, MissingExport, ModuleRef, PIPES,
-    Referent, Role, Site, Tables, Target,
+    AliasCycle, BinderRef, Decl, DeclAst, DeclNode, Diag, Head, ImportCycle, MissingExport,
+    ModuleRef, PIPES, Referent, Role, Site, Tables, Target, UnitDiag, UnitInfo,
+    ids::Rebase,
+    local,
+    surface::{self, ConstLit, Name, SiteId, StrId, TypeExpr},
 };
 use crate::{
     Mode, PreludeImport, Unit,
     ast::{
-        AliasBody, Annot, Arg, ArrayElem, Binder, Binders, Block, Class, ClassMember, DictElem,
-        Expr, ExprBody, FieldInit, For, Function, Ident, If, ImportElement, LValue, Method, Param,
-        PatIdent, Pattern, PrimStmt, Res, Stmt, TypeDecl, TypeEntry, TypeExpr, TypeRes, Var,
-        implicits,
+        self, AliasBody, Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, Const,
+        DictElem, Expr, ExprBody, FieldInit, For, Function, Ident, If, ImportElement, LValue,
+        Method, Param, PatIdent, Pattern, PrimStmt, Res, Stmt, TypeDecl, TypeEntry, TypeRes, Var,
+        visit::Node,
     },
     resolvety::names_type_in,
-    source::{self, Diagnose, File, Span},
-    typeck::r#type::{Database, DeclId, DeclKind, UnitId, UnitSpan},
+    source::{File, Span},
+    typeck::{
+        r#type::{Database, DeclId, DeclKind, UnitId, UnitSpan},
+        typelib::wire,
+    },
 };
 
-/// A diagnostic, with the unit whose source it points into
-pub(crate) type UnitDiag = (UnitId, source::Diag);
+/// What collection learns of one unit: its surface, and how the type names written
+/// in it resolve as far as the unit itself can tell.
+///
+/// A harvest is local until it is linked: its unit is unit 0, and its declarations
+/// and sites are numbered from 0.
+#[derive(Clone)]
+pub(crate) struct Harvest<'u> {
+    pub(crate) info: UnitInfo<'u>,
+    pub(crate) strings: Vec<&'u str>,
+    pub(crate) decls: Vec<Decl<'u>>,
+    pub(crate) sites: Vec<Site>,
+    /// The type names, by head, with what each refers to within the unit
+    pub(crate) pending: Vec<Pending<'u>>,
+    /// The unit's exports by name, with the name each is bound by. Empty for a unit
+    /// that is not a module.
+    pub(crate) exports: HashMap<&'u str, (Span, Target<'u>)>,
+}
 
-/// Collect the declarations of `units`, allocating each in `db`, and resolve every
-/// type name in them. The units are walked in `order`, which fixes the order of
-/// declarations and diagnostics. `pipes` nominates the types `strand`'s pipe
-/// placeholders stand for, by module and item.
-pub(crate) fn collect<'u>(
-    db: &mut Database,
-    units: &[&'u Unit<'u>],
-    order: &[UnitId],
-    pipes: [(&'u str, &'u str); 2],
-) -> (Tables<'u>, Vec<UnitDiag>) {
+/// Collect the surface of a unit, and resolve its type names as far as it can.
+pub(crate) fn harvest<'u>(unit: &'u Unit<'u>) -> Harvest<'u> {
+    let compiler = &unit.compiler;
     let mut decls = Vec::new();
     let mut pending = Vec::new();
     let mut sites = Vec::new();
-    let mut exports = vec![HashMap::new(); units.len()];
-    for &id in order {
-        let unit = units[id.index()];
-        let mut walk = Walk {
-            unit: id,
-            file: &unit.compiler.file,
-            prelude: &unit.compiler.prelude,
-            db: &mut *db,
-            decls: &mut decls,
-            pending: &mut pending,
-            sites: &mut sites,
-            owner: None,
-            sig: None,
-            declared: HashMap::new(),
-        };
-        let root = &unit.ast.0;
-        walk.function(None, root);
-        if let Mode::Module { .. } = unit.compiler.mode {
-            exports[id.index()] = walk.exports(&root.body.stmts);
-        }
+    let mut walk = Walk {
+        unit: local(),
+        file: &compiler.file,
+        prelude: &compiler.prelude,
+        decls: &mut decls,
+        pending: &mut pending,
+        sites: &mut sites,
+        strings: Vec::new(),
+        interned: HashMap::new(),
+        owner: None,
+        sig: None,
+        declared: HashMap::new(),
+    };
+    let root = &unit.ast.0;
+    walk.function(None, root);
+    let exports = match compiler.mode {
+        Mode::Module { .. } => walk.exports(&root.body.stmts),
+        Mode::Script | Mode::Repl => HashMap::new(),
+    };
+    let strings = walk.strings;
+    Harvest {
+        info: UnitInfo {
+            module: match compiler.mode {
+                Mode::Module { name } => Some(name),
+                Mode::Script | Mode::Repl => None,
+            },
+            path: compiler.file.path(),
+            newlines: compiler.file.newlines().to_vec(),
+            source: Some(unit),
+        },
+        strings,
+        decls,
+        sites,
+        pending,
+        exports,
     }
+}
+
+/// Link the units' harvests, by [`UnitId`], into the tables, allocating every
+/// declaration in `db`, and resolve the type names that go through imports. The
+/// units are linked in `order`, which fixes the order of declarations and
+/// diagnostics. `pipes` nominates the types `strand`'s pipe placeholders stand for,
+/// by module and item.
+pub(crate) fn link<'u>(
+    db: &mut Database,
+    harvests: Vec<Harvest<'u>>,
+    order: &[UnitId],
+    pipes: [(&'u str, &'u str); 2],
+) -> (Tables<'u>, Vec<UnitDiag>) {
+    let count = harvests.len();
+    let mut harvests: Vec<_> = harvests.into_iter().map(Some).collect();
+    let mut units: Vec<Option<UnitInfo<'u>>> = (0..count).map(|_| None).collect();
+    let mut strings = vec![Vec::new(); count];
+    let mut exports = vec![HashMap::new(); count];
+    let mut decls = Vec::new();
+    let mut pending = Vec::new();
+    let mut sites = Vec::new();
+    for &id in order {
+        let mut harvest = harvests[id.index()]
+            .take()
+            .expect("each unit is linked once");
+        harvest.visit_ids(&mut Rebase {
+            unit: id,
+            decls: decls.len(),
+            sites: sites.len(),
+        });
+        for _ in 0..harvest.decls.len() {
+            db.allocate();
+        }
+        decls.extend(harvest.decls);
+        sites.extend(harvest.sites);
+        pending.extend(harvest.pending);
+        exports[id.index()] = harvest.exports;
+        strings[id.index()] = harvest.strings;
+        units[id.index()] = Some(harvest.info);
+    }
+    let units: Vec<UnitInfo<'u>> = units
+        .into_iter()
+        .map(|info| info.expect("every unit is linked"))
+        .collect();
 
     let mut fixup = Fixup {
-        units,
+        units: &units,
         modules: units
             .iter()
             .enumerate()
-            .filter_map(|(index, unit)| match unit.compiler.mode {
-                Mode::Module { name } => Some((name, UnitId::from_index(index))),
-                Mode::Script | Mode::Repl => None,
-            })
+            .filter_map(|(index, unit)| Some((unit.module?, UnitId::from_index(index))))
             .collect(),
         exports: &exports,
         memo: HashMap::new(),
@@ -103,6 +175,7 @@ pub(crate) fn collect<'u>(
 
     let mut aliases = Aliases {
         decls: &decls,
+        sites: &sites,
         referents: &referents,
         heads: HashMap::new(),
         diags: &mut diags,
@@ -121,7 +194,8 @@ pub(crate) fn collect<'u>(
         .collect();
 
     let tables = Tables {
-        units: units.to_vec(),
+        units,
+        strings,
         decls,
         referents,
         aliases,
@@ -175,7 +249,7 @@ enum FrameKind<'u> {
     Binders {
         decl: DeclId,
         sig: usize,
-        binders: &'u [Binder],
+        binders: &'u [ast::Binder],
     },
     /// A lexical scope, with what each of its variables and type-only declarations
     /// names
@@ -249,11 +323,15 @@ impl<'u> Frame<'_, 'u> {
 }
 
 /// A type name whose referent is found once every unit is collected
-struct Pending<'u> {
-    head: UnitSpan,
-    base: Target<'u>,
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct Pending<'u> {
+    #[serde(with = "wire::local_span")]
+    pub(crate) head: UnitSpan,
+    #[serde(borrow)]
+    pub(crate) base: Target<'u>,
     /// The item a dotted name takes from the module `base` names
-    item: Option<&'u str>,
+    #[serde(borrow)]
+    pub(crate) item: Option<&'u str>,
 }
 
 /// What a block's statements declare, gathered as its scope is entered
@@ -300,10 +378,13 @@ struct Walk<'c, 'u> {
     unit: UnitId,
     file: &'u File<'u>,
     prelude: &'u [PreludeImport],
-    db: &'c mut Database,
     decls: &'c mut Vec<Decl<'u>>,
     pending: &'c mut Vec<Pending<'u>>,
-    sites: &'c mut Vec<Site<'u>>,
+    sites: &'c mut Vec<Site>,
+    /// The unit's string table
+    strings: Vec<&'u str>,
+    /// Each string of the unit's string table, by its text
+    interned: HashMap<&'u str, StrId>,
     /// The declaration being walked, and which of its signatures, which encloses any
     /// found within it
     owner: Option<(DeclId, usize)>,
@@ -316,17 +397,157 @@ struct Walk<'c, 'u> {
 }
 
 impl<'u> Walk<'_, 'u> {
-    fn allocate(&mut self, kind: DeclKind, name: Option<Span>, node: DeclNode<'u>) -> DeclId {
-        let id = self.db.allocate();
-        debug_assert_eq!(id.index(), self.decls.len());
+    /// Allocate a declaration. Its surface is filled in as it is walked.
+    fn allocate(
+        &mut self,
+        kind: DeclKind,
+        name: Option<Span>,
+        node: DeclNode,
+        ast: DeclAst<'u>,
+    ) -> DeclId {
+        let id = DeclId::from_index(self.decls.len());
+        let name = name.map(|span| self.name(span));
         self.decls.push(Decl {
             unit: self.unit,
             kind,
             name,
             node,
             outer: self.owner,
+            ast: Some(ast),
         });
         id
+    }
+
+    fn node(&mut self, id: DeclId) -> &mut DeclNode {
+        &mut self.decls[id.index()].node
+    }
+
+    /// Intern a string in the unit's string table.
+    fn intern(&mut self, text: &'u str) -> StrId {
+        *self.interned.entry(text).or_insert_with(|| {
+            self.strings.push(text);
+            StrId::from_index(self.strings.len() - 1)
+        })
+    }
+
+    fn name(&mut self, span: Span) -> Name {
+        Name {
+            span,
+            text: self.intern(self.file.str(span)),
+        }
+    }
+
+    /// A type expression's surface
+    fn surface(&mut self, ty: &'u ast::TypeExpr) -> TypeExpr {
+        let span = ty.span();
+        match ty {
+            ast::TypeExpr::Name { head, fields, .. } => TypeExpr::Name {
+                span,
+                head: self.name(*head),
+                fields: fields.iter().map(|&field| self.name(field)).collect(),
+            },
+            ast::TypeExpr::Const { expr } => TypeExpr::Const {
+                span,
+                value: expr.fold(self.file).and_then(|value| self.const_lit(value)),
+            },
+            ast::TypeExpr::App { base, args, .. } => TypeExpr::App {
+                span,
+                base: Box::new(self.surface(base)),
+                args: args.iter().map(|arg| self.surface_arg(arg)).collect(),
+            },
+            ast::TypeExpr::Schema { params, .. } => TypeExpr::Schema {
+                span,
+                params: self.surface_params(params),
+            },
+            ast::TypeExpr::Group { ty, .. } => TypeExpr::Group {
+                span,
+                ty: Box::new(self.surface(ty)),
+            },
+            ast::TypeExpr::Union { members, .. } => TypeExpr::Union {
+                span,
+                members: members.iter().map(|member| self.surface(member)).collect(),
+            },
+            ast::TypeExpr::Func {
+                params,
+                input,
+                output,
+                arrow_span,
+                ret,
+                ..
+            } => TypeExpr::Func {
+                span,
+                params: self.surface_params(params),
+                input: input
+                    .as_ref()
+                    .map(|implicit| Box::new(self.surface(&implicit.ty))),
+                output: output
+                    .as_ref()
+                    .map(|implicit| Box::new(self.surface(&implicit.ty))),
+                arrow_span: *arrow_span,
+                ret: Box::new(self.surface(ret)),
+            },
+            ast::TypeExpr::Error => TypeExpr::Error { span },
+        }
+    }
+
+    fn surface_arg(&mut self, arg: &'u ast::TypeArg) -> surface::TypeArg {
+        use ast::TypeArgKind as A;
+        use surface::TypeArgKind;
+
+        surface::TypeArg {
+            kind: match &arg.kind {
+                A::Pos(ty) => TypeArgKind::Pos(self.surface(ty)),
+                A::Key { name, ty, .. } => TypeArgKind::Key {
+                    name: self.name(*name),
+                    ty: self.surface(ty),
+                },
+                A::Expand { ty, .. } => TypeArgKind::Expand {
+                    ty: self.surface(ty),
+                },
+            },
+        }
+    }
+
+    fn surface_params(&mut self, params: &'u [ast::TypeParam]) -> Vec<surface::TypeParam> {
+        use ast::{TypeKey as K, TypeParamKind as P, TypeQuant as Q};
+        use surface::{TypeKey, TypeParamKind, TypeQuant};
+
+        params
+            .iter()
+            .map(|param| surface::TypeParam {
+                quant: param.quant.as_ref().map(|quant| match quant {
+                    Q::Opt(_) => TypeQuant::Opt,
+                    Q::Star(_) => TypeQuant::Star,
+                    Q::StarStar(_) => TypeQuant::StarStar,
+                }),
+                kind: param.kind.as_ref().map(|kind| match kind {
+                    P::Pos(ty) => TypeParamKind::Pos(self.surface(ty)),
+                    P::Key { key, ty, .. } => TypeParamKind::Key {
+                        key: match key {
+                            K::Sym(span) => TypeKey::Sym(self.name(*span)),
+                            K::Type(ty) => TypeKey::Type(Box::new(self.surface(ty))),
+                        },
+                        ty: self.surface(ty),
+                    },
+                    P::Include { ty, .. } => TypeParamKind::Include {
+                        ty: self.surface(ty),
+                    },
+                    P::Open { .. } => TypeParamKind::Open,
+                }),
+            })
+            .collect()
+    }
+
+    /// The literal a constant stands for as a type, if it can
+    fn const_lit(&mut self, value: Const) -> Option<ConstLit> {
+        Some(match value {
+            Const::Str(value) => ConstLit::Str(value.into()),
+            Const::Int(value) => ConstLit::Int(value),
+            Const::Bool(value) => ConstLit::Bool(value),
+            Const::Nil => ConstLit::Nil,
+            Const::Sym(span) => ConstLit::Sym(self.name(span)),
+            Const::Bin(_) | Const::F64(_) | Const::Error => return None,
+        })
     }
 
     fn declared(&self, name: Span) -> DeclId {
@@ -419,7 +640,12 @@ impl<'u> Walk<'_, 'u> {
                 } else {
                     DeclKind::Class
                 };
-                let id = self.allocate(kind, Some(class.ident.span), DeclNode::Class(class));
+                let node = DeclNode::Class(surface::Class {
+                    binders: Vec::new(),
+                    supers: Vec::new(),
+                    members: Vec::new(),
+                });
+                let id = self.allocate(kind, Some(class.ident.span), node, DeclAst::Class(class));
                 self.declared.insert(class.ident.span, (id, 0));
                 block.var(&class.ident, Target::Local(Referent::Decl(id)));
             }
@@ -428,7 +654,11 @@ impl<'u> Walk<'_, 'u> {
                     AliasBody::Type(_) => DeclKind::Alias,
                     AliasBody::Opaque(_) => DeclKind::OpaqueAlias,
                 };
-                let id = self.allocate(kind, Some(alias.ident.span), DeclNode::Alias(alias));
+                let node = DeclNode::Alias(surface::Alias {
+                    binders: Vec::new(),
+                    body: None,
+                });
+                let id = self.allocate(kind, Some(alias.ident.span), node, DeclAst::Alias(alias));
                 self.declared.insert(alias.ident.span, (id, 0));
             }
             // A def's overloads and implementation are one function
@@ -436,7 +666,7 @@ impl<'u> Walk<'_, 'u> {
                 let (id, sig) = match block.defs.entry(file.str(def.ident.span)) {
                     MapEntry::Occupied(entry) => {
                         let id = *entry.get();
-                        let DeclNode::Defs(defs) = &mut self.decls[id.index()].node else {
+                        let Some(DeclAst::Defs(defs)) = &mut self.decls[id.index()].ast else {
                             unreachable!("a def groups with defs")
                         };
                         defs.push(def);
@@ -446,7 +676,8 @@ impl<'u> Walk<'_, 'u> {
                         let id = self.allocate(
                             DeclKind::Function,
                             Some(def.ident.span),
-                            DeclNode::Defs(vec![def]),
+                            DeclNode::Defs(Vec::new()),
+                            DeclAst::Defs(vec![def]),
                         );
                         entry.insert(id);
                         (id, 0)
@@ -565,7 +796,7 @@ impl<'u> Walk<'_, 'u> {
         });
     }
 
-    fn name(
+    fn name_ref(
         &mut self,
         frame: &Frame<'_, 'u>,
         head: Span,
@@ -579,36 +810,59 @@ impl<'u> Walk<'_, 'u> {
         }
     }
 
-    fn ty(&mut self, frame: &Frame<'_, 'u>, ty: &'u TypeExpr, role: Role) {
+    /// Record a site, resolving the names in its type.
+    fn ty(&mut self, frame: &Frame<'_, 'u>, ty: &'u ast::TypeExpr, role: Role) -> SiteId {
+        let id = SiteId::from_index(self.sites.len());
+        let surface = self.surface(ty);
         self.sites.push(Site {
             unit: self.unit,
-            ty,
+            ty: surface,
             role,
             ambient: self.sig,
             owner: self.owner,
         });
-        ty.names(&mut |head, res, fields| self.name(frame, head, res, fields));
+        ty.names(&mut |head, res, fields| self.name_ref(frame, head, res, fields));
+        id
     }
 
-    fn annot(&mut self, frame: &Frame<'_, 'u>, annot: &'u Option<Box<Annot>>, role: Role) {
-        if let Some(annot) = annot {
-            self.ty(frame, &annot.ty, role);
-        }
+    fn annot(
+        &mut self,
+        frame: &Frame<'_, 'u>,
+        annot: &'u Option<Box<Annot>>,
+        role: Role,
+    ) -> Option<SiteId> {
+        annot.as_ref().map(|annot| self.ty(frame, &annot.ty, role))
     }
 
-    fn function(&mut self, outer: Option<&Frame<'_, 'u>>, func: &'u Function) {
+    /// Walk a function, returning its signature.
+    fn function(
+        &mut self,
+        outer: Option<&Frame<'_, 'u>>,
+        func: &'u Function,
+    ) -> surface::Signature {
         let frame = self.scope(outer, &func.body.vars, &func.body.stmts);
-        for param in &func.params {
-            self.param(&frame, param);
-        }
-        for implicit in implicits(&func.input, &func.output) {
-            self.ty(&frame, &implicit.ty, Role::Type);
-        }
-        if let Some(ret) = &func.ret {
-            self.ty(&frame, &ret.ty, Role::Type);
-        }
+        let params = func
+            .params
+            .iter()
+            .map(|param| self.param(&frame, param))
+            .collect();
+        let [input, output] = [&func.input, &func.output].map(|implicit| {
+            implicit
+                .as_ref()
+                .map(|implicit| self.ty(&frame, &implicit.ty, Role::Type))
+        });
+        let ret = func
+            .ret
+            .as_ref()
+            .map(|ret| self.ty(&frame, &ret.ty, Role::Type));
         for stmt in &func.body.stmts {
             self.stmt(&frame, stmt);
+        }
+        surface::Signature {
+            params,
+            input,
+            output,
+            ret,
         }
     }
 
@@ -619,25 +873,39 @@ impl<'u> Walk<'_, 'u> {
         decl: DeclId,
         sig: usize,
         binders: Option<&'u Binders>,
-    ) -> Frame<'f, 'u> {
+    ) -> (Frame<'f, 'u>, Vec<surface::Binder>) {
         let binders = binders.map_or(&[][..], |binders| &binders.binders);
         let group = Frame {
             outer: Some(frame),
             kind: FrameKind::Binders { decl, sig, binders },
         };
+        let mut surfaces = Vec::new();
         for (slot, binder) in binders.iter().enumerate() {
             let binder_ref = BinderRef { decl, sig, slot };
-            if let Some(bound) = &binder.bound {
-                self.ty(&group, &bound.ty, Role::Bound(binder_ref));
-            }
-            if let Some(default) = &binder.default {
-                self.ty(&group, &default.ty, Role::Default(binder_ref));
-            }
+            let bound = binder
+                .bound
+                .as_ref()
+                .map(|bound| self.ty(&group, &bound.ty, Role::Bound(binder_ref)));
+            let default = binder
+                .default
+                .as_ref()
+                .map(|default| self.ty(&group, &default.ty, Role::Default(binder_ref)));
+            surfaces.push(surface::Binder {
+                kind: match binder.kind {
+                    ast::BinderKind::Pos => surface::BinderKind::Pos,
+                    ast::BinderKind::Key { .. } => surface::BinderKind::Key,
+                    ast::BinderKind::Rest { kind, .. } => surface::BinderKind::Rest(kind),
+                },
+                name: self.name(binder.ident.span),
+                bound,
+                default,
+            });
         }
-        group
+        (group, surfaces)
     }
 
-    /// Walk a def or method, one signature `sig` of the function `decl`.
+    /// Walk a def or method, one signature `sig` of the function `decl`, returning
+    /// its binders and signature.
     fn def(
         &mut self,
         frame: &Frame<'_, 'u>,
@@ -645,32 +913,75 @@ impl<'u> Walk<'_, 'u> {
         sig: usize,
         binders: Option<&'u Binders>,
         func: &'u Function,
-    ) {
+    ) -> (Vec<surface::Binder>, surface::Signature) {
         let outer = self.sig.replace((decl, sig));
-        let group = self.binders(frame, decl, sig, binders);
+        let (group, binders) = self.binders(frame, decl, sig, binders);
         let owner = self.owner.replace((decl, sig));
-        self.function(Some(&group), func);
+        let signature = self.function(Some(&group), func);
         self.owner = owner;
         self.sig = outer;
+        (binders, signature)
     }
 
     fn closure(&mut self, frame: &Frame<'_, 'u>, func: &'u Function) {
-        let id = self.allocate(DeclKind::Closure, None, DeclNode::Closure(func));
+        let span = func.span();
+        let empty = surface::Signature {
+            params: Vec::new(),
+            input: None,
+            output: None,
+            ret: None,
+        };
+        let id = self.allocate(
+            DeclKind::Closure,
+            None,
+            DeclNode::Closure(surface::Closure { span, sig: empty }),
+            DeclAst::Closure(func),
+        );
         let owner = self.owner.replace((id, 0));
-        self.function(Some(frame), func);
+        let sig = self.function(Some(frame), func);
         self.owner = owner;
+        *self.node(id) = DeclNode::Closure(surface::Closure { span, sig });
     }
 
-    fn param(&mut self, frame: &Frame<'_, 'u>, param: &'u Param) {
+    /// Walk a parameter, of a signature or a pattern, returning its surface.
+    fn param(&mut self, frame: &Frame<'_, 'u>, param: &'u Param) -> surface::Param {
+        use surface::ParamKind;
+
         match param {
-            Param::Pos { ty, default, .. } | Param::Key { ty, default, .. } => {
+            Param::Pos { ident, ty, default } => {
                 if let Some(default) = default {
                     self.expr(frame, &default.expr);
                 }
-                self.annot(frame, ty, Role::Type);
+                surface::Param {
+                    kind: ParamKind::Pos,
+                    name: Some(self.name(ident.span)),
+                    default: default.is_some(),
+                    annot: self.annot(frame, ty, Role::Type),
+                }
+            }
+            Param::Key {
+                key_span,
+                ident,
+                ty,
+                default,
+                ..
+            } => {
+                if let Some(default) = default {
+                    self.expr(frame, &default.expr);
+                }
+                surface::Param {
+                    kind: ParamKind::Key {
+                        key: self.name(*key_span),
+                    },
+                    name: Some(self.name(ident.span)),
+                    default: default.is_some(),
+                    annot: self.annot(frame, ty, Role::Type),
+                }
             }
             Param::ConstKey {
                 key_expr,
+                key_const,
+                ident,
                 ty,
                 default,
                 ..
@@ -679,9 +990,24 @@ impl<'u> Walk<'_, 'u> {
                 if let Some(default) = default {
                     self.expr(frame, &default.expr);
                 }
-                self.annot(frame, ty, Role::Type);
+                let key = match key_const {
+                    Const::Str(value) => Some(ConstLit::Str(value.as_str().into())),
+                    Const::Int(value) => Some(ConstLit::Int(*value)),
+                    Const::Bool(value) => Some(ConstLit::Bool(*value)),
+                    Const::Nil => Some(ConstLit::Nil),
+                    Const::Sym(span) => Some(ConstLit::Sym(self.name(*span))),
+                    Const::Bin(_) | Const::F64(_) | Const::Error => None,
+                };
+                surface::Param {
+                    kind: ParamKind::ConstKey { key },
+                    name: Some(self.name(ident.span)),
+                    default: default.is_some(),
+                    annot: self.annot(frame, ty, Role::Type),
+                }
             }
             Param::Rest {
+                kind,
+                ident,
                 ty,
                 type_ellipsis_span,
                 ..
@@ -690,14 +1016,24 @@ impl<'u> Walk<'_, 'u> {
                     Some(_) => Role::Pattern,
                     None => Role::Rest,
                 };
-                self.annot(frame, ty, role);
+                surface::Param {
+                    kind: ParamKind::Rest {
+                        kind: *kind,
+                        pattern: type_ellipsis_span.is_some(),
+                    },
+                    name: ident.as_ref().map(|ident| self.name(ident.span)),
+                    default: false,
+                    annot: self.annot(frame, ty, role),
+                }
             }
         }
     }
 
     fn pattern(&mut self, frame: &Frame<'_, 'u>, pattern: &'u Pattern) {
         match pattern {
-            Pattern::Ident(PatIdent { ty, .. }) => self.annot(frame, ty, Role::Type),
+            Pattern::Ident(PatIdent { ty, .. }) => {
+                self.annot(frame, ty, Role::Type);
+            }
             Pattern::Unpack(params) => {
                 for param in params {
                     self.param(frame, param);
@@ -726,10 +1062,12 @@ impl<'u> Walk<'_, 'u> {
             Stmt::TypeAlias(alias) => {
                 let id = self.declared(alias.ident.span);
                 let outer = self.sig.take();
-                let group = self.binders(frame, id, 0, alias.binders.as_deref());
-                if let AliasBody::Type(ty) = &alias.body {
-                    self.ty(&group, ty, Role::Alias(id));
-                }
+                let (group, binders) = self.binders(frame, id, 0, alias.binders.as_deref());
+                let body = match &alias.body {
+                    AliasBody::Type(ty) => Some(self.ty(&group, ty, Role::Alias(id))),
+                    AliasBody::Opaque(_) => None,
+                };
+                *self.node(id) = DeclNode::Alias(surface::Alias { binders, body });
                 self.sig = outer;
             }
             Stmt::Def(def) => {
@@ -737,7 +1075,19 @@ impl<'u> Walk<'_, 'u> {
                     self.expr(frame, &decorator.expr);
                 }
                 let (id, sig) = self.declared[&def.ident.span];
-                self.def(frame, id, sig, def.binders.as_deref(), &def.func);
+                let (binders, signature) =
+                    self.def(frame, id, sig, def.binders.as_deref(), &def.func);
+                let name = self.name(def.ident.span);
+                let DeclNode::Defs(defs) = self.node(id) else {
+                    unreachable!("a def is collected into defs")
+                };
+                debug_assert_eq!(defs.len(), sig, "defs are walked in order");
+                defs.push(surface::Def {
+                    name,
+                    binders,
+                    sig: signature,
+                    type_only: def.is_type_only(),
+                });
             }
             Stmt::Class(class) => self.class(frame, class),
             Stmt::Return(ret) => {
@@ -769,11 +1119,12 @@ impl<'u> Walk<'_, 'u> {
         }
         let id = self.declared(class.ident.span);
         let outer = self.sig.take();
-        let group = self.binders(frame, id, 0, class.binders.as_deref());
+        let (group, binders) = self.binders(frame, id, 0, class.binders.as_deref());
         let owner = self.owner.replace((id, 0));
+        let mut supers = Vec::new();
         for super_ref in &class.super_refs {
             if super_ref.type_only {
-                self.name(
+                self.name_ref(
                     &group,
                     super_ref.ident.span,
                     super_ref.res,
@@ -785,11 +1136,24 @@ impl<'u> Walk<'_, 'u> {
                 // A supertype that exists at runtime is a value elaboration resolved
                 self.refer(super_ref.ident.span, entry, &super_ref.fields);
             }
+            let mut args = Vec::new();
             for arg in &super_ref.args {
                 // Checked with the supertype, whose binders they fill
                 arg.ty()
-                    .names(&mut |head, res, fields| self.name(&group, head, res, fields));
+                    .names(&mut |head, res, fields| self.name_ref(&group, head, res, fields));
+                args.push(self.surface_arg(arg));
             }
+            supers.push(surface::Super {
+                head: self.name(super_ref.ident.span),
+                fields: super_ref
+                    .fields
+                    .iter()
+                    .map(|&field| self.name(field))
+                    .collect(),
+                args,
+                bracket_span: super_ref.bracket_span,
+                type_only: super_ref.type_only,
+            });
         }
         // A method's overload signatures are one function with its first
         // implementation, as a def's are. Each other implementation of the name is a
@@ -827,17 +1191,20 @@ impl<'u> Walk<'_, 'u> {
                 let id = self.allocate(
                     DeclKind::Function,
                     Some(methods[0].name_span),
-                    DeclNode::Methods(methods.clone()),
+                    DeclNode::Methods(Vec::new()),
+                    DeclAst::Methods(methods.clone()),
                 );
                 for (sig, method) in methods.into_iter().enumerate() {
                     sigs.insert(method.name_span, (id, sig));
                 }
             }
         }
+        let mut members = Vec::new();
         for member in &class.body.members {
             match member {
                 ClassMember::Method(method) => {
                     let (id, sig) = sigs[&method.name_span];
+                    let mut decorators = Vec::new();
                     for decorator in &method.decorators {
                         self.expr(&group, &decorator.expr);
                         // Only std's `getter` and `setter` are recognized so far
@@ -847,8 +1214,28 @@ impl<'u> Walk<'_, 'u> {
                         {
                             self.refer(ident.span, entry, &[]);
                         }
+                        decorators.push(match &decorator.expr {
+                            Expr::Ident(ident) => surface::Decorator::Ident(self.name(ident.span)),
+                            _ => surface::Decorator::Other,
+                        });
                     }
-                    self.def(&group, id, sig, method.binders.as_deref(), &method.func);
+                    let (binders, signature) =
+                        self.def(&group, id, sig, method.binders.as_deref(), &method.func);
+                    let name = self.name(method.name_span);
+                    let DeclNode::Methods(methods) = self.node(id) else {
+                        unreachable!("a method is collected into methods")
+                    };
+                    debug_assert_eq!(methods.len(), sig, "methods are walked in order");
+                    methods.push(surface::Method {
+                        name,
+                        binders,
+                        sig: signature,
+                        overload: method.at_span.is_some(),
+                        special: method.special,
+                        public: method.pub_span.is_some(),
+                        decorators,
+                    });
+                    members.push(surface::Member::Method { decl: id, sig });
                 }
                 ClassMember::Field(field) => {
                     for decorator in &field.decorators {
@@ -861,10 +1248,27 @@ impl<'u> Walk<'_, 'u> {
                         }
                         FieldInit::Thunk(func) => self.closure(&group, func),
                     }
-                    self.annot(&group, &field.ty, Role::Type);
+                    let annot = self.annot(&group, &field.ty, Role::Type);
+                    members.push(surface::Member::Field(surface::Field {
+                        names: (field.fields.iter())
+                            .map(|name| self.name(name.ident.span))
+                            .collect(),
+                        annot,
+                        public: field.pub_span.is_some(),
+                        scope: match field.scope {
+                            ast::MemberScope::Instance => surface::MemberScope::Instance,
+                            ast::MemberScope::Class => surface::MemberScope::Class,
+                            ast::MemberScope::Static => surface::MemberScope::Static,
+                        },
+                    }));
                 }
             }
         }
+        *self.node(id) = DeclNode::Class(surface::Class {
+            binders,
+            supers,
+            members,
+        });
         self.owner = owner;
         self.sig = outer;
     }
@@ -1088,7 +1492,7 @@ impl<'u> Walk<'_, 'u> {
 
 /// Resolution of names that go through an import, once every unit is collected
 struct Fixup<'a, 'u> {
-    units: &'a [&'u Unit<'u>],
+    units: &'a [UnitInfo<'u>],
     modules: HashMap<&'u str, UnitId>,
     exports: &'a [HashMap<&'u str, (Span, Target<'u>)>],
     memo: HashMap<(UnitId, &'u str), Referent>,
@@ -1098,15 +1502,14 @@ struct Fixup<'a, 'u> {
 }
 
 impl<'u> Fixup<'_, 'u> {
-    fn diag(&mut self, unit: UnitId, info: impl Diagnose + 'static) {
-        self.diags.push((unit, source::Diag::new(info)));
+    fn diag(&mut self, unit: UnitId, info: impl super::Report + 'static) {
+        self.diags.push((unit, Diag::new(info)));
     }
 
     fn module_name(&self, unit: UnitId) -> &'u str {
-        match self.units[unit.index()].compiler.mode {
-            Mode::Module { name } => name,
-            Mode::Script | Mode::Repl => unreachable!("only modules export"),
-        }
+        self.units[unit.index()]
+            .module
+            .expect("only modules export")
     }
 
     fn pending(&mut self, pending: &Pending<'u>) -> Referent {
@@ -1187,6 +1590,7 @@ impl<'u> Fixup<'_, 'u> {
 /// The heads of transparent aliases, found by following each alias's chain
 struct Aliases<'a, 'u> {
     decls: &'a [Decl<'u>],
+    sites: &'a [Site],
     referents: &'a HashMap<UnitSpan, Referent>,
     /// Each alias's head, or `None` while its chain is being followed
     heads: HashMap<DeclId, Option<Head>>,
@@ -1201,21 +1605,18 @@ impl Aliases<'_, '_> {
             // Every alias on the cycle takes the error this returns, so it is
             // reported once
             Some(None) => {
-                let span = decl.name.expect("an alias is named");
-                self.diags
-                    .push((decl.unit, source::Diag::new(AliasCycle(span))));
+                let span = decl.name_span().expect("an alias is named");
+                self.diags.push((decl.unit, Diag::new(AliasCycle(span))));
                 return Head::Error;
             }
             None => {}
         }
         self.heads.insert(id, None);
-        let DeclNode::Alias(alias) = decl.node else {
+        let DeclNode::Alias(alias) = &decl.node else {
             unreachable!("only an alias has a head")
         };
-        let head = match &alias.body {
-            AliasBody::Type(ty) => self.ty(decl.unit, ty),
-            AliasBody::Opaque(_) => unreachable!("an opaque alias is not transparent"),
-        };
+        let body = alias.body.expect("an opaque alias is not transparent");
+        let head = self.ty(decl.unit, &self.sites[body.index()].ty);
         self.heads.insert(id, Some(head.clone()));
         head
     }
@@ -1225,7 +1626,10 @@ impl Aliases<'_, '_> {
             TypeExpr::Group { ty, .. } => self.ty(unit, ty),
             TypeExpr::App { base, .. } => self.ty(unit, base),
             TypeExpr::Name { head, .. } => {
-                match self.referents.get(&UnitSpan { unit, span: *head }) {
+                match self.referents.get(&UnitSpan {
+                    unit,
+                    span: head.span,
+                }) {
                     Some(Referent::Decl(decl))
                         if self.decls[decl.index()].kind == DeclKind::Alias =>
                     {
@@ -1246,7 +1650,7 @@ impl Aliases<'_, '_> {
             | TypeExpr::Union { .. }
             | TypeExpr::Func { .. }
             | TypeExpr::Schema { .. } => Head::Structural,
-            TypeExpr::Error => Head::Error,
+            TypeExpr::Error { .. } => Head::Error,
         }
     }
 }

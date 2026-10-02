@@ -167,7 +167,8 @@ impl<'s> File<'s> {
         str::from_utf8(self.slice(span)).expect("invalid utf-8")
     }
 
-    fn newlines(&self) -> &[Offset] {
+    /// The offset of each newline in the file
+    pub(crate) fn newlines(&self) -> &[Offset] {
         self.newlines.get_or_init(|| {
             let mut newlines: Vec<Offset> = Default::default();
             let mut iter = self.content.iter();
@@ -183,19 +184,7 @@ impl<'s> File<'s> {
     }
 
     pub(crate) fn coord(&self, offset: Offset) -> Coord {
-        let newlines = self.newlines();
-        let index = newlines.partition_point(|&o| offset > o);
-        if index == 0 {
-            Coord {
-                line: 0,
-                column: offset,
-            }
-        } else {
-            Coord {
-                line: index as u32,
-                column: offset - newlines[index - 1] - 1,
-            }
-        }
+        coord(self.newlines(), offset)
     }
 
     pub(crate) fn coord_span(&self, span: Span) -> Range<Coord> {
@@ -204,6 +193,22 @@ impl<'s> File<'s> {
 
     pub(crate) fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+/// The line and column of an offset into a file whose newlines are at `newlines`
+pub(crate) fn coord(newlines: &[Offset], offset: Offset) -> Coord {
+    let index = newlines.partition_point(|&o| offset > o);
+    if index == 0 {
+        Coord {
+            line: 0,
+            column: offset,
+        }
+    } else {
+        Coord {
+            line: index as u32,
+            column: offset - newlines[index - 1] - 1,
+        }
     }
 }
 

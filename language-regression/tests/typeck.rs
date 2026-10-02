@@ -18,6 +18,11 @@
 //!
 //! Only annotated spans are asserted.
 //!
+//! Each case is then checked again with every module supplied by its typelib (see
+//! [`typeck::typelib`]), as a library the interpreter bundles is.
+//! Everything reported for the script must be the same, and what is reported for the
+//! modules must be what was before, less what came of checking their bodies.
+//!
 //! # Settings
 //!
 //! A `.test` file in a case or in a group of cases holds `key: value` lines. A
@@ -318,9 +323,123 @@ fn run(case: &Path) {
         }
         judge(source, ids[index], &check, &mut failures);
     }
+    from_typelibs(&sources, &units, &settings, &check, &ids, &mut failures);
 
     if !failures.is_empty() {
         panic!("{}:{failures}", case.display());
+    }
+}
+
+/// Check the case again with every module supplied by its typelib, and compare what
+/// that reports with the check from source.
+fn from_typelibs(
+    sources: &[Source],
+    units: &[dolang::compile::Unit<'_>],
+    settings: &Settings,
+    check: &typeck::Check,
+    ids: &[Option<UnitId>],
+    failures: &mut String,
+) {
+    // A unit that failed to compile is left out of both checks
+    let written: Vec<Option<Vec<u8>>> = (units.iter().enumerate())
+        .map(|(index, unit)| {
+            let module = ids[index].is_some() && sources[index].module.is_some();
+            module.then(|| typeck::typelib(unit).unwrap())
+        })
+        .collect();
+    let typelibs: Vec<Option<typeck::Typelib>> = (written.iter())
+        .map(|bytes| {
+            bytes
+                .as_ref()
+                .map(|bytes| typeck::Typelib::read(bytes).unwrap())
+        })
+        .collect();
+    let mut checker = typeck::Builder::new();
+    if let Some([(sender_module, sender), (receiver_module, receiver)]) = &settings.pipes {
+        checker.pipes((sender_module, sender), (receiver_module, receiver));
+    }
+    for (index, unit) in units.iter().enumerate() {
+        if ids[index].is_none() {
+            continue;
+        }
+        let id = match &typelibs[index] {
+            Some(typelib) => checker.typelib(typelib),
+            None => checker.unit(unit),
+        };
+        assert_eq!(Some(id.unwrap()), ids[index], "units are added in order");
+    }
+    let other = checker.check();
+    other.smoke();
+
+    let script = |unit: Option<UnitId>| {
+        let unit = unit.expect("checker locations name their unit");
+        let index = ids.iter().position(|id| *id == Some(unit)).unwrap();
+        sources[index].module.is_none()
+    };
+    // What is reported in the script, then in the modules
+    let diagnostics = |check: &typeck::Check| -> [Vec<String>; 2] {
+        let mut split = [Vec::new(), Vec::new()];
+        for diag in check.diagnostics() {
+            let mut out = format!("{:?} {:?} {}", diag.severity(), diag.span(), diag.message());
+            for annotation in diag.annotations() {
+                let _ = write!(out, "; {:?} {}", annotation.span(), annotation.message());
+            }
+            for note in diag.notes() {
+                let _ = write!(out, "; note: {}", note.message());
+            }
+            split[usize::from(!script(diag.span().unit()))].push(out);
+        }
+        split
+    };
+    let undecided = |check: &typeck::Check| -> [Vec<String>; 2] {
+        let mut split = [Vec::new(), Vec::new()];
+        for (reason, span) in check.undecided() {
+            split[usize::from(!script(span.unit()))].push(format!("{reason} {span:?}"));
+        }
+        split
+    };
+    let compare = |what: &str,
+                   failures: &mut String,
+                   source: [Vec<String>; 2],
+                   typelib: [Vec<String>; 2]| {
+        let [source_script, source_modules] = source;
+        let [typelib_script, typelib_modules] = typelib;
+        let mut rest = source_modules.iter();
+        let subsequence = (typelib_modules.iter()).all(|found| rest.any(|item| item == found));
+        if source_script != typelib_script || !subsequence {
+            let _ = write!(
+                failures,
+                "\n{what} differ when modules are typelibs:\n  from source: {source_script:#?} {source_modules:#?}\n  from typelibs: {typelib_script:#?} {typelib_modules:#?}"
+            );
+        }
+    };
+    compare(
+        "diagnostics",
+        failures,
+        diagnostics(check),
+        diagnostics(&other),
+    );
+    compare(
+        "undecided checks",
+        failures,
+        undecided(check),
+        undecided(&other),
+    );
+    for (index, source) in sources.iter().enumerate() {
+        let Some(id) = ids[index].filter(|_| source.module.is_none()) else {
+            continue;
+        };
+        let judgments = |check: &typeck::Check| -> Vec<String> {
+            (check.judgments(id).into_iter())
+                .map(|judgment| format!("{} {:?} {}", judgment.name, judgment.span, judgment.value))
+                .collect()
+        };
+        compare(
+            &format!("{} judgments", source.file),
+            failures,
+            [judgments(check), Vec::new()],
+            [judgments(&other), Vec::new()],
+        );
     }
 }
 

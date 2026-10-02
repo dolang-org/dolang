@@ -1,6 +1,7 @@
 import proc shell
   fs:
     - Path
+    - with_temp_dir
   test:
     - assert
     - assert_eq
@@ -48,3 +49,70 @@ def an_imported_entry_is_checked_once()
   cd $FIXTURE do
     run $shell.exe -m compile check main.dol lib/m.dol lib/m.dol --path lib stdout: $out stderr: :STDOUT: mode: :CHUNK:
   assert ((printed out).contains "validated: 2 units, 0 diagnostics")
+
+# Write the typelib of a fixture module under `lib_dir` into `dir`, as the search
+# path finds it.
+def write_typelib lib_dir source dir
+  cd $FIXTURE do
+    run $shell.exe -m compile typelib $source --path $lib_dir -o "$dir/$(Path(source).stem).dolt"
+
+#[test]
+def imports_are_met_by_typelibs()
+  with_temp_dir do |dir|
+    write_typelib lib lib/m.dol $dir
+    let out = BinBuf()
+    cd $FIXTURE do
+      run $shell.exe -m compile check main.dol --path $dir stdout: $out stderr: :STDOUT: mode: :CHUNK:
+    assert ((printed out).contains "validated: 2 units, 0 diagnostics")
+
+#[test]
+def a_typelibs_imports_are_found()
+  with_temp_dir do |dir|
+    write_typelib lib lib/n.dol $dir
+    let out = BinBuf()
+    cd $FIXTURE do
+      run $shell.exe -m compile check wraps.dol --path $dir --path lib stdout: $out stderr: :STDOUT: mode: :CHUNK:
+    let text = printed $out
+    assert (text.contains "validated: 3 units, 0 diagnostics")
+    assert $!text.contains("not found, treated as unknown: m")
+
+#[test]
+def a_typelib_entry_is_its_module()
+  with_temp_dir do |dir|
+    write_typelib lib lib/m.dol $dir
+    let out = BinBuf()
+    cd $FIXTURE do
+      run $shell.exe -m compile check main.dol "$dir/m.dolt" --path lib stdout: $out stderr: :STDOUT: mode: :CHUNK:
+    assert ((printed out).contains "validated: 2 units, 0 diagnostics")
+
+#[test]
+def typelib_exports_are_checked()
+  with_temp_dir do |dir|
+    write_typelib lib lib/m.dol $dir
+    let out = BinBuf()
+    let err = assert_throws $proc.Error do
+      cd $FIXTURE do
+        run $shell.exe -m compile check bad.dol --path $dir stdout: $out stderr: :STDOUT: mode: :CHUNK:
+    assert_eq $err.rc 1
+    assert ((printed out).contains "module `m` has no export `Absent`")
+
+#[test]
+def typelib_diagnostics_are_located()
+  with_temp_dir do |dir|
+    write_typelib flawed flawed/f.dol $dir
+    let out = BinBuf()
+    assert_throws $proc.Error do
+      cd $FIXTURE do
+        run $shell.exe -m compile check flawed.dol --path $dir stdout: $out stderr: :STDOUT: mode: :CHUNK:
+    let text = printed $out
+    assert (text.contains "this does not satisfy `T @ A`")
+    assert (text.contains "flawed/f.dol:5:19")
+    assert (text.contains "partial: 2 units, 1 diagnostics")
+
+#[test]
+def a_typelib_needs_a_module_name()
+  let out = BinBuf()
+  assert_throws $proc.Error do
+    cd $FIXTURE do
+      run $shell.exe -m compile typelib main.dol stdout: $out stderr: :STDOUT: mode: :CHUNK:
+  assert ((printed out).contains "name the module with --module")

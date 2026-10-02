@@ -27,12 +27,10 @@ use std::{collections::HashMap, hash::Hash};
 
 use super::{
     Ambient, BinderRef, DeclNode, Designated, Head, ParamTy, Referent, RestSlot, Slot, Tables, sig,
+    surface::{Member, TypeArg, TypeExpr, TypeKey, TypeParam, TypeParamKind},
 };
 use crate::{
-    ast::{
-        AliasBody, ClassMember, SpecialMethod, TypeArg, TypeExpr, TypeKey, TypeParam,
-        TypeParamKind, implicits,
-    },
+    ast::SpecialMethod,
     source::Span,
     typeck::{
         elab::Fill,
@@ -204,7 +202,7 @@ struct Collect<'t, 'u> {
     constraints: Vec<(Key, Source<Key>)>,
 }
 
-impl<'t, 'u> Collect<'t, 'u> {
+impl<'t> Collect<'t, '_> {
     fn decl(&mut self, id: DeclId) {
         let tables = self.tables;
         let decl = &tables.decls[id.index()];
@@ -213,16 +211,16 @@ impl<'t, 'u> Collect<'t, 'u> {
         for sig in 0..tables.sig_count(id) {
             self.bound = Some((id, sig));
             for binder in tables.binders(id, sig) {
-                if let Some(bound) = &binder.bound {
-                    self.ty(&bound.ty, Use::CONTRA);
+                if let Some(bound) = binder.bound {
+                    self.ty(tables.site_ty(bound), Use::CONTRA);
                 }
             }
             self.bound = None;
         }
-        match decl.node {
+        match &decl.node {
             DeclNode::Class(class) => {
-                for super_ref in &class.super_refs {
-                    match self.referent(super_ref.ident.span) {
+                for super_ref in &class.supers {
+                    match self.referent(super_ref.head.span) {
                         Some(&Referent::Decl(super_decl)) if self.is_type(super_decl) => {
                             self.app(super_decl, &super_ref.args, Use::CO)
                         }
@@ -233,27 +231,28 @@ impl<'t, 'u> Collect<'t, 'u> {
                         }
                     }
                 }
-                for member in &class.body.members {
-                    if let ClassMember::Field(field) = member
-                        && let Some(annot) = &field.ty
+                for member in &class.members {
+                    if let Member::Field(field) = member
+                        && let Some(annot) = field.annot
                     {
-                        let u = match (self.phantom(&annot.ty), field.pub_span) {
+                        let annot = tables.site_ty(annot);
+                        let u = match (self.phantom(annot), field.public) {
                             (true, _) => Use::CO,
-                            (false, Some(_)) => Use::BOTH,
+                            (false, true) => Use::BOTH,
                             // Only a method's parameters or results store into a
                             // private field, and they count
-                            (false, None) => continue,
+                            (false, false) => continue,
                         };
-                        self.ty(&annot.ty, u);
+                        self.ty(annot, u);
                     }
                 }
             }
             DeclNode::Alias(alias) => {
                 // An alias on a cycle has an erroneous head, already diagnosed
-                if let AliasBody::Type(body) = &alias.body
+                if let Some(body) = alias.body
                     && tables.aliases.get(&id) != Some(&Head::Error)
                 {
-                    self.ty(body, Use::CO);
+                    self.ty(tables.site_ty(body), Use::CO);
                 }
             }
             DeclNode::Defs(_) | DeclNode::Methods(_) => {
@@ -271,7 +270,7 @@ impl<'t, 'u> Collect<'t, 'u> {
             && methods.iter().any(|method| match method.special {
                 Some(SpecialMethod::Init) => false,
                 Some(_) => true,
-                None => method.pub_span.is_some(),
+                None => method.public,
             })
         {
             let written = (0..tables.binders(class, 0).len()).map(|slot| BinderRef {
@@ -336,7 +335,7 @@ impl<'t, 'u> Collect<'t, 'u> {
     fn sig(&mut self, decl: DeclId, sig: usize) {
         let tables = self.tables;
         let completed = &tables.sigs[&(decl, sig)];
-        for (index, (_, param)) in completed.params.iter().enumerate() {
+        for (index, param) in completed.params.iter().enumerate() {
             if index == 0 && completed.receiver {
                 continue;
             }
@@ -345,17 +344,19 @@ impl<'t, 'u> Collect<'t, 'u> {
                     self.slot(slot, Use::CONTRA);
                 }
                 ParamTy::Rest(RestSlot::Pack(ty) | RestSlot::Pattern(ty)) => {
-                    self.ty(ty, Use::CONTRA);
+                    self.ty(tables.site_ty(*ty), Use::CONTRA);
                 }
             }
         }
         let func = sig::function(tables, decl, sig);
         for (ambient, written) in [
-            (completed.input, &func.input),
-            (completed.output, &func.output),
+            (completed.input, func.input),
+            (completed.output, func.output),
         ] {
             match (ambient, written) {
-                (Ambient::Written, Some(implicit)) => self.ty(&implicit.ty, Use::CONTRA),
+                (Ambient::Written, Some(implicit)) => {
+                    self.ty(tables.site_ty(implicit), Use::CONTRA)
+                }
                 (Ambient::Implicit(binder), _) => self.uses(binder, Use::CONTRA),
                 _ => {}
             }
@@ -363,9 +364,9 @@ impl<'t, 'u> Collect<'t, 'u> {
         self.slot(&completed.ret, Use::CO);
     }
 
-    fn slot(&mut self, slot: &Slot<'u>, u: Use) {
-        if let Slot::Annot(ty) = slot {
-            self.ty(ty, u);
+    fn slot(&mut self, slot: &Slot, u: Use) {
+        if let Slot::Annot(ty) = *slot {
+            self.ty(self.tables.site_ty(ty), u);
         }
     }
 
@@ -396,7 +397,7 @@ impl<'t, 'u> Collect<'t, 'u> {
             base = inner;
         }
         matches!(base, TypeExpr::Name { head, .. }
-            if matches!(self.referent(*head), Some(Referent::Decl(decl))
+            if matches!(self.referent(head.span), Some(Referent::Decl(decl))
                 if self.tables.designated.get(decl) == Some(&Designated::Phantom)))
     }
 
@@ -411,7 +412,7 @@ impl<'t, 'u> Collect<'t, 'u> {
     }
 
     /// Walk a type within a position that varies as `key` does.
-    fn through(&mut self, key: Key, ty: &'u TypeExpr, u: Use) {
+    fn through(&mut self, key: Key, ty: &'t TypeExpr, u: Use) {
         self.path.push(key);
         self.ty(ty, u);
         self.path.pop();
@@ -429,7 +430,7 @@ impl<'t, 'u> Collect<'t, 'u> {
     }
 
     /// Walk type arguments applied to a type declaration.
-    fn app(&mut self, decl: DeclId, args: &'u [TypeArg], u: Use) {
+    fn app(&mut self, decl: DeclId, args: &'t [TypeArg], u: Use) {
         self.captures(decl, u);
         let fills = self.tables.fill(self.unit, decl, args);
         for (arg, fill) in args.iter().zip(fills) {
@@ -445,10 +446,10 @@ impl<'t, 'u> Collect<'t, 'u> {
         }
     }
 
-    fn ty(&mut self, ty: &'u TypeExpr, u: Use) {
+    fn ty(&mut self, ty: &'t TypeExpr, u: Use) {
         match ty {
             TypeExpr::Group { ty, .. } => self.ty(ty, u),
-            TypeExpr::Name { head, .. } => match self.referent(*head) {
+            TypeExpr::Name { head, .. } => match self.referent(head.span) {
                 Some(&Referent::Binder(binder)) => self.uses(binder, u),
                 Some(&Referent::Decl(decl)) if self.is_type(decl) => self.captures(decl, u),
                 _ => {}
@@ -459,7 +460,7 @@ impl<'t, 'u> Collect<'t, 'u> {
                     head = ty;
                 }
                 if let TypeExpr::Name { head, .. } = head
-                    && let Some(&Referent::Decl(decl)) = self.referent(*head)
+                    && let Some(&Referent::Decl(decl)) = self.referent(head.span)
                     && self.is_type(decl)
                 {
                     return self.app(decl, args, u);
@@ -485,8 +486,8 @@ impl<'t, 'u> Collect<'t, 'u> {
                 ..
             } => {
                 self.items(params, u.flip());
-                for implicit in implicits(input, output) {
-                    self.ty(&implicit.ty, u.flip());
+                for ty in [input, output].into_iter().flatten() {
+                    self.ty(ty, u.flip());
                 }
                 self.ty(ret, u);
                 let tables = self.tables;
@@ -498,7 +499,7 @@ impl<'t, 'u> Collect<'t, 'u> {
                     self.ambient(*ambient, index, u.flip());
                 }
             }
-            TypeExpr::Const { .. } | TypeExpr::Error => {}
+            TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}
         }
     }
 
@@ -508,21 +509,22 @@ impl<'t, 'u> Collect<'t, 'u> {
             Ambient::Implicit(binder) => self.uses(binder, u),
             Ambient::Of(decl, sig) => {
                 let func = sig::function(self.tables, decl, sig);
-                let Some(implicit) = [&func.input, &func.output][index] else {
+                let Some(implicit) = [func.input, func.output][index] else {
                     return;
                 };
+                let implicit = self.tables.site_ty(implicit);
                 // A channel that contains a function type taking that channel is used
                 // in every direction its nesting reaches
                 if self.expanding.contains(&(decl, sig, index)) {
                     if !self.saturated {
                         self.saturated = true;
-                        self.ty(&implicit.ty, u);
+                        self.ty(implicit, u);
                         self.saturated = false;
                     }
                     return;
                 }
                 self.expanding.push((decl, sig, index));
-                self.ty(&implicit.ty, u);
+                self.ty(implicit, u);
                 self.expanding.pop();
             }
             Ambient::Written | Ambient::Unknown => {}
@@ -530,10 +532,10 @@ impl<'t, 'u> Collect<'t, 'u> {
     }
 
     /// Walk the items of a schema or parameter list.
-    fn items(&mut self, params: &'u [TypeParam], u: Use) {
+    fn items(&mut self, params: &'t [TypeParam], u: Use) {
         for param in params {
             match &param.kind {
-                Some(TypeParamKind::Pos(ty) | TypeParamKind::Include { ty, .. }) => {
+                Some(TypeParamKind::Pos(ty) | TypeParamKind::Include { ty }) => {
                     self.ty(ty, u);
                 }
                 Some(TypeParamKind::Key { key, ty, .. }) => {
@@ -542,7 +544,7 @@ impl<'t, 'u> Collect<'t, 'u> {
                     }
                     self.ty(ty, u);
                 }
-                Some(TypeParamKind::Open { .. }) | None => {}
+                Some(TypeParamKind::Open) | None => {}
             }
         }
     }

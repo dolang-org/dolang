@@ -1,37 +1,46 @@
 //! Elaboration of the checked units' declarations into the type database.
 //!
-//! Passes run in order over common tables and the units' frozen syntax trees. The
-//! tables refer to declaration nodes in place rather than copying source into an
-//! intermediate representation.
+//! Collection copies each unit's declaration surface out of its syntax tree (see
+//! [`surface`]), and the passes after it read only that and the common tables. Only
+//! lowering reads syntax trees again, for the bodies it lowers.
 
 mod capture;
 mod collect;
+mod ids;
 mod judge;
 mod kind;
 mod overrides;
 mod populate;
 mod sig;
 mod specialize;
+pub(crate) mod surface;
 mod variance;
 mod wellformed;
 
 use std::{
     collections::HashMap,
     fmt::{self, Write},
+    path::Path,
 };
 
+use serde::{Deserialize, Serialize};
+
+use super::report::{Annotation, Report};
 use super::r#type::{
     Database, DeclId, DeclKind, Intrinsic, Kind, TypeId, UnitId, UnitSpan, Variance,
 };
+use super::typelib::wire;
 use crate::{
-    Compiler, RestKind, Unit,
-    ast::{Binder, Class, Def, Function, Method, Param, TypeAlias, TypeExpr, visit::Node},
+    RestKind, Unit, ast,
     diag::{AnnotationKind, NoteKind, Severity},
-    source::{Annotate, Diagnose, Note, Span},
+    source::Span,
 };
+use surface::{Alias, Binder, Class, Closure, Def, Method, Name, Signature, SiteId, TypeExpr};
 
+pub(crate) use super::report::{Diag, UnitDiag};
 pub(crate) use capture::captures;
-pub(crate) use collect::{UnitDiag, collect};
+pub(crate) use collect::{Harvest, Pending, harvest, link};
+pub(crate) use ids::Ids;
 pub(crate) use judge::JUDGMENTS;
 pub(crate) use kind::{Fill, kinds};
 pub(crate) use overrides::overrides;
@@ -47,7 +56,9 @@ pub(crate) const PIPES: [&str; 2] = ["PipeSender", "PipeReceiver"];
 /// What collection learns of the checked units
 pub(crate) struct Tables<'u> {
     /// The units, by [`UnitId`]
-    pub(crate) units: Vec<&'u Unit<'u>>,
+    pub(crate) units: Vec<UnitInfo<'u>>,
+    /// Each unit's string table, by [`UnitId`]
+    pub(crate) strings: Vec<Vec<&'u str>>,
     /// Every declaration, by [`DeclId`]
     pub(crate) decls: Vec<Decl<'u>>,
     /// What each type name refers to, keyed by its head. Imports and renames are
@@ -58,17 +69,18 @@ pub(crate) struct Tables<'u> {
     /// Each unit's exports by name, with the name each is bound by. Empty for a unit
     /// that is not a module.
     pub(crate) exports: Vec<HashMap<&'u str, (Span, Target<'u>)>>,
-    /// Every type expression written in a declaration or annotation, outermost only
-    pub(crate) sites: Vec<Site<'u>>,
+    /// Every type expression written in a declaration or annotation, outermost only,
+    /// by [`SiteId`]
+    pub(crate) sites: Vec<Site>,
     /// The kind of each binder, including the implicit binders of omitted ambient
     /// channels
     pub(crate) binder_kinds: HashMap<BinderRef, KindOf>,
     /// The kind of each alias
     pub(crate) alias_kinds: HashMap<DeclId, KindOf>,
     /// The completed signature of each def or method, by declaration and signature
-    pub(crate) sigs: HashMap<(DeclId, usize), Sig<'u>>,
+    pub(crate) sigs: HashMap<(DeclId, usize), Sig>,
     /// The type of each field, by its class and the span of its name
-    pub(crate) fields: HashMap<(DeclId, Span), Slot<'u>>,
+    pub(crate) fields: HashMap<(DeclId, Span), Slot>,
     /// The ambient channels of each function type written without them, by its `->`
     pub(crate) func_ambients: HashMap<UnitSpan, [Ambient; 2]>,
     /// The declarations of `std` and `strand` the checker treats specially
@@ -112,15 +124,22 @@ impl<'u> Tables<'u> {
     }
 
     /// The binders written for signature `sig` of a declaration
-    pub(crate) fn binders(&self, decl: DeclId, sig: usize) -> &'u [Binder] {
-        let binders = match self.decls[decl.index()].node {
-            DeclNode::Class(class) => class.binders.as_deref(),
-            DeclNode::Alias(alias) => alias.binders.as_deref(),
-            DeclNode::Defs(ref defs) => defs[sig].binders.as_deref(),
-            DeclNode::Methods(ref methods) => methods[sig].binders.as_deref(),
-            DeclNode::Closure(_) => None,
-        };
-        binders.map_or(&[], |binders| &binders.binders)
+    pub(crate) fn binders(&self, decl: DeclId, sig: usize) -> &[Binder] {
+        match &self.decls[decl.index()].node {
+            DeclNode::Class(class) => &class.binders,
+            DeclNode::Alias(alias) => &alias.binders,
+            DeclNode::Defs(defs) => &defs[sig].binders,
+            DeclNode::Methods(methods) => &methods[sig].binders,
+            DeclNode::Closure(_) => &[],
+        }
+    }
+
+    /// Signature `sig` of a method declaration
+    pub(crate) fn method(&self, decl: DeclId, sig: usize) -> &Method {
+        match &self.decls[decl.index()].node {
+            DeclNode::Methods(methods) => &methods[sig],
+            _ => unreachable!("only a method declaration has methods"),
+        }
     }
 
     /// Each written type as interned, with the kinds of the binders of the group it
@@ -174,9 +193,45 @@ impl<'u> Tables<'u> {
             .unwrap_or(0)
     }
 
-    /// The source text of a span of a unit
+    /// The source text of a span of a unit, for lowering and flow analysis, which
+    /// read only units with source
     pub(crate) fn text(&self, unit: UnitId, span: Span) -> &'u str {
-        self.units[unit.index()].compiler.file.str(span)
+        self.units[unit.index()]
+            .source
+            .expect("only a unit with source is read as text")
+            .compiler
+            .file
+            .str(span)
+    }
+}
+
+/// The unit of a harvest that is not yet linked
+pub(crate) fn local() -> UnitId {
+    UnitId::from_index(0)
+}
+
+/// What the checker knows of a unit, whether or not its source is at hand
+#[derive(Clone)]
+pub(crate) struct UnitInfo<'u> {
+    /// The module's name; absent for a script
+    pub(crate) module: Option<&'u str>,
+    pub(crate) path: &'u Path,
+    /// The offset of each newline of the unit's source, which locates its spans
+    pub(crate) newlines: Vec<u32>,
+    /// The unit, when it is checked from source
+    pub(crate) source: Option<&'u Unit<'u>>,
+}
+
+impl UnitInfo<'_> {
+    /// A module's name, or a script's file stem
+    pub(crate) fn name(&self) -> String {
+        match self.module {
+            Some(name) => name.to_owned(),
+            None => self
+                .path
+                .file_stem()
+                .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned()),
+        }
     }
 }
 
@@ -184,7 +239,7 @@ impl<'u> Tables<'u> {
 /// declaration's defs or methods, and is 0 for any other declaration. The implicit
 /// binders of a signature's omitted ambient channels follow its written binders.
 /// Outer declarations are allocated first, so the order is outermost first.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub(crate) struct BinderRef {
     pub(crate) decl: DeclId,
     pub(crate) sig: usize,
@@ -192,9 +247,12 @@ pub(crate) struct BinderRef {
 }
 
 /// A type expression written in source, and how it is used
-pub(crate) struct Site<'u> {
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct Site {
+    /// A harvest's own unit, which a typelib leaves implicit
+    #[serde(skip, default = "local")]
     pub(crate) unit: UnitId,
-    pub(crate) ty: &'u TypeExpr,
+    pub(crate) ty: TypeExpr,
     pub(crate) role: Role,
     /// The def or method signature whose ambient channels a function type written
     /// here takes when it omits its own
@@ -204,7 +262,7 @@ pub(crate) struct Site<'u> {
     pub(crate) owner: Option<(DeclId, usize)>,
 }
 
-impl Site<'_> {
+impl Site {
     /// The declaration signature whose binder group the type is interpreted in
     pub(crate) fn group(&self) -> Option<(DeclId, usize)> {
         match self.role {
@@ -215,7 +273,7 @@ impl Site<'_> {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Role {
     /// The annotation of a binding, or a return type or ambient channel: a type
     Type,
@@ -243,8 +301,8 @@ pub(crate) struct KindOf {
 
 /// A type in a completed signature, before it is interned
 #[derive(Clone, Copy)]
-pub(crate) enum Slot<'u> {
-    Annot(&'u TypeExpr),
+pub(crate) enum Slot {
+    Annot(SiteId),
     /// Omitted, so dynamic
     Unknown,
     /// An omitted receiver annotation: the class applied to its own binders
@@ -253,19 +311,19 @@ pub(crate) enum Slot<'u> {
 
 /// The type of a rest parameter, before it is interned
 #[derive(Clone, Copy)]
-pub(crate) enum RestSlot<'u> {
+pub(crate) enum RestSlot {
     /// A type for each item: `{*T}`, `{**T}` or `{*T, **T}` by the rest's kind
-    Items(RestKind, Slot<'u>),
+    Items(RestKind, Slot),
     /// A schema for the whole pack
-    Pack(&'u TypeExpr),
+    Pack(SiteId),
     /// A type pattern expanded over the packs it names
-    Pattern(&'u TypeExpr),
+    Pattern(SiteId),
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum ParamTy<'u> {
-    Single(Slot<'u>),
-    Rest(RestSlot<'u>),
+pub(crate) enum ParamTy {
+    Single(Slot),
+    Rest(RestSlot),
 }
 
 /// An ambient channel of a signature or function type
@@ -282,13 +340,14 @@ pub(crate) enum Ambient {
 }
 
 /// A def or method signature, completed with the defaults for what it omits
-pub(crate) struct Sig<'u> {
-    pub(crate) params: Vec<(&'u Param, ParamTy<'u>)>,
+pub(crate) struct Sig {
+    /// Each parameter's type, by its index in the signature's parameters
+    pub(crate) params: Vec<ParamTy>,
     /// Whether the first parameter is an instance method's receiver
     pub(crate) receiver: bool,
     pub(crate) input: Ambient,
     pub(crate) output: Ambient,
-    pub(crate) ret: Slot<'u>,
+    pub(crate) ret: Slot,
 }
 
 /// A declaration of `std` or `strand` the checker treats specially
@@ -339,32 +398,72 @@ pub(crate) enum Designated {
 }
 
 /// A source declaration
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Decl<'u> {
+    /// A harvest's own unit, which a typelib leaves implicit
+    #[serde(skip, default = "local")]
     pub(crate) unit: UnitId,
     pub(crate) kind: DeclKind,
     /// The declared name; absent for a closure
-    pub(crate) name: Option<Span>,
-    pub(crate) node: DeclNode<'u>,
+    pub(crate) name: Option<Name>,
+    pub(crate) node: DeclNode,
     /// The declaration this one is nested in, and which of its signatures, whose
     /// binders it may capture
     pub(crate) outer: Option<(DeclId, usize)>,
+    /// The syntax the declaration was collected from, for lowering; absent for a
+    /// unit checked without its source
+    #[serde(skip)]
+    pub(crate) ast: Option<DeclAst<'u>>,
 }
 
-pub(crate) enum DeclNode<'u> {
+/// A declaration's surface
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) enum DeclNode {
     /// A class or protocol
-    Class(&'u Class),
+    Class(Class),
     /// A transparent or opaque alias
-    Alias(&'u TypeAlias),
+    Alias(Alias),
     /// A function's implementation and its `@def` overloads, in source order. The
     /// implementation is absent when only overloads were written.
-    Defs(Vec<&'u Def>),
+    Defs(Vec<Def>),
     /// The methods of one name in a class body, in source order
-    Methods(Vec<&'u Method>),
+    Methods(Vec<Method>),
     /// A lambda or field initializer
-    Closure(&'u Function),
+    Closure(Closure),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The syntax a declaration was collected from
+#[derive(Clone)]
+pub(crate) enum DeclAst<'u> {
+    Class(&'u ast::Class),
+    Alias(&'u ast::TypeAlias),
+    Defs(Vec<&'u ast::Def>),
+    Methods(Vec<&'u ast::Method>),
+    Closure(&'u ast::Function),
+}
+
+impl Decl<'_> {
+    /// The span of the declared name; a declaration that is a type is named
+    pub(crate) fn name_span(&self) -> Option<Span> {
+        self.name.map(|name| name.span)
+    }
+}
+
+impl DeclNode {
+    /// The signature of a def, method or closure
+    pub(crate) fn signature(&self, sig: usize) -> &Signature {
+        match self {
+            DeclNode::Defs(defs) => &defs[sig].sig,
+            DeclNode::Methods(methods) => &methods[sig].sig,
+            DeclNode::Closure(closure) => &closure.sig,
+            DeclNode::Class(_) | DeclNode::Alias(_) => {
+                unreachable!("only a def, method or closure has a signature")
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Referent {
     Decl(DeclId),
     Binder(BinderRef),
@@ -376,19 +475,21 @@ pub(crate) enum Referent {
     /// A module, reached by a name that is not dotted
     Module(ModuleRef),
     /// A binding that exists only at runtime, such as a `let` or a parameter
-    Value(UnitSpan),
+    Value(#[serde(with = "wire::local_span")] UnitSpan),
     /// Nothing, for a reason already diagnosed
     Error,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum ModuleRef {
+    /// A checked unit, which a harvest names only once linked
+    #[serde(skip)]
     Unit(UnitId),
     External(Box<str>),
 }
 
 /// What an unresolved name or export refers to
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) enum Target<'u> {
     Local(Referent),
     /// An item of a module, by name
@@ -421,12 +522,12 @@ struct ImportCycle {
     chain: String,
 }
 
-impl Diagnose for ImportCycle {
+impl Report for ImportCycle {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         write!(w, "import cycle")
     }
 
@@ -434,33 +535,22 @@ impl Diagnose for ImportCycle {
         self.span
     }
 
-    fn notes(&self) -> Box<dyn Iterator<Item = Box<dyn Note>>> {
-        Box::new(std::iter::once(
-            Box::new(Chain(self.chain.clone())) as Box<dyn Note>
-        ))
-    }
-}
-
-struct Chain(String);
-
-impl Note for Chain {
-    fn kind(&self) -> NoteKind {
-        NoteKind::Info
-    }
-
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(w, "{} re-export each other", self.0)
+    fn notes(&self) -> Vec<(NoteKind, String)> {
+        vec![(
+            NoteKind::Info,
+            format!("{} re-export each other", self.chain),
+        )]
     }
 }
 
 struct AliasCycle(Span);
 
-impl Diagnose for AliasCycle {
+impl Report for AliasCycle {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         write!(w, "alias refers to itself")
     }
 
@@ -475,12 +565,12 @@ struct MissingExport {
     item: String,
 }
 
-impl Diagnose for MissingExport {
+impl Report for MissingExport {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         write!(w, "module `{}` has no export `{}`", self.module, self.item)
     }
 
@@ -502,12 +592,12 @@ struct NotAType {
     name: String,
 }
 
-impl Diagnose for NotAType {
+impl Report for NotAType {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         write!(w, "`{}` is not a type", self.name)
     }
 
@@ -525,12 +615,12 @@ struct KindMismatch {
     declared: Option<Span>,
 }
 
-impl Diagnose for KindMismatch {
+impl Report for KindMismatch {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         let found = match self.expected {
             Kind::Type => Kind::Schema,
             Kind::Schema => Kind::Type,
@@ -547,26 +637,21 @@ impl Diagnose for KindMismatch {
         self.span
     }
 
-    fn annotations(&self) -> Box<dyn Iterator<Item = Box<dyn Annotate>>> {
-        match self.declared {
-            Some(_) => Box::new(std::iter::once(Box::new(self.clone()) as Box<dyn Annotate>)),
-            None => Box::new(std::iter::empty()),
-        }
+    fn annotations(&self) -> Vec<Annotation> {
+        declared_here(self.declared)
     }
 }
 
-impl Annotate for KindMismatch {
-    fn kind(&self) -> AnnotationKind {
-        AnnotationKind::Context
-    }
-
-    fn span(&self) -> Span {
-        self.declared.expect("annotated only when declared")
-    }
-
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(w, "declared here")
-    }
+/// A note of where something was declared, when in the same unit
+fn declared_here(declared: Option<Span>) -> Vec<Annotation> {
+    declared
+        .map(|span| Annotation {
+            kind: AnnotationKind::Context,
+            span,
+            message: "declared here".to_owned(),
+        })
+        .into_iter()
+        .collect()
 }
 
 /// Type arguments applied to what takes none
@@ -576,12 +661,12 @@ struct NotGeneric {
     schema: bool,
 }
 
-impl Diagnose for NotGeneric {
+impl Report for NotGeneric {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         if self.schema {
             write!(w, "a schema takes no type arguments")
         } else {
@@ -596,12 +681,12 @@ impl Diagnose for NotGeneric {
 
 struct TooManyTypeArgs(Span);
 
-impl Diagnose for TooManyTypeArgs {
+impl Report for TooManyTypeArgs {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         write!(w, "too many type arguments")
     }
 
@@ -615,12 +700,12 @@ struct UnknownTypeKeyword {
     name: String,
 }
 
-impl Diagnose for UnknownTypeKeyword {
+impl Report for UnknownTypeKeyword {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
             "no binder takes the keyword type argument `{}`",
@@ -641,12 +726,12 @@ struct BadReceiver {
     undecided: bool,
 }
 
-impl Diagnose for BadReceiver {
+impl Report for BadReceiver {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         match self.undecided {
             false => write!(w, "`self` must be a `{}` or a subtype of it", self.class),
             true => write!(
@@ -670,12 +755,12 @@ struct BoundViolation {
     default: bool,
 }
 
-impl Diagnose for BoundViolation {
+impl Report for BoundViolation {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         match self.default {
             false => write!(w, "this does not satisfy `{}`", self.binder),
             true => write!(w, "the default does not satisfy `{}`", self.binder),
@@ -690,12 +775,12 @@ impl Diagnose for BoundViolation {
 /// A function type or signature whose parameters admit keys that aren't symbols
 struct ParameterKeys(Span);
 
-impl Diagnose for ParameterKeys {
+impl Report for ParameterKeys {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         write!(w, "function parameters must have symbol keys")
     }
 
@@ -710,12 +795,12 @@ struct BadChannel {
     output: bool,
 }
 
-impl Diagnose for BadChannel {
+impl Report for BadChannel {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         match self.output {
             false => write!(w, "`<` must be an `Iter`"),
             true => write!(w, "`>` must be a `Sink`"),
@@ -736,12 +821,12 @@ struct BadRecursion {
     irregular: bool,
 }
 
-impl Diagnose for BadRecursion {
+impl Report for BadRecursion {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         match self.irregular {
             false => write!(
                 w,
@@ -768,12 +853,12 @@ struct Nonconforming {
     message: String,
 }
 
-impl Diagnose for Nonconforming {
+impl Report for Nonconforming {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         w.write_str(&self.message)
     }
 
@@ -785,12 +870,12 @@ impl Diagnose for Nonconforming {
 /// A rest binding's `@...` pattern that names no pack
 struct PatternWithoutPack(Span);
 
-impl Diagnose for PatternWithoutPack {
+impl Report for PatternWithoutPack {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         write!(w, "`...` pattern names no pack to expand over")
     }
 
@@ -805,12 +890,12 @@ struct MisdeclaredIntrinsic {
     expected: &'static str,
 }
 
-impl Diagnose for MisdeclaredIntrinsic {
+impl Report for MisdeclaredIntrinsic {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         write!(w, "the checker requires this to be {}", self.expected)
     }
 
@@ -833,12 +918,12 @@ struct BadNominee {
     not_class: bool,
 }
 
-impl Diagnose for BadNominee {
+impl Report for BadNominee {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         match self.not_class {
             true => write!(
                 w,
@@ -857,24 +942,7 @@ impl Diagnose for BadNominee {
         self.span
     }
 
-    fn annotations(&self) -> Box<dyn Iterator<Item = Box<dyn Annotate>>> {
-        match self.declared {
-            Some(_) => Box::new(std::iter::once(Box::new(self.clone()) as Box<dyn Annotate>)),
-            None => Box::new(std::iter::empty()),
-        }
-    }
-}
-
-impl Annotate for BadNominee {
-    fn kind(&self) -> AnnotationKind {
-        AnnotationKind::Context
-    }
-
-    fn span(&self) -> Span {
-        self.declared.expect("annotated only when declared")
-    }
-
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(w, "declared here")
+    fn annotations(&self) -> Vec<Annotation> {
+        declared_here(self.declared)
     }
 }

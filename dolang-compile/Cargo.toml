@@ -20,6 +20,16 @@ workspace = true
 workspace = true
 
 
+[dependencies.postcard]
+workspace = true
+features = ["use-std"]
+
+
+[dependencies.serde]
+workspace = true
+features = ["derive"]
+
+
 [dependencies.dot-writer]
 version = "0.1.4"
 optional = true

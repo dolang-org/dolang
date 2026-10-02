@@ -23,7 +23,9 @@ fn lower(source: &str) -> String {
     let mut builder = Builder::new();
     builder.unit(&unit).unwrap();
     let check = builder.check();
-    let ir = &check.cfgs[0];
+    let ir = check.cfgs[0]
+        .as_ref()
+        .expect("a unit with source is lowered");
     assert_eq!(ir.validate(), Ok(()));
     stack_depths(ir);
     ir.dump(&check.db, |span| {

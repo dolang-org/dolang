@@ -14,10 +14,12 @@
 
 use std::collections::HashMap;
 
-use super::{DeclNode, Nonconforming, Tables, UnitDiag, Unresolved, sig};
+use super::{
+    DeclNode, Diag, Nonconforming, Tables, UnitDiag, Unresolved, sig,
+    surface::{Class, Member, MemberScope},
+};
 use crate::{
-    ast::{Class, ClassMember, MemberScope},
-    source::{self, Span},
+    source::Span,
     typeck::{
         solver::{
             ConstraintId, Inheritance, Issue, Outcome, Provenance, Requirement, RequirementKind,
@@ -39,7 +41,7 @@ pub(crate) fn overrides(
 ) -> Vec<Unresolved> {
     let mut unresolved = Vec::new();
     for (index, decl) in tables.decls.iter().enumerate() {
-        let DeclNode::Class(class) = decl.node else {
+        let DeclNode::Class(class) = &decl.node else {
             continue;
         };
         let mut check = Check {
@@ -61,7 +63,7 @@ struct Check<'a, 'u> {
     tables: &'a Tables<'u>,
     id: DeclId,
     unit: UnitId,
-    class: &'u Class,
+    class: &'a Class,
     diags: &'a mut Vec<UnitDiag>,
     unresolved: &'a mut Vec<Unresolved>,
 }
@@ -84,9 +86,8 @@ impl Check<'_, '_> {
         let instance = self.instance();
         let spans = self.member_spans();
         let mut pending = Vec::new();
-        for super_ref in &self.class.super_refs {
-            let head = super_ref.ident.span;
-            let span = super_ref.fields.last().map_or(head, |field| head | field);
+        for super_ref in &self.class.supers {
+            let span = super_ref.span();
             let Some(&ty) = self.tables.expr_types.get(&UnitSpan {
                 unit: self.unit,
                 span,
@@ -115,7 +116,9 @@ impl Check<'_, '_> {
             }
             // A claim doesn't make the runtime inherit what it names
             if runtime && super_ref.type_only {
-                let name = self.tables.text(self.unit, span);
+                let name = &self
+                    .tables
+                    .dotted(self.unit, super_ref.head, &super_ref.fields);
                 match solver.claimed_classes(solver.closed(instance), supertype) {
                     Ok(classes) => {
                         for (class, inheritance) in classes {
@@ -281,28 +284,29 @@ impl Check<'_, '_> {
     fn member_spans(&self) -> HashMap<(MemberKey, bool), Span> {
         let (db, tables, unit) = (self.db, self.tables, self.unit);
         let mut spans = HashMap::new();
-        for member in &self.class.body.members {
-            match member {
-                ClassMember::Field(field) => {
-                    for name in &field.fields {
+        for member in &self.class.members {
+            match *member {
+                Member::Field(ref field) => {
+                    for &name in &field.names {
                         let key = MemberKey {
-                            name: db.intern_symbol(tables.text(unit, name.ident.span)),
+                            name: db.intern_symbol(tables.name(unit, name)),
                             special: false,
-                            private: field.pub_span.is_none(),
+                            private: !field.public,
                         };
                         spans
-                            .entry((key, matches!(field.scope, MemberScope::Instance)))
-                            .or_insert(name.ident.span);
+                            .entry((key, field.scope == MemberScope::Instance))
+                            .or_insert(name.span);
                     }
                 }
-                ClassMember::Method(method) => {
+                Member::Method { decl, sig } => {
+                    let method = tables.method(decl, sig);
                     let key = MemberKey {
-                        name: db.intern_symbol(tables.text(unit, method.name_span)),
+                        name: db.intern_symbol(tables.name(unit, method.name)),
                         special: method.special.is_some(),
-                        private: method.pub_span.is_none() && method.special.is_none(),
+                        private: !method.public && method.special.is_none(),
                     };
                     let instance = sig::method_scope(tables, unit, method) == Scope::Instance;
-                    spans.entry((key, instance)).or_insert(method.name_span);
+                    spans.entry((key, instance)).or_insert(method.name.span);
                 }
             }
         }
@@ -326,10 +330,8 @@ impl Check<'_, '_> {
     }
 
     fn report(&mut self, span: Span, message: String) {
-        self.diags.push((
-            self.unit,
-            source::Diag::new(Nonconforming { span, message }),
-        ));
+        self.diags
+            .push((self.unit, Diag::new(Nonconforming { span, message })));
     }
 
     fn undecided(&mut self, span: Span, issue: Issue) {

@@ -12,16 +12,17 @@ use std::collections::HashMap;
 use super::{
     Ambient, BinderRef, Head, KindMismatch, KindOf, NotAType, NotGeneric, PatternWithoutPack,
     Referent, Role, Site, Tables, TooManyTypeArgs, UnknownTypeKeyword,
+    surface::{
+        Binder, BinderKind, Name, Super, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam,
+        TypeParamKind,
+    },
 };
 use crate::{
     RestKind,
-    ast::{
-        AliasBody, Binder, BinderKind, ClassSuper, TypeArg, TypeArgKind, TypeExpr, TypeKey,
-        TypeParam, TypeParamKind, implicits, visit::Node,
-    },
-    source::{self, Diagnose, Span},
+    source::Span,
     typeck::{
-        elab::{DeclNode, UnitDiag, sig},
+        elab::{DeclNode, Diag, UnitDiag, sig},
+        report::Report,
         r#type::{DeclId, DeclKind, Kind, UnitId, UnitSpan},
     },
 };
@@ -35,8 +36,8 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
         for sig in 0..tables.sig_count(decl) {
             for (slot, binder) in tables.binders(decl, sig).iter().enumerate() {
                 let fixed = match binder.kind {
-                    BinderKind::Rest { .. } => Some(Kind::Schema),
-                    BinderKind::Key { .. } => Some(Kind::Type),
+                    BinderKind::Rest(_) => Some(Kind::Schema),
+                    BinderKind::Key => Some(Kind::Type),
                     BinderKind::Pos => None,
                 };
                 infer.var(Var::Binder(BinderRef { decl, sig, slot }), fixed);
@@ -56,19 +57,19 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
         let unit = tables.decls[index].unit;
         for sig in 0..tables.sig_count(decl) {
             for (slot, binder) in tables.binders(decl, sig).iter().enumerate() {
-                if let (BinderKind::Pos, Some(bound)) = (&binder.kind, &binder.bound) {
-                    let term = infer.synth(tables, unit, &bound.ty);
+                if let (BinderKind::Pos, Some(bound)) = (binder.kind, binder.bound) {
+                    let term = infer.synth(tables, unit, tables.site_ty(bound));
                     infer.equate(Var::Binder(BinderRef { decl, sig, slot }), term);
                 }
             }
         }
-        if let DeclNode::Alias(alias) = tables.decls[index].node
-            && let AliasBody::Type(body) = &alias.body
+        if let DeclNode::Alias(alias) = &tables.decls[index].node
+            && let Some(body) = alias.body
         {
             // An alias on a cycle has an erroneous head, already diagnosed
             let term = match tables.aliases.get(&decl) {
                 Some(Head::Error) => Term::Flexible,
-                _ => infer.synth(tables, unit, body),
+                _ => infer.synth(tables, unit, tables.site_ty(body)),
             };
             infer.equate(Var::Alias(decl), term);
         }
@@ -104,10 +105,10 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
     }
     for index in 0..check.tables.decls.len() {
         let decl = &check.tables.decls[index];
-        if let DeclNode::Class(class) = decl.node {
+        if let DeclNode::Class(class) = &decl.node {
             check.unit = decl.unit;
             check.ambient = None;
-            for super_ref in &class.super_refs {
+            for super_ref in &class.supers {
                 check.supertype(super_ref);
             }
         }
@@ -194,7 +195,10 @@ impl Infer {
         match ty {
             TypeExpr::Group { ty, .. } => self.synth(tables, unit, ty),
             TypeExpr::Name { head, .. } => {
-                match tables.referents.get(&UnitSpan { unit, span: *head }) {
+                match tables.referents.get(&UnitSpan {
+                    unit,
+                    span: head.span,
+                }) {
                     Some(Referent::Decl(decl)) => match tables.decls[decl.index()].kind {
                         DeclKind::Class | DeclKind::Protocol => Term::Known(Kind::Type),
                         DeclKind::Alias | DeclKind::OpaqueAlias => {
@@ -220,17 +224,17 @@ impl Infer {
             | TypeExpr::Func { .. }
             | TypeExpr::Const { .. } => Term::Known(Kind::Type),
             TypeExpr::Schema { .. } => Term::Known(Kind::Schema),
-            TypeExpr::Error => Term::Flexible,
+            TypeExpr::Error { .. } => Term::Flexible,
         }
     }
 }
 
 /// What a type name names, for checking
-enum Named<'u> {
+enum Named<'t> {
     /// A binder or declaration of a known kind, where it was declared
     Kind(KindOf, UnitId, Span),
     /// A declaration that takes type arguments: its binders
-    Generic(KindOf, UnitId, Span, DeclId, &'u [Binder]),
+    Generic(KindOf, UnitId, Span, DeclId, &'t [Binder]),
     /// A value, function or module
     NotAType,
     /// An external or erroneous name
@@ -248,20 +252,20 @@ struct Check<'a, 't, 'u> {
     func_ambients: HashMap<UnitSpan, [Ambient; 2]>,
 }
 
-impl<'u> Check<'_, '_, 'u> {
-    fn diag(&mut self, info: impl Diagnose + 'static) {
-        self.diags.push((self.unit, source::Diag::new(info)));
+impl<'t> Check<'_, 't, '_> {
+    fn diag(&mut self, info: impl Report + 'static) {
+        self.diags.push((self.unit, Diag::new(info)));
     }
 
-    fn site(&mut self, site: &Site<'u>) {
+    fn site(&mut self, site: &'t Site) {
         self.unit = site.unit;
         self.ambient = site.ambient;
         match site.role {
-            Role::Type => self.check(site.ty, Some(Kind::Type)),
-            Role::Rest | Role::Alias(_) => self.check(site.ty, None),
+            Role::Type => self.check(&site.ty, Some(Kind::Type)),
+            Role::Rest | Role::Alias(_) => self.check(&site.ty, None),
             Role::Pattern => {
                 self.packs = Some(0);
-                self.check(site.ty, Some(Kind::Type));
+                self.check(&site.ty, Some(Kind::Type));
                 if self.packs.take() == Some(0) {
                     self.diag(PatternWithoutPack(site.ty.span()));
                 }
@@ -270,29 +274,32 @@ impl<'u> Check<'_, '_, 'u> {
                 let expected = match self.tables.binders(binder.decl, binder.sig)[binder.slot].kind
                 {
                     // A variadic binder's bound may bound each item or the whole pack
-                    BinderKind::Rest { .. } if matches!(site.role, Role::Bound(_)) => None,
+                    BinderKind::Rest(_) if matches!(site.role, Role::Bound(_)) => None,
                     _ => Some(self.tables.binder_kinds[&binder].kind),
                 };
-                self.check(site.ty, expected)
+                self.check(&site.ty, expected)
             }
         }
     }
 
     /// Check a supertype of a class, which is a type, and the arguments it takes.
-    fn supertype(&mut self, super_ref: &'u ClassSuper) {
-        let span = super_ref
-            .fields
-            .last()
-            .map_or(super_ref.ident.span, |field| super_ref.ident.span | field);
-        let named = self.named(super_ref.ident.span);
-        self.name(span, &named, Some(Kind::Type));
+    fn supertype(&mut self, super_ref: &'t Super) {
+        let span = super_ref.span();
+        let named = self.named(super_ref.head.span);
+        self.name(
+            span,
+            &super_ref.head,
+            &super_ref.fields,
+            &named,
+            Some(Kind::Type),
+        );
         if !super_ref.args.is_empty() {
             let bracket = super_ref.bracket_span.unwrap_or(span);
             self.args(&named, &super_ref.args, span | bracket);
         }
     }
 
-    fn named(&self, head: Span) -> Named<'u> {
+    fn named(&self, head: Span) -> Named<'t> {
         let tables = self.tables;
         let Some(referent) = tables.referents.get(&UnitSpan {
             unit: self.unit,
@@ -303,7 +310,7 @@ impl<'u> Check<'_, '_, 'u> {
         match referent {
             Referent::Decl(decl) => {
                 let owner = &tables.decls[decl.index()];
-                let name = owner.name.expect("a type declaration is named");
+                let name = owner.name_span().expect("a type declaration is named");
                 let kind = match owner.kind {
                     DeclKind::Class | DeclKind::Protocol => KindOf {
                         kind: Kind::Type,
@@ -318,16 +325,23 @@ impl<'u> Check<'_, '_, 'u> {
             }
             Referent::Binder(binder) => {
                 let unit = tables.decls[binder.decl.index()].unit;
-                let ident = &tables.binders(binder.decl, binder.sig)[binder.slot].ident;
-                Named::Kind(tables.binder_kinds[binder], unit, ident.span)
+                let name = tables.binders(binder.decl, binder.sig)[binder.slot].name;
+                Named::Kind(tables.binder_kinds[binder], unit, name.span)
             }
             Referent::Module(_) | Referent::Value(_) => Named::NotAType,
             Referent::External { .. } | Referent::Error => Named::Unknown,
         }
     }
 
-    /// Check a name used where `expected` is required.
-    fn name(&mut self, span: Span, named: &Named<'u>, expected: Option<Kind>) {
+    /// Check a name, spanning `span`, used where `expected` is required.
+    fn name(
+        &mut self,
+        span: Span,
+        head: &Name,
+        fields: &[Name],
+        named: &Named<'t>,
+        expected: Option<Kind>,
+    ) {
         match *named {
             Named::Kind(kind, unit, declared) | Named::Generic(kind, unit, declared, ..) => {
                 if kind.flexible {
@@ -345,7 +359,7 @@ impl<'u> Check<'_, '_, 'u> {
                 self.expect(span, expected, kind.kind, declared);
             }
             Named::NotAType => {
-                let name = self.tables.text(self.unit, span).to_owned();
+                let name = self.tables.dotted(self.unit, *head, fields);
                 self.diag(NotAType { span, name });
             }
             Named::Unknown => {}
@@ -364,24 +378,23 @@ impl<'u> Check<'_, '_, 'u> {
         }
     }
 
-    fn check(&mut self, ty: &'u TypeExpr, expected: Option<Kind>) {
+    fn check(&mut self, ty: &'t TypeExpr, expected: Option<Kind>) {
         match ty {
             TypeExpr::Group { ty, .. } => self.check(ty, expected),
             TypeExpr::Name { head, fields, .. } => {
-                let span = fields.last().map_or(*head, |field| *head | field);
-                let named = self.named(*head);
-                self.name(span, &named, expected);
+                let span = fields
+                    .last()
+                    .map_or(head.span, |field| head.span | field.span);
+                let named = self.named(head.span);
+                self.name(span, head, fields, &named, expected);
             }
             TypeExpr::App { base, args, .. } => {
-                let mut base = &**base;
-                while let TypeExpr::Group { ty, .. } = base {
-                    base = ty;
-                }
+                let base = base.ungrouped();
                 match base {
-                    TypeExpr::Name { head, .. } => {
-                        let named = self.named(*head);
+                    TypeExpr::Name { head, fields, .. } => {
+                        let named = self.named(head.span);
                         if let Named::NotAType = named {
-                            self.name(base.span(), &named, None);
+                            self.name(base.span(), head, fields, &named, None);
                         }
                         self.args(&named, args, ty.span());
                     }
@@ -411,8 +424,8 @@ impl<'u> Check<'_, '_, 'u> {
                 ..
             } => {
                 self.items(params);
-                for implicit in implicits(input, output) {
-                    self.check(&implicit.ty, Some(Kind::Type));
+                for ty in [input, output].into_iter().flatten() {
+                    self.check(ty, Some(Kind::Type));
                 }
                 self.check(ret, Some(Kind::Type));
                 if input.is_none() || output.is_none() {
@@ -436,12 +449,12 @@ impl<'u> Check<'_, '_, 'u> {
                 self.expect(ty.span(), expected, Kind::Type, None);
             }
             TypeExpr::Const { .. } => self.expect(ty.span(), expected, Kind::Type, None),
-            TypeExpr::Error => {}
+            TypeExpr::Error { .. } => {}
         }
     }
 
     /// Check the items of a schema or parameter list.
-    fn items(&mut self, params: &'u [TypeParam]) {
+    fn items(&mut self, params: &'t [TypeParam]) {
         for param in params {
             match &param.kind {
                 Some(TypeParamKind::Pos(ty)) => self.check(ty, Some(Kind::Type)),
@@ -451,15 +464,15 @@ impl<'u> Check<'_, '_, 'u> {
                     }
                     self.check(ty, Some(Kind::Type));
                 }
-                Some(TypeParamKind::Include { ty, .. }) => self.check(ty, Some(Kind::Schema)),
-                Some(TypeParamKind::Open { .. }) | None => {}
+                Some(TypeParamKind::Include { ty }) => self.check(ty, Some(Kind::Schema)),
+                Some(TypeParamKind::Open) | None => {}
             }
         }
     }
 
     /// Check type arguments applied to what `named` names, matching each to the
     /// binder it fills.
-    fn args(&mut self, named: &Named<'u>, args: &'u [TypeArg], span: Span) {
+    fn args(&mut self, named: &Named<'t>, args: &'t [TypeArg], span: Span) {
         match *named {
             Named::Generic(kind, .., binders)
                 if !kind.flexible && kind.kind == Kind::Type && !binders.is_empty() =>
@@ -480,7 +493,7 @@ impl<'u> Check<'_, '_, 'u> {
         }
     }
 
-    fn match_args(&mut self, named: &Named<'u>, args: &'u [TypeArg]) {
+    fn match_args(&mut self, named: &Named<'t>, args: &'t [TypeArg]) {
         let Named::Generic(_, _, _, decl, _) = *named else {
             unreachable!("only a declaration has binders")
         };
@@ -501,12 +514,12 @@ impl<'u> Check<'_, '_, 'u> {
                     None
                 }
                 Fill::UnknownKeyword => {
-                    let TypeArgKind::Key { name, .. } = arg.kind else {
+                    let TypeArgKind::Key { name, .. } = &arg.kind else {
                         unreachable!("only a keyword argument names a keyword")
                     };
                     self.diag(UnknownTypeKeyword {
-                        span: name,
-                        name: tables.text(self.unit, name).to_owned(),
+                        span: name.span,
+                        name: tables.name(self.unit, *name).to_owned(),
                     });
                     None
                 }
@@ -549,7 +562,7 @@ impl Tables<'_> {
         let kind_of = |slot: usize| self.binder_kinds[&BinderRef { decl, sig: 0, slot }];
 
         if let [binder] = binders
-            && matches!(binder.kind, BinderKind::Pos)
+            && binder.kind == BinderKind::Pos
             && kind_of(0).kind == Kind::Schema
             && !kind_of(0).flexible
         {
@@ -586,9 +599,9 @@ impl Tables<'_> {
             .filter(|(_, binder)| matches!(binder.kind, BinderKind::Pos))
             .map(|(slot, _)| slot);
         let rest = |accepts: &dyn Fn(RestKind) -> bool| {
-            binders.iter().position(
-                |binder| matches!(binder.kind, BinderKind::Rest { kind, .. } if accepts(kind)),
-            )
+            binders
+                .iter()
+                .position(|binder| matches!(binder.kind, BinderKind::Rest(kind) if accepts(kind)))
         };
         let positional_rest = rest(&|kind| matches!(kind, RestKind::Pos | RestKind::Mixed));
         let keyed_rest = rest(&|kind| matches!(kind, RestKind::Key | RestKind::Mixed));
@@ -603,13 +616,12 @@ impl Tables<'_> {
                     None => positional_rest.map_or(Fill::Excess, Fill::Item),
                 },
                 TypeArgKind::Key { name, .. } => {
-                    let text = self.text(unit, *name);
+                    let text = self.name(unit, *name);
                     let owner = self.decls[decl.index()].unit;
                     binders
                         .iter()
                         .position(|binder| {
-                            matches!(binder.kind, BinderKind::Key { .. })
-                                && self.text(owner, binder.ident.span) == text
+                            binder.kind == BinderKind::Key && self.name(owner, binder.name) == text
                         })
                         .map(Fill::Binder)
                         .or(keyed_rest.map(Fill::Item))
@@ -633,7 +645,10 @@ impl Tables<'_> {
         match ty {
             TypeExpr::Group { ty, .. } => self.kind_of(unit, ty),
             TypeExpr::Name { head, .. } => {
-                match self.referents.get(&UnitSpan { unit, span: *head })? {
+                match self.referents.get(&UnitSpan {
+                    unit,
+                    span: head.span,
+                })? {
                     Referent::Decl(decl) => match self.decls[decl.index()].kind {
                         DeclKind::Class | DeclKind::Protocol => Some(Kind::Type),
                         DeclKind::Alias | DeclKind::OpaqueAlias => known(&self.alias_kinds[decl]),
@@ -648,7 +663,7 @@ impl Tables<'_> {
             | TypeExpr::Func { .. }
             | TypeExpr::Const { .. } => Some(Kind::Type),
             TypeExpr::Schema { .. } => Some(Kind::Schema),
-            TypeExpr::Error => None,
+            TypeExpr::Error { .. } => None,
         }
     }
 }

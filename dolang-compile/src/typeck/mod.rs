@@ -4,23 +4,109 @@ pub(crate) mod cfg;
 pub(crate) mod elab;
 mod flow;
 mod lower;
+pub(crate) mod report;
 pub(crate) mod solver;
 pub(crate) mod r#type;
+pub(crate) mod typelib;
 
-use std::collections::HashSet;
+use std::{collections::HashSet, path::Path};
 
 use crate::{
     Error, ErrorInfo, Mode, Unit, UnitId,
     diag::{self, Diag, Severity},
-    source,
 };
+
+/// Write a module's typelib: its declarations as the checker reads them, without its
+/// source. Read it back with [`Typelib::read`].
+///
+/// The unit must have been compiled with [`Config::typecheck`](crate::Config::typecheck).
+///
+/// # Errors
+///
+/// | Kind | Condition |
+/// | ---- | --------- |
+/// | [`ErrorKind::Fail`](crate::ErrorKind::Fail) | The unit failed to compile |
+/// | [`ErrorKind::Unresolved`](crate::ErrorKind::Unresolved) | The unit was compiled without resolving types |
+/// | [`ErrorKind::NotModule`](crate::ErrorKind::NotModule) | The unit is not a module |
+pub fn typelib(unit: &Unit<'_>) -> Result<Vec<u8>, Error> {
+    if unit.failed {
+        return Err(Error(ErrorInfo::Fail));
+    }
+    if !unit.resolved {
+        return Err(Error(ErrorInfo::Unresolved));
+    }
+    let Mode::Module { .. } = unit.compiler.mode else {
+        return Err(Error(ErrorInfo::NotModule));
+    };
+    Ok(typelib::write(elab::harvest(unit)))
+}
+
+/// A module's typelib, as [`typelib`] wrote it, decoded and found to be one this
+/// checker reads. It borrows from the bytes it was read from.
+///
+/// A unit checked against a typelib (see [`Builder::typelib`]) sees the same
+/// declarations as if the module were checked from source, but the module's bodies
+/// are not checked. A typelib is read only by the version of the checker that wrote
+/// it.
+pub struct Typelib<'a>(elab::Harvest<'a>);
+
+impl<'a> Typelib<'a> {
+    /// Read a typelib.
+    ///
+    /// # Errors
+    ///
+    /// | Kind | Condition |
+    /// | ---- | --------- |
+    /// | [`ErrorKind::Typelib`](crate::ErrorKind::Typelib) | The bytes are not a typelib this version of the checker reads |
+    pub fn read(bytes: &'a [u8]) -> Result<Self, Error> {
+        typelib::read(bytes)
+            .map(Self)
+            .map_err(|invalid| Error(ErrorInfo::Typelib(invalid)))
+    }
+
+    /// The module's name.
+    pub fn module(&self) -> &'a str {
+        self.0.info.module.expect("a typelib is a module's")
+    }
+
+    /// The path of the module's source when the typelib was written, which locates
+    /// its diagnostics.
+    pub fn path(&self) -> &'a Path {
+        self.0.info.path
+    }
+
+    /// The modules the module's declarations name, each once, in order. A check finds
+    /// what they name among its units, and treats a module it doesn't have as
+    /// unknown.
+    pub fn imports(&self) -> Vec<&'a str> {
+        use elab::Target;
+
+        let targets = (self.0.pending.iter().map(|pending| &pending.base))
+            .chain(self.0.exports.values().map(|(_, target)| target));
+        let mut imports: Vec<&'a str> = targets
+            .filter_map(|target| match *target {
+                Target::Import { module, .. } | Target::Module(module) => Some(module),
+                Target::Local(_) => None,
+            })
+            .collect();
+        imports.sort_unstable();
+        imports.dedup();
+        imports
+    }
+}
+
+/// A unit to check
+enum Input<'u, 's> {
+    Source(&'u Unit<'s>),
+    Typelib(elab::Harvest<'u>),
+}
 
 /// Collects the units to check together.
 ///
 /// Each unit is identified by the [`UnitId`] returned when it is added; IDs
 /// are meaningful only for the [`Check`] this builder produces.
 pub struct Builder<'u, 's> {
-    units: Vec<&'u Unit<'s>>,
+    units: Vec<Input<'u, 's>>,
     modules: HashSet<&'u str>,
     /// The types `strand.PipeSender` and `strand.PipeReceiver` stand for, by module
     /// and item
@@ -72,14 +158,35 @@ impl<'u, 's> Builder<'u, 's> {
         if !unit.resolved {
             return Err(Error(ErrorInfo::Unresolved));
         }
-        let id = UnitId::from_index(self.units.len());
-        if let Mode::Module { name } = unit.compiler.mode
-            && !self.modules.insert(name)
-        {
-            return Err(Error(ErrorInfo::DuplicateModule(name.to_owned())));
+        if let Mode::Module { name } = unit.compiler.mode {
+            self.module(name)?;
         }
-        self.units.push(unit);
-        Ok(id)
+        self.units.push(Input::Source(unit));
+        Ok(UnitId::from_index(self.units.len() - 1))
+    }
+
+    /// Add a module to check by its typelib. The same typelib may be added to any
+    /// number of checks.
+    ///
+    /// Diagnostics may locate spans of the module, by line and column; it has no
+    /// source to show.
+    ///
+    /// # Errors
+    ///
+    /// | Kind | Condition |
+    /// | ---- | --------- |
+    /// | [`ErrorKind::DuplicateModule`](crate::ErrorKind::DuplicateModule) | A module of the same name was already added |
+    pub fn typelib(&mut self, typelib: &Typelib<'u>) -> Result<UnitId, Error> {
+        self.module(typelib.module())?;
+        self.units.push(Input::Typelib(typelib.0.clone()));
+        Ok(UnitId::from_index(self.units.len() - 1))
+    }
+
+    fn module(&mut self, name: &'u str) -> Result<(), Error> {
+        match self.modules.insert(name) {
+            true => Ok(()),
+            false => Err(Error(ErrorInfo::DuplicateModule(name.to_owned()))),
+        }
     }
 
     /// Check the units.
@@ -95,16 +202,21 @@ impl<'u, 's> Builder<'u, 's> {
                 "units are allocated in order"
             );
         }
-        let units: Vec<&Unit<'_>> = self.units;
-        let mut order: Vec<UnitId> = (0..units.len()).map(UnitId::from_index).collect();
+        let harvests: Vec<elab::Harvest<'u>> = (self.units.into_iter())
+            .map(|input| match input {
+                Input::Source(unit) => elab::harvest(unit),
+                Input::Typelib(harvest) => harvest,
+            })
+            .collect();
+        let mut order: Vec<UnitId> = (0..harvests.len()).map(UnitId::from_index).collect();
         order.sort_by_key(|id| {
-            let compiler = &units[id.index()].compiler;
-            match compiler.mode {
-                Mode::Module { name } => (0, name, None),
-                Mode::Script | Mode::Repl => (1, "", Some(compiler.file.path())),
+            let info = &harvests[id.index()].info;
+            match info.module {
+                Some(name) => (0, name, None),
+                None => (1, "", Some(info.path)),
             }
         });
-        let (mut tables, mut diags) = elab::collect(&mut db, &units, &order, self.pipes);
+        let (mut tables, mut diags) = elab::link(&mut db, harvests, &order, self.pipes);
         elab::kinds(&mut tables, &mut diags);
         elab::signatures(&mut tables, &mut diags);
         elab::captures(&mut tables);
@@ -114,21 +226,26 @@ impl<'u, 's> Builder<'u, 's> {
         elab::specialize(&mut db, &tables, &mut diags);
         let mut unresolved = elab::wellformed(&db, &tables, &mut diags);
         unresolved.extend(elab::overrides(&db, &tables, &mut diags));
-        let cfgs = (0..units.len())
+        // A unit's bodies are checked only from its source
+        let cfgs = (0..tables.units.len())
             .map(|index| {
+                tables.units[index].source?;
                 let ir = lower::lower(&tables, &db, UnitId::from_index(index));
                 debug_assert_eq!(ir.validate(), Ok(()), "lowering builds a valid graph");
-                ir
+                Some(ir)
             })
             .collect::<Vec<_>>();
-        let flows: Vec<flow::Results> = cfgs
+        let flows: Vec<Option<flow::Results>> = cfgs
             .iter()
-            .map(|ir| flow::analyze(ir, &db, &tables))
+            .map(|ir| ir.as_ref().map(|ir| flow::analyze(ir, &db, &tables)))
             .collect();
         for (index, results) in flows.iter().enumerate() {
+            let Some(results) = results else {
+                continue;
+            };
             let unit = UnitId::from_index(index);
             for problem in &results.problems {
-                diags.push((unit, source::Diag::new(problem.clone())));
+                diags.push((unit, report::Diag::new(problem.clone())));
             }
             unresolved.extend(results.unresolved.iter().map(|&(span, residual)| {
                 elab::Unresolved {
@@ -142,7 +259,7 @@ impl<'u, 's> Builder<'u, 's> {
             flows,
             diagnostics: diags
                 .iter()
-                .map(|(unit, diag)| diag.resolve_in(&units[unit.index()].compiler, Some(*unit)))
+                .map(|(unit, diag)| diag.resolve(*unit, &tables.units[unit.index()]))
                 .collect(),
             tables,
             db,
@@ -165,11 +282,12 @@ pub struct Check<'u> {
     db: r#type::Database,
     /// Well-formedness checks the checker could not decide
     unresolved: Vec<elab::Unresolved>,
-    /// Each unit's typing CFG, by [`UnitId`]
+    /// Each unit's typing CFG, by [`UnitId`], for a unit checked from source
     #[cfg_attr(not(test), allow(dead_code, reason = "dumped by tests"))]
-    cfgs: Vec<cfg::Ir>,
-    /// What flow analysis concluded about each unit, by [`UnitId`]
-    flows: Vec<flow::Results>,
+    cfgs: Vec<Option<cfg::Ir>>,
+    /// What flow analysis concluded about each unit, by [`UnitId`], for a unit checked
+    /// from source
+    flows: Vec<Option<flow::Results>>,
 }
 
 /// The names of the judgments [`Check::judgments`] reports.
@@ -193,6 +311,12 @@ impl Check<'_> {
         self.diagnostics.iter()
     }
 
+    /// The path of a checked unit: the one it was compiled with, or for a typelib,
+    /// its module's when the typelib was written.
+    pub fn path(&self, unit: UnitId) -> &Path {
+        self.tables.units[unit.index()].path
+    }
+
     /// Whether every well-formedness check passed. See [`Check`].
     pub fn validated(&self) -> bool {
         self.unresolved
@@ -212,11 +336,10 @@ impl Check<'_> {
             .iter()
             .map(|unresolved| {
                 let unit = unresolved.span.unit;
-                let compiler = &self.tables.units[unit.index()].compiler;
-                let span = source::Diag::resolve_span(compiler, unresolved.span.span);
+                let info = &self.tables.units[unit.index()];
                 (
                     format!("{:?}", unresolved.residual),
-                    diag::SourceSpan::new(Some(unit), span),
+                    report::resolve_span(unit, info, unresolved.span.span),
                 )
             })
             .collect()
@@ -225,9 +348,10 @@ impl Check<'_> {
     /// The judgments about spans of `unit`, in source order.
     #[doc(hidden)]
     pub fn judgments(&self, unit: UnitId) -> Vec<Judgment> {
-        let compiler = &self.tables.units[unit.index()].compiler;
+        let info = &self.tables.units[unit.index()];
         let mut judgments = self.tables.judgments(&self.db, unit, &self.unresolved);
-        judgments.extend(self.flows[unit.index()].facts.iter().map(|(&span, fact)| {
+        let facts = self.flows[unit.index()].iter().flat_map(|flow| &flow.facts);
+        judgments.extend(facts.map(|(&span, fact)| {
             let ty = self.tables.render_type(&self.db, fact.ty);
             let value = match (fact.unassigned, fact.ty == self.db.bottom()) {
                 (false, _) => ty,
@@ -241,7 +365,7 @@ impl Check<'_> {
             .into_iter()
             .map(|(name, span, value)| Judgment {
                 name,
-                span: source::Diag::resolve_span(compiler, span),
+                span: report::resolve_span(unit, info, span).span(),
                 value,
             })
             .collect()

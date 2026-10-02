@@ -2295,7 +2295,7 @@ impl Node for Method {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) enum SpecialMethod {
     Init,
     Call,

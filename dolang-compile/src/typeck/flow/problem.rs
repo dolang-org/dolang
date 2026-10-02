@@ -2,11 +2,7 @@
 
 use std::fmt::{self, Write};
 
-use crate::{
-    Compiler,
-    diag::Severity,
-    source::{Diagnose, Span},
-};
+use crate::{diag::Severity, source::Span, typeck::report::Report};
 
 /// A diagnosed problem, with the types it names rendered
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -93,7 +89,7 @@ pub(crate) enum Misfit {
     Unpackable,
 }
 
-impl Diagnose for Problem {
+impl Report for Problem {
     fn span(&self) -> Span {
         match *self {
             Problem::Argument { span, .. }
@@ -115,7 +111,7 @@ impl Diagnose for Problem {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         match self {
             // Where the argument's type and the parameter's look alike, only what's
             // inside them shows what doesn't fit

@@ -167,10 +167,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             })
             .collect();
         let modules = (tables.units.iter().enumerate())
-            .filter_map(|(index, unit)| match unit.compiler.mode {
-                crate::Mode::Module { name } => Some((name, UnitId::from_index(index))),
-                crate::Mode::Script | crate::Mode::Repl => None,
-            })
+            .filter_map(|(index, unit)| Some((unit.module?, UnitId::from_index(index))))
             .collect();
         Self {
             ir,
@@ -260,7 +257,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
         let mut results = self.results.take().expect("recorded by the final pass");
         results.problems.sort_by_key(|problem| {
-            let span = crate::source::Diagnose::span(problem);
+            let span = crate::typeck::report::Report::span(problem);
             (span.start, span.end)
         });
         results
@@ -310,7 +307,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         let Some(results) = &mut self.results else {
             return;
         };
-        if crate::source::Diagnose::span(&problem) != Span::INVALID
+        if crate::typeck::report::Report::span(&problem) != Span::INVALID
             && !results.problems.contains(&problem)
         {
             results.problems.push(problem);

@@ -1,6 +1,6 @@
 use annotate_snippets::{
-    Annotation, AnnotationKind as SnippetAnnotationKind, Group, Level, Patch as SnippetPatch,
-    Renderer, Snippet, renderer::DecorStyle,
+    Annotation, AnnotationKind as SnippetAnnotationKind, Group, Level, Origin,
+    Patch as SnippetPatch, Renderer, Snippet, renderer::DecorStyle,
 };
 use console::Term;
 use dolang::compile::{self, Diag, UnitId};
@@ -24,17 +24,25 @@ fn use_color(term: &Term, color: ColorMode) -> bool {
 #[derive(Debug)]
 pub(crate) struct UnknownSource;
 
-/// Sources indexed by unit; a location with no unit refers to the first.
+/// Sources indexed by unit; a location with no unit refers to the first. A unit
+/// checked from its typelib has a path but no text.
 #[derive(Clone, Copy)]
 struct Sources<'a, 'b> {
     paths: &'b [&'a str],
-    texts: &'b [&'a str],
+    texts: &'b [Option<&'a str>],
+}
+
+/// Where a unit's locations are shown: its source, or for a unit without one, only
+/// its path
+enum Shown<'a, T: Clone> {
+    Snippet(Snippet<'a, T>),
+    Path(&'a str),
 }
 
 fn snippet<'a, T: Clone>(
     sources: Sources<'a, '_>,
     unit: Option<UnitId>,
-) -> Result<Snippet<'a, T>, UnknownSource> {
+) -> Result<Shown<'a, T>, UnknownSource> {
     let index = unit.map_or(0, UnitId::index);
     let (&file, &source) = sources
         .paths
@@ -44,7 +52,18 @@ fn snippet<'a, T: Clone>(
     // The whole source is handed over, so it starts at line 1. `line_start` is
     // for a fragment cut out of a larger file; setting it to the diagnostic's
     // own line makes every reported number come back as roughly double.
-    Ok(Snippet::source(source).path(file).line_start(1))
+    Ok(match source {
+        Some(source) => Shown::Snippet(Snippet::source(source).path(file).line_start(1)),
+        None => Shown::Path(file),
+    })
+}
+
+/// A location of a unit without source, by line and column
+fn origin<'a>(path: &'a str, span: compile::Span) -> Origin<'a> {
+    let start = span.start();
+    Origin::path(path)
+        .line(start.line_number() as usize)
+        .char_column(start.column_number() as usize)
 }
 
 fn render_report<'a>(
@@ -58,7 +77,8 @@ fn render_report<'a>(
     };
     // Annotations grouped by file, the primary location's first.
     let primary_location = diag.span();
-    let mut files: Vec<(Option<UnitId>, Vec<Annotation<'a>>)> =
+    type Located = (SnippetAnnotationKind, compile::Span, Option<String>);
+    let mut files: Vec<(Option<UnitId>, Vec<Located>)> =
         vec![(primary_location.unit(), Vec::new())];
     let mut have_primary = false;
     for ann in diag.annotations() {
@@ -70,25 +90,42 @@ fn render_report<'a>(
             }
             _ => SnippetAnnotationKind::Context,
         };
-        let span = location.span();
-        let annotation = kind
-            .span(span.start().byte_offset()..span.end().byte_offset())
-            .label(ann.message().to_string());
+        let annotation = (kind, location.span(), Some(ann.message().to_string()));
         match files.iter_mut().find(|(unit, _)| *unit == location.unit()) {
             Some((_, annotations)) => annotations.push(annotation),
             None => files.push((location.unit(), vec![annotation])),
         }
     }
     if !have_primary {
-        let span = primary_location.span();
-        files[0].1.push(
-            SnippetAnnotationKind::Primary
-                .span(span.start().byte_offset()..span.end().byte_offset()),
-        );
+        files[0].1.push((
+            SnippetAnnotationKind::Primary,
+            primary_location.span(),
+            None,
+        ));
     }
     let mut primary = Group::with_title(level.primary_title(diag.message().to_string()));
     for (unit, annotations) in files {
-        primary = primary.element(snippet(sources, unit)?.annotations(annotations));
+        match snippet(sources, unit)? {
+            Shown::Snippet(snippet) => {
+                let annotations = annotations.into_iter().map(|(kind, span, label)| {
+                    let annotation: Annotation<'a> =
+                        kind.span(span.start().byte_offset()..span.end().byte_offset());
+                    match label {
+                        Some(label) => annotation.label(label),
+                        None => annotation,
+                    }
+                });
+                primary = primary.element(snippet.annotations(annotations));
+            }
+            Shown::Path(path) => {
+                for (_, span, label) in annotations {
+                    primary = primary.element(origin(path, span));
+                    if let Some(label) = label {
+                        primary = primary.element(Level::NOTE.message(label));
+                    }
+                }
+            }
+        }
     }
     for note in diag.notes() {
         match note.kind() {
@@ -102,14 +139,14 @@ fn render_report<'a>(
     for patch in diag.patches() {
         let location = patch.span();
         let span = location.span();
-        report.push(
-            Group::with_title(Level::HELP.secondary_title(patch.message().to_string())).element(
-                snippet(sources, location.unit())?.patch(SnippetPatch::new(
-                    span.start().byte_offset()..span.end().byte_offset(),
-                    patch.sub().to_owned(),
-                )),
-            ),
-        );
+        let title = Group::with_title(Level::HELP.secondary_title(patch.message().to_string()));
+        report.push(match snippet(sources, location.unit())? {
+            Shown::Snippet(snippet) => title.element(snippet.patch(SnippetPatch::new(
+                span.start().byte_offset()..span.end().byte_offset(),
+                patch.sub().to_owned(),
+            ))),
+            Shown::Path(path) => title.element(origin(path, span)),
+        });
     }
     Ok(report)
 }
@@ -129,10 +166,10 @@ fn renderer(color: ColorMode) -> Renderer {
 /// Render a diagnostic whose locations may refer to several files.
 ///
 /// `paths` and `texts` are indexed by unit; a location with no unit refers to
-/// the first.
+/// the first. A unit without text is located by line and column.
 pub(crate) fn render_diag(
     paths: &[&str],
-    texts: &[&str],
+    texts: &[Option<&str>],
     diag: &Diag,
     color: ColorMode,
 ) -> Result<String, UnknownSource> {
@@ -142,5 +179,5 @@ pub(crate) fn render_diag(
 
 /// Render a diagnostic from [`Unit::diagnostics`](dolang::compile::Unit::diagnostics).
 pub fn render_compile_diag(file: &str, source: &str, diag: &Diag, color: ColorMode) -> String {
-    render_diag(&[file], &[source], diag, color).expect("local compiler diagnostic")
+    render_diag(&[file], &[Some(source)], diag, color).expect("local compiler diagnostic")
 }

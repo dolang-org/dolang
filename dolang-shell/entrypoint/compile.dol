@@ -2,7 +2,8 @@
 # JSON, for consumers such as the MkDocs syntax lexer and the mkdocstrings
 # API-reference handler. The lexer is the only consumer of the source's
 # tokens, so it asks for them with `--tokens`. `dolang -m compile check` runs
-# the type checker over sources and the modules they import.
+# the type checker over sources and the modules they import, and
+# `dolang -m compile typelib` writes a module's typelib for checking against.
 
 import args compile json shell
   fs:
@@ -869,25 +870,46 @@ def imported_modules unit source
       modules.push $module
   modules
 
+# A source's module name under the first of the directories it is under, or
+# `nil` when it is under none.
+def module_among file dirs
+  for dir = dirs
+    let module = module_under $file $dir
+    if (module != nil)
+      return module
+  nil
+
+# Whether a file is a typelib, as `compile typelib` writes one.
+def is_typelib file
+  (file.ext == "dolt")
+
 # Checks the entries together with the modules they import, found by searching
-# the directories for `a/b.dol` as module `a.b`. An entry under one of the
-# directories is compiled as its module, so a stub can be checked directly, and
-# meets the other entries' imports of that module.
+# the directories for `a/b.dol` as module `a.b`, or for its typelib `a/b.dolt`.
+# An entry under one of the directories is compiled as its module, so a stub can
+# be checked directly, and meets the other entries' imports of that module. An
+# entry that is a typelib is its own module.
 def check p
   let :entries :path ... = p.check
   let dirs = [...path.map do |dir| (Path dir)]
   let units = []
+  let typelibs = []
   let seen = Set []
   let pending = []
   let missing = []
 
   def add file module
-    let source = file.read()
-    let unit = compile.compile "$file" $source module: $module typecheck: true document: true
-    units.push $unit
-    if (module != nil)
-      seen.add $module
-    for name = imported_modules(unit, source)
+    let imports = if is_typelib(file)
+      let typelib = compile.Typelib $file.read("b")
+      typelibs.push $typelib
+      typelib.imports()
+    else
+      let source = file.read()
+      let unit = compile.compile "$file" $source module: $module typecheck: true document: true
+      units.push $unit
+      if (module != nil)
+        seen.add $module
+      imported_modules $unit $source
+    for name = imports
       if !seen.contains(name)
         seen.add $name
         pending.push $name
@@ -897,11 +919,10 @@ def check p
   let roots = []
   for entry = entries
     let file = Path $entry
-    let module = nil
-    for dir = dirs
-      module = module_under $file $dir
-      if (module != nil)
-        break
+    let module = if is_typelib(file)
+      compile.Typelib(file.read("b")).module
+    else
+      module_among $file $dirs
     if (module != nil)
       if seen.contains(module)
         continue
@@ -915,8 +936,12 @@ def check p
     pending.push proc
   while (pending.len > 0)
     let name = pending.pop()
-    let relative = "$(name.replace(".", "/")).dol"
-    let found = dirs.map(do |dir| dir / relative).find (do |file| file.exists()) default: nil
+    let relative = name.replace(".", "/")
+    let candidates = $
+      for dir = dirs
+        - (dir / "$relative.dol")
+        - (dir / "$relative.dolt")
+    let found = candidates.find (do |file| file.exists()) default: nil
     if (found == nil)
       missing.push $name
     else
@@ -928,7 +953,7 @@ def check p
       if (diag.severity == :ERROR:)
         failed = true
       echo $diag.render()
-  let result = compile.check $units
+  let result = compile.check [...units, ...typelibs]
   for diag = result.diagnostics
     echo $diag.render()
   let undecided = result.undecided()
@@ -941,9 +966,32 @@ def check p
     "validated"
   else
     "partial"
-  echo "$verdict: $(units.len) units, $(result.diagnostics.len) diagnostics"
+  echo "$verdict: $(units.len + typelibs.len) units, $(result.diagnostics.len) diagnostics"
   if (verdict != "validated")
     shell.exit 1
+
+# Writes a module's typelib, by default beside its source as `.dolt`. The module
+# is named by `--module`, or by where its source is under a search directory.
+def typelib p
+  let :source :module :path :output ... = p.typelib
+  let file = Path $source
+  if (module == nil)
+    module = module_among $file [...path.map do |dir| (Path dir)]
+  if (module == nil)
+    throw args.Error "name the module with --module, or put its source under a --path directory"
+  let unit = compile.compile "$file" $file.read() module: $module typecheck: true
+  let failed = false
+  for diag = unit.diagnostics()
+    if (diag.severity == :ERROR:)
+      failed = true
+    echo $diag.render()
+  if failed
+    shell.exit 1
+  let out = if (output == nil)
+    file.with_ext dolt
+  else
+    Path $output
+  out.write $unit.typelib()
 
 args.with
   help: Describe a Do source file's compiler output as JSON.
@@ -976,6 +1024,22 @@ args.with
       help: Directory to search for imported modules, as `a/b.dol` for module `a.b`
     - arg: entries
       collect: true
-      help: Sources to check; one under a search directory is checked as its module
+      help: Sources or typelibs to check; a source under a search directory is checked as its module
     do |p|
       check $p
+  - cmd: typelib
+    help: Write a module's typelib, its declarations for checking without its source.
+    - opt: module
+      default: nil
+      help: The module's name; by default, from where the source is under a search directory
+    - opt: path
+      collect: true
+      help: Directory the source may be under, as `a/b.dol` for module `a.b`
+    - opt: output
+      short: o
+      default: nil
+      help: File to write; by default, the source's path with the extension `.dolt`
+    - arg: source
+      help: The module's source
+    do |p|
+      typelib $p
