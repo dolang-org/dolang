@@ -20,7 +20,7 @@ use crate::{
     ast::{
         AliasBody, Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, Decorator, Def,
         DictElem, Expr, ExprBody, FieldInit, For, Function, Ident, If, ImportElement, LValue,
-        Origin, Param, ParamBind, PatIdent, Pattern, PrimStmt, Res, Root, Stmt, TypeArg, TypeDecl,
+        Origin, PatBind, PatIdent, PatItem, Pattern, PrimStmt, Res, Root, Stmt, TypeArg, TypeDecl,
         TypeEntry, TypeExpr, TypeRes, Var, implicit_tys_mut, visit::Node,
     },
     diag::Severity,
@@ -671,27 +671,27 @@ impl Check<'_> {
         }
     }
 
-    fn param(&mut self, frame: &Frame<'_>, param: &mut Param) {
+    fn param(&mut self, frame: &Frame<'_>, param: &mut PatItem) {
         match param {
-            Param::Pos { bind, .. } | Param::Key { bind, .. } | Param::ConstKey { bind, .. } => {
-                match bind {
-                    ParamBind::Ident(ident) => self.warn_value_name(frame, ident),
-                    ParamBind::Pattern { pattern, .. } => self.pattern(frame, pattern),
-                }
-            }
-            Param::Rest {
+            PatItem::Pos { bind, .. }
+            | PatItem::Key { bind, .. }
+            | PatItem::ConstKey { bind, .. } => match bind {
+                PatBind::Ident(ident) => self.warn_value_name(frame, ident),
+                PatBind::Nested { pattern, .. } => self.pattern(frame, pattern),
+            },
+            PatItem::Rest {
                 ident: Some(ident), ..
             } => self.warn_value_name(frame, ident),
-            Param::Rest { ident: None, .. } => {}
+            PatItem::Rest { ident: None, .. } => {}
         }
         match param {
-            Param::Pos { ty, default, .. } | Param::Key { ty, default, .. } => {
+            PatItem::Pos { ty, default, .. } | PatItem::Key { ty, default, .. } => {
                 if let Some(default) = default {
                     self.expr(frame, &mut default.expr);
                 }
                 self.annot(frame, ty);
             }
-            Param::ConstKey {
+            PatItem::ConstKey {
                 key_expr,
                 ty,
                 default,
@@ -703,7 +703,7 @@ impl Check<'_> {
                 }
                 self.annot(frame, ty);
             }
-            Param::Rest { ty, .. } => self.annot(frame, ty),
+            PatItem::Rest { ty, .. } => self.annot(frame, ty),
         }
     }
 

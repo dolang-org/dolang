@@ -209,7 +209,7 @@ impl<T: Node> Node for For<T> {
 ///
 /// The two forms bind identically; they differ only in where the pattern sits
 /// relative to the scrutinee, which matters for traversal order.
-pub(crate) enum PatternBindKind {
+pub(crate) enum CondPatternKind {
     /// `if let PATTERN = SCRUTINEE`
     Let { equal_span: Span },
     /// `if bind SCRUTINEE`, with the pattern laid out vertically and the body
@@ -219,10 +219,10 @@ pub(crate) enum PatternBindKind {
 
 /// A pattern matched against the condition of an `if` or `while`, binding its
 /// parts in the branch body on success and taking the failure edge otherwise.
-pub(crate) struct PatternBind {
+pub(crate) struct CondPattern {
     /// Span of the `let` or `bind` keyword
     pub(crate) keyword_span: Span,
-    pub(crate) kind: PatternBindKind,
+    pub(crate) kind: CondPatternKind,
     pub(crate) pattern: Pattern,
 }
 
@@ -230,7 +230,7 @@ pub(crate) struct PatternBind {
 /// any, in source order.  The two bind forms put the pattern on opposite sides of
 /// the scrutinee, so the order cannot be fixed by the caller.
 fn accept_cond<'a, V: Visit>(
-    bind: Option<&'a PatternBind>,
+    bind: Option<&'a CondPattern>,
     cond: &'a Expr,
     visit: &'a mut V,
 ) -> ControlFlow<V::Break> {
@@ -239,12 +239,12 @@ fn accept_cond<'a, V: Visit>(
     };
     visit.token(Token::Keyword, bind.keyword_span, None)?;
     match bind.kind {
-        PatternBindKind::Let { equal_span } => {
+        CondPatternKind::Let { equal_span } => {
             visit.node(&bind.pattern)?;
             visit.token(Token::Operator, equal_span, None)?;
             visit.node(cond)
         }
-        PatternBindKind::Bind { do_span } => {
+        CondPatternKind::Bind { do_span } => {
             visit.node(cond)?;
             visit.node(&bind.pattern)?;
             visit.token(Token::Keyword, do_span, None)
@@ -256,7 +256,7 @@ pub(crate) struct IfBranch<T> {
     pub(crate) span: Span,
     pub(crate) expr: Expr,
     /// Conditional pattern bind, for `if let` / `if bind`
-    pub(crate) bind: Option<PatternBind>,
+    pub(crate) bind: Option<CondPattern>,
     pub(crate) body: T,
 }
 
@@ -1497,34 +1497,34 @@ impl Node for Arg {
     }
 }
 
-pub(crate) struct ParamDefault {
+pub(crate) struct PatDefault {
     pub(crate) delim_span: Span,
     pub(crate) expr: Expr,
     pub(crate) fold: Option<Const>,
 }
 
-/// What a parameter or pattern item binds its value to
-pub(crate) enum ParamBind {
+/// What a pattern item binds its value to
+pub(crate) enum PatBind {
     Ident(Ident),
     /// A nested pattern, matched against the item's value
-    Pattern {
+    Nested {
         pattern: Box<Pattern>,
         /// The `(` and `)` of a horizontal sub-pattern; a vertical one has none
         parens: Option<(Span, Span)>,
     },
 }
 
-impl Node for ParamBind {
+impl Node for PatBind {
     const TRANSPARENT: bool = true;
 
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         match self {
-            ParamBind::Ident(ident) => visit.token(
+            PatBind::Ident(ident) => visit.token(
                 Token::Variable,
                 ident.span,
                 ident.res.as_ref().and_then(|r| r.node),
             ),
-            ParamBind::Pattern { pattern, parens } => {
+            PatBind::Nested { pattern, parens } => {
                 if let Some((open, _)) = parens {
                     visit.token(Token::Delim, *open, None)?;
                 }
@@ -1542,26 +1542,26 @@ impl Node for ParamBind {
     }
 }
 
-pub(crate) enum Param {
+pub(crate) enum PatItem {
     Pos {
-        bind: ParamBind,
+        bind: PatBind,
         ty: Option<Box<Annot>>,
-        default: Option<ParamDefault>,
+        default: Option<PatDefault>,
     },
     Key {
         key_span: Span,
         /// The `:`, which precedes the key in `:name` and follows it in `name:`
         colon_span: Span,
-        bind: ParamBind,
+        bind: PatBind,
         ty: Option<Box<Annot>>,
-        default: Option<ParamDefault>,
+        default: Option<PatDefault>,
     },
     ConstKey {
         key_expr: Expr,
         key_const: Const,
-        bind: ParamBind,
+        bind: PatBind,
         ty: Option<Box<Annot>>,
-        default: Option<ParamDefault>,
+        default: Option<PatDefault>,
         colon_span: Span,
     },
     Rest {
@@ -1574,10 +1574,10 @@ pub(crate) enum Param {
     },
 }
 
-impl Node for Param {
+impl Node for PatItem {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         match self {
-            Param::Pos { bind, ty, default } => {
+            PatItem::Pos { bind, ty, default } => {
                 bind.trans(visit)?;
                 if let Some(ty) = ty {
                     visit.node(&**ty)?;
@@ -1588,7 +1588,7 @@ impl Node for Param {
                 }
                 ControlFlow::Continue(())
             }
-            Param::Key {
+            PatItem::Key {
                 key_span,
                 colon_span,
                 bind,
@@ -1607,7 +1607,7 @@ impl Node for Param {
                 }
                 ControlFlow::Continue(())
             }
-            Param::ConstKey {
+            PatItem::ConstKey {
                 key_expr,
                 bind,
                 ty,
@@ -1627,7 +1627,7 @@ impl Node for Param {
                 }
                 ControlFlow::Continue(())
             }
-            Param::Rest {
+            PatItem::Rest {
                 sigil_span,
                 ident,
                 ty,
@@ -1651,7 +1651,7 @@ impl Node for Param {
     }
 
     fn kind(&self) -> NodeKind {
-        NodeKind::Param
+        NodeKind::PatItem
     }
 }
 
@@ -1688,7 +1688,7 @@ pub(crate) struct PatIdent {
 
 pub(crate) enum Pattern {
     Ident(PatIdent),
-    Unpack(Vec<Param>),
+    Unpack(Vec<PatItem>),
 }
 
 impl Node for Pattern {
@@ -1701,7 +1701,7 @@ impl Node for Pattern {
                 }
                 ControlFlow::Continue(())
             }
-            Pattern::Unpack(params) => params.accept(visit),
+            Pattern::Unpack(items) => items.accept(visit),
         }
     }
 
@@ -1818,7 +1818,7 @@ impl Node for Assign {
 pub(crate) struct While {
     pub(crate) expr: Expr,
     /// Conditional pattern bind, for `while let` / `while bind`
-    pub(crate) bind: Option<PatternBind>,
+    pub(crate) bind: Option<CondPattern>,
     pub(crate) body: Block,
     pub(crate) while_span: Span,
 }
@@ -2776,7 +2776,7 @@ impl Block {
 }
 
 pub(crate) struct Function {
-    pub(crate) params: Vec<Param>,
+    pub(crate) params: Vec<PatItem>,
     /// The `<` implicit parameter, giving the ambient input
     pub(crate) input: Option<Box<Implicit>>,
     /// The `>` implicit parameter, giving the ambient output

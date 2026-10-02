@@ -5,9 +5,9 @@ use super::{
 };
 use crate::{
     ast::{
-        AliasBody, Assign, Bind, Block, CatchHandler, Expr, For, Function, Ident, If, IfBranch,
-        ImportElement, Let, Param, ParamBind, PatternBind, PatternBindKind, PrimStmt, Return, Stmt,
-        Throw, Try, TypeAlias, While, visit::Node,
+        AliasBody, Assign, Bind, Block, CatchHandler, CondPattern, CondPatternKind, Expr, For,
+        Function, Ident, If, IfBranch, ImportElement, Let, PatBind, PatItem, PrimStmt, Return,
+        Stmt, Throw, Try, TypeAlias, While, visit::Node,
     },
     lex::{Keyword, Token, TokenInfo},
     source::Span,
@@ -132,7 +132,7 @@ impl Parser<'_> {
     /// The three forms differ only in layout: `let` puts the pattern before the
     /// scrutinee and separates them with `=`, `bind` puts it after in an indented
     /// block terminated by `do`, and the plain form has no pattern at all.
-    pub(super) fn parse_cond(&mut self, scope: &mut Scope) -> Result<(Expr, Option<PatternBind>)> {
+    pub(super) fn parse_cond(&mut self, scope: &mut Scope) -> Result<(Expr, Option<CondPattern>)> {
         use self::Keyword;
         use TokenInfo::*;
 
@@ -153,7 +153,7 @@ impl Parser<'_> {
             self.expect(scope, &[ExpectKind::ArgSep])?;
             let expr = self.parse_cmd_or_expr(scope, false)?;
             self.expect(scope, &[ExpectKind::Indent])?;
-            (expr, pattern, PatternBindKind::Let { equal_span })
+            (expr, pattern, CondPatternKind::Let { equal_span })
         } else {
             let expr = self.parse_cmd_or_expr(scope, false)?;
             // The vertical pattern consumes its own indented block through the
@@ -161,12 +161,12 @@ impl Parser<'_> {
             let pattern = self.parse_pattern(scope, true)?;
             let do_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Do)])?;
             self.expect(scope, &[ExpectKind::Indent])?;
-            (expr, pattern, PatternBindKind::Bind { do_span })
+            (expr, pattern, CondPatternKind::Bind { do_span })
         };
 
         Ok((
             expr,
-            Some(PatternBind {
+            Some(CondPattern {
                 keyword_span,
                 kind,
                 pattern,
@@ -277,8 +277,8 @@ impl Parser<'_> {
                 handlers.push(CatchHandler {
                     class_expr: Some(expr),
                     func: Function {
-                        params: vec![Param::Pos {
-                            bind: ParamBind::Ident(Ident::new(var_span)),
+                        params: vec![PatItem::Pos {
+                            bind: PatBind::Ident(Ident::new(var_span)),
                             ty: None,
                             default: None,
                         }],
@@ -309,8 +309,8 @@ impl Parser<'_> {
                 handlers.push(CatchHandler {
                     class_expr: None,
                     func: Function {
-                        params: vec![Param::Pos {
-                            bind: ParamBind::Ident(Ident::new(var_span)),
+                        params: vec![PatItem::Pos {
+                            bind: PatBind::Ident(Ident::new(var_span)),
                             ty: None,
                             default: None,
                         }],

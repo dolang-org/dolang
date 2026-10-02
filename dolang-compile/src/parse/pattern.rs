@@ -6,7 +6,7 @@ use super::{
 use crate::{
     RestKind,
     ast::visit::Node,
-    ast::{Annot, Ident, Implicit, Implicits, Param, ParamBind, ParamDefault, PatIdent, Pattern},
+    ast::{Annot, Ident, Implicit, Implicits, PatBind, PatDefault, PatIdent, PatItem, Pattern},
     lex::{Keyword, Mode, Op, Token, TokenInfo},
     source::Span,
 };
@@ -27,49 +27,48 @@ fn rest_order_error(prev: RestKind, kind: RestKind) -> Option<&'static str> {
 ///
 /// A lone positional item without a default matches the whole value rather than
 /// unpacking it, so it stands for what it binds: a name, or a sub-pattern.
-fn collapse_pattern(mut params: Vec<Param>) -> Pattern {
-    if let [Param::Pos { default: None, .. }] = params.as_slice()
-        && let Some(Param::Pos { bind, ty, .. }) = params.pop()
+fn collapse_pattern(mut items: Vec<PatItem>) -> Pattern {
+    if let [PatItem::Pos { default: None, .. }] = items.as_slice()
+        && let Some(PatItem::Pos { bind, ty, .. }) = items.pop()
     {
         return match bind {
-            ParamBind::Ident(ident) => Pattern::Ident(PatIdent { ident, ty }),
-            ParamBind::Pattern { pattern, .. } => *pattern,
+            PatBind::Ident(ident) => Pattern::Ident(PatIdent { ident, ty }),
+            PatBind::Nested { pattern, .. } => *pattern,
         };
     }
-    Pattern::Unpack(params)
+    Pattern::Unpack(items)
 }
 
 #[derive(Copy, Clone)]
-pub(super) enum ParamMode {
+pub(super) enum PatMode {
     HorizFunc,
     /// Horizontal parameters of a declaration without a body, which end with the statement
     HorizSig,
     VertFunc,
     /// Vertical parameters of a declaration without a body
     VertSig,
-    HorizPattern,
-    VertPattern,
+    // Horizontal binding form, like `let` or `for`
+    HorizBind,
+    // Vertical binding form, like `bind`
+    VertBind,
     /// The items of a horizontal sub-pattern, within `()`
-    NestedPattern,
+    Nested,
 }
 
-impl ParamMode {
+impl PatMode {
     fn is_pattern(&self) -> bool {
-        matches!(
-            self,
-            Self::HorizPattern | Self::VertPattern | Self::NestedPattern
-        )
+        matches!(self, Self::HorizBind | Self::VertBind | Self::Nested)
     }
 
     fn is_vertical(&self) -> bool {
-        matches!(self, Self::VertFunc | Self::VertSig | Self::VertPattern)
+        matches!(self, Self::VertFunc | Self::VertSig | Self::VertBind)
     }
 
     fn supports_defaults(&self) -> bool {
-        !matches!(self, Self::HorizPattern)
+        !matches!(self, Self::HorizBind)
     }
 
-    /// Whether the parameters unpack arguments, which constrains their order. A
+    /// Whether the items unpack arguments, which constrains their order. A
     /// declaration without a body only describes calls, leaving any constraint to
     /// the type checker.
     fn unpacks(&self) -> bool {
@@ -95,26 +94,26 @@ impl Parser<'_> {
 
     pub(super) fn parse_pattern(&mut self, scope: &mut Scope, vertical: bool) -> Result<Pattern> {
         // A pattern binds values, so any implicit in it has been diagnosed
-        let (params, _) = self.parse_params(
+        let (items, _) = self.parse_pat_items(
             scope,
             if vertical {
-                ParamMode::VertPattern
+                PatMode::VertBind
             } else {
-                ParamMode::HorizPattern
+                PatMode::HorizBind
             },
         )?;
-        Ok(collapse_pattern(params))
+        Ok(collapse_pattern(items))
     }
 
     /// Parse a horizontal sub-pattern, starting at its `(`.
-    fn parse_sub_pattern(&mut self, scope: &mut Scope) -> Result<ParamBind> {
+    fn parse_sub_pattern(&mut self, scope: &mut Scope) -> Result<PatBind> {
         let open = self.advance();
         // Within `()`, newlines are only whitespace, so a long pattern can wrap
         self.with_mode(Mode::InlineShell, |this| {
-            let (params, _) = this.parse_params(scope, ParamMode::NestedPattern)?;
+            let (items, _) = this.parse_pat_items(scope, PatMode::Nested)?;
             let close = this.expect_matching(scope, ExpectKind::RightParen, open);
-            Ok(ParamBind::Pattern {
-                pattern: Box::new(Pattern::Unpack(params)),
+            Ok(PatBind::Nested {
+                pattern: Box::new(Pattern::Unpack(items)),
                 parens: Some((open, close)),
             })
         })
@@ -127,17 +126,17 @@ impl Parser<'_> {
     fn parse_key_bind(
         &mut self,
         scope: &mut Scope,
-        mode: ParamMode,
-    ) -> Result<(ParamBind, Option<Box<Annot>>)> {
+        mode: PatMode,
+    ) -> Result<(PatBind, Option<Box<Annot>>)> {
         if mode.unpacks()
             && mode.is_vertical()
             && let Some(token!(TokenInfo::Indent)) = self.peek()?
         {
-            let (params, _) = self.parse_params(scope, ParamMode::VertPattern)?;
-            return Ok(match collapse_pattern(params) {
-                Pattern::Ident(PatIdent { ident, ty }) => (ParamBind::Ident(ident), ty),
+            let (items, _) = self.parse_pat_items(scope, PatMode::VertBind)?;
+            return Ok(match collapse_pattern(items) {
+                Pattern::Ident(PatIdent { ident, ty }) => (PatBind::Ident(ident), ty),
                 pattern => (
-                    ParamBind::Pattern {
+                    PatBind::Nested {
                         pattern: Box::new(pattern),
                         parens: None,
                     },
@@ -152,7 +151,7 @@ impl Parser<'_> {
             return Ok((self.parse_sub_pattern(scope)?, None));
         }
         match decay_ident!(self.next()?) {
-            Some(token!(TokenInfo::Ident, span)) => Ok((ParamBind::Ident(Ident::new(span)), None)),
+            Some(token!(TokenInfo::Ident, span)) => Ok((PatBind::Ident(Ident::new(span)), None)),
             token => {
                 Err(self.syntax_error(scope, token, "expected variable name to receive value"))
             }
@@ -165,12 +164,12 @@ impl Parser<'_> {
     fn parse_item_tail(
         &mut self,
         scope: &mut Scope,
-        mode: ParamMode,
-        bind: &ParamBind,
-    ) -> Result<(Option<Box<Annot>>, Option<ParamDefault>)> {
-        if let ParamBind::Ident(_) = bind {
-            let ty = self.parse_param_annot(scope)?;
-            let default = self.parse_param_default(scope, mode)?;
+        mode: PatMode,
+        bind: &PatBind,
+    ) -> Result<(Option<Box<Annot>>, Option<PatDefault>)> {
+        if let PatBind::Ident(_) = bind {
+            let ty = self.parse_pat_annot(scope)?;
+            let default = self.parse_pat_default(scope, mode)?;
             return Ok((ty, default));
         }
         if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
@@ -189,13 +188,13 @@ impl Parser<'_> {
         }
     }
 
-    pub(super) fn parse_params(
+    pub(super) fn parse_pat_items(
         &mut self,
         scope: &mut Scope,
-        mode: ParamMode,
-    ) -> Result<(Vec<Param>, Implicits)> {
+        mode: PatMode,
+    ) -> Result<(Vec<PatItem>, Implicits)> {
         use self::{Ident, Keyword, Op};
-        let mut params = Vec::new();
+        let mut items = Vec::new();
         let mut implicits = Implicits::default();
         let mut variadic = false;
         let mut variadic_span = None;
@@ -208,14 +207,14 @@ impl Parser<'_> {
         loop {
             match self.peek()? {
                 // `()` is valid, matching an empty value
-                Some(token!(TokenInfo::RightParen)) if matches!(mode, ParamMode::NestedPattern) => {
-                    break Ok((params, implicits));
+                Some(token!(TokenInfo::RightParen)) if matches!(mode, PatMode::Nested) => {
+                    break Ok((items, implicits));
                 }
                 None
                 | Some(token!(TokenInfo::Indent | TokenInfo::Op(Op::Bar) | TokenInfo::Equal))
-                    if !mode.is_vertical() && !matches!(mode, ParamMode::NestedPattern) =>
+                    if !mode.is_vertical() && !matches!(mode, PatMode::Nested) =>
                 {
-                    if params.is_empty() && mode.is_pattern() {
+                    if items.is_empty() && mode.is_pattern() {
                         let token = self.next().unwrap();
                         return Err(self.syntax_error(
                             scope,
@@ -223,20 +222,20 @@ impl Parser<'_> {
                             "expected at least one item in pattern",
                         ));
                     }
-                    break Ok((params, implicits));
+                    break Ok((items, implicits));
                 }
                 Some(token!(TokenInfo::Arrow))
-                    if matches!(mode, ParamMode::HorizFunc | ParamMode::HorizSig) =>
+                    if matches!(mode, PatMode::HorizFunc | PatMode::HorizSig) =>
                 {
-                    break Ok((params, implicits));
+                    break Ok((items, implicits));
                 }
                 Some(token!(TokenInfo::StmtSep | TokenInfo::Dedent))
-                    if matches!(mode, ParamMode::HorizSig) =>
+                    if matches!(mode, PatMode::HorizSig) =>
                 {
-                    break Ok((params, implicits));
+                    break Ok((items, implicits));
                 }
                 token @ Some(token!(TokenInfo::Dedent)) if mode.is_vertical() => {
-                    if params.is_empty() {
+                    if items.is_empty() {
                         return Err(self.syntax_error(
                             scope,
                             token,
@@ -244,10 +243,10 @@ impl Parser<'_> {
                         ));
                     }
                     self.advance();
-                    if matches!(mode, ParamMode::VertFunc | ParamMode::VertSig) {
+                    if matches!(mode, PatMode::VertFunc | PatMode::VertSig) {
                         self.expect(scope, &[ExpectKind::Keyword(Keyword::Do)])?;
                     }
-                    break Ok((params, implicits));
+                    break Ok((items, implicits));
                 }
                 Some(token!(TokenInfo::ArgSep)) => {
                     self.advance();
@@ -264,7 +263,7 @@ impl Parser<'_> {
                     let key = self.advance();
                     let (bind, block_ty) = self.parse_key_bind(scope, mode)?;
                     let (ty, default) = self.parse_item_tail(scope, mode, &bind)?;
-                    params.push(Param::Key {
+                    items.push(PatItem::Key {
                         key_span: key,
                         colon_span: key.after_right_char(),
                         bind,
@@ -279,12 +278,12 @@ impl Parser<'_> {
                         &mut variadic_trailing_reported,
                     );
                     let key = self.advance();
-                    let ty = self.parse_param_annot(scope)?;
-                    let default = self.parse_param_default(scope, mode)?;
-                    params.push(Param::Key {
+                    let ty = self.parse_pat_annot(scope)?;
+                    let default = self.parse_pat_default(scope, mode)?;
+                    items.push(PatItem::Key {
                         key_span: key,
                         colon_span: key.before_left_char(),
-                        bind: ParamBind::Ident(Ident::new(key)),
+                        bind: PatBind::Ident(Ident::new(key)),
                         ty,
                         default,
                     })
@@ -297,7 +296,7 @@ impl Parser<'_> {
                     {
                         self.parse_sub_pattern(scope)?
                     } else {
-                        ParamBind::Ident(Ident::new(self.expect(scope, &[ExpectKind::Ident])?))
+                        PatBind::Ident(Ident::new(self.expect(scope, &[ExpectKind::Ident])?))
                     };
                     self.report_non_trailing_variadic(
                         variadic,
@@ -311,7 +310,7 @@ impl Parser<'_> {
                         self.fail = true;
                         self.diags.push(RequiredAfterOptional(bind.span()));
                     }
-                    params.push(Param::Pos { bind, ty, default })
+                    items.push(PatItem::Pos { bind, ty, default })
                 }
                 Some(token @ token!(TokenInfo::Op(Op::Lt) | TokenInfo::Op(Op::Gt))) => {
                     let input = matches!(token.info, TokenInfo::Op(Op::Lt));
@@ -393,7 +392,7 @@ impl Parser<'_> {
                     }
                     let (ty, type_ellipsis_span) = self.parse_annot_with_ellipsis(scope, true)?;
 
-                    params.push(Param::Rest {
+                    items.push(PatItem::Rest {
                         kind,
                         sigil_span,
                         ident,
@@ -417,7 +416,7 @@ impl Parser<'_> {
                         self.fail = true;
                         self.diags.push(RequiredAfterOptional(bind.span()));
                     }
-                    params.push(Param::Pos { bind, ty, default });
+                    items.push(PatItem::Pos { bind, ty, default });
                 }
                 Some(token!(expr_start!())) if mode.is_pattern() => {
                     self.report_non_trailing_variadic(
@@ -431,7 +430,7 @@ impl Parser<'_> {
                     let (bind, block_ty) = self.parse_key_bind(scope, mode)?;
                     let (ty, default) = self.parse_item_tail(scope, mode, &bind)?;
 
-                    params.push(Param::ConstKey {
+                    items.push(PatItem::ConstKey {
                         key_expr,
                         key_const,
                         bind,
@@ -459,16 +458,16 @@ impl Parser<'_> {
                             variadic_span,
                             &mut variadic_trailing_reported,
                         );
-                        let ty = self.parse_param_annot(scope)?;
-                        let default = self.parse_param_default(scope, mode)?;
+                        let ty = self.parse_pat_annot(scope)?;
+                        let default = self.parse_pat_default(scope, mode)?;
                         if default.is_some() {
                             seen_optional = true;
                         } else if seen_optional && mode.unpacks() {
                             self.fail = true;
                             self.diags.push(RequiredAfterOptional(span));
                         }
-                        params.push(Param::Pos {
-                            bind: ParamBind::Ident(Ident::new(span)),
+                        items.push(PatItem::Pos {
+                            bind: PatBind::Ident(Ident::new(span)),
                             ty,
                             default,
                         })
@@ -491,18 +490,18 @@ impl Parser<'_> {
     }
 
     /// Parse the annotation after a bound name, with optional whitespace before it.
-    fn parse_param_annot(&mut self, scope: &mut Scope<'_>) -> Result<Option<Box<Annot>>> {
+    fn parse_pat_annot(&mut self, scope: &mut Scope<'_>) -> Result<Option<Box<Annot>>> {
         if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
             self.advance();
         }
         self.parse_annot(scope)
     }
 
-    fn parse_param_default(
+    fn parse_pat_default(
         &mut self,
         scope: &mut Scope<'_>,
-        mode: ParamMode,
-    ) -> Result<Option<ParamDefault>> {
+        mode: PatMode,
+    ) -> Result<Option<PatDefault>> {
         Ok(if mode.supports_defaults() {
             if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
                 self.advance();
@@ -513,7 +512,7 @@ impl Parser<'_> {
                     self.expect(scope, &[ExpectKind::ArgSep])?;
                     let expr = self.parse_expr(scope, ExprMode::Compact)?;
                     let fold = expr.fold(self.file);
-                    Some(ParamDefault {
+                    Some(PatDefault {
                         delim_span,
                         expr,
                         fold,

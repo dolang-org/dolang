@@ -547,7 +547,7 @@ impl Diagnose for RestMustBeTrailing {
     }
 
     fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(w, "rest parameter must be trailing")
+        write!(w, "rest item must be trailing")
     }
 }
 

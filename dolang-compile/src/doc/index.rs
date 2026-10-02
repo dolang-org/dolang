@@ -181,17 +181,17 @@ impl Scope<'_> {
 }
 
 /// Split what an item binds into a name or a sub-pattern.
-fn split_bind(bind: &mut ParamBind) -> (Option<&mut Ident>, Option<&mut Pattern>) {
+fn split_bind(bind: &mut PatBind) -> (Option<&mut Ident>, Option<&mut Pattern>) {
     match bind {
-        ParamBind::Ident(ident) => (Some(ident), None),
-        ParamBind::Pattern { pattern, .. } => (None, Some(pattern)),
+        PatBind::Ident(ident) => (Some(ident), None),
+        PatBind::Nested { pattern, .. } => (None, Some(pattern)),
     }
 }
 
 impl Index<'_> {
-    fn param_kind(param: &Param) -> (Kind, Span) {
+    fn param_kind(param: &PatItem) -> (Kind, Span) {
         let (kind, key_span, ident, ty, default) = match param {
-            Param::Pos { bind, ty, default } => (
+            PatItem::Pos { bind, ty, default } => (
                 Kind::PositionalParam {
                     name: bind.span(),
                     default: default.as_ref().map(|default| default.expr.span()),
@@ -201,7 +201,7 @@ impl Index<'_> {
                 ty,
                 default,
             ),
-            Param::Key {
+            PatItem::Key {
                 key_span,
                 colon_span,
                 bind,
@@ -220,7 +220,7 @@ impl Index<'_> {
                 ty,
                 default,
             ),
-            Param::ConstKey {
+            PatItem::ConstKey {
                 key_expr,
                 bind,
                 ty,
@@ -240,7 +240,7 @@ impl Index<'_> {
                     default,
                 )
             }
-            Param::Rest {
+            PatItem::Rest {
                 kind,
                 sigil_span,
                 ident,
@@ -861,7 +861,7 @@ impl Index<'_> {
     fn param(
         &mut self,
         scope: &Scope<'_>,
-        param: &mut Param,
+        param: &mut PatItem,
         signature: bool,
         is_pub: bool,
         is_self: bool,
@@ -869,13 +869,13 @@ impl Index<'_> {
     ) {
         let (kind, span) = Self::param_kind(param);
         let (ident, nested) = match param {
-            Param::Pos { bind, default, .. } | Param::Key { bind, default, .. } => {
+            PatItem::Pos { bind, default, .. } | PatItem::Key { bind, default, .. } => {
                 if let Some(default) = default {
                     self.expr(scope, &mut default.expr);
                 }
                 split_bind(bind)
             }
-            Param::ConstKey {
+            PatItem::ConstKey {
                 bind,
                 key_expr,
                 default,
@@ -887,7 +887,7 @@ impl Index<'_> {
                 }
                 split_bind(bind)
             }
-            Param::Rest { ident, .. } => (ident.as_mut(), None),
+            PatItem::Rest { ident, .. } => (ident.as_mut(), None),
         };
         let id = if let Some(ident) = ident {
             let kind = if is_self {
@@ -915,10 +915,10 @@ impl Index<'_> {
         if let Some(pattern) = nested {
             self.pattern(scope, pattern, is_pub, extent.filter(|_| !signature));
         }
-        let (Param::Pos { ty, .. }
-        | Param::Key { ty, .. }
-        | Param::ConstKey { ty, .. }
-        | Param::Rest { ty, .. }) = param;
+        let (PatItem::Pos { ty, .. }
+        | PatItem::Key { ty, .. }
+        | PatItem::ConstKey { ty, .. }
+        | PatItem::Rest { ty, .. }) = param;
         self.annot(scope, id, ty);
     }
 

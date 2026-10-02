@@ -7,12 +7,12 @@ use dolang_bytecode::builtin;
 use crate::{
     Mode, PreludeImport, RestKind,
     ast::{
-        Arg, ArrayElem, Assign, Bind, Block, Class, ClassMember, ClassSuper, Const, Decorator, Def,
-        DictElem, Expand, Expr, ExprBody, FieldInit, FmtParamName, For, FormatAlign, FormatKind,
-        FormatSign, FormatSpec, Function, GetVariant, Ident, If, Import, ImportElement, ImportItem,
-        Key, LValue, Let, MemberScope, Method, NlGuard, Pair, Param, ParamBind, ParamDefault,
-        PatIdent, Pattern, PatternBind, PrimStmt, Res, Return, Root, Single, Stmt, Try, While,
-        visit::Node,
+        Arg, ArrayElem, Assign, Bind, Block, Class, ClassMember, ClassSuper, CondPattern, Const,
+        Decorator, Def, DictElem, Expand, Expr, ExprBody, FieldInit, FmtParamName, For,
+        FormatAlign, FormatKind, FormatSign, FormatSpec, Function, GetVariant, Ident, If, Import,
+        ImportElement, ImportItem, Key, LValue, Let, MemberScope, Method, NlGuard, Pair, PatBind,
+        PatDefault, PatIdent, PatItem, Pattern, PrimStmt, Res, Return, Root, Single, Stmt, Try,
+        While, visit::Node,
     },
     cfg::{self, BlockRefMut, Inst, InstInfo, Term, TermInfo},
     constant::{self, ConstantExt},
@@ -52,9 +52,9 @@ enum Var {
 }
 
 /// The prologue bindings a branch body needs: how to bind the values the
-/// terminator left on the operand stack, and, for an unpack pattern, the parameter
+/// terminator left on the operand stack, and, for an unpack pattern, the item
 /// list carrying any non-constant defaults.
-type Binds<'a> = (Option<BindPlan>, Option<&'a [Param]>);
+type Binds<'a> = (Option<BindPlan>, Option<&'a [PatItem]>);
 
 /// How to bind the values an unpack leaves on the operand stack.
 ///
@@ -80,12 +80,12 @@ struct SubUnpack {
 enum Slot<'a> {
     Var(Var),
     /// The value of a sub-pattern with these items
-    Pattern(&'a [Param]),
+    Pattern(&'a [PatItem]),
 }
 
 struct Params<'a> {
     bind: Option<BindPlan>,
-    bind_params: Option<&'a [Param]>,
+    bind_params: Option<&'a [PatItem]>,
     mode: Mode<'a>,
     unpack: Option<sig::UnpackId>,
     is_top_level: bool,
@@ -981,7 +981,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         None,
                     ),
                     Pattern::Unpack(params) => {
-                        let unpack = self.lower_params(params)?;
+                        let unpack = self.lower_pattern_sig(params)?;
                         let sig = self.unpacktab.id(&unpack);
                         (
                             self.bind_plan(self.graph.scope(bscope), params, sig)?,
@@ -1089,7 +1089,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         None,
                     ),
                     Pattern::Unpack(params) => {
-                        let unpack = self.lower_params(params)?;
+                        let unpack = self.lower_pattern_sig(params)?;
                         let sig = self.unpacktab.id(&unpack);
                         (
                             self.bind_plan(self.graph.scope(bscope), params, sig)?,
@@ -1199,7 +1199,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         None,
                     ),
                     Pattern::Unpack(params) => {
-                        let unpack = self.lower_params(params)?;
+                        let unpack = self.lower_pattern_sig(params)?;
                         let sig = self.unpacktab.id(&unpack);
                         (
                             self.bind_plan(self.graph.scope(bscope), params, sig)?,
@@ -1271,7 +1271,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 self.lower_store_res(res, *span, want_result);
             }
             Pattern::Unpack(params) => {
-                let unpack = self.lower_params(params)?;
+                let unpack = self.lower_pattern_sig(params)?;
                 let sig = self.unpacktab.id(&unpack);
                 let span = bind.span();
                 if want_result {
@@ -1367,7 +1367,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     fn lower_cond(
         &mut self,
         cond: &'a Expr,
-        bind: Option<&'a PatternBind>,
+        bind: Option<&'a CondPattern>,
         bscope: cfg::ScopeId,
         tid: cfg::BlockId,
         fid: cfg::BlockId,
@@ -1411,7 +1411,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 // The terminator pops the scrutinee and pushes one value per element of
                 // the signature on the success edge, nothing on the failure edge, so
                 // neither edge is left holding anything the other does not
-                let unpack = self.lower_params(params)?;
+                let unpack = self.lower_pattern_sig(params)?;
                 let sig = self.unpacktab.id(&unpack);
                 let BindPlan { steps, vars } =
                     self.bind_plan(self.graph.scope(bscope), params, sig)?;
@@ -1709,7 +1709,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     }
 
     fn lower_closure(&mut self, func: &'a Function, span: Span) -> Result<()> {
-        let unpack = self.lower_params(&func.params)?;
+        let unpack = self.lower_pattern_sig(&func.params)?;
         let sig = self.unpacktab.id(&unpack);
         let fid = self
             .graph
@@ -1864,7 +1864,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 None,
             ),
             Pattern::Unpack(params) => {
-                let unpack = self.lower_params(params)?;
+                let unpack = self.lower_pattern_sig(params)?;
                 let sig = self.unpacktab.id(&unpack);
                 (
                     self.bind_plan(self.graph.scope(bscope), params, sig)?,
@@ -1905,20 +1905,20 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         Ok(())
     }
 
-    fn lower_params(&mut self, params: &'a [Param]) -> Result<sig::Unpack> {
+    fn lower_pattern_sig(&mut self, items: &'a [PatItem]) -> Result<sig::Unpack> {
         let mut required = 0;
         let mut optional = Vec::new();
         let mut keys = Vec::new();
         let mut variadic = dolang_bytecode::Variadic::NONE;
 
-        for param in params.iter() {
-            match param {
-                Param::Pos { default: None, .. } => required += 1,
-                Param::Pos {
+        for item in items.iter() {
+            match item {
+                PatItem::Pos { default: None, .. } => required += 1,
+                PatItem::Pos {
                     default: Some(default),
                     ..
                 } => optional.push(self.lower_default_const(default)),
-                Param::Key {
+                PatItem::Key {
                     key_span, default, ..
                 } => {
                     let constid = default
@@ -1932,7 +1932,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         default: constid,
                     })
                 }
-                Param::ConstKey {
+                PatItem::ConstKey {
                     key_const, default, ..
                 } => {
                     let constid_default = default
@@ -1947,7 +1947,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         default: constid_default,
                     })
                 }
-                Param::Rest { kind, ident, .. } => {
+                PatItem::Rest { kind, ident, .. } => {
                     use dolang_bytecode::{Rest, Variadic};
                     let rest = if ident.is_some() {
                         Rest::Capture
@@ -1964,7 +1964,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         (RestKind::Key, Variadic::Split(pos, Rest::None)) => {
                             Variadic::Split(pos, rest)
                         }
-                        _ => unreachable!("invalid rest parameters"),
+                        _ => unreachable!("invalid rest items"),
                     };
                 }
             }
@@ -1973,20 +1973,20 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         Ok(sig::Unpack::new(required, optional, keys, variadic))
     }
 
-    fn lower_non_const_defaults(&mut self, params: &'a [Param], span: Span) -> Result<()> {
-        for param in params {
-            let (default, bind) = match param {
-                Param::Pos { default, bind, .. }
-                | Param::Key { default, bind, .. }
-                | Param::ConstKey { default, bind, .. } => (default, bind),
-                Param::Rest { .. } => continue,
+    fn lower_non_const_defaults(&mut self, items: &'a [PatItem], span: Span) -> Result<()> {
+        for item in items {
+            let (default, bind) = match item {
+                PatItem::Pos { default, bind, .. }
+                | PatItem::Key { default, bind, .. }
+                | PatItem::ConstKey { default, bind, .. } => (default, bind),
+                PatItem::Rest { .. } => continue,
             };
             let ident = match bind {
-                ParamBind::Ident(ident) => ident,
+                PatBind::Ident(ident) => ident,
                 // A sub-pattern has no default of its own, but its items may
-                ParamBind::Pattern { pattern, .. } => {
-                    if let Pattern::Unpack(params) = &**pattern {
-                        self.lower_non_const_defaults(params, span)?;
+                PatBind::Nested { pattern, .. } => {
+                    if let Pattern::Unpack(items) = &**pattern {
+                        self.lower_non_const_defaults(items, span)?;
                     }
                     continue;
                 }
@@ -1995,10 +1995,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 continue;
             };
 
-            let res = ident.res.as_ref().expect("unresolved param");
+            let res = ident.res.as_ref().expect("unresolved item");
             let var = self.resolve_var(res.index, res.depth);
 
-            // Load the current value of this param
+            // Load the current value of this item
             self.lower_load(res, span);
             // Load sentinel and compare
             let sentinel = self.sentinel_const();
@@ -2027,7 +2027,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         Ok(())
     }
 
-    fn lower_default_const(&mut self, default: &ParamDefault) -> constant::Id {
+    fn lower_default_const(&mut self, default: &PatDefault) -> constant::Id {
         match &default.fold {
             Some(fold) => self.lower_const(fold),
             None => self.sentinel_const(),
@@ -2058,7 +2058,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
     fn lower_def(&mut self, node: &'a Def, want_result: bool) -> Result<()> {
         self.lower_decorator_exprs(&node.decorators)?;
-        let unpack = self.lower_params(&node.func.params)?;
+        let unpack = self.lower_pattern_sig(&node.func.params)?;
         let name = node.ident.span;
         let res = &node.ident.res;
         let sig = self.unpacktab.id(&unpack);
@@ -2132,7 +2132,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
     fn lower_class_method_value(&mut self, node: &'a Method, class_name: Span) -> Result<()> {
         self.lower_decorator_exprs(&node.decorators)?;
-        let unpack = self.lower_params(&node.func.params)?;
+        let unpack = self.lower_pattern_sig(&node.func.params)?;
         let name = if node.special.is_some() {
             node.name_span.before_left_char() | node.name_span.after_right_char()
         } else {
@@ -3030,28 +3030,28 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         Ok(())
     }
 
-    /// The values an unpack with `sig` leaves on the operand stack for `params`,
+    /// The values an unpack with `sig` leaves on the operand stack for `items`,
     /// from the top of the stack.
     fn unpack_order_in_scope(
         &mut self,
         scope: cfg::ScopeRef<'a>,
-        params: &'a [Param],
+        items: &'a [PatItem],
         sig: sig::UnpackId,
     ) -> Vec<Slot<'a>> {
-        let pos: Vec<_> = params
+        let pos: Vec<_> = items
             .iter()
             .filter_map(|p| {
-                if let Param::Pos { bind, .. } = p {
+                if let PatItem::Pos { bind, .. } = p {
                     Some(bind)
                 } else {
                     None
                 }
             })
             .collect();
-        let mut sym_keys: Vec<_> = params
+        let mut sym_keys: Vec<_> = items
             .iter()
             .filter_map(|p| {
-                if let Param::Key { key_span, bind, .. } = p {
+                if let PatItem::Key { key_span, bind, .. } = p {
                     Some((
                         self.symtab
                             .id(&self.bintab.id_str(self.file.str(*key_span))),
@@ -3062,10 +3062,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 }
             })
             .collect();
-        let mut const_keys: Vec<_> = params
+        let mut const_keys: Vec<_> = items
             .iter()
             .filter_map(|p| {
-                if let Param::ConstKey {
+                if let PatItem::ConstKey {
                     key_const, bind, ..
                 } = p
                 {
@@ -3075,11 +3075,11 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 }
             })
             .collect();
-        // Capturing rests, which take the last slots in parameter order
-        let rests: Vec<_> = params
+        // Capturing rests, which take the last slots in item order
+        let rests: Vec<_> = items
             .iter()
             .filter_map(|p| {
-                if let Param::Rest { ident, .. } = p {
+                if let PatItem::Rest { ident, .. } = p {
                     ident.as_ref()
                 } else {
                     None
@@ -3089,13 +3089,13 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         sym_keys.sort_by_key(|(sym, _)| *sym);
         const_keys.sort_by_key(|(c, _)| *c);
         let var = |this: &mut Self, ident: &Ident| {
-            let res = ident.res.as_ref().expect("unresolved param");
+            let res = ident.res.as_ref().expect("unresolved item");
             Slot::Var(this.resolve_var_in_scope(cfg::ScopeRef::clone(&scope), res.index, res.depth))
         };
-        let slot = |this: &mut Self, bind: &'a ParamBind| match bind {
-            ParamBind::Ident(ident) => var(this, ident),
-            ParamBind::Pattern { pattern, .. } => match &**pattern {
-                Pattern::Unpack(params) => Slot::Pattern(params),
+        let slot = |this: &mut Self, bind: &'a PatBind| match bind {
+            PatBind::Ident(ident) => var(this, ident),
+            PatBind::Nested { pattern, .. } => match &**pattern {
+                Pattern::Unpack(items) => Slot::Pattern(items),
                 Pattern::Ident(_) => unreachable!("sub-pattern binding a lone name"),
             },
         };
@@ -3114,13 +3114,13 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 sig::UnpackKeyKind::Sym(sym) => {
                     let index = sym_keys
                         .binary_search_by_key(&sym, |(s, _)| *s)
-                        .expect("key symbol not in parameters?!");
+                        .expect("key symbol not in pattern items?!");
                     sym_keys[index].1
                 }
                 sig::UnpackKeyKind::Const(c) => {
                     let index = const_keys
                         .binary_search_by_key(&c, |(const_id, _)| *const_id)
-                        .expect("constant key not in parameters?!");
+                        .expect("constant key not in pattern items?!");
                     const_keys[index].1
                 }
             };
@@ -3133,14 +3133,14 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     }
 
     /// Plan the binding of the values an unpack with `sig` leaves on the operand
-    /// stack for `params`, unpacking sub-patterns in turn.
+    /// stack for `items`, unpacking sub-patterns in turn.
     fn bind_plan(
         &mut self,
         scope: cfg::ScopeRef<'a>,
-        params: &'a [Param],
+        items: &'a [PatItem],
         sig: sig::UnpackId,
     ) -> Result<BindPlan> {
-        let mut stack = self.unpack_order_in_scope(cfg::ScopeRef::clone(&scope), params, sig);
+        let mut stack = self.unpack_order_in_scope(cfg::ScopeRef::clone(&scope), items, sig);
         let mut steps = Vec::new();
         // Unpack the topmost sub-pattern's value, swapping it to the top first
         while let Some(depth) = stack
@@ -3148,17 +3148,17 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             .position(|slot| matches!(slot, Slot::Pattern(_)))
         {
             stack.swap(0, depth);
-            let Slot::Pattern(params) = stack.remove(0) else {
+            let Slot::Pattern(items) = stack.remove(0) else {
                 unreachable!()
             };
-            let unpack = self.lower_params(params)?;
+            let unpack = self.lower_pattern_sig(items)?;
             let sig = self.unpacktab.id(&unpack);
             steps.push(SubUnpack {
                 depth,
                 sig,
                 others: stack.len(),
             });
-            let slots = self.unpack_order_in_scope(cfg::ScopeRef::clone(&scope), params, sig);
+            let slots = self.unpack_order_in_scope(cfg::ScopeRef::clone(&scope), items, sig);
             stack.splice(0..0, slots);
         }
         let vars = stack

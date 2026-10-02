@@ -1,0 +1,6 @@
+let *rest after = [1, 2]
+# error: rest item must be trailing
+#   --> rest_pattern_trailing.dol:LL:LL
+#    |
+# LL | let *rest after = [1, 2]
+#    |     ^

@@ -1,23 +1,23 @@
 use super::{
-    ExprMode, Parser, Result, Scope, diag::SpecialMethodOutsideClass, params::ParamMode,
+    ExprMode, Parser, Result, Scope, diag::SpecialMethodOutsideClass, pattern::PatMode,
     stream::ExpectKind,
 };
 use crate::{
     ast::{
-        Binders, Block, Decorator, Def, Expr, Function, Ident, Implicits, Method, Param, PrimStmt,
-        RetType, SpecialMethod, Stmt,
+        Binders, Block, Decorator, Def, Expr, Function, Ident, Implicits, Method, PatItem,
+        PrimStmt, RetType, SpecialMethod, Stmt,
     },
     lex::{self, Keyword, Op, Token, TokenInfo},
     source::Span,
 };
 
 impl Parser<'_> {
-    fn parse_lambda_params(&mut self, scope: &mut Scope) -> Result<(Vec<Param>, Implicits)> {
+    fn parse_lambda_params(&mut self, scope: &mut Scope) -> Result<(Vec<PatItem>, Implicits)> {
         match self.peek()? {
             Some(token!(TokenInfo::Op(Op::Bar))) => {
                 self.advance();
                 self.with_inline_shell(|this| {
-                    let params = this.parse_params(scope, ParamMode::HorizFunc)?;
+                    let params = this.parse_pat_items(scope, PatMode::HorizFunc)?;
                     this.expect(scope, &[ExpectKind::Op(Op::Bar)])?;
                     Ok(params)
                 })
@@ -50,7 +50,7 @@ impl Parser<'_> {
     fn parse_do_params(
         &mut self,
         scope: &mut Scope,
-    ) -> Result<(Vec<Param>, Implicits, Option<Box<RetType>>)> {
+    ) -> Result<(Vec<PatItem>, Implicits, Option<Box<RetType>>)> {
         match self.peek()? {
             Some(token!(TokenInfo::Indent)) => return Ok((vec![], Implicits::default(), None)),
             Some(token!(TokenInfo::ArgSep)) => self.advance(),
@@ -66,7 +66,7 @@ impl Parser<'_> {
         let (params, implicits) = match self.peek()? {
             Some(token!(TokenInfo::Op(Op::Bar))) => {
                 self.advance();
-                let params = self.parse_params(scope, ParamMode::HorizFunc)?;
+                let params = self.parse_pat_items(scope, PatMode::HorizFunc)?;
                 self.expect(scope, &[ExpectKind::Op(Op::Bar)])?;
                 if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
                     self.advance();
@@ -175,17 +175,17 @@ impl Parser<'_> {
         let binders = self.parse_binders(scope)?;
         let (params, implicits) = match self.peek()? {
             Some(token!(TokenInfo::Indent)) if type_only => {
-                self.parse_params(scope, ParamMode::VertSig)?
+                self.parse_pat_items(scope, PatMode::VertSig)?
             }
-            Some(token!(TokenInfo::Indent)) => self.parse_params(scope, ParamMode::VertFunc)?,
+            Some(token!(TokenInfo::Indent)) => self.parse_pat_items(scope, PatMode::VertFunc)?,
             Some(token!(TokenInfo::LeftParen)) => {
                 let left = self.advance();
                 let _right = self.expect_matching(scope, ExpectKind::RightParen, left);
                 // FIXME: include paren spans somewhere
                 (vec![], Implicits::default())
             }
-            _ if type_only => self.parse_params(scope, ParamMode::HorizSig)?,
-            _ => self.parse_params(scope, ParamMode::HorizFunc)?,
+            _ if type_only => self.parse_pat_items(scope, PatMode::HorizSig)?,
+            _ => self.parse_pat_items(scope, PatMode::HorizFunc)?,
         };
         // The return type follows the parameters, or the `do` ending vertical ones
         if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
