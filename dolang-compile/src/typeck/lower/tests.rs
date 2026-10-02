@@ -1218,3 +1218,89 @@ b7 f3:
 ",
     );
 }
+
+/// A sub-pattern's item binds a synthetic variable, which a later step unpacks.
+/// Every level binds before any default joins, in item order.
+#[test]
+fn nested_patterns() {
+    check(
+        "
+let x = [1, [2, [3]]]
+let a (b (c d = 0)) = x
+def f p (q r = p)
+  [p, q, r]
+for k (lo hi) = [x]
+  [a, b, c, d, f, k, lo, hi]
+",
+        "
+f0 module: entry b0, exit b1, params ()
+f1 decl0 in f0: entry b2, exit b3, params (p, t18)
+b0 f0:
+  let x = array[1, array[2, array[3]]]
+  let (a, t8) = x
+  let (b, t9) = t8
+  let (c, d) = t9
+  default d = 0
+  let f = f1
+  let t7 = array[x]
+  goto b4
+b1 f0:
+  return
+b2 f1:
+  let (q, r) = t18
+  default r = p
+  result1 = array[p, q, r]
+  goto b3
+b3 f1:
+  return
+b4 f0:
+  next (k, t17) in t7 then b7 else b5
+b5 f0:
+  result0 = nil
+  goto b1
+b6 f0:
+  eval array[a, b, c, d, f, k, lo, hi]
+  goto b4
+b7 f0:
+  let (lo, hi) = t17
+  goto b6
+",
+    );
+}
+
+/// A refutable sub-pattern is a further test, failing to where the pattern does
+#[test]
+fn nested_pattern_tests() {
+    check(
+        "
+let v = {1, [2, 3], k: [4]}
+if let a (b c) k: (d e = 0) = v
+  [a, b, c, d, e]
+else
+  nil
+",
+        "
+f0 module: entry b0, exit b1, params ()
+b0 f0:
+  let v = dict[1, array[2, 3], k: array[4]]
+  unpack (a, t7, k: t8) = v then b6 else b3
+b1 f0:
+  return
+b2 f0:
+  goto b1
+b3 f0:
+  result0 = nil
+  goto b2
+b4 f0:
+  result0 = array[a, b, c, d, e]
+  goto b2
+b5 f0:
+  default e = 0
+  goto b4
+b6 f0:
+  unpack (b, c) = t7 then b7 else b3
+b7 f0:
+  unpack (d, e) = t8 then b5 else b3
+",
+    );
+}

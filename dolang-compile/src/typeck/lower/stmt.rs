@@ -12,8 +12,8 @@ use super::{
 use crate::{
     ast::{
         self, Assign, Block, Class, ClassMember, Decorator, Def, FieldInit, For, Function, Ident,
-        If, IfBranch, LValue, MemberScope, Param, PatIdent, PatternBind, PrimStmt, Return, Stmt,
-        Try, While, visit::Node,
+        If, IfBranch, LValue, MemberScope, Param, ParamBind, PatIdent, PatternBind, PrimStmt,
+        Return, Stmt, Try, While, visit::Node,
     },
     source::Span,
     typeck::{
@@ -25,16 +25,20 @@ use crate::{
     },
 };
 
+/// The sub-patterns a pattern leaves to match: for each, the synthetic variable its
+/// item binds the value to, its items, and its span
+type Nested<'u> = Vec<(VarId, &'u [Param], Span)>;
+
 impl<'u> Scope<'_, '_, 'u> {
     /// A function's parameters and body, lowered from its entry block
     pub(super) fn function(&mut self, func: &'u Function) {
         let frame = self.ctx.frame.clone();
+        let mut nested = Vec::new();
         let items = self.in_frame(&frame, |scope| {
-            (func.params.iter())
-                .map(|param| scope.pattern_item(param))
-                .collect()
+            scope.pattern_items(&func.params, &mut nested)
         });
         self.graph().func_mut(self.ctx.func).params = Pattern::Unpack(items);
+        self.nested_lets(nested, &frame);
         self.defaults(&func.params, &frame);
         let (result, exit) = {
             let func = self.graph().func(self.ctx.func);
@@ -240,7 +244,7 @@ impl<'u> Scope<'_, '_, 'u> {
             _ => None,
         };
         let frame = self.ctx.frame.clone();
-        let bound_pattern = self.pattern(pattern, &frame);
+        let (bound_pattern, nested) = self.pattern(pattern, &frame);
         let bound = match bound_pattern {
             Pattern::Bind(var) => Some(var),
             Pattern::Unpack(_) => copy,
@@ -249,6 +253,7 @@ impl<'u> Scope<'_, '_, 'u> {
             pattern: bound_pattern,
             value,
         });
+        self.nested_lets(nested, &frame);
         self.pattern_defaults(pattern, &frame);
         if let (Some(dest), Some(var)) = (dest, bound) {
             self.assign(dest, expr(ExprKind::Copy(var), span));
@@ -305,18 +310,77 @@ impl<'u> Scope<'_, '_, 'u> {
         }
     }
 
-    /// Lower a pattern in `frame`, where its names are bound
-    pub(super) fn pattern(&mut self, pattern: &'u ast::Pattern, frame: &Rc<Frame<'u>>) -> Pattern {
-        self.in_frame(frame, |scope| match pattern {
+    /// Lower a pattern's top level in `frame`, where its names are bound, with the
+    /// sub-patterns its items leave to match
+    fn pattern(
+        &mut self,
+        pattern: &'u ast::Pattern,
+        frame: &Rc<Frame<'u>>,
+    ) -> (Pattern, Nested<'u>) {
+        let mut nested = Vec::new();
+        let pattern = self.in_frame(frame, |scope| match pattern {
             ast::Pattern::Ident(PatIdent { ident, ty }) => {
                 Pattern::Bind(scope.binding(ident, ty.as_deref()))
             }
-            ast::Pattern::Unpack(params) => Pattern::Unpack(
-                (params.iter())
-                    .map(|param| scope.pattern_item(param))
-                    .collect(),
-            ),
-        })
+            ast::Pattern::Unpack(params) => {
+                Pattern::Unpack(scope.pattern_items(params, &mut nested))
+            }
+        });
+        (pattern, nested)
+    }
+
+    /// Match sub-patterns, each against the variable its item bound, and theirs in
+    /// turn. A mismatch raises.
+    fn nested_lets(&mut self, nested: Nested<'u>, frame: &Rc<Frame<'u>>) {
+        for (var, params, span) in nested {
+            let mut inner = Vec::new();
+            let items = self.in_frame(frame, |scope| scope.pattern_items(params, &mut inner));
+            self.emit(Step::Let {
+                pattern: Pattern::Unpack(items),
+                value: expr(ExprKind::Copy(var), span),
+            });
+            self.nested_lets(inner, frame);
+        }
+    }
+
+    /// Blocks matching sub-patterns in turn, as [`Self::nested_lets`] does, which
+    /// continue to `then` once all match, or to `else_` at the first that doesn't.
+    /// Returns the first, or `then` if there are none.
+    fn nested_tests(
+        &mut self,
+        nested: Nested<'u>,
+        frame: &Rc<Frame<'u>>,
+        then: BlockId,
+        else_: BlockId,
+    ) -> BlockId {
+        if nested.is_empty() {
+            return then;
+        }
+        let from = self.bb;
+        let entry = self.block();
+        self.switch(entry);
+        let mut pending: Nested<'u> = nested.into_iter().rev().collect();
+        while let Some((var, params, span)) = pending.pop() {
+            let mut inner = Vec::new();
+            let items = self.in_frame(frame, |scope| scope.pattern_items(params, &mut inner));
+            pending.extend(inner.into_iter().rev());
+            let next = if pending.is_empty() {
+                then
+            } else {
+                self.block()
+            };
+            self.end(Terminal::Unpack {
+                pattern: Pattern::Unpack(items),
+                value: expr(ExprKind::Copy(var), span),
+                then: next,
+                else_,
+            });
+            if !pending.is_empty() {
+                self.switch(next);
+            }
+        }
+        self.switch(from);
+        entry
     }
 
     /// Run `f` in `frame`
@@ -331,31 +395,26 @@ impl<'u> Scope<'_, '_, 'u> {
         result
     }
 
-    /// Join the defaults of parameters bound in `frame` into their variables. A
-    /// default may read the pattern's earlier bindings and captures, so it's a step
-    /// after the binding.
+    /// Join the defaults of parameters bound in `frame` into their variables, and
+    /// those of their sub-patterns where they occur. A default may read the
+    /// pattern's earlier bindings and captures, so it's a step after the binding.
     fn defaults(&mut self, params: &'u [Param], frame: &Rc<Frame<'u>>) {
         self.in_frame(frame, |scope| {
             for param in params {
-                let (Param::Pos {
-                    bind,
-                    default: Some(default),
-                    ..
-                }
-                | Param::Key {
-                    bind,
-                    default: Some(default),
-                    ..
-                }
-                | Param::ConstKey {
-                    bind,
-                    default: Some(default),
-                    ..
-                }) = param
+                let (Param::Pos { bind, default, .. }
+                | Param::Key { bind, default, .. }
+                | Param::ConstKey { bind, default, .. }) = param
                 else {
                     continue;
                 };
-                let Some(var) = scope.var(bind.unwrap_ident()) else {
+                let ident = match bind {
+                    ParamBind::Ident(ident) => ident,
+                    ParamBind::Pattern { pattern, .. } => {
+                        scope.pattern_defaults(pattern, frame);
+                        continue;
+                    }
+                };
+                let (Some(default), Some(var)) = (default, scope.var(ident)) else {
                     continue;
                 };
                 let value = scope.expr(&default.expr);
@@ -371,23 +430,26 @@ impl<'u> Scope<'_, '_, 'u> {
         }
     }
 
-    /// The target of an edge that binds a pattern: a new block joining its defaults,
-    /// on the way to `target`, if it has any
+    /// The target of an edge that binds a pattern: a new block matching the
+    /// sub-patterns `nested` and joining its defaults, on the way to `target`, if
+    /// there are any
     fn defaulted(
         &mut self,
         pattern: &'u ast::Pattern,
+        nested: Nested<'u>,
         frame: &Rc<Frame<'u>>,
         target: BlockId,
     ) -> BlockId {
         let ast::Pattern::Unpack(params) = pattern else {
             return target;
         };
-        if !params.iter().any(has_default) {
+        if nested.is_empty() && !any_default(params) {
             return target;
         }
         let from = self.bb;
         let block = self.block();
         self.switch(block);
+        self.nested_lets(nested, frame);
         self.defaults(params, frame);
         self.end(Terminal::Branch(target));
         self.switch(from);
@@ -401,25 +463,53 @@ impl<'u> Scope<'_, '_, 'u> {
         var
     }
 
+    /// A pattern's items, adding the sub-patterns they leave to match to `nested`
+    fn pattern_items(&mut self, params: &'u [Param], nested: &mut Nested<'u>) -> Vec<PatternItem> {
+        (params.iter())
+            .map(|param| self.pattern_item(param, nested))
+            .collect()
+    }
+
+    /// The variable a pattern item binds: its name's, or for a sub-pattern, a
+    /// synthetic one that the sub-pattern, added to `nested`, matches later
+    fn item_binding(
+        &mut self,
+        bind: &'u ParamBind,
+        annot: Option<&ast::Annot>,
+        nested: &mut Nested<'u>,
+    ) -> VarId {
+        match bind {
+            ParamBind::Ident(ident) => self.binding(ident, annot),
+            ParamBind::Pattern { pattern, .. } => {
+                let ast::Pattern::Unpack(params) = &**pattern else {
+                    unreachable!("sub-pattern binding a lone name")
+                };
+                let var = self.synthetic();
+                nested.push((var, params, bind.span()));
+                var
+            }
+        }
+    }
+
     /// A pattern item, without its default, which [`Self::defaults`] joins after the
     /// pattern binds
-    fn pattern_item(&mut self, param: &'u Param) -> PatternItem {
+    fn pattern_item(&mut self, param: &'u Param, nested: &mut Nested<'u>) -> PatternItem {
         let (key, var) = match param {
             Param::Pos { bind, ty, .. } => (
                 PatternKey::Pos,
-                self.binding(bind.unwrap_ident(), ty.as_deref()),
+                self.item_binding(bind, ty.as_deref(), nested),
             ),
             Param::Key {
                 key_span, bind, ty, ..
             } => (
                 PatternKey::Key(self.symbol(*key_span)),
-                self.binding(bind.unwrap_ident(), ty.as_deref()),
+                self.item_binding(bind, ty.as_deref(), nested),
             ),
             Param::ConstKey {
                 key_expr, bind, ty, ..
             } => {
                 let key = PatternKey::ConstKey(self.expr(key_expr));
-                (key, self.binding(bind.unwrap_ident(), ty.as_deref()))
+                (key, self.item_binding(bind, ty.as_deref(), nested))
             }
             Param::Rest { kind, ident, .. } => {
                 return PatternItem {
@@ -512,8 +602,9 @@ impl<'u> Scope<'_, '_, 'u> {
                 self.end(Terminal::Branch(else_));
             }
             pattern @ ast::Pattern::Unpack(_) => {
-                let bound = self.pattern(pattern, frame);
-                let then = self.defaulted(pattern, frame, then);
+                let (bound, nested) = self.pattern(pattern, frame);
+                let then = self.defaulted(pattern, Vec::new(), frame, then);
+                let then = self.nested_tests(nested, frame, then, else_);
                 self.end(Terminal::Unpack {
                     pattern: bound,
                     value,
@@ -620,8 +711,8 @@ impl<'u> Scope<'_, '_, 'u> {
         let body = self.block();
         self.end(Terminal::Branch(header));
         self.switch(header);
-        let pattern = self.pattern(&node.bind, frame);
-        let entry = self.defaulted(&node.bind, frame, body);
+        let (pattern, nested) = self.pattern(&node.bind, frame);
+        let entry = self.defaulted(&node.bind, nested, frame, body);
         self.end(Terminal::Next {
             iter,
             pattern,
@@ -751,14 +842,12 @@ impl<'u> Scope<'_, '_, 'u> {
             [] => self.emit(Step::Pop),
             [
                 Param::Pos {
-                    bind,
+                    bind: ParamBind::Ident(ident),
                     ty,
                     default: None,
                 },
             ] => {
-                let var = self.in_frame(&frame, |scope| {
-                    scope.binding(bind.unwrap_ident(), ty.as_deref())
-                });
+                let var = self.in_frame(&frame, |scope| scope.binding(ident, ty.as_deref()));
                 self.emit(Step::Let {
                     pattern: Pattern::Bind(var),
                     value: operand,
@@ -766,11 +855,8 @@ impl<'u> Scope<'_, '_, 'u> {
             }
             // The clause is called with the exception as its one argument
             params => {
-                let items = self.in_frame(&frame, |scope| {
-                    (params.iter())
-                        .map(|param| scope.pattern_item(param))
-                        .collect()
-                });
+                let mut nested = Vec::new();
+                let items = self.in_frame(&frame, |scope| scope.pattern_items(params, &mut nested));
                 let args = ExprKind::Collection {
                     kind: Collection::Tuple,
                     items: vec![Item::Pos(operand)],
@@ -779,6 +865,7 @@ impl<'u> Scope<'_, '_, 'u> {
                     pattern: Pattern::Unpack(items),
                     value: expr(args, span),
                 });
+                self.nested_lets(nested, &frame);
                 self.defaults(params, &frame);
             }
         }
@@ -928,6 +1015,20 @@ impl<'u> Scope<'_, '_, 'u> {
             self.emit(Step::Eval(value));
         }
     }
+}
+
+/// Whether any item has a default, at any level
+fn any_default(params: &[Param]) -> bool {
+    params.iter().any(|param| match param {
+        Param::Pos { bind, default, .. }
+        | Param::Key { bind, default, .. }
+        | Param::ConstKey { bind, default, .. } => {
+            default.is_some()
+                || matches!(bind, ParamBind::Pattern { pattern, .. }
+                    if matches!(&**pattern, ast::Pattern::Unpack(params) if any_default(params)))
+        }
+        Param::Rest { .. } => false,
+    })
 }
 
 fn has_default(param: &Param) -> bool {
