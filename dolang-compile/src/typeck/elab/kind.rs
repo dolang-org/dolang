@@ -553,28 +553,59 @@ pub(crate) enum Fill {
 }
 
 impl Tables<'_> {
+    /// The slot of a declaration's only positional binder, when it's a schema and
+    /// every other binder is a keyword binder. Such a declaration takes `Foo[T]`
+    /// for `Foo[{*T}]` and `Foo[K, V]` for `Foo[{*(K): V}]`.
+    pub(crate) fn shorthand(&self, decl: DeclId) -> Option<usize> {
+        let binders = self.binders(decl, 0);
+        let mut positional = binders
+            .iter()
+            .enumerate()
+            .filter(|(_, binder)| binder.kind != BinderKind::Key);
+        let (slot, binder) = positional.next()?;
+        let kind = self.binder_kinds[&BinderRef { decl, sig: 0, slot }];
+        (positional.next().is_none()
+            && binder.kind == BinderKind::Pos
+            && kind.kind == Kind::Schema
+            && !kind.flexible)
+            .then_some(slot)
+    }
+
     /// Match the type arguments applied, in `unit`, to a declaration to the binders
     /// they fill: positional arguments in order and then to a variadic binder, keyword
-    /// arguments by name. A declaration whose only binder is a schema takes `Foo[T]`
-    /// for `Foo[{*T}]` and `Foo[K, V]` for `Foo[{*(K): V}]`.
+    /// arguments by name, with the [shorthand](Self::shorthand) for a schema.
     pub(crate) fn fill(&self, unit: UnitId, decl: DeclId, args: &[TypeArg]) -> Vec<Fill> {
         let binders = self.binders(decl, 0);
-        let kind_of = |slot: usize| self.binder_kinds[&BinderRef { decl, sig: 0, slot }];
+        let owner = self.decls[decl.index()].unit;
+        let keyword = |name| {
+            let text = self.name(unit, name);
+            binders.iter().position(|binder| {
+                binder.kind == BinderKind::Key && self.name(owner, binder.name) == text
+            })
+        };
 
-        if let [binder] = binders
-            && binder.kind == BinderKind::Pos
-            && kind_of(0).kind == Kind::Schema
-            && !kind_of(0).flexible
-        {
-            if let [
-                TypeArg {
+        if let Some(slot) = self.shorthand(decl) {
+            let mut written = args
+                .iter()
+                .filter(|arg| !matches!(arg.kind, TypeArgKind::Key { .. }));
+            if let (
+                Some(TypeArg {
                     kind: TypeArgKind::Pos(ty),
                     ..
-                },
-            ] = args
+                }),
+                None,
+            ) = (written.next(), written.next())
                 && self.kind_of(unit, ty) == Some(Kind::Schema)
             {
-                return vec![Fill::Binder(0)];
+                return args
+                    .iter()
+                    .map(|arg| match arg.kind {
+                        TypeArgKind::Key { name, .. } => {
+                            keyword(name).map_or(Fill::UnknownKeyword, Fill::Binder)
+                        }
+                        _ => Fill::Binder(slot),
+                    })
+                    .collect();
             }
             let mut positional = 0;
             return args
@@ -583,12 +614,14 @@ impl Tables<'_> {
                     TypeArgKind::Pos(_) => {
                         positional += 1;
                         match positional {
-                            ..=2 => Fill::Item(0),
+                            ..=2 => Fill::Item(slot),
                             _ => Fill::Excess,
                         }
                     }
-                    TypeArgKind::Key { .. } => Fill::UnknownKeyword,
-                    TypeArgKind::Expand { .. } => Fill::Expand(Some(0)),
+                    TypeArgKind::Key { name, .. } => {
+                        keyword(name).map_or(Fill::UnknownKeyword, Fill::Binder)
+                    }
+                    TypeArgKind::Expand { .. } => Fill::Expand(Some(slot)),
                 })
                 .collect();
         }
@@ -615,18 +648,10 @@ impl Tables<'_> {
                     Some(slot) => Fill::Binder(slot),
                     None => positional_rest.map_or(Fill::Excess, Fill::Item),
                 },
-                TypeArgKind::Key { name, .. } => {
-                    let text = self.name(unit, *name);
-                    let owner = self.decls[decl.index()].unit;
-                    binders
-                        .iter()
-                        .position(|binder| {
-                            binder.kind == BinderKind::Key && self.name(owner, binder.name) == text
-                        })
-                        .map(Fill::Binder)
-                        .or(keyed_rest.map(Fill::Item))
-                        .unwrap_or(Fill::UnknownKeyword)
-                }
+                TypeArgKind::Key { name, .. } => keyword(*name)
+                    .map(Fill::Binder)
+                    .or(keyed_rest.map(Fill::Item))
+                    .unwrap_or(Fill::UnknownKeyword),
                 // A type expands as a pack of any number of it. It reaches only the
                 // variadic binder once every positional binder is filled.
                 TypeArgKind::Expand { .. } => {

@@ -830,9 +830,18 @@ only reified types leave it:
   couldn't resolve counts as undecided, so defaulting rounds reach it. Once no
   undecided rule is left, a block's parameters and channels that nothing gave
   anything become `Unknown`, which may start more rounds.
-- A `for` item is `T` of `iteratee <: BaseIterable[T]`, and an unpacking pattern
-  takes `value <: Unpack[S]`, with every item optional and anything else
-  admitted, since unpacking checks the count as it runs.
+- A `for` item is `T` of `iteratee <: BaseIterable[T]`. An unpacking pattern
+  requires `value <: Unpack[...]` and is walked (`solver/unpack.rs`) against
+  the `S` each member of the value's solved type reaches, as the runtime binds
+  it: positional items by count, keyed items by key. An item takes the join of
+  what it can bind. A rest is the `Rest` of the supertype edge reaching
+  `Unpack`, with that edge's class binders solved again by matching its `S`
+  against the tail, if that is within `Rest`'s bound, or else `Rest`'s default
+  for the tail, which only spreads. A pattern no filling of `S` matches
+  is diagnosed as impossible, and its bound edge is unreachable. A member whose
+  `S` can't be found, as for a structural conformance, leaves the whole pattern
+  to the earlier rule: every item optional, anything else admitted, and rests
+  and constant keys `Unknown`.
 - A binary string's parts must be `Bin`, and an interpolation's width and
   precision `Int`.
 - A member use (`flow/member.rs`) looks its member up (see "Member lookup") and
@@ -949,8 +958,9 @@ annotation is either kind, giving each item's type or the whole pack, and a
 variadic binder's bound likewise. Type arguments are matched to the binders
 they fill: positional arguments in order and then to a variadic binder,
 keyword arguments by name, and an expansion `...X` of either kind, a type
-expanding as any number of it. A declaration whose only binder is a schema
-takes `Foo[T]` and `Foo[K, V]` for its items. Applying a schema, a binder or a
+expanding as any number of it. A declaration whose only positional binder is
+a schema, with only keyword binders besides, takes `Foo[T]` and `Foo[K, V]`
+for its items. Applying a schema, a binder or a
 declaration without binders is an error, as is naming a value or module as a
 type.
 
@@ -995,21 +1005,21 @@ an object being constructed. This relies on elaboration refusing `.#` on
 anything but a `self` parameter, and `.(init)` calls outside an `(init)` body or
 on anything but its `self`. A field whose type is an application of `Phantom`
 always counts, whatever its visibility, using its arguments covariantly as
-Rust's `PhantomData` does, so `Phantom[(T -> nil)]` marks a class
-contravariant. A transparent alias uses
-its body covariantly; `Union`, the projections and `Phantom` take their binders
-covariantly, and
-any other opaque alias uses none. A binder used in a bound of its own group is
-invariant, and an outer binder used in the bound of a nested group is used
-contravariantly there. Defaults and bodies do not count. A type argument is used
-as the binder it fills varies, matched as kind checking matches it, and one
-whose binder is unknown is invariant. A type declared within a generic
-declaration takes the outer binders it is lifted over as implicit arguments.
-These equations are solved by a worklist for their least solution, which is
-unique whatever the order. A binder with no use, including one used only through
-itself, is then invariant, as is any use through it, and a second round
-propagates that. The `variance` judgment reports a binder's variance, and
-`captured` a nested declaration's outer binders.
+Rust's `PhantomData` does, so `Phantom[(T -> nil)]` marks a class contravariant.
+A transparent alias uses its body covariantly; `Union`, the projections and
+`Phantom` take their binders covariantly, and any other opaque alias uses none.
+A bound of a binder's own group is a covariant position for it, since widening
+the binder widens the bound, which the other arguments then still meet. An outer
+binder used in the bound of a nested group is used contravariantly there.
+Defaults and bodies do not count. A type argument is used as the binder it fills
+varies, matched as kind checking matches it, and one whose binder is unknown is
+invariant. A type declared within a generic declaration takes the outer binders
+it is lifted over as implicit arguments. These equations are solved by a
+worklist for their least solution, which is unique whatever the order. A binder
+with no use, including one used only through itself, is then invariant, as is
+any use through it, and a second round propagates that. The `variance` judgment
+reports a binder's variance, and `captured` a nested declaration's outer
+binders.
 
 Every declaration is closed. Before variance, the captures pass finds the outer
 binders each is lifted over: those it names anywhere, in its signature, members

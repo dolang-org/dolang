@@ -29,23 +29,23 @@ use super::*;
 const COMBINATIONS: usize = 4096;
 
 #[derive(Clone, Copy, Debug)]
-struct Atom {
-    multiplicity: Multiplicity,
-    ty: Term,
+pub(super) struct Atom {
+    pub(super) multiplicity: Multiplicity,
+    pub(super) ty: Term,
     /// The top-level item it came from, for diagnostics
     item: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
-struct KeyedAtom {
-    multiplicity: Multiplicity,
-    key: Term,
-    value: Term,
+pub(super) struct KeyedAtom {
+    pub(super) multiplicity: Multiplicity,
+    pub(super) key: Term,
+    pub(super) value: Term,
     item: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Opacity {
+pub(super) enum Opacity {
     Unknown,
     /// A rigid, as its closed view, or a skolem
     Rigid(Term),
@@ -53,19 +53,19 @@ enum Opacity {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct Opaque {
-    opacity: Opacity,
+pub(super) struct Opaque {
+    pub(super) opacity: Opacity,
     /// Whether it admits positional items, keyed items, or both
     lanes: Rest,
     item: usize,
 }
 
 impl Opaque {
-    fn positional(&self) -> bool {
+    pub(super) fn positional(&self) -> bool {
         self.lanes != Rest::Keyed
     }
 
-    fn keyed(&self) -> bool {
+    pub(super) fn keyed(&self) -> bool {
         self.lanes != Rest::Positional
     }
 }
@@ -80,7 +80,7 @@ enum Collected {
 }
 
 #[derive(Clone, Copy, Debug)]
-enum Slot {
+pub(super) enum Slot {
     Atom(Atom),
     /// An index into [`Shape::opaque`]. Every opaque has a slot here, whatever
     /// its lanes, so pairs keep their positional order.
@@ -88,10 +88,10 @@ enum Slot {
 }
 
 #[derive(Default, Debug)]
-struct Shape {
-    positional: Vec<Slot>,
-    keyed: Vec<KeyedAtom>,
-    opaque: Vec<Opaque>,
+pub(super) struct Shape {
+    pub(super) positional: Vec<Slot>,
+    pub(super) keyed: Vec<KeyedAtom>,
+    pub(super) opaque: Vec<Opaque>,
 }
 
 /// The inclusive range of a multiplicity's counts; `None` is unbounded
@@ -468,7 +468,7 @@ impl Solver<'_> {
     }
 
     /// Flatten an included schema into `shape`
-    fn include(
+    pub(super) fn include(
         &self,
         term: Term,
         multiplicity: Multiplicity,

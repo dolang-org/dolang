@@ -1976,6 +1976,25 @@ impl Database {
         }
     }
 
+    /// A class applied to `given` for its first binders and to its later binders'
+    /// defaults, each of which sees the arguments before it; `None` if one of
+    /// those has no default
+    pub(crate) fn apply_defaults(&self, decl: DeclId, given: &[TypeId]) -> Option<TypeId> {
+        let Type::Quantified { binders, .. } = self.ty(self.declaration(decl).ty) else {
+            return None;
+        };
+        let mut args: Vec<TypeId> = binders.iter().map(|b| self.unknown_of(b.kind)).collect();
+        args[..given.len()].copy_from_slice(given);
+        for slot in given.len()..binders.len() {
+            args[slot] = self.substitute(binders[slot].default?, &args);
+        }
+        Some(self.intern(Type::Apply {
+            base: self.intern(Type::Decl(decl)),
+            args: args.into_iter().map(Argument::Positional).collect(),
+            kind: Kind::Type,
+        }))
+    }
+
     /// The rigids of a declaration's binders, in slot order. Substituting them for
     /// its group gives the declaration as checked.
     pub(crate) fn rigids(&self, decl: DeclId) -> Vec<TypeId> {

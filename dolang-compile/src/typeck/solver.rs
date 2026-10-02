@@ -2849,11 +2849,13 @@ mod lattice;
 mod member;
 mod narrow;
 mod schema;
+mod unpack;
 
 pub(crate) use conform::{Inheritance, Requirement, RequirementKind};
 pub(crate) use lattice::Widening;
 pub(crate) use member::{FoundKind, Lookup, Signatures};
 pub(crate) use narrow::Target as NarrowTarget;
+pub(crate) use unpack::PatternShape;
 
 #[cfg(test)]
 mod tests;

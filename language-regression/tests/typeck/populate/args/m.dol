@@ -1,5 +1,6 @@
 # Type arguments are placed by the binders they fill, and an omitted one takes
-# its binder's default, which sees the arguments before it.
+# its binder's default, which sees the arguments before it. A trailing argument
+# equal to its default isn't shown, and a keyword binder's argument is named.
 
 pub class Num
 pub class Text
@@ -18,14 +19,14 @@ pub class Early[A = B, B = Num]
 pub @let Phantom[...Ts] = ...
 
 pub let defaulted @ Pair[Text] = nil
-#                   ^~~~~~~~~~: type m.Pair[m.Text, m.Text]
+#                   ^~~~~~~~~~: type m.Pair[m.Text]
 pub let both @ Pair[Text, Num] = nil
 #              ^~~~~~~~~~~~~~~: type m.Pair[m.Text, m.Num]
 pub let bare @ Pair[Num] = nil
 pub let keyword @ Keyed[Text, K: Text] = nil
-#                 ^~~~~~~~~~~~~~~~~~~~: type m.Keyed[m.Text, m.Text]
+#                 ^~~~~~~~~~~~~~~~~~~~: type m.Keyed[m.Text, K: m.Text]
 pub let keyword_default @ Keyed[Text] = nil
-#                         ^~~~~~~~~~~: type m.Keyed[m.Text, m.Num]
+#                         ^~~~~~~~~~~: type m.Keyed[m.Text]
 pub let items @ Tuple[Num, Text] = nil
 #               ^~~~~~~~~~~~~~~~: type m.Tuple[{m.Num, m.Text}]
 pub let empty @ Tuple[] = nil
@@ -41,7 +42,7 @@ pub let short_keyed @ Table[Text, Num] = nil
 pub let whole @ Table[{Num}] = nil
 #               ^~~~~~~~~~~~: type m.Table[{m.Num}]
 pub let later @ Early[] = nil
-#               ^~~~~~~: type m.Early[Unknown, m.Num]
+#               ^~~~~~~: type m.Early[Unknown]
 
 # After an expansion, where later arguments go is unknown, so they stay as written
 pub class Two[A, B]

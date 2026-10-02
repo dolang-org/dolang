@@ -662,9 +662,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         let mut items: Vec<Option<Vec<SchemaItem>>> = vec![None; count];
         // `Foo[T]` for `Foo[{*T}]`, or `Foo[K, V]` for `Foo[{*(K): V}]`
         let mut shorthand = Vec::new();
-        let short = count == 1
-            && written[0].kind == BinderKind::Pos
-            && self.kind(binder(0)) == Kind::Schema;
+        let short = tables.shorthand(decl);
         for (arg, fill) in args.iter().zip(fills) {
             match fill {
                 super::Fill::Binder(slot) => {
@@ -673,7 +671,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                 }
                 super::Fill::Item(slot) => {
                     let item = match &arg.kind {
-                        TypeArgKind::Pos(ty) if short => {
+                        TypeArgKind::Pos(ty) if short.is_some() => {
                             shorthand.push(self.intern(group, ty, Kind::Type, depth));
                             items[slot].get_or_insert_default();
                             continue;
@@ -702,13 +700,14 @@ impl<'t, 'u> Populate<'t, 'u> {
                 super::Fill::Unknown | super::Fill::Expand(None) => unreachable!(),
             }
         }
+        let short = short.unwrap_or(0);
         match shorthand[..] {
             [] => {}
-            [ty] => items[0].get_or_insert_default().insert(
+            [ty] => items[short].get_or_insert_default().insert(
                 0,
                 Self::item(Multiplicity::Repeated, Element::Positional(ty)),
             ),
-            [key, value, ..] => items[0].get_or_insert_default().insert(
+            [key, value, ..] => items[short].get_or_insert_default().insert(
                 0,
                 Self::item(Multiplicity::Repeated, Element::Keyed { key, value }),
             ),

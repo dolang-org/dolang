@@ -28,7 +28,14 @@ pub @class Bounded[T]
   #       ^~~: captured T contravariant
   #           ^: variance contravariant
 
+# A bound of a binder's own group is a covariant position for it
 pub @class Pair[A, B @ Source[A]]
+  #             ^: variance covariant
+  #                ^: variance covariant
+  pub def first self -> A
+  pub def second self -> B
+
+pub @class Feed[A, B @ Bounded[A]]
   #             ^: variance invariant
   #                ^: variance covariant
   pub def first self -> A

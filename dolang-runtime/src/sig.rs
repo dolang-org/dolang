@@ -1,8 +1,7 @@
 use crate::{
-    object::record,
     strand::Strand,
     sym::Sym,
-    value::{Input, InputBy, Slots, Value, private},
+    value::{Input, InputBy, Output, Slots, Value, private},
     vm::Vm,
 };
 use dolang_bytecode::{Rest, Variadic};
@@ -99,11 +98,11 @@ impl<'v, 'a> Unpack<'v, 'a> {
         }
     }
 
-    /// Stores an empty record in a `**name` rest, for sources without keyed items.
+    /// Stores `std.null`, the empty iterator, in a `**name` rest, for sources
+    /// without keyed items
     pub(crate) fn fill_empty_key_rest(&self, strand: &mut Strand<'v, '_>, out: &mut Slots<'v, '_>) {
         if let Some(slot) = self.key_rest_slot() {
-            out.at(slot)
-                .store(Value::from_object(record::empty(strand)));
+            Output::set(strand, out.at(slot), &strand.singletons().null);
         }
     }
 

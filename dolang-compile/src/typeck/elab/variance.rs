@@ -13,8 +13,9 @@
 //! enforce.
 //!
 //! A transparent alias uses its body covariantly, and so does a pipe placeholder
-//! the nominee it stands for. A binder used in a bound of its
-//! own group is invariant, and an outer binder used in the bound of a nested group
+//! the nominee it stands for. A bound of a binder's own group is a covariant
+//! position for it: widening the binder widens the bound, which the other binders'
+//! arguments then still meet. An outer binder used in the bound of a nested group
 //! is used contravariantly there. Defaults, bodies and closures do not count.
 //!
 //! A type argument is used as the binder it fills varies, and a type declared
@@ -191,7 +192,8 @@ struct Collect<'t, 'u> {
     unit: UnitId,
     /// The declaration whose uses are collected
     decl: DeclId,
-    /// Within a bound of the binders of a signature, which are invariant there
+    /// Within a bound of the binders of a signature, which is a covariant position
+    /// for them
     bound: Option<(DeclId, usize)>,
     /// The keys whose variance composes a use at the current position
     path: Vec<Key>,
@@ -403,9 +405,13 @@ impl<'t> Collect<'t, '_> {
 
     /// Record a use of a binder at the current position.
     fn uses(&mut self, binder: BinderRef, u: Use) {
-        let u = match self.bound == Some((binder.decl, binder.sig)) || self.saturated {
-            true => Use::BOTH,
-            false => u,
+        // Bounds are walked as contravariant positions, which an outer binder's
+        // uses are; a bound of the binder's own group is a covariant one
+        let own = self.bound == Some((binder.decl, binder.sig));
+        let u = match (own, self.saturated) {
+            (_, true) => Use::BOTH,
+            (true, false) => u.flip(),
+            (false, false) => u,
         };
         self.constraints
             .push(((self.decl, binder), Source::Path(u, self.path.clone())));

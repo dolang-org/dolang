@@ -428,12 +428,14 @@ impl<'u> Scope<'_, '_, 'u> {
                 return PatternItem {
                     key: PatternKey::Rest(*kind),
                     var: ident.as_ref().and_then(|ident| self.var(ident)),
+                    default: false,
                 };
             }
         };
         PatternItem {
             key,
             var: Some(var),
+            default: has_default(param),
         }
     }
 

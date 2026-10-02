@@ -41,7 +41,7 @@ pub @let AssignItem[S @ {...}, K] = ...
 # The singleton [`Null`](std.Null) value.
 #
 # As an iterator it ends immediately; as a sink it discards every value.
-pub let null = ...
+pub let null @ Null = ...
 
 #
 # Creates an array from positional arguments.
@@ -350,17 +350,20 @@ pub @class Spread[S @ {...}]
 # A value that implements the
 # [`(unpack)`](../../language/classes.md#unpack-destructuring) protocol,
 # destructuring as the items in `S` without changing the receiver.
-# Captured rests also support spreading with their remaining schema.
-pub @class Unpack[S @ {...}]: Spread[S]
+#
+# A captured rest is a `Rest` with its remaining schema in place of `S`. By
+# default, a rest only spreads as the remaining schema.
+pub @class Unpack[S @ {...}, :Rest @ Spread[S] = Spread[S]]: Spread[S]
   field schema @Phantom[...S]
+  field rest @Phantom[Rest]
 
   # Returns a value to destructure in place of this one.
-  pub def (unpack) self -> Unpack[S]
+  pub def (unpack) self -> Unpack[S, Rest: Rest]
 
 
 # An iterable sequence of `T`, which integers index, slices, spreads, and
 # destructures.
-pub @class Seq[T]: Iterable[T] Index[Int, T] Spread[T] Unpack[T]
+pub @class Seq[T]: Iterable[T] Index[Int, T] Spread[T] Unpack[T, Rest: Unpack[T]]
   # The number of items.
   #[getter]
   pub def len self -> Int
@@ -649,7 +652,7 @@ pub class AbortError: Error
 #
 # Arrays are ordered, mutable sequences of values.
 #
-pub class Array[T]: Iterable[T] Sinkable[T] @MutSeq[T]
+pub class Array[T]: Iterable[T] Sinkable[T] @Unpack[T, Rest: UnpackIter[T]] @MutSeq[T]
   #
   #
   # Builds an array from one iterable. The lowercase `array` factory instead
@@ -945,7 +948,7 @@ pub class Array[T]: Iterable[T] Sinkable[T] @MutSeq[T]
   # assert_eq $a 1
   # assert_eq $b 2
   # ```
-  pub def (unpack) self -> Unpack[T]
+  pub def (unpack) self -> Unpack[T, Rest: UnpackIter[T]]
     ...
 
   # Spreads the items positionally.
@@ -1712,7 +1715,7 @@ pub class CyclicImportError: RuntimeError
 #
 # `BaseDict` is `Dict` at runtime, so only a dict is a `BaseDict`.
 #
-pub class BaseDict[S @ {...}]: @Index[S] @Spread[S] @Unpack[S] Iterable[Entries[S]]
+pub class BaseDict[S @ {...}]: @Index[S] @Spread[S] @Unpack[S, Rest: Unpack[S]] Iterable[Entries[S]]
   #
   # Returns the number of key-value pairs (counting each value in a multi-map
   # separately).
@@ -1868,7 +1871,7 @@ pub class BaseDict[S @ {...}]: @Index[S] @Spread[S] @Unpack[S] Iterable[Entries[
   # ```
   # let :name age: years = {name: "Alice", age: 30}
   # ```
-  pub def (unpack) self -> Unpack[S]
+  pub def (unpack) self -> Unpack[S, Rest: Unpack[S]]
     ...
 
 
@@ -2622,7 +2625,7 @@ pub class FmtValue
 # assert_eq $seq[1].value $user
 # assert_eq $seq[1].width 8
 # ```
-pub class Fmt: @Index[Int, FmtSegment] @Spread[FmtSegment] @Unpack[FmtSegment]
+pub class Fmt: @Index[Int, FmtSegment] @Spread[FmtSegment] @Unpack[FmtSegment, Rest: UnpackIter[FmtSegment]]
   #
   #
   # Builds a sequence from an iterable of segments.
@@ -2763,7 +2766,7 @@ pub class Fmt: @Index[Int, FmtSegment] @Spread[FmtSegment] @Unpack[FmtSegment]
     ...
 
   # Destructures the segments positionally.
-  pub def (unpack) self -> Unpack[FmtSegment]
+  pub def (unpack) self -> Unpack[FmtSegment, Rest: UnpackIter[FmtSegment]]
     ...
 
 
@@ -3138,6 +3141,14 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   pub def (spread) self -> Spread[T]
     ...
 
+  # Returns this iterator.
+  pub def iter self -> Iter[T]
+    ...
+
+  # Returns this iterator.
+  pub def (iter) self -> Iter[T]
+    ...
+
 
 # An iterable whose iterator supports read-only unpacking.
 pub @class UnpackIterable[T]: Iterable[T]
@@ -3149,8 +3160,9 @@ pub @class UnpackIterable[T]: Iterable[T]
 
 
 # An iterator whose remaining elements can be unpacked without advancing it.
-# Spreading and `next` still consume it. Captured rests are separate values.
-pub @class UnpackIter[T]: Iter[T] Unpack[T]
+# Spreading and `next` still consume it. Captured rests are separate iterators
+# over what is left.
+pub @class UnpackIter[T]: Iter[T] Unpack[T, Rest: UnpackIter[T]]
   # Returns this iterator.
   pub def iter self -> UnpackIter[T]
 
@@ -3207,9 +3219,21 @@ pub class Nil
 # run tool stdin: $null stdout: $null
 # ```
 #
-pub class Null: Iter[Never] Sink[Value]
+pub class Null: Iter[Never] @UnpackIter[Never] Sink[Value]
   # Ends the iteration immediately without yielding a value.
   pub def (next) self
+    ...
+
+  # Destructures as no items.
+  pub def (unpack) self -> UnpackIter[Never]
+    ...
+
+  # Returns this iterator.
+  pub def iter self -> UnpackIter[Never]
+    ...
+
+  # Returns this iterator.
+  pub def (iter) self -> UnpackIter[Never]
     ...
 
   # Discards the value.
@@ -3327,7 +3351,7 @@ pub class Range[T @ Num]: Iterable[T] @Spread[T]
 # ```
 # let updated = old.with status: ready
 # ```
-pub class Record[...Ts]: Iterable[Tuple[Sym | Int, Value]] @Index[{...Ts}] @Spread[{...Ts}] @Unpack[{...Ts}]
+pub class Record[...Ts]: Iterable[Tuple[Sym | Int, Value]] @Index[{...Ts}] @Spread[{...Ts}] @Unpack[{...Ts}, Rest: Unpack[{...Ts}]]
   #
   #
   # Builds a record from one spreadable source of key-value pairs.
@@ -3410,7 +3434,7 @@ pub class Record[...Ts]: Iterable[Tuple[Sym | Int, Value]] @Index[{...Ts}] @Spre
     ...
 
   # Unpacks record items by position and symbol.
-  pub def (unpack) self -> Unpack[{...Ts}]
+  pub def (unpack) self -> Unpack[{...Ts}, Rest: Unpack[{...Ts}]]
     ...
 
   # Returns the value at a position or key.
@@ -4490,7 +4514,7 @@ pub class TimedOutError: RuntimeError
 # object is in the prelude, so `Tuple(iterable)` is available without an
 # explicit import.
 #
-pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}] Iterable[Union[...Ts]] @Index[{...Ts}] @Seq[Union[...Ts]]
+pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}, Rest: Unpack[{...Ts}]] Iterable[Union[...Ts]] @Index[{...Ts}] @Seq[Union[...Ts]]
   #
   #
   # Builds a tuple from an iterable.
@@ -4609,7 +4633,7 @@ pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}] Iterable[Union[...Ts]] @
   # for k v = {name: "Alice", age: 30}
   #   echo "$k = $v"
   # ```
-  pub def (unpack) self -> Unpack[{...Ts}]
+  pub def (unpack) self -> Unpack[{...Ts}, Rest: Unpack[{...Ts}]]
     ...
 
   # Spreads the items.

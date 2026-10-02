@@ -3046,6 +3046,36 @@ impl<'v> Protocol<'v> for Null {
         Ok(false)
     }
 
+    // Unpacks as no items, so each rest is `null` again
+    async fn op_unpack<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        sig: &'a sig::Unpack<'v, 'a>,
+        mut out: Slots<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        if sig.required > 0 {
+            return Err(Error::missing_positional(strand, sig.required));
+        }
+        for (i, default) in sig.optional.iter().enumerate() {
+            out.at(i).store(default.dup());
+        }
+        let keyed = sig.optional.len();
+        for (i, key) in sig.keys.iter().enumerate() {
+            let Some(default) = &key.default else {
+                return Err(match &key.kind {
+                    sig::UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
+                    sig::UnpackKeyKind::Const(value) => Error::missing_key(strand, value),
+                });
+            };
+            out.at(keyed + i).store(default.dup());
+        }
+        if let Some(i) = sig.pos_rest_slot() {
+            Output::set(strand, out.at(i), &this);
+        }
+        sig.fill_empty_key_rest(strand, &mut out);
+        Ok(())
+    }
+
     // Sink protocol: discards everything
     async fn op_sink<'a, 's>(
         this: Recv<'v, 'a, Self>,

@@ -429,8 +429,9 @@ let positional @ Dict[{Str, *}] = {}
 
 #### Types as Schema Arguments
 
-A type whose only parameter is a schema, such as `Dict`, also accepts types in
-its place:
+A type whose only positional parameter is a schema, such as `Dict`, also
+accepts types in its place. Any other parameters must be keyword parameters,
+which are passed by name as usual:
 
 | Shorthand    | Stands for          |
 | ------------ | ------------------- |

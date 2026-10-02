@@ -395,7 +395,7 @@ pub class Statement
 # for value = [...rest]
 #   echo $ str value
 # ```
-pub class Row: @Index[Int | Str, Value] @Unpack[{...}]
+pub class Row: @Index[Int | Str, Value] @Unpack[{...}, Rest: RowRest]
   # Reads a column by position or by name.
   #
   # ## Errors
@@ -418,7 +418,7 @@ pub class Row: @Index[Int | Str, Value] @Unpack[{...}]
     ...
 
   # Destructures the row by position or by column name.
-  pub def (unpack) self -> Unpack[{...}]
+  pub def (unpack) self -> Unpack[{...}, Rest: RowRest]
     ...
 
   # Spreads the columns, by name where keys are allowed and by position otherwise.
@@ -431,7 +431,7 @@ pub class Row: @Index[Int | Str, Value] @Unpack[{...}]
 # A positional rest spreads values; a keyed rest spreads name/value pairs
 # in sequences and keyed items in calls and dictionaries. Materialize with
 # `[...rest]` to iterate. Statement and row invalidation apply to the rest.
-pub @class RowRest: Unpack[{...}]
+pub @class RowRest: Unpack[{...}, Rest: RowRest]
 
 
 # A database transaction in progress.
