@@ -437,6 +437,41 @@ async fn opaque_pipe_reports_broken_pipe_after_receiver_drop() {
 }
 
 #[tokio::test]
+async fn opaque_pipe_write_reports_broken_pipe_after_session_stop() {
+    let (client, server_task) = connected_pair().await;
+    let (mut send, recv) = client.pipe(None).await.unwrap();
+    drop(recv);
+    stop_pair(client, server_task).await;
+
+    let error = send.write_all(b"after stop").await.unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+}
+
+#[tokio::test]
+async fn opaque_pipe_flush_reports_broken_pipe_after_transport_loss() {
+    use tokio::time::{Duration, timeout};
+
+    let (client, server_task) = connected_pair().await;
+    let (mut send, _recv) = client.pipe(None).await.unwrap();
+    // A partial trailer write leaves an RPC outstanding for flush to finish.
+    let data = vec![0; 4 * 1024 * 1024];
+    let written = timeout(Duration::from_secs(5), send.write(&data))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(written > 0 && written < data.len());
+    server_task.abort();
+    assert!(server_task.await.unwrap_err().is_cancelled());
+
+    let error = timeout(Duration::from_secs(5), send.flush())
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+    client.abort().await;
+}
+
+#[tokio::test]
 async fn opaque_pipe_connects_remote_children_without_client_relay() {
     let (client, server_task) = connected_pair().await;
     let (send, recv) = client.pipe(None).await.unwrap();
@@ -1158,7 +1193,7 @@ async fn regular_file_xattrs_round_trip_over_generic_stream() {
 }
 
 #[tokio::test]
-async fn stop_drains_outstanding_pipe_endpoints() {
+async fn stop_drains_pipe_receivers_without_waiting_for_senders() {
     use tokio::time::{Duration, sleep, timeout};
 
     let (client, server_task) = connected_pair().await;
@@ -1168,11 +1203,11 @@ async fn stop_drains_outstanding_pipe_endpoints() {
     let stopping = client.clone();
     let mut stop = tokio::spawn(async move { stopping.stop().await });
 
-    // The stop must not complete while endpoints are still outstanding.
+    // The stop must not complete while a receiver is still outstanding.
     sleep(Duration::from_millis(200)).await;
     assert!(
         !stop.is_finished(),
-        "stop completed while pipe endpoints were still open"
+        "stop completed while a pipe receiver was still open"
     );
 
     // Traffic through those endpoints keeps working during the drain.
@@ -1185,14 +1220,15 @@ async fn stop_drains_outstanding_pipe_endpoints() {
     let error = client.pipe(None).await.unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::NotConnected);
 
-    drop(send);
+    // Keep the sender alive: only the receiver should hold up shutdown.
     drop(recv);
 
     timeout(Duration::from_secs(5), &mut stop)
         .await
-        .expect("stop did not complete after endpoints were closed")
+        .expect("stop did not complete after the receiver was closed")
         .unwrap()
         .expect("stop should succeed");
+    drop(send);
     drop(client);
     server_task.await.unwrap().unwrap();
 }

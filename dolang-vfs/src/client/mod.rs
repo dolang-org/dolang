@@ -1954,6 +1954,17 @@ impl fmt::Debug for RemoteStdioRecv {
     }
 }
 
+// Losing the transport disconnects the pipe's reader, regardless of how the
+// transport reports it. Keep remote operation and non-transport RPC errors intact.
+fn stdio_send_rpc_error(error: dolang_rpc::Error) -> io::Error {
+    match error {
+        dolang_rpc::Error::Io(_) | dolang_rpc::Error::ConnectionClosed => {
+            io::Error::new(io::ErrorKind::BrokenPipe, error)
+        }
+        error => Error::from(error).into(),
+    }
+}
+
 impl AsyncWrite for RemoteStdioSend {
     fn poll_write(
         mut self: Pin<&mut Self>,
@@ -1995,7 +2006,7 @@ impl AsyncWrite for RemoteStdioSend {
                     let unreported = pending.unreported;
                     self.write_body = None;
                     match result
-                        .map_err(Error::from)?
+                        .map_err(stdio_send_rpc_error)?
                         .into_response()
                         .map_err(io::Error::from)?
                     {
@@ -2018,7 +2029,9 @@ impl AsyncWrite for RemoteStdioSend {
             .poll_write(cx, &buf[..buf.len().min(remaining)])
         {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Ready(Err(error)) => {
+                Poll::Ready(Err(io::Error::new(io::ErrorKind::BrokenPipe, error)))
+            }
             Poll::Ready(Ok(n)) => {
                 pending.sent += n;
                 if pending.sent == pending.target {
@@ -2041,17 +2054,12 @@ impl AsyncWrite for RemoteStdioSend {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(result) => {
                     self.write_body = None;
-                    Poll::Ready(
-                        result
-                            .map_err(Error::from)
-                            .map_err(io::Error::from)
-                            .and_then(|result| {
-                                match result.into_response().map_err(io::Error::from)? {
-                                    ResponseKind::StdioSendWrite(_) => Ok(()),
-                                    response => Err(unexpected(response)),
-                                }
-                            }),
-                    )
+                    Poll::Ready(result.map_err(stdio_send_rpc_error).and_then(|result| {
+                        match result.into_response().map_err(io::Error::from)? {
+                            ResponseKind::StdioSendWrite(_) => Ok(()),
+                            response => Err(unexpected(response)),
+                        }
+                    }))
                 }
             };
         }
@@ -2088,7 +2096,7 @@ impl AsyncWrite for RemoteStdioSend {
             Poll::Ready(result) => {
                 self.pending = None;
                 match result
-                    .map_err(Error::from)?
+                    .map_err(stdio_send_rpc_error)?
                     .into_response()
                     .map_err(io::Error::from)?
                 {
