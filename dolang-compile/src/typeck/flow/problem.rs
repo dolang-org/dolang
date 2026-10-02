@@ -32,6 +32,8 @@ pub(crate) enum Problem {
         found: String,
         misfit: Misfit,
     },
+    /// A pattern that can't unpack a value of the type found
+    Impossible { span: Span, found: String },
     /// A value that doesn't fit a variable's annotation, or a function's declared
     /// result
     Annotation {
@@ -99,6 +101,7 @@ impl Report for Problem {
             | Problem::Conflict(span)
             | Problem::Unadmitted { span, .. }
             | Problem::Misfit { span, .. }
+            | Problem::Impossible { span, .. }
             | Problem::Annotation { span, .. }
             | Problem::Default { span, .. }
             | Problem::MissingMember { span, .. }
@@ -169,6 +172,9 @@ impl Report for Problem {
                     Misfit::Unpackable => "unpackable",
                 };
                 write!(w, "`{found}` is not {required}")
+            }
+            Problem::Impossible { found, .. } => {
+                write!(w, "`{found}` can never unpack as this pattern")
             }
             Problem::Annotation {
                 found,

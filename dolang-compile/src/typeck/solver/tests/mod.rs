@@ -18,6 +18,7 @@ mod rigids;
 mod schemas;
 mod skolems;
 mod unknown;
+mod unpack;
 
 fn literal(db: &Database, n: i128) -> TypeId {
     db.intern(Type::Literal(Literal::Int(n)))

@@ -22,13 +22,14 @@ use super::{
     problem::{Misfit, Problem},
 };
 use crate::{
+    RestKind,
     source::Span,
     typeck::{
         cfg::{Collection, Expr, ExprKind, FuncId, Item, Pattern, PatternItem, PatternKey, VarId},
         elab::Designated,
         solver::{
-            CallArgument, Contradiction, InferVarId, Issue, ObligationId, Outcome, Provenance,
-            Solver, Status, Step as Derivation, Term,
+            CallArgument, Contradiction, InferVarId, Issue, ObligationId, Outcome, PatternShape,
+            Provenance, Solver, Status, Step as Derivation, Term,
         },
         r#type::{
             Argument, BoundRef, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
@@ -1872,28 +1873,103 @@ impl<'a> Flow<'a, '_> {
     }
 
     /// The types a pattern's items unpack from a value, which must be an
-    /// `Unpack[S]`. Since unpacking checks the items' count as it runs, every item
-    /// is optional and the pattern admits any others; a rest's type isn't found yet.
-    /// Diagnosed at `span`, if given.
+    /// `Unpack[S]`, diagnosed at `span`; `None` if the pattern can't match it.
+    /// The pattern is walked against `S` (see [`Solver::unpack_pattern`]), giving
+    /// a rest `Unpack[tail]`. Where `S` can't be found, every item is optional and
+    /// the pattern admits any others, giving a const key or a rest `Unknown`.
     pub(super) fn unpack(
         &mut self,
         at: At,
+        state: &mut State,
         items: &[PatternItem],
         value: TypeId,
-        span: Option<Span>,
-    ) -> Vec<TypeId> {
+        span: Span,
+    ) -> Option<Vec<TypeId>> {
         let unknown = self.db.unknown();
         if value == self.db.bottom() {
-            return vec![value; items.len()];
+            return Some(vec![value; items.len()]);
         }
         let Some(unpack) = self.designated(Designated::Unpack) else {
-            return vec![unknown; items.len()];
+            return Some(vec![unknown; items.len()]);
         };
-        let check = match span {
-            Some(span) => Check::Fits(span, Misfit::Unpackable),
-            None => Check::Quiet,
+        let check = Check::Fits(span, Misfit::Unpackable);
+        let mut pattern = PatternShape {
+            positional: Vec::new(),
+            keyed: Vec::new(),
+            positional_rest: false,
+            keyed_rest: false,
         };
-        self.conclude(at, None, |rule| {
+        for item in items {
+            match item.key {
+                PatternKey::Pos => pattern.positional.push(item.default),
+                PatternKey::Key(key) => {
+                    let key = self.db.intern(Type::Literal(Literal::Sym(key)));
+                    pattern.keyed.push((key, item.default));
+                }
+                PatternKey::ConstKey(ref key) => {
+                    // A constant, without operands
+                    let key = self.eval(at, state, &mut VecDeque::new(), key);
+                    pattern.keyed.push((self.db.regular(key), item.default));
+                }
+                PatternKey::Rest(kind) => {
+                    pattern.positional_rest |= kind != RestKind::Key;
+                    pattern.keyed_rest |= kind != RestKind::Pos;
+                }
+            }
+        }
+        if let Some(unpacked) = self.solver().unpack_pattern(value, unpack, &pattern) {
+            self.conclude(at, None, |rule| {
+                let target = rule.term(|holes| {
+                    let unknown = holes.db.unknown();
+                    let schema = holes.schema(vec![
+                        self::item(Multiplicity::Repeated, Element::Positional(unknown)),
+                        self::item(
+                            Multiplicity::Repeated,
+                            Element::Keyed {
+                                key: unknown,
+                                value: unknown,
+                            },
+                        ),
+                    ]);
+                    holes.apply(unpack, vec![schema])
+                });
+                rule.constrain(rule.closed(value), target, check.clone());
+                Vec::new()
+            });
+            if !unpacked.possible {
+                return None;
+            }
+            let (positional, keyed) = unpacked.slots.split_at(pattern.positional.len());
+            let (mut positional, mut keyed) = (positional.iter(), keyed.iter());
+            let types = (items.iter())
+                .map(|item| match item.key {
+                    PatternKey::Pos => *positional.next().expect("a positional slot"),
+                    PatternKey::Key(_) | PatternKey::ConstKey(_) => {
+                        *keyed.next().expect("a keyed slot")
+                    }
+                    PatternKey::Rest(kind) => match &unpacked.tail {
+                        Some(tail) => {
+                            let mut schema = Vec::new();
+                            if kind != RestKind::Key {
+                                schema.extend(tail.positional.iter().cloned());
+                            }
+                            if kind != RestKind::Pos {
+                                schema.extend(tail.keyed.iter().cloned());
+                            }
+                            let schema = self.db.intern(Type::Schema(schema.into()));
+                            self.db.intern(Type::Apply {
+                                base: self.db.intern(Type::Decl(unpack)),
+                                args: vec![Argument::Positional(schema)].into(),
+                                kind: Kind::Type,
+                            })
+                        }
+                        None => unknown,
+                    },
+                })
+                .collect();
+            return Some(types);
+        }
+        let types = self.conclude(at, None, |rule| {
             let vars: Vec<Option<Term>> = (items.iter())
                 .map(|item| match item.key {
                     PatternKey::Pos | PatternKey::Key(_) => Some(rule.solver.infer()),
@@ -1933,7 +2009,8 @@ impl<'a> Flow<'a, '_> {
             (vars.into_iter())
                 .map(|var| var.unwrap_or(rule.closed(unknown)))
                 .collect()
-        })
+        });
+        Some(types)
     }
 }
 

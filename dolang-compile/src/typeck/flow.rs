@@ -626,7 +626,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                     Pattern::Unpack(_) => None,
                 };
                 let ty = self.expect(at, state, &mut operands, value, expected);
-                self.bind(at, state, pattern, ty, value.span, true);
+                return self.bind(at, state, pattern, ty, value.span);
             }
             Step::Assign { target, value } => {
                 let count = match target {
@@ -761,7 +761,7 @@ impl<'a, 'u> Flow<'a, 'u> {
     }
 
     /// Bind a pattern to a value at `span`, recording each binding. Unpacking is
-    /// a rule, diagnosed if `strict`: a pattern that is a test isn't.
+    /// a rule. Returns whether the pattern can match, reporting it if it can't.
     fn bind(
         &mut self,
         at: At,
@@ -769,13 +769,17 @@ impl<'a, 'u> Flow<'a, 'u> {
         pattern: &Pattern,
         ty: TypeId,
         span: Span,
-        strict: bool,
-    ) {
+    ) -> bool {
         match pattern {
             &Pattern::Bind(var) => self.binding(at, state, var, ty, span),
             Pattern::Unpack(items) => {
-                let blame = strict.then_some(span);
-                let types = self.unpack(at, items, ty, blame);
+                let Some(types) = self.unpack(at, state, items, ty, span) else {
+                    if self.observing() {
+                        let found = self.tables.render_type(self.db, ty);
+                        self.problem(Problem::Impossible { span, found });
+                    }
+                    return false;
+                };
                 for (item, ty) in items.iter().zip(types) {
                     if let Some(var) = item.var {
                         let span = match self.ir.var(var).origin {
@@ -787,6 +791,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 }
             }
         }
+        true
     }
 
     /// Bind a variable, checking the value at `span` against its annotation
@@ -978,8 +983,9 @@ impl<'a, 'u> Flow<'a, 'u> {
                 self.raise(at.ctx, data.handler, &state, unknown);
                 let ty = self.eval(at, &mut state, &mut operands, value);
                 let mut bound = state.clone();
-                self.bind(at, &mut bound, pattern, ty, value.span, false);
-                self.flow(at.ctx, *then, bound);
+                if self.bind(at, &mut bound, pattern, ty, value.span) {
+                    self.flow(at.ctx, *then, bound);
+                }
                 self.flow(at.ctx, *else_, state);
             }
             Terminal::Catch { clauses, otherwise } => {
@@ -1022,8 +1028,9 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let iterable = self.read(at, &state, *iter).ty;
                 let item = self.next(at, iterable, *span);
                 let mut bound = state.clone();
-                self.bind(at, &mut bound, pattern, item, *span, true);
-                self.flow(at.ctx, *body, bound);
+                if self.bind(at, &mut bound, pattern, item, *span) {
+                    self.flow(at.ctx, *body, bound);
+                }
                 self.flow(at.ctx, *exit, state);
             }
             Terminal::Throw(value) => {

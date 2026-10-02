@@ -1,0 +1,112 @@
+# A pattern is walked against the schema `S` of the `Unpack[S]` its value
+# reaches: each item takes the join of what it can bind, and a rest unpacks as
+# what the pattern leaves.
+
+import std:
+  - @Unpack
+
+pub def tuple_rest()
+  let a ...r = (1, "a", true)
+  let _ = a
+  #       ^: flow std.Int
+  let _ = r
+  #       ^: flow std.Unpack[{std.Str, std.Bool}]
+  let xs = [...r]
+  let _ = xs
+  #       ^~: flow std.Array[std.Bool | std.Str]
+
+pub def array_rest xs @ Array[Int]
+  let a ...r = xs
+  let _ = a
+  #       ^: flow std.Int
+  let _ = r
+  #       ^: flow std.Unpack[{*std.Int}]
+
+pub def quantified source @ Unpack[{Int, ?Str, *Bool}]
+  let a b = source
+  let _ = a
+  #       ^: flow std.Int
+  let _ = b
+  #       ^: flow std.Bool | std.Str
+  let _ ...r = source
+  let _ = r
+  #       ^: flow std.Unpack[{?std.Str, *std.Bool}]
+  let _ _ ...t = source
+  let _ = t
+  #       ^: flow std.Unpack[{*std.Bool}]
+
+pub def keyed()
+  let :a ...r = (a: 1, b: "x")
+  let _ = a
+  #       ^: flow std.Int
+  let _ = r
+  #       ^: flow std.Unpack[{b: std.Str}]
+  let :b *p **k = (1, b: "x", c: true)
+  let _ = b
+  #       ^: flow std.Str
+  let _ = p
+  #       ^: flow std.Unpack[{std.Int}]
+  let _ = k
+  #       ^: flow std.Unpack[{c: std.Bool}]
+
+pub def const_keys d @ Dict[Str, Int]
+  let "name": name = d
+  let _ = name
+  #       ^~~~: flow std.Int
+
+pub def defaults xs @ Array[Int]
+  bind xs
+    a = "none"
+    :b = nil
+  let _ = a
+  #       ^: flow std.Int | std.Str
+  let _ = b
+  #       ^: flow std.Nil
+
+pub def unions c @ Bool
+  let v = if c
+    (1, "a")
+  else
+    (true,)
+  let x ...r = v
+  let _ = x
+  #       ^: flow std.Bool | std.Int
+  let _ = r
+  #       ^: flow std.Unpack[{*std.Str}]
+
+pub def dynamic v
+  let a ...r = v
+  let _ = a
+  #       ^: flow Unknown
+  let _ = r
+  #       ^: flow Unknown
+
+pub def possible s @ Str
+  let a _b = [4]
+  let _ = a
+  #       ^: flow std.Int
+  let _k v = s.split "="
+  let _ = v
+  #       ^: flow std.Str
+
+pub def impossible()
+  if let _x _y = 4
+    # error: `4` is not unpackable
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   if let _x _y = 4
+    #    |                  ^
+    nil
+  if let _foo _bar = (4,)
+    # error: `std.Tuple[{4}]` can never unpack as this pattern
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   if let _foo _bar = (4,)
+    #    |                      ^^^^
+    nil
+  let _a _b = (4,)
+# error: `std.Tuple[{4}]` can never unpack as this pattern
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _a _b = (4,)
+#    |               ^^^^
