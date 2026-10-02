@@ -948,20 +948,20 @@ impl<'u> Walk<'_, 'u> {
         use surface::ParamKind;
 
         match param {
-            Param::Pos { ident, ty, default } => {
+            Param::Pos { bind, ty, default } => {
                 if let Some(default) = default {
                     self.expr(frame, &default.expr);
                 }
                 surface::Param {
                     kind: ParamKind::Pos,
-                    name: Some(self.name(ident.span)),
+                    name: Some(self.name(bind.unwrap_ident().span)),
                     default: default.is_some(),
                     annot: self.annot(frame, ty, Role::Type),
                 }
             }
             Param::Key {
                 key_span,
-                ident,
+                bind,
                 ty,
                 default,
                 ..
@@ -973,7 +973,7 @@ impl<'u> Walk<'_, 'u> {
                     kind: ParamKind::Key {
                         key: self.name(*key_span),
                     },
-                    name: Some(self.name(ident.span)),
+                    name: Some(self.name(bind.unwrap_ident().span)),
                     default: default.is_some(),
                     annot: self.annot(frame, ty, Role::Type),
                 }
@@ -981,7 +981,7 @@ impl<'u> Walk<'_, 'u> {
             Param::ConstKey {
                 key_expr,
                 key_const,
-                ident,
+                bind,
                 ty,
                 default,
                 ..
@@ -1000,7 +1000,7 @@ impl<'u> Walk<'_, 'u> {
                 };
                 surface::Param {
                     kind: ParamKind::ConstKey { key },
-                    name: Some(self.name(ident.span)),
+                    name: Some(self.name(bind.unwrap_ident().span)),
                     default: default.is_some(),
                     annot: self.annot(frame, ty, Role::Type),
                 }
@@ -1451,10 +1451,10 @@ impl<'u> Walk<'_, 'u> {
                     Pattern::Unpack(params) => {
                         for param in params {
                             match param {
-                                Param::Pos { ident, .. }
-                                | Param::Key { ident, .. }
-                                | Param::ConstKey { ident, .. }
-                                | Param::Rest {
+                                Param::Pos { bind, .. }
+                                | Param::Key { bind, .. }
+                                | Param::ConstKey { bind, .. } => value(bind.unwrap_ident()),
+                                Param::Rest {
                                     ident: Some(ident), ..
                                 } => value(ident),
                                 Param::Rest { ident: None, .. } => {}

@@ -1503,9 +1503,60 @@ pub(crate) struct ParamDefault {
     pub(crate) fold: Option<Const>,
 }
 
+/// What a parameter or pattern item binds its value to
+pub(crate) enum ParamBind {
+    Ident(Ident),
+    /// A nested pattern, matched against the item's value
+    Pattern {
+        pattern: Box<Pattern>,
+        /// The `(` and `)` of a horizontal sub-pattern; a vertical one has none
+        parens: Option<(Span, Span)>,
+    },
+}
+
+impl ParamBind {
+    /// The bound name, for consumers that don't support nested patterns yet
+    pub(crate) fn unwrap_ident(&self) -> &Ident {
+        match self {
+            ParamBind::Ident(ident) => ident,
+            ParamBind::Pattern { .. } => {
+                unimplemented!("nested patterns in the type checker (#854)")
+            }
+        }
+    }
+}
+
+impl Node for ParamBind {
+    const TRANSPARENT: bool = true;
+
+    fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+        match self {
+            ParamBind::Ident(ident) => visit.token(
+                Token::Variable,
+                ident.span,
+                ident.res.as_ref().and_then(|r| r.node),
+            ),
+            ParamBind::Pattern { pattern, parens } => {
+                if let Some((open, _)) = parens {
+                    visit.token(Token::Delim, *open, None)?;
+                }
+                visit.node(&**pattern)?;
+                if let Some((_, close)) = parens {
+                    visit.token(Token::Delim, *close, None)?;
+                }
+                ControlFlow::Continue(())
+            }
+        }
+    }
+
+    fn kind(&self) -> NodeKind {
+        unreachable!()
+    }
+}
+
 pub(crate) enum Param {
     Pos {
-        ident: Ident,
+        bind: ParamBind,
         ty: Option<Box<Annot>>,
         default: Option<ParamDefault>,
     },
@@ -1513,14 +1564,14 @@ pub(crate) enum Param {
         key_span: Span,
         /// The `:`, which precedes the key in `:name` and follows it in `name:`
         colon_span: Span,
-        ident: Ident,
+        bind: ParamBind,
         ty: Option<Box<Annot>>,
         default: Option<ParamDefault>,
     },
     ConstKey {
         key_expr: Expr,
         key_const: Const,
-        ident: Ident,
+        bind: ParamBind,
         ty: Option<Box<Annot>>,
         default: Option<ParamDefault>,
         colon_span: Span,
@@ -1538,12 +1589,8 @@ pub(crate) enum Param {
 impl Node for Param {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         match self {
-            Param::Pos { ident, ty, default } => {
-                visit.token(
-                    Token::Variable,
-                    ident.span,
-                    ident.res.as_ref().and_then(|r| r.node),
-                )?;
+            Param::Pos { bind, ty, default } => {
+                bind.trans(visit)?;
                 if let Some(ty) = ty {
                     visit.node(&**ty)?;
                 }
@@ -1556,17 +1603,13 @@ impl Node for Param {
             Param::Key {
                 key_span,
                 colon_span,
-                ident,
+                bind,
                 ty,
                 default,
             } => {
                 visit.token(Token::Key, *key_span, None)?;
                 visit.token(Token::Delim, *colon_span, None)?;
-                visit.token(
-                    Token::Variable,
-                    ident.span,
-                    ident.res.as_ref().and_then(|r| r.node),
-                )?;
+                bind.trans(visit)?;
                 if let Some(ty) = ty {
                     visit.node(&**ty)?;
                 }
@@ -1578,7 +1621,7 @@ impl Node for Param {
             }
             Param::ConstKey {
                 key_expr,
-                ident,
+                bind,
                 ty,
                 default,
                 colon_span,
@@ -1586,11 +1629,7 @@ impl Node for Param {
             } => {
                 visit.node(key_expr)?;
                 visit.token(Token::Delim, *colon_span, None)?;
-                visit.token(
-                    Token::Variable,
-                    ident.span,
-                    ident.res.as_ref().and_then(|r| r.node),
-                )?;
+                bind.trans(visit)?;
                 if let Some(ty) = ty {
                     visit.node(&**ty)?;
                 }

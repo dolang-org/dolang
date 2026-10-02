@@ -20,8 +20,8 @@ use crate::{
     ast::{
         AliasBody, Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, Decorator, Def,
         DictElem, Expr, ExprBody, FieldInit, For, Function, Ident, If, ImportElement, LValue,
-        Origin, Param, PatIdent, Pattern, PrimStmt, Res, Root, Stmt, TypeArg, TypeDecl, TypeEntry,
-        TypeExpr, TypeRes, Var, implicit_tys_mut, visit::Node,
+        Origin, Param, ParamBind, PatIdent, Pattern, PrimStmt, Res, Root, Stmt, TypeArg, TypeDecl,
+        TypeEntry, TypeExpr, TypeRes, Var, implicit_tys_mut, visit::Node,
     },
     diag::Severity,
     source::{Diagnose, Diags, File, Span},
@@ -673,8 +673,11 @@ impl Check<'_> {
 
     fn param(&mut self, frame: &Frame<'_>, param: &mut Param) {
         match param {
-            Param::Pos { ident, .. } | Param::Key { ident, .. } | Param::ConstKey { ident, .. } => {
-                self.warn_value_name(frame, ident)
+            Param::Pos { bind, .. } | Param::Key { bind, .. } | Param::ConstKey { bind, .. } => {
+                match bind {
+                    ParamBind::Ident(ident) => self.warn_value_name(frame, ident),
+                    ParamBind::Pattern { pattern, .. } => self.pattern(frame, pattern),
+                }
             }
             Param::Rest {
                 ident: Some(ident), ..

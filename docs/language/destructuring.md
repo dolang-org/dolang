@@ -136,6 +136,60 @@ bind {foo: nil}
 assert_eq $foo nil
 ```
 
+## Nested Patterns
+
+An item in parentheses matches its value against a pattern of its own:
+
+```playground
+#> import test:
+#>   - assert_eq
+let a (b c) = [1, [2, 3]]
+assert_eq [a, b, c] [1, 2, 3]
+
+let :name address: (:city :zip) = $
+  name: Alice
+  address:
+    city: Springfield
+    zip: 12345
+assert_eq $city Springfield
+```
+
+A space must separate the parentheses from a preceding name. Within the
+parentheses, items read as in a parameter list, so they may have defaults, and
+newlines are only whitespace:
+
+```
+let id (
+  host
+  port = 80
+) = ["web", ["example.com"]]
+```
+
+A parenthesized pattern always unpacks, even with one item. `let (x) = [1]`
+binds the item, where `let x = [1]` binds the array itself. An empty `()`
+matches only an empty value, so `if let () = items` tests for one.
+
+In vertical layout, an indented block after a key nests the same way:
+
+```playground
+#> import test:
+#>   - assert_eq
+bind {status: 200, headers: {"content-type": "text/plain"}}
+  :status
+  headers:
+    "content-type": type
+assert_eq $type "text/plain"
+```
+
+Annotations go on the names a sub-pattern binds, never on the sub-pattern, and a
+sub-pattern has no default of its own. Function parameters accept sub-patterns
+too:
+
+```
+def add (x1 y1) (x2 y2)
+  [x1 + x2, y1 + y2]
+```
+
 ## Conditional Destructuring
 
 `let` and `bind` after `if` or `while` make the destructuring itself the
@@ -222,6 +276,11 @@ if let value = lookup key
 else
   echo "not found"
 ```
+
+To match a sequence of exactly one item instead, write the item in parentheses:
+`if let (value) = items`.
+
+A nested pattern matches only if every level does.
 
 ## Destructuring in `for`
 

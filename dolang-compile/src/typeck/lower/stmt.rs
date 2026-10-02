@@ -338,24 +338,24 @@ impl<'u> Scope<'_, '_, 'u> {
         self.in_frame(frame, |scope| {
             for param in params {
                 let (Param::Pos {
-                    ident,
+                    bind,
                     default: Some(default),
                     ..
                 }
                 | Param::Key {
-                    ident,
+                    bind,
                     default: Some(default),
                     ..
                 }
                 | Param::ConstKey {
-                    ident,
+                    bind,
                     default: Some(default),
                     ..
                 }) = param
                 else {
                     continue;
                 };
-                let Some(var) = scope.var(ident) else {
+                let Some(var) = scope.var(bind.unwrap_ident()) else {
                     continue;
                 };
                 let value = scope.expr(&default.expr);
@@ -405,24 +405,21 @@ impl<'u> Scope<'_, '_, 'u> {
     /// pattern binds
     fn pattern_item(&mut self, param: &'u Param) -> PatternItem {
         let (key, var) = match param {
-            Param::Pos { ident, ty, .. } => (PatternKey::Pos, self.binding(ident, ty.as_deref())),
+            Param::Pos { bind, ty, .. } => (
+                PatternKey::Pos,
+                self.binding(bind.unwrap_ident(), ty.as_deref()),
+            ),
             Param::Key {
-                key_span,
-                ident,
-                ty,
-                ..
+                key_span, bind, ty, ..
             } => (
                 PatternKey::Key(self.symbol(*key_span)),
-                self.binding(ident, ty.as_deref()),
+                self.binding(bind.unwrap_ident(), ty.as_deref()),
             ),
             Param::ConstKey {
-                key_expr,
-                ident,
-                ty,
-                ..
+                key_expr, bind, ty, ..
             } => {
                 let key = PatternKey::ConstKey(self.expr(key_expr));
-                (key, self.binding(ident, ty.as_deref()))
+                (key, self.binding(bind.unwrap_ident(), ty.as_deref()))
             }
             Param::Rest { kind, ident, .. } => {
                 return PatternItem {
@@ -754,12 +751,14 @@ impl<'u> Scope<'_, '_, 'u> {
             [] => self.emit(Step::Pop),
             [
                 Param::Pos {
-                    ident,
+                    bind,
                     ty,
                     default: None,
                 },
             ] => {
-                let var = self.in_frame(&frame, |scope| scope.binding(ident, ty.as_deref()));
+                let var = self.in_frame(&frame, |scope| {
+                    scope.binding(bind.unwrap_ident(), ty.as_deref())
+                });
                 self.emit(Step::Let {
                     pattern: Pattern::Bind(var),
                     value: operand,

@@ -1,0 +1,6 @@
+let a (b c)@Int = [1, [2, 3]]
+# error: a sub-pattern cannot be annotated; annotate its bindings instead
+#   --> nested_pattern_annot.dol:LL:LL
+#    |
+# LL | let a (b c)@Int = [1, [2, 3]]
+#    |            ^

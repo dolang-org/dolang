@@ -180,41 +180,49 @@ impl Scope<'_> {
     }
 }
 
+/// Split what an item binds into a name or a sub-pattern.
+fn split_bind(bind: &mut ParamBind) -> (Option<&mut Ident>, Option<&mut Pattern>) {
+    match bind {
+        ParamBind::Ident(ident) => (Some(ident), None),
+        ParamBind::Pattern { pattern, .. } => (None, Some(pattern)),
+    }
+}
+
 impl Index<'_> {
     fn param_kind(param: &Param) -> (Kind, Span) {
         let (kind, key_span, ident, ty, default) = match param {
-            Param::Pos { ident, ty, default } => (
+            Param::Pos { bind, ty, default } => (
                 Kind::PositionalParam {
-                    name: ident.span,
+                    name: bind.span(),
                     default: default.as_ref().map(|default| default.expr.span()),
                 },
                 None,
-                Some(ident.span),
+                Some(bind.span()),
                 ty,
                 default,
             ),
             Param::Key {
                 key_span,
                 colon_span,
-                ident,
+                bind,
                 ty,
                 default,
             } => (
                 Kind::KeyParam {
                     key: *key_span,
-                    name: ident.span,
+                    name: bind.span(),
                     default: default.as_ref().map(|default| default.expr.span()),
                 },
                 // The `:` is part of how the parameter is written, and in the
                 // `:name` form it is where the parameter starts.
                 Some(*key_span | *colon_span),
-                Some(ident.span),
+                Some(bind.span()),
                 ty,
                 default,
             ),
             Param::ConstKey {
                 key_expr,
-                ident,
+                bind,
                 ty,
                 default,
                 ..
@@ -223,11 +231,11 @@ impl Index<'_> {
                 (
                     Kind::KeyParam {
                         key,
-                        name: ident.span,
+                        name: bind.span(),
                         default: default.as_ref().map(|default| default.expr.span()),
                     },
                     Some(key),
-                    Some(ident.span),
+                    Some(bind.span()),
                     ty,
                     default,
                 )
@@ -860,15 +868,15 @@ impl Index<'_> {
         extent: Option<Span>,
     ) {
         let (kind, span) = Self::param_kind(param);
-        let ident = match param {
-            Param::Pos { ident, default, .. } | Param::Key { ident, default, .. } => {
+        let (ident, nested) = match param {
+            Param::Pos { bind, default, .. } | Param::Key { bind, default, .. } => {
                 if let Some(default) = default {
                     self.expr(scope, &mut default.expr);
                 }
-                Some(ident)
+                split_bind(bind)
             }
             Param::ConstKey {
-                ident,
+                bind,
                 key_expr,
                 default,
                 ..
@@ -877,9 +885,9 @@ impl Index<'_> {
                 if let Some(default) = default {
                     self.expr(scope, &mut default.expr);
                 }
-                Some(ident)
+                split_bind(bind)
             }
-            Param::Rest { ident, .. } => ident.as_mut(),
+            Param::Rest { ident, .. } => (ident.as_mut(), None),
         };
         let id = if let Some(ident) = ident {
             let kind = if is_self {
@@ -903,6 +911,10 @@ impl Index<'_> {
         } else {
             None
         };
+        // A sub-pattern's own bindings are names in the body, never parameters
+        if let Some(pattern) = nested {
+            self.pattern(scope, pattern, is_pub, extent.filter(|_| !signature));
+        }
         let (Param::Pos { ty, .. }
         | Param::Key { ty, .. }
         | Param::ConstKey { ty, .. }

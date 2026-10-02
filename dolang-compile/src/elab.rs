@@ -12,8 +12,8 @@ use crate::{
     ast::{
         self, Arg, ArrayElem, Assign, Bind, Block, Class, Def, DictElem, Expand, Expr, ExprBody,
         For, Function, GetVariant, Ident, If, Import, ImportElement, ImportItem, Key, LValue, Let,
-        Method, NlGuard, NlInfo, Origin, Pair, Param, PatIdent, Pattern, PatternBind, PrimStmt,
-        Res, Return, Root, SideEffect, Single, Stmt, Try, Var, While, visit::Node,
+        Method, NlGuard, NlInfo, Origin, Pair, Param, ParamBind, PatIdent, Pattern, PatternBind,
+        PrimStmt, Res, Return, Root, SideEffect, Single, Stmt, Try, Var, While, visit::Node,
     },
     diag::{AnnotationKind, Severity},
     source::{Annotate, Diagnose, Diags, File, Patch, Span},
@@ -1544,28 +1544,7 @@ impl<'a> Elaborater<'a> {
                 {
                     let mut scope = scope.nested_element();
                     // Inject loop binds into inner scope
-                    match bind {
-                        Pattern::Ident(PatIdent { ident, .. }) => {
-                            self.bind_ident(&mut scope, ident, false)?
-                        }
-                        Pattern::Unpack(params) => {
-                            for param in params.iter_mut() {
-                                self.visit_param_non_const_default(&mut scope, param)?;
-                                match param {
-                                    Param::Pos { ident, .. }
-                                    | Param::Key { ident, .. }
-                                    | Param::ConstKey { ident, .. } => {
-                                        self.bind_ident(&mut scope, ident, false)?
-                                    }
-                                    Param::Rest { ident, .. } => {
-                                        if let Some(ident) = ident {
-                                            self.bind_ident(&mut scope, ident, false)?
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    self.bind_pattern(&mut scope, bind)?;
                     for arg in body.elems.iter_mut() {
                         self.visit_array_elem(&mut scope, arg, is_arg)?;
                     }
@@ -1611,28 +1590,7 @@ impl<'a> Elaborater<'a> {
                 {
                     let mut scope = scope.nested_element();
                     // Inject loop binds into inner scope
-                    match bind {
-                        Pattern::Ident(PatIdent { ident, .. }) => {
-                            self.bind_ident(&mut scope, ident, false)?
-                        }
-                        Pattern::Unpack(params) => {
-                            for param in params.iter_mut() {
-                                self.visit_param_non_const_default(&mut scope, param)?;
-                                match param {
-                                    Param::Pos { ident, .. }
-                                    | Param::Key { ident, .. }
-                                    | Param::ConstKey { ident, .. } => {
-                                        self.bind_ident(&mut scope, ident, false)?
-                                    }
-                                    Param::Rest { ident, .. } => {
-                                        if let Some(ident) = ident {
-                                            self.bind_ident(&mut scope, ident, false)?
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    self.bind_pattern(&mut scope, bind)?;
                     for elem in body.elems.iter_mut() {
                         self.visit_dict_elem(&mut scope, elem, is_arg)?;
                     }
@@ -2022,28 +1980,7 @@ impl<'a> Elaborater<'a> {
                 {
                     let mut scope = scope.nested_element();
                     // Inject loop binds into inner scope
-                    match bind {
-                        Pattern::Ident(PatIdent { ident, .. }) => {
-                            self.bind_ident(&mut scope, ident, false)?
-                        }
-                        Pattern::Unpack(params) => {
-                            for param in params.iter_mut() {
-                                self.visit_param_non_const_default(&mut scope, param)?;
-                                match param {
-                                    Param::Pos { ident, .. }
-                                    | Param::Key { ident, .. }
-                                    | Param::ConstKey { ident, .. } => {
-                                        self.bind_ident(&mut scope, ident, false)?
-                                    }
-                                    Param::Rest { ident, .. } => {
-                                        if let Some(ident) = ident {
-                                            self.bind_ident(&mut scope, ident, false)?
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    self.bind_pattern(&mut scope, bind)?;
                     for arg in body.elems.iter_mut() {
                         self.visit_cmd_arg(&mut scope, arg)?;
                     }
@@ -2146,14 +2083,19 @@ impl<'a> Elaborater<'a> {
         export: bool,
     ) -> Result<()> {
         match pat {
-            Pattern::Ident(PatIdent { ident, .. }) => self.bind_ident(scope, ident, export)?,
+            Pattern::Ident(PatIdent { ident, .. }) => self.bind_ident(scope, ident, export),
             Pattern::Unpack(params) => {
                 for param in params.iter_mut() {
                     self.visit_param_non_const_default(scope, param)?;
                     match param {
-                        Param::Pos { ident, .. }
-                        | Param::Key { ident, .. }
-                        | Param::ConstKey { ident, .. } => self.bind_ident(scope, ident, export)?,
+                        Param::Pos { bind, .. }
+                        | Param::Key { bind, .. }
+                        | Param::ConstKey { bind, .. } => match bind {
+                            ParamBind::Ident(ident) => self.bind_ident(scope, ident, export)?,
+                            ParamBind::Pattern { pattern, .. } => {
+                                self.visit_pattern(scope, pattern, export)?
+                            }
+                        },
                         Param::Rest { ident, .. } => {
                             if let Some(ident) = ident {
                                 self.bind_ident(scope, ident, export)?
@@ -2161,9 +2103,9 @@ impl<'a> Elaborater<'a> {
                         }
                     }
                 }
+                Ok(())
             }
         }
-        Ok(())
     }
 
     fn visit_assign(&mut self, scope: &mut Scope<'_>, node: &mut Assign) -> Result<()> {
@@ -2184,25 +2126,7 @@ impl<'a> Elaborater<'a> {
     /// The bindings land at the front of the scope, which lowering relies on to
     /// resolve them positionally.
     fn bind_pattern(&mut self, scope: &mut Scope<'_>, pattern: &mut Pattern) -> Result<()> {
-        match pattern {
-            Pattern::Ident(PatIdent { ident, .. }) => self.bind_ident(scope, ident, false)?,
-            Pattern::Unpack(params) => {
-                for param in params.iter_mut() {
-                    self.visit_param_non_const_default(scope, param)?;
-                    match param {
-                        Param::Pos { ident, .. }
-                        | Param::Key { ident, .. }
-                        | Param::ConstKey { ident, .. } => self.bind_ident(scope, ident, false)?,
-                        Param::Rest { ident, .. } => {
-                            if let Some(ident) = ident {
-                                self.bind_ident(scope, ident, false)?
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
+        self.visit_pattern(scope, pattern, false)
     }
 
     /// Visit the body of an `if` or `while` branch, injecting the bindings of its
@@ -3013,9 +2937,15 @@ impl<'a> Elaborater<'a> {
         for (param_idx, param) in params.iter_mut().enumerate() {
             self.visit_param_non_const_default(scope, param)?;
             let ident = match param {
-                Param::Pos { ident, .. }
-                | Param::Key { ident, .. }
-                | Param::ConstKey { ident, .. } => Some(ident),
+                Param::Pos { bind, .. }
+                | Param::Key { bind, .. }
+                | Param::ConstKey { bind, .. } => match bind {
+                    ParamBind::Ident(ident) => Some(ident),
+                    ParamBind::Pattern { pattern, .. } => {
+                        self.bind_pattern(scope, pattern)?;
+                        None
+                    }
+                },
                 Param::Rest { ident, .. } => ident.as_mut(),
             };
             let Some(ident) = ident else {
@@ -3191,9 +3121,15 @@ impl<'a> Elaborater<'a> {
         for param in node.params.iter_mut() {
             self.visit_param_non_const_default(&mut scope, param)?;
             let ident = match param {
-                Param::Pos { ident, .. }
-                | Param::Key { ident, .. }
-                | Param::ConstKey { ident, .. } => Some(ident),
+                Param::Pos { bind, .. }
+                | Param::Key { bind, .. }
+                | Param::ConstKey { bind, .. } => match bind {
+                    ParamBind::Ident(ident) => Some(ident),
+                    ParamBind::Pattern { pattern, .. } => {
+                        self.bind_pattern(&mut scope, pattern)?;
+                        None
+                    }
+                },
                 Param::Rest { ident, .. } => ident.as_mut(),
             };
             let Some(ident) = ident else {
