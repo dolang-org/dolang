@@ -256,10 +256,16 @@ forms: anything is below top and `Unknown`, even a type that can't be exposed.
 positional and keyed items are independent. Positional items are distributed by
 count, as the runtime binds positional arguments: each required item takes one,
 optional items take what is left over from left to right, and a repeated item
-takes the rest. Keyed items are unordered. A literal key owns every item with
-that key, as a named parameter does, and other keys go to a key domain
-`(K): V`. Data schemas and parameter lists mean the same thing, which requires
-duplicate keywords for a named parameter to be a runtime error.
+takes the rest. Keyed items are unordered across keys. Within a key, a literal
+key takes as many of its items as its multiplicity admits, in order, as a named
+parameter does, and the rest go to a key domain `(K): V`.
+
+A parameter list binds by count. The schema of a type argument, as `Unpack`'s
+or `Tuple`'s, is the items a value holds, which may fill its multiplicities any
+way that fits: `(1, true)` is below `Unpack[{Int, ?Str, *Bool}]` but isn't
+accepted by `(Int, ?Str, *Bool) -> nil`. A relation records which reading
+applies. A type argument starts the second; a parameter list and a variable's
+bounds start the first, which is the stricter. Anything else inherits it.
 
 Both sides flatten into lanes of positional and keyed atoms. A required
 inclusion splices its items; an optional or repeated one gives its single item
@@ -274,18 +280,24 @@ literal keys must still fit the expected side's items with those keys.
 
 Positional inclusion tries every way of filling the actual side's
 multiplicities, up to one overflow past the expected items. Each actual atom
-must be a subtype of every expected atom its items can land on. Too few or too
-many items contradict the judgment, naming the expected item that can go missing
-or the actual item that can be excess. So does a literal key whose count can
-fall outside its item's multiplicity, where a domain on the actual side may hold
-the key any number of times. Keys not named on the expected side go to its
-single repeated domain. Several repeated domains own keys as a literal key does:
-each member of an actual item's key goes to the narrowest domain admitting it,
-and to any domain lying inside it, and its value must fit each. So a lookup
-bound `{*(K): V, ...}` isn't vacuous, though its `...` admits every key. A
-domain key still to be inferred waits for its solution, and one whose relation
-to an item's key can't be decided is residual. When several expected repeated
-items could take the overflow, the judgment is residual.
+must be a subtype of every expected atom its items can land on. Where the
+expected side is the items a value holds and a filling's count distribution is
+refuted, the filling still fits when the item types, compared without adding
+bounds, prove some path through the expected multiplicities. Otherwise too few
+or too many items contradict the judgment, naming the expected item that can go
+missing or the actual item that can be excess. So does a literal key whose count
+can fall outside its item's multiplicity, where a domain on the actual side may
+hold the key any number of times, unless a repeated domain beside the literal
+admits the key. An actual item that may come before the literal is full must fit
+it, and one that may come after must fit that domain. Keys not named on the
+expected side go to its single repeated domain. Several repeated domains own
+keys as a literal key does: each member of an actual item's key goes to the
+narrowest domain admitting it, and to any domain lying inside it, and its value
+must fit each. So a lookup bound `{*(K): V, ...}` isn't vacuous, though its
+`...` admits every key. A domain key still to be inferred waits for its
+solution, and one whose relation to an item's key can't be decided is residual.
+When several expected repeated items could take the overflow, the judgment is
+residual.
 
 Subtyping never admits a positional item as an `Int`-keyed item; only the
 projections key positions by their indexes. Positional items against an expected

@@ -4,8 +4,9 @@
 //! The pattern is matched against `S` as the runtime binds it. Positional items
 //! are distributed by count: with `k` items, the first `k` slots are filled in
 //! order, defaulted slots past them take their defaults, and items beyond every
-//! slot go to a positional rest or are an error. Keyed slots take the items with
-//! their key, and keyed items no slot takes go to a keyed rest or are an error.
+//! slot go to a positional rest or are an error. A keyed slot takes the first item
+//! with its key, and keyed items no slot takes go to a keyed rest or are an
+//! error.
 //!
 //! Every way of filling `S`'s multiplicities that the pattern accepts is a
 //! possibility. A slot's type is the join over the possibilities, and the rest
@@ -552,9 +553,11 @@ impl Solver<'_> {
         Some((types, tail))
     }
 
-    /// The keyed slots' types and the keyed tail. A literal key takes the items
-    /// of the literal-keyed atoms owning it; a domain keeps its items, since the
-    /// slots can't take every key in it.
+    /// The keyed slots' types and the keyed tail. A literal key takes the first
+    /// item with that key, in the atoms' order: a required literal-keyed atom
+    /// before it ends the search, and the first owner, if a literal-keyed atom
+    /// with at most one item, leaves the tail. A domain keeps its items, since
+    /// the slots can't take every key in it.
     fn walk_keyed(
         &self,
         atoms: &[(Multiplicity, TypeId, TypeId)],
@@ -564,25 +567,64 @@ impl Solver<'_> {
         let keys: Vec<TypeId> = atoms.iter().map(|&(_, key, _)| key).collect();
         let literal = |key: TypeId| self.db.literal(key).is_some();
         let mut taken = vec![false; atoms.len()];
+        let mut demoted = vec![false; atoms.len()];
         let mut types = Vec::new();
         for &(key, defaulted) in &pattern.keyed {
-            let owning = self.owning(key, &keys)?;
-            if owning.is_empty() && !defaulted {
-                return Ok(None);
-            }
             let mut ty = self.db.bottom();
-            for (index, _) in owning {
-                let (_, owner, value) = atoms[index];
-                ty = self.lub(ty, value);
-                if owner != unknown && literal(key) && literal(owner) {
-                    taken[index] = true;
+            if !literal(key) {
+                let owning = self.owning(key, &keys)?;
+                if owning.is_empty() && !defaulted {
+                    return Ok(None);
                 }
+                for (index, _) in owning {
+                    ty = self.lub(ty, atoms[index].2);
+                }
+                types.push(ty);
+                continue;
+            }
+            let mut owned = false;
+            for (index, &(multiplicity, owner, value)) in atoms.iter().enumerate() {
+                if taken[index] {
+                    continue;
+                }
+                match self.probe(key, owner)? {
+                    Status::Proven => {}
+                    Status::Contradicted => continue,
+                    Status::Unresolved => {
+                        return Err(
+                            Residual::Unsupported("a key that may or may not own an item").into(),
+                        );
+                    }
+                }
+                ty = self.lub(ty, value);
+                let first = !owned;
+                owned = true;
+                if owner != unknown && literal(owner) {
+                    if multiplicity == Multiplicity::Required {
+                        match first {
+                            true => taken[index] = true,
+                            false => demoted[index] = true,
+                        }
+                        break;
+                    }
+                    if first && multiplicity == Multiplicity::Optional {
+                        taken[index] = true;
+                    }
+                }
+            }
+            if !owned && !defaulted {
+                return Ok(None);
             }
             types.push(ty);
         }
-        let left = atoms.iter().zip(&taken).filter(|&(_, &taken)| !taken);
         let mut tail = Vec::new();
-        for (&(multiplicity, key, value), _) in left {
+        for (index, &(mut multiplicity, key, value)) in atoms.iter().enumerate() {
+            if taken[index] {
+                continue;
+            }
+            if demoted[index] {
+                multiplicity = Multiplicity::Optional;
+            }
             if multiplicity == Multiplicity::Required && !pattern.keyed_rest() {
                 return Ok(None);
             }
