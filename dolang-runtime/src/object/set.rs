@@ -409,6 +409,15 @@ impl<'v> Protocol<'v> for Iter<'v> {
     ) -> Result<'v, 's, ()> {
         iter::iter_mcall(strand, &this, method, args, out).await
     }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: super::protocol::SpreadContext,
+        sink: &'a mut dyn super::protocol::Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::spread_iter(strand, this.clone(), sink).await
+    }
 }
 
 impl<'v> Protocol<'v> for Set<'v> {
@@ -825,6 +834,7 @@ impl<'v> Protocol<'v> for Type {
                 Method(sym::CALL_METHOD),
             ],
             members: members![
+                Method(sym::SPREAD_METHOD),
                 Method(sym::STR_METHOD),
                 Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),

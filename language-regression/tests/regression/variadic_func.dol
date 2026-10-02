@@ -1,5 +1,6 @@
 import std:
   - Iterable
+  - UnexpectedPosError
 
 def foo first ...rest
   echo $first
@@ -19,8 +20,10 @@ foo
   - 3
 foo ...{foo: 42, "a", bar: false}
 assert_eq (capture ...{"a", foo: 1, "b", bar: 2}) ["a", "b", 1, 2]
-assert_eq (capture ...({"a", foo: 1, "b", bar: 2}.iter())) ["a", "b", 1, 2]
-assert_eq (capture ...(Iterable.iter (record "a" foo: 1 "b" bar: 2))) ["a", "b", 1, 2]
+assert_throws $UnexpectedPosError do
+  capture ...({"a", foo: 1, "b", bar: 2}.iter())
+assert_throws $UnexpectedPosError do
+  capture ...(Iterable.iter (record "a" foo: 1 "b" bar: 2))
 let _a foo: _x ...dict_rest = {"a", foo: 1, "b", bar: 2}
 assert_eq (capture_rest ...dict_rest) ["b", 2]
 let _a foo: _x ...record_rest = record("a", foo: 1, "b", bar: 2)

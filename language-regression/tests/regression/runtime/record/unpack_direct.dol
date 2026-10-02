@@ -1,7 +1,3 @@
-import
-  std:
-    - Iter
-
 # Positional unpack against integer keys
 let x y = record("zero", "one")
 assert_eq $x zero
@@ -11,30 +7,29 @@ assert_throws $std.RuntimeError str: "unexpected positional item: 2" do
 assert_throws $std.RuntimeError str: "missing positional item: 1" do
   let _a _b = record("only-zero")
 
-# ...rest captures the remaining pairs as an Iter, in order, skipping those
-# already consumed
+# ...rest captures the remaining pairs as a structural rest, in order, skipping those
+# already matched
 let :a ...rest = record(a: 1, b: 2, c: 3)
 assert_eq $a 1
-assert (type rest Iter)
 let pairs = $
-  for k v = rest
+  for k v = Dict(rest)
     - (Tuple [k, v])
 assert_eq $pairs [(Tuple [:b:, 2]), (Tuple [:c:, 3])]
 
-# the rest iterator numbers positional items after those already taken
+# materializing the structural rest numbers its positional items from zero
 let x2 :k ...rest2 = record("zero", k: 1, "one", "two")
 assert_eq $x2 zero
 assert_eq $k 1
 let pairs2 = $
-  for k v = rest2
+  for k v = Dict(rest2)
     - (Tuple [k, v])
-assert_eq $pairs2 [(Tuple [1, "one"]), (Tuple [2, "two"])]
+assert_eq $pairs2 [(Tuple [0, "one"]), (Tuple [1, "two"])]
 
 # an integer key out of sequence is not a position, so a record refuses it
 assert_throws $std.TypeError do Record {0: "zero", 1: "one", 3: "three"}
 assert_throws $std.TypeError do Record {2: "c", 0: "a", 1: "b"}
 
-# the rest iterator supports further keyed/positional unpacking
+# the structural rest supports further keyed/positional unpacking
 let a: _a ...rest4 = record(a: 1, "zero", "one")
 let d e = rest4
 assert_eq $d zero

@@ -66,4 +66,4 @@ assert_eq (coerce_flags [:READ:, :WRITE:]) $rw
 assert_eq (coerce_flags []) $empty
 assert_throws $std.RuntimeError str: "value error: unrecognized flag: BOGUS" do coerce_flags :BOGUS:
 assert_throws $std.RuntimeError str: "value error: unrecognized flag: BOGUS" do coerce_flags [:BOGUS:]
-assert_throws $std.RuntimeError str: "type error: iteration protocol not supported" do coerce_flags 42
+assert_throws $std.RuntimeError str: "type error: spreading protocol not supported" do coerce_flags 42

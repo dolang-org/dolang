@@ -1,0 +1,13 @@
+# Unsupported stream unpack must not run callbacks or consume input.
+let calls = 0
+let mapped = [1, 2].map do |x|
+  calls = (calls + 1)
+  x
+assert_throws $std.UnsupportedError do let _a _b = mapped
+assert_eq $calls 0
+assert_eq [...mapped] [1, 2]
+assert_eq $calls 2
+let filtered = [1, 2].filter do |_x| true
+assert_throws $std.UnsupportedError do let _a _b = filtered
+assert_eq [...filtered] [1, 2]
+

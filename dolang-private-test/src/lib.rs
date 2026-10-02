@@ -548,6 +548,15 @@ pub fn check_results(
         && !assertions_failed
 }
 
+/// Prints the Do backtrace, then panics with the formatted message.
+macro_rules! assertion_failed {
+    ($strand:expr, $($arg:tt)*) => {{
+        let message = format!($($arg)*);
+        print_backtrace($strand);
+        panic!("{message}")
+    }};
+}
+
 pub fn print_backtrace(strand: &Strand) {
     for (i, frame) in strand.backtrace().enumerate() {
         let module = frame.module();
@@ -696,9 +705,9 @@ pub fn configure_vm<'v>(vm: &mut Builder<'v>) -> State<'v, TestState> {
                 let ([cond], [msg]) = unpack!(strand, args, 1, 0, msg = None)?;
                 if !cond.to_bool(strand) {
                     if let Some(msg) = msg {
-                        panic!("assertion failed: {}", msg.to_string(strand)?);
+                        assertion_failed!(strand, "assertion failed: {}", msg.to_string(strand)?);
                     } else {
-                        panic!("assertion failed");
+                        assertion_failed!(strand, "assertion failed");
                     }
                 }
                 Ok(())
@@ -709,9 +718,9 @@ pub fn configure_vm<'v>(vm: &mut Builder<'v>) -> State<'v, TestState> {
                 let ([cond], [msg]) = unpack!(strand, args, 1, 0, msg = None)?;
                 if cond.to_bool(strand) {
                     if let Some(msg) = msg {
-                        panic!("assertion failed: {}", msg.to_string(strand)?);
+                        assertion_failed!(strand, "assertion failed: {}", msg.to_string(strand)?);
                     } else {
-                        panic!("assertion failed");
+                        assertion_failed!(strand, "assertion failed");
                     }
                 }
                 Ok(())
@@ -722,14 +731,16 @@ pub fn configure_vm<'v>(vm: &mut Builder<'v>) -> State<'v, TestState> {
                 let ([left, right], [msg]) = unpack!(strand, args, 2, 0, msg = None)?;
                 if !left.eq(strand, &right) {
                     if let Some(msg) = msg {
-                        panic!(
+                        assertion_failed!(
+                            strand,
                             "assertion failed: {} ({} != {})",
                             msg.to_string(strand)?,
                             left.to_debug(strand)?,
                             right.to_debug(strand)?
                         );
                     } else {
-                        panic!(
+                        assertion_failed!(
+                            strand,
                             "assertion failed: {} != {}",
                             left.to_debug(strand)?,
                             right.to_debug(strand)?
@@ -744,14 +755,16 @@ pub fn configure_vm<'v>(vm: &mut Builder<'v>) -> State<'v, TestState> {
                 let ([left, right], [msg]) = unpack!(strand, args, 2, 0, msg = None)?;
                 if !left.ne(strand, &right) {
                     if let Some(msg) = msg {
-                        panic!(
+                        assertion_failed!(
+                            strand,
                             "assertion failed: {} ({} == {})",
                             msg.to_string(strand)?,
                             left.to_debug(strand)?,
                             right.to_debug(strand)?
                         );
                     } else {
-                        panic!(
+                        assertion_failed!(
+                            strand,
                             "assertion failed: {} == {}",
                             left.to_debug(strand)?,
                             right.to_debug(strand)?
@@ -768,19 +781,25 @@ pub fn configure_vm<'v>(vm: &mut Builder<'v>) -> State<'v, TestState> {
                 match call!(strand, &block, &mut out).await {
                     Ok(()) => {
                         if let Some(msg) = msg {
-                            panic!(
+                            assertion_failed!(
+                                strand,
                                 "assertion failed: {} ({} thrown)",
                                 msg.to_string(strand)?,
                                 ty.to_debug(strand)?
                             );
                         } else {
-                            panic!("assertion failed: {} thrown", ty.to_debug(strand)?);
+                            assertion_failed!(
+                                strand,
+                                "assertion failed: {} thrown",
+                                ty.to_debug(strand)?
+                            );
                         }
                     }
                     Err(mut err) if err.catchable() => {
                         err.get_value(strand, &mut out);
                         if !out.is_instance_of(strand, &ty) {
-                            panic!(
+                            assertion_failed!(
+                                strand,
                                 "assertion failed: {} is not an instance of {}",
                                 out.to_debug(strand)?,
                                 ty.to_debug(strand)?
@@ -790,9 +809,11 @@ pub fn configure_vm<'v>(vm: &mut Builder<'v>) -> State<'v, TestState> {
                             let actual = out.to_string(strand)?;
                             let expected = expected.to_string(strand)?;
                             if actual != expected {
-                                panic!(
+                                assertion_failed!(
+                                    strand,
                                     "assertion failed: error str {:?} != {:?}",
-                                    actual, expected
+                                    actual,
+                                    expected
                                 );
                             }
                         }
@@ -806,14 +827,16 @@ pub fn configure_vm<'v>(vm: &mut Builder<'v>) -> State<'v, TestState> {
             let ([expected, value], [msg]) = unpack!(strand, args, 2, 1)?;
             if !value.is_instance_of(strand, &expected) {
                 if let Some(msg) = msg {
-                    panic!(
+                    assertion_failed!(
+                        strand,
                         "assertion failed: {} ({} is not an instance of {})",
                         msg.to_string(strand)?,
                         value.to_debug(strand)?,
                         expected.to_debug(strand)?
                     );
                 } else {
-                    panic!(
+                    assertion_failed!(
+                        strand,
                         "assertion failed: {} is not an instance of {}",
                         value.to_debug(strand)?,
                         expected.to_debug(strand)?

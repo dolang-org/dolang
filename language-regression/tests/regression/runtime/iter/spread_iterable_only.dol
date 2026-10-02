@@ -1,0 +1,15 @@
+def capture ...args
+  args
+
+# Iterable alone supplies no implicit spread fallback.
+class OnlyIterable: Iterable
+  def (iter) _self
+    [1, 2].iter()
+let source = OnlyIterable()
+assert_throws $std.UnsupportedError do [...source]
+assert_throws $std.UnsupportedError do capture ...source
+assert_throws $std.UnsupportedError do {...source}
+# Default class unpack sees fields, not iterator elements.
+assert_throws $std.MissingPosError do let _a _b = source
+assert_eq [...source.iter()] [1, 2]
+

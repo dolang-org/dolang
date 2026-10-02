@@ -96,23 +96,29 @@ See the [Dict API](std.Dict) for details.
 
 ### Spreading
 
-Spread an iterable of key/value pairs (e.g. another dict iterator) into a dict
-literal:
+Spread a dictionary directly to preserve its keys:
 
 ```
 let base = {name: "Alice"}
 let extended = {...base, age: 30}
 ```
 
-Use `kv()` when you want an ordinary iterator of 2-item sequences to spread as
-key/value entries:
+Use `kv()` when you want an iterator of pairs to spread as key/value entries:
 
 ```
-let entries = ["x=1", "y=2"].map do |e| e.split "="
+let entries = [("x", 1), ("y", 2)].iter()
 let dict = {...entries.kv()}
 ```
 
-Spreading of dicts preserves duplicate keys and order.
+Spreading dicts preserves duplicate keys and order. Spreading any `Iter`,
+including a dict or record pair iterator, inserts its elements positionally.
+The adapter returned by `kv()` emits keyed entries in every spread context.
+It supports spreading only: it cannot be iterated or used with iterator methods.
+A keyed spread into an array or tuple raises an error.
+
+Converting a dict or record directly to an array or tuple still produces
+key/value pairs. An `Iterable` without spread support must first be converted
+to an iterator with `iter()`.
 
 ## Records (`Record`)
 
@@ -193,7 +199,7 @@ let empty = ()
 let single = (1,)
 ```
 
-Spread an iterable into a tuple with `...`:
+Spread a sequence into a tuple with `...`:
 
 ```
 let rest = [2, 3]

@@ -386,12 +386,12 @@ pub class Statement
 # ## Unpacking
 #
 # A row unpacks by position, or by symbol naming the column. A `...rest` term
-# yields an iterator over the columns nothing else consumed, as values rather
-# than as rows.
+# yields a read-only [`RowRest`](sqlite.RowRest) over the remaining columns.
+# Unpacking leaves the row unchanged.
 #
 # ```
 # let id :name :age ...rest = row
-# for value = rest
+# for value = [...rest]
 #   echo $ str value
 # ```
 pub class Row: @Index[Int | Str, Value] @Unpack[{...}]
@@ -419,6 +419,14 @@ pub class Row: @Index[Int | Str, Value] @Unpack[{...}]
   # Destructures the row by position or by column name.
   pub def (unpack) self -> Unpack[{...}]
     ...
+
+
+# Reads leftover columns without advancing a cursor.
+#
+# A positional rest spreads values; a keyed rest spreads name/value pairs
+# in sequences and keyed items in calls and dictionaries. Materialize with
+# `[...rest]` to iterate. Statement and row invalidation apply to the rest.
+pub @class RowRest: Unpack[{...}]
 
 
 # A database transaction in progress.

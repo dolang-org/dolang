@@ -27,6 +27,7 @@ import std:
   - @Fmt
   - @Index
   - @IndexItem
+  - @UnpackIter
 
 # A compiled regular expression.
 pub class Regex
@@ -176,13 +177,16 @@ pub class Regex
     # - `limit: -N` (negative) — split at most N times from the **left**, but
     #   still yield segments right to left.
     :limit @ Int = nil
-  do -> Iter[Str]
+  do -> UnpackIter[Str]
     ...
 
   # Splits `haystack` around matches of this pattern.
   #
-  # Returns an iterator that yields the [`Str`](std.Str) substrings
-  # between matches. Iteration is lazy where possible; a negative limit
+  # Destructuring reads the remaining substrings without advancing the
+  # iterator. A captured rest is a new iterator over the substrings after
+  # those bound.
+  #
+  # Iteration is lazy where possible; a negative limit
   # requires buffering all matches up front.
   #
   # ## Example
@@ -221,7 +225,7 @@ pub class Regex
     #   still yield segments left to right. Useful for splitting off a
     #   known-length suffix.
     :limit @ Int = nil
-  do -> Iter[Str]
+  do -> UnpackIter[Str]
     ...
 
 # A successful match along with any capture groups.

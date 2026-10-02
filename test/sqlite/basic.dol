@@ -14,6 +14,7 @@ import sqlite
     - TypeError
     - UnexpectedKeyError
     - UnexpectedPosError
+    - UnsupportedError
     - ValueError
 
 #[test]
@@ -144,7 +145,10 @@ def query_star_unpack()
     conn.execute t"INSERT INTO test VALUES (1), (2), (3)"
 
     conn.prepare t"SELECT n FROM test ORDER BY n" do |stmt|
-      bind stmt.query()
+      let rows = stmt.query()
+      assert_throws $UnsupportedError do
+        let ..._rest = rows
+      bind [...rows]
         - first = nil
         *others
       assert_eq $first["n"] 1
@@ -175,7 +179,7 @@ def split_rest_unpack()
       for row = stmt.query()
         let **named = row
         let pairs = $
-          for k v = named
+          for k v = [...named]
             - (Tuple [k, v])
         assert_eq $pairs [(Tuple [:a:, 1]), (Tuple [:b:, "two"]), (Tuple [:c:, 3.0])]
 
@@ -190,7 +194,7 @@ def split_rest_unpack()
         assert_eq ({...more}) {a: 1, c: 3.0}
 
 #[test]
-def repeat_unpack_consumes()
+def repeat_unpack_readonly()
   sqlite.open ":memory:" do |conn|
     conn.execute t"CREATE TABLE test (x INTEGER, y TEXT, z REAL)"
     conn.execute t"INSERT INTO test VALUES (10, 'twenty', 30.0)"
@@ -200,10 +204,11 @@ def repeat_unpack_consumes()
         let :x ...rest = row
         assert_eq $x 10
 
-        let :y ...rest = rest
+        let :y ...tail = rest
         assert_eq $y "twenty"
+        assert_eq ([...rest]) ["twenty", 30.0]
 
-        let remaining = [...rest]
+        let remaining = [...tail]
         assert_eq $remaining.len 1
         assert_eq $remaining[0] 30.0
 

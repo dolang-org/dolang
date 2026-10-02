@@ -1,0 +1,88 @@
+import std:
+  - @Unpack
+  - @UnpackIter
+  - @Spread
+
+# Iterable promises iteration, but does not promise spreading.
+pub def iterable_source source @ Iterable[Int]
+  let _x = [...source]
+# error: `std.Iterable[std.Int]` is not spreadable
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _x = [...source]
+#    |                ^^^^^^
+
+# General iterators spread but do not promise unpacking.
+pub def general it @ Iter[Int]
+  let xs = [...it]
+  let _ = xs
+  #       ^~: flow std.Array[std.Int]
+  let _ _ = it
+# error: `std.Iter[std.Int]` is not unpackable
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ _ = it
+#    |             ^^
+
+pub def unpackable it @ UnpackIter[Int]
+  let a b = it
+  let _ = a
+  #       ^: flow std.Int
+  let _ = b
+  #       ^: flow std.Int
+  let mapped = it.map do |x| x
+  let _ = mapped
+  #       ^~~~~~: flow std.Iter[std.Int]
+  let _ _ = mapped
+# error: `std.Iter[std.Int]` is not unpackable
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ _ = mapped
+#    |             ^^^^^^
+
+# Unpack carries the spread contract too.
+pub def unpack_spreads source @ Unpack[Int]
+  let xs = [...source]
+  let _ = xs
+  #       ^~: flow std.Array[std.Int]
+
+pub def factories a @ Array[Int] t @ Tuple[Int, Str] d @ Dict[Str, Int]
+  let _ = a.iter()
+  #   ^: flow std.UnpackIter[std.Int]
+  let _ = a.pairs()
+  #   ^: flow std.UnpackIter[std.Tuple[{std.Int, std.Int}]]
+  let _ = t.iter()
+  #   ^: flow std.UnpackIter[std.Int | std.Str]
+  let _ = t.pairs()
+  #   ^: flow std.UnpackIter[std.Tuple[{std.Int, Value}]]
+  let _ = d.keys()
+  #   ^: flow std.UnpackIter[std.Str]
+  let _ = d.values()
+  #   ^: flow std.UnpackIter[std.Int]
+  let _ = "a=b".split "="
+  #   ^: flow std.UnpackIter[std.Str]
+  let _ = b"a=b".rsplit b"="
+  #   ^: flow std.UnpackIter[std.Bin]
+
+# kv infers the key and value types of pairs.
+pub def pairs tuples @ Iter[Tuple[Str, Int]]
+  let _ = tuples.kv()
+  #   ^: flow std.Spread[{*(std.Str): std.Int}]
+
+# The kv adapter promises only spreading, not iterator methods or unpacking.
+pub def spread_surface entries @ Spread[Str, Int]
+  let d = {...entries}
+  let _ = d
+  #       ^: flow std.Dict[{*(std.Str): std.Int}]
+  let _ = entries.next
+  # error: `std.Spread[{*(std.Str): std.Int}]` has no member `next`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = entries.next
+  #    |           ^^^^^^^^^^^^
+  let _ _ = entries
+# error: `std.Spread[{*(std.Str): std.Int}]` is not unpackable
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ _ = entries
+#    |             ^^^^^^^

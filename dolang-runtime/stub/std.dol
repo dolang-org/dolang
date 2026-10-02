@@ -349,8 +349,9 @@ pub @class Spread[S @ {...}]
 
 # A value that implements the
 # [`(unpack)`](../../language/classes.md#unpack-destructuring) protocol,
-# destructuring as the items in `S`.
-pub @class Unpack[S @ {...}]
+# destructuring as the items in `S` without changing the receiver.
+# Captured rests also support spreading with their remaining schema.
+pub @class Unpack[S @ {...}]: Spread[S]
   field schema @Phantom[...S]
 
   # Returns a value to destructure in place of this one.
@@ -781,6 +782,10 @@ pub class Array[T]: Iterable[T] Sinkable[T] @MutSeq[T]
   do
     ...
 
+  # Returns an iterator with read-only unpacking.
+  pub def iter self -> UnpackIter[T]
+    ...
+
   #
   # Returns an iterator yielding `[index, value]` pairs.
   #
@@ -795,7 +800,7 @@ pub class Array[T]: Iterable[T] Sinkable[T] @MutSeq[T]
   # # 2: 30
   # ```
   #
-  pub def pairs self -> Iter[Tuple[Int, T]]
+  pub def pairs self -> UnpackIter[Tuple[Int, T]]
     ...
 
   #
@@ -930,7 +935,7 @@ pub class Array[T]: Iterable[T] Sinkable[T] @MutSeq[T]
   #   echo $value
   # ```
   #
-  pub def (iter) self -> Iter[T]
+  pub def (iter) self -> UnpackIter[T]
     ...
 
   # Destructures the array positionally.
@@ -1075,7 +1080,7 @@ pub class Bin: @Index[Range[Int], Bin]
     delimiter @ Bin
     # max splits; negative means split from left
     :limit @ Int = nil
-  do -> Iter[Bin]
+  do -> UnpackIter[Bin]
     ...
 
   #
@@ -1103,7 +1108,7 @@ pub class Bin: @Index[Range[Int], Bin]
     delimiter @ Bin
     # max splits; negative means split from right
     :limit @ Int = nil
-  do -> Iter[Bin]
+  do -> UnpackIter[Bin]
     ...
 
   #
@@ -1808,7 +1813,7 @@ pub class BaseDict[S @ {...}]: @Index[S] @Spread[S] @Unpack[S] Iterable[Entries[
   # If duplicate-key iteration is needed, use [`pairs`](#pairs) instead.
   #
   #
-  pub def keys self -> Iter[Keys[S]]
+  pub def keys self -> UnpackIter[Keys[S]]
     ...
 
   #
@@ -1826,9 +1831,9 @@ pub class BaseDict[S @ {...}]: @Index[S] @Spread[S] @Unpack[S] Iterable[Entries[
   # that key, in that key's insertion order.
   #
   # Missing keys return an empty iterator.
-  @def values self -> Iter[Values[S]]
-  @def values[K] self key@K -> Iter[IndexItem[S, K]]
-  pub def values self key = nil -> Iter[Values[S]]
+  @def values self -> UnpackIter[Values[S]]
+  @def values[K] self key@K -> UnpackIter[IndexItem[S, K]]
+  pub def values self key = nil -> UnpackIter[Values[S]]
     ...
 
   #
@@ -2768,7 +2773,10 @@ pub class Func
 
 # A module object, produced by `import` or by loading a compiled module. Its
 # fields are the module's exported bindings.
-pub class Module
+pub class Module: @Spread[Tuple[Sym, Value]]
+  # Spreads exported name/value pairs positionally.
+  pub def (spread) self -> Spread[Tuple[Sym, Value]]
+    ...
 
 #
 # Abstract type for class-field getter objects.
@@ -2912,7 +2920,7 @@ pub class IterStop: Error
 # assert_eq (type $ [1, 2, 3].iter()) $Iter
 # ```
 #
-pub class Iter[T]: Iterable[T] @BaseIter[T] @Unpack[T] @Spread[T]
+pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   #
   #
   # Returns `true` if every yielded value is truthy.
@@ -3033,20 +3041,20 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Unpack[T] @Spread[T]
   pub def fold[A] self init@A func@((A, T) -> A) -> A
     ...
 
+  @def kv[K, V] self @ Iter[Unpack[{K, V}]] -> Spread[K, V]
+
   #
-  # Returns an iterator wrapper that preserves normal iteration, but opts into
-  # key/value spreading.
+  # Adapts the remaining elements for keyed spreading.
   #
-  # When spread in a keyed context such as a dict literal or argument spread, each
-  # yielded item must unpack into exactly two values.
+  # Each element must unpack into exactly two values without being consumed.
+  # Spreading consumes the source. The adapter does not support iteration.
   #
   # ```
-  # let entries = ["x=1", "y=2"].iter().map do |e| e.split "="
-  #
-  # assert_eq {...entries.kv()} {"x": "1", "y": "2"}
+  # let entries = [("x", 1), ("y", 2)].iter()
+  # assert_eq {...entries.kv()} {"x": 1, "y": 2}
   # ```
   #
-  pub def kv self -> Iter[T]
+  pub def kv self -> Spread[{...}]
     ...
 
   #
@@ -3126,13 +3134,28 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Unpack[T] @Spread[T]
   pub def (next) self -> T
     ...
 
-  # Destructures the remaining items positionally.
-  pub def (unpack) self -> Unpack[T]
-    ...
-
   # Spreads the remaining items positionally.
   pub def (spread) self -> Spread[T]
     ...
+
+
+# An iterable whose iterator supports read-only unpacking.
+pub @class UnpackIterable[T]: Iterable[T]
+  # Returns an iterator with read-only unpacking.
+  pub def iter self -> UnpackIter[T]
+
+  # Returns an iterator with read-only unpacking.
+  pub def (iter) self -> UnpackIter[T]
+
+
+# An iterator whose remaining elements can be unpacked without advancing it.
+# Spreading and `next` still consume it. Captured rests are separate values.
+pub @class UnpackIter[T]: Iter[T] Unpack[T]
+  # Returns this iterator.
+  pub def iter self -> UnpackIter[T]
+
+  # Returns this iterator.
+  pub def (iter) self -> UnpackIter[T]
 
 
 #
@@ -3383,7 +3406,7 @@ pub class Record[...Ts]: Iterable[Tuple[Sym | Int, Value]] @Index[{...Ts}] @Spre
 
   # Iterates record items as `[key, value]` pairs in order. A positional item's
   # key is its position.
-  pub def (iter) self -> Iter[Tuple[Sym | Int, Value]]
+  pub def (iter) self -> UnpackIter[Tuple[Sym | Int, Value]]
     ...
 
   # Unpacks record items by position and symbol.
@@ -3705,7 +3728,7 @@ pub class Str: @Index[Range[Int], Str]
   # assert_eq $scalars[-1] "́"
   # ```
   #
-  pub def scalars self -> Iterable[Str]
+  pub def scalars self -> UnpackIterable[Str]
     ...
 
   #
@@ -3809,7 +3832,7 @@ pub class Str: @Index[Range[Int], Str]
   # assert_eq [...graphemes] ["é", "👩‍💻"]
   # ```
   #
-  pub def graphemes self -> Iterable[Str]
+  pub def graphemes self -> UnpackIterable[Str]
     ...
 
   #
@@ -3910,7 +3933,7 @@ pub class Str: @Index[Range[Int], Str]
     #   segments right-to-left.
     # - Omitted splits fully with no limit.
     :limit @ Int = nil
-  do -> Iter[Str]
+  do -> UnpackIter[Str]
     ...
 
   #
@@ -3945,7 +3968,7 @@ pub class Str: @Index[Range[Int], Str]
     #   suffix such as a file extension.
     # - Omitted splits fully with no limit.
     :limit @ Int = nil
-  do -> Iter[Str]
+  do -> UnpackIter[Str]
     ...
 
   #
@@ -4534,11 +4557,15 @@ pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}] Iterable[Union[...Ts]] @
   do -> (Union[...Ts] | D)
     ...
 
+  # Returns an iterator with read-only unpacking.
+  pub def iter self -> UnpackIter[Union[...Ts]]
+    ...
+
   #
   # Returns an iterator yielding `[index, value]` pairs.
   #
   #
-  pub def pairs self -> Iter[Tuple[Int, Value]]
+  pub def pairs self -> UnpackIter[Tuple[Int, Value]]
     ...
 
   @def (index)[K] self key@K -> IndexItem[{...Ts}, K]
@@ -4570,6 +4597,10 @@ pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}] Iterable[Union[...Ts]] @
   # means the tuple length, and negative endpoints count from the end. Negative
   # steps reverse the slice.
   pub def (index)[K] self key@K -> IndexItem[{*(Int): Union[...Ts]}, K]
+    ...
+
+  # Returns an iterator with read-only unpacking.
+  pub def (iter) self -> UnpackIter[Union[...Ts]]
     ...
 
   # Unpacks tuple elements.

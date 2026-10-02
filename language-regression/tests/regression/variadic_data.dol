@@ -22,13 +22,9 @@ let mapped = ["foo=bar", "baz=qux"].iter().map do |e| e.split "="
 let atomic = {...mapped}
 assert_eq (Array atomic[0]) ["foo", "bar"]
 assert_eq (Array atomic[1]) ["baz", "qux"]
-let mapped = ["foo=bar", "baz=qux"].iter().map do |e| e.split "="
-assert_eq {...mapped.kv()} {"foo": "bar", "baz": "qux"}
 
 let items = [1, 2, 3].iter()
 assert_eq (Array items) [1, 2, 3]
-let entries = (["foo=bar", "baz=qux"].iter().map do |e| e.split "=")
-assert_eq (Dict(entries.kv())) {"foo": "bar", "baz": "qux"}
 
 let arr = [...{1, foo: "bar", 2}]
 assert_eq $arr[0][0] 0

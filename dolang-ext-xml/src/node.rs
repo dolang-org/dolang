@@ -362,6 +362,15 @@ impl<'v> Object<'v> for Node {
         }
     }
 
+    async fn spread<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        context: dolang::runtime::object::SpreadContext,
+        sink: &'a mut dyn dolang::runtime::object::Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        ArrayView::spread(this, Children, strand, context, sink)
+    }
+
     async fn iter<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

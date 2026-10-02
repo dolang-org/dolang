@@ -14,7 +14,7 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{self, BinEmbryo, Empty, Output, Slot, Slots, Value},
+    value::{BinEmbryo, Empty, Output, Slot, Slots, Value},
     vm::Vm,
 };
 
@@ -515,6 +515,28 @@ enum SplitState {
     },
 }
 
+/// Clones the remaining state; a buffered clone keeps only unconsumed segments.
+impl Clone for SplitState {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Lazy {
+                offset,
+                limit,
+                reverse,
+            } => Self::Lazy {
+                offset: *offset,
+                limit: *limit,
+                reverse: *reverse,
+            },
+            Self::Buffered { segments, index } => Self::Buffered {
+                segments: segments[*index..].to_vec(),
+                index: 0,
+            },
+        }
+    }
+}
+
+#[derive(Clone)]
 pub(crate) struct Split<'v> {
     str: GcObj<'v, [u8]>,
     delim: GcObj<'v, [u8]>,
@@ -586,6 +608,15 @@ unsafe impl<'v> Collect for Split<'v> {
 }
 
 impl<'v> Protocol<'v> for Split<'v> {
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: crate::object::protocol::SpreadContext,
+        sink: &'a mut dyn crate::object::protocol::Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::spread_iter(strand, &this, sink).await
+    }
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -640,7 +671,7 @@ impl<'v> Protocol<'v> for Split<'v> {
                 .store(key.default.as_ref().unwrap().dup());
         }
 
-        let mut borrow = this.borrow_mut(strand)?;
+        let mut borrow = this.borrow(strand)?.clone();
 
         // Fill required positional slots
         for i in 0..sig.required {
@@ -661,11 +692,15 @@ impl<'v> Protocol<'v> for Split<'v> {
             }
         }
 
-        drop(borrow);
+        if sig.pos_rest() == crate::bytecode::Rest::None && borrow.next_segment().is_some() {
+            return Err(Error::unexpected_positional(strand, pos_count));
+        }
 
-        // Assign this (now with updated state) to a capturing rest
         if let Some(i) = sig.pos_rest_slot() {
-            value::Output::set(strand, out.at(i), &this);
+            strand
+                .builtin_types()
+                .bin_split
+                .create(strand, borrow, out.at(i));
         }
         sig.fill_empty_key_rest(strand, &mut out);
 

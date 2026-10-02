@@ -2,16 +2,18 @@
 import 
   std:
     - IterStop
+    - Iter
   strand:
     - redirect
     - put
 
 # Custom iterator that counts from start to stop
-class Counter
+class Counter: Iter
   pub field current = 0
   pub field stop = 0
 
   def (init) self start stop
+    Iter.(init) $self
     self.current = start
     self.stop = stop
 
@@ -28,6 +30,9 @@ class Counter
 
 # Test basic iteration with (next)
 let counter = Counter 0 5
+assert_throws $std.UnsupportedError do let ..._rest = counter
+assert_throws $std.UnsupportedError do let current: _ ..._rest = counter
+assert_eq $counter.current 0
 let results = [...counter]
 assert_eq $results [0, 1, 2, 3, 4]
 

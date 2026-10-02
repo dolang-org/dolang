@@ -262,6 +262,15 @@ impl<'v> Protocol<'v> for Iter<'v> {
     ) -> Result<'v, 's, ()> {
         super::iter::iter_mcall(strand, &this, method, args, out).await
     }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: super::protocol::SpreadContext,
+        sink: &'a mut dyn super::protocol::Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::spread_iter(strand, this.clone(), sink).await
+    }
 }
 
 fn resolve_sym<'v, 's, F: FlagLike>(
@@ -369,6 +378,15 @@ impl<'v, F: FlagLike> Object<'v> for Flags<F> {
         };
         this.create_flags(strand, bits, out);
         Ok(())
+    }
+
+    async fn spread<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn super::protocol::Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::spread_iter(strand, this, sink).await
     }
 
     fn eq<'a, 's>(

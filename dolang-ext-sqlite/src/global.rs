@@ -6,7 +6,7 @@ use dolang::runtime::{
 use crate::sqlite::{
     SqliteBusy, SqliteError,
     connection::{Connection, Transaction},
-    row::{Row, RowIter, Rows},
+    row::{Row, RowRest, Rows},
     statement::Statement,
 };
 
@@ -15,7 +15,7 @@ pub(crate) struct Types<'v> {
     pub(crate) statement: Type<'v, Statement>,
     pub(crate) rows: Type<'v, Rows>,
     pub(crate) row: Type<'v, Row>,
-    pub(crate) row_iter: Type<'v, RowIter>,
+    pub(crate) row_rest: Type<'v, RowRest>,
     pub(crate) transaction: Type<'v, Transaction>,
     pub(crate) error: Type<'v, SqliteError>,
     pub(crate) busy: Type<'v, SqliteBusy>,
@@ -39,7 +39,7 @@ impl<'v> Global<'v> {
             statement: builder.register_type(),
             rows: builder.register_type(),
             row: builder.register_type(),
-            row_iter: builder.register_type(),
+            row_rest: builder.register_type(),
             transaction: builder.register_type(),
             error,
             busy: builder

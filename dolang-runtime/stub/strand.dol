@@ -227,7 +227,11 @@ pub class Stream[R, I, O]: Iterable[I] Sinkable[O]
 # Obtained from [`backtrace`](strand.backtrace) or
 # [`error_backtrace`](strand.error_backtrace). Iterating it gives a
 # [`Frame`](strand.Frame) for each call.
-pub class Backtrace: std.Iterable[Frame]
+pub class Backtrace: std.Iterable[Frame] @std.Spread[Frame]
+  # Spreads the frames positionally.
+  pub def (spread) self -> std.Spread[Frame]
+    ...
+
   # The number of frames.
   #[getter]
   pub def len self -> Int

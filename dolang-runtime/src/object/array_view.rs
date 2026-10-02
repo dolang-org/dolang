@@ -676,6 +676,15 @@ impl<'v> Protocol<'v> for View<'v> {
 }
 
 impl<'v> Protocol<'v> for Iter<'v> {
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: crate::object::protocol::SpreadContext,
+        sink: &'a mut dyn crate::object::protocol::Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        super::iter::spread_iter(strand, &this, sink).await
+    }
+
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -723,9 +732,15 @@ impl<'v> Protocol<'v> for Iter<'v> {
             &*view.glue,
             iter.index.get(),
         )?;
-        iter.index.set(iter.index.get() + consumed);
         if let Some(i) = sig.pos_rest_slot() {
-            Output::set(strand, out.at(i), &this);
+            strand.builtin_types().array_view_iter.create(
+                strand,
+                Iter {
+                    parent: iter.parent.clone(),
+                    index: Cell::new(iter.index.get() + consumed),
+                },
+                out.at(i),
+            );
         }
         sig.fill_empty_key_rest(strand, &mut out);
         Ok(())

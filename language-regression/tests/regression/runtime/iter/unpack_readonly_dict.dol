@@ -1,0 +1,15 @@
+# Retained in-memory iterator unpack is read-only, even after advancing.
+def check_readonly it expected
+  assert_throws $std.MissingPosError do let _a _b _c _d = it
+  let a b ...rest = it
+  let c d ...again = it
+  assert_eq [a, b, ...rest] $expected
+  assert_eq [c, d, ...again] $expected
+  assert_eq (it.next()) $expected[0]
+  let first ...tail = it
+  assert_eq [first, ...tail] [...expected.iter().skip(1)]
+  assert_eq [...it] [...expected.iter().skip(1)]
+
+check_readonly ${a: 1, b: 2, c: 3}.keys() [:a:, :b:, :c:]
+check_readonly ${a: 1, b: 2, c: 3}.values() [1, 2, 3]
+check_readonly ${a: 1, a: 2, a: 3}.values(:a:) [1, 2, 3]

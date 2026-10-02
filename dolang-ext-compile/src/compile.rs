@@ -1293,6 +1293,7 @@ impl<'v> Object<'v> for DiagnosticIter {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder.supertype(TypeObject::Iter)
     }
+
     async fn iter<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1342,6 +1343,7 @@ impl<'v> Object<'v> for NodeIter {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder.supertype(TypeObject::Iter)
     }
+
     async fn iter<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1389,6 +1391,7 @@ impl<'v> Object<'v> for TokenIter<'v> {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder.supertype(TypeObject::Iter)
     }
+
     async fn iter<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

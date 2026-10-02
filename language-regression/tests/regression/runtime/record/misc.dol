@@ -65,8 +65,8 @@ assert_eq [...dup] [(:a:, 1), (:b:, 2), (:a:, 3)]
 # from 0 are positional, as when spreading a dict.
 assert_eq (Record {0: :a:, x: 1, 1: :b:}) (record :a: x: 1 :b:)
 # Pairs from an iterator
-assert_eq (Record([[0, :a:], [:k:, 1]].iter().kv())) (record :a: k: 1)
+assert_eq (Record([(0, :a:), (:k:, 1)].iter().kv())) (record :a: k: 1)
 assert_eq (Record (record 1 k: 2 3)) (record 1 k: 2 3)
 assert_throws $TypeError str: "type error: record keys must be symbols" do Record {"s": 1}
 assert_throws $TypeError str: "type error: record keys must be symbols" do Record {5: :x:, 0: :y:}
-assert_throws $TypeError str: "type error: record keys must be symbols" do Record $[[1, :x:]].iter().kv()
+assert_throws $TypeError str: "type error: record keys must be symbols" do Record $[(1, :x:)].iter().kv()

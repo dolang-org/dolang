@@ -59,7 +59,7 @@ if bind [1, 2, 3]
 do
   assert_eq $a 1
   let sum = 0
-  for x = rest
+  for x = [...rest]
     sum = (sum + x)
   assert_eq $sum 5
 else
