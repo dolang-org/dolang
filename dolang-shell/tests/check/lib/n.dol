@@ -1,0 +1,4 @@
+import m:
+  - @Present
+pub def wrap p @ Present -> Present
+  p

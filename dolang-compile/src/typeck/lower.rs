@@ -29,12 +29,11 @@ use scope::{DeclKey, Frame};
 
 use super::{
     cfg::{BlockId, Expr, ExprKind, FuncId, FuncKind, Graph, Ir, Origin, Step, Terminal, VarId},
-    elab::{DeclNode, ModuleRef, Tables},
+    elab::{DeclAst, ModuleRef, Tables},
     r#type::{Database, DeclId, Literal, SymbolId, UnitId},
 };
 use crate::{
-    Mode,
-    ast::{Function, Stmt, visit::Node},
+    ast::{Function, Stmt},
     source::Span,
 };
 
@@ -42,7 +41,11 @@ use crate::{
 /// its entry function
 pub(crate) fn lower(tables: &Tables<'_>, db: &Database, unit: UnitId) -> Ir {
     let lower = Lower::new(tables, db, unit);
-    let root = &tables.units[unit.index()].ast.0;
+    let root = &tables.units[unit.index()]
+        .source
+        .expect("only a unit with source is lowered")
+        .ast
+        .0;
     let func = lower.graph.alloc_func(FuncKind::Module(unit), None);
     let frame = lower.frame(func, None, &root.body.vars, &root.body.stmts, None);
     let entry = lower.graph.func(func).entry;
@@ -84,30 +87,30 @@ impl<'t, 'u> Lower<'t, 'u> {
                 continue;
             }
             let id = DeclId::from_index(index);
-            match &decl.node {
-                DeclNode::Class(class) => {
+            let Some(ast) = &decl.ast else {
+                continue;
+            };
+            match ast {
+                DeclAst::Class(class) => {
                     decls.insert(DeclKey::class(class), id);
                 }
-                DeclNode::Defs(defs) => {
+                DeclAst::Defs(defs) => {
                     decls.extend(defs.iter().map(|def| (DeclKey::def(def), id)));
                 }
-                DeclNode::Methods(methods) => {
+                DeclAst::Methods(methods) => {
                     decls.extend(methods.iter().map(|method| (DeclKey::method(method), id)));
                 }
-                DeclNode::Closure(func) => {
+                DeclAst::Closure(func) => {
                     decls.insert(DeclKey::closure(func), id);
                 }
-                DeclNode::Alias(_) => {}
+                DeclAst::Alias(_) => {}
             }
         }
         let modules = tables
             .units
             .iter()
             .enumerate()
-            .filter_map(|(index, unit)| match unit.compiler.mode {
-                Mode::Module { name } => Some((name, UnitId::from_index(index))),
-                Mode::Script | Mode::Repl => None,
-            })
+            .filter_map(|(index, unit)| Some((unit.module?, UnitId::from_index(index))))
             .collect();
         Self {
             tables,

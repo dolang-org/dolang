@@ -19,11 +19,13 @@ fn agree(source: &str) {
     let mut builder = Builder::new();
     builder.unit(&unit).unwrap();
     let check = builder.check();
-    let ir = &check.cfgs[UnitId::from_index(0).index()];
+    let ir = check.cfgs[UnitId::from_index(0).index()]
+        .as_ref()
+        .expect("a unit with source is lowered");
     let forward = Flow::new(ir, &check.db, &check.tables, false).analyze();
     let reversed = Flow::new(ir, &check.db, &check.tables, true).analyze();
     assert_eq!(forward, reversed);
-    assert_eq!(forward, check.flows[0]);
+    assert_eq!(Some(forward), check.flows[0]);
 }
 
 #[test]

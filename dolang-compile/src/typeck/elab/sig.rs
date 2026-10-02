@@ -9,22 +9,18 @@
 //! method once the database is sealed.
 
 use super::{
-    Ambient, BadNominee, BinderRef, DeclNode, Designated, KindOf, MisdeclaredIntrinsic, PIPES,
-    ParamTy, Referent, RestSlot, Sig, Slot, Tables, UnitDiag,
+    Ambient, BadNominee, BinderRef, DeclNode, Designated, Diag, KindOf, MisdeclaredIntrinsic,
+    PIPES, ParamTy, Referent, RestSlot, Sig, Slot, Tables, UnitDiag,
+    surface::{BinderKind, Decorator, Member, Method, ParamKind, Signature},
 };
-use crate::{
-    Mode,
-    ast::{BinderKind, ClassMember, Expr, Function, Method, Param},
-    source,
-    typeck::r#type::{DeclId, DeclKind, Intrinsic, Kind, Scope, UnitId, UnitSpan},
-};
+use crate::typeck::r#type::{DeclId, DeclKind, Intrinsic, Kind, Scope, UnitId, UnitSpan};
 
 /// Complete every def and method signature, record every field's type, and find
 /// the designated declarations of `std`.
 pub(crate) fn signatures(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
     for index in 0..tables.decls.len() {
         let decl = DeclId::from_index(index);
-        match tables.decls[index].node {
+        match &tables.decls[index].node {
             DeclNode::Defs(_) | DeclNode::Methods(_) => {
                 for sig in 0..tables.sig_count(decl) {
                     let completed = complete(tables, decl, sig);
@@ -43,18 +39,17 @@ pub(crate) fn signatures(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
                 }
             }
             DeclNode::Class(class) => {
-                for member in &class.body.members {
-                    let ClassMember::Field(field) = member else {
+                let mut fields = Vec::new();
+                for member in &class.members {
+                    let Member::Field(field) = member else {
                         continue;
                     };
-                    let slot = field
-                        .ty
-                        .as_ref()
-                        .map_or(Slot::Unknown, |annot| Slot::Annot(&annot.ty));
-                    for name in &field.fields {
-                        tables.fields.insert((decl, name.ident.span), slot);
+                    let slot = field.annot.map_or(Slot::Unknown, Slot::Annot);
+                    for name in &field.names {
+                        fields.push(((decl, name.span), slot));
                     }
                 }
+                tables.fields.extend(fields);
             }
             DeclNode::Alias(_) | DeclNode::Closure(_) => {}
         }
@@ -76,11 +71,11 @@ pub(crate) fn signatures(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
     }
 }
 
-/// The function of a def or method signature
-pub(crate) fn function<'u>(tables: &Tables<'u>, decl: DeclId, sig: usize) -> &'u Function {
-    match tables.decls[decl.index()].node {
-        DeclNode::Defs(ref defs) => &defs[sig].func,
-        DeclNode::Methods(ref methods) => &methods[sig].func,
+/// The signature of a def or method
+pub(crate) fn function<'t>(tables: &'t Tables<'_>, decl: DeclId, sig: usize) -> &'t Signature {
+    match &tables.decls[decl.index()].node {
+        DeclNode::Defs(defs) => &defs[sig].sig,
+        DeclNode::Methods(methods) => &methods[sig].sig,
         _ => unreachable!("only a def or method has a signature"),
     }
 }
@@ -102,13 +97,11 @@ pub(crate) fn channels(tables: &Tables<'_>, decl: DeclId, sig: usize) -> [Ambien
     })
 }
 
-fn complete<'u>(tables: &Tables<'u>, decl: DeclId, sig: usize) -> Sig<'u> {
+fn complete(tables: &Tables<'_>, decl: DeclId, sig: usize) -> Sig {
     let unit = tables.decls[decl.index()].unit;
     let func = function(tables, decl, sig);
-    let receiver = match tables.decls[decl.index()].node {
-        DeclNode::Methods(ref methods) => {
-            method_scope(tables, unit, methods[sig]) == Scope::Instance
-        }
+    let receiver = match &tables.decls[decl.index()].node {
+        DeclNode::Methods(methods) => method_scope(tables, unit, &methods[sig]) == Scope::Instance,
         _ => false,
     };
     let params = params(tables, unit, func, receiver);
@@ -121,52 +114,37 @@ fn complete<'u>(tables: &Tables<'u>, decl: DeclId, sig: usize) -> Sig<'u> {
         receiver,
         input,
         output,
-        ret: func
-            .ret
-            .as_ref()
-            .map_or(Slot::Unknown, |ret| Slot::Annot(&ret.ty)),
+        ret: func.ret.map_or(Slot::Unknown, Slot::Annot),
     }
 }
 
 /// The parameters of a def, method or closure, each with the type it has, or the
 /// default for an omitted annotation. An instance method's `receiver` is its class
 /// unless annotated otherwise.
-pub(crate) fn params<'u>(
-    tables: &Tables<'u>,
+pub(crate) fn params(
+    tables: &Tables<'_>,
     unit: UnitId,
-    func: &'u Function,
+    func: &Signature,
     receiver: bool,
-) -> Vec<(&'u Param, ParamTy<'u>)> {
+) -> Vec<ParamTy> {
     func.params
         .iter()
         .enumerate()
-        .map(|(index, param)| {
-            let ty = match param {
-                Param::Pos { ty, .. } if index == 0 && receiver => ParamTy::Single(
-                    ty.as_ref()
-                        .map_or(Slot::SelfType, |annot| Slot::Annot(&annot.ty)),
-                ),
-                Param::Pos { ty, .. } | Param::Key { ty, .. } | Param::ConstKey { ty, .. } => {
-                    ParamTy::Single(
-                        ty.as_ref()
-                            .map_or(Slot::Unknown, |annot| Slot::Annot(&annot.ty)),
-                    )
-                }
-                Param::Rest {
-                    kind,
-                    ty,
-                    type_ellipsis_span,
-                    ..
-                } => ParamTy::Rest(match (ty, type_ellipsis_span) {
-                    (None, _) => RestSlot::Items(*kind, Slot::Unknown),
-                    (Some(annot), Some(_)) => RestSlot::Pattern(&annot.ty),
-                    (Some(annot), None) => match tables.kind_of(unit, &annot.ty) {
-                        Some(Kind::Schema) => RestSlot::Pack(&annot.ty),
-                        _ => RestSlot::Items(*kind, Slot::Annot(&annot.ty)),
-                    },
-                }),
-            };
-            (param, ty)
+        .map(|(index, param)| match param.kind {
+            ParamKind::Pos if index == 0 && receiver => {
+                ParamTy::Single(param.annot.map_or(Slot::SelfType, Slot::Annot))
+            }
+            ParamKind::Pos | ParamKind::Key { .. } | ParamKind::ConstKey { .. } => {
+                ParamTy::Single(param.annot.map_or(Slot::Unknown, Slot::Annot))
+            }
+            ParamKind::Rest { kind, pattern } => ParamTy::Rest(match (param.annot, pattern) {
+                (None, _) => RestSlot::Items(kind, Slot::Unknown),
+                (Some(annot), true) => RestSlot::Pattern(annot),
+                (Some(annot), false) => match tables.kind_of(unit, tables.site_ty(annot)) {
+                    Some(Kind::Schema) => RestSlot::Pack(annot),
+                    _ => RestSlot::Items(kind, Slot::Annot(annot)),
+                },
+            }),
         })
         .collect()
 }
@@ -175,8 +153,8 @@ pub(crate) fn params<'u>(
 pub(crate) fn method_scope(tables: &Tables<'_>, unit: UnitId, method: &Method) -> Scope {
     let mut scope = Scope::Instance;
     for decorator in &method.decorators {
-        if let Expr::Ident(ident) = &decorator.expr {
-            match tables.text(unit, ident.span) {
+        if let Decorator::Ident(name) = decorator {
+            match tables.name(unit, *name) {
                 "class" => scope = Scope::Class,
                 "static" => scope = Scope::Static,
                 _ => {}
@@ -204,18 +182,18 @@ pub(crate) enum Form {
 pub(crate) fn method_form(tables: &Tables<'_>, unit: UnitId, method: &Method) -> Form {
     let mut form = Form::Plain;
     for decorator in &method.decorators {
-        let designated = match &decorator.expr {
-            Expr::Ident(ident) => match tables.text(unit, ident.span) {
+        let designated = match decorator {
+            Decorator::Ident(name) => match tables.name(unit, *name) {
                 "class" | "static" => continue,
                 _ => match tables.referents.get(&UnitSpan {
                     unit,
-                    span: ident.span,
+                    span: name.span,
                 }) {
                     Some(Referent::Decl(decl)) => tables.designated.get(decl).copied(),
                     _ => None,
                 },
             },
-            _ => None,
+            Decorator::Other => None,
         };
         form = match (form, designated) {
             (Form::Plain, Some(Designated::Getter)) => Form::Getter,
@@ -231,13 +209,13 @@ pub(crate) fn method_form(tables: &Tables<'_>, unit: UnitId, method: &Method) ->
 /// lookalike.
 fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
     let owner = &tables.decls[decl.index()];
-    let Mode::Module { name: module } = tables.units[owner.unit.index()].compiler.mode else {
+    let Some(module) = tables.units[owner.unit.index()].module else {
         return;
     };
     let Some(name) = owner.name.filter(|_| owner.outer.is_none()) else {
         return;
     };
-    let (designated, expected) = match (module, tables.text(owner.unit, name)) {
+    let (designated, expected) = match (module, tables.name(owner.unit, name)) {
         ("strand", "PipeSender") => (Designated::PipeSender, DeclKind::OpaqueAlias),
         ("strand", "PipeReceiver") => (Designated::PipeReceiver, DeclKind::OpaqueAlias),
         ("std", "Value") => (Designated::Value, DeclKind::Class),
@@ -305,8 +283,8 @@ fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
         };
         diags.push((
             owner.unit,
-            source::Diag::new(MisdeclaredIntrinsic {
-                span: name,
+            Diag::new(MisdeclaredIntrinsic {
+                span: name.span,
                 expected,
             }),
         ));
@@ -328,15 +306,14 @@ fn nominate(
     };
     let owner = &tables.decls[placeholder.index()];
     let target = &tables.decls[nominee.index()];
-    let span = owner.name.expect("a designated declaration is named");
-    let described = match (
-        &tables.units[target.unit.index()].compiler.mode,
-        target.name,
-    ) {
-        (Mode::Module { name: module }, Some(item)) => {
-            format!("{module}.{}", tables.text(target.unit, item))
+    let span = owner
+        .name_span()
+        .expect("a designated declaration is named");
+    let described = match (tables.units[target.unit.index()].module, target.name) {
+        (Some(module), Some(item)) => {
+            format!("{module}.{}", tables.name(target.unit, item))
         }
-        (_, Some(item)) => tables.text(target.unit, item).to_owned(),
+        (_, Some(item)) => tables.name(target.unit, item).to_owned(),
         (_, None) => unreachable!("an export is named"),
     };
     let reason = match target.kind {
@@ -351,11 +328,13 @@ fn nominate(
     };
     diags.push((
         owner.unit,
-        source::Diag::new(BadNominee {
+        Diag::new(BadNominee {
             span,
             nominee: described,
             placeholder: name,
-            declared: (target.unit == owner.unit).then_some(target.name).flatten(),
+            declared: (target.unit == owner.unit)
+                .then(|| target.name_span())
+                .flatten(),
             not_class,
         }),
     ));
@@ -390,7 +369,7 @@ fn passes(tables: &Tables<'_>, placeholder: DeclId, nominee: DeclId) -> bool {
                     .kind
                     == Kind::Type
         } else {
-            binder.default.is_some() || matches!(binder.kind, BinderKind::Rest { .. })
+            binder.default.is_some() || matches!(binder.kind, BinderKind::Rest(_))
         }
     })
 }

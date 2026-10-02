@@ -20,13 +20,14 @@
 use std::collections::{HashMap, HashSet};
 
 use super::{
-    BadChannel, BadRecursion, BoundViolation, DeclNode, Designated, Fill, Head, ParameterKeys,
-    Referent, Role, Tables, UnitDiag,
+    BadChannel, BadRecursion, BoundViolation, DeclNode, Designated, Diag, Fill, Head,
+    ParameterKeys, Referent, Role, Tables, UnitDiag,
+    surface::{Class, Name, TypeArg, TypeExpr, TypeParam, TypeParamKind},
 };
 use crate::{
-    ast::{AliasBody, Class, Function, TypeArg, TypeExpr, TypeParam, TypeParamKind, visit::Node},
-    source::{self, Diagnose, Span},
+    source::Span,
     typeck::{
+        report::Report,
         solver::{Issue, Provenance, Reach, Residual, Solver, Status},
         r#type::{
             Argument, Binder, Binding, BoundRef, Database, DeclId, Intrinsic, Rest, Type, TypeId,
@@ -53,13 +54,23 @@ pub(crate) fn wellformed(
         tables,
         diags,
         unresolved: Vec::new(),
+        bounds: (tables.sites.iter())
+            .filter(|site| matches!(site.role, Role::Bound(_)))
+            .map(|site| {
+                let span = UnitSpan {
+                    unit: site.unit,
+                    span: site.ty.span(),
+                };
+                (span, &site.ty)
+            })
+            .collect(),
     };
     for site in &tables.sites {
         if matches!(site.role, Role::Pattern) {
             continue;
         }
         let scope = site.group().map(|key| check.declaration(key));
-        check.ty(site.unit, scope, site.ty, false);
+        check.ty(site.unit, scope, &site.ty, false);
     }
     for index in 0..tables.decls.len() {
         let id = DeclId::from_index(index);
@@ -83,6 +94,8 @@ struct Check<'a, 'u> {
     tables: &'a Tables<'u>,
     diags: &'a mut Vec<UnitDiag>,
     unresolved: Vec<Unresolved>,
+    /// Each binder bound written, by its span
+    bounds: HashMap<UnitSpan, &'a TypeExpr>,
 }
 
 impl Check<'_, '_> {
@@ -136,10 +149,10 @@ impl Check<'_, '_> {
     }
 
     /// Diagnose a failed check, or record an undecided one
-    fn report(&mut self, verdict: Verdict, span: UnitSpan, diag: impl Diagnose + 'static) {
+    fn report(&mut self, verdict: Verdict, span: UnitSpan, diag: impl Report + 'static) {
         match verdict {
             Verdict::Holds => {}
-            Verdict::Fails => self.diags.push((span.unit, source::Diag::new(diag))),
+            Verdict::Fails => self.diags.push((span.unit, Diag::new(diag))),
             Verdict::Undecided(residual) => self.unresolved.push(Unresolved { span, residual }),
         }
     }
@@ -147,7 +160,7 @@ impl Check<'_, '_> {
     /// Check a written type and everything written within it
     fn ty(&mut self, unit: UnitId, scope: Option<DeclId>, ty: &TypeExpr, phantom: bool) {
         match ty {
-            TypeExpr::Name { .. } | TypeExpr::Const { .. } | TypeExpr::Error => {}
+            TypeExpr::Name { .. } | TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}
             TypeExpr::Group { ty, .. } => self.ty(unit, scope, ty, phantom),
             TypeExpr::Union { members, .. } => {
                 for member in members {
@@ -176,8 +189,8 @@ impl Check<'_, '_> {
                 for ty in params.iter().flat_map(TypeParam::tys) {
                     self.ty(unit, scope, ty, phantom);
                 }
-                for implicit in [input, output].into_iter().flatten() {
-                    self.ty(unit, scope, &implicit.ty, phantom);
+                for ty in [input, output].into_iter().flatten() {
+                    self.ty(unit, scope, ty, phantom);
                 }
                 self.ty(unit, scope, ret, phantom);
             }
@@ -272,10 +285,10 @@ impl Check<'_, '_> {
             Binding::Rest(Rest::All) => "...",
         };
         let bound = match (source.bound, binder.binding) {
-            (Some(bound), _) => self.tables.text(bound.unit, bound.span),
-            (None, Binding::Rest(Rest::Positional)) => "{*Value}",
-            (None, Binding::Rest(Rest::Keyed)) => "{**Value}",
-            (None, _) => "{...}",
+            (Some(bound), _) => self.tables.print(bound.unit, self.bounds[&bound]),
+            (None, Binding::Rest(Rest::Positional)) => "{*Value}".to_owned(),
+            (None, Binding::Rest(Rest::Keyed)) => "{**Value}".to_owned(),
+            (None, _) => "{...}".to_owned(),
         };
         format!("{sigil}{} @ {bound}", self.db.symbol(source.name))
     }
@@ -310,7 +323,7 @@ impl Check<'_, '_> {
                     output,
                     UnitSpan {
                         unit,
-                        span: written.ty.span(),
+                        span: written.span(),
                     },
                 );
             }
@@ -344,7 +357,7 @@ impl Check<'_, '_> {
     /// or method's parameter keys and written channels
     fn signature(&mut self, id: DeclId, sig: usize) {
         let decl = self.declaration((id, sig));
-        if let DeclNode::Class(class) = self.tables.decls[id.index()].node {
+        if let DeclNode::Class(class) = &self.tables.decls[id.index()].node {
             self.supertypes(id, decl, class);
         }
         let declaration = self.db.declaration(decl);
@@ -381,9 +394,8 @@ impl Check<'_, '_> {
     /// of their own
     fn supertypes(&mut self, id: DeclId, decl: DeclId, class: &Class) {
         let unit = self.tables.decls[id.index()].unit;
-        for super_ref in &class.super_refs {
-            let head = super_ref.ident.span;
-            let span = super_ref.fields.last().map_or(head, |field| head | field);
+        for super_ref in &class.supers {
+            let span = super_ref.span();
             let phantom = self.application(unit, Some(decl), span, &super_ref.args);
             for arg in &super_ref.args {
                 self.ty(unit, Some(decl), arg.ty(), phantom);
@@ -392,10 +404,9 @@ impl Check<'_, '_> {
     }
 
     fn function_signature(&mut self, id: DeclId, sig: usize, decl: DeclId, body: TypeId) {
-        let func: &Function = match &self.tables.decls[id.index()].node {
-            DeclNode::Defs(defs) => &defs[sig].func,
-            DeclNode::Methods(methods) => &methods[sig].func,
-            DeclNode::Closure(func) => func,
+        let node = &self.tables.decls[id.index()].node;
+        let func = match node {
+            DeclNode::Defs(_) | DeclNode::Methods(_) | DeclNode::Closure(_) => node.signature(sig),
             DeclNode::Class(_) | DeclNode::Alias(_) => return,
         };
         let Type::Function(function) = self.db.ty(body) else {
@@ -406,8 +417,8 @@ impl Check<'_, '_> {
         let verdict = self.relate(Some(decl), function.params, self.db.rest_shape(Rest::All));
         self.report(verdict, name, ParameterKeys(name.span));
         for (written, channel, output) in [
-            (&func.input, function.input, false),
-            (&func.output, function.output, true),
+            (func.input, function.input, false),
+            (func.output, function.output, true),
         ] {
             if let (Some(written), Some(channel)) = (written, channel) {
                 self.channel(
@@ -416,7 +427,7 @@ impl Check<'_, '_> {
                     output,
                     UnitSpan {
                         unit,
-                        span: written.ty.span(),
+                        span: self.tables.site_ty(written).span(),
                     },
                 );
             }
@@ -440,11 +451,11 @@ impl Check<'_, '_> {
         for &id in &aliases {
             let decl = &self.tables.decls[id.index()];
             let targets = edges.entry(id).or_default();
-            if let Some(body) = alias_body(&decl.node) {
-                body.names(&mut |head, _, _| {
+            if let Some(body) = alias_body(self.tables, &decl.node) {
+                body.names(&mut |head, _| {
                     if let Some(Referent::Decl(target)) = self.tables.referents.get(&UnitSpan {
                         unit: decl.unit,
-                        span: head,
+                        span: head.span,
                     }) && self.tables.aliases.contains_key(target)
                     {
                         targets.push(*target);
@@ -464,7 +475,7 @@ impl Check<'_, '_> {
             let mut found = Vec::new();
             for &id in &component {
                 let decl = &self.tables.decls[id.index()];
-                if let Some(body) = alias_body(&decl.node) {
+                if let Some(body) = alias_body(self.tables, &decl.node) {
                     self.guarded(decl.unit, id, &members, body, false, &mut found);
                 }
             }
@@ -489,7 +500,7 @@ impl Check<'_, '_> {
                 if cyclic || !reference.regular {
                     self.diags.push((
                         reference.unit,
-                        source::Diag::new(BadRecursion {
+                        Diag::new(BadRecursion {
                             span: reference.span,
                             alias: reference.name,
                             irregular: !cyclic,
@@ -512,7 +523,7 @@ impl Check<'_, '_> {
         found: &mut Vec<Recursive>,
     ) {
         match ty {
-            TypeExpr::Const { .. } | TypeExpr::Error => {}
+            TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}
             TypeExpr::Group { ty, .. } => self.guarded(unit, alias, members, ty, guarded, found),
             TypeExpr::Union { members: union, .. } => {
                 for member in union {
@@ -520,21 +531,17 @@ impl Check<'_, '_> {
                 }
             }
             TypeExpr::Name { head, .. } => {
-                self.reference(unit, alias, members, *head, ty.span(), None, guarded, found);
+                self.reference(unit, alias, members, head, ty.span(), None, guarded, found);
             }
             TypeExpr::App { base, args, .. } => {
-                let mut base = &**base;
-                while let TypeExpr::Group { ty, .. } = base {
-                    base = ty;
-                }
-                let TypeExpr::Name { head, .. } = base else {
+                let TypeExpr::Name { head, .. } = base.ungrouped() else {
                     return;
                 };
                 let target = self.reference(
                     unit,
                     alias,
                     members,
-                    *head,
+                    head,
                     ty.span(),
                     Some(ty),
                     guarded,
@@ -568,8 +575,8 @@ impl Check<'_, '_> {
                 for ty in params.iter().flat_map(TypeParam::tys) {
                     self.guarded(unit, alias, members, ty, true, found);
                 }
-                for implicit in [input, output].into_iter().flatten() {
-                    self.guarded(unit, alias, members, &implicit.ty, true, found);
+                for ty in [input, output].into_iter().flatten() {
+                    self.guarded(unit, alias, members, ty, true, found);
                 }
                 self.guarded(unit, alias, members, ret, true, found);
             }
@@ -584,15 +591,16 @@ impl Check<'_, '_> {
         unit: UnitId,
         alias: DeclId,
         members: &HashSet<DeclId>,
-        head: Span,
+        head: &Name,
         span: Span,
         app: Option<&TypeExpr>,
         guarded: bool,
         found: &mut Vec<Recursive>,
     ) -> Option<DeclId> {
-        let Some(&Referent::Decl(target)) =
-            self.tables.referents.get(&UnitSpan { unit, span: head })
-        else {
+        let Some(&Referent::Decl(target)) = self.tables.referents.get(&UnitSpan {
+            unit,
+            span: head.span,
+        }) else {
             return None;
         };
         if members.contains(&target) {
@@ -601,7 +609,7 @@ impl Check<'_, '_> {
                 alias,
                 target,
                 span,
-                name: self.tables.text(unit, head).to_owned(),
+                name: self.tables.name(unit, *head).to_owned(),
                 guarded,
                 regular: self.regular(unit, alias, target, app),
             });
@@ -674,12 +682,9 @@ struct Recursive {
 }
 
 /// The written body of a transparent alias
-fn alias_body<'u>(node: &DeclNode<'u>) -> Option<&'u TypeExpr> {
+fn alias_body<'t>(tables: &'t Tables<'_>, node: &DeclNode) -> Option<&'t TypeExpr> {
     match node {
-        DeclNode::Alias(alias) => match &alias.body {
-            AliasBody::Type(ty) => Some(ty),
-            AliasBody::Opaque(_) => None,
-        },
+        DeclNode::Alias(alias) => alias.body.map(|body| tables.site_ty(body)),
         _ => None,
     }
 }

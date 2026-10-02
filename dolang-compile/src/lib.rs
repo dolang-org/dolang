@@ -66,6 +66,8 @@ enum ErrorInfo {
     Io(io::Error),
     DuplicateModule(String),
     Unresolved,
+    NotModule,
+    Typelib(typeck::typelib::Invalid),
 }
 
 /// Kind of compilation error.
@@ -80,6 +82,10 @@ pub enum ErrorKind {
     DuplicateModule,
     /// A unit to check was compiled without [`Config::typecheck`].
     Unresolved,
+    /// A typelib was requested of a unit that is not a module.
+    NotModule,
+    /// A typelib is malformed, or of a version this checker doesn't read.
+    Typelib,
 }
 
 /// Compile error
@@ -94,6 +100,8 @@ impl Error {
             ErrorInfo::Io(_) => ErrorKind::Io,
             ErrorInfo::DuplicateModule(_) => ErrorKind::DuplicateModule,
             ErrorInfo::Unresolved => ErrorKind::Unresolved,
+            ErrorInfo::NotModule => ErrorKind::NotModule,
+            ErrorInfo::Typelib(_) => ErrorKind::Typelib,
         }
     }
 
@@ -119,6 +127,8 @@ impl Display for Error {
             ErrorInfo::Io(e) => e.fmt(f),
             ErrorInfo::DuplicateModule(name) => write!(f, "duplicate module `{name}`"),
             ErrorInfo::Unresolved => "unit types were not resolved".fmt(f),
+            ErrorInfo::NotModule => "only a module has a typelib".fmt(f),
+            ErrorInfo::Typelib(invalid) => invalid.fmt(f),
         }
     }
 }
@@ -126,7 +136,11 @@ impl Display for Error {
 impl error::Error for Error {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match &self.0 {
-            ErrorInfo::Fail | ErrorInfo::DuplicateModule(_) | ErrorInfo::Unresolved => None,
+            ErrorInfo::Fail
+            | ErrorInfo::DuplicateModule(_)
+            | ErrorInfo::Unresolved
+            | ErrorInfo::NotModule
+            | ErrorInfo::Typelib(_) => None,
             ErrorInfo::Io(error) => Some(error),
         }
     }

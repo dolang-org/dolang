@@ -18,18 +18,20 @@ use std::{
 };
 
 use super::{
-    Ambient, BinderRef, DeclNode, Designated, Head, ParamTy, Referent, RestSlot, Role, Slot,
+    Ambient, BinderRef, DeclNode, Designated, Diag, Head, ParamTy, Referent, RestSlot, Role, Slot,
     Tables, UnitDiag,
     sig::{self, Form},
+    surface::{
+        BinderKind, Class, ConstLit, Member as SourceMember, MemberScope, Name, ParamKind,
+        Signature, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam, TypeParamKind, TypeQuant,
+    },
 };
 use crate::{
-    Compiler, RestKind,
-    ast::{
-        AliasBody, BinderKind, Class, ClassMember, Const, MemberScope, Param, SpecialMethod,
-        TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam, TypeParamKind, TypeQuant, visit::Node,
-    },
+    RestKind,
+    ast::SpecialMethod,
     diag::Severity,
-    source::{self, Diagnose, Span},
+    source::Span,
+    typeck::report::Report,
     typeck::r#type::{
         Argument, Binder, BinderOrigin, BinderSource, Binding, BoundRef, Database, DeclId,
         DeclKind, DeclSource, Declaration, Element, Function, Intrinsic, Kind, Literal, Member,
@@ -51,11 +53,9 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
         let id = DeclId::from_index(index);
         let count = tables.sig_count(id);
         let primary = match &tables.decls[index].node {
-            DeclNode::Defs(defs) => defs.iter().position(|def| !def.is_type_only()),
+            DeclNode::Defs(defs) => defs.iter().position(|def| !def.type_only),
             // A protocol member is type-only, but not an overload signature
-            DeclNode::Methods(methods) => {
-                methods.iter().position(|method| method.at_span.is_none())
-            }
+            DeclNode::Methods(methods) => methods.iter().position(|method| !method.overload),
             _ => None,
         };
         // Without an implementation, which resolution reports, the first overload
@@ -103,7 +103,7 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
                 let decl = &tables.decls[index];
                 diags.push((
                     decl.unit,
-                    source::Diag::new(TooManyBinders(sig_name(tables, id, sig))),
+                    Diag::new(TooManyBinders(sig_span(tables, id, sig))),
                 ));
                 broken.insert((id, sig));
             }
@@ -133,15 +133,17 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
     for site in &tables.sites {
         let scope = populate.scope(site.group(), site.unit);
         let ty = match site.role {
-            Role::Type => populate.intern(scope, site.ty, Kind::Type, 0),
+            Role::Type => populate.intern(scope, &site.ty, Kind::Type, 0),
             Role::Rest => {
-                let kind = tables.kind_of(site.unit, site.ty).unwrap_or(Kind::Type);
-                populate.intern(scope, site.ty, kind, 0)
+                let kind = tables.kind_of(site.unit, &site.ty).unwrap_or(Kind::Type);
+                populate.intern(scope, &site.ty, kind, 0)
             }
             Role::Pattern => populate.db.unknown_schema(),
-            Role::Bound(binder) => populate.bound(scope, binder, site.ty),
-            Role::Default(binder) => populate.intern(scope, site.ty, populate.kind(binder), 0),
-            Role::Alias(decl) => populate.intern(scope, site.ty, tables.alias_kinds[&decl].kind, 0),
+            Role::Bound(binder) => populate.bound(scope, binder, &site.ty),
+            Role::Default(binder) => populate.intern(scope, &site.ty, populate.kind(binder), 0),
+            Role::Alias(decl) => {
+                populate.intern(scope, &site.ty, tables.alias_kinds[&decl].kind, 0)
+            }
         };
         site_types.insert(
             UnitSpan {
@@ -168,15 +170,24 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
     tables.site_types = site_types;
 }
 
-/// The name of signature `sig` of a declaration, or where a closure begins
-fn sig_name(tables: &Tables<'_>, decl: DeclId, sig: usize) -> Span {
+/// The name of signature `sig` of a named declaration
+fn sig_name(tables: &Tables<'_>, decl: DeclId, sig: usize) -> Name {
     match &tables.decls[decl.index()].node {
-        DeclNode::Defs(defs) => defs[sig].ident.span,
-        DeclNode::Methods(methods) => methods[sig].name_span,
-        DeclNode::Closure(func) => func.span(),
+        DeclNode::Defs(defs) => defs[sig].name,
+        DeclNode::Methods(methods) => methods[sig].name,
+        DeclNode::Closure(_) => unreachable!("a closure is not named"),
         DeclNode::Class(_) | DeclNode::Alias(_) => tables.decls[decl.index()]
             .name
             .expect("a type declaration is named"),
+    }
+}
+
+/// The span of the name of signature `sig` of a declaration, or where a closure
+/// begins
+fn sig_span(tables: &Tables<'_>, decl: DeclId, sig: usize) -> Span {
+    match &tables.decls[decl.index()].node {
+        DeclNode::Closure(closure) => closure.span,
+        _ => sig_name(tables, decl, sig).span,
     }
 }
 
@@ -207,9 +218,9 @@ struct Populate<'t, 'u> {
 }
 
 impl<'t, 'u> Populate<'t, 'u> {
-    fn report(&mut self, unit: UnitId, info: impl Diagnose + 'static) {
+    fn report(&mut self, unit: UnitId, info: impl Report + 'static) {
         if self.reported.insert((unit, info.span())) {
-            self.diags.push((unit, source::Diag::new(info)));
+            self.diags.push((unit, Diag::new(info)));
         }
     }
 
@@ -236,9 +247,22 @@ impl<'t, 'u> Populate<'t, 'u> {
         self.db.unknown_of(kind)
     }
 
-    fn symbol(&self, unit: UnitId, span: Span) -> TypeId {
-        let sym = self.db.intern_symbol(self.tables.text(unit, span));
+    fn symbol(&self, unit: UnitId, name: Name) -> TypeId {
+        let sym = self.db.intern_symbol(self.tables.name(unit, name));
         self.db.intern(Type::Literal(Literal::Sym(sym)))
+    }
+
+    /// The literal a constant of `unit` stands for
+    fn literal(&self, unit: UnitId, value: &ConstLit) -> Literal {
+        match value {
+            ConstLit::Str(value) => Literal::Str(value.clone()),
+            ConstLit::Int(value) => Literal::Int(*value),
+            ConstLit::Bool(value) => Literal::Bool(*value),
+            ConstLit::Nil => Literal::Nil,
+            ConstLit::Sym(name) => {
+                Literal::Sym(self.db.intern_symbol(self.tables.name(unit, *name)))
+            }
+        }
     }
 
     /// The type of a symbol key
@@ -261,7 +285,7 @@ impl<'t, 'u> Populate<'t, 'u> {
             sig: 0,
             slot: 0,
         };
-        let single = matches!(tables.binders(decl, 0), [written] if matches!(written.kind, BinderKind::Pos))
+        let single = matches!(tables.binders(decl, 0), [written] if written.kind == BinderKind::Pos)
             && tables.lifted[&decl].is_empty()
             && self.kind(binder) == Kind::Type;
         single.then(|| {
@@ -336,21 +360,17 @@ impl<'t, 'u> Populate<'t, 'u> {
         match ty {
             TypeExpr::Group { ty, .. } => self.intern(group, ty, expected, depth),
             TypeExpr::Name { head, fields, .. } => {
-                let span = fields.last().map_or(*head, |field| *head | field);
-                self.reference(group, *head, span, None, expected, depth)
+                let span = fields
+                    .last()
+                    .map_or(head.span, |field| head.span | field.span);
+                self.reference(group, head, fields, span, None, expected, depth)
             }
-            TypeExpr::App { base, args, .. } => {
-                let mut base = &**base;
-                while let TypeExpr::Group { ty, .. } = base {
-                    base = ty;
+            TypeExpr::App { base, args, .. } => match base.ungrouped() {
+                TypeExpr::Name { head, fields, .. } => {
+                    self.reference(group, head, fields, ty.span(), Some(args), expected, depth)
                 }
-                match base {
-                    TypeExpr::Name { head, .. } => {
-                        self.reference(group, *head, ty.span(), Some(args), expected, depth)
-                    }
-                    _ => self.unknown(expected),
-                }
-            }
+                _ => self.unknown(expected),
+            },
             TypeExpr::Schema { params, .. } if expected == Kind::Schema => {
                 let items = self.items(group, params, false, depth);
                 self.schema(items)
@@ -382,7 +402,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                     .copied();
                 let [input, output] =
                     [(0, input), (1, output)].map(|(index, written)| match written {
-                        Some(implicit) => self.intern(group, &implicit.ty, Kind::Type, depth),
+                        Some(implicit) => self.intern(group, implicit, Kind::Type, depth),
                         None => {
                             let ambient =
                                 ambients.map_or(Ambient::Unknown, |ambients| ambients[index]);
@@ -397,18 +417,10 @@ impl<'t, 'u> Populate<'t, 'u> {
                     output: Some(output),
                 }))
             }
-            TypeExpr::Const { expr } if expected == Kind::Type => {
-                let file = &self.tables.units[group.unit.index()].compiler.file;
-                let literal = match expr.fold(file) {
-                    Some(Const::Str(value)) => Literal::Str(value.into()),
-                    Some(Const::Int(value)) => Literal::Int(value),
-                    Some(Const::Bool(value)) => Literal::Bool(value),
-                    Some(Const::Nil) => Literal::Nil,
-                    Some(Const::Sym(span)) => {
-                        Literal::Sym(self.db.intern_symbol(self.tables.text(group.unit, span)))
-                    }
-                    _ => return self.unknown(expected),
-                };
+            TypeExpr::Const {
+                value: Some(value), ..
+            } if expected == Kind::Type => {
+                let literal = self.literal(group.unit, value);
                 self.db.intern(Type::Literal(literal))
             }
             _ => self.unknown(expected),
@@ -427,7 +439,7 @@ impl<'t, 'u> Populate<'t, 'u> {
             Ambient::Implicit(binder) => self.binder(group, binder),
             Ambient::Of(decl, sig) => {
                 let func = sig::function(self.tables, decl, sig);
-                let Some(implicit) = [&func.input, &func.output][index] else {
+                let Some(implicit) = [func.input, func.output][index] else {
                     return self.db.unknown();
                 };
                 // A channel containing a function type that takes that channel would
@@ -440,7 +452,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                     unit: self.tables.decls[decl.index()].unit,
                     ..group
                 };
-                let ty = self.intern(owner, &implicit.ty, Kind::Type, depth);
+                let ty = self.intern(owner, self.tables.site_ty(implicit), Kind::Type, depth);
                 self.expanding.pop();
                 ty
             }
@@ -467,9 +479,9 @@ impl<'t, 'u> Populate<'t, 'u> {
         for param in params {
             let (multiplicity, keyed) = match param.quant {
                 None => (Multiplicity::Required, false),
-                Some(TypeQuant::Opt(_)) => (Multiplicity::Optional, false),
-                Some(TypeQuant::Star(_)) => (Multiplicity::Repeated, false),
-                Some(TypeQuant::StarStar(_)) => (Multiplicity::Repeated, true),
+                Some(TypeQuant::Opt) => (Multiplicity::Optional, false),
+                Some(TypeQuant::Star) => (Multiplicity::Repeated, false),
+                Some(TypeQuant::StarStar) => (Multiplicity::Repeated, true),
             };
             let element = |value| match keyed {
                 true => Element::Keyed { key: sym, value },
@@ -488,20 +500,20 @@ impl<'t, 'u> Populate<'t, 'u> {
                     let ty = self.intern(group, ty, Kind::Type, depth);
                     items.push(Self::item(multiplicity, element(ty)));
                 }
-                Some(TypeParamKind::Key { key, ty, .. }) => {
+                Some(TypeParamKind::Key { key, ty }) => {
                     let key = match key {
-                        TypeKey::Sym(span) => self.symbol(group.unit, *span),
+                        TypeKey::Sym(name) => self.symbol(group.unit, *name),
                         TypeKey::Type(key) => self.intern(group, key, Kind::Type, depth),
                     };
                     let value = self.intern(group, ty, Kind::Type, depth);
                     items.push(Self::item(multiplicity, Element::Keyed { key, value }));
                 }
                 // Only a schema's items are included, as kind checking requires
-                Some(TypeParamKind::Include { ty, .. }) => {
+                Some(TypeParamKind::Include { ty }) => {
                     let ty = self.intern(group, ty, Kind::Schema, depth);
                     items.push(Self::item(multiplicity, Element::Include(ty)));
                 }
-                Some(TypeParamKind::Open { .. }) => {
+                Some(TypeParamKind::Open) => {
                     items.push(Self::item(Multiplicity::Repeated, Element::Positional(top)));
                     items.push(Self::item(
                         Multiplicity::Repeated,
@@ -516,11 +528,13 @@ impl<'t, 'u> Populate<'t, 'u> {
         items
     }
 
-    /// A name, with the type arguments applied to it if any
+    /// A name, spanning `span`, with the type arguments applied to it if any
+    #[allow(clippy::too_many_arguments)]
     fn reference(
         &mut self,
         group: Group<'_>,
-        head: Span,
+        head: &Name,
+        fields: &[Name],
         span: Span,
         args: Option<&[TypeArg]>,
         expected: Kind,
@@ -529,7 +543,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         let tables = self.tables;
         let referent = tables.referents.get(&UnitSpan {
             unit: group.unit,
-            span: head,
+            span: head.span,
         });
         match referent {
             // A binder takes no arguments, which is already diagnosed
@@ -552,19 +566,20 @@ impl<'t, 'u> Populate<'t, 'u> {
                     (Some(Designated::Never), None) => return self.db.bottom(),
                     _ => {}
                 }
-                self.apply(group, decl, args, span, depth)
+                self.apply(group, decl, args, (head, fields, span), depth)
             }
             _ => self.unknown(expected),
         }
     }
 
-    /// A type declaration applied to type arguments, or named without any
+    /// A type declaration applied to type arguments, or named without any, by the
+    /// name it is written with and the span of the whole
     fn apply(
         &mut self,
         group: Group<'_>,
         decl: DeclId,
         args: Option<&[TypeArg]>,
-        span: Span,
+        (head, fields, span): (&Name, &[Name], Span),
         depth: usize,
     ) -> TypeId {
         let tables = self.tables;
@@ -600,9 +615,9 @@ impl<'t, 'u> Populate<'t, 'u> {
             Some(args) => args,
             None => {
                 if written.iter().any(|written| {
-                    written.default.is_none() && !matches!(written.kind, BinderKind::Rest { .. })
+                    written.default.is_none() && !matches!(written.kind, BinderKind::Rest(_))
                 }) {
-                    let name = tables.text(group.unit, span).to_owned();
+                    let name = tables.dotted(group.unit, *head, fields);
                     self.report(group.unit, BareGeneric { span, name });
                     return self.unknown(result);
                 }
@@ -624,11 +639,11 @@ impl<'t, 'u> Populate<'t, 'u> {
                     TypeArgKind::Pos(ty) => {
                         Argument::Positional(self.intern(group, ty, kind_of(ty), depth))
                     }
-                    TypeArgKind::Key { name, ty, .. } => Argument::Keyword(
-                        self.db.intern_symbol(tables.text(group.unit, *name)),
+                    TypeArgKind::Key { name, ty } => Argument::Keyword(
+                        self.db.intern_symbol(tables.name(group.unit, *name)),
                         self.intern(group, ty, kind_of(ty), depth),
                     ),
-                    TypeArgKind::Expand { ty, .. } => {
+                    TypeArgKind::Expand { ty } => {
                         Argument::Expand(match self.expansion(group, ty, depth) {
                             SchemaItem {
                                 element: Element::Include(schema),
@@ -648,7 +663,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         // `Foo[T]` for `Foo[{*T}]`, or `Foo[K, V]` for `Foo[{*(K): V}]`
         let mut shorthand = Vec::new();
         let short = count == 1
-            && matches!(written[0].kind, BinderKind::Pos)
+            && written[0].kind == BinderKind::Pos
             && self.kind(binder(0)) == Kind::Schema;
         for (arg, fill) in args.iter().zip(fills) {
             match fill {
@@ -667,7 +682,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                             Multiplicity::Required,
                             Element::Positional(self.intern(group, ty, Kind::Type, depth)),
                         ),
-                        TypeArgKind::Key { name, ty, .. } => Self::item(
+                        TypeArgKind::Key { name, ty } => Self::item(
                             Multiplicity::Required,
                             Element::Keyed {
                                 key: self.symbol(group.unit, *name),
@@ -734,7 +749,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                 self.schema(items)
             } else if let Some(default) = self.default(binder(slot)) {
                 self.db.substitute(default, &placeholder)
-            } else if let BinderKind::Rest { .. } = written[slot].kind {
+            } else if let BinderKind::Rest(_) = written[slot].kind {
                 self.schema(Vec::new())
             } else {
                 missing.push(slot);
@@ -748,7 +763,7 @@ impl<'t, 'u> Populate<'t, 'u> {
             let mut names = missing
                 .iter()
                 .take(3)
-                .map(|&slot| format!("`{}`", tables.text(owner, written[slot].ident.span)))
+                .map(|&slot| format!("`{}`", tables.name(owner, written[slot].name)))
                 .collect::<Vec<_>>()
                 .join(", ");
             if missing.len() > 3 {
@@ -789,7 +804,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         }
         let items = vec![None; given.len()];
         let span = self.tables.decls[placeholder.index()]
-            .name
+            .name_span()
             .expect("a designated declaration is named");
         self.complete(group, nominee, Vec::new(), given, items, span)
     }
@@ -810,7 +825,7 @@ impl<'t, 'u> Populate<'t, 'u> {
     fn default(&mut self, binder: BinderRef) -> Option<TypeId> {
         let tables = self.tables;
         let written = &tables.binders(binder.decl, binder.sig)[binder.slot];
-        let default = written.default.as_ref()?;
+        let default = tables.site_ty(written.default?);
         match self.defaults.get(&binder) {
             Some(Some(ty)) => return Some(*ty),
             // A default that refers to its own binder through an application
@@ -820,7 +835,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         self.defaults.insert(binder, None);
         let unit = tables.decls[binder.decl.index()].unit;
         let group = self.scope(Some((binder.decl, binder.sig)), unit);
-        let ty = self.intern(group, &default.ty, self.kind(binder), 0);
+        let ty = self.intern(group, default, self.kind(binder), 0);
         self.defaults.insert(binder, Some(ty));
         Some(ty)
     }
@@ -833,9 +848,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         let unit = self.tables.decls[binder.decl.index()].unit;
         let group = Group { unit, ..group };
         match written.kind {
-            BinderKind::Rest { kind: rest, .. }
-                if self.tables.kind_of(unit, ty) != Some(Kind::Schema) =>
-            {
+            BinderKind::Rest(rest) if self.tables.kind_of(unit, ty) != Some(Kind::Schema) => {
                 let item = self.intern(group, ty, Kind::Type, 0);
                 let items = rest_items(rest, item, self.sym());
                 self.schema(items)
@@ -866,21 +879,19 @@ impl<'t, 'u> Populate<'t, 'u> {
             };
             let (name, name_span, binding) = match written {
                 Some(written) => {
-                    let name = self
-                        .db
-                        .intern_symbol(tables.text(owner, written.ident.span));
+                    let name = self.db.intern_symbol(tables.name(owner, written.name));
                     // A lifted binder keeps its binding, so a rest binder keeps its
                     // shape as a bound; it is still always passed positionally
-                    let binding = match &written.kind {
+                    let binding = match written.kind {
                         BinderKind::Pos => Binding::Positional,
-                        BinderKind::Key { .. } => Binding::Keyword(name),
-                        BinderKind::Rest { kind, .. } => Binding::Rest(match kind {
+                        BinderKind::Key => Binding::Keyword(name),
+                        BinderKind::Rest(kind) => Binding::Rest(match kind {
                             RestKind::Mixed => Rest::All,
                             RestKind::Pos => Rest::Positional,
                             RestKind::Key => Rest::Keyed,
                         }),
                     };
-                    (name, written.ident.span, binding)
+                    (name, written.name.span, binding)
                 }
                 None => {
                     let sigil = match tables.sigs[&(binder.decl, binder.sig)].input {
@@ -889,7 +900,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                     };
                     (
                         self.db.intern_symbol(sigil),
-                        sig_name(tables, binder.decl, binder.sig),
+                        sig_span(tables, binder.decl, binder.sig),
                         Binding::Implicit,
                     )
                 }
@@ -897,8 +908,7 @@ impl<'t, 'u> Populate<'t, 'u> {
             let bound = match written {
                 Some(written) => written
                     .bound
-                    .as_ref()
-                    .map(|bound| self.bound(group, binder, &bound.ty)),
+                    .map(|bound| self.bound(group, binder, tables.site_ty(bound))),
                 // An omitted channel is gradual: its elements are `Unknown`
                 None => self.ambient_bound(match self.db.symbol(name) {
                     "<" => Intrinsic::Iter,
@@ -929,12 +939,12 @@ impl<'t, 'u> Populate<'t, 'u> {
                 name,
                 span: span(name_span),
                 bound: written
-                    .and_then(|written| written.bound.as_ref())
-                    .map(|bound| span(bound.ty.span())),
+                    .and_then(|written| written.bound)
+                    .map(|bound| span(tables.site_ty(bound).span())),
                 default: written
-                    .and_then(|written| written.default.as_ref())
+                    .and_then(|written| written.default)
                     .filter(|_| origin == BinderOrigin::Written)
-                    .map(|default| span(default.ty.span())),
+                    .map(|default| span(tables.site_ty(default).span())),
                 origin,
             });
         }
@@ -954,7 +964,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         let (binders, sources) = self.binders(key);
         let name = decl.name.map(|_| {
             self.db
-                .intern_symbol(tables.text(decl.unit, sig_name(tables, key.0, key.1)))
+                .intern_symbol(tables.name(decl.unit, sig_name(tables, key.0, key.1)))
         });
         Declaration {
             source: DeclSource {
@@ -963,7 +973,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                 name,
                 span: UnitSpan {
                     unit: decl.unit,
-                    span: sig_name(tables, key.0, key.1),
+                    span: sig_span(tables, key.0, key.1),
                 },
             },
             ty: self.db.intern(Type::Quantified {
@@ -985,22 +995,28 @@ impl<'t, 'u> Populate<'t, 'u> {
         let tables = self.tables;
         let decl = &tables.decls[id.index()];
         let group = self.scope(Some((id, 0)), decl.unit);
-        match decl.node {
+        match &decl.node {
             DeclNode::Class(class) => {
                 let body = self.db.intern(Type::Decl(id));
                 let mut declaration = self.declaration((id, 0), decl.kind, Kind::Type, body);
                 let mut supertypes = Vec::new();
-                for super_ref in &class.super_refs {
-                    let head = super_ref.ident.span;
-                    let span = super_ref.fields.last().map_or(head, |field| head | field);
+                for super_ref in &class.supers {
+                    let head = super_ref.head.span;
+                    let span = super_ref.span();
                     let args = (!super_ref.args.is_empty()).then_some(&super_ref.args[..]);
                     let ty = match tables.referents.get(&UnitSpan {
                         unit: decl.unit,
                         span: head,
                     }) {
-                        Some(Referent::Decl(_) | Referent::External { .. }) => {
-                            self.reference(group, head, span, args, Kind::Type, 0)
-                        }
+                        Some(Referent::Decl(_) | Referent::External { .. }) => self.reference(
+                            group,
+                            &super_ref.head,
+                            &super_ref.fields,
+                            span,
+                            args,
+                            Kind::Type,
+                            0,
+                        ),
                         _ => continue,
                     };
                     // Checked for well-formedness by its name, as it has no type
@@ -1034,14 +1050,12 @@ impl<'t, 'u> Populate<'t, 'u> {
             }
             DeclNode::Alias(alias) => {
                 let kind = tables.alias_kinds[&id].kind;
-                let body = match &alias.body {
-                    AliasBody::Opaque(_) if tables.pipes.contains_key(&id) => self.pipe(group, id),
-                    AliasBody::Opaque(_) => self.db.intern(Type::Decl(id)),
+                let body = match alias.body {
+                    None if tables.pipes.contains_key(&id) => self.pipe(group, id),
+                    None => self.db.intern(Type::Decl(id)),
                     // An alias on or reaching a cycle, already diagnosed
-                    AliasBody::Type(_) if tables.aliases.get(&id) == Some(&Head::Error) => {
-                        self.unknown(kind)
-                    }
-                    AliasBody::Type(body) => self.intern(group, body, kind, 0),
+                    Some(_) if tables.aliases.get(&id) == Some(&Head::Error) => self.unknown(kind),
+                    Some(body) => self.intern(group, tables.site_ty(body), kind, 0),
                 };
                 // A pipe placeholder is transparent, standing for its nominee
                 let decl_kind = match tables.pipes.contains_key(&id) {
@@ -1054,15 +1068,15 @@ impl<'t, 'u> Populate<'t, 'u> {
                 for sig in 0..tables.sig_count(id) {
                     let group = self.scope(Some((id, sig)), decl.unit);
                     let completed = &tables.sigs[&(id, sig)];
-                    let params = self.params(id, group, &completed.params);
                     let func = sig::function(tables, id, sig);
+                    let params = self.params(id, group, func, &completed.params);
                     let [input, output] = [
-                        (completed.input, &func.input),
-                        (completed.output, &func.output),
+                        (completed.input, func.input),
+                        (completed.output, func.output),
                     ]
                     .map(|(ambient, written)| match (ambient, written) {
                         (Ambient::Written, Some(implicit)) => {
-                            self.intern(group, &implicit.ty, Kind::Type, 0)
+                            self.intern(group, tables.site_ty(implicit), Kind::Type, 0)
                         }
                         (ambient, _) => self.ambient(group, ambient, 0, 0),
                     });
@@ -1078,17 +1092,15 @@ impl<'t, 'u> Populate<'t, 'u> {
                     out.push((sig_decls[&(id, sig)], declaration));
                 }
             }
-            DeclNode::Closure(func) => {
+            DeclNode::Closure(closure) => {
+                let func = &closure.sig;
                 let params = sig::params(tables, decl.unit, func, false);
-                let params = self.params(id, group, &params);
-                let [input, output] = [&func.input, &func.output].map(|written| match written {
-                    Some(implicit) => self.intern(group, &implicit.ty, Kind::Type, 0),
-                    None => self.db.unknown(),
-                });
-                let result = match &func.ret {
-                    Some(ret) => self.intern(group, &ret.ty, Kind::Type, 0),
-                    None => self.db.unknown(),
-                };
+                let params = self.params(id, group, func, &params);
+                let [input, output, result] =
+                    [func.input, func.output, func.ret].map(|written| match written {
+                        Some(written) => self.intern(group, tables.site_ty(written), Kind::Type, 0),
+                        None => self.db.unknown(),
+                    });
                 let body = self.db.intern(Type::Function(Function {
                     params,
                     result,
@@ -1104,9 +1116,9 @@ impl<'t, 'u> Populate<'t, 'u> {
     }
 
     /// The type of a parameter, a return type, or a field
-    fn slot(&mut self, id: DeclId, group: Group<'_>, slot: &Slot<'_>) -> TypeId {
-        match slot {
-            Slot::Annot(ty) => self.intern(group, ty, Kind::Type, 0),
+    fn slot(&mut self, id: DeclId, group: Group<'_>, slot: &Slot) -> TypeId {
+        match *slot {
+            Slot::Annot(ty) => self.intern(group, self.tables.site_ty(ty), Kind::Type, 0),
             Slot::Unknown => self.db.unknown(),
             // The class, applied to its own binders, which lead a method's group
             Slot::SelfType => {
@@ -1135,52 +1147,49 @@ impl<'t, 'u> Populate<'t, 'u> {
     }
 
     /// The parameter schema of a def, method or closure
-    fn params(&mut self, id: DeclId, group: Group<'_>, params: &[(&Param, ParamTy<'_>)]) -> TypeId {
+    fn params(
+        &mut self,
+        id: DeclId,
+        group: Group<'_>,
+        func: &Signature,
+        tys: &[ParamTy],
+    ) -> TypeId {
         let sym = self.sym();
         let mut items = Vec::new();
-        for (param, ty) in params {
-            let multiplicity = match param {
-                Param::Pos { default, .. }
-                | Param::Key { default, .. }
-                | Param::ConstKey { default, .. } => match default {
-                    Some(_) => Multiplicity::Optional,
-                    None => Multiplicity::Required,
-                },
-                Param::Rest { .. } => Multiplicity::Repeated,
+        for (param, ty) in func.params.iter().zip(tys) {
+            let multiplicity = match (&param.kind, param.default) {
+                (ParamKind::Rest { .. }, _) => Multiplicity::Repeated,
+                (_, true) => Multiplicity::Optional,
+                (_, false) => Multiplicity::Required,
             };
-            match (param, ty) {
-                (Param::Pos { .. }, ParamTy::Single(slot)) => {
+            match (&param.kind, ty) {
+                (ParamKind::Pos, ParamTy::Single(slot)) => {
                     let ty = self.slot(id, group, slot);
                     items.push(Self::item(multiplicity, Element::Positional(ty)));
                 }
-                (Param::Key { key_span, .. }, ParamTy::Single(slot)) => {
-                    let key = self.symbol(group.unit, *key_span);
+                (ParamKind::Key { key }, ParamTy::Single(slot)) => {
+                    let key = self.symbol(group.unit, *key);
                     let value = self.slot(id, group, slot);
                     items.push(Self::item(multiplicity, Element::Keyed { key, value }));
                 }
-                (Param::ConstKey { key_const, .. }, ParamTy::Single(slot)) => {
-                    let key = match key_const {
-                        Const::Str(value) => Some(Literal::Str(value.as_str().into())),
-                        Const::Int(value) => Some(Literal::Int(*value)),
-                        Const::Bool(value) => Some(Literal::Bool(*value)),
-                        Const::Nil => Some(Literal::Nil),
-                        Const::Sym(span) => Some(Literal::Sym(
-                            self.db.intern_symbol(self.tables.text(group.unit, *span)),
-                        )),
-                        Const::Bin(_) | Const::F64(_) | Const::Error => None,
+                (ParamKind::ConstKey { key }, ParamTy::Single(slot)) => {
+                    let key = match key {
+                        Some(key) => {
+                            let literal = self.literal(group.unit, key);
+                            self.db.intern(Type::Literal(literal))
+                        }
+                        None => self.db.unknown(),
                     };
-                    let key =
-                        key.map_or(self.db.unknown(), |key| self.db.intern(Type::Literal(key)));
                     let value = self.slot(id, group, slot);
                     items.push(Self::item(multiplicity, Element::Keyed { key, value }));
                 }
-                (Param::Rest { .. }, ParamTy::Rest(rest)) => match rest {
+                (ParamKind::Rest { .. }, ParamTy::Rest(rest)) => match rest {
                     RestSlot::Items(kind, slot) => {
                         let ty = self.slot(id, group, slot);
                         items.extend(rest_items(*kind, ty, sym));
                     }
                     RestSlot::Pack(ty) => {
-                        let ty = self.intern(group, ty, Kind::Schema, 0);
+                        let ty = self.intern(group, self.tables.site_ty(*ty), Kind::Schema, 0);
                         items.push(Self::item(Multiplicity::Required, Element::Include(ty)));
                     }
                     // Mapping a pattern over packs has no representation yet
@@ -1209,59 +1218,60 @@ impl<'t, 'u> Populate<'t, 'u> {
             {
                 let primary = found
                     .iter()
-                    .find(|method| method.at_span.is_none())
+                    .find(|method| !method.overload)
                     .unwrap_or(&found[0]);
-                methods.insert(primary.name_span, (DeclId::from_index(index), *primary));
+                methods.insert(primary.name.span, (DeclId::from_index(index), primary));
             }
         }
         // Instance members and type-object members are separate namespaces
         let mut index = HashMap::new();
         let mut members = Vec::new();
-        for member in &class.body.members {
-            match member {
-                ClassMember::Field(field) => {
+        for member in &class.members {
+            match *member {
+                SourceMember::Field(ref field) => {
                     let scope = match field.scope {
                         MemberScope::Instance => Scope::Instance,
                         MemberScope::Class => Scope::Class,
                         MemberScope::Static => Scope::Static,
                     };
-                    for name in &field.fields {
+                    for &name in &field.names {
                         let key = MemberKey {
-                            name: self.db.intern_symbol(tables.text(unit, name.ident.span)),
+                            name: self.db.intern_symbol(tables.name(unit, name)),
                             special: false,
-                            private: field.pub_span.is_none(),
+                            private: !field.public,
                         };
                         let MapEntry::Vacant(entry) = index.entry((key, scope == Scope::Instance))
                         else {
                             continue;
                         };
                         entry.insert(members.len());
-                        let slot = tables.fields[&(id, name.ident.span)];
+                        let slot = tables.fields[&(id, name.span)];
                         let ty = self.slot(id, group, &slot);
                         members.push((
                             key,
                             Member::Field {
                                 ty,
                                 scope,
-                                public: field.pub_span.is_some(),
+                                public: field.public,
                             },
                         ));
                     }
                 }
-                ClassMember::Method(method) => {
-                    let Some(&(decl, primary)) = methods.get(&method.name_span) else {
+                SourceMember::Method { decl, sig } => {
+                    let method = tables.method(decl, sig);
+                    let Some(&(decl, primary)) = methods.get(&method.name.span) else {
                         // An overload signature, with its implementation's function
                         continue;
                     };
                     let key = MemberKey {
-                        name: self.db.intern_symbol(tables.text(unit, primary.name_span)),
+                        name: self.db.intern_symbol(tables.name(unit, primary.name)),
                         special: primary.special.is_some(),
-                        private: primary.pub_span.is_none() && primary.special.is_none(),
+                        private: !primary.public && primary.special.is_none(),
                     };
                     let scope = sig::method_scope(tables, unit, primary);
                     // A special method other than `(init)` is reached by the runtime
                     // from anywhere
-                    let public = primary.pub_span.is_some()
+                    let public = primary.public
                         || matches!(primary.special, Some(special)
                             if !matches!(special, SpecialMethod::Init));
                     let form = sig::method_form(tables, unit, primary);
@@ -1322,11 +1332,11 @@ impl<'t, 'u> Populate<'t, 'u> {
         let count = tables.decls.len();
         let mut edges: Vec<Vec<(DeclId, Span)>> = vec![Vec::new(); count];
         for (index, decl) in tables.decls.iter().enumerate() {
-            let DeclNode::Class(class) = decl.node else {
+            let DeclNode::Class(class) = &decl.node else {
                 continue;
             };
-            for super_ref in &class.super_refs {
-                let head = super_ref.ident.span;
+            for super_ref in &class.supers {
+                let head = super_ref.head.span;
                 let target = match tables.referents.get(&UnitSpan {
                     unit: decl.unit,
                     span: head,
@@ -1349,8 +1359,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                     _ => None,
                 };
                 if let Some(target) = target {
-                    let span = super_ref.fields.last().map_or(head, |field| head | field);
-                    edges[index].push((target, span));
+                    edges[index].push((target, super_ref.span()));
                 }
             }
         }
@@ -1419,12 +1428,12 @@ struct MissingTypeArgs {
     names: String,
 }
 
-impl Diagnose for MissingTypeArgs {
+impl Report for MissingTypeArgs {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         write!(w, "missing type arguments for {}", self.names)
     }
 
@@ -1439,12 +1448,12 @@ struct BareGeneric {
     name: String,
 }
 
-impl Diagnose for BareGeneric {
+impl Report for BareGeneric {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         write!(w, "`{}` needs type arguments", self.name)
     }
 
@@ -1455,12 +1464,12 @@ impl Diagnose for BareGeneric {
 
 struct InheritanceCycle(Span);
 
-impl Diagnose for InheritanceCycle {
+impl Report for InheritanceCycle {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         write!(w, "class inherits from itself")
     }
 
@@ -1471,12 +1480,12 @@ impl Diagnose for InheritanceCycle {
 
 struct TooManyBinders(Span);
 
-impl Diagnose for TooManyBinders {
+impl Report for TooManyBinders {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
             "declaration has more than {MAX_BINDERS} binders, counting those it captures"
@@ -1490,12 +1499,12 @@ impl Diagnose for TooManyBinders {
 
 struct TypeTooDeep(Span);
 
-impl Diagnose for TypeTooDeep {
+impl Report for TypeTooDeep {
     fn severity(&self) -> Severity {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
         write!(w, "type is nested more than {MAX_TYPE_DEPTH} deep")
     }
 

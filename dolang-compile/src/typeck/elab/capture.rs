@@ -13,9 +13,11 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use super::{Ambient, BinderRef, DeclNode, Referent, Role, Tables, sig};
+use super::{
+    Ambient, BinderRef, DeclNode, Referent, Role, Tables, sig,
+    surface::{TypeExpr, TypeParam},
+};
 use crate::{
-    ast::{TypeExpr, TypeParam, implicits},
     source::Span,
     typeck::r#type::{DeclId, DeclKind, UnitId, UnitSpan},
 };
@@ -32,22 +34,22 @@ pub(crate) fn captures(tables: &mut Tables<'_>) {
     };
     for site in &tables.sites {
         if let Some((decl, _)) = site.group() {
-            needs.ty(decl.index(), site.unit, site.ty);
+            needs.ty(decl.index(), site.unit, &site.ty);
         }
         if let Role::Bound(binder) = site.role {
             let node = needs.binders.len();
             needs.binders.push(BTreeSet::new());
             needs.deps.push(Vec::new());
             needs.bounds.insert(binder, node);
-            needs.ty(node, site.unit, site.ty);
+            needs.ty(node, site.unit, &site.ty);
         }
     }
     for index in 0..count {
         let id = DeclId::from_index(index);
         let decl = &tables.decls[index];
-        if let DeclNode::Class(class) = decl.node {
-            for super_ref in &class.super_refs {
-                needs.name(index, decl.unit, super_ref.ident.span);
+        if let DeclNode::Class(class) = &decl.node {
+            for super_ref in &class.supers {
+                needs.name(index, decl.unit, super_ref.head.span);
                 for arg in &super_ref.args {
                     needs.ty(index, decl.unit, arg.ty());
                 }
@@ -163,8 +165,8 @@ impl Needs<'_, '_> {
 
     fn ty(&mut self, node: usize, unit: UnitId, ty: &TypeExpr) {
         match ty {
-            TypeExpr::Name { head, .. } => self.name(node, unit, *head),
-            TypeExpr::Const { .. } | TypeExpr::Error => {}
+            TypeExpr::Name { head, .. } => self.name(node, unit, head.span),
+            TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}
             TypeExpr::App { base, args, .. } => {
                 self.ty(node, unit, base);
                 for arg in args {
@@ -187,8 +189,8 @@ impl Needs<'_, '_> {
                 ..
             } => {
                 self.params(node, unit, params);
-                for implicit in implicits(input, output) {
-                    self.ty(node, unit, &implicit.ty);
+                for ty in [input, output].into_iter().flatten() {
+                    self.ty(node, unit, ty);
                 }
                 self.ty(node, unit, ret);
                 let tables = self.tables;
@@ -216,7 +218,7 @@ impl Needs<'_, '_> {
             }
             Ambient::Of(owner, sig) => {
                 let func = sig::function(self.tables, owner, sig);
-                let Some(implicit) = [&func.input, &func.output][index] else {
+                let Some(implicit) = [func.input, func.output][index] else {
                     return;
                 };
                 if self.expanding.contains(&(owner, sig, index)) {
@@ -224,7 +226,7 @@ impl Needs<'_, '_> {
                 }
                 self.expanding.push((owner, sig, index));
                 let unit = self.tables.decls[owner.index()].unit;
-                self.ty(node, unit, &implicit.ty);
+                self.ty(node, unit, self.tables.site_ty(implicit));
                 self.expanding.pop();
             }
             Ambient::Written | Ambient::Unknown => {}

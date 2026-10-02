@@ -188,7 +188,9 @@ impl<'u> Lower<'_, 'u> {
     }
 
     fn prelude(&self, entries: &mut [Option<Entry<'u>>]) {
-        let unit = self.tables.units[self.unit.index()];
+        let unit = self.tables.units[self.unit.index()]
+            .source
+            .expect("only a unit with source is lowered");
         for import in &unit.compiler.prelude {
             match import {
                 PreludeImport::Items { module, items } => {

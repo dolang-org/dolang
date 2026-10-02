@@ -109,6 +109,63 @@ pub class Unit
   pub def emit self -> Bin
     ...
 
+  # Returns the bytes of the module's typelib, which
+  # [`Typelib`](compile.Typelib) reads.
+  #
+  # ## Errors
+  #
+  # | Exception          | Condition                                                   |
+  # | ------------------ | ----------------------------------------------------------- |
+  # | `std.CompileError` | Compilation failed, the unit was compiled without `typecheck: true`, or it is not a module |
+  # | `std.StateError`   | The unit was emitted                                        |
+  pub def typelib self -> Bin
+    ...
+
+# A module's typelib: its declarations as [`check`](compile.check) reads them,
+# without its source.
+#
+# Checking units against a typelib checks them against the module's
+# declarations, but not the module's own bodies. A typelib is read only by the
+# version of Do that wrote it.
+#
+# ## Example
+#
+# ```
+# let lib = compile "lib.dol" $lib_source module: lib typecheck: true
+# let typelib = Typelib $lib.typelib()
+# echo $typelib.module ...typelib.imports()
+# ```
+pub class Typelib
+  # Reads a typelib.
+  #
+  # ## Errors
+  #
+  # | Exception    | Condition                                           |
+  # | ------------ | --------------------------------------------------- |
+  # | `TypeError`  | `bytes` is not `Bin`                                |
+  # | `ValueError` | `bytes` is malformed, or from another version of Do |
+  pub def (init)
+    self
+    # Bytes from [`Unit.typelib`](compile.Unit.typelib).
+    bytes @ Bin
+  do
+    ...
+
+  # The module's name.
+  #[getter]
+  pub def module self -> Str
+    ...
+
+  # The path of the module's source when the typelib was written.
+  #[getter]
+  pub def path self -> Str
+    ...
+
+  # Returns the modules the module's declarations name, each once, in order.
+  # [`check`](compile.check) treats those it isn't given as unknown.
+  pub def imports self -> Iterable[Str]
+    ...
+
 # An opaque handle identifying one node within a [`Unit`](compile.Unit).
 #
 # IDs compare equal and hash by identity, so they work as dict keys and as a
@@ -942,6 +999,10 @@ do -> Unit
 # Modules that aren't among the units are treated as unknown. A unit that failed
 # to compile is skipped; its own diagnostics report why.
 #
+# A module may be given by its [`Typelib`](compile.Typelib) in place of a unit.
+# Its declarations are checked, but not its bodies, and a diagnostic in it is
+# located by line and column, without its source.
+#
 # The pipes `strand` gives pipeline and stream stages are checked as
 # [`proc.PipeSender`](proc.PipeSender) and
 # [`proc.PipeReceiver`](proc.PipeReceiver), which the shell's pipelines use.
@@ -952,7 +1013,7 @@ do -> Unit
 # | ------------------ | --------------------------------------------------- |
 # | `ValueError`       | A unit was compiled without `typecheck: true`       |
 # | `ValueError`       | Two units are compiled as the same module           |
-# | `std.StateError`   | A unit was emitted                                  |
+# | `std.StateError`   | A unit was emitted, or a typelib is given twice     |
 #
 # ## Example
 #
@@ -962,8 +1023,9 @@ do -> Unit
 # let result = check [lib, main]
 # for diag = result.diagnostics
 #   echo $diag.render()
+# let again = check [Typelib(lib.typelib()), main]
 # ```
-pub def check units @ Iterable[Unit] -> Check
+pub def check units @ Iterable[Unit | Typelib] -> Check
   ...
 
 # The result of [`check`](compile.check).

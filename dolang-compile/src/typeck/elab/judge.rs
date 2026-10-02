@@ -7,11 +7,11 @@ use std::{collections::HashMap, fmt::Write};
 
 use super::{
     Ambient, BinderRef, DeclNode, Designated, Head, KindOf, ModuleRef, ParamTy, Referent, RestSlot,
-    Sig, Slot, Tables, Unresolved,
+    Slot, Tables, Unresolved,
+    surface::{Member as SourceMember, MemberScope, ParamKind},
 };
 use crate::{
-    Mode, RestKind,
-    ast::{ClassMember, MemberScope, Param, TypeExpr, visit::Node},
+    RestKind,
     source::Span,
     typeck::r#type::{
         Argument, BinderOrigin, Database, DeclId, Declaration, Element, Kind, Literal, Member,
@@ -64,7 +64,7 @@ impl Tables<'_> {
         for (id, head) in &self.aliases {
             let decl = &self.decls[id.index()];
             if decl.unit == unit
-                && let Some(name) = decl.name
+                && let Some(name) = decl.name_span()
             {
                 judgments.push(("head", name, self.head(head)));
             }
@@ -74,13 +74,13 @@ impl Tables<'_> {
             if owner.unit == unit
                 && let Some(written) = self.binders(binder.decl, binder.sig).get(binder.slot)
             {
-                judgments.push(("kind", written.ident.span, self.kind(kind)));
+                judgments.push(("kind", written.name.span, self.kind(kind)));
             }
         }
         for (id, kind) in &self.alias_kinds {
             let decl = &self.decls[id.index()];
             if decl.unit == unit
-                && let Some(name) = decl.name
+                && let Some(name) = decl.name_span()
             {
                 judgments.push(("kind", name, self.kind(kind)));
             }
@@ -88,12 +88,12 @@ impl Tables<'_> {
         for (&(id, sig), completed) in &self.sigs {
             let decl = &self.decls[id.index()];
             if decl.unit == unit {
-                let name = match decl.node {
-                    DeclNode::Defs(ref defs) => defs[sig].ident.span,
-                    DeclNode::Methods(ref methods) => methods[sig].name_span,
+                let name = match &decl.node {
+                    DeclNode::Defs(defs) => defs[sig].name.span,
+                    DeclNode::Methods(methods) => methods[sig].name.span,
                     _ => unreachable!("only a def or method has a signature"),
                 };
-                judgments.push(("sig", name, self.sig(unit, completed)));
+                judgments.push(("sig", name, self.sig(id, sig)));
                 let implicit: Vec<_> = [('<', completed.input), ('>', completed.output)]
                     .into_iter()
                     .filter_map(|(sigil, ambient)| match ambient {
@@ -115,7 +115,7 @@ impl Tables<'_> {
             if owner.unit == unit
                 && let Some(written) = self.binders(binder.decl, binder.sig).get(binder.slot)
             {
-                judgments.push(("variance", written.ident.span, variance(value).to_owned()));
+                judgments.push(("variance", written.name.span, variance(value).to_owned()));
             }
         }
         let mut captured: HashMap<DeclId, Vec<(BinderRef, Variance)>> = HashMap::new();
@@ -125,7 +125,7 @@ impl Tables<'_> {
             }
         }
         for (id, mut binders) in captured {
-            let Some(name) = self.decls[id.index()].name else {
+            let Some(name) = self.decls[id.index()].name_span() else {
                 continue;
             };
             // Outer declarations are allocated first
@@ -134,8 +134,8 @@ impl Tables<'_> {
                 .iter()
                 .map(|&(binder, value)| {
                     let unit = self.decls[binder.decl.index()].unit;
-                    let ident = &self.binders(binder.decl, binder.sig)[binder.slot].ident;
-                    format!("{} {}", self.text(unit, ident.span), variance(value))
+                    let name = self.binders(binder.decl, binder.sig)[binder.slot].name;
+                    format!("{} {}", self.name(unit, name), variance(value))
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
@@ -150,7 +150,7 @@ impl Tables<'_> {
         for (id, designated) in &self.designated {
             let decl = &self.decls[id.index()];
             if decl.unit == unit
-                && let Some(name) = decl.name
+                && let Some(name) = decl.name_span()
             {
                 let value = match designated {
                     Designated::Value => "top".to_owned(),
@@ -211,38 +211,36 @@ impl Tables<'_> {
         }
     }
 
-    /// A completed signature, with annotations as written, omissions as the types
-    /// they default to, and implicit binders by slot
-    fn sig(&self, unit: UnitId, sig: &Sig<'_>) -> String {
-        let text = |ty: &TypeExpr| self.text(unit, ty.span());
-        let slot = |slot: &Slot<'_>| match slot {
-            Slot::Annot(ty) => text(ty).to_owned(),
+    /// A completed signature, with annotations in canonical form, omissions as the
+    /// types they default to, and implicit binders by slot
+    fn sig(&self, decl: DeclId, sig: usize) -> String {
+        let unit = self.decls[decl.index()].unit;
+        let func = self.decls[decl.index()].node.signature(sig);
+        let sig = &self.sigs[&(decl, sig)];
+        let text = |site| self.print(unit, self.site_ty(site));
+        let slot = |slot: &Slot| match *slot {
+            Slot::Annot(ty) => text(ty),
             Slot::Unknown => "Unknown".to_owned(),
             Slot::SelfType => "Self".to_owned(),
         };
         let mut out = String::from("(");
-        for (index, (param, ty)) in sig.params.iter().enumerate() {
+        for (index, (param, ty)) in func.params.iter().zip(&sig.params).enumerate() {
             if index != 0 {
                 out.push_str(", ");
             }
-            let (name, optional) = match param {
-                Param::Pos { ident, default, .. } => {
-                    (self.text(unit, ident.span).to_owned(), default.is_some())
+            let spelled = param.name.map_or("", |name| self.name(unit, name));
+            let (name, optional) = match param.kind {
+                ParamKind::Pos => (spelled.to_owned(), param.default),
+                ParamKind::Key { .. } | ParamKind::ConstKey { .. } => {
+                    (format!(":{spelled}"), param.default)
                 }
-                Param::Key { ident, default, .. } | Param::ConstKey { ident, default, .. } => (
-                    format!(":{}", self.text(unit, ident.span)),
-                    default.is_some(),
-                ),
-                Param::Rest { kind, ident, .. } => {
+                ParamKind::Rest { kind, .. } => {
                     let sigil = match kind {
                         RestKind::Mixed => "...",
                         RestKind::Pos => "*",
                         RestKind::Key => "**",
                     };
-                    let name = ident
-                        .as_ref()
-                        .map_or("", |ident| self.text(unit, ident.span));
-                    (format!("{sigil}{name}"), false)
+                    (format!("{sigil}{spelled}"), false)
                 }
             };
             let ty = match ty {
@@ -255,8 +253,8 @@ impl Tables<'_> {
                         RestKind::Key => format!("{{**{item}}}"),
                     }
                 }
-                ParamTy::Rest(RestSlot::Pack(ty)) => text(ty).to_owned(),
-                ParamTy::Rest(RestSlot::Pattern(ty)) => format!("...{}", text(ty)),
+                ParamTy::Rest(RestSlot::Pack(ty)) => text(*ty),
+                ParamTy::Rest(RestSlot::Pattern(ty)) => format!("...{}", text(*ty)),
             };
             let _ = write!(out, "{}{name}: {ty}", if optional { "?" } else { "" });
         }
@@ -306,7 +304,7 @@ impl Tables<'_> {
         };
         name.push('.');
         match decl.name {
-            Some(span) => name.push_str(self.units[decl.unit.index()].compiler.file.str(span)),
+            Some(spelled) => name.push_str(self.name(decl.unit, spelled)),
             None => name.push_str("<closure>"),
         }
         name
@@ -314,21 +312,13 @@ impl Tables<'_> {
 
     /// A module's name, or a script's file stem
     fn unit_name(&self, unit: UnitId) -> String {
-        let compiler = &self.units[unit.index()].compiler;
-        match compiler.mode {
-            Mode::Module { name } => name.to_owned(),
-            Mode::Script | Mode::Repl => compiler
-                .file
-                .path()
-                .file_stem()
-                .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned()),
-        }
+        self.units[unit.index()].name()
     }
 
     fn binder(&self, binder: BinderRef) -> String {
         let unit = self.decls[binder.decl.index()].unit;
-        let ident = &self.binders(binder.decl, binder.sig)[binder.slot].ident;
-        format!("binder {}", self.text(unit, ident.span))
+        let name = self.binders(binder.decl, binder.sig)[binder.slot].name;
+        format!("binder {}", self.name(unit, name))
     }
 
     /// The judgments about what population interned
@@ -344,8 +334,8 @@ impl Tables<'_> {
                 continue;
             }
             let span = match &decl.node {
-                DeclNode::Defs(defs) => defs[sig].ident.span,
-                DeclNode::Methods(methods) => methods[sig].name_span,
+                DeclNode::Defs(defs) => defs[sig].name.span,
+                DeclNode::Methods(methods) => methods[sig].name.span,
                 _ => continue,
             };
             let declaration = db.declaration(db_id);
@@ -358,32 +348,32 @@ impl Tables<'_> {
             if decl.unit != unit {
                 continue;
             }
-            match decl.node {
+            match &decl.node {
                 DeclNode::Class(class) => {
                     let declaration = db.declaration(id);
                     let names = self.names(db, declaration);
-                    let span = decl.name.expect("a class is named");
+                    let span = decl.name_span().expect("a class is named");
                     judgments.push(("quantifier", span, self.quantifier(db, declaration, &names)));
                     judgments.push(("decl", span, self.decl(db, declaration, &names)));
                     for (key, member) in declaration.members.iter() {
                         // A method member is judged at its function's name, and a field at
                         // the first field its key and namespace record
                         let span = match member.decls().next() {
-                            Some(decl) => self.decls[decl.index()].name,
-                            None => class.body.members.iter().find_map(|source| {
-                                let ClassMember::Field(field) = source else {
+                            Some(decl) => self.decls[decl.index()].name_span(),
+                            None => class.members.iter().find_map(|source| {
+                                let SourceMember::Field(field) = source else {
                                     return None;
                                 };
-                                let instance = matches!(field.scope, MemberScope::Instance);
+                                let instance = field.scope == MemberScope::Instance;
                                 field
-                                    .fields
+                                    .names
                                     .iter()
-                                    .map(|name| name.ident.span)
-                                    .find(|&span| {
-                                        self.text(unit, span) == db.symbol(key.name)
-                                            && field.pub_span.is_none() == key.private
+                                    .find(|&&name| {
+                                        self.name(unit, name) == db.symbol(key.name)
+                                            && !field.public == key.private
                                             && instance == (member.scope() == Scope::Instance)
                                     })
+                                    .map(|name| name.span)
                             }),
                         };
                         if let Some(span) = span {
@@ -394,7 +384,7 @@ impl Tables<'_> {
                 DeclNode::Alias(_) => {
                     let declaration = db.declaration(id);
                     let names = self.names(db, declaration);
-                    let span = decl.name.expect("an alias is named");
+                    let span = decl.name_span().expect("an alias is named");
                     judgments.push(("quantifier", span, self.quantifier(db, declaration, &names)));
                     judgments.push(("decl", span, self.decl(db, declaration, &names)));
                 }
@@ -422,7 +412,7 @@ impl Tables<'_> {
     fn binder_name(&self, binder: BinderRef) -> String {
         let unit = self.decls[binder.decl.index()].unit;
         match self.binders(binder.decl, binder.sig).get(binder.slot) {
-            Some(written) => self.text(unit, written.ident.span).to_owned(),
+            Some(written) => self.name(unit, written.name).to_owned(),
             None => match self.sigs[&(binder.decl, binder.sig)].input {
                 Ambient::Implicit(input) if input == binder => "in".to_owned(),
                 _ => "out".to_owned(),

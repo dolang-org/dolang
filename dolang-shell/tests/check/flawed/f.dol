@@ -1,0 +1,6 @@
+pub class A
+pub class B
+pub class Box[T @ A]
+  pub field value @ T
+pub def f x @ Box[B]
+  x

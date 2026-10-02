@@ -11,14 +11,10 @@
 //! Only class supertypes and a method's own binder bounds are read, so the order
 //! in which methods are specialized doesn't matter.
 
-use super::{BadReceiver, DeclNode, ParamTy, Slot, Tables, UnitDiag};
-use crate::{
-    ast::visit::Node,
-    source,
-    typeck::{
-        solver::{Reach, Solver},
-        r#type::{Binder, Database, DeclId, Element, Type, TypeId},
-    },
+use super::{BadReceiver, DeclNode, Diag, ParamTy, Slot, Tables, UnitDiag};
+use crate::typeck::{
+    solver::{Reach, Solver},
+    r#type::{Binder, Database, DeclId, Element, Type, TypeId},
 };
 
 /// Specialize every method with an annotated receiver.
@@ -32,7 +28,7 @@ pub(crate) fn specialize(db: &mut Database, tables: &Tables<'_>, diags: &mut Vec
         let (class, _) = decl.outer.expect("a method is declared in a class");
         for sig in 0..tables.sig_count(id) {
             let completed = &tables.sigs[&(id, sig)];
-            let Some(&(_, ParamTy::Single(Slot::Annot(annot)))) =
+            let Some(&ParamTy::Single(Slot::Annot(annot))) =
                 completed.params.first().filter(|_| completed.receiver)
             else {
                 continue;
@@ -61,11 +57,11 @@ pub(crate) fn specialize(db: &mut Database, tables: &Tables<'_>, diags: &mut Vec
                 Walk::Undecided => true,
             };
             let owner = &tables.decls[class.index()];
-            let name = owner.name.map_or("", |name| tables.text(owner.unit, name));
+            let name = owner.name.map_or("", |name| tables.name(owner.unit, name));
             diags.push((
                 decl.unit,
-                source::Diag::new(BadReceiver {
-                    span: annot.span(),
+                Diag::new(BadReceiver {
+                    span: tables.site_ty(annot).span(),
                     class: name.to_owned(),
                     undecided,
                 }),

@@ -38,7 +38,18 @@ use crate::source::Span;
 
 macro_rules! id {
     ($name:ident) => {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[derive(
+            Clone,
+            Copy,
+            Debug,
+            PartialEq,
+            Eq,
+            PartialOrd,
+            Ord,
+            Hash,
+            serde::Serialize,
+            serde::Deserialize,
+        )]
         pub(crate) struct $name(NonZeroU32);
 
         impl $name {
@@ -634,7 +645,7 @@ impl Member {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum DeclKind {
     Class,
     Protocol,
