@@ -1,0 +1,79 @@
+# A conditional match fails if any level of a nested pattern does. Failing at an
+# inner level discards the values the outer levels already produced.
+def t v
+  if let (a b) c (d (e f)) :k = v
+    [a, b, c, d, e, f, k]
+  else
+    :none:
+
+assert_eq (t {[1, 2], 3, [4, [5, 6]], k: 7}) [1, 2, 3, 4, 5, 6, 7]
+# Innermost level
+assert_eq (t {[1, 2], 3, [4, [5]], k: 7}) :none:
+# First sub-pattern
+assert_eq (t {[1], 3, [4, [5, 6]], k: 7}) :none:
+# Outer level
+assert_eq (t {[1, 2], 3, [4, [5, 6]]}) :none:
+
+# `(x)` matches a 1-item sequence; `x` tests truthiness
+if let (one) = [false]
+  assert_eq $one false
+else
+  assert false msg: "should have matched"
+if let (one) = [1, 2]
+  assert false msg: "should not have matched: $one"
+if let one = [false]
+  assert_eq $one [false]
+else
+  assert false msg: "should have matched"
+
+# `()` tests for an empty value, at any level
+def empty v
+  if let () = v
+    true
+  else
+    false
+assert (empty([]))
+assert (empty({}))
+assert (!empty([1]))
+assert (!empty({k: 1}))
+if let x () = [1, [2]]
+  assert false msg: "should not have matched: $x"
+
+# `while let` stops at the first value that fails to match at any level
+let items = [[1, [2, 3]], [4, [5, 6]], [7, [8]], [9, [10, 11]]]
+let seen = []
+let i = 0
+while let a (b c) = items.get(i)
+  seen.push (a + b + c)
+  i = (i + 1)
+assert_eq $seen [6, 15]
+
+# `if bind` nests under keys
+def k v
+  if bind v
+    k:
+      :x
+      :y
+  do
+    (x + y)
+  else
+    :none:
+assert_eq (k {k: {x: 1, y: 2}}) 3
+assert_eq (k {k: {x: 1}}) :none:
+
+# Vertical-element layout
+let arr = $
+  - 0
+  if let a (b c) = [1, [2, 3]]
+    - $a
+    - $b
+    - $c
+  else
+    - none
+assert_eq $arr [0, 1, 2, 3]
+let short = $
+  if let a (b c) = [1, [2]]
+    - [a, b, c]
+  else
+    - nope
+assert_eq $short ["nope"]

@@ -1,0 +1,6 @@
+let a ((b c) = [1, 2]) = [1, []]
+# error: a sub-pattern cannot have a default
+#   --> nested_pattern_default.dol:LL:LL
+#    |
+# LL | let a ((b c) = [1, 2]) = [1, []]
+#    |              ^

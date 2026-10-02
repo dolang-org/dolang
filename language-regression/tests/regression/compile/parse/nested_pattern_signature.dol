@@ -1,0 +1,6 @@
+@def f a (b c)
+# error: invalid parameter
+#   --> nested_pattern_signature.dol:LL:LL
+#    |
+# LL | @def f a (b c)
+#    |          ^

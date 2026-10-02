@@ -6,8 +6,8 @@ use super::{
 use crate::{
     ast::{
         AliasBody, Assign, Bind, Block, CatchHandler, Expr, For, Function, Ident, If, IfBranch,
-        ImportElement, Let, Param, PatternBind, PatternBindKind, PrimStmt, Return, Stmt, Throw,
-        Try, TypeAlias, While, visit::Node,
+        ImportElement, Let, Param, ParamBind, PatternBind, PatternBindKind, PrimStmt, Return, Stmt,
+        Throw, Try, TypeAlias, While, visit::Node,
     },
     lex::{Keyword, Token, TokenInfo},
     source::Span,
@@ -278,7 +278,7 @@ impl Parser<'_> {
                     class_expr: Some(expr),
                     func: Function {
                         params: vec![Param::Pos {
-                            ident: Ident::new(var_span),
+                            bind: ParamBind::Ident(Ident::new(var_span)),
                             ty: None,
                             default: None,
                         }],
@@ -310,7 +310,7 @@ impl Parser<'_> {
                     class_expr: None,
                     func: Function {
                         params: vec![Param::Pos {
-                            ident: Ident::new(var_span),
+                            bind: ParamBind::Ident(Ident::new(var_span)),
                             ty: None,
                             default: None,
                         }],

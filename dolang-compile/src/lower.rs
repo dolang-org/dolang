@@ -10,8 +10,9 @@ use crate::{
         Arg, ArrayElem, Assign, Bind, Block, Class, ClassMember, ClassSuper, Const, Decorator, Def,
         DictElem, Expand, Expr, ExprBody, FieldInit, FmtParamName, For, FormatAlign, FormatKind,
         FormatSign, FormatSpec, Function, GetVariant, Ident, If, Import, ImportElement, ImportItem,
-        Key, LValue, Let, MemberScope, Method, NlGuard, Pair, Param, ParamDefault, PatIdent,
-        Pattern, PatternBind, PrimStmt, Res, Return, Root, Single, Stmt, Try, While, visit::Node,
+        Key, LValue, Let, MemberScope, Method, NlGuard, Pair, Param, ParamBind, ParamDefault,
+        PatIdent, Pattern, PatternBind, PrimStmt, Res, Return, Root, Single, Stmt, Try, While,
+        visit::Node,
     },
     cfg::{self, BlockRefMut, Inst, InstInfo, Term, TermInfo},
     constant::{self, ConstantExt},
@@ -50,13 +51,40 @@ enum Var {
     Upvar(usize, usize),
 }
 
-/// The prologue bindings a branch body needs: the store order for the values the
+/// The prologue bindings a branch body needs: how to bind the values the
 /// terminator left on the operand stack, and, for an unpack pattern, the parameter
 /// list carrying any non-constant defaults.
-type Binds<'a> = (Option<Vec<Var>>, Option<&'a [Param]>);
+type Binds<'a> = (Option<BindPlan>, Option<&'a [Param]>);
+
+/// How to bind the values an unpack leaves on the operand stack.
+///
+/// Sub-patterns unpack in turn, each leaving its own values in place of the value
+/// it matched, until only values bound to variables remain.
+struct BindPlan {
+    /// The sub-pattern unpacks, in order
+    steps: Vec<SubUnpack>,
+    /// The variables to store the remaining values in, from the top of the stack
+    vars: Vec<Var>,
+}
+
+/// The unpack of a sub-pattern's value, once preceding steps have run.
+struct SubUnpack {
+    /// The value's depth on the operand stack, counting from the top
+    depth: usize,
+    sig: sig::UnpackId,
+    /// The other values on the stack, which a failed match must discard
+    others: usize,
+}
+
+/// A value an unpack leaves on the operand stack
+enum Slot<'a> {
+    Var(Var),
+    /// The value of a sub-pattern with these items
+    Pattern(&'a [Param]),
+}
 
 struct Params<'a> {
-    bind: Option<Vec<Var>>,
+    bind: Option<BindPlan>,
     bind_params: Option<&'a [Param]>,
     mode: Mode<'a>,
     unpack: Option<sig::UnpackId>,
@@ -945,7 +973,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 let bodyid = self.graph.alloc_block(self.block.func, bscope);
                 let (binds, unpack, bind_params) = match bind {
                     Pattern::Ident(_) => (
-                        vec![self.resolve_var_in_scope(self.graph.scope(bscope), 0, 0)],
+                        BindPlan {
+                            steps: Vec::new(),
+                            vars: vec![self.resolve_var_in_scope(self.graph.scope(bscope), 0, 0)],
+                        },
                         None,
                         None,
                     ),
@@ -953,7 +984,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         let unpack = self.lower_params(params)?;
                         let sig = self.unpacktab.id(&unpack);
                         (
-                            self.unpack_order_in_scope(self.graph.scope(bscope), params, sig),
+                            self.bind_plan(self.graph.scope(bscope), params, sig)?,
                             Some(sig),
                             Some(params.as_slice()),
                         )
@@ -1050,7 +1081,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 let bodyid = self.graph.alloc_block(self.block.func, bscope);
                 let (binds, unpack, bind_params) = match bind {
                     Pattern::Ident(_) => (
-                        vec![self.resolve_var_in_scope(self.graph.scope(bscope), 0, 0)],
+                        BindPlan {
+                            steps: Vec::new(),
+                            vars: vec![self.resolve_var_in_scope(self.graph.scope(bscope), 0, 0)],
+                        },
                         None,
                         None,
                     ),
@@ -1058,7 +1092,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         let unpack = self.lower_params(params)?;
                         let sig = self.unpacktab.id(&unpack);
                         (
-                            self.unpack_order_in_scope(self.graph.scope(bscope), params, sig),
+                            self.bind_plan(self.graph.scope(bscope), params, sig)?,
                             Some(sig),
                             Some(params.as_slice()),
                         )
@@ -1157,7 +1191,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 let bodyid = self.graph.alloc_block(self.block.func, bscope);
                 let (binds, unpack, bind_params) = match bind {
                     Pattern::Ident(_) => (
-                        vec![self.resolve_var_in_scope(self.graph.scope(bscope), 0, 0)],
+                        BindPlan {
+                            steps: Vec::new(),
+                            vars: vec![self.resolve_var_in_scope(self.graph.scope(bscope), 0, 0)],
+                        },
                         None,
                         None,
                     ),
@@ -1165,7 +1202,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         let unpack = self.lower_params(params)?;
                         let sig = self.unpacktab.id(&unpack);
                         (
-                            self.unpack_order_in_scope(self.graph.scope(bscope), params, sig),
+                            self.bind_plan(self.graph.scope(bscope), params, sig)?,
                             Some(sig),
                             Some(params.as_slice()),
                         )
@@ -1241,9 +1278,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     self.block.insts.push(Inst(InstInfo::Dup, span));
                 }
                 self.block.insts.push(Inst(InstInfo::Unpack(sig), span));
-                for var in self.unpack_order(params, sig).into_iter() {
-                    self.lower_store(span, var);
-                }
+                let plan = self.bind_plan(self.graph.scope(self.block.scope), params, sig)?;
+                self.lower_bind_plan(plan, span);
                 self.lower_non_const_defaults(params, span)?;
             }
         }
@@ -1326,7 +1362,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     /// `bscope` is the scope allocated for the branch body, `tid` the block the body
     /// starts in, and `fid` the block reached when the test fails.  Returns the `bind`
     /// and `bind_params` the body's prologue needs; `unpack` is always `None`, since
-    /// the terminator performs the unpack itself.
+    /// the terminator performs the unpack itself.  A nested pattern chains a block
+    /// per sub-pattern after the current one, each ending in its own unpack test.
     fn lower_cond(
         &mut self,
         cond: &'a Expr,
@@ -1362,7 +1399,13 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 self.link(fid);
                 self.switch(test);
                 let var = self.resolve_var_in_scope(self.graph.scope(bscope), 0, 0);
-                Ok((Some(vec![var]), None))
+                Ok((
+                    Some(BindPlan {
+                        steps: Vec::new(),
+                        vars: vec![var],
+                    }),
+                    None,
+                ))
             }
             Pattern::Unpack(params) => {
                 // The terminator pops the scrutinee and pushes one value per element of
@@ -1370,11 +1413,38 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 // neither edge is left holding anything the other does not
                 let unpack = self.lower_params(params)?;
                 let sig = self.unpacktab.id(&unpack);
-                let binds = self.unpack_order_in_scope(self.graph.scope(bscope), params, sig);
-                self.block.term = Term(TermInfo::UnpackIf(sig, tid, fid), span);
+                let BindPlan { steps, vars } =
+                    self.bind_plan(self.graph.scope(bscope), params, sig)?;
+                // Each sub-pattern's unpack is a further test, in a block of its own.
+                // A failure discards whatever the earlier unpacks left behind.
+                let test = self.bb;
+                let mut discards = Vec::new();
+                let (mut sig, mut fail) = (sig, fid);
+                for step in steps {
+                    let next = self.graph.alloc_block(self.block.func, self.block.scope);
+                    self.block.term = Term(TermInfo::UnpackIf(sig, next, fail), span);
+                    self.link(next);
+                    self.link(fail);
+                    self.switch(next);
+                    if step.depth > 0 {
+                        self.block
+                            .insts
+                            .push(Inst(InstInfo::Swap(0, step.depth), span));
+                    }
+                    sig = step.sig;
+                    fail = self.discard_block(&mut discards, step.others, fid, span);
+                }
+                self.block.term = Term(TermInfo::UnpackIf(sig, tid, fail), span);
                 self.link(tid);
-                self.link(fid);
-                Ok((Some(binds), Some(params.as_slice())))
+                self.link(fail);
+                self.switch(test);
+                Ok((
+                    Some(BindPlan {
+                        steps: Vec::new(),
+                        vars,
+                    }),
+                    Some(params.as_slice()),
+                ))
             }
         }
     }
@@ -1786,7 +1856,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         let bodyid = self.graph.alloc_block(self.block.func, bscope);
         let (binds, unpack, bind_params) = match &node.bind {
             Pattern::Ident(_) => (
-                vec![self.resolve_var_in_scope(self.graph.scope(bscope), 0, 0)],
+                BindPlan {
+                    steps: Vec::new(),
+                    vars: vec![self.resolve_var_in_scope(self.graph.scope(bscope), 0, 0)],
+                },
                 None,
                 None,
             ),
@@ -1794,7 +1867,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 let unpack = self.lower_params(params)?;
                 let sig = self.unpacktab.id(&unpack);
                 (
-                    self.unpack_order_in_scope(self.graph.scope(bscope), params, sig),
+                    self.bind_plan(self.graph.scope(bscope), params, sig)?,
                     Some(sig),
                     Some(params.as_slice()),
                 )
@@ -1902,23 +1975,24 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
     fn lower_non_const_defaults(&mut self, params: &'a [Param], span: Span) -> Result<()> {
         for param in params {
-            let (default, ident) = match param {
-                Param::Pos {
-                    default: Some(d),
-                    ident,
-                    ..
+            let (default, bind) = match param {
+                Param::Pos { default, bind, .. }
+                | Param::Key { default, bind, .. }
+                | Param::ConstKey { default, bind, .. } => (default, bind),
+                Param::Rest { .. } => continue,
+            };
+            let ident = match bind {
+                ParamBind::Ident(ident) => ident,
+                // A sub-pattern has no default of its own, but its items may
+                ParamBind::Pattern { pattern, .. } => {
+                    if let Pattern::Unpack(params) = &**pattern {
+                        self.lower_non_const_defaults(params, span)?;
+                    }
+                    continue;
                 }
-                | Param::Key {
-                    default: Some(d),
-                    ident,
-                    ..
-                }
-                | Param::ConstKey {
-                    default: Some(d),
-                    ident,
-                    ..
-                } if d.fold.is_none() => (d, ident),
-                _ => continue,
+            };
+            let Some(default) = default.as_ref().filter(|d| d.fold.is_none()) else {
+                continue;
             };
 
             let res = ident.res.as_ref().expect("unresolved param");
@@ -2552,27 +2626,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             }
         }
 
-        if let Some(vars) = self.params.bind.as_ref() {
-            if let Some(id) = self.params.unpack {
-                self.block.insts.push(Inst(InstInfo::Unpack(id), span))
-            }
-            for var in vars.iter() {
-                match var {
-                    Var::Local(index) => self
-                        .block
-                        .insts
-                        .push(Inst(InstInfo::StoreLocal(*index), span)),
-                    Var::Upvar(index, depth) => self
-                        .block
-                        .insts
-                        .push(Inst(InstInfo::StoreUpvar(*index, *depth), span)),
-                }
-            }
-        }
-
-        if let Some(params) = self.params.bind_params {
-            self.lower_non_const_defaults(params, span)?;
-        }
+        self.lower_prologue_bind(span)?;
 
         // End prologue
         if let Some(span) = stub_span {
@@ -2969,23 +3023,26 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
     fn lower_function(&mut self, function: &'a Function, sig: sig::UnpackId) -> Result<()> {
         // Compute order in which to move arguments into locals or upvars
-        self.params.bind = Some(self.unpack_order(&function.params, sig));
+        self.params.bind =
+            Some(self.bind_plan(self.graph.scope(self.block.scope), &function.params, sig)?);
         self.params.bind_params = Some(&function.params);
         self.lower_block(&function.body, true, function.stub_span)?;
         Ok(())
     }
 
+    /// The values an unpack with `sig` leaves on the operand stack for `params`,
+    /// from the top of the stack.
     fn unpack_order_in_scope(
         &mut self,
         scope: cfg::ScopeRef<'a>,
-        params: &[Param],
+        params: &'a [Param],
         sig: sig::UnpackId,
-    ) -> Vec<Var> {
+    ) -> Vec<Slot<'a>> {
         let pos: Vec<_> = params
             .iter()
             .filter_map(|p| {
-                if let Param::Pos { ident, .. } = p {
-                    Some(ident)
+                if let Param::Pos { bind, .. } = p {
+                    Some(bind)
                 } else {
                     None
                 }
@@ -2994,14 +3051,11 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         let mut sym_keys: Vec<_> = params
             .iter()
             .filter_map(|p| {
-                if let Param::Key {
-                    key_span, ident, ..
-                } = p
-                {
+                if let Param::Key { key_span, bind, .. } = p {
                     Some((
                         self.symtab
                             .id(&self.bintab.id_str(self.file.str(*key_span))),
-                        ident,
+                        bind,
                     ))
                 } else {
                     None
@@ -3012,10 +3066,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             .iter()
             .filter_map(|p| {
                 if let Param::ConstKey {
-                    key_const, ident, ..
+                    key_const, bind, ..
                 } = p
                 {
-                    Some((self.lower_const(key_const), ident))
+                    Some((self.lower_const(key_const), bind))
                 } else {
                     None
                 }
@@ -3034,42 +3088,146 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             .collect();
         sym_keys.sort_by_key(|(sym, _)| *sym);
         const_keys.sort_by_key(|(c, _)| *c);
+        let var = |this: &mut Self, ident: &Ident| {
+            let res = ident.res.as_ref().expect("unresolved param");
+            Slot::Var(this.resolve_var_in_scope(cfg::ScopeRef::clone(&scope), res.index, res.depth))
+        };
+        let slot = |this: &mut Self, bind: &'a ParamBind| match bind {
+            ParamBind::Ident(ident) => var(this, ident),
+            ParamBind::Pattern { pattern, .. } => match &**pattern {
+                Pattern::Unpack(params) => Slot::Pattern(params),
+                Pattern::Ident(_) => unreachable!("sub-pattern binding a lone name"),
+            },
+        };
         let unpack = &self.unpacktab[sig];
-        let mut vars = Vec::new();
+        let keys: Vec<_> = unpack
+            .iter_keys()
+            .rev()
+            .map(|key| key.kind.clone())
+            .collect();
+        let mut slots = Vec::new();
         for id in rests.iter().rev() {
-            let res = id.res.as_ref().expect("unresolved param");
-            let var = self.resolve_var_in_scope(cfg::ScopeRef::clone(&scope), res.index, res.depth);
-            vars.push(var);
+            slots.push(var(self, id));
         }
-        for unpack_key in unpack.iter_keys().rev() {
-            let ident = match &unpack_key.kind {
+        for kind in keys {
+            let bind = match kind {
                 sig::UnpackKeyKind::Sym(sym) => {
                     let index = sym_keys
-                        .binary_search_by_key(sym, |(s, _)| *s)
+                        .binary_search_by_key(&sym, |(s, _)| *s)
                         .expect("key symbol not in parameters?!");
                     sym_keys[index].1
                 }
                 sig::UnpackKeyKind::Const(c) => {
                     let index = const_keys
-                        .binary_search_by_key(c, |(const_id, _)| *const_id)
+                        .binary_search_by_key(&c, |(const_id, _)| *const_id)
                         .expect("constant key not in parameters?!");
                     const_keys[index].1
                 }
             };
-            let res = ident.res.as_ref().expect("unresolved param");
-            let var = self.resolve_var_in_scope(cfg::ScopeRef::clone(&scope), res.index, res.depth);
-            vars.push(var);
+            slots.push(slot(self, bind));
         }
-        for id in pos.iter().rev() {
-            let res = id.res.as_ref().expect("unresolved param");
-            let var = self.resolve_var_in_scope(cfg::ScopeRef::clone(&scope), res.index, res.depth);
-            vars.push(var);
+        for bind in pos.iter().rev() {
+            slots.push(slot(self, bind));
         }
-        vars
+        slots
     }
 
-    fn unpack_order(&mut self, params: &[Param], sig: sig::UnpackId) -> Vec<Var> {
-        self.unpack_order_in_scope(self.graph.scope(self.block.scope), params, sig)
+    /// Plan the binding of the values an unpack with `sig` leaves on the operand
+    /// stack for `params`, unpacking sub-patterns in turn.
+    fn bind_plan(
+        &mut self,
+        scope: cfg::ScopeRef<'a>,
+        params: &'a [Param],
+        sig: sig::UnpackId,
+    ) -> Result<BindPlan> {
+        let mut stack = self.unpack_order_in_scope(cfg::ScopeRef::clone(&scope), params, sig);
+        let mut steps = Vec::new();
+        // Unpack the topmost sub-pattern's value, swapping it to the top first
+        while let Some(depth) = stack
+            .iter()
+            .position(|slot| matches!(slot, Slot::Pattern(_)))
+        {
+            stack.swap(0, depth);
+            let Slot::Pattern(params) = stack.remove(0) else {
+                unreachable!()
+            };
+            let unpack = self.lower_params(params)?;
+            let sig = self.unpacktab.id(&unpack);
+            steps.push(SubUnpack {
+                depth,
+                sig,
+                others: stack.len(),
+            });
+            let slots = self.unpack_order_in_scope(cfg::ScopeRef::clone(&scope), params, sig);
+            stack.splice(0..0, slots);
+        }
+        let vars = stack
+            .into_iter()
+            .map(|slot| match slot {
+                Slot::Var(var) => var,
+                Slot::Pattern(_) => unreachable!(),
+            })
+            .collect();
+        Ok(BindPlan { steps, vars })
+    }
+
+    /// Run a plan's sub-pattern unpacks, which raise on a mismatch, and store the
+    /// values left.
+    fn lower_bind_plan(&mut self, plan: BindPlan, span: Span) {
+        for step in plan.steps {
+            if step.depth > 0 {
+                self.block
+                    .insts
+                    .push(Inst(InstInfo::Swap(0, step.depth), span));
+            }
+            self.block
+                .insts
+                .push(Inst(InstInfo::Unpack(step.sig), span));
+        }
+        for var in plan.vars {
+            self.lower_store(span, var);
+        }
+    }
+
+    /// The block that discards `count` values from the operand stack, then
+    /// continues at `target`.
+    ///
+    /// `blocks` caches the chain built so far: its `n`th block discards `n + 1`
+    /// values by discarding one and continuing at the block before it.
+    fn discard_block(
+        &mut self,
+        blocks: &mut Vec<cfg::BlockId>,
+        count: usize,
+        target: cfg::BlockId,
+        span: Span,
+    ) -> cfg::BlockId {
+        let back = self.bb;
+        while blocks.len() < count {
+            let next = blocks.last().copied().unwrap_or(target);
+            let id = self.graph.alloc_block(self.block.func, self.block.scope);
+            self.switch(id);
+            self.block.insts.push(Inst(InstInfo::Pop, span));
+            self.block.term = Term(TermInfo::Branch(next), span);
+            self.link(next);
+            blocks.push(id);
+        }
+        self.switch(back);
+        count.checked_sub(1).map_or(target, |index| blocks[index])
+    }
+
+    /// Bind the values the body's caller left on the operand stack, as the body's
+    /// prologue.
+    fn lower_prologue_bind(&mut self, span: Span) -> Result<()> {
+        if let Some(plan) = self.params.bind.take() {
+            if let Some(id) = self.params.unpack {
+                self.block.insts.push(Inst(InstInfo::Unpack(id), span))
+            }
+            self.lower_bind_plan(plan, span);
+        }
+        if let Some(params) = self.params.bind_params {
+            self.lower_non_const_defaults(params, span)?;
+        }
+        Ok(())
     }
 
     fn lower_for_args(&mut self, body: &'a [Arg]) -> Result<()> {
@@ -3086,27 +3244,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 .push(Inst(InstInfo::PushUpvars(scope.caps), span));
         }
 
-        if let Some(vars) = self.params.bind.as_ref() {
-            if let Some(id) = self.params.unpack {
-                self.block.insts.push(Inst(InstInfo::Unpack(id), span))
-            }
-            for var in vars.iter() {
-                match var {
-                    Var::Local(index) => self
-                        .block
-                        .insts
-                        .push(Inst(InstInfo::StoreLocal(*index), span)),
-                    Var::Upvar(index, depth) => self
-                        .block
-                        .insts
-                        .push(Inst(InstInfo::StoreUpvar(*index, *depth), span)),
-                }
-            }
-        }
-
-        if let Some(params) = self.params.bind_params {
-            self.lower_non_const_defaults(params, span)?;
-        }
+        self.lower_prologue_bind(span)?;
 
         let mut sig = Vec::new();
         self.block.insts.push(Inst(InstInfo::Dup, span));
@@ -3153,27 +3291,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 .push(Inst(InstInfo::PushUpvars(scope.caps), span));
         }
 
-        if let Some(vars) = self.params.bind.as_ref() {
-            if let Some(id) = self.params.unpack {
-                self.block.insts.push(Inst(InstInfo::Unpack(id), span))
-            }
-            for var in vars.iter() {
-                match var {
-                    Var::Local(index) => self
-                        .block
-                        .insts
-                        .push(Inst(InstInfo::StoreLocal(*index), span)),
-                    Var::Upvar(index, depth) => self
-                        .block
-                        .insts
-                        .push(Inst(InstInfo::StoreUpvar(*index, *depth), span)),
-                }
-            }
-        }
-
-        if let Some(params) = self.params.bind_params {
-            self.lower_non_const_defaults(params, span)?;
-        }
+        self.lower_prologue_bind(span)?;
 
         let mut sig = Vec::new();
         self.block.insts.push(Inst(InstInfo::Dup, span));
@@ -3220,27 +3338,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 .push(Inst(InstInfo::PushUpvars(scope.caps), span));
         }
 
-        if let Some(vars) = self.params.bind.as_ref() {
-            if let Some(id) = self.params.unpack {
-                self.block.insts.push(Inst(InstInfo::Unpack(id), span))
-            }
-            for var in vars.iter() {
-                match var {
-                    Var::Local(index) => self
-                        .block
-                        .insts
-                        .push(Inst(InstInfo::StoreLocal(*index), span)),
-                    Var::Upvar(index, depth) => self
-                        .block
-                        .insts
-                        .push(Inst(InstInfo::StoreUpvar(*index, *depth), span)),
-                }
-            }
-        }
-
-        if let Some(params) = self.params.bind_params {
-            self.lower_non_const_defaults(params, span)?;
-        }
+        self.lower_prologue_bind(span)?;
 
         let mut sig = Vec::new();
         self.block.insts.push(Inst(InstInfo::Dup, span));
