@@ -208,7 +208,7 @@ fn sources(case: &Path, settings: &Settings) -> Vec<Source> {
 /// Find a native module's stub: module `x.y` is `x/y.dol` in a stub directory.
 fn repo_stub(name: &str) -> (PathBuf, String) {
     let relative = format!("{}.dol", name.replace('.', "/"));
-    let mut dirs = vec!["dolang-runtime".to_owned()];
+    let mut dirs = vec!["dolang".to_owned()];
     for entry in fs::read_dir(WORKSPACE).unwrap() {
         let entry = entry.unwrap().file_name().into_string().unwrap();
         if entry.starts_with("dolang-ext-") {
