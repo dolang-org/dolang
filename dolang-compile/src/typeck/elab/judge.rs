@@ -14,8 +14,9 @@ use crate::{
     RestKind,
     source::Span,
     typeck::r#type::{
-        Argument, BinderOrigin, Database, DeclId, Declaration, Element, Kind, Literal, Member,
-        Multiplicity, Scope, Type, TypeId, UnionMember, UnitId, UnitSpan, Variance,
+        Argument, Binder, BinderOrigin, Binding, Database, DeclId, Declaration, Element, Kind,
+        Literal, Member, Multiplicity, Scope, Type, TypeId, UnionMember, UnitId, UnitSpan,
+        Variance,
     },
 };
 
@@ -577,8 +578,32 @@ impl Tables<'_> {
                         .count(),
                     _ => 0,
                 };
+                let binders: &[Binder] = match db.ty(*base) {
+                    Type::Decl(id) => match db.ty(db.declaration(*id).ty) {
+                        Type::Quantified { binders, .. } if binders.len() == args.len() => binders,
+                        _ => &[],
+                    },
+                    _ => &[],
+                };
+                // A keyword binder's argument is named, and trailing arguments equal
+                // to their binders' defaults are left out
+                let mut shown = args.len();
+                if let Some(given) = (args.iter())
+                    .map(|arg| match *arg {
+                        Argument::Positional(ty) => Some(ty),
+                        _ => None,
+                    })
+                    .collect::<Option<Vec<TypeId>>>()
+                {
+                    while shown > lifted
+                        && let Some(default) = binders.get(shown - 1).and_then(|b| b.default)
+                        && db.substitute(default, &given) == given[shown - 1]
+                    {
+                        shown -= 1;
+                    }
+                }
                 out.push('[');
-                for (index, arg) in args.iter().enumerate() {
+                for (index, arg) in args.iter().enumerate().take(shown) {
                     if index != 0 {
                         out.push_str(", ");
                     }
@@ -586,7 +611,14 @@ impl Tables<'_> {
                         out.push('^');
                     }
                     match arg {
-                        Argument::Positional(ty) => self.render_into(db, *ty, names, depth, out),
+                        Argument::Positional(ty) => {
+                            if let Some(Binding::Keyword(name)) =
+                                binders.get(index).map(|binder| binder.binding)
+                            {
+                                let _ = write!(out, "{}: ", db.symbol(name));
+                            }
+                            self.render_into(db, *ty, names, depth, out)
+                        }
                         Argument::Keyword(name, ty) => {
                             let _ = write!(out, "{}: ", db.symbol(*name));
                             self.render_into(db, *ty, names, depth, out);

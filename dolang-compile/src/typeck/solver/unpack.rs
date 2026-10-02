@@ -12,6 +12,14 @@
 //! unpacks as a tail schema admitting what each possibility leaves. A pattern
 //! with no possibility is impossible. A possible pattern may still fail to
 //! match a value, as `S` may admit other fillings too.
+//!
+//! A rest is `Unpack`'s `Rest` with the tail in place of `S`. The supertype edge
+//! that reaches `Unpack` is open over its declaring class's binders: matching
+//! its `S` against the tail solves them again, and its `Rest` is instantiated
+//! with the solution. A rest that this doesn't give, or that isn't within
+//! `Rest`'s bound for the tail, is `Rest`'s default for the tail, which only
+//! spreads. Without binders to solve again, as for a value of an `Unpack` type
+//! itself, `Rest` carries over only where `S` is its own tail.
 
 use std::collections::BTreeSet;
 
@@ -19,6 +27,7 @@ use super::{
     schema::{Opacity, Shape, Slot},
     *,
 };
+use crate::{RestKind, typeck::r#type::BinderOrigin};
 
 /// A destructuring pattern, as the walk sees it
 pub(crate) struct PatternShape {
@@ -27,10 +36,20 @@ pub(crate) struct PatternShape {
     pub(crate) positional: Vec<bool>,
     /// Each keyed slot's key, and whether it has a default
     pub(crate) keyed: Vec<(TypeId, bool)>,
-    /// Whether leftover positional items are accepted, by a rest
-    pub(crate) positional_rest: bool,
-    /// Whether leftover keyed items are accepted, by a rest
-    pub(crate) keyed_rest: bool,
+    /// Each rest's kind
+    pub(crate) rests: Vec<RestKind>,
+}
+
+impl PatternShape {
+    /// Whether a rest takes leftover positional items
+    fn positional_rest(&self) -> bool {
+        self.rests.iter().any(|&kind| kind != RestKind::Key)
+    }
+
+    /// Whether a rest takes leftover keyed items
+    fn keyed_rest(&self) -> bool {
+        self.rests.iter().any(|&kind| kind != RestKind::Pos)
+    }
 }
 
 /// A pattern walked against a value's schemas
@@ -39,23 +58,45 @@ pub(crate) struct Unpacked {
     /// Each positional slot's type, then each keyed slot's. A slot that's never
     /// filled is bottom: its default gives its type.
     pub(crate) slots: Vec<TypeId>,
-    /// What the pattern leaves, or `None` if that's unknown
-    pub(crate) tail: Option<Tail>,
+    /// Each rest's type
+    pub(crate) rests: Vec<TypeId>,
     /// Whether any possibility matches
     pub(crate) possible: bool,
 }
 
 /// The items a pattern leaves, by lane
 #[derive(Debug, Default, PartialEq, Eq)]
-pub(crate) struct Tail {
-    pub(crate) positional: Vec<SchemaItem>,
-    pub(crate) keyed: Vec<SchemaItem>,
+struct Tail {
+    positional: Vec<SchemaItem>,
+    keyed: Vec<SchemaItem>,
+}
+
+impl Tail {
+    /// The schema of what a rest of `kind` takes
+    fn schema(&self, db: &Database, kind: RestKind) -> TypeId {
+        let mut items = Vec::new();
+        if kind != RestKind::Key {
+            items.extend(self.positional.iter().cloned());
+        }
+        if kind != RestKind::Pos {
+            items.extend(self.keyed.iter().cloned());
+        }
+        db.intern(Type::Schema(items.into()))
+    }
 }
 
 /// A schema's items, reified and flattened
 struct Atoms {
     positional: Vec<(Multiplicity, TypeId)>,
     keyed: Vec<(Multiplicity, TypeId, TypeId)>,
+}
+
+/// Where a member's `Unpack` came from, to find its rests by
+enum Source {
+    /// A supertype edge, with the class declaring it as reached
+    Edge { owner: Nominal, supertype: TypeId },
+    /// The member's own `Unpack[S, Rest: R]`, by `S` and `R`
+    Applied { schema: TypeId, rest: TypeId },
 }
 
 /// A lane's walk: its slots' types and its tail
@@ -65,6 +106,8 @@ type Lane = (Vec<TypeId>, Vec<SchemaItem>);
 struct Walk {
     slots: Vec<TypeId>,
     tail: Tail,
+    /// Each rest's type, unless it's the default
+    rests: Vec<Option<TypeId>>,
 }
 
 impl Solver<'_> {
@@ -89,15 +132,21 @@ impl Solver<'_> {
                 dynamic = true;
                 continue;
             }
-            let atoms = self.unpack_atoms(member, unpack).ok()??;
-            if let Some(walk) = self.walk(&atoms, pattern).ok()? {
+            let (atoms, source) = self.unpack_atoms(member, unpack).ok()??;
+            if let Some(mut walk) = self.walk(&atoms, pattern).ok()? {
+                walk.rests = (pattern.rests.iter())
+                    .map(|&kind| {
+                        let tail = walk.tail.schema(self.db, kind);
+                        self.member_rest(&source, unpack, tail)
+                    })
+                    .collect();
                 walks.push(walk);
             }
         }
         if dynamic {
             return Some(Unpacked {
                 slots: vec![unknown; count],
-                tail: None,
+                rests: vec![unknown; pattern.rests.len()],
                 possible: true,
             });
         }
@@ -108,7 +157,8 @@ impl Solver<'_> {
             }
         }
         let possible = !walks.is_empty();
-        let tail = match &walks[..] {
+        // Rests that are all the default are the default for the joined tail
+        let joined = match &walks[..] {
             [] => Tail::default(),
             [walk] => Tail {
                 positional: walk.tail.positional.clone(),
@@ -116,22 +166,54 @@ impl Solver<'_> {
             },
             _ => self.join_tails(walks.iter().map(|walk| &walk.tail)),
         };
+        let fallback = |schema| self.default_rest(unpack, schema).unwrap_or(unknown);
+        let rests = (pattern.rests.iter().enumerate())
+            .map(|(index, &kind)| {
+                if walks.iter().all(|walk| walk.rests[index].is_none()) {
+                    return fallback(joined.schema(self.db, kind));
+                }
+                let mut rest = self.db.bottom();
+                for walk in &walks {
+                    let member = walk.rests[index]
+                        .unwrap_or_else(|| fallback(walk.tail.schema(self.db, kind)));
+                    rest = self.lub(rest, member);
+                }
+                rest
+            })
+            .collect();
         Some(Unpacked {
             slots,
-            tail: Some(tail),
+            rests,
             possible,
         })
     }
 
-    /// The flattened schema a member unpacks as, `None` when it can't be found
-    fn unpack_atoms(&self, member: TypeId, unpack: DeclId) -> Result<Option<Atoms>, Issue> {
+    /// The flattened schema a member unpacks as, with where its `Unpack` came
+    /// from; `None` when it can't be found
+    fn unpack_atoms(
+        &self,
+        member: TypeId,
+        unpack: DeclId,
+    ) -> Result<Option<(Atoms, Source)>, Issue> {
         let Some(start) = self.start(member)? else {
             return Ok(None);
         };
-        let Some(found) = self.ancestor(start, unpack, &mut HashSet::new(), 0)? else {
-            return Ok(None);
+        let (found, source) = if start.declaration == unpack {
+            let [schema, rest] = start.arguments[..] else {
+                return Ok(None);
+            };
+            let source = Source::Applied {
+                schema: self.reify(schema)?,
+                rest: self.reify(rest)?,
+            };
+            (start, source)
+        } else {
+            match self.unpack_edge(start, unpack, &mut HashSet::new(), 0)? {
+                Some(found) => found,
+                None => return Ok(None),
+            }
         };
-        let [schema] = found.arguments[..] else {
+        let [schema, _] = found.arguments[..] else {
             return Ok(None);
         };
         let mut shape = Shape::default();
@@ -144,7 +226,180 @@ impl Solver<'_> {
             &mut shape,
             0,
         )?;
-        self.atoms(&shape)
+        Ok(self.atoms(&shape)?.map(|atoms| (atoms, source)))
+    }
+
+    /// Walk the supertypes of `current` in MRO order, as [`Self::ancestor`] does,
+    /// to the edge that reaches `unpack`: the `Unpack` found there, and the edge
+    fn unpack_edge(
+        &self,
+        current: Nominal,
+        unpack: DeclId,
+        path: &mut HashSet<DeclId>,
+        depth: usize,
+    ) -> Result<Option<(Nominal, Source)>, Issue> {
+        self.depth(depth)?;
+        self.spend()?;
+        if !path.insert(current.declaration) {
+            return Err(Residual::Recursive.into());
+        }
+        for supertype in self.db.declaration(current.declaration).supertypes.iter() {
+            let found = match self.head(self.view(supertype.ty, current.environment))? {
+                Head::Nominal(next) if next.declaration == unpack => {
+                    let source = Source::Edge {
+                        owner: current.clone(),
+                        supertype: supertype.ty,
+                    };
+                    Some((next, source))
+                }
+                Head::Nominal(next) => self.unpack_edge(next, unpack, path, depth + 1)?,
+                _ => {
+                    return Err(Residual::Unsupported(
+                        "an ancestor search through a structural supertype",
+                    )
+                    .into());
+                }
+            };
+            if found.is_some() {
+                return Ok(found);
+            }
+        }
+        path.remove(&current.declaration);
+        Ok(None)
+    }
+
+    /// A member's rest that leaves `tail`, if it's other than the default
+    fn member_rest(&self, source: &Source, unpack: DeclId, tail: TypeId) -> Option<TypeId> {
+        let rest = match *source {
+            Source::Applied { schema, rest } => (schema == tail).then_some(rest)?,
+            Source::Edge {
+                ref owner,
+                supertype,
+            } => self.resolve_rest(owner, supertype, tail).ok()??,
+        };
+        let binder = self.rest_binder(unpack)?;
+        let expected = self.db.binder_bound(binder, &[tail, self.db.unknown()])?;
+        (self.probe(rest, expected) == Ok(Status::Proven)).then_some(rest)
+    }
+
+    /// `Unpack`'s `Rest` binder
+    fn rest_binder(&self, unpack: DeclId) -> Option<&Binder> {
+        match self.db.ty(self.db.declaration(unpack).ty) {
+            Type::Quantified { binders, .. } => binders.get(1),
+            _ => None,
+        }
+    }
+
+    /// The rest that leaves `tail` by default: `Rest`'s default with the tail in
+    /// place of `S`
+    fn default_rest(&self, unpack: DeclId, tail: TypeId) -> Option<TypeId> {
+        let default = self.rest_binder(unpack)?.default?;
+        Some(self.db.substitute(default, &[tail, self.db.unknown()]))
+    }
+
+    /// The `Rest` of an edge to `Unpack` once its `S` is matched against `tail`,
+    /// solving the binders of the class declaring it again. Binders it is lifted
+    /// over keep their arguments. `None` if the match or the binders' bounds fail.
+    fn resolve_rest(
+        &self,
+        owner: &Nominal,
+        supertype: TypeId,
+        tail: TypeId,
+    ) -> Result<Option<TypeId>, Issue> {
+        let declaration = self.db.declaration(owner.declaration);
+        let binders: &[Binder] = match self.db.ty(declaration.ty) {
+            Type::Quantified { binders, .. } => binders,
+            _ => &[],
+        };
+        let mut nested = self.nested()?;
+        let mut group = Vec::new();
+        for (slot, binder) in binders.iter().enumerate() {
+            let lifted = (declaration.binders.get(slot))
+                .is_some_and(|source| source.origin == BinderOrigin::Lifted);
+            group.push(match (lifted, owner.arguments.get(slot)) {
+                (true, Some(&argument)) => nested.closed(self.reify(argument)?),
+                _ => {
+                    let lanes = match binder.binding {
+                        Binding::Rest(lanes) => lanes,
+                        _ => Rest::All,
+                    };
+                    nested.infer_kind(binder.kind, lanes)
+                }
+            });
+        }
+        let environment = nested.environment(nested.empty_environment(), group.clone());
+        let result = (|| {
+            let Head::Nominal(found) = nested.head(nested.view(supertype, environment))? else {
+                return Ok(None);
+            };
+            let [schema, rest] = found.arguments[..] else {
+                return Ok(None);
+            };
+            nested.constrain(nested.closed(tail), schema, Provenance::default());
+            for (binder, &term) in binders.iter().zip(&group) {
+                if let (Some(bound), Term::Infer(_)) = (binder.bound, term) {
+                    let bound = nested.view(bound, environment);
+                    nested.constrain(term, bound, Provenance::default());
+                }
+            }
+            let mut outcomes = nested.solve();
+            // Literals in the tail stay as they are, so that the rest fits its bound
+            loop {
+                let unsolved: Vec<_> = nested.unresolved().collect();
+                let progress = (unsolved.into_iter())
+                    .filter(|&id| nested.default_with(id, false).is_ok())
+                    .count();
+                if progress == 0 {
+                    break;
+                }
+                outcomes = nested.solve();
+            }
+            if outcomes
+                .iter()
+                .any(|outcome| outcome.status != Status::Proven)
+            {
+                return Ok(None);
+            }
+            Ok(nested.reify(rest).ok().map(|rest| self.splice(rest)))
+        })();
+        self.work.set(self.work.get() + nested.work.get());
+        result
+    }
+
+    /// A solved rest with each required inclusion of a schema spliced in, through
+    /// applications' arguments, as `{...Ts}` solved is `{...{A, B}}` for `{A, B}`
+    fn splice(&self, ty: TypeId) -> TypeId {
+        match self.db.ty(ty) {
+            Type::Apply { base, args, kind } => {
+                let args = (args.iter())
+                    .map(|arg| match *arg {
+                        Argument::Positional(ty) => Argument::Positional(self.splice(ty)),
+                        Argument::Keyword(name, ty) => Argument::Keyword(name, self.splice(ty)),
+                        Argument::Expand(ty) => Argument::Expand(self.splice(ty)),
+                    })
+                    .collect();
+                self.db.intern(Type::Apply {
+                    base: *base,
+                    args,
+                    kind: *kind,
+                })
+            }
+            Type::Schema(items) => {
+                let mut spliced = Vec::new();
+                for item in items.iter() {
+                    if let (Multiplicity::Required, Element::Include(inner)) =
+                        (item.multiplicity, item.element.clone())
+                        && let Type::Schema(inner) = self.db.ty(self.splice(inner))
+                    {
+                        spliced.extend(inner.iter().cloned());
+                        continue;
+                    }
+                    spliced.push(item.clone());
+                }
+                self.db.intern(Type::Schema(spliced.into()))
+            }
+            _ => ty,
+        }
     }
 
     /// A shape's atoms, reified. The dynamic schema is a repeated item of
@@ -197,6 +452,7 @@ impl Solver<'_> {
         Ok(Some(Walk {
             slots,
             tail: Tail { positional, keyed },
+            rests: Vec::new(),
         }))
     }
 
@@ -245,7 +501,7 @@ impl Solver<'_> {
         let mut accepted = Vec::new();
         for (count, states) in forward.iter().enumerate().skip(required) {
             for &state in states {
-                if ends(state) || (count == slots && pattern.positional_rest) {
+                if ends(state) || (count == slots && pattern.positional_rest()) {
                     alive[count].insert(state);
                     accepted.push(state);
                 }
@@ -327,7 +583,7 @@ impl Solver<'_> {
         let left = atoms.iter().zip(&taken).filter(|&(_, &taken)| !taken);
         let mut tail = Vec::new();
         for (&(multiplicity, key, value), _) in left {
-            if multiplicity == Multiplicity::Required && !pattern.keyed_rest {
+            if multiplicity == Multiplicity::Required && !pattern.keyed_rest() {
                 return Ok(None);
             }
             tail.push(SchemaItem {

@@ -22,7 +22,6 @@ use super::{
     problem::{Misfit, Problem},
 };
 use crate::{
-    RestKind,
     source::Span,
     typeck::{
         cfg::{Collection, Expr, ExprKind, FuncId, Item, Pattern, PatternItem, PatternKey, VarId},
@@ -1896,8 +1895,7 @@ impl<'a> Flow<'a, '_> {
         let mut pattern = PatternShape {
             positional: Vec::new(),
             keyed: Vec::new(),
-            positional_rest: false,
-            keyed_rest: false,
+            rests: Vec::new(),
         };
         for item in items {
             match item.key {
@@ -1911,10 +1909,7 @@ impl<'a> Flow<'a, '_> {
                     let key = self.eval(at, state, &mut VecDeque::new(), key);
                     pattern.keyed.push((self.db.regular(key), item.default));
                 }
-                PatternKey::Rest(kind) => {
-                    pattern.positional_rest |= kind != RestKind::Key;
-                    pattern.keyed_rest |= kind != RestKind::Pos;
-                }
+                PatternKey::Rest(kind) => pattern.rests.push(kind),
             }
         }
         if let Some(unpacked) = self.solver().unpack_pattern(value, unpack, &pattern) {
@@ -1931,7 +1926,7 @@ impl<'a> Flow<'a, '_> {
                             },
                         ),
                     ]);
-                    holes.apply(unpack, vec![schema])
+                    holes.apply(unpack, vec![schema, unknown])
                 });
                 rule.constrain(rule.closed(value), target, check.clone());
                 Vec::new()
@@ -1941,30 +1936,15 @@ impl<'a> Flow<'a, '_> {
             }
             let (positional, keyed) = unpacked.slots.split_at(pattern.positional.len());
             let (mut positional, mut keyed) = (positional.iter(), keyed.iter());
+            let mut rests = unpacked.rests.iter();
             let types = (items.iter())
-                .map(|item| match item.key {
-                    PatternKey::Pos => *positional.next().expect("a positional slot"),
-                    PatternKey::Key(_) | PatternKey::ConstKey(_) => {
-                        *keyed.next().expect("a keyed slot")
-                    }
-                    PatternKey::Rest(kind) => match &unpacked.tail {
-                        Some(tail) => {
-                            let mut schema = Vec::new();
-                            if kind != RestKind::Key {
-                                schema.extend(tail.positional.iter().cloned());
-                            }
-                            if kind != RestKind::Pos {
-                                schema.extend(tail.keyed.iter().cloned());
-                            }
-                            let schema = self.db.intern(Type::Schema(schema.into()));
-                            self.db.intern(Type::Apply {
-                                base: self.db.intern(Type::Decl(unpack)),
-                                args: vec![Argument::Positional(schema)].into(),
-                                kind: Kind::Type,
-                            })
-                        }
-                        None => unknown,
-                    },
+                .map(|item| {
+                    let slot = match item.key {
+                        PatternKey::Pos => positional.next(),
+                        PatternKey::Key(_) | PatternKey::ConstKey(_) => keyed.next(),
+                        PatternKey::Rest(_) => rests.next(),
+                    };
+                    *slot.expect("a type for each item")
                 })
                 .collect();
             return Some(types);
@@ -2003,7 +1983,7 @@ impl<'a> Flow<'a, '_> {
                     },
                 ));
                 let schema = holes.schema(schema);
-                holes.apply(unpack, vec![schema])
+                holes.apply(unpack, vec![schema, unknown])
             });
             rule.constrain(rule.closed(value), target, check.clone());
             (vars.into_iter())

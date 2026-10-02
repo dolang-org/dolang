@@ -350,9 +350,13 @@ pub @class Spread[S @ {...}]
 # A value that implements the
 # [`(unpack)`](../../language/classes.md#unpack-destructuring) protocol,
 # destructuring as the items in `S` without changing the receiver.
-# Captured rests also support spreading with their remaining schema.
-pub @class Unpack[S @ {...}]: Spread[S]
+#
+# A captured rest is a `Rest` with its remaining schema in place of `S`, when
+# that unpacks as the remaining schema. Otherwise, as by default, it's an
+# `Unpack` of the remaining schema.
+pub @class Unpack[S @ {...}, :Rest @ Spread[S] = Spread[S]]: Spread[S]
   field schema @Phantom[...S]
+  field rest @Phantom[Rest]
 
   # Returns a value to destructure in place of this one.
   pub def (unpack) self -> Unpack[S]

@@ -1,6 +1,7 @@
 # A pattern is walked against the schema `S` of the `Unpack[S]` its value
-# reaches: each item takes the join of what it can bind, and a rest unpacks as
-# what the pattern leaves.
+# reaches: each item takes the join of what it can bind, and a rest is the
+# `Rest` its class claims for what the pattern leaves, which by default only
+# spreads.
 
 import std:
   - @Unpack
@@ -20,7 +21,7 @@ pub def array_rest xs @ Array[Int]
   let _ = a
   #       ^: flow std.Int
   let _ = r
-  #       ^: flow std.Unpack[{*std.Int}]
+  #       ^: flow std.UnpackIter[std.Int]
 
 pub def quantified source @ Unpack[{Int, ?Str, *Bool}]
   let a b = source
@@ -30,10 +31,10 @@ pub def quantified source @ Unpack[{Int, ?Str, *Bool}]
   #       ^: flow std.Bool | std.Str
   let _ ...r = source
   let _ = r
-  #       ^: flow std.Unpack[{?std.Str, *std.Bool}]
+  #       ^: flow std.Spread[{?std.Str, *std.Bool}]
   let _ _ ...t = source
   let _ = t
-  #       ^: flow std.Unpack[{*std.Bool}]
+  #       ^: flow std.Spread[{*std.Bool}]
 
 pub def keyed()
   let :a ...r = (a: 1, b: "x")
@@ -72,7 +73,21 @@ pub def unions c @ Bool
   let _ = x
   #       ^: flow std.Bool | std.Int
   let _ = r
-  #       ^: flow std.Unpack[{*std.Str}]
+  #       ^: flow std.Unpack[{std.Str}] | std.Unpack[{}]
+
+# An iterator's rest is an iterator of the same kind, and so is that rest's
+pub def iterators s @ Str
+  let _ ...r = s.split "="
+  let _ = r
+  #       ^: flow std.UnpackIter[std.Str]
+  let _ ...again = r
+  let _ = again
+  #       ^~~~~: flow std.UnpackIter[std.Str]
+
+pub def dict_rest d @ Dict[Str, Int]
+  let "a": _a ...r = d
+  let _ = r
+  #       ^: flow std.Unpack[{*(std.Str): std.Int}]
 
 pub def dynamic v
   let a ...r = v
@@ -80,6 +95,24 @@ pub def dynamic v
   #       ^: flow Unknown
   let _ = r
   #       ^: flow Unknown
+
+# A rest is the `Rest` of the edge to `Unpack`, solved again from the tail
+pub @class Rows[T]: Unpack[T, Rest: Rows[T]]
+  pub def first self -> T
+
+pub def rows r @ Rows[Int]
+  let _ ...rest = r
+  let _ = rest
+  #       ^~~~: flow m.Rows[std.Int]
+
+# A `Rest` the tail can't solve again falls back to the default
+pub @class Pairs[A, B]: Unpack[{A, B}, Rest: Pairs[A, B]]
+  pub def first self -> A
+
+pub def pairs p @ Pairs[Int, Str]
+  let _ ...rest = p
+  let _ = rest
+  #       ^~~~: flow std.Spread[{std.Str}]
 
 pub def possible s @ Str
   let a _b = [4]
