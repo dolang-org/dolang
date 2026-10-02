@@ -249,6 +249,23 @@ pub async fn print_compile_diag_stderr<'v, 's>(
     write_preformatted_stderr(strand, &rendered).await
 }
 
+/// Print a diagnostic from a check to stderr, as
+/// [`render_check_diag`](dolang_ext_compile::render_check_diag) renders it.
+pub async fn print_check_diag_stderr<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    paths: &[&str],
+    texts: &[Option<&str>],
+    diag: &Diag,
+) -> Result<'v, 's, ()> {
+    let rendered = dolang_ext_compile::render_check_diag(
+        paths,
+        texts,
+        diag,
+        dolang_ext_compile::ColorMode::Always,
+    );
+    write_preformatted_stderr(strand, &rendered).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

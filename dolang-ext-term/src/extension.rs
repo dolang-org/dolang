@@ -16,6 +16,7 @@ impl Extension for TermExt {
     type Error = Infallible;
     const NAME: &str = "term";
     const VERSION: Version = dolang::package_version!();
+    const TYPELIBS: &'static [(&'static str, &'static [u8])] = dolang::typelibs!();
     const DESCRIPTION: &str = "Do Terminal Extension";
 
     fn apply_compiler(&self, config: &mut Config) -> Result<(), Infallible> {

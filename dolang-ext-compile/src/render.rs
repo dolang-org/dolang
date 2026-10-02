@@ -177,6 +177,23 @@ pub(crate) fn render_diag(
     Ok(renderer(color).render(&render_report(sources, diag)?))
 }
 
+/// Render a diagnostic from [`Check::diagnostics`](dolang::compile::typeck::Check::diagnostics).
+///
+/// `paths` and `texts` are indexed by the checked units' [`UnitId`]s; a unit
+/// checked from its typelib has no text, and is located by line and column.
+///
+/// # Panics
+///
+/// If the diagnostic refers to a unit beyond `paths` or `texts`.
+pub fn render_check_diag(
+    paths: &[&str],
+    texts: &[Option<&str>],
+    diag: &Diag,
+    color: ColorMode,
+) -> String {
+    render_diag(paths, texts, diag, color).expect("diagnostic of a checked unit")
+}
+
 /// Render a diagnostic from [`Unit::diagnostics`](dolang::compile::Unit::diagnostics).
 pub fn render_compile_diag(file: &str, source: &str, diag: &Diag, color: ColorMode) -> String {
     render_diag(&[file], &[Some(source)], diag, color).expect("local compiler diagnostic")

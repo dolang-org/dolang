@@ -5,7 +5,7 @@
 # the type checker over sources and the modules they import, and
 # `dolang -m compile typelib` writes a module's typelib for checking against.
 
-import args compile json shell
+import _shell args compile json shell
   fs:
     - Path
 
@@ -857,19 +857,6 @@ def module_under file dir
   rest[rest.len - 1] = Path(rest[rest.len - 1]).stem
   ".".join $rest
 
-# The modules a unit imports, its prelude's included.
-def imported_modules unit source
-  let modules = []
-  for _id node = unit.nodes()
-    if !(type(node, compile.Import) || type(node, compile.PreludeModule) || type(node, compile.PreludeItem))
-      continue
-    let module = node.module
-    if type(module, compile.Span)
-      modules.push $source[module.start.byte_offset..module.end.byte_offset]
-    else
-      modules.push $module
-  modules
-
 # A source's module name under the first of the directories it is under, or
 # `nil` when it is under none.
 def module_among file dirs
@@ -884,35 +871,40 @@ def is_typelib file
   (file.ext == "dolt")
 
 # Checks the entries together with the modules they import, found by searching
-# the directories for `a/b.dol` as module `a.b`, or for its typelib `a/b.dolt`.
-# An entry under one of the directories is compiled as its module, so a stub can
-# be checked directly, and meets the other entries' imports of that module. An
-# entry that is a typelib is its own module.
+# the directories for `a/b.dol` as module `a.b`, or for its typelib `a/b.dolt`,
+# and then among the typelibs bundled with `dolang`. An entry under one of the
+# directories is compiled as its module, so a stub can be checked directly, and
+# meets the other entries' imports of that module. An entry that is a typelib is
+# its own module.
 def check p
   let :entries :path ... = p.check
   let dirs = [...path.map do |dir| (Path dir)]
   let units = []
   let typelibs = []
+  let bundled = []
   let seen = Set []
   let pending = []
   let missing = []
 
-  def add file module
-    let imports = if is_typelib(file)
-      let typelib = compile.Typelib $file.read("b")
-      typelibs.push $typelib
-      typelib.imports()
-    else
-      let source = file.read()
-      let unit = compile.compile "$file" $source module: $module typecheck: true document: true
-      units.push $unit
-      if (module != nil)
-        seen.add $module
-      imported_modules $unit $source
+  def add_typelib typelib to
+    to.push $typelib
+    queue $typelib.imports()
+
+  def queue imports
     for name = imports
       if !seen.contains(name)
         seen.add $name
         pending.push $name
+
+  def add file module
+    if is_typelib(file)
+      add_typelib $compile.Typelib(file.read("b")) $typelibs
+    else
+      let unit = compile.compile "$file" $file.read() module: $module typecheck: true document: true
+      units.push $unit
+      if (module != nil)
+        seen.add $module
+      queue $unit.imports()
 
   # Every entry's module is known before any is compiled, so an import of one
   # is met by the entry rather than found again
@@ -942,10 +934,14 @@ def check p
         - (dir / "$relative.dol")
         - (dir / "$relative.dolt")
     let found = candidates.find (do |file| file.exists()) default: nil
-    if (found == nil)
-      missing.push $name
-    else
+    if (found != nil)
       add $found $name
+      continue
+    let typelib = _shell.bundled_typelib $name
+    if (typelib != nil)
+      add_typelib $compile.Typelib(typelib) $bundled
+    else
+      missing.push $name
 
   let failed = false
   for unit = units
@@ -953,7 +949,7 @@ def check p
       if (diag.severity == :ERROR:)
         failed = true
       echo $diag.render()
-  let result = compile.check [...units, ...typelibs]
+  let result = compile.check [...units, ...typelibs, ...bundled]
   for diag = result.diagnostics
     echo $diag.render()
   let undecided = result.undecided()
@@ -966,7 +962,8 @@ def check p
     "validated"
   else
     "partial"
-  echo "$verdict: $(units.len + typelibs.len) units, $(result.diagnostics.len) diagnostics"
+  let summary = "$verdict: $(units.len + typelibs.len) units, $(result.diagnostics.len) diagnostics"
+  echo "$summary ($(bundled.len) bundled typelibs)"
   if (verdict != "validated")
     shell.exit 1
 
@@ -1021,7 +1018,7 @@ args.with
     help: Check the types of sources and the modules they import.
     - opt: path
       collect: true
-      help: Directory to search for imported modules, as `a/b.dol` for module `a.b`
+      help: Directory to search for imported modules, as `a/b.dol` for module `a.b`, before the bundled typelibs
     - arg: entries
       collect: true
       help: Sources or typelibs to check; a source under a search directory is checked as its module

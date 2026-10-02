@@ -33,6 +33,7 @@ impl Extension for HttpExt {
     type Error = Infallible;
     const NAME: &str = "dolang-http";
     const VERSION: Version = dolang::package_version!();
+    const TYPELIBS: &'static [(&'static str, &'static [u8])] = dolang::typelibs!();
     const DESCRIPTION: &str = "Do HTTP Client Extension";
 
     fn apply_compiler(&self, _config: &mut Config) -> Result<(), Infallible> {

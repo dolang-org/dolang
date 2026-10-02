@@ -1297,6 +1297,18 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 Output::set(strand, out, bytecode.as_slice());
                 Ok(())
             })
+            .method("imports", async move |this, strand, args, out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let imports: Vec<String> = {
+                    let borrow = this.borrow(strand)?;
+                    let unit = (borrow.unit.as_ref())
+                        .ok_or_else(|| Error::state_error(strand, "unit was emitted"))?;
+                    unit.imports().into_iter().map(str::to_owned).collect()
+                };
+                let imports: Vec<&str> = imports.iter().map(String::as_str).collect();
+                Output::set(strand, out, AsTuple::new(imports));
+                Ok(())
+            })
             .method("typelib", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let typelib = {

@@ -74,6 +74,17 @@ pub class Unit
   pub def nodes self -> Iter[Tuple[NodeId, Node]]
     ...
 
+  # Returns the modules the unit imports, by statement or through the prelude
+  # bindings it uses, each once, in order.
+  #
+  # Empty unless the unit was compiled with `document: true`.
+  #
+  # ## Errors
+  #
+  # Raises `std.StateError` if the unit was emitted.
+  pub def imports self -> Iterable[Str]
+    ...
+
   # Looks up a node by [`NodeId`](compile.NodeId).
   #
   # ## Returns

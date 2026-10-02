@@ -1490,6 +1490,29 @@ impl Unit<'_> {
         (next < table.len()).then(|| public_node_id(doc::Id::from_index(next)))
     }
 
+    /// The modules the unit imports, by statement or through the prelude
+    /// bindings it uses, sorted and listed once each.
+    ///
+    /// Requires [`Config::document`]; without it, the list is empty.
+    pub fn imports(&self) -> Vec<&str> {
+        let Some(table) = &self.document else {
+            return Vec::new();
+        };
+        let mut modules: Vec<&str> =
+            (0..table.len())
+                .filter_map(|index| match &table[doc::Id::from_index(index)].kind {
+                    doc::Kind::ImportModule { module, .. }
+                    | doc::Kind::ImportItem { module, .. } => Some(self.compiler.file.str(*module)),
+                    doc::Kind::PreludeModule { module, .. }
+                    | doc::Kind::PreludeItem { module, .. } => Some(&**module),
+                    _ => None,
+                })
+                .collect();
+        modules.sort_unstable();
+        modules.dedup();
+        modules
+    }
+
     /// Look up a single document node, as named by a token or by another node.
     ///
     /// Returns `None` for an identity this unit did not produce.

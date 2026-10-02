@@ -209,6 +209,10 @@ pub class Node: @Index[{*(Str): Str, *(Int): Node | Str}] @Assign[Str, Str] @Spr
   pub def (iter) self
     ...
 
+  # Spreads the children positionally.
+  pub def (spread) self -> Spread[Node | Str]
+    ...
+
 # Parses an XML document into a parentless element tree.
 #
 # Predefined entities and numeric character references are expanded. Custom

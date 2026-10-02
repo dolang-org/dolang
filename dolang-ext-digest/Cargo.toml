@@ -34,3 +34,7 @@ version = "0.11.0"
 
 [dependencies.dolang]
 workspace = true
+
+
+[build-dependencies.dolang-private-bundle]
+workspace = true

@@ -31,6 +31,10 @@ impl dolang_shell_main::Config for ExampleConfig {
     fn bundled_module(&self, name: &str) -> Option<&'static [u8]> {
         dolang_shell_modules::get(name)
     }
+
+    fn bundled_typelib(&self, name: &str) -> Option<&'static [u8]> {
+        dolang_shell_modules::typelib(name)
+    }
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {

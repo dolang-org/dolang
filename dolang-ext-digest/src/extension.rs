@@ -31,6 +31,7 @@ impl Extension for DigestExt {
     type Error = Infallible;
     const NAME: &str = "dolang-digest";
     const VERSION: Version = dolang::package_version!();
+    const TYPELIBS: &'static [(&'static str, &'static [u8])] = dolang::typelibs!();
     const DESCRIPTION: &str = "Do Digest Extension";
 
     fn apply_compiler(&self, _config: &mut Config) -> Result<(), Infallible> {

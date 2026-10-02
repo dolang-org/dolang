@@ -35,3 +35,7 @@ workspace = true
 
 [dependencies.dolang-winterop]
 workspace = true
+
+
+[build-dependencies.dolang-private-bundle]
+workspace = true

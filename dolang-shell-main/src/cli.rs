@@ -258,7 +258,7 @@ Arguments:
 
 Options:
   -m, --main              Run a bundled main entrypoint
-      --check             Check syntax without executing
+      --check             Check a script and its imports without executing
       --compile <OUTPUT>  Compile to bytecode file
       --module-path <PATH>  Add a module search path
       --import <MODULE[=NAME]>  Add a module to the prelude

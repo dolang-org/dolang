@@ -108,3 +108,7 @@ workspace = true
 
 [target.'cfg(windows)'.dependencies.dunce]
 workspace = true
+
+
+[build-dependencies.dolang-private-bundle]
+workspace = true

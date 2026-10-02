@@ -205,3 +205,11 @@ optional = true
 
 [build-dependencies.dolang-private-bundle]
 workspace = true
+
+
+[build-dependencies.dolang]
+workspace = true
+
+
+[build-dependencies.dolang-ext-shell]
+workspace = true

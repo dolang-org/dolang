@@ -29,6 +29,7 @@ impl Extension for GlobExt {
     type Error = Infallible;
     const NAME: &str = "dolang-glob";
     const VERSION: Version = dolang::package_version!();
+    const TYPELIBS: &'static [(&'static str, &'static [u8])] = dolang::typelibs!();
     const DESCRIPTION: &str = "Do Glob Extension";
 
     fn apply_compiler(&self, _config: &mut Config) -> Result<(), Infallible> {

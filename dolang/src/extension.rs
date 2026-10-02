@@ -97,6 +97,10 @@ pub trait Extension: Send + Sync + 'static {
     /// a name are all link-time configuration errors and panic when
     /// extensions are enumerated.
     const DEPENDS: &'static [&'static str] = &[];
+    /// Typelibs of the modules the extension provides, paired with their module
+    /// names, for checking code that imports them. Bundle them from the crate's
+    /// `stub/` directory with [`typelibs!`](crate::typelibs).
+    const TYPELIBS: &'static [(&'static str, &'static [u8])] = &[];
 
     /// Apply extension to compiler, such as by registering prelude imports.
     fn apply_compiler<'a>(&self, config: &mut Config<'a>) -> Result<(), Self::Error>;
@@ -111,6 +115,8 @@ pub struct Vtbl {
     version: Version,
     #[cfg(not(target_family = "wasm"))]
     depends: &'static [&'static str],
+    #[cfg(not(target_family = "wasm"))]
+    typelibs: &'static [(&'static str, &'static [u8])],
 
     apply_compiler: unsafe fn(this: NonNull<()>, config: &mut Config) -> Result<(), Error>,
     apply_vm: for<'v> unsafe fn(this: NonNull<()>, builder: &mut Builder<'v>) -> Result<(), Error>,
@@ -135,6 +141,8 @@ impl Vtbl {
                 version: T::VERSION,
                 #[cfg(not(target_family = "wasm"))]
                 depends: T::DEPENDS,
+                #[cfg(not(target_family = "wasm"))]
+                typelibs: T::TYPELIBS,
                 apply_compiler: |this, config| unsafe {
                     this.cast::<T>()
                         .as_ref()
@@ -255,7 +263,7 @@ fn order(items: &[(&'static str, &'static [&'static str])]) -> Vec<usize> {
 }
 
 #[cfg(not(target_family = "wasm"))]
-fn extensions() -> impl Iterator<Item = &'static Erased> {
+pub(crate) fn extensions() -> impl Iterator<Item = &'static Erased> {
     static ORDERED: OnceLock<Vec<&'static Erased>> = OnceLock::new();
 
     ORDERED
@@ -275,6 +283,33 @@ fn extensions() -> impl Iterator<Item = &'static Erased> {
         })
         .iter()
         .copied()
+}
+
+impl Vtbl {
+    #[cfg(not(target_family = "wasm"))]
+    fn typelibs(&self) -> &'static [(&'static str, &'static [u8])] {
+        self.typelibs
+    }
+
+    #[cfg(target_family = "wasm")]
+    fn typelibs(&self) -> &'static [(&'static str, &'static [u8])] {
+        &[]
+    }
+}
+
+impl Erased {
+    pub(crate) fn typelibs(&self) -> &'static [(&'static str, &'static [u8])] {
+        self.vtbl.typelibs()
+    }
+}
+
+/// The typelibs a crate's build script bundled with
+/// `dolang_private_bundle::stub_typelibs`, for [`Extension::TYPELIBS`].
+#[macro_export]
+macro_rules! typelibs {
+    () => {
+        include!(concat!(env!("OUT_DIR"), "/typelibs.rs"))
+    };
 }
 
 /// Register extension.
@@ -308,6 +343,12 @@ impl CompilerExtension {
     /// Extension version.
     pub fn version(&self) -> Version {
         self.vtbl.version
+    }
+
+    /// Typelibs of the modules the extension provides, paired with their module
+    /// names.
+    pub fn typelibs(&self) -> &'static [(&'static str, &'static [u8])] {
+        self.vtbl.typelibs()
     }
 
     /// Apply extension to compiler, such as by registering prelude imports.
@@ -436,7 +477,7 @@ mod tests {
 }
 
 #[cfg(target_family = "wasm")]
-fn extensions() -> impl Iterator<Item = &'static Erased> {
+pub(crate) fn extensions() -> impl Iterator<Item = &'static Erased> {
     std::iter::empty()
 }
 

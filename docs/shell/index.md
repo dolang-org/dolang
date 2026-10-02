@@ -22,7 +22,7 @@ dolang --strict script.dol
 Other options:
 
 - `-m`, `--main` -- run a bundled entrypoint instead of a script
-- `--check` -- check syntax without executing
+- `--check` -- check a script and the modules it imports without executing
 - `--compile OUTPUT` -- compile to bytecode file
 - `--module-path PATH` -- add a module search path (repeatable)
 - `--import MODULE[=NAME]` -- add a module to the prelude (repeatable)

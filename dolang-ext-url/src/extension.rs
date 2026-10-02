@@ -33,6 +33,7 @@ impl Extension for UrlExt {
     type Error = Infallible;
     const NAME: &str = "dolang-url";
     const VERSION: Version = dolang::package_version!();
+    const TYPELIBS: &'static [(&'static str, &'static [u8])] = dolang::typelibs!();
     const DESCRIPTION: &str = "Do URL Extension";
 
     fn apply_compiler(&self, _config: &mut Config) -> Result<(), Infallible> {

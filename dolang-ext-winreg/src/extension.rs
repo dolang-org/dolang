@@ -30,6 +30,7 @@ impl Extension for WinregExt {
     type Error = Infallible;
     const NAME: &str = "dolang-winreg";
     const VERSION: Version = dolang::package_version!();
+    const TYPELIBS: &'static [(&'static str, &'static [u8])] = dolang::typelibs!();
     const DESCRIPTION: &str = "Do Windows Registry Extension";
     const DEPENDS: &'static [&'static str] = &[<dolang_ext_shell::Shell as Extension>::NAME];
 

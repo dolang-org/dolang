@@ -30,6 +30,7 @@ impl Extension for WinscmExt {
     type Error = Infallible;
     const NAME: &str = "dolang-winscm";
     const VERSION: Version = dolang::package_version!();
+    const TYPELIBS: &'static [(&'static str, &'static [u8])] = dolang::typelibs!();
     const DESCRIPTION: &str = "Do Windows Service Control Manager Extension";
     const DEPENDS: &'static [&'static str] = &[<dolang_ext_shell::Shell as Extension>::NAME];
 
