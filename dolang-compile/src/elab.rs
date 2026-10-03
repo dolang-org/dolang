@@ -202,22 +202,6 @@ impl Diagnose for BadReturn {
     }
 }
 
-struct IfWithoutElse(Span);
-
-impl Diagnose for IfWithoutElse {
-    fn severity(&self) -> Severity {
-        Severity::Warning
-    }
-
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(w, "`if` without `else` always evaluates to `nil`")
-    }
-
-    fn span(&self) -> Span {
-        self.0
-    }
-}
-
 #[derive(Clone)]
 struct BadNl {
     span: Span,
@@ -2014,13 +1998,6 @@ impl<'a> Elaborater<'a> {
             self.fail = true;
         }
 
-        // Check for `if` without `else` in RHS
-        if let PrimStmt::If(if_node) = &node.rhs
-            && if_node.else_branch.is_none()
-        {
-            self.diags.push(IfWithoutElse(if_node.tbranch.span));
-        }
-
         self.visit_prim_stmt(scope, &mut node.rhs, true)?;
 
         // In a class body, let bindings are not inserted into the lexical index.
@@ -2110,13 +2087,6 @@ impl<'a> Elaborater<'a> {
 
     fn visit_assign(&mut self, scope: &mut Scope<'_>, node: &mut Assign) -> Result<()> {
         self.visit_lvalue(scope, &mut node.lhs)?;
-
-        // Check for `if` without `else` in RHS
-        if let PrimStmt::If(if_node) = &node.rhs
-            && if_node.else_branch.is_none()
-        {
-            self.diags.push(IfWithoutElse(if_node.tbranch.span));
-        }
 
         self.visit_prim_stmt(scope, &mut node.rhs, true)
     }

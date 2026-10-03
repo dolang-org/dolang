@@ -118,3 +118,27 @@ class P
   pub field q = 1
 pub let p = P
 #       ^: flow std.Type[m.P]
+
+pub def partial c @ Bool
+  let y = if c
+    1
+  let _ = y
+  #       ^: flow std.Int | std.Nil
+  y = if c
+    "a"
+  let _ = y
+  #       ^: flow std.Nil | std.Str
+
+pub def partial_chain c @ Bool d @ Bool
+  let y = if c
+    1
+  else if d
+    "a"
+  let _ = y
+  #       ^: flow std.Int | std.Nil | std.Str
+
+pub def partial_narrowed v @ (Int | Str)
+  let y = if (type(v, Int))
+    v
+  let _ = y
+  #       ^: flow std.Int | std.Nil

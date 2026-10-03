@@ -1455,7 +1455,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     /// Mirrors [`Self::lower_if`], differing only in what the branches contribute
     /// to: an empty `ARGS` builtin opens the pack each body pushes into, and
     /// `work_ast` wraps the body for the queue.  There is no result value, so no
-    /// `want_result` and no `complete` distinction.
+    /// `want_result` distinction.
     fn lower_elem_if<T>(
         &mut self,
         node: &'a If<ExprBody<T>>,
@@ -1587,7 +1587,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     }
 
     fn lower_if(&mut self, node: &'a If<Block>, want_result: bool) -> Result<()> {
-        let complete = node.else_branch.is_some();
         let next = self.graph.alloc_block(self.block.func, self.block.scope);
 
         let start = self.bb;
@@ -1607,7 +1606,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             fallback = self.graph.alloc_block(self.block.func, fscope);
             self.queue(Work {
                 bb: fallback,
-                ast: WorkAst::Block(else_block, want_result && complete),
+                ast: WorkAst::Block(else_block, want_result),
                 params: Params {
                     bind: None,
                     bind_params: None,
@@ -1621,6 +1620,14 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     exit_id: self.params.exit_id,
                 },
             });
+        }
+
+        if node.else_branch.is_none() && want_result {
+            fallback = self.graph.alloc_block(self.block.func, self.block.scope);
+            self.switch(fallback);
+            self.lower_load_nil(node.span());
+            self.block.term = Term(TermInfo::Branch(next), node.span());
+            self.link(next);
         }
 
         // Process elif branches in reverse order (last to first)
@@ -1648,7 +1655,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             )?;
             self.queue(Work {
                 bb: tid,
-                ast: WorkAst::Block(&elif_branch.body, want_result && complete),
+                ast: WorkAst::Block(&elif_branch.body, want_result),
                 params: Params {
                     bind,
                     bind_params,
@@ -1685,7 +1692,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         )?;
         self.queue(Work {
             bb: tid,
-            ast: WorkAst::Block(&node.tbranch.body, want_result && complete),
+            ast: WorkAst::Block(&node.tbranch.body, want_result),
             params: Params {
                 bind,
                 bind_params,
@@ -1702,9 +1709,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
         self.switch(next);
 
-        if want_result && !complete {
-            self.lower_load_nil(node.span())
-        }
         Ok(())
     }
 

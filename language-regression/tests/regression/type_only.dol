@@ -46,19 +46,9 @@ do -> Str
 
 # A type-only declaration yields nil where its value is wanted
 let def_value = if true
-  # warning: `if` without `else` always evaluates to `nil`
-  #   --> type_only.dol:LL:LL
-  #    |
-  # LL | let def_value = if true
-  #    |                 ^^
   @def nothing()
 assert_eq $def_value nil
 
 let class_value = if true
-  # warning: `if` without `else` always evaluates to `nil`
-  #   --> type_only.dol:LL:LL
-  #    |
-  # LL | let class_value = if true
-  #    |                   ^^
   @class Nothing
 assert_eq $class_value nil

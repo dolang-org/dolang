@@ -617,14 +617,12 @@ impl<'u> Scope<'_, '_, 'u> {
 
     fn if_(&mut self, node: &'u If<Block>, dest: Option<VarId>) {
         let complete = node.else_branch.is_some();
-        // An `if` without `else` is `nil`
-        let branch_dest = if complete { dest } else { None };
         let join = self.block();
         let branches: Vec<&IfBranch<Block>> = std::iter::once(&node.tbranch)
             .chain(node.elif_branches.iter().map(|(branch, _)| branch))
             .collect();
         for (index, branch) in branches.iter().enumerate() {
-            let fallback = if index + 1 < branches.len() || complete {
+            let fallback = if index + 1 < branches.len() || complete || dest.is_some() {
                 self.block()
             } else {
                 join
@@ -636,7 +634,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 frame,
                 ..self.ctx.clone()
             };
-            self.queue_block(body, ctx, &branch.body, branch_dest, join);
+            self.queue_block(body, ctx, &branch.body, dest, join);
             self.switch(fallback);
         }
         if let Some((block, _)) = &node.else_branch {
@@ -644,12 +642,13 @@ impl<'u> Scope<'_, '_, 'u> {
                 frame: self.block_frame(block),
                 ..self.ctx.clone()
             };
-            self.queue_block(self.bb, ctx, block, branch_dest, join);
+            self.queue_block(self.bb, ctx, block, dest, join);
+        }
+        if !complete && dest.is_some() {
+            self.value_nil(dest, node.tbranch.span);
+            self.end(Terminal::Branch(join));
         }
         self.switch(join);
-        if !complete {
-            self.value_nil(dest, node.tbranch.span);
-        }
     }
 
     fn loop_ctx(&self, frame: Rc<Frame<'u>>, exit: BlockId, next: BlockId) -> Ctx<'u> {
