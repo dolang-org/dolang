@@ -155,7 +155,7 @@ mod expr;
 mod format;
 mod func;
 mod import;
-mod params;
+mod pattern;
 mod stmt;
 mod stream;
 mod string;

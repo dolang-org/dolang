@@ -160,7 +160,7 @@ pub enum NodeKind {
     Try,
     While,
     NlGuard,
-    Param,
+    PatItem,
     Block,
     Function,
     ImportItem,

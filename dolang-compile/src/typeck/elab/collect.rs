@@ -24,7 +24,7 @@ use crate::{
     ast::{
         self, AliasBody, Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, Const,
         DictElem, Expr, ExprBody, FieldInit, For, Function, Ident, If, ImportElement, LValue,
-        Method, Param, ParamBind, PatIdent, Pattern, PrimStmt, Res, Stmt, TypeDecl, TypeEntry,
+        Method, PatBind, PatIdent, PatItem, Pattern, PrimStmt, Res, Stmt, TypeDecl, TypeEntry,
         TypeRes, Var, visit::Node,
     },
     resolvety::names_type_in,
@@ -944,10 +944,10 @@ impl<'u> Walk<'_, 'u> {
     }
 
     /// The name an item binds, walking a sub-pattern, which binds none of its own
-    fn bind(&mut self, frame: &Frame<'_, 'u>, bind: &'u ParamBind) -> Option<Name> {
+    fn bind(&mut self, frame: &Frame<'_, 'u>, bind: &'u PatBind) -> Option<Name> {
         match bind {
-            ParamBind::Ident(ident) => Some(self.name(ident.span)),
-            ParamBind::Pattern { pattern, .. } => {
+            PatBind::Ident(ident) => Some(self.name(ident.span)),
+            PatBind::Nested { pattern, .. } => {
                 self.pattern(frame, pattern);
                 None
             }
@@ -955,11 +955,11 @@ impl<'u> Walk<'_, 'u> {
     }
 
     /// Walk a parameter, of a signature or a pattern, returning its surface.
-    fn param(&mut self, frame: &Frame<'_, 'u>, param: &'u Param) -> surface::Param {
+    fn param(&mut self, frame: &Frame<'_, 'u>, param: &'u PatItem) -> surface::Param {
         use surface::ParamKind;
 
         match param {
-            Param::Pos { bind, ty, default } => {
+            PatItem::Pos { bind, ty, default } => {
                 if let Some(default) = default {
                     self.expr(frame, &default.expr);
                 }
@@ -970,7 +970,7 @@ impl<'u> Walk<'_, 'u> {
                     annot: self.annot(frame, ty, Role::Type),
                 }
             }
-            Param::Key {
+            PatItem::Key {
                 key_span,
                 bind,
                 ty,
@@ -989,7 +989,7 @@ impl<'u> Walk<'_, 'u> {
                     annot: self.annot(frame, ty, Role::Type),
                 }
             }
-            Param::ConstKey {
+            PatItem::ConstKey {
                 key_expr,
                 key_const,
                 bind,
@@ -1016,7 +1016,7 @@ impl<'u> Walk<'_, 'u> {
                     annot: self.annot(frame, ty, Role::Type),
                 }
             }
-            Param::Rest {
+            PatItem::Rest {
                 kind,
                 ident,
                 ty,
@@ -1494,16 +1494,16 @@ fn pattern_names(pattern: &Pattern, f: &mut impl FnMut(&Ident)) {
     };
     for param in params {
         match param {
-            Param::Pos { bind, .. } | Param::Key { bind, .. } | Param::ConstKey { bind, .. } => {
-                match bind {
-                    ParamBind::Ident(ident) => f(ident),
-                    ParamBind::Pattern { pattern, .. } => pattern_names(pattern, f),
-                }
-            }
-            Param::Rest {
+            PatItem::Pos { bind, .. }
+            | PatItem::Key { bind, .. }
+            | PatItem::ConstKey { bind, .. } => match bind {
+                PatBind::Ident(ident) => f(ident),
+                PatBind::Nested { pattern, .. } => pattern_names(pattern, f),
+            },
+            PatItem::Rest {
                 ident: Some(ident), ..
             } => f(ident),
-            Param::Rest { ident: None, .. } => {}
+            PatItem::Rest { ident: None, .. } => {}
         }
     }
 }

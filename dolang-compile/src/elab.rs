@@ -10,9 +10,9 @@ use dolang_util::{intern::BinTable, mono::MonoVec};
 use crate::{
     Compiler, Mode, PreludeImport,
     ast::{
-        self, Arg, ArrayElem, Assign, Bind, Block, Class, Def, DictElem, Expand, Expr, ExprBody,
-        For, Function, GetVariant, Ident, If, Import, ImportElement, ImportItem, Key, LValue, Let,
-        Method, NlGuard, NlInfo, Origin, Pair, Param, ParamBind, PatIdent, Pattern, PatternBind,
+        self, Arg, ArrayElem, Assign, Bind, Block, Class, CondPattern, Def, DictElem, Expand, Expr,
+        ExprBody, For, Function, GetVariant, Ident, If, Import, ImportElement, ImportItem, Key,
+        LValue, Let, Method, NlGuard, NlInfo, Origin, Pair, PatBind, PatIdent, PatItem, Pattern,
         PrimStmt, Res, Return, Root, SideEffect, Single, Stmt, Try, Var, While, visit::Node,
     },
     diag::{AnnotationKind, Severity},
@@ -2060,13 +2060,13 @@ impl<'a> Elaborater<'a> {
     fn visit_param_non_const_default(
         &mut self,
         scope: &mut Scope<'_>,
-        param: &mut Param,
+        param: &mut PatItem,
     ) -> Result<()> {
         let default = match param {
-            Param::Pos { default, .. }
-            | Param::Key { default, .. }
-            | Param::ConstKey { default, .. } => default,
-            Param::Rest { .. } => return Ok(()),
+            PatItem::Pos { default, .. }
+            | PatItem::Key { default, .. }
+            | PatItem::ConstKey { default, .. } => default,
+            PatItem::Rest { .. } => return Ok(()),
         };
         if let Some(default) = default
             && default.fold.is_none()
@@ -2088,15 +2088,15 @@ impl<'a> Elaborater<'a> {
                 for param in params.iter_mut() {
                     self.visit_param_non_const_default(scope, param)?;
                     match param {
-                        Param::Pos { bind, .. }
-                        | Param::Key { bind, .. }
-                        | Param::ConstKey { bind, .. } => match bind {
-                            ParamBind::Ident(ident) => self.bind_ident(scope, ident, export)?,
-                            ParamBind::Pattern { pattern, .. } => {
+                        PatItem::Pos { bind, .. }
+                        | PatItem::Key { bind, .. }
+                        | PatItem::ConstKey { bind, .. } => match bind {
+                            PatBind::Ident(ident) => self.bind_ident(scope, ident, export)?,
+                            PatBind::Nested { pattern, .. } => {
                                 self.visit_pattern(scope, pattern, export)?
                             }
                         },
-                        Param::Rest { ident, .. } => {
+                        PatItem::Rest { ident, .. } => {
                             if let Some(ident) = ident {
                                 self.bind_ident(scope, ident, export)?
                             }
@@ -2137,7 +2137,7 @@ impl<'a> Elaborater<'a> {
     fn visit_branch_body(
         &mut self,
         scope: &mut Scope<'_>,
-        bind: Option<&mut PatternBind>,
+        bind: Option<&mut CondPattern>,
         body: &mut Block,
         is_loop: bool,
     ) -> Result<()> {
@@ -2200,7 +2200,7 @@ impl<'a> Elaborater<'a> {
     fn visit_elem_branch_body<T>(
         &mut self,
         scope: &mut Scope<'_>,
-        bind: Option<&mut PatternBind>,
+        bind: Option<&mut CondPattern>,
         body: &mut ExprBody<T>,
         is_arg: bool,
         visit_elem: fn(&mut Self, &mut Scope<'_>, &mut T, bool) -> Result<()>,
@@ -2931,22 +2931,22 @@ impl<'a> Elaborater<'a> {
     fn visit_params(
         &mut self,
         scope: &mut Scope<'_>,
-        params: &mut [Param],
+        params: &mut [PatItem],
         is_class_method: bool,
     ) -> Result<()> {
         for (param_idx, param) in params.iter_mut().enumerate() {
             self.visit_param_non_const_default(scope, param)?;
             let ident = match param {
-                Param::Pos { bind, .. }
-                | Param::Key { bind, .. }
-                | Param::ConstKey { bind, .. } => match bind {
-                    ParamBind::Ident(ident) => Some(ident),
-                    ParamBind::Pattern { pattern, .. } => {
+                PatItem::Pos { bind, .. }
+                | PatItem::Key { bind, .. }
+                | PatItem::ConstKey { bind, .. } => match bind {
+                    PatBind::Ident(ident) => Some(ident),
+                    PatBind::Nested { pattern, .. } => {
                         self.bind_pattern(scope, pattern)?;
                         None
                     }
                 },
-                Param::Rest { ident, .. } => ident.as_mut(),
+                PatItem::Rest { ident, .. } => ident.as_mut(),
             };
             let Some(ident) = ident else {
                 continue;
@@ -3121,16 +3121,16 @@ impl<'a> Elaborater<'a> {
         for param in node.params.iter_mut() {
             self.visit_param_non_const_default(&mut scope, param)?;
             let ident = match param {
-                Param::Pos { bind, .. }
-                | Param::Key { bind, .. }
-                | Param::ConstKey { bind, .. } => match bind {
-                    ParamBind::Ident(ident) => Some(ident),
-                    ParamBind::Pattern { pattern, .. } => {
+                PatItem::Pos { bind, .. }
+                | PatItem::Key { bind, .. }
+                | PatItem::ConstKey { bind, .. } => match bind {
+                    PatBind::Ident(ident) => Some(ident),
+                    PatBind::Nested { pattern, .. } => {
                         self.bind_pattern(&mut scope, pattern)?;
                         None
                     }
                 },
-                Param::Rest { ident, .. } => ident.as_mut(),
+                PatItem::Rest { ident, .. } => ident.as_mut(),
             };
             let Some(ident) = ident else {
                 continue;
