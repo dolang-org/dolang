@@ -27,14 +27,13 @@ def hello()
 
 A function returns the result of its final statement:
 
-| Statement                   | Result                                        |
-| --------------------------- | --------------------------------------------- |
-| command                     | function return value                         |
-| `let`                       | value of right-hand side                      |
-| `bind`                      | value of scrutinee                            |
-| `if` (with final `else`)    | result of branch                              |
-| `if` (without final `else`) | `nil`                                         |
-| `try`/`catch`               | result of `try` (no error) or invoked `catch` |
+| Statement     | Result                                           |
+| ------------- | ------------------------------------------------ |
+| command       | function return value                            |
+| `let`         | value of right-hand side                         |
+| `bind`        | value of scrutinee                               |
+| `if`          | result of selected branch, or `nil` if none runs |
+| `try`/`catch` | result of `try` (no error) or invoked `catch`    |
 
 All other statements have a `nil` result.
 

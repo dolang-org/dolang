@@ -90,6 +90,18 @@ else
   data
 ```
 
+An `if` gives the result of the branch that runs, or `nil` if no branch runs:
+
+```
+let value = if true
+  42
+# value == 42
+
+value = if false
+  1
+# value == nil
+```
+
 ## Loops
 
 ### `while`

@@ -1,0 +1,74 @@
+# Branch values survive without a final else, including implicit returns.
+def choose n
+  if (n == 1)
+    10
+  else if (n == 2)
+    20
+  else if (n == 3)
+    30
+
+assert_eq (choose 1) 10
+assert_eq (choose 2) 20
+assert_eq (choose 3) 30
+assert_eq (choose 4) nil
+
+let value = if true
+  42
+assert_eq $value 42
+value = if false
+  1
+assert_eq $value nil
+value = if true
+  false
+assert_eq $value false
+value = if true
+  nil
+assert_eq $value nil
+
+value = if true
+  if true
+    7
+assert_eq $value 7
+value = if true
+  if false
+    7
+assert_eq $value nil
+
+value = if let a b = (1, 2)
+  (a + b)
+assert_eq $value 3
+value = if let a b = (1,)
+  (a + b)
+assert_eq $value nil
+
+value = if bind (key: 9)
+  :key
+do
+  key
+assert_eq $value 9
+value = if bind ()
+  :key
+do
+  key
+assert_eq $value nil
+
+def early flag
+  if flag
+    return 8
+assert_eq (early true) 8
+assert_eq (early false) nil
+
+value = try
+  if true
+    throw :failed:
+catch err
+  err
+assert_eq $value :failed:
+
+# Discarded results still run only the selected branch.
+let calls = 0
+if true
+  calls = (calls + 1)
+if false
+  calls = (calls + 1)
+assert_eq $calls 1

@@ -338,7 +338,7 @@ b16 f1:
     );
 }
 
-/// Each edge of a test gets its own narrowing; an `if` without `else` is `nil`
+/// Each edge keeps its narrowing and result; only fallthrough writes `nil`.
 #[test]
 fn narrowing() {
     check(
@@ -365,12 +365,11 @@ b2 f1:
 b3 f1:
   return
 b4 f1:
-  result1 = nil
   goto b3
 b5 f1:
   if (x == nil) then b11 else b12
 b6 f1:
-  eval x
+  result1 = x
   goto b4
 b7 f1:
   assume x <: class std::Int
@@ -379,9 +378,9 @@ b8 f1:
   assume x !<: class std::Int
   goto b5
 b9 f1:
-  if x then b14 else b4
+  if x then b15 else b13
 b10 f1:
-  eval 1
+  result1 = 1
   goto b4
 b11 f1:
   assume x == nil
@@ -390,12 +389,15 @@ b12 f1:
   assume x != nil
   goto b9
 b13 f1:
-  eval 2
+  result1 = nil
   goto b4
 b14 f1:
+  result1 = 2
+  goto b4
+b15 f1:
   assume x != nil
   assume x != false
-  goto b13
+  goto b14
 ",
     );
 }
@@ -1303,4 +1305,14 @@ b7 f0:
   unpack (d, e) = t8 then b5 else b3
 ",
     );
+}
+
+#[test]
+fn discarded_if_results() {
+    let graph = lower("if true\n  1\nelse if false\n  2\nnil\n");
+    assert!(graph.contains("eval 1"));
+    assert!(graph.contains("eval 2"));
+    assert!(!graph.contains("result0 = 1"));
+    assert!(!graph.contains("result0 = 2"));
+    assert_eq!(graph.matches("result0 = nil").count(), 1);
 }
