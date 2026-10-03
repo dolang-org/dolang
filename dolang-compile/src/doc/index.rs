@@ -930,6 +930,7 @@ impl Index<'_> {
         extent: Option<Span>,
     ) {
         match pattern {
+            Pattern::Constant { .. } => {}
             Pattern::TypeTest(test) => {
                 self.reference(scope, &mut test.class.ident);
                 self.pattern(scope, &mut test.pattern, is_pub, extent);

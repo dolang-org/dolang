@@ -1,0 +1,75 @@
+pub def integer value @ Int
+  if let 200 = value
+    let _ = value
+    #       ^~~~~: flow std.Int
+  else
+    let _ = value
+    #       ^~~~~: flow std.Int
+
+pub def boolean value @ Bool
+  if let false = value
+    let _ = value
+    #       ^~~~~: flow std.Bool
+  else
+    let _ = value
+    #       ^~~~~: flow true
+
+pub def nullable value @ (Int | nil)
+  if let nil = value
+    let _ = value
+    #       ^~~~~: flow nil | std.Int
+  else
+    let _ = value
+    #       ^~~~~: flow std.Int
+
+pub def symbol value @ (:ok: | :error:)
+  if let :ok: = value
+    let _ = value
+    #       ^~~~~: flow :ok:
+  else
+    let _ = value
+    #       ^~~~~: flow :error:
+
+pub def asserted value @ Bool
+  let false = value
+  let _ = value
+  #       ^~~~~: flow std.Bool
+
+pub def nested value @ Tuple[Int, Str, Bool]
+  if let 200 name false = value
+    let _ = name
+    #       ^~~~: flow std.Str
+
+pub def typed value @ (Bool | Str)
+  if let Bool(false) = value
+    let _ = value
+    #       ^~~~~: flow std.Bool
+  else
+    let _ = value
+    #       ^~~~~: flow std.Str | true
+
+pub def literal_union value @ (200 | 404)
+  if let 200 = value
+    let _ = value
+    #       ^~~~~: flow 200
+  else
+    let _ = value
+    #       ^~~~~: flow 404
+
+pub def asserted_literal value @ (false | :ok:)
+  let false = value
+  let _ = value
+  #       ^~~~~: flow false
+
+pub def asserted_typed value @ (false | true)
+  let Bool(false) = value
+  let _ = value
+  #       ^~~~~: flow false
+
+pub def folded value @ ("200" | "404")
+  if let "$(200)" = value
+    let _ = value
+    #       ^~~~~: flow "200"
+  else
+    let _ = value
+    #       ^~~~~: flow "404"

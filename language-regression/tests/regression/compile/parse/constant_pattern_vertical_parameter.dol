@@ -1,0 +1,9 @@
+def f
+  - 200
+# error: a `def` parameter must be a name; unpack it in the body
+#   --> constant_pattern_vertical_parameter.dol:LL:LL
+#    |
+# LL |   - 200
+#    |     ^^^
+do
+  nil

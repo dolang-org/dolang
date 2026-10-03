@@ -52,9 +52,10 @@ pub def unpack value @ (Point | Int)
     let _ = value
     #       ^~~~~: flow m.Point | std.Int
 
-pub def parameter Int(x)
-  let _ = x
-  #       ^: flow std.Int
+pub def parameter()
+  do |Int(x)|
+    let _ = x
+    #       ^: flow std.Int
 
 pub def vertical value @ (Array[Int] | Str)
   if bind value

@@ -1,5 +1,5 @@
 @def f a (b c)
-# error: invalid parameter
+# error: a `def` parameter must be a name
 #   --> nested_pattern_signature.dol:LL:LL
 #    |
 # LL | @def f a (b c)

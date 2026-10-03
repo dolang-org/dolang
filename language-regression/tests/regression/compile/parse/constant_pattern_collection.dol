@@ -1,0 +1,11 @@
+let [200] = [200]
+# error: expression is not a constant
+#   --> constant_pattern_collection.dol:LL:LL
+#    |
+# LL | let [200] = [200]
+#    |     ^^^^^
+# error: got <whitespace>, expected: :
+#   --> constant_pattern_collection.dol:LL:LL
+#    |
+# LL | let [200] = [200]
+#    |          ^

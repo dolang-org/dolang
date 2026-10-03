@@ -1229,14 +1229,13 @@ fn nested_patterns() {
         "
 let x = [1, [2, [3]]]
 let a (b (c d = 0)) = x
-def f p (q r = p)
-  [p, q, r]
+let f = do |p (q r = p)| [p, q, r]
 for k (lo hi) = [x]
   [a, b, c, d, f, k, lo, hi]
 ",
         "
-f0 module: entry b0, exit b1, params ()
-f1 decl0 in f0: entry b2, exit b3, params (p, t18)
+f0 module: entry b0, exit b1, params (), bottom t19 t20 t21 t22 t23
+f1 decl0 in f0: entry b2, exit b3, params (p, t18), signature (t19, t20) <t21 >t22 -> t23, captures t19 t20 t21 t22 t23!
 b0 f0:
   let x = array[1, array[2, array[3]]]
   let (a, t8) = x
@@ -1254,6 +1253,7 @@ b2 f1:
   result1 = array[p, q, r]
   goto b3
 b3 f1:
+  t23 = result1
   return
 b4 f0:
   next (k, t17) in t7 then b7 else b5

@@ -22,7 +22,7 @@ nav:
     - language/flow-control.md
     - language/vertical-layout.md
     - language/functions.md
-    - language/destructuring.md
+    - language/patterns.md
     - language/modules.md
     - language/classes.md
     - language/types.md

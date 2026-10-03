@@ -1,0 +1,6 @@
+@def f 200 -> Int
+# error: a `def` parameter must be a name
+#   --> constant_pattern_signature.dol:LL:LL
+#    |
+# LL | @def f 200 -> Int
+#    |        ^^^

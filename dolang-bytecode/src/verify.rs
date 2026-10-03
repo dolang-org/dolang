@@ -413,7 +413,7 @@ impl<'a, C: Context> FuncVerifier<'a, C> {
                 | BitXor | Shl | Shr | Pop | Eq | Ne | Gt | Lt | Gte | Lte | Sub | Ret
                 | PopUpvars | Index | Assign | Next => (),
                 // Must wait for data flow to interpret these immediates
-                LoadUpvar(_, _) | StoreUpvar(_, _) | PushUpvars(_) => (),
+                Pick(_) | LoadUpvar(_, _) | StoreUpvar(_, _) | PushUpvars(_) => (),
                 // Disallow swaps that don't do anything, in case the implementation is unsafe with
                 // overlapping targets
                 Swap(i, j) => {
@@ -688,6 +688,12 @@ impl<'a, C: Context> FuncVerifier<'a, C> {
             Dup => {
                 block.pop()?;
                 block.push();
+                block.push();
+            }
+            Pick(n) => {
+                if *n >= block.operands {
+                    return Err(InstError::OperandIndexOutOfBounds(*n));
+                }
                 block.push();
             }
             Swap(i, j) => {
@@ -1398,6 +1404,37 @@ mod test {
         let inputs = vec![func(0, vec![], vec![Pop, Ret])];
 
         inst_error(link(mock, inputs), InstError::OperandUnderflow);
+    }
+
+    #[test]
+    fn pick_valid_depth() {
+        use Inst::*;
+        let inputs = vec![func(
+            0,
+            vec![],
+            vec![LoadConst(0), LoadConst(0), Pick(1), Pop, Pop, Ret],
+        )];
+        run(&link(default_mock(), inputs)).unwrap();
+    }
+
+    #[test]
+    fn pick_invalid_depth() {
+        use Inst::*;
+        let inputs = vec![func(0, vec![], vec![LoadConst(0), Pick(1), Ret])];
+        inst_error(
+            link(default_mock(), inputs),
+            InstError::OperandIndexOutOfBounds(1),
+        );
+    }
+
+    #[test]
+    fn pick_empty_stack() {
+        use Inst::*;
+        let inputs = vec![func(0, vec![], vec![Pick(0), Ret])];
+        inst_error(
+            link(default_mock(), inputs),
+            InstError::OperandIndexOutOfBounds(0),
+        );
     }
 
     #[test]

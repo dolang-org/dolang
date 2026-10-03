@@ -13,7 +13,7 @@ sort stdin: $["c", "a", "b"].crimp()
 
 ## Program Lookup
 
-Call `run` directly, index it with a name or path, or destructure it to bind
+Call `run` directly, index it with a name or path, or match its keys to bind
 identifier-safe program names. The resulting [`Program`](proc.Program)
 proxy is a function:
 

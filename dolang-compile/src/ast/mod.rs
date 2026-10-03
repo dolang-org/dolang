@@ -1697,6 +1697,7 @@ pub(crate) struct TypePattern {
 }
 
 pub(crate) enum Pattern {
+    Constant { expr: Expr, value: Const },
     TypeTest(Box<TypePattern>),
     Ident(PatIdent),
     Unpack(Vec<PatItem>),
@@ -1705,6 +1706,7 @@ pub(crate) enum Pattern {
 impl Node for Pattern {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         match self {
+            Pattern::Constant { expr, .. } => expr.accept(visit),
             Pattern::Ident(PatIdent { ident, ty }) => {
                 ident.accept(visit)?;
                 if let Some(ty) = ty {
@@ -1728,7 +1730,9 @@ impl Node for Pattern {
     fn kind(&self) -> NodeKind {
         match self {
             Pattern::Ident(PatIdent { ident, .. }) => ident.kind(),
-            Pattern::Unpack(_) | Pattern::TypeTest(_) => NodeKind::Pattern,
+            Pattern::Constant { .. } | Pattern::Unpack(_) | Pattern::TypeTest(_) => {
+                NodeKind::Pattern
+            }
         }
     }
 }

@@ -69,18 +69,10 @@ else
   assert false
 
 # Parameters, lambdas, captures, loops and defaults inside tested patterns.
-def add Int(x) Int(y)
-  (x + y)
+let add = do |Int(x) Int(y)| (x + y)
 assert_eq (add 2 3) 5
 let twice = (do |Int(x)| x * 2)
 assert_eq (twice 4) 8
-def vertical
-  - Point $
-    x: x
-    y: y
-do
-  (x + y)
-assert_eq (vertical(Point(3, 4))) 7
 let Int(cap) = 12
 let capture = do cap
 assert_eq (capture()) 12
@@ -140,7 +132,7 @@ bind [0, Point(5, 6)]
     x: dx
     y: dy
 assert_eq [dx, dy] [5, 6]
-def keyed k: Int(n) :unused = nil
+let keyed = do |k: Int(n) :unused = nil|
   assert_eq $unused nil
   n
 assert_eq (keyed k: 13) 13

@@ -194,7 +194,7 @@ let items = $
 assert_eq $items [1, 2]
 ```
 
-See [Conditional Destructuring](./destructuring.md#conditional-destructuring).
+See [Conditional Matching](./patterns.md#conditional-matching).
 
 ## Spreading
 

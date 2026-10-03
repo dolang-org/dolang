@@ -1,0 +1,10 @@
+def f
+  - Int $
+    # error: a `def` parameter must be a name; unpack it in the body
+    #   --> def_param_vertical_type_test.dol:LL:LL
+    #    |
+    # LL |   - Int $
+    #    |         ^
+    x
+do
+  x

@@ -1,0 +1,11 @@
+let t"x" = "x"
+# error: expression is not a constant
+#   --> constant_pattern_template.dol:LL:LL
+#    |
+# LL | let t"x" = "x"
+#    |     ^^^^
+# error: got <whitespace>, expected: :
+#   --> constant_pattern_template.dol:LL:LL
+#    |
+# LL | let t"x" = "x"
+#    |         ^

@@ -46,6 +46,7 @@ pub(crate) enum InstInfo {
     Div,
     Ediv,
     Dup,
+    Pick(usize),
     Swap(usize, usize),
     LoadConst(constant::Id),
     LoadLocal(usize),

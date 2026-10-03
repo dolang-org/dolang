@@ -1,6 +1,6 @@
 def missing_do
   nil
-# error: invalid parameter
+# error: a `def` parameter must be a name; unpack it in the body
 #   --> vertical_params_without_do.dol:LL:LL
 #    |
 # LL |   nil

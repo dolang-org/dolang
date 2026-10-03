@@ -1,7 +1,6 @@
-pub def f C callback = (do |x| x) item: C(x)
-  # error: a type-test class cannot be bound by the same pattern
-  #   --> type_pattern_pending_nested_default.dol:LL:LL
-  #    |
-  # LL | pub def f C callback = (do |x| x) item: C(x)
-  #    |           - bound here                  ^
-  callback $x
+pub let f = do |C callback = (do |x| x) item: C(x)| callback $x
+# error: a type-test class cannot be bound by the same pattern
+#   --> type_pattern_pending_nested_default.dol:LL:LL
+#    |
+# LL | pub let f = do |C callback = (do |x| x) item: C(x)| callback $x
+#    |                 - bound here                  ^

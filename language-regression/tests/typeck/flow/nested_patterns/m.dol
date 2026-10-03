@@ -84,10 +84,11 @@ pub def loops xs @ Array[Tuple[Str, Tuple[Int, Int]]]
   let _ = zs
   #       ^~: flow std.Array[std.Int]
 
-pub def params a (b c = 0)
-  let _ = c
-  #       ^: flow Unknown
-  (a, b)
+pub def params()
+  do |a (b c = 0)|
+    let _ = c
+    #       ^: flow Unknown
+    (a, b)
 
 pub def lambda()
   let f = (do |(m n)| (m, n))

@@ -132,6 +132,7 @@ impl<'a, 'b> FuncEmitter<'a, 'b> {
                 Div => BcInst::Div,
                 Ediv => BcInst::Ediv,
                 Dup => BcInst::Dup,
+                Pick(n) => BcInst::Pick(n),
                 Swap(i, j) => BcInst::Swap(i, j),
                 Mod => BcInst::Mod,
                 Mul => BcInst::Mul,

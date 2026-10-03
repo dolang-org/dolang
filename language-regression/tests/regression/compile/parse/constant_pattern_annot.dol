@@ -1,0 +1,6 @@
+let 200 @ Int = 200
+# error: a constant pattern cannot be annotated
+#   --> constant_pattern_annot.dol:LL:LL
+#    |
+# LL | let 200 @ Int = 200
+#    |         ^

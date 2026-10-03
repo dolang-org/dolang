@@ -17,7 +17,7 @@ impl Parser<'_> {
             Some(token!(TokenInfo::Op(Op::Bar))) => {
                 self.advance();
                 self.with_inline_shell(|this| {
-                    let params = this.parse_pat_items(scope, PatMode::HorizFunc)?;
+                    let params = this.parse_pat_items(scope, PatMode::Lambda)?;
                     this.expect(scope, &[ExpectKind::Op(Op::Bar)])?;
                     Ok(params)
                 })
@@ -66,7 +66,7 @@ impl Parser<'_> {
         let (params, implicits) = match self.peek()? {
             Some(token!(TokenInfo::Op(Op::Bar))) => {
                 self.advance();
-                let params = self.parse_pat_items(scope, PatMode::HorizFunc)?;
+                let params = self.parse_pat_items(scope, PatMode::Lambda)?;
                 self.expect(scope, &[ExpectKind::Op(Op::Bar)])?;
                 if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
                     self.advance();
