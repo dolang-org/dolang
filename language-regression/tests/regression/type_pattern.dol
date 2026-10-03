@@ -1,0 +1,190 @@
+# Class tests bind the whole value, including falsy values.
+let Int(n) = 7
+assert_eq $n 7
+let Bool(flag) = false
+assert_eq $flag false
+if let Bool(value) = false
+  assert_eq $value false
+else
+  assert false
+if let std.Nil(value) = nil
+  assert_eq $value nil
+else
+  assert false
+if let Int(_value) = "no"
+  assert false
+
+# Composition, keyed items, dotted names and explicit singleton unpacking.
+let Int(a) Str(b) = [1, "two"]
+assert_eq [a, b] [1, "two"]
+let k: std.Int(c) = {k: 3}
+assert_eq $c 3
+let Array((d)) = [4]
+assert_eq $d 4
+let Array() = []
+let Array(Array(e)) = [5]
+assert_eq $e [5]
+let Head (f g) = [6, [7, 8]]
+assert_eq [Head, f, g] [6, 7, 8]
+
+# A class test protects an unpack that the rejected value cannot support.
+class Point
+  pub field x y = 0
+  def (init) self x y
+    self.x = x
+    self.y = y
+  def (unpack) self
+    {x: self.x, y: self.y}
+class Child: Point
+let Point(x: px y: py) = Point(2, 3)
+assert_eq [px, py] [2, 3]
+if let Point(x: _x y: _y) = 42
+  assert false
+let Point(child) = Child(4, 5)
+assert_eq $child.x 4
+
+# Vertical tests work at the root, under keys and under dash items.
+bind Point(8, 9)
+  Point $
+    x: vx
+    y: vy
+assert_eq [vx, vy] [8, 9]
+bind {k: false, q: [10]}
+  k:
+    Bool $
+      vb
+  q: Array((vq))
+assert_eq [vb, vq] [false, 10]
+bind [11, "twelve"]
+  - std.Int(vi)
+  - Str(vs)
+assert_eq [vi, vs] [11, "twelve"]
+if bind Point(1, 2)
+  Point $
+    x: ix
+    y: iy
+do
+  assert_eq [ix, iy] [1, 2]
+else
+  assert false
+
+# Parameters, lambdas, captures, loops and defaults inside tested patterns.
+def add Int(x) Int(y)
+  (x + y)
+assert_eq (add 2 3) 5
+let twice = (do |Int(x)| x * 2)
+assert_eq (twice 4) 8
+def vertical
+  - Point $
+    x: x
+    y: y
+do
+  (x + y)
+assert_eq (vertical(Point(3, 4))) 7
+let Int(cap) = 12
+let capture = do cap
+assert_eq (capture()) 12
+let sum = 0
+for Int(i) = [1, 2, 3]
+  sum = (sum + i)
+assert_eq $sum 6
+let results = $
+  for Int(i) = [1, 2]
+    - (i + 1)
+assert_eq $results [2, 3]
+let Array(x y = (x + 1)) = [20]
+assert_eq [x, y] [20, 21]
+
+# Failure after earlier unpacks must clean up all pending values.
+for _i = (0..20)
+  if let Int(_a) (Str(_b) Int(_c)) Int(_d) = [1, [2, 3], 4]
+    assert false
+  if let Array((_a _b)) = [1]
+    assert false
+assert_eq (add 10 20) 30
+let failure = try
+  let Int(_n) = "wrong"
+  false
+catch std.TypeError: err
+  assert $str(err).contains("Int")
+  assert $str(err).contains("Str")
+  true
+assert $failure
+
+# A class name holding anything but a type raises, refutable or not.
+let not_class = 6
+for conditional = [false, true]
+  let raised = try
+    if conditional
+      if let not_class(_x) = 1
+        assert false
+    else
+      let not_class(_x) = 1
+    false
+  catch std.TypeError: err
+    assert $str(err).contains("expected a type")
+    true
+  assert $raised
+
+# Builtin lowering does not depend on the binding of std.
+def shadowed std
+  assert_eq $std nil
+  let Bool(x) = false
+  x
+assert_eq (shadowed nil) false
+
+# Tests compose under vertical dash items and inside keyword parameters.
+bind [0, Point(5, 6)]
+  - _
+  - Point $
+    x: dx
+    y: dy
+assert_eq [dx, dy] [5, 6]
+def keyed k: Int(n) :unused = nil
+  assert_eq $unused nil
+  n
+assert_eq (keyed k: 13) 13
+
+# A successful type test still propagates exceptions raised by unpacking.
+class Broken
+  def (unpack) _self
+    throw std.RuntimeError "unpack failed"
+let raised = try
+  if let Broken(x y) = Broken()
+    [x, y]
+  false
+catch std.RuntimeError: _
+  true
+assert $raised
+
+# A class name can be captured by a nested function or shadow its inner binding.
+def factory C
+  do |C(x)| x
+let accept = factory $Int
+assert_eq (accept 14) 14
+let std.Int(Int) = 15
+assert_eq $Int 15
+
+# The test repeats on each iteration and preserves falsy values.
+let todo = [false, true, 42]
+let index = 0
+let seen = []
+while let Bool(b) = todo[index]
+  seen.push $b
+  index = (index + 1)
+assert_eq $seen [false, true]
+
+# A completed binding can provide a class to a later pattern.
+let C = std.Int
+let C(selected) = 17
+assert_eq $selected 17
+bind [std.Int, 0]
+  - C
+  - _
+let C(selected) = 18
+assert_eq $selected 18
+
+# Defaults still see earlier bindings; a nested lambda uses its own scope.
+def defaulted C = std.Int get = (do |x = 1| [C, x])
+  get()
+assert_eq (defaulted()) [std.Int, 1]

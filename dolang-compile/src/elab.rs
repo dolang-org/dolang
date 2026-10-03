@@ -36,6 +36,42 @@ impl Diagnose for Unbound {
     }
 }
 
+#[derive(Clone)]
+struct ClassFromSamePattern {
+    use_span: Span,
+    binding_span: Span,
+}
+
+impl Diagnose for ClassFromSamePattern {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "a type-test class cannot be bound by the same pattern")
+    }
+
+    fn span(&self) -> Span {
+        self.use_span
+    }
+
+    fn annotations(&self) -> Box<dyn Iterator<Item = Box<dyn Annotate>>> {
+        Box::new([Box::new(self.clone()) as Box<dyn Annotate>].into_iter())
+    }
+}
+
+impl Annotate for ClassFromSamePattern {
+    fn kind(&self) -> AnnotationKind {
+        AnnotationKind::Context
+    }
+    fn span(&self) -> Span {
+        self.binding_span
+    }
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "bound here")
+    }
+}
+
 /// A `def`/`class` name was used before its own statement was elaborated,
 /// without crossing a function/lambda scope boundary in between. Such a use
 /// would observe an uninitialized local at runtime, since the binding is
@@ -776,6 +812,8 @@ enum Scope<'s> {
         nl_continue: Cell<bool>,
         nl_return: Cell<Option<usize>>,
         vars: MonoVec<Cell<(Var, Epoch)>>,
+        /// Only the variables marked by the current pattern, for linear cleanup.
+        pattern_pending: Vec<usize>,
         parent: &'s Scope<'s>,
         index: HashMap<sym::Id, usize>,
     },
@@ -888,6 +926,7 @@ impl<'s> Scope<'s> {
             nl_continue: Cell::new(false),
             nl_return: Cell::new(None),
             vars: MonoVec::new(),
+            pattern_pending: Vec::new(),
             parent: self,
             index: HashMap::new(),
         }
@@ -906,6 +945,7 @@ impl<'s> Scope<'s> {
             nl_continue: Cell::new(false),
             nl_return: Cell::new(None),
             vars: MonoVec::new(),
+            pattern_pending: Vec::new(),
             parent: self,
             index: HashMap::new(),
         }
@@ -923,6 +963,7 @@ impl<'s> Scope<'s> {
             nl_continue: Cell::new(false),
             nl_return: Cell::new(None),
             vars: MonoVec::new(),
+            pattern_pending: Vec::new(),
             parent: self,
             index: HashMap::new(),
         }
@@ -944,6 +985,7 @@ impl<'s> Scope<'s> {
             nl_continue: Cell::new(false),
             nl_return: Cell::new(None),
             vars: MonoVec::new(),
+            pattern_pending: Vec::new(),
             parent: self,
             index: HashMap::new(),
         }
@@ -1162,6 +1204,7 @@ impl<'s> Scope<'s> {
             nl_continue: Cell::new(false),
             nl_return: Cell::new(None),
             vars: MonoVec::new(),
+            pattern_pending: Vec::new(),
             parent: self,
             index: HashMap::new(),
         }
@@ -1235,6 +1278,7 @@ impl<'s> Scope<'s> {
                         used: false,
                         initialized,
                         origin,
+                        pattern_pending: false,
                         type_used: false,
                         node: None,
                     },
@@ -1260,12 +1304,64 @@ impl<'s> Scope<'s> {
                         used: true,
                         initialized: true,
                         origin: Origin::Synthetic,
+                        pattern_pending: false,
                         type_used: false,
                         node: None,
                     },
                     epoch,
                 )));
                 i
+            }
+        }
+    }
+
+    fn mark_pattern_binding(&mut self, index: usize) {
+        let Self::Nested {
+            vars,
+            pattern_pending,
+            ..
+        } = self
+        else {
+            unreachable!("pattern bindings have a lexical destination scope")
+        };
+        vars[index].update(|(mut var, epoch)| {
+            var.pattern_pending = true;
+            (var, epoch)
+        });
+        pattern_pending.push(index);
+    }
+
+    fn finish_pattern(&mut self) {
+        let Self::Nested {
+            vars,
+            pattern_pending,
+            ..
+        } = self
+        else {
+            return;
+        };
+        for index in pattern_pending.drain(..) {
+            vars[index].update(|(mut var, epoch)| {
+                var.pattern_pending = false;
+                (var, epoch)
+            });
+        }
+    }
+
+    fn pending_pattern_binding(&self, res: Res) -> Option<Span> {
+        match self {
+            Self::Base => unreachable!(),
+            Self::Class { parent, .. } => parent.pending_pattern_binding(res),
+            Self::Nested { vars, parent, .. } => {
+                if res.depth == 0 {
+                    let var = vars[res.index].get().0;
+                    var.pattern_pending.then(|| var.origin.name()).flatten()
+                } else {
+                    parent.pending_pattern_binding(Res {
+                        depth: res.depth - 1,
+                        ..res
+                    })
+                }
             }
         }
     }
@@ -1981,6 +2077,7 @@ impl<'a> Elaborater<'a> {
             .id(&self.bintab.id_str(self.file.str(ident.span)));
         let node = Origin::Source(ident.span);
         let index = scope.insert(id, node, self.epoch, export);
+        scope.mark_pattern_binding(index);
         ident.res = Some(Res {
             index,
             depth: 0,
@@ -2059,7 +2156,31 @@ impl<'a> Elaborater<'a> {
         pat: &mut Pattern,
         export: bool,
     ) -> Result<()> {
+        let result = self.visit_pattern_inner(scope, pat, export);
+        scope.finish_pattern();
+        result
+    }
+
+    fn visit_pattern_inner(
+        &mut self,
+        scope: &mut Scope<'_>,
+        pat: &mut Pattern,
+        export: bool,
+    ) -> Result<()> {
         match pat {
+            Pattern::TypeTest(test) => {
+                self.visit_ident(scope, &mut test.class.ident)?;
+                if let Some(res) = test.class.ident.res
+                    && let Some(binding_span) = scope.pending_pattern_binding(res)
+                {
+                    self.fail = true;
+                    self.diags.push(ClassFromSamePattern {
+                        use_span: test.class.ident.span,
+                        binding_span,
+                    });
+                }
+                self.visit_pattern_inner(scope, &mut test.pattern, export)
+            }
             Pattern::Ident(PatIdent { ident, .. }) => self.bind_ident(scope, ident, export),
             Pattern::Unpack(params) => {
                 for param in params.iter_mut() {
@@ -2070,7 +2191,7 @@ impl<'a> Elaborater<'a> {
                         | PatItem::ConstKey { bind, .. } => match bind {
                             PatBind::Ident(ident) => self.bind_ident(scope, ident, export)?,
                             PatBind::Nested { pattern, .. } => {
-                                self.visit_pattern(scope, pattern, export)?
+                                self.visit_pattern_inner(scope, pattern, export)?
                             }
                         },
                         PatItem::Rest { ident, .. } => {
@@ -2912,7 +3033,7 @@ impl<'a> Elaborater<'a> {
                 | PatItem::ConstKey { bind, .. } => match bind {
                     PatBind::Ident(ident) => Some(ident),
                     PatBind::Nested { pattern, .. } => {
-                        self.bind_pattern(scope, pattern)?;
+                        self.visit_pattern_inner(scope, pattern, false)?;
                         None
                     }
                 },
@@ -2934,12 +3055,14 @@ impl<'a> Elaborater<'a> {
                 self.epoch,
                 false,
             );
+            scope.mark_pattern_binding(index);
             ident.res = Some(Res {
                 index,
                 depth: 0,
                 node: None,
             });
         }
+        scope.finish_pattern();
         Ok(())
     }
 
@@ -3096,7 +3219,7 @@ impl<'a> Elaborater<'a> {
                 | PatItem::ConstKey { bind, .. } => match bind {
                     PatBind::Ident(ident) => Some(ident),
                     PatBind::Nested { pattern, .. } => {
-                        self.bind_pattern(&mut scope, pattern)?;
+                        self.visit_pattern_inner(&mut scope, pattern, false)?;
                         None
                     }
                 },
@@ -3109,12 +3232,14 @@ impl<'a> Elaborater<'a> {
                 .symtab
                 .id(&self.bintab.id_str(self.file.str(ident.span)));
             let index = scope.insert(sym, Origin::Source(ident.span), self.epoch, false);
+            scope.mark_pattern_binding(index);
             ident.res = Some(Res {
                 index,
                 depth: 0,
                 node: None,
             });
         }
+        scope.finish_pattern();
         self.visit_block_inner(&mut scope, &mut node.body)?;
         scope.finish(self, &mut node.body.vars);
         Ok(())

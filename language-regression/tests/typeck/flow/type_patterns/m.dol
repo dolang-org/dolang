@@ -1,0 +1,89 @@
+pub def narrow value @ (Int | Str)
+  if let Int(n) = value
+    let _ = n
+    #       ^: flow std.Int
+    let _ = value
+    #       ^~~~~: flow std.Int
+  else
+    let _ = value
+    #       ^~~~~: flow std.Str
+
+pub def generic value @ (Array[Int] | Str)
+  if let Array(xs) = value
+    let _ = xs
+    #       ^~: flow std.Array[std.Int]
+  else
+    let _ = value
+    #       ^~~~~: flow std.Str
+
+pub def nested value @ Tuple[Int | Str, Bool]
+  let Int(n) b = value
+  let _ = n
+  #       ^: flow std.Int
+  let _ = b
+  #       ^: flow std.Bool
+
+pub def failed_unpack value @ (Array[Int] | Str)
+  if let Array((x)) = value
+    let _ = x
+    #       ^: flow std.Int
+  else
+    let _ = value
+    #       ^~~~~: flow std.Array[std.Int] | std.Str
+
+pub def falsy value @ Bool
+  if let Bool(b) = value
+    let _ = b
+    #       ^: flow std.Bool
+
+pub class Point: @std.Unpack[{x: Int, y: Str}]
+  def (unpack) _self -> std.Unpack[{x: Int, y: Str}]
+    ...
+  def (spread) _self -> std.Spread[{x: Int, y: Str}]
+    ...
+
+pub def unpack value @ (Point | Int)
+  if let Point(x: x y: y) = value
+    let _ = x
+    #       ^: flow std.Int
+    let _ = y
+    #       ^: flow std.Str
+  else
+    let _ = value
+    #       ^~~~~: flow m.Point | std.Int
+
+pub def parameter Int(x)
+  let _ = x
+  #       ^: flow std.Int
+
+pub def vertical value @ (Array[Int] | Str)
+  if bind value
+    Array $
+      xs
+  do
+    let _ = xs
+    #       ^~: flow std.Array[std.Int]
+  else
+    let _ = value
+    #       ^~~~~: flow std.Str
+
+pub def asserted value @ (Int | Str)
+  let Int(n) = value
+  let _ = n
+  #       ^: flow std.Int
+  let _ = value
+  #       ^~~~~: flow std.Int
+
+# A method return annotation alone does not declare an unpack schema.
+pub class MethodOnly
+  def (unpack) _self -> std.Unpack[Int]
+    ...
+
+pub def missing_edge value @ MethodOnly
+  let MethodOnly((x)) = value
+  # error: `m.MethodOnly` is not unpackable
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let MethodOnly((x)) = value
+  #    |       ^^^^^^^^^^^^^^^
+  let _ = x

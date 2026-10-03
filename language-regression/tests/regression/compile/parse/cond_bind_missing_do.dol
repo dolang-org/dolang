@@ -2,8 +2,8 @@ if bind [1, 2]
   - a
   - b
   echo $a $b
-# error: invalid pattern
+# error: expected an indented type-test pattern
 #   --> cond_bind_missing_do.dol:LL:LL
 #    |
 # LL |   echo $a $b
-#    |        ^
+#    |         ^

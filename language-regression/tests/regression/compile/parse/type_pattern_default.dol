@@ -1,0 +1,7 @@
+def f Int(x) = 1
+  # error: a sub-pattern cannot have a default
+  #   --> type_pattern_default.dol:LL:LL
+  #    |
+  # LL | def f Int(x) = 1
+  #    |              ^
+  x

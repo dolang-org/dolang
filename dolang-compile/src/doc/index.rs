@@ -930,6 +930,10 @@ impl Index<'_> {
         extent: Option<Span>,
     ) {
         match pattern {
+            Pattern::TypeTest(test) => {
+                self.reference(scope, &mut test.class.ident);
+                self.pattern(scope, &mut test.pattern, is_pub, extent);
+            }
             Pattern::Ident(PatIdent { ident, ty }) => {
                 let span = extent.unwrap_or_else(|| match ty {
                     Some(ty) => ident.span | ty.span(),

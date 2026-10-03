@@ -1,0 +1,8 @@
+let C C(_x) = [std.Int, 1]
+# error: a type-test class cannot be bound by the same pattern
+#   --> type_pattern_pending_let.dol:LL:LL
+#    |
+# LL | let C C(_x) = [std.Int, 1]
+#    |     - ^
+#    |     |
+#    |     bound here

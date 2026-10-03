@@ -61,33 +61,37 @@ type Binds<'a> = (Option<BindPlan>, Option<&'a [PatItem]>);
 /// Sub-patterns unpack in turn, each leaving its own values in place of the value
 /// it matched, until only values bound to variables remain.
 struct BindPlan {
-    /// The sub-pattern unpacks, in order
-    steps: Vec<SubUnpack>,
+    /// The class tests and sub-pattern unpacks, in order
+    steps: Vec<BindStep>,
     /// The variables to store the remaining values in, from the top of the stack
     vars: Vec<Var>,
 }
 
-/// The unpack of a sub-pattern's value, once preceding steps have run.
-struct SubUnpack {
+/// A test or unpack of a sub-pattern's value, after preceding steps.
+struct BindStep {
     /// The value's depth on the operand stack, counting from the top
     depth: usize,
-    sig: sig::UnpackId,
+    op: BindOp,
     /// The other values on the stack, which a failed match must discard
     others: usize,
+}
+
+enum BindOp {
+    Unpack(sig::UnpackId),
+    TypeTest { var: Var, fields: Vec<sym::Id> },
 }
 
 /// A value an unpack leaves on the operand stack
 enum Slot<'a> {
     Var(Var),
-    /// The value of a sub-pattern with these items
-    Pattern(&'a [PatItem]),
+    /// The value of a sub-pattern
+    Pattern(&'a Pattern),
 }
 
 struct Params<'a> {
     bind: Option<BindPlan>,
     bind_params: Option<&'a [PatItem]>,
     mode: Mode<'a>,
-    unpack: Option<sig::UnpackId>,
     is_top_level: bool,
     next_id: Option<cfg::BlockId>,
     break_id: Option<cfg::BlockId>,
@@ -971,25 +975,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     &body.vars,
                 );
                 let bodyid = self.graph.alloc_block(self.block.func, bscope);
-                let (binds, unpack, bind_params) = match bind {
-                    Pattern::Ident(_) => (
-                        BindPlan {
-                            steps: Vec::new(),
-                            vars: vec![self.resolve_var_in_scope(self.graph.scope(bscope), 0, 0)],
-                        },
-                        None,
-                        None,
-                    ),
-                    Pattern::Unpack(params) => {
-                        let unpack = self.lower_pattern_sig(params)?;
-                        let sig = self.unpacktab.id(&unpack);
-                        (
-                            self.bind_plan(self.graph.scope(bscope), params, sig)?,
-                            Some(sig),
-                            Some(params.as_slice()),
-                        )
-                    }
-                };
+                let binds = self.pattern_plan(self.graph.scope(bscope), bind)?;
+                let bind_params = Self::pattern_defaults_items(bind);
                 // FIXME: include span of keyword, not of block
                 self.queue(Work {
                     bb: bodyid,
@@ -997,7 +984,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     params: Params {
                         bind: Some(binds),
                         bind_params,
-                        unpack,
                         mode: self.params.mode.clone(),
                         is_top_level: false,
                         next_id: Some(advance),
@@ -1079,25 +1065,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     &body.vars,
                 );
                 let bodyid = self.graph.alloc_block(self.block.func, bscope);
-                let (binds, unpack, bind_params) = match bind {
-                    Pattern::Ident(_) => (
-                        BindPlan {
-                            steps: Vec::new(),
-                            vars: vec![self.resolve_var_in_scope(self.graph.scope(bscope), 0, 0)],
-                        },
-                        None,
-                        None,
-                    ),
-                    Pattern::Unpack(params) => {
-                        let unpack = self.lower_pattern_sig(params)?;
-                        let sig = self.unpacktab.id(&unpack);
-                        (
-                            self.bind_plan(self.graph.scope(bscope), params, sig)?,
-                            Some(sig),
-                            Some(params.as_slice()),
-                        )
-                    }
-                };
+                let binds = self.pattern_plan(self.graph.scope(bscope), bind)?;
+                let bind_params = Self::pattern_defaults_items(bind);
                 // FIXME: include span of keyword, not of block
                 self.queue(Work {
                     bb: bodyid,
@@ -1105,7 +1074,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     params: Params {
                         bind: Some(binds),
                         bind_params,
-                        unpack,
                         mode: self.params.mode.clone(),
                         is_top_level: false,
                         next_id: Some(advance),
@@ -1189,25 +1157,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     &body.vars,
                 );
                 let bodyid = self.graph.alloc_block(self.block.func, bscope);
-                let (binds, unpack, bind_params) = match bind {
-                    Pattern::Ident(_) => (
-                        BindPlan {
-                            steps: Vec::new(),
-                            vars: vec![self.resolve_var_in_scope(self.graph.scope(bscope), 0, 0)],
-                        },
-                        None,
-                        None,
-                    ),
-                    Pattern::Unpack(params) => {
-                        let unpack = self.lower_pattern_sig(params)?;
-                        let sig = self.unpacktab.id(&unpack);
-                        (
-                            self.bind_plan(self.graph.scope(bscope), params, sig)?,
-                            Some(sig),
-                            Some(params.as_slice()),
-                        )
-                    }
-                };
+                let binds = self.pattern_plan(self.graph.scope(bscope), bind)?;
+                let bind_params = Self::pattern_defaults_items(bind);
                 // FIXME: include span of keyword, not of block
                 self.queue(Work {
                     bb: bodyid,
@@ -1215,7 +1166,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     params: Params {
                         bind: Some(binds),
                         bind_params,
-                        unpack,
                         mode: self.params.mode.clone(),
                         is_top_level: false,
                         next_id: Some(advance),
@@ -1262,27 +1212,16 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     }
 
     fn lower_pattern(&mut self, bind: &'a Pattern, want_result: bool) -> Result<()> {
-        match bind {
-            Pattern::Ident(PatIdent {
-                ident: Ident { res, span },
-                ..
-            }) => {
-                let res = res.as_ref().expect("unresolved assignment lhs");
-                self.lower_store_res(res, *span, want_result);
-            }
-            Pattern::Unpack(params) => {
-                let unpack = self.lower_pattern_sig(params)?;
-                let sig = self.unpacktab.id(&unpack);
-                let span = bind.span();
-                if want_result {
-                    self.block.insts.push(Inst(InstInfo::Dup, span));
-                }
-                self.block.insts.push(Inst(InstInfo::Unpack(sig), span));
-                let plan = self.bind_plan(self.graph.scope(self.block.scope), params, sig)?;
-                self.lower_bind_plan(plan, span);
-                self.lower_non_const_defaults(params, span)?;
-            }
+        let span = bind.span();
+        if want_result {
+            self.block.insts.push(Inst(InstInfo::Dup, span));
         }
+        let plan = self.pattern_plan(self.graph.scope(self.block.scope), bind)?;
+        self.lower_bind_plan(plan, span);
+        if let Some(items) = Self::pattern_defaults_items(bind) {
+            self.lower_non_const_defaults(items, span)?;
+        }
+
         Ok(())
     }
 
@@ -1361,9 +1300,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     ///
     /// `bscope` is the scope allocated for the branch body, `tid` the block the body
     /// starts in, and `fid` the block reached when the test fails.  Returns the `bind`
-    /// and `bind_params` the body's prologue needs; `unpack` is always `None`, since
-    /// the terminator performs the unpack itself.  A nested pattern chains a block
-    /// per sub-pattern after the current one, each ending in its own unpack test.
+    /// and `bind_params` the body's prologue needs. Tests and unpacks each end a
+    /// block, with failure edges discarding the values left by earlier steps.
     fn lower_cond(
         &mut self,
         cond: &'a Expr,
@@ -1407,43 +1345,46 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     None,
                 ))
             }
-            Pattern::Unpack(params) => {
-                // The terminator pops the scrutinee and pushes one value per element of
-                // the signature on the success edge, nothing on the failure edge, so
-                // neither edge is left holding anything the other does not
-                let unpack = self.lower_pattern_sig(params)?;
-                let sig = self.unpacktab.id(&unpack);
+            pattern => {
                 let BindPlan { steps, vars } =
-                    self.bind_plan(self.graph.scope(bscope), params, sig)?;
-                // Each sub-pattern's unpack is a further test, in a block of its own.
-                // A failure discards whatever the earlier unpacks left behind.
+                    self.pattern_plan(self.graph.scope(bscope), pattern)?;
                 let test = self.bb;
                 let mut discards = Vec::new();
-                let (mut sig, mut fail) = (sig, fid);
-                for step in steps {
-                    let next = self.graph.alloc_block(self.block.func, self.block.scope);
-                    self.block.term = Term(TermInfo::UnpackIf(sig, next, fail), span);
-                    self.link(next);
-                    self.link(fail);
-                    self.switch(next);
+                let count = steps.len();
+                for (index, step) in steps.into_iter().enumerate() {
+                    let next = if index + 1 == count {
+                        tid
+                    } else {
+                        self.graph.alloc_block(self.block.func, self.block.scope)
+                    };
                     if step.depth > 0 {
                         self.block
                             .insts
                             .push(Inst(InstInfo::Swap(0, step.depth), span));
                     }
-                    sig = step.sig;
-                    fail = self.discard_block(&mut discards, step.others, fid, span);
+                    let retained =
+                        step.others + usize::from(matches!(step.op, BindOp::TypeTest { .. }));
+                    let fail = self.discard_block(&mut discards, retained, fid, span);
+                    match step.op {
+                        BindOp::Unpack(sig) => {
+                            self.block.term = Term(TermInfo::UnpackIf(sig, next, fail), span)
+                        }
+                        op @ BindOp::TypeTest { .. } => {
+                            self.lower_type_test(op, false, span);
+                            self.block.term = Term(TermInfo::If(next, fail), span);
+                        }
+                    }
+                    self.link(next);
+                    self.link(fail);
+                    self.switch(next);
                 }
-                self.block.term = Term(TermInfo::UnpackIf(sig, tid, fail), span);
-                self.link(tid);
-                self.link(fail);
                 self.switch(test);
                 Ok((
                     Some(BindPlan {
                         steps: Vec::new(),
                         vars,
                     }),
-                    Some(params.as_slice()),
+                    Self::pattern_defaults_items(pattern),
                 ))
             }
         }
@@ -1493,7 +1434,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 params: Params {
                     bind: None,
                     bind_params: None,
-                    unpack: None,
                     mode: self.params.mode.clone(),
                     is_top_level: false,
                     next_id: Some(next),
@@ -1534,7 +1474,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 params: Params {
                     bind,
                     bind_params,
-                    unpack: None,
                     mode: self.params.mode.clone(),
                     is_top_level: false,
                     next_id: Some(next),
@@ -1571,7 +1510,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             params: Params {
                 bind,
                 bind_params,
-                unpack: None,
                 mode: self.params.mode.clone(),
                 is_top_level: false,
                 next_id: Some(next),
@@ -1610,7 +1548,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 params: Params {
                     bind: None,
                     bind_params: None,
-                    unpack: None,
                     mode: self.params.mode.clone(),
                     is_top_level: false,
                     next_id: Some(next),
@@ -1659,7 +1596,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 params: Params {
                     bind,
                     bind_params,
-                    unpack: None,
                     mode: self.params.mode.clone(),
                     is_top_level: false,
                     next_id: Some(next),
@@ -1696,7 +1632,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             params: Params {
                 bind,
                 bind_params,
-                unpack: None,
                 mode: self.params.mode.clone(),
                 is_top_level: false,
                 next_id: Some(next),
@@ -1728,7 +1663,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             params: Params {
                 bind: None,
                 bind_params: None,
-                unpack: None,
                 mode: self.params.mode.clone(),
                 is_top_level: false,
                 next_id: None,
@@ -1813,7 +1747,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             params: Params {
                 bind,
                 bind_params,
-                unpack: None,
                 mode: self.params.mode.clone(),
                 is_top_level: false,
                 next_id: Some(test),
@@ -1858,25 +1791,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             &node.body.vars,
         );
         let bodyid = self.graph.alloc_block(self.block.func, bscope);
-        let (binds, unpack, bind_params) = match &node.bind {
-            Pattern::Ident(_) => (
-                BindPlan {
-                    steps: Vec::new(),
-                    vars: vec![self.resolve_var_in_scope(self.graph.scope(bscope), 0, 0)],
-                },
-                None,
-                None,
-            ),
-            Pattern::Unpack(params) => {
-                let unpack = self.lower_pattern_sig(params)?;
-                let sig = self.unpacktab.id(&unpack);
-                (
-                    self.bind_plan(self.graph.scope(bscope), params, sig)?,
-                    Some(sig),
-                    Some(params.as_slice()),
-                )
-            }
-        };
+        let binds = self.pattern_plan(self.graph.scope(bscope), &node.bind)?;
+        let bind_params = Self::pattern_defaults_items(&node.bind);
         // FIXME: include span of keyword, not of block
         self.queue(Work {
             bb: bodyid,
@@ -1884,7 +1800,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             params: Params {
                 bind: Some(binds),
                 bind_params,
-                unpack,
                 mode: self.params.mode.clone(),
                 is_top_level: false,
                 next_id: Some(advance),
@@ -1989,7 +1904,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 PatBind::Ident(ident) => ident,
                 // A sub-pattern has no default of its own, but its items may
                 PatBind::Nested { pattern, .. } => {
-                    if let Pattern::Unpack(items) = &**pattern {
+                    if let Some(items) = Self::pattern_defaults_items(pattern) {
                         self.lower_non_const_defaults(items, span)?;
                     }
                     continue;
@@ -2082,7 +1997,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             params: Params {
                 bind: None,
                 bind_params: None,
-                unpack: None,
                 mode: self.params.mode.clone(),
                 is_top_level: false,
                 next_id: None,
@@ -2160,7 +2074,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             params: Params {
                 bind: None,
                 bind_params: None,
-                unpack: None,
                 mode: self.params.mode.clone(),
                 is_top_level: false,
                 next_id: None,
@@ -2733,7 +2646,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             params: Params {
                 bind: None,
                 bind_params: None,
-                unpack: None,
                 mode: self.params.mode.clone(),
                 is_top_level: false,
                 next_id: None,
@@ -3098,10 +3010,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         };
         let slot = |this: &mut Self, bind: &'a PatBind| match bind {
             PatBind::Ident(ident) => var(this, ident),
-            PatBind::Nested { pattern, .. } => match &**pattern {
-                Pattern::Unpack(items) => Slot::Pattern(items),
-                Pattern::Ident(_) => unreachable!("sub-pattern binding a lone name"),
-            },
+            PatBind::Nested { pattern, .. } => Slot::Pattern(pattern),
         };
         let unpack = &self.unpacktab[sig];
         let keys: Vec<_> = unpack
@@ -3144,26 +3053,80 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         items: &'a [PatItem],
         sig: sig::UnpackId,
     ) -> Result<BindPlan> {
-        let mut stack = self.unpack_order_in_scope(cfg::ScopeRef::clone(&scope), items, sig);
+        let stack = self.unpack_order_in_scope(cfg::ScopeRef::clone(&scope), items, sig);
+        self.plan_slots(scope, stack)
+    }
+
+    fn pattern_defaults_items(pattern: &Pattern) -> Option<&[PatItem]> {
+        match pattern {
+            Pattern::Ident(_) => None,
+            Pattern::Unpack(items) => Some(items),
+            Pattern::TypeTest(test) => Self::pattern_defaults_items(&test.pattern),
+        }
+    }
+
+    fn pattern_plan(&mut self, scope: cfg::ScopeRef<'a>, pattern: &'a Pattern) -> Result<BindPlan> {
+        self.plan_slots(scope, vec![Slot::Pattern(pattern)])
+    }
+
+    fn plan_slots(
+        &mut self,
+        scope: cfg::ScopeRef<'a>,
+        mut stack: Vec<Slot<'a>>,
+    ) -> Result<BindPlan> {
         let mut steps = Vec::new();
-        // Unpack the topmost sub-pattern's value, swapping it to the top first
         while let Some(depth) = stack
             .iter()
             .position(|slot| matches!(slot, Slot::Pattern(_)))
         {
+            // A plain binding needs no stack operation.
+            if let Slot::Pattern(Pattern::Ident(PatIdent { ident, .. })) = stack[depth] {
+                let res = ident.res.as_ref().expect("unresolved pattern binding");
+                stack[depth] = Slot::Var(self.resolve_var_in_scope(
+                    cfg::ScopeRef::clone(&scope),
+                    res.index,
+                    res.depth,
+                ));
+                continue;
+            }
             stack.swap(0, depth);
-            let Slot::Pattern(items) = stack.remove(0) else {
+            let Slot::Pattern(pattern) = stack.remove(0) else {
                 unreachable!()
             };
-            let unpack = self.lower_pattern_sig(items)?;
-            let sig = self.unpacktab.id(&unpack);
-            steps.push(SubUnpack {
-                depth,
-                sig,
-                others: stack.len(),
-            });
-            let slots = self.unpack_order_in_scope(cfg::ScopeRef::clone(&scope), items, sig);
-            stack.splice(0..0, slots);
+            let others = stack.len();
+            let op = match pattern {
+                Pattern::Ident(_) => unreachable!(),
+                Pattern::Unpack(items) => {
+                    let unpack = self.lower_pattern_sig(items)?;
+                    let sig = self.unpacktab.id(&unpack);
+                    let slots =
+                        self.unpack_order_in_scope(cfg::ScopeRef::clone(&scope), items, sig);
+                    stack.splice(0..0, slots);
+                    BindOp::Unpack(sig)
+                }
+                Pattern::TypeTest(test) => {
+                    let res = test
+                        .class
+                        .ident
+                        .res
+                        .as_ref()
+                        .expect("unresolved pattern class");
+                    let var = self.resolve_var_in_scope(
+                        cfg::ScopeRef::clone(&scope),
+                        res.index,
+                        res.depth,
+                    );
+                    let fields = test
+                        .class
+                        .fields
+                        .iter()
+                        .map(|field| self.symtab.id(&self.bintab.id_str(self.file.str(*field))))
+                        .collect();
+                    stack.insert(0, Slot::Pattern(&test.pattern));
+                    BindOp::TypeTest { var, fields }
+                }
+            };
+            steps.push(BindStep { depth, op, others });
         }
         let vars = stack
             .into_iter()
@@ -3175,7 +3138,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         Ok(BindPlan { steps, vars })
     }
 
-    /// Run a plan's sub-pattern unpacks, which raise on a mismatch, and store the
+    /// Run a plan's tests and unpacks, which raise on a mismatch, and store the
     /// values left.
     fn lower_bind_plan(&mut self, plan: BindPlan, span: Span) {
         for step in plan.steps {
@@ -3184,12 +3147,42 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     .insts
                     .push(Inst(InstInfo::Swap(0, step.depth), span));
             }
-            self.block
-                .insts
-                .push(Inst(InstInfo::Unpack(step.sig), span));
+            match step.op {
+                BindOp::Unpack(sig) => self.block.insts.push(Inst(InstInfo::Unpack(sig), span)),
+                op @ BindOp::TypeTest { .. } => self.lower_type_test(op, true, span),
+            }
         }
         for var in plan.vars {
             self.lower_store(span, var);
+        }
+    }
+
+    fn lower_type_test(&mut self, op: BindOp, assert: bool, span: Span) {
+        let BindOp::TypeTest { var, fields } = op else {
+            unreachable!()
+        };
+        self.block.insts.push(Inst(InstInfo::Dup, span));
+        let load = match var {
+            Var::Local(index) => InstInfo::LoadLocal(index),
+            Var::Upvar(index, depth) => InstInfo::LoadUpvar(index, depth),
+        };
+        self.block.insts.push(Inst(load, span));
+        for field in fields {
+            self.block.insts.push(Inst(InstInfo::Get(field), span));
+        }
+        let args = self.packtab.id(&sig::Pack::new(
+            [sig::Arg::Value, sig::Arg::Value].into_iter(),
+        ));
+        let builtin = if assert {
+            builtin::TYPE_ASSERT
+        } else {
+            builtin::TYPE_TEST
+        };
+        self.block
+            .insts
+            .push(Inst(InstInfo::Builtin(builtin, args), span));
+        if assert {
+            self.block.insts.push(Inst(InstInfo::Pop, span));
         }
     }
 
@@ -3223,9 +3216,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     /// prologue.
     fn lower_prologue_bind(&mut self, span: Span) -> Result<()> {
         if let Some(plan) = self.params.bind.take() {
-            if let Some(id) = self.params.unpack {
-                self.block.insts.push(Inst(InstInfo::Unpack(id), span))
-            }
             self.lower_bind_plan(plan, span);
         }
         if let Some(params) = self.params.bind_params {
@@ -3419,7 +3409,6 @@ impl<'c> Lowerer<'c> {
             params: Params {
                 bind: None,
                 bind_params: None,
-                unpack: None,
                 mode: self.mode.clone(),
                 is_top_level: true,
                 next_id: None,

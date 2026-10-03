@@ -75,6 +75,10 @@ impl Flow<'_, '_> {
                 fact.ty
             }
             &ExprKind::Copy(var) => self.read(at, state, var).ty,
+            ExprKind::TypeTest { value, .. } => {
+                self.eval(at, state, operands, value);
+                self.intrinsic(Intrinsic::Bool)
+            }
             &ExprKind::Class(decl) => self.class_object(decl),
             ExprKind::Import { module, item } => self.import(module, *item),
             &ExprKind::Lambda(func) => self.lambda(at, func),

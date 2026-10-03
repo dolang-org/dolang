@@ -392,6 +392,46 @@ impl<'v> Vm<'v> {
     }
 
     #[inline(never)]
+    fn type_test<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        args: Args<'v, '_>,
+        out: Slot<'v, '_>,
+        assert: bool,
+    ) -> Result<'v, 's, ()> {
+        let ([value, class], []) = unpack!(strand, args, 2, 0)?;
+        // The class is an ordinary runtime name, which may hold anything
+        if !class.is_instance_of(strand, &strand.singletons().type_obj) {
+            return strand.with_slots_sync(|strand, [mut actual]| {
+                class.op_type(strand, Slot::reborrow(&mut actual));
+                let actual = actual.to_string(strand)?;
+                Err(Error::type_error(
+                    strand,
+                    format!("type-test pattern: expected a type, got {actual}"),
+                ))
+            });
+        }
+        let matches = value.is_instance_of(strand, &class);
+        if assert && !matches {
+            return strand.with_slots_sync(|strand, [mut actual]| {
+                value.op_type(strand, Slot::reborrow(&mut actual));
+                let expected = class.to_string(strand)?;
+                let actual = actual.to_string(strand)?;
+                Err(Error::type_error(
+                    strand,
+                    format!("expected {expected}, got {actual}"),
+                ))
+            });
+        }
+        if assert {
+            Output::set(strand, out, &Value::NIL);
+        } else {
+            Output::set(strand, out, matches);
+        }
+        Ok(())
+    }
+
+    #[inline(never)]
     async fn guard<'a, 's>(
         &self,
         strand: &'a mut Strand<'v, 's>,
@@ -862,6 +902,12 @@ impl<'v> Vm<'v> {
                         builtin::CLASS_CREATE => {
                             class::create(strand, args, Slot::reborrow(&mut res)).await
                         }
+                        builtin::TYPE_TEST | builtin::TYPE_ASSERT => self.type_test(
+                            strand,
+                            args,
+                            Slot::reborrow(&mut res),
+                            index == builtin::TYPE_ASSERT,
+                        ),
                         builtin::GUARD => self.guard(strand, args, Slot::reborrow(&mut res)).await,
                         builtin::THROW => self.throw(strand, args),
                         builtin::CONCAT_BIN => {

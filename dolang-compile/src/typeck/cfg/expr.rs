@@ -16,6 +16,11 @@ pub(crate) struct Expr {
 }
 
 pub(crate) enum ExprKind {
+    /// A runtime class test; its branch assumptions carry the narrowing.
+    TypeTest {
+        value: Box<Expr>,
+        class: Option<DeclId>,
+    },
     Literal(Literal),
     Float,
     Bin,
@@ -182,6 +187,7 @@ impl Expr {
                 receiver.walk(visit);
                 Item::walk_all(args, visit);
             }
+            ExprKind::TypeTest { value, .. } => value.walk(visit),
             ExprKind::Get { object, .. } => object.walk(visit),
             ExprKind::Index { object, index, .. } => {
                 object.walk(visit);
@@ -213,7 +219,8 @@ impl Expr {
     pub(crate) fn is_rule(&self) -> bool {
         matches!(
             self.kind,
-            ExprKind::Call { .. }
+            ExprKind::TypeTest { .. }
+                | ExprKind::Call { .. }
                 | ExprKind::Invoke { .. }
                 | ExprKind::Get { .. }
                 | ExprKind::Index { .. }

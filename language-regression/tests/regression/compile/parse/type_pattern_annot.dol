@@ -1,0 +1,6 @@
+let Int(x) @ Int = 1
+# error: a sub-pattern cannot be annotated; annotate its bindings instead
+#   --> type_pattern_annot.dol:LL:LL
+#    |
+# LL | let Int(x) @ Int = 1
+#    |            ^

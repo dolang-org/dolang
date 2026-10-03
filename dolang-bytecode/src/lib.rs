@@ -281,6 +281,8 @@ pub enum Builtin {
     Stub,
     Tuple,
     Record,
+    TypeTest,
+    TypeAssert,
     _LEN,
 }
 
@@ -304,6 +306,8 @@ pub mod builtin {
     pub const STUB: usize = Stub as usize;
     pub const TUPLE: usize = Tuple as usize;
     pub const RECORD: usize = Record as usize;
+    pub const TYPE_TEST: usize = TypeTest as usize;
+    pub const TYPE_ASSERT: usize = TypeAssert as usize;
 }
 
 pub const BUILTINS: [&str; Builtin::_LEN as usize] = [
@@ -325,6 +329,8 @@ pub const BUILTINS: [&str; Builtin::_LEN as usize] = [
     "stub",
     "tuple",
     "record",
+    "type_test",
+    "type_assert",
 ];
 
 trait Encode {

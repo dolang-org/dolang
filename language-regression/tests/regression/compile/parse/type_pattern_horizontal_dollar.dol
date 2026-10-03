@@ -1,0 +1,7 @@
+let Int $
+  # error: invalid pattern
+  #   --> type_pattern_horizontal_dollar.dol:LL:LL
+  #    |
+  # LL | let Int $
+  #    |         ^
+  x

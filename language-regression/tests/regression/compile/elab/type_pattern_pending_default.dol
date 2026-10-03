@@ -1,0 +1,7 @@
+pub def f (C = std.Int) C(x)
+  # error: a type-test class cannot be bound by the same pattern
+  #   --> type_pattern_pending_default.dol:LL:LL
+  #    |
+  # LL | pub def f (C = std.Int) C(x)
+  #    |            - bound here ^
+  x
