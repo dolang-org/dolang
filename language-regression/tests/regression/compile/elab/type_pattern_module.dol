@@ -1,0 +1,7 @@
+import @std: types
+# error: expected module name
+#   --> type_pattern_module.dol:LL:LL
+#    |
+# LL | import @std: types
+#    |         ^^^
+let types.Int(n) = 1

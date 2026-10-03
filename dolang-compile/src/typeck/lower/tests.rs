@@ -107,7 +107,7 @@ fn stack_depths(ir: &Ir) {
                     Against::Class(expr) | Against::Value(expr) => {
                         assert_eq!(operands(expr), 0)
                     }
-                    Against::Type(_) => {}
+                    Against::Type(_) | Against::Decl(_) => {}
                 },
             }
         }

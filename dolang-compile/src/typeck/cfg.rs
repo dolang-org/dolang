@@ -298,6 +298,7 @@ pub(crate) enum Relation {
 
 /// What a variable is narrowed against
 pub(crate) enum Against {
+    Decl(DeclId),
     /// The class that a class object's type `Type[C]` gives
     Class(Expr),
     /// A value's type, for comparison with a literal

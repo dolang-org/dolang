@@ -1,0 +1,8 @@
+@import std:
+  - Int: Number
+# error: invalid import item
+#   --> type_pattern_all_import.dol:LL:LL
+#    |
+# LL |   - Int: Number
+#    |     ^^^
+let Number(n) = 1

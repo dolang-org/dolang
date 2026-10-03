@@ -187,6 +187,7 @@ impl Dump<'_, '_> {
                         self.expr(out, class)
                     }
                     Against::Value(value) => self.expr(out, value),
+                    Against::Decl(decl) => write!(out, "class{}", decl.index()),
                     Against::Type(ty) => write!(out, "type{}", ty.index()),
                 }
             }
@@ -464,6 +465,11 @@ impl Dump<'_, '_> {
             ExprKind::Operand => write!(out, "<pop>"),
             ExprKind::Never => write!(out, "never"),
             ExprKind::Namespace => write!(out, "<namespace>"),
+            ExprKind::TypeTest { value, class } => {
+                write!(out, "type_test(")?;
+                self.expr(out, value)?;
+                write!(out, ", {class:?})")
+            }
             ExprKind::Error => write!(out, "<error>"),
         }
     }

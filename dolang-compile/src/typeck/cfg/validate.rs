@@ -103,7 +103,7 @@ impl Ir {
                         vars.push(assume.var);
                         match &assume.against {
                             Against::Class(expr) | Against::Value(expr) => exprs.push(expr),
-                            Against::Type(_) => {}
+                            Against::Type(_) | Against::Decl(_) => {}
                         }
                     }
                 }

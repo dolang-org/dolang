@@ -1042,6 +1042,14 @@ impl<'u> Walk<'_, 'u> {
 
     fn pattern(&mut self, frame: &Frame<'_, 'u>, pattern: &'u Pattern) {
         match pattern {
+            Pattern::TypeTest(test) => {
+                if let Some(res) = test.class.ident.res
+                    && let Some(entry) = frame.value_entry(res)
+                {
+                    self.refer(test.class.ident.span, entry, &test.class.fields);
+                }
+                self.pattern(frame, &test.pattern);
+            }
             Pattern::Ident(PatIdent { ty, .. }) => {
                 self.annot(frame, ty, Role::Type);
             }
@@ -1489,6 +1497,7 @@ impl<'u> Walk<'_, 'u> {
 /// Call `f` on each name a pattern binds, at any level
 fn pattern_names(pattern: &Pattern, f: &mut impl FnMut(&Ident)) {
     let params = match pattern {
+        Pattern::TypeTest(test) => return pattern_names(&test.pattern, f),
         Pattern::Ident(PatIdent { ident, .. }) => return f(ident),
         Pattern::Unpack(params) => params,
     };

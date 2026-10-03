@@ -1,0 +1,10 @@
+let C = std.Int
+assert_eq $C $std.Int
+let C C(_x) = [std.Str, "one"]
+# error: a type-test class cannot be bound by the same pattern
+#   --> type_pattern_pending_shadow.dol:LL:LL
+#    |
+# LL | let C C(_x) = [std.Str, "one"]
+#    |     - ^
+#    |     |
+#    |     bound here

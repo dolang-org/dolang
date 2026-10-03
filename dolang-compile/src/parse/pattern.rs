@@ -6,7 +6,10 @@ use super::{
 use crate::{
     RestKind,
     ast::visit::Node,
-    ast::{Annot, Ident, Implicit, Implicits, PatBind, PatDefault, PatIdent, PatItem, Pattern},
+    ast::{
+        Annot, ClassSuper, Ident, Implicit, Implicits, PatBind, PatDefault, PatIdent, PatItem,
+        Pattern, TypePattern,
+    },
     lex::{Keyword, Mode, Op, Token, TokenInfo},
     source::Span,
 };
@@ -150,12 +153,89 @@ impl Parser<'_> {
         {
             return Ok((self.parse_sub_pattern(scope)?, None));
         }
-        match decay_ident!(self.next()?) {
-            Some(token!(TokenInfo::Ident, span)) => Ok((PatBind::Ident(Ident::new(span)), None)),
+        self.parse_named_bind(scope, mode).map(|bind| (bind, None))
+    }
+
+    /// A name binding or a runtime class test, including a dotted class name.
+    fn parse_named_bind(&mut self, scope: &mut Scope, mode: PatMode) -> Result<PatBind> {
+        let span = match decay_ident!(self.next()?) {
+            Some(token!(TokenInfo::Ident, span)) => span,
             token => {
-                Err(self.syntax_error(scope, token, "expected variable name to receive value"))
+                return Err(self.syntax_error(
+                    scope,
+                    token,
+                    "expected variable name to receive value",
+                ));
             }
+        };
+        if !mode.unpacks() {
+            return Ok(PatBind::Ident(Ident::new(span)));
         }
+        let mut fields = Vec::new();
+        let mut next = self.peek()?;
+        while matches!(next, Some(token!(TokenInfo::Op(Op::Dot)))) {
+            self.advance();
+            let field = match decay_field!(self.next()?) {
+                Some(token!(TokenInfo::Ident, span)) => span,
+                token => {
+                    return Err(self.syntax_error(
+                        scope,
+                        token,
+                        "expected field name after `.` in type-test pattern",
+                    ));
+                }
+            };
+            fields.push(field);
+            next = self.peek()?;
+        }
+        let horizontal = matches!(next, Some(token!(TokenInfo::LeftParen)));
+        if mode.is_vertical() && matches!(next, Some(token!(TokenInfo::ArgSep))) {
+            self.advance();
+            next = self.peek()?;
+        }
+        let vertical = matches!(next, Some(token!(TokenInfo::Dollar))) && mode.is_vertical();
+        if !horizontal && !vertical && fields.is_empty() {
+            return Ok(PatBind::Ident(Ident::new(span)));
+        }
+        if !horizontal && !vertical {
+            return Err(self.syntax_error(scope, next, "expected a runtime type-test pattern"));
+        }
+        let open = self.advance();
+        let (pattern, close) = if horizontal {
+            self.with_mode(Mode::InlineShell, |this| {
+                let (items, _) = this.parse_pat_items(scope, PatMode::Nested)?;
+                let close = this.expect_matching(scope, ExpectKind::RightParen, open);
+                Ok((collapse_pattern(items), Some(close)))
+            })?
+        } else {
+            if !matches!(self.peek()?, Some(token!(TokenInfo::Indent))) {
+                let token = self.peek()?;
+                return Err(self.syntax_error(
+                    scope,
+                    token,
+                    "expected an indented type-test pattern",
+                ));
+            }
+            let (items, _) = self.parse_pat_items(scope, PatMode::VertBind)?;
+            (collapse_pattern(items), None)
+        };
+        Ok(PatBind::Nested {
+            pattern: Box::new(Pattern::TypeTest(Box::new(TypePattern {
+                class: ClassSuper {
+                    at_span: None,
+                    type_only: false,
+                    ident: Ident::new(span),
+                    fields,
+                    args: Vec::new(),
+                    bracket_span: None,
+                    res: None,
+                },
+                pattern: Box::new(pattern),
+                open,
+                close,
+            }))),
+            parens: None,
+        })
     }
 
     /// Parse the annotation and default after what an item binds.
@@ -296,7 +376,7 @@ impl Parser<'_> {
                     {
                         self.parse_sub_pattern(scope)?
                     } else {
-                        PatBind::Ident(Ident::new(self.expect(scope, &[ExpectKind::Ident])?))
+                        self.parse_named_bind(scope, mode)?
                     };
                     self.report_non_trailing_variadic(
                         variadic,
@@ -441,37 +521,23 @@ impl Parser<'_> {
                 }
                 other => match decay_ident!(other) {
                     Some(token!(TokenInfo::Ident)) => {
-                        let span = self.advance();
-                        // A name directly followed by `(` is reserved for type
-                        // tests, `C(p)`
-                        if mode.unpacks()
-                            && let token @ Some(token!(TokenInfo::LeftParen)) = self.peek()?
-                        {
-                            return Err(self.syntax_error(
-                                scope,
-                                token,
-                                "expected whitespace before sub-pattern",
-                            ));
-                        }
+                        let bind = self.parse_named_bind(scope, mode)?;
+                        let span = bind.span();
                         self.report_non_trailing_variadic(
                             variadic,
                             variadic_span,
                             &mut variadic_trailing_reported,
                         );
-                        let ty = self.parse_pat_annot(scope)?;
-                        let default = self.parse_pat_default(scope, mode)?;
+                        let (ty, default) = self.parse_item_tail(scope, mode, &bind)?;
                         if default.is_some() {
                             seen_optional = true;
                         } else if seen_optional && mode.unpacks() {
                             self.fail = true;
                             self.diags.push(RequiredAfterOptional(span));
                         }
-                        items.push(PatItem::Pos {
-                            bind: PatBind::Ident(Ident::new(span)),
-                            ty,
-                            default,
-                        })
+                        items.push(PatItem::Pos { bind, ty, default })
                     }
+
                     _ => {
                         let token = self.next()?;
                         return Err(self.syntax_error(
@@ -503,10 +569,12 @@ impl Parser<'_> {
         mode: PatMode,
     ) -> Result<Option<PatDefault>> {
         Ok(if mode.supports_defaults() {
-            if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
+            let mut next = self.peek()?;
+            if matches!(next, Some(token!(TokenInfo::ArgSep))) {
                 self.advance();
+                next = self.peek()?;
             }
-            match self.peek()? {
+            match next {
                 Some(token!(TokenInfo::Equal)) => {
                     let delim_span = self.advance();
                     self.expect(scope, &[ExpectKind::ArgSep])?;

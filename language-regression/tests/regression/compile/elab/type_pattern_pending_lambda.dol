@@ -1,0 +1,8 @@
+pub let f = (do |C C(x)| x)
+# error: a type-test class cannot be bound by the same pattern
+#   --> type_pattern_pending_lambda.dol:LL:LL
+#    |
+# LL | pub let f = (do |C C(x)| x)
+#    |                  - ^
+#    |                  |
+#    |                  bound here

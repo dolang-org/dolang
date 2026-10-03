@@ -1,0 +1,7 @@
+bind 1
+  Int $ x
+# error: expected an indented type-test pattern
+#   --> type_pattern_missing_block.dol:LL:LL
+#    |
+# LL |   Int $ x
+#    |        ^

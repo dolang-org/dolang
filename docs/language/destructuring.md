@@ -190,6 +190,47 @@ def add (x1 y1) (x2 y2)
   [x1 + x2, y1 + y2]
 ```
 
+## Type-Test Patterns
+
+`C(pattern)` tests whether a value is an instance of `C`, then matches the
+inner pattern against the same value. The test runs before any unpacking:
+
+```
+let Int(n) = 42
+let Int(x) Str(label) = [1, "first"]
+let Point(x: px y: py) = point
+```
+
+A single required positional binding captures the whole value: `Int(n)` binds
+an integer without unpacking it. To unpack one element explicitly, use
+`Array((item))`. `Array()` tests for an empty array.
+
+The parentheses must touch the class name. `Int(n)` is a type test, while
+`Int (n)` binds `Int` and unpacks another value into `n`. The class may be a
+dotted runtime name such as `std.Int`; it takes no type arguments. Type-only
+imports, aliases, and protocols cannot supply a runtime class. The class cannot
+be bound by the same pattern or parameter list, as in `let C C(x) = ...`; a
+later pattern may use it.
+
+In vertical patterns, `C $` introduces the inner pattern as an indented block:
+
+```
+bind point
+  Point $
+    x: px
+    y: py
+```
+
+This form works in `bind`, vertical function parameters, and nested vertical
+patterns. Use `C(pattern)` in horizontal bindings. Both forms accept annotations
+and defaults on inner bindings, but neither accepts an annotation or default on
+the whole type-test pattern. Bodiless signatures accept neither form.
+
+A failed class test raises `TypeError` in an ordinary binding or function
+parameter. In a conditional binding it takes the failure branch. A successful
+class test can capture a falsy value: `if let Bool(value) = false` succeeds and
+binds `false`. A subsequent inner pattern can still fail independently.
+
 ## Conditional Destructuring
 
 `let` and `bind` after `if` or `while` make the destructuring itself the

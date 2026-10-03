@@ -1,0 +1,9 @@
+@def f
+  Int $
+    # error: invalid parameter
+    #   --> type_pattern_vertical_signature.dol:LL:LL
+    #    |
+    # LL |   Int $
+    #    |       ^
+    x
+do

@@ -1,0 +1,11 @@
+let Array[Int](x) = [1]
+# error: expression is not a constant
+#   --> type_pattern_type_args.dol:LL:LL
+#    |
+# LL | let Array[Int](x) = [1]
+#    |          ^^^^^
+# error: got (, expected: :
+#   --> type_pattern_type_args.dol:LL:LL
+#    |
+# LL | let Array[Int](x) = [1]
+#    |               ^

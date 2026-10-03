@@ -1,0 +1,9 @@
+pub def f self self.C(x)
+  # error: a type-test class cannot be bound by the same pattern
+  #   --> type_pattern_pending_field.dol:LL:LL
+  #    |
+  # LL | pub def f self self.C(x)
+  #    |           ---- ^^^^
+  #    |           |
+  #    |           bound here
+  x

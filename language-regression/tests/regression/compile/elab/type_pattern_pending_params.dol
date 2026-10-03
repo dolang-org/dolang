@@ -1,0 +1,9 @@
+pub def f C C(x)
+  # error: a type-test class cannot be bound by the same pattern
+  #   --> type_pattern_pending_params.dol:LL:LL
+  #    |
+  # LL | pub def f C C(x)
+  #    |           - ^
+  #    |           |
+  #    |           bound here
+  x

@@ -898,6 +898,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
         let mut none = VecDeque::new();
         let target = match &assume.against {
+            &Against::Decl(decl) => Some(NarrowTarget::Class(decl)),
             Against::Class(class) => {
                 let ty = self.eval(at, state, &mut none, class);
                 self.class_of(ty).map(NarrowTarget::Class)

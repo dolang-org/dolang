@@ -1,0 +1,12 @@
+@class Shape
+let Shape(s) = nil
+# error: unbound identifier
+#   --> type_pattern_protocol.dol:LL:LL
+#    |
+# LL | let Shape(s) = nil
+#    |     ^^^^^
+# warning: unused variable
+#   --> type_pattern_protocol.dol:LL:LL
+#    |
+# LL | let Shape(s) = nil
+#    |           ^

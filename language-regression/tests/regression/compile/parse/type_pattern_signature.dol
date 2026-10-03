@@ -1,0 +1,6 @@
+@def f Int(x)
+# error: invalid parameter
+#   --> type_pattern_signature.dol:LL:LL
+#    |
+# LL | @def f Int(x)
+#    |           ^

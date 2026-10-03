@@ -1,0 +1,19 @@
+import m: shapes
+import m:
+  Point: P
+
+pub def dotted value @ (shapes.Point | Str)
+  if let shapes.Point(x: x y: _y) = value
+    let _ = x
+    #       ^: flow std.Int
+  else
+    let _ = value
+    #       ^~~~~: flow m.Point | std.Str
+
+pub def renamed value @ (P | Str)
+  if let P(p) = value
+    let _ = p
+    #       ^: flow m.Point
+  else
+    let _ = value
+    #       ^~~~~: flow std.Str

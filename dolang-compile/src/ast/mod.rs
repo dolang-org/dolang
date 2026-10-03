@@ -51,6 +51,8 @@ pub(crate) struct Var {
     // an uninitialized local at runtime, so it is a hard error rather than
     // silently emitted.
     pub(crate) initialized: bool,
+    // Still being bound by a pattern; unavailable as a runtime class test.
+    pub(crate) pattern_pending: bool,
     // Compile-time provenance of the binding.
     pub(crate) origin: Origin,
     // Named by a type. Set only when documenting, and never read by lowering.
@@ -1686,7 +1688,16 @@ pub(crate) struct PatIdent {
     pub(crate) ty: Option<Box<Annot>>,
 }
 
+pub(crate) struct TypePattern {
+    pub(crate) class: ClassSuper,
+    pub(crate) pattern: Box<Pattern>,
+    /// Opening parenthesis or vertical application marker.
+    pub(crate) open: Span,
+    pub(crate) close: Option<Span>,
+}
+
 pub(crate) enum Pattern {
+    TypeTest(Box<TypePattern>),
     Ident(PatIdent),
     Unpack(Vec<PatItem>),
 }
@@ -1701,6 +1712,15 @@ impl Node for Pattern {
                 }
                 ControlFlow::Continue(())
             }
+            Pattern::TypeTest(test) => {
+                visit.node(&test.class)?;
+                visit.token(Token::Delim, test.open, None)?;
+                visit.node(&*test.pattern)?;
+                if let Some(close) = test.close {
+                    visit.token(Token::Delim, close, None)?;
+                }
+                ControlFlow::Continue(())
+            }
             Pattern::Unpack(items) => items.accept(visit),
         }
     }
@@ -1708,7 +1728,7 @@ impl Node for Pattern {
     fn kind(&self) -> NodeKind {
         match self {
             Pattern::Ident(PatIdent { ident, .. }) => ident.kind(),
-            Pattern::Unpack(_) => NodeKind::Pattern,
+            Pattern::Unpack(_) | Pattern::TypeTest(_) => NodeKind::Pattern,
         }
     }
 }
