@@ -125,6 +125,7 @@ impl Solver<'_> {
         let unknown = self.db.unknown();
         let mut walks = Vec::new();
         let mut dynamic = false;
+        let mut dynamic_rests = Vec::new();
         for member in self.union_members(ty) {
             let UnionMember::Type(member) = member else {
                 return None;
@@ -133,7 +134,21 @@ impl Solver<'_> {
                 dynamic = true;
                 continue;
             }
-            let (atoms, source) = self.unpack_atoms(member, unpack).ok()??;
+            let (schema, source) = self.unpack_schema(member, unpack).ok()??;
+            if self.is_unknown(&self.head(schema).ok()?) {
+                let schema = self.db.unknown_schema();
+                dynamic_rests.push(
+                    (pattern.rests.iter())
+                        .map(|_| {
+                            self.member_rest(&source, unpack, schema)
+                                .or_else(|| self.default_rest(unpack, schema))
+                                .unwrap_or(unknown)
+                        })
+                        .collect::<Vec<_>>(),
+                );
+                continue;
+            };
+            let atoms = self.schema_atoms(schema).ok()??;
             if let Some(mut walk) = self.walk(&atoms, pattern).ok()? {
                 walk.rests = (pattern.rests.iter())
                     .map(|&kind| {
@@ -157,7 +172,10 @@ impl Solver<'_> {
                 *slot = self.lub(*slot, ty);
             }
         }
-        let possible = !walks.is_empty();
+        if !dynamic_rests.is_empty() {
+            slots.fill(unknown);
+        }
+        let possible = !walks.is_empty() || !dynamic_rests.is_empty();
         // Rests that are all the default are the default for the joined tail
         let joined = match &walks[..] {
             [] => Tail::default(),
@@ -170,7 +188,8 @@ impl Solver<'_> {
         let fallback = |schema| self.default_rest(unpack, schema).unwrap_or(unknown);
         let rests = (pattern.rests.iter().enumerate())
             .map(|(index, &kind)| {
-                if walks.iter().all(|walk| walk.rests[index].is_none()) {
+                if dynamic_rests.is_empty() && walks.iter().all(|walk| walk.rests[index].is_none())
+                {
                     return fallback(joined.schema(self.db, kind));
                 }
                 let mut rest = self.db.bottom();
@@ -178,6 +197,9 @@ impl Solver<'_> {
                     let member = walk.rests[index]
                         .unwrap_or_else(|| fallback(walk.tail.schema(self.db, kind)));
                     rest = self.lub(rest, member);
+                }
+                for dynamic in &dynamic_rests {
+                    rest = self.lub(rest, dynamic[index]);
                 }
                 rest
             })
@@ -189,13 +211,13 @@ impl Solver<'_> {
         })
     }
 
-    /// The flattened schema a member unpacks as, with where its `Unpack` came
+    /// The schema a member unpacks as, with where its `Unpack` came
     /// from; `None` when it can't be found
-    fn unpack_atoms(
+    fn unpack_schema(
         &self,
         member: TypeId,
         unpack: DeclId,
-    ) -> Result<Option<(Atoms, Source)>, Issue> {
+    ) -> Result<Option<(Term, Source)>, Issue> {
         let Some(start) = self.start(member)? else {
             return Ok(None);
         };
@@ -217,6 +239,11 @@ impl Solver<'_> {
         let [schema, _] = found.arguments[..] else {
             return Ok(None);
         };
+        Ok(Some((schema, source)))
+    }
+
+    /// Flatten a known unpack schema into atoms for walking a pattern.
+    fn schema_atoms(&self, schema: Term) -> Result<Option<Atoms>, Issue> {
         let mut shape = Shape::default();
         let keep = HashSet::new();
         self.include(
@@ -227,7 +254,7 @@ impl Solver<'_> {
             &mut shape,
             0,
         )?;
-        Ok(self.atoms(&shape)?.map(|atoms| (atoms, source)))
+        self.atoms(&shape)
     }
 
     /// Walk the supertypes of `current` in MRO order, as [`Self::ancestor`] does,

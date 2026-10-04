@@ -1,0 +1,52 @@
+# Dynamic spreads admit optional constructor arguments. Known unsupported
+# keywords still fail, including beside a dynamic spread.
+pub class Opt
+  def (init) _self :name @ Str :help @ Str = "" :default = nil
+    ...
+
+pub class Flag
+  def (init) _self :name @ Str :help @ Str = "" :invert @ Bool = false
+    ...
+
+pub class Arg
+  def (init) _self :name @ Str :help @ Str = "" :collect @ Bool = false
+    ...
+
+pub def dynamic rest
+  Opt name: value ...rest
+  Flag name: value ...rest
+  Arg name: value ...rest
+
+pub def narrowed spec
+  for k v = spec
+    if (type k Int)
+      if (type v Dict)
+        bind v
+          :opt = nil
+          :arg = nil
+          :cmd = nil
+          :flag = nil
+          ...rest
+        let _ = cmd
+        let _ = rest
+        #       ^~~~: flow std.Unpack[Unknown{}]
+        if (opt != nil)
+          Opt name: $opt ...rest
+        else if (flag != nil)
+          Flag name: $flag ...rest
+        else if (arg != nil)
+          Arg name: $arg ...rest
+
+pub def known rest
+  Opt name: value unsupported: true
+  # error: the callee takes no such argument
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   Opt name: value unsupported: true
+  #    |                                ^^^^
+  Opt name: value unsupported: true ...rest
+# error: the callee takes no such argument
+#   --> m.dol:LL:LL
+#    |
+# LL |   Opt name: value unsupported: true ...rest
+#    |                                ^^^^
