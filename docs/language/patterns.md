@@ -186,6 +186,18 @@ bind {status: 200, headers: {"content-type": "text/plain"}}
 assert_eq $type "text/plain"
 ```
 
+Dash items can nest positional patterns too:
+
+```
+bind [[1, 2]]
+  - - first
+    - second
+```
+
+A dash always marks one positional item: `- x` alone unpacks a one-item
+sequence, and `- key: x` alone unpacks a sequence containing one keyed value.
+A lone bare item in a block still matches the whole value.
+
 Annotations go on the names a sub-pattern binds, never on the sub-pattern, and a
 sub-pattern has no default of its own. Lambda parameters accept sub-patterns
 too:
@@ -196,6 +208,73 @@ let add = (do |(x1 y1) (x2 y2)| [x1 + x2, y1 + y2])
 
 A `def`'s parameters must be names, which its signature can annotate. Unpack
 them in the body instead.
+
+### Optional Sub-patterns
+
+`?` before a sub-pattern allows its item to be absent. When absent, every
+binding beneath it takes its default, at any depth. Defaults run in item order
+and may read earlier bindings:
+
+```playground
+#> import test:
+#>   - assert_eq
+let ?"settings": ("port": port = 80 "next": next = (port + 1)) ... = {}
+assert_eq $port 80
+assert_eq $next 81
+
+let first ?(second = 2) = [1]
+assert_eq $first 1
+assert_eq $second 2
+```
+
+When the item is present, its value must match the sub-pattern as usual. A
+present `nil` is not absent: unpacking it raises an error, including in a
+conditional pattern. `?()` accepts an absent item or an empty value.
+
+Each `?` applies only at its own level. Here `k` may be absent, but a present
+`k` must contain `j`; write `?j:` to make that inner item optional too:
+
+```
+let ?k: (j: (value = 0)) = data
+```
+
+Every binding under `?` needs a default. In an alternative pattern, only the
+first alternative needs defaults: an absent item takes that alternative's
+defaults without testing or unpacking it.
+
+```playground
+#> import test:
+#>   - assert_eq
+let ?k: (Int(n = 0) | Str(n)) = {}
+assert_eq $n 0
+```
+
+Bindings on the absent path cannot be named rests; an anonymous `...` is
+allowed.
+`?` cannot precede a plain binding or `:key` shorthand: use a default instead,
+such as `x = 0` or `:key = 0`. Required positional items must precede optional
+ones.
+
+In vertical layout, `?` followed by a space marks an optional positional
+sub-pattern, while a touching `?` marks the item after it. `- ?(...)` also marks
+an optional positional item:
+
+```
+bind data
+  - first
+  ? - second = 2
+    - third = 3
+  ?settings:
+    :port = 80
+    ...
+```
+
+Lambda parameters use the same syntax, making that parameter optional in the
+lambda's signature:
+
+```
+let port_of = do |?settings: (:port = 80)| port
+```
 
 ## Constant Patterns
 
@@ -239,6 +318,13 @@ let Point(x: px y: py) = point
 A single positional binding captures the whole value: `Int(n)` binds
 an integer without unpacking it. To unpack one element explicitly, use
 `Array((item))`. `Array()` tests for an empty array.
+
+A lone binding still captures the whole value when it has a default:
+`Int(n = 0)` tests and binds an integer. Its default applies only when an
+enclosing `?` leaves the value absent. This also holds for a lone binding at
+the top of a `let`, `bind`, or `match` pattern, in an alternative, or in a
+block without a dash. Explicit parentheses and dash items always unpack,
+including `(n = 0)` and `- n = 0`.
 
 The parentheses must touch the class name. `Int(n)` is a type test, while
 `Int (n)` binds `Int` and unpacks another value into `n`. The class may be a

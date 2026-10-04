@@ -1,0 +1,211 @@
+# Optional items join their present bindings with defaults. Absent items keep
+# nested matching reachable. Alternatives conservatively join their defaults.
+
+pub def present()
+  let ?k: (a = "none") = (k: (1,))
+  let _ = a
+  #       ^: flow std.Int | std.Str
+
+pub def absent()
+  let ?"k": (a = 1 b = a) ... = ()
+  let _ = a
+  #       ^: flow std.Int
+  let _ = b
+  #       ^: flow std.Int
+
+pub def positional()
+  let p ?(a = "none") = (true,)
+  let _ = p
+  #       ^: flow std.Bool
+  let _ = a
+  #       ^: flow std.Str
+
+pub def mixed value @ (Record[...{?k: Tuple[Int]}])
+  let ?k: (a = "none") = value
+  let _ = a
+  #       ^: flow std.Int | std.Str
+
+pub def nested()
+  let ?k: (a = 1 j: (?z: Int(b = "fallback"))) = ()
+  let _ = a
+  #       ^: flow std.Int
+  let _ = b
+  #       ^: flow std.Str
+
+pub def inner_absent()
+  let ?k: (a = 1 ?j: (b = "fallback")) = (k: (2,))
+  let _ = a
+  #       ^: flow std.Int
+  let _ = b
+  #       ^: flow std.Str
+
+pub def collapsed()
+  let ?k: Int(n = "fallback") = ()
+  let _ = n
+  #       ^: flow std.Str
+  let Int(m = "unused") = 1
+  let _ = m
+  #       ^: flow std.Int
+
+pub def alternatives()
+  let ?k: (Int(n = 0) | Str(n)) = ()
+  let _ = n
+  #       ^: flow std.Int
+  let ?j: ((a = 1) | (a = "later")) = ()
+  let _ = a
+  #       ^: flow std.Int | std.Str
+  let ?i: ((1 a = "first") | (2 a = false)) = ()
+  let _ = a
+  #       ^: flow std.Bool | std.Str
+
+pub def second_alternative()
+  let ?k: (Int(n = 0) | Str(n)) = (k: "present")
+  let _ = n
+  #       ^: flow std.Int | std.Str
+
+pub def vertical()
+  bind (true,)
+    - flag
+    ? - a = 1
+      - b = a
+  let _ = flag
+  #       ^~~~: flow std.Bool
+  let _ = b
+  #       ^: flow std.Int
+
+pub def conditional()
+  if let ?k: Int(n = 0) = ()
+    let _ = n
+    #       ^: flow std.Int
+  if let ?k: ((a = "first") | (a = false)) = ()
+    let _ = a
+    #       ^: flow std.Bool | std.Str
+  let result = match (())
+    ?k: Int(n = 0) do n
+  let _ = result
+  #       ^~~~~~: flow std.Int | std.Nil
+
+pub def empty_and_constants()
+  let ?k: () = ()
+  let ?k: 1 = ()
+  let reached = "yes"
+  let _ = reached
+  #       ^~~~~~~: flow std.Str
+
+pub def required_inner()
+  let ?k: (j: (a = 1)) = (k: ())
+  # error: `std.Tuple[{}]` can never unpack as this pattern
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let ?k: (j: (a = 1)) = (k: ())
+  #    |           ^^^^^^^^^^^^
+  let _ = a
+
+pub def nil_present()
+  let ?k: (a = 1) = (k: nil)
+  # error: `nil` is not unpackable
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let ?k: (a = 1) = (k: nil)
+  #    |           ^^^^^^^
+  let _ = a
+
+pub def captured()
+  let ?k: (cap = 42) = ()
+  let get = do cap
+  let result = get()
+  let _ = result
+  #       ^~~~~~: flow std.Int
+
+pub def loops values @ Array[Record[...{?k: Tuple[Int]}]]
+  for ?k: (a = "none") = values
+    let _ = a
+    #       ^: flow std.Int | std.Str
+  let xs = $
+    for ?k: (a = "none") = values
+      - $a
+  let _ = xs
+  #       ^~: flow std.Array[std.Int | std.Str]
+
+pub def accepts block @ ((?k: Tuple[Int]) -> (Int | Str))
+  ...
+
+pub def lambda()
+  accepts do |?k: (a = "none")|
+    let _ = a
+    #       ^: flow std.Int | std.Str
+    a
+
+pub def annotated()
+  let ?k: (a @ Int = nil) = ()
+  let _ = a
+  #       ^: flow nil | std.Int
+  let ?k: (b @ Int = "wrong") = ()
+  # error: default `"wrong"` does not fit the annotation `std.Int`, and isn't a `nil` or symbol sentinel
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let ?k: (b @ Int = "wrong") = ()
+  #    |                      ^^^^^^^
+  let _ = b
+  #       ^: flow std.Int
+
+# Closed dictionary schemas prove the slot has no present type; a mutable dict
+# without a schema remains gradual, so alternatives still contribute.
+pub def closed_dict value @ Dict[{}]
+  let ?"key": (a = 1 b = a) ... = value
+  let _ = b
+  #       ^: flow std.Int
+
+pub def dynamic_dict()
+  let ?k: (Int(n = 0) | Str(n)) = {}
+  let _ = n
+  #       ^: flow std.Int | std.Str
+
+pub def mixed_alternatives value @ Record[...{?k: (Int | Str)}]
+  let ?k: (Int(n = 0) | Str(n)) = value
+  let _ = n
+  #       ^: flow std.Int | std.Str
+
+pub def dependent_alternative()
+  let ?k: (a: a = 1 j: (Int(b = a) | Str(b))) = ()
+  let _ = b
+  #       ^: flow std.Int
+
+pub def lambda_signatures()
+  let f = do |?k: (a = 1)| -> Int a
+  let _ = f
+  #       ^: flow (?k: Unknown) <Unknown >Unknown -> std.Int
+  f()
+  f k: (2,)
+  let g = do |_p ?(q = 2)| -> Int q
+  let _ = g
+  #       ^: flow (Unknown, ?Unknown) <Unknown >Unknown -> std.Int
+  g 1
+  g(1, (2,))
+  g()
+# error: this call is missing an argument
+#   --> m.dol:LL:LL
+#    |
+# LL |   g()
+#    |   ^^^
+
+pub def string_key value @ Dict[{?"key": Tuple[Bool]}]
+  bind value
+    ?"key":
+      - a = "missing"
+  let _ = a
+  #       ^: flow std.Bool | std.Str
+
+pub def while_pattern value @ Record[...{?k: Tuple[Int]}]
+  while let ?k: (n = "missing") = value
+    let _ = n
+    #       ^: flow std.Int | std.Str
+    break
+
+pub def nested_alternatives()
+  let ?k: (Int(a = 1) | Str(a = "dead")) = ()
+  let _ = a
+  #       ^: flow std.Int
+  let ?k: (j: (Int(b = 2) | Str(b = "dead"))) = ()
+  let _ = b
+  #       ^: flow std.Int
