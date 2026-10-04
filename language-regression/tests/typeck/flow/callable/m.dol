@@ -1,0 +1,231 @@
+# Calls through `(call)` use the method's arguments and result. Each possible
+# callee in a union must take the call.
+
+pub class Callable
+  pub def (call) _self n @ Int :label @ Str = "" -> Str
+    ...
+
+pub class Child: Callable
+
+pub class Generic[T]
+  pub def (call)[U] _self item @ T f @ ((T) -> U) -> U
+    ...
+
+pub class Picker
+  @def (call) self n @ Int -> Int
+  @def (call) self s @ Str -> Str
+  pub def (call) _self x
+    x
+
+pub class Strict
+  @def (call) self n @ Int -> Int
+  @def (call) self s @ Str -> Str
+  pub def (call) _self x @ (Int | Str) -> (Int | Str)
+    x
+
+pub class Empty
+
+pub class Numbers
+  pub def (call) _self n @ Int -> Int
+    ...
+
+pub class Symbols
+  pub def (call) _self values @ Array[(:a: | :b:)] -> Int
+    ...
+
+pub class Holder
+  pub field callee @ Callable = nil
+  pub field mixed @ (((Int) -> Int) | Callable) = nil
+
+  #[getter]
+  pub def callable _self -> Callable
+    ...
+
+pub class Sink[T]
+  pub def (call) _self f @ ((T) -> Str) -> Str
+    ...
+
+pub class Factory
+  #[class]
+  pub def (call) _cls n @ Int -> Str
+    ...
+
+pub def constructors
+  f @ (Type[Empty] | (() -> Str))
+  g @ (Type[Factory] | (Int -> Int))
+do
+  let _ = f()
+  #   ^: flow m.Empty | std.Str
+  let _ = g 1
+  #   ^: flow std.Int | std.Str
+
+pub def members h @ Holder
+  let _ = h.callee 1
+  #   ^: flow std.Str
+  let _ = h.callable 1
+  #   ^: flow std.Str
+  let _ = h.mixed 1
+  #   ^: flow std.Int | std.Str
+  h.callee "bad"
+# error: expected `std.Int`, found `"bad"`
+#   --> m.dol:LL:LL
+#    |
+# LL |   h.callee "bad"
+#    |            ^^^^^
+
+pub def callback_union f @ (Sink[Int] | Sink[Str])
+  let result = f do |x|
+    let _ = x
+    #   ^: flow std.Int | std.Str
+    "s"
+  let _ = result
+  #   ^: flow std.Str
+
+pub def instances f @ Callable c @ Child g @ Generic[Int] n @ Int
+  let _ = f 1 label: ok
+  #   ^: flow std.Str
+  let _ = c 1
+  #   ^: flow std.Str
+  let _ = f ...(1,) label: ok
+  #   ^: flow std.Str
+  let callback = g 1 do |x|
+    let _ = x
+    #   ^: flow std.Int
+    "s"
+  # The method's own binder is inferred from its callback's result
+  let s = g $n do |_x| "s"
+  let _ = s
+  #   ^: flow std.Str
+  let _ = callback
+  #   ^: flow std.Str
+  f "bad"
+  # error: expected `std.Int`, found `"bad"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   f "bad"
+  #    |     ^^^^^
+  f 1 label: 2
+  # error: expected `std.Str`, found `2`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   f 1 label: 2
+  #    |              ^
+  f()
+  # error: this call is missing an argument
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   f()
+  #    |   ^^^
+  f 1 2
+  # error: the callee takes no such argument
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   f 1 2
+  #    |       ^
+  g "bad" do |x| x
+  # error: expected `std.Int`, found `"bad"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   g "bad" do |x| x
+  #    |     ^^^^^
+  let _wrong @ Int = f 1
+# error: `std.Str` does not fit the annotation `std.Int`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _wrong @ Int = f 1
+#    |                      ^^^
+
+pub def overloads p @ Picker s @ Strict x
+  let _ = p 1
+  #   ^: flow std.Int
+  let _ = p "s"
+  #   ^: flow std.Str
+  let _ = p $x
+  #   ^: flow Unknown
+  let _ = s $x
+  #   ^: flow std.Int | std.Str
+  s true
+  # error: expected `std.Int | std.Str`, found `true`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   s true
+  #    |     ^^^^
+  let _wrong @ Str = p 1
+# error: `std.Int` does not fit the annotation `std.Str`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _wrong @ Str = p 1
+#    |                      ^^^
+
+pub def unions
+  f @ (((Int) -> Int) | Callable)
+  instances @ (Numbers | Callable)
+  picker @ (((Int) -> Int) | Picker)
+  invalid @ (Callable | Empty)
+  mismatched @ (((Str) -> Int) | Callable)
+do
+  let _ = f 1
+  #   ^: flow std.Int | std.Str
+  let _ = instances 1
+  #   ^: flow std.Int | std.Str
+  let _ = picker 1
+  #   ^: flow std.Int
+  let _ = f ...((1 + 2),)
+  #   ^: flow std.Int | std.Str
+  f "bad"
+  # error: expected `std.Int`, found `"bad"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   f "bad"
+  #    |     ^^^^^
+  invalid 1
+  # error: `m.Empty` has no member `(call)`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   invalid 1
+  #    |   ^^^^^^^^^
+  mismatched 1
+# error: expected `std.Str`, found `1`
+#   --> m.dol:LL:LL
+#    |
+# LL |   mismatched 1
+#    |              ^
+
+pub def contextual
+  f @ ((Array[(:a: | :b:)] -> Str) | Symbols)
+  g @ (((Int, ((Int) -> Str)) -> Str) | Generic[Int])
+do
+  let _ = f [:a:]
+  #   ^: flow std.Int | std.Str
+  let callback = g 1 do |x|
+    let _ = x
+    #   ^: flow std.Int
+    "s"
+  let _ = callback
+  #   ^: flow std.Str
+  f [:c:]
+# error: expected `std.Array[:a: | :b:]`, found `std.Array[std.Sym]`: `std.Sym` does not fit `:a: | :b:`
+#   --> m.dol:LL:LL
+#    |
+# LL |   f [:c:]
+#    |     ^^^^^
+
+pub def dynamic x e @ Empty
+  let _ = x 1
+  #   ^: flow Unknown
+  let _ = x do |v|
+    let _ = v
+    #   ^: flow Unknown
+    v
+  e()
+# error: `m.Empty` has no member `(call)`
+#   --> m.dol:LL:LL
+#    |
+# LL |   e()
+#    |   ^^^
+
+pub def funcs f @ Func g @ (Func | Callable)
+  let _ = f 1 key: 2
+  #   ^: flow Value
+  let _ = g 1
+  #   ^: flow Value

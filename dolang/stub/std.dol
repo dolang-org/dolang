@@ -2773,6 +2773,9 @@ pub class Fmt: @Index[Int, FmtSegment] @Spread[FmtSegment] @Unpack[FmtSegment, R
 #
 # `Func` is the abstract supertype of function values.
 pub class Func
+  # Calls the function.
+  pub def (call) _self ...args -> Value
+    ...
 
 # A module object, produced by `import` or by loading a compiled module. Its
 # fields are the module's exported bindings.

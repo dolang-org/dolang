@@ -1,9 +1,9 @@
 //! Member use: reading, writing and calling a receiver's members, indexing,
-//! operators, ranges and constructors. Each finds its member with the solver's
-//! lookup ([`Solver::member`]) and checks the use as the runtime makes it: as a
-//! call through the member, passing the receiver first to a method. A receiver
-//! the lookup can't decide, such as a union, is an explicit residual. A call
-//! through an overloaded method chooses among its overloads (see
+//! operators, calls through `(call)`, ranges and constructors. Each finds its
+//! member with the solver's lookup ([`Solver::member`]) and checks the use as the
+//! runtime makes it: as a call through the member, passing the receiver first to a
+//! method. A receiver the lookup can't decide, such as a union, is an explicit
+//! residual. A call through an overloaded method chooses among its overloads (see
 //! [`Flow::call_overloaded`]); any other use of one is dynamic.
 //!
 //! [`Solver::member`]: crate::typeck::solver::Solver::member
@@ -33,17 +33,47 @@ use crate::{
 /// overloaded method chooses among its overloads (see [`Flow::call_overloaded`]);
 /// any other use of one is dynamic.
 #[derive(Clone, Default)]
-struct Signature {
+pub(super) struct Signature {
     /// Its `@def` signatures, empty unless it's overloaded
-    overloads: Vec<TypeId>,
+    pub(super) overloads: Vec<TypeId>,
     /// Its implementation's signature, if it has one
-    implementation: Option<TypeId>,
+    pub(super) implementation: Option<TypeId>,
 }
 
 impl Signature {
     /// Its one signature, unless it's overloaded
     fn single(&self) -> Option<TypeId> {
         self.overloads.is_empty().then_some(self.implementation)?
+    }
+}
+
+/// How a call reaches a callee (see [`Flow::call_target`]): the signature it
+/// calls, passing `receivers` before its own arguments
+pub(super) struct CallTarget {
+    pub(super) signature: Signature,
+    pub(super) receivers: Vec<(TypeId, Span)>,
+    /// The instance a constructor with unchecked arguments gives
+    instance: Option<TypeId>,
+}
+
+impl CallTarget {
+    fn new(callee: Option<TypeId>) -> Self {
+        Self {
+            signature: Signature {
+                overloads: Vec::new(),
+                implementation: callee,
+            },
+            receivers: Vec::new(),
+            instance: None,
+        }
+    }
+
+    /// What the call gives, from what calling its signature gave
+    pub(super) fn gives(&self, given: TypeId, bottom: TypeId) -> TypeId {
+        match self.instance {
+            Some(instance) if given != bottom => instance,
+            _ => given,
+        }
     }
 }
 
@@ -80,6 +110,56 @@ enum Constructor {
 }
 
 impl Flow<'_, '_> {
+    /// How calling `callee` reaches a signature: a function or an overloaded
+    /// function directly, and a class object through its class-level `(call)` if
+    /// it has one, and otherwise instantiation, which runs `(init)` and gives the
+    /// instance. Any other callee is sent its `(call)` special method. An unknown
+    /// or undecided callee is dynamic; a known one without `(call)` is reported
+    /// at `span`.
+    pub(super) fn call_target(&mut self, callee: (TypeId, Span), span: Span) -> CallTarget {
+        let (ty, _) = callee;
+        if self.callable(ty) || ty == self.db.bottom() {
+            return CallTarget::new(Some(ty));
+        }
+        if let Some((overloads, implementation)) = self.overloaded(ty) {
+            return CallTarget {
+                signature: Signature {
+                    overloads,
+                    implementation: Some(implementation),
+                },
+                ..CallTarget::new(None)
+            };
+        }
+        if let Some(class) = self.class_of(ty) {
+            let generic = matches!(self.db.ty(ty), Type::Quantified { .. });
+            return match self.constructor(class) {
+                Constructor::Call(Some(signature)) if !generic => CallTarget {
+                    receivers: vec![callee],
+                    ..CallTarget::new(Some(signature))
+                },
+                Constructor::Init(Some(constructor)) => CallTarget::new(Some(constructor)),
+                Constructor::Init(None) if !generic => CallTarget {
+                    instance: Some(self.db.intern(Type::Decl(class))),
+                    ..CallTarget::new(None)
+                },
+                _ => CallTarget::new(None),
+            };
+        }
+        let member = self.special("call");
+        match self.resolve(ty, member, span) {
+            Resolved::Method(signature, bound) => CallTarget {
+                signature,
+                receivers: if bound { vec![callee] } else { Vec::new() },
+                instance: None,
+            },
+            Resolved::Missing => {
+                self.missing(ty, member, span);
+                CallTarget::new(None)
+            }
+            _ => CallTarget::new(None),
+        }
+    }
+
     /// A special member's key
     fn special(&self, name: &str) -> Member {
         Member {
@@ -202,7 +282,7 @@ impl Flow<'_, '_> {
     }
 
     /// A call through a method's signatures, passing `receivers` first
-    fn call_signature(
+    pub(super) fn call_signature(
         &mut self,
         at: At,
         state: &mut State,
@@ -403,7 +483,9 @@ impl Flow<'_, '_> {
                 self.missing(receiver.0, member, span);
                 self.call_with(at, state, operands, unknown, leading, call)
             }
-            Resolved::Field(ty) => self.call_with(at, state, operands, ty, leading, call),
+            Resolved::Field(ty) => {
+                self.call_value(at, state, operands, (ty, receiver.1), leading, call)
+            }
             Resolved::Method(signature, true) => {
                 self.call_signature(at, state, operands, &signature, &with_receiver, call)
             }
@@ -415,7 +497,7 @@ impl Flow<'_, '_> {
                 ..
             } => {
                 let value = self.call_signature(at, state, operands, &getter, &[receiver], got);
-                self.call_with(at, state, operands, value, leading, call)
+                self.call_value(at, state, operands, (value, receiver.1), leading, call)
             }
             Resolved::Property { getter: None, .. } => {
                 self.misuse(member, span, MemberUse::Read);
@@ -424,7 +506,7 @@ impl Flow<'_, '_> {
             Resolved::Fallback { get: Some(get), .. } => {
                 let name = (self.name_literal(member), span);
                 let value = self.call_signature(at, state, operands, &get, &[receiver, name], got);
-                self.call_with(at, state, operands, value, leading, call)
+                self.call_value(at, state, operands, (value, receiver.1), leading, call)
             }
         }
     }
@@ -676,39 +758,6 @@ impl Flow<'_, '_> {
                 self.call_with(at, state, operands, constructor, &bounds, call)
             }
             _ => self.db.unknown(),
-        }
-    }
-
-    /// Calling a class object: its class-level `(call)` if it has one, and
-    /// otherwise instantiation, which runs `(init)` and gives the instance
-    pub(super) fn construct(
-        &mut self,
-        at: At,
-        state: &mut State,
-        operands: &mut VecDeque<TypeId>,
-        object: TypeId,
-        class: DeclId,
-        call: Call<'_>,
-    ) -> TypeId {
-        let unknown = self.db.unknown();
-        let generic = matches!(self.db.ty(object), Type::Quantified { .. });
-        match self.constructor(class) {
-            Constructor::Call(Some(signature)) if !generic => {
-                let leading = [(object, call.span)];
-                self.call_with(at, state, operands, signature, &leading, call)
-            }
-            Constructor::Init(Some(constructor)) => {
-                self.call_with(at, state, operands, constructor, &[], call)
-            }
-            Constructor::Init(None) if !generic => {
-                // Its arguments are unchecked, but it gives an instance
-                let result = self.call_with(at, state, operands, unknown, &[], call);
-                match result == self.db.bottom() {
-                    true => result,
-                    false => self.db.intern(Type::Decl(class)),
-                }
-            }
-            _ => self.call_with(at, state, operands, unknown, &[], call),
         }
     }
 

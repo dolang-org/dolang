@@ -3,11 +3,15 @@ use std::path::Path;
 use super::Flow;
 use crate::{
     Config,
-    typeck::{Builder, r#type::UnitId},
+    typeck::{Builder, Check, r#type::UnitId},
 };
 
 /// Analyze a script both in queue order and in reverse, which must agree
 fn agree(source: &str) {
+    agree_with(source, |_| {});
+}
+
+fn agree_with(source: &str, inspect: impl FnOnce(&Check<'_>)) {
     let mut config = Config::new();
     config.typecheck(true);
     let unit = config.unit(Path::new("test.dol"), source.as_bytes());
@@ -26,6 +30,79 @@ fn agree(source: &str) {
     let reversed = Flow::new(ir, &check.db, &check.tables, true).analyze();
     assert_eq!(forward, reversed);
     assert_eq!(Some(forward), check.flows[0]);
+    inspect(&check);
+}
+
+#[test]
+fn callable_instances_and_unions() {
+    agree_with(
+        "
+class A
+class B
+class Callable
+  pub def (call) _self x @ A -> B
+    ...
+class Child: Callable
+class Generic[T]
+  pub def (call)[U] _self x @ T f @ ((T) -> U) -> U
+    ...
+class Picker
+  @def (call) self x @ A -> A
+  @def (call) self x @ B -> B
+  pub def (call) _self x
+    x
+class Empty
+class Sink[T]
+  pub def (call) _self f @ ((T) -> A) -> A
+    ...
+def run c @ Callable child @ Child g @ Generic[A] p @ Picker a @ A b @ B mixed @ (((A) -> A) | Callable) sinks @ (Sink[A] | Sink[B])
+  let instance = c $a
+  let inherited = child $a
+  let generic = g $a do |x| b
+  let overloaded = p $a
+  let union = mixed $a
+  let callback_union = sinks do |input|
+    let _ = input
+    a
+  let _ = [instance, inherited, generic, overloaded, union, callback_union]
+  c $b
+def dynamic x e @ Empty
+  let unknown = x()
+  let _ = unknown
+  e()
+",
+        |check| {
+            let flow = check.flows[0].as_ref().unwrap();
+            for (name, expected) in [
+                ("instance", ".B"),
+                ("inherited", ".B"),
+                ("generic", ".B"),
+                ("overloaded", ".A"),
+                ("union", ".A | test.B"),
+                ("input", ".A | test.B"),
+                ("callback_union", ".A"),
+                ("unknown", "Unknown"),
+            ] {
+                let types: Vec<_> = flow.facts.iter()
+                    .filter(|(span, _)| check.tables.text(UnitId::from_index(0), **span) == name)
+                    .map(|(_, fact)| check.tables.render_type(&check.db, fact.ty))
+                    .collect();
+                assert!(!types.is_empty(), "no facts for {name}");
+                assert!(
+                    types.iter().all(|ty| ty.ends_with(expected)),
+                    "{name}: {types:?}",
+                );
+            }
+            assert_eq!(flow.problems.len(), 2, "{:?}", flow.problems);
+            assert!(flow.problems.iter().any(|problem| {
+                matches!(problem, super::Problem::Argument { .. })
+            }));
+            assert!(flow.problems.iter().any(|problem| {
+                matches!(problem, super::Problem::MissingMember { name, .. } if name == "(call)")
+            }));
+            assert!(flow.unresolved.is_empty(), "{:?}", flow.unresolved);
+        },
+    );
 }
 
 #[test]
