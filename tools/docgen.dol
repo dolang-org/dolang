@@ -251,6 +251,23 @@ pub def extract_doc_json spec out_dir
     let :name :path = job
     run (spec.bin "dolang") -m compile extract --doc --strict --module $name $path stdout: (out_dir / "$name.json")
 
+# Regenerates every bundled library's typelib for the LSP build. Keep private
+# modules too: public declarations may refer to them.
+pub def extract_typelibs spec out_dir
+  let jobs = [...collect_doc_jobs()]
+  let names = Set []
+  for job = jobs
+    let :name ... = job
+    if names.contains(name)
+      throw "duplicate bundled module: $name"
+    names.add $name
+  out_dir.remove all: true ignore: true
+  out_dir.create_dir all: true
+  let workers = sys.cpu_info().logical_count
+  strand.pool $workers $jobs do |job|
+    let :name :path = job
+    run (spec.bin "dolang") -m compile typelib --module $name --output (out_dir / "$name.dolt") $path
+
 # Extracts the JSON cache and regenerates the docs/api page tree from it.
 #
 # `dolang -m compile extract --doc` nests the cooked documentation projection

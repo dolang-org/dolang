@@ -57,6 +57,9 @@ features = ["derive"]
 [build-dependencies.serde_json]
 workspace = true
 
+[build-dependencies.dolang-compile]
+workspace = true
+
 
 [dev-dependencies.futures]
 workspace = true

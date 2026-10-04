@@ -7,6 +7,7 @@ use tower_lsp_server::Server;
 
 mod backend;
 mod doc_index;
+mod typelib_index;
 
 #[cfg(not(asan))]
 #[global_allocator]
