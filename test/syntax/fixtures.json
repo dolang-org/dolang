@@ -1,0 +1,1882 @@
+[
+  {
+    "name": "keywords and decayed names",
+    "lines": [
+      "class Widget",
+      "  pub field value = nil",
+      "try",
+      "  re.match(\"x\")",
+      "catch err",
+      "  throw err",
+      "finally",
+      "  echo done",
+      "let keys = {if: 1, match: 2, class: 3}",
+      "match value",
+      "  1 do true",
+      "re.if()",
+      "echo $obj.match()"
+    ],
+    "checks": [
+      {
+        "line": 1,
+        "text": "class",
+        "scopes": ["keyword.control.dol"],
+        "vim": ["dolKeyword"]
+      },
+      {
+        "line": 2,
+        "text": "field",
+        "scopes": ["keyword.control.dol"],
+        "vim": ["dolKeyword"]
+      },
+      {
+        "line": 3,
+        "text": "try",
+        "scopes": ["keyword.control.dol"],
+        "vim": ["dolKeyword"]
+      },
+      {
+        "line": 5,
+        "text": "catch",
+        "scopes": ["keyword.control.dol"],
+        "vim": ["dolKeyword"]
+      },
+      {
+        "line": 6,
+        "text": "throw",
+        "scopes": ["keyword.control.dol"],
+        "vim": ["dolKeyword"]
+      },
+      {
+        "line": 7,
+        "text": "finally",
+        "scopes": ["keyword.control.dol"],
+        "vim": ["dolKeyword"]
+      },
+      {
+        "line": 10,
+        "text": "match",
+        "scopes": ["keyword.control.conditional.dol"],
+        "vim": ["dolConditional"]
+      },
+      {
+        "line": 4,
+        "text": "match",
+        "notScopes": ["keyword.control"],
+        "notVim": ["dolKeyword", "dolConditional"]
+      },
+      {
+        "line": 9,
+        "text": "if",
+        "notScopes": ["keyword.control"],
+        "notVim": ["dolKeyword", "dolConditional"]
+      },
+      {
+        "line": 9,
+        "text": "match",
+        "notScopes": ["keyword.control"],
+        "notVim": ["dolKeyword", "dolConditional"]
+      },
+      {
+        "line": 9,
+        "text": "class",
+        "notScopes": ["keyword.control"],
+        "notVim": ["dolKeyword", "dolConditional"]
+      },
+      {
+        "line": 12,
+        "text": "if",
+        "notScopes": ["keyword.control"],
+        "notVim": ["dolKeyword", "dolConditional"]
+      },
+      {
+        "line": 13,
+        "text": "match",
+        "notScopes": ["keyword.control"],
+        "notVim": ["dolKeyword", "dolConditional"]
+      },
+      {
+        "line": 9,
+        "text": "if",
+        "scopes": ["meta.object-literal.key.dol"],
+        "vim": ["dolKey"]
+      },
+      {
+        "line": 9,
+        "text": "match",
+        "scopes": ["meta.object-literal.key.dol"],
+        "vim": ["dolKey"]
+      },
+      {
+        "line": 9,
+        "text": "class",
+        "scopes": ["meta.object-literal.key.dol"],
+        "vim": ["dolKey"]
+      }
+    ]
+  },
+  {
+    "name": "quoted strings and escapes",
+    "lines": [
+      "let normal = \"name $name.field $(1 + 2) \\0 \\x7f \\u{1_f600} \\$ \\n\"",
+      "let binary = b\"\\x00\\xff\"",
+      "let formatted = t\"${value:8.2f} $#name ${#0:$(width)}\"",
+      "let raw = r\"$name \\n # literal\"",
+      "let hashes = r##\"quote \"# $name \\n # literal\"##",
+      "echo true"
+    ],
+    "checks": [
+      {
+        "line": 1,
+        "text": "name",
+        "scopes": ["string.quoted.double.dol"],
+        "vim": ["dolString"]
+      },
+      {
+        "line": 1,
+        "text": "$name",
+        "scopes": ["string.quoted.double.dol"],
+        "vim": ["dolInterpMarker", "dolIdentifier"]
+      },
+      {
+        "line": 1,
+        "text": ".field",
+        "scopes": ["string.quoted.double.dol"],
+        "vim": ["dolString"]
+      },
+      {
+        "line": 1,
+        "text": "+",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      },
+      {
+        "line": 1,
+        "text": "\\0",
+        "scopes": ["constant.character.escape.dol"],
+        "vim": ["dolEscape"]
+      },
+      {
+        "line": 1,
+        "text": "\\x7f",
+        "scopes": ["constant.character.escape.dol"],
+        "vim": ["dolEscape"]
+      },
+      {
+        "line": 1,
+        "text": "\\u{1_f600}",
+        "scopes": ["constant.character.escape.dol"],
+        "vim": ["dolEscape"]
+      },
+      {
+        "line": 1,
+        "text": "\\$",
+        "scopes": ["constant.character.escape.dol"],
+        "vim": ["dolEscape"]
+      },
+      {
+        "line": 1,
+        "text": "\\n",
+        "scopes": ["constant.character.escape.dol"],
+        "vim": ["dolEscape"]
+      },
+      {
+        "line": 2,
+        "text": "\\x00",
+        "scopes": ["constant.character.escape.dol"],
+        "vim": ["dolEscape"]
+      },
+      {
+        "line": 2,
+        "text": "\\xff",
+        "scopes": ["constant.character.escape.dol"],
+        "vim": ["dolEscape"]
+      },
+      {
+        "line": 3,
+        "text": "8.2f",
+        "scopes": ["constant.other.placeholder.dol"],
+        "vim": ["dolFmtSpec"]
+      },
+      {
+        "line": 3,
+        "text": "width",
+        "scopes": ["variable.other.dol"],
+        "vim": ["dolIdentifier"]
+      },
+      {
+        "line": 4,
+        "text": "$name",
+        "scopes": ["string.quoted.double.raw.dol"],
+        "vim": ["dolRawString"],
+        "notScopes": ["comment", "constant.character.escape", "variable"]
+      },
+      {
+        "line": 4,
+        "text": "\\n",
+        "scopes": ["string.quoted.double.raw.dol"],
+        "vim": ["dolRawString"],
+        "notScopes": ["comment", "constant.character.escape", "variable"]
+      },
+      {
+        "line": 4,
+        "text": "# literal",
+        "scopes": ["string.quoted.double.raw.dol"],
+        "vim": ["dolRawString"],
+        "notScopes": ["comment", "constant.character.escape", "variable"]
+      },
+      {
+        "line": 5,
+        "text": "$name",
+        "scopes": ["string.quoted.double.raw.dol"],
+        "vim": ["dolRawString"],
+        "notScopes": ["comment", "constant.character.escape", "variable"]
+      },
+      {
+        "line": 5,
+        "text": "\\n",
+        "scopes": ["string.quoted.double.raw.dol"],
+        "vim": ["dolRawString"],
+        "notScopes": ["comment", "constant.character.escape", "variable"]
+      },
+      {
+        "line": 5,
+        "text": "# literal",
+        "scopes": ["string.quoted.double.raw.dol"],
+        "vim": ["dolRawString"],
+        "notScopes": ["comment", "constant.character.escape", "variable"]
+      },
+      {
+        "line": 6,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"]
+      }
+    ]
+  },
+  {
+    "name": "numbers and expression operators",
+    "lines": [
+      "echo 0xff 0XCA_FE 0o7_1 0b10_01 -0xA 1_000 1_2.3_4e+5_6 .5",
+      "let x = (a..b ^ ~c + d / e)",
+      "echo $obj.field $obj.#field",
+      "let range = (1..2)",
+      "echo prefix1_000 0b102 0xG"
+    ],
+    "checks": [
+      {
+        "line": 1,
+        "text": "0xff",
+        "scopes": ["constant.numeric.dol"],
+        "vim": ["dolNumber"]
+      },
+      {
+        "line": 1,
+        "text": "0XCA_FE",
+        "scopes": ["constant.numeric.dol"],
+        "vim": ["dolNumber"]
+      },
+      {
+        "line": 1,
+        "text": "0o7_1",
+        "scopes": ["constant.numeric.dol"],
+        "vim": ["dolNumber"]
+      },
+      {
+        "line": 1,
+        "text": "0b10_01",
+        "scopes": ["constant.numeric.dol"],
+        "vim": ["dolNumber"]
+      },
+      {
+        "line": 1,
+        "text": "-0xA",
+        "scopes": ["constant.numeric.dol"],
+        "vim": ["dolNumber"]
+      },
+      {
+        "line": 1,
+        "text": "1_000",
+        "scopes": ["constant.numeric.dol"],
+        "vim": ["dolNumber"]
+      },
+      {
+        "line": 1,
+        "text": "1_2.3_4e+5_6",
+        "scopes": ["constant.numeric.dol"],
+        "vim": ["dolNumber"]
+      },
+      {
+        "line": 1,
+        "text": ".5",
+        "scopes": ["constant.numeric.dol"],
+        "vim": ["dolNumber"]
+      },
+      {
+        "line": 2,
+        "text": "..",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      },
+      {
+        "line": 2,
+        "text": "^",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      },
+      {
+        "line": 2,
+        "text": "~",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      },
+      {
+        "line": 2,
+        "text": "+",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      },
+      {
+        "line": 2,
+        "text": "/",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      },
+      {
+        "line": 3,
+        "text": ".",
+        "notScopes": ["keyword.operator"],
+        "notVim": ["dolOperator"]
+      },
+      {
+        "line": 3,
+        "text": ".#",
+        "notScopes": ["keyword.operator"],
+        "notVim": ["dolOperator"]
+      },
+      {
+        "line": 4,
+        "text": "..",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      },
+      {
+        "line": 5,
+        "text": "prefix1_000",
+        "notScopes": ["constant.numeric"],
+        "notVim": ["dolNumber"]
+      },
+      {
+        "line": 5,
+        "text": "0b102",
+        "notScopes": ["constant.numeric"],
+        "notVim": ["dolNumber"]
+      },
+      {
+        "line": 5,
+        "text": "0xG",
+        "notScopes": ["constant.numeric"],
+        "notVim": ["dolNumber"]
+      }
+    ]
+  },
+  {
+    "name": "here string |",
+    "lines": [
+      "def example()",
+      "  let text = |",
+      "    # content $name \\n",
+      "",
+      "      nested ${value:8}",
+      "    $(1 + 2)",
+      "  echo true",
+      "echo false"
+    ],
+    "checks": [
+      {
+        "line": 2,
+        "text": "let",
+        "scopes": ["keyword.control.dol"],
+        "vim": ["dolKeyword"]
+      },
+      {
+        "line": 3,
+        "text": "# content",
+        "scopes": ["string.unquoted.heredoc.dol"],
+        "vim": ["dolHereString"],
+        "notScopes": ["comment"],
+        "notVim": ["dolComment"]
+      },
+      {
+        "line": 3,
+        "text": "$name",
+        "scopes": ["string.unquoted.heredoc.dol"],
+        "vim": ["dolInterpMarker", "dolIdentifier"]
+      },
+      {
+        "line": 3,
+        "text": "\\n",
+        "scopes": ["constant.character.escape.dol"],
+        "vim": ["dolEscape"]
+      },
+      {
+        "line": 5,
+        "text": "nested",
+        "scopes": ["string.unquoted.heredoc.dol"],
+        "vim": ["dolHereString"]
+      },
+      {
+        "line": 6,
+        "text": "+",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      },
+      {
+        "line": 7,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"],
+        "notScopes": ["string"],
+        "notVim": ["dolHereString"]
+      },
+      {
+        "line": 8,
+        "text": "false",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"]
+      }
+    ]
+  },
+  {
+    "name": "here string |-",
+    "lines": [
+      "def example()",
+      "  let text = |-",
+      "    # content $name \\n",
+      "",
+      "      nested ${value:8}",
+      "    $(1 + 2)",
+      "  echo true",
+      "echo false"
+    ],
+    "checks": [
+      {
+        "line": 2,
+        "text": "let",
+        "scopes": ["keyword.control.dol"],
+        "vim": ["dolKeyword"]
+      },
+      {
+        "line": 3,
+        "text": "# content",
+        "scopes": ["string.unquoted.heredoc.dol"],
+        "vim": ["dolHereString"],
+        "notScopes": ["comment"],
+        "notVim": ["dolComment"]
+      },
+      {
+        "line": 3,
+        "text": "$name",
+        "scopes": ["string.unquoted.heredoc.dol"],
+        "vim": ["dolInterpMarker", "dolIdentifier"]
+      },
+      {
+        "line": 3,
+        "text": "\\n",
+        "scopes": ["constant.character.escape.dol"],
+        "vim": ["dolEscape"]
+      },
+      {
+        "line": 5,
+        "text": "nested",
+        "scopes": ["string.unquoted.heredoc.dol"],
+        "vim": ["dolHereString"]
+      },
+      {
+        "line": 6,
+        "text": "+",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      },
+      {
+        "line": 7,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"],
+        "notScopes": ["string"],
+        "notVim": ["dolHereString"]
+      },
+      {
+        "line": 8,
+        "text": "false",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"]
+      }
+    ]
+  },
+  {
+    "name": "here string t|",
+    "lines": [
+      "def example()",
+      "  let text = t|",
+      "    # content $name \\n",
+      "",
+      "      nested ${value:8}",
+      "    $(1 + 2)",
+      "  echo true",
+      "echo false"
+    ],
+    "checks": [
+      {
+        "line": 2,
+        "text": "let",
+        "scopes": ["keyword.control.dol"],
+        "vim": ["dolKeyword"]
+      },
+      {
+        "line": 3,
+        "text": "# content",
+        "scopes": ["string.unquoted.heredoc.dol"],
+        "vim": ["dolHereString"],
+        "notScopes": ["comment"],
+        "notVim": ["dolComment"]
+      },
+      {
+        "line": 3,
+        "text": "$name",
+        "scopes": ["string.unquoted.heredoc.dol"],
+        "vim": ["dolInterpMarker", "dolIdentifier"]
+      },
+      {
+        "line": 3,
+        "text": "\\n",
+        "scopes": ["constant.character.escape.dol"],
+        "vim": ["dolEscape"]
+      },
+      {
+        "line": 5,
+        "text": "nested",
+        "scopes": ["string.unquoted.heredoc.dol"],
+        "vim": ["dolHereString"]
+      },
+      {
+        "line": 6,
+        "text": "+",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      },
+      {
+        "line": 7,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"],
+        "notScopes": ["string"],
+        "notVim": ["dolHereString"]
+      },
+      {
+        "line": 8,
+        "text": "false",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"]
+      }
+    ]
+  },
+  {
+    "name": "here string t|-",
+    "lines": [
+      "def example()",
+      "  let text = t|-",
+      "    # content $name \\n",
+      "",
+      "      nested ${value:8}",
+      "    $(1 + 2)",
+      "  echo true",
+      "echo false"
+    ],
+    "checks": [
+      {
+        "line": 2,
+        "text": "let",
+        "scopes": ["keyword.control.dol"],
+        "vim": ["dolKeyword"]
+      },
+      {
+        "line": 3,
+        "text": "# content",
+        "scopes": ["string.unquoted.heredoc.dol"],
+        "vim": ["dolHereString"],
+        "notScopes": ["comment"],
+        "notVim": ["dolComment"]
+      },
+      {
+        "line": 3,
+        "text": "$name",
+        "scopes": ["string.unquoted.heredoc.dol"],
+        "vim": ["dolInterpMarker", "dolIdentifier"]
+      },
+      {
+        "line": 3,
+        "text": "\\n",
+        "scopes": ["constant.character.escape.dol"],
+        "vim": ["dolEscape"]
+      },
+      {
+        "line": 5,
+        "text": "nested",
+        "scopes": ["string.unquoted.heredoc.dol"],
+        "vim": ["dolHereString"]
+      },
+      {
+        "line": 6,
+        "text": "+",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      },
+      {
+        "line": 7,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"],
+        "notScopes": ["string"],
+        "notVim": ["dolHereString"]
+      },
+      {
+        "line": 8,
+        "text": "false",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"]
+      }
+    ]
+  },
+  {
+    "name": "here string r|",
+    "lines": [
+      "def example()",
+      "  let text = r|",
+      "    # content $name \\n",
+      "",
+      "      nested ${value:8}",
+      "    $(1 + 2)",
+      "  echo true",
+      "echo false"
+    ],
+    "checks": [
+      {
+        "line": 2,
+        "text": "let",
+        "scopes": ["keyword.control.dol"],
+        "vim": ["dolKeyword"]
+      },
+      {
+        "line": 3,
+        "text": "# content",
+        "scopes": ["string.unquoted.heredoc.raw.dol"],
+        "vim": ["dolRawHereString"],
+        "notScopes": ["comment"],
+        "notVim": ["dolComment"]
+      },
+      {
+        "line": 3,
+        "text": "$name",
+        "scopes": ["string.unquoted.heredoc.raw.dol"],
+        "vim": ["dolRawHereString"]
+      },
+      {
+        "line": 3,
+        "text": "\\n",
+        "scopes": ["string.unquoted.heredoc.raw.dol"],
+        "vim": ["dolRawHereString"]
+      },
+      {
+        "line": 5,
+        "text": "nested",
+        "scopes": ["string.unquoted.heredoc.raw.dol"],
+        "vim": ["dolRawHereString"]
+      },
+      {
+        "line": 6,
+        "text": "+",
+        "scopes": ["string.unquoted.heredoc.raw.dol"],
+        "vim": ["dolRawHereString"]
+      },
+      {
+        "line": 7,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"],
+        "notScopes": ["string"],
+        "notVim": ["dolRawHereString"]
+      },
+      {
+        "line": 8,
+        "text": "false",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"]
+      }
+    ]
+  },
+  {
+    "name": "here string r|-",
+    "lines": [
+      "def example()",
+      "  let text = r|-",
+      "    # content $name \\n",
+      "",
+      "      nested ${value:8}",
+      "    $(1 + 2)",
+      "  echo true",
+      "echo false"
+    ],
+    "checks": [
+      {
+        "line": 2,
+        "text": "let",
+        "scopes": ["keyword.control.dol"],
+        "vim": ["dolKeyword"]
+      },
+      {
+        "line": 3,
+        "text": "# content",
+        "scopes": ["string.unquoted.heredoc.raw.dol"],
+        "vim": ["dolRawHereString"],
+        "notScopes": ["comment"],
+        "notVim": ["dolComment"]
+      },
+      {
+        "line": 3,
+        "text": "$name",
+        "scopes": ["string.unquoted.heredoc.raw.dol"],
+        "vim": ["dolRawHereString"]
+      },
+      {
+        "line": 3,
+        "text": "\\n",
+        "scopes": ["string.unquoted.heredoc.raw.dol"],
+        "vim": ["dolRawHereString"]
+      },
+      {
+        "line": 5,
+        "text": "nested",
+        "scopes": ["string.unquoted.heredoc.raw.dol"],
+        "vim": ["dolRawHereString"]
+      },
+      {
+        "line": 6,
+        "text": "+",
+        "scopes": ["string.unquoted.heredoc.raw.dol"],
+        "vim": ["dolRawHereString"]
+      },
+      {
+        "line": 7,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"],
+        "notScopes": ["string"],
+        "notVim": ["dolRawHereString"]
+      },
+      {
+        "line": 8,
+        "text": "false",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"]
+      }
+    ]
+  },
+  {
+    "name": "here string baseline and leading blank lines",
+    "lines": [
+      "let text = |",
+      "",
+      "    # first",
+      "      more",
+      "  echo true",
+      "let other = |-",
+      "  second",
+      "echo false"
+    ],
+    "checks": [
+      {
+        "line": 3,
+        "text": "# first",
+        "scopes": ["string.unquoted.heredoc.dol"],
+        "vim": ["dolHereString"]
+      },
+      {
+        "line": 4,
+        "text": "more",
+        "scopes": ["string.unquoted.heredoc.dol"],
+        "vim": ["dolHereString"]
+      },
+      {
+        "line": 5,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"],
+        "notScopes": ["string"]
+      },
+      {
+        "line": 7,
+        "text": "second",
+        "scopes": ["string.unquoted.heredoc.dol"],
+        "vim": ["dolHereString"]
+      },
+      {
+        "line": 8,
+        "text": "false",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"]
+      }
+    ]
+  },
+  {
+    "name": "compact annotations and nested types",
+    "lines": [
+      "let a @ Int = 1",
+      "let b@Dict[Str, Array[Int]] = {}",
+      "def f x@Int y@(Str | nil) -> Array[Str]",
+      "  echo $x",
+      "let fn @ ((Int, ?Int, *Str, **Bool, <Iter[Int], >Sink[Str]) -> nil) = nil",
+      "let schema @ Dict[{name: Str, ?port: Int, *...S, **Bool}] = nil",
+      "let sym @ (:a: | :b:) = :a:",
+      "let double = (do |x @ Int <Iter[Int]| -> Int x * 2)"
+    ],
+    "checks": [
+      {
+        "line": 1,
+        "text": "Int",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 2,
+        "text": "Dict",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 2,
+        "text": "Str",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 2,
+        "text": "Array",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 2,
+        "text": "Int",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 3,
+        "text": "Int",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 3,
+        "text": "Str",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 3,
+        "text": "Array",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 5,
+        "text": "Int",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 5,
+        "text": "Bool",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 5,
+        "text": "Iter",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 5,
+        "text": "Sink",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 6,
+        "text": "Dict",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 6,
+        "text": "Str",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 6,
+        "text": "Int",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 6,
+        "text": "S",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 8,
+        "text": "Int",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 8,
+        "text": "Iter",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 1,
+        "text": "@",
+        "scopes": ["punctuation.definition.type.dol"],
+        "vim": ["dolTypeMarker"]
+      },
+      {
+        "line": 3,
+        "text": "->",
+        "scopes": ["keyword.operator.type.dol"],
+        "vim": ["dolTypeMarker"]
+      },
+      {
+        "line": 5,
+        "text": "?",
+        "scopes": ["keyword.operator.type.dol"],
+        "vim": ["dolTypeMarker"]
+      },
+      {
+        "line": 5,
+        "text": "*",
+        "scopes": ["keyword.operator.type.dol"],
+        "vim": ["dolTypeMarker"]
+      },
+      {
+        "line": 5,
+        "text": "**",
+        "scopes": ["keyword.operator.type.dol"],
+        "vim": ["dolTypeMarker"]
+      },
+      {
+        "line": 5,
+        "text": "<",
+        "scopes": ["keyword.operator.type.dol"],
+        "vim": ["dolTypeMarker"]
+      },
+      {
+        "line": 5,
+        "text": ">",
+        "scopes": ["keyword.operator.type.dol"],
+        "vim": ["dolTypeMarker"]
+      },
+      {
+        "line": 6,
+        "text": "?",
+        "scopes": ["keyword.operator.type.dol"],
+        "vim": ["dolTypeMarker"]
+      },
+      {
+        "line": 6,
+        "text": "...",
+        "scopes": ["keyword.operator.type.dol"],
+        "vim": ["dolTypeMarker"]
+      },
+      {
+        "line": 3,
+        "text": "y",
+        "notScopes": ["storage.type"],
+        "notVim": ["dolTypeName"]
+      },
+      {
+        "line": 1,
+        "text": "1",
+        "scopes": ["constant.numeric.dol"],
+        "vim": ["dolNumber"],
+        "notScopes": ["meta.type"]
+      },
+      {
+        "line": 4,
+        "text": "echo",
+        "notScopes": ["storage.type"],
+        "notVim": ["dolTypeName"]
+      },
+      {
+        "line": 7,
+        "text": ":a:",
+        "scopes": ["constant.other.dol"],
+        "vim": ["dolSymbol"]
+      },
+      {
+        "line": 8,
+        "text": "x",
+        "notScopes": ["storage.type"],
+        "notVim": ["dolTypeName"],
+        "from": 42
+      }
+    ]
+  },
+  {
+    "name": "type declarations binders and imports",
+    "lines": [
+      "@def double x@Int -> Int",
+      "@class Shape",
+      "  pub def area self -> Int",
+      "pub @let Pair[T] = Tuple[T, T]",
+      "class Registry[V]: Table[Sym, V]",
+      "def first[T @ Bound = Default, :K, *Ts, **Ks] items @ Array[T] -> T",
+      "@import geometry:",
+      "  - Point",
+      "import @geometry",
+      "import geometry:",
+      "  - @Point",
+      "  - @Vector: Offset",
+      "def sink count @ Int <Iter[Int] >Sink[Str] -> nil",
+      "  echo true"
+    ],
+    "checks": [
+      {
+        "line": 1,
+        "text": "Int",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 3,
+        "text": "Int",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 4,
+        "text": "Tuple",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 4,
+        "text": "T",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 5,
+        "text": "V",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 5,
+        "text": "Table",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 5,
+        "text": "Sym",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 6,
+        "text": "T",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 6,
+        "text": "Bound",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 6,
+        "text": "Default",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 6,
+        "text": "K",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 6,
+        "text": "Ts",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 6,
+        "text": "Ks",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 6,
+        "text": "Array",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 9,
+        "text": "geometry",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 11,
+        "text": "Point",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 12,
+        "text": "Vector",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 13,
+        "text": "Iter",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 13,
+        "text": "Sink",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 1,
+        "text": "@",
+        "scopes": ["storage.modifier.type-only.dol"],
+        "vim": ["dolTypeOnly"]
+      },
+      {
+        "line": 2,
+        "text": "@",
+        "scopes": ["storage.modifier.type-only.dol"],
+        "vim": ["dolTypeOnly"]
+      },
+      {
+        "line": 4,
+        "text": "@",
+        "scopes": ["storage.modifier.type-only.dol"],
+        "vim": ["dolTypeOnly"]
+      },
+      {
+        "line": 7,
+        "text": "@",
+        "scopes": ["storage.modifier.type-only.dol"],
+        "vim": ["dolTypeOnly"]
+      },
+      {
+        "line": 14,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"]
+      },
+      {
+        "line": 4,
+        "text": "let",
+        "scopes": ["keyword.control.dol"],
+        "vim": ["dolAliasKeyword"]
+      }
+    ]
+  },
+  {
+    "name": "binding rests and type tests",
+    "lines": [
+      "def collect *args **opts",
+      "  echo $args",
+      "let Int(n) *args **opts = value",
+      "let std.Int(n) = value",
+      "for Array(x y) = items",
+      "  echo $x",
+      "let tuple = (Int(n))",
+      "bind point",
+      "  Point $",
+      "    x: px",
+      "    y: py",
+      "bind response",
+      "  headers:",
+      "    | \"content-type\": type",
+      "    | \"Content-Type\": type",
+      "echo true"
+    ],
+    "checks": [
+      {
+        "line": 1,
+        "text": "*",
+        "scopes": ["keyword.other.rest.dol"],
+        "vim": ["dolRest"]
+      },
+      {
+        "line": 1,
+        "text": "**",
+        "scopes": ["keyword.other.rest.dol"],
+        "vim": ["dolRest"]
+      },
+      {
+        "line": 3,
+        "text": "*",
+        "scopes": ["keyword.other.rest.dol"],
+        "vim": ["dolRest"]
+      },
+      {
+        "line": 3,
+        "text": "**",
+        "scopes": ["keyword.other.rest.dol"],
+        "vim": ["dolRest"]
+      },
+      {
+        "line": 3,
+        "text": "Int",
+        "scopes": ["storage.type.pattern.dol"],
+        "vim": ["dolPatternType"]
+      },
+      {
+        "line": 4,
+        "text": "std.Int",
+        "scopes": ["storage.type.pattern.dol"],
+        "vim": ["dolPatternType"]
+      },
+      {
+        "line": 5,
+        "text": "Array",
+        "scopes": ["storage.type.pattern.dol"],
+        "vim": ["dolPatternType"]
+      },
+      {
+        "line": 9,
+        "text": "Point",
+        "scopes": ["storage.type.pattern.dol"],
+        "vim": ["dolPatternType"]
+      },
+      {
+        "line": 7,
+        "text": "Int",
+        "notScopes": ["storage.type.pattern"],
+        "notVim": ["dolPatternType"]
+      },
+      {
+        "line": 14,
+        "text": "|",
+        "scopes": ["punctuation.separator.pattern.dol"],
+        "vim": ["dolPatternBar"],
+        "notScopes": ["string"]
+      },
+      {
+        "line": 15,
+        "text": "|",
+        "scopes": ["punctuation.separator.pattern.dol"],
+        "vim": ["dolPatternBar"],
+        "notScopes": ["string"]
+      },
+      {
+        "line": 16,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"]
+      }
+    ]
+  },
+  {
+    "name": "match headers and ordinary calls in bodies",
+    "lines": [
+      "match value",
+      "  Int(n) if (n < 0)",
+      "    echo $n",
+      "  Array(first _) do",
+      "    let copy = Int(first)",
+      "    echo \"value\"",
+      "  std.Int(n) do \"integer\"",
+      "  _ do \"other\"",
+      "let copy = Int(value)",
+      "echo true"
+    ],
+    "checks": [
+      {
+        "line": 2,
+        "text": "Int",
+        "scopes": ["storage.type.pattern.dol"],
+        "vim": ["dolPatternType"]
+      },
+      {
+        "line": 4,
+        "text": "Array",
+        "scopes": ["storage.type.pattern.dol"],
+        "vim": ["dolPatternType"]
+      },
+      {
+        "line": 7,
+        "text": "std.Int",
+        "scopes": ["storage.type.pattern.dol"],
+        "vim": ["dolPatternType"]
+      },
+      {
+        "line": 5,
+        "text": "Int",
+        "notScopes": ["storage.type.pattern"],
+        "notVim": ["dolPatternType"]
+      },
+      {
+        "line": 9,
+        "text": "Int",
+        "notScopes": ["storage.type.pattern"],
+        "notVim": ["dolPatternType"]
+      },
+      {
+        "line": 10,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"]
+      }
+    ]
+  },
+  {
+    "name": "decorators symbols and formatted nesting",
+    "lines": [
+      "#[getter]",
+      "def len self -> Int",
+      "  1",
+      "let key = :symbol:",
+      "let value = \"${f({a: 1}):$(width).$(precision)f}\"",
+      "# comment",
+      "let list = [1, true, \"text\"]"
+    ],
+    "checks": [
+      {
+        "line": 1,
+        "text": "getter",
+        "scopes": ["meta.annotation.dol"],
+        "vim": ["dolIdentifier"]
+      },
+      {
+        "line": 4,
+        "text": ":symbol:",
+        "scopes": ["constant.other.dol"],
+        "vim": ["dolSymbol"]
+      },
+      {
+        "line": 5,
+        "text": "width",
+        "scopes": ["variable.other.dol"],
+        "vim": ["dolIdentifier"]
+      },
+      {
+        "line": 5,
+        "text": "precision",
+        "scopes": ["variable.other.dol"],
+        "vim": ["dolIdentifier"]
+      },
+      {
+        "line": 6,
+        "text": "# comment",
+        "scopes": ["comment.line.number-sign.dol"],
+        "vim": ["dolComment"]
+      },
+      {
+        "line": 7,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"]
+      }
+    ]
+  },
+  {
+    "name": "multiline types and executable defaults",
+    "lines": [
+      "let callback @ (",
+      "  (Int, ?Str) -> Dict[{name: Str}]",
+      ") = nil",
+      "def choose[T @ Bound = Default]",
+      "  value @ Array[T]",
+      "  *args @ Str",
+      "  **opts @ Bool",
+      "  <Iter[Int]",
+      "  >Sink[Str]",
+      "do -> T",
+      "  echo true",
+      "def f values = [1, true]",
+      "  echo false",
+      "let standalone@Int = 1",
+      "let alias = 0"
+    ],
+    "checks": [
+      {
+        "line": 2,
+        "text": "Int",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 2,
+        "text": "Dict",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 2,
+        "text": "Str",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 4,
+        "text": "T",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 4,
+        "text": "Bound",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 4,
+        "text": "Default",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 5,
+        "text": "Array",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 5,
+        "text": "T",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 6,
+        "text": "Str",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 7,
+        "text": "Bool",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 8,
+        "text": "Iter",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 8,
+        "text": "Int",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 9,
+        "text": "Sink",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 9,
+        "text": "Str",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 10,
+        "text": "T",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 14,
+        "text": "Int",
+        "scopes": ["storage.type.dol"],
+        "vim": ["dolTypeName"]
+      },
+      {
+        "line": 6,
+        "text": "*",
+        "scopes": ["keyword.other.rest.dol"],
+        "vim": ["dolRest"]
+      },
+      {
+        "line": 7,
+        "text": "**",
+        "scopes": ["keyword.other.rest.dol"],
+        "vim": ["dolRest"]
+      },
+      {
+        "line": 8,
+        "text": "<",
+        "scopes": ["keyword.operator.type.dol"],
+        "vim": ["dolTypeMarker"]
+      },
+      {
+        "line": 9,
+        "text": ">",
+        "scopes": ["keyword.operator.type.dol"],
+        "vim": ["dolTypeMarker"]
+      },
+      {
+        "line": 11,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"],
+        "notScopes": ["meta.type"]
+      },
+      {
+        "line": 12,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"],
+        "notScopes": ["meta.type"]
+      },
+      {
+        "line": 13,
+        "text": "false",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"],
+        "notScopes": ["meta.type"]
+      },
+      {
+        "line": 15,
+        "text": "alias",
+        "notScopes": ["storage.type"],
+        "notVim": ["dolTypeName"]
+      }
+    ]
+  },
+  {
+    "name": "match as assignment and nested matches",
+    "lines": [
+      "let label = match value",
+      "  Int(n) do",
+      "    match n",
+      "      1 do \"one\"",
+      "      Int(other) do \"integer\"",
+      "    let result = Int(n)",
+      "  _ do \"other\"",
+      "label = match value",
+      "  Array(first _) do \"array\"",
+      "  _ do \"other\"",
+      "echo true"
+    ],
+    "checks": [
+      {
+        "line": 2,
+        "text": "Int",
+        "scopes": ["storage.type.pattern.dol"],
+        "vim": ["dolPatternType"]
+      },
+      {
+        "line": 5,
+        "text": "Int",
+        "scopes": ["storage.type.pattern.dol"],
+        "vim": ["dolPatternType"]
+      },
+      {
+        "line": 9,
+        "text": "Array",
+        "scopes": ["storage.type.pattern.dol"],
+        "vim": ["dolPatternType"]
+      },
+      {
+        "line": 6,
+        "text": "Int",
+        "notScopes": ["storage.type.pattern"],
+        "notVim": ["dolPatternType"]
+      },
+      {
+        "line": 11,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"]
+      }
+    ]
+  },
+  {
+    "name": "numbers beside ranges and trailing decimal points",
+    "lines": [
+      "echo 1. 2.e3 1.2_3 -0B1_0",
+      "let interval = (1..2)",
+      "let longer = (1...items)",
+      "echo 1__2 0x_FF 42_"
+    ],
+    "checks": [
+      {
+        "line": 1,
+        "text": "1.",
+        "scopes": ["constant.numeric.dol"],
+        "vim": ["dolNumber"]
+      },
+      {
+        "line": 1,
+        "text": "2.e3",
+        "scopes": ["constant.numeric.dol"],
+        "vim": ["dolNumber"]
+      },
+      {
+        "line": 1,
+        "text": "1.2_3",
+        "scopes": ["constant.numeric.dol"],
+        "vim": ["dolNumber"]
+      },
+      {
+        "line": 1,
+        "text": "-0B1_0",
+        "scopes": ["constant.numeric.dol"],
+        "vim": ["dolNumber"]
+      },
+      {
+        "line": 2,
+        "text": "1",
+        "scopes": ["constant.numeric.dol"],
+        "vim": ["dolNumber"]
+      },
+      {
+        "line": 2,
+        "text": "2",
+        "scopes": ["constant.numeric.dol"],
+        "vim": ["dolNumber"]
+      },
+      {
+        "line": 2,
+        "text": "..",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      },
+      {
+        "line": 3,
+        "text": "...",
+        "scopes": ["keyword.other.special.dol"],
+        "vim": ["dolSpecial", "dolEllipsis"]
+      },
+      {
+        "line": 4,
+        "text": "1__2",
+        "notScopes": ["constant.numeric"],
+        "notVim": ["dolNumber"]
+      },
+      {
+        "line": 4,
+        "text": "0x_FF",
+        "notScopes": ["constant.numeric"],
+        "notVim": ["dolNumber"]
+      },
+      {
+        "line": 4,
+        "text": "42_",
+        "notScopes": ["constant.numeric"],
+        "notVim": ["dolNumber"]
+      }
+    ]
+  },
+  {
+    "name": "here strings after quoted arguments and comments",
+    "lines": [
+      "echo \"# argument\" | # opener comment",
+      "  # body $name",
+      "let value = 1 # comment |",
+      "echo true",
+      "let raw = r\"not a match value\"",
+      "echo \"not a |\"",
+      "echo false"
+    ],
+    "checks": [
+      {
+        "line": 1,
+        "text": "# argument",
+        "scopes": ["string.quoted.double.dol"],
+        "vim": ["dolString"]
+      },
+      {
+        "line": 2,
+        "text": "# body",
+        "scopes": ["string.unquoted.heredoc.dol"],
+        "vim": ["dolHereString"]
+      },
+      {
+        "line": 3,
+        "text": "# comment |",
+        "scopes": ["comment.line.number-sign.dol"],
+        "vim": ["dolComment"]
+      },
+      {
+        "line": 4,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"]
+      },
+      {
+        "line": 5,
+        "text": "match",
+        "scopes": ["string.quoted.double.raw.dol"],
+        "vim": ["dolRawString"]
+      },
+      {
+        "line": 6,
+        "text": "|",
+        "scopes": ["string.quoted.double.dol"],
+        "vim": ["dolString"]
+      },
+      {
+        "line": 7,
+        "text": "false",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"]
+      }
+    ]
+  },
+  {
+    "name": "vertical match alternatives and guard calls",
+    "lines": [
+      "match response",
+      "  | Int(n)",
+      "  | Array(n)",
+      "  do",
+      "    echo $n",
+      "  _ if check(value) do \"fallback\"",
+      "echo true"
+    ],
+    "checks": [
+      {
+        "line": 2,
+        "text": "|",
+        "scopes": ["punctuation.separator.pattern.dol"],
+        "vim": ["dolPatternBar"]
+      },
+      {
+        "line": 3,
+        "text": "|",
+        "scopes": ["punctuation.separator.pattern.dol"],
+        "vim": ["dolPatternBar"]
+      },
+      {
+        "line": 2,
+        "text": "Int",
+        "scopes": ["storage.type.pattern.dol"],
+        "vim": ["dolPatternType"]
+      },
+      {
+        "line": 3,
+        "text": "Array",
+        "scopes": ["storage.type.pattern.dol"],
+        "vim": ["dolPatternType"]
+      },
+      {
+        "line": 6,
+        "text": "check",
+        "notScopes": ["storage.type.pattern"],
+        "notVim": ["dolPatternType"]
+      },
+      {
+        "line": 7,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"]
+      }
+    ]
+  },
+  {
+    "name": "quoted match patterns do not introduce guards",
+    "lines": [
+      "match value",
+      "  \"do this\" do \"done\"",
+      "  r\"if\" do \"raw\"",
+      "  Int(n) if test(n) do \"number\"",
+      "echo true"
+    ],
+    "checks": [
+      {
+        "line": 2,
+        "text": "do this",
+        "scopes": ["string.quoted.double.dol"],
+        "vim": ["dolString"]
+      },
+      {
+        "line": 3,
+        "text": "if",
+        "scopes": ["string.quoted.double.raw.dol"],
+        "vim": ["dolRawString"]
+      },
+      {
+        "line": 4,
+        "text": "test",
+        "notScopes": ["storage.type.pattern"],
+        "notVim": ["dolPatternType"]
+      },
+      {
+        "line": 5,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"]
+      }
+    ]
+  },
+  {
+    "name": "low precedence dollar calls and lambda markers",
+    "lines": [
+      "let value = (str $ range 10)",
+      "let double = (do |x| x * 2)",
+      "echo true"
+    ],
+    "checks": [
+      {
+        "line": 1,
+        "text": "$",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      },
+      {
+        "line": 2,
+        "text": "do",
+        "from": 12,
+        "scopes": ["keyword.control.dol"],
+        "vim": ["dolKeyword"]
+      },
+      {
+        "line": 2,
+        "text": "*",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      },
+      {
+        "line": 3,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"]
+      }
+    ]
+  }
+]

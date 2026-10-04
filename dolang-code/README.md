@@ -64,6 +64,12 @@ npm install
 npm run package:vsix
 ```
 
+### Grammar Tests
+
+Run `npm run test:syntax` in this directory after `npm ci`. The tests tokenize
+fixtures directly with TextMate, without the language server or an editor.
+Shared grammar fixtures live in `test/syntax/` at the workspace root.
+
 ## Installation
 
 Install the extension from the VSIX file:

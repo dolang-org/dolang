@@ -1,4 +1,4 @@
-import sys admin dodo exec toml
+import sys admin dodo exec toml json proc
   fs:
     - Path
     - copy
@@ -165,6 +165,33 @@ def playground_build()
   wasm_build()
   dodo.show npm --prefix playground ci
   dodo.show npm --prefix playground run build
+
+def vim_test()
+  with_temp_dir do |temp| env NVIM_LOG_FILE: (temp / "nvim.log") do
+    let configured = env.get DOLANG_SYNTAX_VIM
+    let candidates = (configured && [configured] || ["nvim", "vim", "vi"])
+    let editor = nil
+    for candidate = candidates
+      if !run[candidate].which()
+        continue
+      let version = try
+        sub do run $candidate --version stderr: $std.null
+      catch proc.Error: _
+        continue
+      if (version.contains("NVIM") ||
+        version.contains("+syntax") && version.contains("+eval"))
+        editor = candidate
+        break
+    if !editor
+      throw std.RuntimeError |
+        Syntax tests require Neovim or Vim with +syntax and +eval;
+        set DOLANG_SYNTAX_VIM to select one.
+    dodo.show $editor
+      -u NONE -i NONE -n -es -V1
+      -S vim/test/syntax.vim
+      test/syntax/fixtures.json vim/syntax/dol.vim
+    let fixtures = json.decode $Path("test/syntax/fixtures.json").read()
+    echo "Vim: $(fixtures.len) syntax fixtures passed ($editor)"
 
 def rustdoc_build()
   env RUSTDOCFLAGS: "--cfg docsrs" do
@@ -473,6 +500,16 @@ return $
       playground_build()
       run_cargo clippy -p dolang-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
       dodo.show npm --prefix playground test
+
+  "syntax-test":
+    help: test TextMate and Vim highlighting (requires npm dependencies and Vim or Neovim)
+    do |_|
+      dodo.show npm --prefix dolang-code run test:syntax
+      vim_test()
+
+  "vim-test":
+    help: test Vim highlighting (requires Vim or Neovim)
+    do |_| vim_test()
 
   pages:
     help: build the complete GitHub Pages site
