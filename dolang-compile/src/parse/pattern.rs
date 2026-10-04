@@ -713,8 +713,9 @@ impl Parser<'_> {
                         Some(
                             token!(TokenInfo::Indent | TokenInfo::Dedent | TokenInfo::StmtSep),
                         ) => None,
-                        // Closing delimiter for do blocks and other contexts - discard case
-                        Some(token!(TokenInfo::Op(Op::Bar))) => None,
+                        // Closing delimiter of a group, a type test, or lambda parameters, or an
+                        // alternative separator - discard case
+                        Some(token!(TokenInfo::RightParen | TokenInfo::Op(Op::Bar))) => None,
                         // End of input - discard case
                         None => None,
                         // Error case - require whitespace before other delimiters

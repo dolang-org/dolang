@@ -87,3 +87,13 @@ assert_eq $pairs ["a:1-2", "b:3-4"]
 let (cap) = [42]
 let get = do cap
 assert_eq (get()) 42
+
+# A rest before a closing parenthesis or `|` discards
+let (head ...) = [1, 2, 3]
+assert_eq $head 1
+let Array(first *) = [4, 5]
+assert_eq $first 4
+let h = (do |(x **)| x)
+assert_eq (h({1, a: 2})) 1
+let (one ... | one) = [6, 7]
+assert_eq $one 6
