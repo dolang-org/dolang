@@ -2165,7 +2165,16 @@ pub @let FmtSign = (:PLUS: | :SPACE:)
 
 # A representation kind for formatted output. See
 # [`FmtSpec.kind`](std.FmtSpec.kind).
-pub @let FmtKind = (:STR: | :DBG: | :VERBATIM: | :HEX: | :OCT: | :BIN: | :DEC: | :EXP: | :FIXED:)
+pub @let FmtKind = $
+  | :STR:
+  | :DBG:
+  | :VERBATIM:
+  | :HEX:
+  | :OCT:
+  | :BIN:
+  | :DEC:
+  | :EXP:
+  | :FIXED:
 
 #
 # An unbound interpolation in a [`Fmt`](std.Fmt).

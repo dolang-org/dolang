@@ -25,12 +25,13 @@ pub(crate) enum TypeExpr {
     App {
         base: Box<TypeExpr>,
         args: Vec<TypeArg>,
-        bracket_span: Span,
+        bracket_span: Option<Span>,
     },
     /// A schema, e.g. `{name: Str, ?port: Int}`
     Schema {
         params: Vec<TypeParam>,
-        brace_span: Span,
+        brace_span: Option<Span>,
+        dollar_span: Option<Span>,
     },
     /// A parenthesized type
     Group { ty: Box<TypeExpr>, paren_span: Span },
@@ -39,6 +40,7 @@ pub(crate) enum TypeExpr {
         members: Vec<TypeExpr>,
         /// Every `|` in source order, including a leading one
         bars: Vec<Span>,
+        dollar_span: Option<Span>,
     },
     /// A function type, e.g. `(Int, ?Int) -> Int` or `Int -> Int`
     Func {
@@ -79,7 +81,7 @@ pub(crate) enum TypeEntry {
     Type(usize),
 }
 
-/// A type argument in the `[]` of an application
+/// A type argument in a bracketed or vertical application
 pub(crate) struct TypeArg {
     pub(crate) kind: TypeArgKind,
     /// The trailing `,`
@@ -101,6 +103,7 @@ pub(crate) enum TypeArgKind {
 
 /// An item a schema or a function type's parameters declare
 pub(crate) struct TypeParam {
+    pub(crate) dash_span: Option<Span>,
     /// How many of the element the item admits
     pub(crate) quant: Option<TypeQuant>,
     /// The element the quantifier applies to, absent only for a bare `*` or `**`
@@ -403,21 +406,45 @@ impl Node for TypeExpr {
                 bracket_span,
             } => {
                 visit.node(&**base)?;
-                visit.token(Token::Delim, bracket_span.left_char(), None)?;
+                if let Some(span) = bracket_span {
+                    visit.token(Token::Delim, span.left_char(), None)?;
+                }
                 args.accept(visit)?;
-                visit.token(Token::Delim, bracket_span.right_char(), None)
+                if let Some(span) = bracket_span {
+                    visit.token(Token::Delim, span.right_char(), None)?;
+                }
+                ControlFlow::Continue(())
             }
-            TypeExpr::Schema { params, brace_span } => {
-                visit.token(Token::Delim, brace_span.left_char(), None)?;
+            TypeExpr::Schema {
+                params,
+                brace_span,
+                dollar_span,
+            } => {
+                if let Some(span) = dollar_span {
+                    visit.token(Token::Sigil, *span, None)?;
+                }
+                if let Some(span) = brace_span {
+                    visit.token(Token::Delim, span.left_char(), None)?;
+                }
                 params.accept(visit)?;
-                visit.token(Token::Delim, brace_span.right_char(), None)
+                if let Some(span) = brace_span {
+                    visit.token(Token::Delim, span.right_char(), None)?;
+                }
+                ControlFlow::Continue(())
             }
             TypeExpr::Group { ty, paren_span } => {
                 visit.token(Token::Delim, paren_span.left_char(), None)?;
                 visit.node(&**ty)?;
                 visit.token(Token::Delim, paren_span.right_char(), None)
             }
-            TypeExpr::Union { members, bars } => {
+            TypeExpr::Union {
+                members,
+                bars,
+                dollar_span,
+            } => {
+                if let Some(span) = dollar_span {
+                    visit.token(Token::Sigil, *span, None)?;
+                }
                 let mut bars = bars.iter();
                 if bars.len() == members.len()
                     && let Some(bar) = bars.next()
@@ -497,6 +524,9 @@ impl Node for TypeArg {
 
 impl Node for TypeParam {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+        if let Some(span) = self.dash_span {
+            visit.token(Token::Operator, span, None)?;
+        }
         match &self.quant {
             Some(TypeQuant::Opt(span)) => visit.token(Token::Operator, *span, None)?,
             Some(TypeQuant::Star(span)) | Some(TypeQuant::StarStar(span)) => {

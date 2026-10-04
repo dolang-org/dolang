@@ -27,7 +27,13 @@ import
     - @Unpack
 
 # Values accepted as SQL parameters.
-pub @let SqlValue = (nil | Bool | Int | Float | Str | Bin)
+pub @let SqlValue = $
+  | nil
+  | Bool
+  | Int
+  | Float
+  | Str
+  | Bin
 
 # Raised when a SQLite operation fails for any reason other than the database
 # being locked.

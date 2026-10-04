@@ -1,0 +1,70 @@
+pub class Num
+pub class Text
+pub class Table[_S @ {...}]
+pub class Tuple[*_Ts]
+pub class Record[**_Ks]
+pub class Tagged[_T, _S @ {...}]
+
+pub @let Shape = $
+  Num Text
+  ?name: Text
+  (Text): Num
+  *Num
+  **Text
+
+pub @let Vertical = Table $
+  #      ^~~~~~~~: decl m.Table[{m.Num, m.Text}]
+  Num Text
+pub @let Inline = Table[{Num, Text}]
+#        ^~~~~~: decl m.Table[{m.Num, m.Text}]
+pub let v @ Vertical = nil
+pub let i @ Inline = nil
+
+pub @let Expanded = Tuple ...$
+  #      ^~~~~~~~: decl m.Tuple[{...{m.Num, m.Text}}]
+  Num Text
+pub @let ExpandedInline = Tuple[...{Num, Text}]
+#        ^~~~~~~~~~~~~~: decl m.Tuple[{...{m.Num, m.Text}}]
+pub let pair @ Expanded = nil
+
+pub @let Appended = Tagged[Num] $
+  #      ^~~~~~~~: decl m.Tagged[m.Num, {value: m.Text}]
+  value: Text
+pub @let AppendedInline = Tagged[Num, {value: Text}]
+#        ^~~~~~~~~~~~~~: decl m.Tagged[m.Num, {value: m.Text}]
+pub let tagged @ Appended = nil
+
+pub @let Fields = Record ...$
+  #      ^~~~~~: decl m.Record[{...{value: m.Text}}]
+  value: Text
+pub @let FieldsInline = Record[...{value: Text}]
+#        ^~~~~~~~~~~~: decl m.Record[{...{value: m.Text}}]
+pub let fields @ Fields = nil
+
+pub @let Choice = $
+  #      ^~~~~~: decl m.Num | m.Text
+  | Num
+  | Text
+pub let choice @ Choice = nil
+
+pub @let Nested = Table $
+  value:
+    | Num
+    | Table $
+        name: Text
+  - | Num
+    | Text
+
+pub @let Included = $
+  ...Shape
+  *...Shape
+
+pub @let Generic[T] = Table $
+  #      ^~~~~~~: decl m.Table[{value: T}]
+  value: T
+pub let generic @ Generic[Num] = nil
+
+pub @let Recursive = $
+  | nil
+  | Table $
+      child: Recursive

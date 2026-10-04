@@ -857,6 +857,19 @@ impl Parser<'_> {
                         question = Some((self.advance(), items.len()));
                     }
                     let bind = self.parse_dash_bind(scope, mode, sep)?;
+                    // A vertical sub-pattern has already consumed its closing dedent.
+                    let block = match &bind {
+                        PatBind::Nested {
+                            parens: None,
+                            pattern,
+                            ..
+                        } => match &**pattern {
+                            Pattern::Unpack(_) => true,
+                            Pattern::TypeTest(test) => test.close.is_none(),
+                            _ => false,
+                        },
+                        _ => false,
+                    };
                     self.report_non_trailing_variadic(
                         variadic,
                         variadic_span,
@@ -872,6 +885,9 @@ impl Parser<'_> {
                         &mut seen_optional,
                         &mut items,
                     )?;
+                    if !block {
+                        self.expect_item_end(scope)?;
+                    }
                 }
                 Some(token @ token!(TokenInfo::Op(Op::Lt) | TokenInfo::Op(Op::Gt))) => {
                     let input = matches!(token.info, TokenInfo::Op(Op::Lt));

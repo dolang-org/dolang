@@ -24,6 +24,8 @@ enum Params {
     Func,
     /// A schema's, in `{}`
     Schema,
+    /// A vertical schema introduced by `$`.
+    Vertical,
 }
 
 impl Params {
@@ -31,13 +33,16 @@ impl Params {
         match self {
             Params::Func => ExpectKind::RightParen,
             Params::Schema => ExpectKind::RightBrace,
+            Params::Vertical => ExpectKind::Dedent,
         }
     }
 
     fn is_close(self, info: &TokenInfo) -> bool {
         matches!(
             (self, info),
-            (Params::Func, TokenInfo::RightParen) | (Params::Schema, TokenInfo::RightBrace)
+            (Params::Func, TokenInfo::RightParen)
+                | (Params::Schema, TokenInfo::RightBrace)
+                | (Params::Vertical, TokenInfo::Dedent)
         )
     }
 }
@@ -65,7 +70,279 @@ enum Group {
     },
 }
 
+/// How a layout type ended. A consumed block's dedent also ends its item,
+/// even when the lexer does not emit a statement separator after it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LayoutEnd {
+    Compact,
+    Space,
+    Block,
+}
+
 impl Parser<'_> {
+    /// An alias RHS may introduce layout, unlike a compact annotation.
+    pub(super) fn parse_type_alias_body(&mut self, scope: &mut Scope) -> Result<(TypeExpr, bool)> {
+        let (ty, end) = self.parse_type_layout_value(scope)?;
+        Ok((ty, end == LayoutEnd::Block))
+    }
+
+    /// Parse a type and an optional vertical schema application. The ending
+    /// records whether whitespace or a completed block separates the next item.
+    fn parse_type_layout_value(&mut self, scope: &mut Scope) -> Result<(TypeExpr, LayoutEnd)> {
+        if let Some(token!(TokenInfo::Dollar)) = self.peek()? {
+            let dollar_span = self.advance();
+            self.expect(scope, &[ExpectKind::Indent])?;
+            return Ok((
+                self.parse_type_layout_body(scope, dollar_span, true)?,
+                LayoutEnd::Block,
+            ));
+        }
+        let ty = self.parse_type_compact(scope)?;
+        let separated = if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
+            self.advance();
+            true
+        } else {
+            false
+        };
+        if !separated {
+            return Ok((ty, LayoutEnd::Compact));
+        }
+        let next = self.peek()?;
+        let ellipsis_span = if let Some(token!(TokenInfo::Ellipsis)) = next {
+            Some(self.advance())
+        } else {
+            None
+        };
+        if ellipsis_span.is_none() && !matches!(next, Some(token!(TokenInfo::Dollar))) {
+            return Ok((ty, LayoutEnd::Space));
+        }
+        let dollar_span = self.expect(scope, &[ExpectKind::Dollar])?;
+        self.expect(scope, &[ExpectKind::Indent])?;
+        let schema = self.parse_type_layout_body(scope, dollar_span, false)?;
+        let kind = match ellipsis_span {
+            Some(ellipsis_span) => TypeArgKind::Expand {
+                ellipsis_span,
+                ty: schema,
+            },
+            None => TypeArgKind::Pos(schema),
+        };
+        let arg = TypeArg {
+            kind,
+            delim_span: None,
+        };
+        let ty = match ty {
+            TypeExpr::App {
+                base,
+                mut args,
+                bracket_span,
+            } => {
+                args.push(arg);
+                TypeExpr::App {
+                    base,
+                    args,
+                    bracket_span,
+                }
+            }
+            base => TypeExpr::App {
+                base: Box::new(base),
+                args: vec![arg],
+                bracket_span: None,
+            },
+        };
+        Ok((ty, LayoutEnd::Block))
+    }
+
+    /// The opening indentation has already been consumed.
+    fn parse_type_layout_body(
+        &mut self,
+        scope: &mut Scope,
+        dollar_span: Span,
+        allow_union: bool,
+    ) -> Result<TypeExpr> {
+        let depth = self.indent_depth();
+        match self.parse_type_layout_body_inner(scope, dollar_span, allow_union) {
+            Ok(ty) => Ok(ty),
+            Err(_) => {
+                self.resync_indent(depth);
+                Ok(TypeExpr::Error)
+            }
+        }
+    }
+
+    fn parse_type_layout_body_inner(
+        &mut self,
+        scope: &mut Scope,
+        dollar_span: Span,
+        allow_union: bool,
+    ) -> Result<TypeExpr> {
+        while matches!(self.peek()?, Some(token!(TokenInfo::StmtSep))) {
+            self.advance();
+        }
+        if allow_union && matches!(self.peek()?, Some(token!(TokenInfo::Op(Op::Bar)))) {
+            let mut ty = self.parse_type_layout_union(scope)?;
+            if let TypeExpr::Union {
+                dollar_span: span, ..
+            } = &mut ty
+            {
+                *span = Some(dollar_span);
+            }
+            self.expect(scope, &[ExpectKind::Dedent])?;
+            return Ok(ty);
+        }
+        let mut params = Vec::new();
+        let mut line_start = true;
+        loop {
+            match self.peek()? {
+                Some(token!(TokenInfo::Dedent)) if !params.is_empty() => {
+                    self.advance();
+                    break;
+                }
+                Some(token!(TokenInfo::StmtSep)) => {
+                    self.advance();
+                    line_start = true;
+                }
+                None => return Err(self.syntax_error(scope, None, "expected schema item")),
+                token => {
+                    let dash_span = if let Some(token!(TokenInfo::Op(Op::Minus))) = token {
+                        if !line_start {
+                            let token = self.peek()?;
+                            return Err(self.syntax_error(
+                                scope,
+                                token,
+                                "expected positional type item",
+                            ));
+                        }
+                        let dash = self.advance();
+                        let sep = self.expect(scope, &[ExpectKind::ArgSep])?;
+                        self.add_indent(sep.end);
+                        Some(dash)
+                    } else {
+                        None
+                    };
+                    let (mut param, end) =
+                        self.parse_type_layout_item(scope, dash_span.is_some())?;
+                    param.dash_span = dash_span;
+                    let positional = matches!(param.kind, Some(TypeParamKind::Pos(_)))
+                        && !matches!(param.quant, Some(TypeQuant::StarStar(_)));
+                    if !line_start && !positional {
+                        let token = Some(Token {
+                            info: TokenInfo::Colon,
+                            span: param.span(),
+                        });
+                        return Err(self.syntax_error(
+                            scope,
+                            token,
+                            "only positional type items may be bin-packed",
+                        ));
+                    }
+                    params.push(param);
+                    line_start = end == LayoutEnd::Block;
+                    if dash_span.is_some() {
+                        self.expect_item_end(scope)?;
+                        while matches!(self.peek()?, Some(token!(TokenInfo::StmtSep))) {
+                            self.advance();
+                        }
+                        self.expect(scope, &[ExpectKind::Dedent])?;
+                        line_start = true;
+                    } else if end != LayoutEnd::Block && (!positional || end == LayoutEnd::Compact)
+                    {
+                        self.expect_item_end(scope)?;
+                    }
+                }
+            }
+        }
+        Ok(TypeExpr::Schema {
+            params,
+            brace_span: None,
+            dollar_span: Some(dollar_span),
+        })
+    }
+
+    fn parse_type_layout_item(
+        &mut self,
+        scope: &mut Scope,
+        dashed: bool,
+    ) -> Result<(TypeParam, LayoutEnd)> {
+        let (quant, token) = self.parse_type_quant()?;
+        let bare = matches!(quant, Some(TypeQuant::Star(_) | TypeQuant::StarStar(_)))
+            && self.at_item_end(Params::Vertical)?;
+        let (kind, end) = if bare {
+            (None, LayoutEnd::Compact)
+        } else if dashed && matches!(token, Some(token!(TokenInfo::Op(Op::Bar)))) {
+            (
+                Some(TypeParamKind::Pos(self.parse_type_layout_union(scope)?)),
+                LayoutEnd::Block,
+            )
+        } else {
+            if let Some(ref token @ token!(TokenInfo::Op(Op::Lt | Op::Gt))) = token {
+                self.fail = true;
+                self.diags.push(ImplicitInSchema(token.span));
+                if let Some(quant) = &quant {
+                    self.diags.push(QuantifiedImplicit(quant.span()));
+                }
+                self.advance();
+            }
+            let (kind, end) = self.parse_type_element(scope, Params::Vertical)?;
+            if dashed && matches!(kind, TypeParamKind::Key { .. }) {
+                return Err(self.syntax_error(scope, token, "expected positional type after `-`"));
+            }
+            (Some(kind), end)
+        };
+        Ok((
+            TypeParam {
+                dash_span: None,
+                quant,
+                kind,
+                delim_span: None,
+            },
+            end,
+        ))
+    }
+
+    fn parse_type_layout_key_value(&mut self, scope: &mut Scope) -> Result<(TypeExpr, LayoutEnd)> {
+        if matches!(self.peek()?, Some(token!(TokenInfo::Indent))) {
+            self.advance();
+            let ty = self.parse_type_layout_union(scope)?;
+            self.expect(scope, &[ExpectKind::Dedent])?;
+            return Ok((ty, LayoutEnd::Block));
+        }
+        self.expect(scope, &[ExpectKind::ArgSep])?;
+        self.parse_type_layout_value(scope)
+    }
+
+    /// A run of alternatives, without consuming the enclosing indentation.
+    fn parse_type_layout_union(&mut self, scope: &mut Scope) -> Result<TypeExpr> {
+        let mut members = Vec::new();
+        let mut bars = Vec::new();
+        loop {
+            if matches!(self.peek()?, Some(token!(TokenInfo::StmtSep))) {
+                self.advance();
+                continue;
+            }
+            if !matches!(self.peek()?, Some(token!(TokenInfo::Op(Op::Bar)))) {
+                break;
+            }
+            bars.push(self.advance());
+            let sep = self.expect(scope, &[ExpectKind::ArgSep])?;
+            self.add_indent(sep.end);
+            members.push(self.parse_type_layout_value(scope)?.0);
+            self.expect_item_end(scope)?;
+            while matches!(self.peek()?, Some(token!(TokenInfo::StmtSep))) {
+                self.advance();
+            }
+            self.expect(scope, &[ExpectKind::Dedent])?;
+        }
+        if members.is_empty() {
+            let token = self.peek()?;
+            return Err(self.syntax_error(scope, token, "expected `|` union alternative"));
+        }
+        Ok(TypeExpr::Union {
+            members,
+            bars,
+            dollar_span: None,
+        })
+    }
+
     /// Parse a `@` annotation if one is next.
     pub(super) fn parse_annot(&mut self, scope: &mut Scope) -> Result<Option<Box<Annot>>> {
         self.parse_annot_with_ellipsis(scope, false)
@@ -211,6 +488,7 @@ impl Parser<'_> {
                 } => (params, implicits, Some(paren_span)),
                 Group::Type(ty) => (
                     vec![TypeParam {
+                        dash_span: None,
                         quant: None,
                         kind: Some(TypeParamKind::Pos(ty)),
                         delim_span: None,
@@ -246,7 +524,11 @@ impl Parser<'_> {
                 "a union must be parenthesized to be a parameter type",
             ));
         }
-        Ok(TypeExpr::Union { members, bars })
+        Ok(TypeExpr::Union {
+            members,
+            bars,
+            dollar_span: None,
+        })
     }
 
     fn parse_type_compact_or_params(&mut self, scope: &mut Scope) -> Result<Group> {
@@ -260,7 +542,7 @@ impl Parser<'_> {
             group = Group::Type(TypeExpr::App {
                 base: Box::new(base),
                 args,
-                bracket_span,
+                bracket_span: Some(bracket_span),
             });
         }
         Ok(group)
@@ -304,7 +586,11 @@ impl Parser<'_> {
                 let left = self.advance();
                 let (params, _, brace_span) =
                     self.parse_type_params(scope, Params::Schema, left)?;
-                TypeExpr::Schema { params, brace_span }
+                TypeExpr::Schema {
+                    params,
+                    brace_span: Some(brace_span),
+                    dollar_span: None,
+                }
             }
             Some(
                 token!(
@@ -421,27 +707,7 @@ impl Parser<'_> {
                 {
                     break this.advance();
                 }
-                let quant = match this.peek()? {
-                    Some(token!(TokenInfo::Question)) => Some(TypeQuant::Opt(this.advance())),
-                    Some(token!(TokenInfo::Op(Op::Star))) => Some(TypeQuant::Star(this.advance())),
-                    Some(token!(TokenInfo::Op(Op::StarStar))) => {
-                        Some(TypeQuant::StarStar(this.advance()))
-                    }
-                    _ => None,
-                };
-                // An item takes one quantifier, so `?` cannot also repeat.
-                if let Some(TypeQuant::Opt(span)) = quant
-                    && matches!(
-                        this.peek()?,
-                        Some(token!(
-                            TokenInfo::Op(Op::Star) | TokenInfo::Op(Op::StarStar)
-                        ))
-                    )
-                {
-                    this.fail = true;
-                    this.diags.push(OptionalQuant(span));
-                    this.advance();
-                }
+                let (quant, _) = this.parse_type_quant()?;
                 // An implicit is an item of its own rather than an element a
                 // quantifier applies to, and a list holds at most one of each.
                 if let Some(token) = this.peek()?
@@ -481,10 +747,11 @@ impl Parser<'_> {
                 let kind = if bare {
                     None
                 } else {
-                    Some(this.parse_type_element(scope, list)?)
+                    Some(this.parse_type_element(scope, list)?.0)
                 };
                 let delim_span = this.consume_comma()?;
                 params.push(TypeParam {
+                    dash_span: None,
                     quant,
                     kind,
                     delim_span,
@@ -497,42 +764,85 @@ impl Parser<'_> {
         })
     }
 
-    /// Whether the next token ends an item, so that a quantifier stands alone.
-    fn at_item_end(&mut self, list: Params) -> Result<bool> {
-        Ok(
-            matches!(self.peek()?, Some(token!(TokenInfo::Comma)) | None)
-                || self.peek()?.is_some_and(|token| list.is_close(&token.info)),
-        )
+    /// Parse one quantifier and retain the next token for the item parser.
+    fn parse_type_quant(&mut self) -> Result<(Option<TypeQuant>, Option<Token>)> {
+        let token = self.peek()?;
+        let quant = match token {
+            Some(token!(TokenInfo::Question)) => Some(TypeQuant::Opt(self.advance())),
+            Some(token!(TokenInfo::Op(Op::Star))) => Some(TypeQuant::Star(self.advance())),
+            Some(token!(TokenInfo::Op(Op::StarStar))) => Some(TypeQuant::StarStar(self.advance())),
+            _ => return Ok((None, token)),
+        };
+        let mut token = self.peek()?;
+        if let Some(TypeQuant::Opt(span)) = quant
+            && matches!(token, Some(token!(TokenInfo::Op(Op::Star | Op::StarStar))))
+        {
+            self.fail = true;
+            self.diags.push(OptionalQuant(span));
+            self.advance();
+            token = self.peek()?;
+        }
+        Ok((quant, token))
     }
 
-    /// Parse the element a quantifier applies to: `T`, `k: V`, `(K): V`, `...S`,
-    /// or an open `...`.
-    fn parse_type_element(&mut self, scope: &mut Scope, list: Params) -> Result<TypeParamKind> {
-        if let Some(token!(TokenInfo::Ellipsis)) = self.peek()? {
-            let ellipsis_span = self.advance();
-            if self.at_item_end(list)? {
-                return Ok(TypeParamKind::Open { ellipsis_span });
+    /// Whether the next token ends an item, so a rest may stand alone.
+    fn at_item_end(&mut self, list: Params) -> Result<bool> {
+        let token = self.peek()?;
+        Ok(match token {
+            None | Some(token!(TokenInfo::Comma)) => true,
+            Some(token!(TokenInfo::ArgSep | TokenInfo::StmtSep)) if list == Params::Vertical => {
+                true
             }
-            return Ok(TypeParamKind::Include {
-                ellipsis_span,
-                ty: self.parse_type_full(scope)?,
-            });
+            Some(token) => list.is_close(&token.info),
+        })
+    }
+
+    fn parse_type_element_value(
+        &mut self,
+        scope: &mut Scope,
+        list: Params,
+        key: bool,
+    ) -> Result<(TypeExpr, LayoutEnd)> {
+        match list {
+            Params::Vertical if key => self.parse_type_layout_key_value(scope),
+            Params::Vertical => self.parse_type_layout_value(scope),
+            _ => Ok((self.parse_type_full(scope)?, LayoutEnd::Compact)),
         }
-        // `k:` is one lexer token, while a compound key type such as
-        // `Tuple[Int, Int]:` leaves the `:` as its own token.
-        if let Some(token!(TokenInfo::Key, span)) = self.peek()? {
-            self.advance();
-            return Ok(TypeParamKind::Key {
-                key: TypeKey::Sym(span),
-                colon_span: span.after_right_char(),
-                ty: self.parse_type_full(scope)?,
-            });
-        }
-        let ty = self.parse_type_full(scope)?;
+    }
+
+    /// Parse the element a quantifier applies to in a delimited or vertical list.
+    fn parse_type_element(
+        &mut self,
+        scope: &mut Scope,
+        list: Params,
+    ) -> Result<(TypeParamKind, LayoutEnd)> {
         match self.peek()? {
-            // A schema key may be any type, while a parameter's key is a name
+            Some(token!(TokenInfo::Ellipsis)) => {
+                let ellipsis_span = self.advance();
+                if self.at_item_end(list)? {
+                    return Ok((TypeParamKind::Open { ellipsis_span }, LayoutEnd::Compact));
+                }
+                let (ty, end) = self.parse_type_element_value(scope, list, false)?;
+                return Ok((TypeParamKind::Include { ellipsis_span, ty }, end));
+            }
+            Some(token!(TokenInfo::Key, span)) => {
+                self.advance();
+                let (ty, end) = self.parse_type_element_value(scope, list, true)?;
+                return Ok((
+                    TypeParamKind::Key {
+                        key: TypeKey::Sym(span),
+                        colon_span: span.after_right_char(),
+                        ty,
+                    },
+                    end,
+                ));
+            }
+            _ => {}
+        }
+        let (ty, end) = self.parse_type_element_value(scope, list, false)?;
+        match self.peek()? {
             Some(token @ token!(TokenInfo::Colon)) => {
-                if list != Params::Schema {
+                if list == Params::Func {
                     return Err(self.syntax_error(
                         scope,
                         Some(token),
@@ -540,13 +850,17 @@ impl Parser<'_> {
                     ));
                 }
                 let colon_span = self.advance();
-                Ok(TypeParamKind::Key {
-                    key: TypeKey::Type(Box::new(ty)),
-                    colon_span,
-                    ty: self.parse_type_full(scope)?,
-                })
+                let (value, end) = self.parse_type_element_value(scope, list, true)?;
+                Ok((
+                    TypeParamKind::Key {
+                        key: TypeKey::Type(Box::new(ty)),
+                        colon_span,
+                        ty: value,
+                    },
+                    end,
+                ))
             }
-            _ => Ok(TypeParamKind::Pos(ty)),
+            _ => Ok((TypeParamKind::Pos(ty), end)),
         }
     }
 
@@ -564,6 +878,7 @@ impl Parser<'_> {
                         quant: None,
                         kind: Some(TypeParamKind::Pos(_)),
                         delim_span: None,
+                        ..
                     },
                 ] = params.as_slice()
                     // An implicit describes a function, so it leaves no grouped type

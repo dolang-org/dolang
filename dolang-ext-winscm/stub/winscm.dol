@@ -35,10 +35,14 @@ pub @let ControlRequest = (:STOP: | :PAUSE: | :CONTINUE: | :INTERROGATE:)
 # | `:CONTINUE_PENDING:` | Resuming from the paused state |
 # | `:PAUSE_PENDING:`    | Pausing                        |
 # | `:PAUSED:`           | Paused                         |
-pub @let ServiceState = (
-  | :STOPPED: | :START_PENDING: | :STOP_PENDING: | :RUNNING: | :CONTINUE_PENDING:
-  | :PAUSE_PENDING: | :PAUSED:
-)
+pub @let ServiceState = $
+  | :STOPPED:
+  | :START_PENDING:
+  | :STOP_PENDING:
+  | :RUNNING:
+  | :CONTINUE_PENDING:
+  | :PAUSE_PENDING:
+  | :PAUSED:
 
 # When a service starts.
 #
@@ -49,9 +53,12 @@ pub @let ServiceState = (
 # | `:AUTO_START:`   | Starts automatically during system startup    |
 # | `:DEMAND_START:` | Starts when requested                         |
 # | `:DISABLED:`     | Cannot be started                             |
-pub @let StartType = (
-  | :BOOT_START: | :SYSTEM_START: | :AUTO_START: | :DEMAND_START: | :DISABLED:
-)
+pub @let StartType = $
+  | :BOOT_START:
+  | :SYSTEM_START:
+  | :AUTO_START:
+  | :DEMAND_START:
+  | :DISABLED:
 
 # What Windows does when a service fails to start.
 #
@@ -87,13 +94,15 @@ pub @let StateFilter = (:ACTIVE: | :INACTIVE: | :ALL:)
 # | `:SC_MANAGER_QUERY_LOCK_STATUS:`  | Queries the service database lock status    |
 # | `:SC_MANAGER_MODIFY_BOOT_CONFIG:` | Modifies boot configuration information     |
 # | `:SC_MANAGER_ALL_ACCESS:`         | All Service Control Manager-specific rights |
-pub @let ManagerAccessRight = (
-  | :SC_MANAGER_CONNECT: | :SC_MANAGER_CREATE_SERVICE:
-  | :SC_MANAGER_ENUMERATE_SERVICE: | :SC_MANAGER_LOCK:
-  | :SC_MANAGER_QUERY_LOCK_STATUS: | :SC_MANAGER_MODIFY_BOOT_CONFIG:
+pub @let ManagerAccessRight = $
+  | :SC_MANAGER_CONNECT:
+  | :SC_MANAGER_CREATE_SERVICE:
+  | :SC_MANAGER_ENUMERATE_SERVICE:
+  | :SC_MANAGER_LOCK:
+  | :SC_MANAGER_QUERY_LOCK_STATUS:
+  | :SC_MANAGER_MODIFY_BOOT_CONFIG:
   | :SC_MANAGER_ALL_ACCESS:
   | AccessRight
-)
 
 # Access rights for a [`ScManager`](winscm.ScManager) handle.
 #
@@ -160,13 +169,18 @@ pub class ManagerAccessMask: AccessMask
 # | `:SERVICE_INTERROGATE:`          | Requests that the service report its status    |
 # | `:SERVICE_USER_DEFINED_CONTROL:` | Sends user-defined control codes to the service |
 # | `:SERVICE_ALL_ACCESS:`           | All service-specific rights                    |
-pub @let ServiceAccessRight = (
-  | :SERVICE_QUERY_CONFIG: | :SERVICE_CHANGE_CONFIG: | :SERVICE_QUERY_STATUS:
-  | :SERVICE_ENUMERATE_DEPENDENTS: | :SERVICE_START: | :SERVICE_STOP:
-  | :SERVICE_PAUSE_CONTINUE: | :SERVICE_INTERROGATE:
-  | :SERVICE_USER_DEFINED_CONTROL: | :SERVICE_ALL_ACCESS:
+pub @let ServiceAccessRight = $
+  | :SERVICE_QUERY_CONFIG:
+  | :SERVICE_CHANGE_CONFIG:
+  | :SERVICE_QUERY_STATUS:
+  | :SERVICE_ENUMERATE_DEPENDENTS:
+  | :SERVICE_START:
+  | :SERVICE_STOP:
+  | :SERVICE_PAUSE_CONTINUE:
+  | :SERVICE_INTERROGATE:
+  | :SERVICE_USER_DEFINED_CONTROL:
+  | :SERVICE_ALL_ACCESS:
   | AccessRight
-)
 
 # Access rights for a [`Service`](winscm.Service) handle.
 #
@@ -228,10 +242,14 @@ pub class ServiceAccessMask: AccessMask
 # | `:INTERACTIVE_PROCESS:` | Service that can interact with the desktop          |
 # | `:DRIVER:`              | Either kind of driver                               |
 # | `:WIN32:`               | Either kind of Win32 service                        |
-pub @let ServiceTypeFlag = (
-  | :KERNEL_DRIVER: | :FILE_SYSTEM_DRIVER: | :WIN32_OWN_PROCESS:
-  | :WIN32_SHARE_PROCESS: | :INTERACTIVE_PROCESS: | :DRIVER: | :WIN32:
-)
+pub @let ServiceTypeFlag = $
+  | :KERNEL_DRIVER:
+  | :FILE_SYSTEM_DRIVER:
+  | :WIN32_OWN_PROCESS:
+  | :WIN32_SHARE_PROCESS:
+  | :INTERACTIVE_PROCESS:
+  | :DRIVER:
+  | :WIN32:
 
 # Windows service type flags.
 #
@@ -306,11 +324,17 @@ pub class ServiceType: Iterable[ServiceTypeFlag]
 # | `:CREATED:`          | Service creation                       |
 # | `:DELETED:`          | Service deletion                       |
 # | `:DELETE_PENDING:`   | A service becoming marked for deletion |
-pub @let NotifyChange = (
-  | :STOPPED: | :START_PENDING: | :STOP_PENDING: | :RUNNING:
-  | :CONTINUE_PENDING: | :PAUSE_PENDING: | :PAUSED: | :CREATED: | :DELETED:
+pub @let NotifyChange = $
+  | :STOPPED:
+  | :START_PENDING:
+  | :STOP_PENDING:
+  | :RUNNING:
+  | :CONTINUE_PENDING:
+  | :PAUSE_PENDING:
+  | :PAUSED:
+  | :CREATED:
+  | :DELETED:
   | :DELETE_PENDING:
-)
 
 # Service status changes to observe.
 #
@@ -387,11 +411,18 @@ pub class NotifyMask: Iterable[NotifyChange]
 # | `:PRESHUTDOWN:`           | Prepare for system shutdown before other services |
 # | `:TIMECHANGE:`            | Handle a system-time change                       |
 # | `:TRIGGEREVENT:`          | Handle a service-trigger event                    |
-pub @let AcceptedControl = (
-  | :STOP: | :PAUSE_CONTINUE: | :SHUTDOWN: | :PARAMCHANGE: | :NETBINDCHANGE:
-  | :HARDWAREPROFILECHANGE: | :POWEREVENT: | :SESSIONCHANGE: | :PRESHUTDOWN:
-  | :TIMECHANGE: | :TRIGGEREVENT:
-)
+pub @let AcceptedControl = $
+  | :STOP:
+  | :PAUSE_CONTINUE:
+  | :SHUTDOWN:
+  | :PARAMCHANGE:
+  | :NETBINDCHANGE:
+  | :HARDWAREPROFILECHANGE:
+  | :POWEREVENT:
+  | :SESSIONCHANGE:
+  | :PRESHUTDOWN:
+  | :TIMECHANGE:
+  | :TRIGGEREVENT:
 
 # Controls a running service accepts.
 #
@@ -457,21 +488,24 @@ pub class ServiceControlsAccepted: Iterable[AcceptedControl]
 
 # Manager rights, given as a [`ManagerAccessMask`](winscm.ManagerAccessMask),
 # one right, or an iterable of rights.
-pub @let ManagerAccessMaskSpec = (
-  | ManagerAccessMask | ManagerAccessRight | Iterable[ManagerAccessRight]
-)
+pub @let ManagerAccessMaskSpec = $
+  | ManagerAccessMask
+  | ManagerAccessRight
+  | Iterable[ManagerAccessRight]
 
 # Service rights, given as a [`ServiceAccessMask`](winscm.ServiceAccessMask),
 # one right, or an iterable of rights.
-pub @let ServiceAccessMaskSpec = (
-  | ServiceAccessMask | ServiceAccessRight | Iterable[ServiceAccessRight]
-)
+pub @let ServiceAccessMaskSpec = $
+  | ServiceAccessMask
+  | ServiceAccessRight
+  | Iterable[ServiceAccessRight]
 
 # Service types, given as a [`ServiceType`](winscm.ServiceType), one flag, or an
 # iterable of flags.
-pub @let ServiceTypeSpec = (
-  | ServiceType | ServiceTypeFlag | Iterable[ServiceTypeFlag]
-)
+pub @let ServiceTypeSpec = $
+  | ServiceType
+  | ServiceTypeFlag
+  | Iterable[ServiceTypeFlag]
 
 # Status changes, given as a [`NotifyMask`](winscm.NotifyMask), one change, or
 # an iterable of changes.

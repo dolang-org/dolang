@@ -1,0 +1,12 @@
+@let Bad = $
+@let Good = Int
+# error: got <new statement>, expected: <indent>
+#   --> vertical_type_missing_body.dol:LL:LL
+#    |
+# LL |   @let Bad = $
+#    |  _____________^
+# LL | | @let Good = Int
+#    | |_^
+
+@let Following = Int
+assert_eq 1 1

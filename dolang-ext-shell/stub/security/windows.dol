@@ -21,6 +21,9 @@
 #       flags: [:OBJECT_INHERIT:, :CONTAINER_INHERIT:]
 # ```
 
+import std:
+  - @BaseDict
+
 import
   std:
     - @Seq
@@ -76,19 +79,45 @@ import
 # | `:MEDIUM_PLUS_LABEL:`                   | `S-1-16-8448`  | `MP` | Medium-plus integrity level         |
 # | `:HIGH_LABEL:`                          | `S-1-16-12288` | `HI` | High integrity level                |
 # | `:SYSTEM_LABEL:`                        | `S-1-16-16384` | `SI` | System integrity level              |
-pub @let WellKnownSid = (
-  | :NULL: | :EVERYONE: | :LOCAL: | :CONSOLE_LOGON: | :CREATOR_OWNER:
-  | :CREATOR_GROUP: | :OWNER_RIGHTS: | :DIALUP: | :NETWORK: | :BATCH:
-  | :INTERACTIVE: | :SERVICE: | :ANONYMOUS: | :PRINCIPAL_SELF:
-  | :AUTHENTICATED_USERS: | :RESTRICTED_CODE: | :REMOTE_INTERACTIVE_LOGON:
-  | :THIS_ORGANIZATION: | :LOCAL_SYSTEM: | :LOCAL_SERVICE: | :NETWORK_SERVICE:
-  | :LOCAL_ACCOUNT: | :LOCAL_ACCOUNT_ADMINISTRATOR: | :BUILTIN_ADMINISTRATORS:
-  | :BUILTIN_USERS: | :BUILTIN_GUESTS: | :BUILTIN_POWER_USERS:
-  | :BUILTIN_BACKUP_OPERATORS: | :BUILTIN_REMOTE_DESKTOP_USERS:
-  | :BUILTIN_REMOTE_MANAGEMENT_USERS: | :ALL_APPLICATION_PACKAGES:
-  | :ALL_RESTRICTED_APPLICATION_PACKAGES: | :UNTRUSTED_LABEL: | :LOW_LABEL:
-  | :MEDIUM_LABEL: | :MEDIUM_PLUS_LABEL: | :HIGH_LABEL: | :SYSTEM_LABEL:
-)
+pub @let WellKnownSid = $
+  | :NULL:
+  | :EVERYONE:
+  | :LOCAL:
+  | :CONSOLE_LOGON:
+  | :CREATOR_OWNER:
+  | :CREATOR_GROUP:
+  | :OWNER_RIGHTS:
+  | :DIALUP:
+  | :NETWORK:
+  | :BATCH:
+  | :INTERACTIVE:
+  | :SERVICE:
+  | :ANONYMOUS:
+  | :PRINCIPAL_SELF:
+  | :AUTHENTICATED_USERS:
+  | :RESTRICTED_CODE:
+  | :REMOTE_INTERACTIVE_LOGON:
+  | :THIS_ORGANIZATION:
+  | :LOCAL_SYSTEM:
+  | :LOCAL_SERVICE:
+  | :NETWORK_SERVICE:
+  | :LOCAL_ACCOUNT:
+  | :LOCAL_ACCOUNT_ADMINISTRATOR:
+  | :BUILTIN_ADMINISTRATORS:
+  | :BUILTIN_USERS:
+  | :BUILTIN_GUESTS:
+  | :BUILTIN_POWER_USERS:
+  | :BUILTIN_BACKUP_OPERATORS:
+  | :BUILTIN_REMOTE_DESKTOP_USERS:
+  | :BUILTIN_REMOTE_MANAGEMENT_USERS:
+  | :ALL_APPLICATION_PACKAGES:
+  | :ALL_RESTRICTED_APPLICATION_PACKAGES:
+  | :UNTRUSTED_LABEL:
+  | :LOW_LABEL:
+  | :MEDIUM_LABEL:
+  | :MEDIUM_PLUS_LABEL:
+  | :HIGH_LABEL:
+  | :SYSTEM_LABEL:
 
 # A SID, built or spelled as its canonical string, its native packet, or a
 # well-known SID.
@@ -110,11 +139,19 @@ pub @let SidSpec = (Sid | Str | Bin | WellKnownSid)
 # | `:SCOPED_POLICY:`    | Scoped policy ID    |
 # | `:AUTHENTICATION:`   | Authentication      |
 # | `:PROCESS_TRUST:`    | Process trust       |
-pub @let IdentifierAuthority = (
-  | :NULL: | :WORLD: | :LOCAL: | :CREATOR: | :NON_UNIQUE: | :NT:
-  | :RESOURCE_MANAGER: | :APP_PACKAGE: | :MANDATORY_LABEL: | :SCOPED_POLICY:
-  | :AUTHENTICATION: | :PROCESS_TRUST:
-)
+pub @let IdentifierAuthority = $
+  | :NULL:
+  | :WORLD:
+  | :LOCAL:
+  | :CREATOR:
+  | :NON_UNIQUE:
+  | :NT:
+  | :RESOURCE_MANAGER:
+  | :APP_PACKAGE:
+  | :MANDATORY_LABEL:
+  | :SCOPED_POLICY:
+  | :AUTHENTICATION:
+  | :PROCESS_TRUST:
 
 # How Windows classifies a resolved SID.
 #
@@ -131,11 +168,18 @@ pub @let IdentifierAuthority = (
 # | `:COMPUTER:`         | Computer SID                  |
 # | `:LABEL:`            | Mandatory integrity label SID |
 # | `:LOGON_SESSION:`    | Logon session SID             |
-pub @let SidNameUse = (
-  | :USER: | :GROUP: | :DOMAIN: | :ALIAS: | :WELL_KNOWN_GROUP:
-  | :DELETED_ACCOUNT: | :INVALID: | :UNKNOWN: | :COMPUTER: | :LABEL:
+pub @let SidNameUse = $
+  | :USER:
+  | :GROUP:
+  | :DOMAIN:
+  | :ALIAS:
+  | :WELL_KNOWN_GROUP:
+  | :DELETED_ACCOUNT:
+  | :INVALID:
+  | :UNKNOWN:
+  | :COMPUTER:
+  | :LABEL:
   | :LOGON_SESSION:
-)
 
 # A native ACE type, or `:UNKNOWN:` for an unrecognized type code.
 #
@@ -163,17 +207,30 @@ pub @let SidNameUse = (
 # | 19   | `:SYSTEM_SCOPED_POLICY_ID:`        |
 # | 20   | `:SYSTEM_PROCESS_TRUST_LABEL:`     |
 # | 21   | `:SYSTEM_ACCESS_FILTER:`           |
-pub @let AceType = (
-  | :ACCESS_ALLOWED: | :ACCESS_DENIED: | :SYSTEM_AUDIT: | :SYSTEM_ALARM:
-  | :ACCESS_ALLOWED_COMPOUND: | :ACCESS_ALLOWED_OBJECT: | :ACCESS_DENIED_OBJECT:
-  | :SYSTEM_AUDIT_OBJECT: | :SYSTEM_ALARM_OBJECT: | :ACCESS_ALLOWED_CALLBACK:
-  | :ACCESS_DENIED_CALLBACK: | :ACCESS_ALLOWED_CALLBACK_OBJECT:
-  | :ACCESS_DENIED_CALLBACK_OBJECT: | :SYSTEM_AUDIT_CALLBACK:
-  | :SYSTEM_ALARM_CALLBACK: | :SYSTEM_AUDIT_CALLBACK_OBJECT:
-  | :SYSTEM_ALARM_CALLBACK_OBJECT: | :SYSTEM_MANDATORY_LABEL:
-  | :SYSTEM_RESOURCE_ATTRIBUTE: | :SYSTEM_SCOPED_POLICY_ID:
-  | :SYSTEM_PROCESS_TRUST_LABEL: | :SYSTEM_ACCESS_FILTER: | :UNKNOWN:
-)
+pub @let AceType = $
+  | :ACCESS_ALLOWED:
+  | :ACCESS_DENIED:
+  | :SYSTEM_AUDIT:
+  | :SYSTEM_ALARM:
+  | :ACCESS_ALLOWED_COMPOUND:
+  | :ACCESS_ALLOWED_OBJECT:
+  | :ACCESS_DENIED_OBJECT:
+  | :SYSTEM_AUDIT_OBJECT:
+  | :SYSTEM_ALARM_OBJECT:
+  | :ACCESS_ALLOWED_CALLBACK:
+  | :ACCESS_DENIED_CALLBACK:
+  | :ACCESS_ALLOWED_CALLBACK_OBJECT:
+  | :ACCESS_DENIED_CALLBACK_OBJECT:
+  | :SYSTEM_AUDIT_CALLBACK:
+  | :SYSTEM_ALARM_CALLBACK:
+  | :SYSTEM_AUDIT_CALLBACK_OBJECT:
+  | :SYSTEM_ALARM_CALLBACK_OBJECT:
+  | :SYSTEM_MANDATORY_LABEL:
+  | :SYSTEM_RESOURCE_ATTRIBUTE:
+  | :SYSTEM_SCOPED_POLICY_ID:
+  | :SYSTEM_PROCESS_TRUST_LABEL:
+  | :SYSTEM_ACCESS_FILTER:
+  | :UNKNOWN:
 
 # A named ACL revision. A native revision number is accepted wherever one of
 # these is.
@@ -198,24 +255,34 @@ pub @let AceFlagsSpec = (AceFlags | Int | AceFlag | Iterable[AceFlag])
 #   mask: :GENERIC_ALL:
 #   flags: [:OBJECT_INHERIT:, :CONTAINER_INHERIT:]
 # ```
-pub @let AceSpec = (
+pub @let AceSpec = $
   | Ace
-  | Dict[{
-    allow: SidSpec, mask: AccessMaskSpec, ?flags: AceFlagsSpec,
-    ?object_type: Guid | Str | Bin, ?inherited_object_type: Guid | Str | Bin,
-    ?callback: Bool, ?application_data: Bin,
-  }]
-  | Dict[{
-    deny: SidSpec, mask: AccessMaskSpec, ?flags: AceFlagsSpec,
-    ?object_type: Guid | Str | Bin, ?inherited_object_type: Guid | Str | Bin,
-    ?callback: Bool, ?application_data: Bin,
-  }]
-  | Dict[{
-    audit: SidSpec, mask: AccessMaskSpec, ?flags: AceFlagsSpec,
-    ?object_type: Guid | Str | Bin, ?inherited_object_type: Guid | Str | Bin,
-    ?callback: Bool, ?application_data: Bin, ?successful: Bool, ?failed: Bool,
-  }]
-)
+  | BaseDict $
+      allow: SidSpec
+      mask: AccessMaskSpec
+      ?flags: AceFlagsSpec
+      ?object_type: (Guid | Str | Bin)
+      ?inherited_object_type: (Guid | Str | Bin)
+      ?callback: Bool
+      ?application_data: Bin
+  | BaseDict $
+      deny: SidSpec
+      mask: AccessMaskSpec
+      ?flags: AceFlagsSpec
+      ?object_type: (Guid | Str | Bin)
+      ?inherited_object_type: (Guid | Str | Bin)
+      ?callback: Bool
+      ?application_data: Bin
+  | BaseDict $
+      audit: SidSpec
+      mask: AccessMaskSpec
+      ?flags: AceFlagsSpec
+      ?object_type: (Guid | Str | Bin)
+      ?inherited_object_type: (Guid | Str | Bin)
+      ?callback: Bool
+      ?application_data: Bin
+      ?successful: Bool
+      ?failed: Bool
 
 # An ACL, built or given as its entries in packet order.
 #
@@ -228,31 +295,37 @@ pub @let AceSpec = (
 #     mask: :GENERIC_ALL:
 #     object_type: $schema_guid
 # ```
-pub @let AclSpec = (
+pub @let AclSpec = $
   | Acl
   | Iterable[AceSpec]
-  | Dict[{*AceSpec, ?revision: AclRevision | Int}]
-)
+  | BaseDict $
+      *AceSpec
+      ?revision: (AclRevision | Int)
 
 # A security descriptor, built, given as a self-relative packet, or given as a
 # dictionary of the component arguments of
 # [`sec_desc`](security.windows.sec_desc).
-pub @let SecDescSpec = (
+pub @let SecDescSpec = $
   | SecDesc
   | Bin
-  | Dict[{
-    ?owner: SidSpec | nil, ?group: SidSpec | nil,
-    ?dacl: AclSpec | nil, ?sacl: AclSpec | nil,
-    ?owner_defaulted: Bool, ?group_defaulted: Bool,
-    ?dacl_present: Bool, ?dacl_defaulted: Bool,
-    ?dacl_auto_inherit_required: Bool, ?dacl_auto_inherited: Bool,
-    ?dacl_protected: Bool,
-    ?sacl_present: Bool, ?sacl_defaulted: Bool,
-    ?sacl_auto_inherit_required: Bool, ?sacl_auto_inherited: Bool,
-    ?sacl_protected: Bool,
-    ?rm_control: Int | nil,
-  }]
-)
+  | BaseDict $
+      ?owner: (SidSpec | nil)
+      ?group: (SidSpec | nil)
+      ?dacl: (AclSpec | nil)
+      ?sacl: (AclSpec | nil)
+      ?owner_defaulted: Bool
+      ?group_defaulted: Bool
+      ?dacl_present: Bool
+      ?dacl_defaulted: Bool
+      ?dacl_auto_inherit_required: Bool
+      ?dacl_auto_inherited: Bool
+      ?dacl_protected: Bool
+      ?sacl_present: Bool
+      ?sacl_defaulted: Bool
+      ?sacl_auto_inherit_required: Bool
+      ?sacl_auto_inherited: Bool
+      ?sacl_protected: Bool
+      ?rm_control: (Int | nil)
 
 # A symbol naming rights of an [`AccessMask`](security.windows.AccessMask).
 #
@@ -271,12 +344,20 @@ pub @let SecDescSpec = (
 # | `:GENERIC_WRITE:`            | Request object-specific write access             |
 # | `:GENERIC_EXECUTE:`          | Request object-specific execute access           |
 # | `:GENERIC_ALL:`              | Request all object-specific access               |
-pub @let AccessRight = (
-  | :DELETE: | :READ_CONTROL: | :WRITE_DAC: | :WRITE_OWNER: | :SYNCHRONIZE:
-  | :STANDARD_RIGHTS_REQUIRED: | :STANDARD_RIGHTS_ALL:
-  | :ACCESS_SYSTEM_SECURITY: | :MAXIMUM_ALLOWED: | :GENERIC_READ:
-  | :GENERIC_WRITE: | :GENERIC_EXECUTE: | :GENERIC_ALL:
-)
+pub @let AccessRight = $
+  | :DELETE:
+  | :READ_CONTROL:
+  | :WRITE_DAC:
+  | :WRITE_OWNER:
+  | :SYNCHRONIZE:
+  | :STANDARD_RIGHTS_REQUIRED:
+  | :STANDARD_RIGHTS_ALL:
+  | :ACCESS_SYSTEM_SECURITY:
+  | :MAXIMUM_ALLOWED:
+  | :GENERIC_READ:
+  | :GENERIC_WRITE:
+  | :GENERIC_EXECUTE:
+  | :GENERIC_ALL:
 
 # Generic Windows object access rights.
 #
@@ -366,11 +447,15 @@ pub class AccessMask: Iterable[AccessRight]
 # | `:CRITICAL:`             | The entry is critical and cannot be removed            |
 # | `:SUCCESSFUL_ACCESS:`    | An audit or alarm entry selects successful access      |
 # | `:FAILED_ACCESS:`        | An audit or alarm entry selects failed access          |
-pub @let AceFlag = (
-  | :OBJECT_INHERIT: | :CONTAINER_INHERIT: | :NO_PROPAGATE_INHERIT:
-  | :INHERIT_ONLY: | :INHERITED: | :CRITICAL: | :SUCCESSFUL_ACCESS:
+pub @let AceFlag = $
+  | :OBJECT_INHERIT:
+  | :CONTAINER_INHERIT:
+  | :NO_PROPAGATE_INHERIT:
+  | :INHERIT_ONLY:
+  | :INHERITED:
+  | :CRITICAL:
+  | :SUCCESSFUL_ACCESS:
   | :FAILED_ACCESS:
-)
 
 # Flags stored in an ACE header.
 pub class AceFlags: Iterable[AceFlag]
@@ -439,12 +524,21 @@ pub class AceFlags: Iterable[AceFlag]
 # | `:SACL_PROTECTED:`             | SACL blocks inheritable ACEs          |
 # | `:RM_CONTROL_VALID:`           | Resource-manager control byte valid   |
 # | `:SELF_RELATIVE:`              | Descriptor uses self-relative storage |
-pub @let SecDescControlFlag = (
-  | :OWNER_DEFAULTED: | :GROUP_DEFAULTED: | :DACL_PRESENT: | :DACL_DEFAULTED:
-  | :SACL_PRESENT: | :SACL_DEFAULTED: | :DACL_AUTO_INHERIT_REQUIRED:
-  | :SACL_AUTO_INHERIT_REQUIRED: | :DACL_AUTO_INHERITED: | :SACL_AUTO_INHERITED:
-  | :DACL_PROTECTED: | :SACL_PROTECTED: | :RM_CONTROL_VALID: | :SELF_RELATIVE:
-)
+pub @let SecDescControlFlag = $
+  | :OWNER_DEFAULTED:
+  | :GROUP_DEFAULTED:
+  | :DACL_PRESENT:
+  | :DACL_DEFAULTED:
+  | :SACL_PRESENT:
+  | :SACL_DEFAULTED:
+  | :DACL_AUTO_INHERIT_REQUIRED:
+  | :SACL_AUTO_INHERIT_REQUIRED:
+  | :DACL_AUTO_INHERITED:
+  | :SACL_AUTO_INHERITED:
+  | :DACL_PROTECTED:
+  | :SACL_PROTECTED:
+  | :RM_CONTROL_VALID:
+  | :SELF_RELATIVE:
 
 # Security descriptor control flags.
 pub class SecDescControl: Iterable[SecDescControlFlag]
@@ -491,9 +585,12 @@ pub class SecDescControl: Iterable[SecDescControlFlag]
 # | `:DACL:`  | Discretionary ACL        |
 # | `:SACL:`  | System ACL               |
 # | `:ALL:`   | All supported components |
-pub @let SecInfoComponent = (
-  | :OWNER: | :GROUP: | :DACL: | :SACL: | :ALL:
-)
+pub @let SecInfoComponent = $
+  | :OWNER:
+  | :GROUP:
+  | :DACL:
+  | :SACL:
+  | :ALL:
 
 # Security descriptor components loaded by a query.
 pub class SecInfo: Iterable[SecInfoComponent]
@@ -544,11 +641,16 @@ pub class SecInfo: Iterable[SecInfoComponent]
 # | `:INTEGRITY_ENABLED:`  | Integrity SID enabled       |
 # | `:RESOURCE:`           | Resource group              |
 # | `:LOGON_ID:`           | Logon-session identifier    |
-pub @let TokenGroupAttribute = (
-  | :MANDATORY: | :ENABLED_BY_DEFAULT: | :ENABLED: | :OWNER:
-  | :USE_FOR_DENY_ONLY: | :INTEGRITY: | :INTEGRITY_ENABLED: | :RESOURCE:
+pub @let TokenGroupAttribute = $
+  | :MANDATORY:
+  | :ENABLED_BY_DEFAULT:
+  | :ENABLED:
+  | :OWNER:
+  | :USE_FOR_DENY_ONLY:
+  | :INTEGRITY:
+  | :INTEGRITY_ENABLED:
+  | :RESOURCE:
   | :LOGON_ID:
-)
 
 # Windows access-token group attributes.
 pub class TokenGroupAttributes: Iterable[TokenGroupAttribute]

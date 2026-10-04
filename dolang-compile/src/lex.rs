@@ -1648,6 +1648,10 @@ impl<'a> Lexer<'a> {
         self.span
     }
 
+    pub(crate) fn indent_depth(&self) -> usize {
+        self.stack.len()
+    }
+
     // Inject a "synthetic" indentation level; used by the parser for certain dash lists:
     //
     // - foo

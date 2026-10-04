@@ -1,0 +1,68 @@
+@let Scalar = $
+  | Str
+  | Int
+  | nil
+
+@let Commented = $
+  # union introduction
+  # still the introduction
+  | Int
+    # comment at the implicit level
+    # another comment
+  | Str
+
+@let Config = Dict $
+  host: Str
+  ?port: Int
+  credentials:
+    | nil
+    | Dict $
+        user: Str
+        token: Str
+
+@let Pair = Tuple ...$
+  Str Int
+
+@let Shape = $
+  Str Int (Str | nil)
+  - | Int
+    | Str
+  - Dict $
+      name: Str
+  ?port: Int
+  "x-custom": Str
+  (Str): Bool
+  *Str
+  **Bool
+  *
+  **
+  ...
+
+@let Wrapped = $
+  - Dict[
+      {name: Str, ?age: Int}
+    ]
+  - (Int |
+      Str)
+  - ?Int
+
+@let Base = {name: Str}
+@let Included = $
+  ...Base
+  *...Base
+  ...$
+    Int Str
+
+class _Applied[_T, _S @ {...}]
+@let Appended = _Applied[Int] $
+  value: Int
+
+@let Recursive = $
+  | nil
+  | Array[Recursive]
+
+let nested = do
+  @let Local = $
+    - Int
+  42
+assert_eq (nested()) 42

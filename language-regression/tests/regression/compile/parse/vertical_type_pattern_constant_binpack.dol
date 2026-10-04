@@ -1,0 +1,7 @@
+bind [1, 2]
+  - 1 2
+# error: expected end of item
+#   --> vertical_type_pattern_constant_binpack.dol:LL:LL
+#    |
+# LL |   - 1 2
+#    |       ^

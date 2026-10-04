@@ -1,0 +1,49 @@
+pub @let Schema = $
+  #               ^: sigil
+  #: operator
+  - Int
+  # ^~~: type_token
+  #: operator
+  ?name: Str
+  #^~~~: type_key
+  #    ^: delim
+  #: delim
+  (Str): Bool
+  #^~~: type_token
+  #   ^: delim
+  #    ^: delim
+  #~~: sigil
+  ...Other
+
+@let Other = {Int}
+
+@let Applied = Dict $
+  #                 ^: sigil
+  #~~~~: type_key
+  value:
+    #: operator
+    | nil
+    # ^~~: constant
+    #: operator
+    | Dict $
+        #  ^: sigil
+        #~~~: type_key
+        name: Str
+
+@let Expanded = Tuple ...$
+  #                   ^~~: sigil
+  #                      ^: sigil
+  Int Str
+
+@let Appended = Bar[Int] $
+  #                ^: delim
+  #                    ^: delim
+  #                      ^: sigil
+  value: Str
+
+@let Choice = $
+  #           ^: sigil
+  #: operator
+  | Int
+  #: operator
+  | Str

@@ -244,6 +244,16 @@ impl<'a> Iterator for Peek<'a> {
 }
 
 impl Parser<'_> {
+    pub(super) fn expect_item_end(&mut self, scope: &mut Scope) -> Result<()> {
+        while let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
+            self.advance();
+        }
+        match self.peek()? {
+            None | Some(token!(TokenInfo::StmtSep | TokenInfo::Dedent)) => Ok(()),
+            token => Err(self.syntax_error(scope, token, "expected end of item")),
+        }
+    }
+
     pub(super) fn push_colon(&mut self, span: Span) {
         self.lex.push(Token {
             info: TokenInfo::Colon,
@@ -256,6 +266,31 @@ impl Parser<'_> {
             info: TokenInfo::Op(Op::Bar),
             span,
         })
+    }
+
+    pub(super) fn indent_depth(&self) -> usize {
+        self.lex.lexer.indent_depth()
+    }
+
+    /// Discard a malformed layout body through its closing indentation.
+    pub(super) fn resync_indent(&mut self, depth: usize) {
+        self.lex.set_error();
+        loop {
+            let token = match self.peek() {
+                Ok(token) => token,
+                Err(_) => continue,
+            };
+            if self.indent_depth() < depth {
+                if matches!(token, Some(token!(TokenInfo::Dedent))) {
+                    self.advance();
+                }
+                break;
+            }
+            if token.is_none() {
+                break;
+            }
+            self.advance();
+        }
     }
 
     pub(super) fn add_indent(&mut self, offset: Offset) {

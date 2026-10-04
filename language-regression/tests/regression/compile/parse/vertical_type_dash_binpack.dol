@@ -1,0 +1,10 @@
+@let Bad = $
+  - Int Str
+# error: expected end of item
+#   --> vertical_type_dash_binpack.dol:LL:LL
+#    |
+# LL |   - Int Str
+#    |         ^^^
+
+@let Following = Int
+assert_eq 1 1

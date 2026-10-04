@@ -22,24 +22,27 @@
 #   echo $id $node.span
 # ```
 
+import std:
+  - @BaseDict
+
 import term:
   - @Text
 
 # What a prelude binds a module to: an alias, an array of items, or a
 # dictionary of items to their aliases.
-pub @let PreludeBinding = (
-  | Str | Sym
+pub @let PreludeBinding = $
+  | Str
+  | Sym
   | Array[Str | Sym]
-  | Dict[Str | Sym, Str | Sym]
-)
+  | BaseDict[Str | Sym, Str | Sym]
 
 # Imports to bind before compiled source: a module name, an array of module
 # names, or a dictionary of module names to their bindings.
-pub @let Prelude = (
-  | Str | Sym
+pub @let Prelude = $
+  | Str
+  | Sym
   | Array[Str | Sym]
-  | Dict[Str | Sym, PreludeBinding]
-)
+  | BaseDict[Str | Sym, PreludeBinding]
 
 # A staged compilation unit.
 #
@@ -747,12 +750,27 @@ pub class AnyTypeParam: TypeParam
 # | `:TYPE_KEY:`     | A keyed argument within a type expression                 |
 # | `:VARIABLE:`     | A variable                                                 |
 # | `:SIGIL:`        | A sigil like `$` or `...`                                  |
-pub @let TokenKind = (
-  | :ANNOTATION: | :BINDER: | :COMMENT: | :CONSTANT: | :DELIM: | :ESCAPE:
-  | :FIELD: | :METHOD: | :KEY: | :MODULE_NAME: | :MODULE_ITEM: | :KEYWORD:
-  | :LITERAL: | :NUMBER: | :OPERATOR: | :STRING_DELIM: | :TYPE: | :TYPE_KEY:
-  | :VARIABLE: | :SIGIL:
-)
+pub @let TokenKind = $
+  | :ANNOTATION:
+  | :BINDER:
+  | :COMMENT:
+  | :CONSTANT:
+  | :DELIM:
+  | :ESCAPE:
+  | :FIELD:
+  | :METHOD:
+  | :KEY:
+  | :MODULE_NAME:
+  | :MODULE_ITEM:
+  | :KEYWORD:
+  | :LITERAL:
+  | :NUMBER:
+  | :OPERATOR:
+  | :STRING_DELIM:
+  | :TYPE:
+  | :TYPE_KEY:
+  | :VARIABLE:
+  | :SIGIL:
 
 # A syntactic token.
 #

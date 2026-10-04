@@ -23,6 +23,9 @@
 # An item's name becomes a field of the resulting [`Args`](args.Args), with
 # hyphens converted to underscores: `dry-run` is read as `p.dry_run`.
 
+import std:
+  - @BaseDict
+
 import shell
 import fs:
   - Path
@@ -38,10 +41,14 @@ import fs:
 # | `divider` | Stop interpreting later arguments as options or flags              |
 # | `env`     | Environment variable consulted when the flag is absent             |
 # | `help`    | Description shown in `--help` output                               |
-pub @let FlagSpec = Dict[{
-  flag: Str, ?long: Str | nil, ?short: Str, ?default: Bool, ?divider: Bool,
-  ?env: Str, ?help: Str,
-}]
+pub @let FlagSpec = BaseDict $
+  flag: Str
+  ?long: (Str | nil)
+  ?short: Str
+  ?default: Bool
+  ?divider: Bool
+  ?env: Str
+  ?help: Str
 
 # A named option that takes a value.
 #
@@ -58,11 +65,18 @@ pub @let FlagSpec = Dict[{
 # | `meta`    | Placeholder shown in help output. Defaults to the uppercased name  |
 # | `values`  | Allowed values                                                     |
 # | `help`    | Description shown in `--help` output                               |
-pub @let OptSpec = Dict[{
-  opt: Str, ?long: Str | nil, ?short: Str, ?parse: (Str -> Value),
-  ?default: Value, ?divider: Bool, ?env: Str, ?collect: Bool, ?meta: Str,
-  ?values: Iterable[Value], ?help: Str,
-}]
+pub @let OptSpec = BaseDict $
+  opt: Str
+  ?long: (Str | nil)
+  ?short: Str
+  ?parse: (Str -> Value)
+  ?default: Value
+  ?divider: Bool
+  ?env: Str
+  ?collect: Bool
+  ?meta: Str
+  ?values: Iterable[Value]
+  ?help: Str
 
 # A positional argument.
 #
@@ -75,10 +89,14 @@ pub @let OptSpec = Dict[{
 # | `collect` | Collect all remaining arguments in an array. Last argument only    |
 # | `values`  | Allowed values                                                     |
 # | `help`    | Description shown in `--help` output                               |
-pub @let ArgSpec = Dict[{
-  arg: Str, ?parse: (Str -> Value), ?default: Value, ?divider: Bool,
-  ?collect: Bool, ?values: Iterable[Value], ?help: Str,
-}]
+pub @let ArgSpec = BaseDict $
+  arg: Str
+  ?parse: (Str -> Value)
+  ?default: Value
+  ?divider: Bool
+  ?collect: Bool
+  ?values: Iterable[Value]
+  ?help: Str
 
 # A subcommand.
 #
@@ -95,9 +113,11 @@ pub @let ArgSpec = Dict[{
 # symbol, such as `:deploy:` or `:build_docs:`, and its own fields are in a
 # nested [`Args`](args.Args) at `p[p.cmd]`. The result's `handler` field is the matched
 # handler.
-pub @let CmdSpec = Dict[{
-  cmd: Str, ?help: Str, ?usage: Str, *(SpecItem | Handler),
-}]
+pub @let CmdSpec = BaseDict $
+  cmd: Str
+  ?help: Str
+  ?usage: Str
+  *(SpecItem | Handler)
 
 # An item of an argument specification.
 pub @let SpecItem = (FlagSpec | OptSpec | ArgSpec | CmdSpec)

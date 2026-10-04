@@ -1,6 +1,9 @@
 # NFSv4 access-control-list types.
 
 import std:
+  - @BaseDict
+
+import std:
   - @Seq
 
 # A symbol naming a bit of a [`Mask`](security.nfs4.Mask).
@@ -21,12 +24,21 @@ import std:
 # | `:WRITE_ACL:`         | Write the ACL                                          |
 # | `:WRITE_OWNER:`       | Change owner and owning group                          |
 # | `:SYNCHRONIZE:`       | Use synchronous I/O                                    |
-pub @let MaskBit = (
-  | :READ_DATA: | :WRITE_DATA: | :APPEND_DATA: | :READ_NAMED_ATTRS:
-  | :WRITE_NAMED_ATTRS: | :EXECUTE: | :DELETE_CHILD: | :READ_ATTRIBUTES:
-  | :WRITE_ATTRIBUTES: | :DELETE: | :READ_ACL: | :WRITE_ACL: | :WRITE_OWNER:
+pub @let MaskBit = $
+  | :READ_DATA:
+  | :WRITE_DATA:
+  | :APPEND_DATA:
+  | :READ_NAMED_ATTRS:
+  | :WRITE_NAMED_ATTRS:
+  | :EXECUTE:
+  | :DELETE_CHILD:
+  | :READ_ATTRIBUTES:
+  | :WRITE_ATTRIBUTES:
+  | :DELETE:
+  | :READ_ACL:
+  | :WRITE_ACL:
+  | :WRITE_OWNER:
   | :SYNCHRONIZE:
-)
 
 # NFSv4 ACE permission bits.
 #
@@ -81,10 +93,14 @@ pub class Mask: Iterable[MaskBit]
 # | `:SUCCESSFUL_ACCESS:`    | Generate an audit/alarm event on successful access (`:AUDIT:`/`:ALARM:` entries) |
 # | `:FAILED_ACCESS:`        | Generate an audit/alarm event on failed access (`:AUDIT:`/`:ALARM:` entries)     |
 # | `:INHERITED:`            | This entry was inherited from a parent directory                                 |
-pub @let FlagBit = (
-  | :FILE_INHERIT: | :DIRECTORY_INHERIT: | :NO_PROPAGATE_INHERIT: | :INHERIT_ONLY:
-  | :SUCCESSFUL_ACCESS: | :FAILED_ACCESS: | :INHERITED:
-)
+pub @let FlagBit = $
+  | :FILE_INHERIT:
+  | :DIRECTORY_INHERIT:
+  | :NO_PROPAGATE_INHERIT:
+  | :INHERIT_ONLY:
+  | :SUCCESSFUL_ACCESS:
+  | :FAILED_ACCESS:
+  | :INHERITED:
 
 # NFSv4 ACE inheritance and audit flags.
 #
@@ -268,10 +284,14 @@ pub class Acl
 
 # The principal of an entry: the file owner, owning group, everyone, or a
 # user or group ID.
-pub @let Principal = (
-  | :OWNER: | :OWNING_GROUP: | :EVERYONE:
-  | Dict[{user: Int}] | Dict[{group: Int}]
-)
+pub @let Principal = $
+  | :OWNER:
+  | :OWNING_GROUP:
+  | :EVERYONE:
+  | BaseDict $
+      user: Int
+  | BaseDict $
+      group: Int
 
 # A mask given as a [`Mask`](security.nfs4.Mask), one symbol, or an iterable
 # of symbols.
@@ -284,13 +304,24 @@ pub @let FlagsSpec = (Flags | FlagBit | Iterable[FlagBit])
 # An NFSv4 entry, built or declared as a dictionary. A dictionary has
 # exactly one type key, with the same meaning as the keyword arguments of
 # [`ace`](security.nfs4.ace).
-pub @let AceSpec = (
+pub @let AceSpec = $
   | Ace
-  | Dict[{allow: Principal, mask: MaskSpec, ?flags: FlagsSpec}]
-  | Dict[{deny: Principal, mask: MaskSpec, ?flags: FlagsSpec}]
-  | Dict[{audit: Principal, mask: MaskSpec, ?flags: FlagsSpec}]
-  | Dict[{alarm: Principal, mask: MaskSpec, ?flags: FlagsSpec}]
-)
+  | BaseDict $
+      allow: Principal
+      mask: MaskSpec
+      ?flags: FlagsSpec
+  | BaseDict $
+      deny: Principal
+      mask: MaskSpec
+      ?flags: FlagsSpec
+  | BaseDict $
+      audit: Principal
+      mask: MaskSpec
+      ?flags: FlagsSpec
+  | BaseDict $
+      alarm: Principal
+      mask: MaskSpec
+      ?flags: FlagsSpec
 
 # An NFSv4 ACL, built or given as its entries.
 pub @let AclSpec = (Acl | Iterable[AceSpec])

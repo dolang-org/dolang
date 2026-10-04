@@ -1,3 +1,6 @@
+import std:
+  - @BaseDict
+
 import progress json patch rand shlex strand proc sys transfer _vfs time
   std:
     - RuntimeError
@@ -31,7 +34,7 @@ pub @let PullPolicy = (:MISSING: | :ALWAYS: | :NEVER:)
 
 # Environment variables to set. A value of `:INHERIT:` copies the variable from
 # the calling environment; any other value is converted to a string.
-pub @let Env = Dict[Str | Sym, Value]
+pub @let Env = BaseDict[Str | Sym, Value]
 
 # A mount for a container.
 #
@@ -41,10 +44,11 @@ pub @let Env = Dict[Str | Sym, Value]
 # | `target`   | Mount path in the container                     |
 # | `source`   | Host path or volume name. Required for `:BIND:` |
 # | `readonly` | Mount read-only. Defaults to `false`            |
-pub @let ContainerMount = Dict[{
-  type: :BIND: | :VOLUME: | :TMPFS:, target: Str | Path,
-  ?source: Str | Path, ?readonly: Bool,
-}]
+pub @let ContainerMount = BaseDict $
+  type: (:BIND: | :VOLUME: | :TMPFS:)
+  target: (Str | Path)
+  ?source: (Str | Path)
+  ?readonly: Bool
 
 # A mount available to every build step.
 #
@@ -55,10 +59,12 @@ pub @let ContainerMount = Dict[{
 # | `source`   | Host path or volume name. Required for `:BIND:` |
 # | `id`       | Cache ID. Defaults to `target`                  |
 # | `readonly` | Mount read-only. Defaults to `false`            |
-pub @let BuildMount = Dict[{
-  type: :CACHE: | :BIND: | :VOLUME: | :TMPFS:, target: Str | Path,
-  ?source: Str | Path, ?id: Str, ?readonly: Bool,
-}]
+pub @let BuildMount = BaseDict $
+  type: (:CACHE: | :BIND: | :VOLUME: | :TMPFS:)
+  target: (Str | Path)
+  ?source: (Str | Path)
+  ?id: Str
+  ?readonly: Bool
 
 # A network protocol for a published port.
 pub @let PortProtocol = (:TCP: | :UDP: | :SCTP:)
@@ -71,10 +77,11 @@ pub @let PortProtocol = (:TCP: | :UDP: | :SCTP:)
 # | `host_port`      | Host port. Assigned automatically when omitted  |
 # | `host_ip`        | Host address to bind                            |
 # | `protocol`       | Protocol. Defaults to `:TCP:`                   |
-pub @let PortSpec = Dict[{
-  container_port: Int | Str, ?host_port: Int | Str, ?host_ip: Str,
-  ?protocol: PortProtocol,
-}]
+pub @let PortSpec = BaseDict $
+  container_port: (Int | Str)
+  ?host_port: (Int | Str)
+  ?host_ip: Str
+  ?protocol: PortProtocol
 
 # A container restart policy.
 #
@@ -86,13 +93,17 @@ pub @let PortSpec = Dict[{
 # | `:UNLESS_STOPPED:` | Restart unless explicitly stopped  |
 #
 # `max_retries` limits restarts, and applies only to `:ON_FAILURE:`.
-pub @let RestartSpec = Dict[{
-  policy: :NO: | :ON_FAILURE: | :ALWAYS: | :UNLESS_STOPPED:,
-  ?max_retries: Int,
-}]
+pub @let RestartSpec = BaseDict $
+  policy: (:NO: | :ON_FAILURE: | :ALWAYS: | :UNLESS_STOPPED:)
+  ?max_retries: Int
 
 # A target platform: an `os/arch[/variant]` string, or its parts.
-pub @let Platform = (Str | Dict[{os: Str, arch: Str, ?variant: Str}])
+pub @let Platform = $
+  | Str
+  | BaseDict $
+      os: Str
+      arch: Str
+      ?variant: Str
 
 # An image archive format. Docker supports only `:DOCKER_ARCHIVE:`.
 #
@@ -103,28 +114,44 @@ pub @let Platform = (Str | Dict[{os: Str, arch: Str, ?variant: Str}])
 # | `:OCI_DIR:`        | OCI layout directory                                    |
 # | `:DOCKER_DIR:`     | Docker directory format                                 |
 # | `:DIR:`            | Plain directory of layers                               |
-pub @let ArchiveFormat = (
-  | :DOCKER_ARCHIVE: | :OCI_ARCHIVE: | :OCI_DIR: | :DOCKER_DIR: | :DIR:
-)
+pub @let ArchiveFormat = $
+  | :DOCKER_ARCHIVE:
+  | :OCI_ARCHIVE:
+  | :OCI_DIR:
+  | :DOCKER_DIR:
+  | :DIR:
 
 # A file to add in a build step, from a path or URL or as direct content.
 #
 # If `target` is a directory, a source path or URL keeps its file name. Direct
 # content is always written to `target` itself. `chmod` sets the destination's
 # permissions.
-pub @let AddSpec = (
-  | Dict[{source: Str | Path | Url, target: Str | Path, ?chmod: Int | Mode}]
-  | Dict[{content: Str | Bin, target: Str | Path, ?chmod: Int | Mode}]
-)
+pub @let AddSpec = $
+  | BaseDict $
+      source: (Str | Path | Url)
+      target: (Str | Path)
+      ?chmod: (Int | Mode)
+  | BaseDict $
+      content: (Str | Bin)
+      target: (Str | Path)
+      ?chmod: (Int | Mode)
 
 # A unified patch to apply in a build step, from a file or as direct content.
-pub @let PatchSpec = (Dict[{source: Str | Path}] | Dict[{content: Str | Bin}])
+pub @let PatchSpec = $
+  | BaseDict $
+      source: (Str | Path)
+  | BaseDict $
+      content: (Str | Bin)
 
 # The lifecycle state of a container.
-pub @let ContainerStatus = (
-  | :CREATED: | :RUNNING: | :PAUSED: | :RESTARTING: | :REMOVING: | :EXITED:
+pub @let ContainerStatus = $
+  | :CREATED:
+  | :RUNNING:
+  | :PAUSED:
+  | :RESTARTING:
+  | :REMOVING:
+  | :EXITED:
   | :DEAD:
-)
 
 # A published port of a container, as reported by
 # [`Container.state`](_container.dockman.Container.state).
