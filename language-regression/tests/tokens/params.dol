@@ -15,3 +15,8 @@ def connect
 do
   dbg $p
   dbg $flag
+
+# A `?` before a sub-pattern lets its item be absent.
+let f = do |?k: (a = 1)| a
+#           ^: operator
+dbg (f())
