@@ -2168,6 +2168,7 @@ impl<'a> Elaborater<'a> {
         export: bool,
     ) -> Result<()> {
         match pat {
+            Pattern::Constant { .. } => Ok(()),
             Pattern::TypeTest(test) => {
                 self.visit_ident(scope, &mut test.class.ident)?;
                 if let Some(res) = test.class.ident.res

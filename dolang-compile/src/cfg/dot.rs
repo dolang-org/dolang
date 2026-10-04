@@ -84,6 +84,7 @@ impl Inst {
             Nop => write!(w, "nop"),
             Pop => write!(w, "pop"),
             Dup => write!(w, "dup"),
+            Pick(n) => write!(w, "pick {n}"),
             Swap(i, j) => write!(w, "swap {} {}", i, j),
             Add => write!(w, "add"),
             Sub => write!(w, "sub"),

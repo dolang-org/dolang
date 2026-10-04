@@ -283,6 +283,7 @@ pub enum Builtin {
     Record,
     TypeTest,
     TypeAssert,
+    ValueAssert,
     _LEN,
 }
 
@@ -307,6 +308,7 @@ pub mod builtin {
     pub const TUPLE: usize = Tuple as usize;
     pub const RECORD: usize = Record as usize;
     pub const TYPE_TEST: usize = TypeTest as usize;
+    pub const VALUE_ASSERT: usize = ValueAssert as usize;
     pub const TYPE_ASSERT: usize = TypeAssert as usize;
 }
 
@@ -331,6 +333,7 @@ pub const BUILTINS: [&str; Builtin::_LEN as usize] = [
     "record",
     "type_test",
     "type_assert",
+    "value_assert",
 ];
 
 trait Encode {
@@ -355,6 +358,7 @@ pub enum Opcode {
     Div,
     Ediv,
     Dup,
+    Pick,
     Swap,
     LoadConst, // id: uvar
     LoadLocal, // index: uvar
@@ -408,6 +412,7 @@ pub enum Inst {
     Div,
     Ediv,
     Dup,
+    Pick(usize),
     Swap(usize, usize),
     LoadConst(usize),
     LoadLocal(usize),
@@ -459,6 +464,7 @@ impl Display for Inst {
         match self {
             Pop => write!(f, "pop"),
             Dup => write!(f, "dup"),
+            Pick(n) => write!(f, "pick {n}"),
             Swap(i, j) => write!(f, "swap {i} {j}"),
             Add => write!(f, "add"),
             Sub => write!(f, "sub"),
@@ -535,6 +541,7 @@ impl Decode for Opcode {
                 Some(Div),
                 Some(Ediv),
                 Some(Dup),
+                Some(Pick),
                 Some(Swap),
                 Some(LoadConst),
                 Some(LoadLocal),
@@ -783,7 +790,6 @@ impl Decode for Opcode {
                 None,
                 None,
                 None,
-                None,
             ];
             if size_of_val(&table) != 256 {
                 panic!("reality is broken")
@@ -823,6 +829,10 @@ impl Inst {
             Gte => w.opcode(Opcode::Gte),
             Lte => w.opcode(Opcode::Lte),
             Dup => w.opcode(Opcode::Dup),
+            Pick(n) => {
+                w.opcode(Opcode::Pick)?;
+                w.usize(*n)
+            }
             Swap(i, j) => {
                 w.opcode(Opcode::Swap)?;
                 w.usize(*i)?;
@@ -1053,6 +1063,7 @@ impl<R: io::Read + io::Seek> Iterator for InstDecoder<R> {
                 Div => Inst::Div,
                 Ediv => Inst::Ediv,
                 Dup => Inst::Dup,
+                Pick => Inst::Pick(self.usize()?),
                 Swap => Inst::Swap(self.usize()?, self.usize()?),
                 LoadConst => Inst::LoadConst(self.usize()?),
                 LoadLocal => Inst::LoadLocal(self.usize()?),

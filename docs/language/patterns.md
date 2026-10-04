@@ -1,10 +1,13 @@
-# Destructuring
+# Pattern Matching
 
-Do supports destructuring data in `let`, `bind`, and `for`.
+Patterns bind names, unpack sequences and keyed values, and test constants or
+runtime types. Use them in `let`, `bind`, `for`, and lambda parameters. With
+`if let`, `if bind`, or their `while` forms, a pattern match controls whether
+the body runs.
 
-## `let` Destructuring
+## Binding and Unpacking
 
-Destructure arrays and similar sequences by listing multiple names:
+`let` matches arrays and similar sequences by listing multiple names:
 
 ```
 let a b = [1, 2]
@@ -31,8 +34,7 @@ Specify nothing after `...` to simply ignore surplus items:
 let first ... = [1, 2, 3, 4]
 ```
 
-Destructure dictionaries and similar key/value structures with key
-patterns:
+Match dictionaries and similar keyed values with key patterns:
 
 ```
 let :name age: years = {name: "Alice", age: 30}
@@ -40,8 +42,8 @@ assert_eq $name "Alice"
 assert_eq $years 30
 ```
 
-Mixed positional/key destructuring is also possible, with the semantics
-depending on the structure. For dictionaries, positional patterns bind
+A pattern can mix positional and keyed items; how they match depends on the
+source. For dictionaries, positional patterns bind
 incrementing integer keys:
 
 ```
@@ -73,7 +75,7 @@ be unpacked and spread repeatedly; these operations do not consume it.
 ### Non-symbol Keys
 
 `:key` and `key: name` match **symbol** keys. External inputs such as decoded
-JSON will typically have string keys. To destructure such data, use a constant
+JSON will typically have string keys. To match such keys, use a constant
 expression instead of a bare key:
 
 ```playground
@@ -91,9 +93,8 @@ assert_eq $age 30
 
 ## `bind`
 
-`bind` is similar to `let` but takes the scrutinee (the value to destructure)
-first and provides the destructuring pattern in vertical layout. This is
-useful when the pattern is more complex than what you're destructuring.
+`bind` takes the scrutinee (the value to match) first, followed by the pattern
+in vertical layout. Use it to lay out longer patterns across several lines.
 
 ```playground
 #> import test:
@@ -182,13 +183,43 @@ assert_eq $type "text/plain"
 ```
 
 Annotations go on the names a sub-pattern binds, never on the sub-pattern, and a
-sub-pattern has no default of its own. Function parameters accept sub-patterns
+sub-pattern has no default of its own. Lambda parameters accept sub-patterns
 too:
 
 ```
-def add (x1 y1) (x2 y2)
-  [x1 + x2, y1 + y2]
+let add = (do |(x1 y1) (x2 y2)| [x1 + x2, y1 + y2])
 ```
+
+A `def`'s parameters must be names, which its signature can annotate. Unpack
+them in the body instead.
+
+## Constant Patterns
+
+A constant in a pattern matches an equal value using `==` and binds no name.
+A bare word still binds a name; quote a string to match it.
+
+```
+if let "GET" path = request
+  echo $path
+
+if bind response
+  status: 200
+  :body
+do
+  echo $body
+```
+
+A lone constant tests the whole value. Parentheses require a sequence with the
+listed items. Constants also nest in sub-patterns and runtime type tests, such
+as `Array("GET" path)`.
+
+`false` and `nil` match equal values in conditional patterns; the truthiness
+test for a lone name does not apply to constants.
+
+A mismatch takes a conditional pattern's failure branch. In a plain `let`,
+`bind`, or `for`, it raises `std.TypeError`. Constants cannot have annotations
+or defaults, and cannot be `def` parameters. Interpolated strings and other
+expressions that cannot be folded to constants are rejected.
 
 ## Type-Test Patterns
 
@@ -221,21 +252,21 @@ bind point
     y: py
 ```
 
-This form works in `bind`, vertical function parameters, and nested vertical
-patterns. Use `C(pattern)` in horizontal bindings. Both forms accept annotations
-and defaults on inner bindings, but neither accepts an annotation or default on
-the whole type-test pattern. Bodiless signatures accept neither form.
+This form works in `bind` and nested vertical patterns. Use `C(pattern)` in
+horizontal bindings. Both forms accept annotations and defaults on inner
+bindings, but neither accepts an annotation or default on the whole type-test
+pattern. `def` parameters accept neither form.
 
-A failed class test raises `TypeError` in an ordinary binding or function
+A failed class test raises `TypeError` in an ordinary binding or lambda
 parameter. In a conditional binding it takes the failure branch. A successful
 class test can capture a falsy value: `if let Bool(value) = false` succeeds and
 binds `false`. A subsequent inner pattern can still fail independently.
 
-## Conditional Destructuring
+## Conditional Matching
 
-`let` and `bind` after `if` or `while` make the destructuring itself the
-condition: the bindings are in scope for the branch body when the pattern
-matches, and the else branch runs when it does not.
+`let` and `bind` after `if` or `while` make the pattern match the condition.
+The bindings are in scope for the branch body when the pattern matches, and
+the else branch runs when it does not.
 
 ```
 if let a b = [1, 2]
@@ -284,10 +315,10 @@ let parts = $
 
 ### What Counts as a Match
 
-Only a *shape* mismatch takes the else branch: too few or too many
-positional elements, or a missing or unexpected key. Any other error raised
-while destructuring propagates as usual. In particular, destructuring a value
-that does not support it at all is an error rather than a silent non-match:
+A pattern takes the failure branch when an unpack has too few or too many
+positional items, a missing or unexpected key, or a type test or constant
+comparison fails. Other errors propagate as usual. In particular, trying to
+unpack a value that does not support it is an error:
 
 ```
 # Branches: [1, 2] unpacks fine, but not into three elements
@@ -296,7 +327,7 @@ if let a b c = [1, 2]
 else
   echo "wrong arity"
 
-# Raises: an int cannot be destructured at all
+# Raises: an int cannot be unpacked
 if let a b = 42
   echo unreachable
 else
@@ -309,7 +340,7 @@ mismatch into a match.
 ### Binding a Single Name
 
 A pattern that is a bare identifier binds the scrutinee itself and branches on
-its truthiness rather than destructuring it:
+its truthiness without unpacking it:
 
 ```
 if let value = lookup key
@@ -323,9 +354,9 @@ To match a sequence of exactly one item instead, write the item in parentheses:
 
 A nested pattern matches only if every level does.
 
-## Destructuring in `for`
+## Patterns in `for`
 
-Destructure elements during iteration:
+`for` matches each element against its pattern:
 
 ```playground
 for k v = {name: "Alice", age: 30}

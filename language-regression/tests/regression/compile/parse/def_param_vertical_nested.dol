@@ -1,0 +1,9 @@
+def f
+  - (a b)
+# error: a `def` parameter must be a name; unpack it in the body
+#   --> def_param_vertical_nested.dol:LL:LL
+#    |
+# LL |   - (a b)
+#    |     ^
+do
+  nil

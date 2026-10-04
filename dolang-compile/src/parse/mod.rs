@@ -92,6 +92,22 @@ macro_rules! expr_start {
     };
 }
 
+/// The start of a constant pattern, whose value goes in the constant table: a
+/// scalar, or a string or binary string that must fold to one. `(` would start a
+/// sub-pattern instead.
+macro_rules! const_pattern_start {
+    () => {
+        TokenInfo::DQuote
+            | TokenInfo::RawQuote
+            | TokenInfo::BQuote
+            | TokenInfo::Sym
+            | TokenInfo::Int(_)
+            | TokenInfo::F64
+            | TokenInfo::Bool(_)
+            | TokenInfo::Keyword(Keyword::Nil)
+    };
+}
+
 macro_rules! expr_tail_break {
     () => {
         TokenInfo::RightParen

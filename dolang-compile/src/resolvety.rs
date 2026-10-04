@@ -709,6 +709,7 @@ impl Check<'_> {
 
     fn pattern(&mut self, frame: &Frame<'_>, pattern: &mut Pattern) {
         match pattern {
+            Pattern::Constant { .. } => {}
             Pattern::TypeTest(test) => self.pattern(frame, &mut test.pattern),
             Pattern::Ident(PatIdent { ident, ty }) => {
                 self.warn_value_name(frame, ident);

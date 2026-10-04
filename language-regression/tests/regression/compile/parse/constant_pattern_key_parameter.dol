@@ -1,0 +1,7 @@
+def f status: 200
+  # error: a `def` parameter must be a name; unpack it in the body
+  #   --> constant_pattern_key_parameter.dol:LL:LL
+  #    |
+  # LL | def f status: 200
+  #    |               ^^^
+  nil

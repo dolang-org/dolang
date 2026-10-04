@@ -1,0 +1,7 @@
+let name = "foo"
+let "$name" = "foo"
+# error: expression is not a constant
+#   --> constant_pattern_interpolation.dol:LL:LL
+#    |
+# LL | let "$name" = "foo"
+#    |     ^^^^^^^

@@ -597,10 +597,9 @@ let double = Multiplier 2
 echo (double 5)   # 10
 ```
 
-### `(unpack)`: Destructuring
+### `(unpack)`: Pattern Unpacking
 
-Return a more primitive type (such as a `dict`) for the runtime to destructure
-in lieu of `self`:
+Return a value (such as a `dict`) for patterns to unpack in place of `self`:
 
 ```
 class Point

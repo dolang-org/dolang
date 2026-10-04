@@ -10,7 +10,7 @@ use super::{
 use dolang_util::verified::Verified;
 
 const MAGIC: [u8; 8] = *b"\xffdobytec";
-const VERSION: [u8; 3] = [0, 0, 5];
+const VERSION: [u8; 3] = [0, 0, 6];
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 struct Header {

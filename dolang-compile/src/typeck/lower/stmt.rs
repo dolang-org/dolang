@@ -23,7 +23,7 @@ use crate::{
             VarId,
         },
         elab::Referent,
-        r#type::{DeclId, DeclKind, UnitSpan},
+        r#type::{DeclId, DeclKind, Literal, UnitSpan},
     },
 };
 
@@ -236,7 +236,10 @@ impl<'u> Scope<'_, '_, 'u> {
     /// Bind a pattern to a value, whose operands are the only ones on the stack
     fn bind(&mut self, pattern: &'u ast::Pattern, value: Expr, dest: Option<VarId>) {
         let span = value.span;
-        if matches!(pattern, ast::Pattern::TypeTest(_)) {
+        if matches!(
+            pattern,
+            ast::Pattern::TypeTest(_) | ast::Pattern::Constant { .. }
+        ) {
             let var = match value.kind {
                 ExprKind::Var(var) | ExprKind::Copy(var) => {
                     self.emit(Step::Eval(value));
@@ -343,7 +346,7 @@ impl<'u> Scope<'_, '_, 'u> {
             ast::Pattern::Unpack(pat_items) => {
                 Pattern::Unpack(scope.pattern_items(pat_items, &mut nested))
             }
-            ast::Pattern::TypeTest(_) => {
+            ast::Pattern::TypeTest(_) | ast::Pattern::Constant { .. } => {
                 let var = scope.synthetic();
                 nested.push((var, pattern, pattern.span()));
                 Pattern::Bind(var)
@@ -377,6 +380,19 @@ impl<'u> Scope<'_, '_, 'u> {
             } else {
                 pattern
             };
+            if let ast::Pattern::Constant {
+                value: constant, ..
+            } = pattern
+            {
+                let value = self.pattern_constant(constant, span);
+                self.emit(Step::Assume(Assume {
+                    var,
+                    relation: Relation::Exact,
+                    negated: false,
+                    against: Against::Value(value),
+                }));
+                continue;
+            }
             let (pattern, inner) = self.pattern(pattern, frame);
             self.emit(Step::Let {
                 pattern,
@@ -384,6 +400,21 @@ impl<'u> Scope<'_, '_, 'u> {
             });
             self.nested_lets(inner, frame);
         }
+    }
+
+    /// Use the folded value, including strings with constant interpolations.
+    fn pattern_constant(&mut self, value: &ast::Const, span: Span) -> Expr {
+        let kind = match value {
+            ast::Const::Nil => ExprKind::Literal(Literal::Nil),
+            ast::Const::Bool(value) => ExprKind::Literal(Literal::Bool(*value)),
+            ast::Const::Int(value) => ExprKind::Literal(Literal::Int(*value)),
+            ast::Const::Str(value) => ExprKind::Literal(Literal::Str(value.as_str().into())),
+            ast::Const::Sym(symbol) => ExprKind::Literal(Literal::Sym(self.symbol(*symbol))),
+            ast::Const::F64(_) => ExprKind::Float,
+            ast::Const::Bin(_) => ExprKind::Bin,
+            ast::Const::Error => ExprKind::Error,
+        };
+        expr(kind, span)
     }
 
     fn pattern_class(&self, test: &ast::TypePattern) -> Option<DeclId> {
@@ -419,6 +450,46 @@ impl<'u> Scope<'_, '_, 'u> {
         self.switch(entry);
         let mut pending: Nested<'u> = nested.into_iter().rev().collect();
         while let Some((var, pattern, span)) = pending.pop() {
+            if let ast::Pattern::Constant {
+                value: constant, ..
+            } = pattern
+            {
+                let value = self.pattern_constant(constant, span);
+                let comparison = self.pattern_constant(constant, span);
+                let rejected = self.pattern_constant(constant, span);
+                let success = self.block();
+                let failure = self.block();
+                self.end(Terminal::If {
+                    cond: expr(
+                        ExprKind::Binary {
+                            op: crate::lex::Op::EqEq,
+                            operands: Box::new([expr(ExprKind::Copy(var), span), comparison]),
+                        },
+                        span,
+                    ),
+                    then: success,
+                    else_: failure,
+                });
+                self.switch(failure);
+                self.emit(Step::Assume(Assume {
+                    var,
+                    relation: Relation::Exact,
+                    negated: true,
+                    against: Against::Value(rejected),
+                }));
+                self.end(Terminal::Branch(else_));
+                self.switch(success);
+                self.emit(Step::Assume(Assume {
+                    var,
+                    relation: Relation::Exact,
+                    negated: false,
+                    against: Against::Value(value),
+                }));
+                if pending.is_empty() {
+                    self.end(Terminal::Branch(then));
+                }
+                continue;
+            }
             if let ast::Pattern::TypeTest(test) = pattern {
                 let class = self.pattern_class(test);
                 let success = self.block();
@@ -531,7 +602,7 @@ impl<'u> Scope<'_, '_, 'u> {
         match pattern {
             ast::Pattern::Unpack(items) => self.defaults(items, frame),
             ast::Pattern::TypeTest(test) => self.pattern_defaults(&test.pattern, frame),
-            ast::Pattern::Ident(_) => {}
+            ast::Pattern::Constant { .. } | ast::Pattern::Ident(_) => {}
         }
     }
 
@@ -700,7 +771,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 self.emit(Step::Pop);
                 self.end(Terminal::Branch(else_));
             }
-            ast::Pattern::TypeTest(_) => {
+            ast::Pattern::TypeTest(_) | ast::Pattern::Constant { .. } => {
                 let var = match value.kind {
                     ExprKind::Var(var) | ExprKind::Copy(var) => {
                         self.emit(Step::Eval(value));
@@ -1130,7 +1201,7 @@ impl<'u> Scope<'_, '_, 'u> {
 /// Whether any item has a default, at any level
 fn pattern_has_default(pattern: &ast::Pattern) -> bool {
     match pattern {
-        ast::Pattern::Ident(_) => false,
+        ast::Pattern::Constant { .. } | ast::Pattern::Ident(_) => false,
         ast::Pattern::Unpack(items) => any_default(items),
         ast::Pattern::TypeTest(test) => pattern_has_default(&test.pattern),
     }

@@ -59,12 +59,13 @@ type Binds<'a> = (Option<BindPlan>, Option<&'a [PatItem]>);
 /// How to bind the values an unpack leaves on the operand stack.
 ///
 /// Sub-patterns unpack in turn, each leaving its own values in place of the value
-/// it matched, until only values bound to variables remain.
+/// it matched, until only bindings and values to discard remain. Tests check a
+/// copy of a value, which stays in place for its inner pattern.
 struct BindPlan {
-    /// The class tests and sub-pattern unpacks, in order
+    /// The constant tests, class tests and sub-pattern unpacks, in order
     steps: Vec<BindStep>,
-    /// The variables to store the remaining values in, from the top of the stack
-    vars: Vec<Var>,
+    /// The destinations of remaining values, from the top; `None` discards a value
+    vars: Vec<Option<Var>>,
 }
 
 /// A test or unpack of a sub-pattern's value, after preceding steps.
@@ -72,17 +73,20 @@ struct BindStep {
     /// The value's depth on the operand stack, counting from the top
     depth: usize,
     op: BindOp,
-    /// The other values on the stack, which a failed match must discard
+    /// The values a failed match must discard: the others on the stack, and a
+    /// tested value
     others: usize,
 }
 
 enum BindOp {
+    Constant(constant::Id),
     Unpack(sig::UnpackId),
     TypeTest { var: Var, fields: Vec<sym::Id> },
 }
 
 /// A value an unpack leaves on the operand stack
 enum Slot<'a> {
+    Discard,
     Var(Var),
     /// The value of a sub-pattern
     Pattern(&'a Pattern),
@@ -1340,7 +1344,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 Ok((
                     Some(BindPlan {
                         steps: Vec::new(),
-                        vars: vec![var],
+                        vars: vec![Some(var)],
                     }),
                     None,
                 ))
@@ -1357,20 +1361,18 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     } else {
                         self.graph.alloc_block(self.block.func, self.block.scope)
                     };
-                    if step.depth > 0 {
-                        self.block
-                            .insts
-                            .push(Inst(InstInfo::Swap(0, step.depth), span));
-                    }
-                    let retained =
-                        step.others + usize::from(matches!(step.op, BindOp::TypeTest { .. }));
-                    let fail = self.discard_block(&mut discards, retained, fid, span);
+                    let fail = self.discard_block(&mut discards, step.others, fid, span);
                     match step.op {
                         BindOp::Unpack(sig) => {
+                            if step.depth > 0 {
+                                self.block
+                                    .insts
+                                    .push(Inst(InstInfo::Swap(0, step.depth), span));
+                            }
                             self.block.term = Term(TermInfo::UnpackIf(sig, next, fail), span)
                         }
-                        op @ BindOp::TypeTest { .. } => {
-                            self.lower_type_test(op, false, span);
+                        op => {
+                            self.lower_test(op, step.depth, false, span);
                             self.block.term = Term(TermInfo::If(next, fail), span);
                         }
                     }
@@ -3059,7 +3061,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
     fn pattern_defaults_items(pattern: &Pattern) -> Option<&[PatItem]> {
         match pattern {
-            Pattern::Ident(_) => None,
+            Pattern::Constant { .. } | Pattern::Ident(_) => None,
             Pattern::Unpack(items) => Some(items),
             Pattern::TypeTest(test) => Self::pattern_defaults_items(&test.pattern),
         }
@@ -3079,30 +3081,40 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             .iter()
             .position(|slot| matches!(slot, Slot::Pattern(_)))
         {
-            // A plain binding needs no stack operation.
-            if let Slot::Pattern(Pattern::Ident(PatIdent { ident, .. })) = stack[depth] {
-                let res = ident.res.as_ref().expect("unresolved pattern binding");
-                stack[depth] = Slot::Var(self.resolve_var_in_scope(
-                    cfg::ScopeRef::clone(&scope),
-                    res.index,
-                    res.depth,
-                ));
-                continue;
-            }
-            stack.swap(0, depth);
-            let Slot::Pattern(pattern) = stack.remove(0) else {
+            let Slot::Pattern(pattern) = stack[depth] else {
                 unreachable!()
             };
+            // Tests leave the value in place, so a failure discards the whole stack.
             let others = stack.len();
             let op = match pattern {
-                Pattern::Ident(_) => unreachable!(),
+                // A plain binding needs no stack operation.
+                Pattern::Ident(PatIdent { ident, .. }) => {
+                    let res = ident.res.as_ref().expect("unresolved pattern binding");
+                    stack[depth] = Slot::Var(self.resolve_var_in_scope(
+                        cfg::ScopeRef::clone(&scope),
+                        res.index,
+                        res.depth,
+                    ));
+                    continue;
+                }
                 Pattern::Unpack(items) => {
+                    stack.swap(0, depth);
+                    stack.remove(0);
                     let unpack = self.lower_pattern_sig(items)?;
                     let sig = self.unpacktab.id(&unpack);
                     let slots =
                         self.unpack_order_in_scope(cfg::ScopeRef::clone(&scope), items, sig);
                     stack.splice(0..0, slots);
-                    BindOp::Unpack(sig)
+                    steps.push(BindStep {
+                        depth,
+                        op: BindOp::Unpack(sig),
+                        others: others - 1,
+                    });
+                    continue;
+                }
+                Pattern::Constant { value, .. } => {
+                    stack[depth] = Slot::Discard;
+                    BindOp::Constant(self.lower_const(value))
                 }
                 Pattern::TypeTest(test) => {
                     let res = test
@@ -3122,7 +3134,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         .iter()
                         .map(|field| self.symtab.id(&self.bintab.id_str(self.file.str(*field))))
                         .collect();
-                    stack.insert(0, Slot::Pattern(&test.pattern));
+                    stack[depth] = Slot::Pattern(&test.pattern);
                     BindOp::TypeTest { var, fields }
                 }
             };
@@ -3131,7 +3143,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         let vars = stack
             .into_iter()
             .map(|slot| match slot {
-                Slot::Var(var) => var,
+                Slot::Var(var) => Some(var),
+                Slot::Discard => None,
                 Slot::Pattern(_) => unreachable!(),
             })
             .collect();
@@ -3142,42 +3155,65 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     /// values left.
     fn lower_bind_plan(&mut self, plan: BindPlan, span: Span) {
         for step in plan.steps {
-            if step.depth > 0 {
-                self.block
-                    .insts
-                    .push(Inst(InstInfo::Swap(0, step.depth), span));
-            }
             match step.op {
-                BindOp::Unpack(sig) => self.block.insts.push(Inst(InstInfo::Unpack(sig), span)),
-                op @ BindOp::TypeTest { .. } => self.lower_type_test(op, true, span),
+                BindOp::Unpack(sig) => {
+                    if step.depth > 0 {
+                        self.block
+                            .insts
+                            .push(Inst(InstInfo::Swap(0, step.depth), span));
+                    }
+                    self.block.insts.push(Inst(InstInfo::Unpack(sig), span))
+                }
+                op => self.lower_test(op, step.depth, true, span),
             }
         }
         for var in plan.vars {
-            self.lower_store(span, var);
+            if let Some(var) = var {
+                self.lower_store(span, var);
+            } else {
+                self.block.insts.push(Inst(InstInfo::Pop, span));
+            }
         }
     }
 
-    fn lower_type_test(&mut self, op: BindOp, assert: bool, span: Span) {
-        let BindOp::TypeTest { var, fields } = op else {
-            unreachable!()
+    /// Test a copy of the value at `depth`, leaving a boolean unless `assert`,
+    /// which raises on a mismatch instead.
+    fn lower_test(&mut self, op: BindOp, depth: usize, assert: bool, span: Span) {
+        let pick = if depth == 0 {
+            InstInfo::Dup
+        } else {
+            InstInfo::Pick(depth)
         };
-        self.block.insts.push(Inst(InstInfo::Dup, span));
-        let load = match var {
-            Var::Local(index) => InstInfo::LoadLocal(index),
-            Var::Upvar(index, depth) => InstInfo::LoadUpvar(index, depth),
+        self.block.insts.push(Inst(pick, span));
+        let builtin = match op {
+            BindOp::Unpack(_) => unreachable!(),
+            BindOp::Constant(id) => {
+                self.block.insts.push(Inst(InstInfo::LoadConst(id), span));
+                if !assert {
+                    self.block.insts.push(Inst(InstInfo::Eq, span));
+                    return;
+                }
+                builtin::VALUE_ASSERT
+            }
+            BindOp::TypeTest { var, fields } => {
+                let load = match var {
+                    Var::Local(index) => InstInfo::LoadLocal(index),
+                    Var::Upvar(index, depth) => InstInfo::LoadUpvar(index, depth),
+                };
+                self.block.insts.push(Inst(load, span));
+                for field in fields {
+                    self.block.insts.push(Inst(InstInfo::Get(field), span));
+                }
+                if assert {
+                    builtin::TYPE_ASSERT
+                } else {
+                    builtin::TYPE_TEST
+                }
+            }
         };
-        self.block.insts.push(Inst(load, span));
-        for field in fields {
-            self.block.insts.push(Inst(InstInfo::Get(field), span));
-        }
         let args = self.packtab.id(&sig::Pack::new(
             [sig::Arg::Value, sig::Arg::Value].into_iter(),
         ));
-        let builtin = if assert {
-            builtin::TYPE_ASSERT
-        } else {
-            builtin::TYPE_TEST
-        };
         self.block
             .insts
             .push(Inst(InstInfo::Builtin(builtin, args), span));

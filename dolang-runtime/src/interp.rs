@@ -60,6 +60,12 @@ impl<'v> CallFrame<'v> {
         }
     }
 
+    unsafe fn pick(&self, depth: usize) {
+        unsafe {
+            self.push((*self.slots.get_unchecked(self.sp.get() - 1 - depth).get()).dup());
+        }
+    }
+
     unsafe fn swap(&self, i: usize, j: usize) {
         unsafe {
             ptr::swap(
@@ -711,6 +717,7 @@ impl<'v> Vm<'v> {
                     mem::drop(frame.pop());
                 }
                 Dup => frame.dup(),
+                Pick => frame.pick(reader.usize()),
                 Swap => {
                     let i = reader.usize();
                     let j = reader.usize();
@@ -901,6 +908,22 @@ impl<'v> Vm<'v> {
                         builtin::ARGS => self.args(strand, args, Slot::reborrow(&mut res)),
                         builtin::CLASS_CREATE => {
                             class::create(strand, args, Slot::reborrow(&mut res)).await
+                        }
+                        builtin::VALUE_ASSERT => {
+                            let ([value, expected], []) = unpack!(strand, args, 2, 0)?;
+                            if !value.op_eq(strand, &expected).to_bool(strand) {
+                                // Report the mismatch even if a value can't be formatted
+                                let msg = match (expected.to_debug(strand), value.to_debug(strand))
+                                {
+                                    (Ok(expected), Ok(actual)) => {
+                                        format!("expected {expected}, got {actual}")
+                                    }
+                                    _ => "constant pattern: value mismatch".into(),
+                                };
+                                return Err(Error::type_error(strand, msg));
+                            }
+                            Output::set(strand, Slot::reborrow(&mut res), &Value::NIL);
+                            Ok(())
                         }
                         builtin::TYPE_TEST | builtin::TYPE_ASSERT => self.type_test(
                             strand,

@@ -62,8 +62,3 @@ pub def pick x
   x
 
 hidden 1 2
-
-# A sub-pattern parameter binds no name of its own
-pub def nested a @ Int (b c) k: (d)
-  #     ^~~~~~: sig (a: Int, (): Unknown, :(): Unknown) <#0 >#1 -> Unknown
-  [a, b, c, d]

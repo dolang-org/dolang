@@ -1,7 +1,6 @@
-def f Int(x) = 1
-  # error: a sub-pattern cannot have a default
-  #   --> type_pattern_default.dol:LL:LL
-  #    |
-  # LL | def f Int(x) = 1
-  #    |              ^
-  x
+let f = do |Int(x) = 1| x
+# error: a sub-pattern cannot have a default
+#   --> type_pattern_default.dol:LL:LL
+#    |
+# LL | let f = do |Int(x) = 1| x
+#    |                    ^

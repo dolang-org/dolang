@@ -1,0 +1,7 @@
+def f 200 value
+  # error: a `def` parameter must be a name; unpack it in the body
+  #   --> constant_pattern_parameter.dol:LL:LL
+  #    |
+  # LL | def f 200 value
+  #    |       ^^^
+  value

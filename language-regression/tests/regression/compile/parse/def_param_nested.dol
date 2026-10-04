@@ -1,0 +1,7 @@
+def f a (b c)
+  # error: a `def` parameter must be a name; unpack it in the body
+  #   --> def_param_nested.dol:LL:LL
+  #    |
+  # LL | def f a (b c)
+  #    |         ^
+  nil

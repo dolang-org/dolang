@@ -347,3 +347,27 @@ mod detail {
 use detail::run;
 
 include!(concat!(env!("OUT_DIR"), "/generated_tests.rs"));
+
+#[test]
+fn constant_pattern_without_prelude() {
+    use dolang::{
+        compile::Config,
+        runtime::{Bytecode, error::ErrorKind, vm::Builder},
+    };
+    let mut config = Config::new();
+    config.prelude().clear();
+    let mut bytes = Vec::new();
+    config
+        .unit(std::path::Path::new("constant.dol"), b"let 200 = 404\n")
+        .emit(&mut bytes)
+        .unwrap();
+    let bytecode = Bytecode::new(bytes);
+    futures::executor::block_on(Builder::build(async |vm| {
+        vm.importer(async |_strand, _name, _out| panic!("unexpected import"));
+        vm.enter_with_slots(async |strand, [mut out]| {
+            let error = bytecode.run(strand, &mut out).await.unwrap_err();
+            assert_eq!(error.kind(), ErrorKind::Type);
+        })
+        .await;
+    }));
+}

@@ -1,0 +1,7 @@
+bind [200]
+  - 200 = 200
+# error: a constant pattern cannot have a default
+#   --> constant_pattern_default.dol:LL:LL
+#    |
+# LL |   - 200 = 200
+#    |         ^

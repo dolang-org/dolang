@@ -36,9 +36,9 @@ else
 
 ### `if let` / `if bind`
 
-A `let` or `bind` pattern after `if` makes the destructuring itself the
-condition. The bindings are in scope for the branch body, and the `else` branch
-runs when the pattern does not match:
+A `let` or `bind` pattern after `if` makes the pattern match the condition.
+The bindings are in scope for the branch body, and the `else` branch runs when
+the pattern does not match:
 
 ```
 if let a b = pair
@@ -61,10 +61,9 @@ do
 Both forms are also available where `if` appears in
 [vertical layout](./vertical-layout.md).
 
-Only a shape mismatch — wrong arity, or a missing or unexpected key — takes the
+An unpacking mismatch or a failed type test or constant comparison takes the
 failure branch; other errors propagate. See
-[Conditional Destructuring](./destructuring.md#conditional-destructuring) for
-the details.
+[Conditional Matching](./patterns.md#conditional-matching) for the details.
 
 ### `if` in `let` and Assignments
 
@@ -140,14 +139,14 @@ for i = Range 5
   echo $i
 ```
 
-Dictionaries iterate as `[key, value]` pairs. Use destructuring to unpack them:
+Dictionaries iterate as `[key, value]` pairs. Use a pattern to unpack them:
 
 ```
 for k v = {name: "Alice", age: 30}
   echo "$k: $v"
 ```
 
-See [Destructuring](destructuring.md) for more on `for` unpacking.
+See [Pattern Matching](patterns.md) for more on `for` unpacking.
 
 ## Flow Control Statements
 

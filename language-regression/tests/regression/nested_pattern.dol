@@ -62,18 +62,19 @@ catch _
   true
 assert $caught
 
-# Function parameters
-def f a (b c)
-  (a + b + c)
+# Lambda parameters
+let f = do |a (b c)| (a + b + c)
 assert_eq (f(1, [2, 3])) 6
 let g = (do |(m n)| m * n)
 assert_eq (g([3, 4])) 12
-def vf
+let vf = do |k: (:x :y)| (x * y)
+# An indented key item in `def` parameters may only annotate a name
+def annotated
   k:
-    :x
-    :y
+    x @ Int
 do
-  (x * y)
+  x
+assert_eq (annotated k: 5) 5
 assert_eq (vf k: {x: 3, y: 4}) 12
 
 # Loops
