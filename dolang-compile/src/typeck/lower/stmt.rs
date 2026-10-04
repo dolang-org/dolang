@@ -238,7 +238,7 @@ impl<'u> Scope<'_, '_, 'u> {
         let span = value.span;
         if matches!(
             pattern,
-            ast::Pattern::TypeTest(_) | ast::Pattern::Constant { .. }
+            ast::Pattern::TypeTest(_) | ast::Pattern::Constant { .. } | ast::Pattern::Alt(_)
         ) {
             let var = match value.kind {
                 ExprKind::Var(var) | ExprKind::Copy(var) => {
@@ -346,7 +346,7 @@ impl<'u> Scope<'_, '_, 'u> {
             ast::Pattern::Unpack(pat_items) => {
                 Pattern::Unpack(scope.pattern_items(pat_items, &mut nested))
             }
-            ast::Pattern::TypeTest(_) | ast::Pattern::Constant { .. } => {
+            ast::Pattern::TypeTest(_) | ast::Pattern::Constant { .. } | ast::Pattern::Alt(_) => {
                 let var = scope.synthetic();
                 nested.push((var, pattern, pattern.span()));
                 Pattern::Bind(var)
@@ -359,6 +359,9 @@ impl<'u> Scope<'_, '_, 'u> {
     /// turn. A mismatch raises.
     fn nested_lets(&mut self, nested: Nested<'u>, frame: &Rc<Frame<'u>>) {
         for (var, pattern, span) in nested {
+            if let ast::Pattern::Alt(_) = pattern {
+                todo!("#863 stage 3")
+            }
             let pattern = if let ast::Pattern::TypeTest(test) = pattern {
                 let class = self.pattern_class(test);
                 self.emit(Step::Eval(expr(
@@ -450,6 +453,9 @@ impl<'u> Scope<'_, '_, 'u> {
         self.switch(entry);
         let mut pending: Nested<'u> = nested.into_iter().rev().collect();
         while let Some((var, pattern, span)) = pending.pop() {
+            if let ast::Pattern::Alt(_) = pattern {
+                todo!("#863 stage 3")
+            }
             if let ast::Pattern::Constant {
                 value: constant, ..
             } = pattern
@@ -602,7 +608,8 @@ impl<'u> Scope<'_, '_, 'u> {
         match pattern {
             ast::Pattern::Unpack(items) => self.defaults(items, frame),
             ast::Pattern::TypeTest(test) => self.pattern_defaults(&test.pattern, frame),
-            ast::Pattern::Constant { .. } | ast::Pattern::Ident(_) => {}
+            // Each alternative's defaults join on its own success edge
+            ast::Pattern::Constant { .. } | ast::Pattern::Ident(_) | ast::Pattern::Alt(_) => {}
         }
     }
 
@@ -771,7 +778,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 self.emit(Step::Pop);
                 self.end(Terminal::Branch(else_));
             }
-            ast::Pattern::TypeTest(_) | ast::Pattern::Constant { .. } => {
+            ast::Pattern::TypeTest(_) | ast::Pattern::Constant { .. } | ast::Pattern::Alt(_) => {
                 let var = match value.kind {
                     ExprKind::Var(var) | ExprKind::Copy(var) => {
                         self.emit(Step::Eval(value));
@@ -1204,6 +1211,8 @@ fn pattern_has_default(pattern: &ast::Pattern) -> bool {
         ast::Pattern::Constant { .. } | ast::Pattern::Ident(_) => false,
         ast::Pattern::Unpack(items) => any_default(items),
         ast::Pattern::TypeTest(test) => pattern_has_default(&test.pattern),
+        // Each alternative's defaults join on its own success edge
+        ast::Pattern::Alt(_) => false,
     }
 }
 

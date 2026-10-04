@@ -1,0 +1,6 @@
+let (_a) | _a _b = [1, 2]
+# error: alternatives must bind the same names, but this one doesn't bind `_b`
+#   --> alt_pattern_extra_name.dol:LL:LL
+#    |
+# LL | let (_a) | _a _b = [1, 2]
+#    |      ^^       -- bound here

@@ -1,0 +1,7 @@
+bind [1]
+  :a | :b
+# error: alternatives within a line need parentheses
+#   --> alt_pattern_vertical_inline.dol:LL:LL
+#    |
+# LL |   :a | :b
+#    |      ^

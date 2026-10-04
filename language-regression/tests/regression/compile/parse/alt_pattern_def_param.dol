@@ -1,0 +1,9 @@
+def f
+  | a
+# error: a `def` parameter must be a name; unpack it in the body
+#   --> alt_pattern_def_param.dol:LL:LL
+#    |
+# LL |   | a
+#    |   ^
+do
+  a

@@ -1696,11 +1696,22 @@ pub(crate) struct TypePattern {
     pub(crate) close: Option<Span>,
 }
 
+/// Alternative patterns, tried in order against the same value
+pub(crate) struct Alternation {
+    pub(crate) alts: Vec<Pattern>,
+    /// Each `|`, before its alternative
+    pub(crate) bars: Vec<Span>,
+    /// The synthetic variable recording which alternative matched, when one
+    /// of them has a default to evaluate after the whole pattern
+    pub(crate) indicator: Option<usize>,
+}
+
 pub(crate) enum Pattern {
     Constant { expr: Expr, value: Const },
     TypeTest(Box<TypePattern>),
     Ident(PatIdent),
     Unpack(Vec<PatItem>),
+    Alt(Box<Alternation>),
 }
 
 impl Node for Pattern {
@@ -1724,15 +1735,32 @@ impl Node for Pattern {
                 ControlFlow::Continue(())
             }
             Pattern::Unpack(items) => items.accept(visit),
+            Pattern::Alt(alt) => {
+                // A vertical alternative follows its `|`; a horizontal one may
+                // precede the first
+                let mut bars = alt.bars.iter().peekable();
+                for pattern in &alt.alts {
+                    let start = pattern.span().start;
+                    while let Some(bar) = bars.next_if(|bar| bar.start < start) {
+                        visit.token(Token::Delim, *bar, None)?;
+                    }
+                    visit.node(pattern)?;
+                }
+                for bar in bars {
+                    visit.token(Token::Delim, *bar, None)?;
+                }
+                ControlFlow::Continue(())
+            }
         }
     }
 
     fn kind(&self) -> NodeKind {
         match self {
             Pattern::Ident(PatIdent { ident, .. }) => ident.kind(),
-            Pattern::Constant { .. } | Pattern::Unpack(_) | Pattern::TypeTest(_) => {
-                NodeKind::Pattern
-            }
+            Pattern::Constant { .. }
+            | Pattern::Unpack(_)
+            | Pattern::TypeTest(_)
+            | Pattern::Alt(_) => NodeKind::Pattern,
         }
     }
 }

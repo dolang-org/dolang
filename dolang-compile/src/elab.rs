@@ -14,6 +14,7 @@ use crate::{
         ExprBody, For, Function, GetVariant, Ident, If, Import, ImportElement, ImportItem, Key,
         LValue, Let, Method, NlGuard, NlInfo, Origin, Pair, PatBind, PatIdent, PatItem, Pattern,
         PrimStmt, Res, Return, Root, SideEffect, Single, Stmt, Try, Var, While, visit::Node,
+        Alternation,
     },
     diag::{AnnotationKind, Severity},
     source::{Annotate, Diagnose, Diags, File, Patch, Span},
@@ -70,6 +71,101 @@ impl Annotate for ClassFromSamePattern {
     fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "bound here")
     }
+}
+
+/// A pattern binds a name it already bound
+#[derive(Clone)]
+struct DuplicatePatternBinding {
+    span: Span,
+    previous: Span,
+}
+
+impl Diagnose for DuplicatePatternBinding {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "a pattern cannot bind the same name twice")
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+
+    fn annotations(&self) -> Box<dyn Iterator<Item = Box<dyn Annotate>>> {
+        Box::new([Box::new(self.clone()) as Box<dyn Annotate>].into_iter())
+    }
+}
+
+impl Annotate for DuplicatePatternBinding {
+    fn kind(&self) -> AnnotationKind {
+        AnnotationKind::Context
+    }
+    fn span(&self) -> Span {
+        self.previous
+    }
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "first bound here")
+    }
+}
+
+/// Alternatives that don't all bind a name
+#[derive(Clone)]
+struct AltNameMismatch {
+    name: String,
+    /// The alternative that lacks the name
+    span: Span,
+    /// Where the other alternative binds it
+    binding: Span,
+}
+
+impl Diagnose for AltNameMismatch {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "alternatives must bind the same names, but this one doesn't bind `{}`",
+            self.name
+        )
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+
+    fn annotations(&self) -> Box<dyn Iterator<Item = Box<dyn Annotate>>> {
+        Box::new([Box::new(self.clone()) as Box<dyn Annotate>].into_iter())
+    }
+}
+
+impl Annotate for AltNameMismatch {
+    fn kind(&self) -> AnnotationKind {
+        AnnotationKind::Context
+    }
+    fn span(&self) -> Span {
+        self.binding
+    }
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "bound here")
+    }
+}
+
+/// The alternation being elaborated, whose alternatives share one variable for
+/// each name
+#[derive(Default)]
+struct AltFrame {
+    /// What the first alternative binds, and where
+    first: HashMap<sym::Id, (usize, Span)>,
+    /// The first alternative, once elaborated
+    first_span: Span,
+    /// The alternative being elaborated
+    current: usize,
+    /// What the current alternative has bound, and where, if it isn't the first
+    seen: HashMap<sym::Id, Span>,
 }
 
 /// A `def`/`class` name was used before its own statement was elaborated,
@@ -773,6 +869,8 @@ pub(crate) struct Elaborater<'a> {
     symtab: &'a sym::Table,
     fail: bool,
     epoch: Epoch,
+    /// The alternations enclosing the pattern being elaborated, innermost last
+    alts: Vec<AltFrame>,
 }
 
 enum ScopeKind {
@@ -1329,6 +1427,42 @@ impl<'s> Scope<'s> {
             (var, epoch)
         });
         pattern_pending.push(index);
+    }
+
+    /// Where the pattern being elaborated already bound `sym` in this scope, if
+    /// it did
+    fn pending_local(&self, sym: sym::Id) -> Option<Span> {
+        let Self::Nested { vars, index, .. } = self else {
+            return None;
+        };
+        let var = vars[*index.get(&sym)?].get().0;
+        var.pattern_pending.then(|| var.origin.name()).flatten()
+    }
+
+    /// The names visible in this scope, to restore after elaborating an
+    /// alternative
+    fn names(&self) -> HashMap<sym::Id, usize> {
+        match self {
+            Self::Nested { index, .. } => index.clone(),
+            _ => unreachable!("pattern bindings have a lexical destination scope"),
+        }
+    }
+
+    fn restore_names(&mut self, names: HashMap<sym::Id, usize>) {
+        match self {
+            Self::Nested { index, .. } => *index = names,
+            _ => unreachable!("pattern bindings have a lexical destination scope"),
+        }
+    }
+
+    /// Make `sym` name an existing variable
+    fn rebind(&mut self, sym: sym::Id, var: usize) {
+        match self {
+            Self::Nested { index, .. } => {
+                index.insert(sym, var);
+            }
+            _ => unreachable!("pattern bindings have a lexical destination scope"),
+        }
     }
 
     fn finish_pattern(&mut self) {
@@ -2071,18 +2205,134 @@ impl<'a> Elaborater<'a> {
         }
     }
 
+    /// Whether `ident` is `_`, which a pattern may bind any number of times
+    fn is_wildcard(&self, ident: &Ident) -> bool {
+        self.file.str(ident.span) == "_"
+    }
+
+    /// Report a name the pattern being elaborated already bound
+    fn check_duplicate_binding(&mut self, scope: &Scope<'_>, sym: sym::Id, ident: &Ident) {
+        if !self.is_wildcard(ident)
+            && let Some(previous) = scope.pending_local(sym)
+        {
+            self.fail = true;
+            self.diags.push(DuplicatePatternBinding {
+                span: ident.span,
+                previous,
+            });
+        }
+    }
+
     fn bind_ident(&mut self, scope: &mut Scope<'_>, ident: &mut Ident, export: bool) -> Result<()> {
         let id = self
             .symtab
             .id(&self.bintab.id_str(self.file.str(ident.span)));
-        let node = Origin::Source(ident.span);
-        let index = scope.insert(id, node, self.epoch, export);
+        // Alternatives after the first bind the first's variables
+        let wildcard = self.is_wildcard(ident);
+        let shared = (!wildcard)
+            .then(|| self.alts.iter().rposition(|frame| frame.current > 0))
+            .flatten();
+        // A shared variable was first bound by the first alternative, so look for
+        // an earlier binding in this one
+        match shared.and_then(|depth| self.alts[depth].seen.get(&id)) {
+            Some(&previous) => {
+                self.fail = true;
+                self.diags.push(DuplicatePatternBinding {
+                    span: ident.span,
+                    previous,
+                });
+            }
+            None => self.check_duplicate_binding(scope, id, ident),
+        }
+        let index = match shared {
+            Some(depth) => {
+                let frame = &mut self.alts[depth];
+                frame.seen.insert(id, ident.span);
+                match frame.first.get(&id) {
+                    Some(&(index, _)) => {
+                        scope.rebind(id, index);
+                        Some(index)
+                    }
+                    None => {
+                        self.fail = true;
+                        self.diags.push(AltNameMismatch {
+                            name: self.file.str(ident.span).to_owned(),
+                            span: frame.first_span,
+                            binding: ident.span,
+                        });
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+        let index = index.unwrap_or_else(|| {
+            scope.insert(id, Origin::Source(ident.span), self.epoch, export)
+        });
+        if !wildcard {
+            let start = shared.map_or(0, |depth| depth + 1);
+            for frame in &mut self.alts[start..] {
+                frame.first.insert(id, (index, ident.span));
+            }
+        }
         scope.mark_pattern_binding(index);
         ident.res = Some(Res {
             index,
             depth: 0,
             node: None,
         });
+        Ok(())
+    }
+
+    /// Elaborate alternatives, each in a lexical scope of its own whose names
+    /// share the first alternative's variables
+    fn visit_alternation(
+        &mut self,
+        scope: &mut Scope<'_>,
+        alt: &mut Alternation,
+        export: bool,
+    ) -> Result<()> {
+        let names = scope.names();
+        self.alts.push(AltFrame::default());
+        let mut result = Ok(());
+        for (current, pattern) in alt.alts.iter_mut().enumerate() {
+            let frame = self.alts.last_mut().unwrap();
+            frame.current = current;
+            frame.seen.clear();
+            scope.restore_names(names.clone());
+            result = self.visit_pattern_inner(scope, pattern, export);
+            if result.is_err() {
+                break;
+            }
+            let frame = self.alts.last_mut().unwrap();
+            if current == 0 {
+                frame.first_span = pattern.span();
+            } else {
+                let mut missing: Vec<_> = (frame.first.iter())
+                    .filter(|(sym, _)| !frame.seen.contains_key(sym))
+                    .map(|(_, &(_, binding))| binding)
+                    .collect();
+                missing.sort_by_key(|span| span.start);
+                for binding in missing {
+                    self.fail = true;
+                    self.diags.push(AltNameMismatch {
+                        name: self.file.str(binding).to_owned(),
+                        span: pattern.span(),
+                        binding,
+                    });
+                }
+            }
+        }
+        let frame = self.alts.pop().unwrap();
+        // Later siblings see the names bound by every alternative
+        scope.restore_names(names);
+        for (sym, (index, _)) in frame.first {
+            scope.rebind(sym, index);
+        }
+        result?;
+        if alt.alts.iter().any(has_non_const_default) {
+            alt.indicator = Some(scope.insert_synthetic(self.epoch));
+        }
         Ok(())
     }
 
@@ -2183,6 +2433,7 @@ impl<'a> Elaborater<'a> {
                 self.visit_pattern_inner(scope, &mut test.pattern, export)
             }
             Pattern::Ident(PatIdent { ident, .. }) => self.bind_ident(scope, ident, export),
+            Pattern::Alt(alt) => self.visit_alternation(scope, alt, export),
             Pattern::Unpack(params) => {
                 for param in params.iter_mut() {
                     self.visit_param_non_const_default(scope, param)?;
@@ -3046,6 +3297,7 @@ impl<'a> Elaborater<'a> {
             let sym = self
                 .symtab
                 .id(&self.bintab.id_str(self.file.str(ident.span)));
+            self.check_duplicate_binding(scope, sym, ident);
             let index = scope.insert(
                 sym,
                 if is_class_method && param_idx == 0 {
@@ -3261,6 +3513,7 @@ impl<'a> Elaborater<'a> {
             diags,
             fail: false,
             epoch: 0,
+            alts: Vec::new(),
         }
     }
 
@@ -3292,5 +3545,23 @@ impl<'a> Elaborater<'a> {
     /// Whether any error was recorded during elaboration
     pub(crate) fn failed(&self) -> bool {
         self.fail
+    }
+}
+
+/// Whether a pattern has a default to evaluate after the whole pattern matches
+fn has_non_const_default(pattern: &Pattern) -> bool {
+    match pattern {
+        Pattern::Constant { .. } | Pattern::Ident(_) => false,
+        Pattern::TypeTest(test) => has_non_const_default(&test.pattern),
+        Pattern::Alt(alt) => alt.alts.iter().any(has_non_const_default),
+        Pattern::Unpack(items) => items.iter().any(|item| match item {
+            PatItem::Pos { bind, default, .. }
+            | PatItem::Key { bind, default, .. }
+            | PatItem::ConstKey { bind, default, .. } => {
+                default.as_ref().is_some_and(|default| default.fold.is_none())
+                    || matches!(bind, PatBind::Nested { pattern, .. } if has_non_const_default(pattern))
+            }
+            PatItem::Rest { .. } => false,
+        }),
     }
 }

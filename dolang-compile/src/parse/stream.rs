@@ -251,6 +251,13 @@ impl Parser<'_> {
         })
     }
 
+    pub(super) fn push_bar(&mut self, span: Span) {
+        self.lex.push(Token {
+            info: TokenInfo::Op(Op::Bar),
+            span,
+        })
+    }
+
     pub(super) fn add_indent(&mut self, offset: Offset) {
         self.lex.lexer.add_indent(offset)
     }

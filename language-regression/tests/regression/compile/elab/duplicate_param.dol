@@ -1,0 +1,9 @@
+def _f _a _a
+  # error: a pattern cannot bind the same name twice
+  #   --> duplicate_param.dol:LL:LL
+  #    |
+  # LL | def _f _a _a
+  #    |        -- ^^
+  #    |        |
+  #    |        first bound here
+  nil

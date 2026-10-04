@@ -3064,6 +3064,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             Pattern::Constant { .. } | Pattern::Ident(_) => None,
             Pattern::Unpack(items) => Some(items),
             Pattern::TypeTest(test) => Self::pattern_defaults_items(&test.pattern),
+            Pattern::Alt(_) => todo!("#863 stage 2"),
         }
     }
 
@@ -3137,6 +3138,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     stack[depth] = Slot::Pattern(&test.pattern);
                     BindOp::TypeTest { var, fields }
                 }
+                Pattern::Alt(_) => todo!("#863 stage 2"),
             };
             steps.push(BindStep { depth, op, others });
         }

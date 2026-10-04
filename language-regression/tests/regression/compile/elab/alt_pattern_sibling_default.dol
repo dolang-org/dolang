@@ -1,0 +1,8 @@
+bind [1, 2]
+  | _a _b
+  | (_b = _a) _a
+# error: unbound identifier
+#   --> alt_pattern_sibling_default.dol:LL:LL
+#    |
+# LL |   | (_b = _a) _a
+#    |           ^^

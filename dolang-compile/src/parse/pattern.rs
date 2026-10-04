@@ -1,3 +1,5 @@
+use std::mem;
+
 use super::{
     ExprMode, Parser, Result, Scope,
     diag::{
@@ -9,8 +11,8 @@ use crate::{
     RestKind,
     ast::visit::Node,
     ast::{
-        Annot, ClassSuper, Ident, Implicit, Implicits, PatBind, PatDefault, PatIdent, PatItem,
-        Pattern, TypePattern,
+        Alternation, Annot, ClassSuper, Ident, Implicit, Implicits, PatBind, PatDefault, PatIdent,
+        PatItem, Pattern, TypePattern,
     },
     lex::{Keyword, Mode, Op, Token, TokenInfo},
     source::Span,
@@ -43,6 +45,26 @@ fn collapse_pattern(mut items: Vec<PatItem>) -> Pattern {
     }
     Pattern::Unpack(items)
 }
+
+/// Horizontal items, or alternatives separated by `|`
+enum HorizAlts {
+    Items(Vec<PatItem>),
+    Alt(Alternation),
+}
+
+impl HorizAlts {
+    /// The pattern the items stand for, where a lone item without a default may
+    /// stand for the whole value if `collapse`; alternatives always collapse
+    fn into_pattern(self, collapse: bool) -> Pattern {
+        match self {
+            Self::Items(items) if collapse => collapse_pattern(items),
+            Self::Items(items) => Pattern::Unpack(items),
+            Self::Alt(alt) => Pattern::Alt(Box::new(alt)),
+        }
+    }
+}
+
+const MIXED_BLOCK: &str = "a pattern block is either all `|` alternatives or has none";
 
 #[derive(Copy, Clone)]
 pub(super) enum PatMode {
@@ -120,27 +142,99 @@ impl Parser<'_> {
     }
 
     pub(super) fn parse_pattern(&mut self, scope: &mut Scope, vertical: bool) -> Result<Pattern> {
+        if vertical {
+            self.parse_vert_pattern(scope)
+        } else {
+            Ok(self
+                .parse_horiz_alts(scope, PatMode::HorizBind)?
+                .into_pattern(true))
+        }
+    }
+
+    /// Parse horizontal items in `mode`, and any further alternatives after `|`.
+    fn parse_horiz_alts(&mut self, scope: &mut Scope, mode: PatMode) -> Result<HorizAlts> {
         // A pattern binds values, so any implicit in it has been diagnosed
-        let (items, _) = self.parse_pat_items(
-            scope,
-            if vertical {
-                PatMode::VertBind
-            } else {
-                PatMode::HorizBind
-            },
-        )?;
-        Ok(collapse_pattern(items))
+        let (items, _) = self.parse_pat_items(scope, mode)?;
+        if !matches!(self.peek()?, Some(token!(TokenInfo::Op(Op::Bar)))) {
+            return Ok(HorizAlts::Items(items));
+        }
+        let mut alts = vec![collapse_pattern(items)];
+        let mut bars = Vec::new();
+        while let Some(token!(TokenInfo::Op(Op::Bar))) = self.peek()? {
+            if let [.., Pattern::Unpack(items)] = alts.as_slice()
+                && items.is_empty()
+            {
+                let token = self.peek()?;
+                return Err(self.syntax_error(scope, token, "expected an alternative"));
+            }
+            bars.push(self.advance());
+            if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
+                self.advance();
+            }
+            let (items, _) = self.parse_pat_items(scope, mode)?;
+            if items.is_empty() {
+                let token = self.peek()?;
+                return Err(self.syntax_error(scope, token, "expected an alternative"));
+            }
+            alts.push(collapse_pattern(items));
+        }
+        Ok(HorizAlts::Alt(Alternation {
+            alts,
+            bars,
+            indicator: None,
+        }))
+    }
+
+    /// Parse an indented pattern block: either items, or `|` alternatives, each
+    /// continuing on lines two columns in.
+    fn parse_vert_pattern(&mut self, scope: &mut Scope) -> Result<Pattern> {
+        self.expect(scope, &[ExpectKind::Indent])?;
+        if !matches!(self.peek()?, Some(token!(TokenInfo::Op(Op::Bar)))) {
+            let (items, _) = self.parse_pat_list(scope, PatMode::VertBind)?;
+            return Ok(collapse_pattern(items));
+        }
+        let mut alts = Vec::new();
+        let mut bars = Vec::new();
+        loop {
+            match self.peek()? {
+                Some(token!(TokenInfo::Op(Op::Bar))) => {
+                    bars.push(self.advance());
+                    let sep = self.expect(scope, &[ExpectKind::ArgSep])?;
+                    self.add_indent(sep.end);
+                    let (items, _) = self.parse_pat_list(scope, PatMode::VertBind)?;
+                    alts.push(collapse_pattern(items));
+                }
+                Some(token!(TokenInfo::StmtSep)) => {
+                    self.advance();
+                }
+                Some(token!(TokenInfo::Dedent)) => {
+                    self.advance();
+                    break;
+                }
+                token => return Err(self.syntax_error(scope, token, MIXED_BLOCK)),
+            }
+        }
+        if alts.len() == 1 {
+            return Ok(alts.pop().unwrap());
+        }
+        Ok(Pattern::Alt(Box::new(Alternation {
+            alts,
+            bars,
+            indicator: None,
+        })))
     }
 
     /// Parse a horizontal sub-pattern, starting at its `(`.
+    ///
+    /// Parentheses around `|` alternatives only group them.
     fn parse_sub_pattern(&mut self, scope: &mut Scope) -> Result<PatBind> {
         let open = self.advance();
         // Within `()`, newlines are only whitespace, so a long pattern can wrap
         self.with_mode(Mode::InlineShell, |this| {
-            let (items, _) = this.parse_pat_items(scope, PatMode::Nested)?;
+            let alts = this.parse_horiz_alts(scope, PatMode::Nested)?;
             let close = this.expect_matching(scope, ExpectKind::RightParen, open);
             Ok(PatBind::Nested {
-                pattern: Box::new(Pattern::Unpack(items)),
+                pattern: Box::new(alts.into_pattern(false)),
                 parens: Some((open, close)),
             })
         })
@@ -159,8 +253,7 @@ impl Parser<'_> {
             && mode.is_vertical()
             && let Some(token!(TokenInfo::Indent)) = self.peek()?
         {
-            let (items, _) = self.parse_pat_items(scope, PatMode::VertBind)?;
-            return Ok(match collapse_pattern(items) {
+            return Ok(match self.parse_vert_pattern(scope)? {
                 Pattern::Ident(PatIdent { ident, ty }) => (PatBind::Ident(ident), ty),
                 pattern => {
                     // An indented block may only annotate a `def`'s parameter
@@ -263,9 +356,9 @@ impl Parser<'_> {
         let open = self.advance();
         let (pattern, close) = if horizontal {
             self.with_mode(Mode::InlineShell, |this| {
-                let (items, _) = this.parse_pat_items(scope, PatMode::Nested)?;
+                let alts = this.parse_horiz_alts(scope, PatMode::Nested)?;
                 let close = this.expect_matching(scope, ExpectKind::RightParen, open);
-                Ok((collapse_pattern(items), Some(close)))
+                Ok((alts.into_pattern(true), Some(close)))
             })?
         } else {
             if !matches!(self.peek()?, Some(token!(TokenInfo::Indent))) {
@@ -276,8 +369,7 @@ impl Parser<'_> {
                     "expected an indented type-test pattern",
                 ));
             }
-            let (items, _) = self.parse_pat_items(scope, PatMode::VertBind)?;
-            (collapse_pattern(items), None)
+            (self.parse_vert_pattern(scope)?, None)
         };
         Ok(PatBind::Nested {
             pattern: Box::new(Pattern::TypeTest(Box::new(TypePattern {
@@ -345,6 +437,19 @@ impl Parser<'_> {
         scope: &mut Scope,
         mode: PatMode,
     ) -> Result<(Vec<PatItem>, Implicits)> {
+        if mode.is_vertical() {
+            self.expect(scope, &[ExpectKind::Indent])?;
+        }
+        self.parse_pat_list(scope, mode)
+    }
+
+    /// Parse items through the end of the list, which for a vertical list is its
+    /// `Dedent`.
+    fn parse_pat_list(
+        &mut self,
+        scope: &mut Scope,
+        mode: PatMode,
+    ) -> Result<(Vec<PatItem>, Implicits)> {
         use self::{Ident, Keyword, Op};
         let mut items = Vec::new();
         let mut implicits = Implicits::default();
@@ -353,14 +458,48 @@ impl Parser<'_> {
         let mut last_rest = None;
         let mut variadic_trailing_reported = false;
         let mut seen_optional = false;
-        if mode.is_vertical() {
-            self.expect(scope, &[ExpectKind::Indent])?;
-        }
+        let mut line_start = true;
         loop {
+            let at_line_start = mem::replace(&mut line_start, false);
             match self.peek()? {
-                // `()` is valid, matching an empty value
-                Some(token!(TokenInfo::RightParen)) if matches!(mode, PatMode::Nested) => {
+                // `()` is valid, matching an empty value; `|` ends an alternative
+                Some(token!(TokenInfo::RightParen | TokenInfo::Op(Op::Bar)))
+                    if matches!(mode, PatMode::Nested) =>
+                {
                     break Ok((items, implicits));
+                }
+                token @ Some(token!(TokenInfo::Op(Op::Bar))) if mode.is_vertical() => {
+                    let msg = if mode.is_def() {
+                        mode.def_param_error()
+                    } else if at_line_start {
+                        MIXED_BLOCK
+                    } else {
+                        "alternatives within a line need parentheses"
+                    };
+                    return Err(self.syntax_error(scope, token, msg));
+                }
+                // In shell mode, `r|` and `t|` start here strings, but in a
+                // pattern they are a name followed by `|`
+                Some(token @ token!(TokenInfo::RBar | TokenInfo::TBar))
+                    if matches!(mode, PatMode::HorizBind) =>
+                {
+                    self.advance();
+                    let name = token.span.left_char();
+                    self.push_bar(token.span.right_char());
+                    self.report_non_trailing_variadic(
+                        variadic,
+                        variadic_span,
+                        &mut variadic_trailing_reported,
+                    );
+                    if seen_optional && mode.unpacks() {
+                        self.fail = true;
+                        self.diags.push(RequiredAfterOptional(name));
+                    }
+                    items.push(PatItem::Pos {
+                        bind: PatBind::Ident(Ident::new(name)),
+                        ty: None,
+                        default: None,
+                    });
                 }
                 None
                 | Some(token!(TokenInfo::Indent | TokenInfo::Op(Op::Bar) | TokenInfo::Equal))
@@ -405,9 +544,11 @@ impl Parser<'_> {
                 }
                 Some(token!(TokenInfo::ArgSep)) => {
                     self.advance();
+                    line_start = at_line_start;
                 }
                 Some(token!(TokenInfo::StmtSep)) if mode.is_vertical() => {
                     self.advance();
+                    line_start = true;
                 }
                 Some(token!(TokenInfo::Key)) => {
                     self.report_non_trailing_variadic(

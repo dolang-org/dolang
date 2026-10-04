@@ -1,0 +1,7 @@
+bind [[1]]
+  - (a | (a)) = 1
+# error: a sub-pattern cannot have a default
+#   --> alt_pattern_group_default.dol:LL:LL
+#    |
+# LL |   - (a | (a)) = 1
+#    |               ^

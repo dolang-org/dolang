@@ -720,6 +720,11 @@ impl Check<'_> {
                     self.param(frame, param);
                 }
             }
+            Pattern::Alt(alt) => {
+                for pattern in &mut alt.alts {
+                    self.pattern(frame, pattern);
+                }
+            }
         }
     }
 
