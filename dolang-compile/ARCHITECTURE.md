@@ -794,18 +794,25 @@ Checking rules (`flow/rule.rs`) are solved by a fresh solver on each run, and
 only reified types leave it:
 
 - A call constrains its callee below `Solver::call_items` of its arguments,
-  passing the caller's declared channels. A callee that isn't a function type
-  or a union of them gives `Unknown`. What its arguments
-  are expected to be comes from the callee's parameters. A parameter that
-  mentions the callee's binders gives an expectation only once the call is
-  solved, so a collection literal or call passed to it is held back: a
-  pre-solve stands a fresh variable for it and solves the call without it. A
-  variable the held arguments can't raise takes its least solution
+  passing the caller's declared channels. A non-function callee calls its
+  `(call)` special method, passing the receiver first as a method call does. A
+  known missing method is diagnosed; an unknown callee stays untyped. Calling
+  a member's value, such as a field's or a getter's result, dispatches the
+  same way (`Flow::call_target`). A union calls each alternative and joins
+  their results. Its arguments are evaluated once, and each alternative
+  selects its own overload and solves its call separately, preserving its
+  receiver's argument indexes in diagnostics. A held argument takes an
+  expectation only when all alternatives agree on it.
+  What its arguments are expected to be comes from the callee's parameters. A
+  parameter that mentions the callee's binders gives an expectation only once
+  the call is solved, so a collection literal or call passed to it is held
+  back: a pre-solve stands a fresh variable for it and solves the call without
+  it. A variable the held arguments can't raise takes its least solution
   (`Solver::raised`), since whatever supplies a function takes its parameters
-  and channels from what's expected of it. Then each held argument is evaluated
-  expecting its parameter, if what's forced or chosen solves it. The pre-solve
-  never makes a variable dynamic, so a binder only a held argument determines
-  gives it no expectation.
+  and channels from what's expected of it. Then each held argument is
+  evaluated expecting its parameter, if what's forced or chosen solves it. The
+  pre-solve never makes a variable dynamic, so a binder only a held argument
+  determines gives it no expectation.
 - A call through an overloaded function, a method or a def, chooses among its
   `@def` overloads, a stopgap until union calls are solved (#742). Its
   arguments are evaluated once, each one that takes an expectation held back,

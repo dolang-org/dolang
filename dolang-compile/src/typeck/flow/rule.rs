@@ -19,6 +19,7 @@ use std::collections::{HashSet, VecDeque};
 
 use super::{
     At, Flow, State,
+    member::CallTarget,
     problem::{Misfit, Problem},
 };
 use crate::{
@@ -877,9 +878,8 @@ impl<'a> Flow<'a, '_> {
     /// that takes an expectation its generic callee's signature alone doesn't give
     /// is held back until the call's pre-solve does (see [`Flow::expectations`]).
     /// A comprehension's arguments are passed as often as it says: see
-    /// [`Flow::gather`]. A class object is called as its constructor (see
-    /// [`Flow::construct`]). A callee that isn't a function or a union of them
-    /// gives the dynamic type.
+    /// [`Flow::gather`]. A callee that isn't a function is called as
+    /// [`Flow::call_value`] says.
     pub(super) fn call(
         &mut self,
         at: At,
@@ -897,21 +897,43 @@ impl<'a> Flow<'a, '_> {
             expected,
             span: expr.span,
         };
-        if let Some(class) = self.class_of(callee_type) {
-            return self.construct(at, state, operands, callee_type, class, call);
+        self.call_value(at, state, operands, (callee_type, callee.span), &[], call)
+    }
+
+    /// A call of an evaluated callee, passing `leading` before the call's own
+    /// arguments, as calling a member's value passes an operator's operands. How
+    /// it reaches a signature is [`Flow::call_target`]'s. Each alternative of a
+    /// union must take the call (see [`Flow::call_union`]).
+    pub(super) fn call_value(
+        &mut self,
+        at: At,
+        state: &mut State,
+        operands: &mut VecDeque<TypeId>,
+        callee: (TypeId, Span),
+        leading: &[(TypeId, Span)],
+        call: Call<'_>,
+    ) -> TypeId {
+        let mut targets = match self.db.ty(callee.0) {
+            Type::Union(members) if callee.0 != self.db.bottom() => (members.iter())
+                .map(|member| match *member {
+                    UnionMember::Type(ty) => self.call_target((ty, callee.1), call.span),
+                    _ => self.call_target((self.db.unknown(), callee.1), call.span),
+                })
+                .collect(),
+            _ => vec![self.call_target(callee, call.span)],
+        };
+        for target in &mut targets {
+            target.receivers.extend_from_slice(leading);
         }
-        if let Some((overloads, implementation)) = self.overloaded(callee_type) {
-            return self.call_overloaded(
-                at,
-                state,
-                operands,
-                &overloads,
-                Some(implementation),
-                &[],
-                call,
-            );
+        match <[CallTarget; 1]>::try_from(targets) {
+            Ok([target]) => {
+                let receivers = &target.receivers;
+                let given =
+                    self.call_signature(at, state, operands, &target.signature, receivers, call);
+                target.gives(given, self.db.bottom())
+            }
+            Err(targets) => self.call_union(at, state, operands, &targets, call),
         }
-        self.call_with(at, state, operands, callee_type, &[], call)
     }
 
     /// A call of `callee`, passing `receivers` before the call's own arguments, as
@@ -931,7 +953,7 @@ impl<'a> Flow<'a, '_> {
         let generic = matches!(self.db.ty(callee_type), Type::Quantified { .. });
         let mut values = self.values(at, state, operands, call.args, Some(&params), true, generic);
         received(&mut values, receivers, self.db.bottom());
-        self.finish_call(at, state, callee_type, values, call)
+        self.finish_call(at, state, callee_type, &mut values, call)
     }
 
     /// A call of an overloaded function, passing `receivers` as
@@ -957,20 +979,89 @@ impl<'a> Flow<'a, '_> {
     ) -> TypeId {
         let mut values = self.values(at, state, operands, call.args, None, true, true);
         received(&mut values, receivers, self.db.bottom());
-        let mut chosen = None;
-        if !values.never {
-            let (input, output) = self.channels(at);
-            let mut survivors = (overloads.iter()).filter(|&&overload| {
-                let (_, _, contradicted) =
-                    self.presolve(overload, &values, input, output, None, call.span, true);
-                !contradicted
-            });
-            if let (Some(&survivor), None) = (survivors.next(), survivors.next()) {
-                chosen = Some(survivor);
-            }
-        }
+        let chosen = self.choose_overload(at, overloads, &values, call.span);
         let callee = chosen.or(implementation).unwrap_or(self.db.unknown());
-        self.finish_call(at, state, callee, values, call)
+        self.finish_call(at, state, callee, &mut values, call)
+    }
+
+    /// The one overload whose pre-solve with `values` isn't contradicted, if
+    /// exactly one is
+    fn choose_overload(
+        &mut self,
+        at: At,
+        overloads: &[TypeId],
+        values: &Values<'_>,
+        span: Span,
+    ) -> Option<TypeId> {
+        if values.never {
+            return None;
+        }
+        let (input, output) = self.channels(at);
+        let mut survivors = overloads.iter().filter(|&&overload| {
+            let (_, _, contradicted) =
+                self.presolve(overload, values, input, output, None, span, true);
+            !contradicted
+        });
+        match (survivors.next(), survivors.next()) {
+            (Some(&survivor), None) => Some(survivor),
+            _ => None,
+        }
+    }
+
+    /// A call of a union's alternatives, its arguments evaluated once. Each
+    /// alternative chooses its own overload, as [`Flow::call_overloaded`] does, and
+    /// a held argument takes an expectation only when every alternative gives it
+    /// the same one. Each is then solved separately, so a diagnostic's argument
+    /// indexes are its own receivers', and the call gives what they give.
+    fn call_union(
+        &mut self,
+        at: At,
+        state: &mut State,
+        operands: &mut VecDeque<TypeId>,
+        targets: &[CallTarget],
+        call: Call<'_>,
+    ) -> TypeId {
+        let (bottom, unknown) = (self.db.bottom(), self.db.unknown());
+        let mut values = self.values(at, state, operands, call.args, None, true, true);
+        let (input, output) = self.channels(at);
+        let mut callees = Vec::with_capacity(targets.len());
+        let mut expectations: Option<Vec<Option<TypeId>>> = None;
+        for target in targets {
+            received(&mut values, &target.receivers, bottom);
+            let signature = &target.signature;
+            let chosen = self.choose_overload(at, &signature.overloads, &values, call.span);
+            let callee = chosen.or(signature.implementation).unwrap_or(unknown);
+            let next = match !values.never && self.callable(callee) {
+                true => self.expectations(callee, &values, input, output, call.expected, call.span),
+                false => vec![None; values.held.len()],
+            };
+            match &mut expectations {
+                None => expectations = Some(next),
+                Some(common) => {
+                    for (common, next) in common.iter_mut().zip(next) {
+                        if *common != next {
+                            *common = None;
+                        }
+                    }
+                }
+            }
+            values.values.drain(..target.receivers.len());
+            callees.push(callee);
+        }
+        let expectations = expectations.unwrap_or_else(|| vec![None; values.held.len()]);
+        self.release(at, state, &mut values, &expectations);
+        if values.never {
+            return bottom;
+        }
+        let mut result = bottom;
+        for (target, callee) in targets.iter().zip(callees) {
+            received(&mut values, &target.receivers, bottom);
+            let given = self.finish_call(at, state, callee, &mut values, call);
+            values.values.drain(..target.receivers.len());
+            let given = target.gives(given, bottom);
+            result = self.solver().lub(result, given);
+        }
+        result
     }
 
     /// Finish a call of `callee` with its arguments evaluated: release the ones
@@ -981,7 +1072,7 @@ impl<'a> Flow<'a, '_> {
         at: At,
         state: &mut State,
         callee_type: TypeId,
-        mut values: Values<'_>,
+        values: &mut Values<'_>,
         call: Call<'_>,
     ) -> TypeId {
         let Call { expected, span, .. } = call;
@@ -992,22 +1083,22 @@ impl<'a> Flow<'a, '_> {
         let spread = self.designated(Designated::Spread);
         if !values.held.is_empty() {
             let expectations = match callee_type != bottom && !values.never && callable {
-                true => self.expectations(callee_type, &values, input, output, expected, span),
+                true => self.expectations(callee_type, values, input, output, expected, span),
                 false => vec![None; values.held.len()],
             };
-            self.release(at, state, &mut values, &expectations);
+            self.release(at, state, values, &expectations);
         }
         if callee_type == bottom || values.never {
             return bottom;
         }
         if !callable {
-            self.untyped(at, &values);
+            self.untyped(at, values);
             return unknown;
         }
         self.conclude(at, expected, |rule| {
             vec![call_constraint(
                 rule,
-                &values,
+                values,
                 spread,
                 span,
                 callee_type,
@@ -1019,7 +1110,7 @@ impl<'a> Flow<'a, '_> {
 
     /// Whether a callee is a function, or a union of them, as a variable assigned
     /// several closures holds
-    fn callable(&self, callee: TypeId) -> bool {
+    pub(super) fn callable(&self, callee: TypeId) -> bool {
         let function = |ty: TypeId| {
             let ty = match self.db.ty(ty) {
                 Type::Quantified { body, .. } => *body,
