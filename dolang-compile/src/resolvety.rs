@@ -711,8 +711,11 @@ impl Check<'_> {
         match pattern {
             Pattern::Constant { .. } => {}
             Pattern::TypeTest(test) => self.pattern(frame, &mut test.pattern),
-            Pattern::Ident(PatIdent { ident, ty }) => {
+            Pattern::Ident(PatIdent { ident, ty, default }) => {
                 self.warn_value_name(frame, ident);
+                if let Some(default) = default {
+                    self.expr(frame, &mut default.expr);
+                }
                 self.annot(frame, ty);
             }
             Pattern::Unpack(params) => {

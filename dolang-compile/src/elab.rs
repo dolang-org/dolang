@@ -2431,7 +2431,14 @@ impl<'a> Elaborater<'a> {
                 }
                 self.visit_pattern_inner(scope, &mut test.pattern, export)
             }
-            Pattern::Ident(PatIdent { ident, .. }) => self.bind_ident(scope, ident, export),
+            Pattern::Ident(PatIdent { ident, default, .. }) => {
+                if let Some(default) = default
+                    && default.fold.is_none()
+                {
+                    self.visit_expr(scope, &mut default.expr, false)?;
+                }
+                self.bind_ident(scope, ident, export)
+            }
             Pattern::Alt(alt) => self.visit_alternation(scope, alt, export),
             Pattern::Unpack(params) => {
                 for param in params.iter_mut() {
@@ -3580,7 +3587,10 @@ impl<'a> Elaborater<'a> {
 /// Whether a pattern has a default to evaluate after the whole pattern matches
 fn has_non_const_default(pattern: &Pattern) -> bool {
     match pattern {
-        Pattern::Constant { .. } | Pattern::Ident(_) => false,
+        Pattern::Constant { .. } => false,
+        Pattern::Ident(PatIdent { default, .. }) => {
+            default.as_ref().is_some_and(|default| default.fold.is_none())
+        }
         Pattern::TypeTest(test) => has_non_const_default(&test.pattern),
         Pattern::Alt(alt) => alt.alts.iter().any(has_non_const_default),
         Pattern::Unpack(items) => items.iter().any(|item| match item {

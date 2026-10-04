@@ -236,7 +236,7 @@ let Int(x) Str(label) = [1, "first"]
 let Point(x: px y: py) = point
 ```
 
-A single required positional binding captures the whole value: `Int(n)` binds
+A single positional binding captures the whole value: `Int(n)` binds
 an integer without unpacking it. To unpack one element explicitly, use
 `Array((item))`. `Array()` tests for an empty array.
 

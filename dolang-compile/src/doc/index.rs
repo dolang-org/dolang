@@ -973,7 +973,10 @@ impl Index<'_> {
                 self.reference(scope, &mut test.class.ident);
                 self.pattern(scope, &mut test.pattern, is_pub, extent);
             }
-            Pattern::Ident(PatIdent { ident, ty }) => {
+            Pattern::Ident(PatIdent { ident, ty, default }) => {
+                if let Some(default) = default {
+                    self.expr(scope, &mut default.expr);
+                }
                 let span = extent.unwrap_or_else(|| match ty {
                     Some(ty) => ident.span | ty.span(),
                     None => ident.span,

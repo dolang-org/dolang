@@ -12,12 +12,14 @@ let ?k: (a = 1 j: (b)) ... = {}
 # LL | let ?k: (a = 1 j: (b)) ... = {}
 #    |                    ^
 
+# Only the first alternative's bindings need defaults
 let ?k: ((a = 1) | (a)) ... = {}
+let ?k: ((a) | (a = 1)) ... = {}
 # error: binding `a` under `?` needs a default
 #   --> optional_pattern_needs_default.dol:LL:LL
 #    |
-# LL | let ?k: ((a = 1) | (a)) ... = {}
-#    |                     ^
+# LL | let ?k: ((a) | (a = 1)) ... = {}
+#    |           ^
 
 bind {}
   ?k:

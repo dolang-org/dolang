@@ -1773,6 +1773,9 @@ where
 pub(crate) struct PatIdent {
     pub(crate) ident: Ident,
     pub(crate) ty: Option<Box<Annot>>,
+    /// The default of a lone item that collapsed to its name, which applies when
+    /// the value is absent under `?`
+    pub(crate) default: Option<PatDefault>,
 }
 
 pub(crate) struct TypePattern {
@@ -1805,10 +1808,14 @@ impl Node for Pattern {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         match self {
             Pattern::Constant { expr, .. } => expr.accept(visit),
-            Pattern::Ident(PatIdent { ident, ty }) => {
+            Pattern::Ident(PatIdent { ident, ty, default }) => {
                 ident.accept(visit)?;
                 if let Some(ty) = ty {
                     visit.node(&**ty)?;
+                }
+                if let Some(default) = default {
+                    visit.token(Token::Delim, default.delim_span, None)?;
+                    visit.node(&default.expr)?;
                 }
                 ControlFlow::Continue(())
             }

@@ -341,7 +341,7 @@ impl<'u> Scope<'_, '_, 'u> {
     ) -> (Pattern, Nested<'u>) {
         let mut nested = Vec::new();
         let pattern = self.in_frame(frame, |scope| match pattern {
-            ast::Pattern::Ident(PatIdent { ident, ty }) => {
+            ast::Pattern::Ident(PatIdent { ident, ty, .. }) => {
                 Pattern::Bind(scope.binding(ident, ty.as_deref()))
             }
             ast::Pattern::Unpack(pat_items) => {
@@ -826,7 +826,7 @@ impl<'u> Scope<'_, '_, 'u> {
     ) {
         let span = value.span;
         match pattern {
-            ast::Pattern::Ident(PatIdent { ident, ty }) if !truthy => {
+            ast::Pattern::Ident(PatIdent { ident, ty, .. }) if !truthy => {
                 let var = self.in_frame(frame, |scope| scope.binding(ident, ty.as_deref()));
                 self.emit(Step::Let {
                     pattern: Pattern::Bind(var),
@@ -835,7 +835,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 self.end(Terminal::Branch(then));
             }
             // A name binds the value itself, on its truthiness
-            ast::Pattern::Ident(PatIdent { ident, ty }) => {
+            ast::Pattern::Ident(PatIdent { ident, ty, .. }) => {
                 self.push(value);
                 self.emit(Step::Dup);
                 let bound = self.block();

@@ -93,13 +93,20 @@ let ?k: 5 = {k: 5}
 if let ?k: 5 = {k: 6}
   assert false
 
-# Before a type test, `?` matches an absent item or one of the class
-let ?k: Array(i = 0) = {}
+# Before a type test, `?` matches an absent item or one of the class. A lone
+# item collapses to the whole value, keeping its default for an absent one.
+let ?k: Int(i = 0) = {}
 assert_eq $i 0
-let ?k: Array(i = 0) = {k: [8]}
+let ?k: Int(i = 0) = {k: 8}
 assert_eq $i 8
-if let ?k: Array(_i = 0) = {k: {8}}
+if let ?k: Int(_i = 0) = {k: "eight"}
   assert false
+let ?k: Int(i = (n + 1)) = {}
+assert_eq $i 11
+let ?k: Int(i = (n + 1)) = {k: 8}
+assert_eq $i 8
+let ?k: Array(i = 0) = {k: [8]}
+assert_eq $i [8]
 
 # Vertical `?` items: `? ` marks an optional positional item as `- ` does, and
 # `?` directly before an item marks it
@@ -169,6 +176,14 @@ bind []
   - ?Dict $
     :x = 1
 assert_eq $x 1
+bind []
+  ? Dict $
+    d = {}
+assert_eq $d {}
+bind [{x: 3}]
+  ? Dict $
+    d = {}
+assert_eq $d {x: 3}
 bind [{x: 5}]
   - ?Dict $
     :x = 1
@@ -179,7 +194,12 @@ if bind [[5]]
 do
   assert false
 
-# An absent alternation acts as if its first alternative matched
+# An absent alternation acts as if its first alternative matched, so only its
+# bindings need defaults
+let ?k: (Int(v = 0) | Str(v)) = {}
+assert_eq $v 0
+let ?k: (Int(v = 0) | Str(v)) = {k: "s"}
+assert_eq $v "s"
 let ?k: ((:a = 1 :b = 2) | (a = 3 b = 4)) = {}
 assert_eq [a, b] [1, 2]
 let ?k: ((:a = 1 :b = 2) | (a = 3 b = 4)) = {k: [5]}
@@ -202,12 +222,12 @@ assert_eq (g(3, [4])) 12
 # `match` arms and loops
 def describe value
   match value
-    ?k: Array(n = 0) do n
+    ?k: Int(n = 0) do n
   else
     :other:
 assert_eq (describe ({})) 0
-assert_eq (describe ({k: [3]})) 3
-assert_eq (describe ({k: {3}})) :other:
+assert_eq (describe ({k: 3})) 3
+assert_eq (describe ({k: "x"})) :other:
 let sums = []
 for ?k: (a = 1 b = 2) = [{}, {k: [3]}, {k: [3, 4]}]
   sums.push (a + b)

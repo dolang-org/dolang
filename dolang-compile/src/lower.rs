@@ -2077,39 +2077,52 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     continue;
                 }
             };
-            let Some(default) = default.as_ref().filter(|d| d.fold.is_none()) else {
-                continue;
-            };
-
-            let res = ident.res.as_ref().expect("unresolved item");
-            let var = self.resolve_var(res.index, res.depth);
-
-            // Load the current value of this item
-            self.lower_load(res, span);
-            // Load sentinel and compare
-            let sentinel = self.sentinel_const();
-            self.block
-                .insts
-                .push(Inst(InstInfo::LoadConst(sentinel), span));
-            self.block.insts.push(Inst(InstInfo::Eq, span));
-
-            // Branch: if true (sentinel), evaluate default; else skip
-            let eval_bb = self.graph.alloc_block(self.block.func, self.block.scope);
-            let skip_bb = self.graph.alloc_block(self.block.func, self.block.scope);
-            self.block.term = Term(TermInfo::If(eval_bb, skip_bb), span);
-            self.link(eval_bb);
-            self.link(skip_bb);
-
-            // Evaluate default expression
-            self.switch(eval_bb);
-            self.lower_expr(&default.expr)?;
-            self.lower_store(span, var);
-            self.block.term = Term(TermInfo::Branch(skip_bb), span);
-            self.link(skip_bb);
-
-            // Continue in skip block
-            self.switch(skip_bb);
+            if let Some(default) = default {
+                self.lower_non_const_default(ident, default, span)?;
+            }
         }
+        Ok(())
+    }
+
+    /// Evaluate `default` into the variable of `ident` if it holds the sentinel,
+    /// unless the default was folded into the unpack
+    fn lower_non_const_default(
+        &mut self,
+        ident: &Ident,
+        default: &'a PatDefault,
+        span: Span,
+    ) -> Result<()> {
+        if default.fold.is_some() {
+            return Ok(());
+        }
+        let res = ident.res.as_ref().expect("unresolved item");
+        let var = self.resolve_var(res.index, res.depth);
+
+        // Load the current value of this item
+        self.lower_load(res, span);
+        // Load sentinel and compare
+        let sentinel = self.sentinel_const();
+        self.block
+            .insts
+            .push(Inst(InstInfo::LoadConst(sentinel), span));
+        self.block.insts.push(Inst(InstInfo::Eq, span));
+
+        // Branch: if true (sentinel), evaluate default; else skip
+        let eval_bb = self.graph.alloc_block(self.block.func, self.block.scope);
+        let skip_bb = self.graph.alloc_block(self.block.func, self.block.scope);
+        self.block.term = Term(TermInfo::If(eval_bb, skip_bb), span);
+        self.link(eval_bb);
+        self.link(skip_bb);
+
+        // Evaluate default expression
+        self.switch(eval_bb);
+        self.lower_expr(&default.expr)?;
+        self.lower_store(span, var);
+        self.block.term = Term(TermInfo::Branch(skip_bb), span);
+        self.link(skip_bb);
+
+        // Continue in skip block
+        self.switch(skip_bb);
         Ok(())
     }
 
@@ -3241,7 +3254,12 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     /// are those of the alternative that matched.
     fn lower_pattern_defaults(&mut self, pattern: &'a Pattern, span: Span) -> Result<()> {
         match pattern {
-            Pattern::Constant { .. } | Pattern::Ident(_) => Ok(()),
+            Pattern::Constant { .. } | Pattern::Ident(PatIdent { default: None, .. }) => Ok(()),
+            Pattern::Ident(PatIdent {
+                ident,
+                default: Some(default),
+                ..
+            }) => self.lower_non_const_default(ident, default, span),
             Pattern::Unpack(items) => self.lower_non_const_defaults(items, span),
             Pattern::TypeTest(test) => self.lower_pattern_defaults(&test.pattern, span),
             Pattern::Alt(alt) => {
@@ -3440,7 +3458,16 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         values: &mut Vec<(Var, constant::Id)>,
     ) {
         match pattern {
-            Pattern::Constant { .. } | Pattern::Ident(_) => {}
+            Pattern::Constant { .. } | Pattern::Ident(PatIdent { default: None, .. }) => {}
+            Pattern::Ident(PatIdent {
+                ident,
+                default: Some(default),
+                ..
+            }) => {
+                let res = ident.res.as_ref().expect("unresolved pattern binding");
+                let var = self.resolve_var_in_scope(scope, res.index, res.depth);
+                values.push((var, self.lower_default_const(default)));
+            }
             Pattern::TypeTest(test) => self.absent_values(scope, &test.pattern, values),
             Pattern::Alt(alt) => {
                 if let Some(index) = alt.indicator {
