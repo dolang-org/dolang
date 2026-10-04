@@ -471,6 +471,65 @@ impl Diagnose for RequiredAfterOptional {
     }
 }
 
+/// A binding under `?` without a default, which an absent item leaves nothing
+/// to bind
+pub(super) struct OptionalNeedsDefault(pub(super) Span);
+
+impl Diagnose for OptionalNeedsDefault {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "binding `{}` under `?` needs a default",
+            compiler.file.str(self.0)
+        )
+    }
+}
+
+/// `?` before an item that binds a name, which a default already makes optional
+pub(super) struct OptionalName(pub(super) Span);
+
+impl Diagnose for OptionalName {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "`?` only precedes a sub-pattern; give `{}` a default instead",
+            compiler.file.str(self.0)
+        )
+    }
+}
+
+pub(super) struct OptionalNamedRest(pub(super) Span);
+
+impl Diagnose for OptionalNamedRest {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "a rest under `?` cannot bind a name")
+    }
+}
+
 pub(super) struct ImplicitInPattern(pub(super) Span);
 
 impl Diagnose for ImplicitInPattern {

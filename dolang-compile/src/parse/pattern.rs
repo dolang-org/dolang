@@ -3,7 +3,8 @@ use std::mem;
 use super::{
     ExprMode, Parser, Result, Scope,
     diag::{
-        DuplicateImplicit, ImplicitInPattern, RequiredAfterOptional, RestMustBeTrailing, SyntaxDiag,
+        DuplicateImplicit, ImplicitInPattern, OptionalName, OptionalNamedRest,
+        OptionalNeedsDefault, RequiredAfterOptional, RestMustBeTrailing, SyntaxDiag,
     },
     stream::ExpectKind,
 };
@@ -32,10 +33,18 @@ fn rest_order_error(prev: RestKind, kind: RestKind) -> Option<&'static str> {
 
 /// Build a pattern from its top-level items.
 ///
-/// A lone positional item without a default matches the whole value rather than
-/// unpacking it, so it stands for what it binds: a name, or a sub-pattern.
+/// A lone positional item without a default, and not optional, matches the whole
+/// value rather than unpacking it, so it stands for what it binds: a name, or a
+/// sub-pattern.
 fn collapse_pattern(mut items: Vec<PatItem>) -> Pattern {
-    if let [PatItem::Pos { default: None, .. }] = items.as_slice()
+    if let [
+        PatItem::Pos {
+            default: None,
+            bind,
+            ..
+        },
+    ] = items.as_slice()
+        && bind.optional().is_none()
         && let Some(PatItem::Pos { bind, ty, .. }) = items.pop()
     {
         return match bind {
@@ -144,6 +153,137 @@ impl Parser<'_> {
             ));
             *variadic_trailing_reported = true;
         }
+    }
+
+    /// Mark an item's sub-pattern optional for the `?` before it.
+    fn apply_optional(&mut self, item: &mut PatItem, question: Span) {
+        let (PatItem::Pos { bind, .. }
+        | PatItem::Key { bind, .. }
+        | PatItem::ConstKey { bind, .. }) = item
+        else {
+            unreachable!("`?` before a rest")
+        };
+        match bind {
+            PatBind::Nested {
+                pattern, optional, ..
+            } => {
+                *optional = Some(question);
+                self.check_optional(pattern);
+            }
+            PatBind::Ident(ident) => {
+                self.fail = true;
+                self.diags.push(OptionalName(ident.span));
+            }
+        }
+    }
+
+    /// Check that every binding in an optional sub-pattern can do without its
+    /// item: an absent item gives each one its default.
+    fn check_optional(&mut self, pattern: &Pattern) {
+        match pattern {
+            Pattern::Constant { .. } => {}
+            Pattern::Ident(PatIdent { ident, .. }) => {
+                self.fail = true;
+                self.diags.push(OptionalNeedsDefault(ident.span));
+            }
+            Pattern::TypeTest(test) => self.check_optional(&test.pattern),
+            Pattern::Alt(alt) => {
+                for alt in &alt.alts {
+                    self.check_optional(alt);
+                }
+            }
+            Pattern::Unpack(items) => {
+                for item in items {
+                    match item {
+                        PatItem::Pos { bind, default, .. }
+                        | PatItem::Key { bind, default, .. }
+                        | PatItem::ConstKey { bind, default, .. } => match bind {
+                            PatBind::Ident(ident) if default.is_none() => {
+                                self.fail = true;
+                                self.diags.push(OptionalNeedsDefault(ident.span));
+                            }
+                            PatBind::Ident(_) => {}
+                            // Its own `?` has checked it
+                            PatBind::Nested {
+                                optional: Some(_), ..
+                            } => {}
+                            PatBind::Nested { pattern, .. } => self.check_optional(pattern),
+                        },
+                        PatItem::Rest {
+                            ident: Some(ident), ..
+                        } => {
+                            self.fail = true;
+                            self.diags.push(OptionalNamedRest(ident.span));
+                        }
+                        PatItem::Rest { ident: None, .. } => {}
+                    }
+                }
+            }
+        }
+    }
+
+    /// Parse what a vertical positional item binds, after its `- ` or `? `,
+    /// whose separator is `sep`.
+    ///
+    /// A `-` or key there starts a sub-pattern continuing on lines at its column,
+    /// as in vertical data.
+    fn parse_dash_bind(&mut self, scope: &mut Scope, mode: PatMode, sep: Span) -> Result<PatBind> {
+        let token = self.peek()?;
+        if mode.is_def()
+            && let Some(
+                token!(
+                    TokenInfo::LeftParen
+                        | TokenInfo::Op(Op::Minus)
+                        | TokenInfo::Key
+                        | TokenInfo::DittoKey
+                        | const_pattern_start!()
+                ),
+            ) = token
+        {
+            return Err(self.syntax_error(scope, token, mode.def_param_error()));
+        }
+        Ok(match token {
+            Some(token!(TokenInfo::LeftParen)) => self.parse_sub_pattern(scope)?,
+            Some(token!(TokenInfo::Op(Op::Minus) | TokenInfo::Key | TokenInfo::DittoKey)) => {
+                self.add_indent(sep.end);
+                let (items, _) = self.parse_pat_list(scope, PatMode::VertBind)?;
+                PatBind::Nested {
+                    pattern: Box::new(Pattern::Unpack(items)),
+                    parens: None,
+                    optional: None,
+                }
+            }
+            Some(token!(const_pattern_start!())) => {
+                let (expr, value) = self.parse_expr_const(scope, ExprMode::Compact)?;
+                PatBind::Nested {
+                    pattern: Box::new(Pattern::Constant { expr, value }),
+                    parens: None,
+                    optional: None,
+                }
+            }
+            _ => self.parse_named_bind(scope, mode)?,
+        })
+    }
+
+    /// Finish a vertical positional item with its annotation and default.
+    fn push_dash_item(
+        &mut self,
+        scope: &mut Scope,
+        mode: PatMode,
+        bind: PatBind,
+        optional: bool,
+        seen_optional: &mut bool,
+        items: &mut Vec<PatItem>,
+    ) -> Result<()> {
+        let (ty, default) = self.parse_item_tail(scope, mode, &bind)?;
+        if default.is_some() || optional {
+            *seen_optional = true;
+        } else if *seen_optional && mode.unpacks() {
+            self.fail = true;
+            self.diags.push(RequiredAfterOptional(bind.span()));
+        }
+        items.push(PatItem::Pos { bind, ty, default });
+        Ok(())
     }
 
     pub(super) fn parse_pattern(&mut self, scope: &mut Scope, vertical: bool) -> Result<Pattern> {
@@ -261,6 +401,7 @@ impl Parser<'_> {
             Ok(PatBind::Nested {
                 pattern: Box::new(alts.into_pattern(false)),
                 parens: Some((open, close)),
+                optional: None,
             })
         })
     }
@@ -291,6 +432,7 @@ impl Parser<'_> {
                         PatBind::Nested {
                             pattern: Box::new(pattern),
                             parens: None,
+                            optional: None,
                         },
                         None,
                     )
@@ -312,6 +454,7 @@ impl Parser<'_> {
                 PatBind::Nested {
                     pattern: Box::new(Pattern::Constant { expr, value }),
                     parens: None,
+                    optional: None,
                 },
                 None,
             ));
@@ -412,6 +555,7 @@ impl Parser<'_> {
                 close,
             }))),
             parens: None,
+            optional: None,
         })
     }
 
@@ -484,7 +628,16 @@ impl Parser<'_> {
         let mut variadic_trailing_reported = false;
         let mut seen_optional = false;
         let mut line_start = true;
+        // A `?` and the number of items before it, until the item after it is
+        // parsed
+        let mut question: Option<(Span, usize)> = None;
         loop {
+            if let Some((span, before)) = question
+                && items.len() > before
+            {
+                question = None;
+                self.apply_optional(items.last_mut().unwrap(), span);
+            }
             let at_line_start = mem::replace(&mut line_start, false);
             match self.peek()? {
                 // `()` is valid, matching an empty value; `|` ends an alternative
@@ -586,6 +739,57 @@ impl Parser<'_> {
                     self.advance();
                     line_start = true;
                 }
+                token @ Some(token!(TokenInfo::Question)) if mode.is_def() => {
+                    return Err(self.syntax_error(scope, token, mode.def_param_error()));
+                }
+                Some(token!(TokenInfo::Question)) => {
+                    let span = self.advance();
+                    // `? ` starts an optional positional item, as `- ` starts one
+                    if mode.is_vertical()
+                        && let Some(token!(TokenInfo::ArgSep)) = self.peek()?
+                    {
+                        let sep = self.advance();
+                        question = Some((span, items.len()));
+                        let bind = self.parse_dash_bind(scope, mode, sep)?;
+                        self.report_non_trailing_variadic(
+                            variadic,
+                            variadic_span,
+                            &mut variadic_trailing_reported,
+                        );
+                        self.push_dash_item(
+                            scope,
+                            mode,
+                            bind,
+                            true,
+                            &mut seen_optional,
+                            &mut items,
+                        )?;
+                        continue;
+                    }
+                    match decay_ident!(self.peek()?) {
+                        Some(
+                            token!(
+                                TokenInfo::LeftParen
+                                    | TokenInfo::Key
+                                    | TokenInfo::Ident
+                                    | TokenInfo::LeftBracket
+                                    | TokenInfo::LeftBrace
+                                    | TokenInfo::TQuote
+                                    | const_pattern_start!()
+                                    // Diagnosed once parsed, as `?name` is
+                                    | TokenInfo::DittoKey
+                            ),
+                        ) => {}
+                        token => {
+                            return Err(self.syntax_error(
+                                scope,
+                                token,
+                                "expected a sub-pattern after `?`",
+                            ));
+                        }
+                    }
+                    question = Some((span, items.len()));
+                }
                 Some(token!(TokenInfo::Key)) => {
                     self.report_non_trailing_variadic(
                         variadic,
@@ -622,37 +826,29 @@ impl Parser<'_> {
                 }
                 Some(token!(TokenInfo::Op(Op::Minus))) if mode.is_vertical() => {
                     let _minus = self.advance();
-                    self.expect(scope, &[ExpectKind::ArgSep])?;
-                    let bind = if let token @ Some(
-                        token!(TokenInfo::LeftParen | const_pattern_start!()),
-                    ) = self.peek()?
-                        && mode.is_def()
-                    {
-                        return Err(self.syntax_error(scope, token, mode.def_param_error()));
-                    } else if let Some(token!(TokenInfo::LeftParen)) = self.peek()? {
-                        self.parse_sub_pattern(scope)?
-                    } else if matches!(self.peek()?, Some(token!(const_pattern_start!()))) {
-                        let (expr, value) = self.parse_expr_const(scope, ExprMode::Compact)?;
-                        PatBind::Nested {
-                            pattern: Box::new(Pattern::Constant { expr, value }),
-                            parens: None,
+                    let sep = self.expect(scope, &[ExpectKind::ArgSep])?;
+                    // `- ?(…)` marks the item's sub-pattern optional, as `? (…)` does
+                    if let token @ Some(token!(TokenInfo::Question)) = self.peek()? {
+                        if mode.is_def() {
+                            return Err(self.syntax_error(scope, token, mode.def_param_error()));
                         }
-                    } else {
-                        self.parse_named_bind(scope, mode)?
-                    };
+                        question = Some((self.advance(), items.len()));
+                    }
+                    let bind = self.parse_dash_bind(scope, mode, sep)?;
                     self.report_non_trailing_variadic(
                         variadic,
                         variadic_span,
                         &mut variadic_trailing_reported,
                     );
-                    let (ty, default) = self.parse_item_tail(scope, mode, &bind)?;
-                    if default.is_some() {
-                        seen_optional = true;
-                    } else if seen_optional && mode.unpacks() {
-                        self.fail = true;
-                        self.diags.push(RequiredAfterOptional(bind.span()));
-                    }
-                    items.push(PatItem::Pos { bind, ty, default })
+                    let optional = question.is_some();
+                    self.push_dash_item(
+                        scope,
+                        mode,
+                        bind,
+                        optional,
+                        &mut seen_optional,
+                        &mut items,
+                    )?;
                 }
                 Some(token @ token!(TokenInfo::Op(Op::Lt) | TokenInfo::Op(Op::Gt))) => {
                     let input = matches!(token.info, TokenInfo::Op(Op::Lt));
@@ -758,9 +954,11 @@ impl Parser<'_> {
                         &mut variadic_trailing_reported,
                     );
                     let bind = self.parse_sub_pattern(scope)?;
-                    // A sub-pattern has no default, so it is always required
+                    // A sub-pattern has no default, so only `?` makes it optional
                     let (ty, default) = self.parse_item_tail(scope, mode, &bind)?;
-                    if seen_optional {
+                    if question.is_some() {
+                        seen_optional = true;
+                    } else if seen_optional {
                         self.fail = true;
                         self.diags.push(RequiredAfterOptional(bind.span()));
                     }
@@ -797,9 +995,12 @@ impl Parser<'_> {
                                 value: key_const,
                             }),
                             parens: None,
+                            optional: None,
                         };
                         let (ty, default) = self.parse_item_tail(scope, mode, &bind)?;
-                        if seen_optional {
+                        if question.is_some() {
+                            seen_optional = true;
+                        } else if seen_optional {
                             self.fail = true;
                             self.diags.push(RequiredAfterOptional(bind.span()));
                         }
@@ -829,7 +1030,7 @@ impl Parser<'_> {
                             &mut variadic_trailing_reported,
                         );
                         let (ty, default) = self.parse_item_tail(scope, mode, &bind)?;
-                        if default.is_some() {
+                        if default.is_some() || question.is_some() {
                             seen_optional = true;
                         } else if seen_optional && mode.unpacks() {
                             self.fail = true;

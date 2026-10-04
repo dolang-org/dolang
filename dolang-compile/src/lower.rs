@@ -3162,6 +3162,9 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         };
         let slot = |this: &mut Self, bind: &'a PatBind| match bind {
             PatBind::Ident(ident) => var(this, ident),
+            PatBind::Nested {
+                optional: Some(_), ..
+            } => todo!("#856 optional sub-pattern lowering"),
             PatBind::Nested { pattern, .. } => Slot::Pattern(pattern),
         };
         let unpack = &self.unpacktab[sig];

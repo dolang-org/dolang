@@ -1,0 +1,40 @@
+let ?k: (a b = 1) ... = {}
+# error: binding `a` under `?` needs a default
+#   --> optional_pattern_needs_default.dol:LL:LL
+#    |
+# LL | let ?k: (a b = 1) ... = {}
+#    |          ^
+
+let ?k: (a = 1 j: (b)) ... = {}
+# error: binding `b` under `?` needs a default
+#   --> optional_pattern_needs_default.dol:LL:LL
+#    |
+# LL | let ?k: (a = 1 j: (b)) ... = {}
+#    |                    ^
+
+let ?k: ((a = 1) | (a)) ... = {}
+# error: binding `a` under `?` needs a default
+#   --> optional_pattern_needs_default.dol:LL:LL
+#    |
+# LL | let ?k: ((a = 1) | (a)) ... = {}
+#    |                     ^
+
+bind {}
+  ?k:
+    :x
+    # error: binding `x` under `?` needs a default
+    #   --> optional_pattern_needs_default.dol:LL:LL
+    #    |
+    # LL |     :x
+    #    |      ^
+    :y = 2
+  ...
+
+bind []
+  ? - a
+    # error: binding `a` under `?` needs a default
+    #   --> optional_pattern_needs_default.dol:LL:LL
+    #    |
+    # LL |   ? - a
+    #    |       ^
+    - b = 1

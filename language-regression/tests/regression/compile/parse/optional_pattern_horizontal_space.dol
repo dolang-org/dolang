@@ -1,0 +1,6 @@
+let ? (a = 1) = []
+# error: expected a sub-pattern after `?`
+#   --> optional_pattern_horizontal_space.dol:LL:LL
+#    |
+# LL | let ? (a = 1) = []
+#    |      ^

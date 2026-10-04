@@ -1,0 +1,15 @@
+let f = do |?(a = 1) b| b
+# error: required positional items must precede any optional positional items
+#   --> optional_pattern_required_after.dol:LL:LL
+#    |
+# LL | let f = do |?(a = 1) b| b
+#    |                      ^
+
+bind []
+  - ?(a = 1)
+  - b
+# error: required positional items must precede any optional positional items
+#   --> optional_pattern_required_after.dol:LL:LL
+#    |
+# LL |   - b
+#    |     ^

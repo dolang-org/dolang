@@ -54,6 +54,26 @@ bind {k: [1, 2]}
     (k1 k2)
 assert_eq [k1, k2] [1, 2]
 
+# After `- `, a dash or key starts a positional sub-pattern continuing at its
+# column, as in vertical data
+bind [[1, [2]], {k: 3, j: [4, 5]}, 6]
+  - - a
+    - - b
+  - k: c
+    j:
+      - d
+      - e
+  - f
+assert_eq [a, b, c, d, e, f] [1, 2, 3, 4, 5, 6]
+bind [{x: 7}]
+  - - :x
+assert_eq $x 7
+
+# A lone dash item stands for its sub-pattern, as a lone horizontal one does
+bind {k: 8}
+  - k: g
+assert_eq $g 8
+
 # A failed sub-pattern raises, leaving nothing bound outside the `try`
 let caught = try
   let _u (_t) = [1, [2, 3]]

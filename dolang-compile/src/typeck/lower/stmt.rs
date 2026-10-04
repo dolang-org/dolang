@@ -712,6 +712,9 @@ impl<'u> Scope<'_, '_, 'u> {
     ) -> VarId {
         match bind {
             PatBind::Ident(ident) => self.binding(ident, annot),
+            PatBind::Nested {
+                optional: Some(_), ..
+            } => todo!("#856 optional sub-pattern typing"),
             PatBind::Nested { pattern, .. } => {
                 let var = self.synthetic();
                 nested.push((var, pattern, bind.span()));

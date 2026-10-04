@@ -1,0 +1,32 @@
+let a ?b = [1]
+# error: `?` only precedes a sub-pattern; give `b` a default instead
+#   --> optional_pattern_name.dol:LL:LL
+#    |
+# LL | let a ?b = [1]
+#    |        ^
+
+let ?:k ... = {}
+# error: `?` only precedes a sub-pattern; give `k` a default instead
+#   --> optional_pattern_name.dol:LL:LL
+#    |
+# LL | let ?:k ... = {}
+#    |       ^
+
+bind {}
+  ?k:
+    x
+  # error: `?` only precedes a sub-pattern; give `x` a default instead
+  #   --> optional_pattern_name.dol:LL:LL
+  #    |
+  # LL |     x
+  #    |     ^
+  ...
+
+bind [1]
+  ? x
+  # error: `?` only precedes a sub-pattern; give `x` a default instead
+  #   --> optional_pattern_name.dol:LL:LL
+  #    |
+  # LL |   ? x
+  #    |     ^
+  ...
