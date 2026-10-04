@@ -10,11 +10,11 @@ use dolang_util::{intern::BinTable, mono::MonoVec};
 use crate::{
     Compiler, Mode, PreludeImport,
     ast::{
-        self, Arg, ArrayElem, Assign, Bind, Block, Class, CondPattern, Def, DictElem, Expand, Expr,
-        ExprBody, For, Function, GetVariant, Ident, If, Import, ImportElement, ImportItem, Key,
-        LValue, Let, Method, NlGuard, NlInfo, Origin, Pair, PatBind, PatIdent, PatItem, Pattern,
-        PrimStmt, Res, Return, Root, SideEffect, Single, Stmt, Try, Var, While, visit::Node,
-        Alternation,
+        self, Alternation, Arg, ArrayElem, Assign, Bind, Block, Class, CondPattern, Def, DictElem,
+        Expand, Expr, ExprBody, For, Function, GetVariant, Ident, If, Import, ImportElement,
+        ImportItem, Key, LValue, Let, Method, NlGuard, NlInfo, Origin, Pair, PatBind, PatIdent,
+        PatItem, Pattern, PrimStmt, Res, Return, Root, SideEffect, Single, Stmt, Try, Var, While,
+        visit::Node,
     },
     diag::{AnnotationKind, Severity},
     source::{Annotate, Diagnose, Diags, File, Patch, Span},
@@ -76,7 +76,7 @@ impl Annotate for ClassFromSamePattern {
 /// A pattern binds a name it already bound
 #[derive(Clone)]
 struct DuplicatePatternBinding {
-    span: Span,
+    duplicate: Span,
     previous: Span,
 }
 
@@ -90,7 +90,7 @@ impl Diagnose for DuplicatePatternBinding {
     }
 
     fn span(&self) -> Span {
-        self.span
+        self.duplicate
     }
 
     fn annotations(&self) -> Box<dyn Iterator<Item = Box<dyn Annotate>>> {
@@ -115,7 +115,7 @@ impl Annotate for DuplicatePatternBinding {
 struct AltNameMismatch {
     name: String,
     /// The alternative that lacks the name
-    span: Span,
+    alternative: Span,
     /// Where the other alternative binds it
     binding: Span,
 }
@@ -134,7 +134,7 @@ impl Diagnose for AltNameMismatch {
     }
 
     fn span(&self) -> Span {
-        self.span
+        self.alternative
     }
 
     fn annotations(&self) -> Box<dyn Iterator<Item = Box<dyn Annotate>>> {
@@ -2217,7 +2217,7 @@ impl<'a> Elaborater<'a> {
         {
             self.fail = true;
             self.diags.push(DuplicatePatternBinding {
-                span: ident.span,
+                duplicate: ident.span,
                 previous,
             });
         }
@@ -2238,7 +2238,7 @@ impl<'a> Elaborater<'a> {
             Some(&previous) => {
                 self.fail = true;
                 self.diags.push(DuplicatePatternBinding {
-                    span: ident.span,
+                    duplicate: ident.span,
                     previous,
                 });
             }
@@ -2257,7 +2257,7 @@ impl<'a> Elaborater<'a> {
                         self.fail = true;
                         self.diags.push(AltNameMismatch {
                             name: self.file.str(ident.span).to_owned(),
-                            span: frame.first_span,
+                            alternative: frame.first_span,
                             binding: ident.span,
                         });
                         None
@@ -2266,9 +2266,8 @@ impl<'a> Elaborater<'a> {
             }
             None => None,
         };
-        let index = index.unwrap_or_else(|| {
-            scope.insert(id, Origin::Source(ident.span), self.epoch, export)
-        });
+        let index = index
+            .unwrap_or_else(|| scope.insert(id, Origin::Source(ident.span), self.epoch, export));
         if !wildcard {
             let start = shared.map_or(0, |depth| depth + 1);
             for frame in &mut self.alts[start..] {
@@ -2317,7 +2316,7 @@ impl<'a> Elaborater<'a> {
                     self.fail = true;
                     self.diags.push(AltNameMismatch {
                         name: self.file.str(binding).to_owned(),
-                        span: pattern.span(),
+                        alternative: pattern.span(),
                         binding,
                     });
                 }

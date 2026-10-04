@@ -1,0 +1,167 @@
+# Alternatives at the top level are tried in order; the first match wins.
+let a b | (b a) = [1, 2]
+assert_eq [a, b] [1, 2]
+let a b _ | (b a) = [1, 2]
+assert_eq [a, b] [2, 1]
+let n | (n) = 5
+assert_eq $n 5
+
+# A lone positional item collapses; `:x` is always a sequence pattern.
+let (:x | (x)) = {x: 1}
+assert_eq $x 1
+let (:x | (x)) = [2]
+assert_eq $x 2
+
+# Grouping parentheses alternate one item of an enclosing sequence.
+if let ("foo" | "bar") baz = ["bar", 3]
+  assert_eq $baz 3
+else
+  assert false
+if let ("foo" | "bar") _baz = ["qux", 3]
+  assert false
+
+# Doubled parentheses make a one-item sequence of alternatives.
+let ((Array((p)) | p)) = [[4]]
+assert_eq $p 4
+let ((Array((p)) | p)) = [5]
+assert_eq $p 5
+
+# Constant, type-test and nested alternatives mix.
+def classify value
+  if let (0 | "zero" | false) = value
+    :zero:
+  else if let Int(n) | Str(n) | (n) = value
+    n
+  else
+    :other:
+assert_eq (classify 0) :zero:
+assert_eq (classify "zero") :zero:
+assert_eq (classify false) :zero:
+assert_eq (classify 7) 7
+assert_eq (classify "s") "s"
+assert_eq (classify ([8])) 8
+assert_eq (classify ([1, 2])) :other:
+
+# Alternations nest.
+let (k ((1 | 2) | 3) | k _) = [:a:, 2]
+assert_eq $k :a:
+let (k (1 | 2) | _ k) = [:a:, 3]
+assert_eq $k 3
+
+# Vertical alternatives continue on lines two columns in.
+bind {status: 200, headers: {"Content-Type": "text/plain"}}
+  :status
+  headers:
+    | "content-type": type
+    | "Content-Type": type
+assert_eq [status, type] [200, "text/plain"]
+if bind {a: 1}
+  | Array((a b))
+  | :a
+    :b = 10
+do
+  assert_eq [a, b] [1, 10]
+else
+  assert false
+
+# A vertical type test can take alternatives.
+bind [9]
+  | Int $
+      m
+  | Array $
+      | (m)
+      | m
+assert_eq $m 9
+
+# `_` may appear any number of times, and in any alternative.
+let _ _ ((_ w) | w) = [1, 2, [3, 4]]
+assert_eq $w 4
+let ((_ w) | (_ _ w)) = [1, 2, 3]
+assert_eq $w 3
+
+# Defaults run after the whole pattern, and only the matching alternative's,
+# whatever order each alternative binds its names in.
+let calls = []
+def mark name value
+  calls.push $name
+  value
+let cases = $
+  - [[1, 5], 5, 5, ["first"]]
+  - [[2, 7], 7, 7, ["second"]]
+  - [[1, 5, 6], 5, 6, []]
+  - [[2, 6, 5], 5, 6, []]
+for case = cases
+  calls.clear()
+  let value ea eb ecalls = case
+  let (1 a b = mark("first", a) | 2 b a = mark("second", b)) = value
+  assert_eq [a, b, calls] [ea, eb, ecalls]
+
+# No default runs when a later part of the pattern fails.
+calls.clear()
+if let (1 _a _b = mark("first", 10) | 2 _a _b) 1 = [[1, 5], 2]
+  assert false
+assert_eq $calls []
+
+# Nested alternations select their own defaults.
+let cases = $
+  - [[1, 5], 1, ["inner"]]
+  - [[2, 5, 6], 6, []]
+  - [[3, 5], 0, ["outer"]]
+  - [[1, 5, 6], 6, []]
+for case = cases
+  calls.clear()
+  let value eb ecalls = case
+  let ((1 a b = mark("inner", 1) | 2 a b) | 3 a b = mark("outer", 0)) = value
+  assert_eq [a, b, calls] [5, eb, ecalls]
+
+# A failed alternation discards what earlier steps left.
+for value = [[1, 9, 2], [1, "s", 3], [1, [7, 8], 3], [0, 9]]
+  if let 1 (Array((_x)) | Int(_x)) 3 = value
+    assert false
+  assert_eq (2 + 3) 5
+if let 1 (Array((x)) | Int(x)) 3 = [1, [7], 3]
+  assert_eq $x 7
+else
+  assert false
+
+# A plain pattern raises when no alternative matches.
+let raised = try
+  let (1 | 2) = 3
+  false
+catch std.TypeError: _
+  true
+assert $raised
+let raised = try
+  let (_x _y | _x _y _) = [1, 2, 3, 4]
+  false
+catch _
+  true
+assert $raised
+
+# `for` and lambda parameters take alternatives.
+let seen = []
+for (Array((k)) v | k v) = [[1, 2], [[3], 4]]
+  seen.push [k, v]
+assert_eq $seen [[1, 2], [3, 4]]
+let first = do |(a _ | (a))| a
+assert_eq (first ([1, 2])) 1
+assert_eq (first ([3])) 3
+
+# A pattern as a block's value gives the value matched.
+def matched value
+  let (Array((_y)) | _y) = value
+assert_eq (matched ([6])) [6]
+
+# Bindings captured by a closure are stored in the body.
+if bind [[1], 2]
+  | (q) r
+  | q r
+do
+  let get = do [q, r]
+  assert_eq (get()) [1, 2]
+else
+  assert false
+
+# `r|` and `t|` would otherwise start here strings.
+let r|(r) = 1
+assert_eq $r 1
