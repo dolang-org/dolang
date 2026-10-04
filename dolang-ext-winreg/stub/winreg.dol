@@ -22,9 +22,12 @@ import
 # | `:LOCAL_MACHINE:`  | Computer-wide configuration          |
 # | `:USERS:`          | All user profiles                    |
 # | `:CURRENT_CONFIG:` | Current hardware profile             |
-pub @let RegistryRoot = (
-  | :CLASSES_ROOT: | :CURRENT_USER: | :LOCAL_MACHINE: | :USERS: | :CURRENT_CONFIG:
-)
+pub @let RegistryRoot = $
+  | :CLASSES_ROOT:
+  | :CURRENT_USER:
+  | :LOCAL_MACHINE:
+  | :USERS:
+  | :CURRENT_CONFIG:
 
 # A registry view.
 #
@@ -47,10 +50,15 @@ pub @let RegistryView = (:NATIVE: | :WOW32: | :WOW64:)
 # | `:QWORD:`            | Little-endian 64-bit integer |
 # | `:BINARY:`           | Raw bytes                    |
 # | `:NONE:`             | No data                      |
-pub @let ValueKind = (
-  | :SZ: | :EXPAND_SZ: | :MULTI_SZ: | :DWORD: | :DWORD_BIG_ENDIAN: | :QWORD:
-  | :BINARY: | :NONE:
-)
+pub @let ValueKind = $
+  | :SZ:
+  | :EXPAND_SZ:
+  | :MULTI_SZ:
+  | :DWORD:
+  | :DWORD_BIG_ENDIAN:
+  | :QWORD:
+  | :BINARY:
+  | :NONE:
 
 # How opening a key treats a registry link.
 #
@@ -62,7 +70,12 @@ pub @let LinkResolution = (:TARGET: | :LINK:)
 
 # Registry value data in its natural Do representation. See
 # [`Value.value`](winreg.Value.value) for how each value kind maps to it.
-pub @let Data = (Str | Array[Str] | Int | Bin | nil)
+pub @let Data = $
+  | Str
+  | Array[Str]
+  | Int
+  | Bin
+  | nil
 
 # A right of an [`AccessMask`](winreg.AccessMask): a registry-specific right or
 # composite, or a generic Windows
@@ -86,12 +99,19 @@ pub @let Data = (Str | Array[Str] | Int | Bin | nil)
 # | `:READ:`       | Query values, enumerate subkeys, receive change notifications, and read security information |
 # | `:WRITE:`      | Set values, create subkeys, and read security information                                    |
 # | `:READ_WRITE:` | `:READ:` and `:WRITE:` together                                                              |
-pub @let AccessRight = (
-  | :QUERY_VALUE: | :SET_VALUE: | :CREATE_SUB_KEY: | :ENUMERATE_SUB_KEYS:
-  | :NOTIFY: | :CREATE_LINK: | :WOW64_64KEY: | :WOW64_32KEY:
-  | :READ: | :WRITE: | :READ_WRITE:
+pub @let AccessRight = $
+  | :QUERY_VALUE:
+  | :SET_VALUE:
+  | :CREATE_SUB_KEY:
+  | :ENUMERATE_SUB_KEYS:
+  | :NOTIFY:
+  | :CREATE_LINK:
+  | :WOW64_64KEY:
+  | :WOW64_32KEY:
+  | :READ:
+  | :WRITE:
+  | :READ_WRITE:
   | WindowsAccessRight
-)
 
 # Access rights for a registry key.
 #

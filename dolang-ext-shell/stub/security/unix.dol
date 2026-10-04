@@ -1,5 +1,8 @@
 # Unix security types and uid/gid identity lookups.
 
+import std:
+  - @BaseDict
+
 import
   std:
     - @Seq
@@ -203,15 +206,22 @@ pub @let PermissionSpec = (Permission | PermissionBit | Iterable[PermissionBit])
 # A POSIX entry, built or declared as a dictionary. A dictionary has exactly
 # one qualifier key, with the same meaning as the keyword arguments of
 # [`ace`](security.unix.ace).
-pub @let AceSpec = (
+pub @let AceSpec = $
   | Ace
-  | Dict[{user_obj: PermissionSpec}]
-  | Dict[{group_obj: PermissionSpec}]
-  | Dict[{mask: PermissionSpec}]
-  | Dict[{other: PermissionSpec}]
-  | Dict[{user: Int, ?permissions: PermissionSpec}]
-  | Dict[{group: Int, ?permissions: PermissionSpec}]
-)
+  | BaseDict $
+      user_obj: PermissionSpec
+  | BaseDict $
+      group_obj: PermissionSpec
+  | BaseDict $
+      mask: PermissionSpec
+  | BaseDict $
+      other: PermissionSpec
+  | BaseDict $
+      user: Int
+      ?permissions: PermissionSpec
+  | BaseDict $
+      group: Int
+      ?permissions: PermissionSpec
 
 # A POSIX ACL, built or given as its entries.
 pub @let AclSpec = (Acl | Iterable[AceSpec])

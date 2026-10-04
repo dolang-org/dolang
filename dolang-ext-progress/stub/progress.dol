@@ -12,6 +12,9 @@
 # an indicator's icon or message are printed immediately. Indicator creation
 # and completion are always logged.
 
+import std:
+  - @BaseDict
+
 # A progress bar or spinner.
 #
 # Indicators are created by [`show`](progress.show). An indicator is a
@@ -209,12 +212,24 @@ do -> Array[Value]
 # | `:WHITE:`    | `:BRIGHT_WHITE:`    |
 #
 # `:BRIGHT:` brightens the default color.
-pub @let Color = (
-  | :BLACK: | :RED: | :GREEN: | :YELLOW: | :BLUE: | :MAGENTA: | :CYAN: | :WHITE:
-  | :BRIGHT_BLACK: | :BRIGHT_RED: | :BRIGHT_GREEN: | :BRIGHT_YELLOW:
-  | :BRIGHT_BLUE: | :BRIGHT_MAGENTA: | :BRIGHT_CYAN: | :BRIGHT_WHITE:
+pub @let Color = $
+  | :BLACK:
+  | :RED:
+  | :GREEN:
+  | :YELLOW:
+  | :BLUE:
+  | :MAGENTA:
+  | :CYAN:
+  | :WHITE:
+  | :BRIGHT_BLACK:
+  | :BRIGHT_RED:
+  | :BRIGHT_GREEN:
+  | :BRIGHT_YELLOW:
+  | :BRIGHT_BLUE:
+  | :BRIGHT_MAGENTA:
+  | :BRIGHT_CYAN:
+  | :BRIGHT_WHITE:
   | :BRIGHT:
-)
 
 # A text attribute for [`Colors`](progress.Colors).
 #
@@ -228,10 +243,15 @@ pub @let Color = (
 # | `:REVERSE:`       | Reverse video |
 # | `:HIDDEN:`        | Hidden        |
 # | `:STRIKETHROUGH:` | Strikethrough |
-pub @let Attr = (
-  | :BOLD: | :DIM: | :ITALIC: | :UNDERLINED: | :BLINK: | :REVERSE: | :HIDDEN:
+pub @let Attr = $
+  | :BOLD:
+  | :DIM:
+  | :ITALIC:
+  | :UNDERLINED:
+  | :BLINK:
+  | :REVERSE:
+  | :HIDDEN:
   | :STRIKETHROUGH:
-)
 
 # Colors and attributes of one element of the progress display.
 #
@@ -240,7 +260,10 @@ pub @let Attr = (
 # | `fg`    | Foreground color |
 # | `bg`    | Background color |
 # | `attrs` | Text attributes  |
-pub @let Colors = {?fg: Color, ?bg: Color, ?attrs: Array[Attr]}
+pub @let Colors = $
+  ?fg: Color
+  ?bg: Color
+  ?attrs: Array[Attr]
 
 # Display style overrides for [`with`](progress.with).
 #
@@ -260,16 +283,23 @@ pub @let Colors = {?fg: Color, ?bg: Color, ?attrs: Array[Attr]}
 # | `elapsed`  |               |            | `:DIM:`       |
 # | `position` |               |            |               |
 # | `total`    |               |            |               |
-pub @let Style = Dict[{
-  ?bar: Dict[{?width: Int, ...Colors, ?alt: Dict[Colors]}],
-  ?message: Dict[{?width: Int, ...Colors}],
-  ?icon: Dict[{?width: Int, ...Colors}],
-  ?status: Dict[{?width: Int}],
-  ?spinner: Dict[Colors],
-  ?elapsed: Dict[Colors],
-  ?position: Dict[Colors],
-  ?total: Dict[Colors],
-}]
+pub @let Style = BaseDict $
+  ?bar: BaseDict $
+    ?width: Int
+    ?alt: BaseDict[Colors]
+    ...Colors
+  ?message: BaseDict $
+    ?width: Int
+    ...Colors
+  ?icon: BaseDict $
+    ?width: Int
+    ...Colors
+  ?status: BaseDict $
+    ?width: Int
+  ?spinner: BaseDict[Colors]
+  ?elapsed: BaseDict[Colors]
+  ?position: BaseDict[Colors]
+  ?total: BaseDict[Colors]
 
 # Activates a progress context for the duration of `func`.
 #

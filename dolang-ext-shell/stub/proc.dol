@@ -18,20 +18,85 @@ import
 
 # A signal name, with or without a `SIG` prefix, such as `:TERM:` or
 # `:SIGTERM:`.
-pub @let Signal = (
-  | :HUP: | :INT: | :QUIT: | :ILL: | :TRAP: | :ABRT: | :IOT: | :EMT: | :FPE:
-  | :KILL: | :BUS: | :SEGV: | :SYS: | :UNUSED: | :PIPE: | :ALRM: | :TERM:
-  | :URG: | :STOP: | :TSTP: | :CONT: | :CHLD: | :CLD: | :TTIN: | :TTOU: | :IO:
-  | :POLL: | :XCPU: | :XFSZ: | :VTALRM: | :PROF: | :WINCH: | :INFO: | :USR1:
-  | :USR2: | :STKFLT: | :PWR: | :THR: | :LIBRT: | :SIGHUP: | :SIGINT:
-  | :SIGQUIT: | :SIGILL: | :SIGTRAP: | :SIGABRT: | :SIGIOT: | :SIGEMT:
-  | :SIGFPE: | :SIGKILL: | :SIGBUS: | :SIGSEGV: | :SIGSYS: | :SIGUNUSED:
-  | :SIGPIPE: | :SIGALRM: | :SIGTERM: | :SIGURG: | :SIGSTOP: | :SIGTSTP:
-  | :SIGCONT: | :SIGCHLD: | :SIGCLD: | :SIGTTIN: | :SIGTTOU: | :SIGIO:
-  | :SIGPOLL: | :SIGXCPU: | :SIGXFSZ: | :SIGVTALRM: | :SIGPROF: | :SIGWINCH:
-  | :SIGINFO: | :SIGUSR1: | :SIGUSR2: | :SIGSTKFLT: | :SIGPWR: | :SIGTHR:
+pub @let Signal = $
+  | :HUP:
+  | :INT:
+  | :QUIT:
+  | :ILL:
+  | :TRAP:
+  | :ABRT:
+  | :IOT:
+  | :EMT:
+  | :FPE:
+  | :KILL:
+  | :BUS:
+  | :SEGV:
+  | :SYS:
+  | :UNUSED:
+  | :PIPE:
+  | :ALRM:
+  | :TERM:
+  | :URG:
+  | :STOP:
+  | :TSTP:
+  | :CONT:
+  | :CHLD:
+  | :CLD:
+  | :TTIN:
+  | :TTOU:
+  | :IO:
+  | :POLL:
+  | :XCPU:
+  | :XFSZ:
+  | :VTALRM:
+  | :PROF:
+  | :WINCH:
+  | :INFO:
+  | :USR1:
+  | :USR2:
+  | :STKFLT:
+  | :PWR:
+  | :THR:
+  | :LIBRT:
+  | :SIGHUP:
+  | :SIGINT:
+  | :SIGQUIT:
+  | :SIGILL:
+  | :SIGTRAP:
+  | :SIGABRT:
+  | :SIGIOT:
+  | :SIGEMT:
+  | :SIGFPE:
+  | :SIGKILL:
+  | :SIGBUS:
+  | :SIGSEGV:
+  | :SIGSYS:
+  | :SIGUNUSED:
+  | :SIGPIPE:
+  | :SIGALRM:
+  | :SIGTERM:
+  | :SIGURG:
+  | :SIGSTOP:
+  | :SIGTSTP:
+  | :SIGCONT:
+  | :SIGCHLD:
+  | :SIGCLD:
+  | :SIGTTIN:
+  | :SIGTTOU:
+  | :SIGIO:
+  | :SIGPOLL:
+  | :SIGXCPU:
+  | :SIGXFSZ:
+  | :SIGVTALRM:
+  | :SIGPROF:
+  | :SIGWINCH:
+  | :SIGINFO:
+  | :SIGUSR1:
+  | :SIGUSR2:
+  | :SIGSTKFLT:
+  | :SIGPWR:
+  | :SIGTHR:
   | :SIGLIBRT:
-)
 
 # Raised when an external program exits unsuccessfully.
 #

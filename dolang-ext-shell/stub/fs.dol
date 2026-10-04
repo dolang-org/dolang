@@ -55,10 +55,15 @@ pub @let Resolve = (:TARGET: | :LINK:)
 # | `:BLOCK_DEVICE:` | Block device                 |
 # | `:SOCKET:`       | Unix domain socket           |
 # | `:UNKNOWN:`      | Type could not be determined |
-pub @let FileType = (
-  | :FILE: | :DIR: | :SYMLINK: | :FIFO: | :CHAR_DEVICE: | :BLOCK_DEVICE: | :SOCKET:
+pub @let FileType = $
+  | :FILE:
+  | :DIR:
+  | :SYMLINK:
+  | :FIFO:
+  | :CHAR_DEVICE:
+  | :BLOCK_DEVICE:
+  | :SOCKET:
   | :UNKNOWN:
-)
 
 # How a copy shares blocks between its source and destination.
 #
@@ -85,10 +90,19 @@ pub @let XattrNamespace = (Str | :USER: | :SYSTEM:)
 # | `"a+"` | Read and append                          |
 #
 # A `"b"` suffix selects binary mode, as in `"rb"`, `"wb"`, or `"r+b"`.
-pub @let OpenMode = (
-  | "r" | "w" | "a" | "r+" | "w+" | "a+"
-  | "rb" | "wb" | "ab" | "r+b" | "w+b" | "a+b"
-)
+pub @let OpenMode = $
+  | "r"
+  | "w"
+  | "a"
+  | "r+"
+  | "w+"
+  | "a+"
+  | "rb"
+  | "wb"
+  | "ab"
+  | "r+b"
+  | "w+b"
+  | "a+b"
 
 # An entry within a directory.
 #

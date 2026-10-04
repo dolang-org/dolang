@@ -1,6 +1,9 @@
 # macOS extended access-control-list types and principal identity resolution
 # between Unix uid/gid values and macOS `guid_t` UUIDs.
 
+import std:
+  - @BaseDict
+
 import
   std:
     - @Seq
@@ -25,12 +28,21 @@ import
 # | `:WRITE_SECURITY:`      | Write the ACL                                          |
 # | `:CHANGE_OWNER:`        | Change owner and owning group                          |
 # | `:SYNCHRONIZE:`         | Use synchronous I/O                                    |
-pub @let MaskBit = (
-  | :READ_DATA: | :WRITE_DATA: | :EXECUTE: | :DELETE: | :APPEND_DATA:
-  | :DELETE_CHILD: | :READ_ATTRIBUTES: | :WRITE_ATTRIBUTES:
-  | :READ_EXTATTRIBUTES: | :WRITE_EXTATTRIBUTES: | :READ_SECURITY:
-  | :WRITE_SECURITY: | :CHANGE_OWNER: | :SYNCHRONIZE:
-)
+pub @let MaskBit = $
+  | :READ_DATA:
+  | :WRITE_DATA:
+  | :EXECUTE:
+  | :DELETE:
+  | :APPEND_DATA:
+  | :DELETE_CHILD:
+  | :READ_ATTRIBUTES:
+  | :WRITE_ATTRIBUTES:
+  | :READ_EXTATTRIBUTES:
+  | :WRITE_EXTATTRIBUTES:
+  | :READ_SECURITY:
+  | :WRITE_SECURITY:
+  | :CHANGE_OWNER:
+  | :SYNCHRONIZE:
 
 # macOS extended ACE permission bits.
 #
@@ -83,10 +95,12 @@ pub class Mask: Iterable[MaskBit]
 # | `:LIMIT_INHERIT:`     | Stop propagating this entry after one level of inheritance         |
 # | `:ONLY_INHERIT:`      | This entry is inherited but does not apply to the directory itself |
 # | `:INHERITED:`         | This entry was inherited from a parent directory                   |
-pub @let FlagBit = (
-  | :FILE_INHERIT: | :DIRECTORY_INHERIT: | :LIMIT_INHERIT: | :ONLY_INHERIT:
+pub @let FlagBit = $
+  | :FILE_INHERIT:
+  | :DIRECTORY_INHERIT:
+  | :LIMIT_INHERIT:
+  | :ONLY_INHERIT:
   | :INHERITED:
-)
 
 # macOS extended ACE inheritance flags.
 #
@@ -234,11 +248,16 @@ pub @let FlagsSpec = (Flags | FlagBit | Iterable[FlagBit])
 # A macOS entry, built or declared as a dictionary. A dictionary has
 # exactly one type key, with the same meaning as the keyword arguments of
 # [`ace`](security.macos.ace).
-pub @let AceSpec = (
+pub @let AceSpec = $
   | Ace
-  | Dict[{allow: Principal, mask: MaskSpec, ?flags: FlagsSpec}]
-  | Dict[{deny: Principal, mask: MaskSpec, ?flags: FlagsSpec}]
-)
+  | BaseDict $
+      allow: Principal
+      mask: MaskSpec
+      ?flags: FlagsSpec
+  | BaseDict $
+      deny: Principal
+      mask: MaskSpec
+      ?flags: FlagsSpec
 
 # A macOS ACL, built or given as its entries.
 pub @let AclSpec = (Acl | Iterable[AceSpec])

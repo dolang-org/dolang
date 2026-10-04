@@ -139,10 +139,13 @@ import _vfs base64 digest json proc progress rand shell shlex ssh std strand sys
 #     digest: blake3:0123...
 #   os: :LINUX:
 # ```
-pub @let ArtifactSpec = (
-  | Str | Path | Url
-  | Dict[{source: Str | Path | Url, ?digest: Str}]
-)
+pub @let ArtifactSpec = $
+  | Str
+  | Path
+  | Url
+  | BaseDict $
+      source: (Str | Path | Url)
+      ?digest: Str
 
 # Install media, as an artifact spec that may also select an edition.
 #
@@ -150,33 +153,50 @@ pub @let ArtifactSpec = (
 # an unattended install means stopping for good. `edition` selects one by name,
 # such as `"Windows 11 Pro"`, and `index` by position in the media's image
 # list; they are alternatives.
-pub @let InstallerSpec = (
-  | Str | Path | Url
-  | Dict[{source: Str | Path | Url, ?digest: Str, ?edition: Str}]
-  | Dict[{source: Str | Path | Url, ?digest: Str, ?index: Int}]
-)
+pub @let InstallerSpec = $
+  | Str
+  | Path
+  | Url
+  | BaseDict $
+      source: (Str | Path | Url)
+      ?digest: Str
+      ?edition: Str
+  | BaseDict $
+      source: (Str | Path | Url)
+      ?digest: Str
+      ?index: Int
 
 # A file to write into the guest, from an artifact or as direct content.
 #
 # `chmod` is a Unix file mode, and is rejected for a guest provisioned by
 # unattended install.
-pub @let AddSpec = (
-  | Dict[{target: Str, source: ArtifactSpec, ?chmod: Int | Mode}]
-  | Dict[{target: Str, content: Str | Bin, ?chmod: Int | Mode}]
-)
+pub @let AddSpec = $
+  | BaseDict $
+      target: Str
+      source: ArtifactSpec
+      ?chmod: (Int | Mode)
+  | BaseDict $
+      target: Str
+      content: (Str | Bin)
+      ?chmod: (Int | Mode)
 
 # A file for cloud-init to write during early boot. `owner`, `append`, and
 # `defer` are passed to cloud-init's `write_files`.
-pub @let InitAddSpec = (
-  | Dict[{
-    target: Str, source: ArtifactSpec, ?chmod: Int | Mode,
-    ?owner: Str, ?append: Bool, ?defer: Bool,
-  }]
-  | Dict[{
-    target: Str, content: Str | Bin, ?chmod: Int | Mode,
-    ?owner: Str, ?append: Bool, ?defer: Bool,
-  }]
-)
+pub @let InitAddSpec = $
+  | BaseDict $
+      target: Str
+      source: ArtifactSpec
+      ?chmod: (Int | Mode)
+      ?owner: Str
+      ?append: Bool
+      ?defer: Bool
+  | BaseDict $
+      target: Str
+      content: (Str | Bin)
+      ?chmod: (Int | Mode)
+      ?owner: Str
+      ?append: Bool
+      ?defer: Bool
 
 # Boot-time provisioning, interpreted by cloud-init on the guest's first boot,
 # before any steps. Each key may repeat.
@@ -186,11 +206,10 @@ pub @let InitAddSpec = (
 # | `add`      | Writes a file                                            |
 # | `run`      | Runs a command, split with `shlex` when given as a `Str` |
 # | `packages` | Installs guest packages                                  |
-pub @let InitSpec = Dict[{
-  *add: InitAddSpec,
-  *run: Str | Array[Str],
-  *packages: Str | Array[Str],
-}]
+pub @let InitSpec = BaseDict $
+  *add: InitAddSpec
+  *run: (Str | Array[Str])
+  *packages: (Str | Array[Str])
 
 # The Do build to install into a guest.
 #
@@ -205,11 +224,15 @@ pub @let InitSpec = Dict[{
 # | `{version: tag}`        | The same, spelled explicitly                |
 # | a `Path` or `Url`       | The given release archive                   |
 # | a dictionary spec       | The given release archive, digest-pinned    |
-pub @let DolangSpec = (
-  | Str | Path | Url
-  | Dict[{version: Str}]
-  | Dict[{source: Str | Path | Url, ?digest: Str}]
-)
+pub @let DolangSpec = $
+  | Str
+  | Path
+  | Url
+  | BaseDict $
+      version: Str
+  | BaseDict $
+      source: (Str | Path | Url)
+      ?digest: Str
 
 # A host cache mode for the domain disk. The hypervisor's own default, which
 # honors guest flushes, applies when none is given. A `Str` is matched
@@ -229,9 +252,13 @@ pub @let DolangSpec = (
 # build domain — dropping flushes removes them from the critical path, and
 # files written and deleted within one run need never reach storage at all —
 # but it is not a safe default for a domain whose disk matters.
-pub @let DiskCache = (
-  | :NONE: | :WRITEBACK: | :WRITETHROUGH: | :DIRECTSYNC: | :UNSAFE: | Str
-)
+pub @let DiskCache = $
+  | :NONE:
+  | :WRITEBACK:
+  | :WRITETHROUGH:
+  | :DIRECTSYNC:
+  | :UNSAFE:
+  | Str
 
 # A disk I/O submission mode. Defaults to `:IO_URING:`. A `Str` is matched
 # ignoring case.
@@ -271,10 +298,15 @@ pub @let Compress = (Bool | :ZSTD: | :ZLIB:)
 @let Probe = (:VFS: | :SSH: | :CLOUD_INIT:)
 
 # A domain's state.
-pub @let DomainState = (
-  | :RUNNING: | :IDLE: | :PAUSED: | :IN_SHUTDOWN: | :SHUTOFF: | :CRASHED:
-  | :PMSUSPENDED: | :BLOCKED:
-)
+pub @let DomainState = $
+  | :RUNNING:
+  | :IDLE:
+  | :PAUSED:
+  | :IN_SHUTDOWN:
+  | :SHUTOFF:
+  | :CRASHED:
+  | :PMSUSPENDED:
+  | :BLOCKED:
 
 let VM_NAMESPACE = "https://github.com/dolang-org/dolang"
 let DEFAULT_CONNECT_URI = "qemu:///session"
