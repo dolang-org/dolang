@@ -1,0 +1,8 @@
+let (_a | (_a)) _a = [1, 2]
+# error: a pattern cannot bind the same name twice
+#   --> duplicate_pattern_binding_after_alt.dol:LL:LL
+#    |
+# LL | let (_a | (_a)) _a = [1, 2]
+#    |      --         ^^
+#    |      |
+#    |      first bound here

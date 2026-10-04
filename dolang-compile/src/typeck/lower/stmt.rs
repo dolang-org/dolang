@@ -238,7 +238,7 @@ impl<'u> Scope<'_, '_, 'u> {
         let span = value.span;
         if matches!(
             pattern,
-            ast::Pattern::TypeTest(_) | ast::Pattern::Constant { .. }
+            ast::Pattern::TypeTest(_) | ast::Pattern::Constant { .. } | ast::Pattern::Alt(_)
         ) {
             let var = match value.kind {
                 ExprKind::Var(var) | ExprKind::Copy(var) => {
@@ -346,7 +346,7 @@ impl<'u> Scope<'_, '_, 'u> {
             ast::Pattern::Unpack(pat_items) => {
                 Pattern::Unpack(scope.pattern_items(pat_items, &mut nested))
             }
-            ast::Pattern::TypeTest(_) | ast::Pattern::Constant { .. } => {
+            ast::Pattern::TypeTest(_) | ast::Pattern::Constant { .. } | ast::Pattern::Alt(_) => {
                 let var = scope.synthetic();
                 nested.push((var, pattern, pattern.span()));
                 Pattern::Bind(var)
@@ -359,6 +359,13 @@ impl<'u> Scope<'_, '_, 'u> {
     /// turn. A mismatch raises.
     fn nested_lets(&mut self, nested: Nested<'u>, frame: &Rc<Frame<'u>>) {
         for (var, pattern, span) in nested {
+            if let ast::Pattern::Alt(alt) = pattern {
+                let join = self.block();
+                let entry = self.alternatives(var, alt, span, frame, None, join);
+                self.end(Terminal::Branch(entry));
+                self.switch(join);
+                continue;
+            }
             let pattern = if let ast::Pattern::TypeTest(test) = pattern {
                 let class = self.pattern_class(test);
                 self.emit(Step::Eval(expr(
@@ -450,6 +457,19 @@ impl<'u> Scope<'_, '_, 'u> {
         self.switch(entry);
         let mut pending: Nested<'u> = nested.into_iter().rev().collect();
         while let Some((var, pattern, span)) = pending.pop() {
+            if let ast::Pattern::Alt(alt) = pattern {
+                let join = if pending.is_empty() {
+                    then
+                } else {
+                    self.block()
+                };
+                let entry = self.alternatives(var, alt, span, frame, Some(else_), join);
+                self.end(Terminal::Branch(entry));
+                if !pending.is_empty() {
+                    self.switch(join);
+                }
+                continue;
+            }
             if let ast::Pattern::Constant {
                 value: constant, ..
             } = pattern
@@ -557,6 +577,43 @@ impl<'u> Scope<'_, '_, 'u> {
         entry
     }
 
+    /// Blocks matching `var` against alternatives in turn, each joining its own
+    /// defaults on its way to `join`. If none matches, the last continues to
+    /// `else_`, or raises without one. Returns the first.
+    fn alternatives(
+        &mut self,
+        var: VarId,
+        alt: &'u ast::Alternation,
+        span: Span,
+        frame: &Rc<Frame<'u>>,
+        else_: Option<BlockId>,
+        join: BlockId,
+    ) -> BlockId {
+        let from = self.bb;
+        let mut next = else_;
+        for (index, pattern) in alt.alts.iter().enumerate().rev() {
+            let matched = self.block();
+            self.switch(matched);
+            self.pattern_defaults(pattern, frame);
+            self.end(Terminal::Branch(join));
+            let entry = match next {
+                Some(else_) => self.nested_tests(vec![(var, pattern, span)], frame, matched, else_),
+                // The last alternative of a plain pattern has no mismatch edge
+                None => {
+                    debug_assert_eq!(index + 1, alt.alts.len());
+                    let entry = self.block();
+                    self.switch(entry);
+                    self.nested_lets(vec![(var, pattern, span)], frame);
+                    self.end(Terminal::Branch(matched));
+                    entry
+                }
+            };
+            next = Some(entry);
+        }
+        self.switch(from);
+        next.expect("an alternative")
+    }
+
     /// Run `f` in `frame`
     pub(super) fn in_frame<R>(
         &mut self,
@@ -602,7 +659,8 @@ impl<'u> Scope<'_, '_, 'u> {
         match pattern {
             ast::Pattern::Unpack(items) => self.defaults(items, frame),
             ast::Pattern::TypeTest(test) => self.pattern_defaults(&test.pattern, frame),
-            ast::Pattern::Constant { .. } | ast::Pattern::Ident(_) => {}
+            // Each alternative's defaults join on its own success edge
+            ast::Pattern::Constant { .. } | ast::Pattern::Ident(_) | ast::Pattern::Alt(_) => {}
         }
     }
 
@@ -771,7 +829,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 self.emit(Step::Pop);
                 self.end(Terminal::Branch(else_));
             }
-            ast::Pattern::TypeTest(_) | ast::Pattern::Constant { .. } => {
+            ast::Pattern::TypeTest(_) | ast::Pattern::Constant { .. } | ast::Pattern::Alt(_) => {
                 let var = match value.kind {
                     ExprKind::Var(var) | ExprKind::Copy(var) => {
                         self.emit(Step::Eval(value));
@@ -1204,6 +1262,8 @@ fn pattern_has_default(pattern: &ast::Pattern) -> bool {
         ast::Pattern::Constant { .. } | ast::Pattern::Ident(_) => false,
         ast::Pattern::Unpack(items) => any_default(items),
         ast::Pattern::TypeTest(test) => pattern_has_default(&test.pattern),
+        // Each alternative's defaults join on its own success edge
+        ast::Pattern::Alt(_) => false,
     }
 }
 

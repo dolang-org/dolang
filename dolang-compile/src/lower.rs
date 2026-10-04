@@ -46,15 +46,25 @@ impl From<Utf8Error> for Error {
 
 pub(crate) type Result<T> = std::result::Result<T, Error>;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Var {
     Local(usize),
     Upvar(usize, usize),
 }
 
+/// What carries the non-constant defaults a prologue evaluates once its values
+/// are bound
+#[derive(Clone, Copy)]
+enum Defaults<'a> {
+    /// A function's parameters
+    Items(&'a [PatItem]),
+    Pattern(&'a Pattern),
+}
+
 /// The prologue bindings a branch body needs: how to bind the values the
-/// terminator left on the operand stack, and, for an unpack pattern, the item
-/// list carrying any non-constant defaults.
-type Binds<'a> = (Option<BindPlan>, Option<&'a [PatItem]>);
+/// terminator left on the operand stack, and the pattern carrying any
+/// non-constant defaults.
+type Binds<'a> = (Option<BindPlan>, Option<Defaults<'a>>);
 
 /// How to bind the values an unpack leaves on the operand stack.
 ///
@@ -81,7 +91,27 @@ struct BindStep {
 enum BindOp {
     Constant(constant::Id),
     Unpack(sig::UnpackId),
-    TypeTest { var: Var, fields: Vec<sym::Id> },
+    TypeTest {
+        var: Var,
+        fields: Vec<sym::Id>,
+    },
+    /// Alternatives, each matching the value on its own, which leave the values
+    /// of `canon`, and above them `indicator`'s, in place of the value
+    Alt {
+        alts: Vec<BindPlan>,
+        /// Every variable an alternative binds, from the top
+        canon: Vec<Var>,
+        indicator: Option<Var>,
+    },
+}
+
+/// Where a failed match continues
+#[derive(Clone, Copy)]
+enum Fail {
+    /// Nowhere: the match raises
+    Raise,
+    /// At `target`, after discarding the values the plan left, and `below` more
+    Goto { target: cfg::BlockId, below: usize },
 }
 
 /// A value an unpack leaves on the operand stack
@@ -94,7 +124,7 @@ enum Slot<'a> {
 
 struct Params<'a> {
     bind: Option<BindPlan>,
-    bind_params: Option<&'a [PatItem]>,
+    bind_params: Option<Defaults<'a>>,
     mode: Mode<'a>,
     is_top_level: bool,
     next_id: Option<cfg::BlockId>,
@@ -980,7 +1010,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 );
                 let bodyid = self.graph.alloc_block(self.block.func, bscope);
                 let binds = self.pattern_plan(self.graph.scope(bscope), bind)?;
-                let bind_params = Self::pattern_defaults_items(bind);
+                let bind_params = Some(Defaults::Pattern(bind));
                 // FIXME: include span of keyword, not of block
                 self.queue(Work {
                     bb: bodyid,
@@ -1070,7 +1100,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 );
                 let bodyid = self.graph.alloc_block(self.block.func, bscope);
                 let binds = self.pattern_plan(self.graph.scope(bscope), bind)?;
-                let bind_params = Self::pattern_defaults_items(bind);
+                let bind_params = Some(Defaults::Pattern(bind));
                 // FIXME: include span of keyword, not of block
                 self.queue(Work {
                     bb: bodyid,
@@ -1162,7 +1192,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 );
                 let bodyid = self.graph.alloc_block(self.block.func, bscope);
                 let binds = self.pattern_plan(self.graph.scope(bscope), bind)?;
-                let bind_params = Self::pattern_defaults_items(bind);
+                let bind_params = Some(Defaults::Pattern(bind));
                 // FIXME: include span of keyword, not of block
                 self.queue(Work {
                     bb: bodyid,
@@ -1222,9 +1252,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         }
         let plan = self.pattern_plan(self.graph.scope(self.block.scope), bind)?;
         self.lower_bind_plan(plan, span);
-        if let Some(items) = Self::pattern_defaults_items(bind) {
-            self.lower_non_const_defaults(items, span)?;
-        }
+        self.lower_pattern_defaults(bind, span)?;
 
         Ok(())
     }
@@ -1353,40 +1381,20 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 let BindPlan { steps, vars } =
                     self.pattern_plan(self.graph.scope(bscope), pattern)?;
                 let test = self.bb;
-                let mut discards = Vec::new();
-                let count = steps.len();
-                for (index, step) in steps.into_iter().enumerate() {
-                    let next = if index + 1 == count {
-                        tid
-                    } else {
-                        self.graph.alloc_block(self.block.func, self.block.scope)
-                    };
-                    let fail = self.discard_block(&mut discards, step.others, fid, span);
-                    match step.op {
-                        BindOp::Unpack(sig) => {
-                            if step.depth > 0 {
-                                self.block
-                                    .insts
-                                    .push(Inst(InstInfo::Swap(0, step.depth), span));
-                            }
-                            self.block.term = Term(TermInfo::UnpackIf(sig, next, fail), span)
-                        }
-                        op => {
-                            self.lower_test(op, step.depth, false, span);
-                            self.block.term = Term(TermInfo::If(next, fail), span);
-                        }
-                    }
-                    self.link(next);
-                    self.link(fail);
-                    self.switch(next);
-                }
+                let fail = Fail::Goto {
+                    target: fid,
+                    below: 0,
+                };
+                self.lower_steps(steps, fail, span);
+                self.block.term = Term(TermInfo::Branch(tid), span);
+                self.link(tid);
                 self.switch(test);
                 Ok((
                     Some(BindPlan {
                         steps: Vec::new(),
                         vars,
                     }),
-                    Self::pattern_defaults_items(pattern),
+                    Some(Defaults::Pattern(pattern)),
                 ))
             }
         }
@@ -1794,7 +1802,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         );
         let bodyid = self.graph.alloc_block(self.block.func, bscope);
         let binds = self.pattern_plan(self.graph.scope(bscope), &node.bind)?;
-        let bind_params = Self::pattern_defaults_items(&node.bind);
+        let bind_params = Some(Defaults::Pattern(&node.bind));
         // FIXME: include span of keyword, not of block
         self.queue(Work {
             bb: bodyid,
@@ -1906,9 +1914,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 PatBind::Ident(ident) => ident,
                 // A sub-pattern has no default of its own, but its items may
                 PatBind::Nested { pattern, .. } => {
-                    if let Some(items) = Self::pattern_defaults_items(pattern) {
-                        self.lower_non_const_defaults(items, span)?;
-                    }
+                    self.lower_pattern_defaults(pattern, span)?;
                     continue;
                 }
             };
@@ -2943,7 +2949,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         // Compute order in which to move arguments into locals or upvars
         self.params.bind =
             Some(self.bind_plan(self.graph.scope(self.block.scope), &function.params, sig)?);
-        self.params.bind_params = Some(&function.params);
+        self.params.bind_params = Some(Defaults::Items(&function.params));
         self.lower_block(&function.body, true, function.stub_span)?;
         Ok(())
     }
@@ -3059,11 +3065,49 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         self.plan_slots(scope, stack)
     }
 
-    fn pattern_defaults_items(pattern: &Pattern) -> Option<&[PatItem]> {
+    /// Evaluate the non-constant defaults of a bound pattern. An alternation's
+    /// are those of the alternative that matched.
+    fn lower_pattern_defaults(&mut self, pattern: &'a Pattern, span: Span) -> Result<()> {
         match pattern {
-            Pattern::Constant { .. } | Pattern::Ident(_) => None,
-            Pattern::Unpack(items) => Some(items),
-            Pattern::TypeTest(test) => Self::pattern_defaults_items(&test.pattern),
+            Pattern::Constant { .. } | Pattern::Ident(_) => Ok(()),
+            Pattern::Unpack(items) => self.lower_non_const_defaults(items, span),
+            Pattern::TypeTest(test) => self.lower_pattern_defaults(&test.pattern, span),
+            Pattern::Alt(alt) => {
+                let Some(index) = alt.indicator else {
+                    return Ok(());
+                };
+                let indicator = Res {
+                    index,
+                    depth: 0,
+                    node: None,
+                };
+                let join = self.graph.alloc_block(self.block.func, self.block.scope);
+                let count = alt.alts.len();
+                for (i, pattern) in alt.alts.iter().enumerate() {
+                    if i + 1 < count {
+                        let case = self.graph.alloc_block(self.block.func, self.block.scope);
+                        let next = self.graph.alloc_block(self.block.func, self.block.scope);
+                        self.lower_load(&indicator, span);
+                        let i = self.consttab.int(i as constant::Int);
+                        self.block.insts.push(Inst(InstInfo::LoadConst(i), span));
+                        self.block.insts.push(Inst(InstInfo::Eq, span));
+                        self.block.term = Term(TermInfo::If(case, next), span);
+                        self.link(case);
+                        self.link(next);
+                        self.switch(case);
+                        self.lower_pattern_defaults(pattern, span)?;
+                        self.block.term = Term(TermInfo::Branch(join), span);
+                        self.link(join);
+                        self.switch(next);
+                    } else {
+                        self.lower_pattern_defaults(pattern, span)?;
+                        self.block.term = Term(TermInfo::Branch(join), span);
+                        self.link(join);
+                    }
+                }
+                self.switch(join);
+                Ok(())
+            }
         }
     }
 
@@ -3137,6 +3181,39 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     stack[depth] = Slot::Pattern(&test.pattern);
                     BindOp::TypeTest { var, fields }
                 }
+                Pattern::Alt(alt) => {
+                    stack.swap(0, depth);
+                    stack.remove(0);
+                    let mut alts = Vec::new();
+                    let mut canon = Vec::new();
+                    for pattern in &alt.alts {
+                        let plan = self.plan_slots(
+                            cfg::ScopeRef::clone(&scope),
+                            vec![Slot::Pattern(pattern)],
+                        )?;
+                        for var in plan.vars.iter().flatten() {
+                            if !canon.contains(var) {
+                                canon.push(*var);
+                            }
+                        }
+                        alts.push(plan);
+                    }
+                    let indicator = alt.indicator.map(|index| {
+                        self.resolve_var_in_scope(cfg::ScopeRef::clone(&scope), index, 0)
+                    });
+                    let slots = indicator.iter().chain(&canon).map(|var| Slot::Var(*var));
+                    stack.splice(0..0, slots);
+                    steps.push(BindStep {
+                        depth,
+                        op: BindOp::Alt {
+                            alts,
+                            canon,
+                            indicator,
+                        },
+                        others: others - 1,
+                    });
+                    continue;
+                }
             };
             steps.push(BindStep { depth, op, others });
         }
@@ -3154,24 +3231,171 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     /// Run a plan's tests and unpacks, which raise on a mismatch, and store the
     /// values left.
     fn lower_bind_plan(&mut self, plan: BindPlan, span: Span) {
-        for step in plan.steps {
-            match step.op {
-                BindOp::Unpack(sig) => {
-                    if step.depth > 0 {
-                        self.block
-                            .insts
-                            .push(Inst(InstInfo::Swap(0, step.depth), span));
-                    }
-                    self.block.insts.push(Inst(InstInfo::Unpack(sig), span))
-                }
-                op => self.lower_test(op, step.depth, true, span),
-            }
-        }
+        self.lower_steps(plan.steps, Fail::Raise, span);
         for var in plan.vars {
             if let Some(var) = var {
                 self.lower_store(span, var);
             } else {
                 self.block.insts.push(Inst(InstInfo::Pop, span));
+            }
+        }
+    }
+
+    /// Run a plan's tests and unpacks, continuing at `fail` on a mismatch, and on
+    /// a match in the current block.
+    fn lower_steps(&mut self, steps: Vec<BindStep>, fail: Fail, span: Span) {
+        let mut discards = Vec::new();
+        for step in steps {
+            let next = match (step.op, fail) {
+                (
+                    BindOp::Alt {
+                        alts,
+                        canon,
+                        indicator,
+                    },
+                    fail,
+                ) => {
+                    self.lower_swap(step.depth, span);
+                    // The last alternative takes the value, leaving the others
+                    let fail = match fail {
+                        Fail::Raise => Fail::Raise,
+                        Fail::Goto { target, below } => Fail::Goto {
+                            target,
+                            below: below + step.others,
+                        },
+                    };
+                    let join = self.graph.alloc_block(self.block.func, self.block.scope);
+                    self.lower_alts(alts, &canon, indicator, fail, join, span);
+                    join
+                }
+                (BindOp::Unpack(sig), Fail::Raise) => {
+                    self.lower_swap(step.depth, span);
+                    self.block.insts.push(Inst(InstInfo::Unpack(sig), span));
+                    continue;
+                }
+                (op, Fail::Raise) => {
+                    self.lower_test(op, step.depth, true, span);
+                    continue;
+                }
+                (op, Fail::Goto { target, below }) => {
+                    let mismatch = self.discard_block(
+                        Self::discards_to(&mut discards, target),
+                        step.others + below,
+                        target,
+                        span,
+                    );
+                    let next = self.graph.alloc_block(self.block.func, self.block.scope);
+                    match op {
+                        BindOp::Unpack(sig) => {
+                            self.lower_swap(step.depth, span);
+                            self.block.term = Term(TermInfo::UnpackIf(sig, next, mismatch), span)
+                        }
+                        op => {
+                            self.lower_test(op, step.depth, false, span);
+                            self.block.term = Term(TermInfo::If(next, mismatch), span);
+                        }
+                    }
+                    self.link(next);
+                    self.link(mismatch);
+                    next
+                }
+            };
+            self.switch(next);
+        }
+    }
+
+    /// Bring the value at `depth` to the top of the stack
+    fn lower_swap(&mut self, depth: usize, span: Span) {
+        if depth > 0 {
+            self.block.insts.push(Inst(InstInfo::Swap(0, depth), span));
+        }
+    }
+
+    /// The discard chain for failures continuing at `target`
+    fn discards_to(
+        discards: &mut Vec<(cfg::BlockId, Vec<cfg::BlockId>)>,
+        target: cfg::BlockId,
+    ) -> &mut Vec<cfg::BlockId> {
+        let index = match discards.iter().position(|(t, _)| *t == target) {
+            Some(index) => index,
+            None => {
+                discards.push((target, Vec::new()));
+                discards.len() - 1
+            }
+        };
+        &mut discards[index].1
+    }
+
+    /// Try alternatives in turn against the value on top of the stack, the last
+    /// continuing at `fail` on a mismatch. A match leaves `indicator`'s value
+    /// above `canon`'s in place of the value, and continues at `join`.
+    fn lower_alts(
+        &mut self,
+        alts: Vec<BindPlan>,
+        canon: &[Var],
+        indicator: Option<Var>,
+        fail: Fail,
+        join: cfg::BlockId,
+        span: Span,
+    ) {
+        let count = alts.len();
+        for (index, plan) in alts.into_iter().enumerate() {
+            // Each alternative but the last matches a copy, keeping the value
+            // for the next
+            let next = (index + 1 < count)
+                .then(|| self.graph.alloc_block(self.block.func, self.block.scope));
+            let fail = match next {
+                Some(target) => {
+                    self.block.insts.push(Inst(InstInfo::Dup, span));
+                    Fail::Goto { target, below: 0 }
+                }
+                None => fail,
+            };
+            self.lower_steps(plan.steps, fail, span);
+            self.lower_canon(plan.vars, next.is_some(), canon, span);
+            if indicator.is_some() {
+                let value = self.consttab.int(index as constant::Int);
+                self.block
+                    .insts
+                    .push(Inst(InstInfo::LoadConst(value), span));
+            }
+            self.block.term = Term(TermInfo::Branch(join), span);
+            self.link(join);
+            if let Some(next) = next {
+                self.switch(next);
+            }
+        }
+    }
+
+    /// Rearrange the values an alternative left, from the top, and the matched
+    /// value below them if `original`, into the values of `canon`, from the top.
+    fn lower_canon(&mut self, vars: Vec<Option<Var>>, original: bool, canon: &[Var], span: Span) {
+        let mut stack = vars;
+        if original {
+            stack.push(None);
+        }
+        while let Some(depth) = stack.iter().position(Option::is_none) {
+            if depth > 0 {
+                self.block.insts.push(Inst(InstInfo::Swap(0, depth), span));
+                stack.swap(0, depth);
+            }
+            self.block.insts.push(Inst(InstInfo::Pop, span));
+            stack.remove(0);
+        }
+        // Another alternative's variables are left nil
+        for var in canon {
+            if !stack.contains(&Some(*var)) {
+                let nil = self.consttab.nil();
+                self.block.insts.push(Inst(InstInfo::LoadConst(nil), span));
+                stack.insert(0, Some(*var));
+            }
+        }
+        for (depth, var) in canon.iter().enumerate() {
+            let at =
+                (stack.iter().position(|slot| *slot == Some(*var))).expect("a canonical variable");
+            if at != depth {
+                self.block.insts.push(Inst(InstInfo::Swap(depth, at), span));
+                stack.swap(depth, at);
             }
         }
     }
@@ -3186,7 +3410,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         };
         self.block.insts.push(Inst(pick, span));
         let builtin = match op {
-            BindOp::Unpack(_) => unreachable!(),
+            BindOp::Unpack(_) | BindOp::Alt { .. } => unreachable!(),
             BindOp::Constant(id) => {
                 self.block.insts.push(Inst(InstInfo::LoadConst(id), span));
                 if !assert {
@@ -3254,8 +3478,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         if let Some(plan) = self.params.bind.take() {
             self.lower_bind_plan(plan, span);
         }
-        if let Some(params) = self.params.bind_params {
-            self.lower_non_const_defaults(params, span)?;
+        match self.params.bind_params {
+            Some(Defaults::Items(params)) => self.lower_non_const_defaults(params, span)?,
+            Some(Defaults::Pattern(pattern)) => self.lower_pattern_defaults(pattern, span)?,
+            None => {}
         }
         Ok(())
     }

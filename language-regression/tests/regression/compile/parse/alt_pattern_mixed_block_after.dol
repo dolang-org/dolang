@@ -1,0 +1,8 @@
+bind [1]
+  | a
+  - b
+# error: a pattern block is either all `|` alternatives or has none
+#   --> alt_pattern_mixed_block_after.dol:LL:LL
+#    |
+# LL |   - b
+#    |   ^

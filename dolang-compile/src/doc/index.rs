@@ -188,6 +188,37 @@ fn split_bind(bind: &mut PatBind) -> (Option<&mut Ident>, Option<&mut Pattern>) 
     }
 }
 
+/// Call `f` on each name a pattern binds, at any level
+fn pattern_idents(pattern: &mut Pattern, f: &mut impl FnMut(&mut Ident)) {
+    match pattern {
+        Pattern::Constant { .. } => {}
+        Pattern::TypeTest(test) => pattern_idents(&mut test.pattern, f),
+        Pattern::Ident(PatIdent { ident, .. }) => f(ident),
+        Pattern::Alt(alt) => {
+            for pattern in &mut alt.alts {
+                pattern_idents(pattern, f);
+            }
+        }
+        Pattern::Unpack(params) => {
+            for param in params {
+                match param {
+                    PatItem::Pos { bind, .. }
+                    | PatItem::Key { bind, .. }
+                    | PatItem::ConstKey { bind, .. } => match bind {
+                        PatBind::Ident(ident) => f(ident),
+                        PatBind::Nested { pattern, .. } => pattern_idents(pattern, f),
+                    },
+                    PatItem::Rest { ident, .. } => {
+                        if let Some(ident) = ident {
+                            f(ident)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl Index<'_> {
     fn param_kind(param: &PatItem) -> (Kind, Span) {
         let (kind, key_span, ident, ty, default) = match param {
@@ -954,6 +985,16 @@ impl Index<'_> {
             Pattern::Unpack(params) => {
                 for param in params {
                     self.param(scope, param, false, is_pub, false, extent);
+                }
+            }
+            Pattern::Alt(alt) => {
+                let (first, rest) = alt.alts.split_first_mut().expect("an alternative");
+                self.pattern(scope, first, is_pub, extent);
+                // The other alternatives bind the first's variables, so their
+                // names refer to its declarations
+                for pattern in rest {
+                    pattern_idents(pattern, &mut |ident| self.reference(scope, ident));
+                    self.pattern(scope, pattern, is_pub, extent);
                 }
             }
         }

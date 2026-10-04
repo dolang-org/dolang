@@ -1059,6 +1059,11 @@ impl<'u> Walk<'_, 'u> {
                     self.param(frame, param);
                 }
             }
+            Pattern::Alt(alt) => {
+                for pattern in &alt.alts {
+                    self.pattern(frame, pattern);
+                }
+            }
         }
     }
 
@@ -1502,6 +1507,8 @@ fn pattern_names(pattern: &Pattern, f: &mut impl FnMut(&Ident)) {
         Pattern::TypeTest(test) => return pattern_names(&test.pattern, f),
         Pattern::Ident(PatIdent { ident, .. }) => return f(ident),
         Pattern::Unpack(params) => params,
+        // Every alternative binds the same names
+        Pattern::Alt(alt) => return pattern_names(&alt.alts[0], f),
     };
     for param in params {
         match param {

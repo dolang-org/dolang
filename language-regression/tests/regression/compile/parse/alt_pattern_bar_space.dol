@@ -1,0 +1,7 @@
+bind [1]
+  |a
+# error: got identifier, expected: <whitespace>
+#   --> alt_pattern_bar_space.dol:LL:LL
+#    |
+# LL |   |a
+#    |    ^
