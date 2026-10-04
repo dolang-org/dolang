@@ -1,0 +1,173 @@
+# Arms are tried in order; the first whose pattern and guard match runs.
+def classify value
+  match value
+    Int(n) do [:int:, n]
+    "x" | "y" do :xy:
+    Str(_s) do :str:
+    | :status
+      :body = ""
+    if (status == 200)
+      [:ok:, body]
+    a b if (a == 1)
+      [:one:, b]
+    | (x)
+    | x _ _
+    do
+      [:small:, x]
+  else
+    :none:
+assert_eq (classify 5) [:int:, 5]
+assert_eq (classify "y") :xy:
+assert_eq (classify "z") :str:
+assert_eq (classify {status: 200}) [:ok:, ""]
+assert_eq (classify {status: 200, body: "hi"}) [:ok:, "hi"]
+assert_eq (classify {status: 404}) :none:
+assert_eq (classify ([1, 2])) [:one:, 2]
+assert_eq (classify ([3, 4])) :none:
+assert_eq (classify ([7])) [:small:, 7]
+assert_eq (classify ([8, 9, 10])) [:small:, 8]
+
+# A horizontal arm may have defaults, and a body may be a block.
+def pair value
+  match value
+    a b = 0 do
+      let sum = (a + b)
+      [a, b, sum]
+assert_eq (pair ([1])) [1, 0, 1]
+assert_eq (pair ([1, 2])) [1, 2, 3]
+
+# Without `else`, no match gives `nil`.
+def lookup value
+  match value
+    1 do :one:
+assert_eq (lookup 1) :one:
+assert_eq (lookup 2) nil
+
+# A bare name matches anything, even a falsy value.
+def name value
+  match value
+    1 do :one:
+    other do [:other:, other]
+assert_eq (name false) [:other:, false]
+assert_eq (name nil) [:other:, nil]
+
+# A failed guard falls through to later arms, which may match the same value.
+def sign n
+  match n
+    m if (m < 0)
+      :negative:
+    0 do :zero:
+    _ do :positive:
+assert_eq (sign (-3)) :negative:
+assert_eq (sign 0) :zero:
+assert_eq (sign 4) :positive:
+
+# A guard may match a pattern of its own, whose names the body sees.
+def find table key
+  match key
+    Str(k) if let Array((v)) = table.get(k)
+      [k, v]
+    Str(k) if bind table.get(k)
+      | Dict $
+          :value
+      | value
+    do
+      [k, value]
+    k do [k, nil]
+let table = {"a": [1], "b": {value: 2}, "c": 3}
+assert_eq (find table "a") ["a", 1]
+assert_eq (find table "b") ["b", 2]
+assert_eq (find table "c") ["c", 3]
+assert_eq (find table 4) [4, nil]
+
+# A guard's pattern may rebind one of the arm's names.
+def unwrap value
+  match value
+    (x) if let Array((x)) = x
+      x
+    x do x
+assert_eq (unwrap ([[5]])) 5
+assert_eq (unwrap ([5])) [5]
+
+# `else if` continues as it does after `if`.
+def grade score
+  match score
+    100 do :perfect:
+  else if (score >= 70)
+    :pass:
+  else
+    :fail:
+assert_eq (grade 100) :perfect:
+assert_eq (grade 80) :pass:
+assert_eq (grade 10) :fail:
+
+# The scrutinee is evaluated once.
+let calls = []
+def next_value()
+  calls.push 1
+  [2]
+let result = match next_value()
+  (1) do :one:
+  (2) do :two:
+assert_eq [result, calls] [:two:, [1]]
+
+# An error other than a mismatch propagates rather than trying later arms.
+let raised = try
+  match 1
+    (_x) do false
+    _ do false
+catch _
+  true
+assert $raised
+
+# Arm and guard names can be captured.
+let getters = []
+for value = [[1, [2]], [3, [4]]]
+  match value
+    a rest if let (b) = rest
+      getters.push $ do [a, b]
+assert_eq [getters[0](), getters[1]()] [[1, 2], [3, 4]]
+
+# A failed guard leaves an arm whose names are captured.
+def capture value
+  match value
+    (a) if let Array((b)) = a
+      do [a, b]
+    (a) if (a > 1)
+      do a
+    (a) do
+      do (a + 10)
+let get = capture ([[3]])
+assert_eq (get()) [[3], 3]
+let get = capture ([2])
+assert_eq (get()) 2
+let get = capture ([1])
+assert_eq (get()) 11
+
+# `break`, `continue` and `return` work from arms.
+def first_even items
+  for item = items
+    match (item % 2)
+      0 do return item
+      _ do continue
+  nil
+assert_eq (first_even ([1, 3, 4, 5])) 4
+assert_eq (first_even ([1])) nil
+let seen = []
+for item = [1, 2, 3]
+  match item
+    3 do break
+    n do seen.push $n
+assert_eq $seen [1, 2]
+
+# Matches nest.
+def nested value
+  match value
+    Array(a b) do
+      match b
+        Int(n) do [a, n]
+        _ do :not_int:
+    _ do :not_pair:
+assert_eq (nested ([1, 2])) [1, 2]
+assert_eq (nested ([1, "s"])) :not_int:
+assert_eq (nested 3) :not_pair:
