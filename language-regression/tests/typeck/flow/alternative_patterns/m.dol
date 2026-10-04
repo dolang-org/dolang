@@ -1,0 +1,37 @@
+pub def constants value @ (200 | 404 | 500)
+  if let 200 | 404 = value
+    let _ = value
+    #       ^~~~~: flow 200 | 404
+  else
+    let _ = value
+    #       ^~~~~: flow 500
+
+pub def asserted value @ (200 | 404 | 500)
+  let (200 | 404) = value
+  let _ = value
+  #       ^~~~~: flow 200 | 404
+
+pub def typed value @ (Int | Str | Bool)
+  if let Int(x) | Str(x) = value
+    let _ = x
+    #       ^: flow std.Int | std.Str
+  else
+    let _ = value
+    #       ^~~~~: flow std.Bool
+
+pub def shapes value @ (Tuple[Int] | Tuple[Str, Bool])
+  let (n) | n _ = value
+  let _ = n
+  #       ^: flow std.Int | std.Str
+
+pub def defaults value @ Array[Int]
+  let (1 a b = "none" | 2 b a = nil) = value
+  let _ = a
+  #       ^: flow std.Int | std.Nil
+  let _ = b
+  #       ^: flow std.Int | std.Str
+
+pub def nested value @ Tuple[Sym, (1 | 2 | 3)]
+  if let (k (1 | 2) | k _) = value
+    let _ = k
+    #       ^: flow std.Sym
