@@ -2373,10 +2373,8 @@ pub class FmtSpec
   # renders the value and this one lays that rendering out. See
   # [Sequencing](std.FmtValue.sequencing).
   #
-  pub def (call)
+  @def (call)
     self
-    # value to bind
-    value = nil
     # Padding fill
     :fill @ (FmtFill | nil) = nil
     # Alignment
@@ -2391,7 +2389,29 @@ pub class FmtSpec
     :alt @ (Bool | nil) = nil
     # Representation kind
     :kind @ (FmtKind | nil) = nil
-  do
+  do -> FmtSpec
+
+  @def (call)[T]
+    self
+    # value to bind
+    value @ T
+    # Padding fill
+    :fill @ (FmtFill | nil) = nil
+    # Alignment
+    :align @ (FmtAlign | nil) = nil
+    # Sign display
+    :sign @ (FmtSign | nil) = nil
+    # Minimum width in grapheme clusters
+    :width @ (Int | nil) = nil
+    # Numeric precision or maximum graphemes
+    :precision @ (Int | nil) = nil
+    # Enables alternate formatting
+    :alt @ (Bool | nil) = nil
+    # Representation kind
+    :kind @ (FmtKind | nil) = nil
+  do -> FmtValue[T]
+
+  pub def (call) self ...args
     ...
 
   #
@@ -2463,7 +2483,7 @@ pub class FmtSpec
 # When `kind` is nil, interpolation in an ordinary quoted string or here string
 # uses display formatting. `str` and `dbg` supply display and debug formatting,
 # respectively. An explicit `kind` overrides the surrounding operation.
-pub class FmtValue
+pub class FmtValue[T]
   #
   #
   # ## Example
@@ -2476,7 +2496,7 @@ pub class FmtValue
   pub def (init)
     self
     # Value to bind
-    value @ Value
+    value @ T
     # Padding fill
     :fill @ FmtFill = nil
     # Alignment
@@ -2501,7 +2521,7 @@ pub class FmtValue
   # binds another.
   #
   #[getter]
-  pub def value self
+  pub def value self -> T
     ...
 
   #
@@ -2539,7 +2559,7 @@ pub class FmtValue
     :alt @ (Bool | nil) = nil
     # Representation kind
     :kind @ (FmtKind | nil) = nil
-  do -> FmtValue
+  do -> FmtValue[T]
     ...
 
   # Two bindings are equal when they bind equal values to the same specification
@@ -2549,12 +2569,16 @@ pub class FmtValue
     ...
 
 
-@let FmtSegment = (Str | FmtValue | FmtParam)
+@let FmtSegment[V] = (Str | FmtValue[V] | FmtParam)
 
 #
-# An immutable sequence of literal text, bound interpolations, and unbound
-# parameters, produced by a
+# Preserves literal text, bound interpolations, and unbound parameters from a
 # [`t"..."` string](../../language/strings.md#formatted-sequences).
+#
+# `V` is the union of the interpolated value types; `S` describes the required
+# hole bindings. A bare `Fmt` leaves both unknown. Templates are immutable:
+# `V` is covariant, and the binding schema `S` is contravariant.
+# `S` admits positional items and integer or symbol keys.
 #
 # Every segment is a [`Str`](std.Str) of literal text, a
 # [`FmtValue`](std.FmtValue) interpolation, or a [`FmtParam`](std.FmtParam)
@@ -2625,13 +2649,16 @@ pub class FmtValue
 # assert_eq $seq[1].value $user
 # assert_eq $seq[1].width 8
 # ```
-pub class Fmt: @Index[Int, FmtSegment] @Spread[FmtSegment] @Unpack[FmtSegment, Rest: UnpackIter[FmtSegment]]
+pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[Int, FmtSegment[V]] @Spread[FmtSegment[V]] @Unpack[FmtSegment[V], Rest: UnpackIter[FmtSegment[V]]]
+  field schema @ Phantom[((...S) -> nil)]
+
   #
   #
   # Builds a sequence from an iterable of segments.
   #
   # Writing a `t"..."` is the usual way to get one; the constructor is for
-  # assembling a sequence at runtime.
+  # assembling a sequence at runtime. Its interpolation types and hole schema
+  # remain unknown to the checker.
   #
   # ## Errors
   #
@@ -2671,7 +2698,9 @@ pub class Fmt: @Index[Int, FmtSegment] @Spread[FmtSegment] @Unpack[FmtSegment, R
   # argument *i* fills `${#i}`, and a keyword argument fills `${#name}`:
   #
   # - Holes inside a bound `Fmt` are filled too, depth first. Names are never
-  #   renumbered, so a nested `${#0}` is filled by argument `0` as well.
+  #   renumbered, so a nested `${#0}` is filled by argument `0` as well. The
+  #   checker tracks only the outer holes, so bindings for nested holes may
+  #   be reported as unused.
   # - A filled hole keeps the parameter's specification and
   #   [`source`](std.FmtParam.source).
   # - A hole left unfilled, or an argument no hole consumed, is an error.
@@ -2696,7 +2725,7 @@ pub class Fmt: @Index[Int, FmtSegment] @Spread[FmtSegment] @Unpack[FmtSegment, R
   # assert_eq $stmt.format(1, name: "n") "select * from t where a = 1 and c = n"
   # ```
   #
-  pub def format self ...bindings -> Str
+  pub def format[B @ {*Value, **Value}] self @ Fmt[V, B] ...bindings @ B -> Str
     ...
 
   #
@@ -2711,9 +2740,9 @@ pub class Fmt: @Index[Int, FmtSegment] @Spread[FmtSegment] @Unpack[FmtSegment, R
   #
   # Assigning to a segment raises an [`ImmutableError`](std.ImmutableError).
   #
-  @def (index)[K] self key@K -> IndexItem[{*(Int): FmtSegment}, K]
-  @def (index) self range@Range[Int] -> Array[FmtSegment]
-  pub def (index)[K] self key@K -> IndexItem[{*(Int): FmtSegment}, K]
+  @def (index)[K] self key@K -> IndexItem[{*(Int): FmtSegment[V]}, K]
+  @def (index) self range@Range[Int] -> Seq[FmtSegment[V]]
+  pub def (index)[K] self key@K -> IndexItem[{*(Int): FmtSegment[V]}, K]
     ...
 
   #
@@ -2762,11 +2791,11 @@ pub class Fmt: @Index[Int, FmtSegment] @Spread[FmtSegment] @Unpack[FmtSegment, R
     ...
 
   # Spreads the segments.
-  pub def (spread) self -> Spread[FmtSegment]
+  pub def (spread) self -> Spread[FmtSegment[V]]
     ...
 
   # Destructures the segments positionally.
-  pub def (unpack) self -> Unpack[FmtSegment, Rest: UnpackIter[FmtSegment]]
+  pub def (unpack) self -> Unpack[FmtSegment[V], Rest: UnpackIter[FmtSegment[V]]]
     ...
 
 

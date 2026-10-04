@@ -48,17 +48,7 @@ impl Flow<'_, '_> {
                 self.intrinsic(Intrinsic::Str)
             }
             ExprKind::BinConcat { parts, .. } => self.bin_concat(at, state, operands, parts),
-            ExprKind::Fmt(parts) => {
-                let bottom = self.db.bottom();
-                let mut never = false;
-                for part in parts {
-                    never |= self.eval(at, state, operands, part) == bottom;
-                }
-                match never {
-                    true => bottom,
-                    false => self.designated_type(Designated::Fmt),
-                }
-            }
+            ExprKind::Fmt(parts) => self.fmt_seq(at, state, operands, parts, expected),
             ExprKind::FmtValue { .. } | ExprKind::FmtParam { .. } => {
                 self.fmt(at, state, operands, expr)
             }

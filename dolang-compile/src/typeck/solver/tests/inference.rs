@@ -569,3 +569,89 @@ fn locked_variables_are_those_a_literal_would_fix() {
     let locked = s.locked(&[(result, Variance::Contravariant)]).unwrap();
     assert!(locked.contains(&variable_id(result)));
 }
+
+#[test]
+fn schema_upper_bounds_keep_shape_and_constrain_values() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let key = db.intern(Type::Literal(Literal::Sym(db.intern_symbol("name"))));
+    let unknown = db.unknown();
+    let shape = items(
+        &db,
+        vec![
+            item(Multiplicity::Required, Element::Positional(unknown)),
+            item(
+                Multiplicity::Required,
+                Element::Keyed {
+                    key,
+                    value: unknown,
+                },
+            ),
+        ],
+    );
+    let sym_class = nominal(&mut db, "Sym", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Sym, sym_class);
+    let bound = items(
+        &db,
+        vec![
+            item(Multiplicity::Repeated, Element::Positional(int)),
+            item(
+                Multiplicity::Repeated,
+                Element::Keyed {
+                    key: sym_class,
+                    value: int,
+                },
+            ),
+        ],
+    );
+    let expected = items(
+        &db,
+        vec![
+            item(Multiplicity::Required, Element::Positional(int)),
+            item(Multiplicity::Required, Element::Keyed { key, value: int }),
+        ],
+    );
+    db.seal();
+    for upper in [[shape, bound], [bound, shape]] {
+        let mut solver = Solver::new(&db);
+        let variable = solver.infer_kind(Kind::Schema, Rest::All);
+        for ty in upper {
+            solver.constrain(variable, solver.closed(ty), Provenance::default());
+        }
+        solver.solve();
+        assert_eq!(solver.default(variable_id(variable)), Ok(expected));
+        assert!(solver.solve().iter().all(|o| o.status == Status::Proven));
+    }
+}
+
+#[test]
+fn schema_upper_bounds_do_not_invent_opaque_or_incompatible_shapes() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let a = db.intern(Type::Literal(Literal::Sym(db.intern_symbol("a"))));
+    let b = db.intern(Type::Literal(Literal::Sym(db.intern_symbol("b"))));
+    let shapes = [a, b].map(|key| {
+        items(
+            &db,
+            vec![item(
+                Multiplicity::Required,
+                Element::Keyed { key, value: int },
+            )],
+        )
+    });
+    let repeated = items(
+        &db,
+        vec![item(Multiplicity::Repeated, Element::Positional(int))],
+    );
+    db.seal();
+    for upper in [shapes.to_vec(), vec![repeated], vec![db.unknown_schema()]] {
+        let mut solver = Solver::new(&db);
+        let variable = solver.infer_kind(Kind::Schema, Rest::All);
+        for ty in upper {
+            solver.constrain(variable, solver.closed(ty), Provenance::default());
+        }
+        solver.solve();
+        assert!(solver.default(variable_id(variable)).is_err());
+        assert!(solver.reify(variable).is_err());
+    }
+}

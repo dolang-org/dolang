@@ -375,3 +375,35 @@ fn item_projections_relate_before_they_can_be_evaluated() {
     let outcome = under(db, decl, read_ab, read_a);
     assert_ne!(outcome.status, Status::Proven, "{outcome:?}");
 }
+
+#[test]
+fn a_class_outside_scalar_members_is_outside_the_union() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let nil_class = nominal(&mut db, "Nil", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Nil, nil_class);
+    let nil = db.intern(Type::Literal(Literal::Nil));
+    let other = nominal(&mut db, "Other", vec![], vec![]);
+    let scalars = union(&db, &[nil, int]);
+    db.seal();
+    assert!(contradiction(
+        &check(&db, other, scalars),
+        Contradiction::Outside
+    ));
+    assert_eq!(check(&db, nil, scalars).status, Status::Proven);
+    assert_eq!(check(&db, nil_class, scalars).status, Status::Proven);
+}
+
+#[test]
+fn generic_union_alternatives_remain_conservative() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Str, str);
+    let array = nominal(&mut db, "Array", vec![binder(Variance::Invariant)], vec![]);
+    let actual = apply(&db, array, &[int]);
+    let alternative = apply(&db, array, &[str]);
+    let expected = union(&db, &[int, alternative]);
+    db.seal();
+    assert_eq!(check(&db, actual, expected).status, Status::Unresolved);
+}

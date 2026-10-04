@@ -51,9 +51,19 @@ impl<'u> Scope<'_, '_, 'u> {
                 value: Box::new(self.expr(value)),
                 spec: self.spec(spec),
             },
-            ast::Expr::FmtParam { spec, .. } => ExprKind::FmtParam {
-                spec: self.spec(spec),
-            },
+            ast::Expr::FmtParam { name, spec, .. } => {
+                let (name, name_span) = match name {
+                    ast::FmtParamName::Pos(index, span) => {
+                        (Literal::Int(i128::from(*index)), *span)
+                    }
+                    ast::FmtParamName::Named(span) => (Literal::Sym(self.symbol(*span)), *span),
+                };
+                ExprKind::FmtParam {
+                    name,
+                    name_span,
+                    spec: self.spec(spec),
+                }
+            }
             ast::Expr::FmtSeq { exprs, .. } => self.fmt_seq(exprs, span),
             ast::Expr::Group { expr, .. } => return self.expr(expr),
             ast::Expr::Ident(ident) => match self.ident(ident) {

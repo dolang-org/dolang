@@ -7,6 +7,12 @@ use crate::{diag::Severity, source::Span, typeck::report::Report};
 /// A diagnosed problem, with the types it names rendered
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Problem {
+    /// A numbered hole after a gap stays an integer key.
+    FmtGap {
+        span: Span,
+        index: i128,
+        missing: usize,
+    },
     /// An argument that doesn't fit its parameter, whose type is shown when it's
     /// known, with the part of it that doesn't fit what, when that's deeper
     Argument {
@@ -94,7 +100,8 @@ pub(crate) enum Misfit {
 impl Report for Problem {
     fn span(&self) -> Span {
         match *self {
-            Problem::Argument { span, .. }
+            Problem::FmtGap { span, .. }
+            | Problem::Argument { span, .. }
             | Problem::MissingArgument(span)
             | Problem::ExtraArgument(span)
             | Problem::Call { span, .. }
@@ -111,11 +118,18 @@ impl Report for Problem {
     }
 
     fn severity(&self) -> Severity {
-        Severity::Error
+        match self {
+            Self::FmtGap { .. } => Severity::Warning,
+            _ => Severity::Error,
+        }
     }
 
     fn message(&self, w: &mut dyn Write) -> fmt::Result {
         match self {
+            Problem::FmtGap { index, missing, .. } => write!(
+                w,
+                "format hole `#{index}` follows missing `#{missing}`; it is an integer key, not a positional item"
+            ),
             // Where the argument's type and the parameter's look alike, only what's
             // inside them shows what doesn't fit
             Problem::Argument {

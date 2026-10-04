@@ -41,6 +41,8 @@ pub(crate) enum ExprKind {
     },
     /// A `${#...}` interpolation: a `FmtParam`, which a `Fmt` fills later
     FmtParam {
+        name: Literal,
+        name_span: Span,
         spec: FmtSpec,
     },
     /// A reference to a variable

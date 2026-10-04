@@ -56,7 +56,7 @@ do
   # LL |   b[0] = "x"
   #    |          ^^^
   let _ = f[0]
-  #   ^: flow std.FmtSegment
+  #   ^: flow std.FmtSegment[Unknown]
 
 pub def chosen p @ Picker x u @ (Int | Str)
   let _ = p.pick 1

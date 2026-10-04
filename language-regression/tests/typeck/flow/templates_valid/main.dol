@@ -1,0 +1,90 @@
+import std:
+  - Fmt
+  - FmtValue
+  - @Seq
+  - FmtParam
+import sqlite:
+  - @Connection
+  - @Statement
+  - @SqlValue
+
+pub def template n @ Int
+  let source = t"$n ${#name} ${#0}"
+  let _ = source
+  #       ^~~~~~: flow std.Fmt[std.Int, {Unknown, name: Unknown}]
+  source.format 1 name: "ok"
+  let segments = [...source]
+  let _ = segments
+  #       ^~~~~~~~: flow std.Array[std.FmtSegment[std.Int]]
+  for part = segments
+    if let FmtParam(_) = part
+      nil
+    else if let FmtValue(bound) = part
+      let _ = bound
+      #       ^~~~~: flow std.FmtValue[std.Int]
+      let _ = bound.value
+      #   ^: flow std.Int
+  let first ...rest = source
+  let _ = first
+  #       ^~~~~: flow std.FmtSegment[std.Int]
+  let _ = rest
+  #       ^~~~: flow std.Spread[{*std.FmtSegment[std.Int]}]
+  let slice = source[0..2]
+  let _ = slice
+  #       ^~~~~: flow std.Seq[std.FmtSegment[std.Int]]
+  let _ @ Seq[Str | FmtValue[Int] | FmtParam] = slice
+  let explicit @ Fmt[Int, {Int, name: Str}] = t"$n ${#name} ${#0}"
+  explicit.format 1 name: "ok"
+  let empty = t"literal"
+  empty.format()
+  let _ = empty
+  #       ^~~~~: flow std.Fmt[Never, {}]
+  let built = Fmt ["prefix", FmtValue(n)]
+  built.format arbitrary: true
+  let _ = built
+  #       ^~~~~: flow std.Fmt[]
+
+pub def prepared conn @ Connection n @ Int
+  let s = conn.prepare t"SELECT $n, ${#name}, ${#0}"
+  let _ = s
+  #       ^: flow sqlite.Statement[{sqlite.SqlValue, name: sqlite.SqlValue}]
+  s.execute 1 name: "ok"
+  s.query nil name: b"bytes"
+  conn.execute t"SELECT ${#name}" name: true
+  let no_holes = conn.prepare t"SELECT 1"
+  no_holes.execute()
+  let _ = no_holes
+  #       ^~~~~~~~: flow sqlite.Statement[{}]
+  let result = conn.prepare t"SELECT ${#id}" do |stmt|
+    let _ = stmt
+    #       ^~~~: flow sqlite.Statement[{id: sqlite.SqlValue}]
+    stmt.execute id: 1
+  let _ = result
+  #       ^~~~~~: flow std.Int
+  let tmpl = t"SELECT ${#id}"
+  let stored = conn.prepare $tmpl
+  stored.execute id: 1
+  let typed @ Statement[{id: Int}] = conn.prepare t"SELECT ${#id}"
+  typed.execute id: 1
+  let _ @ Statement[{id: Int}] = s_for_int $conn
+
+pub def s_for_int conn @ Connection -> Statement[{id: Int}]
+  conn.prepare t"SELECT ${#id}"
+
+pub def generic[S @ {*, *(Int | Sym): Value}] f @ Fmt[Int, S] -> Fmt[Int, S]
+  f
+
+pub def contextual n @ Int
+  let tmpl @ Fmt[Int, {value: Int}] = generic t"$n ${#value}"
+  tmpl.format value: 1
+  let nested = t"$tmpl ${#outer}"
+  nested.format outer: 1
+  let _ = nested
+  #       ^~~~~~: flow std.Fmt[std.Fmt[std.Int, {value: std.Int}], {outer: Unknown}]
+
+pub def variance narrow @ Fmt[Int, {x: Int}] wide @ Fmt[Value, {x: Value}] dynamic @ Fmt
+  let _ @ Fmt[Value, {x: Int}] = narrow
+  let _ @ Fmt[Value, {x: Int}] = wide
+  let _ @ Fmt = narrow
+  let _ @ Fmt[Int, {x: Int}] = dynamic
+  let _ @ SqlValue = nil
