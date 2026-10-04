@@ -121,6 +121,7 @@ pub(crate) struct ConcreteNodeTypes<'v> {
     lambda: Type<'v, NodeObject<LambdaTag>>,
     if_node: Type<'v, NodeObject<IfTag>>,
     else_node: Type<'v, NodeObject<ElseTag>>,
+    arm: Type<'v, NodeObject<ArmTag>>,
     while_node: Type<'v, NodeObject<WhileTag>>,
     for_node: Type<'v, NodeObject<ForTag>>,
     try_node: Type<'v, NodeObject<TryTag>>,
@@ -246,6 +247,7 @@ impl<'v> Global<'v> {
                     lambda: subtype!(LambdaTag, block),
                     if_node: subtype!(IfTag, block),
                     else_node: subtype!(ElseTag, block),
+                    arm: subtype!(ArmTag, block),
                     while_node: subtype!(WhileTag, block),
                     for_node: subtype!(ForTag, block),
                     try_node: subtype!(TryTag, block),
@@ -490,7 +492,7 @@ node_tags! {
     KeyParamTag=>"KeyParam", RestParamTag=>"RestParam", MixedRestParamTag=>"MixedRestParam",
     PosRestParamTag=>"PosRestParam", KeyRestParamTag=>"KeyRestParam",
     ImplicitParamTag=>"ImplicitParam", InputParamTag=>"InputParam", OutputParamTag=>"OutputParam",
-    LambdaTag=>"Lambda", IfTag=>"If", ElseTag=>"Else",
+    LambdaTag=>"Lambda", IfTag=>"If", ElseTag=>"Else", ArmTag=>"Arm",
     WhileTag=>"While", ForTag=>"For", TryTag=>"Try", CatchTag=>"Catch", FinallyTag=>"Finally",
     ForElemTag=>"ForElem", IfElemTag=>"IfElem", DecoratorTag=>"Decorator", BreakTag=>"Break",
     ContinueTag=>"Continue", ReturnTag=>"Return", TypeTag=>"Type", BinderTag=>"Binder",
@@ -1713,6 +1715,7 @@ fn create_node<'v, 's>(
         Lambda,
         If,
         Else,
+        Arm,
         While,
         For,
         Try,
@@ -1770,6 +1773,7 @@ fn create_node<'v, 's>(
             compile::Kind::Lambda => Which::Lambda,
             compile::Kind::If => Which::If,
             compile::Kind::Else => Which::Else,
+            compile::Kind::Arm => Which::Arm,
             compile::Kind::While => Which::While,
             compile::Kind::For => Which::For,
             compile::Kind::Try => Which::Try,
@@ -1824,6 +1828,7 @@ fn create_node<'v, 's>(
         Which::Lambda => make!(t.lambda, LambdaTag),
         Which::If => make!(t.if_node, IfTag),
         Which::Else => make!(t.else_node, ElseTag),
+        Which::Arm => make!(t.arm, ArmTag),
         Which::While => make!(t.while_node, WhileTag),
         Which::For => make!(t.for_node, ForTag),
         Which::Try => make!(t.try_node, TryTag),
@@ -3093,6 +3098,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .value("Lambda", global.types.concrete_nodes.lambda)
         .value("If", global.types.concrete_nodes.if_node)
         .value("Else", global.types.concrete_nodes.else_node)
+        .value("Arm", global.types.concrete_nodes.arm)
         .value("While", global.types.concrete_nodes.while_node)
         .value("For", global.types.concrete_nodes.for_node)
         .value("Try", global.types.concrete_nodes.try_node)

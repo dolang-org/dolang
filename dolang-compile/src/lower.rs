@@ -2817,6 +2817,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 self.lower_if(node, want_result)?;
                 Ok(false)
             }
+            PrimStmt::Match(_) => todo!("#817 runtime lowering"),
             PrimStmt::Try(node) => {
                 self.lower_try(node, want_result)?;
                 Ok(false)

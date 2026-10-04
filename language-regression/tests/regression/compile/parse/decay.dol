@@ -8,7 +8,7 @@ class Fields
   def (get) self name
     self.#values[name]
 
-let rec = Fields true: true false: true nil: true while: true let: true field: true do: true
+let rec = Fields true: true false: true nil: true while: true let: true field: true do: true match: true
 let field = 1
 assert_eq $field 1
 for field = [2]
@@ -20,6 +20,7 @@ assert $rec.while
 assert $rec.let
 assert $rec.field
 assert $rec.do
+assert $rec.match
 
 # A declaration names what it defines, so a keyword may be taken as a name.
 def import name
@@ -38,9 +39,13 @@ class Keywords
   pub def while self
     "$(self.#tag) while"
 
+  pub def match self text
+    "$(self.#tag) match $text"
+
 let kw = Keywords()
 assert_eq $kw.import("y") "kw import y"
 assert_eq $kw.while() "kw while"
+assert_eq $kw.match("z") "kw match z"
 # output: END
 # if else while for let field = + - / %
 # END

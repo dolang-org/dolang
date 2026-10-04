@@ -206,16 +206,17 @@ impl<'u> Scope<'_, '_, 'u> {
                 }
             }
             PrimStmt::If(node) => self.if_(node, dest),
+            PrimStmt::Match(_) => todo!("#817 type checker"),
             PrimStmt::Try(node) => self.try_(node, dest),
         }
     }
 
-    /// The value of a statement's right-hand side. An `if` or `try` leaves it in a
+    /// The value of a statement's right-hand side. An `if`, `match` or `try` leaves it in a
     /// synthetic variable.
     fn prim_value(&mut self, prim: &'u PrimStmt) -> Expr {
         match prim {
             PrimStmt::Expr(node) => self.expr(node),
-            PrimStmt::If(_) | PrimStmt::Try(_) => {
+            PrimStmt::If(_) | PrimStmt::Match(_) | PrimStmt::Try(_) => {
                 let var = self.synthetic();
                 self.prim(prim, Some(var));
                 expr(ExprKind::Copy(var), prim.span())

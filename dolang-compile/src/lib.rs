@@ -436,6 +436,7 @@ impl<'a> Node<'a> {
             doc::Kind::Lambda => Kind::Lambda,
             doc::Kind::If => Kind::If,
             doc::Kind::Else => Kind::Else,
+            doc::Kind::Arm => Kind::Arm,
             doc::Kind::While => Kind::While,
             doc::Kind::For => Kind::For,
             doc::Kind::Try => Kind::Try,
@@ -636,6 +637,8 @@ pub enum Kind<'a> {
     If,
     /// An `else` body
     Else,
+    /// A `match` arm: its pattern, guard and body
+    Arm,
     /// A `while` body
     While,
     /// A `for` body

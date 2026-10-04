@@ -1,0 +1,8 @@
+match [1]
+  | (x)
+  y do x
+# error: expected `do` or `if` after an arm's pattern
+#   --> match_mixed_arm.dol:LL:LL
+#    |
+# LL |   y do x
+#    |   ^

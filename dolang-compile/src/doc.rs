@@ -140,6 +140,8 @@ pub(crate) enum Kind {
     Lambda,
     If,
     Else,
+    /// A `match` arm
+    Arm,
     While,
     For,
     Try,
@@ -294,6 +296,7 @@ impl Kind {
             | Kind::Lambda
             | Kind::If
             | Kind::Else
+            | Kind::Arm
             | Kind::While
             | Kind::For
             | Kind::Try

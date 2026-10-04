@@ -1,0 +1,7 @@
+match 1
+  do 1
+# error: an arm needs a pattern before its guard or body; `_` matches anything
+#   --> match_body_no_pattern.dol:LL:LL
+#    |
+# LL |   do 1
+#    |   ^^

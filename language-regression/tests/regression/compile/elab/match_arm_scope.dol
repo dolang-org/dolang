@@ -1,0 +1,9 @@
+pub def f value
+  match value
+    Int(n) do n
+    _x do n
+# error: unbound identifier
+#   --> match_arm_scope.dol:LL:LL
+#    |
+# LL |     _x do n
+#    |           ^

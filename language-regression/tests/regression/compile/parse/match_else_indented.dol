@@ -1,0 +1,9 @@
+match [1]
+  x do x
+  else
+    # error: `else` lines up with its `match`
+    #   --> match_else_indented.dol:LL:LL
+    #    |
+    # LL |   else
+    #    |   ^^^^
+    1

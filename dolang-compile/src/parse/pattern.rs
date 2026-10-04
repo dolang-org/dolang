@@ -80,6 +80,8 @@ pub(super) enum PatMode {
     HorizBind,
     // Vertical binding form, like `bind`
     VertBind,
+    /// The horizontal pattern of a `match` arm, which ends at `do` or `if`
+    Arm,
     /// The items of a horizontal sub-pattern, within `()`
     Nested,
     /// Parameters of a lambda, within `||`
@@ -97,7 +99,10 @@ impl PatMode {
     }
 
     fn is_pattern(&self) -> bool {
-        matches!(self, Self::HorizBind | Self::VertBind | Self::Nested)
+        matches!(
+            self,
+            Self::HorizBind | Self::VertBind | Self::Nested | Self::Arm
+        )
     }
 
     fn is_vertical(&self) -> bool {
@@ -193,6 +198,19 @@ impl Parser<'_> {
             let (items, _) = self.parse_pat_list(scope, PatMode::VertBind)?;
             return Ok(collapse_pattern(items));
         }
+        let pattern = self.parse_vert_alts(scope)?;
+        match self.peek()? {
+            Some(token!(TokenInfo::Dedent)) => {
+                self.advance();
+                Ok(pattern)
+            }
+            token => Err(self.syntax_error(scope, token, MIXED_BLOCK)),
+        }
+    }
+
+    /// Parse lines of `|` alternatives, each continuing on lines two columns in,
+    /// through the line separator after the last.
+    fn parse_vert_alts(&mut self, scope: &mut Scope) -> Result<Pattern> {
         let mut alts = Vec::new();
         let mut bars = Vec::new();
         loop {
@@ -207,11 +225,7 @@ impl Parser<'_> {
                 Some(token!(TokenInfo::StmtSep)) => {
                     self.advance();
                 }
-                Some(token!(TokenInfo::Dedent)) => {
-                    self.advance();
-                    break;
-                }
-                token => return Err(self.syntax_error(scope, token, MIXED_BLOCK)),
+                _ => break,
             }
         }
         if alts.len() == 1 {
@@ -222,6 +236,17 @@ impl Parser<'_> {
             bars,
             indicator: None,
         })))
+    }
+
+    /// Parse the pattern of a `match` arm: lines of `|` alternatives, or a
+    /// horizontal pattern ending at the arm's `do` or `if`.
+    pub(super) fn parse_arm_pattern(&mut self, scope: &mut Scope) -> Result<Pattern> {
+        if matches!(self.peek()?, Some(token!(TokenInfo::Op(Op::Bar)))) {
+            return self.parse_vert_alts(scope);
+        }
+        Ok(self
+            .parse_horiz_alts(scope, PatMode::Arm)?
+            .into_pattern(true))
     }
 
     /// Parse a horizontal sub-pattern, starting at its `(`.
@@ -478,10 +503,21 @@ impl Parser<'_> {
                     };
                     return Err(self.syntax_error(scope, token, msg));
                 }
+                // An arm's pattern ends where its guard or body begins, which
+                // must be on the same line
+                Some(
+                    token!(
+                        TokenInfo::Keyword(Keyword::Do | Keyword::If)
+                            | TokenInfo::StmtSep
+                            | TokenInfo::Dedent
+                    ),
+                ) if matches!(mode, PatMode::Arm) => {
+                    break Ok((items, implicits));
+                }
                 // In shell mode, `r|` and `t|` start here strings, but in a
                 // pattern they are a name followed by `|`
                 Some(token @ token!(TokenInfo::RBar | TokenInfo::TBar))
-                    if matches!(mode, PatMode::HorizBind) =>
+                    if matches!(mode, PatMode::HorizBind | PatMode::Arm) =>
                 {
                     self.advance();
                     let name = token.span.left_char();

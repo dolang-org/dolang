@@ -1,0 +1,7 @@
+match [1]
+  x | do x
+# error: expected an alternative
+#   --> match_empty_alternative.dol:LL:LL
+#    |
+# LL |   x | do x
+#    |       ^^

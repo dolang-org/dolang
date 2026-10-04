@@ -1302,6 +1302,25 @@ impl<'u> Walk<'_, 'u> {
         match prim {
             PrimStmt::Expr(expr) => self.expr(frame, expr),
             PrimStmt::If(node) => self.if_body(frame, node),
+            PrimStmt::Match(node) => {
+                self.expr(frame, &node.scrutinee);
+                for arm in &node.arms {
+                    let inner = self.scope(Some(frame), &arm.body.vars, &arm.body.stmts);
+                    self.pattern(&inner, &arm.pattern);
+                    if let Some(guard) = &arm.guard {
+                        self.expr(&inner, &guard.expr);
+                        if let Some(bind) = &guard.bind {
+                            self.pattern(&inner, &bind.pattern);
+                        }
+                    }
+                    for stmt in &arm.body.stmts {
+                        stmt.walk(self, &inner);
+                    }
+                }
+                if let Some((body, _)) = &node.else_branch {
+                    self.branch(frame, body, None);
+                }
+            }
             PrimStmt::Try(node) => {
                 self.function(Some(frame), &node.body);
                 for handler in &node.handlers {
