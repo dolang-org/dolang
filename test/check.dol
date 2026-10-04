@@ -73,7 +73,7 @@ def a_typelibs_imports_are_found()
     cd $FIXTURE do
       run $shell.exe -m compile check wraps.dol --path $dir --path lib stdout: $out stderr: :STDOUT: mode: :CHUNK:
     let text = printed $out
-    assert (text.contains "validated: 3 units, 0 diagnostics")
+    assert (text.contains "validated: 3 units, 1 diagnostics")
     assert $!text.contains("not found, treated as unknown: m")
 
 #[test]
@@ -107,7 +107,7 @@ def typelib_diagnostics_are_located()
     let text = printed $out
     assert (text.contains "this does not satisfy `T @ A`")
     assert (text.contains "flawed/f.dol:5:19")
-    assert (text.contains "partial: 2 units, 1 diagnostics")
+    assert (text.contains "partial: 2 units, 2 diagnostics")
 
 #[test]
 def a_typelib_needs_a_module_name()
@@ -148,3 +148,45 @@ def a_module_on_the_path_overrides_its_typelib()
     cd $dir do
       run $shell.exe -m compile check main.dol --path lib stdout: $out stderr: :STDOUT: mode: :CHUNK:
     assert ((printed out).contains "validated: 2 units, 0 diagnostics")
+
+#[test]
+def strict_check_rejects_compiler_warnings()
+  with_temp_dir do |dir|
+    let source = (dir / "warn.dol")
+    source.write "def f unused\n  nil\nf 1\n"
+    let out = BinBuf()
+    run $shell.exe -m compile check $source stdout: $out stderr: :STDOUT: mode: :CHUNK:
+    assert ((printed out).contains "1 diagnostics")
+    out = BinBuf()
+    let err = assert_throws $proc.Error do
+      run $shell.exe -m compile check --strict $source stdout: $out stderr: :STDOUT: mode: :CHUNK:
+    assert_eq $err.rc 1
+    assert ((printed out).contains "partial:")
+
+#[test]
+def no_bundled_check_rejects_missing_imports()
+  with_temp_dir do |dir|
+    let source = (dir / "main.dol")
+    source.write "import json\njson.encode [1]\n"
+    let out = BinBuf()
+    let err = assert_throws $proc.Error do
+      run $shell.exe -m compile check --no-bundled $source stdout: $out stderr: :STDOUT: mode: :CHUNK:
+    assert_eq $err.rc 1
+    let text = printed $out
+    assert (text.contains "treated as unknown: json")
+    assert (text.contains "0 bundled typelibs")
+
+#[test]
+def directory_modules_are_resolved_as_roots_and_imports()
+  with_temp_dir do |dir|
+    (dir / "a").create_dir()
+    (dir / "a/mod.dol").write "pub let value @ Int = 1\n"
+    (dir / "main.dol").write r|
+      import a
+      let n @ Int = a.value
+      echo $n
+    for roots = [["main.dol"], ["main.dol", "a/mod.dol"]]
+      let out = BinBuf()
+      cd $dir do
+        run $shell.exe -m compile check ...roots --path . stdout: $out stderr: :STDOUT: mode: :CHUNK:
+      assert ((printed out).contains "validated: 2 units, 0 diagnostics")

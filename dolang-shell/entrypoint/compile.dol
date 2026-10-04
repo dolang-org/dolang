@@ -855,7 +855,10 @@ def module_under file dir
   if (parts.len <= base.len || parts[..base.len] != base)
     return nil
   let rest = parts[base.len..]
-  rest[rest.len - 1] = Path(rest[rest.len - 1]).stem
+  if (rest[rest.len - 1] == "mod.dol")
+    rest.pop()
+  else
+    rest[rest.len - 1] = Path(rest[rest.len - 1]).stem
   ".".join $rest
 
 # A source's module name under the first of the directories it is under, or
@@ -878,7 +881,7 @@ def is_typelib file
 # meets the other entries' imports of that module. An entry that is a typelib is
 # its own module.
 def check p
-  let :entries :path ... = p.check
+  let :entries :path :strict :no_bundled ... = p.check
   let dirs = [...path.map do |dir| (Path dir)]
   let units = []
   let typelibs = []
@@ -933,24 +936,33 @@ def check p
     let candidates = $
       for dir = dirs
         - (dir / "$relative.dol")
+        - (dir / "$relative/mod.dol")
         - (dir / "$relative.dolt")
     let found = candidates.find (do |file| file.exists()) default: nil
     if (found != nil)
       add $found $name
       continue
-    let typelib = _shell.bundled_typelib $name
+    let typelib = if no_bundled
+      nil
+    else
+      _shell.bundled_typelib $name
     if (typelib != nil)
       add_typelib $compile.Typelib(typelib) $bundled
     else
       missing.push $name
 
-  let failed = false
+  let failed = (no_bundled && missing.len > 0)
+  let diagnostics = 0
   for unit = units
     for diag = unit.diagnostics()
-      if (diag.severity == :ERROR:)
+      diagnostics = (diagnostics + 1)
+      if (strict || diag.severity == :ERROR:)
         failed = true
       echo $diag.render()
   let result = compile.check [...units, ...typelibs, ...bundled]
+  diagnostics = (diagnostics + result.diagnostics.len)
+  if (strict && result.diagnostics.len > 0)
+    failed = true
   for diag = result.diagnostics
     echo $diag.render()
   let undecided = result.undecided()
@@ -963,7 +975,7 @@ def check p
     "validated"
   else
     "partial"
-  let summary = "$verdict: $(units.len + typelibs.len) units, $(result.diagnostics.len) diagnostics"
+  let summary = "$verdict: $(units.len + typelibs.len) units, $diagnostics diagnostics"
   echo "$summary ($(bundled.len) bundled typelibs)"
   if (verdict != "validated")
     shell.exit 1
@@ -1020,6 +1032,10 @@ args.with
     - opt: path
       collect: true
       help: Directory to search for imported modules, as `a/b.dol` for module `a.b`, before the bundled typelibs
+    - flag: strict
+      help: Fail on any compiler or type-checker diagnostic, including warnings
+    - flag: no-bundled
+      help: Disable bundled typelibs and fail if an imported module is missing
     - arg: entries
       collect: true
       help: Sources or typelibs to check; a source under a search directory is checked as its module
