@@ -12,9 +12,9 @@ use crate::{
     ast::{
         self, Alternation, Arg, ArrayElem, Assign, Bind, Block, Class, CondPattern, Def, DictElem,
         Expand, Expr, ExprBody, For, Function, GetVariant, Ident, If, Import, ImportElement,
-        ImportItem, Key, LValue, Let, Method, NlGuard, NlInfo, Origin, Pair, PatBind, PatIdent,
-        PatItem, Pattern, PrimStmt, Res, Return, Root, SideEffect, Single, Stmt, Try, Var, While,
-        visit::Node,
+        ImportItem, Key, LValue, Let, Match, Method, NlGuard, NlInfo, Origin, Pair, PatBind,
+        PatIdent, PatItem, Pattern, PrimStmt, Res, Return, Root, SideEffect, Single, Stmt, Try,
+        Var, While, visit::Node,
     },
     diag::{AnnotationKind, Severity},
     source::{Annotate, Diagnose, Diags, File, Patch, Span},
@@ -2592,6 +2592,35 @@ impl<'a> Elaborater<'a> {
         Ok(())
     }
 
+    /// Elaborate a `match`, whose scrutinee is held in a synthetic variable so
+    /// that each arm can test it.
+    ///
+    /// Each arm's body gets a scope of its own, into which its pattern binds, then
+    /// its guard's pattern: the guard sees the arm's names, and the body both.
+    fn visit_match(&mut self, scope: &mut Scope<'_>, node: &mut Match) -> Result<()> {
+        self.visit_expr(scope, &mut node.scrutinee, false)?;
+        node.var = Some(scope.insert_synthetic(self.epoch));
+
+        for arm in &mut node.arms {
+            let mut inner = scope.nested();
+            self.bind_pattern(&mut inner, &mut arm.pattern)?;
+            if let Some(guard) = &mut arm.guard {
+                self.visit_expr(&mut inner, &mut guard.expr, false)?;
+                if let Some(bind) = &mut guard.bind {
+                    self.bind_pattern(&mut inner, &mut bind.pattern)?;
+                }
+            }
+            self.visit_block_inner(&mut inner, &mut arm.body)?;
+            inner.finish(self, &mut arm.body.vars);
+        }
+
+        if let Some((else_block, _)) = &mut node.else_branch {
+            self.visit_block(scope, else_block)?;
+        }
+
+        Ok(())
+    }
+
     /// Elaborate try, catch, and finally bodies as closures.
     fn visit_try(&mut self, scope: &mut Scope<'_>, node: &mut Try) -> Result<()> {
         // Visit body as a function scope (0-param closure)
@@ -2766,6 +2795,7 @@ impl<'a> Elaborater<'a> {
                 self.visit_expr(scope, cmd, false)
             }
             PrimStmt::If(node) => self.visit_if(scope, node),
+            PrimStmt::Match(node) => self.visit_match(scope, node),
             PrimStmt::Try(node) => self.visit_try(scope, node),
         }
     }

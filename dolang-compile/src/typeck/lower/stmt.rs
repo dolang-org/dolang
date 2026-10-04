@@ -12,8 +12,8 @@ use super::{
 use crate::{
     ast::{
         self, Assign, Block, Class, ClassMember, CondPattern, Decorator, Def, FieldInit, For,
-        Function, Ident, If, IfBranch, LValue, MemberScope, PatBind, PatIdent, PatItem, PrimStmt,
-        Return, Stmt, Try, While, visit::Node,
+        Function, Ident, If, IfBranch, LValue, Match, MemberScope, PatBind, PatIdent, PatItem,
+        PrimStmt, Return, Stmt, Try, While, visit::Node,
     },
     source::Span,
     typeck::{
@@ -206,16 +206,17 @@ impl<'u> Scope<'_, '_, 'u> {
                 }
             }
             PrimStmt::If(node) => self.if_(node, dest),
+            PrimStmt::Match(node) => self.match_(node, dest),
             PrimStmt::Try(node) => self.try_(node, dest),
         }
     }
 
-    /// The value of a statement's right-hand side. An `if` or `try` leaves it in a
+    /// The value of a statement's right-hand side. An `if`, `match` or `try` leaves it in a
     /// synthetic variable.
     fn prim_value(&mut self, prim: &'u PrimStmt) -> Expr {
         match prim {
             PrimStmt::Expr(node) => self.expr(node),
-            PrimStmt::If(_) | PrimStmt::Try(_) => {
+            PrimStmt::If(_) | PrimStmt::Match(_) | PrimStmt::Try(_) => {
                 let var = self.synthetic();
                 self.prim(prim, Some(var));
                 expr(ExprKind::Copy(var), prim.span())
@@ -804,9 +805,32 @@ impl<'u> Scope<'_, '_, 'u> {
             self.cond(cond, then, else_);
             return;
         };
-        let span = cond.span();
         let value = self.expr(cond);
-        match &bind.pattern {
+        self.test_pattern(value, &bind.pattern, true, frame, then, else_);
+    }
+
+    /// Branch on whether `pattern` matches `value`, binding it in `frame` on the
+    /// success edge. With `truthy`, a lone name also tests the value's
+    /// truthiness, as `if let` does; otherwise it always matches.
+    fn test_pattern(
+        &mut self,
+        value: Expr,
+        pattern: &'u ast::Pattern,
+        truthy: bool,
+        frame: &Rc<Frame<'u>>,
+        then: BlockId,
+        else_: BlockId,
+    ) {
+        let span = value.span;
+        match pattern {
+            ast::Pattern::Ident(PatIdent { ident, ty }) if !truthy => {
+                let var = self.in_frame(frame, |scope| scope.binding(ident, ty.as_deref()));
+                self.emit(Step::Let {
+                    pattern: Pattern::Bind(var),
+                    value,
+                });
+                self.end(Terminal::Branch(then));
+            }
             // A name binds the value itself, on its truthiness
             ast::Pattern::Ident(PatIdent { ident, ty }) => {
                 self.push(value);
@@ -837,8 +861,8 @@ impl<'u> Scope<'_, '_, 'u> {
                     }
                     _ => self.temporary(value),
                 };
-                let then = self.defaulted(&bind.pattern, Vec::new(), frame, then);
-                let entry = self.nested_tests(vec![(var, &bind.pattern, span)], frame, then, else_);
+                let then = self.defaulted(pattern, Vec::new(), frame, then);
+                let entry = self.nested_tests(vec![(var, pattern, span)], frame, then, else_);
                 self.end(Terminal::Branch(entry));
             }
             pattern @ ast::Pattern::Unpack(_) => {
@@ -886,6 +910,61 @@ impl<'u> Scope<'_, '_, 'u> {
         }
         if !complete && dest.is_some() {
             self.value_nil(dest, node.tbranch.span);
+            self.end(Terminal::Branch(join));
+        }
+        self.switch(join);
+    }
+
+    fn match_(&mut self, node: &'u Match, dest: Option<VarId>) {
+        let complete = node.else_branch.is_some();
+        let join = self.block();
+        let span = node.scrutinee.span();
+        // Later arms test the same variable, which earlier arms' failed tests narrow
+        let value = self.expr(&node.scrutinee);
+        let var = match value.kind {
+            ExprKind::Var(var) | ExprKind::Copy(var) => {
+                self.emit(Step::Eval(value));
+                var
+            }
+            _ => self.temporary(value),
+        };
+        for (index, arm) in node.arms.iter().enumerate() {
+            let fallback = if index + 1 < node.arms.len() || complete || dest.is_some() {
+                self.block()
+            } else {
+                join
+            };
+            let frame = self.block_frame(&arm.body);
+            let body = self.block();
+            let entry = if arm.guard.is_some() {
+                self.block()
+            } else {
+                body
+            };
+            let value = expr(ExprKind::Var(var), span);
+            self.test_pattern(value, &arm.pattern, false, &frame, entry, fallback);
+            if let Some(guard) = &arm.guard {
+                self.switch(entry);
+                self.in_frame(&frame, |scope| {
+                    scope.test(&guard.expr, guard.bind.as_ref(), &frame, body, fallback)
+                });
+            }
+            let ctx = Ctx {
+                frame,
+                ..self.ctx.clone()
+            };
+            self.queue_block(body, ctx, &arm.body, dest, join);
+            self.switch(fallback);
+        }
+        if let Some((block, _)) = &node.else_branch {
+            let ctx = Ctx {
+                frame: self.block_frame(block),
+                ..self.ctx.clone()
+            };
+            self.queue_block(self.bb, ctx, block, dest, join);
+        }
+        if !complete && dest.is_some() {
+            self.value_nil(dest, node.match_span);
             self.end(Terminal::Branch(join));
         }
         self.switch(join);

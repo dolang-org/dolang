@@ -4,7 +4,7 @@ endif
 
 syn keyword dolConstant false true nil
 syn keyword dolKeyword break continue return do let def pub bind
-syn keyword dolConditional if else
+syn keyword dolConditional if else match
 syn keyword dolRepeat for while
 syn keyword dolInclude import
 

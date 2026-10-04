@@ -1,0 +1,9 @@
+match [1]
+  | (x)
+  | x
+# error: expected `do` or `if` after an arm's pattern
+#   --> match_missing_terminator.dol:LL:LL
+#    |
+# LL |   | x
+#    |     ^
+echo after

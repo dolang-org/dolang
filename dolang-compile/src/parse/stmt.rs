@@ -5,11 +5,11 @@ use super::{
 };
 use crate::{
     ast::{
-        AliasBody, Assign, Bind, Block, CatchHandler, CondPattern, CondPatternKind, Expr, For,
-        Function, Ident, If, IfBranch, ImportElement, Let, PatBind, PatItem, PrimStmt, Return,
-        Stmt, Throw, Try, TypeAlias, While, visit::Node,
+        AliasBody, Arm, Assign, Bind, Block, CatchHandler, CondPattern, CondPatternKind, Expr, For,
+        Function, Guard, Ident, If, IfBranch, ImportElement, Let, Match, PatBind, PatItem,
+        PrimStmt, Return, Stmt, Throw, Try, TypeAlias, While, visit::Node,
     },
-    lex::{Keyword, Token, TokenInfo},
+    lex::{Keyword, Op, Token, TokenInfo},
     source::Span,
 };
 
@@ -24,6 +24,9 @@ impl Parser<'_> {
         match self.peek()? {
             Some(token!(TokenInfo::Keyword(Keyword::If))) => {
                 Ok(PrimStmt::If(self.parse_if(scope)?))
+            }
+            Some(token!(TokenInfo::Keyword(Keyword::Match))) => {
+                Ok(PrimStmt::Match(self.parse_match(scope)?))
             }
             Some(token!(TokenInfo::Keyword(Keyword::Try))) => {
                 Ok(PrimStmt::Try(self.parse_try(scope)?))
@@ -227,6 +230,143 @@ impl Parser<'_> {
             elif_branches,
             else_branch,
         })
+    }
+
+    fn parse_match(&mut self, scope: &mut Scope) -> Result<Match> {
+        use self::Keyword;
+        use TokenInfo::*;
+
+        let match_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Match)])?;
+        self.expect(scope, &[ExpectKind::ArgSep])?;
+        let scrutinee = self.parse_cmd_or_expr(scope, false)?;
+        self.expect(scope, &[ExpectKind::Indent])?;
+
+        let mut arms = Vec::new();
+        loop {
+            match self.peek()? {
+                Some(token!(StmtSep)) => {
+                    self.advance();
+                }
+                Some(token!(Dedent)) => {
+                    self.advance();
+                    break;
+                }
+                _ => arms.push(self.parse_arm(scope)?),
+            }
+        }
+        if arms.is_empty() {
+            let token = self.peek()?;
+            return Err(self.syntax_error(scope, token, "expected at least one arm"));
+        }
+
+        let else_branch = match self.peek()? {
+            Some(token!(Keyword(Keyword::Else))) => {
+                let else_span = self.advance();
+                let body = if let Some(token!(ArgSep)) = self.peek()? {
+                    self.advance();
+                    let node = self.parse_if(scope)?;
+                    Block {
+                        stmts: vec![Stmt::Prim(PrimStmt::If(node))],
+                        vars: Vec::new(),
+                        repl: None,
+                    }
+                } else {
+                    self.expect(scope, &[ExpectKind::Indent])?;
+                    self.parse_block_through_dedent(scope)?
+                };
+                Some((body, else_span))
+            }
+            _ => None,
+        };
+
+        Ok(Match {
+            match_span,
+            scrutinee,
+            arms,
+            else_branch,
+            var: None,
+        })
+    }
+
+    /// Parse an arm of a `match`: its pattern, then a guard and its block, or `do`
+    /// and a body, which is a block or a statement on the same line.
+    fn parse_arm(&mut self, scope: &mut Scope) -> Result<Arm> {
+        use self::{Keyword, Op};
+        use TokenInfo::*;
+
+        if let token @ Some(token!(Keyword(Keyword::Do | Keyword::If))) = self.peek()? {
+            return Err(self.syntax_error(
+                scope,
+                token,
+                "an arm needs a pattern before its guard or body; `_` matches anything",
+            ));
+        }
+        if let token @ Some(token!(Keyword(Keyword::Else))) = self.peek()? {
+            return Err(self.syntax_error(scope, token, "`else` lines up with its `match`"));
+        }
+        let pattern = self.parse_arm_pattern(scope)?;
+        if let Some(token!(ArgSep)) = self.peek()? {
+            self.advance();
+        }
+        match self.peek()? {
+            Some(token!(Keyword(Keyword::If))) => {
+                let if_span = self.advance();
+                self.expect(scope, &[ExpectKind::ArgSep])?;
+                let (expr, bind) = self.parse_cond(scope)?;
+                let body = self.parse_block_through_dedent(scope)?;
+                Ok(Arm {
+                    pattern,
+                    guard: Some(Guard {
+                        if_span,
+                        expr,
+                        bind,
+                    }),
+                    do_span: None,
+                    body,
+                })
+            }
+            Some(token!(Keyword(Keyword::Do))) => {
+                let do_span = self.advance();
+                let body = match self.peek()? {
+                    Some(token!(Indent)) => {
+                        self.advance();
+                        self.parse_block_through_dedent(scope)?
+                    }
+                    _ => {
+                        self.expect(scope, &[ExpectKind::ArgSep])?;
+                        if let token @ Some(token!(TokenInfo::Op(Op::Bar))) = self.peek()? {
+                            return Err(self.syntax_error(
+                                scope,
+                                token,
+                                "an arm's `do` starts its body, which takes no parameters",
+                            ));
+                        }
+                        Block {
+                            stmts: vec![self.parse_stmt(scope)?],
+                            vars: Vec::new(),
+                            repl: None,
+                        }
+                    }
+                };
+                Ok(Arm {
+                    pattern,
+                    guard: None,
+                    do_span: Some(do_span),
+                    body,
+                })
+            }
+            token => {
+                // At the end of the line, point at the end of the pattern
+                let token = match token {
+                    None | Some(token!(StmtSep | Dedent)) => Some(Token {
+                        info: StmtSep,
+                        span: pattern.span().right_char(),
+                    }),
+                    token => token,
+                };
+                Err(self.syntax_error(scope, token, "expected `do` or `if` after an arm's pattern"))
+            }
+        }
     }
 
     fn parse_try(&mut self, scope: &mut Scope) -> Result<Try> {
@@ -481,6 +621,9 @@ impl Parser<'_> {
                 self.parse_class(scope, pub_span, decorators, at_span)?,
             )),
             Some(token!(Keyword(If))) => Ok(Stmt::Prim(PrimStmt::If(self.parse_if(scope)?))),
+            Some(token!(Keyword(Match))) => {
+                Ok(Stmt::Prim(PrimStmt::Match(self.parse_match(scope)?)))
+            }
             Some(token!(Keyword(Try))) => Ok(Stmt::Prim(PrimStmt::Try(self.parse_try(scope)?))),
             Some(token!(Keyword(While))) => self.parse_while(scope),
             Some(token!(Keyword(For))) => self.parse_for(scope),

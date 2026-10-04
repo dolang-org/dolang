@@ -330,6 +330,71 @@ impl<T: Node> Node for If<T> {
     }
 }
 
+/// The guard of a `match` arm: a condition, which may bind a pattern of its own
+/// for the arm's body as `if let` and `if bind` do
+pub(crate) struct Guard {
+    pub(crate) if_span: Span,
+    pub(crate) expr: Expr,
+    pub(crate) bind: Option<CondPattern>,
+}
+
+/// An arm of a `match`: a pattern, an optional guard, and a body
+pub(crate) struct Arm {
+    pub(crate) pattern: Pattern,
+    pub(crate) guard: Option<Guard>,
+    /// Span of the `do` introducing the body, absent after a guard
+    pub(crate) do_span: Option<Span>,
+    pub(crate) body: Block,
+}
+
+impl Node for Arm {
+    fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+        visit.node(&self.pattern)?;
+        if let Some(guard) = &self.guard {
+            visit.token(Token::Keyword, guard.if_span, None)?;
+            accept_cond(guard.bind.as_ref(), &guard.expr, visit)?;
+        }
+        if let Some(do_span) = self.do_span {
+            visit.token(Token::Keyword, do_span, None)?;
+        }
+        self.body.trans(visit)
+    }
+
+    fn kind(&self) -> NodeKind {
+        NodeKind::Arm
+    }
+}
+
+/// A `match`: the first arm whose pattern and guard match the scrutinee runs.
+pub(crate) struct Match {
+    pub(crate) match_span: Span,
+    pub(crate) scrutinee: Expr,
+    pub(crate) arms: Vec<Arm>,
+    /// The `else` body, which for `else if` holds the `if` alone
+    pub(crate) else_branch: Option<(Block, Span)>,
+    /// The synthetic variable holding the scrutinee, filled in by elaboration
+    pub(crate) var: Option<usize>,
+}
+
+impl Node for Match {
+    fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+        visit.token(Token::Keyword, self.match_span, None)?;
+        visit.node(&self.scrutinee)?;
+        for arm in &self.arms {
+            visit.node(arm)?;
+        }
+        if let Some((else_body, else_span)) = &self.else_branch {
+            visit.token(Token::Keyword, *else_span, None)?;
+            else_body.trans(visit)?
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn kind(&self) -> NodeKind {
+        NodeKind::Match
+    }
+}
+
 pub(crate) struct Expand {
     pub(crate) expr: Expr,
     pub(crate) delim_span: Option<Span>,
@@ -2240,6 +2305,7 @@ impl Node for Try {
 pub(crate) enum PrimStmt {
     Expr(Expr),
     If(If<Block>),
+    Match(Match),
     Try(Try),
 }
 
@@ -2258,6 +2324,7 @@ impl Node for PrimStmt {
         match self {
             PrimStmt::Expr(expr) => expr.accept(visit),
             PrimStmt::If(node) => node.accept(visit),
+            PrimStmt::Match(node) => node.accept(visit),
             PrimStmt::Try(node) => node.accept(visit),
         }
     }
@@ -2266,6 +2333,7 @@ impl Node for PrimStmt {
         match self {
             PrimStmt::Expr(expr) => expr.kind(),
             PrimStmt::If(node) => node.kind(),
+            PrimStmt::Match(node) => node.kind(),
             PrimStmt::Try(node) => node.kind(),
         }
     }

@@ -460,6 +460,9 @@ pub class If: Block
 # An `else` body.
 pub class Else: Block
 
+# A `match` arm: its pattern, guard and body.
+pub class Arm: Block
+
 # A `while` body.
 pub class While: Block
 

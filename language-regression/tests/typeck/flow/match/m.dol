@@ -1,0 +1,58 @@
+pub def union value @ (Int | Str)
+  let result = match value
+    Int(n) do n
+    Str(s) do s
+  let _ = result
+  #       ^~~~~~: flow std.Int | std.Str
+
+pub def incomplete value @ (Int | Str)
+  let result = match value
+    Int(n) do n
+  let _ = result
+  #       ^~~~~~: flow std.Int | std.Nil
+
+pub def complete value @ (Int | Str | Bool)
+  let result = match value
+    Int(_n) do 1
+    Str(_s) do 2
+  else
+    value
+  let _ = result
+  #       ^~~~~~: flow std.Bool | std.Int
+
+pub def narrowed value @ (200 | 404 | 500)
+  match value
+    200 do nil
+    other do
+      let _ = other
+      #       ^~~~~: flow 404 | 500
+      let _ = value
+      #       ^~~~~: flow 404 | 500
+
+pub def catch_all value @ (Int | Str)
+  let result = match value
+    Int(_n) do 1
+    _ do 2
+  let _ = result
+  #       ^~~~~~: flow std.Int
+
+pub def guarded value @ (Int | Str)
+  match value
+    x if (type x Int)
+      let _ = x
+      #       ^: flow std.Int
+    x do
+      let _ = x
+      #       ^: flow std.Int | std.Str
+
+pub def guard_pattern value @ Array[Int]
+  match value
+    (a) if let Int(b) = (a + 1)
+      let _ = b
+      #       ^: flow std.Int
+
+pub def defaults value @ Array[Int]
+  match value
+    _a b = "none" do
+      let _ = b
+      #       ^: flow std.Int | std.Str

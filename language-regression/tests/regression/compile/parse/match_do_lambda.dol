@@ -1,0 +1,7 @@
+match [1]
+  x do |y| y
+# error: an arm's `do` starts its body, which takes no parameters
+#   --> match_do_lambda.dol:LL:LL
+#    |
+# LL |   x do |y| y
+#    |        ^

@@ -101,6 +101,23 @@ value = if false
 # value == nil
 ```
 
+### `match`
+
+`match` runs the body of the first arm whose pattern matches a value. `if`
+after an arm's pattern adds a guard, and `else` runs when no arm matches:
+
+```
+let label = match response
+  Int(code) if (code >= 400)
+    "error $code"
+  Int(_) do "ok"
+  Dict(:status :body) do "$status: $body"
+else
+  "unknown"
+```
+
+See [`match`](./patterns.md#match) for arms, guards, and alternatives.
+
 ## Loops
 
 ### `while`

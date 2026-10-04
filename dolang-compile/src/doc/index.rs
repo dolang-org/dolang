@@ -1224,6 +1224,26 @@ impl Index<'_> {
         match prim {
             PrimStmt::Expr(expr) => self.expr(scope, expr),
             PrimStmt::If(node) => self.if_body(scope, node, false, Self::block),
+            PrimStmt::Match(node) => {
+                self.expr(scope, &mut node.scrutinee);
+                for arm in &mut node.arms {
+                    let span = arm.span();
+                    let id = self.push(scope, Kind::Arm, span);
+                    let inner = scope.nested(&mut arm.body.vars, Some(id));
+                    self.pattern(&inner, &mut arm.pattern, false, None);
+                    if let Some(guard) = &mut arm.guard {
+                        self.expr(&inner, &mut guard.expr);
+                        if let Some(bind) = &mut guard.bind {
+                            self.pattern(&inner, &mut bind.pattern, false, None);
+                        }
+                    }
+                    self.block(&inner, &mut arm.body.stmts);
+                }
+                if let Some((body, span)) = &mut node.else_branch {
+                    let span = *span | body.span();
+                    self.branch(scope, body, None, Kind::Else, span, Self::block);
+                }
+            }
             PrimStmt::Try(node) => {
                 // A handler is a node of its own, so the `try` covers its own
                 // body alone: sibling constructs stay disjoint.

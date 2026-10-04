@@ -69,6 +69,7 @@ let KIND_NAMES = $
   $compile.Lambda: "Lambda"
   $compile.If: "If"
   $compile.Else: "Else"
+  $compile.Arm: "Arm"
   $compile.While: "While"
   $compile.For: "For"
   $compile.Try: "Try"

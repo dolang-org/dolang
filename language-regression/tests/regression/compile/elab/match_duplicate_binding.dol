@@ -1,0 +1,15 @@
+pub def f value
+  match value
+    (a a) do a
+# error: a pattern cannot bind the same name twice
+#   --> match_duplicate_binding.dol:LL:LL
+#    |
+# LL |     (a a) do a
+#    |      - ^
+#    |      |
+#    |      first bound here
+# warning: unused variable
+#   --> match_duplicate_binding.dol:LL:LL
+#    |
+# LL |     (a a) do a
+#    |      ^

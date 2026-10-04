@@ -18,7 +18,7 @@ use dolang_util::intern::BinTable;
 use crate::{
     Compiler,
     ast::{
-        AliasBody, Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, Decorator, Def,
+        AliasBody, Annot, Arg, Arm, ArrayElem, Binders, Block, Class, ClassMember, Decorator, Def,
         DictElem, Expr, ExprBody, FieldInit, For, Function, Ident, If, ImportElement, LValue,
         Origin, PatBind, PatIdent, PatItem, Pattern, PrimStmt, Res, Root, Stmt, TypeArg, TypeDecl,
         TypeEntry, TypeExpr, TypeRes, Var, implicit_tys_mut, visit::Node,
@@ -931,6 +931,15 @@ impl Check<'_> {
         match prim {
             PrimStmt::Expr(expr) => self.expr(frame, expr),
             PrimStmt::If(node) => self.if_body(frame, node),
+            PrimStmt::Match(node) => {
+                self.expr(frame, &mut node.scrutinee);
+                for arm in &mut node.arms {
+                    self.arm(frame, arm);
+                }
+                if let Some((body, _)) = &mut node.else_branch {
+                    self.branch(frame, body, None);
+                }
+            }
             PrimStmt::Try(node) => {
                 self.function(Some(frame), &mut node.body);
                 for handler in &mut node.handlers {
@@ -951,6 +960,25 @@ impl Check<'_> {
         let inner = Frame::scope(Some(frame), vars, elems);
         if let Some(pattern) = pattern {
             self.pattern(&inner, pattern);
+        }
+        inner.enter_body();
+        self.overloads(elems);
+        for elem in elems.iter_mut() {
+            elem.check(self, &inner);
+        }
+        self.unused_types(&inner);
+    }
+
+    /// A `match` arm, whose guard sees the names its pattern binds
+    fn arm(&mut self, frame: &Frame<'_>, arm: &mut Arm) {
+        let (vars, elems) = arm.body.parts();
+        let inner = Frame::scope(Some(frame), vars, elems);
+        self.pattern(&inner, &mut arm.pattern);
+        if let Some(guard) = &mut arm.guard {
+            self.expr(&inner, &mut guard.expr);
+            if let Some(bind) = &mut guard.bind {
+                self.pattern(&inner, &mut bind.pattern);
+            }
         }
         inner.enter_body();
         self.overloads(elems);

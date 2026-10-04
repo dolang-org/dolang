@@ -408,6 +408,22 @@ else
   b
 ```
 
+`match` runs the first arm whose pattern (and optional `if` guard) matches. A
+bare name matches anything, `else` lines up with `match`, and no match without
+`else` gives `nil`. Unpacking a value that isn't a sequence or keyed value
+raises rather than trying the next arm, so type-test first:
+
+```
+let label = match value
+  Int(n) if (n < 0)
+    "negative"
+  0 | 1 do "small"
+  Array(first _) do
+    echo $first
+    "pair"
+  other do "other: $other"
+```
+
 ### Commands and Calls
 
 ```

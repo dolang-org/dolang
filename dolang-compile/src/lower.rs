@@ -7,12 +7,12 @@ use dolang_bytecode::builtin;
 use crate::{
     Mode, PreludeImport, RestKind,
     ast::{
-        Arg, ArrayElem, Assign, Bind, Block, Class, ClassMember, ClassSuper, CondPattern, Const,
-        Decorator, Def, DictElem, Expand, Expr, ExprBody, FieldInit, FmtParamName, For,
-        FormatAlign, FormatKind, FormatSign, FormatSpec, Function, GetVariant, Ident, If, Import,
-        ImportElement, ImportItem, Key, LValue, Let, MemberScope, Method, NlGuard, Pair, PatBind,
-        PatDefault, PatIdent, PatItem, Pattern, PrimStmt, Res, Return, Root, Single, Stmt, Try,
-        While, visit::Node,
+        Arg, Arm, ArrayElem, Assign, Bind, Block, Class, ClassMember, ClassSuper, CondPattern,
+        Const, Decorator, Def, DictElem, Expand, Expr, ExprBody, FieldInit, FmtParamName, For,
+        FormatAlign, FormatKind, FormatSign, FormatSpec, Function, GetVariant, Guard, Ident, If,
+        Import, ImportElement, ImportItem, Key, LValue, Let, Match, MemberScope, Method, NlGuard,
+        Pair, PatBind, PatDefault, PatIdent, PatItem, Pattern, PrimStmt, Res, Return, Root, Single,
+        Stmt, Try, While, visit::Node,
     },
     cfg::{self, BlockRefMut, Inst, InstInfo, Term, TermInfo},
     constant::{self, ConstantExt},
@@ -137,6 +137,8 @@ struct Params<'a> {
 enum WorkAst<'a> {
     Function(&'a Function, sig::UnpackId),
     Block(&'a Block, bool),
+    /// A `match` arm's body, with the block its guard fails to
+    Arm(&'a Arm, bool, cfg::BlockId),
     Stmt(&'a Stmt),
     Args(&'a [Arg]),
     ArrayElems(&'a [ArrayElem]),
@@ -1350,8 +1352,23 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             self.link(fid);
             return Ok((None, None));
         };
-        match &bind.pattern {
-            Pattern::Ident(_) => {
+        self.lower_cond_test(&bind.pattern, true, bscope, tid, fid, span)
+    }
+
+    /// Lower the test of a pattern against the value on top of the stack, as
+    /// [`Self::lower_cond`] does.  With `truthy`, a bare name tests the value's
+    /// truthiness, as in `if let`; otherwise it always matches.
+    fn lower_cond_test(
+        &mut self,
+        pattern: &'a Pattern,
+        truthy: bool,
+        bscope: cfg::ScopeId,
+        tid: cfg::BlockId,
+        fid: cfg::BlockId,
+        span: Span,
+    ) -> Result<Binds<'a>> {
+        match pattern {
+            Pattern::Ident(PatIdent { ident, .. }) if truthy => {
                 // A bare identifier binds the scrutinee itself and branches on its
                 // truthiness, so the value has to survive the test.  That leaves the
                 // duplicate on the failure edge, which needs a block of its own to drop
@@ -1368,7 +1385,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 self.block.term = Term(TermInfo::Branch(fid), span);
                 self.link(fid);
                 self.switch(test);
-                let var = self.resolve_var_in_scope(self.graph.scope(bscope), 0, 0);
+                let res = ident.res.as_ref().expect("unresolved pattern binding");
+                let var = self.resolve_var_in_scope(self.graph.scope(bscope), res.index, res.depth);
                 Ok((
                     Some(BindPlan {
                         steps: Vec::new(),
@@ -1532,6 +1550,124 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
         self.switch(next);
         Ok(())
+    }
+
+    /// Lower a `match`.  The scrutinee is stored once, and each arm loads it to
+    /// test its pattern, failing over to the next arm, then `else`.
+    fn lower_match(&mut self, node: &'a Match, want_result: bool) -> Result<()> {
+        let span = node.match_span;
+        let scrutinee = Res {
+            index: node.var.expect("unelaborated match"),
+            depth: 0,
+            node: None,
+        };
+        self.lower_expr(&node.scrutinee)?;
+        self.lower_store_res(&scrutinee, span, false);
+
+        let next = self.graph.alloc_block(self.block.func, self.block.scope);
+        let start = self.bb;
+        let mut fallback = next;
+
+        if let Some((else_block, _)) = &node.else_branch {
+            let fscope = self.graph.alloc_scope(
+                false,
+                false,
+                self.block.func,
+                Some(self.block.scope),
+                &else_block.vars,
+            );
+            fallback = self.graph.alloc_block(self.block.func, fscope);
+            self.queue(Work {
+                bb: fallback,
+                ast: WorkAst::Block(else_block, want_result),
+                params: self.branch_params(None, None, next),
+            });
+        } else if want_result {
+            fallback = self.graph.alloc_block(self.block.func, self.block.scope);
+            self.switch(fallback);
+            self.lower_load_nil(span);
+            self.block.term = Term(TermInfo::Branch(next), span);
+            self.link(next);
+        }
+
+        // Build the arms from the last to the first, each failing over to the next
+        for arm in node.arms.iter().rev() {
+            let current_fallback = fallback;
+            fallback = self.graph.alloc_block(self.block.func, self.block.scope);
+            let tscope = self.graph.alloc_scope(
+                false,
+                false,
+                self.block.func,
+                Some(self.block.scope),
+                &arm.body.vars,
+            );
+            let tid = self.graph.alloc_block(self.block.func, tscope);
+            self.switch(fallback);
+            let span = arm.pattern.span();
+            self.lower_load(&scrutinee, span);
+            let (bind, bind_params) =
+                self.lower_cond_test(&arm.pattern, false, tscope, tid, current_fallback, span)?;
+            self.queue(Work {
+                bb: tid,
+                ast: WorkAst::Arm(arm, want_result, current_fallback),
+                params: self.branch_params(bind, bind_params, next),
+            });
+        }
+
+        self.switch(start);
+        self.block.term = Term(TermInfo::Branch(fallback), span);
+        self.link(fallback);
+        self.switch(next);
+        Ok(())
+    }
+
+    /// The parameters of a branch body queued from the current block, which
+    /// continues at `next`
+    fn branch_params(
+        &self,
+        bind: Option<BindPlan>,
+        bind_params: Option<Defaults<'a>>,
+        next: cfg::BlockId,
+    ) -> Params<'a> {
+        Params {
+            bind,
+            bind_params,
+            mode: self.params.mode.clone(),
+            is_top_level: false,
+            next_id: Some(next),
+            break_id: self.params.break_id,
+            break_result: self.params.break_result,
+            continue_id: self.params.continue_id,
+            exit_id: self.params.exit_id,
+        }
+    }
+
+    /// Lower a `match` arm's guard in its body's prologue, after the arm's
+    /// bindings.  On failure, leave the arm's scope for `fail`; on success, bind
+    /// the guard's own pattern, if it has one.
+    fn lower_guard(&mut self, guard: &'a Guard, fail: cfg::BlockId, span: Span) -> Result<()> {
+        let leave = self.graph.alloc_block(self.block.func, self.block.scope);
+        let pass = self.graph.alloc_block(self.block.func, self.block.scope);
+        let (bind, bind_params) = self.lower_cond(
+            &guard.expr,
+            guard.bind.as_ref(),
+            self.block.scope,
+            pass,
+            leave,
+            guard.if_span,
+        )?;
+
+        self.switch(leave);
+        if self.graph.scope(self.block.scope).has_upvars() {
+            self.block.insts.push(Inst(InstInfo::PopUpvars, span));
+        }
+        self.block.term = Term(TermInfo::Branch(fail), span);
+        self.link(fail);
+
+        self.switch(pass);
+        self.params.bind = bind;
+        self.params.bind_params = bind_params;
+        self.lower_prologue_bind(span)
     }
 
     fn lower_if(&mut self, node: &'a If<Block>, want_result: bool) -> Result<()> {
@@ -2435,6 +2571,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         block: &'a Block,
         mut want_result: bool,
         stub_span: Option<Span>,
+        guard: Option<(&'a Guard, cfg::BlockId)>,
     ) -> Result<()> {
         let scope = self.graph.scope(self.block.scope);
         // An empty stub block has no span of its own, so use its marker for the
@@ -2552,6 +2689,9 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         }
 
         self.lower_prologue_bind(span)?;
+        if let Some((guard, fail)) = guard {
+            self.lower_guard(guard, fail, span)?;
+        }
 
         // End prologue
         if let Some(span) = stub_span {
@@ -2817,6 +2957,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 self.lower_if(node, want_result)?;
                 Ok(false)
             }
+            PrimStmt::Match(node) => {
+                self.lower_match(node, want_result)?;
+                Ok(false)
+            }
             PrimStmt::Try(node) => {
                 self.lower_try(node, want_result)?;
                 Ok(false)
@@ -2950,7 +3094,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         self.params.bind =
             Some(self.bind_plan(self.graph.scope(self.block.scope), &function.params, sig)?);
         self.params.bind_params = Some(Defaults::Items(&function.params));
-        self.lower_block(&function.body, true, function.stub_span)?;
+        self.lower_block(&function.body, true, function.stub_span, None)?;
         Ok(())
     }
 
@@ -3699,8 +3843,14 @@ impl<'c> Lowerer<'c> {
             match work.ast {
                 WorkAst::Function(function, sig) => scope.lower_function(function, sig)?,
                 WorkAst::Block(block, want_result) => {
-                    scope.lower_block(block, want_result, None)?
+                    scope.lower_block(block, want_result, None, None)?
                 }
+                WorkAst::Arm(arm, want_result, fail) => scope.lower_block(
+                    &arm.body,
+                    want_result,
+                    None,
+                    arm.guard.as_ref().map(|guard| (guard, fail)),
+                )?,
                 WorkAst::Stmt(stmt) => scope.lower_nl_guard_body(stmt)?,
                 WorkAst::Args(body) => scope.lower_for_args(body)?,
                 WorkAst::ArrayElems(body) => scope.lower_for_array(body)?,

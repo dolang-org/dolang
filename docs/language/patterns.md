@@ -3,7 +3,8 @@
 Patterns bind names, unpack sequences and keyed values, test constants or
 runtime types, and try alternatives. Use them in `let`, `bind`, `for`, and
 lambda parameters. With `if let`, `if bind`, or their `while` forms, a pattern
-match controls whether the body runs.
+match controls whether the body runs, and `match` chooses among several bodies
+by the first pattern that matches.
 
 ## Binding and Unpacking
 
@@ -424,6 +425,121 @@ To match a sequence of exactly one item instead, write the item in parentheses:
 `if let (value) = items`.
 
 A nested pattern matches only if every level does.
+
+## `match`
+
+`match` tries a value against a list of arms in order and runs the body of the
+first arm that matches. An arm is a pattern followed by `do` and a body, either
+on the same line or as an indented block:
+
+```playground
+#> import test:
+#>   - assert_eq
+def describe value
+  match value
+    Int(n) do "int $n"
+    "GET" | "HEAD" do "read"
+    Array(first _) do
+      let inner = describe $first
+      "array of $inner"
+    _ do "other"
+
+assert_eq (describe 3) "int 3"
+assert_eq (describe "HEAD") "read"
+assert_eq (describe ([1, 2])) "array of int 1"
+assert_eq (describe nil) "other"
+```
+
+An arm's pattern reads as a `let` pattern does, including `|` between whole
+item lists, and may have defaults. Its names are in scope only in that arm.
+
+An arm starting with `|` lays out its alternatives vertically, as in a
+vertical [alternatives](./patterns.md#alternatives) block, with `do` on a line
+of its own:
+
+```playground
+#> import test:
+#>   - assert_eq
+def summary response
+  match response
+    | :status
+      :body = ""
+    | status body
+    do
+      "$status $body"
+
+assert_eq (summary {status: 200}) "200 "
+assert_eq (summary ([404, "missing"])) "404 missing"
+```
+
+A bare name matches any value, even `false` or `nil`, and binds it; the
+truthiness test of `if let` does not apply. `_ do` is a catch-all arm.
+
+A mismatch moves on to the next arm, but other errors propagate, as described
+in [What Counts as a Match](./patterns.md#what-counts-as-a-match). Trying to
+unpack a value that does not support it raises, so test the type first when the
+value may not be a sequence or keyed value:
+
+```playground
+#> import test:
+#>   - assert_eq
+def size value
+  match value
+    Array(_ _) do 2
+    Array((_)) do 1
+    _ do 0
+
+assert_eq (size ([1, 2])) 2
+assert_eq (size 5) 0
+```
+
+### Guards
+
+`if` in place of `do` adds a guard, a condition checked once the pattern
+matches. The guard can use the arm's names, and the body follows as an indented
+block. When the guard fails, matching continues with the next arm:
+
+```playground
+#> import test:
+#>   - assert_eq
+def sign n
+  match n
+    m if (m < 0)
+      :negative:
+    0 do :zero:
+    _ do :positive:
+
+assert_eq (sign (-3)) :negative:
+assert_eq (sign 0) :zero:
+assert_eq (sign 4) :positive:
+```
+
+A guard may be `if let` or `if bind`, which matches a pattern of its own, as in
+[Conditional Matching](./patterns.md#conditional-matching). Its names are in
+scope in the body along with the arm's.
+
+### `else` and the Result
+
+`else`, lined up with `match`, runs when no arm matches. `else if` continues as
+it does after `if`:
+
+```playground
+#> import test:
+#>   - assert_eq
+def lookup table key
+  match key
+    Str(k) if let value = table.get(k)
+      "$k is $value"
+  else
+    "not found"
+
+assert_eq (lookup {"a": 1} "a") "a is 1"
+assert_eq (lookup {"a": 1} 4) "not found"
+```
+
+Like `if`, `match` can be the right-hand side of `let` or an assignment, and
+gives the result of the body that runs. Without `else`, it gives `nil` when no
+arm matches. The value being matched is evaluated once, before the first arm.
 
 ## Patterns in `for`
 
