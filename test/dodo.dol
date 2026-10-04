@@ -1,9 +1,53 @@
-import dodo
+import compile dodo exec shell
   fs:
+    - Path
     - with_temp_dir
   test:
+    - assert
     - assert_eq
+    - assert_throws
     - test
+
+let docgen_path = (Path "tools/docgen.dol").absolute()
+
+class DocgenSpec
+  pub def bin _self _name
+    shell.exe
+
+def write_source dir relative
+  let path = (dir / relative)
+  path.parent.create_dir all: true
+  path.write "pub let value = 1\n"
+
+#[test]
+def lsp_typelibs_include_nested_and_private_modules_and_replace_stale_files()
+  let docgen = exec.module $docgen_path
+  with_temp_dir do |dir|
+    write_source $dir dolang-shell-modules/lib/a/mod.dol
+    write_source $dir dolang-shell-modules/lib/a/b.dol
+    write_source $dir fixture/stub/_private.dol
+    let out = (dir / "typelibs")
+    out.create_dir()
+    (out / "stale.dolt").write stale
+    cd $dir do docgen.extract_typelibs (DocgenSpec()) $out
+    let names = [...out.glob("*.dolt").map do |path|
+      compile.Typelib(path.read("b")).module]
+    names.sort()
+    assert_eq $names ["_private", "a", "a.b"]
+    assert $!((out / "stale.dolt").exists())
+
+#[test]
+def lsp_typelib_extraction_rejects_duplicate_module_names_before_clearing_output()
+  let docgen = exec.module $docgen_path
+  with_temp_dir do |dir|
+    write_source $dir dolang-shell-modules/lib/a.dol
+    write_source $dir fixture/stub/a.dol
+    let out = (dir / "typelibs")
+    out.create_dir()
+    (out / "marker").write preserved
+    assert_throws $Str str: "duplicate bundled module: a" do
+      cd $dir do docgen.extract_typelibs (DocgenSpec()) $out
+    assert_eq $(out / "marker").read() preserved
 
 #[test]
 def run_reuses_loaded_rules_when_reentered()

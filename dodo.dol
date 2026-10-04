@@ -551,7 +551,9 @@ return $
           # dolang binary just built, then point the build at it via env var.
           let doc_json = (spec.target_dir / "lsp-doc-json").absolute()
           docgen().extract_doc_json $spec $doc_json
-          env DOLANG_LSP_DOC_JSON_DIR: $doc_json do
+          let typelibs = (spec.target_dir / "lsp-typelibs").absolute()
+          docgen().extract_typelibs $spec $typelibs
+          env DOLANG_LSP_DOC_JSON_DIR: $doc_json DOLANG_LSP_TYPELIB_DIR: $typelibs do
             spec.cargo build --bin dolang-lsp
 
       if is_windows

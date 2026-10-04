@@ -6,10 +6,14 @@
 //! build`/`dodo build` doesn't set it (extraction requires a working
 //! `dolang` binary and is comparatively slow), so that case just emits an
 //! empty table rather than failing the build.
+//!
+//! `DOLANG_LSP_TYPELIB_DIR` similarly supplies regenerated bundled typelibs;
+//! `typelib_build` validates and embeds them for `src/typelib_index.rs`.
 
 use std::{collections::HashMap, env, fmt::Write as _, fs, path::PathBuf};
 
 mod doc_markdown;
+pub(crate) mod typelib_build;
 
 // `dolang -m compile extract --doc` nests the cooked documentation
 // projection this build script wants under "doc", alongside the raw
@@ -315,6 +319,7 @@ struct Row {
 }
 
 fn main() {
+    typelib_build::generate();
     println!("cargo:rerun-if-env-changed=DOLANG_LSP_DOC_JSON_DIR");
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is always set by cargo"));

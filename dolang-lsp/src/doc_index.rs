@@ -10,6 +10,9 @@
 #[path = "../build.rs"]
 mod doc_build;
 
+#[cfg(test)]
+pub(crate) use doc_build::typelib_build;
+
 /// One parameter of a documented function or method.
 pub(crate) struct Param {
     pub(crate) name: &'static str,
