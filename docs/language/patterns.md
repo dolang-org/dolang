@@ -1,9 +1,9 @@
 # Pattern Matching
 
-Patterns bind names, unpack sequences and keyed values, and test constants or
-runtime types. Use them in `let`, `bind`, `for`, and lambda parameters. With
-`if let`, `if bind`, or their `while` forms, a pattern match controls whether
-the body runs.
+Patterns bind names, unpack sequences and keyed values, test constants or
+runtime types, and try alternatives. Use them in `let`, `bind`, `for`, and
+lambda parameters. With `if let`, `if bind`, or their `while` forms, a pattern
+match controls whether the body runs.
 
 ## Binding and Unpacking
 
@@ -51,6 +51,9 @@ let first :foo = {foo: 42, "ultramarine"}
 assert_eq $first "ultramarine"
 assert_eq $foo 42
 ```
+
+A pattern binds each name at most once, so `let a a = [1, 2]` is an error. `_`
+is exempt and may appear any number of times.
 
 ### Positional and Key Rests
 
@@ -261,6 +264,74 @@ A failed class test raises `TypeError` in an ordinary binding or lambda
 parameter. In a conditional binding it takes the failure branch. A successful
 class test can capture a falsy value: `if let Bool(value) = false` succeeds and
 binds `false`. A subsequent inner pattern can still fail independently.
+
+## Alternatives
+
+`|` separates alternative patterns. They are tried in order, and the first that
+matches binds the names:
+
+```playground
+#> import test:
+#>   - assert_eq
+def port_of address
+  let Int(port) | _ Int(port) = address
+  port
+
+assert_eq (port_of 8080) 8080
+let address = ["example.com", 443]
+assert_eq (port_of address) 443
+```
+
+At the top level of a `let`, `|` separates whole item lists, and each
+alternative matches the value as an entire pattern would: in
+`let Array((n)) | n = value`, the first alternative unpacks a one-item array,
+while the second binds the value itself. Elsewhere, parentheses group
+alternatives into one item of the enclosing pattern:
+
+```
+if let ("GET" | "HEAD") path = request
+  echo $path
+```
+
+A group with `|` does not unpack, so to match a sequence of one item against
+alternatives, double the parentheses: `((Array((x)) | x))`. Lambda parameters
+accept only such groups, and `def` parameters accept no alternatives.
+
+In vertical layout, a block can consist of `|` alternatives, each followed by a
+space. An alternative continues on lines indented two columns past its `|`:
+
+```playground
+#> import test:
+#>   - assert_eq
+bind {status: 200, headers: {"Content-Type": "text/plain"}}
+  :status
+  headers:
+    | "content-type": type
+    | "Content-Type": type
+assert_eq $type "text/plain"
+```
+
+A block is either all alternatives or has none. Alternatives within one line of
+a block need parentheses.
+
+Every alternative must bind the same names, though in any order and any
+position; `_` is exempt. Defaults run once the whole pattern matches, and only
+those of the alternative that matched:
+
+```
+if bind args
+  | :host
+    :port = 80
+  | host port
+do
+  echo "$host:$port"
+```
+
+When no alternative matches, a conditional pattern takes its failure branch.
+In a plain `let`, `bind`, or `for`, the last alternative's mismatch raises as
+it would alone. An error that is not a mismatch (see
+[What Counts as a Match](./patterns.md#what-counts-as-a-match)) propagates
+without trying later alternatives.
 
 ## Conditional Matching
 
