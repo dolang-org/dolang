@@ -13,6 +13,10 @@ from typing import Any
 # How many parameters a signature keeps once a parameter table repeats them.
 MAX_SIGNATURE_PARAMS = 3
 
+ALIAS_LINE_LENGTH = 90
+ALIAS_UNION_MEMBERS = 5
+ALIAS_SCHEMA_ITEMS = 4
+
 from mkdocstrings._internal.handlers.base import BaseHandler, CollectionError
 
 # Characters Markdown reads as syntax, escaped in the text of a type
@@ -125,6 +129,9 @@ class DoHandler(BaseHandler):
         result = self._resolve_entity(cache_dir, source_module, target, (*chain, key))
         result["name"] = entity.get("name", source_item)
         result["pub"] = entity.get("pub", True)
+        if result.get("kind") == "alias":
+            source_module = result["_doc_source"].rsplit(".", 1)[0]
+            _render_annotations(result, self._type_scopes[source_module])
         return result
 
     def _resolve_entities(
@@ -420,12 +427,16 @@ def _escape_type_text(text: str) -> str:
     return _MARKDOWN_SPECIAL.sub(r"\\\1", html.escape(text))
 
 
-def _render_type(ty: dict, scope: _TypeScope, context: int, plain: bool = False) -> str:
+def _render_type(
+    ty: dict, scope: _TypeScope, context: int, plain: bool = False,
+    *, code: bool = False,
+) -> str:
     """Render a type tree in a position binding as tightly as `context`.
 
     A `plain` rendering is bare text with no links, for a template to escape.
+    A `code` rendering is linked HTML inside a preformatted declaration.
     """
-    escape = (lambda text: text) if plain else _escape_type_text
+    escape = (lambda text: text) if plain else (html.escape if code else _escape_type_text)
     kind = ty.get("kind")
     if kind == "name":
         name, link = scope.name(ty)
@@ -436,29 +447,29 @@ def _render_type(ty: dict, scope: _TypeScope, context: int, plain: bool = False)
     if kind == "const":
         return escape(ty.get("text", ""))
     if kind == "app":
-        base = _render_type(ty["base"], scope, _BINDS_COMPACT, plain)
-        args = _render_type_args(ty["args"], scope, plain)
-        rendered = f"{base}[{args}]" if plain else f"{base}\\[{args}\\]"
+        base = _render_type(ty["base"], scope, _BINDS_COMPACT, plain, code=code)
+        args = _render_type_args(ty["args"], scope, plain, code=code)
+        rendered = f"{base}[{args}]" if plain or code else f"{base}\\[{args}\\]"
         binding = _BINDS_COMPACT
     elif kind == "schema":
-        rendered = f"{{{_render_type_params(ty['params'], scope, plain)}}}"
+        rendered = f"{{{_render_type_params(ty['params'], scope, plain, code=code)}}}"
         binding = _BINDS_COMPACT
     elif kind == "union":
         rendered = " | ".join(
-            _render_type(member, scope, _BINDS_COMPACT, plain) for member in ty["members"]
+            _render_type(member, scope, _BINDS_COMPACT, plain, code=code) for member in ty["members"]
         )
         binding = _BINDS_UNION
     elif kind == "func":
-        params = _render_type_params(ty["params"], scope, plain)
+        params = _render_type_params(ty["params"], scope, plain, code=code)
         # The implicits are written among the items, but a list holds at most
         # one of each, so they are rendered after them
         implicits = [
-            escape(sigil) + _render_type(ty[key], scope, _BINDS_FUNC, plain)
+            escape(sigil) + _render_type(ty[key], scope, _BINDS_FUNC, plain, code=code)
             for key, sigil in (("input", "<"), ("output", ">"))
             if ty.get(key)
         ]
         params = ", ".join([p for p in [params, *implicits] if p])
-        ret = _render_type(ty["ret"], scope, _BINDS_FUNC, plain)
+        ret = _render_type(ty["ret"], scope, _BINDS_FUNC, plain, code=code)
         arrow = "->" if plain else "-&gt;"
         rendered = f"({params}) {arrow} {ret}"
         binding = _BINDS_FUNC
@@ -467,21 +478,26 @@ def _render_type(ty: dict, scope: _TypeScope, context: int, plain: bool = False)
     return f"({rendered})" if binding < context else rendered
 
 
-def _render_type_args(args: list[dict], scope: _TypeScope, plain: bool = False) -> str:
+def _render_type_args(
+    args: list[dict], scope: _TypeScope, plain: bool = False, *, code: bool = False,
+) -> str:
+    escape = (lambda text: text) if plain else (html.escape if code else _escape_type_text)
     rendered = []
     for arg in args:
-        text = _render_type(arg["type"], scope, _BINDS_FUNC, plain)
+        text = _render_type(arg["type"], scope, _BINDS_FUNC, plain, code=code)
         if arg.get("kind") == "expand":
             text = "..." + text
         elif arg.get("kind") == "key":
             name = arg.get("name", "")
-            text = f"{name if plain else _escape_type_text(name)}: {text}"
+            text = f"{escape(name)}: {text}"
         rendered.append(text)
     return ", ".join(rendered)
 
 
-def _render_type_params(params: list[dict], scope: _TypeScope, plain: bool = False) -> str:
-    escape = (lambda text: text) if plain else _escape_type_text
+def _render_type_params(
+    params: list[dict], scope: _TypeScope, plain: bool = False, *, code: bool = False,
+) -> str:
+    escape = (lambda text: text) if plain else (html.escape if code else _escape_type_text)
     rendered = []
     for param in params:
         # A `*` sigil would otherwise read as Markdown emphasis
@@ -498,13 +514,129 @@ def _render_type_params(params: list[dict], scope: _TypeScope, plain: bool = Fal
         elif param.get("kind") == "key" and "key_type" in param:
             # A name must be parenthesized to not be taken as a symbol key
             key_type = param["key_type"]
-            key = _render_type(key_type, scope, _BINDS_COMPACT, plain)
+            key = _render_type(key_type, scope, _BINDS_COMPACT, plain, code=code)
             text += f"({key}): " if key_type.get("kind") == "name" else f"{key}: "
         elif param.get("kind") == "key":
             key = param.get("key", "")
-            text += f"{key if plain else _escape_type_text(key)}: "
-        rendered.append(text + _render_type(param["type"], scope, _BINDS_FUNC, plain))
+            text += f"{escape(key)}: "
+        rendered.append(text + _render_type(param["type"], scope, _BINDS_FUNC, plain, code=code))
     return ", ".join(rendered)
+
+
+def _layout_schema(ty: dict) -> dict | None:
+    """The schema that can be moved out of brackets without reordering arguments."""
+    if ty.get("kind") == "schema":
+        return ty if ty["params"] else None
+    if ty.get("kind") == "app" and ty["args"]:
+        last = ty["args"][-1]
+        if last.get("kind") in ("pos", "expand"):
+            schema = last["type"]
+            if schema.get("kind") == "schema" and schema["params"]:
+                return schema
+    return None
+
+
+def _has_schema_application(ty: dict) -> bool:
+    if ty.get("kind") == "app":
+        return _layout_schema(ty) is not None or any(
+            _has_schema_application(arg["type"]) for arg in ty["args"]
+        )
+    if ty.get("kind") == "union":
+        return any(_has_schema_application(member) for member in ty["members"])
+    return False
+
+
+def _alias_layout(ty: dict, scope: _TypeScope, column: int) -> bool:
+    schema = _layout_schema(ty)
+    union = ty.get("kind") == "union" and bool(ty["members"])
+    if not schema and not union:
+        return False
+    if column + len(_render_type(ty, scope, _BINDS_COMPACT, plain=True)) > ALIAS_LINE_LENGTH:
+        return True
+    if union:
+        return len(ty["members"]) >= ALIAS_UNION_MEMBERS
+    params = schema["params"]
+    return len(params) >= ALIAS_SCHEMA_ITEMS or (
+        len(params) >= 2
+        and any(_has_schema_application(param.get("type") or {}) for param in params)
+    )
+
+
+def _alias_type_lines(
+    ty: dict, scope: _TypeScope, prefix: str, indent: int,
+    *, plain: bool = False, force: bool = False,
+) -> list[str]:
+    """Render layout relative to the first token of this type's item.
+
+    HTML changes neither indentation nor layout decisions. Compact fragments
+    inside a preformatted declaration need HTML escaping, not Markdown escaping.
+    """
+    def compact(value: dict, context: int = _BINDS_COMPACT) -> str:
+        return _render_type(value, scope, context, plain, code=not plain)
+
+    def column(text: str) -> int:
+        return len(text) if plain else len(html.unescape(re.sub(r"<[^>]*>", "", text)))
+
+    if not force and not _alias_layout(ty, scope, column(prefix)):
+        return [prefix + compact(ty)]
+    if ty.get("kind") == "union":
+        lines = [prefix + "$"]
+        for member in ty["members"]:
+            lines.extend(_alias_type_lines(
+                member, scope, " " * (indent + 2) + "| ", indent + 4, plain=plain,
+            ))
+        return lines
+    schema = _layout_schema(ty)
+    if schema is None:
+        return [prefix + compact(ty)]
+    head = ""
+    if ty["kind"] == "app":
+        args = ty["args"][:-1]
+        head = compact({**ty, "args": args}) if args else compact(ty["base"])
+        head += " ..." if ty["args"][-1]["kind"] == "expand" else " "
+    lines = [prefix + head + "$"]
+    for param in schema["params"]:
+        item_indent = indent + 2
+        start = " " * item_indent
+        quant = _QUANTS.get(param.get("quant"), "")
+        kind = param.get("kind")
+        if kind in ("open", "any"):
+            lines.append(start + quant + ("..." if kind == "open" else ""))
+            continue
+        value = param["type"]
+        if kind == "key":
+            if "key_type" in param:
+                key = compact(param["key_type"])
+                if param["key_type"].get("kind") == "name":
+                    key = f"({key})"
+            else:
+                key = param["key"] if plain else html.escape(param["key"])
+            start += quant + key + ":"
+            if value.get("kind") == "union" and _alias_layout(value, scope, column(start) + 1):
+                lines.append(start)
+                for member in value["members"]:
+                    lines.extend(_alias_type_lines(
+                        member, scope, " " * (item_indent + 2) + "| ",
+                        item_indent + 4, plain=plain,
+                    ))
+                continue
+            start += " "
+        elif kind == "include":
+            start += quant + "..."
+        else:
+            # Dash items establish their baseline after `- `, not at the dash.
+            start += "- " + quant
+            item_indent += 2
+            if value.get("kind") == "union" and _alias_layout(value, scope, column(start)):
+                for index, member in enumerate(value["members"]):
+                    branch = start + "| " if index == 0 else " " * item_indent + "| "
+                    baseline = item_indent + (len(quant) if index == 0 else 0) + 2
+                    lines.extend(_alias_type_lines(
+                        member, scope, branch, baseline, plain=plain,
+                    ))
+                continue
+        lines.extend(_alias_type_lines(value, scope, start, item_indent, plain=plain))
+    return lines
 
 
 def _binder_text(binder: dict, scope: _TypeScope) -> str:
@@ -550,6 +682,13 @@ def _render_annotations(entity: dict, scope: _TypeScope) -> None:
         entity["annotation"] = _type_html(entity.get("type"), scope)
     elif entity.get("kind") == "alias":
         entity["annotation"] = _type_html(entity.get("type"), scope)
+        ty = entity.get("type")
+        prefix = f"@let {_declaration_name(entity)} = "
+        entity["alias_vertical"] = bool(ty and _alias_layout(ty, scope, len(prefix)))
+        if entity["alias_vertical"]:
+            entity["alias_declaration"] = "\n".join(_alias_type_lines(
+                ty, scope, html.escape(prefix), 0, force=True,
+            ))
     elif entity.get("kind") == "class":
         supers = entity.get("supers") or []
         entity["super_annotations"] = [
