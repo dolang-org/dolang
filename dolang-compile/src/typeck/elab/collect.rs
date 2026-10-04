@@ -966,7 +966,8 @@ impl<'u> Walk<'_, 'u> {
                 surface::Param {
                     kind: ParamKind::Pos,
                     name: self.bind(frame, bind),
-                    default: default.is_some(),
+                    // `?` makes a sub-pattern optional, as a default does a name
+                    default: default.is_some() || bind.optional().is_some(),
                     annot: self.annot(frame, ty, Role::Type),
                 }
             }
@@ -985,7 +986,7 @@ impl<'u> Walk<'_, 'u> {
                         key: self.name(*key_span),
                     },
                     name: self.bind(frame, bind),
-                    default: default.is_some(),
+                    default: default.is_some() || bind.optional().is_some(),
                     annot: self.annot(frame, ty, Role::Type),
                 }
             }
@@ -1012,7 +1013,7 @@ impl<'u> Walk<'_, 'u> {
                 surface::Param {
                     kind: ParamKind::ConstKey { key },
                     name: self.bind(frame, bind),
-                    default: default.is_some(),
+                    default: default.is_some() || bind.optional().is_some(),
                     annot: self.annot(frame, ty, Role::Type),
                 }
             }

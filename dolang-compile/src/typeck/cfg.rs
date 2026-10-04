@@ -315,7 +315,7 @@ pub(crate) struct PatternItem {
     pub(crate) key: PatternKey,
     /// Absent for a rest that binds nothing
     pub(crate) var: Option<VarId>,
-    /// Whether it has a default, which a later [`Step::Default`] joins in
+    /// Whether a default or an optional sub-pattern allows the item to be absent
     pub(crate) default: bool,
 }
 

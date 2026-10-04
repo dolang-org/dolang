@@ -1316,3 +1316,28 @@ fn discarded_if_results() {
     assert!(!graph.contains("result0 = 2"));
     assert_eq!(graph.matches("result0 = nil").count(), 1);
 }
+
+/// Optionality belongs to the unpack schema. Matching stays unchanged, and
+/// collapsed defaults apply only along an optional ancestor's first alternatives.
+#[test]
+fn optional_patterns() {
+    let graph = lower(
+        r#"
+let ?k: (a: a = 1 j: (Int(b = a) | Str(b = "dead"))) = ()
+let Int(c = "dead") = 2
+let f = do |?k: (p = 1 q = (p && 2))| (p, q)
+if let ?k: Int(n = 0) = ()
+  n
+else
+  nil
+"#,
+    );
+    assert_eq!(graph.matches("default a = 1").count(), 1);
+    assert_eq!(graph.matches("default b = a").count(), 1);
+    assert!(graph.find("default a = 1") < graph.find("default b = a"));
+    assert!(!graph.contains("default c"));
+    assert!(!graph.contains("dead"));
+    assert!(graph.contains("default p = 1"));
+    assert!(graph.contains("default q = <pop>"));
+    assert!(graph.contains("default n = 0"));
+}

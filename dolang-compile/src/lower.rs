@@ -103,6 +103,13 @@ enum BindOp {
         canon: Vec<Var>,
         indicator: Option<Var>,
     },
+    /// A `?` sub-pattern, whose value is the sentinel when the item is absent.
+    /// Either way, it leaves the values of `plan.vars` in place of the value: a
+    /// present value as `plan` leaves them, an absent one as `absent` gives them.
+    Optional {
+        plan: BindPlan,
+        absent: Vec<constant::Id>,
+    },
 }
 
 /// Where a failed match continues
@@ -120,6 +127,8 @@ enum Slot<'a> {
     Var(Var),
     /// The value of a sub-pattern
     Pattern(&'a Pattern),
+    /// The value of a `?` sub-pattern
+    Optional(&'a Pattern),
 }
 
 struct Params<'a> {
@@ -1978,17 +1987,27 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
         for item in items.iter() {
             match item {
+                // A `?` item's value is the sentinel when it is absent
+                PatItem::Pos {
+                    default: None,
+                    bind,
+                    ..
+                } if bind.optional().is_some() => optional.push(self.sentinel_const()),
                 PatItem::Pos { default: None, .. } => required += 1,
                 PatItem::Pos {
                     default: Some(default),
                     ..
                 } => optional.push(self.lower_default_const(default)),
                 PatItem::Key {
-                    key_span, default, ..
+                    key_span,
+                    default,
+                    bind,
+                    ..
                 } => {
-                    let constid = default
-                        .as_ref()
-                        .map(|default| self.lower_default_const(default));
+                    let constid = match default {
+                        Some(default) => Some(self.lower_default_const(default)),
+                        None => bind.optional().map(|_| self.sentinel_const()),
+                    };
                     keys.push(sig::UnpackKey {
                         kind: sig::UnpackKeyKind::Sym(
                             self.symtab
@@ -1998,11 +2017,15 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     })
                 }
                 PatItem::ConstKey {
-                    key_const, default, ..
+                    key_const,
+                    default,
+                    bind,
+                    ..
                 } => {
-                    let constid_default = default
-                        .as_ref()
-                        .map(|default| self.lower_default_const(default));
+                    let constid_default = match default {
+                        Some(default) => Some(self.lower_default_const(default)),
+                        None => bind.optional().map(|_| self.sentinel_const()),
+                    };
 
                     // Lower the key constant value
                     let key_const_id = self.lower_const(key_const);
@@ -2054,39 +2077,52 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     continue;
                 }
             };
-            let Some(default) = default.as_ref().filter(|d| d.fold.is_none()) else {
-                continue;
-            };
-
-            let res = ident.res.as_ref().expect("unresolved item");
-            let var = self.resolve_var(res.index, res.depth);
-
-            // Load the current value of this item
-            self.lower_load(res, span);
-            // Load sentinel and compare
-            let sentinel = self.sentinel_const();
-            self.block
-                .insts
-                .push(Inst(InstInfo::LoadConst(sentinel), span));
-            self.block.insts.push(Inst(InstInfo::Eq, span));
-
-            // Branch: if true (sentinel), evaluate default; else skip
-            let eval_bb = self.graph.alloc_block(self.block.func, self.block.scope);
-            let skip_bb = self.graph.alloc_block(self.block.func, self.block.scope);
-            self.block.term = Term(TermInfo::If(eval_bb, skip_bb), span);
-            self.link(eval_bb);
-            self.link(skip_bb);
-
-            // Evaluate default expression
-            self.switch(eval_bb);
-            self.lower_expr(&default.expr)?;
-            self.lower_store(span, var);
-            self.block.term = Term(TermInfo::Branch(skip_bb), span);
-            self.link(skip_bb);
-
-            // Continue in skip block
-            self.switch(skip_bb);
+            if let Some(default) = default {
+                self.lower_non_const_default(ident, default, span)?;
+            }
         }
+        Ok(())
+    }
+
+    /// Evaluate `default` into the variable of `ident` if it holds the sentinel,
+    /// unless the default was folded into the unpack
+    fn lower_non_const_default(
+        &mut self,
+        ident: &Ident,
+        default: &'a PatDefault,
+        span: Span,
+    ) -> Result<()> {
+        if default.fold.is_some() {
+            return Ok(());
+        }
+        let res = ident.res.as_ref().expect("unresolved item");
+        let var = self.resolve_var(res.index, res.depth);
+
+        // Load the current value of this item
+        self.lower_load(res, span);
+        // Load sentinel and compare
+        let sentinel = self.sentinel_const();
+        self.block
+            .insts
+            .push(Inst(InstInfo::LoadConst(sentinel), span));
+        self.block.insts.push(Inst(InstInfo::Eq, span));
+
+        // Branch: if true (sentinel), evaluate default; else skip
+        let eval_bb = self.graph.alloc_block(self.block.func, self.block.scope);
+        let skip_bb = self.graph.alloc_block(self.block.func, self.block.scope);
+        self.block.term = Term(TermInfo::If(eval_bb, skip_bb), span);
+        self.link(eval_bb);
+        self.link(skip_bb);
+
+        // Evaluate default expression
+        self.switch(eval_bb);
+        self.lower_expr(&default.expr)?;
+        self.lower_store(span, var);
+        self.block.term = Term(TermInfo::Branch(skip_bb), span);
+        self.link(skip_bb);
+
+        // Continue in skip block
+        self.switch(skip_bb);
         Ok(())
     }
 
@@ -3162,6 +3198,11 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         };
         let slot = |this: &mut Self, bind: &'a PatBind| match bind {
             PatBind::Ident(ident) => var(this, ident),
+            PatBind::Nested {
+                pattern,
+                optional: Some(_),
+                ..
+            } => Slot::Optional(pattern),
             PatBind::Nested { pattern, .. } => Slot::Pattern(pattern),
         };
         let unpack = &self.unpacktab[sig];
@@ -3213,7 +3254,12 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     /// are those of the alternative that matched.
     fn lower_pattern_defaults(&mut self, pattern: &'a Pattern, span: Span) -> Result<()> {
         match pattern {
-            Pattern::Constant { .. } | Pattern::Ident(_) => Ok(()),
+            Pattern::Constant { .. } | Pattern::Ident(PatIdent { default: None, .. }) => Ok(()),
+            Pattern::Ident(PatIdent {
+                ident,
+                default: Some(default),
+                ..
+            }) => self.lower_non_const_default(ident, default, span),
             Pattern::Unpack(items) => self.lower_non_const_defaults(items, span),
             Pattern::TypeTest(test) => self.lower_pattern_defaults(&test.pattern, span),
             Pattern::Alt(alt) => {
@@ -3267,13 +3313,43 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         let mut steps = Vec::new();
         while let Some(depth) = stack
             .iter()
-            .position(|slot| matches!(slot, Slot::Pattern(_)))
+            .position(|slot| matches!(slot, Slot::Pattern(_) | Slot::Optional(_)))
         {
-            let Slot::Pattern(pattern) = stack[depth] else {
-                unreachable!()
-            };
             // Tests leave the value in place, so a failure discards the whole stack.
             let others = stack.len();
+            let pattern = match stack[depth] {
+                Slot::Pattern(pattern) => pattern,
+                Slot::Optional(pattern) => {
+                    stack.swap(0, depth);
+                    stack.remove(0);
+                    let plan = self
+                        .plan_slots(cfg::ScopeRef::clone(&scope), vec![Slot::Pattern(pattern)])?;
+                    let mut values = Vec::new();
+                    self.absent_values(cfg::ScopeRef::clone(&scope), pattern, &mut values);
+                    let nil = self.consttab.nil();
+                    let absent = plan
+                        .vars
+                        .iter()
+                        .map(|var| {
+                            // Another alternative's variables are left nil
+                            var.and_then(|var| values.iter().find(|(v, _)| *v == var))
+                                .map_or(nil, |(_, value)| *value)
+                        })
+                        .collect();
+                    let slots = plan.vars.iter().map(|var| match var {
+                        Some(var) => Slot::Var(*var),
+                        None => Slot::Discard,
+                    });
+                    stack.splice(0..0, slots);
+                    steps.push(BindStep {
+                        depth,
+                        op: BindOp::Optional { plan, absent },
+                        others: others - 1,
+                    });
+                    continue;
+                }
+                _ => unreachable!(),
+            };
             let op = match pattern {
                 // A plain binding needs no stack operation.
                 Pattern::Ident(PatIdent { ident, .. }) => {
@@ -3366,10 +3442,66 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             .map(|slot| match slot {
                 Slot::Var(var) => Some(var),
                 Slot::Discard => None,
-                Slot::Pattern(_) => unreachable!(),
+                Slot::Pattern(_) | Slot::Optional(_) => unreachable!(),
             })
             .collect();
         Ok(BindPlan { steps, vars })
+    }
+
+    /// The values the variables of `pattern` take when its `?` item is absent:
+    /// a binding's folded default, or the sentinel for a default to evaluate.
+    /// An alternation acts as if its first alternative matched.
+    fn absent_values(
+        &mut self,
+        scope: cfg::ScopeRef<'a>,
+        pattern: &'a Pattern,
+        values: &mut Vec<(Var, constant::Id)>,
+    ) {
+        match pattern {
+            Pattern::Constant { .. } | Pattern::Ident(PatIdent { default: None, .. }) => {}
+            Pattern::Ident(PatIdent {
+                ident,
+                default: Some(default),
+                ..
+            }) => {
+                let res = ident.res.as_ref().expect("unresolved pattern binding");
+                let var = self.resolve_var_in_scope(scope, res.index, res.depth);
+                values.push((var, self.lower_default_const(default)));
+            }
+            Pattern::TypeTest(test) => self.absent_values(scope, &test.pattern, values),
+            Pattern::Alt(alt) => {
+                if let Some(index) = alt.indicator {
+                    let var = self.resolve_var_in_scope(cfg::ScopeRef::clone(&scope), index, 0);
+                    values.push((var, self.consttab.int(0)));
+                }
+                self.absent_values(scope, &alt.alts[0], values);
+            }
+            Pattern::Unpack(items) => {
+                for item in items {
+                    let (default, bind) = match item {
+                        PatItem::Pos { default, bind, .. }
+                        | PatItem::Key { default, bind, .. }
+                        | PatItem::ConstKey { default, bind, .. } => (default, bind),
+                        PatItem::Rest { .. } => continue,
+                    };
+                    match (bind, default) {
+                        (PatBind::Nested { pattern, .. }, _) => {
+                            self.absent_values(cfg::ScopeRef::clone(&scope), pattern, values)
+                        }
+                        (PatBind::Ident(ident), Some(default)) => {
+                            let res = ident.res.as_ref().expect("unresolved item");
+                            let var = self.resolve_var_in_scope(
+                                cfg::ScopeRef::clone(&scope),
+                                res.index,
+                                res.depth,
+                            );
+                            values.push((var, self.lower_default_const(default)));
+                        }
+                        (PatBind::Ident(_), None) => {}
+                    }
+                }
+            }
+        }
     }
 
     /// Run a plan's tests and unpacks, which raise on a mismatch, and store the
@@ -3410,6 +3542,51 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     };
                     let join = self.graph.alloc_block(self.block.func, self.block.scope);
                     self.lower_alts(alts, &canon, indicator, fail, join, span);
+                    join
+                }
+                (BindOp::Optional { plan, absent }, fail) => {
+                    // Test a copy for the sentinel; either side then replaces the value
+                    let pick = if step.depth == 0 {
+                        InstInfo::Dup
+                    } else {
+                        InstInfo::Pick(step.depth)
+                    };
+                    self.block.insts.push(Inst(pick, span));
+                    let sentinel = self.sentinel_const();
+                    self.block
+                        .insts
+                        .push(Inst(InstInfo::LoadConst(sentinel), span));
+                    self.block.insts.push(Inst(InstInfo::Eq, span));
+                    let absent_bb = self.graph.alloc_block(self.block.func, self.block.scope);
+                    let present_bb = self.graph.alloc_block(self.block.func, self.block.scope);
+                    let join = self.graph.alloc_block(self.block.func, self.block.scope);
+                    self.block.term = Term(TermInfo::If(absent_bb, present_bb), span);
+                    self.link(absent_bb);
+                    self.link(present_bb);
+
+                    self.switch(present_bb);
+                    self.lower_swap(step.depth, span);
+                    let fail = match fail {
+                        Fail::Raise => Fail::Raise,
+                        Fail::Goto { target, below } => Fail::Goto {
+                            target,
+                            below: below + step.others,
+                        },
+                    };
+                    self.lower_steps(plan.steps, fail, span);
+                    self.block.term = Term(TermInfo::Branch(join), span);
+                    self.link(join);
+
+                    self.switch(absent_bb);
+                    self.lower_swap(step.depth, span);
+                    self.block.insts.push(Inst(InstInfo::Pop, span));
+                    for value in absent.into_iter().rev() {
+                        self.block
+                            .insts
+                            .push(Inst(InstInfo::LoadConst(value), span));
+                    }
+                    self.block.term = Term(TermInfo::Branch(join), span);
+                    self.link(join);
                     join
                 }
                 (BindOp::Unpack(sig), Fail::Raise) => {
@@ -3554,7 +3731,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         };
         self.block.insts.push(Inst(pick, span));
         let builtin = match op {
-            BindOp::Unpack(_) | BindOp::Alt { .. } => unreachable!(),
+            BindOp::Unpack(_) | BindOp::Alt { .. } | BindOp::Optional { .. } => unreachable!(),
             BindOp::Constant(id) => {
                 self.block.insts.push(Inst(InstInfo::LoadConst(id), span));
                 if !assert {

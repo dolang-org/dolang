@@ -41,7 +41,7 @@ impl<'u> Scope<'_, '_, 'u> {
         });
         self.graph().func_mut(self.ctx.func).params = Pattern::Unpack(items);
         self.nested_lets(nested, &frame);
-        self.defaults(&func.params, &frame);
+        self.defaults(&func.params, &frame, false);
         let (result, exit) = {
             let func = self.graph().func(self.ctx.func);
             (func.result, func.exit)
@@ -250,7 +250,7 @@ impl<'u> Scope<'_, '_, 'u> {
             };
             let frame = self.ctx.frame.clone();
             self.nested_lets(vec![(var, pattern, pattern.span())], &frame);
-            self.pattern_defaults(pattern, &frame);
+            self.pattern_defaults(pattern, &frame, false);
             if let Some(dest) = dest {
                 self.assign(dest, expr(ExprKind::Copy(var), span));
             }
@@ -276,7 +276,7 @@ impl<'u> Scope<'_, '_, 'u> {
             value,
         });
         self.nested_lets(nested, &frame);
-        self.pattern_defaults(pattern, &frame);
+        self.pattern_defaults(pattern, &frame, false);
         if let (Some(dest), Some(var)) = (dest, bound) {
             self.assign(dest, expr(ExprKind::Copy(var), span));
         }
@@ -341,7 +341,7 @@ impl<'u> Scope<'_, '_, 'u> {
     ) -> (Pattern, Nested<'u>) {
         let mut nested = Vec::new();
         let pattern = self.in_frame(frame, |scope| match pattern {
-            ast::Pattern::Ident(PatIdent { ident, ty }) => {
+            ast::Pattern::Ident(PatIdent { ident, ty, .. }) => {
                 Pattern::Bind(scope.binding(ident, ty.as_deref()))
             }
             ast::Pattern::Unpack(pat_items) => {
@@ -578,9 +578,9 @@ impl<'u> Scope<'_, '_, 'u> {
         entry
     }
 
-    /// Blocks matching `var` against alternatives in turn, each joining its own
-    /// defaults on its way to `join`. If none matches, the last continues to
-    /// `else_`, or raises without one. Returns the first.
+    /// Blocks matching `var` against alternatives in turn, continuing to `join`
+    /// on a match. If none matches, the last continues to `else_`, or raises
+    /// without one. Defaults join after the whole pattern. Returns the first.
     fn alternatives(
         &mut self,
         var: VarId,
@@ -593,19 +593,15 @@ impl<'u> Scope<'_, '_, 'u> {
         let from = self.bb;
         let mut next = else_;
         for (index, pattern) in alt.alts.iter().enumerate().rev() {
-            let matched = self.block();
-            self.switch(matched);
-            self.pattern_defaults(pattern, frame);
-            self.end(Terminal::Branch(join));
             let entry = match next {
-                Some(else_) => self.nested_tests(vec![(var, pattern, span)], frame, matched, else_),
+                Some(else_) => self.nested_tests(vec![(var, pattern, span)], frame, join, else_),
                 // The last alternative of a plain pattern has no mismatch edge
                 None => {
                     debug_assert_eq!(index + 1, alt.alts.len());
                     let entry = self.block();
                     self.switch(entry);
                     self.nested_lets(vec![(var, pattern, span)], frame);
-                    self.end(Terminal::Branch(matched));
+                    self.end(Terminal::Branch(join));
                     entry
                 }
             };
@@ -630,7 +626,7 @@ impl<'u> Scope<'_, '_, 'u> {
     /// Join the defaults of pattern items bound in `frame` into their variables, and
     /// those of their sub-patterns where they occur. A default may read the
     /// pattern's earlier bindings and captures, so it's a step after the binding.
-    fn defaults(&mut self, items: &'u [PatItem], frame: &Rc<Frame<'u>>) {
+    fn defaults(&mut self, items: &'u [PatItem], frame: &Rc<Frame<'u>>, may_be_absent: bool) {
         self.in_frame(frame, |scope| {
             for item in items {
                 let (PatItem::Pos { bind, default, .. }
@@ -642,7 +638,11 @@ impl<'u> Scope<'_, '_, 'u> {
                 let ident = match bind {
                     PatBind::Ident(ident) => ident,
                     PatBind::Nested { pattern, .. } => {
-                        scope.pattern_defaults(pattern, frame);
+                        scope.pattern_defaults(
+                            pattern,
+                            frame,
+                            may_be_absent || bind.optional().is_some(),
+                        );
                         continue;
                     }
                 };
@@ -655,13 +655,41 @@ impl<'u> Scope<'_, '_, 'u> {
         });
     }
 
-    /// Join the defaults of a pattern bound in `frame`
-    fn pattern_defaults(&mut self, pattern: &'u ast::Pattern, frame: &Rc<Frame<'u>>) {
+    /// Join the defaults of a pattern bound in `frame`. `may_be_absent` says
+    /// whether an optional ancestor can leave its value absent, so a collapsed
+    /// binding's default can apply. It is syntactic, not a flow presence fact.
+    fn pattern_defaults(
+        &mut self,
+        pattern: &'u ast::Pattern,
+        frame: &Rc<Frame<'u>>,
+        may_be_absent: bool,
+    ) {
         match pattern {
-            ast::Pattern::Unpack(items) => self.defaults(items, frame),
-            ast::Pattern::TypeTest(test) => self.pattern_defaults(&test.pattern, frame),
-            // Each alternative's defaults join on its own success edge
-            ast::Pattern::Constant { .. } | ast::Pattern::Ident(_) | ast::Pattern::Alt(_) => {}
+            ast::Pattern::Unpack(items) => self.defaults(items, frame, may_be_absent),
+            ast::Pattern::TypeTest(test) => {
+                self.pattern_defaults(&test.pattern, frame, may_be_absent)
+            }
+            ast::Pattern::Ident(PatIdent {
+                ident,
+                default: Some(default),
+                ..
+            }) if may_be_absent => {
+                self.in_frame(frame, |scope| {
+                    if let Some(var) = scope.var(ident) {
+                        let value = scope.expr(&default.expr);
+                        scope.emit(Step::Default { var, value });
+                    }
+                });
+            }
+            // Matching has joined the bindings. Join every alternative's defaults
+            // conservatively, after earlier items' defaults; only the first can
+            // supply a collapsed default when an optional ancestor is absent.
+            ast::Pattern::Alt(alt) => {
+                for (index, pattern) in alt.alts.iter().enumerate() {
+                    self.pattern_defaults(pattern, frame, may_be_absent && index == 0);
+                }
+            }
+            ast::Pattern::Constant { .. } | ast::Pattern::Ident(_) => {}
         }
     }
 
@@ -682,7 +710,7 @@ impl<'u> Scope<'_, '_, 'u> {
         let block = self.block();
         self.switch(block);
         self.nested_lets(nested, frame);
-        self.pattern_defaults(pattern, frame);
+        self.pattern_defaults(pattern, frame, false);
         self.end(Terminal::Branch(target));
         self.switch(from);
         block
@@ -823,7 +851,7 @@ impl<'u> Scope<'_, '_, 'u> {
     ) {
         let span = value.span;
         match pattern {
-            ast::Pattern::Ident(PatIdent { ident, ty }) if !truthy => {
+            ast::Pattern::Ident(PatIdent { ident, ty, .. }) if !truthy => {
                 let var = self.in_frame(frame, |scope| scope.binding(ident, ty.as_deref()));
                 self.emit(Step::Let {
                     pattern: Pattern::Bind(var),
@@ -832,7 +860,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 self.end(Terminal::Branch(then));
             }
             // A name binds the value itself, on its truthiness
-            ast::Pattern::Ident(PatIdent { ident, ty }) => {
+            ast::Pattern::Ident(PatIdent { ident, ty, .. }) => {
                 self.push(value);
                 self.emit(Step::Dup);
                 let bound = self.block();
@@ -1184,7 +1212,7 @@ impl<'u> Scope<'_, '_, 'u> {
                     value: expr(args, span),
                 });
                 self.nested_lets(nested, &frame);
-                self.defaults(params, &frame);
+                self.defaults(params, &frame, false);
             }
         }
         let body = self.bb;
@@ -1338,11 +1366,11 @@ impl<'u> Scope<'_, '_, 'u> {
 /// Whether any item has a default, at any level
 fn pattern_has_default(pattern: &ast::Pattern) -> bool {
     match pattern {
-        ast::Pattern::Constant { .. } | ast::Pattern::Ident(_) => false,
+        ast::Pattern::Constant { .. } => false,
+        ast::Pattern::Ident(ident) => ident.default.is_some(),
         ast::Pattern::Unpack(items) => any_default(items),
         ast::Pattern::TypeTest(test) => pattern_has_default(&test.pattern),
-        // Each alternative's defaults join on its own success edge
-        ast::Pattern::Alt(_) => false,
+        ast::Pattern::Alt(alt) => alt.alts.iter().any(pattern_has_default),
     }
 }
 
@@ -1360,17 +1388,10 @@ fn any_default(items: &[PatItem]) -> bool {
 }
 
 fn has_default(item: &PatItem) -> bool {
-    matches!(
-        item,
-        PatItem::Pos {
-            default: Some(_),
-            ..
-        } | PatItem::Key {
-            default: Some(_),
-            ..
-        } | PatItem::ConstKey {
-            default: Some(_),
-            ..
-        }
-    )
+    match item {
+        PatItem::Pos { bind, default, .. }
+        | PatItem::Key { bind, default, .. }
+        | PatItem::ConstKey { bind, default, .. } => default.is_some() || bind.optional().is_some(),
+        PatItem::Rest { .. } => false,
+    }
 }

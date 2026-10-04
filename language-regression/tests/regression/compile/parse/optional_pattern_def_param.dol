@@ -1,0 +1,7 @@
+def f ?(a = 1)
+  # error: a `def` parameter must be a name; unpack it in the body
+  #   --> optional_pattern_def_param.dol:LL:LL
+  #    |
+  # LL | def f ?(a = 1)
+  #    |       ^
+  a

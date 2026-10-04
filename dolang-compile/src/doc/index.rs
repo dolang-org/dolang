@@ -289,9 +289,16 @@ impl Index<'_> {
                 &None,
             ),
         };
+        // A `?` comes before the key, starting the parameter
+        let question = match param {
+            PatItem::Pos { bind, .. }
+            | PatItem::Key { bind, .. }
+            | PatItem::ConstKey { bind, .. } => bind.optional(),
+            PatItem::Rest { .. } => None,
+        };
         let ty_span = ty.as_ref().map(|ty| ty.span());
         let default_span = default.as_ref().map(|default| default.expr.span());
-        let span = [key_span, ident, ty_span, default_span]
+        let span = [question, key_span, ident, ty_span, default_span]
             .into_iter()
             .flatten()
             .reduce(|acc, span| acc | span)
@@ -966,7 +973,10 @@ impl Index<'_> {
                 self.reference(scope, &mut test.class.ident);
                 self.pattern(scope, &mut test.pattern, is_pub, extent);
             }
-            Pattern::Ident(PatIdent { ident, ty }) => {
+            Pattern::Ident(PatIdent { ident, ty, default }) => {
+                if let Some(default) = default {
+                    self.expr(scope, &mut default.expr);
+                }
                 let span = extent.unwrap_or_else(|| match ty {
                     Some(ty) => ident.span | ty.span(),
                     None => ident.span,

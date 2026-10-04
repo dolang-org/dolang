@@ -653,8 +653,16 @@ operators and collection literals. `&&` and `||` are
 control flow, so a narrowing test's successors begin with `Assume` steps. A
 pattern binds without its defaults; each default is a `Default` step after the
 binding step, or on the success edge of the terminal that binds it, which joins
-it into the variable. An interpolation is a `FmtValue`, which a string formats
-in place, and a `t"..."` sequence is a `Fmt` of text, `FmtValue`s and
+it into the variable. An optional sub-pattern marks its item optional in the
+unpack schema, including in a lambda's signature, without introducing a
+presence test. Its bindings still match the item's variable. Defaults join in
+item order after the whole pattern matches, including a collapsed binding's
+default where an optional ancestor can leave it absent. Alternative bindings
+join before their defaults, which are conservatively joined from every
+alternative; only the first alternative can supply a collapsed default from
+an absent ancestor. This keeps defaults dependent on earlier bindings after
+those bindings' own defaults. An interpolation is a `FmtValue`, which a string
+formats in place, and a `t"..."` sequence is a `Fmt` of text, `FmtValue`s and
 `FmtParam`s; std's classes of those names are designated for their types.
 
 Only short circuits cross blocks mid-expression. A short circuit's left operand
@@ -861,6 +869,11 @@ only reified types leave it:
   `S` can't be found, as for a structural conformance, leaves the whole pattern
   to the earlier rule: every item optional, anything else admitted, and rests
   and constant keys `Unknown`.
+  A slot no schema member fills is bottom. Unpacking bottom binds every slot
+  to bottom and remains reachable, so defaults beneath an absent optional item
+  supply their types. Alternative matching stays conservative; flow does not
+  track presence to select only the first alternative's defaults or diagnose
+  an optional item that is always absent.
 - A binary string's parts must be `Bin`, and an interpolation's width and
   precision `Int`.
 - A member use (`flow/member.rs`) looks its member up (see "Member lookup") and

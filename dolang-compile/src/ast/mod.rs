@@ -1578,7 +1578,19 @@ pub(crate) enum PatBind {
         pattern: Box<Pattern>,
         /// The `(` and `)` of a horizontal sub-pattern; a vertical one has none
         parens: Option<(Span, Span)>,
+        /// The `?` before the item, which may then be absent
+        optional: Option<Span>,
     },
+}
+
+impl PatBind {
+    /// The `?` marking an optional sub-pattern
+    pub(crate) fn optional(&self) -> Option<Span> {
+        match self {
+            PatBind::Nested { optional, .. } => *optional,
+            PatBind::Ident(_) => None,
+        }
+    }
 }
 
 impl Node for PatBind {
@@ -1591,7 +1603,10 @@ impl Node for PatBind {
                 ident.span,
                 ident.res.as_ref().and_then(|r| r.node),
             ),
-            PatBind::Nested { pattern, parens } => {
+            // The item visits any `?`, which precedes its key
+            PatBind::Nested {
+                pattern, parens, ..
+            } => {
                 if let Some((open, _)) = parens {
                     visit.token(Token::Delim, *open, None)?;
                 }
@@ -1643,6 +1658,13 @@ pub(crate) enum PatItem {
 
 impl Node for PatItem {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+        if let PatItem::Pos { bind, .. }
+        | PatItem::Key { bind, .. }
+        | PatItem::ConstKey { bind, .. } = self
+            && let Some(question) = bind.optional()
+        {
+            visit.token(Token::Operator, question, None)?;
+        }
         match self {
             PatItem::Pos { bind, ty, default } => {
                 bind.trans(visit)?;
@@ -1751,6 +1773,9 @@ where
 pub(crate) struct PatIdent {
     pub(crate) ident: Ident,
     pub(crate) ty: Option<Box<Annot>>,
+    /// The default of a lone item that collapsed to its name, which applies when
+    /// the value is absent under `?`
+    pub(crate) default: Option<PatDefault>,
 }
 
 pub(crate) struct TypePattern {
@@ -1783,10 +1808,14 @@ impl Node for Pattern {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         match self {
             Pattern::Constant { expr, .. } => expr.accept(visit),
-            Pattern::Ident(PatIdent { ident, ty }) => {
+            Pattern::Ident(PatIdent { ident, ty, default }) => {
                 ident.accept(visit)?;
                 if let Some(ty) = ty {
                     visit.node(&**ty)?;
+                }
+                if let Some(default) = default {
+                    visit.token(Token::Delim, default.delim_span, None)?;
+                    visit.node(&default.expr)?;
                 }
                 ControlFlow::Continue(())
             }

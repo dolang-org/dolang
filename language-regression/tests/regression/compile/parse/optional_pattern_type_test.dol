@@ -1,0 +1,28 @@
+bind [{x: 1}]
+  ? Dict $
+    :x
+    # error: binding `x` under `?` needs a default
+    #   --> optional_pattern_type_test.dol:LL:LL
+    #    |
+    # LL |     :x
+    #    |      ^
+    :y = 2
+  ...
+bind {k: {x: 1}}
+  ?k: Dict $
+    :x
+  # error: binding `x` under `?` needs a default
+  #   --> optional_pattern_type_test.dol:LL:LL
+  #    |
+  # LL |     :x
+  #    |      ^
+  ...
+bind [{x: 1}]
+  - ?Dict $
+    :x
+  # error: binding `x` under `?` needs a default
+  #   --> optional_pattern_type_test.dol:LL:LL
+  #    |
+  # LL |     :x
+  #    |      ^
+  ...

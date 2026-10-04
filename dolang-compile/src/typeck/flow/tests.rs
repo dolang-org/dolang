@@ -189,3 +189,27 @@ def rebuilt c @ Bool n @ Int s @ Str
 ",
     );
 }
+
+#[test]
+fn optional_patterns_are_order_independent() {
+    agree(
+        r#"
+class A
+class B
+let ?k: (a: a = 1 j: (A(b = a) | B(b))) = ()
+let capture = do b
+let f = do |?key: (p = 1 q = p)| -> nil
+  let _ = (p, q)
+  nil
+if let ?key: (A(n = 1) | B(n)) = ()
+  let g = do n
+  g()
+else
+  f()
+let result = match (())
+  ?key: (p = false q = (p || 1)) do (p, q)
+for ?key: (p = 1) = [(), ()]
+  f key: (p,)
+"#,
+    );
+}
