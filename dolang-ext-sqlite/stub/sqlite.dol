@@ -26,6 +26,9 @@ import
     - @Spread
     - @Unpack
 
+# Values accepted as SQL parameters.
+pub @let SqlValue = (nil | Bool | Int | Float | Str | Bin)
+
 # Raised when a SQLite operation fails for any reason other than the database
 # being locked.
 #
@@ -118,16 +121,16 @@ pub class Connection
   #   let name = "Alice"
   #   conn.execute t"INSERT INTO users (name) VALUES ($name)"
   # ```
-  pub def execute
+  pub def execute[S @ {*SqlValue, **SqlValue}]
     self
     # SQL template. A [`Str`](std.Str) raises,
     # because a `Str` cannot say which of its text is data. Only the literal
     # text becomes SQL; an interpolated value is bound as a parameter, so it
     # is data whatever it looks like. See [Parameter
     # Binding](sqlite.Statement.parameter-binding).
-    sql @ Fmt
+    sql @ Fmt[SqlValue, S]
     # Values filling the template's `${#...}` parameters.
-    ...args @ Value
+    ...args @ S
   do -> Int
     ...
 
@@ -149,25 +152,25 @@ pub class Connection
   #   stmt.execute name: "Charlie"
   #   stmt.close()
   # ```
-  @def prepare
+  @def prepare[S @ {*SqlValue, **SqlValue}]
     self
     # SQL template. See [Parameter
     # Binding](sqlite.Statement.parameter-binding).
-    sql @ Fmt
-  do -> Statement
+    sql @ Fmt[SqlValue, S]
+  do -> Statement[S]
 
   # Prepares a statement and calls `func` with it. The statement is closed when
   # `func` returns.
-  @def prepare[R]
+  @def prepare[S @ {*SqlValue, **SqlValue}, R]
     self
     # SQL template. See [Parameter
     # Binding](sqlite.Statement.parameter-binding).
-    sql @ Fmt
+    sql @ Fmt[SqlValue, S]
     # Called with the [`Statement`](sqlite.Statement).
-    func @ (Statement -> R)
+    func @ (Statement[S] -> R)
   do -> R
 
-  pub def prepare self sql ...options
+  pub def prepare[S @ {*SqlValue, **SqlValue}] self sql @ Fmt[SqlValue, S] ...options
     ...
 
   # Runs `func` inside a database transaction.
@@ -276,7 +279,7 @@ pub class Connection
 #     let rows2 = stmt.query()
 #     # rows has been invalidated at this point
 # ```
-pub class Statement
+pub class Statement[S @ {*SqlValue, **SqlValue}]
   # Closes the statement and releases its resources.
   pub def close self
     ...
@@ -311,7 +314,7 @@ pub class Statement
     self
     # Values filling the statement's parameters. See [Parameter
     # binding](sqlite.Statement.parameter-binding).
-    ...args
+    ...args @ S
   do -> Int
     ...
 
@@ -342,7 +345,7 @@ pub class Statement
     self
     # Values filling the statement's parameters. See [Parameter
     # binding](sqlite.Statement.parameter-binding).
-    ...args
+    ...args @ S
   do -> Iter[Row]
     ...
 

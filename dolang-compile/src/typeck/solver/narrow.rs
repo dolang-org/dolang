@@ -53,8 +53,16 @@ impl Solver<'_> {
                 None => return ty,
             },
         };
+        // A transparent alias can hide the alternatives whose class test
+        // preserves their own type arguments, as FmtSegment[V] does.
+        let exposed = match self.head(self.closed(ty)) {
+            Ok(Head::Structural(view)) if matches!(self.db.ty(view.ty), Type::Union(_)) => {
+                self.reify(Term::View(view)).unwrap_or(ty)
+            }
+            _ => ty,
+        };
         let mut result = self.db.bottom();
-        for member in self.union_members(ty) {
+        for member in self.union_members(exposed) {
             // A projection's members are unknown, so it's kept
             let member = match member {
                 UnionMember::Type(member) => member,

@@ -140,8 +140,7 @@ pub(crate) enum Contradiction {
     Excess(usize),
     /// The expected schema's item can be missing from the actual schema
     Missing(usize),
-    /// A literal, or a class with infinitely many, has a value outside every
-    /// member of a union
+    /// A literal or concrete class has a value outside every union member
     Outside,
     /// A projection's schema has a key that may be a position's index
     Conflict,
@@ -1279,7 +1278,9 @@ impl<'db> Solver<'db> {
     /// its literals, since its bounds require them.
     ///
     /// A lower bound that isn't yet solved leaves the variable unsolved. So does
-    /// a variable without lower bounds, rather than inventing a type. An upper
+    /// a type variable without lower bounds, rather than inventing a type. A
+    /// schema variable may take a closed shape from its upper bounds, with its
+    /// item types constrained by the other bounds. An upper
     /// bound that isn't yet solved is checked once the default is, through the
     /// obligations that pair it with the lower bounds. Any other upper bound the
     /// default can't be shown to satisfy leaves the variable unsolved; if the
@@ -1322,10 +1323,20 @@ impl<'db> Solver<'db> {
             .lower()
             .map(|term| self.reify(term))
             .collect::<Result<Vec<_>, _>>()?;
-        if lower.is_empty() {
-            return Err(Residual::Inference);
-        }
         let kind = self.inference[id.0].kind;
+        if lower.is_empty() {
+            if kind != Kind::Schema {
+                return Err(Residual::Inference);
+            }
+            let upper = bounds
+                .upper()
+                .map(|term| self.reify(term))
+                .collect::<Result<Vec<_>, _>>()?;
+            let candidate = self.upper_schema(&upper)?;
+            self.inference[id.0].defaulted.set(true);
+            self.commit(id, self.closed(candidate));
+            return Ok(self.closed(candidate));
+        }
         let unknown = self.db.unknown_of(kind);
         let candidate = if lower.contains(&unknown) {
             unknown
@@ -2410,14 +2421,15 @@ impl<'db> Solver<'db> {
             self.conflicting(members)?;
             // Testing alternatives must never add bounds to this solver.
             let actual = self.reify(actual)?;
-            // A literal is outside a union if it's outside each member. So is a
-            // class with infinitely many literals, if it's outside each member but
-            // its literals, which are finitely many: one of its literals is below
-            // a nominal member only if the class is.
+            // A literal or concrete class is outside a union if every member
+            // excludes it. For a class with infinitely many literals, a finite
+            // set of literals cannot cover it either. Protocols may be covered
+            // by several implementations, so unrelated alternatives are not
+            // enough to refute their inclusion.
             let infinite = [Intrinsic::Int, Intrinsic::Str, Intrinsic::Sym]
                 .into_iter()
                 .any(|intrinsic| self.db.intrinsic(intrinsic) == Some(actual));
-            let mut outside = infinite || self.db.literal(actual).is_some();
+            let mut outside = self.class_like(actual)?;
             for member in members.iter() {
                 let UnionMember::Type(ty) = *member else {
                     outside = false;
@@ -2432,7 +2444,19 @@ impl<'db> Solver<'db> {
                 }
                 match self.probe(actual, expected)? {
                     Status::Proven => return Ok(()),
-                    Status::Contradicted => {}
+                    Status::Contradicted => {
+                        // Keep generic alternatives conservative: a failed
+                        // argument comparison need not exclude every value
+                        // of the actual class (notably recursive data unions).
+                        if !infinite
+                            && self.db.literal(actual).is_none()
+                            && self
+                                .start(expected)?
+                                .is_some_and(|nominal| !nominal.arguments.is_empty())
+                        {
+                            outside = false;
+                        }
+                    }
                     Status::Unresolved => outside = false,
                 }
             }
@@ -2457,6 +2481,21 @@ impl<'db> Solver<'db> {
                 Err(Residual::Inference.into())
             }
             (Head::Nominal(a), Head::Nominal(b)) => self.nominal(a, b, obligation),
+            (Head::Nominal(_), Head::Structural(view)) if self.db.literal(view.ty).is_some() => {
+                let literal = self.db.literal(view.ty).expect("a literal");
+                let intrinsic = literal.intrinsic();
+                let backing = self
+                    .db
+                    .intrinsic(intrinsic)
+                    .ok_or(Residual::MissingIntrinsic(intrinsic))?;
+                if self.probe(self.reify(actual)?, backing)? == Status::Contradicted {
+                    return Err(Issue::Contradiction(Contradiction::Outside));
+                }
+                if *literal == Literal::Nil && self.same(actual, self.closed(backing))? {
+                    return Ok(());
+                }
+                Err(Residual::Unsupported("a class below one of its literals").into())
+            }
             (Head::Structural(a), Head::Structural(b)) => {
                 if self.same(Term::View(a), Term::View(b))? {
                     return Ok(());

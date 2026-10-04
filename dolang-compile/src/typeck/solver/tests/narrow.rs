@@ -92,6 +92,32 @@ fn value(s: &Solver<'_>, ty: TypeId, negated: bool, target: TypeId) -> TypeId {
 }
 
 #[test]
+fn generic_union_alias_preserves_narrowed_arguments() {
+    let mut db = Database::new();
+    let int = intrinsic(&mut db, "Int", Intrinsic::Int);
+    let str = intrinsic(&mut db, "Str", Intrinsic::Str);
+    let wrapper = nominal(
+        &mut db,
+        "Wrapper",
+        vec![binder(Variance::Covariant)],
+        vec![],
+    );
+    let wrapped = apply(&db, wrapper, &[reference(&db, 0, 0)]);
+    let body = union(&db, &[str, wrapped]);
+    let body = quantified(&db, vec![binder(Variance::Covariant)], body);
+    let segment = alias(&mut db, "Segment", body);
+    let segment = apply(&db, segment, &[int]);
+    let expected = apply(&db, wrapper, &[int]);
+    db.seal();
+    let s = Solver::new(&db);
+    assert_eq!(
+        class(&s, segment, Relation::Upper, false, wrapper),
+        expected
+    );
+    assert_eq!(class(&s, segment, Relation::Upper, true, wrapper), str);
+}
+
+#[test]
 fn upper_bounds_keep_reaching_members() {
     let mut w = World::new();
     w.db.seal();

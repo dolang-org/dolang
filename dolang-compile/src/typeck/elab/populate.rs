@@ -615,7 +615,12 @@ impl<'t, 'u> Populate<'t, 'u> {
             Some(args) => args,
             None => {
                 if written.iter().any(|written| {
-                    written.default.is_none() && !matches!(written.kind, BinderKind::Rest(_))
+                    written.default.is_none()
+                        && !matches!(written.kind, BinderKind::Rest(_))
+                        && !matches!(
+                            tables.designated.get(&decl),
+                            Some(Designated::Fmt | Designated::FmtValue)
+                        )
                 }) {
                     let name = tables.dotted(group.unit, *head, fields);
                     self.report(group.unit, BareGeneric { span, name });
@@ -824,7 +829,14 @@ impl<'t, 'u> Populate<'t, 'u> {
     fn default(&mut self, binder: BinderRef) -> Option<TypeId> {
         let tables = self.tables;
         let written = &tables.binders(binder.decl, binder.sig)[binder.slot];
-        let default = tables.site_ty(written.default?);
+        let Some(default) = written.default else {
+            return matches!(
+                tables.designated.get(&binder.decl),
+                Some(Designated::Fmt | Designated::FmtValue)
+            )
+            .then(|| self.unknown(self.kind(binder)));
+        };
+        let default = tables.site_ty(default);
         match self.defaults.get(&binder) {
             Some(Some(ty)) => return Some(*ty),
             // A default that refers to its own binder through an application

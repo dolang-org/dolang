@@ -213,3 +213,69 @@ for ?key: (p = 1) = [(), ()]
 "#,
     );
 }
+
+#[test]
+fn templates_are_order_independent() {
+    let mut config = Config::new();
+    config
+        .typecheck(true)
+        .mode(crate::Mode::Module { name: "std" });
+    let std = config.unit(
+        Path::new("std.dol"),
+        include_bytes!("../../../../dolang/stub/std.dol"),
+    );
+    assert!(!std.failed);
+    let source = r#"
+import std:
+  - @Fmt
+pub def keep[S @ {*, *(Int | Sym): Value}] f @ Fmt[Int, S] -> Fmt[Int, S]
+  f
+@def choose f @ Fmt[Int, {a: Int}] -> Int
+@def choose f @ Fmt[Int, {b: Str}] -> Str
+pub def choose f
+  f
+pub def run n @ Int width @ Int text @ Str
+  let generic = keep t"${n:$width} ${#a}"
+  generic.format a: 1
+  let chosen = choose t"$n ${#a}"
+  let _ = chosen
+  let nested = t"$generic ${#outer}"
+  nested.format outer: true
+  let direct @ Fmt[Int, {a: Str}] = keep t"$n ${#a}"
+  direct.format a: 1
+  let gap = t"${#0} ${#2} ${#2}"
+  let _ = gap
+  let bad_width = t"${n:$text}"
+  let _ = bad_width
+"#;
+    config.mode(crate::Mode::Script);
+    let script = config.unit(Path::new("test.dol"), source.as_bytes());
+    assert!(!script.failed);
+    let mut builder = Builder::new();
+    builder.unit(&std).unwrap();
+    builder.unit(&script).unwrap();
+    let check = builder.check();
+    let ir = check.cfgs[1].as_ref().unwrap();
+    let forward = Flow::new(ir, &check.db, &check.tables, false).analyze();
+    let reversed = Flow::new(ir, &check.db, &check.tables, true).analyze();
+    assert_eq!(forward, reversed);
+    assert_eq!(Some(&forward), check.flows[1].as_ref());
+    assert!(forward.unresolved.is_empty(), "{:?}", forward.unresolved);
+    assert_eq!(forward.problems.len(), 3, "{:?}", forward.problems);
+    assert!(forward.problems.iter().any(|p| matches!(
+        p,
+        super::Problem::FmtGap {
+            index: 2,
+            missing: 1,
+            ..
+        }
+    )));
+    let types: Vec<_> = forward
+        .facts
+        .iter()
+        .filter(|(span, _)| check.tables.text(UnitId::from_index(1), **span) == "chosen")
+        .map(|(_, fact)| check.tables.render_type(&check.db, fact.ty))
+        .collect();
+    assert!(!types.is_empty());
+    assert!(types.iter().all(|ty| ty == "std.Int"), "{types:?}");
+}

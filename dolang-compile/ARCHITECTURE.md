@@ -526,8 +526,12 @@ callee's variables have only lower bounds and binder bounds. `default` is a
 separate, caller-driven choice: it assigns the join of a variable's lower
 bounds, all of which must be solved, or `Unknown` if one of them is. The default
 must satisfy every solved upper bound; the obligations pairing lower and upper
-bounds check the rest once it commits. A variable without lower bounds is never
-defaulted. The caller defaults a variable's lower bounds before it, such as a
+bounds check the rest once it commits. A type variable without lower bounds is
+never defaulted. A schema variable may instead take a closed shape of required
+literal items from its upper bounds. Item projections through the other bounds
+constrain its values, and the candidate must satisfy every bound; opaque shapes
+and unrepresentable intersections remain unresolved. The caller defaults a
+variable's lower bounds before it, such as a
 call's binders before its result, and solves between defaults so that their
 consequences can force later variables. Defaulted assignments are marked as
 such, so a contradiction reached through one can be reported as an inference
@@ -801,6 +805,16 @@ variables' joined types, and depend on them.
 Checking rules (`flow/rule.rs`) are solved by a fresh solver on each run, and
 only reified types leave it:
 
+A template synthesizes `Fmt[V, S]`: `V` joins the interpolated value types,
+while `S` holds one required item for each distinct hole. Numeric names form
+positional items only for the contiguous prefix from zero; names after a gap
+remain integer keys and are warned about. An expected template schema supplies
+hole types through item projection; without one they are `Unknown`. Nested
+templates contribute their type to `V`, not their holes to `S`. A `FmtValue`
+preserves its value type, and width and precision are still checked as `Int`.
+
+The rules are:
+
 - A call constrains its callee below `Solver::call_items` of its arguments,
   passing the caller's declared channels. A non-function callee calls its
   `(call)` special method, passing the receiver first as a method call does. A
@@ -813,14 +827,17 @@ only reified types leave it:
   expectation only when all alternatives agree on it.
   What its arguments are expected to be comes from the callee's parameters. A
   parameter that mentions the callee's binders gives an expectation only once
-  the call is solved, so a collection literal or call passed to it is held
-  back: a pre-solve stands a fresh variable for it and solves the call without
-  it. A variable the held arguments can't raise takes its least solution
+  the call is solved, so a collection literal, call or template passed to it
+  is held back: a pre-solve stands a fresh variable for it and solves the call
+  without it. A variable the held arguments can't raise takes its least solution
   (`Solver::raised`), since whatever supplies a function takes its parameters
   and channels from what's expected of it. Then each held argument is
   evaluated expecting its parameter, if what's forced or chosen solves it. The
   pre-solve never makes a variable dynamic, so a binder only a held argument
   determines gives it no expectation.
+  A held template supplies a cached preliminary type with its interpolated
+  values and distinct hole names. Pre-solving uses that shape, then its hole
+  types take the solved expectation without evaluating its parts again.
 - A call through an overloaded function, a method or a def, chooses among its
   `@def` overloads, a stopgap until union calls are solved (#742). Its
   arguments are evaluated once, each one that takes an expectation held back,

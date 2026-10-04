@@ -15,7 +15,7 @@
 //! run: its results are bottom. An item of a comprehension is the exception, since
 //! bottom only says that it occurs zero times.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use super::{
     At, Flow, State,
@@ -103,9 +103,13 @@ impl<'a> Rule<'_, 'a> {
     }
 
     /// A fresh variable standing for an argument held back
-    fn held(&mut self, index: usize) -> Term {
+    fn held(&mut self, index: usize, preview: Option<TypeId>) -> Term {
         let term = self.solver.infer();
         self.held.push((index, term));
+        if let Some(preview) = preview {
+            self.solver
+                .constrain(self.closed(preview), term, Provenance::default());
+        }
         term
     }
 
@@ -178,7 +182,7 @@ impl<'a> Rule<'_, 'a> {
                         }
                     }
                     Value::Held(key, index, _) => {
-                        let term = Part::Term(rule.held(index));
+                        let term = Part::Term(rule.held(index, values.held[index].preview));
                         match key {
                             Some(key) => joined.keyed(rule, symbol(key), term),
                             None => joined.positional.add(rule, term),
@@ -222,7 +226,7 @@ impl<'a> Rule<'_, 'a> {
                     vec![(multiplicity, argument, span)]
                 }
                 Value::Held(key, index, span) => {
-                    let term = rule.held(index);
+                    let term = rule.held(index, values.held[index].preview);
                     let argument = match key {
                         Some(key) => CallArgument::Keyword(key, term),
                         None => CallArgument::Positional(term),
@@ -333,6 +337,8 @@ enum Value {
 struct Held<'e> {
     expr: &'e Expr,
     operands: VecDeque<TypeId>,
+    /// A template evaluated once, with its values and hole shape known.
+    preview: Option<TypeId>,
 }
 
 /// A `do` block passed to a rule, which types it: its function type, with a hole
@@ -584,8 +590,8 @@ fn atoms(
 }
 
 /// Hold an item back, if it takes an expectation that its position doesn't give
-/// yet: a collection literal or a call. Its operands are set aside with it. One in
-/// an `if` outside every `for` isn't, since the `if`'s branches are compared as
+/// yet: a collection literal, call or template. Its operands are set aside
+/// with it. One in an `if` outside every `for` isn't, since the `if`'s branches are compared as
 /// they're gathered. Returns its index into [`Values::held`].
 fn hold<'e>(
     gathering: &Gathering<'_>,
@@ -597,7 +603,7 @@ fn hold<'e>(
 ) -> Option<usize> {
     let takes = matches!(
         value.kind,
-        ExprKind::Collection { .. } | ExprKind::Call { .. }
+        ExprKind::Collection { .. } | ExprKind::Call { .. } | ExprKind::Fmt(_)
     );
     if !gathering.hold
         || expected.is_some()
@@ -610,6 +616,7 @@ fn hold<'e>(
     values.held.push(Held {
         expr: value,
         operands,
+        preview: None,
     });
     Some(values.held.len() - 1)
 }
@@ -1207,6 +1214,23 @@ impl<'a> Flow<'a, '_> {
         (solver, held, rejected)
     }
 
+    /// Cache templates before pre-solving so their names and values constrain
+    /// the call, while their hole types can still take its expectation.
+    fn preview_template(
+        &mut self,
+        at: At,
+        state: &mut State,
+        values: &mut Values<'_>,
+        index: usize,
+    ) {
+        let held = &mut values.held[index];
+        if matches!(held.expr.kind, ExprKind::Fmt(_)) {
+            let preview = self.eval(at, state, &mut held.operands, held.expr);
+            values.never |= preview == self.db.bottom();
+            held.preview = Some(preview);
+        }
+    }
+
     /// Evaluate the arguments held back, each expecting what `expectations` gives
     /// it, in place of their placeholders
     fn release(
@@ -1219,8 +1243,9 @@ impl<'a> Flow<'a, '_> {
         let bottom = self.db.bottom();
         let types: Vec<TypeId> = (std::mem::take(&mut values.held).into_iter())
             .zip(expectations)
-            .map(|(mut held, &expected)| {
-                self.expect(at, state, &mut held.operands, held.expr, expected)
+            .map(|(mut held, &expected)| match held.preview {
+                Some(preview) => self.contextual_fmt(preview, expected),
+                None => self.expect(at, state, &mut held.operands, held.expr, expected),
             })
             .collect();
         let mut never = false;
@@ -1481,6 +1506,7 @@ impl<'a> Flow<'a, '_> {
                     let expected = gathering.expected();
                     gathering.advance(place);
                     if let Some(index) = hold(gathering, place, expected, value, operands, values) {
+                        self.preview_template(at, state, values, index);
                         out.push(placed(Value::Held(None, index, value.span)));
                         continue;
                     }
@@ -1494,6 +1520,7 @@ impl<'a> Flow<'a, '_> {
                         (params.keyed.iter()).find_map(|&(name, ty)| (name == key).then_some(ty))
                     });
                     if let Some(index) = hold(gathering, place, expected, value, operands, values) {
+                        self.preview_template(at, state, values, index);
                         out.push(placed(Value::Held(Some(key), index, value.span)));
                         continue;
                     }
@@ -1923,10 +1950,8 @@ impl<'a> Flow<'a, '_> {
             _ => unreachable!("an interpolation or parameter hole"),
         };
         let bottom = self.db.bottom();
-        let mut never = false;
-        if let Some(value) = value {
-            never |= self.eval(at, state, operands, value) == bottom;
-        }
+        let value_type = value.map(|value| self.eval(at, state, operands, value));
+        let never = value_type == Some(bottom);
         let values: Vec<_> = ([&spec.width, &spec.precision].into_iter().flatten())
             .map(|part| (self.eval(at, state, operands, part), part.span))
             .collect();
@@ -1934,8 +1959,174 @@ impl<'a> Flow<'a, '_> {
             return bottom;
         }
         let int = self.db.intrinsic(Intrinsic::Int);
-        let result = self.designated_type(role);
+        let result = match value_type {
+            Some(value) => self.fmt_application(role, vec![self.db.decay(value)]),
+            None => self.designated_type(role),
+        };
         self.fits(at, &values, int, Misfit::Int, result)
+    }
+
+    /// A designated format class applied to its arguments. Synthetic standard
+    /// declarations with no binders still describe the unparameterized class.
+    fn fmt_application(&self, role: Designated, args: Vec<TypeId>) -> TypeId {
+        let Some(class) = self.designated(role) else {
+            return self.db.unknown();
+        };
+        if self.tables.binders(class, 0).is_empty() {
+            return self.designated_type(role);
+        }
+        self.db.intern(Type::Apply {
+            base: self.db.intern(Type::Decl(class)),
+            args: args.into_iter().map(Argument::Positional).collect(),
+            kind: Kind::Type,
+        })
+    }
+
+    /// The unique expected template schema, including in a union.
+    fn fmt_schema(&self, expected: Option<TypeId>) -> Option<TypeId> {
+        self.designated(Designated::Fmt).and_then(|class| {
+            let extract = |ty| match self.db.ty(ty) {
+                Type::Apply { base, args, .. } if *self.db.ty(*base) == Type::Decl(class) => {
+                    match args[..] {
+                        [Argument::Positional(_), Argument::Positional(schema)] => Some(schema),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            let ty = expected?;
+            match self.db.ty(ty) {
+                Type::Union(members) => {
+                    let mut found = members.iter().filter_map(|member| match member {
+                        UnionMember::Type(ty) => extract(*ty),
+                        _ => None,
+                    });
+                    let first = found.next()?;
+                    found.next().is_none().then_some(first)
+                }
+                _ => extract(ty),
+            }
+        })
+    }
+
+    /// Refine only holes of a cached template, preserving its actual key set.
+    fn contextual_fmt(&self, preview: TypeId, expected: Option<TypeId>) -> TypeId {
+        let Some(expected) = self.fmt_schema(expected) else {
+            return preview;
+        };
+        let Some(schema) = self.fmt_schema(Some(preview)) else {
+            return preview;
+        };
+        let Type::Schema(items) = self.db.ty(schema) else {
+            return preview;
+        };
+        let mut position = 0;
+        let mut refined = Vec::new();
+        for source in items.iter() {
+            let key = match source.element {
+                Element::Positional(_) => {
+                    let key = self.db.intern(Type::Literal(Literal::Int(position)));
+                    position += 1;
+                    key
+                }
+                Element::Keyed { key, .. } => key,
+                Element::Include(_) => return preview,
+            };
+            let value = self
+                .solver()
+                .schema_item(expected, key)
+                .unwrap_or(self.db.unknown());
+            let element = match source.element {
+                Element::Positional(_) => Element::Positional(value),
+                _ => Element::Keyed { key, value },
+            };
+            refined.push(item(source.multiplicity, element));
+        }
+        let schema = self.db.intern(Type::Schema(refined.into()));
+        let Type::Apply { args, .. } = self.db.ty(preview) else {
+            return preview;
+        };
+        let Argument::Positional(values) = args[0] else {
+            return preview;
+        };
+        self.fmt_application(Designated::Fmt, vec![values, schema])
+    }
+
+    /// A template retains its values and the distinct names its consumer binds.
+    pub(super) fn fmt_seq(
+        &mut self,
+        at: At,
+        state: &mut State,
+        operands: &mut VecDeque<TypeId>,
+        parts: &[Expr],
+        expected: Option<TypeId>,
+    ) -> TypeId {
+        let mut holes = BTreeMap::new();
+        let mut positional = std::collections::BTreeSet::new();
+        for part in parts {
+            if let ExprKind::FmtParam {
+                name, name_span, ..
+            } = &part.kind
+            {
+                let key = self.db.intern(Type::Literal(name.clone()));
+                holes.entry(key).or_insert((*name_span, name.clone()));
+                if let Literal::Int(index) = name {
+                    positional.insert(*index);
+                }
+            }
+        }
+        let prefix = (0..).take_while(|index| positional.contains(index)).count();
+        let mut items = Vec::new();
+        let mut keyed = Vec::new();
+        for (key, (span, name)) in holes {
+            let value = self.db.unknown();
+            let element = match name {
+                Literal::Int(index) if index < prefix as i128 => {
+                    items.push((
+                        index,
+                        item(Multiplicity::Required, Element::Positional(value)),
+                    ));
+                    continue;
+                }
+                Literal::Int(index) => {
+                    if self.observing() {
+                        self.problem(Problem::FmtGap {
+                            span,
+                            index,
+                            missing: prefix,
+                        });
+                    }
+                    Element::Keyed { key, value }
+                }
+                _ => Element::Keyed { key, value },
+            };
+            keyed.push(item(Multiplicity::Required, element));
+        }
+        items.sort_by_key(|(index, _)| *index);
+        let mut schema: Vec<_> = items.into_iter().map(|(_, item)| item).collect();
+        schema.extend(keyed);
+        let schema = self.db.intern(Type::Schema(schema.into()));
+        let bottom = self.db.bottom();
+        let mut values = bottom;
+        let mut never = false;
+        for part in parts {
+            let ty = self.eval(at, state, operands, part);
+            never |= ty == bottom;
+            if let ExprKind::FmtValue { .. } = part.kind {
+                let value = self
+                    .designated(Designated::FmtValue)
+                    .and_then(|class| self.applied(class, ty).map(|(_, value)| value))
+                    .unwrap_or(self.db.unknown());
+                values = self.solver().lub(values, value);
+            }
+        }
+        if never {
+            return bottom;
+        }
+        self.contextual_fmt(
+            self.fmt_application(Designated::Fmt, vec![values, schema]),
+            expected,
+        )
     }
 
     /// The type of the items a `for` iterates: its iteratee must be a

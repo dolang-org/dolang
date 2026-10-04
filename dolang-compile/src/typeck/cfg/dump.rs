@@ -349,15 +349,19 @@ impl Dump<'_, '_> {
         Ok(())
     }
 
+    fn literal(&self, out: &mut String, literal: &Literal) -> fmt::Result {
+        match literal {
+            Literal::Nil => write!(out, "nil"),
+            Literal::Bool(value) => write!(out, "{value}"),
+            Literal::Int(value) => write!(out, "{value}"),
+            Literal::Str(value) => write!(out, "{value:?}"),
+            Literal::Sym(name) => write!(out, ":{}:", self.db.symbol(*name)),
+        }
+    }
+
     fn expr(&self, out: &mut String, expr: &Expr) -> fmt::Result {
         match &expr.kind {
-            ExprKind::Literal(literal) => match literal {
-                Literal::Nil => write!(out, "nil"),
-                Literal::Bool(value) => write!(out, "{value}"),
-                Literal::Int(value) => write!(out, "{value}"),
-                Literal::Str(value) => write!(out, "{value:?}"),
-                Literal::Sym(name) => write!(out, ":{}:", self.db.symbol(*name)),
-            },
+            ExprKind::Literal(literal) => self.literal(out, literal),
             ExprKind::Float => write!(out, "<float>"),
             ExprKind::Bin => write!(out, "<bin>"),
             ExprKind::Concat(parts) => {
@@ -381,9 +385,10 @@ impl Dump<'_, '_> {
                 self.spec(out, spec, true)?;
                 write!(out, ")")
             }
-            ExprKind::FmtParam { spec, .. } => {
+            ExprKind::FmtParam { name, spec, .. } => {
                 write!(out, "fmt_param(")?;
-                self.spec(out, spec, false)?;
+                self.literal(out, name)?;
+                self.spec(out, spec, true)?;
                 write!(out, ")")
             }
             ExprKind::Var(var) | ExprKind::Copy(var) => self.var(out, *var),

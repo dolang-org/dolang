@@ -1,0 +1,200 @@
+import std:
+  - Fmt
+  - FmtValue
+  - FmtSpec
+import sqlite:
+  - @Connection
+
+pub def inferred n @ Int text @ Str
+  let mixed = t"n=$n text=$text ${#name} ${#0} ${#name}"
+  let _ = mixed
+  #       ^~~~~: flow std.Fmt[std.Int | std.Str, {Unknown, name: Unknown}]
+  mixed.format 1 name: "a"
+  mixed.format name: "a"
+  # error: expected `{Unknown, name: Unknown}`, found `{name: "a"}`
+  #   --> main.dol:LL:LL
+  #    |
+  # LL |   mixed.format name: "a"
+  #    |                      ^^^
+  mixed.format 1 typo: "a"
+  # error: expected `{Unknown, name: Unknown}`, found `{1, typo: "a"}`
+  #   --> main.dol:LL:LL
+  #    |
+  # LL |   mixed.format 1 typo: "a"
+  #    |                ^
+  mixed.format 1 name: "a" extra: true
+  # error: expected `{Unknown, name: Unknown}`, found `{1, name: "a", extra: true}`
+  #   --> main.dol:LL:LL
+  #    |
+  # LL |   mixed.format 1 name: "a" extra: true
+  #    |                ^
+  let empty = t"literal"
+  let _ = empty
+  #       ^~~~~: flow std.Fmt[Never, {}]
+  empty.format()
+  empty.format 1
+  # error: expected `{}`, found `{1}`
+  #   --> main.dol:LL:LL
+  #    |
+  # LL |   empty.format 1
+  #    |                ^
+  let nested = t"nested $mixed ${#outer}"
+  let _ = nested
+  #       ^~~~~~: flow std.Fmt[std.Fmt[std.Int | std.Str, {Unknown, name: Unknown}], {outer: Unknown}]
+  nested.format outer: 1
+  nested.format outer: 1 name: "nested"
+  # error: expected `{outer: Unknown}`, found `{outer: 1, name: "nested"}`
+  #   --> main.dol:LL:LL
+  #    |
+  # LL |   nested.format outer: 1 name: "nested"
+  #    |                        ^
+  let reordered = t"${#1} ${#0} ${#1}"
+  let _ = reordered
+  #       ^~~~~~~~~: flow std.Fmt[Never, {Unknown, Unknown}]
+  reordered.format 1 2
+  let lone = t"${#1}"
+  # warning: format hole `#1` follows missing `#0`; it is an integer key, not a positional item
+  #   --> main.dol:LL:LL
+  #    |
+  # LL |   let lone = t"${#1}"
+  #    |                   ^
+  let _ = lone
+  #       ^~~~: flow std.Fmt[Never, {(1): Unknown}]
+  lone.format 1
+  # error: expected `{(1): Unknown}`, found `{1}`
+  #   --> main.dol:LL:LL
+  #    |
+  # LL |   lone.format 1
+  #    |               ^
+  let gap = t"${#0} ${#2} ${#2}"
+  # warning: format hole `#2` follows missing `#1`; it is an integer key, not a positional item
+  #   --> main.dol:LL:LL
+  #    |
+  # LL |   let gap = t"${#0} ${#2} ${#2}"
+  #    |                        ^
+  let _ = gap
+  #       ^~~: flow std.Fmt[Never, {Unknown, (2): Unknown}]
+
+  let value = FmtValue $n
+  let _ = value.value
+  #   ^: flow std.Int
+  let adjusted = value width: 8
+  let _ = adjusted.value
+  #   ^: flow std.Int
+  let spec = FmtSpec width: 8
+  let bound = spec $text
+  let _ = bound.value
+  #   ^: flow std.Str
+  let changed = spec width: 10
+  let _ = changed
+  #       ^~~~~~~: flow std.FmtSpec
+  let built = Fmt ["text", value]
+  let _ = built
+  #       ^~~~~: flow std.Fmt[]
+  built.format anything: true
+
+def typed template @ Fmt[Int, {Int, name: Str}] -> Fmt[Int, {Int, name: Str}]
+  template
+
+pub def contextual n @ Int
+  let explicit @ Fmt[Int, {Int, name: Str}] = t"$n ${#0} ${#name}"
+  explicit.format 1 name: "ok"
+  explicit.format "bad" name: 1
+  # error: expected `{std.Int, name: std.Str}`, found `{"bad", name: 1}`: `1` does not fit `std.Str`
+  #   --> main.dol:LL:LL
+  #    |
+  # LL |   explicit.format "bad" name: 1
+  #    |                   ^^^^^
+  # error: expected `{std.Int, name: std.Str}`, found `{"bad", name: 1}`: `"bad"` does not fit `std.Int`
+  #   --> main.dol:LL:LL
+  #    |
+  # LL |   explicit.format "bad" name: 1
+  #    |                   ^^^^^
+  let result = typed t"$n ${#0} ${#name}"
+  let _ = result
+  #       ^~~~~~: flow std.Fmt[std.Int, {std.Int, name: std.Str}]
+  typed t"$n ${#wrong}"
+# error: expected `std.Fmt[std.Int, {std.Int, name: std.Str}]`, found `std.Fmt[std.Int, {wrong: Unknown}]`: `{std.Int, name: std.Str}` does not fit `{wrong: Unknown}`
+#   --> main.dol:LL:LL
+#    |
+# LL |   typed t"$n ${#wrong}"
+#    |         ^^^^^^^^^^^^^^^
+
+pub def database conn @ Connection
+  let stmt = conn.prepare t"SELECT ${#id}, ${#0}, ${#id}"
+  let _ = stmt
+  #       ^~~~: flow sqlite.Statement[{sqlite.SqlValue, id: sqlite.SqlValue}]
+  stmt.execute 1 id: 2
+  stmt.query 1 id: "ok"
+  stmt.execute 1
+  # error: this call is missing an argument
+  #   --> main.dol:LL:LL
+  #    |
+  # LL |   stmt.execute 1
+  #    |   ^^^^^^^^^^^^^^
+  stmt.execute 1 typo: 2
+  # error: this call is missing an argument
+  #   --> main.dol:LL:LL
+  #    |
+  # LL |   stmt.execute 1 typo: 2
+  #    |   ^^^^^^^^^^^^^^^^^^^^^^
+  stmt.execute 1 id: [1]
+  # error: expected `sqlite.SqlValue`, found `std.Array[std.Int]`
+  #   --> main.dol:LL:LL
+  #    |
+  # LL |   stmt.execute 1 id: [1]
+  #    |                      ^^^
+  conn.execute t"SELECT ${#id}" id: 2
+  conn.execute t"SELECT ${#id}" typo: 2
+  # error: expected `{id: Unknown}`, found `{typo: 2}`
+  #   --> main.dol:LL:LL
+  #    |
+  # LL |   conn.execute t"SELECT ${#id}" typo: 2
+  #    |                                       ^
+  conn.execute t"SELECT ${#id}" id: [1]
+  # error: expected `{*sqlite.SqlValue, *(std.Sym): sqlite.SqlValue}`, found `{id: std.Array[std.Int]}`: `std.Array[std.Int]` does not fit `sqlite.SqlValue`
+  #   --> main.dol:LL:LL
+  #    |
+  # LL |   conn.execute t"SELECT ${#id}" id: [1]
+  #    |                                     ^^^
+  conn.prepare t"SELECT ${#id}" do |prepared|
+    prepared.execute id: 1
+    prepared.query typo: 1
+  # error: this call is missing an argument
+  #   --> main.dol:LL:LL
+  #    |
+  # LL |     prepared.query typo: 1
+  #    |     ^^^^^^^^^^^^^^^^^^^^^^
+  let template = t"SELECT ${#name}"
+  let stored = conn.prepare $template
+  stored.execute name: "ok"
+  stored.execute wrong: "bad"
+  # error: this call is missing an argument
+  #   --> main.dol:LL:LL
+  #    |
+  # LL |   stored.execute wrong: "bad"
+  #    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  conn.prepare t"SELECT $([1, 2])"
+# error: expected `std.Fmt[sqlite.SqlValue, {}]`, found `std.Fmt[std.Array[std.Int], {}]`: `std.Array[std.Int]` does not fit `sqlite.SqlValue`
+#   --> main.dol:LL:LL
+#    |
+# LL |   conn.prepare t"SELECT $([1, 2])"
+#    |                ^^^^^^^^^^^^^^^^^^^
+
+pub def variance narrow @ Fmt[Int, {x: Int}] wide @ Fmt[Value, {x: Value}] bare @ Fmt
+  let _ @ Fmt[Value, {x: Int}] = narrow
+  let _ @ Fmt[Value, {x: Int}] = wide
+  let _ @ Fmt[Int, {x: Str}] = narrow
+  # error: `std.Fmt[std.Int, {x: std.Int}]` does not fit the annotation `std.Fmt[std.Int, {x: std.Str}]`
+  #   --> main.dol:LL:LL
+  #    |
+  # LL |   let _ @ Fmt[Int, {x: Str}] = narrow
+  #    |                                ^^^^^^
+  let _ @ Fmt[Int, {}] = narrow
+  # error: `std.Fmt[std.Int, {x: std.Int}]` does not fit the annotation `std.Fmt[std.Int, {}]`
+  #   --> main.dol:LL:LL
+  #    |
+  # LL |   let _ @ Fmt[Int, {}] = narrow
+  #    |                          ^^^^^^
+  let _ @ Fmt = narrow
+  let _ @ Fmt[Int, {x: Int}] = bare

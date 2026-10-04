@@ -109,6 +109,78 @@ fn range(multiplicity: Multiplicity) -> (usize, Option<usize>) {
 }
 
 impl Solver<'_> {
+    /// Choose a closed shape from schema upper bounds. This is deliberately
+    /// limited to required literal items; it does not invent schema intersections.
+    pub(super) fn upper_schema(&self, upper: &[TypeId]) -> Result<TypeId, Residual> {
+        let shape = upper
+            .iter()
+            .find_map(|&ty| match self.db.ty(ty) {
+                Type::Schema(items)
+                    if items.iter().all(|item| {
+                        item.multiplicity == Multiplicity::Required
+                            && match item.element {
+                                Element::Positional(_) => true,
+                                Element::Keyed { key, .. } => self.db.literal(key).is_some(),
+                                Element::Include(_) => false,
+                            }
+                    }) =>
+                {
+                    Some(items)
+                }
+                _ => None,
+            })
+            .ok_or(Residual::Inference)?;
+        let mut position = 0;
+        let mut items = Vec::new();
+        for source in shape.iter() {
+            let (key, mut value) = match source.element {
+                Element::Positional(value) => {
+                    let key = self.db.intern(Type::Literal(Literal::Int(position)));
+                    position += 1;
+                    (key, value)
+                }
+                Element::Keyed { key, value } => (key, value),
+                Element::Include(_) => unreachable!("a closed literal shape"),
+            };
+            for &bound in upper {
+                if matches!(self.db.ty(bound), Type::Unknown(_)) {
+                    continue;
+                }
+                let projected = self
+                    .schema_item(bound, key)
+                    .map_err(|_| Residual::Inference)?;
+                if projected == self.db.unknown() {
+                    continue;
+                }
+                value = if value == self.db.unknown() {
+                    projected
+                } else {
+                    self.meet(value, projected)
+                        .map_err(|_| Residual::Inference)?
+                };
+            }
+            let element = match source.element {
+                Element::Positional(_) => Element::Positional(value),
+                _ => Element::Keyed { key, value },
+            };
+            items.push(SchemaItem {
+                multiplicity: Multiplicity::Required,
+                element,
+            });
+        }
+        let candidate = self.db.intern(Type::Schema(items.into()));
+        for &bound in upper {
+            if self
+                .probe(candidate, bound)
+                .map_err(|_| Residual::Inference)?
+                != Status::Proven
+            {
+                return Err(Residual::Inference);
+            }
+        }
+        Ok(candidate)
+    }
+
     /// Relate two exposed schemas.
     pub(super) fn schemas(
         &self,

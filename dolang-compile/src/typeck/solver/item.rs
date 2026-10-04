@@ -44,6 +44,10 @@ impl Solver<'_> {
 
     /// The join, or with `meet` the meet, of the values of a schema's items a key
     /// selects
+    pub(crate) fn schema_item(&self, schema: TypeId, key: TypeId) -> Result<TypeId, Issue> {
+        self.item(schema, key, true)
+    }
+
     fn item(&self, schema: TypeId, key: TypeId, meet: bool) -> Result<TypeId, Issue> {
         if let Type::Unknown(_) = self.db.ty(schema) {
             return Ok(self.db.unknown());
@@ -153,7 +157,7 @@ impl Solver<'_> {
     /// The meet of two closed types, where it needs no intersection: the lower
     /// of two that are ordered, the bottom type for two literals or classes that
     /// can't share a value, and otherwise the dynamic type
-    fn meet(&self, a: TypeId, b: TypeId) -> Result<TypeId, Issue> {
+    pub(super) fn meet(&self, a: TypeId, b: TypeId) -> Result<TypeId, Issue> {
         if a == b {
             return Ok(a);
         }
@@ -178,7 +182,7 @@ impl Solver<'_> {
     /// Whether a type is a literal or an instance of a class. The runtime gives a
     /// class one supertype, so two classes neither below the other share no
     /// value.
-    fn class_like(&self, ty: TypeId) -> Result<bool, Issue> {
+    pub(super) fn class_like(&self, ty: TypeId) -> Result<bool, Issue> {
         if self.db.literal(ty).is_some() {
             return Ok(true);
         }

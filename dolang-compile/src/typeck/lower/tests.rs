@@ -614,7 +614,7 @@ b0 f0:
   let x = 1
   let w = 4
   let s = concat(\"a\", fmt_value(x, width: w, precision: 2), \"b\")
-  let t = fmt(\"a\", fmt_value(x), \"b\", fmt_value(x), fmt_param(width: w))
+  let t = fmt(\"a\", fmt_value(x), \"b\", fmt_value(x), fmt_param(0, width: w))
   let b = bin_concat(<bin>, <bin>)
   result0 = b
   goto b1
