@@ -1,0 +1,11 @@
+@let Bad = $
+  - Int
+    Str
+# error: got identifier, expected: <unindent>
+#   --> vertical_type_wrap.dol:LL:LL
+#    |
+# LL |     Str
+#    |     ^^^
+
+@let Following = Int
+assert_eq 1 1

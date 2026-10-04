@@ -1,0 +1,10 @@
+@let Bad = $
+  key: Int Str
+# error: expected end of item
+#   --> vertical_type_key_binpack.dol:LL:LL
+#    |
+# LL |   key: Int Str
+#    |            ^^^
+
+@let Following = Int
+assert_eq 1 1

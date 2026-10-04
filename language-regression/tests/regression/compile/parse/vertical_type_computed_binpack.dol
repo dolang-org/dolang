@@ -1,0 +1,10 @@
+@let Bad = $
+  Int (Str): Bool
+# error: only positional type items may be bin-packed
+#   --> vertical_type_computed_binpack.dol:LL:LL
+#    |
+# LL |   Int (Str): Bool
+#    |       ^^^^^^^^^^^
+
+@let Following = Int
+assert_eq 1 1

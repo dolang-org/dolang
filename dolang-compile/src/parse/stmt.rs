@@ -54,15 +54,17 @@ impl Parser<'_> {
             }
             let equal_span = self.expect(scope, &[ExpectKind::Equal])?;
             self.expect(scope, &[ExpectKind::ArgSep])?;
-            let body = if let Some(token!(TokenInfo::Ellipsis)) = self.peek()? {
-                AliasBody::Opaque(self.advance())
+            let (body, block) = if let Some(token!(TokenInfo::Ellipsis)) = self.peek()? {
+                (AliasBody::Opaque(self.advance()), false)
             } else {
-                AliasBody::Type(self.with_inline_shell(|this| this.parse_type_compact(scope))?)
+                let (ty, block) = self.parse_type_alias_body(scope)?;
+                (AliasBody::Type(ty), block)
             };
             if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
                 self.advance();
             }
             match self.peek()? {
+                _ if block => {}
                 None | Some(token!(TokenInfo::StmtSep | TokenInfo::Dedent)) => {}
                 _ => {
                     let token = self.consume();

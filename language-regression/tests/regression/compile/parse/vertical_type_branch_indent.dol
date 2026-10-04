@@ -1,0 +1,13 @@
+@let Bad = $
+  | Dict $
+    name: Str
+# error: got <new statement>, expected: <indent>
+#   --> vertical_type_branch_indent.dol:LL:LL
+#    |
+# LL |     | Dict $
+#    |  ___________^
+# LL | |     name: Str
+#    | |_^
+
+@let Following = Int
+assert_eq 1 1

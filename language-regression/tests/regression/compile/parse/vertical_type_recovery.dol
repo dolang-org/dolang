@@ -1,0 +1,14 @@
+@let Bad = $
+  - Int Str
+# error: expected end of item
+#   --> vertical_type_recovery.dol:LL:LL
+#    |
+# LL |   - Int Str
+#    |         ^^^
+
+@let Following = Int trailing
+# error: expected end of statement after alias
+#   --> vertical_type_recovery.dol:LL:LL
+#    |
+# LL | @let Following = Int trailing
+#    |                      ^^^^^^^^

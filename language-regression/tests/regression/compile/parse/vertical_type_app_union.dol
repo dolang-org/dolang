@@ -1,0 +1,10 @@
+@let Bad = Dict $
+  | Int
+# error: expected type
+#   --> vertical_type_app_union.dol:LL:LL
+#    |
+# LL |   | Int
+#    |   ^
+
+@let Following = Int
+assert_eq 1 1

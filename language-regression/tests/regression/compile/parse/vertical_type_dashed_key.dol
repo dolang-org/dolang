@@ -1,0 +1,10 @@
+@let Bad = $
+  - key: Int
+# error: expected positional type after `-`
+#   --> vertical_type_dashed_key.dol:LL:LL
+#    |
+# LL |   - key: Int
+#    |     ^^^
+
+@let Following = Int
+assert_eq 1 1

@@ -152,6 +152,71 @@ pub @let Pair[T] = Tuple[T, T]
 @let Scalar = (Str | Int | Float | Bool | nil)
 ```
 
+### Vertical Aliases
+
+`$` followed by an indented body defines a schema. Positional items may be
+bin-packed on an undashed line. A dash introduces one positional item, and a
+keyed line introduces one keyed item. Quantifiers and schema includes have the
+same meaning as in `{}`.
+
+```
+@let Arguments = $
+  Str Int
+  - (Path | nil)
+  ?verbose: Bool
+  ...Options
+```
+
+If the first item starts with `|`, the body instead defines a union. Every
+alternative starts with `|` and contains one type.
+
+```
+@let Json = $
+  | Scalar
+  | Array[Json]
+  | Dict[Str, Json]
+```
+
+`Type $` applies a vertical schema as one type argument. If the type already
+has arguments in `[]`, the schema is appended to them. `Type ...$` instead
+expands the schema into type arguments, as `Type[...{...}]` does.
+
+```
+@let Pair = Tuple ...$
+  Str Int
+
+@let Config = Dict $
+  host: Str
+  ?port: Int
+  credentials:
+    | nil
+    | Dict $
+        user: Str
+        token: Str
+```
+
+An indented value under a key defines a union without another `$`. Its first
+`|` must be on an indented line. A union may also start directly after a dash:
+
+```
+@let Input = $
+  - | Str
+    | Bin
+  ?encoding: Str
+```
+
+The first token after `-` or `|` establishes an implicit indentation level.
+A schema applied within that item must be indented beyond that level, as the
+`user` and `token` lines above are indented beyond `Dict`.
+
+Implicit nesting defines unions, not schemas. A nested schema needs a type
+application. Schemas themselves cannot be unioned.
+
+Dash items do not allow bin-packing or free-form continuation lines. Wrap
+complex types inside `[]` or `()`, or use a nested type application. Vertical
+bodies must contain an item; write `{}` for an empty schema. Vertical type
+layout is available in alias definitions, not directly in annotations.
+
 ## Type-Only Imports
 
 `@` before an item in an import's item list imports it for type annotation

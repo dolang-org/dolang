@@ -1,0 +1,7 @@
+bind [1, 2]
+  - a @Int = 1 b
+# error: expected end of item
+#   --> vertical_type_pattern_tail.dol:LL:LL
+#    |
+# LL |   - a @Int = 1 b
+#    |                ^

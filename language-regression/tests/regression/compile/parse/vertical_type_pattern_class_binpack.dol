@@ -1,0 +1,7 @@
+bind [1, 2]
+  - Int(a) b
+# error: expected end of item
+#   --> vertical_type_pattern_class_binpack.dol:LL:LL
+#    |
+# LL |   - Int(a) b
+#    |            ^

@@ -1,0 +1,11 @@
+@let Bad = $
+  key:
+    name: Str
+# error: expected `|` union alternative
+#   --> vertical_type_implicit_schema.dol:LL:LL
+#    |
+# LL |     name: Str
+#    |     ^^^^
+
+@let Following = Int
+assert_eq 1 1

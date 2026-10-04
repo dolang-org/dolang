@@ -1,0 +1,7 @@
+@let Bad = $
+  Int **Bool
+# error: only positional type items may be bin-packed
+#   --> vertical_type_key_rest_binpack.dol:LL:LL
+#    |
+# LL |   Int **Bool
+#    |       ^^^^^^
