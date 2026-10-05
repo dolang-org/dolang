@@ -90,19 +90,13 @@ pub @let XattrNamespace = (Str | :USER: | :SYSTEM:)
 # | `"a+"` | Read and append                          |
 #
 # A `"b"` suffix selects binary mode, as in `"rb"`, `"wb"`, or `"r+b"`.
-pub @let OpenMode = $
-  | "r"
-  | "w"
-  | "a"
-  | "r+"
-  | "w+"
-  | "a+"
-  | "rb"
-  | "wb"
-  | "ab"
-  | "r+b"
-  | "w+b"
-  | "a+b"
+pub @let OpenMode = (OpenTextMode | OpenBinaryMode)
+
+# Text file access modes accepted by [`open`](fs.open).
+pub @let OpenTextMode = ("r" | "w" | "a" | "r+" | "w+" | "a+")
+
+# Binary file access modes accepted by [`open`](fs.open).
+pub @let OpenBinaryMode = ("rb" | "wb" | "ab" | "r+b" | "w+b" | "a+b")
 
 # An entry within a directory.
 #
@@ -157,9 +151,13 @@ pub class DirEntry
 #
 # A file is both an iterator and a sink, so it can be used with `for`,
 # `.next()`, `.put()`, and `strand.redirect`. The open mode fixes which for the
-# file's lifetime: a text-mode file yields and accepts lines, a binary-mode one
-# arbitrary chunks. In either mode the values read from a file concatenate back
-# to exactly the file's bytes.
+# file's lifetime: a [`StrFile`](fs.StrFile) yields lines, and a
+# [`BinFile`](fs.BinFile) yields arbitrary chunks. In either mode the values
+# read from a file concatenate back to exactly the file's bytes.
+#
+# Both subtypes accept arbitrary values through `.put()`, which writes each
+# value's encoded bytes without adding a line terminator. Their `.write()`
+# methods accept the data types documented on each subtype.
 pub class File: Iter[Str | Bin] Sink[Value]
   # Closes the file.
   #
@@ -311,6 +309,7 @@ pub class File: Iter[Str | Bin] Sink[Value]
   # Writes data to the file.
   #
   # All of `data` is written, however many transfers that takes.
+  # [`BinFile.write`](fs.BinFile.write) also accepts binary data.
   #
   # ## Returns
   #
@@ -332,7 +331,7 @@ pub class File: Iter[Str | Bin] Sink[Value]
   # open output.txt w do |file|
   #   let bytes_written = file.write "Hello, World!"
   #   echo "Wrote $bytes_written bytes"
-  #   file.write b"Hello"
+  #   file.write "Hello"
   #
   # # Patch a record in place without disturbing the cursor
   # open data.bin r+b do |file|
@@ -342,7 +341,7 @@ pub class File: Iter[Str | Bin] Sink[Value]
     self
     # Data to write. Strings
     # are written as UTF-8 text.
-    data @ (Str | Bin)
+    data @ Str
     # Byte offset to write at. Without it, writes at
     # the cursor and advances it.
     #
@@ -691,6 +690,50 @@ pub class File: Iter[Str | Bin] Sink[Value]
     # Value to write.
     value
   do
+    ...
+
+# Reads text lines from a file opened in text mode.
+#
+# `.write()` accepts only `Str`. `.put()` retains the arbitrary-value encoding
+# of [`File`](fs.File).
+pub class StrFile: Iter[Str] File
+  # Returns the file as its own iterator.
+  pub def (iter) self -> StrFile
+    ...
+
+  # Reads the next line.
+  pub def (next) self -> Str
+    ...
+
+  # Reads text from the file. See [`File.read`](fs.File.read) for options.
+  pub def read self size@Int = nil :offset@Int = nil -> Str
+    ...
+
+  # Writes UTF-8 text to the file. See [`File.write`](fs.File.write) for options.
+  #
+  # Raises [`TypeError`](std.TypeError) when `data` is not a `Str`.
+  pub def write self data@Str :offset@Int = nil -> Int
+    ...
+
+# Reads byte chunks from a file opened in binary mode.
+#
+# `.write()` accepts bytes or strings, writing strings as UTF-8 bytes. `.put()`
+# retains the arbitrary-value encoding of [`File`](fs.File).
+pub class BinFile: Iter[Bin] File
+  # Returns the file as its own iterator.
+  pub def (iter) self -> BinFile
+    ...
+
+  # Reads the next byte chunk.
+  pub def (next) self -> Bin
+    ...
+
+  # Reads bytes from the file. See [`File.read`](fs.File.read) for options.
+  pub def read self size@Int = nil :offset@Int = nil -> Bin
+    ...
+
+  # Writes bytes or UTF-8 text. See [`File.write`](fs.File.write) for options.
+  pub def write self data@(Str | Bin) :offset@Int = nil -> Int
     ...
 
 # The state of a scoped [`File`](fs.File) lock.
@@ -1374,22 +1417,44 @@ pub class Path
   @def open
     self
     # File access mode. Defaults to `"r"`.
-    mode @ OpenMode = nil
-  do -> File
+    mode @ OpenTextMode = nil
+  do -> StrFile
 
   # The method form of [`fs.open`](fs.open) with a block.
   @def open[R]
     self
     # Block to run with the file; it is closed when the block returns.
-    func @ (File -> R)
+    func @ (StrFile -> R)
   do -> R
 
   # The method form of [`fs.open`](fs.open) with a mode and a block.
   @def open[R]
     self
     # File access mode.
-    mode @ OpenMode
+    mode @ OpenTextMode
     # Block to run with the file; it is closed when the block returns.
+    func @ (StrFile -> R)
+  do -> R
+
+  @def open
+    self
+    mode @ OpenBinaryMode
+  do -> BinFile
+
+  @def open[R]
+    self
+    mode @ OpenBinaryMode
+    func @ (BinFile -> R)
+  do -> R
+
+  @def open
+    self
+    mode @ Str
+  do -> File
+
+  @def open[R]
+    self
+    mode @ Str
     func @ (File -> R)
   do -> R
 
@@ -1730,8 +1795,8 @@ pub class XattrEntry
   # Path to the file to open.
   path @ (Str | Path)
   # File access mode. Defaults to `"r"`.
-  mode @ OpenMode = nil
-do -> File
+  mode @ OpenTextMode = nil
+do -> StrFile
 
 # Opens a file for reading and runs a block with it. The file is closed when
 # the block returns.
@@ -1744,7 +1809,7 @@ do -> File
   # Path to the file to open.
   path @ (Str | Path)
   # Block to run with the file.
-  func @ (File -> R)
+  func @ (StrFile -> R)
 do -> R
 
 # Opens a file with a mode and runs a block with it. The file is closed when
@@ -1758,11 +1823,37 @@ do -> R
   # Path to the file to open.
   path @ (Str | Path)
   # File access mode.
-  mode @ OpenMode
+  mode @ OpenTextMode
   # Block to run with the file.
+  func @ (StrFile -> R)
+do -> R
+
+@def open
+  path @ (Str | Path)
+  mode @ OpenBinaryMode
+do -> BinFile
+
+@def open[R]
+  path @ (Str | Path)
+  mode @ OpenBinaryMode
+  func @ (BinFile -> R)
+do -> R
+
+@def open
+  path @ (Str | Path)
+  mode @ Str
+do -> File
+
+@def open[R]
+  path @ (Str | Path)
+  mode @ Str
   func @ (File -> R)
 do -> R
 
+# Opens a file, returning [`StrFile`](fs.StrFile) for text modes and
+# [`BinFile`](fs.BinFile) for binary modes. The default mode is `"r"`.
+#
+# With a block, passes it the file and closes the file when the block exits.
 pub def open path ...options
   ...
 

@@ -351,3 +351,17 @@ def relays_between_two_sessions()
   let content = fs.read "cross-session-dst.txt"
   assert_eq $content.len $CHUNK.len
   assert (content == CHUNK) "relay copy content differs"
+
+
+#[test]
+#[vfs]
+def copies_between_runtime_file_subtypes()
+  for source_mode = ["r", "rb"]
+    for dest_mode = ["w+", "w+b"]
+      seeded mixed-src.txt "hello"
+      open mixed-src.txt $source_mode do |src|
+        open mixed-dst.txt $dest_mode do |dst|
+          assert_eq (copy_data src dst) 5
+          src.seek start: 0
+          assert_eq (src.copy_data dst offset: 5) 5
+      assert_eq (fs.read "mixed-dst.txt") "hellohello"

@@ -1425,23 +1425,11 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
                 offset_kw = None,
                 clone_kw = None
             )?;
-            let src = global
-                .types
-                .file
-                .cast(&src)
+            let src = file::cast_file(global, &src)
                 .ok_or_else(|| Error::type_error(strand, "src must be an fs.File"))?;
-            let dst = global
-                .types
-                .file
-                .cast(&dst)
+            let dst = file::cast_file(global, &dst)
                 .ok_or_else(|| Error::type_error(strand, "dst must be an fs.File"))?;
-            src.enter(strand, async move |strand, src| {
-                dst.enter(strand, async move |strand, dst| {
-                    file::copy_data(strand, global, src, dst, range, size, offset, clone, out).await
-                })
-                .await
-            })
-            .await
+            file::copy_files(strand, global, src, dst, range, size, offset, clone, out).await
         })
         .function("rename", async move |strand, args, _out| {
             let ([from, to], [replace]) = unpack!(strand, args, 2, 0, replace = None)?;
@@ -1594,6 +1582,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             Ok(())
         })
         .value("File", global.types.file)
+        .value("StrFile", global.types.str_file)
+        .value("BinFile", global.types.bin_file)
         .value("FileLock", global.types.file_lock)
         .value("Metadata", global.types.metadata)
         .value("FsMetadata", global.types.fs_metadata)

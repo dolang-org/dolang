@@ -20,6 +20,7 @@ import shell
 import std:
   - RuntimeError
   - StateError
+  - TypeError
 
 #[test]
 #[vfs]
@@ -282,3 +283,30 @@ def path_remove_supports_all_and_ignore()
     dir.remove all: true
     assert (!dir.exists())
     dir.remove ignore: true
+
+
+#[test]
+#[vfs]
+def text_write_rejects_binary_without_changing_file()
+  open restricted.txt w+ do |file|
+    file.write "unchanged"
+    assert_throws $TypeError do file.write b"bad"
+    assert_throws $TypeError do file.write b"bad" offset: 0
+    assert_eq $file.tell() 9
+    file.seek start: 0
+    assert_eq $file.read() "unchanged"
+
+#[test]
+#[vfs]
+def binary_write_accepts_utf8_strings()
+  open utf8.bin w+b do |file|
+    assert_eq (file.write "hé") 3
+    assert_eq (file.write "é" offset: 0) 2
+    assert_eq $file.tell() 3
+    file.seek start: 0
+    assert_eq $file.read() b"\xc3\xa9\xa9"
+    file.put 42
+    file.put "text"
+    file.put b"bytes"
+    file.seek start: 3
+    assert_eq $file.read() b"42textbytes"
