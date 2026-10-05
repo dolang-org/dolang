@@ -1392,24 +1392,44 @@ pub trait Object<'v>: Sized + 'v {
 
     /// Compares this object to another for greater-than ordering.
     /// # Default
-    /// Computes from [`lte`](Self::lte).
+    /// Computes [`lt`](Self::lt) with the operands reversed.
     fn gt<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        Ok(!Self::lte(this, strand, other)?)
+        strand.with_slots_sync(|strand, [mut receiver]| {
+            Output::set(strand, &mut receiver, this);
+            match other.op_lt_direct(strand, &receiver) {
+                Ok(value) => Ok(value.op_bool(strand)),
+                Err(error) if error.kind() == ErrorKind::Unsupported => Err(Error::type_error(
+                    strand,
+                    format!("comparison not supported: {}", Self::NAME),
+                )),
+                Err(error) => Err(error),
+            }
+        })
     }
 
     /// Compares this object to another for greater-than-or-equal ordering.
     /// # Default
-    /// Computes from [`lt`](Self::lt).
+    /// Computes [`lte`](Self::lte) with the operands reversed.
     fn gte<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        Ok(!Self::lt(this, strand, other)?)
+        strand.with_slots_sync(|strand, [mut receiver]| {
+            Output::set(strand, &mut receiver, this);
+            match other.op_lte_direct(strand, &receiver) {
+                Ok(value) => Ok(value.op_bool(strand)),
+                Err(error) if error.kind() == ErrorKind::Unsupported => Err(Error::type_error(
+                    strand,
+                    format!("comparison not supported: {}", Self::NAME),
+                )),
+                Err(error) => Err(error),
+            }
+        })
     }
 
     /// Unpacks values from this object according to the provided specification.

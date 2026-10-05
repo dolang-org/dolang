@@ -1,0 +1,56 @@
+# Distinct values in different groups are incomparable.
+class Partial
+  pub field group rank
+
+  def (init) self group rank
+    self.group = group
+    self.rank = rank
+
+  def (eq) self other
+    (self.group == other.group && self.rank == other.rank)
+
+  def (lt) self other
+    (self.group == other.group && self.rank < other.rank)
+
+let low = Partial a 1
+let high = Partial a 2
+let equal = Partial a 1
+let unordered = Partial b 1
+
+assert (high > low)
+assert (high >= low)
+assert_not (low > high)
+assert_not (low >= high)
+assert_not (low > equal)
+assert (low >= equal)
+assert_not (low < unordered)
+assert_not (low <= unordered)
+assert_not (low > unordered)
+assert_not (low >= unordered)
+assert_not (unordered > low)
+assert_not (unordered >= low)
+
+# Unsupported reflected comparisons must terminate with an error.
+class Unordered
+  field unused = nil
+let unsupported = Unordered()
+assert_throws $std.TypeError do (unsupported > unsupported)
+assert_throws $std.TypeError do (unsupported >= unsupported)
+assert_throws $std.TypeError do (unsupported > 1)
+assert_throws $std.TypeError do (unsupported >= 1)
+
+# Primitive comparisons also preserve unordered values.
+let nan = (0.0 / 0.0)
+assert_not (nan > 0)
+assert_not (nan >= 0)
+assert_not (nan > nan)
+assert_not (nan >= nan)
+
+let ascending = Range start: $low end: $high
+let descending = Range start: $high end: $low
+assert (ascending.contains low)
+assert (descending.contains high)
+assert_not (ascending.contains unordered)
+assert_not (descending.contains unordered)
+assert_not (Range(start: 0.0, end: 1.0).contains nan)
+assert_not (Range(start: 1.0, end: 0.0).contains nan)

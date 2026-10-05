@@ -313,13 +313,13 @@ impl<'v> Protocol<'v> for Range<'v> {
                 let is_decreasing = borrow.start.op_gt(strand, &borrow.end)?.to_bool(strand);
                 let contained = if is_increasing {
                     // Increasing: [start, end)
-                    let gte_start = !value.op_lt(strand, &borrow.start)?.to_bool(strand);
+                    let gte_start = borrow.start.op_lte(strand, &value)?.to_bool(strand);
                     let lt_end = value.op_lt(strand, &borrow.end)?.to_bool(strand);
                     gte_start && lt_end
                 } else if is_decreasing {
                     // Decreasing: (end, start]
                     let gt_end = borrow.end.op_lt(strand, &value)?.to_bool(strand);
-                    let lte_start = !borrow.start.op_lt(strand, &value)?.to_bool(strand);
+                    let lte_start = value.op_lte(strand, &borrow.start)?.to_bool(strand);
                     gt_end && lte_start
                 } else {
                     // Empty range: start == end, nothing is contained

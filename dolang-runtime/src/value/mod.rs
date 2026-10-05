@@ -806,6 +806,38 @@ impl<'v> Value<'v> {
         .unwrap_or(Value::TRUE)
     }
 
+    // Dispatch only to this operand: reflected comparison defaults must not
+    // retry the original operand when the reversed operation is unsupported.
+    pub(crate) fn op_lt_direct<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        match self.case() {
+            Case::Object(this) => this.op_lt(strand, other),
+            Case::Prim(this) => {
+                let other = other.to_prim(strand)?;
+                this.op_lt(strand, &other)
+                    .map(|v| Value::from_prim(strand, v))
+            }
+        }
+    }
+
+    pub(crate) fn op_lte_direct<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        match self.case() {
+            Case::Object(this) => this.op_lte(strand, other),
+            Case::Prim(this) => {
+                let other = other.to_prim(strand)?;
+                this.op_lte(strand, &other)
+                    .map(|v| Value::from_prim(strand, v))
+            }
+        }
+    }
+
     pub(crate) fn op_lt<'a, 's>(
         &self,
         strand: &'a mut Strand<'v, 's>,
