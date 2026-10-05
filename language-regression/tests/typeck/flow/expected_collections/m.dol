@@ -1,0 +1,39 @@
+# A collection literal takes what's expected of it from any supertype of its
+# class that the expectation names, through aliases, so its symbols stay exact
+
+@let Mount = Dict[{type: (:CACHE: | :BIND:), target: Str}]
+
+pub def one _m @ Mount
+  ...
+
+pub def many :mounts @ Iterable[Mount]
+  ...
+
+pub def maybe _m @ (Mount | nil)
+  ...
+
+pub def literals()
+  one {type: :CACHE:, target: "/var/cache"}
+  many mounts: [{type: :CACHE:, target: "/var/cache"}]
+  many
+    mounts:
+      - type: :BIND:
+        target: /src
+  maybe {type: :BIND:, target: "/src"}
+  let ms @ Iterable[Mount] = [{type: :CACHE:, target: "/var/cache"}]
+  let _ = ms
+  #       ^~: flow std.Array[std.Dict[{type: :BIND: | :CACHE:, target: std.Str}]]
+
+# An argument is reported once, however many of its parts don't fit
+pub def decayed()
+  let d = {type: :CACHE:, target: "/var/cache"}
+  one $d
+# error: expected `m.Mount`, found `std.Dict[{*(std.Sym): std.Str | std.Sym}]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   one $d
+#    |        ^
+#    |
+#    = note: `{*(std.Sym): std.Str | std.Sym}` may be missing `type: :BIND: | :CACHE:`
+#    = note: `std.Str | std.Sym` does not fit `:BIND: | :CACHE:`
+#    = note: in `{*(std.Sym): std.Str | std.Sym}`

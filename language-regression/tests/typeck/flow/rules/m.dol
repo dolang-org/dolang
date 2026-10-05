@@ -159,8 +159,10 @@ def bounded[U @ {a: Int}] _d @ Dict[U]
 # doesn't fit
 pub def outside_bound d @ Dict[{b: Int}]
   bounded $d
-# error: `std.Dict[{b: std.Int}]` does not fit this parameter: `{b: std.Int}` does not fit `{a: std.Int}`
+# error: `std.Dict[{b: std.Int}]` does not fit this parameter
 #   --> m.dol:LL:LL
 #    |
 # LL |   bounded $d
 #    |            ^
+#    |
+#    = note: `{b: std.Int}` may be missing `a: std.Int`

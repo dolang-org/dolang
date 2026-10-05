@@ -15,7 +15,7 @@
 //! run: its results are bottom. An item of a comprehension is the exception, since
 //! bottom only says that it occurs zero times.
 
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use super::{
     At, Flow, State,
@@ -28,8 +28,8 @@ use crate::{
         cfg::{Collection, Expr, ExprKind, FuncId, Item, Pattern, PatternItem, PatternKey, VarId},
         elab::Designated,
         solver::{
-            CallArgument, Contradiction, InferVarId, Issue, ObligationId, Outcome, PatternShape,
-            Provenance, Solver, Status, Step as Derivation, Term,
+            CallArgument, Contradiction, Diagnostic, InferVarId, Issue, ObligationId, Outcome,
+            PatternShape, Provenance, Solver, Status, Step as Derivation, Term,
         },
         r#type::{
             Argument, BoundRef, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
@@ -776,32 +776,46 @@ impl<'a> Flow<'a, '_> {
                     // The callee, or the value that doesn't fit
                     let actual = self.render_term(solver, relation.actual);
                     let problems: Vec<Problem> = match check {
-                        Check::Call { span, args } => (outcome.diagnostics.iter())
-                            .filter_map(|diagnostic| {
-                                let Issue::Contradiction(contradiction) = diagnostic.issue else {
-                                    return None;
-                                };
-                                Some(self.call_problem(
+                        // An argument is reported once, with a note for each of
+                        // its parts that doesn't fit
+                        Check::Call { span, args } => {
+                            let mut problems = Vec::new();
+                            for (path, contradiction) in causes(solver, &outcome.diagnostics) {
+                                let problem = self.call_problem(
                                     solver,
                                     *span,
                                     args,
-                                    &diagnostic.path,
+                                    &path,
                                     contradiction,
                                     &actual,
-                                ))
-                            })
-                            .collect(),
+                                );
+                                merge(&mut problems, problem);
+                            }
+                            problems
+                        }
                         &Check::Fits(span, misfit) => vec![Problem::Misfit {
                             span,
                             found: actual.clone().unwrap_or_else(|| "?".to_owned()),
                             misfit,
                         }],
-                        &Check::Expected(span) => vec![Problem::Argument {
-                            span,
-                            found: actual.clone().unwrap_or_else(|| "?".to_owned()),
-                            expected: self.render_term(solver, relation.expected),
-                            inner: None,
-                        }],
+                        &Check::Expected(span) => {
+                            let mut notes = Vec::new();
+                            for (path, contradiction) in causes(solver, &outcome.diagnostics) {
+                                let steps = steps(solver, &path);
+                                if let Some(note) =
+                                    self.cause(solver, &path, &steps, 0, contradiction)
+                                    && !notes.contains(&note)
+                                {
+                                    notes.push(note);
+                                }
+                            }
+                            vec![Problem::Argument {
+                                span,
+                                found: actual.clone().unwrap_or_else(|| "?".to_owned()),
+                                expected: self.render_term(solver, relation.expected),
+                                causes: notes,
+                            }]
+                        }
                         Check::Quiet => Vec::new(),
                     };
                     for problem in problems {
@@ -823,13 +837,7 @@ impl<'a> Flow<'a, '_> {
         contradiction: Contradiction,
         callee: &Option<String>,
     ) -> Problem {
-        let steps: Vec<Derivation> = (path.windows(2))
-            .filter_map(|pair| {
-                (solver.obligation(pair[0]).dependencies.iter())
-                    .find(|dependency| dependency.obligation == pair[1])
-                    .map(|dependency| dependency.step.clone())
-            })
-            .collect();
+        let steps = steps(solver, path);
         match contradiction {
             Contradiction::Conflict => return Problem::Conflict(span),
             Contradiction::Unadmitted(key) => {
@@ -872,29 +880,15 @@ impl<'a> Flow<'a, '_> {
                         _ => None,
                     });
                 // What fails may lie deeper than the argument's own relation, as
-                // in a binder's bound its type solves. A literal's class only
-                // restates the literal.
-                let mut end = path.len();
-                while end > params + 3 && matches!(steps[end - 2], Derivation::IntrinsicBacking(_))
-                {
-                    end -= 1;
-                }
-                let deepest = solver.obligation(path[end - 1]).relation;
-                let inner = (end > params + 3)
-                    .then(|| {
-                        let part = self.render_term(solver, deepest.actual)?;
-                        let bound = self.render_term(solver, deepest.expected)?;
-                        Some((part, bound))
-                    })
-                    .flatten()
-                    .filter(|(part, bound)| {
-                        (Some(part), Some(bound)) != (Some(&found), expected.as_ref())
-                    });
+                // in a binder's bound its type solves
+                let causes = (self.cause(solver, path, &steps, params + 2, contradiction))
+                    .into_iter()
+                    .collect();
                 Problem::Argument {
                     span: arg,
                     found,
                     expected,
-                    inner,
+                    causes,
                 }
             }
             None => match contradiction {
@@ -906,6 +900,110 @@ impl<'a> Flow<'a, '_> {
             },
             Some(_) => fallback,
         }
+    }
+
+    /// Notes on a contradiction below the relation at `path[start]`, which its
+    /// diagnostic shows: what doesn't fit what, then each type found around it,
+    /// innermost first. Each step that reverses a relation, as into a
+    /// contravariant position, swaps which of its sides is the found one. A
+    /// literal's class only restates the literal, and a contradiction of the
+    /// shown relation itself needs a note only to name an item.
+    fn cause(
+        &self,
+        solver: &Solver<'_>,
+        path: &[ObligationId],
+        steps: &[Derivation],
+        start: usize,
+        contradiction: Contradiction,
+    ) -> Option<Vec<String>> {
+        let mut end = path.len();
+        while end > start + 1 && matches!(steps[end - 2], Derivation::IntrinsicBacking(_)) {
+            end -= 1;
+        }
+        // Whether each obligation's expected side is the found one
+        let reversed: Vec<bool> = (steps[start..end - 1].iter())
+            .scan(false, |reversed, step| {
+                *reversed ^= step.reverses();
+                Some(*reversed)
+            })
+            .collect();
+        let reversed = |index: usize| index > start && reversed[index - start - 1];
+        let found_side = |index: usize| {
+            let relation = solver.obligation(path[index]).relation;
+            match reversed(index) {
+                false => relation.actual,
+                true => relation.expected,
+            }
+        };
+        let leaf = solver.obligation(path[end - 1]).relation;
+        let actual = self.render_term(solver, leaf.actual)?;
+        let expected = self.render_term(solver, leaf.expected)?;
+        let note = match (contradiction, reversed(end - 1)) {
+            (Contradiction::Missing(item), flipped) => {
+                match (self.schema_item(solver, leaf.expected, item), flipped) {
+                    (Some(item), false) => format!("`{actual}` may be missing {item}"),
+                    (Some(item), true) => {
+                        format!("`{expected}` requires {item}, which `{actual}` may be missing")
+                    }
+                    (None, _) => format!("`{actual}` may be missing an item of `{expected}`"),
+                }
+            }
+            (Contradiction::Excess(item), _) => match self.schema_item(solver, leaf.actual, item) {
+                Some(item) => format!("`{expected}` doesn't admit {item}"),
+                None => format!("`{expected}` doesn't admit every item of `{actual}`"),
+            },
+            _ if end == start + 1 => return None,
+            (_, false) => format!("`{actual}` does not fit `{expected}`"),
+            (_, true) => format!("`{expected}` doesn't accept `{actual}`"),
+        };
+        let mut notes = vec![note];
+        let shown = self.render_term(solver, found_side(start));
+        let mut last = self.render_term(solver, found_side(end - 1));
+        for index in (start + 1..end - 1).rev() {
+            // Only steps into a type's parts are where a reader can look
+            if !matches!(
+                steps[index - 1],
+                Derivation::Argument { .. }
+                    | Derivation::Parameters
+                    | Derivation::Return
+                    | Derivation::Input
+                    | Derivation::Output
+                    | Derivation::UnionMember(_)
+                    | Derivation::Item(_)
+                    | Derivation::Key(_)
+            ) {
+                continue;
+            }
+            let Some(around) = self.render_term(solver, found_side(index)) else {
+                continue;
+            };
+            if Some(&around) == last.as_ref() || Some(&around) == shown.as_ref() {
+                continue;
+            }
+            notes.push(format!("in `{around}`"));
+            last = Some(around);
+        }
+        Some(notes)
+    }
+
+    /// A schema's top-level item as a diagnostic names it: quoted without the
+    /// schema's braces, and called positional if it is
+    fn schema_item(&self, solver: &Solver<'_>, schema: Term, index: usize) -> Option<String> {
+        let ty = solver.reify(schema).ok()?;
+        let Type::Schema(items) = self.db.ty(ty) else {
+            return None;
+        };
+        let item = items.get(index)?;
+        let positional = matches!(item.element, Element::Positional(_));
+        let rendered = (self.tables).render_type(
+            self.db,
+            self.db.intern(Type::Schema(vec![item.clone()].into())),
+        );
+        let inner = rendered.strip_prefix('{')?.strip_suffix('}')?;
+        Some(match positional {
+            true => format!("positional `{inner}`"),
+            false => format!("`{inner}`"),
+        })
     }
 
     /// A term's type as a diagnostic shows it, if it's solved
@@ -1729,22 +1827,13 @@ impl<'a> Flow<'a, '_> {
             Collection::Record => Designated::Record,
         };
         let class = self.designated(role);
-        // Only a fresh array can widen its invariant element type to the
-        // expected read view. Type its items with `E`, and solve as `Array[E]`.
+        // Only a fresh array can widen its invariant element type to an expected
+        // supertype, such as `BaseArray[E]` or `Iterable[E]`. Type its items with
+        // `E`, and solve as `Array[E]`.
         let expected_array = match kind {
-            Collection::Array => expected.and_then(|ty| {
-                let class = class?;
-                self.applied(class, ty).or_else(|| {
-                    let base = self.designated(Designated::BaseArray)?;
-                    let (_, element) = self.applied(base, ty)?;
-                    let array = self.db.intern(Type::Apply {
-                        base: self.db.intern(Type::Decl(class)),
-                        args: vec![Argument::Positional(element)].into(),
-                        kind: Kind::Type,
-                    });
-                    Some((array, element))
-                })
-            }),
+            Collection::Array => {
+                expected.and_then(|ty| self.fresh_expected(class?, Kind::Type, ty))
+            }
             _ => None,
         };
         let params = expected_array.map(|(_, element)| Params {
@@ -1772,21 +1861,12 @@ impl<'a> Flow<'a, '_> {
         };
         let spread = self.designated(Designated::Spread);
         let int = self.intrinsic(Intrinsic::Int);
-        // A dict expected to be a `BaseDict[S]` is a `Dict[S]`, which only a fresh
-        // dict can be
+        // A dict expected to be a supertype of `Dict[S]`, such as `BaseDict[S]`, is
+        // a `Dict[S]`, which only a fresh dict can be
         let expected_dict = match kind {
-            Collection::Dict => expected.and_then(|ty| {
-                self.applied(class, ty).or_else(|| {
-                    let base = self.designated(Designated::BaseDict)?;
-                    let (_, schema) = self.applied(base, ty)?;
-                    let dict = self.db.intern(Type::Apply {
-                        base: self.db.intern(Type::Decl(class)),
-                        args: vec![Argument::Positional(schema)].into(),
-                        kind: Kind::Type,
-                    });
-                    Some((dict, schema))
-                })
-            }),
+            Collection::Dict => {
+                expected.and_then(|ty| self.fresh_expected(class, Kind::Schema, ty))
+            }
             _ => None,
         };
         let array_expected = expected_array.map(|(ty, _)| ty).or(expected);
@@ -1930,26 +2010,69 @@ impl<'a> Flow<'a, '_> {
         result[0]
     }
 
-    /// The one application of `class` to a single argument that `expected` is, or
-    /// that is a member of it: the application, and its argument
-    fn applied(&self, class: DeclId, expected: TypeId) -> Option<(TypeId, TypeId)> {
-        let db = self.db;
-        let applied = |ty: TypeId| match db.ty(ty) {
-            Type::Apply { base, args, .. } if *db.ty(*base) == Type::Decl(class) => {
-                match args[..] {
-                    [Argument::Positional(arg)] => Some((ty, arg)),
-                    _ => None,
-                }
+    /// What a fresh collection of `class` must be to be `expected`, or the one
+    /// alternative of it that the class reaches: `class` applied to the argument
+    /// the expectation gives, and that argument, of `kind`. `None` unless exactly
+    /// one alternative gives exactly one argument.
+    fn fresh_expected(
+        &self,
+        class: DeclId,
+        kind: Kind,
+        expected: TypeId,
+    ) -> Option<(TypeId, TypeId)> {
+        let argument = |expected: TypeId| {
+            if let Type::Unknown(_) = self.db.ty(expected) {
+                return None;
             }
-            _ => None,
+            let mut solver = self.solver();
+            let argument = solver.infer_kind(kind, Rest::All);
+            let mut holes = Holes {
+                db: self.db,
+                group: Vec::new(),
+            };
+            let hole = holes.hole(argument, kind);
+            let ty = holes.apply(class, vec![hole]);
+            let environment = solver.environment(solver.empty_environment(), holes.group);
+            let term = solver.view(ty, environment);
+            solver.constrain(term, solver.closed(expected), Provenance::default());
+            if (solver.solve().iter()).any(|outcome| outcome.status == Status::Contradicted) {
+                return None;
+            }
+            expectation(&solver, argument).filter(|&ty| !matches!(self.db.ty(ty), Type::Unknown(_)))
         };
-        let Type::Union(members) = db.ty(expected) else {
-            return applied(expected);
+        let mut alternatives = Vec::new();
+        let argument = if self.expand(expected, &mut alternatives, 0) {
+            let mut found = alternatives.into_iter().flatten().filter_map(argument);
+            let first = found.next()?;
+            found.next().is_none().then_some(first)?
+        } else {
+            argument(expected)?
         };
-        let mut found = (members.iter()).filter_map(|member| match *member {
-            UnionMember::Type(ty) => applied(ty),
-            _ => None,
+        let applied = self.db.intern(Type::Apply {
+            base: self.db.intern(Type::Decl(class)),
+            args: vec![Argument::Positional(argument)].into(),
+            kind: Kind::Type,
         });
+        Some((applied, argument))
+    }
+
+    /// The one application of `class` to a single argument that `expected` is, or
+    /// that is a member of it, seen through aliases: the application, and its
+    /// argument
+    fn applied(&self, class: DeclId, expected: TypeId) -> Option<(TypeId, TypeId)> {
+        let solver = self.solver();
+        let applied = |ty: TypeId| match solver.exposed_nominal(ty)? {
+            (decl, arguments) if decl == class => match arguments[..] {
+                [arg] => Some((ty, arg)),
+                _ => None,
+            },
+            _ => None,
+        };
+        let mut alternatives = Vec::new();
+        if !self.expand(expected, &mut alternatives, 0) {
+            return applied(expected);
+        }
+        let mut found = alternatives.into_iter().flatten().filter_map(applied);
         let first = found.next()?;
         found.next().is_none().then_some(first)
     }
@@ -2377,6 +2500,74 @@ fn spread_into(
 }
 
 /// The obligation of a contradicted constraint: the root of its diagnostics' paths
+/// The derivation steps along a path of obligations
+fn steps(solver: &Solver<'_>, path: &[ObligationId]) -> Vec<Derivation> {
+    (path.windows(2))
+        .filter_map(|pair| {
+            (solver.obligation(pair[0]).dependencies.iter())
+                .find(|dependency| dependency.obligation == pair[1])
+                .map(|dependency| dependency.step.clone())
+        })
+        .collect()
+}
+
+/// A contradicted check's contradictions, each with its path from the root.
+/// Members of a union that don't fit are the union's misfit when there are
+/// several, which is all the union's relation says.
+fn causes(
+    solver: &Solver<'_>,
+    diagnostics: &[Diagnostic],
+) -> Vec<(Vec<ObligationId>, Contradiction)> {
+    let member = |path: &[ObligationId]| match path {
+        [.., parent, child] => matches!(
+            steps(solver, &[*parent, *child])[..],
+            [Derivation::UnionMember(_)]
+        )
+        .then(|| path[..path.len() - 1].to_vec()),
+        _ => None,
+    };
+    let contradictions: Vec<_> = (diagnostics.iter())
+        .filter_map(|diagnostic| match diagnostic.issue {
+            Issue::Contradiction(contradiction) => Some((diagnostic.path.clone(), contradiction)),
+            Issue::Residual(_) => None,
+        })
+        .collect();
+    let mut members: HashMap<Vec<ObligationId>, usize> = HashMap::new();
+    for (path, _) in &contradictions {
+        if let Some(union) = member(path) {
+            *members.entry(union).or_default() += 1;
+        }
+    }
+    let mut causes = Vec::new();
+    for (path, contradiction) in contradictions {
+        let cause = match member(&path) {
+            Some(union) if members[&union] > 1 => (union, Contradiction::Outside),
+            _ => (path, contradiction),
+        };
+        if !causes.contains(&cause) {
+            causes.push(cause);
+        }
+    }
+    causes
+}
+
+/// Add a problem to a call's, as a note on the one already reported for its
+/// argument, if any
+fn merge(problems: &mut Vec<Problem>, problem: Problem) {
+    if let Problem::Argument { span, causes, .. } = &problem
+        && let Some(Problem::Argument { causes: notes, .. }) = (problems.iter_mut())
+            .find(|other| matches!(other, Problem::Argument { span: at, .. } if at == span))
+    {
+        for cause in causes {
+            if !notes.contains(cause) {
+                notes.push(cause.clone());
+            }
+        }
+    } else if !problems.contains(&problem) {
+        problems.push(problem);
+    }
+}
+
 fn root(outcome: &Outcome) -> ObligationId {
     outcome
         .diagnostics

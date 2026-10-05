@@ -165,7 +165,12 @@ impl From<Residual> for Issue {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Step {
-    Argument(usize),
+    /// A type argument by its index, relating the parent's expected argument
+    /// below its actual one if `reversed`, as for a contravariant binder
+    Argument {
+        index: usize,
+        reversed: bool,
+    },
     /// A function's parameter list, related contravariantly
     Parameters,
     Return,
@@ -196,6 +201,17 @@ pub(crate) enum Step {
     /// A skolem outside a variable's scope replaced by its bound, as the
     /// variable's lower bound
     Promotion,
+}
+
+impl Step {
+    /// Whether the child relates the parent's expected side below its actual
+    /// side, as a contravariant position does
+    pub(crate) fn reverses(&self) -> bool {
+        matches!(
+            self,
+            Step::Argument { reversed: true, .. } | Step::Parameters | Step::Input | Step::Output
+        )
+    }
 }
 
 /// Where an ancestor query ends
@@ -759,6 +775,19 @@ impl<'db> Solver<'db> {
             Ok(Head::Structural(view)) => self.reify(Term::View(view)).ok(),
             _ => None,
         }
+    }
+
+    /// The nominal declaration a closed type is, or is an application of, with any
+    /// transparent declaration expanded as [`Self::exposed`] does, and its
+    /// arguments. `None` if it isn't nominal.
+    pub(crate) fn exposed_nominal(&self, ty: TypeId) -> Option<(DeclId, Vec<TypeId>)> {
+        let Ok(Head::Nominal(nominal)) = self.head(self.closed(ty)) else {
+            return None;
+        };
+        let arguments = (nominal.arguments.into_iter())
+            .map(|argument| self.reify(argument).ok())
+            .collect::<Option<_>>()?;
+        Some((nominal.declaration, arguments))
     }
 
     /// Rebuild a closed canonical type, retaining references owned by local binders.
@@ -1524,7 +1553,7 @@ impl<'db> Solver<'db> {
         // A type argument's schema is the items a value holds, and a parameter
         // list binds by count. Bounds settle by count, the stricter reading.
         let language = match step {
-            Step::Argument(_) => true,
+            Step::Argument { .. } => true,
             Step::Parameters | Step::BoundPropagation | Step::Assignment => false,
             _ => self.obligations[parent.0].relation.language,
         };
@@ -2055,12 +2084,13 @@ impl<'db> Solver<'db> {
             .zip(binders.iter())
             .enumerate()
         {
+            let step = |reversed| Step::Argument { index, reversed };
             match binder.variance {
-                Variance::Covariant => self.derive(obligation, a, b, Step::Argument(index)),
-                Variance::Contravariant => self.derive(obligation, b, a, Step::Argument(index)),
+                Variance::Covariant => self.derive(obligation, a, b, step(false)),
+                Variance::Contravariant => self.derive(obligation, b, a, step(true)),
                 Variance::Invariant => {
-                    self.derive(obligation, a, b, Step::Argument(index));
-                    self.derive(obligation, b, a, Step::Argument(index));
+                    self.derive(obligation, a, b, step(false));
+                    self.derive(obligation, b, a, step(true));
                 }
             }
         }

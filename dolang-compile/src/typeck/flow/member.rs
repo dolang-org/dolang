@@ -275,7 +275,12 @@ impl Flow<'_, '_> {
 
     /// Add a union's alternatives to `alternatives`, expanding a union alias's.
     /// Whether `ty` is a union.
-    fn expand(&self, ty: TypeId, alternatives: &mut Vec<Option<TypeId>>, depth: usize) -> bool {
+    pub(super) fn expand(
+        &self,
+        ty: TypeId,
+        alternatives: &mut Vec<Option<TypeId>>,
+        depth: usize,
+    ) -> bool {
         // A union alias that expands to itself is ill-formed
         const DEPTH: usize = 16;
         let ty = match self.db.ty(ty) {

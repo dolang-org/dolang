@@ -268,11 +268,13 @@ pub def iterated d @ Dict[{a: Int, b: Str}] s @ Dict[{*(Str): Int}]
   # The keys are the schema's
   keyed $d.keys()
   keyed $s.keys()
-# error: expected `std.Iter[:a: | :b:]`, found `std.UnpackIter[std.Str]`: `std.Str` does not fit `:a: | :b:`
+# error: expected `std.Iter[:a: | :b:]`, found `std.UnpackIter[std.Str]`
 #   --> m.dol:LL:LL
 #    |
 # LL |   keyed $s.keys()
 #    |          ^^^^^^^^
+#    |
+#    = note: `std.Str` does not fit `:a: | :b:`
 
 pub def keyed ks @ Iter[(:a: | :b:)]
   ...
