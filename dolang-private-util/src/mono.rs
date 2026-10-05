@@ -300,6 +300,16 @@ impl<T> Default for MonoVec<T> {
     }
 }
 
+impl<T: Clone> Clone for MonoVec<T> {
+    fn clone(&self) -> Self {
+        let vec = Self::with_capacity(self.len());
+        for value in self.iter() {
+            vec.push(value.clone());
+        }
+        vec
+    }
+}
+
 impl<T, const C: usize> Drop for Inner<T, C> {
     fn drop(&mut self) {
         for chunk in 0..self.chunks {
@@ -567,6 +577,28 @@ impl<K, V, S: Default> Default for MonoHashMap<K, V, S> {
     }
 }
 
+/// A copy with the same entries at the same insertion indexes, so indexes taken
+/// from the original are valid in the copy.
+impl<K: Clone, V: Clone, S: Clone> Clone for MonoHashMap<K, V, S> {
+    fn clone(&self) -> Self {
+        Self {
+            entries: self.entries.clone(),
+            index: RefCell::new(self.index.borrow().clone()),
+            hasher: self.hasher.clone(),
+        }
+    }
+}
+
+impl<K: Clone, V: Clone> Clone for Entry<K, V> {
+    fn clone(&self) -> Self {
+        Self {
+            hash: self.hash,
+            key: self.key.clone(),
+            value: self.value.clone(),
+        }
+    }
+}
+
 /// A hash set that permits insertion through a shared reference.
 ///
 /// A [`MonoHashMap`] with `()` values, with the same guarantees and
@@ -656,6 +688,14 @@ impl<T, S: Default> Default for MonoHashSet<T, S> {
     }
 }
 
+impl<T: Clone, S: Clone> Clone for MonoHashSet<T, S> {
+    fn clone(&self) -> Self {
+        Self {
+            map: self.map.clone(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -735,6 +775,21 @@ mod test {
             assert!(!map.is_indexed(2 * i + 1));
             assert_eq!(map.get_index(2 * i + 1), Some((&i, &())));
         }
+    }
+
+    #[test]
+    fn map_clone_keeps_indexes() {
+        let map = MonoHashMap::new();
+        for i in 0..SIZE {
+            map.try_insert(i.to_string(), i).unwrap();
+        }
+        let copy = map.clone();
+        copy.try_insert(String::from("new"), SIZE).unwrap();
+        assert!(!map.contains_key("new"));
+        for i in 0..SIZE {
+            assert_eq!(copy.get_index_of(i.to_string().as_str()), Some(i));
+        }
+        assert_eq!(copy.get_index_of("new"), Some(SIZE));
     }
 
     #[test]
