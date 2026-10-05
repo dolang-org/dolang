@@ -86,7 +86,7 @@ impl<'a> Rule<'_, 'a> {
             (true, Some((ty, holes))) => (*ty, holes),
             _ => (lambda.ty, &lambda.holes),
         };
-        let group = (holes.iter())
+        let group: Vec<Term> = (holes.iter())
             .map(|&hole| {
                 let term = self.solver.infer();
                 match hole {
@@ -96,10 +96,23 @@ impl<'a> Rule<'_, 'a> {
                 term
             })
             .collect();
-        let environment = self
-            .solver
-            .environment(self.solver.empty_environment(), group);
-        self.solver.view(ty, environment)
+        let empty = self.solver.empty_environment();
+        // Its known result doesn't choose among alternatives either
+        let twin = match (self.blind, &lambda.blinded) {
+            (false, Some((blinded, _))) => {
+                let mut twin = group.clone();
+                twin.push(self.solver.infer());
+                let environment = self.solver.environment(empty, twin);
+                Some(self.solver.view(*blinded, environment))
+            }
+            _ => None,
+        };
+        let environment = self.solver.environment(empty, group);
+        let term = self.solver.view(ty, environment);
+        if let Some(twin) = twin {
+            self.solver.blind(term, twin);
+        }
+        term
     }
 
     /// A fresh variable standing for an argument held back
@@ -682,15 +695,39 @@ impl<'a> Flow<'a, '_> {
             let rejected = seeded && outcomes[checks.len()].status == Status::Contradicted;
             (solver, results, checks, lambdas, outcomes, rejected)
         };
-        let attempt = |default: bool| {
-            let (solver, results, checks, lambdas, outcomes, rejected) = run(true, default);
-            if rejected {
-                let (solver, results, checks, lambdas, outcomes, _) = run(false, default);
-                return (solver, results, checks, lambdas, outcomes);
-            }
-            (solver, results, checks, lambdas, outcomes)
+        let contradicts = |checks: &[Check], outcomes: &[Outcome]| {
+            (outcomes[..checks.len()].iter()).any(|outcome| outcome.status == Status::Contradicted)
         };
-        let (mut solver, mut results, mut checks, mut lambdas, mut outcomes) = attempt(false);
+        // The expectation mustn't choose for the rule, as by rejecting the
+        // alternative a union parameter's argument fits, so a run it contradicts
+        // gives way to one without it that isn't. Defaulting can hide what it
+        // contradicted, so the run that defaults keeps the first run's choice,
+        // unless the expectation itself is contradicted.
+        let attempt = |default: bool, choice: Option<bool>| {
+            let seeded = run(true, default);
+            let (_, _, checks, _, outcomes, rejected) = &seeded;
+            let unseed = match choice {
+                _ if *rejected => true,
+                Some(seed) => !seed,
+                None if contradicts(checks, outcomes) => {
+                    let unseeded = run(false, default);
+                    let (_, _, checks, _, outcomes, _) = &unseeded;
+                    if !contradicts(checks, outcomes) {
+                        let (solver, results, checks, lambdas, outcomes, _) = unseeded;
+                        return (solver, results, checks, lambdas, outcomes, false);
+                    }
+                    false
+                }
+                None => false,
+            };
+            let (solver, results, checks, lambdas, outcomes, _) = match unseed {
+                true => run(false, default),
+                false => seeded,
+            };
+            (solver, results, checks, lambdas, outcomes, !unseed)
+        };
+        let (mut solver, mut results, mut checks, mut lambdas, mut outcomes, seeded) =
+            attempt(false, None);
         let contradicted =
             (outcomes[..checks.len()].iter()).any(|outcome| outcome.status == Status::Contradicted);
         // A check left unresolved may be decided by defaulting
@@ -702,7 +739,7 @@ impl<'a> Flow<'a, '_> {
         let values: Vec<TypeId> = match reified {
             Some(values) if !contradicted && !unresolved => values,
             _ if self.defaulting || self.observing() => {
-                (solver, results, checks, lambdas, outcomes) = attempt(true);
+                (solver, results, checks, lambdas, outcomes, _) = attempt(true, Some(seeded));
                 (results.iter())
                     .map(|&term| solver.reify(term).unwrap_or(self.db.unknown()))
                     .collect()

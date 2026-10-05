@@ -25,6 +25,7 @@
 
 import std:
   - @BaseDict
+  - @Unpack
 
 import shell
 import fs:
@@ -141,7 +142,7 @@ pub @let Handler = (Args -> Value)
 # ```
 # let :format :file = p
 # ```
-pub class Args
+pub class Args: @Unpack[Sym, Value]
   field values
 
   def (init) self values

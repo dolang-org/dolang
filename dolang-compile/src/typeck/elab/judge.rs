@@ -646,6 +646,17 @@ impl Tables<'_> {
                     .map(|member| {
                         let mut out = String::new();
                         match member {
+                            // A function's result would take the members after it
+                            UnionMember::Type(ty)
+                                if matches!(
+                                    db.ty(*ty),
+                                    Type::Function(_) | Type::Quantified { .. }
+                                ) =>
+                            {
+                                out.push('(');
+                                self.render_into(db, *ty, names, depth, &mut out);
+                                out.push(')');
+                            }
                             UnionMember::Type(ty) => {
                                 self.render_into(db, *ty, names, depth, &mut out)
                             }
