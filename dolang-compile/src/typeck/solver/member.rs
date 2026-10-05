@@ -222,8 +222,15 @@ impl Solver<'_> {
                 }
                 Type::Function(_) => Intrinsic::Func,
                 Type::Literal(literal) => literal.intrinsic(),
-                // A union's members are judged by #742's policy
-                _ => return Err(Residual::Unsupported("a member of a union receiver").into()),
+                // Flow makes a use of a union's member of each alternative
+                Type::Union(_) => {
+                    return Err(Residual::Unsupported("a member of a union receiver").into());
+                }
+                // Such as a generic class object
+                _ if ty != view.ty => {
+                    return Err(Residual::Unsupported("a member of a quantified type").into());
+                }
+                _ => return Err(Residual::Unsupported("a member of a structural type").into()),
             };
             let Some(backing) = self.db.intrinsic(intrinsic) else {
                 return Err(Residual::MissingIntrinsic(intrinsic).into());

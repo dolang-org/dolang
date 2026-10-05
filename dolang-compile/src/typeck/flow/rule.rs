@@ -957,18 +957,43 @@ impl<'a> Flow<'a, '_> {
         leading: &[(TypeId, Span)],
         call: Call<'_>,
     ) -> TypeId {
+        let targets = self.value_targets(callee, leading, call.span);
+        self.call_targets(at, state, operands, targets, call)
+    }
+
+    /// The targets calling `callee` reaches, passing `leading` before the call's
+    /// own arguments: one for each alternative of a union
+    pub(super) fn value_targets(
+        &mut self,
+        callee: (TypeId, Span),
+        leading: &[(TypeId, Span)],
+        span: Span,
+    ) -> Vec<CallTarget> {
         let mut targets = match self.db.ty(callee.0) {
             Type::Union(members) if callee.0 != self.db.bottom() => (members.iter())
                 .map(|member| match *member {
-                    UnionMember::Type(ty) => self.call_target((ty, callee.1), call.span),
-                    _ => self.call_target((self.db.unknown(), callee.1), call.span),
+                    UnionMember::Type(ty) => self.call_target((ty, callee.1), span),
+                    _ => self.call_target((self.db.unknown(), callee.1), span),
                 })
                 .collect(),
-            _ => vec![self.call_target(callee, call.span)],
+            _ => vec![self.call_target(callee, span)],
         };
         for target in &mut targets {
             target.receivers.extend_from_slice(leading);
         }
+        targets
+    }
+
+    /// A call through each of `targets`, which must all take it. Several are
+    /// called as [`Flow::call_union`] says.
+    pub(super) fn call_targets(
+        &mut self,
+        at: At,
+        state: &mut State,
+        operands: &mut VecDeque<TypeId>,
+        targets: Vec<CallTarget>,
+        call: Call<'_>,
+    ) -> TypeId {
         match <[CallTarget; 1]>::try_from(targets) {
             Ok([target]) => {
                 let receivers = &target.receivers;

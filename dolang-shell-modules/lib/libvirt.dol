@@ -711,7 +711,7 @@ def require_disk_mode value allowed name
 def normalized_app app
   let candidate = (app || shell.program || "dolang-libvirt")
   let value = if (type candidate Path)
-    (candidate.stem || candidate.name)
+    (candidate.stem || candidate.name || "")
   else
     str $candidate
   let value = value.replace("/", "_").replace("\\", "_")
@@ -1563,7 +1563,9 @@ class DomainImpl
   # which is created along with any missing parent directories.
   pub def screenshot self destination -> Path
     let destination = Path(destination).absolute()
-    destination.parent.create_dir all: true
+    let parent = destination.parent
+    if parent
+      parent.create_dir all: true
     # QEMU dumps the console as PNG for the video models this module emits,
     # whatever the file it is asked to write is called.
     virsh $self.connect_uri screenshot $self.name --file $destination
@@ -2445,7 +2447,9 @@ def prepared_image source root
 
 def image_format image
   let output = sub do cli qemu-img info --output json -- $image
-  let format = json.decode(output).get "format"
+  let info = json.decode $output
+  let format = if (type info Dict)
+    info.get "format"
   if (format == nil)
     throw std.ValueError "qemu-img did not report an image format"
   str $format
@@ -2966,7 +2970,9 @@ def build_provision_iso root files
         staging.create_dir all: true
         for name = names
           let target = (staging / name)
-          target.parent.create_dir all: true
+          let parent = target.parent
+          if parent
+            parent.create_dir all: true
           let value = files[name]
           if (type value Path)
             target.write $(value.read "b")

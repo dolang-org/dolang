@@ -752,6 +752,15 @@ impl<'db> Solver<'db> {
             .filter_map(|(i, b)| b.assignment.get().is_none().then_some(InferVarId(i)))
     }
 
+    /// A closed type with any transparent declaration it's an application of
+    /// expanded, as a union alias is to its union. `None` if it isn't structural.
+    pub(crate) fn exposed(&self, ty: TypeId) -> Option<TypeId> {
+        match self.head(self.closed(ty)) {
+            Ok(Head::Structural(view)) => self.reify(Term::View(view)).ok(),
+            _ => None,
+        }
+    }
+
     /// Rebuild a closed canonical type, retaining references owned by local binders.
     pub(crate) fn reify(&self, term: Term) -> Result<TypeId, Residual> {
         self.reify_scoped(term, 0, 0)

@@ -945,8 +945,17 @@ The rules are:
   `(rmod)`) otherwise. `==`, `!=` and `!` are `Bool`, and the comparisons
   require `(lt)` and are `Bool`. A missing member, and a
   read or write its kind doesn't allow, are reported. A lookup that can't
-  decide, such as on a union receiver, is an unresolved check. An overloaded
-  method is dynamic except where it's called.
+  decide is an unresolved check. An overloaded method is dynamic except where
+  it's called.
+- A use of a union's member, including a union alias's, is made of each
+  alternative, and every alternative must have the member. A call through it
+  calls each alternative's member as a union callee is called, its arguments
+  evaluated once; a read joins what each alternative gives; and a write is
+  checked against each, its value expected to be the fields' type only if they
+  agree. An operator dispatches on each alternative of its left operand, so one
+  that lacks the method reaches the right operand's. The alternatives a use
+  finds without the member are reported together, naming the union. An
+  alternative that projects a schema is an unresolved check.
 - A class object is called as its class-level `(call)`, if it has one, and
   otherwise as its constructor: `(init)`, looked up on the class applied to its
   rigids, without its receiver and giving the instance, with the rigids

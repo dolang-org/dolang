@@ -1,0 +1,167 @@
+# A use of a union's member is made of each alternative, all of which must have
+# it: an alternative without it is reported, and the others are still checked.
+# The use gives what its alternatives give.
+
+import json:
+  - @Data
+
+pub class Cat
+  pub field name @ Str = ""
+  pub field lives @ Int = 9
+
+  pub def speak self -> Str
+    # warning: unused variable
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def speak self -> Str
+    #    |                 ^^^^
+    "meow"
+
+  #[getter]
+  pub def age self -> Int
+    ...
+
+  pub def (add) self other @ Int -> Cat
+    ...
+
+pub class Dog
+  pub field name @ Str = ""
+  pub field lives @ Str = ""
+
+  pub def speak self -> Sym
+    # warning: unused variable
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def speak self -> Sym
+    #    |                 ^^^^
+    :woof:
+
+  #[getter]
+  pub def age self -> Str
+    ...
+
+  pub def (add) self other @ Int -> Dog
+    ...
+
+  pub def (index) self key @ Int -> Str
+    ...
+
+pub class Rock
+
+pub class Dir
+  pub def (div) self other @ (Str | Dir) -> Dir
+    ...
+
+  pub def (rdiv) self other @ Str -> Dir
+    ...
+
+# Without narrowing, `nil` has none of `Int`'s members
+pub def optional v @ (Int | nil)
+  let _ = v.abs()
+  # error: `nil` in `nil | std.Int` has no member `abs`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = v.abs()
+  #    |           ^^^^^^^
+  if v
+    let a = v.abs()
+    let _ = a
+    #       ^: flow std.Int
+
+# Each alternative's method is called, and the results are joined
+pub def methods p @ (Cat | Dog)
+  let s = p.speak()
+  let _ = s
+  #       ^: flow std.Str | std.Sym
+  let _ = p.speak 1
+# error: the callee takes no such argument
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ = p.speak 1
+#    |                   ^
+
+# Fields and properties are read from each alternative
+pub def reads p @ (Cat | Dog)
+  let n = p.name
+  let _ = n
+  #       ^: flow std.Str
+  let l = p.lives
+  let _ = l
+  #       ^: flow std.Int | std.Str
+  let a = p.age
+  let _ = a
+  #       ^: flow std.Int | std.Str
+
+# A write must fit every alternative's field
+pub def writes p @ (Cat | Dog)
+  p.name = "Tom"
+  p.lives = 3
+# error: expected `std.Str`, found `3`
+#   --> m.dol:LL:LL
+#    |
+# LL |   p.lives = 3
+#    |             ^
+
+# A missing member is reported for the alternative without it
+pub def missing p @ (Cat | Rock)
+  let _ = p.speak()
+  # error: `m.Rock` in `m.Cat | m.Rock` has no member `speak`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = p.speak()
+  #    |           ^^^^^^^^^
+  let _ = p.name
+# error: `m.Rock` in `m.Cat | m.Rock` has no member `name`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ = p.name
+#    |           ^^^^^^
+
+# Operators dispatch on each alternative of the left operand
+pub def operators p @ (Cat | Dog) n @ (Int | Str)
+  let q = (p + 1)
+  let _ = q
+  #       ^: flow m.Cat | m.Dog
+  let _ = (p + "a")
+  # error: expected `std.Int`, found `"a"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = (p + "a")
+  #    |                ^^^
+  let _ = (n + 1)
+
+# An alternative without the operator dispatches on the right operand
+pub def reflected x @ (Dir | Str) d @ Dir
+  let y = (x / d)
+  let _ = y
+  #       ^: flow m.Dir
+
+# Indexing calls each alternative's `(index)`
+pub def indexed p @ (Cat | Dog) a @ (Array[Int] | Array[Str])
+  let _ = p[0]
+  # error: `m.Cat` in `m.Cat | m.Dog` has no member `(index)`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = p[0]
+  #    |           ^^^^
+  let c = a[0]
+  let _ = c
+  #       ^: flow std.Int | std.Str
+
+# A union alias's alternatives are its union's
+pub def decoded d @ Data
+  let _ = d["key"]
+  # error: `nil`, `std.Bool`, `std.Float` and `std.Int` in `json.Data` have no member `(index)`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = d["key"]
+  #    |           ^^^^^^^^
+  # error: this call selects by `"key"`, which isn't one of the schema's keys
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = d["key"]
+  #    |           ^^^^^^^^
+  if (type(d, Dict))
+    let v = d["key"]
+    let _ = v
+    #       ^: flow Unknown
