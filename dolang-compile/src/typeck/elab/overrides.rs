@@ -10,7 +10,10 @@
 //! as a protocol's supertypes are claims too.
 //!
 //! Every check is local: it assumes only the declaration's own bounds, and no
-//! verdict is cached. A check the solver can't decide is returned as unresolved.
+//! verdict is cached. Each is solved on its own fork of a solver holding the
+//! declaration's rigids, with its own budget, so a class with many members
+//! doesn't exhaust one budget for all of them. A check the solver can't decide is
+//! returned as unresolved.
 
 use std::collections::HashMap;
 
@@ -22,8 +25,8 @@ use crate::{
     source::Span,
     typeck::{
         solver::{
-            ConstraintId, Inheritance, Issue, Outcome, Provenance, Requirement, RequirementKind,
-            Residual, Solver, Status,
+            Inheritance, Issue, Provenance, Requirement, RequirementKind, Residual, Solver, Status,
+            Term,
         },
         r#type::{
             Argument, Database, DeclId, DeclKind, Kind, MemberKey, Scope, Type, TypeId, UnitId,
@@ -68,11 +71,11 @@ struct Check<'a, 'u> {
     unresolved: &'a mut Vec<Unresolved>,
 }
 
-/// A check whose judgments are constrained, to be reported once solved
+/// A check whose judgments are to be solved together and reported
 struct Pending {
     span: Span,
-    /// The judgments' constraints, all of which must hold
-    constraints: Vec<ConstraintId>,
+    /// The judgments, each actual below its expected, all of which must hold
+    pairs: Vec<(Term, Term)>,
     message: String,
 }
 
@@ -111,7 +114,7 @@ impl Check<'_, '_> {
                     && requirement.provider == Some(requirement.required)
                     && db.declaration(requirement.required).source.kind == DeclKind::Class;
                 if !claimed {
-                    self.requirement(&mut solver, &mut pending, &spans, span, requirement);
+                    self.requirement(&mut pending, &spans, span, requirement);
                 }
             }
             // A claim doesn't make the runtime inherit what it names
@@ -122,26 +125,19 @@ impl Check<'_, '_> {
                 match solver.claimed_classes(solver.closed(instance), supertype) {
                     Ok(classes) => {
                         for (class, inheritance) in classes {
-                            self.inheritance(
-                                &mut solver,
-                                &mut pending,
-                                span,
-                                name,
-                                class,
-                                inheritance,
-                            );
+                            self.inheritance(&mut pending, span, name, class, inheritance);
                         }
                     }
                     Err(issue) => self.undecided(span, issue),
                 }
             }
         }
-        let outcomes = solver.solve();
         for check in pending {
-            let outcomes: Vec<&Outcome> = outcomes
-                .iter()
-                .filter(|outcome| check.constraints.contains(&outcome.constraint))
-                .collect();
+            let mut fork = solver.clone();
+            for (actual, expected) in check.pairs {
+                fork.constrain(actual, expected, Provenance::default());
+            }
+            let outcomes = fork.solve();
             if outcomes.iter().any(|o| o.status == Status::Contradicted) {
                 self.report(check.span, check.message);
             } else if let Some(outcome) = outcomes.iter().find(|o| o.status == Status::Unresolved) {
@@ -174,7 +170,6 @@ impl Check<'_, '_> {
     /// Relate or report what a supertype's member requires
     fn requirement(
         &mut self,
-        solver: &mut Solver<'_>,
         pending: &mut Vec<Pending>,
         spans: &HashMap<(MemberKey, bool), Span>,
         supertype: Span,
@@ -197,15 +192,9 @@ impl Check<'_, '_> {
         };
         match requirement.kind {
             RequirementKind::Relate(pairs) => {
-                let constraints = pairs
-                    .into_iter()
-                    .map(|(actual, expected)| {
-                        solver.constrain(actual, expected, Provenance::default())
-                    })
-                    .collect();
                 pending.push(Pending {
                     span,
-                    constraints,
+                    pairs,
                     message: format!("{subject} does not match `{required}`"),
                 });
             }
@@ -231,7 +220,6 @@ impl Check<'_, '_> {
     /// Relate or report how a class inherits a class its claim names
     fn inheritance(
         &mut self,
-        solver: &mut Solver<'_>,
         pending: &mut Vec<Pending>,
         span: Span,
         claim: &str,
@@ -247,10 +235,9 @@ impl Check<'_, '_> {
                 self.report(span, message);
             }
             Inheritance::Relate(actual, expected) => {
-                let constraint = solver.constrain(actual, expected, Provenance::default());
                 pending.push(Pending {
                     span,
-                    constraints: vec![constraint],
+                    pairs: vec![(actual, expected)],
                     message: format!(
                         "`{own}` inherits `{named}` with arguments `{claim}` does not allow"
                     ),
