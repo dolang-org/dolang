@@ -47,6 +47,8 @@ pub def not_array()
 #    |
 # LL |   let _ @ BaseDict[progress.Colors] = {attrs: (:BOLD:,)}
 #    |                                       ^^^^^^^^^^^^^^^^^^
+#    |
+#    = note: `std.Tuple[{:BOLD:}]` does not fit `std.BaseArray[progress.Attr]`
 
 pub def decoded()
   let data = json.decode "[]"

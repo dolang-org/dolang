@@ -158,3 +158,5 @@ pub def wrong c @ Bool xs @ Array[Int]
 # LL | /     - (do |y| y)
 # LL | |     name: 1
 #    | |___________^
+#    |
+#    = note: `1` does not fit `std.Str`

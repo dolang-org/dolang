@@ -38,13 +38,15 @@ pub def callback()
   # What a block gives doesn't choose, but is checked against what's chosen
   text do |x|
     x
-# error: expected `((std.Int) <m.callback.#0 >m.callback.#1 -> std.Str) | nil`, found `(std.Int) <m.callback.#0 >m.callback.#1 -> std.Int`: `std.Int` does not fit `std.Str`
+# error: expected `((std.Int) <m.callback.#0 >m.callback.#1 -> std.Str) | nil`, found `(std.Int) <m.callback.#0 >m.callback.#1 -> std.Int`
 #   --> m.dol:LL:LL
 #    |
 # LL |     text do |x|
 #    |  ________^
 # LL | |     x
 #    | |_____^
+#    |
+#    = note: `std.Int` does not fit `std.Str`
 
 pub def collection a @ Array[Int]
   let _ = boxed $a

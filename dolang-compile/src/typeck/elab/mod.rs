@@ -375,14 +375,8 @@ pub(crate) enum Designated {
     Bin,
     /// `std.Array`, the class of an array literal
     Array,
-    /// `std.BaseArray`, the read-only half of `std.Array` that an array literal
-    /// may be expected to be
-    BaseArray,
     /// `std.Dict`, the class of a dict literal
     Dict,
-    /// `std.BaseDict`, the read-only half of `std.Dict` that a dict literal may be
-    /// expected to be
-    BaseDict,
     /// `std.Record`, the class of a record literal
     Record,
     /// `std.Range`, the class of a range

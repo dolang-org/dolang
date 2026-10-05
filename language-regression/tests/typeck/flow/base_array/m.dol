@@ -12,11 +12,13 @@ pub def covariance items @ Array[Str] view @ BaseArray[Str]
   reads $items
   reads $view
   writes $items
-  # error: expected `std.Array[std.Str | std.Sym]`, found `std.Array[std.Str]`: `std.Sym` does not fit `std.Str`
+  # error: expected `std.Array[std.Str | std.Sym]`, found `std.Array[std.Str]`
   #   --> m.dol:LL:LL
   #    |
   # LL |   writes $items
   #    |           ^^^^^
+  #    |
+  #    = note: `std.Str` doesn't accept `std.Sym`
   writes $view
   # error: expected `std.Array[std.Str | std.Sym]`, found `std.BaseArray[std.Str]`
   #   --> m.dol:LL:LL
@@ -186,8 +188,10 @@ pub def literal_call()
   reads ["a"]
   reads []
   reads [1]
-# error: expected `std.BaseArray[std.Str | std.Sym]`, found `std.Array[std.Int]`: `std.Int` does not fit `std.Str | std.Sym`
+# error: expected `std.BaseArray[std.Str | std.Sym]`, found `std.Array[std.Int]`
 #   --> m.dol:LL:LL
 #    |
 # LL |   reads [1]
 #    |         ^^^
+#    |
+#    = note: `std.Int` does not fit `std.Str | std.Sym`

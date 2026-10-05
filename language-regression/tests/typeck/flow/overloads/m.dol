@@ -86,11 +86,13 @@ pub def chosen p @ Picker x u @ (Int | Str)
   # A block's result doesn't choose, but is checked against what's chosen
   let _ = p.each 1 do |v| v
   #   ^: flow std.Str
-# error: expected `(std.Int) <m.chosen.#0 >m.chosen.#1 -> std.Str`, found `(std.Int) <m.chosen.#0 >m.chosen.#1 -> std.Int`: `std.Int` does not fit `std.Str`
+# error: expected `(std.Int) <m.chosen.#0 >m.chosen.#1 -> std.Str`, found `(std.Int) <m.chosen.#0 >m.chosen.#1 -> std.Int`
 #   --> m.dol:LL:LL
 #    |
 # LL |   let _ = p.each 1 do |v| v
 #    |                    ^^^^^^^^
+#    |
+#    = note: `std.Int` does not fit `std.Str`
 
 @def twice x @ Int -> Int
 @def twice x @ Str -> Str

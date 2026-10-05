@@ -850,28 +850,36 @@ preserves its value type, and width and precision are still checked as `Int`.
 The rules are:
 
 - A call constrains its callee below `Solver::call_items` of its arguments,
-  passing the caller's declared channels. A non-function callee calls its
-  `(call)` special method, passing the receiver first as a method call does. A
-  known missing method is diagnosed; an unknown callee stays untyped. Calling
-  a member's value, such as a field's or a getter's result, dispatches the
-  same way (`Flow::call_target`). A union calls each alternative and joins
-  their results. Its arguments are evaluated once, and each alternative
-  selects its own overload and solves its call separately, preserving its
-  receiver's argument indexes in diagnostics. A held argument takes an
-  expectation only when all alternatives agree on it.
-  What its arguments are expected to be comes from the callee's parameters. A
-  parameter that mentions the callee's binders gives an expectation only once
-  the call is solved, so a collection literal, call or template passed to it
-  is held back: a pre-solve stands a fresh variable for it and solves the call
-  without it. A variable the held arguments can't raise takes its least solution
+  passing the caller's declared channels. An argument that doesn't fit is
+  reported once, with notes for each contradiction beneath its relation: what
+  doesn't fit what, or the schema item that may be missing or isn't admitted,
+  then a trailing note for each type found around it, through the derivation
+  steps into a type's parts. A step that reverses its relation, into a
+  contravariant position or the reverse half of an invariant argument
+  (`Step::reverses`), swaps which side is found. Union members that don't fit,
+  if several do, are noted as their union. A collection literal that doesn't
+  fit what's expected of it is reported the same way. A non-function callee
+  calls its `(call)` special method, passing the receiver first as a method
+  call does. A known missing method is diagnosed; an unknown callee stays
+  untyped. Calling a member's value, such as a field's or a getter's result,
+  dispatches the same way (`Flow::call_target`). A union calls each
+  alternative and joins their results. Its arguments are evaluated once, and
+  each alternative selects its own overload and solves its call separately,
+  preserving its receiver's argument indexes in diagnostics. A held argument
+  takes an expectation only when all alternatives agree on it. What its
+  arguments are expected to be comes from the callee's parameters. A parameter
+  that mentions the callee's binders gives an expectation only once the call
+  is solved, so a collection literal, call or template passed to it is held
+  back: a pre-solve stands a fresh variable for it and solves the call without
+  it. A variable the held arguments can't raise takes its least solution
   (`Solver::raised`), since whatever supplies a function takes its parameters
   and channels from what's expected of it. Then each held argument is
   evaluated expecting its parameter, if what's forced or chosen solves it. The
   pre-solve never makes a variable dynamic, so a binder only a held argument
-  determines gives it no expectation.
-  A held template supplies a cached preliminary type with its interpolated
-  values and distinct hole names. Pre-solving uses that shape, then its hole
-  types take the solved expectation without evaluating its parts again.
+  determines gives it no expectation. A held template supplies a cached
+  preliminary type with its interpolated values and distinct hole names.
+  Pre-solving uses that shape, then its hole types take the solved expectation
+  without evaluating its parts again.
 - A call through an overloaded function, a method or a def, chooses among its
   `@def` overloads, a stopgap until union calls are solved (#742). Its
   arguments are evaluated once, each one that takes an expectation held back,
@@ -893,20 +901,21 @@ The rules are:
   schema's items, so that the solver never has to repeat or leave out an
   inclusion of several items.
 - An array, dict, tuple or record literal builds its designated class over
-  inference variables for its items, a spread through `Spread[S]`. An array
-  joins every item into its element type, however often it occurs, and expects
-  each item to be the element of an expected `Array[E]` or `BaseArray[E]`.
-  A fresh array expected to be `BaseArray[E]` is inferred as `Array[E]`, so
-  its invariant element type can widen to the expectation. `BaseArray` is the
-  covariant read-only half of `Array`; both names export the same runtime
-  class. A dict joins its items
+  inference variables for its items, a spread through `Spread[S]`. What's
+  expected of an array or dict comes from solving `Array[E]` or `Dict[S]` below
+  the expected type, through aliases, or below the one member of a union for
+  which that gives an argument: `E` or `S` is the argument's single upper bound,
+  if it has one. So an expected supertype, such as `BaseArray[E]` (the covariant
+  read-only half of `Array`) or `Iterable[E]`, gives one, as `Array[E]` does.
+  An array joins every item into its element type, however often it occurs,
+  and expects each item to be `E`. It's inferred as `Array[E]`, so its
+  invariant element type can widen to the expectation. A dict joins its items
   into `Dict[{*(K): V}]`, so that a local it's assigned to can gain entries,
-  unless it's expected to be a `Dict[S]` or a `BaseDict[S]` (alone or as one
-  member of a union): then its items' own schema, built as a call's arguments
-  are, must be below `S`, and it's `Dict[S]`. `std.BaseDict` is `Dict`'s
-  covariant, read-only half, a separate class only to the checker: the runtime
-  exports `Dict` under both names. Tuples and records have no vertical form, so
-  they hold no comprehension.
+  unless it has an expectation: then its items' own schema, built as a call's
+  arguments are, must be below `S`, and it's `Dict[S]`. `std.BaseDict` and
+  `std.BaseArray` are separate classes only to the checker: the runtime exports
+  `Dict` and `Array` under both names. Tuples and records have no vertical
+  form, so they hold no comprehension.
 - A `do` block among a call's arguments, or a collection's items when the
   collection has an expected type, is typed by the rule. A rule with a check it
   couldn't resolve counts as undecided, so defaulting rounds reach it. Once no

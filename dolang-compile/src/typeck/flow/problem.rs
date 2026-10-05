@@ -2,7 +2,11 @@
 
 use std::fmt::{self, Write};
 
-use crate::{diag::Severity, source::Span, typeck::report::Report};
+use crate::{
+    diag::{NoteKind, Severity},
+    source::Span,
+    typeck::report::Report,
+};
 
 /// A diagnosed problem, with the types it names rendered
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -14,12 +18,13 @@ pub(crate) enum Problem {
         missing: usize,
     },
     /// An argument that doesn't fit its parameter, whose type is shown when it's
-    /// known, with the part of it that doesn't fit what, when that's deeper
+    /// known, with notes for each deeper part of it that doesn't fit: what
+    /// doesn't fit, then each type found around it
     Argument {
         span: Span,
         found: String,
         expected: Option<String>,
-        inner: Option<(String, String)>,
+        causes: Vec<Vec<String>>,
     },
     /// A call that doesn't pass one of its callee's required parameters
     MissingArgument(Span),
@@ -126,46 +131,29 @@ impl Report for Problem {
         }
     }
 
+    fn notes(&self) -> Vec<(NoteKind, String)> {
+        match self {
+            Problem::Argument { causes, .. } => (causes.iter().flatten())
+                .map(|note| (NoteKind::Info, note.clone()))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
     fn message(&self, w: &mut dyn Write) -> fmt::Result {
         match self {
             Problem::FmtGap { index, missing, .. } => write!(
                 w,
                 "format hole `#{index}` follows missing `#{missing}`; it is an integer key, not a positional item"
             ),
-            // Where the argument's type and the parameter's look alike, only what's
-            // inside them shows what doesn't fit
+            // Where the argument's type and the parameter's look alike, only the
+            // causes show what doesn't fit
             Problem::Argument {
                 found,
                 expected: Some(expected),
-                inner: Some((part, bound)),
                 ..
-            } if found == expected => {
-                write!(w, "`{part}` does not fit `{bound}` in `{found}`")
-            }
-            Problem::Argument {
-                found,
-                expected: Some(expected),
-                inner,
-                ..
-            } => {
-                write!(w, "expected `{expected}`, found `{found}`")?;
-                match inner {
-                    Some((part, bound)) => write!(w, ": `{part}` does not fit `{bound}`"),
-                    None => Ok(()),
-                }
-            }
-            Problem::Argument {
-                found,
-                expected: None,
-                inner,
-                ..
-            } => {
-                write!(w, "`{found}` does not fit this parameter")?;
-                match inner {
-                    Some((part, bound)) => write!(w, ": `{part}` does not fit `{bound}`"),
-                    None => Ok(()),
-                }
-            }
+            } if found != expected => write!(w, "expected `{expected}`, found `{found}`"),
+            Problem::Argument { found, .. } => write!(w, "`{found}` does not fit this parameter"),
             Problem::MissingArgument(_) => write!(w, "this call is missing an argument"),
             Problem::ExtraArgument(_) => write!(w, "the callee takes no such argument"),
             Problem::Call { callee, .. } => write!(w, "this call does not fit `{callee}`"),
