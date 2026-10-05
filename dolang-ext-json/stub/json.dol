@@ -1,6 +1,7 @@
 # JSON serialization and deserialization.
 
 import std:
+  - @BaseArray
   - @BaseDict
 
 # A value decoded from JSON.
@@ -22,7 +23,7 @@ pub @let Encodable = $
   | Float
   | Str
   | Sym
-  | Array[Encodable]
+  | BaseArray[Encodable]
   | Tuple[...Encodable]
   | Record[...{*Encodable, **Encodable}]
   | BaseDict[Str | Sym | Int | Float | Bool, Encodable]

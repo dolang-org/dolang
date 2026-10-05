@@ -1,0 +1,55 @@
+import rand compile json toml yaml
+  @progress
+  std:
+    - @BaseArray
+    - @BaseDict
+
+pub def inputs
+  names @ Array[Str]
+  attrs @ Array[:BOLD:]
+  ints @ Array[Int]
+  nested @ Array[Array[Int]]
+do
+  let _ = rand.pick $names
+  #   ^: flow std.Str
+  rand.shuffle $ints
+  compile.compile "m.dol" "nil" prelude: $names
+  let _ @ compile.Prelude = names
+  let _ @ compile.PreludeBinding = names
+  let _ @ BaseDict[progress.Colors] = {attrs: attrs}
+  json.encode $names
+  json.encode $nested
+  yaml.encode $names
+  yaml.encode $nested
+  toml.encode {values: names}
+  toml.encode {values: nested}
+
+pub def read_view items @ BaseArray[Int]
+  let _ = rand.pick $items
+  #   ^: flow std.Int
+  rand.shuffle $items
+# error: expected `std.Array[Unknown]`, found `std.BaseArray[std.Int]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   rand.shuffle $items
+#    |                 ^^^^^
+
+pub def not_array()
+  rand.pick (1, 2)
+  # error: expected `std.BaseArray[Unknown]`, found `std.Tuple[{1, 2}]`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   rand.pick (1, 2)
+  #    |             ^^^^^^
+  let _ @ BaseDict[progress.Colors] = {attrs: (:BOLD:,)}
+# error: expected `progress.Colors`, found `{attrs: std.Tuple[{:BOLD:}]}`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ @ BaseDict[progress.Colors] = {attrs: (:BOLD:,)}
+#    |                                       ^^^^^^^^^^^^^^^^^^
+
+pub def decoded()
+  let data = json.decode "[]"
+  let _ @ json.Encodable = data
+  let _ @ yaml.Encodable = yaml.decode "[]"
+  let _ @ toml.Encodable = toml.decode "[]"

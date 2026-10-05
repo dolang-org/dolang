@@ -1071,3 +1071,18 @@ def check_refuses_units_it_cannot_check()
   let emitted = compile.compile "emitted.dol" "" typecheck: true
   emitted.emit()
   assert_throws $std.StateError do compile.check [emitted]
+
+#[test]
+def prelude_array_read_view()
+  let modules @ Array[Str] = ["std"]
+  let view @ std.BaseArray[Str] = modules
+  assert_no_errors $ compile.compile "m.dol" "nil" prelude: $view
+
+  let items @ Array[Str] = ["Int", "Str"]
+  let binding @ std.BaseArray[Str] = items
+  assert_no_errors $ compile.compile "m.dol" "nil" prelude: {std: binding}
+
+  assert_throws $std.TypeError do
+    compile.compile "m.dol" "nil" prelude: ("std",)
+  assert_throws $std.TypeError do
+    compile.compile "m.dol" "nil" prelude: {std: ("Int",)}

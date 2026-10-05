@@ -1,0 +1,193 @@
+import std:
+  - @BaseArray
+  - @Seq
+
+pub def reads _items @ BaseArray[Str | Sym]
+  ...
+
+pub def writes _items @ Array[Str | Sym]
+  ...
+
+pub def covariance items @ Array[Str] view @ BaseArray[Str]
+  reads $items
+  reads $view
+  writes $items
+  # error: expected `std.Array[std.Str | std.Sym]`, found `std.Array[std.Str]`: `std.Sym` does not fit `std.Str`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   writes $items
+  #    |           ^^^^^
+  writes $view
+  # error: expected `std.Array[std.Str | std.Sym]`, found `std.BaseArray[std.Str]`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   writes $view
+  #    |           ^^^^
+  let _ = items
+  #       ^~~~~: flow std.Array[std.Str]
+
+pub def read view @ BaseArray[Int]
+  let _ = view.len
+  #   ^: flow std.Int
+  let _ = view[0]
+  #   ^: flow std.Int
+  let _ = view[1..3]
+  #   ^: flow std.BaseArray[std.Int]
+  let _ = view.copy()
+  #   ^: flow std.BaseArray[std.Int]
+  let _ = view.get 0
+  #   ^: flow nil | std.Int
+  let _ = view.get 0 default: "missing"
+  #   ^: flow std.Int | std.Str
+  let _ = view.get 0 else: (do "missing")
+  #   ^: flow std.Int | std.Str
+  let _ = view.contains "unrelated"
+  #   ^: flow std.Bool
+  let _ = view.iter()
+  #   ^: flow std.UnpackIter[std.Int]
+  let _ = view.pairs()
+  #   ^: flow std.UnpackIter[std.Tuple[{std.Int, std.Int}]]
+  let _ = [...view]
+  #   ^: flow std.Array[std.Int]
+  let first ...rest = view
+  let _ = first
+  #       ^~~~~: flow std.Int
+  let _ = rest
+  #       ^~~~: flow std.UnpackIter[std.Int]
+  for item = view
+    let _ = item
+    #       ^~~~: flow std.Int
+  view[0] = 1
+  # error: `std.BaseArray[std.Int]` has no member `(assign)`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   view[0] = 1
+  #    |   ^^^^^^^^^^^
+  view.push 1
+  # error: `std.BaseArray[std.Int]` has no member `push`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   view.push 1
+  #    |   ^^^^^^^^^^^
+  view.insert 0 1
+  # error: `std.BaseArray[std.Int]` has no member `insert`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   view.insert 0 1
+  #    |   ^^^^^^^^^^^^^^^
+  view.pop()
+  # error: `std.BaseArray[std.Int]` has no member `pop`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   view.pop()
+  #    |   ^^^^^^^^^^
+  view.delete 0
+  # error: `std.BaseArray[std.Int]` has no member `delete`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   view.delete 0
+  #    |   ^^^^^^^^^^^^^
+  view.clear()
+  # error: `std.BaseArray[std.Int]` has no member `clear`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   view.clear()
+  #    |   ^^^^^^^^^^^^
+  view.sort()
+# error: `std.BaseArray[std.Int]` has no member `sort`
+#   --> m.dol:LL:LL
+#    |
+# LL |   view.sort()
+#    |   ^^^^^^^^^^^
+
+pub def sink _items @ Sinkable[Int]
+  ...
+
+pub def not_sink view @ BaseArray[Int]
+  sink $view
+# error: expected `std.Sinkable[std.Int]`, found `std.BaseArray[std.Int]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   sink $view
+#    |         ^^^^
+
+pub def mutable items @ Array[Int] replacement @ BaseArray[Int]
+  let _ = items.copy()
+  #   ^: flow std.Array[std.Int]
+  let _ = items[1..3]
+  #   ^: flow std.Array[std.Int]
+  items[..] = replacement
+  items[..] = (1, 2)
+  items[0] = 1
+  items.push 2
+  items.sort()
+  sink $items
+
+pub def sequences seq @ Seq[Str]
+  reads $seq
+  # error: expected `std.BaseArray[std.Str | std.Sym]`, found `std.Seq[std.Str]`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   reads $seq
+  #    |          ^^^
+  reads ("a", "b")
+  # error: expected `std.BaseArray[std.Str | std.Sym]`, found `std.Tuple[{"a", "b"}]`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   reads ("a", "b")
+  #    |         ^^^^^^^^^^
+  reads (0..2)
+# error: expected `std.BaseArray[std.Str | std.Sym]`, found `std.Range[std.Int]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   reads (0..2)
+#    |          ^^^^
+
+pub def literals ints @ Array[Int]
+  let ordinary @ BaseArray[Int | Str] = [1]
+  let _ = ordinary
+  #       ^~~~~~~~: flow std.Array[std.Int | std.Str]
+  ordinary.push "later"
+  let empty @ BaseArray[Int | Str] = []
+  let _ = empty
+  #       ^~~~~: flow std.Array[std.Int | std.Str]
+  let spread @ BaseArray[Int | Str] = [...ints]
+  let _ = spread
+  #       ^~~~~~: flow std.Array[std.Int | std.Str]
+  let nested @ BaseArray[BaseArray[Int | Str]] = [[1]]
+  let _ = nested
+  #       ^~~~~~: flow std.Array[std.BaseArray[std.Int | std.Str]]
+  let comprehension @ BaseArray[Int | Str] = $
+    for item = ints
+      - $item
+  let _ = comprehension
+  #       ^~~~~~~~~~~~~: flow std.Array[std.Int | std.Str]
+  let union @ (nil | BaseArray[Int | Str]) = [1]
+  let _ = union
+  #       ^~~~~: flow std.Array[std.Int | std.Str]
+  let funcs @ BaseArray[((Int, <Iter[Value], >Sink[Value]) -> Int)] = [(do |x| x.abs())]
+  let _ = funcs
+  #       ^~~~~: flow std.Array[(std.Int) <std.Iter[Value] >std.Sink[Value] -> std.Int]
+  let _bad @ BaseArray[Str] = [1]
+  # error: `std.Array[std.Int]` does not fit the annotation `std.BaseArray[std.Str]`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _bad @ BaseArray[Str] = [1]
+  #    |                               ^^^
+  let inferred = [1]
+  inferred.push "wrong"
+# error: expected `std.Int`, found `"wrong"`
+#   --> m.dol:LL:LL
+#    |
+# LL |   inferred.push "wrong"
+#    |                 ^^^^^^^
+
+pub def literal_call()
+  reads ["a"]
+  reads []
+  reads [1]
+# error: expected `std.BaseArray[std.Str | std.Sym]`, found `std.Array[std.Int]`: `std.Int` does not fit `std.Str | std.Sym`
+#   --> m.dol:LL:LL
+#    |
+# LL |   reads [1]
+#    |         ^^^

@@ -10,6 +10,7 @@ import
     - assert_throws
     - test
   std:
+    - @BaseArray
     - ValueError
     - TypeError
 
@@ -135,3 +136,13 @@ def shuffle_rejects_non_arrays()
   let err = assert_throws $TypeError do
     shuffle 123
   assert_eq (str err) "type error: expected Array"
+
+#[test]
+def array_read_view()
+  let values @ Array[Int] = [1, 2, 3]
+  let view @ BaseArray[Int] = values
+  assert (values.contains (pick view))
+  shuffle $values
+  assert_eq $view.len 3
+  for non_array = [(1, 2), (0..2)]
+    assert_throws $TypeError do pick $non_array

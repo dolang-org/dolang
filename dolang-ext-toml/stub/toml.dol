@@ -1,6 +1,7 @@
 # TOML serialization and deserialization.
 
 import std:
+  - @BaseArray
   - @BaseDict
 
 # A value decoded from TOML.
@@ -19,7 +20,7 @@ pub @let Encodable = $
   | Float
   | Str
   | Sym
-  | Array[Encodable]
+  | BaseArray[Encodable]
   | Tuple[...Encodable]
   | Record[...{**Encodable}]
   | BaseDict[Str | Sym, Encodable]

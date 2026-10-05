@@ -1667,12 +1667,25 @@ impl<'a> Flow<'a, '_> {
             Collection::Record => Designated::Record,
         };
         let class = self.designated(role);
-        // An array expected to be `Array[E]` expects each item to be `E`
-        let params = match kind {
-            Collection::Array => expected.and_then(|ty| self.applied(class?, ty)),
+        // Only a fresh array can widen its invariant element type to the
+        // expected read view. Type its items with `E`, and solve as `Array[E]`.
+        let expected_array = match kind {
+            Collection::Array => expected.and_then(|ty| {
+                let class = class?;
+                self.applied(class, ty).or_else(|| {
+                    let base = self.designated(Designated::BaseArray)?;
+                    let (_, element) = self.applied(base, ty)?;
+                    let array = self.db.intern(Type::Apply {
+                        base: self.db.intern(Type::Decl(class)),
+                        args: vec![Argument::Positional(element)].into(),
+                        kind: Kind::Type,
+                    });
+                    Some((array, element))
+                })
+            }),
             _ => None,
-        }
-        .map(|(_, element)| Params {
+        };
+        let params = expected_array.map(|(_, element)| Params {
             rest: Some(element),
             ..Params::default()
         });
@@ -1714,8 +1727,9 @@ impl<'a> Flow<'a, '_> {
             }),
             _ => None,
         };
+        let array_expected = expected_array.map(|(ty, _)| ty).or(expected);
         let result = match (kind, expected_dict) {
-            (Collection::Array, _) => self.conclude(at, expected, |rule| {
+            (Collection::Array, _) => self.conclude(at, array_expected, |rule| {
                 let element = rule.solver.infer();
                 for placed in &values.values {
                     match placed.value {

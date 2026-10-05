@@ -8,6 +8,7 @@ import
     - assert_throws
     - test
   std:
+    - @BaseArray
     - RuntimeError
 
 #[test]
@@ -87,3 +88,9 @@ def serialize_error_cases()
   let type_err = assert_throws $RuntimeError do
     encode $ Range 10
   assert ((str type_err).contains "unsupported YAML type")
+
+#[test]
+def encode_array_read_view()
+  let values @ Array[Array[Int]] = [[1, 2], [3]]
+  let view @ BaseArray[BaseArray[Int]] = values
+  assert_eq (decode $ encode view) $values

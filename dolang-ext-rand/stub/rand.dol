@@ -1,5 +1,8 @@
 # Random integer sampling, string generation, selection, and shuffling.
 
+import std:
+  - @BaseArray
+
 # Samples a uniformly distributed integer from `[0, end)` or `[start, end)`.
 #
 # ## Errors
@@ -39,7 +42,7 @@ do -> Int
 # ```
 pub def pick[T]
   # Source array.
-  collection @ Array[T]
+  collection @ BaseArray[T]
 do -> T
   ...
 
@@ -62,9 +65,9 @@ do -> T
 # sorted.sort()
 # assert_eq $sorted [1, 2, 3, 4]
 # ```
-pub def shuffle
+pub def shuffle[T]
   # Array to mutate.
-  array @ Array[Value]
+  array @ Array[T]
 do
   ...
 

@@ -8,6 +8,7 @@ pub let table @ Dict[Str, Int] = {}
 
 # The standard library's collections vary as their members use their items.
 import std:
+  - @BaseArray
   - @Seq
   - @Union
   - @Index
@@ -24,6 +25,8 @@ pub @let SinkableOf[T] = Sinkable[T]
 #                   ^: variance contravariant
 pub @let SeqOf[T] = Seq[T]
 #              ^: variance covariant
+pub @let BaseArrayOf[T] = BaseArray[T]
+#                    ^: variance covariant
 pub @let ArrayOf[T] = Array[T]
 #                ^: variance invariant
 pub @let TupleOf[T] = Tuple[T]

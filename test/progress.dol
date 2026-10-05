@@ -5,6 +5,7 @@ import progress
     - assert_throws
     - test
   std:
+    - @BaseArray
     - MissingPosError
     - TypeError
     - UnexpectedKeyError
@@ -120,3 +121,11 @@ def invalid_step_specs()
       do nil
 
   assert_throws $UnexpectedKeyError do progress.steps unknown: value do nil
+
+#[test]
+def style_array_read_view()
+  let attrs @ BaseArray[:BOLD:] = [:BOLD:]
+  assert_eq (progress.with style: {message: {attrs: attrs}} do 42) 42
+  for non_array = [(:BOLD:,), (0..2)]
+    assert_throws $TypeError do
+      progress.with style: {message: {attrs: non_array}} do nil
