@@ -1,0 +1,51 @@
+let failure = std.ValueError "truthiness failed"
+class BrokenBool
+  def (bool) _self
+    throw failure
+let broken = BrokenBool()
+
+def raises block
+  try
+    block()
+  catch err
+    assert_eq $err $failure
+    return
+  throw std.RuntimeError "expected truthiness exception"
+
+raises do bool $broken
+raises do !broken
+raises do
+  if broken
+    throw std.RuntimeError "entered branch"
+raises do
+  while broken
+    throw std.RuntimeError "entered loop"
+raises do (broken && 1)
+raises do (broken || 1)
+assert_eq (false && broken) false
+assert_eq (true || broken) true
+raises do assert $broken
+raises do assert_not $broken
+raises do [...[1].iter().filter(do |_x| broken)]
+
+# A truthiness method's returned value also undergoes conversion.
+class NestedBool
+  def (bool) _self
+    broken
+raises do bool (NestedBool())
+
+class EqualityResult
+  def (eq) _self _other
+    broken
+let result = EqualityResult()
+raises do bool (result == result)
+raises do (result != result)
+raises do assert_eq $result $result
+raises do ([result] == [result])
+
+# Native delegates preserve ordinary true/false results.
+class NativeBool: Bool
+  def (init) self value
+    Bool.(init) $self $value
+assert (bool (NativeBool true))
+assert_not (bool (NativeBool false))

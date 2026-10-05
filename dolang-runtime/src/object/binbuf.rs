@@ -206,9 +206,12 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
         )
     }
 
-    fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, strand: &mut Strand<'v, 's>) -> bool {
+    fn op_bool<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, bool> {
         let borrow = this.borrow(strand).expect("conflicting borrow");
-        !borrow.as_slice().is_empty()
+        Ok(!borrow.as_slice().is_empty())
     }
 
     fn op_eq<'a, 's>(
@@ -586,9 +589,11 @@ impl<'v> Protocol<'v> for Class {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &this)
-            || supertype.eq(strand, &strand.singletons().sinkable)
-            || supertype.eq(strand, TypeObject::Value)
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype
+                .eq(strand, &strand.singletons().sinkable)
+                .unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
 
     async fn op_call<'a, 's>(

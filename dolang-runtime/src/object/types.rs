@@ -317,7 +317,8 @@ impl<'v> Protocol<'v> for ArgsType {
         strand: &'a mut Strand<'v, 's>,
         supertype: &DoValue<'v>,
     ) -> bool {
-        supertype.eq(strand, &this) || supertype.eq(strand, TypeObject::Value)
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
 
     fn op_debug<'a, 's>(
@@ -410,7 +411,7 @@ mod tests {
                 .await
                 .unwrap();
             let result: &DoValue = &out;
-            assert!(result.to_bool(strand));
+            assert!(result.to_bool(strand).unwrap());
 
             let err = call!(strand, &strand.singletons().bool, &mut out, 1_i64)
                 .await
@@ -466,7 +467,7 @@ mod tests {
             .await
             .unwrap();
             let result: &DoValue = &out;
-            assert!(!result.to_bool(strand));
+            assert!(!result.to_bool(strand).unwrap());
         });
     }
 

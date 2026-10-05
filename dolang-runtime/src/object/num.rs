@@ -106,9 +106,9 @@ async fn extrema<'v, 'a, 's>(
     out.store(first.take());
     for mut value in rest {
         let replace = if is_min {
-            value.op_lt(strand, &out)?.to_bool(strand)
+            value.op_lt(strand, &out)?.to_bool(strand)?
         } else {
-            out.op_lt(strand, &value)?.to_bool(strand)
+            out.op_lt(strand, &value)?.to_bool(strand)?
         };
         if replace {
             out.store(value.take());
@@ -131,15 +131,15 @@ async fn default_mcall<'v, 'a, 's>(
         sym::MAX => extrema(strand, args, out, false).await,
         sym::CLAMP => {
             let ([mut value, mut lower, mut upper], []) = unpack!(strand, args, 3, 0)?;
-            if upper.op_lt(strand, &lower)?.to_bool(strand) {
+            if upper.op_lt(strand, &lower)?.to_bool(strand)? {
                 return Err(Error::value(
                     strand,
                     "clamp: lower bound exceeds upper bound",
                 ));
             }
-            if value.op_lt(strand, &lower)?.to_bool(strand) {
+            if value.op_lt(strand, &lower)?.to_bool(strand)? {
                 out.store(lower.take());
-            } else if upper.op_lt(strand, &value)?.to_bool(strand) {
+            } else if upper.op_lt(strand, &value)?.to_bool(strand)? {
                 out.store(upper.take());
             } else {
                 out.store(value.take());

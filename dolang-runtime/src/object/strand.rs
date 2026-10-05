@@ -623,11 +623,23 @@ impl<'v> Protocol<'v> for StreamType {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &this)
-            || supertype.eq(strand, TypeObject::Value)
-            || strand.singletons().strand.eq(strand, supertype)
-            || strand.singletons().iterable.eq(strand, supertype)
-            || strand.singletons().sinkable.eq(strand, supertype)
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
+            || strand
+                .singletons()
+                .strand
+                .eq(strand, supertype)
+                .unwrap_or(false)
+            || strand
+                .singletons()
+                .iterable
+                .eq(strand, supertype)
+                .unwrap_or(false)
+            || strand
+                .singletons()
+                .sinkable
+                .eq(strand, supertype)
+                .unwrap_or(false)
     }
 
     fn op_debug<'a, 's>(

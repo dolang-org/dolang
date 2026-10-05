@@ -278,7 +278,10 @@ impl<'v> Object<'v> for SinkConsole {
         let mode_sym = global.syms.mode;
         let ([target], [can_style, mode]) =
             unpack!(strand, args, 1, 0, can_style_sym = None, mode_sym = None)?;
-        let can_style = can_style.is_some_and(|value| value.to_bool(strand));
+        let can_style = can_style
+            .map(|value| value.to_bool(strand))
+            .transpose()?
+            .unwrap_or(false);
         let mode = crate::util::parse_mode(strand, mode.as_deref())?;
         create_sink_console(strand, &target, can_style, mode, out).await
     }

@@ -102,8 +102,11 @@ impl<'v> Protocol<'v> for i128 {
         super::num::int_mcall(strand, &this, *this.get(), method, _args, _out).await
     }
 
-    fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, _strand: &mut Strand<'v, 's>) -> bool {
-        *this.get() != 0
+    fn op_bool<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        _strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, bool> {
+        Ok(*this.get() != 0)
     }
 
     fn op_hash<'a, 's>(
@@ -383,8 +386,11 @@ impl<'v> Protocol<'v> for Verbatim {
         super::num::int_mcall(strand, &this, this.get().value, method, _args, _out).await
     }
 
-    fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, _strand: &mut Strand<'v, 's>) -> bool {
-        this.get().value != 0
+    fn op_bool<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        _strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, bool> {
+        Ok(this.get().value != 0)
     }
 
     fn op_hash<'a, 's>(
@@ -633,9 +639,13 @@ impl<'v> Protocol<'v> for Int {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &this)
-            || supertype.eq(strand, &strand.singletons().num)
-            || supertype.eq(strand, crate::value::TypeObject::Value)
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype
+                .eq(strand, &strand.singletons().num)
+                .unwrap_or(false)
+            || supertype
+                .eq(strand, crate::value::TypeObject::Value)
+                .unwrap_or(false)
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {

@@ -94,8 +94,11 @@ impl<'v> Protocol<'v> for f64 {
         fmt!(strand, w, "{}", *this.get())
     }
 
-    fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, _strand: &mut Strand<'v, 's>) -> bool {
-        *this.get() != 0.0
+    fn op_bool<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        _strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, bool> {
+        Ok(*this.get() != 0.0)
     }
 
     fn op_hash<'a, 's>(
@@ -331,8 +334,11 @@ impl<'v> Protocol<'v> for Verbatim {
         fmt!(strand, w, "{:?}", this.get().value)
     }
 
-    fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, _strand: &mut Strand<'v, 's>) -> bool {
-        this.get().value != 0.0
+    fn op_bool<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        _strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, bool> {
+        Ok(this.get().value != 0.0)
     }
 
     fn op_hash<'a, 's>(
@@ -528,9 +534,13 @@ impl<'v> Protocol<'v> for Float {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &this)
-            || supertype.eq(strand, &strand.singletons().num)
-            || supertype.eq(strand, crate::value::TypeObject::Value)
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype
+                .eq(strand, &strand.singletons().num)
+                .unwrap_or(false)
+            || supertype
+                .eq(strand, crate::value::TypeObject::Value)
+                .unwrap_or(false)
     }
 
     async fn op_call<'a, 's>(
@@ -710,7 +720,7 @@ mod tests {
                     let mut s = String::new();
                     f64::op_debug(recv.clone(), strand, &mut s).unwrap();
                     assert_eq!(s, "2.5");
-                    assert!(f64::op_bool(recv.clone(), strand));
+                    assert!(f64::op_bool(recv.clone(), strand).unwrap());
                     let neg = f64::op_neg(recv, strand).unwrap();
                     assert_eq!(neg.to_prim(strand).unwrap(), Prim::F64(-2.5));
                 });
@@ -723,7 +733,7 @@ mod tests {
                 .cast(value)
                 .unwrap()
                 .enter_sync(strand, |strand, recv| {
-                    assert!(!f64::op_bool(recv, strand));
+                    assert!(!f64::op_bool(recv, strand).unwrap());
                 });
         });
     }
@@ -773,6 +783,7 @@ mod tests {
                             f64::op_eq(recv, strand, &equal_slot)
                                 .unwrap()
                                 .to_bool(strand)
+                                .unwrap()
                         );
                     },
                 );
@@ -783,6 +794,7 @@ mod tests {
                             f64::op_lt(recv, strand, &greater_slot)
                                 .unwrap()
                                 .to_bool(strand)
+                                .unwrap()
                         );
                     },
                 );
@@ -850,7 +862,7 @@ mod tests {
                     f64::op_type(recv, strand, Slot::reborrow(&mut out));
                 });
             let result: &Value = &out;
-            assert!(result.eq(strand, &strand.singletons().float));
+            assert!(result.eq(strand, &strand.singletons().float).unwrap());
         });
     }
 
@@ -873,7 +885,7 @@ mod tests {
                     Verbatim::op_display(recv.clone(), strand, &mut display).unwrap();
                     assert_eq!(display, "1.5");
 
-                    assert!(Verbatim::op_bool(recv.clone(), strand));
+                    assert!(Verbatim::op_bool(recv.clone(), strand).unwrap());
 
                     let neg = Verbatim::op_neg(recv, strand).unwrap();
                     assert_eq!(neg.to_prim(strand).unwrap(), Prim::F64(-1.5));
@@ -961,7 +973,7 @@ mod tests {
                     Verbatim::op_type(recv, strand, Slot::reborrow(&mut out));
                 });
             let result: &Value = &out;
-            assert!(result.eq(strand, &strand.singletons().float));
+            assert!(result.eq(strand, &strand.singletons().float).unwrap());
         });
     }
 

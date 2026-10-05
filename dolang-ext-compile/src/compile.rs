@@ -3203,11 +3203,22 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
             } else {
                 Mode::Script
             });
-            config.recover(recover.map(|value| value.to_bool(strand)).unwrap_or(false));
-            config.document(document.map(|value| value.to_bool(strand)).unwrap_or(false));
+            config.recover(
+                recover
+                    .map(|value| value.to_bool(strand))
+                    .transpose()?
+                    .unwrap_or(false),
+            );
+            config.document(
+                document
+                    .map(|value| value.to_bool(strand))
+                    .transpose()?
+                    .unwrap_or(false),
+            );
             config.typecheck(
                 typecheck
                     .map(|value| value.to_bool(strand))
+                    .transpose()?
                     .unwrap_or(false),
             );
 

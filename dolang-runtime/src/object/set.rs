@@ -149,10 +149,10 @@ impl<'v> Set<'v> {
         value: &Value<'v>,
         hash: u64,
     ) -> Result<'v, 's, bool> {
-        Ok(self
-            .inner
-            .find(hash, |entry| value.eq(strand, &entry.value))
-            .is_some())
+        Ok(
+            super::table::find(&self.inner, hash, |entry| value.eq(strand, &entry.value))?
+                .is_some(),
+        )
     }
 
     fn insert_known_unique(&mut self, value: Value<'v>, hash: u64) {
@@ -171,12 +171,15 @@ impl<'v> Set<'v> {
         value: &Value<'v>,
         hash: u64,
     ) -> Result<'v, 's, bool> {
+        if super::table::find(&self.inner, hash, |entry| value.eq(strand, &entry.value))?.is_some()
+        {
+            return Ok(false);
+        }
         self.reserve_for_insert();
-        match self.inner.find_or_find_insert_index(
-            hash,
-            |entry| value.eq(strand, &entry.value),
-            |entry| entry.hash,
-        ) {
+        match self
+            .inner
+            .find_or_find_insert_index(hash, |_| false, |entry| entry.hash)
+        {
             Ok(_) => Ok(false),
             Err(insert) => {
                 self.insert_at_index(hash, insert, value.dup());
@@ -191,12 +194,15 @@ impl<'v> Set<'v> {
         value: Value<'v>,
         hash: u64,
     ) -> Result<'v, 's, bool> {
+        if super::table::find(&self.inner, hash, |entry| value.eq(strand, &entry.value))?.is_some()
+        {
+            return Ok(false);
+        }
         self.reserve_for_insert();
-        match self.inner.find_or_find_insert_index(
-            hash,
-            |entry| value.eq(strand, &entry.value),
-            |entry| entry.hash,
-        ) {
+        match self
+            .inner
+            .find_or_find_insert_index(hash, |_| false, |entry| entry.hash)
+        {
             Ok(_) => Ok(false),
             Err(insert) => {
                 self.insert_at_index(hash, insert, value);
@@ -211,9 +217,8 @@ impl<'v> Set<'v> {
         value: &Value<'v>,
         hash: u64,
     ) -> Result<'v, 's, bool> {
-        let Some(bucket) = self
-            .inner
-            .find(hash, |entry| value.eq(strand, &entry.value))
+        let Some(bucket) =
+            super::table::find(&self.inner, hash, |entry| value.eq(strand, &entry.value))?
         else {
             return Ok(false);
         };
@@ -452,11 +457,14 @@ impl<'v> Protocol<'v> for Set<'v> {
         crate::fmt!(strand, w, "])")
     }
 
-    fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, strand: &mut Strand<'v, 's>) -> bool {
+    fn op_bool<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, bool> {
         let Ok(borrow) = this.borrow(strand) else {
-            return true;
+            return Ok(true);
         };
-        !borrow.inner.is_empty()
+        Ok(!borrow.inner.is_empty())
     }
 
     fn op_hash<'a, 's>(
@@ -498,10 +506,10 @@ impl<'v> Protocol<'v> for Set<'v> {
         unsafe {
             for bucket in left.inner.iter() {
                 let entry = bucket.as_ref();
-                if right
-                    .inner
-                    .find(entry.hash, |other| entry.value.eq(strand, &other.value))
-                    .is_none()
+                if super::table::find(&right.inner, entry.hash, |other| {
+                    entry.value.eq(strand, &other.value)
+                })?
+                .is_none()
                 {
                     return Ok(Value::FALSE);
                 }
@@ -811,9 +819,11 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &this)
-            || supertype.eq(strand, &strand.singletons().iterable)
-            || supertype.eq(strand, TypeObject::Value)
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype
+                .eq(strand, &strand.singletons().iterable)
+                .unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
 
     fn op_debug<'a, 's>(

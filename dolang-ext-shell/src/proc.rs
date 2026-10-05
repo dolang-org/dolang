@@ -331,7 +331,10 @@ pub(crate) fn configure_vm<'v>(
         })
         .function_with_slots("sub", async move |strand, args, out, [mut cap, tmp]| {
             let ([func], [chomp]) = unpack!(strand, args, 1, 0, chomp_sym = None)?;
-            let chomp = chomp.map(|v| v.to_bool(strand)).unwrap_or(true);
+            let chomp = chomp
+                .map(|v| v.to_bool(strand))
+                .transpose()?
+                .unwrap_or(true);
             capture_ty.create(strand, Capture::new(), &mut cap);
             Redirect::new(strand)
                 .output(&cap)

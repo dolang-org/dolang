@@ -49,8 +49,11 @@ impl<'v> Object<'v> for Args {
             })
     }
 
-    fn bool<'a, 's>(this: Instance<'v, 'a, Self>, _strand: &mut Strand<'v, 's>) -> bool {
-        !this.annex().is_empty()
+    fn bool<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        _strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, bool> {
+        Ok(!this.annex().is_empty())
     }
 
     fn index<'a, 's>(

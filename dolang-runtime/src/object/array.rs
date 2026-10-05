@@ -525,7 +525,7 @@ impl<'v> Array<'v> {
                         } else {
                             lhs.op_lt(strand, rhs)?
                         };
-                        Ok(result.to_bool(strand))
+                        result.to_bool(strand)
                     })
                 })
                 .await
@@ -546,7 +546,7 @@ impl<'v> Array<'v> {
                     } else {
                         lhs.op_lt(strand, rhs)?
                     };
-                    Ok(result.to_bool(strand))
+                    result.to_bool(strand)
                 },
             )
         }
@@ -627,9 +627,12 @@ impl<'v> Protocol<'v> for Array<'v> {
         crate::fmt!(strand, w, "]")
     }
 
-    fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, strand: &mut Strand<'v, 's>) -> bool {
+    fn op_bool<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, bool> {
         let borrow = this.borrow(strand).expect("conflicting borrow");
-        !borrow.inner.is_empty()
+        Ok(!borrow.inner.is_empty())
     }
 
     fn op_hash<'a, 's>(
@@ -673,7 +676,7 @@ impl<'v> Protocol<'v> for Array<'v> {
             }
             let l = unsafe { left.get_unchecked(i) };
             let r = unsafe { right.get_unchecked(i) };
-            if !l.op_eq(strand, r)?.to_bool(strand) {
+            if !l.op_eq(strand, r)?.to_bool(strand)? {
                 return Ok(Value::from_bool(false));
             }
         }
@@ -700,7 +703,7 @@ impl<'v> Protocol<'v> for Array<'v> {
             }
             let l = unsafe { left.get_unchecked(i) };
             let r = unsafe { right.get_unchecked(i) };
-            if l.op_lt(strand, r)?.to_bool(strand) {
+            if l.op_lt(strand, r)?.to_bool(strand)? {
                 return Ok(Value::from_bool(true));
             }
         }
@@ -993,7 +996,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                     }
                     if unsafe { borrow.inner.get_unchecked(i) }
                         .op_eq(strand, &needle)?
-                        .to_bool(strand)
+                        .to_bool(strand)?
                     {
                         found = true;
                         break;
@@ -1214,10 +1217,14 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &this)
-            || supertype.eq(strand, &strand.singletons().iterable)
-            || supertype.eq(strand, &strand.singletons().sinkable)
-            || supertype.eq(strand, TypeObject::Value)
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype
+                .eq(strand, &strand.singletons().iterable)
+                .unwrap_or(false)
+            || supertype
+                .eq(strand, &strand.singletons().sinkable)
+                .unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
 
     fn op_debug<'a, 's>(

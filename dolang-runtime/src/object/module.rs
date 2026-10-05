@@ -480,7 +480,7 @@ impl<'v> Namespace<'v> {
                         )),
                         hv,
                         true,
-                    );
+                    )?;
                 Ok(())
             }
             None => {
@@ -623,7 +623,7 @@ impl<'v> Protocol<'v> for Namespace<'v> {
         re.dict
             .borrow_mut()
             .ok_or_else(|| Error::concurrency(strand))?
-            .insert(strand, key, value.take(), hv, true);
+            .insert(strand, key, value.take(), hv, true)?;
         Ok(())
     }
 }
@@ -663,7 +663,8 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &this) || supertype.eq(strand, TypeObject::Value)
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
 
     fn op_debug<'a, 's>(
@@ -953,7 +954,7 @@ mod tests {
                 .enter_sync(strand, |strand, recv| {
                     Module::op_type(recv, strand, Slot::reborrow(&mut out));
                 });
-            assert!(out.eq(strand, &strand.singletons().module));
+            assert!(out.eq(strand, &strand.singletons().module).unwrap());
 
             strand
                 .builtin_types()
@@ -1125,7 +1126,7 @@ mod tests {
                 .enter_sync(strand, |strand, recv| {
                     Native::op_type(recv, strand, Slot::reborrow(&mut out));
                 });
-            assert!(out.eq(strand, &strand.singletons().module));
+            assert!(out.eq(strand, &strand.singletons().module).unwrap());
         });
     }
 
@@ -1141,7 +1142,7 @@ mod tests {
                 .enter_sync(strand, |strand, recv| {
                     Namespace::op_type(recv, strand, Slot::reborrow(&mut out));
                 });
-            assert!(out.eq(strand, &strand.singletons().module));
+            assert!(out.eq(strand, &strand.singletons().module).unwrap());
         });
     }
 
@@ -1245,7 +1246,8 @@ mod tests {
             ns.dict
                 .borrow_mut()
                 .unwrap()
-                .insert(strand, sym_a, leaf.take(), hv, true);
+                .insert(strand, sym_a, leaf.take(), hv, true)
+                .unwrap();
 
             Output::set(strand, &mut extra, 2_i64);
             let err = ns.insert(strand, &["a", "b"], extra).unwrap_err();
@@ -1264,7 +1266,7 @@ mod tests {
             module_recv.enter_sync(strand, |strand, recv| {
                 Type::op_type(recv, strand, Slot::reborrow(&mut out));
             });
-            assert!(out.eq(strand, &strand.singletons().type_obj));
+            assert!(out.eq(strand, &strand.singletons().type_obj).unwrap());
         });
     }
 

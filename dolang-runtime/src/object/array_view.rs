@@ -477,9 +477,12 @@ impl<'v> Protocol<'v> for View<'v> {
         let view = this.get();
         debug(view.glue.module(), view.glue.name(), strand, w)
     }
-    fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, strand: &mut Strand<'v, 's>) -> bool {
+    fn op_bool<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, bool> {
         let view = this.get();
-        view.glue.len(&view.owner, strand) != 0
+        Ok(view.glue.len(&view.owner, strand) != 0)
     }
     fn op_eq<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -945,9 +948,11 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &this)
-            || supertype.eq(strand, &strand.singletons().iterable)
-            || supertype.eq(strand, TypeObject::Value)
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype
+                .eq(strand, &strand.singletons().iterable)
+                .unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
 
     fn op_debug<'a, 's>(

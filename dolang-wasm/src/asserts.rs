@@ -7,7 +7,7 @@ use dolang::runtime::{Error, Strand, call, unpack, vm::Builder};
 macro_rules! message {
     ($strand:expr, $msg:expr) => {
         match $msg {
-            Some(msg) if msg.to_bool($strand) => Some(msg.to_string($strand)?),
+            Some(msg) if msg.to_bool($strand)? => Some(msg.to_string($strand)?),
             _ => None,
         }
     };
@@ -33,7 +33,7 @@ pub(crate) fn configure(builder: &mut Builder<'_>) {
         .module("test")
         .function("assert", async move |strand, args, _| {
             let ([cond], [msg]) = unpack!(strand, args, 1, 1)?;
-            if !cond.to_bool(strand) {
+            if !cond.to_bool(strand)? {
                 let msg = message!(strand, msg);
                 return Err(fail(strand, None, msg));
             }
@@ -41,7 +41,7 @@ pub(crate) fn configure(builder: &mut Builder<'_>) {
         })
         .function("assert_not", async move |strand, args, _| {
             let ([cond], [msg]) = unpack!(strand, args, 1, 1)?;
-            if cond.to_bool(strand) {
+            if cond.to_bool(strand)? {
                 let msg = message!(strand, msg);
                 return Err(fail(strand, None, msg));
             }
@@ -49,7 +49,7 @@ pub(crate) fn configure(builder: &mut Builder<'_>) {
         })
         .function("assert_eq", async move |strand, args, _| {
             let ([left, right], [msg]) = unpack!(strand, args, 2, 1)?;
-            if !left.eq(strand, &right) {
+            if !left.eq(strand, &right)? {
                 let detail = format!("{} == {}", left.to_debug(strand)?, right.to_debug(strand)?);
                 let msg = message!(strand, msg);
                 return Err(fail(strand, Some(detail), msg));
@@ -58,7 +58,7 @@ pub(crate) fn configure(builder: &mut Builder<'_>) {
         })
         .function("assert_ne", async move |strand, args, _| {
             let ([left, right], [msg]) = unpack!(strand, args, 2, 1)?;
-            if !left.ne(strand, &right) {
+            if !left.ne(strand, &right)? {
                 let detail = format!("{} != {}", left.to_debug(strand)?, right.to_debug(strand)?);
                 let msg = message!(strand, msg);
                 return Err(fail(strand, Some(detail), msg));

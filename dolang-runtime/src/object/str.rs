@@ -116,8 +116,11 @@ impl<'v> Protocol<'v> for str {
         crate::fmt!(strand, w, "\"")
     }
 
-    fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, _strand: &'a mut Strand<'v, 's>) -> bool {
-        !this.get().is_empty()
+    fn op_bool<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        _strand: &'a mut Strand<'v, 's>,
+    ) -> Result<'v, 's, bool> {
+        Ok(!this.get().is_empty())
     }
 
     fn op_eq<'a, 's>(

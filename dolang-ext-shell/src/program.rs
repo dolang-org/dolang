@@ -251,7 +251,7 @@ async fn configure_direct_input<'v, 's>(
     command: &mut Command<'_>,
     input: &Value<'v>,
 ) -> Result<'v, 's, bool> {
-    if input.is_nil() || input.eq(strand, Singleton::Null) {
+    if input.is_nil() || input.eq(strand, Singleton::Null)? {
         command.stdin_null();
         return Ok(true);
     }
@@ -292,7 +292,7 @@ async fn configure_direct_output<'v, 's>(
     command: &mut Command<'_>,
     output: &Value<'v>,
 ) -> Result<'v, 's, bool> {
-    if output.is_nil() || output.eq(strand, Singleton::Null) {
+    if output.is_nil() || output.eq(strand, Singleton::Null)? {
         command.stdout_null();
         return Ok(true);
     }
@@ -318,7 +318,7 @@ async fn configure_direct_stderr<'v, 's>(
     command: &mut Command<'_>,
     stderr: &Value<'v>,
 ) -> Result<'v, 's, bool> {
-    if stderr.is_nil() || stderr.eq(strand, Singleton::Null) {
+    if stderr.is_nil() || stderr.eq(strand, Singleton::Null)? {
         command.stderr_null();
         return Ok(true);
     }
@@ -680,7 +680,7 @@ async fn run<'v, 's>(
     if stderr_inherit {
         command.stderr_inherit().into_sys(strand)?;
     }
-    let stderr_merge = !io.value.stderr.is_nil() && io.value.stderr.eq(strand, io.value.stdout);
+    let stderr_merge = !io.value.stderr.is_nil() && io.value.stderr.eq(strand, io.value.stdout)?;
 
     let recv_guard = configure_negotiated_input(strand, &mut command, io.value.stdin).await?;
     let send_guard = configure_negotiated_output(strand, &mut command, io.value.stdout).await?;

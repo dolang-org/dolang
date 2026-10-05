@@ -178,8 +178,11 @@ impl<'v> Protocol<'v> for [u8] {
         crate::fmt!(strand, w, "b{:?}", BStr::new(this.receiver.get()))
     }
 
-    fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, _strand: &'a mut Strand<'v, 's>) -> bool {
-        !this.receiver.get().is_empty()
+    fn op_bool<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        _strand: &'a mut Strand<'v, 's>,
+    ) -> Result<'v, 's, bool> {
+        Ok(!this.receiver.get().is_empty())
     }
 
     fn op_eq<'a, 's>(
@@ -940,10 +943,10 @@ mod tests {
             Output::set(strand, &mut empty, b"".as_slice());
             Output::set(strand, &mut nonempty, b"x".as_slice());
             Output::set(strand, &mut other, b"x".as_slice());
-            assert!(!empty.to_bool(strand));
-            assert!(nonempty.to_bool(strand));
-            assert!(nonempty.eq(strand, &other));
-            assert!(!nonempty.eq(strand, 1_i64));
+            assert!(!empty.to_bool(strand).unwrap());
+            assert!(nonempty.to_bool(strand).unwrap());
+            assert!(nonempty.eq(strand, &other).unwrap());
+            assert!(!nonempty.eq(strand, 1_i64).unwrap());
         });
     }
 
@@ -965,7 +968,7 @@ mod tests {
                 .unwrap()
                 .enter_sync(strand, |strand, recv| {
                     let lt = <[u8] as Protocol>::op_lt(recv, strand, &b).unwrap();
-                    assert!(lt.to_bool(strand));
+                    assert!(lt.to_bool(strand).unwrap());
                 });
 
             strand
@@ -1040,7 +1043,7 @@ mod tests {
             call!(strand, &bound, &mut out, b"ell".as_slice())
                 .await
                 .unwrap();
-            assert!(out.to_bool(strand));
+            assert!(out.to_bool(strand).unwrap());
 
             let err = slot
                 .get(strand, Sym::well_known(sym::COUNT), &mut out)
@@ -1063,7 +1066,7 @@ mod tests {
             )
             .await
             .unwrap();
-            assert!(out.to_bool(strand));
+            assert!(out.to_bool(strand).unwrap());
 
             method!(
                 strand,
@@ -1085,7 +1088,7 @@ mod tests {
             )
             .await
             .unwrap();
-            assert!(out.to_bool(strand));
+            assert!(out.to_bool(strand).unwrap());
 
             method!(
                 strand,
@@ -1238,7 +1241,7 @@ mod tests {
             )
             .await
             .unwrap();
-            assert!(out.to_bool(strand));
+            assert!(out.to_bool(strand).unwrap());
 
             method!(
                 strand,
@@ -1249,7 +1252,7 @@ mod tests {
             )
             .await
             .unwrap();
-            assert!(!out.to_bool(strand));
+            assert!(!out.to_bool(strand).unwrap());
         });
     }
 
@@ -1322,7 +1325,7 @@ mod tests {
                         .unwrap();
                 })
                 .await;
-            assert!(out.eq(strand, &split));
+            assert!(out.eq(strand, &split).unwrap());
 
             let mut next = Value::NIL;
             let more = strand
@@ -1436,7 +1439,7 @@ mod tests {
                 .enter_sync(strand, |strand, recv| {
                     Class::op_type(recv, strand, Slot::reborrow(&mut out));
                 });
-            assert!(out.eq(strand, &strand.singletons().type_obj));
+            assert!(out.eq(strand, &strand.singletons().type_obj).unwrap());
 
             strand
                 .builtin_types()

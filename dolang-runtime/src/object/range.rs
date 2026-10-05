@@ -239,9 +239,9 @@ impl<'v> Protocol<'v> for Range<'v> {
         let left = this.get();
         let right = other.get();
         Ok(Value::from_bool(
-            left.start.op_eq(strand, &right.start)?.to_bool(strand)
-                && left.end.op_eq(strand, &right.end)?.to_bool(strand)
-                && left.step.op_eq(strand, &right.step)?.to_bool(strand),
+            left.start.op_eq(strand, &right.start)?.to_bool(strand)?
+                && left.end.op_eq(strand, &right.end)?.to_bool(strand)?
+                && left.step.op_eq(strand, &right.step)?.to_bool(strand)?,
         ))
     }
 
@@ -273,9 +273,9 @@ impl<'v> Protocol<'v> for Range<'v> {
             }
             let direction = if borrow.end.is_nil() {
                 Direction::Unbounded
-            } else if start.op_lt(strand, &borrow.end)?.to_bool(strand) {
+            } else if start.op_lt(strand, &borrow.end)?.to_bool(strand)? {
                 Direction::Increasing
-            } else if start.op_gt(strand, &borrow.end)?.to_bool(strand) {
+            } else if start.op_gt(strand, &borrow.end)?.to_bool(strand)? {
                 Direction::Decreasing
             } else {
                 Direction::Empty
@@ -309,17 +309,17 @@ impl<'v> Protocol<'v> for Range<'v> {
                 // For increasing ranges (start < end): value >= start && value < end
                 // For decreasing ranges (start > end): value > end && value <= start
                 // For empty ranges (start == end): nothing is contained
-                let is_increasing = borrow.start.op_lt(strand, &borrow.end)?.to_bool(strand);
-                let is_decreasing = borrow.start.op_gt(strand, &borrow.end)?.to_bool(strand);
+                let is_increasing = borrow.start.op_lt(strand, &borrow.end)?.to_bool(strand)?;
+                let is_decreasing = borrow.start.op_gt(strand, &borrow.end)?.to_bool(strand)?;
                 let contained = if is_increasing {
                     // Increasing: [start, end)
-                    let gte_start = borrow.start.op_lte(strand, &value)?.to_bool(strand);
-                    let lt_end = value.op_lt(strand, &borrow.end)?.to_bool(strand);
+                    let gte_start = borrow.start.op_lte(strand, &value)?.to_bool(strand)?;
+                    let lt_end = value.op_lt(strand, &borrow.end)?.to_bool(strand)?;
                     gte_start && lt_end
                 } else if is_decreasing {
                     // Decreasing: (end, start]
-                    let gt_end = borrow.end.op_lt(strand, &value)?.to_bool(strand);
-                    let lte_start = value.op_lte(strand, &borrow.start)?.to_bool(strand);
+                    let gt_end = borrow.end.op_lt(strand, &value)?.to_bool(strand)?;
+                    let lte_start = value.op_lte(strand, &borrow.start)?.to_bool(strand)?;
                     gt_end && lte_start
                 } else {
                     // Empty range: start == end, nothing is contained
@@ -443,8 +443,8 @@ impl<'v> Protocol<'v> for Iter<'v> {
         let mut borrow = this.borrow_mut(strand)?;
         let res = match borrow.direction {
             Direction::Empty => false,
-            Direction::Increasing => borrow.cur.op_lt(strand, &borrow.end)?.op_bool(strand),
-            Direction::Decreasing => borrow.cur.op_gt(strand, &borrow.end)?.op_bool(strand),
+            Direction::Increasing => borrow.cur.op_lt(strand, &borrow.end)?.op_bool(strand)?,
+            Direction::Decreasing => borrow.cur.op_gt(strand, &borrow.end)?.op_bool(strand)?,
             Direction::Unbounded => true,
         };
         if res {
@@ -513,9 +513,11 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &this)
-            || supertype.eq(strand, &strand.singletons().iterable)
-            || supertype.eq(strand, TypeObject::Value)
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype
+                .eq(strand, &strand.singletons().iterable)
+                .unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
 
     fn op_debug<'a, 's>(

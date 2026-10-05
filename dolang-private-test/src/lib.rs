@@ -703,7 +703,7 @@ pub fn configure_vm<'v>(vm: &mut Builder<'v>) -> State<'v, TestState> {
         .function("assert", {
             async move |strand, args, _| {
                 let ([cond], [msg]) = unpack!(strand, args, 1, 0, msg = None)?;
-                if !cond.to_bool(strand) {
+                if !cond.to_bool(strand)? {
                     if let Some(msg) = msg {
                         assertion_failed!(strand, "assertion failed: {}", msg.to_string(strand)?);
                     } else {
@@ -716,7 +716,7 @@ pub fn configure_vm<'v>(vm: &mut Builder<'v>) -> State<'v, TestState> {
         .function("assert_not", {
             async move |strand, args, _| {
                 let ([cond], [msg]) = unpack!(strand, args, 1, 0, msg = None)?;
-                if cond.to_bool(strand) {
+                if cond.to_bool(strand)? {
                     if let Some(msg) = msg {
                         assertion_failed!(strand, "assertion failed: {}", msg.to_string(strand)?);
                     } else {
@@ -729,7 +729,7 @@ pub fn configure_vm<'v>(vm: &mut Builder<'v>) -> State<'v, TestState> {
         .function("assert_eq", {
             async move |strand, args, _| {
                 let ([left, right], [msg]) = unpack!(strand, args, 2, 0, msg = None)?;
-                if !left.eq(strand, &right) {
+                if !left.eq(strand, &right)? {
                     if let Some(msg) = msg {
                         assertion_failed!(
                             strand,
@@ -753,7 +753,7 @@ pub fn configure_vm<'v>(vm: &mut Builder<'v>) -> State<'v, TestState> {
         .function("assert_ne", {
             async move |strand, args, _| {
                 let ([left, right], [msg]) = unpack!(strand, args, 2, 0, msg = None)?;
-                if !left.ne(strand, &right) {
+                if !left.ne(strand, &right)? {
                     if let Some(msg) = msg {
                         assertion_failed!(
                             strand,

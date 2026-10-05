@@ -798,13 +798,16 @@ pub trait Object<'v>: Sized + 'v {
         pad.finish(strand)
     }
 
-    /// Implements boolean conversion.
+    /// Implements boolean conversion, propagating errors to the caller.
     ///
     /// # Default
     /// Native objects are truthy.
     #[allow(unused_variables)]
-    fn bool<'a, 's>(this: Instance<'v, 'a, Self>, strand: &mut Strand<'v, 's>) -> bool {
-        true
+    fn bool<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, bool> {
+        Ok(true)
     }
 
     /// Implements Do call (`func arg...`) operations.
@@ -1398,7 +1401,7 @@ pub trait Object<'v>: Sized + 'v {
         strand.with_slots_sync(|strand, [mut receiver]| {
             Output::set(strand, &mut receiver, this);
             match other.op_lt_direct(strand, &receiver) {
-                Ok(value) => Ok(value.op_bool(strand)),
+                Ok(value) => value.op_bool(strand),
                 Err(error) if error.kind() == ErrorKind::Unsupported => Err(Error::type_error(
                     strand,
                     format!("comparison not supported: {}", Self::NAME),
@@ -1419,7 +1422,7 @@ pub trait Object<'v>: Sized + 'v {
         strand.with_slots_sync(|strand, [mut receiver]| {
             Output::set(strand, &mut receiver, this);
             match other.op_lte_direct(strand, &receiver) {
-                Ok(value) => Ok(value.op_bool(strand)),
+                Ok(value) => value.op_bool(strand),
                 Err(error) if error.kind() == ErrorKind::Unsupported => Err(Error::type_error(
                     strand,
                     format!("comparison not supported: {}", Self::NAME),
@@ -1766,7 +1769,10 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         )
     }
 
-    fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, strand: &mut Strand<'v, 's>) -> bool {
+    fn op_bool<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, bool> {
         T::bool(Instance::from_recv(&this), strand)
     }
 
@@ -4400,8 +4406,59 @@ mod tests {
                         .unwrap();
                     assert_eq!(verbatim, "<test.Fixture>");
 
-                    assert!(ObjectWrap::<Fixture>::op_bool(recv, strand));
+                    assert!(ObjectWrap::<Fixture>::op_bool(recv, strand).unwrap());
                 });
+        });
+    }
+
+    struct BrokenConversion;
+
+    impl<'v> Object<'v> for BrokenConversion {
+        const MODULE: &'v str = "test";
+        const NAME: &'v str = "BrokenConversion";
+        type Annex = ();
+        type Type = ();
+        type TypeAnnex = ();
+
+        fn bool<'a, 's>(
+            _this: Instance<'v, 'a, Self>,
+            strand: &mut Strand<'v, 's>,
+        ) -> Result<'v, 's, bool> {
+            Err(Error::value(strand, "native truthiness failed"))
+        }
+
+        fn eq<'a, 's>(
+            _this: Instance<'v, 'a, Self>,
+            strand: &'a mut Strand<'v, 's>,
+            _other: &Value<'v>,
+        ) -> Result<'v, 's, bool> {
+            Err(Error::value(strand, "native comparison failed"))
+        }
+    }
+
+    #[test]
+    fn public_bool_eq_ne_propagate_native_errors() {
+        with_builder(async |vm| {
+            let ty = vm.register_type::<BrokenConversion>();
+            vm.enter_with_slots::<1, _>(async |strand, [mut owner]| {
+                ty.create(strand, BrokenConversion, Slot::reborrow(&mut owner));
+                let error = owner.to_bool(strand).unwrap_err();
+                assert_eq!(error.kind(), ErrorKind::Value);
+                assert!(format!("{}", error.display(strand)).contains("native truthiness failed"));
+                for error in [
+                    owner.eq(strand, &owner).unwrap_err(),
+                    owner.ne(strand, &owner).unwrap_err(),
+                ] {
+                    assert_eq!(error.kind(), ErrorKind::Value);
+                    assert!(
+                        format!("{}", error.display(strand)).contains("native comparison failed")
+                    );
+                }
+                assert!(Value::TRUE.to_bool(strand).unwrap());
+                assert!(Value::TRUE.eq(strand, true).unwrap());
+                assert!(Value::TRUE.ne(strand, false).unwrap());
+            })
+            .await;
         });
     }
 
@@ -5155,7 +5212,7 @@ mod tests {
                             .unwrap();
                         })
                         .await;
-                    assert!(out.to_bool(strand));
+                    assert!(out.to_bool(strand).unwrap());
 
                     // Falls through to `T::method`'s default field error.
                     strand
@@ -5431,11 +5488,11 @@ mod tests {
 
                     let eq = TypeObjectWrap::<SlotFixture>::op_eq(recv.clone(), strand, ty_value)
                         .unwrap();
-                    assert!(eq.to_bool(strand));
+                    assert!(eq.to_bool(strand).unwrap());
                     let ne =
                         TypeObjectWrap::<SlotFixture>::op_eq(recv.clone(), strand, other_ty_value)
                             .unwrap();
-                    assert!(!ne.to_bool(strand));
+                    assert!(!ne.to_bool(strand).unwrap());
 
                     assert!(TypeObjectWrap::<SlotFixture>::op_subtype(
                         recv.clone(),
@@ -5531,7 +5588,7 @@ mod tests {
             let state = strand.vm().state::<FixtureState>();
             let cast = state.fixture_ty.cast(value).unwrap();
             let bool_result = cast.enter_finalize(|instance| Fixture::bool(instance, strand));
-            assert!(bool_result);
+            assert!(bool_result.unwrap());
         });
     }
 

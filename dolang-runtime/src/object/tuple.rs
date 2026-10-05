@@ -151,8 +151,11 @@ impl<'v> Protocol<'v> for [Value<'v>] {
         crate::fmt!(strand, w, ")")
     }
 
-    fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, _strand: &mut Strand<'v, 's>) -> bool {
-        !this.get().is_empty()
+    fn op_bool<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        _strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, bool> {
+        Ok(!this.get().is_empty())
     }
 
     fn op_hash<'a, 's>(
@@ -186,7 +189,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                     strand.check_trap()?;
                 }
-                if !l.op_eq(strand, r)?.to_bool(strand) {
+                if !l.op_eq(strand, r)?.to_bool(strand)? {
                     return Ok(Value::from_bool(false));
                 }
             }
@@ -208,7 +211,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                     strand.check_trap()?;
                 }
-                if l.op_lt(strand, r)?.to_bool(strand) {
+                if l.op_lt(strand, r)?.to_bool(strand)? {
                     return Ok(Value::from_bool(true));
                 }
             }
@@ -355,7 +358,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
                     if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                         strand.check_trap()?;
                     }
-                    if elem.op_eq(strand, &needle)?.to_bool(strand) {
+                    if elem.op_eq(strand, &needle)?.to_bool(strand)? {
                         found = true;
                         break;
                     }
@@ -729,9 +732,11 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &this)
-            || supertype.eq(strand, &strand.singletons().iterable)
-            || supertype.eq(strand, TypeObject::Value)
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype
+                .eq(strand, &strand.singletons().iterable)
+                .unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
 
     fn op_debug<'a, 's>(
