@@ -13,6 +13,7 @@
 # and completion are always logged.
 
 import std:
+  - @BaseArray
   - @BaseDict
 
 # A progress bar or spinner.
@@ -263,7 +264,7 @@ pub @let Attr = $
 pub @let Colors = $
   ?fg: Color
   ?bg: Color
-  ?attrs: Array[Attr]
+  ?attrs: BaseArray[Attr]
 
 # Display style overrides for [`with`](progress.with).
 #

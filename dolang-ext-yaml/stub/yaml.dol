@@ -1,6 +1,7 @@
 # YAML serialization and deserialization.
 
 import std:
+  - @BaseArray
   - @BaseDict
 
 # A value decoded from YAML. A mapping key may be any YAML value.
@@ -21,7 +22,7 @@ pub @let Encodable = $
   | Float
   | Str
   | Sym
-  | Array[Encodable]
+  | BaseArray[Encodable]
   | Tuple[...Encodable]
   | Record[...{*Encodable, **Encodable}]
   | BaseDict[Encodable, Encodable]

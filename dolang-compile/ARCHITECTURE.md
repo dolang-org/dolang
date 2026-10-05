@@ -861,7 +861,11 @@ The rules are:
 - An array, dict, tuple or record literal builds its designated class over
   inference variables for its items, a spread through `Spread[S]`. An array
   joins every item into its element type, however often it occurs, and expects
-  each item to be the element of an expected `Array[E]`. A dict joins its items
+  each item to be the element of an expected `Array[E]` or `BaseArray[E]`.
+  A fresh array expected to be `BaseArray[E]` is inferred as `Array[E]`, so
+  its invariant element type can widen to the expectation. `BaseArray` is the
+  covariant read-only half of `Array`; both names export the same runtime
+  class. A dict joins its items
   into `Dict[{*(K): V}]`, so that a local it's assigned to can gain entries,
   unless it's expected to be a `Dict[S]` or a `BaseDict[S]` (alone or as one
   member of a union): then its items' own schema, built as a call's arguments

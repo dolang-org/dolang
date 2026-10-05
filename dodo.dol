@@ -228,7 +228,34 @@ def shell_test spec args
   spec.cargo_vfs run --bin dolang -- --module-path testlib -m test
     ...(args.args || default_shell_tests args.slow args.release)
 
+# Distribution builds must use the same native-library and CRT settings in
+# install and in subsequent checks, so Cargo can reuse their artifacts.
+def with_build_env spec block
+  env
+    if (spec.profile == "dist" && spec.tuple.contains("-linux-"))
+      ZSTD_SYS_USE_PKG_CONFIG: 1
+    if (spec.profile == "dist" && spec.tuple.ends_with("-pc-windows-msvc"))
+      RUSTFLAGS: "-C target-feature=+crt-static"
+    do block()
+
+def typecheck spec rest :all = false
+  with_build_env $spec do spec.cargo build --bin dolang
+  let dirs = ["dolang-shell-modules/lib", ...glob("*/stub")]
+  let sources = $
+    if all
+      for dir = dirs
+        ...(Path(dir).glob "**/*.dol")
+  if (all && sources.len == 0)
+    throw "no bundled library sources found"
+  dodo.show $spec.bin("dolang") -m compile check
+    if all
+      --strict --no-bundled
+    for dir = dirs
+      --path $dir
+    ...sources ...rest
+
 def both_test spec args
+  typecheck $spec [] all: true
   cargo_test $spec []
   shell_test $spec $ Options slow: $args.slow release: $args.release
 
@@ -352,13 +379,15 @@ return $
       help: "arguments to `dolang -m compile check`: sources, and more `--path` directories"
       collect: true
     do |args|
-      let spec = Spec $args
-      spec.cargo build --bin dolang
-      let paths = $
-        for dir = ["dolang-shell-modules/lib", ...glob("*/stub")]
-          - --path
-          - $dir
-      dodo.show $spec.bin("dolang") -m compile check ...paths ...args.args
+      typecheck (Spec args) $args.args
+
+  "typecheck-test":
+    help: type check every bundled library and stub with zero diagnostics
+    - opt: profile
+      default: debug
+      help: Cargo profile containing the compiler
+    do |args|
+      typecheck (Spec args profile: args.profile) [] all: true
 
   "cargo-bench":
     help: run cargo benchmarks
@@ -574,24 +603,19 @@ return $
       # is where `libvirt` provisioning runs these binaries. Linking the CRT
       # statically absorbs the UCRT along with it, leaving imports on OS DLLs
       # only.
-      env
-        if is_linux
-          ZSTD_SYS_USE_PKG_CONFIG: 1
-        if is_windows
-          RUSTFLAGS: "-C target-feature=+crt-static"
-        do
-          spec.cargo build --bin dolang
-          vfs_spec.cargo build --bin dolang-vfs
-          # dolang-lsp's build.rs bakes a static hover doc index out of the
-          # same per-module JSON dump `dodo mkdocs` uses (see
-          # tools/docgen.dol's extract_doc_json) -- generate it with the
-          # dolang binary just built, then point the build at it via env var.
-          let doc_json = (spec.target_dir / "lsp-doc-json").absolute()
-          docgen().extract_doc_json $spec $doc_json
-          let typelibs = (spec.target_dir / "lsp-typelibs").absolute()
-          docgen().extract_typelibs $spec $typelibs
-          env DOLANG_LSP_DOC_JSON_DIR: $doc_json DOLANG_LSP_TYPELIB_DIR: $typelibs do
-            spec.cargo build --bin dolang-lsp
+      with_build_env $spec do
+        spec.cargo build --bin dolang
+        vfs_spec.cargo build --bin dolang-vfs
+        # dolang-lsp's build.rs bakes a static hover doc index out of the
+        # same per-module JSON dump `dodo mkdocs` uses (see
+        # tools/docgen.dol's extract_doc_json) -- generate it with the
+        # dolang binary just built, then point the build at it via env var.
+        let doc_json = (spec.target_dir / "lsp-doc-json").absolute()
+        docgen().extract_doc_json $spec $doc_json
+        let typelibs = (spec.target_dir / "lsp-typelibs").absolute()
+        docgen().extract_typelibs $spec $typelibs
+        env DOLANG_LSP_DOC_JSON_DIR: $doc_json DOLANG_LSP_TYPELIB_DIR: $typelibs do
+          spec.cargo build --bin dolang-lsp
 
       if is_windows
         verify_windows_crt $spec dolang

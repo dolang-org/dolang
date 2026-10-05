@@ -60,6 +60,8 @@ pub class Bin
 #         ^~~: designated bin
 pub class Array
 #         ^~~~~: designated array
+pub class BaseArray
+#         ^~~~~~~~~: designated base array
 pub class Dict
 #         ^~~~: designated dict
 pub class BaseDict

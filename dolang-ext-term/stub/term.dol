@@ -78,7 +78,7 @@
 #
 # A console whose own methods call `echo` does not recurse: while a write is
 # being dispatched, console output falls through to the host.
-pub class Console
+pub class Console: std.Sink[Value]
   # Initializes the base console. A subclass calls this from its own `(init)`.
   pub def (init) self
     ...
@@ -270,7 +270,7 @@ pub class Geometry
 #
 # Nothing is translated on the way through: a line ending that arrives is the
 # line ending that is stored.
-pub class SinkConsole
+pub class SinkConsole: Console
   # Wraps a sink in a console.
   #
   # ## Example

@@ -78,6 +78,7 @@ jobs:
         if: matrix.target != 'x86_64-freebsd'
         run: dodo.run lint
 
+      # Includes the required bundled-library typecheck-test gate.
       - name: Run tests
         run: dodo.run test --slow
 

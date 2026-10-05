@@ -50,6 +50,9 @@ jobs:
         run: |
           dodo.run install --prefix release
 
+      - name: Type check bundled libraries
+        run: dodo.run typecheck-test --profile dist
+
       - name: Run integration tests
         run: |
           let is_win = (sys.os_info().family == :WINDOWS:)

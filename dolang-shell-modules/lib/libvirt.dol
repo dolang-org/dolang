@@ -107,6 +107,7 @@ import _vfs base64 digest json proc progress rand shell shlex ssh std strand sys
     - Path
     - with_temp_dir
   std:
+    - @BaseArray
     - @BaseDict
     - null
   url:
@@ -208,8 +209,8 @@ pub @let InitAddSpec = $
 # | `packages` | Installs guest packages                                  |
 pub @let InitSpec = BaseDict $
   *add: InitAddSpec
-  *run: (Str | Array[Str])
-  *packages: (Str | Array[Str])
+  *run: (Str | BaseArray[Str])
+  *packages: (Str | BaseArray[Str])
 
 # The Do build to install into a guest.
 #

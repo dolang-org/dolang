@@ -146,18 +146,27 @@ dodo shell-test -- --tags parser test
 
 ### Formatting and tests
 
-| Rule                      | Purpose                                                                                             |
-| ------------------------- | --------------------------------------------------------------------------------------------------- |
-| `fmt`                     | Formats Rust with `cargo fmt`.                                                                      |
-| `lint`                    | Runs Clippy for all targets, then checks Rust formatting.                                           |
-| `cargo-test`              | Runs Cargo tests. Additional arguments are passed to `cargo test`.                                  |
-| `shell-test`              | Runs the Do integration tests. By default, slow and release-tagged tests are excluded.              |
-| `test`                    | Runs both Cargo and Do integration tests. Use `--slow` or `--release` to include those test groups. |
-| `cargo-bench`             | Runs Cargo benchmarks with the optimized distribution profile.                                      |
-| `test-asan`               | Runs tests under AddressSanitizer with nightly Rust.                                                |
-| `test-miri`               | Runs selected crates under Miri with nightly Rust.                                                  |
-| `gen-bytecode-fuzz-seeds` | Generates the bytecode fuzzer's seed corpus.                                                        |
-| `fuzz-bytecode`           | Regenerates the seed corpus and runs the bytecode fuzzer.                                           |
+| Rule                      | Purpose                                                                                                                            |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `fmt`                     | Formats Rust with `cargo fmt`.                                                                                                     |
+| `lint`                    | Runs Clippy for all targets, then checks Rust formatting.                                                                          |
+| `cargo-test`              | Runs Cargo tests. Additional arguments are passed to `cargo test`.                                                                 |
+| `shell-test`              | Runs the Do integration tests. By default, slow and release-tagged tests are excluded.                                             |
+| `typecheck`               | Checks explicit sources with the repository libraries and stubs on the import search path.                                         |
+| `typecheck-test`          | Checks every bundled library and stub from source; any diagnostic fails the rule.                                                  |
+| `test`                    | Runs bundled-library type checks, Cargo tests, and Do integration tests. Use `--slow` or `--release` to include those test groups. |
+| `cargo-bench`             | Runs Cargo benchmarks with the optimized distribution profile.                                                                     |
+| `test-asan`               | Runs tests under AddressSanitizer with nightly Rust.                                                                               |
+| `test-miri`               | Runs selected crates under Miri with nightly Rust.                                                                                 |
+| `gen-bytecode-fuzz-seeds` | Generates the bytecode fuzzer's seed corpus.                                                                                       |
+| `fuzz-bytecode`           | Regenerates the seed corpus and runs the bytecode fuzzer.                                                                          |
+
+`dodo typecheck-test` builds the checkout’s compiler and checks all modules
+under `dolang-shell-modules/lib` and every `*/stub` directory, including nested,
+private, and platform-specific modules. It requires zero diagnostics and a
+successful exit, and disables bundled typelib fallback. It runs first in
+`dodo test` and gates release packaging in CI. Release CI uses
+`dodo typecheck-test --profile dist` to reuse the distribution build.
 
 Passing explicit test-runner arguments to `shell-test` replaces its default
 tag selection. `test --release` also increases the integration-test timeout.

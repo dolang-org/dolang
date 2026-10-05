@@ -649,18 +649,13 @@ pub class Sink[T]: Sinkable[T] @BaseSink[T]
 # Cannot be caught.
 pub class AbortError: Error
 
+# The read-only half of an [`Array`](std.Array), whose elements it holds
+# covariantly: an `Array[Str]` is a `BaseArray[Str | Sym]`.
 #
-# Arrays are ordered, mutable sequences of values.
-#
-pub class Array[T]: Iterable[T] Sinkable[T] @Unpack[T, Rest: UnpackIter[T]] @MutSeq[T]
-  #
-  #
-  # Builds an array from one iterable. The lowercase `array` factory instead
-  # collects its positional arguments verbatim.
-  #
-  pub def (init) self iterable @ Iterable[T]
-    ...
-
+# Use `BaseArray` for inputs that only read an array. Unlike [`Seq`](std.Seq),
+# it requires an actual array. It is `Array` at runtime; the view neither
+# prevents mutation through another reference nor takes a snapshot.
+pub class BaseArray[T]: Iterable[T] @Unpack[T, Rest: UnpackIter[T]] @Seq[T]
   #
   # Returns the number of elements.
   #
@@ -673,18 +668,6 @@ pub class Array[T]: Iterable[T] Sinkable[T] @Unpack[T, Rest: UnpackIter[T]] @Mut
   #
   #[getter]
   pub def len self -> Int
-    ...
-
-  #
-  # Removes all elements from the array.
-  #
-  # ```
-  # let arr = [1, 2, 3]
-  # arr.clear()
-  # assert_eq $arr.len 0
-  # ```
-  #
-  pub def clear self
     ...
 
   #
@@ -715,27 +698,7 @@ pub class Array[T]: Iterable[T] Sinkable[T] @Unpack[T, Rest: UnpackIter[T]] @Mut
   # When inherited by a Do subclass, `copy()` calls the subclass constructor with
   # the source array as a single positional argument.
   #
-  pub def copy self -> Array[T]
-    ...
-
-  #
-  # Indicates whether an element was removed. Deletes the element at `index` if it exists.
-  # Negative indexes count from the end.
-  #
-  # Out-of-bounds indexes are ignored.
-  #
-  #
-  # ## Example
-  #
-  # ```
-  # let arr = [10, 20, 30]
-  # assert (arr.delete 1)
-  # assert (arr.delete -1)
-  # assert (!(arr.delete 99))
-  # assert_eq $arr [10]
-  # ```
-  #
-  pub def delete self index @ Int -> Bool
+  pub def copy self -> BaseArray[T]
     ...
 
   #
@@ -762,6 +725,128 @@ pub class Array[T]: Iterable[T] Sinkable[T] @Unpack[T, Rest: UnpackIter[T]] @Mut
   do -> (T | D)
     ...
 
+  # Returns an iterator with read-only unpacking.
+  pub def iter self -> UnpackIter[T]
+    ...
+
+  #
+  # Returns an iterator yielding `[index, value]` pairs.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # for i v = [10, 20, 30].pairs()
+  #   echo "$i: $v"
+  # # 0: 10
+  # # 1: 20
+  # # 2: 30
+  # ```
+  #
+  pub def pairs self -> UnpackIter[Tuple[Int, T]]
+    ...
+
+  @def (index)[K] self key@K -> IndexItem[{*(Int): T}, K]
+  @def (index) self range@Range[Int] -> BaseArray[T]
+
+  #
+  # ```
+  # let arr = [10, 20, 30]
+  # assert_eq $arr[0] 10
+  # assert_eq $arr[-1] 30
+  # ```
+  #
+  # Out-of-bounds access raises an error; use `get` if you wish to avoid this.
+  #
+  # Arrays also accept [`Range`](std.Range) values for slicing:
+  #
+  # ```playground
+  # #> import test:
+  # #>   - assert_eq
+  # let arr = [0, 1, 2, 3]
+  # assert_eq $arr[1..3] [1, 2]
+  # assert_eq $arr[..2] [0, 1]
+  # assert_eq $arr[2..] [2, 3]
+  # assert_eq $arr[..] [0, 1, 2, 3]
+  # assert_eq $arr[Range 0 4 2] [0, 2]
+  # assert_eq $arr[Range nil nil -1] [3, 2, 1, 0]
+  # ```
+  #
+  # Slice indexing returns a new array.
+  # Omitted `start` means `0`, omitted `end` means the array length, and negative
+  # `start` and `end` values count from the end. Negative steps reverse the slice.
+  #
+  pub def (index)[K] self key@K -> IndexItem[{*(Int): T}, K]
+    ...
+
+  # ```
+  # for value = [1, 2, 3]
+  #   echo $value
+  # ```
+  #
+  pub def (iter) self -> UnpackIter[T]
+    ...
+
+  # Destructures the array positionally.
+  #
+  # ```
+  # let a b ...rest = [1, 2, 3, 4]
+  # assert_eq $a 1
+  # assert_eq $b 2
+  # ```
+  pub def (unpack) self -> Unpack[T, Rest: UnpackIter[T]]
+    ...
+
+  # Spreads the items positionally.
+  pub def (spread) self -> Spread[T]
+    ...
+
+
+# Arrays are ordered, mutable sequences of values.
+#
+# The element type is invariant. Use [`BaseArray`](std.BaseArray) for a
+# covariant read view, or [`Seq`](std.Seq) to accept other sequences too.
+pub class Array[T]: BaseArray[T] Sinkable[T] @MutSeq[T]
+  #
+  #
+  # Builds an array from one iterable. The lowercase `array` factory instead
+  # collects its positional arguments verbatim.
+  #
+  pub def (init) self iterable @ Iterable[T]
+    ...
+
+  #
+  # Removes all elements from the array.
+  #
+  # ```
+  # let arr = [1, 2, 3]
+  # arr.clear()
+  # assert_eq $arr.len 0
+  # ```
+  #
+  pub def clear self
+    ...
+
+  #
+  # Indicates whether an element was removed. Deletes the element at `index` if it exists.
+  # Negative indexes count from the end.
+  #
+  # Out-of-bounds indexes are ignored.
+  #
+  #
+  # ## Example
+  #
+  # ```
+  # let arr = [10, 20, 30]
+  # assert (arr.delete 1)
+  # assert (arr.delete -1)
+  # assert (!(arr.delete 99))
+  # assert_eq $arr [10]
+  # ```
+  #
+  pub def delete self index @ Int -> Bool
+    ...
+
   #
   # Inserts one or more values at the specified index, shifting existing elements.
   # Negative indexes count from the end; `-1` inserts before the last element.
@@ -783,27 +868,6 @@ pub class Array[T]: Iterable[T] Sinkable[T] @Unpack[T, Rest: UnpackIter[T]] @Mut
     # values to insert
     ...values @ T
   do
-    ...
-
-  # Returns an iterator with read-only unpacking.
-  pub def iter self -> UnpackIter[T]
-    ...
-
-  #
-  # Returns an iterator yielding `[index, value]` pairs.
-  #
-  #
-  # ## Example
-  #
-  # ```
-  # for i v = [10, 20, 30].pairs()
-  #   echo "$i: $v"
-  # # 0: 10
-  # # 1: 20
-  # # 2: 30
-  # ```
-  #
-  pub def pairs self -> UnpackIter[Tuple[Int, T]]
     ...
 
   #
@@ -874,45 +938,19 @@ pub class Array[T]: Iterable[T] Sinkable[T] @Unpack[T, Rest: UnpackIter[T]] @Mut
   do
     ...
 
+  # Returns a shallow copy, as [`BaseArray.copy`](std.BaseArray.copy) does.
+  pub def copy self -> Array[T]
+    ...
+
   @def (index)[K] self key@K -> IndexItem[{*(Int): T}, K]
   @def (index) self range@Range[Int] -> Array[T]
 
-  #
-  # ```
-  # let arr = [10, 20, 30]
-  # assert_eq $arr[0] 10
-  # assert_eq $arr[-1] 30
-  # arr[0] = 99
-  # arr[-1] = 77
-  # assert_eq $arr[0] 99
-  # assert_eq $arr[-1] 77
-  # ```
-  #
-  # Out-of-bounds access raises an error; use `get` if you wish to avoid this.
-  #
-  # Arrays also accept [`Range`](std.Range) values for slicing:
-  #
-  # ```playground
-  # #> import test:
-  # #>   - assert_eq
-  # let arr = [0, 1, 2, 3]
-  # assert_eq $arr[1..3] [1, 2]
-  # assert_eq $arr[..2] [0, 1]
-  # assert_eq $arr[2..] [2, 3]
-  # assert_eq $arr[..] [0, 1, 2, 3]
-  # assert_eq $arr[Range 0 4 2] [0, 2]
-  # assert_eq $arr[Range nil nil -1] [3, 2, 1, 0]
-  # ```
-  #
-  # Slice indexing returns a new array.
-  # Omitted `start` means `0`, omitted `end` means the array length, and negative
-  # `start` and `end` values count from the end. Negative steps reverse the slice.
-  #
+  # Returns an element, or a new array for a slice.
   pub def (index)[K] self key@K -> IndexItem[{*(Int): T}, K]
     ...
 
   @def (assign)[K] self key@K value@AssignItem[{*(Int): T}, K]
-  @def (assign) self range@Range[Int] value@(Array[T] | Tuple[...T])
+  @def (assign) self range@Range[Int] value@(BaseArray[T] | Tuple[...T])
 
   #
   # ```
@@ -931,28 +969,6 @@ pub class Array[T]: Iterable[T] Sinkable[T] @Unpack[T, Rest: UnpackIter[T]] @Mut
   # assignment with a non-unity step is rejected.
   #
   pub def (assign)[K] self key@K value@AssignItem[{*(Int): T}, K]
-    ...
-
-  # ```
-  # for value = [1, 2, 3]
-  #   echo $value
-  # ```
-  #
-  pub def (iter) self -> UnpackIter[T]
-    ...
-
-  # Destructures the array positionally.
-  #
-  # ```
-  # let a b ...rest = [1, 2, 3, 4]
-  # assert_eq $a 1
-  # assert_eq $b 2
-  # ```
-  pub def (unpack) self -> Unpack[T, Rest: UnpackIter[T]]
-    ...
-
-  # Spreads the items positionally.
-  pub def (spread) self -> Spread[T]
     ...
 
 

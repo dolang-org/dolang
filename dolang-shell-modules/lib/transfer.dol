@@ -830,7 +830,7 @@ def resolve_link output_parts target
   let parent = output.parent
   if !parent
     throw std.ValueError "empty output path"
-  unix_fs.Path.join(output.parent, target).normalize()
+  unix_fs.Path.join(parent, target).normalize()
 
 def normalize_manifest records strip
   let count = (strip_count records strip)

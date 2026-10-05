@@ -1,0 +1,19 @@
+# Internal shell services used by bundled modules and entrypoints.
+@import fs
+import strand:
+  - @Backtrace
+
+pub def render_error error :backtrace @ Backtrace = nil -> Str
+  ...
+
+pub def compile_script path @ (Str | fs.Path) -> Bin
+  ...
+
+pub def bundled_module name @ Str -> (Bin | nil)
+  ...
+
+pub def bundled_typelib name @ Str -> (Bin | nil)
+  ...
+
+pub def bundled_entrypoint name @ Str -> (Bin | nil)
+  ...

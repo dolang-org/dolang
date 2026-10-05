@@ -8,6 +8,7 @@ import
     - assert_throws
     - test
   std:
+    - @BaseArray
     - RuntimeError
     - TypeError
 
@@ -92,3 +93,9 @@ def indented_encoding()
   let err = assert_throws $TypeError do
     encode [1] indent: -1
   assert ((str err).contains "indent")
+
+#[test]
+def encode_array_read_view()
+  let values @ Array[Array[Int]] = [[1, 2], [3]]
+  let view @ BaseArray[BaseArray[Int]] = values
+  assert_eq (decode $ encode view) $values

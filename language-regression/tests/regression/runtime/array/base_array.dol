@@ -1,0 +1,23 @@
+# The read view uses the existing runtime array type.
+import std:
+  - BaseArray
+
+assert_eq $BaseArray $Array
+assert (type [1, 2] BaseArray)
+assert (!(type (1, 2) BaseArray))
+assert (!(type (0..2) BaseArray))
+
+let values = [1, 2, 3]
+let view @ BaseArray[Int] = values
+assert_eq $view.len 3
+assert_eq $view[0] 1
+assert_eq $view[1..] [2, 3]
+assert_eq $view.copy() $values
+assert_eq (view.get 8 default: 42) 42
+assert (view.contains 2)
+assert_eq $[...view.iter()] $values
+assert_eq $[...view.pairs()] [(0, 1), (1, 2), (2, 3)]
+values.push 4
+assert_eq $view.len 4
+values[..] = view[1..]
+assert_eq $values [2, 3, 4]

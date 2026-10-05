@@ -23,6 +23,7 @@
 # ```
 
 import std:
+  - @BaseArray
   - @BaseDict
 
 import term:
@@ -33,7 +34,7 @@ import term:
 pub @let PreludeBinding = $
   | Str
   | Sym
-  | Array[Str | Sym]
+  | BaseArray[Str | Sym]
   | BaseDict[Str | Sym, Str | Sym]
 
 # Imports to bind before compiled source: a module name, an array of module
@@ -41,7 +42,7 @@ pub @let PreludeBinding = $
 pub @let Prelude = $
   | Str
   | Sym
-  | Array[Str | Sym]
+  | BaseArray[Str | Sym]
   | BaseDict[Str | Sym, PreludeBinding]
 
 # A staged compilation unit.

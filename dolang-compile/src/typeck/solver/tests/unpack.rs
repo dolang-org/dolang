@@ -298,6 +298,29 @@ fn a_member_not_reaching_unpack_is_undecided() {
 }
 
 #[test]
+fn an_unknown_unpack_schema_stays_unknown() {
+    let mut w = World::new();
+    let schema = w.db.unknown_schema();
+    let supertype = w.db.apply_defaults(w.unpack_decl(), &[schema]).unwrap();
+    let c = nominal(&mut w.db, "Dynamic", vec![], vec![supertype]);
+    let rest = apply(&w.db, w.spread, &[schema]);
+    let unknown = w.db.unknown();
+    let key = w.key("name");
+    let walked = w
+        .walk(c, &pattern(&[false], &[(key, false)], true))
+        .unwrap();
+    assert!(walked.possible);
+    assert_eq!(walked.slots, vec![unknown, unknown]);
+    assert_eq!(walked.rests, vec![rest]);
+    let split = PatternShape {
+        positional: vec![],
+        keyed: vec![],
+        rests: vec![RestKind::Pos, RestKind::Key],
+    };
+    assert_eq!(w.walk(c, &split).unwrap().rests, vec![rest, rest]);
+}
+
+#[test]
 fn a_closed_rest_carries_over() {
     let mut w = World::new();
     let int = w.int;

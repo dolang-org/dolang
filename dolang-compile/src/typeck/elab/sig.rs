@@ -260,6 +260,7 @@ fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
         ("std", "Float") => (Designated::Float, DeclKind::Class),
         ("std", "Bin") => (Designated::Bin, DeclKind::Class),
         ("std", "Array") => (Designated::Array, DeclKind::Class),
+        ("std", "BaseArray") => (Designated::BaseArray, DeclKind::Class),
         ("std", "Dict") => (Designated::Dict, DeclKind::Class),
         ("std", "BaseDict") => (Designated::BaseDict, DeclKind::Class),
         ("std", "Tuple") => (Designated::Intrinsic(Intrinsic::Tuple), DeclKind::Class),

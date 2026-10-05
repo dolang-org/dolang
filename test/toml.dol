@@ -8,6 +8,7 @@ import
     - assert_throws
     - test
   std:
+    - @BaseArray
     - ValueError
     - TypeError
     - RuntimeError
@@ -108,3 +109,9 @@ def decode_and_encode_errors()
   let parse_err = assert_throws $ValueError do
     decode "{ a = "
   assert ((str parse_err).contains "expected")
+
+#[test]
+def encode_array_read_view()
+  let values @ Array[Array[Int]] = [[1, 2], [3]]
+  let view @ BaseArray[BaseArray[Int]] = values
+  assert_eq (decode $ encode view) $values

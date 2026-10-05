@@ -27,6 +27,16 @@
     display: none;
 }
 
+/* Alias syntax must retain its indentation when copied or viewed on mobile. */
+.md-typeset pre.do-alias {
+    overflow-x: auto;
+}
+.md-typeset pre.do-alias > code {
+    white-space: pre;
+    word-break: normal;
+    overflow-wrap: normal;
+}
+
 .playground-link {
     font-size: .7rem;
     font-weight: 600;
