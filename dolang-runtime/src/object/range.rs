@@ -239,9 +239,9 @@ impl<'v> Protocol<'v> for Range<'v> {
         let left = this.get();
         let right = other.get();
         Ok(Value::from_bool(
-            left.start.op_eq(strand, &right.start).to_bool(strand)
-                && left.end.op_eq(strand, &right.end).to_bool(strand)
-                && left.step.op_eq(strand, &right.step).to_bool(strand),
+            left.start.op_eq(strand, &right.start)?.to_bool(strand)
+                && left.end.op_eq(strand, &right.end)?.to_bool(strand)
+                && left.step.op_eq(strand, &right.step)?.to_bool(strand),
         ))
     }
 

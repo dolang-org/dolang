@@ -27,6 +27,9 @@ assert (x.contains "ell")
 
 # Comparison
 assert (x == x)
+assert_not (x != x)
+assert (x == MyStr("hello"))
+assert_not (x == y)
 assert (x < y)
 assert (x == "hello")
 

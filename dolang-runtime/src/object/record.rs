@@ -758,7 +758,7 @@ impl<'v> Protocol<'v> for Record<'v> {
             }
             // Positions line up when every key before them does
             if lkey.as_ref().map(|key| key.tag) != rkey.as_ref().map(|key| key.tag)
-                || !lvalue.op_eq(strand, rvalue).to_bool(strand)
+                || !lvalue.op_eq(strand, rvalue)?.to_bool(strand)
             {
                 return Ok(Value::FALSE);
             }

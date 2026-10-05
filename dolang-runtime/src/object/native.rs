@@ -1059,17 +1059,14 @@ pub trait Object<'v>: Sized + 'v {
 
     /// Compares this object to another for equality.
     /// # Default
-    /// Returns a type error
+    /// Returns an unsupported-operation error
     #[allow(unused_variables)]
     fn eq<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        Err(Error::type_error(
-            strand,
-            format!("equality not supported: {}", Self::NAME),
-        ))
+        Err(Error::not_supported(strand))
     }
 
     /// Compares this object to another for inequality.
@@ -4738,7 +4735,7 @@ mod tests {
     }
 
     #[test]
-    fn op_hash_is_stable_and_op_eq_ne_use_default_type_error() {
+    fn op_hash_is_stable_and_op_eq_ne_use_default_unsupported_error() {
         with_fixture_vm(async |strand, [mut owner, mut other]| {
             make_fixture(strand, Slot::reborrow(&mut owner));
             make_fixture(strand, Slot::reborrow(&mut other));
@@ -4759,12 +4756,12 @@ mod tests {
                     assert_eq!(h1.finish(), h2.finish());
 
                     match ObjectWrap::<Fixture>::op_eq(recv.clone(), strand, other_value) {
-                        Err(err) => assert_eq!(err.kind(), ErrorKind::Type),
-                        Ok(_) => panic!("expected a type error"),
+                        Err(err) => assert_eq!(err.kind(), ErrorKind::Unsupported),
+                        Ok(_) => panic!("expected an unsupported-operation error"),
                     }
                     match ObjectWrap::<Fixture>::op_ne(recv, strand, other_value) {
-                        Err(err) => assert_eq!(err.kind(), ErrorKind::Type),
-                        Ok(_) => panic!("expected a type error"),
+                        Err(err) => assert_eq!(err.kind(), ErrorKind::Unsupported),
+                        Ok(_) => panic!("expected an unsupported-operation error"),
                     }
                 });
         });

@@ -186,7 +186,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                     strand.check_trap()?;
                 }
-                if !l.op_eq(strand, r).to_bool(strand) {
+                if !l.op_eq(strand, r)?.to_bool(strand) {
                     return Ok(Value::from_bool(false));
                 }
             }
@@ -355,7 +355,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
                     if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                         strand.check_trap()?;
                     }
-                    if elem.op_eq(strand, &needle).to_bool(strand) {
+                    if elem.op_eq(strand, &needle)?.to_bool(strand) {
                         found = true;
                         break;
                     }

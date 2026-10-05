@@ -673,7 +673,7 @@ impl<'v> Protocol<'v> for Array<'v> {
             }
             let l = unsafe { left.get_unchecked(i) };
             let r = unsafe { right.get_unchecked(i) };
-            if !l.op_eq(strand, r).to_bool(strand) {
+            if !l.op_eq(strand, r)?.to_bool(strand) {
                 return Ok(Value::from_bool(false));
             }
         }
@@ -992,7 +992,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                         strand.check_trap()?;
                     }
                     if unsafe { borrow.inner.get_unchecked(i) }
-                        .op_eq(strand, &needle)
+                        .op_eq(strand, &needle)?
                         .to_bool(strand)
                     {
                         found = true;

@@ -1148,7 +1148,7 @@ impl<'v> Skip<'v> {
         unsafe {
             match self.table.find_or_find_insert_index(
                 hv,
-                |s| value.op_eq(strand, &s.value).to_bool(strand),
+                |s| value.eq(strand, &s.value),
                 |s| s.hash,
             ) {
                 Ok(bucket) => {
@@ -1734,11 +1734,11 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 let (l, subl) = (l.0.as_ref(), l.1);
                 let (r, subr) = (r.0.as_ref(), r.1);
                 if l.hash != r.hash
-                    || !l.key.op_eq(strand, &r.key).to_bool(strand)
+                    || !l.key.op_eq(strand, &r.key)?.to_bool(strand)
                     || !l
                         .value
                         .at(subl)
-                        .op_eq(strand, r.value.at(subr))
+                        .op_eq(strand, r.value.at(subr))?
                         .to_bool(strand)
                 {
                     return Ok(Value::FALSE);
@@ -2496,7 +2496,7 @@ impl<'v> Dict<'v> {
                     let bucket_ref = unsafe { bucket.as_ref() };
                     match &bucket_ref.value {
                         EntryValue::Single { value, .. } => {
-                            value.op_eq(strand, &expected_value).to_bool(strand)
+                            value.op_eq(strand, &expected_value)?.to_bool(strand)
                         }
                         EntryValue::Multi(_) => {
                             let mut found = false;
@@ -2509,7 +2509,7 @@ impl<'v> Dict<'v> {
                                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                                     strand.check_trap()?;
                                 }
-                                if v.op_eq(strand, &expected_value).to_bool(strand) {
+                                if v.op_eq(strand, &expected_value)?.to_bool(strand) {
                                     found = true;
                                     break;
                                 }

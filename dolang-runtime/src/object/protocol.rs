@@ -2254,7 +2254,7 @@ async fn special_mcall<'v, 'a, 's>(
             let ([other], []) = unpack!(strand, args, 1, 0)?;
             let value = match delegator {
                 Some(delegator) => Delegated::new(receiver, delegator).op_eq(strand, &other)?,
-                None => receiver.op_eq(strand, &other),
+                None => receiver.op_eq(strand, &other)?,
             };
             out.store(value);
         }

@@ -1,0 +1,72 @@
+# Identical representations must still invoke the equality operation.
+class NonReflexive
+  pub field calls = 0
+
+  def (eq) self _other
+    self.calls = (self.calls + 1)
+    false
+
+let value = NonReflexive()
+assert_not (value == value)
+assert (value != value)
+assert_eq $value.calls 2
+
+let nan = (0.0 / 0.0)
+assert_not (nan == nan)
+assert (nan != nan)
+
+# Identity remains the fallback when no equality operation is supported.
+class Identity
+  field unused = nil
+let first = Identity()
+let second = Identity()
+assert (first == first)
+assert_not (first != first)
+assert_not (first == second)
+assert (first != second)
+
+# Reflect only when a comparison is unsupported.
+class Unsupported
+  def (eq) _self _other
+    throw std.UnsupportedError()
+class Reflected
+  pub field calls = 0
+  def (eq) self _other
+    self.calls = (self.calls + 1)
+    true
+let unsupported = Unsupported()
+let reflected = Reflected()
+assert (unsupported == reflected)
+assert_not (unsupported != reflected)
+assert_eq $reflected.calls 2
+assert (unsupported == unsupported)
+assert_not (unsupported != unsupported)
+assert_not (unsupported == Unsupported())
+assert (unsupported != Unsupported())
+assert_not (unsupported == 1)
+assert (unsupported != 1)
+
+# A real error must propagate, including when the operands are identical.
+class Broken
+  def (eq) _self _other
+    throw std.ValueError "comparison failed"
+let broken = Broken()
+assert_throws $std.ValueError do (broken == broken)
+assert_throws $std.ValueError do (broken != broken)
+assert_throws $std.ValueError do (broken == reflected)
+assert_throws $std.ValueError do (broken != reflected)
+assert_throws $std.ValueError do (unsupported == broken)
+assert_throws $std.ValueError do (unsupported != broken)
+assert_eq $reflected.calls 2
+assert_throws $std.ValueError do ([broken] == [broken])
+assert_throws $std.ValueError do ([broken] != [broken])
+assert_throws $std.ValueError do [broken].contains $broken
+
+# Boxed numeric values decline comparisons with nonnumeric operands.
+let boxed = 170141183460469231731687303715884105727
+assert_not (boxed == "number")
+assert (boxed != "number")
+assert (boxed == reflected)
+assert_not (boxed != reflected)
+assert_throws $std.ValueError do (boxed == broken)
+assert_throws $std.ValueError do (boxed != broken)

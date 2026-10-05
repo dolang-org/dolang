@@ -117,10 +117,7 @@ pub trait DictLike<'v>: 'v {
         let array = out.as_array(strand).unwrap();
         let mut seen: Vec<Value<'v>> = Vec::with_capacity(pairs.len());
         for (key, _) in pairs {
-            if !seen
-                .iter()
-                .any(|seen| seen.op_eq(strand, &key).to_bool(strand))
-            {
+            if !seen.iter().any(|seen| seen.eq(strand, &key)) {
                 array.push(strand, &key)?;
                 seen.push(key);
             }
@@ -526,7 +523,7 @@ fn unpack_pairs<'v, 's>(
             .iter()
             .enumerate()
             .find_map(|(index, (candidate, value))| {
-                if !consumed[index] && candidate.op_eq(strand, &key).to_bool(strand) {
+                if !consumed[index] && candidate.eq(strand, &key) {
                     Some((index, value))
                 } else {
                     None
@@ -704,7 +701,7 @@ fn unpack_sig_pairs<'v, 's>(
         if let Some((found, (_, value))) = pairs
             .iter()
             .enumerate()
-            .find(|(found, pair)| !consumed[*found] && pair.0.op_eq(strand, &key).to_bool(strand))
+            .find(|(found, pair)| !consumed[*found] && pair.0.eq(strand, &key))
         {
             consumed.set(found, true);
             out.at(index).store(value.dup());
@@ -722,7 +719,7 @@ fn unpack_sig_pairs<'v, 's>(
         if let Some((found, (_, value))) = pairs
             .iter()
             .enumerate()
-            .find(|(found, pair)| !consumed[*found] && pair.0.op_eq(strand, &key).to_bool(strand))
+            .find(|(found, pair)| !consumed[*found] && pair.0.eq(strand, &key))
         {
             consumed.set(found, true);
             out.at(pos_count + offset).store(value.dup());
