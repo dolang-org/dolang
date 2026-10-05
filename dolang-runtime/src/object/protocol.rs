@@ -388,9 +388,10 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Ok(Value::from_bool(
-            !Self::op_lte(this, strand, other)?.op_bool(strand),
-        ))
+        strand.with_slots_sync(|strand, [mut receiver]| {
+            Output::set(strand, &mut receiver, this);
+            other.op_lt_direct(strand, &receiver)
+        })
     }
 
     fn op_gte<'a, 's>(
@@ -398,9 +399,10 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        Ok(Value::from_bool(
-            !Self::op_lt(this, strand, other)?.op_bool(strand),
-        ))
+        strand.with_slots_sync(|strand, [mut receiver]| {
+            Output::set(strand, &mut receiver, this);
+            other.op_lte_direct(strand, &receiver)
+        })
     }
 
     fn op_get<'a, 's>(
@@ -2252,7 +2254,7 @@ async fn special_mcall<'v, 'a, 's>(
             let ([other], []) = unpack!(strand, args, 1, 0)?;
             let value = match delegator {
                 Some(delegator) => Delegated::new(receiver, delegator).op_eq(strand, &other)?,
-                None => receiver.op_eq(strand, &other),
+                None => receiver.op_eq(strand, &other)?,
             };
             out.store(value);
         }

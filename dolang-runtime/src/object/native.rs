@@ -1059,17 +1059,14 @@ pub trait Object<'v>: Sized + 'v {
 
     /// Compares this object to another for equality.
     /// # Default
-    /// Returns a type error
+    /// Returns an unsupported-operation error
     #[allow(unused_variables)]
     fn eq<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        Err(Error::type_error(
-            strand,
-            format!("equality not supported: {}", Self::NAME),
-        ))
+        Err(Error::not_supported(strand))
     }
 
     /// Compares this object to another for inequality.
@@ -1392,24 +1389,44 @@ pub trait Object<'v>: Sized + 'v {
 
     /// Compares this object to another for greater-than ordering.
     /// # Default
-    /// Computes from [`lte`](Self::lte).
+    /// Computes [`lt`](Self::lt) with the operands reversed.
     fn gt<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        Ok(!Self::lte(this, strand, other)?)
+        strand.with_slots_sync(|strand, [mut receiver]| {
+            Output::set(strand, &mut receiver, this);
+            match other.op_lt_direct(strand, &receiver) {
+                Ok(value) => Ok(value.op_bool(strand)),
+                Err(error) if error.kind() == ErrorKind::Unsupported => Err(Error::type_error(
+                    strand,
+                    format!("comparison not supported: {}", Self::NAME),
+                )),
+                Err(error) => Err(error),
+            }
+        })
     }
 
     /// Compares this object to another for greater-than-or-equal ordering.
     /// # Default
-    /// Computes from [`lt`](Self::lt).
+    /// Computes [`lte`](Self::lte) with the operands reversed.
     fn gte<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        Ok(!Self::lt(this, strand, other)?)
+        strand.with_slots_sync(|strand, [mut receiver]| {
+            Output::set(strand, &mut receiver, this);
+            match other.op_lte_direct(strand, &receiver) {
+                Ok(value) => Ok(value.op_bool(strand)),
+                Err(error) if error.kind() == ErrorKind::Unsupported => Err(Error::type_error(
+                    strand,
+                    format!("comparison not supported: {}", Self::NAME),
+                )),
+                Err(error) => Err(error),
+            }
+        })
     }
 
     /// Unpacks values from this object according to the provided specification.
@@ -4718,7 +4735,7 @@ mod tests {
     }
 
     #[test]
-    fn op_hash_is_stable_and_op_eq_ne_use_default_type_error() {
+    fn op_hash_is_stable_and_op_eq_ne_use_default_unsupported_error() {
         with_fixture_vm(async |strand, [mut owner, mut other]| {
             make_fixture(strand, Slot::reborrow(&mut owner));
             make_fixture(strand, Slot::reborrow(&mut other));
@@ -4739,12 +4756,12 @@ mod tests {
                     assert_eq!(h1.finish(), h2.finish());
 
                     match ObjectWrap::<Fixture>::op_eq(recv.clone(), strand, other_value) {
-                        Err(err) => assert_eq!(err.kind(), ErrorKind::Type),
-                        Ok(_) => panic!("expected a type error"),
+                        Err(err) => assert_eq!(err.kind(), ErrorKind::Unsupported),
+                        Ok(_) => panic!("expected an unsupported-operation error"),
                     }
                     match ObjectWrap::<Fixture>::op_ne(recv, strand, other_value) {
-                        Err(err) => assert_eq!(err.kind(), ErrorKind::Type),
-                        Ok(_) => panic!("expected a type error"),
+                        Err(err) => assert_eq!(err.kind(), ErrorKind::Unsupported),
+                        Ok(_) => panic!("expected an unsupported-operation error"),
                     }
                 });
         });

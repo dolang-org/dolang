@@ -911,7 +911,7 @@ impl<'v> Vm<'v> {
                         }
                         builtin::VALUE_ASSERT => {
                             let ([value, expected], []) = unpack!(strand, args, 2, 0)?;
-                            if !value.op_eq(strand, &expected).to_bool(strand) {
+                            if !value.op_eq(strand, &expected)?.to_bool(strand) {
                                 // Report the mismatch even if a value can't be formatted
                                 let msg = match (expected.to_debug(strand), value.to_debug(strand))
                                 {
@@ -1012,8 +1012,8 @@ impl<'v> Vm<'v> {
                         Mod => left.op_mod(strand, &right),
                         Mul => left.op_mul(strand, &right),
                         Sub => left.op_sub(strand, &right),
-                        Eq => Ok(left.op_eq(strand, &right)),
-                        Ne => Ok(left.op_ne(strand, &right)),
+                        Eq => left.op_eq(strand, &right),
+                        Ne => left.op_ne(strand, &right),
                         Lt => left.op_lt(strand, &right),
                         Gt => left.op_gt(strand, &right),
                         Lte => left.op_lte(strand, &right),

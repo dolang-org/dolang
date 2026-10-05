@@ -415,7 +415,7 @@ impl<'v> Value<'v> {
                     Prim::F64(_) => &strand.singletons().float,
                     Prim::Bool(_) => &strand.singletons().bool,
                 };
-                self_type.op_eq(strand, supertype).op_bool(strand)
+                self_type.eq(strand, supertype)
             }
             Case::Object(o) => o.op_subtype(strand, supertype),
         }
@@ -776,34 +776,80 @@ impl<'v> Value<'v> {
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &'a Value<'v>,
-    ) -> Value<'v> {
-        if self.repr_eq(strand, other) {
-            return Value::TRUE;
+    ) -> Result<'v, 's, Value<'v>> {
+        let result = match (self.case(), other.case()) {
+            (Case::Prim(left), Case::Prim(right)) => {
+                Ok(Value::from_bool(left.op_eq(strand, &right)))
+            }
+            (Case::Object(left), Case::Prim(_)) => left.op_eq(strand, other),
+            (Case::Prim(_), Case::Object(right)) => right.op_eq(strand, self),
+            (Case::Object(left), Case::Object(right)) => match left.op_eq(strand, other) {
+                Err(error) if error.kind() == ErrorKind::Unsupported => right.op_eq(strand, self),
+                result => result,
+            },
+        };
+        match result {
+            Err(error) if error.kind() == ErrorKind::Unsupported => {
+                Ok(Value::from_bool(self.repr_eq(strand, other)))
+            }
+            result => result,
         }
-        self.binop_comm(
-            strand,
-            other,
-            |l, strand, r| Ok(l.op_eq(strand, r).into()),
-            |this, strand, other| this.op_eq(strand, other),
-        )
-        .unwrap_or(Value::FALSE)
     }
 
     pub(crate) fn op_ne<'a, 's>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &'a Value<'v>,
-    ) -> Value<'v> {
-        if self.repr_eq(strand, other) {
-            return Value::FALSE;
+    ) -> Result<'v, 's, Value<'v>> {
+        let result = match (self.case(), other.case()) {
+            (Case::Prim(left), Case::Prim(right)) => {
+                Ok(Value::from_bool(left.op_ne(strand, &right)))
+            }
+            (Case::Object(left), Case::Prim(_)) => left.op_ne(strand, other),
+            (Case::Prim(_), Case::Object(right)) => right.op_ne(strand, self),
+            (Case::Object(left), Case::Object(right)) => match left.op_ne(strand, other) {
+                Err(error) if error.kind() == ErrorKind::Unsupported => right.op_ne(strand, self),
+                result => result,
+            },
+        };
+        match result {
+            Err(error) if error.kind() == ErrorKind::Unsupported => {
+                Ok(Value::from_bool(!self.repr_eq(strand, other)))
+            }
+            result => result,
         }
-        self.binop_comm(
-            strand,
-            other,
-            |l, strand, r| Ok(l.op_ne(strand, r).into()),
-            |this, strand, other| this.op_ne(strand, other),
-        )
-        .unwrap_or(Value::TRUE)
+    }
+
+    // Dispatch only to this operand: reflected comparison defaults must not
+    // retry the original operand when the reversed operation is unsupported.
+    pub(crate) fn op_lt_direct<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        match self.case() {
+            Case::Object(this) => this.op_lt(strand, other),
+            Case::Prim(this) => {
+                let other = other.to_prim(strand)?;
+                this.op_lt(strand, &other)
+                    .map(|v| Value::from_prim(strand, v))
+            }
+        }
+    }
+
+    pub(crate) fn op_lte_direct<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        match self.case() {
+            Case::Object(this) => this.op_lte(strand, other),
+            Case::Prim(this) => {
+                let other = other.to_prim(strand)?;
+                this.op_lte(strand, &other)
+                    .map(|v| Value::from_prim(strand, v))
+            }
+        }
     }
 
     pub(crate) fn op_lt<'a, 's>(
@@ -1097,18 +1143,28 @@ impl<'v> Value<'v> {
         self.op_bool(strand)
     }
 
-    /// Tests whether two values are equal.
+    /// Tests whether two values are equal, returning false if comparison raises.
     #[inline]
     pub fn eq<'a, 's>(&self, strand: &'a mut Strand<'v, 's>, other: impl Input<'v>) -> bool {
-        self.op_eq(strand, &Value::from_input(strand, other))
-            .op_bool(strand)
+        strand.with_slots_sync(|strand, [mut operand]| {
+            Output::set(strand, &mut operand, other);
+            match self.op_eq(strand, &operand) {
+                Ok(value) => value.op_bool(strand),
+                Err(_) => false,
+            }
+        })
     }
 
-    /// Tests whether two values are unequal.
+    /// Tests whether two values are unequal, returning true if comparison raises.
     #[inline]
     pub fn ne<'a, 's>(&self, strand: &'a mut Strand<'v, 's>, other: impl Input<'v>) -> bool {
-        self.op_ne(strand, &Value::from_input(strand, other))
-            .op_bool(strand)
+        strand.with_slots_sync(|strand, [mut operand]| {
+            Output::set(strand, &mut operand, other);
+            match self.op_ne(strand, &operand) {
+                Ok(value) => value.op_bool(strand),
+                Err(_) => true,
+            }
+        })
     }
 
     /// Tests if the value is `nil`
@@ -1894,7 +1950,7 @@ impl<'v, 'a> Dispatch<'v, 'a> for Delegated<'v, 'a, &'a Value<'v>> {
     ) -> Result<'v, 's, Value<'v>> {
         match self.receiver.case() {
             Case::Object(receiver) => Delegated::new(receiver, self.delegator).op_eq(strand, other),
-            Case::Prim(_) => Ok(self.receiver.op_eq(strand, other)),
+            Case::Prim(_) => self.receiver.op_eq(strand, other),
         }
     }
     fn op_ne<'s>(
@@ -1904,7 +1960,7 @@ impl<'v, 'a> Dispatch<'v, 'a> for Delegated<'v, 'a, &'a Value<'v>> {
     ) -> Result<'v, 's, Value<'v>> {
         match self.receiver.case() {
             Case::Object(receiver) => Delegated::new(receiver, self.delegator).op_ne(strand, other),
-            Case::Prim(_) => Ok(self.receiver.op_ne(strand, other)),
+            Case::Prim(_) => self.receiver.op_ne(strand, other),
         }
     }
     fn op_lt<'s>(

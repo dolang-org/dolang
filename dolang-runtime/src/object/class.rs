@@ -1853,6 +1853,40 @@ fn class_sync_binary_op<'v, 'a, 's>(
     }
 }
 
+// Inherited comparisons use the delegated operation's reflected fallback,
+// which passes the native receiver when the other operand cannot compare
+// against the Do subclass itself.
+fn class_sync_reverse_comparison<'v, 'a, 's>(
+    this: Recv<'v, 'a, ClassInstance<'v>>,
+    strand: &mut Strand<'v, 's>,
+    other: &Value<'v>,
+    inclusive: bool,
+) -> Result<'v, 's, Value<'v>> {
+    let annex = this.annex();
+    if let Some(ClassEntry::Delegate(slot, _)) = annex.class.annex().entry_by_tag(sym::LT_METHOD) {
+        let native = annex.natives[*slot]
+            .get()
+            .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
+        return strand.with_slots_sync(|strand, [mut delegator]| {
+            Output::set(strand, Slot::reborrow(&mut delegator), &this);
+            let native = Delegated::new(native, &delegator);
+            if inclusive {
+                native.op_gte(strand, other)
+            } else {
+                native.op_gt(strand, other)
+            }
+        });
+    }
+    strand.with_slots_sync(|strand, [mut receiver]| {
+        Output::set(strand, &mut receiver, this);
+        if inclusive {
+            other.op_lte_direct(strand, &receiver)
+        } else {
+            other.op_lt_direct(strand, &receiver)
+        }
+    })
+}
+
 fn class_sync_unary_op<'v, 'a, 's>(
     this: Recv<'v, 'a, ClassInstance<'v>>,
     strand: &mut Strand<'v, 's>,
@@ -2679,6 +2713,22 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         class_sync_binary_op(this, strand, sym::LT_METHOD, other)
+    }
+
+    fn op_gt<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        class_sync_reverse_comparison(this, strand, other, false)
+    }
+
+    fn op_gte<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        class_sync_reverse_comparison(this, strand, other, true)
     }
 
     fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, strand: &mut Strand<'v, 's>) -> bool {

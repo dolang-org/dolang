@@ -257,7 +257,9 @@ impl<'v> Protocol<'v> for i128 {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let prim = other.to_prim(strand)?;
+        let prim = other
+            .to_prim(strand)
+            .map_err(|_| Error::not_supported(strand))?;
         Ok(Value::from_bool(
             Prim::from(*this.get()).op_eq(strand, &prim),
         ))
@@ -537,7 +539,9 @@ impl<'v> Protocol<'v> for Verbatim {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let prim = other.to_prim(strand)?;
+        let prim = other
+            .to_prim(strand)
+            .map_err(|_| Error::not_supported(strand))?;
         Ok(Value::from_bool(
             Prim::from(this.get().value).op_eq(strand, &prim),
         ))

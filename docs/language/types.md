@@ -1,8 +1,111 @@
 # Type Annotations
 
-Type annotations record what a type a binding is expected to hold. They are
-inert at runtime with the exception of class declarations. Type checking is not
-presently implemented, so presently they only serve as documentation.
+Type annotations record what a binding is expected to hold. The type checker
+uses them to check calls, assignments, returns, and class members. Annotations
+do not enforce checks at runtime; a class's runtime supertype still determines
+its inheritance.
+
+## Checking Types
+
+Run the type checker without executing the script:
+
+```bash
+dolang --check script.dol
+```
+
+The checker follows imports using the ordinary module search paths and uses
+bundled type libraries when no source module is found. Add
+`--module-path DIRECTORY` to search another directory. `--strict` makes warnings
+fail the check too. See [Running Scripts](../shell/index.md#running-scripts)
+for the shell's options.
+
+Checking is gradual: unknown information leaves operations unchecked rather
+than making every unannotated program an error. An imported module with neither
+source nor a bundled type library is unknown to the checker. Some unsupported
+type forms are provisionally accepted, so a successful check is not a guarantee
+that every operation has been checked.
+
+### Inference
+
+A local binding without an annotation takes its type from its assigned value.
+Assignments update that type, and convergent program flow (for example, the
+statement after an if/else block) takes the union of types that reach it. An
+annotation constrains the values assigned to the binding, which are checked
+against it.
+
+```
+let count = 1
+let label @ Str = "ready"
+```
+
+A named function's omitted parameter and return annotations remain unknown; the
+checker does not infer its public signature from its body. Annotate the
+signature to check callers and returned values. An unannotated instance-method
+receiver takes the enclosing class's type, including its binders.
+
+A `do` block's result is inferred from its body. When passed as an argument, its
+unannotated parameters can take their types from the signature of the function
+it is passed to.
+
+Unknown type information is distinct from [`Value`](std.Value). `Value` admits
+every runtime value, but few operations are available on it. Unknown types
+allows uses that the checker cannot verify.
+
+### Narrowing
+
+Conditions refine a local variable's type on the branches they select. The
+checker recognizes comparisons with literals. It also recognizes
+`type value Class` tests and comparisons of `type value` with a class object.
+
+```
+def describe value @ (Str | nil) -> Str
+  if (value == nil)
+    "missing"
+  else
+    value
+```
+
+A truthy test removes `nil` and `false`, but its false branch does not assume
+the value is one of those: other values can be falsy. Short-circuit operators
+also carry narrowing into the operand that runs after the test.
+
+Reassignment replaces the local's current type, and branches join it again.
+A variable assigned by another function is not narrowed, since a call may
+change it. Copy such a variable to a local before testing and using that value.
+
+## Type Compatibility
+
+A subtype can be used where its supertype is expected. A union accepts values
+of any of its alternatives. Function compatibility reverses the direction for
+parameters: a replacement must accept everything the caller may pass, and
+return a value the caller expects. Ambient input and output types are also
+checked as parameters.
+
+### Generic Variance
+
+The checker infers how each binder affects compatibility from the declaration's
+members and supertypes. A covariant binder allows a subtype argument where a
+supertype argument is expected; a contravariant binder reverses that direction.
+An invariant binder requires compatibility in both directions.
+
+```
+class Reader[T]
+  pub def read _self -> T
+    throw "not implemented"
+
+class Cell[T]
+  pub field value @ T = nil
+```
+
+`Reader` is covariant in `T` because it only returns `T`. `Cell` is invariant
+because callers can both read and write its public field. A callable's
+parameters use a binder contravariantly and its result covariantly; using it in
+both positions makes it invariant. Constructors and ordinary private members
+do not determine a class's variance.
+
+[`Phantom`](std.Phantom) marks a binder's use without storing a corresponding
+value. A field annotated `Phantom[T]` contributes a covariant use even when
+private; `Phantom[(T -> nil)]` contributes a contravariant use.
 
 ## Annotation
 
@@ -152,12 +255,20 @@ pub @let Pair[T] = Tuple[T, T]
 @let Scalar = (Str | Int | Float | Bool | nil)
 ```
 
-### Vertical Aliases
+Recursive aliases must describe a value through a class's type arguments, a
+function type, or a schema item on every cycle. A union or another alias alone
+does not provide that structure: `@let Loop = (Int | Loop)` is rejected.
 
-`$` followed by an indented body defines a schema. Positional items may be
-bin-packed on an undashed line. A dash introduces one positional item, and a
-keyed line introduces one keyed item. Quantifiers and schema includes have the
-same meaning as in `{}`.
+A recursive generic alias must pass its binders unchanged within the cycle.
+For example, `@let Tree[T] = (T | Array[Tree[T]])` is allowed, but replacing
+`Tree[T]` there with `Tree[Array[T]]` is not.
+
+### Vertical Layout
+
+`$` followed by an indented body defines an alias or schema in vertical layout.
+Positional items may be bin-packed on an undashed line. A dash introduces one
+positional item, and a keyed line introduces one keyed item. Quantifiers and
+schema includes have the same meaning as in `{}`.
 
 ```
 @let Arguments = $
@@ -205,22 +316,13 @@ An indented value under a key defines a union without another `$`. Its first
   ?encoding: Str
 ```
 
-The first token after `-` or `|` establishes an implicit indentation level.
-A schema applied within that item must be indented beyond that level, as the
-`user` and `token` lines above are indented beyond `Dict`.
-
-Implicit nesting defines unions, not schemas. A nested schema needs a type
-application. Schemas themselves cannot be unioned.
-
-Dash items do not allow bin-packing or free-form continuation lines. Wrap
-complex types inside `[]` or `()`, or use a nested type application. Vertical
-bodies must contain an item; write `{}` for an empty schema. Vertical type
-layout is available in alias definitions, not directly in annotations.
+The first token after `-` or `|` establishes an implicit indentation level,
+as it does in vertical arguments or data literals.
 
 ## Type-Only Imports
 
 `@` before an item in an import's item list imports it for type annotation
-only. No binding is created, and the module is not imported at all if only
+only. No binding is created, and the module is not loaded at runtime if only
 types are imported from it.
 
 ```
@@ -241,7 +343,7 @@ import @geometry
 let point @ geometry.Point = nil
 ```
 
-`@import` makes every module and item in the statement type-only Individual `@`
+`@import` makes every module and item in the statement type-only. Individual `@`
 markers remain valid but are redundant:
 
 ```
@@ -257,17 +359,15 @@ let point @ g.Point = nil
 
 ## Overloads
 
-`@def` declares a signature for the function of the same name without giving it
-a body. The signatures declared this way are the function's overloads, each a
-way it can be called. They may appear anywhere in the block that declares the
-function:
+`@def` refines the signature of a function a body based on the type and shape
+of arguments passed to it.
 
 ```
 @def double x @ Int -> Int
 
-@def double x @ Str -> Str
+@def double x @ Float -> Float
 
-pub def double x
+pub def double x @ (Float | Int) -> (Float | Int)
   (x + x)
 ```
 
@@ -276,13 +376,21 @@ its implementation is. A method, including a special method such as `(init)`,
 takes overloads in its class body the same way, and so does a protocol's
 method.
 
-Since an overload receives no arguments, its parameters are not ordered as a
-function's are: rest parameters may appear anywhere and more than once, and a
-required parameter may follow an optional one.
+Overloads have relaxed parameter shape requirements: rest parameters may appear
+anywhere and more than once, and a required parameter may follow an optional
+one.
 
 ```
 @def pipeline[*Rs, R] *stages@...(() -> Rs) last@(() -> R) -> R
 ```
+
+At a call, the checker uses an overload if exactly one is compatible with the
+arguments. If none or several are, it falls back to the implementation's
+signature.
+
+Overloads do not dispatch at runtime; every call runs the same implementation.
+Their signatures are trusted assertions about the implementation's behavior
+that the checker does not verify.
 
 ## Protocols
 
@@ -320,8 +428,9 @@ pub @class Solid: Shape
   pub def volume self -> Int
 ```
 
-A protocol may name a class as a supertype, but claiming the protocol doesn't
-inherit it: a class claiming the protocol must inherit that class itself.
+A protocol may name a runtime class as a supertype, but claiming the protocol
+doesn't inherit it: a class claiming the protocol must inherit that class
+itself.
 
 ## Type Syntax
 
@@ -347,16 +456,14 @@ A name is an identifier, or a module name followed by `.`-separated names, such
 as `time.Duration`.
 
 A name refers to a binder, or to what the same identifier would refer to as a
-variable where the type is written. A `def`, `class`, or import can be named
-anywhere in its block; any other binding must come before the type. A dotted
-name must begin with an import.
+variable where the type is written. A `class`, protocol, alias, or import can
+be named anywhere in its block; any other binding must come before the type. A
+dotted name must begin with an import.
 
-Documentation tools warn about a name that refers to nothing, a dotted name that
-does not begin with an import, and a binder or type-only import that is never
-used. The compiler does not consider types when it warns about unused variables,
-so a binding named only in types is still reported as unused unless its name
-begins with `_`. A [type-only import](#type-only-imports) binds no variable, so
-it is not reported.
+The compiler does not consider types when it warns about unused variables, so a
+binding named only in types is still reported as unused unless its name begins
+with `_`. A [type-only import](#type-only-imports) binds no runtime variable,
+so it is not reported.
 
 ### Constants
 
@@ -561,3 +668,33 @@ let double = do |x <Iter[Int] >Sink[Int]| (x * 2)
 
 Schemas have no implicits, since an ambient channel is not data, and neither do
 `bind` arms or `let` patterns, which bind values.
+
+## Type Utilities
+
+The standard module provides aliases for computing types from packs and schemas:
+
+| Alias                          | Purpose                                                         |
+| ------------------------------ | --------------------------------------------------------------- |
+| [`Union`](std.Union)           | Forms a union from type arguments, including expanded packs     |
+| [`Never`](std.Never)           | Describes no values; a result for a function that never returns |
+| [`Keys`](std.Keys)             | Collects a schema's key types                                   |
+| [`Values`](std.Values)         | Collects a schema's value types                                 |
+| [`Entries`](std.Entries)       | Keeps each schema key paired with its value type                |
+| [`IndexItem`](std.IndexItem)   | Computes the value type a read at a key may produce             |
+| [`AssignItem`](std.AssignItem) | Computes the value type a write at a key must accept            |
+
+```
+@import std:
+  - Keys
+  - Values
+  - IndexItem
+
+@let Fields = {name: Str, age: Int}
+@let FieldName = Keys[Fields]
+@let FieldValue = Values[Fields]
+@let NameValue = IndexItem[Fields, :name:]
+```
+
+Here `FieldName` is `(:name: | :age:)`, `FieldValue` is `(Str | Int)`, and
+`NameValue` is `Str`. See each alias's API reference for its handling of
+repeated items and key selection.
