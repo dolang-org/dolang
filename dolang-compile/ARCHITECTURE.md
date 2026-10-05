@@ -221,34 +221,40 @@ arguments, so both are contravariant; since `Sink` is contravariant in its
 element type, a function that writes `Int`s can be given a `Sink[Num]`. An
 omitted channel stands for its default bound, `Iter[Unknown]` or
 `Sink[Unknown]`, or `Unknown` when `std` doesn't designate one. Union-left
-judgments require every member; union-right judgments accept a member proved by
-an isolated, closed subtype query. Alternative queries cannot add inference
-bounds or diagnostic edges to the calling solver. Expanded union packs and
-alternatives that cannot be proved remain residual. The exception is a literal
-on the left, or `Int`, `Str` or `Sym`, which have infinitely many: when every
-member refutes it, apart from a class's literals, which are finitely many, it
-contradicts the union. A projection is exposed by reifying it once its schema's
-environment is substituted, which waits on the schema's variables. One of a
-rigid's schema that is left on the left reduces to the same projection of the
-rigid's bound. An item projection is evaluated once its schema and key are
-closed, by exposing or reifying it (`solver/item.rs`). The key selects items of
-the schema's keyed view: each member of the key goes to the literal item it is,
-or else to the literal items inside it and the domains that own it, as an actual
-keyed item goes to an expected schema's domains. `IndexItem` joins the selected
-values. `AssignItem` meets them without intersection types: the lower of two
-ordered values, the bottom type for two literals or classes that can't share a
-value, and otherwise `Unknown`, which leaves the write unchecked. A key member
-the schema doesn't admit whole contradicts the projection, as a conflicting
-schema does. A rigid key selects only by its bound, so exactly only where each
-item the bound selects has the same value; otherwise the projection is residual.
-One left unevaluated is below an item projection of the same kind and schema on
-the right whose key is proven wider for `IndexItem`, or narrower for
-`AssignItem`. A function's result that is an item projection is exposed where
-the function is related, so a call reports a key its schema doesn't admit even
-when nothing uses the result. Quantified types on the right are related through
-skolems (see [Skolems and scopes](#skolems-and-scopes)). Contextual identity and
-top/bottom rules can still settle some judgments involving otherwise unsupported
-forms: anything is below top and `Unknown`, even a type that can't be exposed.
+judgments require every member. A closed union-right judgment accepts a member
+proved by an isolated, closed subtype query, which cannot add inference bounds
+or diagnostic edges to the calling solver; one with a term still to infer
+chooses a member by trials (see
+[Alternatives and trials](#alternatives-and-trials)). Expanded union packs and
+alternatives that cannot be proved remain residual. The exception is a literal,
+a function, or a concrete class on the left: when every member refutes it, it
+contradicts the union. A protocol may be covered by several members, and a
+generic member's rejected arguments needn't exclude every value of a class, so
+neither refutes one; a literal's or function's class is fixed, so it is refuted
+outright. `Int`, `Str` and `Sym` have infinitely many literals, which a class's
+literals, finitely many, can't cover. A function relates to a literal through
+`Func`. A projection is exposed by reifying it once its schema's environment is
+substituted, which waits on the schema's variables. One of a rigid's schema that
+is left on the left reduces to the same projection of the rigid's bound. An item
+projection is evaluated once its schema and key are closed, by exposing or
+reifying it (`solver/item.rs`). The key selects items of the schema's keyed
+view: each member of the key goes to the literal item it is, or else to the
+literal items inside it and the domains that own it, as an actual keyed item
+goes to an expected schema's domains. `IndexItem` joins the selected values.
+`AssignItem` meets them without intersection types: the lower of two ordered
+values, the bottom type for two literals or classes that can't share a value,
+and otherwise `Unknown`, which leaves the write unchecked. A key member the
+schema doesn't admit whole contradicts the projection, as a conflicting schema
+does. A rigid key selects only by its bound, so exactly only where each item the
+bound selects has the same value; otherwise the projection is residual. One left
+unevaluated is below an item projection of the same kind and schema on the right
+whose key is proven wider for `IndexItem`, or narrower for `AssignItem`. A
+function's result that is an item projection is exposed where the function is
+related, so a call reports a key its schema doesn't admit even when nothing uses
+the result. Quantified types on the right are related through skolems (see
+[Skolems and scopes](#skolems-and-scopes)). Contextual identity and top/bottom
+rules can still settle some judgments involving otherwise unsupported forms:
+anything is below top and `Unknown`, even a type that can't be exposed.
 
 ### Schemas
 
@@ -427,6 +433,34 @@ quantifier on the right by contravariance. Residual forms are:
   identical projection, a member of a union on the left proved by the same
   member on the right.
 
+### Alternatives and trials
+
+`typeck/solver/alternatives.rs` judges a union on the right whose relation isn't
+closed, where a member must be chosen to infer through: `Int <: ?T | nil` bounds
+`?T` only once `nil` is ruled out. Each member is tried on a fork, a clone of
+the solver to which the trial adds the member's own judgment and solves; nothing
+a trial finds reaches the solver it was forked from. A trial whose judgment is
+contradicted rejects its member, and any other outcome leaves it possible. A
+member proven without adding a bound or assignment holds outright and is chosen.
+Otherwise exactly one possible member is chosen, and the judgment derives it,
+labeled by the member's index. None contradicts the judgment as above, and
+several leave it residual as ambiguous, with nothing recorded.
+
+Bounds only grow, so a rejection holds under every later state, and choices
+don't depend on the order judgments arrive in. Trials run when solving is
+quiescent, before any scope settles, one judgment at a time in creation order;
+solving resumes after a choice. An ambiguous judgment is tried again once
+bounds or assignments have changed since, as a caller's defaults change them.
+Once a judgment has had a member to infer through it stays with trials, even
+after its terms are solved. Forks charge their work to the caller's budget, and
+exhausting it is residual. A fork judges its own alternatives, nested to a
+fixed depth beyond which they stay untried.
+
+A `do` block's result doesn't choose. A rule gives a block whose result is known
+a twin leaving its result to a variable (`Solver::blind`), and trials judge the
+twin in its place, so a result that doesn't fit is reported against the chosen
+member.
+
 ### Member lookup
 
 `typeck/solver/member.rs` finds a receiver's member as the runtime does. It is a
@@ -518,8 +552,8 @@ part of `C` and never forces it; this also keeps a variable from being assigned
 unsolved variables remain obligations and are revisited after commitments.
 Unsupported concrete compatibility checks defer commitment. There are no
 intersection nodes, speculative assignments, rollback, or defaults to top or
-bottom. Closed proof queries reuse the subtype engine and charge their work to
-the caller's lifetime budget.
+bottom; trials run on forks, which are discarded. Closed proof queries reuse the
+subtype engine and charge their work to the caller's lifetime budget.
 
 Forcing alone rarely settles a call: its result variable and most of its
 callee's variables have only lower bounds and binder bounds. `default` is a
@@ -911,8 +945,17 @@ The rules are:
   `(rmod)`) otherwise. `==`, `!=` and `!` are `Bool`, and the comparisons
   require `(lt)` and are `Bool`. A missing member, and a
   read or write its kind doesn't allow, are reported. A lookup that can't
-  decide, such as on a union receiver, is an unresolved check. An overloaded
-  method is dynamic except where it's called.
+  decide is an unresolved check. An overloaded method is dynamic except where
+  it's called.
+- A use of a union's member, including a union alias's, is made of each
+  alternative, and every alternative must have the member. A call through it
+  calls each alternative's member as a union callee is called, its arguments
+  evaluated once; a read joins what each alternative gives; and a write is
+  checked against each, its value expected to be the fields' type only if they
+  agree. An operator dispatches on each alternative of its left operand, so one
+  that lacks the method reaches the right operand's. The alternatives a use
+  finds without the member are reported together, naming the union. An
+  alternative that projects a schema is an unresolved check.
 - A class object is called as its class-level `(call)`, if it has one, and
   otherwise as its constructor: `(init)`, looked up on the class applied to its
   rigids, without its receiver and giving the instance, with the rigids

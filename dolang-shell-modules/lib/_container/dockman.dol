@@ -794,6 +794,13 @@ def parse_image_tags runtime repo_tags
       repo = repo.without_prefix "localhost/"
     ImageTag :repo :tag
 
+# The first object in what `inspect` printed
+def inspected output
+  let data = json.decode $output
+  if !(type data Array)
+    throw TypeError "inspect: expected an array"
+  data[0]
+
 def inspect_image runtime ref
   let lines = []
   let output = try
@@ -802,7 +809,7 @@ def inspect_image runtime ref
     classify_image_error $ref $lines
     report_unknown $lines
     throw e
-  (json.decode output)[0]
+  inspected $output
 
 def inspect_container runtime ref
   let lines = []
@@ -812,7 +819,7 @@ def inspect_container runtime ref
     classify_container_error $ref $lines
     report_unknown $lines
     throw e
-  (json.decode output)[0]
+  inspected $output
 
 # Recognized prefixes, in the forms `load` reports them:
 #
@@ -1010,8 +1017,8 @@ pub class Runtime
           --all
       do each do |id|
         id = id.trim()
-        let data = json.decode $ sub do self.cli inspect --type image $id
-        Image $self $data[0]
+        let data = inspected $ sub do self.cli inspect --type image $id
+        Image $self $data
 
   pub def containers self :all = false :filter = nil
     stream do pipeline

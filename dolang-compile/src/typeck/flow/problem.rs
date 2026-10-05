@@ -54,10 +54,12 @@ pub(crate) enum Problem {
         found: String,
         annotation: String,
     },
-    /// A member the receiver doesn't have
+    /// A member the receiver doesn't have, or alternatives of the union `within`
+    /// don't
     MissingMember {
         span: Span,
-        receiver: String,
+        receivers: Vec<String>,
+        within: Option<String>,
         name: String,
     },
     /// A member used in a way its kind doesn't allow
@@ -211,8 +213,24 @@ impl Report for Problem {
                 w,
                 "default `{found}` does not fit the annotation `{annotation}`, and isn't a `nil` or symbol sentinel"
             ),
-            Problem::MissingMember { receiver, name, .. } => {
-                write!(w, "`{receiver}` has no member `{name}`")
+            Problem::MissingMember {
+                receivers,
+                within,
+                name,
+                ..
+            } => {
+                let quoted: Vec<_> = receivers.iter().map(|r| format!("`{r}`")).collect();
+                let receivers = match &quoted[..] {
+                    [.., last] if quoted.len() > 1 => {
+                        format!("{} and {last}", quoted[..quoted.len() - 1].join(", "))
+                    }
+                    _ => quoted.concat(),
+                };
+                let has = if quoted.len() > 1 { "have" } else { "has" };
+                match within {
+                    Some(within) => write!(w, "{receivers} in `{within}` {has} no member `{name}`"),
+                    None => write!(w, "{receivers} {has} no member `{name}`"),
+                }
             }
             Problem::MemberUse { name, misuse, .. } => match misuse {
                 MemberUse::Read => write!(w, "`{name}` has no getter"),

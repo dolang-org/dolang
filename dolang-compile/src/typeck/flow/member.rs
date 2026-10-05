@@ -2,9 +2,10 @@
 //! operators, calls through `(call)`, ranges and constructors. Each finds its
 //! member with the solver's lookup ([`Solver::member`]) and checks the use as the
 //! runtime makes it: as a call through the member, passing the receiver first to a
-//! method. A receiver the lookup can't decide, such as a union, is an explicit
-//! residual. A call through an overloaded method chooses among its overloads (see
-//! [`Flow::call_overloaded`]); any other use of one is dynamic.
+//! method. A use of a union's member is made of each alternative, all of which
+//! must have it, and gives what they give. A receiver the lookup can't decide is
+//! an explicit residual. A call through an overloaded method chooses among its
+//! overloads (see [`Flow::call_overloaded`]); any other use of one is dynamic.
 //!
 //! [`Solver::member`]: crate::typeck::solver::Solver::member
 
@@ -21,10 +22,10 @@ use crate::{
     typeck::{
         cfg::{Expr, ExprKind, Member},
         elab::Designated,
-        solver::{FoundKind, Issue, Lookup, Signatures},
+        solver::{FoundKind, Issue, Lookup, Residual, Signatures},
         r#type::{
             Argument, Binder, BoundRef, DeclId, Element, Function, Intrinsic, Kind, Literal,
-            MemberKey, Multiplicity, Scope, Type, TypeId,
+            MemberKey, Multiplicity, Scope, Type, TypeId, UnionMember,
         },
     },
 };
@@ -65,6 +66,14 @@ impl CallTarget {
             },
             receivers: Vec::new(),
             instance: None,
+        }
+    }
+
+    /// A dynamic callee, passed `leading` first
+    fn dynamic(leading: &[(TypeId, Span)]) -> Self {
+        Self {
+            receivers: leading.to_vec(),
+            ..Self::new(None)
         }
     }
 
@@ -153,7 +162,7 @@ impl Flow<'_, '_> {
                 instance: None,
             },
             Resolved::Missing => {
-                self.missing(ty, member, span);
+                self.missing(ty, None, member, span);
                 CallTarget::new(None)
             }
             _ => CallTarget::new(None),
@@ -246,16 +255,90 @@ impl Flow<'_, '_> {
         }
     }
 
-    /// Report a missing member
-    fn missing(&mut self, receiver: TypeId, member: Member, span: Span) {
+    /// A union receiver's alternatives, each of which a member use is made of,
+    /// with a union alias among them expanded to its own. One that projects a
+    /// schema is undecided, recorded at `span`. `None` if the receiver isn't a
+    /// union.
+    fn alternatives(&mut self, receiver: TypeId, span: Span) -> Option<Vec<Option<TypeId>>> {
+        let mut alternatives = Vec::new();
+        if !self.expand(receiver, &mut alternatives, 0) {
+            return None;
+        }
+        if alternatives.contains(&None) {
+            self.undecided(
+                span,
+                Residual::Unsupported("a projection in a union receiver"),
+            );
+        }
+        Some(alternatives)
+    }
+
+    /// Add a union's alternatives to `alternatives`, expanding a union alias's.
+    /// Whether `ty` is a union.
+    fn expand(&self, ty: TypeId, alternatives: &mut Vec<Option<TypeId>>, depth: usize) -> bool {
+        // A union alias that expands to itself is ill-formed
+        const DEPTH: usize = 16;
+        let ty = match self.db.ty(ty) {
+            Type::Decl(_) | Type::Apply { .. } if depth < DEPTH => {
+                match self.solver().exposed(ty) {
+                    Some(exposed) => exposed,
+                    None => return false,
+                }
+            }
+            _ => ty,
+        };
+        let Type::Union(members) = self.db.ty(ty) else {
+            return false;
+        };
+        if members.is_empty() {
+            return false;
+        }
+        for member in members.iter() {
+            let alternative = match *member {
+                UnionMember::Type(ty) if self.expand(ty, alternatives, depth + 1) => continue,
+                UnionMember::Type(ty) => Some(ty),
+                _ => None,
+            };
+            if !alternatives.contains(&alternative) {
+                alternatives.push(alternative);
+            }
+        }
+        true
+    }
+
+    /// Report a missing member, of an alternative of the union `within` if given.
+    /// The alternatives a use finds without it are reported together.
+    fn missing(&mut self, receiver: TypeId, within: Option<TypeId>, member: Member, span: Span) {
         if !self.observing() {
             return;
         }
         let receiver = self.tables.render_type(self.db, receiver);
+        let within = within.map(|union| self.tables.render_type(self.db, union));
         let name = self.member_name(member);
+        if within.is_some()
+            && let Some(results) = &mut self.results
+            && let Some(receivers) = results
+                .problems
+                .iter_mut()
+                .find_map(|problem| match problem {
+                    Problem::MissingMember {
+                        span: at,
+                        receivers,
+                        within: union,
+                        name: missing,
+                    } if (*at, &*union, &*missing) == (span, &within, &name) => Some(receivers),
+                    _ => None,
+                })
+        {
+            if let Err(at) = receivers.binary_search(&receiver) {
+                receivers.insert(at, receiver);
+            }
+            return;
+        }
         self.problem(Problem::MissingMember {
             span,
-            receiver,
+            receivers: vec![receiver],
+            within,
             name,
         });
     }
@@ -324,7 +407,6 @@ impl Flow<'_, '_> {
             unreachable!("a member read")
         };
         let (member, span) = (*member, expr.span);
-        let unknown = self.db.unknown();
         let receiver = self.eval(at, state, operands, object);
         if receiver == self.db.bottom() {
             return receiver;
@@ -334,11 +416,53 @@ impl Flow<'_, '_> {
             expected,
             span,
         };
-        let leading = [(receiver, object.span)];
+        let Some(alternatives) = self.alternatives(receiver, span) else {
+            let receiver = (receiver, object.span);
+            return self.got(at, state, operands, receiver, None, member, call);
+        };
+        let mut result = self.db.bottom();
+        for alternative in alternatives {
+            let given = match alternative {
+                Some(ty) => {
+                    let alternative = (ty, object.span);
+                    self.got(
+                        at,
+                        state,
+                        operands,
+                        alternative,
+                        Some(receiver),
+                        member,
+                        call,
+                    )
+                }
+                None => self.db.unknown(),
+            };
+            result = self.solver().lub(result, given);
+        }
+        result
+    }
+
+    /// Reading a member of a receiver that isn't a union, or of an alternative of
+    /// the union `within`
+    #[expect(clippy::too_many_arguments, reason = "a member read's parts")]
+    fn got(
+        &mut self,
+        at: At,
+        state: &mut State,
+        operands: &mut VecDeque<TypeId>,
+        receiver: (TypeId, Span),
+        within: Option<TypeId>,
+        member: Member,
+        call: Call<'_>,
+    ) -> TypeId {
+        let unknown = self.db.unknown();
+        let span = call.span;
+        let leading = [receiver];
+        let receiver = receiver.0;
         match self.resolve(receiver, member, span) {
             Resolved::Dynamic => unknown,
             Resolved::Missing | Resolved::Fallback { get: None, .. } => {
-                self.missing(receiver, member, span);
+                self.missing(receiver, within, member, span);
                 unknown
             }
             Resolved::Field(ty) => ty,
@@ -462,15 +586,65 @@ impl Flow<'_, '_> {
         call: Call<'_>,
     ) -> TypeId {
         let bottom = self.db.bottom();
-        let unknown = self.db.unknown();
-        let span = call.span;
         if receiver.0 == bottom {
             return self.call_with(at, state, operands, bottom, leading, call);
         }
-        let with_receiver: Vec<_> = [receiver]
-            .into_iter()
-            .chain(leading.iter().copied())
-            .collect();
+        let targets =
+            self.member_targets(at, state, operands, receiver, member, leading, call.span);
+        self.call_targets(at, state, operands, targets, call)
+    }
+
+    /// The targets a call through a receiver's member reaches, passing `leading`
+    /// before the call's own arguments: one for each alternative of a union, or of
+    /// a member's value that is one. A getter or `(get)` is called here, with no
+    /// arguments, for the value it gives.
+    #[expect(clippy::too_many_arguments, reason = "a call through a member")]
+    fn member_targets(
+        &mut self,
+        at: At,
+        state: &mut State,
+        operands: &mut VecDeque<TypeId>,
+        receiver: (TypeId, Span),
+        member: Member,
+        leading: &[(TypeId, Span)],
+        span: Span,
+    ) -> Vec<CallTarget> {
+        let Some(alternatives) = self.alternatives(receiver.0, span) else {
+            return self.reached(at, state, operands, receiver, None, member, leading, span);
+        };
+        let mut targets = Vec::new();
+        for alternative in alternatives {
+            match alternative {
+                Some(ty) => targets.extend(self.reached(
+                    at,
+                    state,
+                    operands,
+                    (ty, receiver.1),
+                    Some(receiver.0),
+                    member,
+                    leading,
+                    span,
+                )),
+                None => targets.push(CallTarget::dynamic(leading)),
+            }
+        }
+        targets
+    }
+
+    /// [`Self::member_targets`] for a receiver that isn't a union, or an
+    /// alternative of the union `within`
+    #[expect(clippy::too_many_arguments, reason = "a call through a member")]
+    fn reached(
+        &mut self,
+        at: At,
+        state: &mut State,
+        operands: &mut VecDeque<TypeId>,
+        receiver: (TypeId, Span),
+        within: Option<TypeId>,
+        member: Member,
+        leading: &[(TypeId, Span)],
+        span: Span,
+    ) -> Vec<CallTarget> {
         // A getter's result, or `(get)`'s, called with the arguments
         let got = Call {
             args: &[],
@@ -478,35 +652,38 @@ impl Flow<'_, '_> {
             span,
         };
         match self.resolve(receiver.0, member, span) {
-            Resolved::Dynamic => self.call_with(at, state, operands, unknown, leading, call),
+            Resolved::Dynamic => vec![CallTarget::dynamic(leading)],
             Resolved::Missing | Resolved::Fallback { get: None, .. } => {
-                self.missing(receiver.0, member, span);
-                self.call_with(at, state, operands, unknown, leading, call)
+                self.missing(receiver.0, within, member, span);
+                vec![CallTarget::dynamic(leading)]
             }
-            Resolved::Field(ty) => {
-                self.call_value(at, state, operands, (ty, receiver.1), leading, call)
-            }
-            Resolved::Method(signature, true) => {
-                self.call_signature(at, state, operands, &signature, &with_receiver, call)
-            }
-            Resolved::Method(signature, false) => {
-                self.call_signature(at, state, operands, &signature, leading, call)
+            Resolved::Field(ty) => self.value_targets((ty, receiver.1), leading, span),
+            Resolved::Method(signature, bound) => {
+                let receivers = match bound {
+                    true => [receiver].iter().chain(leading).copied().collect(),
+                    false => leading.to_vec(),
+                };
+                vec![CallTarget {
+                    signature,
+                    receivers,
+                    instance: None,
+                }]
             }
             Resolved::Property {
                 getter: Some(getter),
                 ..
             } => {
                 let value = self.call_signature(at, state, operands, &getter, &[receiver], got);
-                self.call_value(at, state, operands, (value, receiver.1), leading, call)
+                self.value_targets((value, receiver.1), leading, span)
             }
             Resolved::Property { getter: None, .. } => {
                 self.misuse(member, span, MemberUse::Read);
-                self.call_with(at, state, operands, unknown, leading, call)
+                vec![CallTarget::dynamic(leading)]
             }
             Resolved::Fallback { get: Some(get), .. } => {
                 let name = (self.name_literal(member), span);
                 let value = self.call_signature(at, state, operands, &get, &[receiver, name], got);
-                self.call_value(at, state, operands, (value, receiver.1), leading, call)
+                self.value_targets((value, receiver.1), leading, span)
             }
         }
     }
@@ -525,26 +702,58 @@ impl Flow<'_, '_> {
         span: Span,
     ) {
         let receiver = self.eval(at, state, operands, object);
-        let resolved = match receiver == self.db.bottom() {
-            true => Resolved::Dynamic,
-            false => self.resolve(receiver, member, span),
+        // Each alternative's member, as a union's alternatives are written
+        let (within, alternatives) = match self.alternatives(receiver, span) {
+            _ if receiver == self.db.bottom() => (None, Vec::new()),
+            Some(alternatives) => (Some(receiver), alternatives),
+            None => (None, vec![Some(receiver)]),
         };
-        let expected = match resolved {
-            Resolved::Field(ty) => Some(ty),
+        let resolved: Vec<_> = (alternatives.into_iter().flatten())
+            .map(|ty| (ty, self.resolve(ty, member, span)))
+            .collect();
+        // The value is expected to be what every field takes, if they agree
+        let mut fields = resolved.iter().map(|(_, resolved)| match resolved {
+            Resolved::Field(ty) => Some(*ty),
             _ => None,
-        };
+        });
+        let expected = fields
+            .next()
+            .flatten()
+            .filter(|&ty| fields.all(|other| other == Some(ty)));
         let written = self.expect(at, state, operands, value, expected);
+        let written = (written, value.span);
+        for (receiver, resolved) in resolved {
+            let receiver = (receiver, object.span);
+            self.written(
+                at, state, operands, receiver, within, member, resolved, written, span,
+            );
+        }
+    }
+
+    /// Writing `written` to a resolved member of a receiver that isn't a union, or
+    /// of an alternative of the union `within`
+    #[expect(clippy::too_many_arguments, reason = "a write's parts")]
+    fn written(
+        &mut self,
+        at: At,
+        state: &mut State,
+        operands: &mut VecDeque<TypeId>,
+        receiver: (TypeId, Span),
+        within: Option<TypeId>,
+        member: Member,
+        resolved: Resolved,
+        written: (TypeId, Span),
+        span: Span,
+    ) {
         let call = Call {
             args: &[],
             expected: None,
             span,
         };
-        let receiver = (receiver, object.span);
-        let written = (written, value.span);
         match resolved {
             Resolved::Dynamic => {}
             Resolved::Missing | Resolved::Fallback { set: None, .. } => {
-                self.missing(receiver.0, member, span);
+                self.missing(receiver.0, within, member, span);
             }
             Resolved::Field(ty) => self.store(at, written.0, ty, written.1),
             Resolved::Method(..) => self.misuse(member, span, MemberUse::Method),
@@ -714,15 +923,51 @@ impl Flow<'_, '_> {
         };
         let (member, reflected) = (self.special(name), self.special(reflected));
         let (lhs, rhs) = ((lhs, left.span), (rhs, right.span));
-        let reflect = matches!(self.resolve(lhs.0, member, call.span), Resolved::Missing)
-            && !matches!(self.resolve(rhs.0, reflected, call.span), Resolved::Missing);
-        let result = match reflect {
-            true => self.send(at, state, operands, rhs, reflected, &[lhs], call),
-            false => self.send(at, state, operands, lhs, member, &[rhs], call),
+        // Each alternative of the left operand dispatches on its own
+        let (within, alternatives) = match self.alternatives(lhs.0, call.span) {
+            Some(alternatives) => (Some(lhs.0), alternatives),
+            None => (None, vec![Some(lhs.0)]),
         };
+        let mut targets = Vec::new();
+        for alternative in alternatives {
+            let Some(ty) = alternative else {
+                targets.push(CallTarget::dynamic(&[]));
+                continue;
+            };
+            let alternative = (ty, lhs.1);
+            let span = call.span;
+            let reflect = self.lacks(ty, member, span) && !self.lacks(rhs.0, reflected, span);
+            targets.extend(match reflect {
+                true => {
+                    self.member_targets(at, state, operands, rhs, reflected, &[alternative], span)
+                }
+                false => self.reached(
+                    at,
+                    state,
+                    operands,
+                    alternative,
+                    within,
+                    member,
+                    &[rhs],
+                    span,
+                ),
+            });
+        }
+        let result = self.call_targets(at, state, operands, targets, call);
         match compared && result != bottom {
             true => boolean,
             false => result,
+        }
+    }
+
+    /// Whether `ty` lacks a member: each alternative, if it's a union
+    fn lacks(&mut self, ty: TypeId, member: Member, span: Span) -> bool {
+        match self.alternatives(ty, span) {
+            Some(alternatives) => alternatives.into_iter().all(|alternative| {
+                alternative
+                    .is_some_and(|ty| matches!(self.resolve(ty, member, span), Resolved::Missing))
+            }),
+            None => matches!(self.resolve(ty, member, span), Resolved::Missing),
         }
     }
 

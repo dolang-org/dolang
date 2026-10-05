@@ -124,6 +124,9 @@ pub(crate) enum Residual {
     /// Positional schema items can't be matched up by count: several expected
     /// items repeat, or an opaque schema precedes items of varying count.
     Alignment,
+    /// Several alternatives of a judgment that needs one remain possible, so
+    /// none is chosen (see [`Solver::trial`]).
+    Ambiguous,
 }
 
 /// What relating a [`Type::Unsupported`] stand-in is
@@ -369,6 +372,8 @@ enum Head {
 }
 
 /// All solver IDs are local to this solver, just as type IDs are database-local.
+/// A clone is a fork: a trial on it can't affect the original (see
+/// [`Solver::trial`]).
 #[derive(Clone)]
 pub(crate) struct Solver<'db> {
     db: &'db Database,
@@ -399,6 +404,17 @@ pub(crate) struct Solver<'db> {
     /// Whether the judgments own the root scope's variables, so solving settles
     /// them as it settles a skolem scope's
     closed: bool,
+    /// The judgments that need one of their alternatives to hold, by obligation
+    alternatives: RefCell<HashMap<ObligationId, Alternatives>>,
+    /// Counts changes to bounds and assignments, so trials rerun only after
+    /// what they saw has grown
+    generation: Cell<usize>,
+    /// How many trials this solver is nested in. A solver nested too deeply
+    /// leaves its own alternatives untried.
+    trial_depth: usize,
+    /// What trials judge in place of a term, as a `do` block whose result
+    /// mustn't choose an alternative (see [`Solver::blind`])
+    blinded: HashMap<Term, Term>,
 }
 
 impl<'db> Solver<'db> {
@@ -437,6 +453,10 @@ impl<'db> Solver<'db> {
             scope: HashSet::new(),
             rigid_bounds: RefCell::new(HashMap::new()),
             closed: false,
+            alternatives: RefCell::new(HashMap::new()),
+            generation: Cell::new(0),
+            trial_depth: 0,
+            blinded: HashMap::new(),
         }
     }
 
@@ -730,6 +750,15 @@ impl<'db> Solver<'db> {
             .iter()
             .enumerate()
             .filter_map(|(i, b)| b.assignment.get().is_none().then_some(InferVarId(i)))
+    }
+
+    /// A closed type with any transparent declaration it's an application of
+    /// expanded, as a union alias is to its union. `None` if it isn't structural.
+    pub(crate) fn exposed(&self, ty: TypeId) -> Option<TypeId> {
+        match self.head(self.closed(ty)) {
+            Ok(Head::Structural(view)) => self.reify(Term::View(view)).ok(),
+            _ => None,
+        }
     }
 
     /// Rebuild a closed canonical type, retaining references owned by local binders.
@@ -1258,6 +1287,7 @@ impl<'db> Solver<'db> {
             }
         }
         inference.assignment.set(Some(candidate));
+        self.generation.set(self.generation.get() + 1);
         for &obligation in inference.subscribers.iter() {
             self.schedule(obligation);
         }
@@ -2424,8 +2454,24 @@ impl<'db> Solver<'db> {
             && let Type::Union(members) = self.db.ty(view.ty)
         {
             self.conflicting(members)?;
-            // Testing alternatives must never add bounds to this solver.
-            let actual = self.reify(actual)?;
+            let alternatives: Vec<Term> = (members.iter())
+                .map(|&member| match member {
+                    UnionMember::Type(ty) => view.child(ty),
+                    _ => view.child(self.db.intern(Type::Union(vec![member].into()))),
+                })
+                .collect();
+            // A judgment that once had a member to infer through stays with
+            // trials, which judge a `do` block without its result
+            let tried = self.alternatives.borrow().contains_key(&obligation);
+            let closed = (self.reify(actual).ok())
+                .filter(|_| !tried && alternatives.iter().all(|&term| self.reify(term).is_ok()));
+            let Some(actual_ty) = closed else {
+                // A member to infer through is chosen by trials
+                let refuted = self.refuted(actual, *view, members)?;
+                return self.choose(obligation, actual, alternatives, Step::UnionMember, refuted);
+            };
+            // Testing closed alternatives must never add bounds to this solver.
+            let actual = actual_ty;
             // A literal or concrete class is outside a union if every member
             // excludes it. For a class with infinitely many literals, a finite
             // set of literals cannot cover it either. Protocols may be covered
@@ -2434,7 +2480,11 @@ impl<'db> Solver<'db> {
             let infinite = [Intrinsic::Int, Intrinsic::Str, Intrinsic::Sym]
                 .into_iter()
                 .any(|intrinsic| self.db.intrinsic(intrinsic) == Some(actual));
-            let mut outside = self.class_like(actual)?;
+            let function = matches!(
+                self.db.ty(actual),
+                Type::Function(_) | Type::Quantified { .. }
+            );
+            let mut outside = function || self.class_like(actual)?;
             for member in members.iter() {
                 let UnionMember::Type(ty) = *member else {
                     outside = false;
@@ -2454,6 +2504,7 @@ impl<'db> Solver<'db> {
                         // argument comparison need not exclude every value
                         // of the actual class (notably recursive data unions).
                         if !infinite
+                            && !function
                             && self.db.literal(actual).is_none()
                             && self
                                 .start(expected)?
@@ -2520,6 +2571,14 @@ impl<'db> Solver<'db> {
                     }
                     (Type::Schema(xs), Type::Schema(ys)) => {
                         self.schemas(a, xs, b, ys, expected, obligation)
+                    }
+                    // A function is a literal only if its class is
+                    (Type::Function(_) | Type::Quantified { .. }, Type::Literal(_)) => {
+                        let backing = (self.db.intrinsic(Intrinsic::Func))
+                            .ok_or(Residual::MissingIntrinsic(Intrinsic::Func))?;
+                        let step = Step::IntrinsicBacking(Intrinsic::Func);
+                        self.derive(obligation, self.closed(backing), expected, step);
+                        Ok(())
                     }
                     _ => Err(Residual::Unsupported("these structural types").into()),
                 }
@@ -2682,6 +2741,7 @@ impl<'db> Solver<'db> {
             return Ok(());
         }
         self.inference[id.0].dirty.set(true);
+        self.generation.set(self.generation.get() + 1);
         for (&other, other_sources) in opposite.iter() {
             self.spend()?;
             // L <: V <: U requires L <: U. L or U may itself be an inference
@@ -2696,8 +2756,16 @@ impl<'db> Solver<'db> {
 
     /// Process queued obligations to quiescence or exhaustion and report each submitted root.
     pub(crate) fn solve(&mut self) -> Vec<Outcome> {
-        // Settling a scope's variables commits choices, so solving resumes after
-        // each one
+        self.quiesce();
+        (0..self.roots.len())
+            .map(|index| self.outcome(ConstraintId(index)))
+            .collect()
+    }
+
+    /// Process queued obligations to quiescence or exhaustion. Trials then judge
+    /// alternatives, and settling a scope's variables commits choices, so solving
+    /// resumes after each one that changes something.
+    fn quiesce(&mut self) {
         loop {
             loop {
                 while !self.exhausted.get() && !self.queue.is_empty() {
@@ -2742,13 +2810,13 @@ impl<'db> Solver<'db> {
                     break;
                 }
             }
-            if self.exhausted.get() || !self.settle() {
+            if self.exhausted.get() {
+                break;
+            }
+            if !self.try_alternatives() && !self.settle() {
                 break;
             }
         }
-        (0..self.roots.len())
-            .map(|index| self.outcome(ConstraintId(index)))
-            .collect()
     }
 
     /// Commit a choice for one variable of a skolem scope, which nothing outside
@@ -2908,6 +2976,7 @@ fn compose(outer: Variance, inner: Variance) -> Variance {
     }
 }
 
+mod alternatives;
 mod conform;
 mod item;
 mod lattice;
@@ -2916,6 +2985,7 @@ mod narrow;
 mod schema;
 mod unpack;
 
+use alternatives::Alternatives;
 pub(crate) use conform::{Inheritance, Requirement, RequirementKind};
 pub(crate) use lattice::Widening;
 pub(crate) use member::{FoundKind, Lookup, Signatures};

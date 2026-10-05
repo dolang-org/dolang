@@ -5,6 +5,7 @@ use crate::typeck::r#type::{
 };
 use dolang_util::alias;
 
+mod alternatives;
 mod basics;
 mod functions;
 mod inference;

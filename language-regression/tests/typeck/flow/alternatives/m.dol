@@ -1,0 +1,64 @@
+# A union parameter with a member to infer through takes the one member its
+# argument can be: a member that can't hold it is ruled out without leaving
+# bounds behind. What the call is expected to give doesn't choose.
+
+pub def opt[T] x @ (T | nil) -> T
+  ...
+
+pub def maybe[T] f @ ((Int -> T) | nil) -> T
+  ...
+
+pub def text f @ ((Int -> Str) | nil) -> nil
+  ...
+
+pub def boxed[T] xs @ (Array[T] | Str) -> T
+  ...
+
+pub def optional()
+  let _ = opt 1
+  #   ^: flow std.Int
+  # `nil` is a member, so nothing is inferred
+  let _ = opt nil
+  #   ^: flow Unknown
+  let _s @ Str = opt 1
+# error: `1` does not fit the annotation `std.Str`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _s @ Str = opt 1
+#    |                  ^^^^^
+
+pub def callback()
+  # A function isn't `nil`, so the block is the callback
+  let r = maybe do |x|
+    let _ = x
+    #       ^: flow std.Int
+    "s"
+  let _ = r
+  #       ^: flow std.Str
+  # What a block gives doesn't choose, but is checked against what's chosen
+  text do |x|
+    x
+# error: expected `((std.Int) <m.callback.#0 >m.callback.#1 -> std.Str) | nil`, found `(std.Int) <m.callback.#0 >m.callback.#1 -> std.Int`: `std.Int` does not fit `std.Str`
+#   --> m.dol:LL:LL
+#    |
+# LL |     text do |x|
+#    |  ________^
+# LL | |     x
+#    | |_____^
+
+pub def collection a @ Array[Int]
+  let _ = boxed $a
+  #   ^: flow std.Int
+  # A string is the other member
+  let _ = boxed s
+  #   ^: flow Unknown
+
+pub def items ...items @ (Dict[{name: Str}] | (Int -> Str)) -> nil
+  ...
+
+# A function's class is fixed, so a generic class's member rejects it outright
+pub def blocks()
+  items {name: "a"} do |x|
+    let _ = x
+    #       ^: flow std.Int
+    "s"

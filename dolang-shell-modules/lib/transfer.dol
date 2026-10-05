@@ -125,7 +125,9 @@ def read_metadata path identity
     return nil
   try
     let metadata = json.decode(path.read())
-    if (metadata.get("version") != 1 || metadata.get("url") != identity)
+    if !(type metadata Dict)
+      nil
+    else if (metadata.get("version") != 1 || metadata.get("url") != identity)
       nil
     else
       metadata

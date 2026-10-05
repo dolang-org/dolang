@@ -1,7 +1,8 @@
 # Member use is checked through the member lookup, as the runtime makes it: a
 # method call passes the receiver first, a class call runs `(init)`, and indexing
-# and operators call special methods. A receiver the lookup can't decide is left
-# dynamic, and a call through an overloaded method takes one of its overloads.
+# and operators call special methods. An unknown receiver is dynamic, and a call
+# through an overloaded method takes one of its overloads. A union receiver is in
+# `union_members`.
 
 import std:
   - @Index
@@ -212,12 +213,9 @@ pub def constructed()
   let _ = r
   #       ^: flow std.Range[std.Int]
 
-pub def dynamic x u @ (Point | Box[Int])
+pub def dynamic x
   let a = x.anything
   let _ = a
-  #       ^: flow Unknown
-  let b = u.x
-  let _ = b
   #       ^: flow Unknown
 
 # A literal key picks its own item, since the key isn't decayed. A key must be
