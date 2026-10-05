@@ -2,10 +2,19 @@ import
   testlib.vfs:
     - vfs
   test:
+    - assert
+    - assert_throws
     - assert_eq
     - test
   fs:
     - open
+    - Path
+    - File
+    - StrFile
+    - BinFile
+  std:
+    - StateError
+    - ValueError
 
 #[test]
 #[vfs]
@@ -17,7 +26,7 @@ def basic_open()
   # Test basic open without block
   let f = open $path r
   let debug_str = dbg $f
-  assert_eq $debug_str "<fs.File>"
+  assert_eq $debug_str "<fs.StrFile>"
   f.close()
   f.close()
 
@@ -31,6 +40,93 @@ def block_scope()
   # Test block scope syntax
   let result = open $path r do |file|
     let s = dbg $file
-    assert_eq $s "<fs.File>"
+    assert_eq $s "<fs.StrFile>"
     "success"
   assert_eq $result "success"
+
+
+#[test]
+#[vfs]
+def modes_choose_runtime_subtypes()
+  for mode = ["r", "w", "a", "r+", "w+", "a+"]
+    open modes.txt w do |file| file.write "hello\n"
+    for path = ["modes.txt", Path("modes.txt")]
+      let file = if (type path Path)
+        path.open $mode
+      else
+        open $path $mode
+      assert (type file File)
+      assert (type file StrFile)
+      assert $!(type file BinFile)
+      assert_eq (dbg file) "<fs.StrFile>"
+      file.close()
+      file.close()
+      let binary_mode = "$(mode)b"
+      let binary = if (type path Path)
+        path.open $binary_mode
+      else
+        open $path $binary_mode
+      assert (type binary File)
+      assert (type binary BinFile)
+      assert $!(type binary StrFile)
+      assert_eq (dbg binary) "<fs.BinFile>"
+      binary.close()
+      if (type path Path)
+        path.open $mode do |file| assert (type file StrFile)
+        path.open $binary_mode do |file| assert (type file BinFile)
+      else
+        open $path $mode do |file| assert (type file StrFile)
+        open $path $binary_mode do |file| assert (type file BinFile)
+
+#[test]
+#[vfs]
+def default_modes_and_block_cleanup()
+  open default.txt w do |file| file.write "hello"
+  let path = Path default.txt
+  let first = open default.txt
+  let second = path.open()
+  assert (type first StrFile)
+  assert (type second StrFile)
+  first.close()
+  second.close()
+  open default.txt do |file| assert (type file StrFile)
+  path.open do |file| assert (type file StrFile)
+  for mode = ["r", "rb"]
+    let held = nil
+    open default.txt $mode do |file|
+      held = file
+    assert_throws $StateError do held.read()
+    assert_throws $ValueError do
+      path.open $mode do |file|
+        held = file
+        throw (ValueError "test error")
+    assert_throws $StateError do held.read()
+
+#[test]
+#[vfs]
+def subtypes_can_be_matched()
+  open match.txt w do |file| file.write "hello"
+  for mode = ["r", "rb"]
+    open match.txt $mode do |file|
+      let label = match file
+        StrFile(_) do "text"
+        BinFile(_) do "binary"
+      assert_eq $label (mode == "r" && "text" || "binary")
+
+
+#[test]
+#[vfs]
+def subtype_reads_and_iteration_have_mode_specific_values()
+  open values.txt w do |file| file.write "one\ntwo\n"
+  open values.txt do |file|
+    assert_eq (file.read 4) "one\n"
+    assert_eq $file.next() "two\n"
+    file.seek start: 0
+    for line = file
+      assert (type line Str)
+  open values.txt rb do |file|
+    assert_eq (file.read 4) b"one\n"
+    assert_eq $file.next() b"two\n"
+    file.seek start: 0
+    for chunk = file
+      assert (type chunk Bin)

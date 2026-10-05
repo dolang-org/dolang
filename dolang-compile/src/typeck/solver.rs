@@ -218,6 +218,7 @@ enum State {
     Issue(Issue),
 }
 
+#[derive(Clone)]
 pub(crate) struct Obligation {
     pub(crate) relation: Relation,
     pub(crate) dependencies: MonoVec<Dependency>,
@@ -263,6 +264,7 @@ struct Root {
 type BoundSet = MonoHashMap<Term, MonoHashSet<ObligationId>>;
 
 /// Solver-local resolution and wake-up state, independent of accumulated bounds.
+#[derive(Clone)]
 struct Inference {
     kind: Kind,
     /// For a schema variable, the lanes its items can occupy
@@ -286,6 +288,7 @@ struct Inference {
 
 /// A binder of a quantified type on the right, held abstract while its body is
 /// related (see [`Solver::skolemization`])
+#[derive(Clone)]
 struct Skolem {
     kind: Kind,
     binding: Binding,
@@ -297,13 +300,14 @@ struct Skolem {
 
 /// A skolemization's extent: its skolems are visible to variables of this scope
 /// and the scopes inside it. The root scope has no skolems.
+#[derive(Clone)]
 struct Scope {
     parent: ScopeId,
     depth: usize,
 }
 
 /// Accumulated constraints on one inference variable `V`.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct Bounds {
     /// Each key `L` imposes `L <: V`.
     lower: BoundSet,
@@ -365,6 +369,7 @@ enum Head {
 }
 
 /// All solver IDs are local to this solver, just as type IDs are database-local.
+#[derive(Clone)]
 pub(crate) struct Solver<'db> {
     db: &'db Database,
     environments: intern::Table<Environment, EnvironmentId>,

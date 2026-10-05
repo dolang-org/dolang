@@ -145,18 +145,19 @@ def handing_a_file_to_a_child_steals_it()
     input.write "hello"
     let out = (dir / "out.txt")
 
-    let file = open $input rb
-    run $shell.exe --no-cache $path stdin: $file stdout: $out
-    assert_eq $out.read() "hello"
+    for mode = ["r", "rb"]
+      let file = open $input $mode
+      run $shell.exe --no-cache $path stdin: $file stdout: $out
+      assert_eq $out.read() "hello"
 
-    # The child was given the file itself, not a view onto it. The seek
-    # position lives in this process now, so two live handles would each
-    # believe a cursor the other moves; the handoff closes this one rather
-    # than let it read from somewhere it cannot know.
-    assert_throws $StateError do
-      file.read 1
-    # Closing a file the handoff already took is still fine.
-    file.close()
+      # The child was given the file itself, not a view onto it. The seek
+      # position lives in this process now, so two live handles would each
+      # believe a cursor the other moves; the handoff closes this one rather
+      # than let it read from somewhere it cannot know.
+      assert_throws $StateError do
+        file.read 1
+      # Closing a file the handoff already took is still fine.
+      file.close()
 
 #[test]
 def write_reports_bytes_not_characters()
@@ -280,3 +281,26 @@ def naming_shell_stderr_inherits_the_stream()
     run $shell.exe --no-cache $outer $inner stderr: $err
 
     assert_eq $err.read() "from-grandchild\n"
+
+
+#[test]
+def handing_output_file_subtypes_to_a_child_steals_them()
+  with_temp_dir do |dir|
+    let src = r|
+      import shell
+      shell.stdout.put "stdout"
+      shell.stderr.put "stderr"
+
+    let path = script $dir output.dol $src
+    for mode = ["w", "wb"]
+      let out = (dir / "out.txt")
+      let err = (dir / "err.txt")
+      let stdout = open $out $mode
+      let stderr = open $err $mode
+      run $shell.exe --no-cache $path stdout: $stdout stderr: $stderr
+      assert_eq $out.read() "stdout"
+      assert_eq $err.read() "stderr"
+      assert_throws $StateError do stdout.write "closed"
+      assert_throws $StateError do stderr.write "closed"
+      stdout.close()
+      stderr.close()

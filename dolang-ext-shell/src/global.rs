@@ -34,7 +34,7 @@ use crate::{
     },
     error_code::{CodeObject, Errno, ErrorCode, FreeBsdErrno, LinuxErrno, MacosErrno, WinError},
     fs::{
-        file::File,
+        file::{BinaryFile, File, TextFile},
         file_lock::FileLock,
         fs_metadata::FsMetadata,
         metadata::{Metadata, Mode},
@@ -543,6 +543,8 @@ pub(crate) struct FsTypes<'v> {
     pub(crate) metadata: Type<'v, Metadata>,
     pub(crate) fs_metadata: Type<'v, FsMetadata>,
     pub(crate) file: Type<'v, File<'v>>,
+    pub(crate) str_file: Type<'v, File<'v, TextFile>>,
+    pub(crate) bin_file: Type<'v, File<'v, BinaryFile>>,
     pub(crate) file_lock: Type<'v, FileLock>,
     pub(crate) dir_entry: Type<'v, DirEntry>,
     pub(crate) dir_entry_iter: Type<'v, DirEntryIter>,
@@ -588,6 +590,15 @@ impl<'v> FsGlobal<'v> {
             .build_type::<WindowsPath>((), ())
             .nominal_supertype(path)
             .build();
+        let file = builder.register_type::<File>();
+        let str_file = builder
+            .build_type::<File<TextFile>>((), ())
+            .nominal_supertype(file)
+            .build();
+        let bin_file = builder
+            .build_type::<File<BinaryFile>>((), ())
+            .nominal_supertype(file)
+            .build();
         Self {
             local,
             types: FsTypes {
@@ -600,7 +611,9 @@ impl<'v> FsGlobal<'v> {
                 stream_iter: builder.register_type(),
                 metadata: builder.register_type(),
                 fs_metadata: builder.register_type(),
-                file: builder.register_type(),
+                file,
+                str_file,
+                bin_file,
                 file_lock: builder.register_type(),
                 dir_entry: builder.register_type(),
                 dir_entry_iter: builder.register_type(),

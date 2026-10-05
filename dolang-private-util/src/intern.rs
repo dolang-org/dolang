@@ -82,6 +82,7 @@ impl<Tag> Id<Tag> {
     }
 }
 
+#[derive(Clone)]
 pub struct Table<T, Tag> {
     map: MonoHashMap<T, ()>,
     phantom: PhantomData<Tag>,

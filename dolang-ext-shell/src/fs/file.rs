@@ -1,13 +1,14 @@
 use std::{
     io::{self, SeekFrom},
+    marker::PhantomData,
     mem, result, str,
 };
 
 use bstr::ByteSlice;
 use dolang::runtime::{
     AllocExt, BYTE_STREAM_CHUNK_SIZE, Error, Instance, Object, Output, Result, Slot, State, Strand,
-    call, method,
-    object::{Mut, Ref, TypeBuilder},
+    Value, call, method,
+    object::{Cast, Mut, Ref, TypeBuilder},
     strand::InterruptMask,
     unpack,
     value::{BinEmbryo, PinBin, PinStr, TypeObject, View},
@@ -285,12 +286,12 @@ pub(crate) fn copy_mode_sym<'v, 's>(
 /// borrow, so several copies and positional reads can be in flight on one
 /// handle at once; a side addressed through its cursor moves that cursor and
 /// takes the handle exclusively.
-enum CopySide<'v, 'a> {
-    Positional(Ref<'v, 'a, File<'v>>),
-    Cursor(Mut<'v, 'a, File<'v>>),
+enum CopySide<'v, 'a, M: FileMode> {
+    Positional(Ref<'v, 'a, File<'v, M>>),
+    Cursor(Mut<'v, 'a, File<'v, M>>),
 }
 
-impl<'v> CopySide<'v, '_> {
+impl<'v, M: FileMode> CopySide<'v, '_, M> {
     fn file<'b, 's>(&'b self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, &'b VfsFile> {
         let file = match self {
             Self::Positional(borrow) => borrow.file.as_ref(),
@@ -307,11 +308,11 @@ impl<'v> CopySide<'v, '_> {
 /// into `(offset, destination, length)` before anything reaches the VFS, which
 /// knows nothing of either.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn copy_data<'v, 's>(
+async fn copy_data<'v, 's, S: FileMode, D: FileMode>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, FsGlobal<'v>>,
-    src: Instance<'v, '_, File<'v>>,
-    dst: Instance<'v, '_, File<'v>>,
+    src: Instance<'v, '_, File<'v, S>>,
+    dst: Instance<'v, '_, File<'v, D>>,
     range: Option<Slot<'v, '_>>,
     size: Option<Slot<'v, '_>>,
     offset: Option<Slot<'v, '_>>,
@@ -363,7 +364,10 @@ pub(crate) async fn copy_data<'v, 's>(
     let same_handle = {
         let src = src.borrow(strand)?;
         let dst = dst.borrow(strand)?;
-        std::ptr::eq(&*src as *const File<'v>, &*dst as *const File<'v>)
+        std::ptr::eq(
+            (&*src as *const File<'v, S>).cast::<()>(),
+            (&*dst as *const File<'v, D>).cast::<()>(),
+        )
     };
     if same_handle && (region.is_none() || offset.is_none()) {
         return Err(Error::state_error(
@@ -457,7 +461,8 @@ pub(crate) async fn copy_data<'v, 's>(
 }
 
 /// A handle to an open file.
-pub(crate) struct File<'v> {
+pub(crate) struct File<'v, M: FileMode = CommonFile> {
+    marker: PhantomData<M>,
     file: Option<VfsFile>,
     buf: BinEmbryo<'v>,
 }
@@ -500,7 +505,7 @@ pub(crate) async fn open_native<'v>(
         .map_err(dolang_vfs::error::Error::into_io_error)
 }
 
-impl<'v> File<'v> {
+impl<'v, M: FileMode> File<'v, M> {
     pub(crate) fn create(
         _strand: &Strand<'v, '_>,
         global: State<'v, FsGlobal<'v>>,
@@ -509,6 +514,7 @@ impl<'v> File<'v> {
     ) -> (Self, FileAnnex<'v>) {
         (
             File {
+                marker: PhantomData,
                 file: Some(file),
                 buf: BinEmbryo::new(),
             },
@@ -675,7 +681,9 @@ impl<'v> File<'v> {
         self.buf.truncate(0);
         Ok(pos)
     }
+}
 
+impl<'v> File<'v> {
     pub(crate) async fn open<'s>(
         strand: &mut Strand<'v, 's>,
         global: State<'v, FsGlobal<'v>>,
@@ -722,11 +730,7 @@ impl<'v> File<'v> {
             strand
                 .with_slots(async move |strand, [mut handle, mut tmp]| {
                     // Block scope mode: create handle, call block with auto-close
-                    let (file, annex) = File::create(strand, global, file, &mode);
-                    global
-                        .types
-                        .file
-                        .create_with_annex(strand, file, annex, &mut handle);
+                    create_file(strand, global, file, &mode, &mut handle);
 
                     // Call the block with the handle as argument
                     let result = call!(strand, block, out, &handle).await;
@@ -739,15 +743,13 @@ impl<'v> File<'v> {
                 .await
         } else {
             // No block: just return the handle in the slot
-            let (file, annex) = File::create(strand, global, file, &mode);
-            global
-                .types
-                .file
-                .create_with_annex(strand, file, annex, out);
+            create_file(strand, global, file, &mode, out);
             Ok(())
         }
     }
+}
 
+impl<'v, M: FileMode> File<'v, M> {
     async fn fill_buf<'s>(&mut self, strand: &mut Strand<'v, 's>, n: usize) -> Result<'v, 's, ()> {
         let file_ref = self
             .file
@@ -909,8 +911,8 @@ impl<'v> File<'v> {
     }
 }
 
-impl<'v> Object<'v> for File<'v> {
-    const NAME: &'v str = "File";
+impl<'v, M: FileMode> Object<'v> for File<'v, M> {
+    const NAME: &'v str = M::NAME;
     const MODULE: &'v str = "fs";
     type Annex = FileAnnex<'v>;
     type Type = ();
@@ -1205,6 +1207,9 @@ impl<'v> Object<'v> for File<'v> {
             .method("write", async move |this, strand, args, out| {
                 let ([data], [offset]) = unpack!(strand, args, 1, 0, offset_sym = None)?;
                 let offset = read_offset(strand, offset)?;
+                if M::TEXT && !matches!(data.view(strand), View::Str(_)) {
+                    return Err(Error::type_error(strand, "StrFile.write: expected Str"));
+                }
                 match offset {
                     // An append handle writes at the end no matter what offset
                     // the platform is given, so honoring one is impossible
@@ -1236,15 +1241,9 @@ impl<'v> Object<'v> for File<'v> {
                     clone_sym = None
                 )?;
                 let global = this.annex().global;
-                let dst = global
-                    .types
-                    .file
-                    .cast(&dst)
+                let dst = cast_file(global, &dst)
                     .ok_or_else(|| Error::type_error(strand, "expected fs.File"))?;
-                dst.enter(strand, async move |strand, dst| {
-                    copy_data(strand, global, this, dst, range, size, offset, clone, out).await
-                })
-                .await
+                copy_to(strand, global, this, dst, range, size, offset, clone, out).await
             })
             .method("set_size", async move |this, strand, args, _out| {
                 let ([size], []) = unpack!(strand, args, 1, 0)?;
@@ -1523,5 +1522,188 @@ impl<'v> Object<'v> for File<'v> {
                 Output::set(strand, out, i128::from(pos));
                 Ok(())
             })
+    }
+}
+
+pub(crate) trait FileMode: 'static {
+    const NAME: &'static str;
+    const TEXT: bool = false;
+}
+pub(crate) struct CommonFile;
+pub(crate) struct TextFile;
+pub(crate) struct BinaryFile;
+impl FileMode for CommonFile {
+    const NAME: &'static str = "File";
+}
+impl FileMode for TextFile {
+    const NAME: &'static str = "StrFile";
+    const TEXT: bool = true;
+}
+impl FileMode for BinaryFile {
+    const NAME: &'static str = "BinFile";
+}
+
+pub(crate) fn create_file<'v>(
+    strand: &mut Strand<'v, '_>,
+    global: State<'v, FsGlobal<'v>>,
+    file: VfsFile,
+    mode: &str,
+    out: impl Output<'v>,
+) {
+    if mode.contains('b') {
+        let (file, annex) = File::<BinaryFile>::create(strand, global, file, mode);
+        global
+            .types
+            .bin_file
+            .create_with_annex(strand, file, annex, out);
+    } else {
+        let (file, annex) = File::<TextFile>::create(strand, global, file, mode);
+        global
+            .types
+            .str_file
+            .create_with_annex(strand, file, annex, out);
+    }
+}
+
+/// Native casts match representations, not nominal supertypes. Keep the
+/// concrete witness so copies and process handoffs can use any file subtype,
+/// including a native delegate held by a Do class.
+pub(crate) enum FileCast<'v, 'a> {
+    Common(Cast<'v, 'a, File<'v>>),
+    Text(Cast<'v, 'a, File<'v, TextFile>>),
+    Binary(Cast<'v, 'a, File<'v, BinaryFile>>),
+}
+
+pub(crate) fn cast_file<'v, 'a>(
+    global: State<'v, FsGlobal<'v>>,
+    value: &'a Value<'v>,
+) -> Option<FileCast<'v, 'a>> {
+    global
+        .types
+        .str_file
+        .cast(value)
+        .map(FileCast::Text)
+        .or_else(|| global.types.bin_file.cast(value).map(FileCast::Binary))
+        .or_else(|| global.types.file.cast(value).map(FileCast::Common))
+}
+
+impl<'v> FileCast<'v, '_> {
+    pub(crate) async fn command_send<'s>(
+        self,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, Option<StdioSend>> {
+        match self {
+            Self::Common(file) => {
+                file.enter(strand, async |strand, inst| {
+                    File::<CommonFile>::command_send(inst, strand).await
+                })
+                .await
+            }
+            Self::Text(file) => {
+                file.enter(strand, async |strand, inst| {
+                    File::<TextFile>::command_send(inst, strand).await
+                })
+                .await
+            }
+            Self::Binary(file) => {
+                file.enter(strand, async |strand, inst| {
+                    File::<BinaryFile>::command_send(inst, strand).await
+                })
+                .await
+            }
+        }
+    }
+    pub(crate) async fn command_recv<'s>(
+        self,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, Option<StdioRecv>> {
+        match self {
+            Self::Common(file) => {
+                file.enter(strand, async |strand, inst| {
+                    File::<CommonFile>::command_recv(inst, strand).await
+                })
+                .await
+            }
+            Self::Text(file) => {
+                file.enter(strand, async |strand, inst| {
+                    File::<TextFile>::command_recv(inst, strand).await
+                })
+                .await
+            }
+            Self::Binary(file) => {
+                file.enter(strand, async |strand, inst| {
+                    File::<BinaryFile>::command_recv(inst, strand).await
+                })
+                .await
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn copy_to<'v, 's, S: FileMode>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, FsGlobal<'v>>,
+    src: Instance<'v, '_, File<'v, S>>,
+    dst: FileCast<'v, '_>,
+    range: Option<Slot<'v, '_>>,
+    size: Option<Slot<'v, '_>>,
+    offset: Option<Slot<'v, '_>>,
+    clone: Option<Slot<'v, '_>>,
+    out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    match dst {
+        FileCast::Common(dst) => {
+            dst.enter(strand, async move |strand, dst| {
+                copy_data(strand, global, src, dst, range, size, offset, clone, out).await
+            })
+            .await
+        }
+        FileCast::Text(dst) => {
+            dst.enter(strand, async move |strand, dst| {
+                copy_data(strand, global, src, dst, range, size, offset, clone, out).await
+            })
+            .await
+        }
+        FileCast::Binary(dst) => {
+            dst.enter(strand, async move |strand, dst| {
+                copy_data(strand, global, src, dst, range, size, offset, clone, out).await
+            })
+            .await
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn copy_files<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, FsGlobal<'v>>,
+    src: FileCast<'v, '_>,
+    dst: FileCast<'v, '_>,
+    range: Option<Slot<'v, '_>>,
+    size: Option<Slot<'v, '_>>,
+    offset: Option<Slot<'v, '_>>,
+    clone: Option<Slot<'v, '_>>,
+    out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    match src {
+        FileCast::Common(src) => {
+            src.enter(strand, async move |strand, src| {
+                copy_to(strand, global, src, dst, range, size, offset, clone, out).await
+            })
+            .await
+        }
+        FileCast::Text(src) => {
+            src.enter(strand, async move |strand, src| {
+                copy_to(strand, global, src, dst, range, size, offset, clone, out).await
+            })
+            .await
+        }
+        FileCast::Binary(src) => {
+            src.enter(strand, async move |strand, src| {
+                copy_to(strand, global, src, dst, range, size, offset, clone, out).await
+            })
+            .await
+        }
     }
 }

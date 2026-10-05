@@ -19,7 +19,7 @@ use dolang_vfs::{process::ProcessControl, target::OperatingSystem};
 use crate::{
     error::{self, ResultExt as _},
     fs::{
-        file::{self, File},
+        file,
         path::{cast_path, create_path, path_from_value},
     },
     global::{FsGlobal, Global, ProcGlobal, ShellGlobal},
@@ -187,8 +187,7 @@ async fn resolve_io_file<'v, 's>(
 
     let fs = strand.force_state::<FsGlobal<'v>>();
     let file = file::open(strand, fs, path.to_path(), mode).await?;
-    let (file, annex) = File::create(strand, fs, file, mode);
-    fs.types.file.create_with_annex(strand, file, annex, out);
+    file::create_file(strand, fs, file, mode, out);
     Ok(true)
 }
 
@@ -265,13 +264,9 @@ async fn configure_direct_input<'v, 's>(
     }
     if let Some(file) = strand
         .try_state::<FsGlobal<'v>>()
-        .and_then(|fs| fs.types.file.cast(input))
+        .and_then(|fs| file::cast_file(fs, input))
     {
-        let stdio = file
-            .enter(strand, async |strand, inst| {
-                File::command_recv(inst, strand).await
-            })
-            .await?;
+        let stdio = file.command_recv(strand).await?;
         if let Some(stdio) = stdio {
             command.stdin(stdio).into_sys(strand)?;
             return Ok(true);
@@ -307,13 +302,9 @@ async fn configure_direct_output<'v, 's>(
     }
     if let Some(file) = strand
         .try_state::<FsGlobal<'v>>()
-        .and_then(|fs| fs.types.file.cast(output))
+        .and_then(|fs| file::cast_file(fs, output))
     {
-        let stdio = file
-            .enter(strand, async |strand, inst| {
-                File::command_send(inst, strand).await
-            })
-            .await?;
+        let stdio = file.command_send(strand).await?;
         if let Some(stdio) = stdio {
             command.stdout(stdio).into_sys(strand)?;
             return Ok(true);
@@ -344,13 +335,9 @@ async fn configure_direct_stderr<'v, 's>(
     }
     if let Some(file) = strand
         .try_state::<FsGlobal<'v>>()
-        .and_then(|fs| fs.types.file.cast(stderr))
+        .and_then(|fs| file::cast_file(fs, stderr))
     {
-        let stdio = file
-            .enter(strand, async |strand, inst| {
-                File::command_send(inst, strand).await
-            })
-            .await?;
+        let stdio = file.command_send(strand).await?;
         if let Some(stdio) = stdio {
             command.stderr(stdio).into_sys(strand)?;
             return Ok(true);
