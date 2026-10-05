@@ -797,7 +797,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 strand.output(&mut output);
                 while input.next(strand, &mut value).await? {
                     call!(strand, &pred, &mut tmp, &*value).await?;
-                    if tmp.to_bool(strand) {
+                    if tmp.to_bool(strand)? {
                         output.put(strand, &mut value).await?;
                     }
                     strand.check_trap_gc()?

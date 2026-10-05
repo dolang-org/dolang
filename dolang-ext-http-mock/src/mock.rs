@@ -360,7 +360,7 @@ async fn run_callback_strand<'v, 's>(
                                 Slot::reborrow(&mut req),
                             )?;
                             call!(strand, &cb, &mut ret, &req).await?;
-                            Ok(ret.to_bool(strand))
+                            ret.to_bool(strand)
                         },
                     )
                     .await
@@ -1281,7 +1281,7 @@ fn remove_identical<'v, 's>(
         let len = array.len(strand)?;
         for i in 0..len {
             array.get(strand, i, &mut tmp)?;
-            if tmp.eq(strand, target) {
+            if tmp.eq(strand, target)? {
                 array.delete(strand, i)?;
                 break;
             }

@@ -539,7 +539,7 @@ impl<'v, 'a> Dict<'v, 'a> {
             Some(b) => b,
             None => return Err(Error::concurrency(strand)),
         };
-        borrow.insert(strand, key, value, hv, unique);
+        borrow.insert(strand, key, value, hv, unique)?;
         Ok(())
     }
 }

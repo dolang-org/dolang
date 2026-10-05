@@ -911,7 +911,7 @@ impl<'v> Vm<'v> {
                         }
                         builtin::VALUE_ASSERT => {
                             let ([value, expected], []) = unpack!(strand, args, 2, 0)?;
-                            if !value.op_eq(strand, &expected)?.to_bool(strand) {
+                            if !value.op_eq(strand, &expected)?.to_bool(strand)? {
                                 // Report the mismatch even if a value can't be formatted
                                 let msg = match (expected.to_debug(strand), value.to_debug(strand))
                                 {
@@ -1041,8 +1041,7 @@ impl<'v> Vm<'v> {
                     if offset < 0 {
                         Strand::for_frame(inner, frame, |strand| self.check_trap_gc(strand))?
                     }
-                    let value =
-                        Strand::for_frame_infallible(inner, frame, |strand| slot.op_bool(strand));
+                    let value = Strand::for_frame(inner, frame, |strand| slot.op_bool(strand))?;
                     slot.store(Value::NIL);
                     if (op == BranchTrue) == value {
                         reader.seek(offset)

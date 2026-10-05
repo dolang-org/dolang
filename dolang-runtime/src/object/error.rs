@@ -249,10 +249,18 @@ impl<'v> Protocol<'v> for VariantType {
         strand: &'a mut Strand<'v, 's>,
         supertype: &crate::value::Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &this)
-            || strand.singletons().error.eq(strand, supertype)
+        supertype.eq(strand, &this).unwrap_or(false)
+            || strand
+                .singletons()
+                .error
+                .eq(strand, supertype)
+                .unwrap_or(false)
             || (is_runtime_superkind(this.get().0)
-                && strand.singletons().error_runtime.eq(strand, supertype))
+                && strand
+                    .singletons()
+                    .error_runtime
+                    .eq(strand, supertype)
+                    .unwrap_or(false))
     }
 
     fn op_debug<'a, 's>(

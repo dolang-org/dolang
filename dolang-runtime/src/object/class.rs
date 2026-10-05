@@ -1098,13 +1098,15 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &this)
+        supertype.eq(strand, &this).unwrap_or(false)
             || this
                 .annex()
                 .supers
                 .iter()
                 .any(|sup| sup.op_subtype(strand, supertype))
-            || supertype.eq(strand, &strand.singletons().value)
+            || supertype
+                .eq(strand, &strand.singletons().value)
+                .unwrap_or(false)
     }
 
     async fn op_mcall<'a, 's>(
@@ -1497,9 +1499,13 @@ impl<'v> Protocol<'v> for ClassTypeProxy<'v> {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &this)
-            || supertype.eq(strand, &strand.singletons().type_obj)
-            || supertype.eq(strand, &strand.singletons().value)
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype
+                .eq(strand, &strand.singletons().type_obj)
+                .unwrap_or(false)
+            || supertype
+                .eq(strand, &strand.singletons().value)
+                .unwrap_or(false)
     }
 
     fn op_eq<'a, 's>(
@@ -2731,16 +2737,17 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         class_sync_reverse_comparison(this, strand, other, true)
     }
 
-    fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, strand: &mut Strand<'v, 's>) -> bool {
+    fn op_bool<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, bool> {
         let this = this.clone();
         let annex = this.annex();
         match annex.class.annex().entry_by_tag(sym::BOOL_METHOD) {
-            Some(ClassEntry::Method(v)) => strand
-                .with_slots_sync(move |strand, [mut result]| {
-                    strand.sync(async |strand| call!(strand, v, &mut result, &this).await)?;
-                    Ok::<_, crate::error::Error<'v, 's>>(result.take().op_bool(strand))
-                })
-                .unwrap_or(true),
+            Some(ClassEntry::Method(v)) => strand.with_slots_sync(move |strand, [mut result]| {
+                strand.sync(async |strand| call!(strand, v, &mut result, &this).await)?;
+                result.op_bool(strand)
+            }),
             Some(ClassEntry::Delegate(slot, _)) => annex.natives[*slot]
                 .get()
                 .map(|native| {
@@ -2749,8 +2756,8 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                         Delegated::new(native, &delegator).op_bool(strand)
                     })
                 })
-                .unwrap_or(true),
-            _ => true,
+                .unwrap_or(Ok(true)),
+            _ => Ok(true),
         }
     }
 

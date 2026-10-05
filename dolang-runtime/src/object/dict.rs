@@ -140,17 +140,14 @@ impl<'v> Dict<'v> {
         let mut hasher = DefaultHasher::new();
         index.op_hash(strand, &mut hasher)?;
         let hash = hasher.finish();
-        Ok(self
-            .table
-            .find(hash, eq(strand, index))
-            .and_then(|pair| unsafe {
-                let pair = pair.as_ref();
-                let instance = match instance {
-                    Some(instance) => Some(index::element(pair.value.len(), instance)?),
-                    None => None,
-                };
-                pair.value.get(instance)
-            }))
+        Ok(self.find(strand, hash, index)?.and_then(|pair| unsafe {
+            let pair = pair.as_ref();
+            let instance = match instance {
+                Some(instance) => Some(index::element(pair.value.len(), instance)?),
+                None => None,
+            };
+            pair.value.get(instance)
+        }))
     }
 
     /// Finds the key of the first pair, in insertion order, that an unpack
@@ -177,7 +174,7 @@ impl<'v> Dict<'v> {
             {
                 continue;
             }
-            if skip.add(strand, key, bucket.hash) >= bucket.value.len() {
+            if skip.add(strand, key, bucket.hash)? >= bucket.value.len() {
                 continue;
             }
             return Ok(Some(key.dup()));
@@ -218,41 +215,43 @@ impl<'v> Dict<'v> {
         (i, unsafe { index.get_unchecked_mut(i) })
     }
 
-    fn rehash(&mut self, strand: &mut Strand<'v, '_>, old_capacity: usize) -> usize {
+    fn rehash(&mut self, old_capacity: usize) -> usize {
         let capacity = 1.max(old_capacity * 2);
-        let total_pairs = self.total_pairs;
-        let mut this = Self {
-            table: RawTable::with_capacity(capacity),
-            index: Vec::new(),
-            epoch: self.epoch + 1,
-            total_pairs: 0,
-        };
-        for mut bucket in self.index.drain(..) {
-            if let Some((bucket, subindex)) = bucket.take() {
-                if let EntryValue::Single { .. } = unsafe { &bucket.as_ref().value } {
-                    let (mut entry, _) = unsafe { self.table.remove(bucket) };
-                    let (i, slot) = Self::next_index(&mut this.index, capacity);
-                    match &mut entry.value {
-                        EntryValue::Single { index, .. } => *index = i,
-                        EntryValue::Multi(_) => unreachable!(),
-                    };
-                    *slot = Some((this.table.insert(entry.hash, entry, hasher()), 0));
-                    this.total_pairs += 1;
-                } else {
-                    let bucket = unsafe { &bucket.as_ref() };
-                    this.insert(
-                        strand,
-                        bucket.key.dup(),
-                        bucket.value.at(subindex).dup(),
-                        bucket.hash,
-                        false,
-                    )
+        let mut table = RawTable::with_capacity(capacity);
+        let mut remap = vec![None; self.table.buckets()];
+        let mut index = Vec::with_capacity(self.total_pairs);
+        for (old_bucket, subindex) in self.index.drain(..).flatten() {
+            // The old allocation remains live until all bucket pointers have been remapped.
+            let old_index = unsafe { self.table.bucket_index(&old_bucket) };
+            let bucket = match &remap[old_index] {
+                Some(bucket) => Bucket::clone(bucket),
+                None => {
+                    let (entry, _) = unsafe { self.table.remove(old_bucket) };
+                    let bucket = unsafe { table.insert_no_grow(entry.hash, entry) };
+                    remap[old_index] = Some(bucket.clone());
+                    bucket
                 }
+            };
+            let i = index.len();
+            match unsafe { &mut bucket.as_mut().value } {
+                EntryValue::Single { index, .. } => *index = i,
+                EntryValue::Multi(items) => items[subindex].1 = i,
             }
+            index.push(Some((bucket, subindex)));
         }
-        debug_assert_eq!(this.total_pairs, total_pairs);
-        mem::swap(self, &mut this);
+        self.table = table;
+        self.index = index;
+        self.epoch += 1;
         capacity
+    }
+
+    fn find<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        hash: u64,
+        key: &Value<'v>,
+    ) -> Result<'v, 's, Option<Bucket<Entry<'v>>>> {
+        super::table::find(&self.table, hash, |entry| key.eq(strand, &entry.key))
     }
 
     pub(crate) fn insert<'s>(
@@ -262,16 +261,21 @@ impl<'v> Dict<'v> {
         value: Value<'v>,
         hv: u64,
         unique: bool,
-    ) {
+    ) -> Result<'v, 's, ()> {
         unsafe {
+            let found = self.find(strand, hv, &key)?;
             let mut cap = self.table.capacity();
-            if self.table.len() == cap {
-                cap = self.rehash(strand, cap)
-            }
-            match self
-                .table
-                .find_or_find_insert_index(hv, eq(strand, &key), hasher())
-            {
+            let probe = match found {
+                Some(bucket) => Ok(bucket),
+                None => {
+                    if self.table.len() == cap {
+                        cap = self.rehash(cap);
+                    }
+                    self.table
+                        .find_or_find_insert_index(hv, |_| false, hasher())
+                }
+            };
+            match probe {
                 Ok(bucket) => match &mut bucket.as_mut().value {
                     EntryValue::Single {
                         value: existing,
@@ -322,6 +326,7 @@ impl<'v> Dict<'v> {
                 }
             }
         }
+        Ok(())
     }
 
     pub(crate) fn from_args<'s>(
@@ -378,7 +383,7 @@ impl<'v> Dict<'v> {
                         value.take(),
                         hv,
                         false,
-                    );
+                    )?;
                     index += 1;
                     continue;
                 }
@@ -400,7 +405,7 @@ impl<'v> Dict<'v> {
             key.op_hash(strand, &mut hasher)?;
             let hv = hasher.finish();
             sink.dict
-                .insert(strand, key.take(), value.take(), hv, false)
+                .insert(strand, key.take(), value.take(), hv, false)?
         }
 
         Ok(this)
@@ -411,10 +416,6 @@ impl<'v> Dict<'v> {
 
 fn hasher<'v>() -> impl Fn(&Entry<'v>) -> u64 {
     |Entry { hash, .. }| *hash
-}
-
-fn eq<'v, 's>(strand: &mut Strand<'v, 's>, needle: &Value<'v>) -> impl FnMut(&Entry<'v>) -> bool {
-    |Entry { key, .. }| needle.eq(strand, key)
 }
 
 struct DictPairs<'b, 'v> {
@@ -432,7 +433,7 @@ impl<'b, 'v, 's> Spread<'v, 's> for DictPairs<'b, 'v> {
         let mut hasher = DefaultHasher::new();
         key.op_hash(strand, &mut hasher).unwrap();
         let hv = hasher.finish();
-        self.dict.insert(strand, key, value.take(), hv, false);
+        self.dict.insert(strand, key, value.take(), hv, false)?;
         self.int = self
             .int
             .checked_add(1)
@@ -450,7 +451,7 @@ impl<'b, 'v, 's> Spread<'v, 's> for DictPairs<'b, 'v> {
         let mut hasher = DefaultHasher::new();
         key.op_hash(strand, &mut hasher).unwrap();
         let hv = hasher.finish();
-        self.dict.insert(strand, key, value.take(), hv, false);
+        self.dict.insert(strand, key, value.take(), hv, false)?;
         Ok(())
     }
 
@@ -464,7 +465,7 @@ impl<'b, 'v, 's> Spread<'v, 's> for DictPairs<'b, 'v> {
         key.op_hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         self.dict
-            .insert(strand, key.take(), value.take(), hv, false);
+            .insert(strand, key.take(), value.take(), hv, false)?;
         Ok(())
     }
 }
@@ -1143,34 +1144,37 @@ impl<'v> Skip<'v> {
         }
     }
 
-    fn add<'s>(&mut self, strand: &mut Strand<'v, 's>, value: &Value<'v>, hv: u64) -> usize {
-        self.count += 1;
-        unsafe {
-            match self.table.find_or_find_insert_index(
-                hv,
-                |s| value.eq(strand, &s.value),
-                |s| s.hash,
-            ) {
-                Ok(bucket) => {
+    fn add<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        value: &Value<'v>,
+        hv: u64,
+    ) -> Result<'v, 's, usize> {
+        let found = super::table::find(&self.table, hv, |s| value.eq(strand, &s.value))?;
+        let count = unsafe {
+            match found {
+                Some(bucket) => {
                     let bucket = bucket.as_mut();
                     let count = bucket.count;
                     bucket.count += 1;
                     count
                 }
-                Err(index) => {
-                    self.table.insert_at_index(
+                None => {
+                    self.table.insert(
                         hv,
-                        index,
                         Seen {
                             value: value.dup(),
                             hash: hv,
                             count: 1,
                         },
+                        |s| s.hash,
                     );
                     0
                 }
             }
-        }
+        };
+        self.count += 1;
+        Ok(count)
     }
 
     fn take(&mut self) -> Self {
@@ -1223,22 +1227,22 @@ fn offset<'v, 's>(strand: &mut Strand<'v, 's>, base: i64, by: usize) -> Result<'
 /// Values go out in order, skipping those consumed: the first instance of an
 /// integer key below `floor` (taken positionally), then as many more as
 /// `skip` counts.
-fn leftover_instance<'v>(
-    strand: &mut Strand<'v, '_>,
+fn leftover_instance<'v, 's>(
+    strand: &mut Strand<'v, 's>,
     entry: &Entry<'v>,
     subindex: usize,
     floor: i64,
     skip: &mut Skip<'v>,
-) -> Option<usize> {
+) -> Result<'v, 's, Option<usize>> {
     let positional = entry
         .key
         .as_int(strand)
         .is_some_and(|int| (0..i128::from(floor)).contains(&int));
     if positional && subindex == 0 {
-        return None;
+        return Ok(None);
     }
-    let instance = skip.add(strand, &entry.key, entry.hash) + usize::from(positional);
-    (instance < entry.value.len()).then_some(instance)
+    let instance = skip.add(strand, &entry.key, entry.hash)? + usize::from(positional);
+    Ok((instance < entry.value.len()).then_some(instance))
 }
 
 /// Position of a lazy rest over a keyed container's leftover pairs.
@@ -1321,7 +1325,7 @@ impl<'v> UnpackState<'v> {
                     };
                     let entry = unsafe { bucket.as_ref() };
                     if let Some(instance) =
-                        leftover_instance(strand, entry, *subindex, *floor, skip)
+                        leftover_instance(strand, entry, *subindex, *floor, skip)?
                     {
                         return Ok(Some((entry.key.dup(), entry.value.at(instance).dup())));
                     }
@@ -1350,7 +1354,7 @@ impl<'v> UnpackState<'v> {
                         continue;
                     }
                     *index += 1;
-                    if let Some(instance) = leftover_instance(strand, entry, *subindex, *int, skip)
+                    if let Some(instance) = leftover_instance(strand, entry, *subindex, *int, skip)?
                     {
                         return Ok(Some((entry.key.dup(), entry.value.at(instance).dup())));
                     }
@@ -1660,11 +1664,14 @@ impl<'v> Protocol<'v> for Dict<'v> {
         crate::fmt!(strand, w, "}}")
     }
 
-    fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, strand: &mut Strand<'v, 's>) -> bool {
+    fn op_bool<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, bool> {
         let Ok(borrow) = this.borrow(strand) else {
-            return true;
+            return Ok(true);
         };
-        borrow.total_pairs != 0
+        Ok(borrow.total_pairs != 0)
     }
 
     fn op_hash<'a, 's>(
@@ -1734,12 +1741,12 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 let (l, subl) = (l.0.as_ref(), l.1);
                 let (r, subr) = (r.0.as_ref(), r.1);
                 if l.hash != r.hash
-                    || !l.key.op_eq(strand, &r.key)?.to_bool(strand)
+                    || !l.key.op_eq(strand, &r.key)?.to_bool(strand)?
                     || !l
                         .value
                         .at(subl)
                         .op_eq(strand, r.value.at(subr))?
-                        .to_bool(strand)
+                        .to_bool(strand)?
                 {
                     return Ok(Value::FALSE);
                 }
@@ -1784,13 +1791,13 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 }
                 let (l, subl) = (l.0.as_ref(), l.1);
                 let (r, subr) = (r.0.as_ref(), r.1);
-                if l.key.op_lt(strand, &r.key)?.to_bool(strand) {
+                if l.key.op_lt(strand, &r.key)?.to_bool(strand)? {
                     return Ok(Value::TRUE);
                 }
                 if l.value
                     .at(subl)
                     .op_lt(strand, r.value.at(subr))?
-                    .to_bool(strand)
+                    .to_bool(strand)?
                 {
                     return Ok(Value::TRUE);
                 }
@@ -1814,7 +1821,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
         index.op_hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let dict = this.borrow(strand)?;
-        match dict.table.find(hv, eq(strand, index)) {
+        match dict.find(strand, hv, index)? {
             Some(pair) => {
                 Output::set(strand, out, unsafe { pair.as_ref().value.latest() });
                 Ok(())
@@ -1833,7 +1840,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
         key.op_hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let mut borrow = this.borrow_mut(strand)?;
-        borrow.insert(strand, key.take(), value.take(), hv, true);
+        borrow.insert(strand, key.take(), value.take(), hv, true)?;
         borrow.epoch += 1;
         Ok(())
     }
@@ -1901,7 +1908,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
                     let mut hasher = DefaultHasher::new();
                     key.op_hash(strand, &mut hasher)?;
                     let hv = hasher.finish();
-                    let bucket = this.borrow(strand)?.table.find(hv, eq(strand, &key));
+                    let bucket = this.borrow(strand)?.find(strand, hv, &key)?;
                     Value::from_object(GcObj::new(
                         strand.arena(),
                         strand.builtin_types().dict_key_values,
@@ -1952,7 +1959,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
                         bucket.value.at(*subindex).dup(),
                         bucket.hash,
                         false,
-                    );
+                    )?;
                 }
                 strand.builtin_types().dict.create(strand, dict, out);
                 Ok(())
@@ -2220,7 +2227,7 @@ impl<'v> Dict<'v> {
             key_value.op_hash(strand, &mut hasher)?;
 
             let hv = hasher.finish();
-            let seen = skip.add(strand, &key_value, hv);
+            let seen = skip.add(strand, &key_value, hv)?;
 
             let instance = i64::try_from(seen).map_err(|_| Error::overflow(strand))?;
             if let Some(value) = self.get(strand, &key_value, Some(instance))? {
@@ -2329,7 +2336,7 @@ impl<'v> Dict<'v> {
         key.op_hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let mut dict = this.borrow_mut(strand)?;
-        dict.insert(strand, key.take(), value.take(), hv, false);
+        dict.insert(strand, key.take(), value.take(), hv, false)?;
         dict.epoch += 1;
         Ok(())
     }
@@ -2385,7 +2392,7 @@ impl<'v> Dict<'v> {
             .transpose()?;
         {
             let mut dict = this.borrow_mut(strand)?;
-            if let Some(bucket) = dict.table.find(hv, eq(strand, &key)) {
+            if let Some(bucket) = dict.find(strand, hv, &key)? {
                 unsafe {
                     match &mut bucket.as_mut().value {
                         EntryValue::Single { index, .. } => {
@@ -2456,7 +2463,7 @@ impl<'v> Dict<'v> {
         let hv = hasher.finish();
         let mut dict = this.borrow_mut(strand)?;
         let mut deleted = false;
-        if let Some(bucket) = dict.table.find(hv, eq(strand, &key)) {
+        if let Some(bucket) = dict.find(strand, hv, &key)? {
             unsafe {
                 dict.total_pairs -= bucket.as_ref().value.len();
                 match &bucket.as_ref().value {
@@ -2489,14 +2496,14 @@ impl<'v> Dict<'v> {
         key.op_hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let dict = this.borrow(strand)?;
-        let found = match dict.table.find(hv, eq(strand, &key)) {
+        let found = match dict.find(strand, hv, &key)? {
             None => false,
             Some(bucket) => {
                 if let Some(expected_value) = value {
                     let bucket_ref = unsafe { bucket.as_ref() };
                     match &bucket_ref.value {
                         EntryValue::Single { value, .. } => {
-                            value.op_eq(strand, &expected_value)?.to_bool(strand)
+                            value.op_eq(strand, &expected_value)?.to_bool(strand)?
                         }
                         EntryValue::Multi(_) => {
                             let mut found = false;
@@ -2509,7 +2516,7 @@ impl<'v> Dict<'v> {
                                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                                     strand.check_trap()?;
                                 }
-                                if v.op_eq(strand, &expected_value)?.to_bool(strand) {
+                                if v.op_eq(strand, &expected_value)?.to_bool(strand)? {
                                     found = true;
                                     break;
                                 }
@@ -2537,8 +2544,7 @@ impl<'v> Dict<'v> {
             let mut hasher = DefaultHasher::new();
             key.op_hash(strand, &mut hasher)?;
             let hv = hasher.finish();
-            dict.table
-                .find(hv, eq(strand, &key))
+            dict.find(strand, hv, &key)?
                 .map(|bucket| unsafe { bucket.as_ref().value.len() })
                 .unwrap_or(0)
         } else {
@@ -2602,9 +2608,11 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &this)
-            || supertype.eq(strand, &strand.singletons().iterable)
-            || supertype.eq(strand, TypeObject::Value)
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype
+                .eq(strand, &strand.singletons().iterable)
+                .unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
 
     fn op_debug<'a, 's>(
@@ -2736,7 +2744,7 @@ mod tests {
             let mut hasher = DefaultHasher::new();
             key.op_hash(strand, &mut hasher).unwrap();
             let hv = hasher.finish();
-            dict.insert(strand, key, value, hv, false);
+            dict.insert(strand, key, value, hv, false).unwrap();
         }
         strand.builtin_types().dict.create(strand, dict, out);
     }
@@ -2781,7 +2789,7 @@ mod tests {
                         .cast(value)
                         .unwrap()
                         .enter_sync(strand, |strand, recv2| {
-                            assert!(Dict::op_bool(recv2, strand));
+                            assert!(Dict::op_bool(recv2, strand).unwrap());
                         });
                 });
         });
@@ -2799,13 +2807,13 @@ mod tests {
                 .cast(empty)
                 .unwrap()
                 .enter_sync(strand, |strand, recv| {
-                    assert!(!Dict::op_bool(recv, strand));
+                    assert!(!Dict::op_bool(recv, strand).unwrap());
                 });
             dict_type
                 .cast(nonempty)
                 .unwrap()
                 .enter_sync(strand, |strand, recv| {
-                    assert!(Dict::op_bool(recv, strand));
+                    assert!(Dict::op_bool(recv, strand).unwrap());
                 });
         });
     }
@@ -2823,7 +2831,7 @@ mod tests {
                 .unwrap()
                 .enter_sync(strand, |strand, recv| {
                     let eq = Dict::op_eq(recv, strand, other).unwrap();
-                    assert!(!eq.to_bool(strand));
+                    assert!(!eq.to_bool(strand).unwrap());
                 });
             dict_type
                 .cast(value)
@@ -2960,7 +2968,8 @@ mod tests {
                     let hv = hasher.finish();
                     recv.borrow_mut(strand)
                         .unwrap()
-                        .insert(strand, key, val, hv, false);
+                        .insert(strand, key, val, hv, false)
+                        .unwrap();
                 });
 
             assert_eq!(total_pairs(strand, copy), 2);

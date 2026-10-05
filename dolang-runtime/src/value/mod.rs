@@ -415,7 +415,7 @@ impl<'v> Value<'v> {
                     Prim::F64(_) => &strand.singletons().float,
                     Prim::Bool(_) => &strand.singletons().bool,
                 };
-                self_type.eq(strand, supertype)
+                self_type.eq(strand, supertype).unwrap_or(false)
             }
             Case::Object(o) => o.op_subtype(strand, supertype),
         }
@@ -517,7 +517,7 @@ impl<'v> Value<'v> {
         &self,
         strand: &'a mut Strand<'v, 's>,
     ) -> Result<'v, 's, Value<'v>> {
-        Ok(Value::from_bool(!self.op_bool(strand)))
+        Ok(Value::from_bool(!self.op_bool(strand)?))
     }
 
     pub(crate) fn op_bnot<'a, 's>(
@@ -921,9 +921,9 @@ impl<'v> Value<'v> {
         ))
     }
 
-    pub(crate) fn op_bool<'a, 's>(&self, strand: &'a mut Strand<'v, 's>) -> bool {
+    pub(crate) fn op_bool<'a, 's>(&self, strand: &'a mut Strand<'v, 's>) -> Result<'v, 's, bool> {
         match &self.case() {
-            Case::Prim(p) => p.op_bool(strand),
+            Case::Prim(p) => Ok(p.op_bool(strand)),
             Case::Object(o) => o.op_bool(strand),
         }
     }
@@ -1131,7 +1131,8 @@ impl<'v> Value<'v> {
         Ok(out)
     }
 
-    /// Returns the "truth" value of the value.  In particular:
+    /// Returns the "truth" value, propagating errors from user-defined conversion.
+    /// In particular:
     /// - `nil` is false
     /// - `false` is false and `true` is true
     /// - `0` is false and all other integers are true
@@ -1139,31 +1140,35 @@ impl<'v> Value<'v> {
     /// - Empty strings are false, others are true
     /// - Other objects are usually `true` unless they have special behavior
     #[inline]
-    pub fn to_bool<'a, 's>(&self, strand: &'a mut Strand<'v, 's>) -> bool {
+    pub fn to_bool<'a, 's>(&self, strand: &'a mut Strand<'v, 's>) -> Result<'v, 's, bool> {
         self.op_bool(strand)
     }
 
-    /// Tests whether two values are equal, returning false if comparison raises.
+    /// Tests whether two values are equal, propagating comparison and truthiness errors.
     #[inline]
-    pub fn eq<'a, 's>(&self, strand: &'a mut Strand<'v, 's>, other: impl Input<'v>) -> bool {
-        strand.with_slots_sync(|strand, [mut operand]| {
+    pub fn eq<'a, 's>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: impl Input<'v>,
+    ) -> Result<'v, 's, bool> {
+        strand.with_slots_sync(|strand, [mut operand, mut result]| {
             Output::set(strand, &mut operand, other);
-            match self.op_eq(strand, &operand) {
-                Ok(value) => value.op_bool(strand),
-                Err(_) => false,
-            }
+            result.store(self.op_eq(strand, &operand)?);
+            result.op_bool(strand)
         })
     }
 
-    /// Tests whether two values are unequal, returning true if comparison raises.
+    /// Tests whether two values are unequal, propagating comparison and truthiness errors.
     #[inline]
-    pub fn ne<'a, 's>(&self, strand: &'a mut Strand<'v, 's>, other: impl Input<'v>) -> bool {
-        strand.with_slots_sync(|strand, [mut operand]| {
+    pub fn ne<'a, 's>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: impl Input<'v>,
+    ) -> Result<'v, 's, bool> {
+        strand.with_slots_sync(|strand, [mut operand, mut result]| {
             Output::set(strand, &mut operand, other);
-            match self.op_ne(strand, &operand) {
-                Ok(value) => value.op_bool(strand),
-                Err(_) => true,
-            }
+            result.store(self.op_ne(strand, &operand)?);
+            result.op_bool(strand)
         })
     }
 
@@ -1817,7 +1822,7 @@ impl<'v, 'a> Dispatch<'v, 'a> for Delegated<'v, 'a, &'a Value<'v>> {
         }
     }
 
-    fn op_bool<'s>(&self, strand: &'a mut Strand<'v, 's>) -> bool {
+    fn op_bool<'s>(&self, strand: &'a mut Strand<'v, 's>) -> Result<'v, 's, bool> {
         match self.receiver.case() {
             Case::Object(receiver) => Delegated::new(receiver, self.delegator).op_bool(strand),
             Case::Prim(_) => self.receiver.op_bool(strand),

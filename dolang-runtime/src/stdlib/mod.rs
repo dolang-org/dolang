@@ -194,7 +194,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         })
         .function("bool", async move |strand, args, out| {
             let ([value], []) = unpack!(strand, args, 1, 0)?;
-            let value = value.op_bool(strand);
+            let value = value.op_bool(strand)?;
             Output::set(strand, out, value);
             Ok(())
         })

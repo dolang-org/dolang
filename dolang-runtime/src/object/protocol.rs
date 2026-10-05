@@ -153,7 +153,8 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &this) || supertype.eq(strand, TypeObject::Value)
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
 
     #[allow(unused_variables)]
@@ -208,8 +209,11 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         default_fmt::<Self>(this, strand, spec, w)
     }
 
-    fn op_bool<'a, 's>(_this: Recv<'v, 'a, Self>, _strand: &mut Strand<'v, 's>) -> bool {
-        true
+    fn op_bool<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        _strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, bool> {
+        Ok(true)
     }
 
     fn op_eq<'a, 's>(
@@ -226,7 +230,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         Ok(Value::from_bool(
-            !Self::op_eq(this, strand, other)?.op_bool(strand),
+            !Self::op_eq(this, strand, other)?.op_bool(strand)?,
         ))
     }
 
@@ -378,8 +382,8 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         Ok(Value::from_bool(
-            Self::op_lt(this.clone(), strand, other)?.op_bool(strand)
-                || Self::op_eq(this, strand, other)?.op_bool(strand),
+            Self::op_lt(this.clone(), strand, other)?.op_bool(strand)?
+                || Self::op_eq(this, strand, other)?.op_bool(strand)?,
         ))
     }
 
@@ -683,7 +687,7 @@ pub(crate) struct Vtbl<'v> {
         this: ErasedRecv<'v, 'a>,
         strand: &'a mut Strand<'v, 's>,
         _: &'a &'v (),
-    ) -> bool,
+    ) -> Result<'v, 's, bool>,
     op_unary: for<'a, 's> fn(
         this: ErasedRecv<'v, 'a>,
         strand: &'a mut Strand<'v, 's>,
@@ -1163,7 +1167,7 @@ fn to_bool_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     this: ErasedRecv<'v, 'a>,
     strand: &'a mut Strand<'v, 's>,
     _: &'a &'v (),
-) -> bool {
+) -> Result<'v, 's, bool> {
     unsafe { T::op_bool(Recv::from_erased(this), strand) }
 }
 
@@ -1537,7 +1541,7 @@ pub(crate) trait Dispatch<'v, 'a> {
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()>;
 
-    fn op_bool<'s>(&self, strand: &'a mut Strand<'v, 's>) -> bool;
+    fn op_bool<'s>(&self, strand: &'a mut Strand<'v, 's>) -> Result<'v, 's, bool>;
 
     fn op_bnot<'s>(&self, strand: &'a mut Strand<'v, 's>) -> Result<'v, 's, Value<'v>>;
 
@@ -1816,7 +1820,7 @@ impl<'v, 'a, T: AsRecv<'v, 'a>> Dispatch<'v, 'a> for T {
         unsafe { invoke!(self, op_fmt, strand, spec, w) }
     }
 
-    fn op_bool<'s>(&self, strand: &'a mut Strand<'v, 's>) -> bool {
+    fn op_bool<'s>(&self, strand: &'a mut Strand<'v, 's>) -> Result<'v, 's, bool> {
         unsafe { invoke!(self, op_bool, strand) }
     }
 
@@ -2242,7 +2246,7 @@ async fn special_mcall<'v, 'a, 's>(
             format.finish(strand, out);
         }
         sym::BOOL_METHOD => {
-            let b = dispatch!(op_bool);
+            let b = dispatch!(op_bool)?;
             Output::set(strand, out, b);
         }
         sym::HASH_METHOD => {

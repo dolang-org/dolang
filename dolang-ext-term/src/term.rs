@@ -1594,8 +1594,14 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             async move |strand, args, out, [mut console, mut line_ending, mut tmp]| {
                 let ([func], [chomp, can_style]) =
                     unpack!(strand, args, 1, 0, chomp_sym = None, can_style = None)?;
-                let chomp = chomp.map(|v| v.to_bool(strand)).unwrap_or(true);
-                let can_style = can_style.is_some_and(|v| v.to_bool(strand));
+                let chomp = chomp
+                    .map(|v| v.to_bool(strand))
+                    .transpose()?
+                    .unwrap_or(true);
+                let can_style = can_style
+                    .map(|v| v.to_bool(strand))
+                    .transpose()?
+                    .unwrap_or(false);
                 global
                     .types
                     .sub_console

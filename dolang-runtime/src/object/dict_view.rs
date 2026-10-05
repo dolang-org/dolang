@@ -116,11 +116,14 @@ pub trait DictLike<'v>: 'v {
         Output::set(strand, &mut out, Empty::Array);
         let array = out.as_array(strand).unwrap();
         let mut seen: Vec<Value<'v>> = Vec::with_capacity(pairs.len());
-        for (key, _) in pairs {
-            if !seen.iter().any(|seen| seen.eq(strand, &key)) {
-                array.push(strand, &key)?;
-                seen.push(key);
+        'keys: for (key, _) in pairs {
+            for seen in &seen {
+                if seen.eq(strand, &key)? {
+                    continue 'keys;
+                }
             }
+            array.push(strand, &key)?;
+            seen.push(key);
         }
         Ok(())
     }
@@ -453,7 +456,7 @@ fn snapshot_dict<'v, 's>(
         let mut hasher = DefaultHasher::new();
         key.op_hash(strand, &mut hasher)?;
         let hash = hasher.finish();
-        snapshot.insert(strand, key, value, hash, false);
+        snapshot.insert(strand, key, value, hash, false)?;
     }
     Ok(Value::from_object(GcObj::new(
         strand.arena(),
@@ -519,17 +522,8 @@ fn unpack_pairs<'v, 's>(
             }
         };
 
-        let found = pairs
-            .iter()
-            .enumerate()
-            .find_map(|(index, (candidate, value))| {
-                if !consumed[index] && candidate.eq(strand, &key) {
-                    Some((index, value))
-                } else {
-                    None
-                }
-            });
-        if let Some((index, value)) = found {
+        let found = find_pair(strand, &pairs, &consumed, &key)?;
+        if let Some((index, (_, value))) = found {
             consumed.set(index, true);
             Output::set(strand, slot, value);
         } else if let Some(default) = default {
@@ -680,6 +674,20 @@ fn store_split_rests<'v>(
     }
 }
 
+fn find_pair<'a, 'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    pairs: &'a [(Value<'v>, Value<'v>)],
+    consumed: &bitvec::slice::BitSlice,
+    key: &Value<'v>,
+) -> Result<'v, 's, Option<(usize, &'a (Value<'v>, Value<'v>))>> {
+    for (index, pair) in pairs.iter().enumerate() {
+        if !consumed[index] && pair.0.eq(strand, key)? {
+            return Ok(Some((index, pair)));
+        }
+    }
+    Ok(None)
+}
+
 /// Matches `pairs` against `sig`, filling in the positional and key slots of
 /// `out`.
 ///
@@ -698,11 +706,7 @@ fn unpack_sig_pairs<'v, 's>(
     for index in 0..pos_count {
         let index_value = i64::try_from(index).map_err(|_| Error::overflow(strand))?;
         let key = Value::from_i64(strand, index_value);
-        if let Some((found, (_, value))) = pairs
-            .iter()
-            .enumerate()
-            .find(|(found, pair)| !consumed[*found] && pair.0.eq(strand, &key))
-        {
+        if let Some((found, (_, value))) = find_pair(strand, pairs, &consumed, &key)? {
             consumed.set(found, true);
             out.at(index).store(value.dup());
         } else if let Some(default) = sig.optional.get(index.saturating_sub(sig.required)) {
@@ -716,11 +720,7 @@ fn unpack_sig_pairs<'v, 's>(
             sig::UnpackKeyKind::Sym(sym) => Value::from_input(strand, sym.as_str(strand)),
             sig::UnpackKeyKind::Const(value) => value.dup(),
         };
-        if let Some((found, (_, value))) = pairs
-            .iter()
-            .enumerate()
-            .find(|(found, pair)| !consumed[*found] && pair.0.eq(strand, &key))
-        {
+        if let Some((found, (_, value))) = find_pair(strand, pairs, &consumed, &key)? {
             consumed.set(found, true);
             out.at(pos_count + offset).store(value.dup());
         } else if let Some(default) = &spec.default {
@@ -753,9 +753,12 @@ impl<'v> Protocol<'v> for View<'v> {
         let view = this.get();
         debug(view.glue.module(), view.glue.name(), strand, w)
     }
-    fn op_bool<'a, 's>(this: Recv<'v, 'a, Self>, strand: &mut Strand<'v, 's>) -> bool {
+    fn op_bool<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, bool> {
         let view = this.get();
-        view.glue.len(&view.owner, strand) != 0
+        Ok(view.glue.len(&view.owner, strand) != 0)
     }
     fn op_eq<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -1069,9 +1072,11 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         supertype: &Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &this)
-            || supertype.eq(strand, &strand.singletons().iterable)
-            || supertype.eq(strand, TypeObject::Value)
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype
+                .eq(strand, &strand.singletons().iterable)
+                .unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
 
     fn op_debug<'a, 's>(

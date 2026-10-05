@@ -1,0 +1,152 @@
+import std:
+  - Set
+
+let failure = std.ValueError "key operation failed"
+class BrokenBool
+  def (bool) _self
+    throw failure
+let broken = BrokenBool()
+
+class Key
+  pub field id mode = 0
+  pub field bad_hash = false
+  def (init) self id
+    self.id = id
+  def (hash) self
+    if self.bad_hash
+      throw failure
+    0
+  def (eq) self other
+    if (self.mode == 1)
+      throw failure
+    if (self.mode == 2)
+      return broken
+    (self.id == other.id)
+
+def raises block
+  try
+    block()
+  catch err
+    assert_eq $err $failure
+    return
+  throw std.RuntimeError "expected key exception"
+
+def ids items
+  [...items.map(do |item| item.id)]
+
+for mode = [1, 2]
+  let a = Key 1
+  let b = Key 2
+  let same = Key 1
+  let c = Key 3
+  let missing = Key 4
+  let d = {}
+  d.insert $a first
+  d.insert $b middle
+  d.insert $a last
+  d.insert $c filler
+  let s = Set [a, b, c]
+  let before_keys = d.keys()
+  let before_set = s.iter()
+  same.mode = mode
+  missing.mode = mode
+  raises do d[same]
+  raises do d.get $missing default: ignored
+  raises do d.get $same else: do "ignored"
+  raises do d.contains $missing
+  raises do d.count $same
+  raises do d.values $same
+  raises do d.insert $missing new
+  raises do
+    d[same] = "replacement"
+  raises do d.delete $same
+  raises do d.pop $same default: ignored
+  raises do s.contains $missing
+  raises do s.add $missing
+  raises do s.delete $same
+  assert_eq $d.len 4
+  assert_eq [...d.values()] ["first", "middle", "last", "filler"]
+  assert_eq (ids(d.keys())) [1, 2, 3]
+  assert_eq (ids(s.iter())) [1, 2, 3]
+  assert_eq (ids before_keys) [1, 2, 3]
+  assert_eq (ids before_set) [1, 2, 3]
+  same.mode = 0
+  missing.mode = 0
+  assert_eq (d.get same) "last"
+  assert (s.contains same)
+  d.insert $missing new
+  s.add $missing
+  assert_eq (ids(d.keys())) [1, 2, 3, 4]
+  assert_eq (ids(s.iter())) [1, 2, 3, 4]
+
+  # Set comparisons and algebra probe using their existing entries.
+  a.mode = mode
+  let other = Set [same, b, c, missing]
+  raises do (s == other)
+  raises do s.is_subset $other
+  raises do s.intersect $other
+  a.mode = 0
+
+# Hashing failures reach callers before probing or mutation.
+let key = Key 1
+let d = {}
+d.insert $key old
+let s = Set [key]
+key.bad_hash = true
+raises do d.get $key
+raises do d.contains $key
+raises do d.insert $key new
+raises do d.delete $key
+raises do d.pop $key
+raises do s.contains $key
+raises do s.add $key
+raises do s.delete $key
+raises do Set [key]
+assert_eq $d.len 1
+assert_eq [...d.values()] ["old"]
+assert_eq $s.len 1
+key.bad_hash = false
+assert_eq (d.get key) old
+
+# Skip comparisons in keyed unpacking must propagate too.
+for mode = [1, 2]
+  let key = Key 1
+  let d = {}
+  d.insert $key first
+  d.insert $key second
+  key.mode = mode
+  let ...rest = d
+  raises do [...rest]
+  key.mode = 0
+  assert_eq [...d.values()] ["first", "second"]
+
+# Rebuild existing entries without hashing or comparing them again.
+let keys = [Key(0), Key(1), Key(2)]
+let d = {}
+let s = Set()
+for key = keys
+  d.insert $key $key.id
+  s.add $key
+# Interleave duplicates, then leave holes in the order index.
+d.insert $keys[0] repeat
+d.delete $keys[1]
+s.delete $keys[1]
+for key = keys
+  key.mode = 1
+  key.bad_hash = true
+# Fresh keys can compare normally; stored keys must not be invoked by growth.
+for id = 3..80
+  let key = Key $id
+  d.insert $key $id
+  s.add $key
+assert_eq ([...d.values()][0..3]) [0, 2, "repeat"]
+assert_eq (ids(d.keys())[0..2]) [0, 2]
+assert_eq (ids(s.iter())[0..2]) [0, 2]
+for key = keys
+  key.mode = 0
+  key.bad_hash = false
+assert_eq [...d.values(keys[0])] [0, "repeat"]
+assert_eq (d.pop keys[0]) 0
+assert_eq (d.get keys[0]) repeat
+assert (s.delete keys[0])
+assert_eq (ids(s.iter())[0]) 2

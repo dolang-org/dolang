@@ -252,9 +252,9 @@ async fn iter_extrema<'v, 'a, 's>(
             }
             while obj.next(strand, &mut item).await? {
                 let replace = if is_min {
-                    item.op_lt(strand, &out)?.to_bool(strand)
+                    item.op_lt(strand, &out)?.to_bool(strand)?
                 } else {
-                    out.op_lt(strand, &item)?.to_bool(strand)
+                    out.op_lt(strand, &item)?.to_bool(strand)?
                 };
                 if replace {
                     Slot::swap(Slot::reborrow(&mut out), &mut item);
@@ -282,9 +282,9 @@ async fn iter_all_any<'v, 'a, 's>(
             while obj.next(strand, &mut item).await? {
                 let passed = if has_pred {
                     call!(strand, &pred_fn, &mut pred_out, &item).await?;
-                    pred_out.to_bool(strand)
+                    pred_out.to_bool(strand)?
                 } else {
-                    item.to_bool(strand)
+                    item.to_bool(strand)?
                 };
                 if want_all && !passed {
                     out.store(Value::FALSE);
@@ -376,7 +376,7 @@ async fn iter_find<'v, 'a, 's>(
             pred_fn.store(pred.take());
             while obj.next(strand, &mut item).await? {
                 call!(strand, &pred_fn, &mut pred_out, &item).await?;
-                if pred_out.to_bool(strand) {
+                if pred_out.to_bool(strand)? {
                     out.store(item.take());
                     return Ok(());
                 }
@@ -1438,9 +1438,13 @@ impl<'v> Protocol<'v> for Iter {
         strand: &'a mut Strand<'v, 's>,
         supertype: &crate::value::Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &this)
-            || supertype.eq(strand, TypeObject::Value)
-            || strand.singletons().iterable.eq(strand, supertype)
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
+            || strand
+                .singletons()
+                .iterable
+                .eq(strand, supertype)
+                .unwrap_or(false)
     }
 
     fn op_debug<'a, 's>(
@@ -1595,9 +1599,13 @@ impl<'v> Protocol<'v> for Sink {
         strand: &'a mut Strand<'v, 's>,
         supertype: &crate::value::Value<'v>,
     ) -> bool {
-        supertype.eq(strand, &this)
-            || supertype.eq(strand, TypeObject::Value)
-            || strand.singletons().sinkable.eq(strand, supertype)
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
+            || strand
+                .singletons()
+                .sinkable
+                .eq(strand, supertype)
+                .unwrap_or(false)
     }
 
     fn op_debug<'a, 's>(
@@ -1958,7 +1966,7 @@ impl<'v> Protocol<'v> for Filter<'v> {
                         return Ok(false);
                     }
                     call!(strand, &pred, &mut res, &out).await?;
-                    if res.to_bool(strand) {
+                    if res.to_bool(strand)? {
                         return Ok(true);
                     }
                 }
@@ -2068,7 +2076,7 @@ impl<'v> Protocol<'v> for Prefilter<'v> {
                 output.store(borrow.obj.dup());
                 drop(borrow);
                 call!(strand, &pred, &mut output, &value).await?;
-                if output.to_bool(strand) {
+                if output.to_bool(strand)? {
                     this.borrow(strand)?.obj.put(strand, value).await
                 } else {
                     Ok(())
@@ -2979,12 +2987,12 @@ impl<'v> Protocol<'v> for NullType {
         // something an `iter()`/`sink()` call can produce one from -- so it
         // claims `Iter`/`Sink` themselves, not just `Iterable`/`Sinkable`.
         let sings = strand.singletons();
-        supertype.eq(strand, &this)
-            || supertype.eq(strand, TypeObject::Value)
-            || sings.input_iter.eq(strand, supertype)
-            || sings.output_iter.eq(strand, supertype)
-            || sings.iterable.eq(strand, supertype)
-            || sings.sinkable.eq(strand, supertype)
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
+            || sings.input_iter.eq(strand, supertype).unwrap_or(false)
+            || sings.output_iter.eq(strand, supertype).unwrap_or(false)
+            || sings.iterable.eq(strand, supertype).unwrap_or(false)
+            || sings.sinkable.eq(strand, supertype).unwrap_or(false)
     }
 
     fn op_debug<'a, 's>(
@@ -3436,27 +3444,27 @@ mod tests {
             make_int_array(strand, &[1, 2, 3], Slot::reborrow(&mut arr));
             arr.iter(strand, &mut it).await.unwrap();
             method!(strand, &it, all_sym, &mut out).await.unwrap();
-            assert!(out.to_bool(strand));
+            assert!(out.to_bool(strand).unwrap());
 
             make_int_array(strand, &[1, 0, 3], Slot::reborrow(&mut arr));
             arr.iter(strand, &mut it).await.unwrap();
             method!(strand, &it, all_sym, &mut out).await.unwrap();
-            assert!(!out.to_bool(strand));
+            assert!(!out.to_bool(strand).unwrap());
 
             make_int_array(strand, &[], Slot::reborrow(&mut arr));
             arr.iter(strand, &mut it).await.unwrap();
             method!(strand, &it, all_sym, &mut out).await.unwrap();
-            assert!(out.to_bool(strand));
+            assert!(out.to_bool(strand).unwrap());
 
             make_int_array(strand, &[0, 0, 3], Slot::reborrow(&mut arr));
             arr.iter(strand, &mut it).await.unwrap();
             method!(strand, &it, any_sym, &mut out).await.unwrap();
-            assert!(out.to_bool(strand));
+            assert!(out.to_bool(strand).unwrap());
 
             make_int_array(strand, &[0], Slot::reborrow(&mut arr));
             arr.iter(strand, &mut it).await.unwrap();
             method!(strand, &it, any_sym, &mut out).await.unwrap();
-            assert!(!out.to_bool(strand));
+            assert!(!out.to_bool(strand).unwrap());
 
             make_int_array(strand, &[1, 2, 3], Slot::reborrow(&mut arr));
             arr.iter(strand, &mut it).await.unwrap();
@@ -3473,7 +3481,7 @@ mod tests {
             method!(strand, &it, all_sym, &mut out, &pred)
                 .await
                 .unwrap();
-            assert!(out.to_bool(strand));
+            assert!(out.to_bool(strand).unwrap());
 
             arr.iter(strand, &mut it).await.unwrap();
             make_native_fn(
@@ -3489,7 +3497,7 @@ mod tests {
             method!(strand, &it, any_sym, &mut out, &pred)
                 .await
                 .unwrap();
-            assert!(!out.to_bool(strand));
+            assert!(!out.to_bool(strand).unwrap());
         });
     }
 

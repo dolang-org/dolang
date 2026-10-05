@@ -27,6 +27,7 @@ pub(crate) mod str;
 pub(crate) mod strand;
 pub(crate) mod strbuf;
 pub(crate) mod sym;
+pub(crate) mod table;
 pub(crate) mod tuple;
 pub(crate) mod types;
 
