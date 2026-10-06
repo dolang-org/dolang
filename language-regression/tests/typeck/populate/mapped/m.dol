@@ -1,0 +1,63 @@
+# A rest binding's `@...` pattern is mapped over the packs it names: each schema
+# name standing for a type is the current item of its pack, and a pack named
+# twice is one pack. Other names are interpreted as they are outside the pattern.
+
+pub class Num
+pub class Text
+pub class Box[T]
+  pub field item @ T = nil
+pub class Pair[A, B]
+  pub field items @ Phantom[A, B] = nil
+pub class Tuple[*Ts]
+  pub field items @ Phantom[...Ts] = nil
+pub @let Phantom[...Ts] = ...
+
+pub def fork[*Rs] *blocks @ ...(() -> Rs) -> Tuple[...Rs]
+  #     ^~~~: decl (...(<in, >out) -> Rs, <in, >out) -> m.Tuple[{...Rs}]
+  blocks
+
+pub def mixed[...Us] ...values @ ...Box[Us]
+  #     ^~~~~: decl (...m.Box[Us], <in, >out) -> Unknown
+  values
+
+pub def pairs[*As, *Bs] *values @ ...Pair[As, Bs]
+  #     ^~~~~: decl (...m.Pair[As, Bs], <in, >out) -> Unknown
+  values
+
+pub def twice[*Us] *values @ ...Pair[Us, Us]
+  #     ^~~~~: decl (...m.Pair[Us, Us], <in, >out) -> Unknown
+  values
+
+pub def tagged[T, *Us] *values @ ...Pair[T, Us]
+  #     ^~~~~~: decl (...m.Pair[T, Us], <in, >out) -> Unknown
+  values
+
+@let Known = {Num, ?Text, *Num, key: Text}
+pub def known *values @ ...Box[Known]
+  #     ^~~~~: decl (...m.Box[m.Known], <in, >out) -> Unknown
+  values
+
+# A pattern naming no pack expands over nothing known, and an erroneous name in
+# one that does is dynamic
+pub def unnamed *values @ ...Box[Nope]
+  #     ^~~~~~~: decl (...Unknown{}, <in, >out) -> Unknown
+  # warning: unbound type name
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def unnamed *values @ ...Box[Nope]
+  #    |                                  ^^^^
+  # error: `...` pattern names no pack to expand over
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def unnamed *values @ ...Box[Nope]
+  #    |                              ^^^^^^^^^
+  values
+
+pub def partly[*Us] *values @ ...Pair[Us, Nope]
+  #     ^~~~~~: decl (...m.Pair[Us, Unknown], <in, >out) -> Unknown
+  # warning: unbound type name
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def partly[*Us] *values @ ...Pair[Us, Nope]
+  #    |                                           ^^^^
+  values

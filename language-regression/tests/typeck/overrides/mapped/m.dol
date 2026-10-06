@@ -1,0 +1,29 @@
+# A method whose rest maps a pattern over its binder's pack overrides or
+# inherits one of the same pattern pack by pack.
+
+pub class Num
+
+pub class Box[T]
+  pub def get self -> T
+    ...
+
+pub class Base[T]
+  pub def chain[*Us] self *values @ ...Box[Us] -> Base[T]
+    ...
+
+pub class Inherits: Base[Num]
+
+# Renamed binders, and a narrower result
+pub class Overrides[T]: Base[T]
+  pub def chain[*Vs] self *values @ ...Box[Vs] -> Overrides[T]
+    ...
+
+# An override that takes none of the values
+pub class Drops[T]: Base[T]
+  pub def chain self -> Drops[T]
+    # error: `chain` does not match `Base.chain`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def chain self -> Drops[T]
+    #    |           ^^^^^
+    ...

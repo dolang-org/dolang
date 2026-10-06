@@ -444,7 +444,7 @@ pub class Iterable[T]: @BaseIterable[T]
     ...
 
   # Returns an iterator followed by the additional iterables.
-  pub def chain[...Us] self ...values @ ...Iterable[Us] -> Iter[Union[T, ...Us]]
+  pub def chain[*Us] self *values @ ...Iterable[Us] -> Iter[Union[T, ...Us]]
     ...
 
   # Returns an iterator with one trailing line terminator removed from each item.
@@ -3006,7 +3006,7 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   # Returns an iterator that yields this iterator followed by each additional
   # iterable in sequence.
   #
-  pub def chain[...Us] self ...values @ ...Iterable[Us] -> Iter[Union[T, ...Us]]
+  pub def chain[*Us] self *values @ ...Iterable[Us] -> Iter[Union[T, ...Us]]
     ...
 
   #

@@ -6,8 +6,9 @@
 //! source identity and are leaves of structural traversal.
 //!
 //! Each nonempty quantifier introduces one group. Its entire group is in scope
-//! in its bounds, defaults, and body. A bound reference counts groups outward,
-//! then selects a slot in declaration order. Declarations' binder metadata is
+//! in its bounds, defaults, and body. A mapping's pattern is in a group of its
+//! own, of an item of each pack. A bound reference counts groups outward, then
+//! selects a slot in declaration order. Declarations' binder metadata is
 //! parallel to the outer structural group, never a second quantifier.
 //!
 //! A source declaration is closed: its outer group is one flat group of the outer
@@ -128,6 +129,18 @@ pub(crate) enum Variance {
     Invariant,
     Covariant,
     Contravariant,
+}
+
+impl Variance {
+    /// The variance of a position `inner` to one that is itself `self`
+    pub(crate) fn compose(self, inner: Variance) -> Variance {
+        match (self, inner) {
+            (Variance::Invariant, _) | (_, Variance::Invariant) => Variance::Invariant,
+            (Variance::Covariant, inner) => inner,
+            (Variance::Contravariant, Variance::Covariant) => Variance::Contravariant,
+            (Variance::Contravariant, Variance::Contravariant) => Variance::Covariant,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -320,10 +333,11 @@ pub(crate) enum Type {
     Top,
     /// The dynamic type or schema, consistent with every type or schema of its kind
     Unknown(Kind),
-    /// A written type the database can't represent yet, such as a rest pattern
-    /// mapped over packs (#764). Judgments involving it are unsupported rather than
-    /// consistent, so it never passes for `Unknown`. Each is unique (see
-    /// [`Database::unsupported`]), since what it stands for can't be compared.
+    /// A written type the database can't represent yet. Judgments involving it
+    /// are unsupported rather than consistent, so it never passes for `Unknown`.
+    /// Each is unique (see [`Database::unsupported`]), since what it stands for
+    /// can't be compared.
+    #[expect(dead_code, reason = "no written type needs a stand-in now")]
     Unsupported {
         kind: Kind,
         occurrence: u32,
@@ -358,6 +372,15 @@ pub(crate) enum Type {
     Quantified {
         binders: alias::Box<[Binder]>,
         body: TypeId,
+    },
+    /// A schema of a type pattern for each item of its packs, as a rest's `@...P`
+    /// is. The pattern is interpreted in a group of one type for each pack: slot
+    /// `i` is pack `i`'s item. Several packs correspond item by item. Each item has
+    /// its pack's multiplicity, and a keyed item its key. Interning reduces it to a
+    /// schema once its packs are known (see [`Database::normalize`]).
+    Map {
+        packs: alias::Box<[TypeId]>,
+        pattern: TypeId,
     },
 }
 
@@ -418,6 +441,12 @@ impl Type {
                 }
                 visit(*body, groups);
             }
+            Self::Map { packs, pattern } => {
+                for pack in packs.iter() {
+                    visit(*pack, 0);
+                }
+                visit(*pattern, 1);
+            }
         }
     }
 
@@ -467,6 +496,7 @@ impl Type {
                             && a.default.is_some() == b.default.is_some()
                     })
             }
+            (Self::Map { packs: a, .. }, Self::Map { packs: b, .. }) => a.len() == b.len(),
             _ => self == other,
         }
     }
@@ -533,6 +563,12 @@ impl Type {
                     }
                 }
                 *body = f(*body, groups)?;
+            }
+            Self::Map { packs, pattern } => {
+                for pack in packs.iter_mut() {
+                    *pack = f(*pack, 0)?;
+                }
+                *pattern = f(*pattern, 1)?;
             }
         }
         Ok(mapped)
@@ -847,6 +883,7 @@ pub(crate) struct Database {
     overloads: HashMap<DeclId, alias::Box<[DeclId]>>,
     pending_kinds: RefCell<Vec<(TypeId, Kind)>>,
     /// How many unsupported stand-ins have been interned
+    #[expect(dead_code, reason = "no written type needs a stand-in now")]
     unsupported: Cell<u32>,
 }
 
@@ -900,6 +937,7 @@ impl Database {
 
     /// A new stand-in for a written type the database can't represent, distinct
     /// from every other
+    #[expect(dead_code, reason = "no written type needs a stand-in now")]
     pub(crate) fn unsupported(&self, kind: Kind) -> TypeId {
         let occurrence = self.unsupported.get();
         self.unsupported.set(occurrence + 1);
@@ -1174,7 +1212,7 @@ impl Database {
 
     fn known_kind(&self, id: TypeId) -> Option<Kind> {
         match self.ty(id) {
-            Type::Schema(_) => Some(Kind::Schema),
+            Type::Schema(_) | Type::Map { .. } => Some(Kind::Schema),
             Type::Bound { kind, .. } | Type::Rigid { kind, .. } | Type::Apply { kind, .. } => {
                 Some(*kind)
             }
@@ -1208,10 +1246,15 @@ impl Database {
     /// flattened, with its members sorted and deduplicated, and each projection of
     /// a schema among them is evaluated as far as the schema is known (see
     /// [`Self::project`]). A union with `Top` is `Top`, and one with a single
-    /// member is it. Children are assumed canonical already.
+    /// member is it. A mapping whose packs are known is reduced (see
+    /// [`Self::reduce_map`]). Children are assumed canonical already.
     pub(crate) fn normalize(&self, ty: Type) -> Type {
         match ty {
             Type::Quantified { binders, body } if binders.is_empty() => self.ty(body).clone(),
+            Type::Map { packs, pattern } => match self.reduce_map(&packs, pattern) {
+                Some(reduced) => reduced,
+                None => Type::Map { packs, pattern },
+            },
             Type::Apply { base, args, kind } => match self.projection(base, &args) {
                 Some(members) => self.normalize(Type::Union(members.into())),
                 None => Type::Apply { base, args, kind },
@@ -1494,6 +1537,107 @@ impl Database {
         }))
     }
 
+    /// The schema a mapping stands for, if its packs are known well enough: the
+    /// pattern for each item of its packs, with the item's multiplicity and key.
+    /// The dynamic pack maps to the dynamic schema. A pack's included schema not
+    /// yet known stays a mapping over it, but only a single pack may have one,
+    /// since several packs' items correspond only once each is known. Several packs
+    /// must agree, item by item, on multiplicity and on whether, and by which key,
+    /// the item is keyed; otherwise the mapping stays.
+    fn reduce_map(&self, packs: &[TypeId], pattern: TypeId) -> Option<Type> {
+        if let [pack] = *packs
+            && let Type::Unknown(_) = self.ty(pack)
+        {
+            return Some(Type::Unknown(Kind::Schema));
+        }
+        let mut spliced = Vec::with_capacity(packs.len());
+        for &pack in packs {
+            let mut items = Vec::new();
+            if !self.splice(pack, Multiplicity::Required, &mut items) {
+                return None;
+            }
+            spliced.push(items);
+        }
+        let item = |multiplicity, element| SchemaItem {
+            multiplicity,
+            element,
+        };
+        if let [items] = &spliced[..] {
+            let items = items.iter().map(|spliced| {
+                let element = match spliced.element {
+                    Element::Positional(ty) => {
+                        Element::Positional(self.instantiate(pattern, &[ty]))
+                    }
+                    Element::Keyed { key, value } => Element::Keyed {
+                        key,
+                        value: self.instantiate(pattern, &[value]),
+                    },
+                    Element::Include(inner) => Element::Include(self.intern(Type::Map {
+                        packs: vec![inner].into(),
+                        pattern,
+                    })),
+                };
+                item(spliced.multiplicity, element)
+            });
+            return Some(Type::Schema(items.collect()));
+        }
+        let (first, rest) = spliced.split_first()?;
+        if rest.iter().any(|items| items.len() != first.len()) {
+            return None;
+        }
+        let mut items = Vec::with_capacity(first.len());
+        for (index, lead) in first.iter().enumerate() {
+            let mut types = Vec::with_capacity(spliced.len());
+            for items in &spliced {
+                let other = &items[index];
+                if other.multiplicity != lead.multiplicity {
+                    return None;
+                }
+                match (&lead.element, &other.element) {
+                    (Element::Positional(_), &Element::Positional(ty)) => types.push(ty),
+                    (Element::Keyed { key, .. }, &Element::Keyed { key: other, value })
+                        if *key == other =>
+                    {
+                        types.push(value)
+                    }
+                    _ => return None,
+                }
+            }
+            let ty = self.instantiate(pattern, &types);
+            let element = match lead.element {
+                Element::Keyed { key, .. } => Element::Keyed { key, value: ty },
+                _ => Element::Positional(ty),
+            };
+            items.push(item(lead.multiplicity, element));
+        }
+        Some(Type::Schema(items.into()))
+    }
+
+    /// Add a schema's items to `items` as items of an item of `multiplicity`,
+    /// splicing the schemas it includes that are known. Returns whether it's a
+    /// schema.
+    fn splice(
+        &self,
+        schema: TypeId,
+        multiplicity: Multiplicity,
+        items: &mut Vec<SchemaItem>,
+    ) -> bool {
+        let Type::Schema(spliced) = self.ty(schema) else {
+            return false;
+        };
+        for item in spliced.iter() {
+            let multiplicity = multiplicity.compose(item.multiplicity);
+            match item.element {
+                Element::Include(inner) if self.splice(inner, multiplicity, items) => {}
+                ref element => items.push(SchemaItem {
+                    multiplicity,
+                    element: element.clone(),
+                }),
+            }
+        }
+        true
+    }
+
     /// The types of a schema's items, if each is positional, through inclusions
     fn positional_items(&self, schema: TypeId) -> Option<Vec<TypeId>> {
         let Type::Schema(items) = self.ty(schema) else {
@@ -1586,6 +1730,17 @@ impl Database {
                         self.expect_kind(id, binder.kind);
                     }
                 }
+            }
+            Type::Map { packs, pattern } => {
+                assert!(!packs.is_empty(), "a mapping over no packs");
+                assert!(
+                    packs.len() <= usize::from(u16::MAX) + 1,
+                    "binder count overflow"
+                );
+                for pack in packs.iter() {
+                    self.expect_kind(*pack, Kind::Schema);
+                }
+                self.expect_kind(*pattern, Kind::Type);
             }
         }
     }
@@ -1697,14 +1852,116 @@ impl Database {
     /// declaration's binder bounds, defaults and body are, with `args`. The result
     /// is interpreted where `args` are.
     pub(crate) fn substitute(&self, root: TypeId, args: &[TypeId]) -> TypeId {
-        self.substitute_inner(root, 0, args, &mut HashMap::new())
+        self.substitute_inner(root, 0, args, false, &mut HashMap::new())
     }
 
+    /// Replace the references to the innermost group of an open type, as a
+    /// mapping's pattern is, with `items`, interpreted where the type is. The
+    /// result is interpreted where `items` are: the groups outside the replaced one
+    /// are one nearer.
+    pub(crate) fn instantiate(&self, root: TypeId, items: &[TypeId]) -> TypeId {
+        self.substitute_inner(root, 0, items, true, &mut HashMap::new())
+    }
+
+    /// The variance of `root`, as a mapping's pattern is, in slot `slot` of its
+    /// innermost group: what the positions referring to it have in common, or
+    /// `None` if none does. A position in a form whose variance isn't known,
+    /// such as a quantified type, is invariant.
+    pub(crate) fn slot_variance(&self, root: TypeId, slot: u16) -> Option<Variance> {
+        let mut found = None;
+        self.slot_variance_inner(root, slot, 0, Variance::Covariant, &mut found);
+        found
+    }
+
+    fn slot_variance_inner(
+        &self,
+        id: TypeId,
+        slot: u16,
+        local: u32,
+        variance: Variance,
+        found: &mut Option<Variance>,
+    ) {
+        let mut walk = |ty: TypeId, inner: Variance, groups: u32| {
+            self.slot_variance_inner(ty, slot, local + groups, variance.compose(inner), found)
+        };
+        match *self.ty(id) {
+            Type::Bound { reference, .. } => {
+                if u32::from(reference.depth) == local && reference.slot == slot {
+                    *found = match *found {
+                        Some(seen) if seen != variance => Some(Variance::Invariant),
+                        _ => Some(variance),
+                    };
+                }
+            }
+            Type::Apply { base, ref args, .. } => {
+                let binders = match *self.ty(base) {
+                    Type::Decl(decl) if self.declaration(decl).source.kind.nominal() => {
+                        match self.ty(self.declaration(decl).ty) {
+                            Type::Quantified { binders, .. } if binders.len() == args.len() => {
+                                Some(binders)
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                for (index, arg) in args.iter().enumerate() {
+                    let (Argument::Positional(ty)
+                    | Argument::Keyword(_, ty)
+                    | Argument::Expand(ty)) = *arg;
+                    let inner = match (binders, arg) {
+                        (Some(binders), Argument::Positional(_)) => binders[index].variance,
+                        _ => Variance::Invariant,
+                    };
+                    walk(ty, inner, 0);
+                }
+            }
+            Type::Function(ref function) => {
+                walk(function.params, Variance::Contravariant, 0);
+                for channel in [function.input, function.output].into_iter().flatten() {
+                    walk(channel, Variance::Contravariant, 0);
+                }
+                walk(function.result, Variance::Covariant, 0);
+            }
+            Type::Schema(_) => {
+                self.ty(id)
+                    .visit_children(|ty, groups| walk(ty, Variance::Covariant, groups));
+            }
+            // Each pack is where its pattern places its items, and its count
+            // only adds items
+            Type::Map { ref packs, pattern } => {
+                for (index, &pack) in packs.iter().enumerate() {
+                    let index = u16::try_from(index).expect("a mapping's packs fit a group");
+                    let inner = self.slot_variance(pattern, index);
+                    walk(pack, inner.unwrap_or(Variance::Covariant), 0);
+                }
+                walk(pattern, Variance::Covariant, 1);
+            }
+            Type::Union(ref members) => {
+                for member in members.iter() {
+                    match *member {
+                        UnionMember::Type(ty) => walk(ty, Variance::Covariant, 0),
+                        _ => {
+                            walk(member.id(), Variance::Invariant, 0);
+                            if let Some(key) = member.key() {
+                                walk(key, Variance::Invariant, 0);
+                            }
+                        }
+                    }
+                }
+            }
+            ref ty => ty.visit_children(|ty, groups| walk(ty, Variance::Invariant, groups)),
+        }
+    }
+
+    /// Replace the references to the group at `cutoff` with `args`. References
+    /// beyond it are an error, unless `open` makes them one group nearer.
     fn substitute_inner(
         &self,
         id: TypeId,
         cutoff: u32,
         args: &[TypeId],
+        open: bool,
         memo: &mut HashMap<(TypeId, u32), TypeId>,
     ) -> TypeId {
         if let Some(result) = memo.get(&(id, cutoff)) {
@@ -1716,8 +1973,16 @@ impl Database {
                 let depth = u32::from(reference.depth);
                 if depth < cutoff {
                     id
+                } else if depth > cutoff {
+                    assert!(open, "reference beyond a closed type's group");
+                    self.intern(Type::Bound {
+                        reference: BoundRef {
+                            depth: reference.depth - 1,
+                            ..reference
+                        },
+                        kind,
+                    })
                 } else {
-                    assert_eq!(depth, cutoff, "reference beyond a closed type's group");
                     let arg = args[usize::from(reference.slot)];
                     self.expect_kind(arg, kind);
                     let cutoff = u16::try_from(cutoff).expect("binder depth overflow");
@@ -1732,6 +1997,7 @@ impl Database {
                             child,
                             cutoff.checked_add(groups).expect("binder cutoff overflow"),
                             args,
+                            open,
                             memo,
                         ))
                     })

@@ -128,6 +128,7 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
         defaults: HashMap::new(),
         expanding: Vec::new(),
         expr_types: HashMap::new(),
+        pattern: None,
     };
     let mut site_types = HashMap::new();
     for site in &tables.sites {
@@ -138,7 +139,7 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
                 let kind = tables.kind_of(site.unit, &site.ty).unwrap_or(Kind::Type);
                 populate.intern(scope, &site.ty, kind, 0)
             }
-            Role::Pattern => populate.db.unknown_schema(),
+            Role::Pattern => populate.pattern(scope, &site.ty),
             Role::Bound(binder) => populate.bound(scope, binder, &site.ty),
             Role::Default(binder) => populate.intern(scope, &site.ty, populate.kind(binder), 0),
             Role::Alias(decl) => {
@@ -215,6 +216,9 @@ struct Populate<'t, 'u> {
     expanding: Vec<(DeclId, usize, usize)>,
     /// Each written application and function type, by span
     expr_types: HashMap<UnitSpan, TypeId>,
+    /// Within a rest binding's `@...` pattern, the packs it names so far. The
+    /// pattern is interpreted in a group of its own, one item of each pack.
+    pattern: Option<Vec<TypeId>>,
 }
 
 impl<'t, 'u> Populate<'t, 'u> {
@@ -308,7 +312,8 @@ impl<'t, 'u> Populate<'t, 'u> {
         }
     }
 
-    /// A reference to a binder in `group`
+    /// A reference to a binder in `group`, from outside a pattern's own group if
+    /// one is being interned
     fn binder(&self, group: Group<'_>, binder: BinderRef) -> TypeId {
         let kind = self.kind(binder);
         if group.broken {
@@ -320,9 +325,68 @@ impl<'t, 'u> Populate<'t, 'u> {
             .position(|found| *found == binder)
             .expect("a binder named outside the declarations lifted over it");
         self.db.intern(Type::Bound {
-            reference: BoundRef::new(0, slot),
+            reference: BoundRef::new(usize::from(self.pattern.is_some()), slot),
             kind,
         })
+    }
+
+    /// A rest binding's `@...` pattern mapped over the packs it names, or the
+    /// dynamic schema if it names none, which is already diagnosed
+    fn pattern(&mut self, group: Group<'_>, ty: &TypeExpr) -> TypeId {
+        let outer = self.pattern.replace(Vec::new());
+        let pattern = self.intern(group, ty, Kind::Type, 0);
+        let packs = std::mem::replace(&mut self.pattern, outer).expect("in a pattern");
+        if packs.is_empty() || packs.len() > MAX_BINDERS {
+            return self.db.unknown_schema();
+        }
+        self.db.intern(Type::Map {
+            packs: packs.into(),
+            pattern,
+        })
+    }
+
+    /// In a pattern, a reference to the current item of the pack a schema name
+    /// stands for where a type is expected, as kind checking counts it
+    fn pack(
+        &mut self,
+        group: Group<'_>,
+        head: &Name,
+        fields: &[Name],
+        span: Span,
+        depth: usize,
+    ) -> Option<TypeId> {
+        let tables = self.tables;
+        self.pattern.as_ref()?;
+        let kind = match tables.referents.get(&UnitSpan {
+            unit: group.unit,
+            span: head.span,
+        })? {
+            Referent::Binder(binder) => tables.binder_kinds[binder],
+            Referent::Decl(decl) => match tables.decls[decl.index()].kind {
+                DeclKind::Alias | DeclKind::OpaqueAlias => tables.alias_kinds[decl],
+                _ => return None,
+            },
+            _ => return None,
+        };
+        if kind.flexible || kind.kind != Kind::Schema {
+            return None;
+        }
+        // The pack itself is interpreted outside the pattern's group
+        let outer = self.pattern.take();
+        let pack = self.reference(group, head, fields, span, None, Kind::Schema, depth);
+        self.pattern = outer;
+        let packs = self.pattern.as_mut().expect("in a pattern");
+        let slot = packs
+            .iter()
+            .position(|&found| found == pack)
+            .unwrap_or_else(|| {
+                packs.push(pack);
+                packs.len() - 1
+            });
+        Some(self.db.intern(Type::Bound {
+            reference: BoundRef::new(0, slot),
+            kind: Kind::Type,
+        }))
     }
 
     /// Intern a type expression as `expected`, or the dynamic type or schema when it
@@ -330,9 +394,11 @@ impl<'t, 'u> Populate<'t, 'u> {
     fn intern(&mut self, group: Group<'_>, ty: &TypeExpr, expected: Kind, depth: usize) -> TypeId {
         let id = self.intern_node(group, ty, expected, depth);
         // Well-formedness checks these where they are written, in the group they are
-        // written in, not where a def's channels are taken by a function type
+        // written in, not where a def's channels are taken by a function type. A
+        // pattern's interior is not checked.
         if let TypeExpr::App { .. } | TypeExpr::Func { .. } = ty
             && self.expanding.is_empty()
+            && self.pattern.is_none()
         {
             self.expr_types.insert(
                 UnitSpan {
@@ -540,6 +606,12 @@ impl<'t, 'u> Populate<'t, 'u> {
         expected: Kind,
         depth: usize,
     ) -> TypeId {
+        if expected == Kind::Type
+            && args.is_none()
+            && let Some(item) = self.pack(group, head, fields, span, depth)
+        {
+            return item;
+        }
         let tables = self.tables;
         let referent = tables.referents.get(&UnitSpan {
             unit: group.unit,
@@ -846,7 +918,9 @@ impl<'t, 'u> Populate<'t, 'u> {
         self.defaults.insert(binder, None);
         let unit = tables.decls[binder.decl.index()].unit;
         let group = self.scope(Some((binder.decl, binder.sig)), unit);
+        let pattern = self.pattern.take();
         let ty = self.intern(group, default, self.kind(binder), 0);
+        self.pattern = pattern;
         self.defaults.insert(binder, Some(ty));
         Some(ty)
     }
@@ -1203,11 +1277,10 @@ impl<'t, 'u> Populate<'t, 'u> {
                         let ty = self.intern(group, self.tables.site_ty(*ty), Kind::Schema, 0);
                         items.push(Self::item(Multiplicity::Required, Element::Include(ty)));
                     }
-                    // Mapping a pattern over packs has no representation yet
-                    RestSlot::Pattern(_) => items.push(Self::item(
-                        Multiplicity::Required,
-                        Element::Include(self.db.unsupported(Kind::Schema)),
-                    )),
+                    RestSlot::Pattern(ty) => {
+                        let ty = self.pattern(group, self.tables.site_ty(*ty));
+                        items.push(Self::item(Multiplicity::Required, Element::Include(ty)));
+                    }
                 },
                 _ => unreachable!("a parameter's type matches its kind"),
             }

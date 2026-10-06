@@ -1611,3 +1611,234 @@ fn sealed_declarations_can_be_retyped_and_are_revalidated() {
     let unquantified = db.top();
     assert_panics(|| db.retype(f, unquantified));
 }
+
+fn item(multiplicity: Multiplicity, element: Element) -> SchemaItem {
+    SchemaItem {
+        multiplicity,
+        element,
+    }
+}
+
+fn items(db: &mut Database, items: Vec<SchemaItem>) -> TypeId {
+    intern(db, Type::Schema(items.into()))
+}
+
+fn map(db: &mut Database, packs: &[TypeId], pattern: TypeId) -> TypeId {
+    intern(
+        db,
+        Type::Map {
+            packs: packs.iter().copied().collect(),
+            pattern,
+        },
+    )
+}
+
+fn int(db: &mut Database, value: i128) -> TypeId {
+    intern(db, Type::Literal(Literal::Int(value)))
+}
+
+#[test]
+fn a_mapping_over_a_known_pack_reduces_item_by_item() {
+    let mut db = Database::new();
+    // `(item) -> T`, where `T` is outside the mapping
+    let local = reference(&mut db, 0, 0, Kind::Type);
+    let outer = reference(&mut db, 1, 0, Kind::Type);
+    let pattern = function(&mut db, &[local], outer);
+    let t = reference(&mut db, 0, 0, Kind::Type);
+    let applied = |db: &mut Database, item| function(db, &[item], t);
+    let [one, two, three, four] = [1, 2, 3, 4].map(|value| int(&mut db, value));
+    let key = db.intern_symbol("a");
+    let key = intern(&mut db, Type::Literal(Literal::Sym(key)));
+    let rest = reference(&mut db, 0, 1, Kind::Schema);
+    let nested = items(
+        &mut db,
+        vec![item(Multiplicity::Optional, Element::Positional(four))],
+    );
+    let pack = items(
+        &mut db,
+        vec![
+            item(Multiplicity::Required, Element::Positional(one)),
+            item(Multiplicity::Optional, Element::Positional(two)),
+            item(Multiplicity::Repeated, Element::Keyed { key, value: three }),
+            // A known schema is spliced, its items taking on the multiplicity
+            item(Multiplicity::Repeated, Element::Include(nested)),
+            // One not yet known is mapped in turn
+            item(Multiplicity::Required, Element::Include(rest)),
+        ],
+    );
+    let elements = [
+        (
+            Multiplicity::Required,
+            Element::Positional(applied(&mut db, one)),
+        ),
+        (
+            Multiplicity::Optional,
+            Element::Positional(applied(&mut db, two)),
+        ),
+        (
+            Multiplicity::Repeated,
+            Element::Keyed {
+                key,
+                value: applied(&mut db, three),
+            },
+        ),
+        (
+            Multiplicity::Repeated,
+            Element::Positional(applied(&mut db, four)),
+        ),
+        (
+            Multiplicity::Required,
+            Element::Include(map(&mut db, &[rest], pattern)),
+        ),
+    ];
+    let expected = items(
+        &mut db,
+        elements
+            .into_iter()
+            .map(|(multiplicity, element)| item(multiplicity, element))
+            .collect(),
+    );
+    assert_eq!(map(&mut db, &[pack], pattern), expected);
+    // A pack not yet known keeps the mapping, which is a schema
+    let mapped = map(&mut db, &[rest], pattern);
+    assert!(matches!(db.ty(mapped), Type::Map { .. }));
+    assert_eq!(db.kind(mapped), Kind::Schema);
+    // The dynamic pack maps to the dynamic schema
+    let unknown = db.unknown_schema();
+    assert_eq!(map(&mut db, &[unknown], pattern), unknown);
+}
+
+#[test]
+fn several_packs_reduce_only_when_their_items_correspond() {
+    let mut db = Database::new();
+    let first = reference(&mut db, 0, 0, Kind::Type);
+    let second = reference(&mut db, 0, 1, Kind::Type);
+    let top = db.top();
+    let pattern = function(&mut db, &[first, second], top);
+    let [one, two, three, four] = [1, 2, 3, 4].map(|value| int(&mut db, value));
+    let [a, b] = ["a", "b"].map(|name| {
+        let sym = db.intern_symbol(name);
+        intern(&mut db, Type::Literal(Literal::Sym(sym)))
+    });
+    let pack = |db: &mut Database, positional, multiplicity, key, value| {
+        items(
+            db,
+            vec![
+                item(Multiplicity::Required, Element::Positional(positional)),
+                item(multiplicity, Element::Keyed { key, value }),
+            ],
+        )
+    };
+    let left = pack(&mut db, one, Multiplicity::Repeated, a, two);
+    let right = pack(&mut db, three, Multiplicity::Repeated, a, four);
+    let applied = |db: &mut Database, x, y| function(db, &[x, y], top);
+    let expected = vec![
+        item(
+            Multiplicity::Required,
+            Element::Positional(applied(&mut db, one, three)),
+        ),
+        item(
+            Multiplicity::Repeated,
+            Element::Keyed {
+                key: a,
+                value: applied(&mut db, two, four),
+            },
+        ),
+    ];
+    let expected = items(&mut db, expected);
+    assert_eq!(map(&mut db, &[left, right], pattern), expected);
+    // Items that don't correspond keep the mapping
+    let short = schema(&mut db, &[one]);
+    let optional = pack(&mut db, three, Multiplicity::Optional, a, four);
+    let rekeyed = pack(&mut db, three, Multiplicity::Repeated, b, four);
+    let rest = reference(&mut db, 0, 0, Kind::Schema);
+    let opaque = items(
+        &mut db,
+        vec![
+            item(Multiplicity::Required, Element::Positional(one)),
+            item(Multiplicity::Required, Element::Include(rest)),
+        ],
+    );
+    let unknown = db.unknown_schema();
+    for other in [short, optional, rekeyed, opaque, unknown] {
+        let mapped = map(&mut db, &[left, other], pattern);
+        assert!(matches!(db.ty(mapped), Type::Map { .. }));
+    }
+}
+
+#[test]
+fn a_mapping_is_its_own_group() {
+    let mut db = Database::new();
+    // `{...(item, T)}` over the pack `S`, both outside the mapping
+    let local = reference(&mut db, 0, 0, Kind::Type);
+    let outer = reference(&mut db, 1, 0, Kind::Type);
+    let top = db.top();
+    let pattern = function(&mut db, &[local, outer], top);
+    let pack = reference(&mut db, 0, 1, Kind::Schema);
+    let mapped = map(&mut db, &[pack], pattern);
+    let mut seen = HashSet::new();
+    db.walk(mapped, |id, depth| {
+        seen.insert((id, depth));
+    });
+    assert!(seen.contains(&(pack, 0)));
+    assert!(seen.contains(&(pattern, 1)));
+    // Shifting leaves the item's references and moves the others
+    let shifted_pack = reference(&mut db, 1, 1, Kind::Schema);
+    let shifted_outer = reference(&mut db, 2, 0, Kind::Type);
+    let shifted_pattern = function(&mut db, &[local, shifted_outer], top);
+    let shifted = map(&mut db, &[shifted_pack], shifted_pattern);
+    assert_eq!(db.shift(mapped, 0, 1), Ok(shifted));
+    // Substituting a known pack reduces it, with what the pattern refers to
+    // outside it substituted too
+    let one = int(&mut db, 1);
+    let two = int(&mut db, 2);
+    let known = schema(&mut db, &[one]);
+    let applied = function(&mut db, &[one, two], top);
+    let expected = schema(&mut db, &[applied]);
+    assert_eq!(db.substitute(mapped, &[two, known]), expected);
+    // Only the number of packs is shape
+    let other = map(&mut db, &[shifted_pack], pattern);
+    assert!(db.ty(mapped).same_shape(db.ty(other)));
+    let pair = map(&mut db, &[pack, pack], pattern);
+    assert!(!db.ty(mapped).same_shape(db.ty(pair)));
+}
+
+#[test]
+fn instantiating_opens_the_innermost_group() {
+    let mut db = Database::new();
+    let local = reference(&mut db, 0, 0, Kind::Type);
+    let outer = reference(&mut db, 1, 2, Kind::Type);
+    let top = db.top();
+    let pattern = function(&mut db, &[local, outer], top);
+    let one = int(&mut db, 1);
+    let nearer = reference(&mut db, 0, 2, Kind::Type);
+    let expected = function(&mut db, &[one, nearer], top);
+    assert_eq!(db.instantiate(pattern, &[one]), expected);
+}
+
+#[test]
+fn a_mapping_has_packs_of_schemas_and_a_type_pattern() {
+    let mut db = Database::new();
+    let local = reference(&mut db, 0, 0, Kind::Type);
+    let schema_pack = reference(&mut db, 0, 0, Kind::Schema);
+    let type_pack = reference(&mut db, 0, 0, Kind::Type);
+    map(&mut db, &[schema_pack], local);
+    assert_panics(|| {
+        db.intern(Type::Map {
+            packs: vec![].into(),
+            pattern: local,
+        });
+    });
+    assert_panics(|| {
+        db.intern(Type::Map {
+            packs: vec![type_pack].into(),
+            pattern: local,
+        });
+    });
+    assert_panics(|| {
+        db.intern(Type::Map {
+            packs: vec![schema_pack].into(),
+            pattern: schema_pack,
+        });
+    });
+}
