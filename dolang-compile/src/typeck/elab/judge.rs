@@ -304,7 +304,7 @@ impl Tables<'_> {
 
     /// A declaration's name, qualified by its unit and the declarations it is
     /// nested in
-    fn qualified(&self, id: DeclId) -> String {
+    pub(crate) fn qualified(&self, id: DeclId) -> String {
         let decl = &self.decls[id.index()];
         let mut name = match decl.outer {
             Some((outer, _)) => self.qualified(outer),
@@ -316,6 +316,20 @@ impl Tables<'_> {
             None => name.push_str("<closure>"),
         }
         name
+    }
+
+    /// A database declaration's name: a declaration's qualified name, or for one
+    /// of the declarations of a def's or method's signatures, its name and the
+    /// signature's index
+    fn declared(&self, id: DeclId) -> String {
+        if id.index() < self.decls.len() {
+            return self.qualified(id);
+        }
+        let sig = (self.sig_decls.iter()).find(|&(_, &declaration)| declaration == id);
+        match sig {
+            Some((&(decl, sig), _)) => format!("{}#{sig}", self.qualified(decl)),
+            None => unreachable!("every database declaration is a declaration's or a signature's"),
+        }
     }
 
     /// A module's name, or a script's file stem
@@ -563,9 +577,9 @@ impl Tables<'_> {
                     Literal::Sym(sym) => write!(out, ":{}:", db.symbol(*sym)),
                 };
             }
-            Type::Decl(id) => out.push_str(&self.qualified(*id)),
+            Type::Decl(id) => out.push_str(&self.declared(*id)),
             Type::Rigid { decl, slot, .. } => {
-                let _ = write!(out, "{}.#{slot}", self.qualified(*decl));
+                let _ = write!(out, "{}.#{slot}", self.declared(*decl));
             }
             Type::Bound { reference, .. } => match names.get(usize::from(reference.slot)) {
                 Some(name) if reference.depth == depth => out.push_str(name),

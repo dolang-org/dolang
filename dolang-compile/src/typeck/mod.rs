@@ -6,6 +6,8 @@ mod flow;
 mod lower;
 pub(crate) mod report;
 pub(crate) mod solver;
+#[cfg(feature = "debug")]
+mod trace;
 pub(crate) mod r#type;
 pub(crate) mod typelib;
 
@@ -226,6 +228,8 @@ impl<'u, 's> Builder<'u, 's> {
         elab::specialize(&mut db, &tables, &mut diags);
         let mut unresolved = elab::wellformed(&db, &tables, &mut diags);
         unresolved.extend(elab::overrides(&db, &tables, &mut diags));
+        #[cfg(feature = "debug")]
+        trace::elab(&db, &tables, &unresolved);
         // A unit's bodies are checked only from its source
         let cfgs = (0..tables.units.len())
             .map(|index| {
@@ -280,7 +284,11 @@ fn export_dot(ir: &cfg::Ir, db: &r#type::Database, info: &elab::UnitInfo) -> std
     let Some(out) = crate::dot_path(info.path, "typeck.dot")? else {
         return Ok(());
     };
-    let file = &info.source.expect("a lowered unit has a source").compiler.file;
+    let file = &info
+        .source
+        .expect("a lowered unit has a source")
+        .compiler
+        .file;
     ir.dot(db, |span| file.str(span), &mut std::fs::File::create(&out)?)?;
     dolang_util::debug_eprintln!(topic: "dot", "Typing CFG DOT exported to: {}", out.display());
     Ok(())

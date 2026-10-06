@@ -44,6 +44,13 @@
 //! annotation or a declared result, and reads that may be unassigned. A block in a
 //! `finally` is judged once per context, and a problem at a span is reported once.
 
+/// Trace under `typeck.flow`
+macro_rules! trace {
+    ($($arg:tt)*) => {
+        dolang_util::debug_eprintln!(topic: "typeck.flow", $($arg)*)
+    };
+}
+
 mod eval;
 mod member;
 mod problem;
@@ -51,6 +58,8 @@ mod rule;
 mod state;
 #[cfg(test)]
 mod tests;
+#[cfg(feature = "debug")]
+mod trace;
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
@@ -244,11 +253,19 @@ impl<'a, 'u> Flow<'a, 'u> {
                     earliest.get(&self.ir.block(block).func) == Some(&self.rank[block.index()])
                 })
                 .collect();
+            trace!(
+                "defaulting round: {}",
+                (marked.iter())
+                    .map(|&(block, ctx)| self.place(block, ctx))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
             for (block, ctx) in marked {
                 self.marked.insert((block, ctx));
                 self.enqueue(block, ctx);
             }
         }
+        trace!("final pass");
         self.results = Some(Results::default());
         let mut keys: Vec<_> = self.states.keys().copied().collect();
         keys.sort_by_key(|&(block, ctx)| (self.rank[block.index()], block, ctx));
@@ -271,6 +288,11 @@ impl<'a, 'u> Flow<'a, 'u> {
         let mut solver = Solver::new(self.db);
         for &decl in &self.scope {
             solver.assume(decl);
+        }
+        #[cfg(feature = "debug")]
+        {
+            let (db, tables) = (self.db, self.tables);
+            solver.named(move |ty| tables.render_type(db, ty));
         }
         solver
     }
@@ -437,6 +459,11 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
         let key = (block, ctx);
         let Some(old) = self.states.get(&key) else {
+            trace!(
+                "enter {}: {}",
+                self.place(block, ctx),
+                self.render_state(block, &state)
+            );
             self.states.insert(key, state);
             self.enqueue(block, ctx);
             return;
@@ -472,6 +499,11 @@ impl<'a, 'u> Flow<'a, 'u> {
             dup: old.dup && state.dup,
         };
         if joined != old {
+            trace!(
+                "grow {}: {}",
+                self.place(block, ctx),
+                self.render_state(block, &joined)
+            );
             self.states.insert(key, joined);
             self.enqueue(block, ctx);
         }
@@ -490,10 +522,20 @@ impl<'a, 'u> Flow<'a, 'u> {
         let joined = solver.lub(old, new);
         let widening = self.widenings.entry((block, ctx, var)).or_default();
         let widened = widening.join(&solver, old, new);
-        match self.ir.var(var).annotation {
+        let result = match self.ir.var(var).annotation {
             Some(annotation) if widened != joined => annotation,
             _ => widened,
+        };
+        if result != joined {
+            trace!(
+                "widen {} at {}: {} to {}",
+                self.var_name(var),
+                self.place(block, ctx),
+                self.show(joined),
+                self.show(result)
+            );
         }
+        result
     }
 
     /// Join a value into a variable's joined type, queueing its readers if it grew.
@@ -519,6 +561,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             return;
         }
         *old = new;
+        trace!("accumulate {}: {}", self.var_name(var), self.show(new));
         for (block, ctx) in self.readers.get(&var).cloned().into_iter().flatten() {
             self.enqueue(block, ctx);
         }
@@ -539,6 +582,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             .filter(|var| self.joined.get(var).is_none_or(|&(ty, _)| ty == bottom))
             .collect();
         for &var in &vars {
+            trace!("no call gives {}", self.var_name(var));
             self.join(var, unknown);
         }
         !vars.is_empty()
@@ -563,6 +607,16 @@ impl<'a, 'u> Flow<'a, 'u> {
             self.unsettled.remove(&(block, ctx));
         }
         self.defaulting = self.marked.remove(&(block, ctx));
+        trace!(
+            "run {}{}: {}",
+            self.place(block, ctx),
+            match (self.observing(), self.defaulting) {
+                (true, _) => " (final)",
+                (false, true) => " (defaulting)",
+                (false, false) => "",
+            },
+            self.render_state(block, &state)
+        );
         let ir = self.ir;
         let data = ir.block(block);
         let func = ir.func(data.func);
@@ -661,6 +715,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let annotation = self.ir.var(*var).annotation;
                 let ty = self.expect(at, state, &mut operands, value, annotation);
                 let ty = self.default(*var, ty, value.span);
+                trace!("default {}: {}", self.var_name(*var), self.show(ty));
                 let data = self.ir.var(*var);
                 if data.owner == at.func && !data.volatile {
                     let fact = state.vars[self.slots[var.index()]];
@@ -929,6 +984,23 @@ impl<'a, 'u> Flow<'a, 'u> {
         let narrowed = self
             .solver()
             .narrow(fact.ty, assume.relation, assume.negated, target);
+        trace!(
+            "assume {}{} {:?} {}: {} to {}{}",
+            if assume.negated { "not " } else { "" },
+            self.var_name(assume.var),
+            assume.relation,
+            match target {
+                NarrowTarget::Class(decl) => self.tables.qualified(decl),
+                NarrowTarget::Literal(ty) => self.show(ty),
+            },
+            self.show(fact.ty),
+            self.show(narrowed),
+            if narrowed == bottom {
+                " (unreachable)"
+            } else {
+                ""
+            }
+        );
         fact.ty = narrowed;
         narrowed != bottom
     }

@@ -435,6 +435,26 @@ pub(crate) struct Solver<'db> {
     /// What trials judge in place of a term, as a `do` block whose result
     /// mustn't choose an alternative (see [`Solver::blind`])
     blinded: HashMap<Term, Term>,
+    /// How traces render a type (see [`Solver::named`])
+    #[cfg(feature = "debug")]
+    names: Option<std::rc::Rc<dyn Fn(TypeId) -> String + 'db>>,
+    /// How many trials and side queries the solver is nested in, which indents
+    /// its traces
+    #[cfg(feature = "debug")]
+    indent: usize,
+}
+
+/// Trace under `typeck.solver`, indented by how deeply the solver is nested
+macro_rules! trace {
+    ($solver:expr, $($arg:tt)*) => {
+        dolang_util::debug_eprintln!(
+            topic: "typeck.solver",
+            "{:indent$}{}",
+            "",
+            format_args!($($arg)*),
+            indent = 2 * $solver.indent
+        )
+    };
 }
 
 impl<'db> Solver<'db> {
@@ -477,6 +497,49 @@ impl<'db> Solver<'db> {
             generation: Cell::new(0),
             trial_depth: 0,
             blinded: HashMap::new(),
+            #[cfg(feature = "debug")]
+            names: None,
+            #[cfg(feature = "debug")]
+            indent: 0,
+        }
+    }
+
+    /// Render types in traces with `names`, if `typeck.solver` is traced
+    #[cfg(feature = "debug")]
+    pub(crate) fn named(&mut self, names: impl Fn(TypeId) -> String + 'db) {
+        if dolang_util::debug_enabled!("typeck.solver") {
+            self.names = Some(std::rc::Rc::new(names));
+        }
+    }
+
+    /// A term for a trace: its type, if it reifies, and otherwise its type with
+    /// its environment's group, `?n` for an unsolved variable, or `!n` for a skolem
+    #[cfg(feature = "debug")]
+    fn render(&self, term: Term) -> String {
+        match term {
+            Term::Infer(id) => match self.assignment(id) {
+                Some(assigned) => self.render(assigned),
+                None => format!("?{}", id.0),
+            },
+            Term::Skolem(id) => format!("!{}", id.0),
+            Term::View(view) => {
+                let Some(names) = &self.names else {
+                    return format!("{view:?}");
+                };
+                // Rendering mustn't spend the work it limits
+                let (work, exhausted) = (self.work.get(), self.exhausted.get());
+                let reified = self.reify(term);
+                self.work.set(work);
+                self.exhausted.set(exhausted);
+                if let Ok(ty) = reified {
+                    return names(ty);
+                }
+                let group = (self.environments.get_by_index(view.environment.0))
+                    .map(|environment| environment.group.clone())
+                    .unwrap_or_default();
+                let group: Vec<String> = group.into_iter().map(|term| self.render(term)).collect();
+                format!("{} with [{}]", names(view.ty), group.join(", "))
+            }
         }
     }
 
@@ -922,6 +985,11 @@ impl<'db> Solver<'db> {
             },
         );
         nested.scope = self.scope.clone();
+        #[cfg(feature = "debug")]
+        {
+            nested.names = self.names.clone();
+            nested.indent = self.indent + 1;
+        }
         Ok(nested)
     }
 
@@ -1323,6 +1391,17 @@ impl<'db> Solver<'db> {
             }
         }
         inference.assignment.set(Some(candidate));
+        trace!(
+            self,
+            "?{} := {}{}",
+            id.0,
+            self.render(candidate),
+            if inference.defaulted.get() {
+                " (default)"
+            } else {
+                ""
+            }
+        );
         self.generation.set(self.generation.get() + 1);
         for &obligation in inference.subscribers.iter() {
             self.schedule(obligation);
@@ -1365,8 +1444,14 @@ impl<'db> Solver<'db> {
     /// [`Self::locked`]). A variable standing for the key of an item projection
     /// never decays (see [`Database::item_keys`]).
     pub(crate) fn default_with(&mut self, id: InferVarId, decay: bool) -> Result<TypeId, Residual> {
-        let term = self.default_term(id, decay)?;
-        self.reify(term)
+        let defaulted = self
+            .default_term(id, decay)
+            .and_then(|term| self.reify(term));
+        #[cfg(feature = "debug")]
+        if let Err(residual) = defaulted {
+            trace!(self, "?{} not defaulted: {residual:?}", id.0);
+        }
+        defaulted
     }
 
     /// [`Self::default_with`], committing a term. A variable with a lower bound
@@ -1520,6 +1605,13 @@ impl<'db> Solver<'db> {
             self.kind(actual),
             self.kind(expected),
             "constraint kind mismatch"
+        );
+        trace!(
+            self,
+            "#{}: {} <: {}",
+            self.roots.len(),
+            self.render(actual),
+            self.render(expected)
         );
         let obligation = self.enqueue(Relation {
             actual,
@@ -2788,9 +2880,27 @@ impl<'db> Solver<'db> {
     /// Process queued obligations to quiescence or exhaustion and report each submitted root.
     pub(crate) fn solve(&mut self) -> Vec<Outcome> {
         self.quiesce();
-        (0..self.roots.len())
+        let outcomes: Vec<Outcome> = (0..self.roots.len())
             .map(|index| self.outcome(ConstraintId(index)))
-            .collect()
+            .collect();
+        #[cfg(feature = "debug")]
+        for (index, outcome) in outcomes.iter().enumerate() {
+            // The first diagnostic that explains the status
+            let issue = (outcome.diagnostics.iter()).find_map(|diagnostic| {
+                match (outcome.status, diagnostic.issue) {
+                    (Status::Contradicted, Issue::Contradiction(contradiction)) => {
+                        Some(format!(" ({contradiction:?})"))
+                    }
+                    (Status::Unresolved, Issue::Residual(residual)) => {
+                        Some(format!(" ({residual:?})"))
+                    }
+                    _ => None,
+                }
+            });
+            let issue = issue.unwrap_or_default();
+            trace!(self, "#{index}: {:?}{issue}", outcome.status);
+        }
+        outcomes
     }
 
     /// Process queued obligations to quiescence or exhaustion. Trials then judge

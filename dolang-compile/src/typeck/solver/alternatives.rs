@@ -206,8 +206,18 @@ impl Solver<'_> {
         language: bool,
     ) -> Result<(Status, bool), Residual> {
         self.spend()?;
+        trace!(
+            self,
+            "trial {} <: {}",
+            self.render(actual),
+            self.render(expected)
+        );
         let mut fork = self.clone();
         fork.trial_depth += 1;
+        #[cfg(feature = "debug")]
+        {
+            fork.indent += 1;
+        }
         let generation = fork.generation.get();
         let obligation = fork.enqueue(Relation {
             actual,
@@ -226,6 +236,7 @@ impl Solver<'_> {
             return Err(Residual::Limit);
         }
         let status = fork.outcome(constraint).status;
+        trace!(self, "trial: {status:?}");
         Ok((status, fork.generation.get() == generation))
     }
 }

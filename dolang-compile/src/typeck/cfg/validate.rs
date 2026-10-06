@@ -1,6 +1,7 @@
 //! Structural validation of a finished graph. Stack depths are checked by flow
 //! analysis, which knows each block's tag stack.
 
+#[cfg(any(test, debug_assertions))]
 use std::collections::HashMap;
 
 use super::{
@@ -262,6 +263,7 @@ fn operands(expr: &Expr) -> usize {
     count
 }
 
+#[cfg(any(test, debug_assertions))]
 fn pattern_operands(pattern: &Pattern) -> usize {
     let mut count = 0;
     pattern.walk(&mut |expr| count += operands(expr));

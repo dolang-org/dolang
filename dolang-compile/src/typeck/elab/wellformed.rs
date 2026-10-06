@@ -108,6 +108,11 @@ impl Check<'_, '_> {
     /// with a solver of its own
     fn relate(&self, scope: Option<DeclId>, actual: TypeId, expected: TypeId) -> Verdict {
         let mut solver = Solver::new(self.db);
+        #[cfg(feature = "debug")]
+        {
+            let (db, tables) = (self.db, self.tables);
+            solver.named(move |ty| tables.render_type(db, ty));
+        }
         let environment = match scope {
             Some(decl) => solver.rigid_environment(decl),
             None => solver.empty_environment(),
@@ -150,6 +155,21 @@ impl Check<'_, '_> {
 
     /// Diagnose a failed check, or record an undecided one
     fn report(&mut self, verdict: Verdict, span: UnitSpan, diag: impl Report + 'static) {
+        #[cfg(feature = "debug")]
+        if !matches!(verdict, Verdict::Holds) {
+            let mut message = String::new();
+            let _ = diag.message(&mut message);
+            let location = self.tables.locate(span.unit, span.span);
+            match verdict {
+                Verdict::Undecided(residual) => dolang_util::debug_eprintln!(
+                    topic: "typeck.wf",
+                    "{location}: undecided ({residual:?}): {message}"
+                ),
+                _ => {
+                    dolang_util::debug_eprintln!(topic: "typeck.wf", "{location}: fails: {message}")
+                }
+            }
+        }
         match verdict {
             Verdict::Holds => {}
             Verdict::Fails => self.diags.push((span.unit, Diag::new(diag))),
@@ -498,14 +518,19 @@ impl Check<'_, '_> {
                     && (reference.alias == reference.target
                         || unguarded[&reference.alias].contains(&reference.target));
                 if cyclic || !reference.regular {
-                    self.diags.push((
-                        reference.unit,
-                        Diag::new(BadRecursion {
-                            span: reference.span,
-                            alias: reference.name,
-                            irregular: !cyclic,
-                        }),
-                    ));
+                    let diag = BadRecursion {
+                        span: reference.span,
+                        alias: reference.name,
+                        irregular: !cyclic,
+                    };
+                    #[cfg(feature = "debug")]
+                    {
+                        let mut message = String::new();
+                        let _ = diag.message(&mut message);
+                        let location = self.tables.locate(reference.unit, reference.span);
+                        dolang_util::debug_eprintln!(topic: "typeck.wf", "{location}: fails: {message}");
+                    }
+                    self.diags.push((reference.unit, Diag::new(diag)));
                 }
             }
         }
