@@ -67,9 +67,9 @@ pub def show ...cmd
   proc.run ...cmd
 
 # Runs a dodo task from `dodo.dol` in the current directory,
-# equivalnent to running `dolang -m dodo ...argv`, but correctly
+# equivalent to running `dolang -m dodo ...argv`, but correctly
 # handles re-entrancy.
-pub def run *argv
+pub def run *argv @ Str
   args.with args: $argv
     help: run tasks
     - flag: list

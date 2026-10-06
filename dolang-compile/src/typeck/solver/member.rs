@@ -12,8 +12,14 @@
 //! method is lifted over its class's binders, so those are split off its group
 //! and applied, leaving it quantified over its own; its receiver parameter stays,
 //! and a call passes the receiver as its first argument.
+//!
+//! A generic class's object, `[S] Type[C[S]]`, has the members of `C`'s object
+//! applied to its rigids, quantified over `C`'s binders before their own. Since
+//! the object is every application of `C`, a class-level method or property is
+//! bound to it, dropping its receiver parameter, and a class-level field's type
+//! takes `C`'s binders as `Unknown`.
 
-use super::*;
+use super::{callable::drop_receiver, *};
 use crate::typeck::r#type::{Member, MemberKey, Scope};
 
 /// What a receiver's member is
@@ -39,6 +45,9 @@ pub(crate) struct Found {
     /// so only access to one may dispatch.
     #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
     pub(crate) public: bool,
+    /// Whether its signatures are already bound to the receiver, without their
+    /// receiver parameter, as a generic class object's class-level ones are
+    pub(crate) bound: bool,
     pub(crate) kind: FoundKind,
 }
 
@@ -69,6 +78,8 @@ enum Receiver {
     Instance(Nominal),
     /// A class object, with its class
     Object(Nominal),
+    /// A generic class's object, `[S] Type[C[S]]`, with its class
+    Generic(DeclId),
     Missing,
     Dynamic,
 }
@@ -81,6 +92,7 @@ impl Solver<'_> {
         match self.receiver(receiver)? {
             Receiver::Instance(nominal) => self.instance_member(nominal, key),
             Receiver::Object(nominal) => self.object_member(nominal, key),
+            Receiver::Generic(class) => self.generic_member(class, None, key),
             Receiver::Missing => Ok(Lookup::Missing),
             Receiver::Dynamic => Ok(Lookup::Dynamic),
         }
@@ -98,6 +110,7 @@ impl Solver<'_> {
         let (nominal, instance) = match self.receiver(receiver)? {
             Receiver::Instance(nominal) => (nominal, true),
             Receiver::Object(nominal) => (nominal, false),
+            Receiver::Generic(generic) => return self.generic_member(generic, Some(class), key),
             Receiver::Missing => return Ok(Lookup::Missing),
             Receiver::Dynamic => return Ok(Lookup::Dynamic),
         };
@@ -127,7 +140,7 @@ impl Solver<'_> {
     ) -> Result<Lookup, Issue> {
         let nominal = match self.receiver(instance)? {
             Receiver::Instance(nominal) => nominal,
-            Receiver::Object(_) => {
+            Receiver::Object(_) | Receiver::Generic(_) => {
                 return Err(Residual::Unsupported("the members a type object inherits").into());
             }
             Receiver::Missing => return Ok(Lookup::Missing),
@@ -144,7 +157,9 @@ impl Solver<'_> {
     pub(crate) fn lineage(&self, instance: Term) -> Result<Vec<DeclId>, Issue> {
         let nominal = match self.receiver(instance)? {
             Receiver::Instance(nominal) => nominal,
-            Receiver::Object(_) | Receiver::Missing | Receiver::Dynamic => return Ok(Vec::new()),
+            Receiver::Object(_) | Receiver::Generic(_) | Receiver::Missing | Receiver::Dynamic => {
+                return Ok(Vec::new());
+            }
         };
         let mut lineage = Vec::new();
         self.preorder(nominal, &mut HashSet::new(), 0, &mut |visited| {
@@ -200,6 +215,9 @@ impl Solver<'_> {
                 },
                 Head::Structural(view) => view,
             };
+            if let Some(class) = self.generic_object(view.ty) {
+                return Ok(Receiver::Generic(class));
+            }
             let mut ty = view.ty;
             while let Type::Quantified { body, .. } = self.db.ty(ty) {
                 self.spend()?;
@@ -233,7 +251,6 @@ impl Solver<'_> {
                 Type::Union(_) => {
                     return Err(Residual::Unsupported("a member of a union receiver").into());
                 }
-                // Such as a generic class object
                 _ if ty != view.ty => {
                     return Err(Residual::Unsupported("a member of a quantified type").into());
                 }
@@ -245,6 +262,146 @@ impl Solver<'_> {
             term = self.closed(backing);
         }
         unreachable!()
+    }
+
+    /// The class whose object a type is, if it's a generic class's object as flow
+    /// gives it: `[S] Type[C[S]]`, quantified over `C`'s own binders and applying
+    /// `C` to them in order
+    fn generic_object(&self, ty: TypeId) -> Option<DeclId> {
+        let Type::Quantified { binders, body } = self.db.ty(ty) else {
+            return None;
+        };
+        let Type::Apply { base, args, .. } = self.db.ty(*body) else {
+            return None;
+        };
+        let (true, [Argument::Positional(instance)]) =
+            (Some(*base) == self.db.intrinsic(Intrinsic::Type), &args[..])
+        else {
+            return None;
+        };
+        let Type::Apply { base, args, .. } = self.db.ty(*instance) else {
+            return None;
+        };
+        let &Type::Decl(class) = self.db.ty(*base) else {
+            return None;
+        };
+        let declaration = self.db.declaration(class);
+        let Type::Quantified { binders: own, .. } = self.db.ty(declaration.ty) else {
+            return None;
+        };
+        let canonical = declaration.source.kind.nominal()
+            && own == binders
+            && args.len() == binders.len()
+            && (args.iter().enumerate()).all(|(slot, arg)| match arg {
+                Argument::Positional(arg) => matches!(
+                    *self.db.ty(*arg),
+                    Type::Bound { reference, .. } if reference == BoundRef::new(0, slot)
+                ),
+                _ => false,
+            });
+        canonical.then_some(class)
+    }
+
+    /// A member of a generic class's object, or a private member of `private`
+    /// through it, looked up on the object of the class applied to its rigids and
+    /// quantified over its binders again
+    fn generic_member(
+        &self,
+        class: DeclId,
+        private: Option<DeclId>,
+        key: MemberKey,
+    ) -> Result<Lookup, Issue> {
+        let cached = (class, private, key);
+        if let Some(lookup) = self.generic_members.borrow().get(&cached) {
+            return lookup.clone();
+        }
+        let lookup = self.lift_member(class, private, key);
+        (self.generic_members.borrow_mut()).insert(cached, lookup.clone());
+        lookup
+    }
+
+    fn lift_member(
+        &self,
+        class: DeclId,
+        private: Option<DeclId>,
+        key: MemberKey,
+    ) -> Result<Lookup, Issue> {
+        let db = self.db;
+        let class_type =
+            (db.intrinsic(Intrinsic::Type)).ok_or(Residual::MissingIntrinsic(Intrinsic::Type))?;
+        let Type::Quantified { binders, .. } = db.ty(db.declaration(class).ty) else {
+            unreachable!("a generic class without binders")
+        };
+        let args = (db.rigids(class).into_iter())
+            .map(Argument::Positional)
+            .collect();
+        let instance = db.intern(Type::Apply {
+            base: db.intern(Type::Decl(class)),
+            args,
+            kind: Kind::Type,
+        });
+        let object = db.intern(Type::Apply {
+            base: class_type,
+            args: vec![Argument::Positional(instance)].into(),
+            kind: Kind::Type,
+        });
+        let solver = self.side_query(class);
+        let receiver = solver.closed(object);
+        let found = match private {
+            Some(owner) => solver.private_member(receiver, owner, key)?,
+            None => solver.member(receiver, key)?,
+        };
+        let Lookup::Found(found) = found else {
+            return Ok(found);
+        };
+        // What it is with the class's binders in place of its rigids
+        let abstracted = |term| -> Result<TypeId, Issue> {
+            let ty = solver.reify(term)?;
+            Ok(db
+                .abstract_rigids(ty, class)
+                .map_err(|_| Residual::Escape)?)
+        };
+        let bound = found.scope == Scope::Class
+            && matches!(
+                found.kind,
+                FoundKind::Method(_) | FoundKind::Property { .. }
+            );
+        let signature = |term| -> Result<Term, Issue> {
+            let mut signature = abstracted(term)?;
+            if bound {
+                signature = unbind(db, signature).ok_or(Residual::Unsupported(
+                    "a class-level method without a receiver",
+                ))?;
+            }
+            Ok(self.closed(db.merge_groups(binders, signature)))
+        };
+        let signatures = |signatures: Signatures| -> Result<Signatures, Issue> {
+            Ok(Signatures {
+                overloads: (signatures.overloads.into_iter())
+                    .map(signature)
+                    .collect::<Result<_, _>>()?,
+                implementation: signatures.implementation.map(signature).transpose()?,
+            })
+        };
+        let kind = match found.kind {
+            FoundKind::Field(ty) => {
+                let unknowns: Vec<_> = (binders.iter())
+                    .map(|binder| db.unknown_of(binder.kind))
+                    .collect();
+                FoundKind::Field(self.closed(db.substitute(abstracted(ty)?, &unknowns)))
+            }
+            FoundKind::Method(method) => FoundKind::Method(signatures(method)?),
+            FoundKind::Property { getter, setter } => FoundKind::Property {
+                getter: getter.map(signatures).transpose()?,
+                setter: setter.map(signatures).transpose()?,
+            },
+            FoundKind::Unknown => FoundKind::Unknown,
+        };
+        Ok(Lookup::Found(Found {
+            bound,
+            kind,
+            ..found
+        }))
     }
 
     pub(super) fn is_intrinsic(&self, decl: DeclId, intrinsic: Intrinsic) -> bool {
@@ -370,6 +527,7 @@ impl Solver<'_> {
             class: nominal.declaration,
             scope: member.scope(),
             public: member.public(),
+            bound: false,
             kind,
         }
     }
@@ -396,4 +554,22 @@ impl Solver<'_> {
             implementation: self.db.implementation(decl).map(signature),
         }
     }
+}
+
+/// A signature without its receiver parameter, keeping all its binders. Unlike
+/// [`bound_method`], the receiver may mention them: a generic class's object,
+/// which is every application of its class, is passed for it.
+fn unbind(db: &Database, signature: TypeId) -> Option<TypeId> {
+    let (binders, body) = match db.ty(signature) {
+        Type::Quantified { binders, body } => (Some(binders.clone()), *body),
+        _ => (None, signature),
+    };
+    let (function, _) = drop_receiver(db, body)?;
+    Some(match binders {
+        Some(binders) => db.intern(Type::Quantified {
+            binders,
+            body: function,
+        }),
+        None => function,
+    })
 }

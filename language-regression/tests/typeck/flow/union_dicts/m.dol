@@ -1,0 +1,77 @@
+# A dict literal holds back the items that take an expectation until its schema
+# is known, then gives each what the schema expects of it
+
+import std:
+  - @BaseDict
+
+pub def keyed _d @ Dict[{inner: Dict[{a: Str}]}]
+  ...
+
+pub def positional _d @ BaseDict[{name: Str, *BaseDict[{a: Str}]}]
+  ...
+
+pub def text() -> Str
+  "s"
+
+pub def nested()
+  keyed {inner: {a: "x"}}
+  keyed {inner: {a: text()}}
+  positional {name: "n", {a: "x"}, {a: "y"}}
+  positional $
+    name: n
+    - a: x
+  positional {name: "n", {a: 1}}
+# error: expected `{a: std.Str}`, found `{a: 1}`
+#   --> m.dol:LL:LL
+#    |
+# LL |   positional {name: "n", {a: 1}}
+#    |                          ^^^^^^
+#    |
+#    = note: `1` does not fit `std.Str`
+
+# A union expects several schemas of a dict. It takes the one its items fit, or
+# else the one its keys fit, and is checked against that one.
+@let Flag = BaseDict[{flag: Str, ?help: Str}]
+@let Opt = BaseDict[{opt: Str, ?default: Int, ?help: Str}]
+@let Cmd = BaseDict $
+  cmd: Str
+  *(Item | Handler)
+@let Item = (Flag | Opt | Cmd)
+@let Handler = (Int -> Str)
+
+pub def spec ...items @ Item
+  ...
+
+pub def handled ...items @ (Item | Handler)
+  ...
+
+pub def chosen()
+  spec {flag: "v"} {opt: "n", default: 1}
+  let f @ (Flag | Opt) = {opt: "n", help: "count"}
+  let _ = f
+  #       ^: flow std.Dict[{opt: std.Str, ?default: std.Int, ?help: std.Str}]
+  spec
+    - flag: verbose
+      help: be chatty
+    - cmd: deploy
+      - opt: replicas
+        default: 2
+      - cmd: rollback
+        - flag: force
+      do |n|
+        let _ = n
+        #       ^: flow std.Int
+        "deployed $n"
+  handled
+    - flag: list
+    do |n| "$n"
+
+pub def by_keys()
+  spec {opt: "n", default: "two"}
+# error: expected `{opt: std.Str, ?default: std.Int, ?help: std.Str}`, found `{opt: "n", default: "two"}`
+#   --> m.dol:LL:LL
+#    |
+# LL |   spec {opt: "n", default: "two"}
+#    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+#    |
+#    = note: `"two"` does not fit `std.Int`
