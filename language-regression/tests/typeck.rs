@@ -313,7 +313,10 @@ fn run(case: &Path) {
             let _ = write!(failures, "\n{}: unexpected diagnostics", source.file);
         }
         for directive in &directives {
-            if let Directive::DiagBlock(block) = directive {
+            if let Directive::DiagBlock {
+                rendered: block, ..
+            } = directive
+            {
                 let _ = write!(
                     failures,
                     "\n{}: missing diagnostic block:\n{block}",

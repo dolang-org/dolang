@@ -1,6 +1,6 @@
 #![deny(warnings)]
 
-use std::{cell::RefCell, fs::File, io::Read, mem, path::Path};
+use std::{cell::RefCell, fs::File, io::Read, mem, ops::Range, path::Path};
 
 use annotate_snippets::{AnnotationKind, Group, Level, Patch, Renderer, Snippet};
 
@@ -147,7 +147,11 @@ pub enum Directive {
     /// Expected output block
     Output(Vec<u8>),
     /// Expected diagnostic rendered block (verbatim annotate-snippets output with anonymized line numbers)
-    DiagBlock(String),
+    DiagBlock {
+        rendered: String,
+        /// Zero-based source lines occupied by the block.
+        lines: Range<usize>,
+    },
 }
 
 const OUTPUT: &[u8] = b"# output:";
@@ -172,17 +176,17 @@ fn is_top_level_diag(stripped: &[u8]) -> bool {
 
 /// Parse the directives written in a test file's comments.
 pub fn directives(content: &[u8]) -> Vec<Directive> {
-    scan_directives(content).0
+    scan_directives(content)
 }
 
-/// Parse the directives, and mark which lines belong to diagnostic blocks.
+/// Parse the directives, recording the source lines of diagnostic blocks.
 ///
 /// An annotation binding to the line above (`#   ^~~: ...`) ends a diagnostic block
 /// rather than continuing it.
-fn scan_directives(content: &[u8]) -> (Vec<Directive>, Vec<bool>) {
+fn scan_directives(content: &[u8]) -> Vec<Directive> {
     let lines: Vec<&[u8]> = content.lines().collect();
     let mut res = Vec::new();
-    let mut in_block = vec![false; lines.len()];
+    let mut diag_start = 0;
     let mut marker: &[u8] = b"";
     let mut output = Vec::new();
     let mut in_diag = false;
@@ -209,17 +213,23 @@ fn scan_directives(content: &[u8]) -> (Vec<Directive>, Vec<bool>) {
             // Inside a diagnostic block
             if let Some(rest) = trimmed.strip_prefix(OUTPUT) {
                 // Output marker terminates the diagnostic block
-                res.push(Directive::DiagBlock(mem::take(&mut diag_block)));
+                res.push(Directive::DiagBlock {
+                    rendered: mem::take(&mut diag_block),
+                    lines: diag_start..index,
+                });
                 in_diag = false;
                 marker = rest.trim_ascii();
                 continue;
             } else if let Some(stripped) = trimmed.strip_prefix(b"# ")
                 && !annotation
             {
-                in_block[index] = true;
                 if is_top_level_diag(stripped) {
                     // A new top-level diagnostic starts: close current block, begin new one
-                    res.push(Directive::DiagBlock(mem::take(&mut diag_block)));
+                    res.push(Directive::DiagBlock {
+                        rendered: mem::take(&mut diag_block),
+                        lines: diag_start..index,
+                    });
+                    diag_start = index;
                     diag_block = str::from_utf8(stripped).unwrap().to_string();
                 } else {
                     diag_block.push_str(str::from_utf8(stripped).unwrap());
@@ -228,7 +238,10 @@ fn scan_directives(content: &[u8]) -> (Vec<Directive>, Vec<bool>) {
                 continue;
             }
             // Any other line terminates the block
-            res.push(Directive::DiagBlock(mem::take(&mut diag_block)));
+            res.push(Directive::DiagBlock {
+                rendered: mem::take(&mut diag_block),
+                lines: diag_start..index,
+            });
             in_diag = false;
         }
         if let Some(rest) = line.strip_prefix(OUTPUT) {
@@ -237,7 +250,7 @@ fn scan_directives(content: &[u8]) -> (Vec<Directive>, Vec<bool>) {
             && is_diag_start(stripped)
         {
             in_diag = true;
-            in_block[index] = true;
+            diag_start = index;
             diag_block = str::from_utf8(stripped).unwrap().to_owned();
             diag_block.push('\n');
         }
@@ -245,10 +258,13 @@ fn scan_directives(content: &[u8]) -> (Vec<Directive>, Vec<bool>) {
 
     // Finalize any open diagnostic block at end of file
     if in_diag && !diag_block.is_empty() {
-        res.push(Directive::DiagBlock(diag_block));
+        res.push(Directive::DiagBlock {
+            rendered: diag_block,
+            lines: diag_start..lines.len(),
+        });
     }
 
-    (res, in_block)
+    res
 }
 
 /// Replace `:DIGITS` in `-->` header lines with `:LL` for stability across file edits.
@@ -354,9 +370,9 @@ pub fn render_diag_display(file: &str, source: &str, diag: &Diag) -> String {
 }
 
 pub fn expect_compile_error(directives: &[Directive]) -> bool {
-    directives
-        .iter()
-        .any(|d| matches!(d, Directive::DiagBlock(s) if s.starts_with("error:")))
+    directives.iter().any(
+        |d| matches!(d, Directive::DiagBlock { rendered, .. } if rendered.starts_with("error:")),
+    )
 }
 
 /// Try to match a diagnostic against pending directives.
@@ -373,7 +389,7 @@ pub fn match_diagnostic(
     let rendered = render_diag(file, source, diag);
     if let Some(i) = directives
         .iter()
-        .position(|d| matches!(d, Directive::DiagBlock(s) if s.trim() == rendered.trim()))
+        .position(|d| matches!(d, Directive::DiagBlock { rendered: expected, .. } if expected.trim() == rendered.trim()))
     {
         directives.remove(i);
         return None; // matched
@@ -389,9 +405,9 @@ pub fn update_mode() -> bool {
 
 /// Match a file's diagnostics against its directives, rendering locations as `file`.
 ///
-/// In update mode, the file's diagnostic blocks are rewritten to the diagnostics
-/// instead. Returns whether a diagnostic was unexpected, which is never the case in
-/// update mode.
+/// In update mode, matched blocks are preserved, stale blocks are removed, and
+/// unexpected diagnostics are inserted. Returns whether a diagnostic was
+/// unexpected, which is never the case in update mode.
 pub fn match_diagnostics(
     path: &Path,
     content: &[u8],
@@ -406,7 +422,6 @@ pub fn match_diagnostics(
     for d in diags {
         let line = d.span().span().end().line_number();
         match match_diagnostic(directives, d, file, source) {
-            None if update_mode => blocks.push((line, render_diag(file, source, d))),
             None => {}
             Some(rendered) if update_mode => blocks.push((line, rendered)),
             Some(_) => {
@@ -417,26 +432,36 @@ pub fn match_diagnostics(
         }
     }
     if update_mode {
+        rewrite_diagnostics(path, content, directives, blocks);
         // Stale blocks are gone from the file, so they are not missing either
-        directives.retain(|d| !matches!(d, Directive::DiagBlock(_)));
-        rewrite_diagnostics(path, content, blocks);
+        directives.retain(|d| !matches!(d, Directive::DiagBlock { .. }));
     }
     unexpected
 }
 
-/// Rewrite a test file's diagnostic blocks to `blocks`.
+/// Remove unmatched diagnostic directives and insert `blocks` in a test file.
 ///
-/// Every existing diagnostic block is removed, then each of `blocks` is inserted
+/// Matched blocks are preserved verbatim. Each of `blocks` is inserted
 /// after the line it references and any annotations binding to that line.
 /// `blocks` is a list of `(line_number, rendered_block)` pairs where `line_number`
 /// is 1-indexed in `source` (from `diag.span().span().end().line_number()`), so a
 /// block follows the last source line its span covers.
-pub fn rewrite_diagnostics(path: &Path, source: &[u8], mut blocks: Vec<(u32, String)>) {
+pub fn rewrite_diagnostics(
+    path: &Path,
+    source: &[u8],
+    unmatched: &[Directive],
+    mut blocks: Vec<(u32, String)>,
+) {
     // Sort ascending so we process from top to bottom; same-line items keep order
     blocks.sort_by_key(|(line, _)| *line);
-    let (_, in_block) = scan_directives(source);
+    let mut in_block = vec![false; source.lines().count()];
+    for directive in unmatched {
+        if let Directive::DiagBlock { lines, .. } = directive {
+            in_block[lines.clone()].fill(true);
+        }
+    }
 
-    // Split into lines, keeping terminators, and drop the old blocks
+    // Split into lines, keeping terminators, and drop stale blocks
     let mut lines: Vec<(u32, &[u8])> = Vec::new();
     let mut p = 0;
     let mut index = 0;
@@ -458,10 +483,6 @@ pub fn rewrite_diagnostics(path: &Path, source: &[u8], mut blocks: Vec<(u32, Str
     let mut carried: Vec<&str> = Vec::new();
     for (idx, &(line_num, line)) in lines.iter().enumerate() {
         result.extend_from_slice(line);
-        // Ensure line ends with newline before inserting blocks
-        if !line.ends_with(b"\n") {
-            result.push(b'\n');
-        }
         while next < blocks.len() && blocks[next].0 <= line_num {
             carried.push(&blocks[next].1);
             next += 1;
@@ -469,6 +490,10 @@ pub fn rewrite_diagnostics(path: &Path, source: &[u8], mut blocks: Vec<(u32, Str
         // Annotations of the line stay directly under it
         if carried.is_empty() || lines.get(idx + 1).is_some_and(|(_, l)| is_annotation(l)) {
             continue;
+        }
+        // Ensure line ends with newline before inserting blocks
+        if !line.ends_with(b"\n") {
+            result.push(b'\n');
         }
         // Indent to match the next non-empty line
         let indent: &[u8] = lines[idx + 1..]
@@ -498,9 +523,9 @@ pub fn report_unmatched(directives: &[Directive]) -> bool {
     let mut failed = false;
     for directive in directives {
         match directive {
-            Directive::DiagBlock(s) => {
+            Directive::DiagBlock { rendered, .. } => {
                 failed = true;
-                eprintln!("missing diagnostic block:\n{s}");
+                eprintln!("missing diagnostic block:\n{rendered}");
             }
             Directive::Output(_) => {
                 // Output mismatches are reported separately in check_results
