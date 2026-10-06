@@ -19,6 +19,10 @@ pub(crate) enum ExprKind {
     /// A runtime class test; its branch assumptions carry the narrowing.
     TypeTest {
         value: Box<Expr>,
+        #[cfg_attr(
+            not(feature = "debug"),
+            expect(dead_code, reason = "read by the debug dump")
+        )]
         class: Option<DeclId>,
     },
     Literal(Literal),

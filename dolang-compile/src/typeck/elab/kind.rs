@@ -527,11 +527,6 @@ impl<'t> Check<'_, 't, '_> {
             self.check(arg.ty(), expected);
         }
     }
-
-    /// The kind a type expression has, if a declaration determines it
-    fn synth_kind(&self, ty: &TypeExpr) -> Option<Kind> {
-        self.tables.kind_of(self.unit, ty)
-    }
 }
 
 /// What a type argument fills of the binders of the declaration it is applied to

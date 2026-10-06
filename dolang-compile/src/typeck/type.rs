@@ -558,6 +558,10 @@ pub(crate) enum BinderOrigin {
 #[derive(Clone, Debug)]
 pub(crate) struct BinderSource {
     pub(crate) name: SymbolId,
+    #[expect(
+        dead_code,
+        reason = "diagnostics don't cite a binder's declaration yet"
+    )]
     pub(crate) span: UnitSpan,
     pub(crate) bound: Option<UnitSpan>,
     pub(crate) default: Option<UnitSpan>,
@@ -714,6 +718,7 @@ impl Declarations {
 
 /// Transparent declaration chain, including the repeated declaration closing it.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
 pub(crate) struct ExposureCycle(pub(crate) Vec<DeclId>);
 
 /// A reference that prevents removing its enclosing binder group.
@@ -725,6 +730,7 @@ pub(crate) struct RemovedBinder(pub(crate) BoundRef);
 pub(crate) struct Escape(pub(crate) TypeId);
 
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
 pub(crate) struct Exposure {
     pub(crate) ty: TypeId,
     /// Transparent wrappers traversed, in source-to-underlying order.
@@ -993,6 +999,7 @@ impl Database {
         self.symbols.id(text)
     }
 
+    #[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
     pub(crate) fn fresh_symbol(&self, text: &str) -> SymbolId {
         self.symbols.fresh(text.into())
     }
@@ -1584,6 +1591,7 @@ impl Database {
     }
 
     /// Expose one transparent declaration. No substitution or scope change occurs.
+    #[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
     pub(crate) fn deref_one(&self, ty: TypeId) -> Option<TypeId> {
         let Type::Decl(id) = self.ty(ty) else {
             return None;
@@ -1595,6 +1603,7 @@ impl Database {
         Some(decl.ty)
     }
 
+    #[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
     pub(crate) fn expose(&self, mut ty: TypeId) -> Result<Exposure, ExposureCycle> {
         let mut declarations = Vec::new();
         let mut visited = HashSet::new();
@@ -1979,6 +1988,7 @@ impl Database {
     /// A class applied to `given` for its first binders and to its later binders'
     /// defaults, each of which sees the arguments before it; `None` if one of
     /// those has no default
+    #[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
     pub(crate) fn apply_defaults(&self, decl: DeclId, given: &[TypeId]) -> Option<TypeId> {
         let Type::Quantified { binders, .. } = self.ty(self.declaration(decl).ty) else {
             return None;

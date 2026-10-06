@@ -301,7 +301,7 @@ pub struct Check<'u> {
     /// Well-formedness checks the checker could not decide
     unresolved: Vec<elab::Unresolved>,
     /// Each unit's typing CFG, by [`UnitId`], for a unit checked from source
-    #[cfg_attr(not(test), allow(dead_code, reason = "read by tests"))]
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
     cfgs: Vec<Option<cfg::Ir>>,
     /// What flow analysis concluded about each unit, by [`UnitId`], for a unit checked
     /// from source

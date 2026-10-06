@@ -17,6 +17,7 @@ use crate::{
 
 impl Ir {
     /// Dump the graph, naming variables by the source text of their spans
+    #[expect(dead_code, reason = "called while debugging")]
     pub(crate) fn dump<'s>(&self, db: &Database, text: impl Fn(Span) -> &'s str) -> String {
         let dump = Dump::new(self, db, &text);
         let mut out = String::new();

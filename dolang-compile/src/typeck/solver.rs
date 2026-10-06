@@ -96,7 +96,9 @@ pub(crate) enum CallArgument {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Provenance {
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
     pub(crate) actual: Option<UnitSpan>,
+    #[expect(dead_code, reason = "diagnostics don't cite provenance yet")]
     pub(crate) expected: Option<UnitSpan>,
 }
 
@@ -264,6 +266,7 @@ pub(crate) enum Status {
 
 #[derive(Clone, Debug)]
 pub(crate) struct Outcome {
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
     pub(crate) constraint: ConstraintId,
     pub(crate) status: Status,
     pub(crate) diagnostics: Vec<Diagnostic>,
@@ -272,6 +275,7 @@ pub(crate) struct Outcome {
 #[derive(Clone, Debug)]
 struct Root {
     obligation: ObligationId,
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
     provenance: Provenance,
 }
 
@@ -619,6 +623,7 @@ impl<'db> Solver<'db> {
     /// result`. Constraining the callee's type below it checks the call.
     /// Contradictions and derivations under the parameter list name an argument
     /// by its index in `args`, through [`Step::Item`] and [`Step::Key`].
+    #[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
     pub(crate) fn call(
         &self,
         args: &[CallArgument],
@@ -741,6 +746,7 @@ impl<'db> Solver<'db> {
     }
 
     /// A committed, fully resolved solution. Bounds remain available independently.
+    #[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
     pub(crate) fn solution(&self, id: InferVarId) -> Option<TypeId> {
         match self.inference[id.0].assignment.get()? {
             Term::View(view) if view.environment == self.empty_environment() => Some(view.ty),
@@ -754,6 +760,7 @@ impl<'db> Solver<'db> {
     }
 
     /// Obligations that supported the commitment, retained for diagnostic inspection.
+    #[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
     pub(crate) fn solution_sources(
         &self,
         id: InferVarId,
@@ -1453,6 +1460,7 @@ impl<'db> Solver<'db> {
     }
 
     /// Whether a variable's solution was chosen by [`Self::default`], not forced
+    #[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
     pub(crate) fn defaulted(&self, id: InferVarId) -> bool {
         self.inference[id.0].defaulted.get()
     }
@@ -1484,6 +1492,7 @@ impl<'db> Solver<'db> {
         &self.obligations[id.0]
     }
 
+    #[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
     pub(crate) fn provenance(&self, id: ConstraintId) -> &Provenance {
         &self.roots[id.0].provenance
     }
@@ -1645,14 +1654,6 @@ impl<'db> Solver<'db> {
     /// Whether an exposed head is the dynamic type or schema
     fn is_unknown(&self, head: &Head) -> bool {
         matches!(head, Head::Structural(view) if matches!(self.db.ty(view.ty), Type::Unknown(_)))
-    }
-
-    /// Whether a term resolves to the dynamic type or schema
-    fn unknown(&self, term: Term) -> Result<bool, Residual> {
-        Ok(match self.resolve(term)? {
-            Term::View(view) => matches!(self.db.ty(view.ty), Type::Unknown(_)),
-            Term::Infer(_) | Term::Skolem(_) => false,
-        })
     }
 
     /// Whether a closed type contains the dynamic type or schema anywhere

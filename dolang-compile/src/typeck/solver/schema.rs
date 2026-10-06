@@ -80,8 +80,8 @@ impl Opaque {
 enum Collected {
     Atom(Atom),
     Keyed(KeyedAtom),
-    /// The dynamic schema, from the item given
-    Unknown(usize),
+    /// The dynamic schema
+    Unknown,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -309,7 +309,7 @@ impl Solver<'_> {
                 match *slot {
                     Slot::Atom(atom) => atoms.push(Collected::Atom(atom)),
                     Slot::Opaque(index) if a.opaque[index].opacity == Opacity::Unknown => {
-                        atoms.push(Collected::Unknown(a.opaque[index].item));
+                        atoms.push(Collected::Unknown);
                     }
                     Slot::Opaque(index) if !a.opaque[index].positional() => {}
                     Slot::Opaque(_) => return Err(Residual::Inference.into()),
@@ -351,7 +351,7 @@ impl Solver<'_> {
             )?;
             collected.extend(overflow.into_iter().map(Collected::Keyed));
             if unknown(a, Opaque::keyed) && !var.positional() {
-                collected.push(Collected::Unknown(var.item));
+                collected.push(Collected::Unknown);
             }
         } else {
             self.keyed(
@@ -393,7 +393,7 @@ impl Solver<'_> {
                         value: slot(atom.value, Kind::Type),
                     },
                 },
-                Collected::Unknown(_) => SchemaItem {
+                Collected::Unknown => SchemaItem {
                     multiplicity: Multiplicity::Required,
                     element: Element::Include(self.db.unknown_schema()),
                 },

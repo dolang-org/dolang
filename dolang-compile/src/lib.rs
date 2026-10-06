@@ -15,8 +15,6 @@ pub(crate) mod resolvety;
 pub(crate) mod sig;
 pub mod source;
 pub(crate) mod sym;
-// The database is incubating independently of the compilation pipeline.
-#[allow(dead_code)]
 pub mod typeck;
 mod unit_id;
 pub use unit_id::UnitId;
