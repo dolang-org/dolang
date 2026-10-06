@@ -923,7 +923,7 @@ impl<'a, C: Context> FuncVerifier<'a, C> {
                 self.blocks[bb].mark = false;
             }
 
-            debug_eprintln!("  bb #{bb}: {}", block);
+            debug_eprintln!(topic: "verify", "  bb #{bb}: {}", block);
 
             // Dummy value, immediately overwritten
             let mut last = InstOffsets {
@@ -939,10 +939,10 @@ impl<'a, C: Context> FuncVerifier<'a, C> {
             // Step over all instructions in block
             for item in Self::insts_verified(slice, start) {
                 last = item;
-                debug_eprintln!("    {:0width$x} {}", last.before, last.inst);
+                debug_eprintln!(topic: "verify", "    {:0width$x} {}", last.before, last.inst);
                 self.step(&mut block, &last.inst)
                     .map_err(|e| FuncError::inst(slice, last.before, e))?;
-                debug_eprintln!("      ⮡ {}", block);
+                debug_eprintln!(topic: "verify", "      ⮡ {}", block);
                 if block.operands > self.max_operand_depth {
                     self.max_operand_depth = block.operands
                 }
@@ -1005,7 +1005,7 @@ impl<'a, C: Context> FuncVerifier<'a, C> {
                     // Mark block as reached
                     if !succ.mark {
                         succ.mark = true;
-                        debug_eprintln!("    mark #{}", sid);
+                        debug_eprintln!(topic: "verify", "    mark #{}", sid);
                         self.queue.push(sid);
                     }
                     // Check that claimed successor state is unchanged by merge
@@ -1023,7 +1023,7 @@ impl<'a, C: Context> FuncVerifier<'a, C> {
                 } else if succ.mark {
                     // Certificate generation case, block is already marked for visit
                     // Just merge predecessor state into it
-                    debug_eprintln!("    merge #{}", sid);
+                    debug_eprintln!(topic: "verify", "    merge #{}", sid);
                     edge.merge(&mut succ.state)
                         .map_err(|e| FuncError::inst(bytecode, succ.offset, e))?
                 } else {
@@ -1034,7 +1034,7 @@ impl<'a, C: Context> FuncVerifier<'a, C> {
                         .map_err(|e| FuncError::inst(bytecode, succ.offset, e))?;
                     // If the state did change, mark and queue block for visit
                     if succ.state != prev {
-                        debug_eprintln!("    changed #{}", sid);
+                        debug_eprintln!(topic: "verify", "    changed #{}", sid);
                         succ.mark = true;
                         self.queue.push(sid);
                     }
@@ -1142,7 +1142,7 @@ impl<'a, C: Context> Verifier<'a, C> {
         let funcs: Vec<_> = funcs.into_iter().collect();
         let mut used = vec![Default::default(); funcs.len()];
         for (i, func) in funcs.into_iter().enumerate() {
-            debug_eprintln!("Compute cert #{i}:");
+            debug_eprintln!(topic: "verify", "Compute cert #{i}:");
             let verifier = FuncVerifier::new(self.ctx, i, func, &mut used);
             certs.push(
                 verifier
@@ -1163,7 +1163,7 @@ impl<'a, C: Context> Verifier<'a, C> {
         let funcs: Vec<_> = funcs.into_iter().collect();
         let mut used = vec![Default::default(); funcs.len()];
         for (i, (func, cert)) in funcs.into_iter().enumerate() {
-            debug_eprintln!("Check cert #{i}:");
+            debug_eprintln!(topic: "verify", "Check cert #{i}:");
             let mut verifier = FuncVerifier::new(self.ctx, i, func, &mut used);
             verifier
                 .check(cert)

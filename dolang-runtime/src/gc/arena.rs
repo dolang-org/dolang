@@ -254,12 +254,12 @@ pub(crate) struct Arena<'v>(
 
 impl ArenaInner {
     pub(crate) fn clear(&self) {
-        debug_eprintln!("GC CLEAR: begin");
+        debug_eprintln!(topic: "gc", "GC CLEAR: begin");
 
         unsafe {
             while let Some(item) = self.cyclic.pop_front() {
                 let vtbl = item.as_ref().vtbl;
-                debug_eprintln!("GC DROP: trash: {}@{:?}", (vtbl.as_ref().name)(), item);
+                debug_eprintln!(topic: "gc", "GC DROP: trash: {}@{:?}", (vtbl.as_ref().name)(), item);
                 // Give item an extra reference so it doesn't get deleted during
                 // clear routine
                 if item.as_ref().borrow.get() != 0 {
@@ -274,7 +274,7 @@ impl ArenaInner {
             }
         }
 
-        debug_eprintln!("GC CLEAR: end");
+        debug_eprintln!(topic: "gc", "GC CLEAR: end");
     }
 
     #[inline]
@@ -341,7 +341,7 @@ impl<'v> Arena<'v> {
     /// children to break cycles and allow reference counts to reach 0.
     pub(crate) fn collect_full(&self) {
         let this = &*self.0;
-        debug_eprintln!("COLLECT: begin");
+        debug_eprintln!(topic: "gc", "COLLECT: begin");
         let trash: ring!(Header, queue) = Default::default();
         let alive: ring!(Header, queue) = Default::default();
         let jh_trash: ring!(Header, queue) = Default::default();
@@ -353,12 +353,14 @@ impl<'v> Arena<'v> {
             // Pass 1: set trial reference count, check for borrow
             for item in this.cyclic.iter() {
                 debug_eprintln!(
+                    topic: "gc",
                     "COLLECT: possible cyclic: {}@{:?}",
                     (item.as_ref().vtbl.as_ref().name)(),
                     item
                 );
                 if item.as_ref().borrow.get() == BORROW_MUT {
                     debug_eprintln!(
+                        topic: "gc",
                         "COLLECT: deferred due to oustanding mutable borrow: {}@{:?}",
                         (item.as_ref().vtbl.as_ref().name)(),
                         item
@@ -382,6 +384,7 @@ impl<'v> Arena<'v> {
             for item in this.cyclic.iter() {
                 let count = item.as_ref().trial.get();
                 debug_eprintln!(
+                    topic: "gc",
                     "COLLECT: trial count: {}@{:?}: {count}",
                     (item.as_ref().vtbl.as_ref().name)(),
                     item
@@ -399,7 +402,7 @@ impl<'v> Arena<'v> {
             // Pass 4: propagate liveness to children
             while let Some(item) = alive.pop_front() {
                 let vtbl = item.as_ref().vtbl;
-                debug_eprintln!("COLLECT: living: {}@{:?}", (vtbl.as_ref().name)(), item);
+                debug_eprintln!(topic: "gc", "COLLECT: living: {}@{:?}", (vtbl.as_ref().name)(), item);
                 let _ = (vtbl.as_ref().trace)(item, &mut |child: NonNull<Header>| {
                     if child.as_ref().vtbl.as_ref().cyclic && child.as_ref().trial.get() == 0 {
                         child.as_ref().trial.set(1);
@@ -414,6 +417,7 @@ impl<'v> Arena<'v> {
             for item in jh_trash.iter() {
                 let vtbl = item.as_ref().vtbl;
                 debug_eprintln!(
+                    topic: "gc",
                     "COLLECT: join_handle trash: {}@{:?}",
                     (vtbl.as_ref().name)(),
                     item
@@ -434,6 +438,7 @@ impl<'v> Arena<'v> {
             while let Some(item) = alive.pop_front() {
                 let vtbl = item.as_ref().vtbl;
                 debug_eprintln!(
+                    topic: "gc",
                     "COLLECT: living (rescued): {}@{:?}",
                     (vtbl.as_ref().name)(),
                     item
@@ -471,13 +476,14 @@ impl<'v> Arena<'v> {
                     // an immutable subset of the object state that can always be accessed
                     // independently of the main (runtime borrowable) state.
                     debug_eprintln!(
+                        topic: "gc",
                         "COLLECT: clear deferred due to oustanding borrow: {}@{:?}",
                         (item.as_ref().vtbl.as_ref().name)(),
                         item
                     );
                     continue;
                 }
-                debug_eprintln!("COLLECT: trash: {}@{:?}", (vtbl.as_ref().name)(), item);
+                debug_eprintln!(topic: "gc", "COLLECT: trash: {}@{:?}", (vtbl.as_ref().name)(), item);
                 // Give item an extra reference so it doesn't get deleted during
                 // clear routine
                 item.as_ref().retain();
@@ -488,7 +494,7 @@ impl<'v> Arena<'v> {
                 }
             }
         }
-        debug_eprintln!("COLLECT: end");
+        debug_eprintln!(topic: "gc", "COLLECT: end");
         this.balance.set(0);
     }
 

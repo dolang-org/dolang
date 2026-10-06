@@ -1406,7 +1406,7 @@ impl<'a> Config<'a> {
         };
         #[cfg(feature = "debug")]
         if let Err(e) = compiler.export_ast_dot(&ast, false) {
-            debug_eprintln!("AST DOT export failed: {e}")
+            debug_eprintln!(topic: "dot", "AST DOT export failed: {e}")
         }
 
         {
@@ -1416,7 +1416,7 @@ impl<'a> Config<'a> {
         }
         #[cfg(feature = "debug")]
         if let Err(e) = compiler.export_ast_dot(&ast, true) {
-            debug_eprintln!("Resolved AST DOT export failed: {e}")
+            debug_eprintln!(topic: "dot", "Resolved AST DOT export failed: {e}")
         }
 
         compiler.prelude = prelude;
@@ -1583,7 +1583,7 @@ impl Unit<'_> {
             if let Ok(output) = std::env::var("DOLANG_EXPORT_DOT")
                 && let Err(e) = self.compiler.export_cfg_dot(&graph, output)
             {
-                debug_eprintln!("DOT export failed: {e}");
+                debug_eprintln!(topic: "dot", "DOT export failed: {e}");
             }
         }
         let mut emitter = self.compiler.emitter(&graph);
@@ -1698,7 +1698,7 @@ impl Compiler<'_> {
             let mut file = fs::File::create(&out)?;
 
             self.ast_to_dot(ast, &mut file)?;
-            debug_eprintln!("AST DOT exported to: {}", out.display());
+            debug_eprintln!(topic: "dot", "AST DOT exported to: {}", out.display());
         }
 
         Ok(())
