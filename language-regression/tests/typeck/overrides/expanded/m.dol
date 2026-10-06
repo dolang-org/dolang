@@ -1,0 +1,18 @@
+# A union expanding an item and a pack keeps the item beside the pack, so a
+# class inheriting a supertype at two arguments conforms to both.
+
+import std:
+  - @Union
+
+pub class Num
+pub class Int: Num
+
+pub class Base[T]
+  pub def get self -> T
+    ...
+  pub def chain[*Us] self *values @ ...Base[Us] -> Base[Union[T, ...Us]]
+    ...
+
+pub class Wide: Base[Num]
+
+pub class Narrow: Base[Int] Wide

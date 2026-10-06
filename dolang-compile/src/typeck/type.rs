@@ -1420,7 +1420,8 @@ impl Database {
 
     /// What a projection member of a union stands for, as far as its schema is
     /// known, or `None` to keep it. `Union[...S]` expands only a schema of
-    /// positional items, through inclusions, into their types. `Values` folds each
+    /// positional items into their types, and projects an included schema the same
+    /// way in turn, so a known item is reduced beside a pack. `Values` folds each
     /// item's value, ignoring its multiplicity, and projects an included schema
     /// the same way in turn. `Keys` and `Entries` fold the schema's keyed view
     /// (see [`Self::promoted`]): `Keys` takes each key, and `Entries` each
@@ -1433,12 +1434,17 @@ impl Database {
             return Projected::Pending;
         };
         if let UnionMember::Expand(_) = member {
-            return match self.positional_items(schema) {
-                Some(items) => {
-                    Projected::Reduced(items.into_iter().map(UnionMember::Type).collect())
-                }
-                None => Projected::Pending,
+            let Type::Schema(items) = self.ty(schema) else {
+                return Projected::Pending;
             };
+            return (items.iter())
+                .map(|item| match item.element {
+                    Element::Positional(ty) => Some(UnionMember::Type(ty)),
+                    Element::Include(inner) => Some(member.with(inner)),
+                    Element::Keyed { .. } => None,
+                })
+                .collect::<Option<_>>()
+                .map_or(Projected::Pending, Projected::Reduced);
         }
         let items = match self.ty(schema) {
             Type::Unknown(_) => return Projected::Reduced(vec![UnionMember::Type(self.unknown)]),
@@ -1710,22 +1716,6 @@ impl Database {
             }
         }
         true
-    }
-
-    /// The types of a schema's items, if each is positional, through inclusions
-    fn positional_items(&self, schema: TypeId) -> Option<Vec<TypeId>> {
-        let Type::Schema(items) = self.ty(schema) else {
-            return None;
-        };
-        let mut types = Vec::new();
-        for item in items.iter() {
-            match item.element {
-                Element::Positional(ty) => types.push(ty),
-                Element::Include(schema) => types.extend(self.positional_items(schema)?),
-                Element::Keyed { .. } => return None,
-            }
-        }
-        Some(types)
     }
 
     fn validate(&self, ty: &Type) {
