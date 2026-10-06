@@ -1,0 +1,35 @@
+# A dict literal held back for a union of dict schemas that mentions the call's
+# binder takes its schema once the binder is solved from the arguments not held
+# back, or else defaulted
+
+import std:
+  - @BaseDict
+
+@let Flag = BaseDict[{flag: Str}]
+@let Cmd[R] = BaseDict[{cmd: Str, *(Item[R] | (Int -> R))}]
+@let Item[R] = (Flag | Cmd[R])
+
+pub def spec[R] *items @ (Item[R] | (Int -> R)) -> R
+  ...
+
+pub def flagged()
+  spec {flag: "x"}
+
+pub def handled()
+  let r = spec
+    - flag: x
+    - cmd: c
+      - flag: y
+      do |n| "nested $n"
+    do |n| "top $n"
+  let _ = r
+  #       ^: flow std.Str
+
+# A binder nothing else bounds is defaulted, so a nested handler leaves it
+# dynamic until #917
+pub def defaulted()
+  let r = spec
+    - cmd: c
+      do |n| "nested $n"
+  let _ = r
+  #       ^: flow Unknown

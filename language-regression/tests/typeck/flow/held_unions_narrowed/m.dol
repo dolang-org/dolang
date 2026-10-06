@@ -1,0 +1,28 @@
+# Until #917, a handler in a dict held back for a union of dict schemas can't
+# widen the binder that the arguments not held back solve
+
+import std:
+  - @BaseDict
+
+@let Flag = BaseDict[{flag: Str}]
+@let Cmd[R] = BaseDict[{cmd: Str, *(Item[R] | (Int -> R))}]
+@let Item[R] = (Flag | Cmd[R])
+
+pub def spec[R] *items @ (Item[R] | (Int -> R)) -> R
+  ...
+
+pub def narrowed()
+  spec
+    - cmd: c
+      do |n| n
+    # error: expected `{cmd: std.Str, *((std.Int, <Unknown, >Unknown) -> std.Str) | m.Item[std.Str]}`, found `{cmd: "c", (std.Int, <Unknown, >Unknown) -> std.Int}`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |       - cmd: c
+    #    |  _______^
+    # LL | |       do |n| n
+    #    | |______________^
+    #    |
+    #    = note: `std.Int` does not fit `std.Str`
+    #    = note: in `(std.Int, <Unknown, >Unknown) -> std.Int`
+    do |n| "top $n"

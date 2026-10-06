@@ -1349,8 +1349,39 @@ impl<'a> Flow<'a, '_> {
         let terms: Vec<Term> = held.iter().map(|&(_, term)| term).collect();
         let raised = (solver.raised(&terms)).unwrap_or_else(|_| solver.unresolved().collect());
         default_where(&mut solver, |id| !raised.contains(&id), None);
-        for (index, term) in held {
+        for &(index, term) in &held {
             expectations[index] = expectation(&solver, term);
+        }
+        // A stopgap until #917: a dict left without an expectation, where a union
+        // of dict schemas would choose its schema, widens, and no member of the
+        // union takes it. It's given its parameter with every variable defaulted
+        // from the arguments not held back, so the held ones can't widen them.
+        let dict = self.designated(Designated::Dict);
+        let choosing = |index: usize| {
+            expectations[index].is_none()
+                && matches!(
+                    values.held[index].expr.kind,
+                    ExprKind::Collection {
+                        kind: Collection::Dict,
+                        ..
+                    }
+                )
+        };
+        if let Some(dict) = dict
+            && held.iter().any(|&(index, _)| choosing(index))
+        {
+            default_all(&mut solver, self.db, true, None);
+            let chosen: Vec<(usize, Option<TypeId>)> = (held.iter())
+                .filter(|&&(index, _)| choosing(index))
+                .map(|&(index, term)| {
+                    let expected = expectation(&solver, term)
+                        .filter(|&ty| self.fresh_candidates(dict, Kind::Schema, ty).len() > 1);
+                    (index, expected)
+                })
+                .collect();
+            for (index, expected) in chosen {
+                expectations[index] = expected;
+            }
         }
         expectations
     }
