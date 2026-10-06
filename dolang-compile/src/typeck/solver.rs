@@ -29,9 +29,13 @@ use crate::typeck::r#type::UnitSpan;
 
 use super::r#type::{
     Argument, Binder, Binding, BoundRef, Database, DeclId, DeclKind, Element, Function, Intrinsic,
-    Kind, Literal, Multiplicity, Promotion, Rest, SchemaItem, SymbolId, Type, TypeId, UnionMember,
-    Variance,
+    Kind, Literal, MemberKey, Multiplicity, Promotion, Rest, SchemaItem, SymbolId, Type, TypeId,
+    UnionMember, Variance,
 };
+
+/// A member of a generic class's object: its class, the class a private one is
+/// looked up through, and its key
+type GenericMember = (DeclId, Option<DeclId>, MemberKey);
 
 macro_rules! id {
     ($name:ident) => {
@@ -435,6 +439,8 @@ pub(crate) struct Solver<'db> {
     alternatives: RefCell<HashMap<ObligationId, Alternatives>>,
     /// How each class's object is called, once found
     constructors: RefCell<HashMap<DeclId, Constructor>>,
+    /// Each member of a generic class's object, once found
+    generic_members: RefCell<HashMap<GenericMember, Result<Lookup, Issue>>>,
     /// Counts changes to bounds and assignments, so trials rerun only after
     /// what they saw has grown
     generation: Cell<usize>,
@@ -504,6 +510,7 @@ impl<'db> Solver<'db> {
             closed: false,
             alternatives: RefCell::new(HashMap::new()),
             constructors: RefCell::new(HashMap::new()),
+            generic_members: RefCell::new(HashMap::new()),
             generation: Cell::new(0),
             trial_depth: 0,
             blinded: HashMap::new(),
@@ -565,6 +572,19 @@ impl<'db> Solver<'db> {
     pub(crate) fn assume(&mut self, decl: DeclId) {
         self.scope.insert(decl);
         self.constructors.get_mut().clear();
+        self.generic_members.get_mut().clear();
+    }
+
+    /// A solver for a side query about `class`, its rigids assumed
+    pub(super) fn side_query(&self, class: DeclId) -> Solver<'db> {
+        let mut solver = Solver::new(self.db);
+        solver.scope = self.scope.clone();
+        solver.assume(class);
+        #[cfg(feature = "debug")]
+        {
+            solver.names = self.names.clone();
+        }
+        solver
     }
 
     /// Assume `decl`, and return an environment that interprets its group as its

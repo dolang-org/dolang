@@ -61,8 +61,22 @@ impl Class {
         params: &[TypeId],
         result: TypeId,
     ) -> DeclId {
+        let receiver = self.receiver(db);
+        self.function_on(db, receiver, own, params, result)
+    }
+
+    /// [`Self::function`] taking `receiver` first, as a class method takes its
+    /// class's object
+    fn function_on(
+        &self,
+        db: &mut Database,
+        receiver: TypeId,
+        own: Vec<Binder>,
+        params: &[TypeId],
+        result: TypeId,
+    ) -> DeclId {
         let (id, _, source) = reserve(db, DeclKind::Function, "method");
-        let params: Vec<_> = [self.receiver(db)]
+        let params: Vec<_> = [receiver]
             .into_iter()
             .chain(params.iter().copied())
             .collect();
@@ -320,6 +334,153 @@ fn class_objects_have_class_and_static_members_and_unbound_methods() {
     assert!(missing(s.member(object(sub), key(&db, "size"))));
     // Instances don't see the type object's members
     assert!(missing(s.member(s.closed(sub), key(&db, "count"))));
+}
+
+#[test]
+fn generic_class_objects_have_members_quantified_over_its_binders() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let array = nominal(&mut db, "Array", vec![binder(Variance::Covariant)], vec![]);
+    let ty = nominal(&mut db, "Type", vec![binder(Variance::Covariant)], vec![]);
+    db.set_intrinsic(Intrinsic::Type, ty);
+    let t = reference(&db, 0, 0);
+    let u = reference(&db, 0, 1);
+    let class = binder(Variance::Invariant);
+    let mut boxed = Class::new(&mut db, "Box", vec![class.clone()]);
+    let box_t = boxed.receiver(&db);
+    let object_t = apply(&db, ty, &[box_t]);
+    // pub def get self -> T
+    let get = boxed.function(&mut db, vec![], &[], t);
+    boxed.method(key(&db, "get"), get, Scope::Instance);
+    // pub def map[U] self f @ (T -> U) -> U
+    let mapper = function(&db, &[t], u);
+    let map = boxed.function(&mut db, vec![binder(Variance::Invariant)], &[mapper], u);
+    boxed.method(key(&db, "map"), map, Scope::Instance);
+    // #[class] pub def make cls x @ T -> Box[T]
+    let make = boxed.function_on(&mut db, object_t, vec![], &[t], box_t);
+    boxed.method(key(&db, "make"), make, Scope::Class);
+    // #[class] #[getter] pub def first cls -> T
+    let first = boxed.function_on(&mut db, object_t, vec![], &[], t);
+    boxed.members.push((
+        key(&db, "first"),
+        Member::Property {
+            getter: Some(first),
+            setter: None,
+            scope: Scope::Class,
+            public: true,
+        },
+    ));
+    // #[class] pub field count @ Int; #[static] pub field zero @ T
+    boxed.field(key(&db, "count"), int, Scope::Class);
+    boxed.field(key(&db, "zero"), t, Scope::Static);
+    let boxed = boxed.finish(&mut db, vec![]);
+    // class Sub[T]: Box[Array[T]]
+    let sub = Class::new(&mut db, "Sub", vec![class.clone()]);
+    let sub_t = sub.receiver(&db);
+    let box_array_t = apply(&db, boxed, &[apply(&db, array, &[t])]);
+    sub.finish(&mut db, vec![box_array_t]);
+    db.seal();
+
+    // The class objects, as flow gives them
+    let object = |instance| quantified(&db, vec![class.clone()], apply(&db, ty, &[instance]));
+    let box_object = object(box_t);
+    let sub_object = object(sub_t);
+    let mut s = Solver::new(&db);
+    let signature = |s: &Solver<'_>, found: Found| {
+        let FoundKind::Method(signatures) = found.kind else {
+            panic!("a method")
+        };
+        let (true, Some(signature)) = (signatures.overloads.is_empty(), signatures.implementation)
+        else {
+            panic!("one signature")
+        };
+        s.reify(signature).expect("a closed signature")
+    };
+    let generic = |binders, body| quantified(&db, binders, body);
+
+    // An instance method is reached unbound, quantified over the class's binders
+    let found_get = found(s.member(s.closed(box_object), key(&db, "get")));
+    assert!(!found_get.bound);
+    assert_eq!(
+        signature(&s, found_get),
+        generic(vec![class.clone()], function(&db, &[box_t], t))
+    );
+    // The method's own binders follow the class's
+    let found_map = found(s.member(s.closed(box_object), key(&db, "map")));
+    let expected = generic(
+        vec![class.clone(), binder(Variance::Invariant)],
+        function(&db, &[box_t, mapper], u),
+    );
+    assert_eq!(signature(&s, found_map.clone()), expected);
+    // An inherited method has the class's arguments in terms of its binders
+    let inherited = found(s.member(s.closed(sub_object), key(&db, "get")));
+    let array_t = apply(&db, array, &[t]);
+    assert_eq!(
+        signature(&s, inherited),
+        generic(vec![class.clone()], function(&db, &[box_array_t], array_t))
+    );
+    // A class method and a class-level getter are bound to the object
+    let found_make = found(s.member(s.closed(box_object), key(&db, "make")));
+    assert!(found_make.bound);
+    let make = signature(&s, found_make);
+    assert_eq!(
+        make,
+        generic(vec![class.clone()], function(&db, &[t], box_t))
+    );
+    let found_first = found(s.member(s.closed(box_object), key(&db, "first")));
+    assert!(found_first.bound);
+    let FoundKind::Property {
+        getter: Some(getter),
+        setter: None,
+    } = found_first.kind
+    else {
+        panic!("a getter")
+    };
+    assert_eq!(
+        s.reify(getter.implementation.expect("a getter")),
+        Ok(generic(vec![class.clone()], function(&db, &[], t)))
+    );
+    // A class-level field's type takes the class's binders as `Unknown`
+    let field =
+        |s: &Solver<'_>, name| match found(s.member(s.closed(box_object), key(&db, name))).kind {
+            FoundKind::Field(ty) => s.reify(ty).expect("a closed field"),
+            _ => panic!("a field"),
+        };
+    assert_eq!(field(&s, "count"), int);
+    assert_eq!(field(&s, "zero"), db.unknown());
+
+    // A call infers the class's binders from its arguments
+    let r = s.infer();
+    let show = function(&db, &[int], str);
+    let box_int = apply(&db, boxed, &[int]);
+    let args = [
+        CallArgument::Positional(s.closed(box_int)),
+        CallArgument::Positional(s.closed(show)),
+    ];
+    let call = s.call(&args, r, None, None);
+    s.constrain(s.closed(expected), call, Provenance::default());
+    let made = s.infer();
+    let call = s.call(&[CallArgument::Positional(s.closed(int))], made, None, None);
+    s.constrain(s.closed(make), call, Provenance::default());
+    s.solve();
+    let outcomes = default_all(&mut s);
+    assert!(
+        outcomes
+            .iter()
+            .all(|outcome| outcome.status == Status::Proven)
+    );
+    assert_eq!(s.solution(variable_id(r)), Some(str));
+    assert_eq!(s.solution(variable_id(made)), Some(box_int));
+
+    // Any other quantified type object is undecided
+    let other = quantified(&db, vec![class], apply(&db, ty, &[box_array_t]));
+    assert_eq!(
+        s.member(s.closed(other), key(&db, "get")).err(),
+        Some(Issue::Residual(Residual::Unsupported(
+            "a member of a quantified type"
+        )))
+    );
 }
 
 #[test]

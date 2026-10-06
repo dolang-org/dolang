@@ -63,6 +63,15 @@ pub class Box[T]
   pub def (lt) self other @ Box[T] -> Bool
     ...
 
+  #[class]
+  pub def make cls item @ T -> Box[T]
+    ...
+
+  #[class]
+  #[getter]
+  pub def first cls -> T
+    ...
+
 pub class Made
   #[class]
   pub def (call) _cls n @ Int -> Str
@@ -168,6 +177,46 @@ pub def generic b @ Box[Int]
   let q = (b == 1)
   let _ = q
   #       ^: flow std.Bool
+
+# A generic class's object has its members quantified over the class's binders,
+# which a call infers from its arguments. A class-level method or property is
+# bound to the object, which is every application of the class.
+pub def generic_objects b @ Box[Int] items @ Array[Str] cls @ Type[Box[Int]]
+  let c = Box.map $b do |y|
+    let _ = y
+    #       ^: flow std.Int
+    "a"
+  let _ = c
+  #       ^: flow m.Box[std.Str]
+  let m = Box.map
+  let _ = m
+  #       ^: flow forall (m.Box[#0.0], (#0.0, <#0.2, >#0.3) -> #0.1, <#0.2, >#0.3) -> m.Box[#0.1]
+  let n = Box.make 1
+  let _ = n
+  #       ^: flow m.Box[std.Int]
+  # Nothing determines the getter's binder
+  let f = Box.first
+  let _ = f
+  #       ^: flow Unknown
+  let i = Iterable.iter $items
+  let _ = i
+  #       ^: flow std.Iter[std.Str]
+  # An applied type object's members are its class's, applied
+  let a = cls.make 1
+  let _ = a
+  #       ^: flow m.Box[std.Int]
+  let g = cls.first
+  let _ = g
+  #       ^: flow std.Int
+  let d = Box.map $b do |y| y
+  let _ = d
+  #       ^: flow m.Box[std.Int]
+  Box.map 1 do |y| y
+# error: expected `m.Box[Unknown]`, found `1`
+#   --> m.dol:LL:LL
+#    |
+# LL |   Box.map 1 do |y| y
+#    |           ^
 
 pub def reflected d @ Dir
   let a = (d / "x")

@@ -76,9 +76,12 @@ enum Resolved {
     /// A method, and whether a call through the receiver passes it: an instance's
     /// instance method, or a class object's class method
     Method(Signature, bool),
+    /// A property's accessors, and whether a call to them passes the receiver:
+    /// unless they're already bound to it
     Property {
         getter: Option<Signature>,
         setter: Option<Signature>,
+        passed: bool,
     },
     /// No member, but the instance's class has these for any ordinary name
     Fallback {
@@ -204,16 +207,18 @@ impl Flow<'_, '_> {
                 ref kind @ FoundKind::Method(_) => {
                     // A class object reaches an instance method unbound
                     let object = self.class_of(receiver).is_some();
-                    let bound = match found.scope {
-                        Scope::Instance => !object,
-                        Scope::Class => true,
-                        Scope::Static => false,
-                    };
+                    let bound = !found.bound
+                        && match found.scope {
+                            Scope::Instance => !object,
+                            Scope::Class => true,
+                            Scope::Static => false,
+                        };
                     Resolved::Method(method(kind), bound)
                 }
                 FoundKind::Property { getter, setter } => Resolved::Property {
                     getter: signatures(getter),
                     setter: signatures(setter),
+                    passed: !found.bound,
                 },
                 FoundKind::Unknown => Resolved::Dynamic,
             },
@@ -449,8 +454,12 @@ impl Flow<'_, '_> {
             },
             Resolved::Property {
                 getter: Some(getter),
+                passed,
                 ..
-            } => self.call_signature(at, state, operands, &getter, &leading, call),
+            } => {
+                let leading = if passed { &leading[..] } else { &[] };
+                self.call_signature(at, state, operands, &getter, leading, call)
+            }
             Resolved::Property { getter: None, .. } => {
                 self.misuse(member, span, MemberUse::Read);
                 unknown
@@ -596,9 +605,11 @@ impl Flow<'_, '_> {
             }
             Resolved::Property {
                 getter: Some(getter),
+                passed,
                 ..
             } => {
-                let value = self.call_signature(at, state, operands, &getter, &[receiver], got);
+                let receivers = if passed { &[receiver][..] } else { &[] };
+                let value = self.call_signature(at, state, operands, &getter, receivers, got);
                 self.value_targets((value, receiver.1), leading, span)
             }
             Resolved::Property { getter: None, .. } => {
@@ -684,10 +695,12 @@ impl Flow<'_, '_> {
             Resolved::Method(..) => self.misuse(member, span, MemberUse::Method),
             Resolved::Property {
                 setter: Some(setter),
+                passed,
                 ..
             } => {
                 let receivers = [receiver, written];
-                self.call_signature(at, state, operands, &setter, &receivers, call);
+                let receivers = &receivers[usize::from(!passed)..];
+                self.call_signature(at, state, operands, &setter, receivers, call);
             }
             Resolved::Property { setter: None, .. } => {
                 self.misuse(member, span, MemberUse::Write);

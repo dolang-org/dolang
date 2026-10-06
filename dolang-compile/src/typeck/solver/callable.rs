@@ -97,14 +97,7 @@ impl Solver<'_> {
             args: vec![Argument::Positional(instance)].into(),
             kind: Kind::Type,
         });
-        // A side query, its class's rigids assumed
-        let mut solver = Solver::new(db);
-        solver.scope = self.scope.clone();
-        solver.assume(class);
-        #[cfg(feature = "debug")]
-        {
-            solver.names = self.names.clone();
-        }
+        let solver = self.side_query(class);
         let key = |name| MemberKey {
             name: db.intern_symbol(name),
             special: true,
