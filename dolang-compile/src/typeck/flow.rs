@@ -81,7 +81,7 @@ use super::{
 use crate::source::Span;
 
 /// What flow concluded about a unit
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub(crate) struct Results {
     /// What each variable reference read and each binding bound, joined over every
     /// context, by span
@@ -359,21 +359,26 @@ impl<'a, 'u> Flow<'a, 'u> {
                 None => return,
             },
         };
-        let outcome = self.relate(ty, annotation);
-        match outcome.status {
-            Status::Proven => {}
-            Status::Contradicted => {
-                let found = self.tables.render_type(self.db, ty);
-                let annotation = self.tables.render_type(self.db, annotation);
-                self.problem(Problem::Annotation {
-                    span,
-                    found,
-                    annotation,
-                    result,
-                });
-            }
-            Status::Unresolved => self.undecided(span, residual(&outcome)),
+        if self.conform(ty, annotation, span) == Status::Contradicted {
+            let found = self.tables.render_type(self.db, ty);
+            let annotation = self.tables.render_type(self.db, annotation);
+            self.problem(Problem::Annotation {
+                span,
+                found,
+                annotation,
+                result,
+            });
         }
+    }
+
+    /// Relate a value at `span` to the type it's checked against, recording the check
+    /// if it can't be decided. A contradiction is the caller's to report.
+    fn conform(&mut self, ty: TypeId, expected: TypeId, span: Span) -> Status {
+        let outcome = self.relate(ty, expected);
+        if outcome.status == Status::Unresolved {
+            self.undecided(span, residual(&outcome));
+        }
+        outcome.status
     }
 
     /// The declared result a function's result variable is checked against: a

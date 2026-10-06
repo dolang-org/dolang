@@ -1391,6 +1391,10 @@ impl<'u> Walk<'_, 'u> {
     fn expr(&mut self, frame: &Frame<'_, 'u>, expr: &'u Expr) {
         match expr {
             Expr::Group { expr, .. } | Expr::Unary { expr, .. } => self.expr(frame, expr),
+            Expr::Cast { expr, annot, .. } => {
+                self.expr(frame, expr);
+                self.ty(frame, &annot.ty, Role::Type);
+            }
             Expr::Binary { exprs, .. } | Expr::Index { exprs, .. } => {
                 for expr in exprs.iter() {
                     self.expr(frame, expr);

@@ -66,6 +66,18 @@ impl<'u> Scope<'_, '_, 'u> {
             }
             ast::Expr::FmtSeq { exprs, .. } => self.fmt_seq(exprs, span),
             ast::Expr::Group { expr, .. } => return self.expr(expr),
+            ast::Expr::Cast {
+                expr,
+                annot,
+                checked,
+                ..
+            } => ExprKind::Cast {
+                value: Box::new(self.expr(expr)),
+                ty: self
+                    .annotation(annot)
+                    .unwrap_or_else(|| self.lower.db.unknown()),
+                checked: *checked,
+            },
             ast::Expr::Ident(ident) => match self.ident(ident) {
                 kind @ ExprKind::Var(_) => return self.spill(expr(kind, span)),
                 kind => kind,

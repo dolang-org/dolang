@@ -1,0 +1,45 @@
+# A cast is the whole content of a group's parentheses, and its type is compact
+def id x
+  x
+let a = (1 @ Int | nil)
+# error: got |, expected: )
+#   --> cast.dol:LL:LL
+#    |
+# LL | let a = (1 @ Int | nil)
+#    |                  ^
+let b = (1, 2 @ Int)
+# error: got @, expected: )
+#   --> cast.dol:LL:LL
+#    |
+# LL | let b = (1, 2 @ Int)
+#    |               ^
+let c = (x: 1 @ Int)
+# error: got @, expected: )
+#   --> cast.dol:LL:LL
+#    |
+# LL | let c = (x: 1 @ Int)
+#    |               ^
+let d = (id(1 @ Int))
+# error: a cast in a call's arguments needs its own parentheses, as in `f((x @ T))`
+#   --> cast.dol:LL:LL
+#    |
+# LL | let d = (id(1 @ Int))
+#    |               ^
+let e = (id (1 !@ Int))
+# error: a cast in a call's arguments needs its own parentheses, as in `f((x @ T))`
+#   --> cast.dol:LL:LL
+#    |
+# LL | let e = (id (1 !@ Int))
+#    |                ^^
+let f = (id(1, 2 @ Int))
+# error: a cast in a call's arguments needs its own parentheses, as in `f((x @ T))`
+#   --> cast.dol:LL:LL
+#    |
+# LL | let f = (id(1, 2 @ Int))
+#    |                  ^
+let g = (1 !@)
+# error: expected type
+#   --> cast.dol:LL:LL
+#    |
+# LL | let g = (1 !@)
+#    |              ^

@@ -122,3 +122,10 @@ def _implicits[T] < Iter[T] > Sink[_MissingImplicit] -> nil
   # LL | def _implicits[T] < Iter[T] > Sink[_MissingImplicit] -> nil
   #    |                                    ^^^^^^^^^^^^^^^^
   nil
+
+let _cast = (1 @ MissingCast)
+# warning: unbound type name
+#   --> warnings.dol:LL:LL
+#    |
+# LL | let _cast = (1 @ MissingCast)
+#    |                  ^^^^^^^^^^^

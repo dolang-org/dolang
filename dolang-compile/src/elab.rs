@@ -1895,7 +1895,9 @@ impl<'a> Elaborater<'a> {
     fn visit_expr(&mut self, scope: &mut Scope<'_>, node: &mut Expr, is_arg: bool) -> Result<()> {
         match node {
             Expr::Ident(ident) => self.visit_ident(scope, ident),
-            Expr::Group { expr, .. } => self.visit_expr(scope, expr, is_arg),
+            Expr::Group { expr, .. } | Expr::Cast { expr, .. } => {
+                self.visit_expr(scope, expr, is_arg)
+            }
             Expr::Unary { expr, .. } => self.visit_expr(scope, expr, is_arg),
             Expr::Binary { exprs, .. } => {
                 self.visit_expr(scope, &mut exprs[0], is_arg)?;

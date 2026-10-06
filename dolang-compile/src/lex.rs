@@ -226,6 +226,7 @@ pub(crate) enum Mode {
 enum RawToken {
     Arrow,
     At,
+    BangAt,
     DecoratorOpen,
     Dollar,
     DQuote,
@@ -270,6 +271,7 @@ enum RawState {
     At,
     Backslash,
     Bang,
+    BangAt,
     BangEqual,
     Bar,
     BarBar,
@@ -701,6 +703,8 @@ macro_rules! lex {
                 Some(b'&') => emit!($self.$method, $token, Amp),
                 Some(b'{') => emit!($self.$method, $token, LeftBrace),
                 Some(b'}') => emit!($self.$method, $token, RightBrace),
+                // Pattern may be superseded by !@
+                #[allow(unreachable_patterns)]
                 Some(b'@') => emit!($self.$method, $token, At),
                 Some(b'?') => emit!($self.$method, $token, Question),
                 // Only in the modes that have no comments. Elsewhere `#` mid
@@ -919,6 +923,7 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                 Key => symbol!(self, RawToken::Key, {}),
                 Bang => symbol!(self, RawToken::Op(Op::Bang), {
                     match Some(b'=') => self.trans(BangEqual),
+                    match Some(b'@') => self.trans(BangAt),
                 }),
                 BangEqual => symbol!(self, RawToken::Op(Op::BangEq), {}),
                 Minus => symbol!(self, RawToken::Op(Op::Minus), {
@@ -936,6 +941,7 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                 // switch lexer modes immediately after them
                 Arrow => return self.token(RawToken::Arrow, Empty),
                 At => return self.token(RawToken::At, Empty),
+                BangAt => return self.token(RawToken::BangAt, Empty),
                 Question => return self.token(RawToken::Question, Empty),
                 Plus => symbol!(self, RawToken::Op(Op::Plus), {}),
                 Star => symbol!(self, RawToken::Op(Op::Star), {
@@ -1495,6 +1501,7 @@ pub(crate) enum TokenInfo {
     ArgSep,
     Arrow,
     At,
+    BangAt,
     Bool(bool),
     DecoratorOpen,
     Dedent,
@@ -1895,6 +1902,7 @@ impl<'a> Iterator for Lexer<'a> {
                 }
                 Ok((Arrow, span)) => self.token(TokenInfo::Arrow, span),
                 Ok((At, span)) => self.token(TokenInfo::At, span),
+                Ok((BangAt, span)) => self.token(TokenInfo::BangAt, span),
                 Ok((Question, span)) => self.token(TokenInfo::Question, span),
                 Ok((DecoratorOpen, span)) => self.token(TokenInfo::DecoratorOpen, span),
                 Ok((Dollar, span)) => self.token(TokenInfo::Dollar, span),

@@ -212,7 +212,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         span: Span,
     ) -> Result<()> {
         match expr {
-            Expr::Group { expr, .. } => {
+            Expr::Group { expr, .. } | Expr::Cast { expr, .. } => {
                 self.lower_short_circuit(expr, then, else_, want_result, span)
             }
             Expr::Unary {
@@ -654,7 +654,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 let cid = self.consttab.sym(id);
                 self.block.insts.push(Inst(InstInfo::LoadConst(cid), *span));
             }
-            Expr::Group { expr, .. } => self.lower_expr(expr)?,
+            Expr::Group { expr, .. } | Expr::Cast { expr, .. } => self.lower_expr(expr)?,
             Expr::Logical { op_spans, .. } => {
                 let join = self.graph.alloc_block(self.block.func, self.block.scope);
                 self.lower_short_circuit(expr, join, join, true, op_spans[0])?;
@@ -667,7 +667,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 op_span,
             } if {
                 let mut inner = &**operand;
-                while let Expr::Group { expr, .. } = inner {
+                while let Expr::Group { expr, .. } | Expr::Cast { expr, .. } = inner {
                     inner = expr;
                 }
                 matches!(inner, Expr::Logical { .. })

@@ -354,24 +354,34 @@ impl Parser<'_> {
         scope: &mut Scope,
         allow_ellipsis: bool,
     ) -> Result<(Option<Box<Annot>>, Option<Span>)> {
-        let mut ellipsis = None;
-        let annot = match self.peek()? {
+        match self.peek()? {
             Some(token!(TokenInfo::At)) => {
                 let at_span = self.advance();
-                if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
-                    self.advance();
-                }
-                let ty = self.with_inline_shell(|this| {
-                    if allow_ellipsis && matches!(this.peek()?, Some(token!(TokenInfo::Ellipsis))) {
-                        ellipsis = Some(this.advance());
-                    }
-                    this.parse_type_compact(scope)
-                })?;
-                Some(Box::new(Annot { at_span, ty }))
+                let (annot, ellipsis) = self.parse_annot_type(scope, at_span, allow_ellipsis)?;
+                Ok((Some(annot), ellipsis))
             }
-            _ => None,
-        };
-        Ok((annot, ellipsis))
+            _ => Ok((None, None)),
+        }
+    }
+
+    /// Parse an annotation's type, after its consumed `@` or `!@`.
+    pub(super) fn parse_annot_type(
+        &mut self,
+        scope: &mut Scope,
+        at_span: Span,
+        allow_ellipsis: bool,
+    ) -> Result<(Box<Annot>, Option<Span>)> {
+        let mut ellipsis = None;
+        if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
+            self.advance();
+        }
+        let ty = self.with_inline_shell(|this| {
+            if allow_ellipsis && matches!(this.peek()?, Some(token!(TokenInfo::Ellipsis))) {
+                ellipsis = Some(this.advance());
+            }
+            this.parse_type_compact(scope)
+        })?;
+        Ok((Box::new(Annot { at_span, ty }), ellipsis))
     }
 
     /// Parse a `->` return type if one is next.

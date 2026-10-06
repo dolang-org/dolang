@@ -28,6 +28,8 @@ Full expressions support:
 - Field access: `obj.field`
 - Tuple literals: `(1, 2)`, `(x,)`, `()`
 - Record literals: `(name: "Alice", age: 30)`
+- Casts: `(value @ Type)`, `(value !@ Type)` (see
+  [Casts](types.md#casts))
 
 Parentheses around a single item with no trailing comma only group it. With a
 comma, several items, or none, they make a tuple, or a record if any item has a
@@ -60,6 +62,9 @@ From lowest to highest:
 11. `*`, `/`, `//`, `%`
 12. Unary `-`, `!`, `~`
 13. Call, index, field access
+
+A cast, `@` or `!@` followed by a type, comes last in its parentheses and
+applies to everything before it.
 
 ### Ternary-Style Expressions
 

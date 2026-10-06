@@ -1365,6 +1365,10 @@ impl Index<'_> {
         match expr {
             Expr::Ident(ident) => self.reference(scope, ident),
             Expr::Group { expr, .. } | Expr::Unary { expr, .. } => self.expr(scope, expr),
+            Expr::Cast { expr, annot, .. } => {
+                self.expr(scope, expr);
+                self.ty(scope, &mut annot.ty);
+            }
             Expr::Binary { exprs, .. } | Expr::Index { exprs, .. } => {
                 for expr in exprs.iter_mut() {
                     self.expr(scope, expr);

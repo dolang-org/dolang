@@ -1,6 +1,7 @@
 # A call types the `do` blocks it's given: each parameter written without an
 # annotation takes what the callee passes it, and the block's result joins into
-# the call's. Elsewhere a block's parameters are dynamic.
+# the call's. A block a type is expected of, as by an annotation or a cast, is
+# typed the same way. Elsewhere a block's parameters are dynamic.
 
 pub def map[T, U] xs @ Array[T] f @ ((T) -> U) -> Array[U]
   ...
@@ -43,6 +44,12 @@ pub def bound()
   let r = f 2
   let _ = r
   #       ^: flow std.Int
+
+pub def annotated()
+  let f @ ((Int) -> Int) = do |y| y
+  #                            ^: flow std.Int
+  let _ = f
+  #       ^: flow (std.Int, <m.annotated.#0, >m.annotated.#1) -> std.Int
 
 # A block's result is known once the block is analyzed, however the blocks that
 # give it depend on each other

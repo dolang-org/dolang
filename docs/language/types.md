@@ -43,9 +43,9 @@ checker does not infer its public signature from its body. Annotate the
 signature to check callers and returned values. An unannotated instance-method
 receiver takes the enclosing class's type, including its binders.
 
-A `do` block's result is inferred from its body. When passed as an argument, its
-unannotated parameters can take their types from the signature of the function
-it is passed to.
+A `do` block's result is inferred from its body. Its unannotated parameters can
+take their types from the signature of the function it is passed to, or from a
+function type expected of it by an annotation or a [cast](#casts).
 
 Unknown type information is distinct from [`Value`](std.Value). `Value` admits
 every runtime value, but few operations are available on it. Unknown types
@@ -186,6 +186,36 @@ A `do` block's return type follows its parameters:
 let double = do |x @ Int| -> Int (x * 2)
 let halve = (do |x @ Int| -> Int x // 2)
 ```
+
+## Casts
+
+`(value @ Type)` checks `value` against `Type` as an annotated binding would,
+and has the type `Type`. It gives a type where there is no binding to annotate:
+a collection literal or `do` block, or an argument to a generic function.
+
+```
+let names = ([] @ Array[Str])
+let label = (do |item| item.name @ ((Item) -> Str))
+let release = (pick current (:STABLE: @ Release))
+```
+
+`(value !@ Type)` has the type `Type` without checking `value`. Use it for what
+the checker can't show, such as a property that may be `nil` but isn't in
+context:
+
+```
+let dir = (path.parent !@ Path)
+```
+
+The checker warns about a `!@` cast whose value it can show fits the type, since
+`@` would do. That includes a value whose type is unknown.
+
+Neither cast changes the value at runtime.
+
+A cast takes the whole contents of its parentheses, so `(a + b @ Int)` casts
+the sum. The type is compact, as in an annotation, so parenthesize a union:
+`(value @ (Int | nil))`. A cast that is a call's argument needs parentheses of
+its own: `f((value @ Int))`.
 
 ## Binders
 

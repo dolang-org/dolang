@@ -67,6 +67,14 @@ pub(crate) enum Problem {
         annotation: String,
         result: bool,
     },
+    /// A value that doesn't fit the type it's cast to
+    Cast {
+        span: Span,
+        found: String,
+        ty: String,
+    },
+    /// An unchecked cast whose value can be shown to fit its type
+    Assertion { span: Span, ty: String },
     /// A default that neither fits its variable's annotation nor is a sentinel
     Default {
         span: Span,
@@ -133,6 +141,8 @@ impl Report for Problem {
             | Problem::Misfit { span, .. }
             | Problem::Impossible { span, .. }
             | Problem::Annotation { span, .. }
+            | Problem::Cast { span, .. }
+            | Problem::Assertion { span, .. }
             | Problem::Default { span, .. }
             | Problem::MissingMember { span, .. }
             | Problem::MemberUse { span, .. }
@@ -142,7 +152,7 @@ impl Report for Problem {
 
     fn severity(&self) -> Severity {
         match self {
-            Self::FmtGap { .. } => Severity::Warning,
+            Self::FmtGap { .. } | Self::Assertion { .. } => Severity::Warning,
             _ => Severity::Error,
         }
     }
@@ -231,6 +241,12 @@ impl Report for Problem {
                 w,
                 "`{found}` does not fit the declared result `{annotation}`"
             ),
+            Problem::Cast { found, ty, .. } => {
+                write!(w, "`{found}` does not fit the cast's type `{ty}`")
+            }
+            Problem::Assertion { ty, .. } => {
+                write!(w, "this value fits `{ty}`, so `@` suffices")
+            }
             Problem::Default {
                 found, annotation, ..
             } => write!(

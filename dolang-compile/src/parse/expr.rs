@@ -183,6 +183,38 @@ impl Parser<'_> {
         }
     }
 
+    /// Whether a cast's `@` (checked) or `!@` (unchecked) is next
+    fn peek_cast(&mut self) -> Result<Option<bool>> {
+        Ok(match self.peek()? {
+            Some(token!(TokenInfo::At)) => Some(true),
+            Some(token!(TokenInfo::BangAt)) => Some(false),
+            _ => None,
+        })
+    }
+
+    /// Parse the rest of a cast, from its `@` or `!@` after a group's expression
+    /// through the closing `)`.
+    fn parse_cast(
+        &mut self,
+        scope: &mut Scope,
+        mut args: Vec<Arg>,
+        left: Span,
+        checked: bool,
+    ) -> Result<Expr> {
+        let Some(Arg::Pos(Single { expr, .. })) = args.pop() else {
+            unreachable!("a group's lone item")
+        };
+        let at_span = self.advance();
+        let (annot, _) = self.parse_annot_type(scope, at_span, false)?;
+        let right = self.expect_matching(scope, ExpectKind::RightParen, left);
+        Ok(Expr::Cast {
+            expr: Box::new(expr),
+            annot,
+            checked,
+            paren_span: left | right,
+        })
+    }
+
     /// Interpret parenthesized items as an expression (see [`Self::paren_kind`]).
     fn paren_expr(mut args: Vec<Arg>, paren_span: Span) -> Expr {
         match Self::paren_kind(&args) {
@@ -231,6 +263,11 @@ impl Parser<'_> {
             }
             Some(token!(LeftParen, left)) => self.with_mode(lex::Mode::FullExpr, |this| {
                 let args = this.parse_arg_pack(scope)?;
+                if Self::paren_kind(&args) == ParenKind::Group
+                    && let Some(checked) = this.peek_cast()?
+                {
+                    return this.parse_cast(scope, args, left, checked);
+                }
                 let right = this.expect_matching(scope, ExpectKind::RightParen, left);
                 Ok(Self::paren_expr(args, left | right))
             }),
@@ -862,6 +899,15 @@ impl Parser<'_> {
                             let callee_span = lhs.span();
                             let (args, paren_span) = self.with_mode(Mode::FullExpr, |this| {
                                 let args = this.parse_arg_pack(scope)?;
+                                if this.peek_cast()?.is_some() {
+                                    let token = this.peek()?;
+                                    return Err(this.syntax_error(
+                                        scope,
+                                        token,
+                                        "a cast in a call's arguments needs its own \
+                                         parentheses, as in `f((x @ T))`",
+                                    ));
+                                }
                                 let right =
                                     this.expect_matching(scope, ExpectKind::RightParen, left);
                                 Ok((args, left | right))

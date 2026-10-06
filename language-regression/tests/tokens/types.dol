@@ -15,6 +15,20 @@ let f @((Str, ?port: Int, ...Str) -> Conn) = nil
 #                                    ^~~~: type_token, node=none
 #                                        ^: delim
 
+let c = (1 !@ (Int | Str))
+#       ^: delim
+#          ^~: annotation
+#             ^: delim
+#              ^~~: type_token
+#                  ^: operator
+#                    ^~~: type_token
+#                       ^: delim
+#                        ^: delim
+
+let d = (1 @Int)
+#          ^: annotation
+#           ^~~: type_token
+
 let t @(:a: | :b:) = nil
 #       ^~~: constant
 #           ^: operator
