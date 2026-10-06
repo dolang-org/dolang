@@ -247,6 +247,28 @@ def run_declares_and_dispatches_commands_in_one_layout()
   assert_eq $result [17, 42]
 
 #[test]
+def run_without_handler_throws()
+  assert_throws $std.ValueError do
+    args.with
+      args: ["api"]
+      exit: false
+      - arg: service
+
+#[test]
+def run_missing_command_throws_when_exit_false()
+  let message = try
+    args.with
+      args: []
+      exit: false
+      program: prog
+      - cmd: deploy
+        do |_p| "deployed"
+    nil
+  catch args.Error: e
+    e.message
+  assert_eq $message "missing command"
+
+#[test]
 def parse_exposes_top_level_handler()
   let p = args.parse
     args: ["hello"]

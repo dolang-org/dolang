@@ -69,7 +69,7 @@ pub def show ...cmd
 # Runs a dodo task from `dodo.dol` in the current directory,
 # equivalent to running `dolang -m dodo ...argv`, but correctly
 # handles re-entrancy.
-pub def run *argv @ Str
+pub def run *argv @ Str -> nil
   args.with args: $argv
     help: run tasks
     - flag: list
