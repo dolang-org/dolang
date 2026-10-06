@@ -161,6 +161,14 @@ pub def decoded d @ Data
   #    |
   # LL |   let _ = d["key"]
   #    |           ^^^^^^^^
+  # error: no overload of `(index)` accepts these arguments
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = d["key"]
+  #    |           ^^^^^^^^
+  #    |
+  #    = note: `[K] (std.Array[json.Data], K) -> IndexItem[{*(std.Int): json.Data}, K]`: this call selects by `"key"`, which isn't one of the schema's keys
+  #    = note: `(std.Array[json.Data], std.Range[std.Int]) -> std.Array[json.Data]`: expected `std.Range[std.Int]`, found `"key"`
   if (type(d, Dict))
     let v = d["key"]
     let _ = v

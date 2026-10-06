@@ -1,6 +1,7 @@
 //! Judgments that need one of their alternatives to hold: a union on the right
 //! whose terms aren't all closed, where a member must be chosen to infer through,
-//! or a callable on the left with several signatures, one of which must fit.
+//! or a callable or overloaded function on the left with several signatures, one
+//! of which must fit.
 //!
 //! Alternatives are judged by trials, each on a fork of the solver: a trial adds
 //! the alternative's own judgment and solves, so nothing it finds reaches the
@@ -11,9 +12,16 @@
 //! made in. Several possible alternatives leave the judgment ambiguous until what
 //! they relate grows; none contradicts it.
 //!
+//! A judgment may be tried against a selection in place of what it relates to,
+//! as a call's overloads are tried against what its arguments alone say: its
+//! choice is then related to the whole. When every alternative is rejected, the
+//! trials that rejected them are kept, to say why (see [`Solver::rejections`]).
+//!
 //! Trials run when solving is quiescent, before any scope is settled, so a fork
 //! never holds a judgment half processed. They judge one obligation at a time, in
 //! creation order, and solving resumes after each choice.
+
+use std::rc::Rc;
 
 use super::*;
 
@@ -32,25 +40,47 @@ enum Verdict {
     Failed(Issue),
 }
 
+/// A trial that rejected an alternative, in order: the fork it solved, and the
+/// outcome there of the alternative's judgment
+#[derive(Clone)]
+pub(crate) struct Rejection<'db> {
+    /// The alternative's index
+    pub(crate) index: usize,
+    pub(crate) solver: Rc<Solver<'db>>,
+    pub(crate) outcome: Outcome,
+}
+
 /// A judgment that needs one of its alternatives to hold
-#[derive(Clone, Debug)]
-pub(super) struct Alternatives {
+#[derive(Clone)]
+pub(super) struct Alternatives<'db> {
     /// Each alternative's own judgment, `actual <: expected`
     judgments: Vec<(Term, Term)>,
+    /// What trials relate the alternatives to in place of their judgments'
+    /// expected sides, if anything
+    selection: Option<Term>,
     /// What the judgment is when no alternative is possible
     none: Issue,
     /// The generation its trials last ran at
     tried: Option<usize>,
     verdict: Verdict,
+    /// The alternatives left possible, while several are
+    possible: Vec<usize>,
+    /// The trials that rejected every alternative, once they have
+    rejections: Vec<Rejection<'db>>,
 }
 
-impl Solver<'_> {
+impl<'db> Solver<'db> {
     /// Have trials judge `twin` in place of `term`, where `term` is the actual side
     /// of a judgment with alternatives. A `do` block's type whose result is known
     /// has a twin leaving the result to a variable, so that what the block gives
     /// doesn't choose: the choice is then checked with what it gives.
     pub(crate) fn blind(&mut self, term: Term, twin: Term) {
         self.blinded.insert(term, twin);
+    }
+
+    /// What trials judge in place of `term`: its twin, if it has one
+    pub(crate) fn twin(&self, term: Term) -> Term {
+        self.blinded.get(&term).copied().unwrap_or(term)
     }
 
     /// Relate `actual` to the alternative trials chose among `terms`, labeled by
@@ -64,7 +94,7 @@ impl Solver<'_> {
         none: Issue,
     ) -> Result<(), Issue> {
         let judgments = terms.into_iter().map(|term| (actual, term)).collect();
-        self.choose_judgment(obligation, judgments, step, none)
+        self.choose_judgment(obligation, judgments, None, step, none)
     }
 
     /// Relate the alternative trials chose among `terms` to `expected`, labeled
@@ -78,7 +108,37 @@ impl Solver<'_> {
         none: Issue,
     ) -> Result<(), Issue> {
         let judgments = terms.into_iter().map(|term| (term, expected)).collect();
-        self.choose_judgment(obligation, judgments, step, none)
+        self.choose_judgment(obligation, judgments, None, step, none)
+    }
+
+    /// Relate the alternative trials chose among `terms` to `expected`, labeled
+    /// by `step`, where trials relate them to `selection` instead
+    pub(super) fn choose_selected(
+        &self,
+        obligation: ObligationId,
+        terms: Vec<Term>,
+        expected: Term,
+        selection: Term,
+        step: fn(usize) -> Step,
+        none: Issue,
+    ) -> Result<(), Issue> {
+        let judgments = terms.into_iter().map(|term| (term, expected)).collect();
+        self.choose_judgment(obligation, judgments, Some(selection), step, none)
+    }
+
+    /// The trials that rejected each alternative of a judgment none of whose
+    /// alternatives is possible
+    pub(crate) fn rejections(&self, obligation: ObligationId) -> Vec<Rejection<'db>> {
+        (self.alternatives.borrow().get(&obligation))
+            .map_or_else(Vec::new, |record| record.rejections.clone())
+    }
+
+    /// The alternatives left possible of a judgment that's ambiguous
+    pub(crate) fn possible(&self, obligation: ObligationId) -> Vec<usize> {
+        match self.alternatives.borrow().get(&obligation) {
+            Some(record) if record.verdict == Verdict::Ambiguous => record.possible.clone(),
+            _ => Vec::new(),
+        }
     }
 
     /// Derive the alternative judgment trials chose, labeled by `step`
@@ -86,6 +146,7 @@ impl Solver<'_> {
         &self,
         obligation: ObligationId,
         judgments: Vec<(Term, Term)>,
+        selection: Option<Term>,
         step: fn(usize) -> Step,
         none: Issue,
     ) -> Result<(), Issue> {
@@ -93,9 +154,12 @@ impl Solver<'_> {
             let mut records = self.alternatives.borrow_mut();
             let record = records.entry(obligation).or_insert_with(|| Alternatives {
                 judgments,
+                selection,
                 none,
                 tried: None,
                 verdict: Verdict::Untried,
+                possible: Vec::new(),
+                rejections: Vec::new(),
             });
             match record.verdict {
                 Verdict::Chosen(index) => Ok((index, record.judgments[index])),
@@ -127,7 +191,10 @@ impl Solver<'_> {
         let fixed = match self.head(actual) {
             Ok(Head::Structural(view)) => match self.db.ty(view.ty) {
                 _ if view.ty == self.db.top() => true,
-                Type::Literal(_) | Type::Function(_) | Type::Quantified { .. } => true,
+                Type::Literal(_)
+                | Type::Function(_)
+                | Type::Quantified { .. }
+                | Type::Overloaded { .. } => true,
                 _ => return Ok(residual),
             },
             Ok(Head::Nominal(nominal)) => {
@@ -166,8 +233,9 @@ impl Solver<'_> {
         }
         let generation = self.generation.get();
         let mut pending: Vec<ObligationId> = (self.alternatives.borrow().iter())
-            .filter(|(_, record)| {
-                matches!(record.verdict, Verdict::Untried | Verdict::Ambiguous)
+            .filter(|(id, record)| {
+                id.0 >= self.trials_from
+                    && matches!(record.verdict, Verdict::Untried | Verdict::Ambiguous)
                     && record.tried != Some(generation)
             })
             .map(|(&id, _)| id)
@@ -175,14 +243,16 @@ impl Solver<'_> {
         pending.sort_by_key(|id| id.0);
         let mut changed = false;
         for id in pending {
-            let verdict = match self.judge(id) {
-                Ok(verdict) => verdict,
+            let (verdict, possible, rejections) = match self.judge(id) {
+                Ok(judged) => judged,
                 Err(_) if self.exhausted.get() => return changed,
-                Err(residual) => Verdict::Failed(residual.into()),
+                Err(residual) => (Verdict::Failed(residual.into()), Vec::new(), Vec::new()),
             };
             let mut records = self.alternatives.borrow_mut();
             let record = records.get_mut(&id).expect("a judged obligation");
             record.tried = Some(generation);
+            record.possible = possible;
+            record.rejections = rejections;
             if record.verdict != verdict {
                 record.verdict = verdict;
                 changed = true;
@@ -196,42 +266,58 @@ impl Solver<'_> {
     }
 
     /// Try each of a judgment's alternatives. One proven without adding a bound
-    /// holds outright and is chosen even beside other possible ones.
-    fn judge(&self, id: ObligationId) -> Result<Verdict, Residual> {
-        let (judgments, none) = {
+    /// holds outright and is chosen even beside other possible ones. Returns the
+    /// verdict, the alternatives left possible, and the trials that rejected
+    /// every alternative, if they did.
+    fn judge(
+        &self,
+        id: ObligationId,
+    ) -> Result<(Verdict, Vec<usize>, Vec<Rejection<'db>>), Residual> {
+        let (judgments, selection, none) = {
             let records = self.alternatives.borrow();
             let record = &records[&id];
-            (record.judgments.clone(), record.none)
+            (record.judgments.clone(), record.selection, record.none)
         };
         let language = self.obligations[id.0].relation.language;
         let mut possible = Vec::new();
+        let mut rejections = Vec::new();
         for (index, &(actual, expected)) in judgments.iter().enumerate() {
             let resolved = self.resolve(actual)?;
             let actual = self.blinded.get(&resolved).copied().unwrap_or(actual);
-            let (status, free) = self.trial(actual, expected, language)?;
+            // Only the arguments choose an overload, under the least choice of
+            // its own binders, as a call of it alone is solved
+            let owned = selection.is_some();
+            let expected = selection.unwrap_or(expected);
+            let (status, free, fork, outcome) = self.trial(actual, expected, language, owned)?;
             match status {
-                Status::Contradicted => {}
-                Status::Proven if free => return Ok(Verdict::Chosen(index)),
+                Status::Contradicted => rejections.push(Rejection {
+                    index,
+                    solver: Rc::new(fork),
+                    outcome,
+                }),
+                Status::Proven if free => return Ok((Verdict::Chosen(index), vec![], vec![])),
                 _ => possible.push(index),
             }
         }
         Ok(match possible[..] {
-            [index] => Verdict::Chosen(index),
-            [] => Verdict::Failed(none),
-            _ => Verdict::Ambiguous,
+            [index] => (Verdict::Chosen(index), vec![], vec![]),
+            [] => (Verdict::Failed(none), vec![], rejections),
+            _ => (Verdict::Ambiguous, possible, vec![]),
         })
     }
 
     /// Solve `actual <: expected` on a fork of this solver, whose work is charged
-    /// to this one. Returns the judgment's status, and whether the fork's bounds
-    /// and assignments stayed as they were. A fork that exhausts the budget
-    /// exhausts this solver too, since they share it.
-    pub(super) fn trial(
+    /// to this one. Returns the judgment's status, whether the fork's bounds and
+    /// assignments stayed as they were, the fork, and the judgment's outcome
+    /// there. If `owned`, the fork settles the variables it creates. A fork that
+    /// exhausts the budget exhausts this solver too, since they share it.
+    fn trial(
         &self,
         actual: Term,
         expected: Term,
         language: bool,
-    ) -> Result<(Status, bool), Residual> {
+        owned: bool,
+    ) -> Result<(Status, bool, Solver<'db>, Outcome), Residual> {
         self.spend()?;
         trace!(
             self,
@@ -241,6 +327,10 @@ impl Solver<'_> {
         );
         let mut fork = self.clone();
         fork.trial_depth += 1;
+        fork.trials_from = fork.obligations.len();
+        if owned {
+            fork.owned = Some(fork.inference.len());
+        }
         #[cfg(feature = "debug")]
         {
             fork.indent += 1;
@@ -262,8 +352,10 @@ impl Solver<'_> {
             self.exhausted.set(true);
             return Err(Residual::Limit);
         }
-        let status = fork.outcome(constraint).status;
+        let outcome = fork.outcome(constraint);
+        let status = outcome.status;
         trace!(self, "trial: {status:?}");
-        Ok((status, fork.generation.get() == generation))
+        let free = fork.generation.get() == generation;
+        Ok((status, free, fork, outcome))
     }
 }

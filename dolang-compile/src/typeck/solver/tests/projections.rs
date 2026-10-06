@@ -210,6 +210,9 @@ fn a_key_selects_items_positions_by_their_indexes() {
         (true, fixed, ab, Ok(db.bottom())),
         (false, fixed, c, Err(Contradiction::Unadmitted(c))),
         (false, fixed, five, Err(Contradiction::Unadmitted(five))),
+        // An `Int` may be any fixed position, but no keyed item
+        (false, fixed, int, Ok(str)),
+        (true, fixed, int, Ok(str)),
         (false, fixed, sym, Err(Contradiction::Unadmitted(sym))),
         // Positions from the first repeated one on are an `Int` domain
         (false, varying, five, Ok(int)),

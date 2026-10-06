@@ -1447,17 +1447,6 @@ pub class Path
     func @ (BinFile -> R)
   do -> R
 
-  @def open
-    self
-    mode @ Str
-  do -> File
-
-  @def open[R]
-    self
-    mode @ Str
-    func @ (File -> R)
-  do -> R
-
   pub def open self ...options
     ...
 
@@ -1837,17 +1826,6 @@ do -> BinFile
   path @ (Str | Path)
   mode @ OpenBinaryMode
   func @ (BinFile -> R)
-do -> R
-
-@def open
-  path @ (Str | Path)
-  mode @ Str
-do -> File
-
-@def open[R]
-  path @ (Str | Path)
-  mode @ Str
-  func @ (File -> R)
 do -> R
 
 # Opens a file, returning [`StrFile`](fs.StrFile) for text modes and

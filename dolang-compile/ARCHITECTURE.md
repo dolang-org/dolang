@@ -240,7 +240,9 @@ projection is evaluated once its schema and key are closed, by exposing or
 reifying it (`solver/item.rs`). The key selects items of the schema's keyed
 view: each member of the key goes to the literal item it is, or else to the
 literal items inside it and the domains that own it, as an actual keyed item
-goes to an expected schema's domains. `IndexItem` joins the selected values.
+goes to an expected schema's domains. `Int` selects every fixed position too,
+since an index out of range is a runtime error, as an array's is; a literal
+index past them is unadmitted. `IndexItem` joins the selected values.
 `AssignItem` meets them without intersection types: the lower of two ordered
 values, the bottom type for two literals or classes that can't share a value,
 and otherwise `Unknown`, which leaves the write unchecked. A key member the
@@ -453,12 +455,32 @@ solving resumes after a choice. An ambiguous judgment is tried again once
 bounds or assignments have changed since, as a caller's defaults change them.
 Once a judgment has had a member to infer through it stays with trials, even
 after its terms are solved. Forks charge their work to the caller's budget, and
-exhausting it is residual. A fork judges its own alternatives, nested to a
-fixed depth beyond which they stay untried.
+exhausting it is residual. A fork judges the alternatives of the judgments it
+creates, nested to a fixed depth beyond which they stay untried, but not those
+it was forked with, which are its parent's to judge.
 
-The same trials choose among alternatives on the left: an overloaded callable's
-signatures below one function type, where the chosen signature is derived below
-it. None fitting is the caller's residual rather than a contradiction.
+The same trials choose among alternatives on the left. A callable class's
+signatures below one function type derive the chosen one below it; none
+fitting is the caller's residual rather than a contradiction, since a subclass
+may fit.
+
+An overloaded function is `Type::Overloaded`: its `@def` signatures and its
+implementation's. `head()` exposes an overloaded def as it, and flow builds it
+from a method's signatures. On the left of a function type, trials choose one
+overload, relating each to a selection in place of the function type: the
+twin a call registers for its own (`Solver::blind`), whose `do` blocks are
+their twins and whose result is `Value`, or else the function type with its
+result `Value`. So only what's passed chooses, and what's expected of the
+result is related to the chosen overload. A trial settles the variables its
+fork creates, the overload's instantiated binders, as a closed solver settles
+its own, so an overload is judged under the least choice of them, as a call of
+it alone would be: `a[1..3]` rejects `[K] key@K -> IndexItem[S, K]`, since `K`
+is at least `Range`. None fitting is `Contradiction::NoOverload`, and the
+judgment keeps the trials that rejected each overload, with their forks
+(`Solver::rejections`); several possible are ambiguous, with the overloads left
+possible kept (`Solver::possible`). Anywhere else an overloaded function is its
+implementation, and dynamic without one; what's below it is below each of its
+signatures.
 
 A `do` block's result doesn't choose. A rule gives a block whose result is known
 a twin leaving its result to a variable (`Solver::blind`), and trials judge the
@@ -884,8 +906,8 @@ The rules are:
   untyped. Calling a member's value, such as a field's or a getter's result,
   dispatches the same way (`Flow::call_target`). A union calls each
   alternative and joins their results. Its arguments are evaluated once, and
-  each alternative selects its own overload and solves its call separately,
-  preserving its receiver's argument indexes in diagnostics. A held argument
+  each alternative solves its call separately, preserving its receiver's
+  argument indexes in diagnostics. A held argument
   takes an expectation only when all alternatives agree on it. What its
   arguments are expected to be comes from the callee's parameters. A parameter
   that mentions the callee's binders gives an expectation only once the call
@@ -900,17 +922,19 @@ The rules are:
   preliminary type with its interpolated values and distinct hole names.
   Pre-solving uses that shape, then its hole types take the solved expectation
   without evaluating its parts again.
-- A call through an overloaded function, a method or a def, chooses among its
-  `@def` overloads, a stopgap until union calls are solved (#742). Its
-  arguments are evaluated once, each one that takes an expectation held back,
-  and each overload is pre-solved without the expected result, then defaulted
-  as the call's own solve would be, so a key still to be solved can't hide
-  one the overload can't select by. A `do` block's result is a fresh variable
-  there even once it's known, so a block never rejects an overload. The one
-  overload not contradicted, if exactly one is, is the callee; otherwise the
-  implementation is, or `Unknown` without one. Only the implementation's own
-  check reports a call no overload takes (#821). An overloaded def's value is
-  `Type::Decl` of it, which the solver relates as its implementation's type.
+- A call through an overloaded function, a def, a method, `(init)` or a
+  class-level `(call)`, calls its overloads as a whole (`Type::Overloaded`),
+  which the solver chooses among (see "Alternatives and trials"). Every
+  argument that takes an expectation is held back, so the pre-solve that
+  gives held arguments their expectations chooses too. An overloaded def's
+  value is `Type::Decl` of it, so it's chosen among wherever it's passed as a
+  function. A call no overload takes is reported with a note for each
+  overload, giving what its trial's contradictions say of a call of it alone.
+  A call several overloads take is reported naming them, unless what it
+  passes is partly dynamic once defaulted, or isn't solved: then several may
+  fit only for lack of what would tell them apart, and the call is dynamic
+  without a diagnostic or an undecided check. Either way the call gives
+  `Unknown`.
 - A comprehension's items are passed as often as its tree says. The items of an
   outermost `for`, with everything nested in it, join into one repeated item of
   each kind: `*T` for positional items, `*k: V` for each literal key, and

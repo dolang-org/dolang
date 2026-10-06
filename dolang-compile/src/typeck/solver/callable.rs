@@ -29,6 +29,8 @@ pub(crate) struct Signature {
     pub(crate) overloads: Vec<TypeId>,
     /// Its implementation's signature, if it has one
     pub(crate) implementation: Option<TypeId>,
+    /// The method they're the signatures of, if any
+    pub(crate) function: Option<DeclId>,
 }
 
 impl Signature {
@@ -36,13 +38,27 @@ impl Signature {
     pub(crate) fn single(&self) -> Option<TypeId> {
         self.overloads.is_empty().then_some(self.implementation)?
     }
+
+    /// What it's called as: its one signature, or its overloads as a whole.
+    /// `None` if it has neither.
+    pub(crate) fn callee(&self, db: &Database) -> Option<TypeId> {
+        if self.overloads.is_empty() {
+            return self.implementation;
+        }
+        Some(db.intern(Type::Overloaded {
+            overloads: self.overloads.iter().copied().collect(),
+            implementation: self.implementation,
+            function: self.function,
+        }))
+    }
 }
 
 /// How a class object is called (see [`Solver::constructor`])
 #[derive(Clone, Debug)]
 pub(crate) enum Constructor {
-    /// Its class-level `(call)`, which is passed the class object first. `None`
-    /// if it's overloaded.
+    /// Its class-level `(call)`, which is passed the class object first, as
+    /// [`Signature::callee`] says it's called. `None` if a signature doesn't
+    /// reify.
     Call(Option<TypeId>),
     /// Instantiation, running `(init)`: functions from `(init)`'s arguments to
     /// the instance, quantified over the class's binders followed by
@@ -106,13 +122,10 @@ impl Solver<'_> {
         match solver.member(solver.closed(object), key("call")) {
             Ok(Lookup::Found(found)) if found.scope == Scope::Class => {
                 let signature = match &found.kind {
-                    FoundKind::Method(Signatures {
-                        overloads,
-                        implementation: Some(signature),
-                    }) if overloads.is_empty() => solver.reify(*signature).ok(),
+                    FoundKind::Method(signatures) => solver.reified(signatures),
                     _ => None,
                 };
-                return Constructor::Call(signature);
+                return Constructor::Call(signature.and_then(|signature| signature.callee(db)));
             }
             Ok(Lookup::Found(_) | Lookup::Missing) => {}
             Ok(Lookup::Dynamic | Lookup::Fallback { .. }) | Err(_) => return Constructor::Dynamic,
@@ -135,6 +148,7 @@ impl Solver<'_> {
                 return Constructor::Init(abstracted(constructor).map(|constructor| Signature {
                     overloads: Vec::new(),
                     implementation: Some(constructor),
+                    function: None,
                 }));
             }
             Ok(Lookup::Dynamic | Lookup::Fallback { .. }) | Err(_) => {
@@ -165,6 +179,7 @@ impl Solver<'_> {
                 None => function,
             })
         };
+        let function = signatures.function;
         let overloads: Option<Vec<TypeId>> =
             signatures.overloads.into_iter().map(constructor).collect();
         let implementation = match signatures.implementation {
@@ -177,8 +192,26 @@ impl Solver<'_> {
                 .map(|(overloads, implementation)| Signature {
                     overloads,
                     implementation,
+                    function,
                 }),
         )
+    }
+
+    /// Signatures reified, or `None` if any doesn't reify
+    pub(crate) fn reified(&self, signatures: &Signatures) -> Option<Signature> {
+        let reify = |&term| self.reify(term).ok();
+        let overloads = (signatures.overloads.iter())
+            .map(reify)
+            .collect::<Option<_>>()?;
+        let implementation = match &signatures.implementation {
+            Some(term) => Some(reify(term)?),
+            None => None,
+        };
+        Some(Signature {
+            overloads,
+            implementation,
+            function: signatures.function,
+        })
     }
 
     /// Whether a type is one a callable value relates to through its signatures:
@@ -261,6 +294,7 @@ impl Solver<'_> {
             return Ok(Some(Signatures {
                 overloads: signatures.overloads.into_iter().map(applied).collect(),
                 implementation: signatures.implementation.map(applied),
+                function: signatures.function,
             }));
         }
         let func = (self.db.intrinsic(Intrinsic::Func))
@@ -316,6 +350,7 @@ impl Solver<'_> {
         Ok(Some(Signatures {
             overloads,
             implementation,
+            function: signatures.function,
         }))
     }
 }

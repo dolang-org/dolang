@@ -158,6 +158,9 @@ pub(crate) enum Contradiction {
     /// A mapping's packs have items that don't correspond, by count,
     /// multiplicity or form
     MappedPacks,
+    /// No overload of an overloaded function fits the function type it's
+    /// related to (see [`Solver::rejections`])
+    NoOverload,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -214,6 +217,11 @@ pub(crate) enum Step {
     /// below a function type. A contradiction under it leaves the judgment
     /// unresolved instead, since a subclass may fit (see [`callable`]).
     Callable(usize),
+    /// An overloaded function's signature by its index among its overloads,
+    /// chosen by trials
+    Overload(usize),
+    /// An overloaded function related as its implementation
+    Implementation,
 }
 
 impl Step {
@@ -436,7 +444,7 @@ pub(crate) struct Solver<'db> {
     /// them as it settles a skolem scope's
     closed: bool,
     /// The judgments that need one of their alternatives to hold, by obligation
-    alternatives: RefCell<HashMap<ObligationId, Alternatives>>,
+    alternatives: RefCell<HashMap<ObligationId, Alternatives<'db>>>,
     /// How each class's object is called, once found
     constructors: RefCell<HashMap<DeclId, Constructor>>,
     /// Each member of a generic class's object, once found
@@ -447,6 +455,13 @@ pub(crate) struct Solver<'db> {
     /// How many trials this solver is nested in. A solver nested too deeply
     /// leaves its own alternatives untried.
     trial_depth: usize,
+    /// The first obligation whose alternatives a trial's fork judges: the
+    /// judgments it was forked with are its parent's to judge
+    trials_from: usize,
+    /// The first variable a trial's fork owns, if it settles the variables it
+    /// creates as a closed solver settles the root scope's: nothing outside the
+    /// trial sees them
+    owned: Option<usize>,
     /// What trials judge in place of a term, as a `do` block whose result
     /// mustn't choose an alternative (see [`Solver::blind`])
     blinded: HashMap<Term, Term>,
@@ -513,6 +528,8 @@ impl<'db> Solver<'db> {
             generic_members: RefCell::new(HashMap::new()),
             generation: Cell::new(0),
             trial_depth: 0,
+            owned: None,
+            trials_from: 0,
             blinded: HashMap::new(),
             #[cfg(feature = "debug")]
             names: None,
@@ -1258,6 +1275,16 @@ impl<'db> Solver<'db> {
                 }
                 Ok(())
             }
+            Type::Overloaded {
+                ref overloads,
+                implementation,
+                ..
+            } => {
+                for &ty in overloads.iter().chain(implementation.iter()) {
+                    walk(ty, variance, 0)?;
+                }
+                Ok(())
+            }
             Type::Union(ref members) => {
                 for member in members.iter() {
                     match *member {
@@ -1961,6 +1988,25 @@ impl<'db> Solver<'db> {
                             environment: EnvironmentId(0),
                         }));
                     }
+                    // An overloaded function is its overloads, which its
+                    // implementation doesn't describe
+                    if decl.source.kind == DeclKind::Function && !self.db.overloads(id).is_empty() {
+                        let signature = |id: DeclId| self.db.declaration(id).ty;
+                        let overloaded = self.db.intern(Type::Overloaded {
+                            overloads: self
+                                .db
+                                .overloads(id)
+                                .iter()
+                                .map(|&id| signature(id))
+                                .collect(),
+                            implementation: self.db.implementation(id).map(signature),
+                            function: Some(id),
+                        });
+                        return Ok(Head::Structural(TypeView {
+                            ty: overloaded,
+                            environment: EnvironmentId(0),
+                        }));
+                    }
                     // Declarations are closed, so their environment is irrelevant.
                     assert!(
                         exposed.insert(self.closed(view.ty)),
@@ -2236,7 +2282,9 @@ impl<'db> Solver<'db> {
             .map(InferVarId)
             .filter(|&id| {
                 let inference = &self.inference[id.0];
-                (self.closed || inference.scope != ScopeId(0))
+                (self.closed
+                    || inference.scope != ScopeId(0)
+                    || self.owned.is_some_and(|owned| id.0 >= owned))
                     && inference.assignment.get().is_none()
             })
             .collect();

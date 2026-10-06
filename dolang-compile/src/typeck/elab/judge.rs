@@ -3,7 +3,7 @@
 //! A judgment names what the checker concluded at a span in terms a fixture can
 //! write down: qualified names rather than IDs.
 
-use std::{collections::HashMap, fmt::Write};
+use std::{collections::HashMap, convert::Infallible, fmt::Write};
 
 use super::{
     Ambient, BinderRef, DeclNode, Designated, Head, KindOf, ModuleRef, ParamTy, Referent, RestSlot,
@@ -541,6 +541,52 @@ impl Tables<'_> {
         self.render(db, ty, &[])
     }
 
+    /// A signature of the function `decl`, `ty`, as a diagnostic shows it: its
+    /// own written binders named and listed before it, as in `[K] (K) -> K`, and
+    /// the ambient channels its declaration leaves implicit left out. Binders
+    /// `ty` holds before its own, as a class's in a constructor, are shown as
+    /// references.
+    pub(crate) fn render_signature(&self, db: &Database, decl: DeclId, ty: TypeId) -> String {
+        let Type::Quantified { binders, body } = db.ty(ty) else {
+            return self.render_type(db, ty);
+        };
+        let Type::Function(function) = db.ty(*body) else {
+            return self.render_type(db, ty);
+        };
+        let declaration = db.declaration(decl);
+        let own: Vec<(BinderOrigin, String)> = (declaration.binders.iter())
+            .zip(self.names(db, declaration))
+            .filter(|(binder, _)| binder.origin != BinderOrigin::Lifted)
+            .map(|(binder, name)| (binder.origin, name))
+            .collect();
+        let Some(offset) = binders.len().checked_sub(own.len()) else {
+            return self.render_type(db, ty);
+        };
+        let names: Vec<String> = (0..offset)
+            .map(|slot| format!("#0.{slot}"))
+            .chain(own.iter().map(|(_, name)| name.clone()))
+            .collect();
+        let implicit = |slot: u16| {
+            let slot = usize::from(slot);
+            slot >= offset && own[slot - offset].0 == BinderOrigin::Implicit
+        };
+        let shown = without_channels(
+            db,
+            db.intern(Type::Function(function.clone())),
+            &implicit,
+            0,
+        );
+        let written: Vec<&str> = (own.iter())
+            .filter(|(origin, _)| *origin == BinderOrigin::Written)
+            .map(|(_, name)| name.as_str())
+            .collect();
+        let rendered = self.render(db, shown, &names);
+        match written[..] {
+            [] => rendered,
+            _ => format!("[{}] {rendered}", written.join(", ")),
+        }
+    }
+
     /// A type as interned, with the binders of the group it is interpreted in named
     /// by `names`
     fn render(&self, db: &Database, ty: TypeId, names: &[String]) -> String {
@@ -649,6 +695,17 @@ impl Tables<'_> {
                     }
                 }
                 out.push(']');
+            }
+            // Its signatures, any of which it's called as
+            Type::Overloaded { overloads, .. } => {
+                for (index, &overload) in overloads.iter().enumerate() {
+                    if index != 0 {
+                        out.push_str(" & ");
+                    }
+                    out.push('(');
+                    self.render_into(db, overload, naming, out);
+                    out.push(')');
+                }
             }
             Type::Union(members) => {
                 if members.is_empty() {
@@ -818,6 +875,32 @@ struct Naming<'a> {
     depth: u16,
     /// The innermost mapping whose pattern is being rendered
     pattern: Option<&'a Pattern<'a>>,
+}
+
+/// `ty` with each function's channel left out where it's an implicit binder of
+/// the group `depth` groups out, as `implicit` says of its slot
+fn without_channels(
+    db: &Database,
+    ty: TypeId,
+    implicit: &dyn Fn(u16) -> bool,
+    depth: u32,
+) -> TypeId {
+    let mapped = db.ty(ty).map_children(|child, groups| {
+        Ok::<_, Infallible>(without_channels(db, child, implicit, depth + groups))
+    });
+    let Ok(mut node) = mapped;
+    if let Type::Function(function) = &mut node {
+        for channel in [&mut function.input, &mut function.output] {
+            if let Some(ty) = *channel
+                && let Type::Bound { reference, .. } = *db.ty(ty)
+                && u32::from(reference.depth) == depth
+                && implicit(reference.slot)
+            {
+                *channel = None;
+            }
+        }
+    }
+    db.intern(node)
 }
 
 /// A mapping whose pattern is being rendered

@@ -191,13 +191,14 @@ pub def database conn @ Connection
   # LL |   stored.execute wrong: "bad"
   #    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^
   conn.prepare t"SELECT $([1, 2])"
-# error: expected `std.Fmt[sqlite.SqlValue, {}]`, found `std.Fmt[std.Array[std.Int], {}]`
+# error: no overload of `prepare` accepts these arguments
 #   --> main.dol:LL:LL
 #    |
 # LL |   conn.prepare t"SELECT $([1, 2])"
-#    |                ^^^^^^^^^^^^^^^^^^^
+#    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 #    |
-#    = note: `std.Array[std.Int]` does not fit `sqlite.SqlValue`
+#    = note: `[S] (sqlite.Connection, std.Fmt[sqlite.SqlValue, S]) -> sqlite.Statement[S]`: expected `std.Fmt[sqlite.SqlValue, {}]`, found `std.Fmt[std.Array[std.Int], {}]`
+#    = note: `[S, R] (sqlite.Connection, std.Fmt[sqlite.SqlValue, S], (sqlite.Statement[S]) -> R) -> R`: this call is missing an argument
 
 pub def variance narrow @ Fmt[Int, {x: Int}] wide @ Fmt[Value, {x: Value}] bare @ Fmt
   let _ @ Fmt[Value, {x: Int}] = narrow

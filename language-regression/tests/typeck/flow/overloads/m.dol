@@ -1,6 +1,6 @@
 # A call through an overloaded function takes the one overload its arguments
-# don't contradict. Without exactly one, it takes the implementation's
-# signature, which is dynamic for `Picker`'s and checks std's indexing.
+# don't contradict. None is an error with a note for each overload, and several
+# are too, unless the arguments are partly dynamic: then the call is.
 
 import std:
   - @Fmt
@@ -39,22 +39,33 @@ do
   #   ^: flow std.Array[std.Int]
   let _ = r[i]
   #   ^: flow std.Str
-  # An `Int` doesn't select from fixed positions, so no overload takes it, and
-  # the implementation indexes the tuple as a sequence of its items
+  # An `Int` may be any position, and a literal must be one
   let _ = t[i]
   #   ^: flow std.Int | std.Str
   let _ = t[0]
   #   ^: flow std.Int
+  let _ = t[2]
+  # error: no overload of `(index)` accepts these arguments
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = t[2]
+  #    |           ^^^^
+  #    |
+  #    = note: `[K] (std.Tuple[{std.Int, std.Str}], K) -> IndexItem[{...{std.Int, std.Str}}, K]`: this call selects by `2`, which isn't one of the schema's keys
+  #    = note: `(std.Tuple[{std.Int, std.Str}], std.Range[std.Int]) -> std.Tuple[{*std.Int | std.Str}]`: expected `std.Range[std.Int]`, found `2`
   let _ = b[0]
   #   ^: flow std.Int
   b[0] = 1
-  # Nor does any overload take this, and the implementation reports it
+  # Nor does any overload take this
   b[0] = "x"
-  # error: expected `std.Int`, found `"x"`
+  # error: no overload of `(assign)` accepts these arguments
   #   --> m.dol:LL:LL
   #    |
   # LL |   b[0] = "x"
-  #    |          ^^^
+  #    |   ^^^^^^^^^^
+  #    |
+  #    = note: `[K] (std.BinBuf, K, AssignItem[{*(std.Int): std.Int}, K]) -> Unknown`: expected `std.Int`, found `"x"`
+  #    = note: `(std.BinBuf, std.Range[std.Int], std.Bin) -> Unknown`: expected `std.Bin`, found `"x"`; expected `std.Range[std.Int]`, found `0`
   let _ = f[0]
   #   ^: flow std.FmtSegment[Unknown]
 
@@ -68,7 +79,14 @@ pub def chosen p @ Picker x u @ (Int | Str)
   #   ^: flow Unknown
   let _ = p.pick $u
   #   ^: flow Unknown
-  # What's expected doesn't choose, but is checked against what's chosen
+  # error: no overload of `pick` accepts these arguments
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = p.pick $u
+  #    |           ^^^^^^^^^
+  #    |
+  #    = note: `(m.Picker, std.Int) -> std.Int`: expected `std.Int`, found `std.Int | std.Str`
+  #    = note: `(m.Picker, std.Str) -> std.Str`: expected `std.Str`, found `std.Int | std.Str`
   let _s @ Str = p.pick 1
   # error: `std.Int` does not fit the annotation `std.Str`
   #   --> m.dol:LL:LL
@@ -102,8 +120,17 @@ pub def twice x
 pub def apply f @ (Int -> Int) -> Int
   ...
 
+pub def negate f @ (Bool -> Bool) -> Bool
+  ...
+
+@def vague x @ Int -> Int
+@def vague x @ (Int | Str) -> Str
+pub def vague x
+  x
+
 # An overloaded def's value is the def, which a call through it, however it's
-# reached, chooses an overload of. Anything else relates it as its implementation.
+# reached, chooses an overload of, as does a function type it's passed as.
+# Anything else relates it as its implementation.
 pub def functions()
   let _ = twice 1
   #   ^: flow std.Int
@@ -118,6 +145,82 @@ pub def functions()
   #   ^: flow std.Str
   let _ = apply $twice
   #   ^: flow std.Int
+  negate $twice
+  # error: expected `(std.Bool, <m.functions.#0, >m.functions.#1) -> std.Bool`, found `m.twice`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   negate $twice
+  #    |           ^^^^^
+  twice 1.5
+  # error: no overload of `m.twice` accepts these arguments
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   twice 1.5
+  #    |   ^^^^^^^^^
+  #    |
+  #    = note: `(std.Int) -> std.Int`: expected `std.Int`, found `std.Float`
+  #    = note: `(std.Str) -> std.Str`: expected `std.Str`, found `std.Float`
+
+  # Overloads that both take a call make it ambiguous
+  let _ = vague 1
+  #   ^: flow Unknown
+# error: several overloads of `m.vague` accept these arguments
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ = vague 1
+#    |           ^^^^^^^
+#    |
+#    = note: `(std.Int) -> std.Int` accepts them
+#    = note: `(std.Int | std.Str) -> std.Str` accepts them
+
+# A call of a union of overloaded functions is a call of each
+pub def alternatives c @ Bool
+  let f = if c
+    twice
+  else
+    double
+  let _ = f 1
+  #   ^: flow std.Int
+
+# A class's overloaded `(init)` and class-level `(call)` are chosen among too
+pub class Shape
+  @def (init) self n @ Int
+  @def (init) self s @ Str
+  def (init) self _x
+    ...
+
+pub class Maker
+  #[class]
+  @def (call) cls n @ Int -> Int
+  #[class]
+  @def (call) cls s @ Str -> Str
+  #[class]
+  pub def (call) _cls x
+    x
+
+pub def constructed()
+  let _ = Shape 1
+  #   ^: flow m.Shape
+  Shape true
+  # error: no overload of `(init)` accepts these arguments
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   Shape true
+  #    |   ^^^^^^^^^^
+  #    |
+  #    = note: `(std.Int) -> m.Shape`: expected `std.Int`, found `true`
+  #    = note: `(std.Str) -> m.Shape`: expected `std.Str`, found `true`
+  let _ = Maker "s"
+  #   ^: flow std.Str
+  Maker true
+# error: no overload of `(call)` accepts these arguments
+#   --> m.dol:LL:LL
+#    |
+# LL |   Maker true
+#    |   ^^^^^^^^^^
+#    |
+#    = note: `(Unknown, std.Int) -> std.Int`: expected `std.Int`, found `true`
+#    = note: `(Unknown, std.Str) -> std.Str`: expected `std.Str`, found `true`
 
 # A protocol's overloads are chosen among as a class's are
 pub def sequenced s @ Seq[Int]

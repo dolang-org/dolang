@@ -2931,7 +2931,7 @@ def unpack_payload root archive
             # layout is a release-artifact detail, and `bootstrap.cmd` copies
             # one directory.
             let target = (staging / member.path.name)
-            target.open w do |file|
+            target.open wb do |file|
               for chunk = member
                 file.write $chunk
         staging.rename $destination
