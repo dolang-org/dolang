@@ -232,6 +232,8 @@ impl<'u, 's> Builder<'u, 's> {
                 tables.units[index].source?;
                 let ir = lower::lower(&tables, &db, UnitId::from_index(index));
                 debug_assert_eq!(ir.validate(), Ok(()), "lowering builds a valid graph");
+                #[cfg(debug_assertions)]
+                ir.check_stack_depths();
                 Some(ir)
             })
             .collect::<Vec<_>>();
@@ -283,7 +285,10 @@ pub struct Check<'u> {
     /// Well-formedness checks the checker could not decide
     unresolved: Vec<elab::Unresolved>,
     /// Each unit's typing CFG, by [`UnitId`], for a unit checked from source
-    #[cfg_attr(not(test), allow(dead_code, reason = "dumped by tests"))]
+    #[cfg_attr(
+        not(any(test, feature = "debug")),
+        allow(dead_code, reason = "read by tests and the debug dump")
+    )]
     cfgs: Vec<Option<cfg::Ir>>,
     /// What flow analysis concluded about each unit, by [`UnitId`], for a unit checked
     /// from source

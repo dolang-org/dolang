@@ -55,6 +55,7 @@
 //! [`ExprKind::Never`] to the result before continuing to the exit, so the exit
 //! joins the returned value with the guard point's state.
 
+#[cfg(feature = "debug")]
 mod dump;
 mod expr;
 #[cfg(test)]

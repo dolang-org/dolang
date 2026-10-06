@@ -1,6 +1,8 @@
 //! Structural validation of a finished graph. Stack depths are checked by flow
 //! analysis, which knows each block's tag stack.
 
+use std::collections::HashMap;
+
 use super::{
     Against, BlockId, Expr, ExprKind, FuncId, FuncKind, Ir, Pattern, Step, Tag, Target, Terminal,
     VarId,
@@ -250,5 +252,154 @@ impl Check<'_> {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(any(test, debug_assertions))]
+fn operands(expr: &Expr) -> usize {
+    let mut count = 0;
+    expr.walk(&mut |expr| count += matches!(expr.kind, ExprKind::Operand) as usize);
+    count
+}
+
+fn pattern_operands(pattern: &Pattern) -> usize {
+    let mut count = 0;
+    pattern.walk(&mut |expr| count += operands(expr));
+    count
+}
+
+#[cfg(any(test, debug_assertions))]
+impl Ir {
+    /// Check that each block is entered at one stack depth, that nothing pops more than
+    /// is there, and that a statement boundary a jump or `finally` leaves from has an
+    /// empty stack. A handler is entered with the exception alone on the stack.
+    pub(crate) fn check_stack_depths(&self) {
+        let ir = self;
+        struct Walk {
+            depths: HashMap<BlockId, usize>,
+            work: Vec<BlockId>,
+        }
+        impl Walk {
+            fn enter(&mut self, block: BlockId, depth: usize) {
+                match self.depths.insert(block, depth) {
+                    Some(old) => assert_eq!(old, depth, "b{} entered at two depths", block.index()),
+                    None => self.work.push(block),
+                }
+            }
+        }
+        let mut walk = Walk {
+            depths: HashMap::new(),
+            work: Vec::new(),
+        };
+        for (_, func) in ir.funcs() {
+            walk.enter(func.entry, 0);
+        }
+        while let Some(id) = walk.work.pop() {
+            let block = ir.block(id);
+            let mut depth = walk.depths[&id];
+            let mut enter = |block, depth| walk.enter(block, depth);
+            let pop = |depth: &mut usize, count: usize| {
+                *depth = depth
+                    .checked_sub(count)
+                    .unwrap_or_else(|| panic!("b{} pops an empty stack", id.index()));
+            };
+            if let Some(handler) = block.handler {
+                enter(handler, 1);
+            }
+            for step in &block.steps {
+                match step {
+                    Step::Let { pattern, value } => {
+                        pop(&mut depth, operands(value) + pattern_operands(pattern))
+                    }
+                    Step::Assign { target, value } => {
+                        let target = match target {
+                            Target::Var(_) => 0,
+                            Target::Field { object, .. } => operands(object),
+                            Target::Index { object, index, .. } => {
+                                operands(object) + operands(index)
+                            }
+                        };
+                        pop(&mut depth, target + operands(value));
+                    }
+                    Step::Default { value, .. } | Step::Eval(value) => {
+                        pop(&mut depth, operands(value))
+                    }
+                    Step::Push(value) => {
+                        pop(&mut depth, operands(value));
+                        depth += 1;
+                    }
+                    Step::Dup => {
+                        assert!(depth > 0, "b{} duplicates an empty stack", id.index());
+                        depth += 1;
+                    }
+                    Step::Pop => pop(&mut depth, 1),
+                    Step::Assume(assume) => match &assume.against {
+                        Against::Class(expr) | Against::Value(expr) => {
+                            assert_eq!(operands(expr), 0)
+                        }
+                        Against::Type(_) | Against::Decl(_) => {}
+                    },
+                }
+            }
+            let empty = |depth: usize| assert_eq!(depth, 0, "b{} leaves with a stack", id.index());
+            match &block.terminal {
+                Terminal::Branch(next) => enter(*next, depth),
+                Terminal::If { cond, then, else_ } => {
+                    pop(&mut depth, operands(cond));
+                    enter(*then, depth);
+                    enter(*else_, depth);
+                }
+                Terminal::Unpack {
+                    pattern,
+                    value,
+                    then,
+                    else_,
+                } => {
+                    pop(&mut depth, operands(value) + pattern_operands(pattern));
+                    enter(*then, depth);
+                    enter(*else_, depth);
+                }
+                Terminal::Catch { clauses, otherwise } => {
+                    for (class, _) in clauses {
+                        pop(&mut depth, operands(class));
+                    }
+                    assert_eq!(depth, 1, "b{} dispatches the exception alone", id.index());
+                    for (_, clause) in clauses {
+                        enter(*clause, depth);
+                    }
+                    enter(*otherwise, depth);
+                }
+                Terminal::Next {
+                    pattern,
+                    body,
+                    exit,
+                    ..
+                } => {
+                    // A comprehension's loop may run above a command's earlier arguments
+                    pop(&mut depth, pattern_operands(pattern));
+                    enter(*body, depth);
+                    enter(*exit, depth);
+                }
+                Terminal::Throw(value) | Terminal::ReturnFrom { value, .. } => {
+                    pop(&mut depth, operands(value))
+                }
+                Terminal::Leave { entry, tag } => {
+                    empty(depth);
+                    enter(*entry, 0);
+                    if let Tag::Goto(next) = tag {
+                        enter(*next, 0);
+                    }
+                }
+                Terminal::Guard { next, targets } => {
+                    empty(depth);
+                    enter(*next, 0);
+                    for target in targets {
+                        enter(*target, 0);
+                    }
+                }
+                Terminal::Return | Terminal::EndFinally => empty(depth),
+                Terminal::Escape | Terminal::Unreachable => {}
+            }
+        }
     }
 }
