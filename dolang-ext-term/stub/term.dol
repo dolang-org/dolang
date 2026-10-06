@@ -300,7 +300,7 @@ pub class SinkConsole: Console
 # Calling a `Style` applies its saved settings. Supplied options override saved
 # colors or enable additional attributes; omitted options retain saved
 # settings, and `:INHERIT:` clears them.
-pub class Style
+pub class Style: Func
   # Creates a reusable style.
   #
   # To style text as well, use [`text`](term.text).

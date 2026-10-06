@@ -424,6 +424,10 @@ impl<'v> Object<'v> for StyleObject {
     type Type = ();
     type TypeAnnex = ();
 
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder.supertype(TypeObject::Func)
+    }
+
     async fn new<'a, 's>(
         _this: dolang::runtime::Type<'v, Self>,
         strand: &'a mut Strand<'v, 's>,

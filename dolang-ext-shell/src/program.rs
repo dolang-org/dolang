@@ -10,7 +10,7 @@ use dolang::runtime::{
     method,
     object::{Rest, TypeBuilder, Unpack, UnpackItem},
     unpack,
-    value::{Nil, Singleton},
+    value::{Nil, Singleton, TypeObject},
     vm::Register,
 };
 use dolang_vfs::path as vfs_path;
@@ -847,37 +847,40 @@ impl<'v> Object<'v> for Program {
     }
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder.method("which", async move |this, strand, _args, out| {
-            let borrow = this.annex();
-            let global = borrow.global;
-            let name = &borrow.name;
-            let (vfs, paths, cwd) = {
-                let local = global.local.get(strand);
-                let env = local.env();
-                (
-                    local.vfs(),
-                    env.get("PATH").as_deref().map(ToOwned::to_owned),
-                    local.cwd().clone(),
-                )
-            };
+        builder.supertype(TypeObject::Func).method(
+            "which",
+            async move |this, strand, _args, out| {
+                let borrow = this.annex();
+                let global = borrow.global;
+                let name = &borrow.name;
+                let (vfs, paths, cwd) = {
+                    let local = global.local.get(strand);
+                    let env = local.env();
+                    (
+                        local.vfs(),
+                        env.get("PATH").as_deref().map(ToOwned::to_owned),
+                        local.cwd().clone(),
+                    )
+                };
 
-            let resolved = vfs
-                .which(
-                    vfs_path::Path::new(name, cwd.kind()),
-                    paths.as_deref(),
-                    Some(cwd.to_path()),
-                )
-                .await
-                .into_sys(strand)?;
+                let resolved = vfs
+                    .which(
+                        vfs_path::Path::new(name, cwd.kind()),
+                        paths.as_deref(),
+                        Some(cwd.to_path()),
+                    )
+                    .await
+                    .into_sys(strand)?;
 
-            if let Some(path) = resolved {
-                let fs = strand.force_state::<FsGlobal<'v>>();
-                create_path(strand, fs, path, out)?;
-            } else {
-                Output::set(strand, out, Nil);
-            }
-            Ok(())
-        })
+                if let Some(path) = resolved {
+                    let fs = strand.force_state::<FsGlobal<'v>>();
+                    create_path(strand, fs, path, out)?;
+                } else {
+                    Output::set(strand, out, Nil);
+                }
+                Ok(())
+            },
+        )
     }
 
     fn debug<'a, 's>(

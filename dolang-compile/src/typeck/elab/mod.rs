@@ -866,6 +866,31 @@ impl Report for Nonconforming {
     }
 }
 
+/// An instance `(call)` of a class that doesn't reach `Func`, so its instances
+/// aren't passed as functions
+struct Uncallable {
+    span: Span,
+    class: String,
+}
+
+impl Report for Uncallable {
+    fn severity(&self) -> Severity {
+        Severity::Warning
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "`{}` has a `(call)` but not `Func` as a supertype, so it isn't passed as a function",
+            self.class
+        )
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
 /// A rest binding's `@...` pattern that names no pack
 struct PatternWithoutPack(Span);
 

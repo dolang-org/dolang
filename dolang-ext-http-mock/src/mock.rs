@@ -7,7 +7,7 @@ use dolang::runtime::{
     object::{DictLike, DictView, DictViewSink, Instance, Mut, Ref, TypeBuilder},
     strand::InterruptMask,
     unpack,
-    value::{Array, Dict, Empty},
+    value::{Array, Dict, Empty, TypeObject},
     vm::Register,
 };
 use dolang_ext_time::{as_datetime, datetime};
@@ -977,6 +977,7 @@ impl<'v> Object<'v> for Server {
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
+            .supertype(TypeObject::Func)
             .method("close", async move |this, strand, args, _out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let (shutdown, thread) = {

@@ -3184,6 +3184,8 @@ pub enum TypeObject {
     Getter,
     /// `std.Setter`
     Setter,
+    /// `std.Func`, the abstract supertype of callables
+    Func,
     /// `std.FmtValue`, a value bound to a format specification
     FmtValue,
     /// `std.FmtParam`, an unbound position in a sequence
@@ -3230,6 +3232,7 @@ impl<'v> Input<'v> for TypeObject {
             TypeObject::Sink => &builtins.output_iter,
             TypeObject::Getter => &builtins.getter,
             TypeObject::Setter => &builtins.setter,
+            TypeObject::Func => &builtins.func,
             TypeObject::FmtValue => crate::stdlib::fmt::fmt_value_singleton(vm),
             TypeObject::FmtParam => crate::stdlib::fmt::fmt_param_singleton(vm),
             TypeObject::Fmt => crate::stdlib::fmt::fmt_singleton(vm),

@@ -2731,13 +2731,7 @@ impl<'db> Solver<'db> {
                     // class's arguments, so the gradual function's class stands for
                     // it without its variables
                     (Type::Function(_) | Type::Quantified { .. }, Type::Literal(_)) => {
-                        let gradual = self.db.intern(Type::Function(Function {
-                            params: self.db.unknown_schema(),
-                            result: self.db.unknown(),
-                            input: None,
-                            output: None,
-                        }));
-                        let backing = (self.db.func_class(gradual))
+                        let backing = (self.db.func_class(self.db.gradual_function()))
                             .ok_or(Residual::MissingIntrinsic(Intrinsic::Func))?;
                         let step = Step::IntrinsicBacking(Intrinsic::Func);
                         self.derive(obligation, self.closed(backing), expected, step);

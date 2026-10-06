@@ -14,6 +14,11 @@ pub class Described: Func[{Int}, Str]
 
 pub class Plain
   pub def (call) _self n @ Int -> Str
+    # warning: `Plain` has a `(call)` but not `Func` as a supertype, so it isn't passed as a function
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def (call) _self n @ Int -> Str
+    #    |            ^^^^
     ...
 
 pub class Picker: Func

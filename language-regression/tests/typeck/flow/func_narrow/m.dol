@@ -1,0 +1,24 @@
+# A test against `Func` keeps each function and each class that reaches `Func`.
+# Any other class becomes the gradual function type rather than being dropped,
+# since a subclass may reach `Func`.
+
+pub class Adder: Func
+  pub def (call) _self n @ Int -> Str
+    ...
+
+pub class Plain
+
+pub def kept f @ ((Int -> Str) | Adder | Type[Plain])
+  if type(f, Func)
+    let _ = f
+    #       ^: flow ((std.Int, <m.kept.#0, >m.kept.#1) -> std.Str) | m.Adder | std.Type[m.Plain]
+
+pub def widened v @ (Plain | Adder)
+  if type(v, Func)
+    let _ = v
+    #       ^: flow ((...Unknown{}) -> Unknown) | m.Adder
+
+pub def negated v @ (Plain | (Int -> Str))
+  if !(type(v, Func))
+    let _ = v
+    #       ^: flow m.Plain

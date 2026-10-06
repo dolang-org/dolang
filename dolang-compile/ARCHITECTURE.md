@@ -456,6 +456,10 @@ after its terms are solved. Forks charge their work to the caller's budget, and
 exhausting it is residual. A fork judges its own alternatives, nested to a
 fixed depth beyond which they stay untried.
 
+The same trials choose among alternatives on the left: an overloaded callable's
+signatures below one function type, where the chosen signature is derived below
+it. None fitting is the caller's residual rather than a contradiction.
+
 A `do` block's result doesn't choose. A rule gives a block whose result is known
 a twin leaving its result to a variable (`Solver::blind`), and trials judge the
 twin in its place, so a result that doesn't fit is reported against the chosen
@@ -657,11 +661,25 @@ interior mutability; current proof premises are replaced between reductions.
 Setup needs exclusive access, while reduction and insertion preserve borrowed
 solver state.
 
-`Intrinsic::Func` associates the runtime nominal function supertype with the
-checker. Structural function types, including quantified function signatures,
-are subtypes of this registered type and its declared supertypes. This rule does
-not desugar function syntax into a nominal application or assign generic
-semantics to `Func`; those remain undecided. A missing registration is residual.
+`Intrinsic::Func` associates the runtime function supertype with the checker.
+Written in a type, `Func[S, R, In: I, Out: O]` is the function type
+`(...S) <I >O -> R`, and bare `Func` is the gradual function; only a supertype
+list keeps it nominal. A function type's class is `Func` applied to its parts
+(`Database::func_class`), so a function reaches `Func`'s supertypes and members.
+A missing registration is residual.
+
+A value that isn't a function is below a function type through its signatures
+(`solver/callable.rs`). An instance's class must reach `Func`: one naming
+`Func` with arguments is called as the function they describe, and one naming
+bare `Func` through its own `(call)`. A class object `Type[C]` is called through
+`C`'s class-level `(call)`, or else through its `(init)` with `C`'s binders
+merged into the constructor's, so a generic class's arguments are inferred. The
+signatures are judged as alternatives on the left (see
+[Alternatives and trials](#alternatives-and-trials)). Classes are open, so
+nothing here is refuted: a subclass may reach `Func`, or override `(call)` with
+wider parameters and a narrower result. A class that doesn't reach `Func`, or
+none of whose signatures fits, is residual, and a contradiction of a chosen
+signature (labeled `Step::Callable`) is softened to the same residual.
 
 ## Typing CFG
 
@@ -799,7 +817,9 @@ such as a keyword's or one passed as a pair, are regular. It keeps the
 annotation when it fits. A `nil` or symbol literal that doesn't is a sentinel,
 joined into the variable's type for the body to narrow away, while callers see
 only the annotation. Any other default is reported. An `Assume` narrows with
-`Solver::narrow`, and an edge left with nothing is unreachable. Flow state marks
+`Solver::narrow`, and an edge left with nothing is unreachable. A test against
+`Func` never drops a class, which a subclass may make callable; one that doesn't
+reach `Func` becomes the gradual function. Flow state marks
 a stack entry that a `Dup` copied from the one below it, and any other step
 clears the mark. An `If` on a marked copy narrows the original on its `then`
 edge to its truthy values, dropping `nil` and `false`, so a short circuit's
@@ -1219,7 +1239,9 @@ it names, under its own rigids, in one closed solver whose variables it settles
 itself. Every requirement the solver states is constrained there, and a
 contradicted one is reported: an override where it is declared, and an
 inherited member, a missing one or a class a claim needs at the supertype
-reference. The checks are local, as well-formedness's are.
+reference. The checks are local, as well-formedness's are. An instance `(call)`
+in a class or protocol that doesn't reach `Func` is warned of, since the solver
+won't pass its instances as functions.
 
 `Check::validated` holds when the checker reported no errors and decided every
 check, except those that need a form it doesn't support yet, which are

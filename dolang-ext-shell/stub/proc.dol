@@ -350,7 +350,7 @@ pub class Proc
     ...
 
 # Function proxy for an external program.
-pub class Program
+pub class Program: Func
   # Creates a program proxy.
   #
   # ## Example

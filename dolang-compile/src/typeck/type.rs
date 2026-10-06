@@ -1009,6 +1009,17 @@ impl Database {
         })
     }
 
+    /// The function type of any function, as bare `Func` is: `(...Unknown) ->
+    /// Unknown`, with its ambient channels omitted
+    pub(crate) fn gradual_function(&self) -> TypeId {
+        self.intern(Type::Function(Function {
+            params: self.unknown_schema(),
+            result: self.unknown(),
+            input: None,
+            output: None,
+        }))
+    }
+
     /// The class of a function type's values: `Func` applied to the function's
     /// parameters, result and ambient channels, an omitted channel as its default
     /// bound. A quantified function's binders are taken as `Unknown`, as a type
