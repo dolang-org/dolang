@@ -1,17 +1,19 @@
 //! Receiver specialization, after the database is sealed.
 //!
-//! An instance method whose receiver is annotated `self @ U` is specialized: `U`
-//! must reach the method's class through the substitution-carrying ancestor walk,
-//! run under the method's rigids, and the arguments it reaches the class with
-//! replace the class's binders throughout the method's type. `self` keeps `U`
-//! verbatim. The method stays lifted over every class binder; a replaced one is
-//! simply unused. A receiver that doesn't reach its class keeps the unspecialized
-//! type and is diagnosed.
+//! An instance method's receiver annotated `self @ U` must reach the method's
+//! class through the substitution-carrying ancestor walk, run under the method's
+//! rigids. An `@def` overload is specialized: the arguments its receiver reaches
+//! the class with replace the class's binders throughout its type. `self` keeps
+//! `U` verbatim. The overload stays lifted over every class binder; a replaced
+//! one is simply unused. An implementation may not specialize: its receiver must
+//! reach the class with the class's own binders. A receiver that doesn't reach
+//! its class, or an implementation's that specializes it, keeps the
+//! unspecialized type and is diagnosed.
 //!
 //! Only class supertypes and a method's own binder bounds are read, so the order
 //! in which methods are specialized doesn't matter.
 
-use super::{BadReceiver, DeclNode, Diag, ParamTy, Slot, Tables, UnitDiag};
+use super::{BadReceiver, DeclNode, Diag, ParamTy, Slot, SpecializedReceiver, Tables, UnitDiag};
 use crate::typeck::{
     solver::{Reach, Solver},
     r#type::{Binder, Database, DeclId, Element, Type, TypeId},
@@ -21,12 +23,12 @@ use crate::typeck::{
 pub(crate) fn specialize(db: &mut Database, tables: &Tables<'_>, diags: &mut Vec<UnitDiag>) {
     let mut rewrites = Vec::new();
     for (index, decl) in tables.decls.iter().enumerate() {
-        let DeclNode::Methods(_) = decl.node else {
+        let DeclNode::Methods(methods) = &decl.node else {
             continue;
         };
         let id = DeclId::from_index(index);
-        let (class, _) = decl.outer.expect("a method is declared in a class");
-        for sig in 0..tables.sig_count(id) {
+        let (class_id, _) = decl.outer.expect("a method is declared in a class");
+        for (sig, written) in methods.iter().enumerate() {
             let completed = &tables.sigs[&(id, sig)];
             let Some(&ParamTy::Single(Slot::Annot(annot))) =
                 completed.params.first().filter(|_| completed.receiver)
@@ -38,7 +40,7 @@ pub(crate) fn specialize(db: &mut Database, tables: &Tables<'_>, diags: &mut Vec
                 continue;
             };
             let group = &tables.groups[&(id, sig)];
-            let slots: Vec<usize> = tables.groups[&(class, 0)]
+            let slots: Vec<usize> = tables.groups[&(class_id, 0)]
                 .iter()
                 .map(|binder| {
                     group
@@ -47,25 +49,34 @@ pub(crate) fn specialize(db: &mut Database, tables: &Tables<'_>, diags: &mut Vec
                         .expect("a method is lifted over its class's binders")
                 })
                 .collect();
-            let undecided = match walk(db, method, receiver, class) {
-                Walk::Reached(args) => {
+            let span = tables.site_ty(annot).span();
+            let class = || {
+                let owner = &tables.decls[class_id.index()];
+                let name = owner.name.map_or("", |name| tables.name(owner.unit, name));
+                name.to_owned()
+            };
+            let bad = |undecided| {
+                Diag::new(BadReceiver {
+                    span,
+                    class: class(),
+                    undecided,
+                })
+            };
+            let diag = match walk(db, method, receiver, class_id) {
+                Walk::Reached(args) if written.overload => {
                     rewrites.push((method, slots, args));
                     continue;
                 }
-                Walk::Dynamic => continue,
-                Walk::Unreached => false,
-                Walk::Undecided => true,
-            };
-            let owner = &tables.decls[class.index()];
-            let name = owner.name.map_or("", |name| tables.name(owner.unit, name));
-            diags.push((
-                decl.unit,
-                Diag::new(BadReceiver {
-                    span: tables.site_ty(annot).span(),
-                    class: name.to_owned(),
-                    undecided,
+                Walk::Reached(args) if identity(db, method, &slots, &args) => continue,
+                Walk::Reached(_) => Diag::new(SpecializedReceiver {
+                    span,
+                    class: class(),
                 }),
-            ));
+                Walk::Dynamic => continue,
+                Walk::Unreached => bad(false),
+                Walk::Undecided => bad(true),
+            };
+            diags.push((decl.unit, diag));
         }
     }
     for (method, slots, args) in rewrites {
@@ -115,16 +126,22 @@ fn walk(db: &Database, method: DeclId, receiver: TypeId, class: DeclId) -> Walk 
     }
 }
 
+/// Whether `args` are the class binders at `slots` of a method's group, so the
+/// receiver specializes nothing
+fn identity(db: &Database, method: DeclId, slots: &[usize], args: &[TypeId]) -> bool {
+    let rigids = db.rigids(method);
+    slots
+        .iter()
+        .zip(args)
+        .all(|(&slot, &arg)| rigids[slot] == arg)
+}
+
 /// Replace the class binders at `slots` of a method's group with `args`
 fn rewrite(db: &mut Database, method: DeclId, slots: &[usize], args: Vec<TypeId>) {
-    let mut replacements = db.rigids(method);
-    if slots
-        .iter()
-        .zip(&args)
-        .all(|(&slot, &arg)| replacements[slot] == arg)
-    {
+    if identity(db, method, slots, &args) {
         return;
     }
+    let mut replacements = db.rigids(method);
     for (&slot, arg) in slots.iter().zip(args) {
         replacements[slot] = arg;
     }

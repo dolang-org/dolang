@@ -376,6 +376,20 @@ its implementation is. A method, including a special method such as `(init)`,
 takes overloads in its class body the same way, and so does a protocol's
 method.
 
+A method's overload may narrow its receiver to the instances it applies to. The
+class's binders in the overload take the arguments the receiver reaches the
+class with, so `shout` below returns `Str`. An implementation's receiver
+annotation can't narrow the class this way.
+
+```
+class Box[T]
+  pub field item @ T = nil
+
+  @def shout self @ Box[Str] -> T
+  pub def shout self
+    self.item.upper()
+```
+
 Overloads have relaxed parameter shape requirements: rest parameters may appear
 anywhere and more than once, and a required parameter may follow an optional
 one.
@@ -386,7 +400,8 @@ one.
 
 At a call, the checker uses an overload if exactly one is compatible with the
 arguments. If none or several are, it falls back to the implementation's
-signature.
+signature. A function with a single overload always uses it, and checks the
+arguments against it.
 
 Overloads do not dispatch at runtime; every call runs the same implementation.
 Their signatures are trusted assertions about the implementation's behavior

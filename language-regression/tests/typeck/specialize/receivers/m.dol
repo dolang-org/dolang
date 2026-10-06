@@ -1,5 +1,6 @@
-# A method whose receiver is annotated is specialized: the arguments its receiver
-# reaches the class with replace the class's binders throughout its signature.
+# An overload whose receiver is annotated is specialized: the arguments its
+# receiver reaches the class with replace the class's binders throughout its
+# signature. An implementation's receiver may not specialize its class.
 
 pub class Num
 pub class Int: Num
@@ -13,22 +14,36 @@ pub class Box[T]
     #     ^~~: decl (m.Box[T], <in, >out) -> T
     ...
 
-  pub def int _self @ Box[Int] -> T
-    #     ^~~: decl (m.Box[m.Int], <in, >out) -> m.Int
-    #     ^~~: quantifier ^T covariant, in contravariant, out contravariant
+  @def int _self @ Box[Int] -> T
+  #    ^~~: decl (m.Box[m.Int], <in, >out) -> m.Int
+  #    ^~~: quantifier ^T covariant, in contravariant, out contravariant
+  pub def int _self -> T
     nil
 
-  pub def nested[U] _self @ Box[Array[U]] -> T
-    #     ^~~~~~: decl (m.Box[m.Array[U]], <in, >out) -> m.Array[U]
+  @def nested[U] _self @ Box[Array[U]] -> T
+  #    ^~~~~~: decl (m.Box[m.Array[U]], <in, >out) -> m.Array[U]
+  pub def nested _self -> T
     nil
 
   # Through the bound of a binder
-  pub def bounded[N @ Box[Int]] _self @ N -> T
-    #     ^~~~~~~: decl (N, <in, >out) -> m.Int
+  @def bounded[N @ Box[Int]] _self @ N -> T
+  #    ^~~~~~~: decl (N, <in, >out) -> m.Int
+  pub def bounded _self -> T
     nil
 
+  # An implementation's receiver may be annotated with the class's own binders.
   pub def same _self @ Box[T] -> T
     #     ^~~~: decl (m.Box[T], <in, >out) -> T
+    ...
+
+  # An implementation that specializes keeps the unspecialized signature.
+  pub def special _self @ Box[Int] -> T
+    #     ^~~~~~~: decl (m.Box[m.Int], <in, >out) -> T
+    # error: only an `@def` overload may specialize `self` to a `Box`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def special _self @ Box[Int] -> T
+    #    |                           ^^^^^^^^
     ...
 
   # A receiver that doesn't reach its class keeps the unspecialized signature.
@@ -41,7 +56,17 @@ pub class Box[T]
     #    |                         ^^^
     ...
 
-# A class without binders has nothing to specialize.
+  @def wrong_overload _self @ Int -> T
+  # error: `self` must be a `Box` or a subtype of it
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   @def wrong_overload _self @ Int -> T
+  #    |                               ^^^
+  pub def wrong_overload _self -> T
+    ...
+
+# A class without binders has nothing to specialize, so an implementation's
+# receiver may be a bound binder.
 pub class Real: Num
   pub def abs[N @ Real] _self @ N -> N
     #     ^~~: decl (N, <in, >out) -> N

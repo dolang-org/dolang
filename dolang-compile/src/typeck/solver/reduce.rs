@@ -311,7 +311,8 @@ impl Solver<'_> {
 
     /// An overloaded function on the left of a function type is one of its
     /// overloads, chosen by trials against what the function type's parameters
-    /// alone say (see [`Solver::selection`]); none fitting contradicts it.
+    /// alone say (see [`Solver::selection`]); none fitting contradicts it. A
+    /// lone overload is chosen without a trial.
     /// Anywhere else it's its implementation, and dynamic without one. What's
     /// below it is below each of its signatures.
     fn overloaded(&self, j: &Judgment) -> Result<ControlFlow<()>, Issue> {
@@ -358,6 +359,17 @@ impl Solver<'_> {
         };
         if let Type::Quantified { binders, body } = self.db.ty(function.ty) {
             self.skolemization(function, binders, *body, j.actual, j.obligation)?;
+            return Ok(Break(()));
+        }
+        // A lone overload is always chosen, so what doesn't fit it is diagnosed
+        // as for any function
+        if let &[overload] = &overloads[..] {
+            self.derive(
+                j.obligation,
+                view.child(overload),
+                j.expected,
+                Step::Overload(0),
+            );
             return Ok(Break(()));
         }
         let terms = overloads.iter().map(|&ty| view.child(ty)).collect();

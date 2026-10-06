@@ -8,7 +8,8 @@ pub class Box[T]
   pub def get self -> T
     self.#item
 
-  pub def narrow _self @ Box[Int] -> Int
+  @def narrow _self @ Box[Int] -> Int
+  pub def narrow _self -> Int
     0
 
 pub class Made[T]
