@@ -44,6 +44,8 @@ enum Verdict {
 /// outcome there of the alternative's judgment
 #[derive(Clone)]
 pub(crate) struct Rejection<'db> {
+    /// The alternative's index
+    pub(crate) index: usize,
     pub(crate) solver: Rc<Solver<'db>>,
     pub(crate) outcome: Outcome,
 }
@@ -289,6 +291,7 @@ impl<'db> Solver<'db> {
             let (status, free, fork, outcome) = self.trial(actual, expected, language, owned)?;
             match status {
                 Status::Contradicted => rejections.push(Rejection {
+                    index,
                     solver: Rc::new(fork),
                     outcome,
                 }),

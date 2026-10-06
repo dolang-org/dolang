@@ -29,6 +29,8 @@ pub(crate) struct Signature {
     pub(crate) overloads: Vec<TypeId>,
     /// Its implementation's signature, if it has one
     pub(crate) implementation: Option<TypeId>,
+    /// The method they're the signatures of, if any
+    pub(crate) function: Option<DeclId>,
 }
 
 impl Signature {
@@ -46,6 +48,7 @@ impl Signature {
         Some(db.intern(Type::Overloaded {
             overloads: self.overloads.iter().copied().collect(),
             implementation: self.implementation,
+            function: self.function,
         }))
     }
 }
@@ -119,25 +122,7 @@ impl Solver<'_> {
         match solver.member(solver.closed(object), key("call")) {
             Ok(Lookup::Found(found)) if found.scope == Scope::Class => {
                 let signature = match &found.kind {
-                    FoundKind::Method(Signatures {
-                        overloads,
-                        implementation,
-                    }) => {
-                        let reify = |&term| solver.reify(term).ok();
-                        let overloads = overloads.iter().map(reify).collect::<Option<_>>();
-                        let implementation = implementation.as_ref().map(reify);
-                        match (overloads, implementation) {
-                            (Some(overloads), None) => Some(Signature {
-                                overloads,
-                                implementation: None,
-                            }),
-                            (Some(overloads), Some(Some(implementation))) => Some(Signature {
-                                overloads,
-                                implementation: Some(implementation),
-                            }),
-                            _ => None,
-                        }
-                    }
+                    FoundKind::Method(signatures) => solver.reified(signatures),
                     _ => None,
                 };
                 return Constructor::Call(signature.and_then(|signature| signature.callee(db)));
@@ -163,6 +148,7 @@ impl Solver<'_> {
                 return Constructor::Init(abstracted(constructor).map(|constructor| Signature {
                     overloads: Vec::new(),
                     implementation: Some(constructor),
+                    function: None,
                 }));
             }
             Ok(Lookup::Dynamic | Lookup::Fallback { .. }) | Err(_) => {
@@ -193,6 +179,7 @@ impl Solver<'_> {
                 None => function,
             })
         };
+        let function = signatures.function;
         let overloads: Option<Vec<TypeId>> =
             signatures.overloads.into_iter().map(constructor).collect();
         let implementation = match signatures.implementation {
@@ -205,8 +192,26 @@ impl Solver<'_> {
                 .map(|(overloads, implementation)| Signature {
                     overloads,
                     implementation,
+                    function,
                 }),
         )
+    }
+
+    /// Signatures reified, or `None` if any doesn't reify
+    pub(crate) fn reified(&self, signatures: &Signatures) -> Option<Signature> {
+        let reify = |&term| self.reify(term).ok();
+        let overloads = (signatures.overloads.iter())
+            .map(reify)
+            .collect::<Option<_>>()?;
+        let implementation = match &signatures.implementation {
+            Some(term) => Some(reify(term)?),
+            None => None,
+        };
+        Some(Signature {
+            overloads,
+            implementation,
+            function: signatures.function,
+        })
     }
 
     /// Whether a type is one a callable value relates to through its signatures:
@@ -289,6 +294,7 @@ impl Solver<'_> {
             return Ok(Some(Signatures {
                 overloads: signatures.overloads.into_iter().map(applied).collect(),
                 implementation: signatures.implementation.map(applied),
+                function: signatures.function,
             }));
         }
         let func = (self.db.intrinsic(Intrinsic::Func))
@@ -344,6 +350,7 @@ impl Solver<'_> {
         Ok(Some(Signatures {
             overloads,
             implementation,
+            function: signatures.function,
         }))
     }
 }

@@ -879,7 +879,8 @@ impl<'a> Flow<'a, '_> {
             let trial = &*rejection.solver;
             let outcome = &rejection.outcome;
             let overload = trial.obligation(root(outcome)).relation.actual;
-            let overload = self.render_term(trial, overload);
+            let overload = (trial.reify(overload).ok())
+                .map(|ty| self.overload(solver, overloaded, rejection.index, ty));
             let mut problems = Vec::new();
             for (path, contradiction) in causes(trial, &outcome.diagnostics) {
                 let problem = self.call_problem(trial, span, args, &path, contradiction, &overload);
@@ -941,10 +942,31 @@ impl<'a> Flow<'a, '_> {
             _ => return Some(None),
         };
         let survivors = (possible.into_iter())
-            .filter_map(|index| overloads.get(index))
-            .map(|&overload| self.tables.render_type(self.db, overload))
+            .filter_map(|index| Some((index, *overloads.get(index)?)))
+            .map(|(index, overload)| self.overload(solver, overloaded, index, overload))
             .collect();
         Some(Some(survivors))
+    }
+
+    /// An overload of the overloaded callee of `overloaded`'s judgment, by its
+    /// index, as its declaration names it (see [`Tables::render_signature`])
+    fn overload(
+        &self,
+        solver: &Solver<'_>,
+        overloaded: ObligationId,
+        index: usize,
+        ty: TypeId,
+    ) -> String {
+        let callee = solver.obligation(overloaded).relation.actual;
+        let function = match solver.reify(callee).map(|ty| self.db.ty(ty)) {
+            Ok(&Type::Overloaded { function, .. }) => function,
+            Ok(&Type::Decl(decl)) => Some(decl),
+            _ => None,
+        };
+        match function.and_then(|function| self.db.overloads(function).get(index)) {
+            Some(&decl) => self.tables.render_signature(self.db, decl, ty),
+            None => self.tables.render_type(self.db, ty),
+        }
     }
 
     /// What a contradiction under a call's constraint says, through the path of

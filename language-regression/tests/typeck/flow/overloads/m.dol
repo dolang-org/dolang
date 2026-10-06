@@ -51,8 +51,8 @@ do
   # LL |   let _ = t[2]
   #    |           ^^^^
   #    |
-  #    = note: `forall (std.Tuple[{std.Int, std.Str}], #0.0, <#0.1, >#0.2) -> IndexItem[{...{std.Int, std.Str}}, #0.0]`: this call selects by `2`, which isn't one of the schema's keys
-  #    = note: `forall (std.Tuple[{std.Int, std.Str}], std.Range[std.Int], <#0.0, >#0.1) -> std.Tuple[{*std.Int | std.Str}]`: expected `std.Range[std.Int]`, found `2`
+  #    = note: `[K] (std.Tuple[{std.Int, std.Str}], K) -> IndexItem[{...{std.Int, std.Str}}, K]`: this call selects by `2`, which isn't one of the schema's keys
+  #    = note: `(std.Tuple[{std.Int, std.Str}], std.Range[std.Int]) -> std.Tuple[{*std.Int | std.Str}]`: expected `std.Range[std.Int]`, found `2`
   let _ = b[0]
   #   ^: flow std.Int
   b[0] = 1
@@ -64,8 +64,8 @@ do
   # LL |   b[0] = "x"
   #    |   ^^^^^^^^^^
   #    |
-  #    = note: `forall (std.BinBuf, #0.0, AssignItem[{*(std.Int): std.Int}, #0.0], <#0.1, >#0.2) -> Unknown`: expected `std.Int`, found `"x"`
-  #    = note: `forall (std.BinBuf, std.Range[std.Int], std.Bin, <#0.0, >#0.1) -> Unknown`: expected `std.Bin`, found `"x"`; expected `std.Range[std.Int]`, found `0`
+  #    = note: `[K] (std.BinBuf, K, AssignItem[{*(std.Int): std.Int}, K]) -> Unknown`: expected `std.Int`, found `"x"`
+  #    = note: `(std.BinBuf, std.Range[std.Int], std.Bin) -> Unknown`: expected `std.Bin`, found `"x"`; expected `std.Range[std.Int]`, found `0`
   let _ = f[0]
   #   ^: flow std.FmtSegment[Unknown]
 
@@ -85,8 +85,8 @@ pub def chosen p @ Picker x u @ (Int | Str)
   # LL |   let _ = p.pick $u
   #    |           ^^^^^^^^^
   #    |
-  #    = note: `forall (m.Picker, std.Int, <#0.0, >#0.1) -> std.Int`: expected `std.Int`, found `std.Int | std.Str`
-  #    = note: `forall (m.Picker, std.Str, <#0.0, >#0.1) -> std.Str`: expected `std.Str`, found `std.Int | std.Str`
+  #    = note: `(m.Picker, std.Int) -> std.Int`: expected `std.Int`, found `std.Int | std.Str`
+  #    = note: `(m.Picker, std.Str) -> std.Str`: expected `std.Str`, found `std.Int | std.Str`
   let _s @ Str = p.pick 1
   # error: `std.Int` does not fit the annotation `std.Str`
   #   --> m.dol:LL:LL
@@ -158,8 +158,8 @@ pub def functions()
   # LL |   twice 1.5
   #    |   ^^^^^^^^^
   #    |
-  #    = note: `forall (std.Int, <#0.0, >#0.1) -> std.Int`: expected `std.Int`, found `std.Float`
-  #    = note: `forall (std.Str, <#0.0, >#0.1) -> std.Str`: expected `std.Str`, found `std.Float`
+  #    = note: `(std.Int) -> std.Int`: expected `std.Int`, found `std.Float`
+  #    = note: `(std.Str) -> std.Str`: expected `std.Str`, found `std.Float`
 
   # Overloads that both take a call make it ambiguous
   let _ = vague 1
@@ -170,8 +170,8 @@ pub def functions()
 # LL |   let _ = vague 1
 #    |           ^^^^^^^
 #    |
-#    = note: `forall (std.Int, <#0.0, >#0.1) -> std.Int` accepts them
-#    = note: `forall (std.Int | std.Str, <#0.0, >#0.1) -> std.Str` accepts them
+#    = note: `(std.Int) -> std.Int` accepts them
+#    = note: `(std.Int | std.Str) -> std.Str` accepts them
 
 # A call of a union of overloaded functions is a call of each
 pub def alternatives c @ Bool
@@ -208,8 +208,8 @@ pub def constructed()
   # LL |   Shape true
   #    |   ^^^^^^^^^^
   #    |
-  #    = note: `forall (std.Int, <#0.0, >#0.1) -> m.Shape`: expected `std.Int`, found `true`
-  #    = note: `forall (std.Str, <#0.0, >#0.1) -> m.Shape`: expected `std.Str`, found `true`
+  #    = note: `(std.Int) -> m.Shape`: expected `std.Int`, found `true`
+  #    = note: `(std.Str) -> m.Shape`: expected `std.Str`, found `true`
   let _ = Maker "s"
   #   ^: flow std.Str
   Maker true
@@ -219,8 +219,8 @@ pub def constructed()
 # LL |   Maker true
 #    |   ^^^^^^^^^^
 #    |
-#    = note: `forall (Unknown, std.Int, <#0.0, >#0.1) -> std.Int`: expected `std.Int`, found `true`
-#    = note: `forall (Unknown, std.Str, <#0.0, >#0.1) -> std.Str`: expected `std.Str`, found `true`
+#    = note: `(Unknown, std.Int) -> std.Int`: expected `std.Int`, found `true`
+#    = note: `(Unknown, std.Str) -> std.Str`: expected `std.Str`, found `true`
 
 # A protocol's overloads are chosen among as a class's are
 pub def sequenced s @ Seq[Int]

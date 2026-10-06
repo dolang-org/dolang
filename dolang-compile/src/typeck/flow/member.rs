@@ -47,6 +47,7 @@ impl CallTarget {
             signature: Signature {
                 overloads: Vec::new(),
                 implementation: callee,
+                function: None,
             },
             receivers: Vec::new(),
             member: None,
@@ -178,24 +179,7 @@ impl Flow<'_, '_> {
             }
         };
         // A method whose signatures don't all reify is dynamic
-        let signature = |signatures: &Signatures| {
-            let reify = |&term| solver.reify(term).ok();
-            let overloads = (signatures.overloads.iter())
-                .map(reify)
-                .collect::<Option<_>>();
-            let implementation = signatures.implementation.as_ref().map(reify);
-            match (overloads, implementation) {
-                (Some(overloads), None) => Signature {
-                    overloads,
-                    implementation: None,
-                },
-                (Some(overloads), Some(Some(implementation))) => Signature {
-                    overloads,
-                    implementation: Some(implementation),
-                },
-                _ => Signature::default(),
-            }
-        };
+        let signature = |signatures: &Signatures| solver.reified(signatures).unwrap_or_default();
         let method = |kind: &FoundKind| match kind {
             FoundKind::Method(signatures) => signature(signatures),
             _ => Signature::default(),

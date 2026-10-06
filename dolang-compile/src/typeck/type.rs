@@ -386,10 +386,13 @@ pub(crate) enum Type {
     /// or a function type it's passed as chooses, and its implementation's
     /// signature, which it relates as anywhere else. Never written; a solver
     /// exposes an overloaded def as it, and flow builds it from a method's
-    /// signatures.
+    /// signatures. `function` is the declaration they're the signatures of, if
+    /// known: its overloads are these, in order, which diagnostics name binders
+    /// by.
     Overloaded {
         overloads: alias::Box<[TypeId]>,
         implementation: Option<TypeId>,
+        function: Option<DeclId>,
     },
 }
 
@@ -459,6 +462,7 @@ impl Type {
             Self::Overloaded {
                 overloads,
                 implementation,
+                ..
             } => {
                 for ty in overloads.iter().chain(implementation.iter()) {
                     visit(*ty, 0);
@@ -518,12 +522,14 @@ impl Type {
                 Self::Overloaded {
                     overloads: a,
                     implementation: ai,
+                    function: af,
                 },
                 Self::Overloaded {
                     overloads: b,
                     implementation: bi,
+                    function: bf,
                 },
-            ) => a.len() == b.len() && ai.is_some() == bi.is_some(),
+            ) => a.len() == b.len() && ai.is_some() == bi.is_some() && af == bf,
             _ => self == other,
         }
     }
@@ -600,6 +606,7 @@ impl Type {
             Self::Overloaded {
                 overloads,
                 implementation,
+                ..
             } => {
                 for ty in overloads.iter_mut().chain(implementation.iter_mut()) {
                     *ty = f(*ty, 0)?;
@@ -1793,8 +1800,12 @@ impl Database {
             Type::Overloaded {
                 overloads,
                 implementation,
+                function,
             } => {
                 assert!(!overloads.is_empty(), "an overload set without overloads");
+                if let Some(function) = function {
+                    self.declarations.get(*function);
+                }
                 for id in overloads.iter().chain(implementation.iter()) {
                     self.expect_kind(*id, Kind::Type);
                 }

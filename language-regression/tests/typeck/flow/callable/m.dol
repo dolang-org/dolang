@@ -151,8 +151,8 @@ pub def overloads p @ Picker s @ Strict x
   # LL |   s true
   #    |   ^^^^^^
   #    |
-  #    = note: `forall (m.Strict, std.Int, <#0.0, >#0.1) -> std.Int`: expected `std.Int`, found `true`
-  #    = note: `forall (m.Strict, std.Str, <#0.0, >#0.1) -> std.Str`: expected `std.Str`, found `true`
+  #    = note: `(m.Strict, std.Int) -> std.Int`: expected `std.Int`, found `true`
+  #    = note: `(m.Strict, std.Str) -> std.Str`: expected `std.Str`, found `true`
   let _wrong @ Str = p 1
 # error: `std.Int` does not fit the annotation `std.Str`
 #   --> m.dol:LL:LL

@@ -319,6 +319,7 @@ impl Solver<'_> {
             && let Type::Overloaded {
                 overloads,
                 implementation,
+                ..
             } = self.db.ty(view.ty)
         {
             for (index, &ty) in overloads.iter().enumerate() {
@@ -340,6 +341,7 @@ impl Solver<'_> {
         let Type::Overloaded {
             overloads,
             implementation,
+            ..
         } = self.db.ty(view.ty)
         else {
             return Ok(Continue(()));

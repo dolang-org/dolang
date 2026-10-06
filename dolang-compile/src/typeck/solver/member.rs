@@ -71,6 +71,8 @@ pub(crate) struct Signatures {
     pub(crate) overloads: Vec<Term>,
     /// Its implementation's signature, unless it's overloaded without one
     pub(crate) implementation: Option<Term>,
+    /// The method they're the signatures of, if any
+    pub(crate) function: Option<DeclId>,
 }
 
 /// Where a receiver's members are looked up
@@ -381,6 +383,7 @@ impl Solver<'_> {
                     .map(signature)
                     .collect::<Result<_, _>>()?,
                 implementation: signatures.implementation.map(signature).transpose()?,
+                function: signatures.function,
             })
         };
         let kind = match found.kind {
@@ -552,6 +555,7 @@ impl Solver<'_> {
                 .map(signature)
                 .collect(),
             implementation: self.db.implementation(decl).map(signature),
+            function: Some(decl),
         }
     }
 }

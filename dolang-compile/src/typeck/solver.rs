@@ -1278,6 +1278,7 @@ impl<'db> Solver<'db> {
             Type::Overloaded {
                 ref overloads,
                 implementation,
+                ..
             } => {
                 for &ty in overloads.iter().chain(implementation.iter()) {
                     walk(ty, variance, 0)?;
@@ -1999,6 +2000,7 @@ impl<'db> Solver<'db> {
                                 .map(|&id| signature(id))
                                 .collect(),
                             implementation: self.db.implementation(id).map(signature),
+                            function: Some(id),
                         });
                         return Ok(Head::Structural(TypeView {
                             ty: overloaded,

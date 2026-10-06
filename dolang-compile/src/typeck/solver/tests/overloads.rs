@@ -6,6 +6,7 @@ fn overloaded(db: &Database, overloads: &[TypeId], implementation: Option<TypeId
     db.intern(Type::Overloaded {
         overloads: overloads.iter().copied().collect(),
         implementation,
+        function: None,
     })
 }
 
