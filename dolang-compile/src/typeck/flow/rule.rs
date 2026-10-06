@@ -1401,6 +1401,100 @@ impl<'a> Flow<'a, '_> {
         (solver, held, rejected)
     }
 
+    /// The candidate of [`Flow::fresh_candidates`] a fresh dict with `values` is:
+    /// the only one, or else the one its items fit, or else the one its keys fit.
+    /// A choice its values don't fit is then reported against it.
+    fn choose_fresh(
+        &self,
+        candidates: &[(TypeId, TypeId)],
+        values: &Values<'_>,
+        span: Span,
+    ) -> Option<(TypeId, TypeId)> {
+        if let &[candidate] = candidates {
+            return Some(candidate);
+        }
+        if candidates.is_empty() || values.never {
+            return None;
+        }
+        // Two survivors are as many as it takes to choose none
+        let survivors = |keys_only: bool| -> Vec<(TypeId, TypeId)> {
+            (candidates.iter().copied())
+                .filter(|&(_, schema)| {
+                    let (_, _, contradicted) =
+                        self.presolve_schema(values, schema, span, true, keys_only);
+                    !contradicted
+                })
+                .take(2)
+                .collect()
+        };
+        let mut chosen = survivors(false);
+        if chosen.is_empty() {
+            chosen = survivors(true);
+        }
+        trace!(
+            "{}: {} candidates, {}",
+            self.tables.locate(self.unit, span),
+            candidates.len(),
+            match chosen[..] {
+                [] => "none fits the dict".to_owned(),
+                [(ty, _)] => format!("chose {}", self.show(ty)),
+                _ => "several fit the dict".to_owned(),
+            }
+        );
+        match chosen[..] {
+            [candidate] => Some(candidate),
+            _ => None,
+        }
+    }
+
+    /// Solve a fresh dict's items, `values`, against `schema`, with a fresh
+    /// variable for each item held back, as [`Flow::presolve`] solves a call.
+    /// With `choosing`, what's left unsolved is defaulted, and with `keys_only`,
+    /// each item's value is a fresh variable, so only its key can contradict.
+    fn presolve_schema(
+        &self,
+        values: &Values<'_>,
+        schema: TypeId,
+        span: Span,
+        choosing: bool,
+        keys_only: bool,
+    ) -> (Solver<'a>, Vec<(usize, Term)>, bool) {
+        let spread = self.designated(Designated::Spread);
+        let mut solver = self.solver();
+        let mut rule = Rule {
+            solver: &mut solver,
+            db: self.db,
+            checks: Vec::new(),
+            passed: Vec::new(),
+            pending: Vec::new(),
+            held: Vec::new(),
+            blind: choosing,
+        };
+        let (mut arguments, _) = rule.arguments(values, spread, span);
+        if keys_only {
+            for (_, argument) in &mut arguments {
+                match argument {
+                    CallArgument::Positional(value)
+                    | CallArgument::Keyword(_, value)
+                    | CallArgument::Pair(_, value) => *value = rule.solver.infer(),
+                    CallArgument::Spread(_) => {}
+                }
+            }
+        }
+        let exact = rule.solver.arguments_schema(&arguments);
+        let expected = rule.closed(schema);
+        rule.constrain(exact, expected, Check::Quiet);
+        let held = rule.held;
+        let contradicted = |outcomes: &[Outcome]| {
+            (outcomes.iter()).any(|outcome| outcome.status == Status::Contradicted)
+        };
+        let mut rejected = contradicted(&solver.solve());
+        if choosing && !rejected {
+            rejected = contradicted(&default_where(&mut solver, |_| true, None));
+        }
+        (solver, held, rejected)
+    }
+
     /// Cache templates before pre-solving so their names and values constrain
     /// the call, while their hole types can still take its expectation.
     fn preview_template(
@@ -1831,9 +1925,10 @@ impl<'a> Flow<'a, '_> {
     /// A collection literal of a designated class. An array joins its items into
     /// its element type, whether a comprehension repeats them or not, and so does a
     /// dict, unless something is expected of it: then its schema is its items'. A
-    /// tuple
-    /// or record takes its items' schema; neither has a vertical form, so neither
-    /// holds a comprehension. With an expected type, the collection types the `do`
+    /// union expects several schemas of a dict; it takes the one its items fit,
+    /// or else the one its keys do, and its items held back take what that
+    /// schema expects of them. A tuple or record takes its items' schema; neither
+    /// has a vertical form, so neither holds a comprehension. With an expected type, the collection types the `do`
     /// blocks among its items.
     pub(super) fn collection(
         &mut self,
@@ -1867,15 +1962,41 @@ impl<'a> Flow<'a, '_> {
             rest: Some(element),
             ..Params::default()
         });
-        let values = self.values(
+        // A dict expected to be a supertype of `Dict[S]`, such as `BaseDict[S]`, is
+        // a `Dict[S]`, which only a fresh dict can be. It holds back the items that
+        // take an expectation until its schema is chosen, then gives them the
+        // schema's.
+        let candidates = match (kind, class, expected) {
+            (Collection::Dict, Some(class), Some(expected)) => {
+                self.fresh_candidates(class, Kind::Schema, expected)
+            }
+            _ => Vec::new(),
+        };
+        let mut values = self.values(
             at,
             state,
             operands,
             items,
             params.as_ref(),
             expected.is_some(),
-            false,
+            !candidates.is_empty(),
         );
+        let expected_dict = self.choose_fresh(&candidates, &values, expr.span);
+        if !values.held.is_empty() {
+            let expectations = match expected_dict {
+                Some((_, schema)) if !values.never => {
+                    let (solver, held, _) =
+                        self.presolve_schema(&values, schema, expr.span, false, false);
+                    let mut expectations = vec![None; values.held.len()];
+                    for (index, term) in held {
+                        expectations[index] = expectation(&solver, term);
+                    }
+                    expectations
+                }
+                _ => vec![None; values.held.len()],
+            };
+            self.release(at, state, &mut values, &expectations);
+        }
         if values.never {
             return self.db.bottom();
         }
@@ -1888,14 +2009,6 @@ impl<'a> Flow<'a, '_> {
         };
         let spread = self.designated(Designated::Spread);
         let int = self.intrinsic(Intrinsic::Int);
-        // A dict expected to be a supertype of `Dict[S]`, such as `BaseDict[S]`, is
-        // a `Dict[S]`, which only a fresh dict can be
-        let expected_dict = match kind {
-            Collection::Dict => {
-                expected.and_then(|ty| self.fresh_expected(class, Kind::Schema, ty))
-            }
-            _ => None,
-        };
         let array_expected = expected_array.map(|(ty, _)| ty).or(expected);
         let result = match (kind, expected_dict) {
             (Collection::Array, _) => self.conclude(at, array_expected, |rule| {
@@ -2037,16 +2150,16 @@ impl<'a> Flow<'a, '_> {
         result[0]
     }
 
-    /// What a fresh collection of `class` must be to be `expected`, or the one
-    /// alternative of it that the class reaches: `class` applied to the argument
-    /// the expectation gives, and that argument, of `kind`. `None` unless exactly
-    /// one alternative gives exactly one argument.
-    fn fresh_expected(
+    /// What a fresh collection of `class` can be to be `expected`, one candidate for
+    /// each alternative of it that the class reaches: `class` applied to the
+    /// argument that alternative gives, and that argument, of `kind`. An
+    /// alternative that gives no single argument gives no candidate.
+    fn fresh_candidates(
         &self,
         class: DeclId,
         kind: Kind,
         expected: TypeId,
-    ) -> Option<(TypeId, TypeId)> {
+    ) -> Vec<(TypeId, TypeId)> {
         let argument = |expected: TypeId| {
             if let Type::Unknown(_) = self.db.ty(expected) {
                 return None;
@@ -2068,19 +2181,38 @@ impl<'a> Flow<'a, '_> {
             expectation(&solver, argument).filter(|&ty| !matches!(self.db.ty(ty), Type::Unknown(_)))
         };
         let mut alternatives = Vec::new();
-        let argument = if self.expand(expected, &mut alternatives, 0) {
-            let mut found = alternatives.into_iter().flatten().filter_map(argument);
-            let first = found.next()?;
-            found.next().is_none().then_some(first)?
-        } else {
-            argument(expected)?
-        };
-        let applied = self.db.intern(Type::Apply {
-            base: self.db.intern(Type::Decl(class)),
-            args: vec![Argument::Positional(argument)].into(),
-            kind: Kind::Type,
-        });
-        Some((applied, argument))
+        if !self.expand(expected, &mut alternatives, 0) {
+            alternatives = vec![Some(expected)];
+        }
+        let mut arguments: Vec<TypeId> = Vec::new();
+        for argument in alternatives.into_iter().flatten().filter_map(argument) {
+            if !arguments.contains(&argument) {
+                arguments.push(argument);
+            }
+        }
+        (arguments.into_iter())
+            .map(|argument| {
+                let applied = self.db.intern(Type::Apply {
+                    base: self.db.intern(Type::Decl(class)),
+                    args: vec![Argument::Positional(argument)].into(),
+                    kind: Kind::Type,
+                });
+                (applied, argument)
+            })
+            .collect()
+    }
+
+    /// The one candidate of [`Flow::fresh_candidates`], if there's exactly one
+    fn fresh_expected(
+        &self,
+        class: DeclId,
+        kind: Kind,
+        expected: TypeId,
+    ) -> Option<(TypeId, TypeId)> {
+        match self.fresh_candidates(class, kind, expected)[..] {
+            [candidate] => Some(candidate),
+            _ => None,
+        }
     }
 
     /// The one application of `class` to a single argument that `expected` is, or
