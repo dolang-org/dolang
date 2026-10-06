@@ -27,6 +27,38 @@ fn identity_top_bottom_and_literal_difference() {
 }
 
 #[test]
+fn top_is_outside_anything_narrower() {
+    let mut db = Database::new();
+    let class = nominal(&mut db, "Class", vec![], vec![]);
+    let generic = nominal(
+        &mut db,
+        "Generic",
+        vec![binder(Variance::Covariant)],
+        vec![],
+    );
+    let nil = db.intern(Type::Literal(Literal::Nil));
+    let one = literal(&db, 1);
+    let boxed = apply(&db, generic, &[one]);
+    let func = function(&db, &[], one);
+    let members = |types: &[TypeId]| {
+        db.intern(Type::Union(
+            types.iter().copied().map(UnionMember::Type).collect(),
+        ))
+    };
+    let narrower = members(&[nil, class, boxed]);
+    let covering = members(&[class, db.top()]);
+    db.seal();
+    let top = db.top();
+    for expected in [nil, class, boxed, func, narrower] {
+        assert!(contradiction(
+            &check(&db, top, expected),
+            Contradiction::Outside
+        ));
+    }
+    assert_eq!(check(&db, top, covering).status, Status::Proven);
+}
+
+#[test]
 fn open_identity_uses_environments() {
     let mut db = Database::new();
     let r = reference(&db, 0, 0);

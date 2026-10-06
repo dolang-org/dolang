@@ -459,14 +459,11 @@ fn domains_own_what_they_admit_narrowest_first() {
             "{x:?} <: {y:?}"
         );
     }
-    // Items of an open schema may have keys `Sym` owns, and `Top <: Int` isn't
-    // decided
+    // Items of an open schema may have keys `Sym` owns, whose values top is
+    // outside
     let outcome = check(&db, open, sym_int);
     assert!(
-        residual(
-            &outcome,
-            Residual::Unsupported("a structural type below a class")
-        ),
+        contradiction(&outcome, Contradiction::Outside),
         "{outcome:?}"
     );
 

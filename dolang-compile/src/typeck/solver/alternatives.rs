@@ -115,7 +115,8 @@ impl Solver<'_> {
     /// covered by several members' classes, and a generic member's rejected
     /// arguments needn't exclude every value of a class, so they leave it residual,
     /// as do members that are projections. A literal's or function's class is
-    /// fixed, so its rejections are final.
+    /// fixed, so its rejections are final, and so are top's, which no member
+    /// but top covers.
     pub(super) fn refuted(
         &self,
         actual: Term,
@@ -125,6 +126,7 @@ impl Solver<'_> {
         let residual = Residual::Unsupported("a type that may be inside a union member").into();
         let fixed = match self.head(actual) {
             Ok(Head::Structural(view)) => match self.db.ty(view.ty) {
+                _ if view.ty == self.db.top() => true,
                 Type::Literal(_) | Type::Function(_) | Type::Quantified { .. } => true,
                 _ => return Ok(residual),
             },

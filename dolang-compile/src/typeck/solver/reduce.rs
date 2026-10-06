@@ -307,7 +307,7 @@ impl Solver<'_> {
     /// Whether a closed type is below a member of a closed union. Testing
     /// closed alternatives must never add bounds to this solver.
     ///
-    /// A literal or concrete class is outside a union if every member
+    /// A literal, concrete class or top is outside a union if every member
     /// excludes it. For a class with infinitely many literals, a finite
     /// set of literals cannot cover it either. Protocols may be covered
     /// by several implementations, so unrelated alternatives are not
@@ -325,7 +325,9 @@ impl Solver<'_> {
             self.db.ty(actual),
             Type::Function(_) | Type::Quantified { .. }
         );
-        let mut outside = function || self.class_like(actual)?;
+        // No members but top and the dynamic type cover top
+        let top = actual == self.db.top();
+        let mut outside = function || top || self.class_like(actual)?;
         for member in members.iter() {
             let UnionMember::Type(ty) = *member else {
                 outside = false;
@@ -346,6 +348,7 @@ impl Solver<'_> {
                 Status::Contradicted => {
                     if !infinite
                         && !function
+                        && !top
                         && self.db.literal(actual).is_none()
                         && self
                             .start(expected)?
@@ -372,6 +375,13 @@ impl Solver<'_> {
             a,
             b,
         } = j;
+        // Top has values outside anything else: top itself and the dynamic type
+        // are proven before the rules, and variables, unions and rigids are theirs.
+        // This holds while protocols are nominal; once they're structural (#828),
+        // top is inside a protocol without members.
+        if matches!(&a, Head::Structural(view) if view.ty == self.db.top()) {
+            return Err(Issue::Contradiction(Contradiction::Outside));
+        }
         match (a, b) {
             (Head::Nominal(a), Head::Nominal(b)) => self.nominal(a, b, obligation),
             (Head::Nominal(nominal), Head::Structural(view)) => {
