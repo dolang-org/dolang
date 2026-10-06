@@ -968,6 +968,8 @@ def check p
   let undecided = result.undecided()
   if (undecided != "")
     echo "undecided checks:\n$(undecided.trim_end())"
+    if strict
+      failed = true
   missing.sort()
   for name = missing
     echo "not found, treated as unknown: $name"
@@ -1033,7 +1035,7 @@ args.with
       collect: true
       help: Directory to search for imported modules, as `a/b.dol` for module `a.b`, before the bundled typelibs
     - flag: strict
-      help: Fail on any compiler or type-checker diagnostic, including warnings
+      help: Fail on any compiler or type-checker diagnostic, including warnings, or any check the checker couldn't decide
     - flag: no-bundled
       help: Disable bundled typelibs and fail if an imported module is missing
     - arg: entries
