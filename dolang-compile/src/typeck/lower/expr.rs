@@ -74,13 +74,9 @@ impl<'u> Scope<'_, '_, 'u> {
                 op: *op,
                 operand: Box::new(self.expr(expr)),
             },
-            ast::Expr::Binary {
-                op: op @ (Op::AmpAmp | Op::BarBar),
-                exprs,
-                ..
-            } => {
+            ast::Expr::Logical { op, exprs, .. } => {
                 let hoist = mem::replace(&mut self.ctx.hoist, false);
-                let value = self.short_circuit(*op, &exprs[0], &exprs[1], span);
+                let value = self.short_circuit(*op, exprs, span);
                 self.ctx.hoist = hoist;
                 return self.spill(value);
             }
@@ -507,39 +503,37 @@ impl<'u> Scope<'_, '_, 'u> {
         else_.pop().expect("an `if` has a first branch")
     }
 
-    /// A short circuit whose value is used. Its left operand is pushed, and the
-    /// result is on the stack at the join.
-    fn short_circuit(
-        &mut self,
-        op: Op,
-        left: &'u ast::Expr,
-        right: &'u ast::Expr,
-        span: Span,
-    ) -> Expr {
-        let narrowing = self.narrowing(left);
-        let value = self.expr(left);
+    /// A short circuit whose value is used. Its first operand is pushed, and each
+    /// later one's result is on the stack at its join.
+    fn short_circuit(&mut self, op: Op, exprs: &'u [ast::Expr], span: Span) -> Expr {
+        let (first, rest) = exprs.split_first().expect("a short circuit has operands");
+        let mut narrowing = self.narrowing(first);
+        let value = self.expr(first);
         self.push(value);
-        self.emit(Step::Dup);
-        let long = self.block();
-        let join = self.block();
-        let (then, else_, assumes) = match op {
-            Op::AmpAmp => (long, join, narrowing.truthy),
-            _ => (join, long, narrowing.falsy),
-        };
-        self.end(Terminal::If {
-            cond: expr(ExprKind::Operand, span),
-            then,
-            else_,
-        });
-        self.switch(long);
-        for assume in assumes {
-            self.emit(Step::Assume(assume));
+        for right in rest {
+            self.emit(Step::Dup);
+            let long = self.block();
+            let join = self.block();
+            let narrowing = mem::take(&mut narrowing);
+            let (then, else_, assumes) = match op {
+                Op::AmpAmp => (long, join, narrowing.truthy),
+                _ => (join, long, narrowing.falsy),
+            };
+            self.end(Terminal::If {
+                cond: expr(ExprKind::Operand, span),
+                then,
+                else_,
+            });
+            self.switch(long);
+            for assume in assumes {
+                self.emit(Step::Assume(assume));
+            }
+            self.emit(Step::Pop);
+            let value = self.expr(right);
+            self.push(value);
+            self.end(Terminal::Branch(join));
+            self.switch(join);
         }
-        self.emit(Step::Pop);
-        let value = self.expr(right);
-        self.push(value);
-        self.end(Terminal::Branch(join));
-        self.switch(join);
         expr(ExprKind::Operand, span)
     }
 
@@ -554,25 +548,17 @@ impl<'u> Scope<'_, '_, 'u> {
     pub(super) fn cond(&mut self, node: &'u ast::Expr, then: BlockId, else_: BlockId) {
         match node {
             ast::Expr::Group { expr, .. } => self.cond(expr, then, else_),
-            ast::Expr::Binary {
-                op: Op::AmpAmp,
-                exprs,
-                ..
-            } => {
-                let middle = self.block();
-                self.cond(&exprs[0], middle, else_);
-                self.switch(middle);
-                self.cond(&exprs[1], then, else_);
-            }
-            ast::Expr::Binary {
-                op: Op::BarBar,
-                exprs,
-                ..
-            } => {
-                let middle = self.block();
-                self.cond(&exprs[0], then, middle);
-                self.switch(middle);
-                self.cond(&exprs[1], then, else_);
+            ast::Expr::Logical { op, exprs, .. } => {
+                let (last, init) = exprs.split_last().expect("a short circuit has operands");
+                for operand in init {
+                    let middle = self.block();
+                    match op {
+                        Op::AmpAmp => self.cond(operand, middle, else_),
+                        _ => self.cond(operand, then, middle),
+                    }
+                    self.switch(middle);
+                }
+                self.cond(last, then, else_);
             }
             ast::Expr::Unary {
                 op: Op::Bang, expr, ..

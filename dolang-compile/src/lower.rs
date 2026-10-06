@@ -198,38 +198,64 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         }
     }
 
-    fn lower_logical_and(&mut self, left: &'a Expr, right: &'a Expr, span: Span) -> Result<()> {
-        let tid = self.graph.alloc_block(self.block.func, self.block.scope);
-        let next = self.graph.alloc_block(self.block.func, self.block.scope);
-        self.lower_expr(left)?;
-        self.block.insts.push(Inst(InstInfo::Dup, span));
-        self.block.term = Term(TermInfo::If(tid, next), span);
-        self.link(tid);
-        self.link(next);
-        self.switch(tid);
-        self.block.insts.push(Inst(InstInfo::Pop, span));
-        self.lower_expr(right)?;
-        self.block.term = Term(TermInfo::Branch(next), span);
-        self.link(next);
-        self.switch(next);
-        Ok(())
-    }
-
-    fn lower_logical_or(&mut self, left: &'a Expr, right: &'a Expr, span: Span) -> Result<()> {
-        let fid = self.graph.alloc_block(self.block.func, self.block.scope);
-        let next = self.graph.alloc_block(self.block.func, self.block.scope);
-        self.lower_expr(left)?;
-        self.block.insts.push(Inst(InstInfo::Dup, span));
-        self.block.term = Term(TermInfo::If(next, fid), span);
-        self.link(fid);
-        self.link(next);
-        self.switch(fid);
-        self.block.insts.push(Inst(InstInfo::Pop, span));
-        self.lower_expr(right)?;
-        self.block.term = Term(TermInfo::Branch(next), span);
-        self.link(next);
-        self.switch(next);
-        Ok(())
+    /// Branch on `expr`'s truthiness to `then` or `else_`, testing each operand of a
+    /// short circuit once.  `span` is the operator testing it.
+    ///
+    /// With `want_result`, both targets receive the value on the stack, and when
+    /// they're the same block nothing is tested.  Otherwise `!` swaps the targets.
+    fn lower_short_circuit(
+        &mut self,
+        expr: &'a Expr,
+        then: cfg::BlockId,
+        else_: cfg::BlockId,
+        want_result: bool,
+        span: Span,
+    ) -> Result<()> {
+        match expr {
+            Expr::Group { expr, .. } => {
+                self.lower_short_circuit(expr, then, else_, want_result, span)
+            }
+            Expr::Unary {
+                op: Op::Bang, expr, ..
+            } if !want_result => self.lower_short_circuit(expr, else_, then, false, span),
+            Expr::Logical {
+                op,
+                exprs,
+                op_spans,
+            } => {
+                let (last, init) = exprs.split_last().expect("a short circuit has operands");
+                for (operand, &op_span) in init.iter().zip(op_spans) {
+                    let long = self.graph.alloc_block(self.block.func, self.block.scope);
+                    let (t, f) = match op {
+                        Op::AmpAmp => (long, else_),
+                        _ => (then, long),
+                    };
+                    self.lower_short_circuit(operand, t, f, want_result, op_span)?;
+                    self.switch(long);
+                    if want_result {
+                        self.block.insts.push(Inst(InstInfo::Pop, op_span));
+                    }
+                }
+                self.lower_short_circuit(last, then, else_, want_result, span)
+            }
+            expr => {
+                self.lower_expr(expr)?;
+                if then == else_ {
+                    if !want_result {
+                        self.block.insts.push(Inst(InstInfo::Pop, span));
+                    }
+                    self.block.term = Term(TermInfo::Branch(then), span);
+                } else {
+                    if want_result {
+                        self.block.insts.push(Inst(InstInfo::Dup, span));
+                    }
+                    self.block.term = Term(TermInfo::If(then, else_), span);
+                    self.link(else_);
+                }
+                self.link(then);
+                Ok(())
+            }
+        }
     }
 
     /// # Variable Resolution Algorithm
@@ -629,6 +655,38 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 self.block.insts.push(Inst(InstInfo::LoadConst(cid), *span));
             }
             Expr::Group { expr, .. } => self.lower_expr(expr)?,
+            Expr::Logical { op_spans, .. } => {
+                let join = self.graph.alloc_block(self.block.func, self.block.scope);
+                self.lower_short_circuit(expr, join, join, true, op_spans[0])?;
+                self.switch(join);
+            }
+            // Branch on a short circuit rather than test its value again
+            Expr::Unary {
+                op: Op::Bang,
+                expr: operand,
+                op_span,
+            } if {
+                let mut inner = &**operand;
+                while let Expr::Group { expr, .. } = inner {
+                    inner = expr;
+                }
+                matches!(inner, Expr::Logical { .. })
+            } =>
+            {
+                let join = self.graph.alloc_block(self.block.func, self.block.scope);
+                let load = |value: bool| {
+                    let id = self.graph.alloc_block(self.block.func, self.block.scope);
+                    let mut block = self.graph.block_mut(id);
+                    let cid = self.consttab.bool(value);
+                    block.insts.push(Inst(InstInfo::LoadConst(cid), *op_span));
+                    block.term = Term(TermInfo::Branch(join), *op_span);
+                    self.graph.block_mut(join).inbound.insert(id);
+                    id
+                };
+                let (falsy, truthy) = (load(false), load(true));
+                self.lower_short_circuit(operand, falsy, truthy, false, *op_span)?;
+                self.switch(join);
+            }
             Expr::Unary { op, expr, op_span } => {
                 self.lower_expr(expr)?;
                 self.block.insts.push(Inst(
@@ -642,11 +700,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 ));
             }
             Expr::Binary { op, exprs, op_span } => {
-                match op {
-                    Op::AmpAmp => return self.lower_logical_and(&exprs[0], &exprs[1], *op_span),
-                    Op::BarBar => return self.lower_logical_or(&exprs[0], &exprs[1], *op_span),
-                    _ => (),
-                }
                 self.lower_expr(&exprs[0])?;
                 self.lower_expr(&exprs[1])?;
                 self.block.insts.push(Inst(
@@ -1354,77 +1407,63 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         fid: cfg::BlockId,
         span: Span,
     ) -> Result<Binds<'a>> {
-        self.lower_expr(cond)?;
         let Some(bind) = bind else {
-            self.block.term = Term(TermInfo::If(tid, fid), span);
-            self.link(tid);
-            self.link(fid);
+            self.lower_short_circuit(cond, tid, fid, false, span)?;
             return Ok((None, None));
         };
-        self.lower_cond_test(&bind.pattern, true, bscope, tid, fid, span)
+        if let Pattern::Ident(PatIdent { ident, .. }) = &bind.pattern {
+            // A bare identifier binds the value itself and branches on its
+            // truthiness, so the value has to survive the test.  That leaves it on
+            // the failure edge, which needs a block of its own to drop it: the real
+            // failure target is shared with predecessors that have no such value to
+            // clean up.
+            let cleanup = self.graph.alloc_block(self.block.func, self.block.scope);
+            self.lower_short_circuit(cond, tid, cleanup, true, span)?;
+            self.switch(cleanup);
+            self.block.insts.push(Inst(InstInfo::Pop, span));
+            self.block.term = Term(TermInfo::Branch(fid), span);
+            self.link(fid);
+            let res = ident.res.as_ref().expect("unresolved pattern binding");
+            let var = self.resolve_var_in_scope(self.graph.scope(bscope), res.index, res.depth);
+            return Ok((
+                Some(BindPlan {
+                    steps: Vec::new(),
+                    vars: vec![Some(var)],
+                }),
+                None,
+            ));
+        }
+        self.lower_expr(cond)?;
+        self.lower_cond_test(&bind.pattern, bscope, tid, fid, span)
     }
 
     /// Lower the test of a pattern against the value on top of the stack, as
-    /// [`Self::lower_cond`] does.  With `truthy`, a bare name tests the value's
-    /// truthiness, as in `if let`; otherwise it always matches.
+    /// [`Self::lower_cond`] does.  A bare name always matches.
     fn lower_cond_test(
         &mut self,
         pattern: &'a Pattern,
-        truthy: bool,
         bscope: cfg::ScopeId,
         tid: cfg::BlockId,
         fid: cfg::BlockId,
         span: Span,
     ) -> Result<Binds<'a>> {
-        match pattern {
-            Pattern::Ident(PatIdent { ident, .. }) if truthy => {
-                // A bare identifier binds the scrutinee itself and branches on its
-                // truthiness, so the value has to survive the test.  That leaves the
-                // duplicate on the failure edge, which needs a block of its own to drop
-                // it: the real failure target is shared with predecessors that have no
-                // such value to clean up.
-                let cleanup = self.graph.alloc_block(self.block.func, self.block.scope);
-                self.block.insts.push(Inst(InstInfo::Dup, span));
-                self.block.term = Term(TermInfo::If(tid, cleanup), span);
-                self.link(tid);
-                self.link(cleanup);
-                let test = self.bb;
-                self.switch(cleanup);
-                self.block.insts.push(Inst(InstInfo::Pop, span));
-                self.block.term = Term(TermInfo::Branch(fid), span);
-                self.link(fid);
-                self.switch(test);
-                let res = ident.res.as_ref().expect("unresolved pattern binding");
-                let var = self.resolve_var_in_scope(self.graph.scope(bscope), res.index, res.depth);
-                Ok((
-                    Some(BindPlan {
-                        steps: Vec::new(),
-                        vars: vec![Some(var)],
-                    }),
-                    None,
-                ))
-            }
-            pattern => {
-                let BindPlan { steps, vars } =
-                    self.pattern_plan(self.graph.scope(bscope), pattern)?;
-                let test = self.bb;
-                let fail = Fail::Goto {
-                    target: fid,
-                    below: 0,
-                };
-                self.lower_steps(steps, fail, span);
-                self.block.term = Term(TermInfo::Branch(tid), span);
-                self.link(tid);
-                self.switch(test);
-                Ok((
-                    Some(BindPlan {
-                        steps: Vec::new(),
-                        vars,
-                    }),
-                    Some(Defaults::Pattern(pattern)),
-                ))
-            }
-        }
+        let BindPlan { steps, vars } = self.pattern_plan(self.graph.scope(bscope), pattern)?;
+        let test = self.bb;
+        let fail = Fail::Goto {
+            target: fid,
+            below: 0,
+        };
+        self.lower_steps(steps, fail, span);
+        self.block.term = Term(TermInfo::Branch(tid), span);
+        self.link(tid);
+        self.switch(test);
+        Ok((
+            Some(BindPlan {
+                steps: Vec::new(),
+                vars,
+            }),
+            Some(Defaults::Pattern(pattern)),
+        ))
     }
 
     /// Lower an `if` in vertical-element layout, where each branch body is a list
@@ -1615,7 +1654,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             let span = arm.pattern.span();
             self.lower_load(&scrutinee, span);
             let (bind, bind_params) =
-                self.lower_cond_test(&arm.pattern, false, tscope, tid, current_fallback, span)?;
+                self.lower_cond_test(&arm.pattern, tscope, tid, current_fallback, span)?;
             self.queue(Work {
                 bb: tid,
                 ast: WorkAst::Arm(arm, want_result, current_fallback),

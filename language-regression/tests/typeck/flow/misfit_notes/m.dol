@@ -1,0 +1,68 @@
+# An argument that doesn't fit is reported once, with a note for each part of it
+# that doesn't fit, in the types found around it
+
+pub def kinds _d @ Dict[{kind: (:a: | :b:), name: Str}]
+  ...
+
+# Union members that don't fit together are noted as their union
+pub def decayed()
+  let d = {kind: :a:, name: "x"}
+  kinds $d
+# error: expected `std.Dict[{kind: :a: | :b:, name: std.Str}]`, found `std.Dict[{*(std.Sym): std.Str | std.Sym}]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   kinds $d
+#    |          ^
+#    |
+#    = note: `{*(std.Sym): std.Str | std.Sym}` may be missing `kind: :a: | :b:`
+#    = note: `std.Str | std.Sym` does not fit `:a: | :b:`
+#    = note: in `{*(std.Sym): std.Str | std.Sym}`
+
+pub def items()
+  kinds {kind: :c:, name: 1}
+  # error: expected `{kind: :a: | :b:, name: std.Str}`, found `{kind: :c:, name: 1}`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   kinds {kind: :c:, name: 1}
+  #    |         ^^^^^^^^^^^^^^^^^^^^
+  #    |
+  #    = note: `1` does not fit `std.Str`
+  #    = note: `:c:` does not fit `:a: | :b:`
+  kinds {name: "x"}
+  # error: expected `{kind: :a: | :b:, name: std.Str}`, found `{name: "x"}`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   kinds {name: "x"}
+  #    |         ^^^^^^^^^^^
+  #    |
+  #    = note: `{name: "x"}` may be missing `kind: :a: | :b:`
+  kinds {kind: :a:, name: "x", extra: 1}
+# error: expected `{kind: :a: | :b:, name: std.Str}`, found `{kind: :a:, name: "x", extra: 1}`
+#   --> m.dol:LL:LL
+#    |
+# LL |   kinds {kind: :a:, name: "x", extra: 1}
+#    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#    |
+#    = note: `{kind: :a: | :b:, name: std.Str}` doesn't admit `extra: 1`
+
+# A contravariant position swaps which side is found
+pub def takes _f @ ((Dict[{a: Int}]) -> nil)
+  ...
+
+pub def needs_b _d @ Dict[{a: Int, b: Int}] -> nil
+  ...
+
+pub def reversed()
+  takes $needs_b
+# error: expected `(std.Dict[{a: std.Int}]) <m.reversed.#0 >m.reversed.#1 -> nil`, found `forall (std.Dict[{a: std.Int, b: std.Int}]) <#0.0 >#0.1 -> nil`
+#   --> m.dol:LL:LL
+#    |
+# LL |   takes $needs_b
+#    |          ^^^^^^^
+#    |
+#    = note: `{a: std.Int}` doesn't admit `b: std.Int`
+#    = note: in `std.Dict[{a: std.Int, b: std.Int}]`
+#    = note: in `{std.Dict[{a: std.Int, b: std.Int}]}`
+#    = note: `{a: std.Int, b: std.Int}` requires `b: std.Int`, which `{a: std.Int}` may be missing
+#    = note: in `std.Dict[{a: std.Int, b: std.Int}]`
+#    = note: in `{std.Dict[{a: std.Int, b: std.Int}]}`

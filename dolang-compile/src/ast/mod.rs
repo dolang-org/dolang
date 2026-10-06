@@ -675,6 +675,14 @@ pub(crate) enum Expr {
         exprs: Box<[Expr; 2]>,
         op_span: Span,
     },
+    /// `&&` or `||` over two or more operands, left to right. A chain of the same
+    /// operator is one node; a parenthesized operand is its own.
+    Logical {
+        op: Op,
+        exprs: Vec<Expr>,
+        /// The operator after each operand but the last
+        op_spans: Vec<Span>,
+    },
     Range {
         exprs: Box<[Option<Expr>; 2]>,
         op_span: Span,
@@ -939,6 +947,9 @@ impl Expr {
             // Binary operations - combine classifications, unlikely side effect
             Expr::Binary { exprs, .. } => {
                 Self::combine_effects(exprs[0].side_effect(), exprs[1].side_effect()).unlikely()
+            }
+            Expr::Logical { exprs, .. } => {
+                Self::combine_iter(exprs.iter().map(|expr| expr.side_effect())).unlikely()
             }
 
             Expr::Range { exprs, .. } => Self::combine_iter(
@@ -1276,6 +1287,15 @@ impl Node for Expr {
                 visit.token(Token::Operator, *op_span, None)?;
                 visit.node(&exprs[1])
             }
+            Expr::Logical {
+                exprs, op_spans, ..
+            } => {
+                for (expr, op_span) in exprs.iter().zip(op_spans) {
+                    visit.node(expr)?;
+                    visit.token(Token::Operator, *op_span, None)?;
+                }
+                visit.node(exprs.last().expect("a short circuit has operands"))
+            }
             Expr::Range { exprs, op_span } => {
                 if let Some(start) = &exprs[0] {
                     visit.node(start)?;
@@ -1395,6 +1415,7 @@ impl Node for Expr {
             Expr::Group { .. } => NodeKind::Group,
             Expr::Unary { .. } => NodeKind::Unary,
             Expr::Binary { .. } => NodeKind::Binary,
+            Expr::Logical { .. } => NodeKind::Logical,
             Expr::Range { .. } => NodeKind::Range,
             Expr::Call { .. } => NodeKind::Call,
             Expr::Lambda { .. } => NodeKind::Lambda,

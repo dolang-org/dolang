@@ -611,10 +611,27 @@ impl Parser<'_> {
                         };
                     } else {
                         let rhs = self.parse_expr_prec(scope, mode, Some(prec))?;
-                        lhs = Expr::Binary {
-                            op,
-                            exprs: [lhs, rhs].into(),
-                            op_span: span,
+                        lhs = match lhs {
+                            // A chain of the same short circuit is one node
+                            Expr::Logical {
+                                op: lop,
+                                ref mut exprs,
+                                ref mut op_spans,
+                            } if lop == op => {
+                                exprs.push(rhs);
+                                op_spans.push(span);
+                                lhs
+                            }
+                            lhs if matches!(op, Op::AmpAmp | Op::BarBar) => Expr::Logical {
+                                op,
+                                exprs: vec![lhs, rhs],
+                                op_spans: vec![span],
+                            },
+                            lhs => Expr::Binary {
+                                op,
+                                exprs: [lhs, rhs].into(),
+                                op_span: span,
+                            },
                         }
                     }
                 }

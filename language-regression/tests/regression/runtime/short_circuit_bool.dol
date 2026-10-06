@@ -1,0 +1,158 @@
+# A short circuit tests each operand's truthiness at most once
+
+class Probe
+  pub field name = ""
+  pub field truth = false
+  field log = nil
+
+  def (init) self log name truth
+    self.#log = log
+    self.name = name
+    self.truth = truth
+
+  def (bool) self
+    self.#log.push $self.name
+    self.truth
+
+# Call `block` with probes `a`, `b` and `c` of the given truths, giving the names
+# of those tested, in order, and the block's result
+def run a b c block
+  let log = []
+  let result = block (Probe log "a" a) (Probe log "b" b) (Probe log "c" c)
+  (log, result)
+
+# Values
+let log v = run false true true (do |a b c| a && b && c)
+assert_eq $log ["a"]
+assert_eq $v.name a
+let log v = run true false true (do |a b c| a && b && c)
+assert_eq $log ["a", "b"]
+assert_eq $v.name b
+let log v = run true true false (do |a b c| a && b && c)
+assert_eq $log ["a", "b"]
+assert_eq $v.name c
+let log v = run true false false (do |a b c| a || b || c)
+assert_eq $log ["a"]
+assert_eq $v.name a
+let log v = run false true false (do |a b c| a || b || c)
+assert_eq $log ["a", "b"]
+assert_eq $v.name b
+let log v = run false false true (do |a b c| a || b || c)
+assert_eq $log ["a", "b"]
+assert_eq $v.name c
+
+# Mixed chains
+let log v = run false true true (do |a b c| a && b || c)
+assert_eq $log ["a"]
+assert_eq $v.name c
+let log v = run true false true (do |a b c| a && b || c)
+assert_eq $log ["a", "b"]
+assert_eq $v.name c
+let log v = run true true false (do |a b c| a && b || c)
+assert_eq $log ["a", "b"]
+assert_eq $v.name b
+let log v = run false true false (do |a b c| a || b && c)
+assert_eq $log ["a", "b"]
+assert_eq $v.name c
+let log v = run false false true (do |a b c| a || b && c)
+assert_eq $log ["a", "b"]
+assert_eq $v.name b
+
+# Parenthesized operands
+let log v = run false true true (do |a b c| (a && b) && c)
+assert_eq $log ["a"]
+assert_eq $v.name a
+let log v = run true true false (do |a b c| a && (b && c))
+assert_eq $log ["a", "b"]
+assert_eq $v.name c
+let log v = run false false true (do |a b c| (a || b) || c)
+assert_eq $log ["a", "b"]
+assert_eq $v.name c
+
+# Negation
+let log v = run true false true (do |a b _c| !(a && b))
+assert_eq $log ["a", "b"]
+assert_eq $v true
+let log v = run false true true (do |a b c| !(a || b && c))
+assert_eq $log ["a", "b", "c"]
+assert_eq $v false
+let log v = run true true true (do |a b _c| !a && b)
+assert_eq $log ["a"]
+assert_eq $v false
+
+# Conditions
+let log v = run false true true do |a b _c|
+  if (a && b)
+    "then"
+  else
+    "else"
+assert_eq $log ["a"]
+assert_eq $v "else"
+let log v = run true false true do |a b c|
+  if (a || b && c)
+    "then"
+  else
+    "else"
+assert_eq $log ["a"]
+assert_eq $v "then"
+let log v = run false true true do |a b c|
+  if (a || b && c)
+    "then"
+  else
+    "else"
+assert_eq $log ["a", "b", "c"]
+assert_eq $v "then"
+let log v = run true false true do |a b _c|
+  if !(a && b)
+    "then"
+  else
+    "else"
+assert_eq $log ["a", "b"]
+assert_eq $v "then"
+let log v = run false false true do |a b c|
+  if (a)
+    "a"
+  else if (b || c)
+    "b or c"
+  else
+    "neither"
+assert_eq $log ["a", "b", "c"]
+assert_eq $v "b or c"
+let log _ = run true true false do |a b _c|
+  while (a && b)
+    b.truth = false
+  "done"
+assert_eq $log ["a", "b", "a", "b"]
+let log _ = run false true false do |a b _c|
+  while (a || b)
+    b.truth = false
+  "done"
+assert_eq $log ["a", "b", "a", "b"]
+
+# A truthy binding binds the short circuit's value
+let log v = run true true false do |a b c|
+  if let x = (a && b && c)
+    "then $(x.name)"
+  else
+    "else"
+assert_eq $log ["a", "b", "c"]
+assert_eq $v "else"
+let log v = run false true false do |a b c|
+  if let x = (a || b || c)
+    "then $(x.name)"
+  else
+    "else"
+assert_eq $log ["a", "b"]
+assert_eq $v "then b"
+
+# Guards
+let log v = run true false true do |a b c|
+  match 1
+    _ if (a && b)
+      "first"
+    _ if (a || c)
+      "second"
+  else
+    "neither"
+assert_eq $log ["a", "b", "a"]
+assert_eq $v "second"
