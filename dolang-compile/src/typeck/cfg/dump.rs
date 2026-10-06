@@ -4,8 +4,8 @@
 use std::fmt::{self, Write};
 
 use super::{
-    Against, Collection, Expr, ExprKind, FmtSpec, FuncKind, Ir, Item, Member, Origin, Pattern,
-    PatternKey, Relation, Step, Tag, Target, Terminal, VarId,
+    Against, BlockId, Collection, Expr, ExprKind, FmtSpec, FuncId, FuncKind, Ir, Item, Member,
+    Origin, Pattern, PatternKey, Relation, Step, Tag, Target, Terminal, VarId,
 };
 use crate::{
     source::Span,
@@ -18,111 +18,131 @@ use crate::{
 impl Ir {
     /// Dump the graph, naming variables by the source text of their spans
     pub(crate) fn dump<'s>(&self, db: &Database, text: impl Fn(Span) -> &'s str) -> String {
-        let dump = Dump {
-            ir: self,
-            db,
-            text: &text,
-        };
+        let dump = Dump::new(self, db, &text);
         let mut out = String::new();
         dump.write(&mut out).expect("writing to a string succeeds");
         out
     }
+
+    /// A variable's name in a dump, by the source text of its span
+    pub(crate) fn var_name<'s>(&self, var: VarId, text: impl Fn(Span) -> &'s str) -> String {
+        match self.var(var).origin {
+            Origin::Source(span) => text(span).to_owned(),
+            Origin::Result => format!("result{}", self.var(var).owner.index()),
+            Origin::Synthetic | Origin::Field(_) | Origin::Signature => {
+                format!("t{}", var.index())
+            }
+        }
+    }
 }
 
-struct Dump<'a, 's> {
+pub(super) struct Dump<'a, 's> {
     ir: &'a Ir,
     db: &'a Database,
     text: &'a dyn Fn(Span) -> &'s str,
 }
 
+impl<'a, 's> Dump<'a, 's> {
+    pub(super) fn new(ir: &'a Ir, db: &'a Database, text: &'a dyn Fn(Span) -> &'s str) -> Self {
+        Self { ir, db, text }
+    }
+}
+
 impl Dump<'_, '_> {
     fn write(&self, out: &mut String) -> fmt::Result {
-        for (id, func) in self.ir.funcs() {
-            write!(out, "f{}", id.index())?;
-            match func.kind {
-                FuncKind::Module(_) => write!(out, " module")?,
-                FuncKind::Decl(decl) => write!(out, " decl{}", decl.index())?,
-            }
-            if let Some(parent) = func.parent {
-                write!(out, " in f{}", parent.index())?;
-            }
-            write!(
-                out,
-                ": entry b{}, exit b{}",
-                func.entry.index(),
-                func.exit.index()
-            )?;
-            write!(out, ", params ")?;
-            self.pattern(out, &func.params)?;
-            if let Some(signature) = &func.signature {
-                write!(out, ", signature (")?;
-                for (index, &param) in signature.params.iter().enumerate() {
-                    if index != 0 {
-                        write!(out, ", ")?;
-                    }
-                    self.slot(out, param)?;
-                }
-                if !signature.params.is_empty() {
-                    write!(out, ", ")?;
-                }
-                write!(out, "<")?;
-                self.slot(out, signature.input)?;
-                write!(out, ", >")?;
-                self.slot(out, signature.output)?;
-                write!(out, ") -> ")?;
-                self.slot(out, signature.result)?;
-            }
-            if !func.captures.is_empty() {
-                write!(out, ", captures")?;
-                for &var in &func.captures {
-                    write!(out, " ")?;
-                    self.var(out, var)?;
-                    if self.ir.var(var).volatile {
-                        write!(out, "!")?;
-                    }
-                }
-            }
-            let bottom: Vec<_> = (func.vars.iter())
-                .filter(|&&var| self.ir.var(var).bottom)
-                .collect();
-            if !bottom.is_empty() {
-                write!(out, ", bottom")?;
-                for &var in bottom {
-                    write!(out, " ")?;
-                    self.var(out, var)?;
-                }
-            }
+        for (id, _) in self.ir.funcs() {
+            self.func(out, id)?;
             writeln!(out)?;
         }
-        for (id, block) in self.ir.blocks() {
-            write!(out, "b{} f{}", id.index(), block.func.index())?;
-            if let Some(handler) = block.handler {
-                write!(out, " handler b{}", handler.index())?;
-            }
-            if block.depth != 0 {
-                write!(out, " depth {}", block.depth)?;
-            }
-            writeln!(out, ":")?;
-            for step in &block.steps {
-                write!(out, "  ")?;
-                self.step(out, step)?;
-                writeln!(out)?;
-            }
-            write!(out, "  ")?;
-            self.terminal(out, &block.terminal)?;
-            writeln!(out)?;
+        for (id, _) in self.ir.blocks() {
+            self.block(out, id)?;
         }
         Ok(())
     }
 
-    fn var(&self, out: &mut String, var: VarId) -> fmt::Result {
-        match self.ir.var(var).origin {
-            Origin::Source(span) => write!(out, "{}", (self.text)(span)),
-            Origin::Result => write!(out, "result{}", self.ir.var(var).owner.index()),
-            Origin::Synthetic | Origin::Field(_) | Origin::Signature => {
-                write!(out, "t{}", var.index())
+    /// A function's header, without a line ending
+    pub(super) fn func(&self, out: &mut String, id: FuncId) -> fmt::Result {
+        let func = self.ir.func(id);
+        write!(out, "f{}", id.index())?;
+        match func.kind {
+            FuncKind::Module(_) => write!(out, " module")?,
+            FuncKind::Decl(decl) => write!(out, " decl{}", decl.index())?,
+        }
+        if let Some(parent) = func.parent {
+            write!(out, " in f{}", parent.index())?;
+        }
+        write!(
+            out,
+            ": entry b{}, exit b{}",
+            func.entry.index(),
+            func.exit.index()
+        )?;
+        write!(out, ", params ")?;
+        self.pattern(out, &func.params)?;
+        if let Some(signature) = &func.signature {
+            write!(out, ", signature (")?;
+            for (index, &param) in signature.params.iter().enumerate() {
+                if index != 0 {
+                    write!(out, ", ")?;
+                }
+                self.slot(out, param)?;
+            }
+            if !signature.params.is_empty() {
+                write!(out, ", ")?;
+            }
+            write!(out, "<")?;
+            self.slot(out, signature.input)?;
+            write!(out, ", >")?;
+            self.slot(out, signature.output)?;
+            write!(out, ") -> ")?;
+            self.slot(out, signature.result)?;
+        }
+        if !func.captures.is_empty() {
+            write!(out, ", captures")?;
+            for &var in &func.captures {
+                write!(out, " ")?;
+                self.var(out, var)?;
+                if self.ir.var(var).volatile {
+                    write!(out, "!")?;
+                }
             }
         }
+        let bottom: Vec<_> = (func.vars.iter())
+            .filter(|&&var| self.ir.var(var).bottom)
+            .collect();
+        if !bottom.is_empty() {
+            write!(out, ", bottom")?;
+            for &var in bottom {
+                write!(out, " ")?;
+                self.var(out, var)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// A block's header line, then a line for each step and its terminal
+    pub(super) fn block(&self, out: &mut String, id: BlockId) -> fmt::Result {
+        let block = self.ir.block(id);
+        write!(out, "b{} f{}", id.index(), block.func.index())?;
+        if let Some(handler) = block.handler {
+            write!(out, " handler b{}", handler.index())?;
+        }
+        if block.depth != 0 {
+            write!(out, " depth {}", block.depth)?;
+        }
+        writeln!(out, ":")?;
+        for step in &block.steps {
+            write!(out, "  ")?;
+            self.step(out, step)?;
+            writeln!(out)?;
+        }
+        write!(out, "  ")?;
+        self.terminal(out, &block.terminal)?;
+        writeln!(out)
+    }
+
+    fn var(&self, out: &mut String, var: VarId) -> fmt::Result {
+        write!(out, "{}", self.ir.var_name(var, self.text))
     }
 
     /// A signature's variable, or `_` for an annotated item

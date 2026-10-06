@@ -234,6 +234,10 @@ impl<'u, 's> Builder<'u, 's> {
                 debug_assert_eq!(ir.validate(), Ok(()), "lowering builds a valid graph");
                 #[cfg(debug_assertions)]
                 ir.check_stack_depths();
+                #[cfg(feature = "debug")]
+                if let Err(e) = export_dot(&ir, &db, &tables.units[index]) {
+                    dolang_util::debug_eprintln!(topic: "dot", "Typing CFG DOT export failed: {e}");
+                }
                 Some(ir)
             })
             .collect::<Vec<_>>();
@@ -270,6 +274,18 @@ impl<'u, 's> Builder<'u, 's> {
     }
 }
 
+/// Export a unit's typing CFG to a DOT file under `DOLANG_EXPORT_DOT`, if it is set
+#[cfg(feature = "debug")]
+fn export_dot(ir: &cfg::Ir, db: &r#type::Database, info: &elab::UnitInfo) -> std::io::Result<()> {
+    let Some(out) = crate::dot_path(info.path, "typeck.dot")? else {
+        return Ok(());
+    };
+    let file = &info.source.expect("a lowered unit has a source").compiler.file;
+    ir.dot(db, |span| file.str(span), &mut std::fs::File::create(&out)?)?;
+    dolang_util::debug_eprintln!(topic: "dot", "Typing CFG DOT exported to: {}", out.display());
+    Ok(())
+}
+
 /// The result of checking a set of units.
 ///
 /// A check is *validated* when every well-formedness check passed: the checker
@@ -285,10 +301,7 @@ pub struct Check<'u> {
     /// Well-formedness checks the checker could not decide
     unresolved: Vec<elab::Unresolved>,
     /// Each unit's typing CFG, by [`UnitId`], for a unit checked from source
-    #[cfg_attr(
-        not(any(test, feature = "debug")),
-        allow(dead_code, reason = "read by tests and the debug dump")
-    )]
+    #[cfg_attr(not(test), allow(dead_code, reason = "read by tests"))]
     cfgs: Vec<Option<cfg::Ir>>,
     /// What flow analysis concluded about each unit, by [`UnitId`], for a unit checked
     /// from source

@@ -56,6 +56,8 @@
 //! joins the returned value with the guard point's state.
 
 #[cfg(feature = "debug")]
+mod dot;
+#[cfg(feature = "debug")]
 mod dump;
 mod expr;
 #[cfg(test)]
