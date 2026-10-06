@@ -321,10 +321,11 @@ pub(crate) enum Type {
     Top,
     /// The dynamic type or schema, consistent with every type or schema of its kind
     Unknown(Kind),
-    /// A written type the database can't represent yet, such as a rest pattern
-    /// mapped over packs (#764). Judgments involving it are unsupported rather than
-    /// consistent, so it never passes for `Unknown`. Each is unique (see
-    /// [`Database::unsupported`]), since what it stands for can't be compared.
+    /// A written type the database can't represent yet. Judgments involving it
+    /// are unsupported rather than consistent, so it never passes for `Unknown`.
+    /// Each is unique (see [`Database::unsupported`]), since what it stands for
+    /// can't be compared.
+    #[expect(dead_code, reason = "no written type needs a stand-in now")]
     Unsupported {
         kind: Kind,
         occurrence: u32,
@@ -870,6 +871,7 @@ pub(crate) struct Database {
     overloads: HashMap<DeclId, alias::Box<[DeclId]>>,
     pending_kinds: RefCell<Vec<(TypeId, Kind)>>,
     /// How many unsupported stand-ins have been interned
+    #[expect(dead_code, reason = "no written type needs a stand-in now")]
     unsupported: Cell<u32>,
 }
 
@@ -923,6 +925,7 @@ impl Database {
 
     /// A new stand-in for a written type the database can't represent, distinct
     /// from every other
+    #[expect(dead_code, reason = "no written type needs a stand-in now")]
     pub(crate) fn unsupported(&self, kind: Kind) -> TypeId {
         let occurrence = self.unsupported.get();
         self.unsupported.set(occurrence + 1);
