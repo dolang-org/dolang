@@ -156,7 +156,13 @@ impl Solver<'_> {
                 body = *inner;
             }
             let intrinsic = match self.db.ty(body) {
-                Type::Function(_) => Intrinsic::Func,
+                Type::Function(_) => {
+                    let Some(class) = self.db.func_class(view.ty) else {
+                        return Ok(None);
+                    };
+                    term = self.view(class, view.environment);
+                    continue;
+                }
                 Type::Literal(literal) => literal.intrinsic(),
                 Type::Rigid { .. } => {
                     self.rigid(view.ty)?;

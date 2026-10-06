@@ -1,5 +1,6 @@
 //! Judgments that need one of their alternatives to hold: a union on the right
-//! whose terms aren't all closed, where a member must be chosen to infer through.
+//! whose terms aren't all closed, where a member must be chosen to infer through,
+//! or a callable on the left with several signatures, one of which must fit.
 //!
 //! Alternatives are judged by trials, each on a fork of the solver: a trial adds
 //! the alternative's own judgment and solves, so nothing it finds reaches the
@@ -34,9 +35,8 @@ enum Verdict {
 /// A judgment that needs one of its alternatives to hold
 #[derive(Clone, Debug)]
 pub(super) struct Alternatives {
-    actual: Term,
-    /// What `actual` may be below, one of which must hold
-    terms: Vec<Term>,
+    /// Each alternative's own judgment, `actual <: expected`
+    judgments: Vec<(Term, Term)>,
     /// What the judgment is when no alternative is possible
     none: Issue,
     /// The generation its trials last ran at
@@ -63,24 +63,49 @@ impl Solver<'_> {
         step: fn(usize) -> Step,
         none: Issue,
     ) -> Result<(), Issue> {
+        let judgments = terms.into_iter().map(|term| (actual, term)).collect();
+        self.choose_judgment(obligation, judgments, step, none)
+    }
+
+    /// Relate the alternative trials chose among `terms` to `expected`, labeled
+    /// by `step`. Until one is chosen, the judgment is residual.
+    pub(super) fn choose_left(
+        &self,
+        obligation: ObligationId,
+        terms: Vec<Term>,
+        expected: Term,
+        step: fn(usize) -> Step,
+        none: Issue,
+    ) -> Result<(), Issue> {
+        let judgments = terms.into_iter().map(|term| (term, expected)).collect();
+        self.choose_judgment(obligation, judgments, step, none)
+    }
+
+    /// Derive the alternative judgment trials chose, labeled by `step`
+    fn choose_judgment(
+        &self,
+        obligation: ObligationId,
+        judgments: Vec<(Term, Term)>,
+        step: fn(usize) -> Step,
+        none: Issue,
+    ) -> Result<(), Issue> {
         let verdict = {
             let mut records = self.alternatives.borrow_mut();
             let record = records.entry(obligation).or_insert_with(|| Alternatives {
-                actual,
-                terms,
+                judgments,
                 none,
                 tried: None,
                 verdict: Verdict::Untried,
             });
             match record.verdict {
-                Verdict::Chosen(index) => Ok((index, record.terms[index])),
+                Verdict::Chosen(index) => Ok((index, record.judgments[index])),
                 Verdict::Untried => Err(Residual::Inference.into()),
                 Verdict::Ambiguous => Err(Residual::Ambiguous.into()),
                 Verdict::Failed(issue) => Err(issue),
             }
         };
-        let (index, term) = verdict?;
-        self.derive(obligation, actual, term, step(index));
+        let (index, (actual, expected)) = verdict?;
+        self.derive(obligation, actual, expected, step(index));
         Ok(())
     }
 
@@ -171,17 +196,17 @@ impl Solver<'_> {
     /// Try each of a judgment's alternatives. One proven without adding a bound
     /// holds outright and is chosen even beside other possible ones.
     fn judge(&self, id: ObligationId) -> Result<Verdict, Residual> {
-        let (actual, terms, none) = {
+        let (judgments, none) = {
             let records = self.alternatives.borrow();
             let record = &records[&id];
-            (record.actual, record.terms.clone(), record.none)
+            (record.judgments.clone(), record.none)
         };
         let language = self.obligations[id.0].relation.language;
-        let resolved = self.resolve(actual)?;
-        let actual = self.blinded.get(&resolved).copied().unwrap_or(actual);
         let mut possible = Vec::new();
-        for (index, &term) in terms.iter().enumerate() {
-            let (status, free) = self.trial(actual, term, language)?;
+        for (index, &(actual, expected)) in judgments.iter().enumerate() {
+            let resolved = self.resolve(actual)?;
+            let actual = self.blinded.get(&resolved).copied().unwrap_or(actual);
+            let (status, free) = self.trial(actual, expected, language)?;
             match status {
                 Status::Contradicted => {}
                 Status::Proven if free => return Ok(Verdict::Chosen(index)),

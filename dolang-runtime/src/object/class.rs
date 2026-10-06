@@ -38,6 +38,13 @@ use crate::{
 
 use super::protocol::{GcObj, GcObjBorrow, Protocol};
 
+/// Whether `value` is a function, as a member's or thunk's value must be. A type
+/// object is a `Func`, since it's called to construct, but not a function.
+fn is_function<'v>(strand: &mut Strand<'v, '_>, value: &Value<'v>) -> bool {
+    value.is_instance_of(strand, &strand.singletons().func)
+        && !value.is_instance_of(strand, &strand.singletons().type_obj)
+}
+
 /// Unwrap a `class`/`static` decorator marker, replacing `value` with the member
 /// it wraps and reporting which namespace that member belongs to.
 fn unwrap_member_scope<'v, 's>(
@@ -229,7 +236,7 @@ pub(crate) async fn create<'v, 's>(
                 };
                 let is_thunk = matches!(key.tag(), sym::FIELD_THUNK | sym::CLASS_FIELD_THUNK);
                 let default = if is_thunk {
-                    if !default.is_instance_of(strand, &strand.singletons().func) {
+                    if !is_function(strand, &default) {
                         return Err(Error::type_error(
                             strand,
                             "class_create: field thunk must be a function",
@@ -310,7 +317,7 @@ pub(crate) async fn create<'v, 's>(
                             },
                             inherited: scope == MemberScope::Class,
                         }
-                    } else if value.is_instance_of(strand, &strand.singletons().func) {
+                    } else if is_function(strand, &value) {
                         ClassTypeEntry::Method {
                             value,
                             inherited: scope == MemberScope::Class,
@@ -377,7 +384,7 @@ pub(crate) async fn create<'v, 's>(
                     continue;
                 }
 
-                if !value.is_instance_of(strand, &strand.singletons().func) {
+                if !is_function(strand, &value) {
                     return Err(Error::type_error(
                         strand,
                         "class_create: method value must be a function, Getter, or Setter",
@@ -1502,6 +1509,9 @@ impl<'v> Protocol<'v> for ClassTypeProxy<'v> {
         supertype.eq(strand, &this).unwrap_or(false)
             || supertype
                 .eq(strand, &strand.singletons().type_obj)
+                .unwrap_or(false)
+            || supertype
+                .eq(strand, &strand.singletons().func)
                 .unwrap_or(false)
             || supertype
                 .eq(strand, &strand.singletons().value)

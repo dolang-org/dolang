@@ -2193,6 +2193,17 @@ pub @let FmtKind = $
   | :FIXED:
 
 #
+# `Func` is the abstract supertype of function values.
+#
+# Applied in a type, `Func[S, R, In: I, Out: O]` is the function type
+# `(...S) <I >O -> R`; arguments left out are unknown. A class that declares
+# `(call)` names `Func` among its supertypes to be passed as a function.
+pub class Func[S @ {*Value, **Value}, R, :In @ Iter[Value], :Out @ Sink[Never]]
+  # Calls the function.
+  pub def (call) _self ...args @ S <In >Out -> R
+    ...
+
+#
 # An unbound interpolation in a [`Fmt`](std.Fmt).
 #
 # A [`FmtValue`](std.FmtValue) already carries a value. A `FmtParam` carries
@@ -2203,7 +2214,7 @@ pub @let FmtKind = $
 # `FmtParam` exposes the same formatting fields and `pad` method as
 # [`FmtSpec`](std.FmtSpec). Calling it with new keyword options returns a new
 # `FmtParam` naming the same parameter.
-pub class FmtParam
+pub class FmtParam: Func
   #
   #
   # ## Errors
@@ -2293,7 +2304,7 @@ pub class FmtParam
 # the supplied options overridden, or a bound [`FmtValue`](std.FmtValue) when
 # given a positional value.
 #
-pub class FmtSpec
+pub class FmtSpec: Func
   #
   #
   # ## Example
@@ -2508,7 +2519,7 @@ pub class FmtSpec
 # When `kind` is nil, interpolation in an ordinary quoted string or here string
 # uses display formatting. `str` and `dbg` supply display and debug formatting,
 # respectively. An explicit `kind` overrides the surrounding operation.
-pub class FmtValue[T]
+pub class FmtValue[T]: Func
   #
   #
   # ## Example
@@ -2821,14 +2832,6 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[Int, FmtSegment[V]] @Spre
 
   # Destructures the segments positionally.
   pub def (unpack) self -> Unpack[FmtSegment[V], Rest: UnpackIter[FmtSegment[V]]]
-    ...
-
-
-#
-# `Func` is the abstract supertype of function values.
-pub class Func
-  # Calls the function.
-  pub def (call) _self ...args -> Value
     ...
 
 # A module object, produced by `import` or by loading a compiled module. Its
@@ -4717,7 +4720,7 @@ pub class TypeError: RuntimeError
 #
 # The type of a class whose instances are `T`. `Type` is the type of all types
 # and cannot be constructed directly.
-pub class Type[T]
+pub class Type[T]: Func
   field instance @ Phantom[T]
 
 #

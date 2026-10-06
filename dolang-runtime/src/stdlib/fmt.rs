@@ -13,7 +13,7 @@ use crate::{
     sym::Sym,
     unpack,
     value::{
-        Empty, Input, Output, Slot, StrEmbryo, Value,
+        Empty, Input, Output, Slot, StrEmbryo, TypeObject, Value,
         fmt::{Align, Fill, Format, Kind, Pad, Sign, Spec},
     },
     vm::{Builder, State, Stateful, Vm},
@@ -1120,6 +1120,8 @@ where
     T: Object<'v, Annex = SpecAnnex<'v>>,
 {
     builder
+        // Each is called to apply options
+        .supertype(TypeObject::Func)
         .get("fill", |this, strand, mut out| {
             let annex = this.annex();
             match annex.spec.fill {

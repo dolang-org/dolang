@@ -81,7 +81,9 @@ pub(crate) struct Tables<'u> {
     pub(crate) sigs: HashMap<(DeclId, usize), Sig>,
     /// The type of each field, by its class and the span of its name
     pub(crate) fields: HashMap<(DeclId, Span), Slot>,
-    /// The ambient channels of each function type written without them, by its `->`
+    /// The ambient channels of each function type written without them, by its
+    /// `->`, and of each use of `Func` in a type that doesn't give them, by its
+    /// span
     pub(crate) func_ambients: HashMap<UnitSpan, [Ambient; 2]>,
     /// The declarations of `std` and `strand` the checker treats specially
     pub(crate) designated: HashMap<DeclId, Designated>,
@@ -857,6 +859,31 @@ impl Report for Nonconforming {
 
     fn message(&self, w: &mut dyn Write) -> fmt::Result {
         w.write_str(&self.message)
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+/// An instance `(call)` of a class that doesn't reach `Func`, so its instances
+/// aren't passed as functions
+struct Uncallable {
+    span: Span,
+    class: String,
+}
+
+impl Report for Uncallable {
+    fn severity(&self) -> Severity {
+        Severity::Warning
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "`{}` has a `(call)` but not `Func` as a supertype, so it isn't passed as a function",
+            self.class
+        )
     }
 
     fn span(&self) -> Span {

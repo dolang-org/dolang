@@ -113,7 +113,7 @@ pub class Mock
     ...
 
 # A running mock HTTP server, bound to a random local port.
-pub class Server
+pub class Server: Func
   # Starts a server.
   #[class]
   @def (call) self -> Server

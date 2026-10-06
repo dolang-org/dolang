@@ -165,13 +165,20 @@ impl Needs<'_, '_> {
 
     fn ty(&mut self, node: usize, unit: UnitId, ty: &TypeExpr) {
         match ty {
-            TypeExpr::Name { head, .. } => self.name(node, unit, head.span),
+            TypeExpr::Name { head, fields, .. } => {
+                self.name(node, unit, head.span);
+                let span = fields
+                    .last()
+                    .map_or(head.span, |field| head.span | field.span);
+                self.func(node, unit, span);
+            }
             TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}
             TypeExpr::App { base, args, .. } => {
                 self.ty(node, unit, base);
                 for arg in args {
                     self.ty(node, unit, arg.ty());
                 }
+                self.func(node, unit, ty.span());
             }
             TypeExpr::Schema { params, .. } => self.params(node, unit, params),
             TypeExpr::Group { ty, .. } => self.ty(node, unit, ty),
@@ -202,6 +209,15 @@ impl Needs<'_, '_> {
                     self.ambient(node, *ambient, index);
                 }
             }
+        }
+    }
+
+    /// The channels a use of `Func` takes where it doesn't give them
+    fn func(&mut self, node: usize, unit: UnitId, span: Span) {
+        let tables = self.tables;
+        let ambients = tables.func_ambients.get(&UnitSpan { unit, span });
+        for (index, ambient) in ambients.into_iter().flatten().enumerate() {
+            self.ambient(node, *ambient, index);
         }
     }
 

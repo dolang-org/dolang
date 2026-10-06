@@ -12,7 +12,8 @@ def dispatch rules task argv
   let common = rules.get :common: default: {}
   while (type rule Str)
     rule = lookup $rules $rule
-  if type $rule $Func
+  # A type object is a `Func`, but not a rule's function
+  if (type(rule, Func) && !type(rule, Type))
     rule = [rule]
 
   args.with args: $argv ...common ...rule

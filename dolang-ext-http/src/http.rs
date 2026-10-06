@@ -1006,11 +1006,14 @@ impl<'v> Object<'v> for Client {
     }
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder.method("close", async move |this, strand, args, _out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
-            drop(this.borrow_mut(strand)?.inner.take());
-            Ok(())
-        })
+        builder.supertype(TypeObject::Func).method(
+            "close",
+            async move |this, strand, args, _out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                drop(this.borrow_mut(strand)?.inner.take());
+                Ok(())
+            },
+        )
     }
 
     async fn method<'a, 's>(

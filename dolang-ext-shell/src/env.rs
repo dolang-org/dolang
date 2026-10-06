@@ -4,7 +4,7 @@ use dolang::runtime::{
     Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call,
     object::{DictLike, DictView, DictViewSink, Spread, SpreadContext, TypeBuilder, Unpack},
     unpack,
-    value::View,
+    value::{TypeObject, View},
 };
 
 use crate::{global::ShellGlobal, local};
@@ -126,25 +126,27 @@ impl<'v> Object<'v> for Env<'v> {
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         let else_sym = builder.sym("else");
         let default = builder.sym("default");
-        builder.method("get", async move |this, strand, args, out| {
-            let ([key], [else_sym, default]) =
-                unpack!(strand, args, 1, 0, else_sym = None, default = None)?;
-            let borrow = this.borrow(strand)?;
-            let env = borrow.global.local.get(strand).env();
-            let key = key.as_str(strand).ok_or_else(|| Error::index(strand))?;
-            if let Some(value) = strand.access(|x| env.get(key.as_str(x))) {
-                Output::set(strand, out, value.as_ref());
-                return Ok(());
-            }
-            if let Some(default) = default {
-                Output::set(strand, out, default);
-                return Ok(());
-            }
-            if let Some(thunk) = else_sym {
-                return call!(strand, thunk, out).await;
-            }
-            Ok(())
-        })
+        builder
+            .supertype(TypeObject::Func)
+            .method("get", async move |this, strand, args, out| {
+                let ([key], [else_sym, default]) =
+                    unpack!(strand, args, 1, 0, else_sym = None, default = None)?;
+                let borrow = this.borrow(strand)?;
+                let env = borrow.global.local.get(strand).env();
+                let key = key.as_str(strand).ok_or_else(|| Error::index(strand))?;
+                if let Some(value) = strand.access(|x| env.get(key.as_str(x))) {
+                    Output::set(strand, out, value.as_ref());
+                    return Ok(());
+                }
+                if let Some(default) = default {
+                    Output::set(strand, out, default);
+                    return Ok(());
+                }
+                if let Some(thunk) = else_sym {
+                    return call!(strand, thunk, out).await;
+                }
+                Ok(())
+            })
     }
 
     async fn iter<'a, 's>(

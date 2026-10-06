@@ -44,7 +44,7 @@ class TestCollection
 # only `parametrize`) normalizes its input into a `TestDef` via
 # `to_test_def`; `fixture` reaches through (or creates) one transparently,
 # so `#[fixture]`-only tests register the same function as before.
-class TestDef
+class TestDef: Func
   pub field func
   pub field params = []
 
@@ -282,7 +282,7 @@ class Harness
             w.delta()
     self.#report()
 
-class Fixture
+class Fixture: Func
   field wrap func
 
   def (init) self wrap func

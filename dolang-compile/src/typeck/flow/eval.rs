@@ -9,7 +9,8 @@ use crate::typeck::{
     cfg::{Expr, ExprKind, FuncId, FuncKind},
     elab::{Designated, ModuleRef, Referent, Target},
     r#type::{
-        Argument, BoundRef, DeclId, DeclKind, Intrinsic, Kind, SymbolId, Type, TypeId, UnitId,
+        Argument, Binding, BoundRef, DeclId, DeclKind, Intrinsic, Kind, SymbolId, Type, TypeId,
+        UnitId,
     },
 };
 
@@ -168,9 +169,11 @@ impl Flow<'_, '_> {
         if binders.is_empty() {
             return apply(base);
         }
+        // An application gives a keyword binder's argument in its slot, as a
+        // positional binder's
         if binders
             .iter()
-            .any(|binder| binder.binding != crate::typeck::r#type::Binding::Positional)
+            .any(|binder| !matches!(binder.binding, Binding::Positional | Binding::Keyword(_)))
         {
             return self.db.unknown();
         }

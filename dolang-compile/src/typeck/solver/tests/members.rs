@@ -5,8 +5,8 @@ use crate::typeck::{
 };
 
 /// A class whose members are added before it is populated
-struct Class {
-    id: DeclId,
+pub(super) struct Class {
+    pub(super) id: DeclId,
     ty: TypeId,
     source: DeclSource,
     binders: Vec<Binder>,
@@ -14,7 +14,7 @@ struct Class {
 }
 
 impl Class {
-    fn new(db: &mut Database, name: &str, binders: Vec<Binder>) -> Self {
+    pub(super) fn new(db: &mut Database, name: &str, binders: Vec<Binder>) -> Self {
         let (id, ty, source) = reserve(db, DeclKind::Class, name);
         Self {
             id,
@@ -26,12 +26,17 @@ impl Class {
     }
 
     /// The class applied to its own group, as a method's receiver is
-    fn receiver(&self, db: &Database) -> TypeId {
+    pub(super) fn receiver(&self, db: &Database) -> TypeId {
         if self.binders.is_empty() {
             return self.ty;
         }
-        let args: Vec<_> = (0..self.binders.len())
-            .map(|slot| reference(db, 0, slot))
+        let args: Vec<_> = (self.binders.iter().enumerate())
+            .map(|(slot, binder)| {
+                db.intern(Type::Bound {
+                    reference: BoundRef::new(0, slot),
+                    kind: binder.kind,
+                })
+            })
             .collect();
         apply(db, self.ty, &args)
     }
@@ -49,7 +54,7 @@ impl Class {
 
     /// A method's function, lifted over the class's binders and then its `own`. Its
     /// types refer to the class's binders first, and it takes the receiver first.
-    fn function(
+    pub(super) fn function(
         &self,
         db: &mut Database,
         own: Vec<Binder>,
@@ -67,7 +72,7 @@ impl Class {
         id
     }
 
-    fn method(&mut self, key: MemberKey, decl: DeclId, scope: Scope) {
+    pub(super) fn method(&mut self, key: MemberKey, decl: DeclId, scope: Scope) {
         self.members.push((
             key,
             Member::Method {
@@ -78,7 +83,7 @@ impl Class {
         ));
     }
 
-    fn finish(self, db: &mut Database, supers: Vec<TypeId>) -> TypeId {
+    pub(super) fn finish(self, db: &mut Database, supers: Vec<TypeId>) -> TypeId {
         self.finish_with(db, inherited(supers).to_vec())
     }
 
@@ -108,7 +113,7 @@ impl Class {
     }
 }
 
-fn key(db: &Database, name: &str) -> MemberKey {
+pub(super) fn key(db: &Database, name: &str) -> MemberKey {
     MemberKey {
         name: db.intern_symbol(name),
         special: false,
@@ -123,7 +128,7 @@ fn private(db: &Database, name: &str) -> MemberKey {
     }
 }
 
-fn special(db: &Database, name: &str) -> MemberKey {
+pub(super) fn special(db: &Database, name: &str) -> MemberKey {
     MemberKey {
         special: true,
         ..key(db, name)

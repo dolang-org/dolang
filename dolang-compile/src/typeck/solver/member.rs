@@ -221,7 +221,13 @@ impl Solver<'_> {
                         None => return Ok(Receiver::Missing),
                     }
                 }
-                Type::Function(_) => Intrinsic::Func,
+                // `Func` applied to the function's parts
+                Type::Function(_) => {
+                    let class = (self.db.func_class(view.ty))
+                        .ok_or(Residual::MissingIntrinsic(Intrinsic::Func))?;
+                    term = self.view(class, view.environment);
+                    continue;
+                }
                 Type::Literal(literal) => literal.intrinsic(),
                 // Flow makes a use of a union's member of each alternative
                 Type::Union(_) => {
@@ -241,13 +247,17 @@ impl Solver<'_> {
         unreachable!()
     }
 
-    fn is_intrinsic(&self, decl: DeclId, intrinsic: Intrinsic) -> bool {
+    pub(super) fn is_intrinsic(&self, decl: DeclId, intrinsic: Intrinsic) -> bool {
         self.db
             .intrinsic(intrinsic)
             .is_some_and(|ty| *self.db.ty(ty) == Type::Decl(decl))
     }
 
-    fn instance_member(&self, nominal: Nominal, key: MemberKey) -> Result<Lookup, Issue> {
+    pub(super) fn instance_member(
+        &self,
+        nominal: Nominal,
+        key: MemberKey,
+    ) -> Result<Lookup, Issue> {
         let found = self.search(nominal.clone(), key, |_, member| {
             member.scope() == Scope::Instance
         })?;
@@ -280,7 +290,7 @@ impl Solver<'_> {
         })
     }
 
-    fn object_member(&self, nominal: Nominal, key: MemberKey) -> Result<Lookup, Issue> {
+    pub(super) fn object_member(&self, nominal: Nominal, key: MemberKey) -> Result<Lookup, Issue> {
         let class = nominal.declaration;
         // A static member belongs to its class alone
         let found = self.search(nominal.clone(), key, |owner, member| match member.scope() {

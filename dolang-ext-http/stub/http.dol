@@ -422,7 +422,7 @@ pub class Response
 #     sort: name
 #     sort: age
 # ```
-pub class Client
+pub class Client: Func
   # Builds a client.
   #
   # Browser builds accept only `func`; any other option raises

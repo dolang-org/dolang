@@ -1,23 +1,23 @@
 # Calls through `(call)` use the method's arguments and result. Each possible
 # callee in a union must take the call.
 
-pub class Callable
+pub class Callable: Func
   pub def (call) _self n @ Int :label @ Str = "" -> Str
     ...
 
 pub class Child: Callable
 
-pub class Generic[T]
+pub class Generic[T]: Func
   pub def (call)[U] _self item @ T f @ ((T) -> U) -> U
     ...
 
-pub class Picker
+pub class Picker: Func
   @def (call) self n @ Int -> Int
   @def (call) self s @ Str -> Str
   pub def (call) _self x
     x
 
-pub class Strict
+pub class Strict: Func
   @def (call) self n @ Int -> Int
   @def (call) self s @ Str -> Str
   pub def (call) _self x @ (Int | Str) -> (Int | Str)
@@ -25,11 +25,11 @@ pub class Strict
 
 pub class Empty
 
-pub class Numbers
+pub class Numbers: Func
   pub def (call) _self n @ Int -> Int
     ...
 
-pub class Symbols
+pub class Symbols: Func
   pub def (call) _self values @ Array[(:a: | :b:)] -> Int
     ...
 
@@ -41,7 +41,7 @@ pub class Holder
   pub def callable _self -> Callable
     ...
 
-pub class Sink[T]
+pub class Sink[T]: Func
   pub def (call) _self f @ ((T) -> Str) -> Str
     ...
 
@@ -227,7 +227,15 @@ pub def dynamic x e @ Empty
 #    |   ^^^
 
 pub def funcs f @ Func g @ (Func | Callable)
+  # Bare `Func` is the function type of unknown parameters and result
   let _ = f 1 key: 2
-  #   ^: flow Value
+  #   ^: flow Unknown
   let _ = g 1
-  #   ^: flow Value
+  #   ^: flow Unknown
+
+pub def call_member f @ (Int -> Str)
+  # A function's members are `Func`'s, applied to the function's parts
+  let c = f.(call)
+  #   ^: flow (...{std.Int}, <m.call_member.#0, >m.call_member.#1) -> std.Str
+  let _ = c 1
+  #   ^: flow std.Str

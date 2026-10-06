@@ -206,6 +206,10 @@ pub(crate) enum Step {
     /// A skolem outside a variable's scope replaced by its bound, as the
     /// variable's lower bound
     Promotion,
+    /// A callable value's signature by its index among those it's called with,
+    /// below a function type. A contradiction under it leaves the judgment
+    /// unresolved instead, since a subclass may fit (see [`callable`]).
+    Callable(usize),
 }
 
 impl Step {
@@ -429,6 +433,8 @@ pub(crate) struct Solver<'db> {
     closed: bool,
     /// The judgments that need one of their alternatives to hold, by obligation
     alternatives: RefCell<HashMap<ObligationId, Alternatives>>,
+    /// How each class's object is called, once found
+    constructors: RefCell<HashMap<DeclId, Constructor>>,
     /// Counts changes to bounds and assignments, so trials rerun only after
     /// what they saw has grown
     generation: Cell<usize>,
@@ -497,6 +503,7 @@ impl<'db> Solver<'db> {
             rigid_bounds: RefCell::new(HashMap::new()),
             closed: false,
             alternatives: RefCell::new(HashMap::new()),
+            constructors: RefCell::new(HashMap::new()),
             generation: Cell::new(0),
             trial_depth: 0,
             blinded: HashMap::new(),
@@ -557,6 +564,7 @@ impl<'db> Solver<'db> {
     /// declaration have escaped their own check.
     pub(crate) fn assume(&mut self, decl: DeclId) {
         self.scope.insert(decl);
+        self.constructors.get_mut().clear();
     }
 
     /// Assume `decl`, and return an environment that interprets its group as its
@@ -2389,29 +2397,9 @@ impl<'db> Solver<'db> {
         Ok(())
     }
 
-    /// The default bound of an omitted ambient channel, `Iter[Unknown]` or
-    /// `Sink[Unknown]`, or `Unknown` when `std` doesn't designate one with a
-    /// single positional type binder
+    /// [`Database::channel_bound`] as a term
     fn channel_bound(&self, intrinsic: Intrinsic) -> Term {
-        let unknown = self.closed(self.db.unknown());
-        let Some(base) = self.db.intrinsic(intrinsic) else {
-            return unknown;
-        };
-        let Type::Decl(decl) = *self.db.ty(base) else {
-            return unknown;
-        };
-        let Type::Quantified { binders, .. } = self.db.ty(self.db.declaration(decl).ty) else {
-            return unknown;
-        };
-        if !matches!(&binders[..], [binder] if binder.binding == Binding::Positional && binder.kind == Kind::Type)
-        {
-            return unknown;
-        }
-        self.closed(self.db.intern(Type::Apply {
-            base,
-            args: vec![Argument::Positional(self.db.unknown())].into(),
-            kind: Kind::Type,
-        }))
+        self.closed(self.db.channel_bound(intrinsic))
     }
 
     /// Reduce one relation, recording bounds or child obligations, or return a diagnostic issue.
@@ -2739,9 +2727,11 @@ impl<'db> Solver<'db> {
                         };
                         self.schemas(a, xs, b, ys, Term::View(b), obligation)
                     }
-                    // A function is a literal only if its class is
+                    // A function is a literal only if its class is, whatever its
+                    // class's arguments, so the gradual function's class stands for
+                    // it without its variables
                     (Type::Function(_) | Type::Quantified { .. }, Type::Literal(_)) => {
-                        let backing = (self.db.intrinsic(Intrinsic::Func))
+                        let backing = (self.db.func_class(self.db.gradual_function()))
                             .ok_or(Residual::MissingIntrinsic(Intrinsic::Func))?;
                         let step = Step::IntrinsicBacking(Intrinsic::Func);
                         self.derive(obligation, self.closed(backing), expected, step);
@@ -2750,9 +2740,12 @@ impl<'db> Solver<'db> {
                     _ => Err(Residual::Unsupported("these structural types").into()),
                 }
             }
+            (Head::Nominal(nominal), Head::Structural(view)) if self.callee(view.ty) => {
+                self.callable(nominal, actual, view, expected, obligation)
+            }
             (Head::Structural(view), Head::Nominal(_)) => {
-                // Quantifiers preserve function membership without requiring
-                // instantiation or higher-rank comparison of the signature.
+                // A quantified function belongs to its body's class, its binders
+                // taken as `Unknown` rather than instantiated
                 let mut ty = view.ty;
                 while let Type::Quantified { body, .. } = self.db.ty(ty) {
                     self.spend()?;
@@ -2773,8 +2766,20 @@ impl<'db> Solver<'db> {
                     self.derive(obligation, applied, expected, Step::Instantiation);
                     return Ok(());
                 }
+                // `Func` applied to the function's parts
+                if matches!(self.db.ty(ty), Type::Function(_)) {
+                    let class = (self.db.func_class(view.ty))
+                        .ok_or(Residual::MissingIntrinsic(Intrinsic::Func))?;
+                    let step = Step::IntrinsicBacking(Intrinsic::Func);
+                    self.derive(
+                        obligation,
+                        self.view(class, view.environment),
+                        expected,
+                        step,
+                    );
+                    return Ok(());
+                }
                 let intrinsic = match self.db.ty(view.ty) {
-                    _ if matches!(self.db.ty(ty), Type::Function(_)) => Intrinsic::Func,
                     Type::Literal(literal) => literal.intrinsic(),
                     _ => {
                         return Err(Residual::Unsupported("a structural type below a class").into());
@@ -3040,12 +3045,18 @@ impl<'db> Solver<'db> {
     fn outcome(&self, constraint: ConstraintId) -> Outcome {
         let root = self.roots[constraint.0].obligation;
         let mut diagnostics = vec![];
+        // A contradiction under a callable's signature leaves it unresolved
+        let soften = |issue, soft| match issue {
+            Issue::Contradiction(_) if soft => callable::UNFIT.into(),
+            _ => issue,
+        };
+        let softens = |soft, step: &Step| soft || matches!(step, Step::Callable(_));
         // Iterative DFS keeps reporting safe even when the obligation graph is deep.
-        let mut stack = vec![(root, false)];
+        let mut stack = vec![(root, false, false)];
         let mut active = HashSet::new();
         let mut visited = HashSet::new();
         let mut path = vec![];
-        while let Some((id, exit)) = stack.pop() {
+        while let Some((id, exit, soft)) = stack.pop() {
             if exit {
                 active.remove(&id);
                 path.pop();
@@ -3071,19 +3082,23 @@ impl<'db> Solver<'db> {
                     path: path.clone(),
                 }),
                 State::Issue(issue) => diagnostics.push(Diagnostic {
-                    issue,
+                    issue: soften(issue, soft),
                     path: path.clone(),
                 }),
                 State::Reduced => {}
             }
-            stack.push((id, true));
+            stack.push((id, true, soft));
             for dependency in self.obligations[id.0].dependencies.iter().filter(|d| {
                 self.obligations[id.0]
                     .active
                     .borrow()
                     .contains(&(d.obligation, d.step.clone()))
             }) {
-                stack.push((dependency.obligation, false));
+                stack.push((
+                    dependency.obligation,
+                    false,
+                    softens(soft, &dependency.step),
+                ));
             }
         }
         // Historical edges explain contradictions, but are not current proof
@@ -3091,14 +3106,15 @@ impl<'db> Solver<'db> {
         // what the assignment was drawn from, so one is taken only where no other
         // reaches it.
         for assignments in [false, true] {
-            let mut history = vec![(root, vec![root])];
+            let mut history = vec![(root, vec![root], false)];
             let mut seen = HashSet::new();
-            while let Some((id, path)) = history.pop() {
+            while let Some((id, path, soft)) = history.pop() {
                 if !seen.insert(id) {
                     continue;
                 }
                 if let State::Issue(issue @ Issue::Contradiction(_)) =
                     self.obligations[id.0].state.get()
+                    && let issue = soften(issue, soft)
                     && !diagnostics
                         .iter()
                         .any(|d| d.path.last() == Some(&id) && d.issue == issue)
@@ -3114,7 +3130,7 @@ impl<'db> Solver<'db> {
                     }
                     let mut next = path.clone();
                     next.push(dependency.obligation);
-                    history.push((dependency.obligation, next));
+                    history.push((dependency.obligation, next, softens(soft, &dependency.step)));
                 }
             }
         }
@@ -3152,6 +3168,7 @@ fn hole(db: &Database, group: &mut Vec<Term>, term: Term, kind: Kind) -> TypeId 
 }
 
 mod alternatives;
+mod callable;
 mod conform;
 mod item;
 mod lattice;
@@ -3161,6 +3178,7 @@ mod schema;
 mod unpack;
 
 use alternatives::Alternatives;
+pub(crate) use callable::{Constructor, Signature, bound_method};
 pub(crate) use conform::{Inheritance, Requirement, RequirementKind};
 pub(crate) use lattice::Widening;
 pub(crate) use member::{FoundKind, Lookup, Signatures};

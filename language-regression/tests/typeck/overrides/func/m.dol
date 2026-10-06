@@ -1,0 +1,28 @@
+# A class naming `Func` with arguments conforms to the function they describe:
+# its `(call)` must take what the function takes and give what it gives.
+
+pub class Exact: Func[{Int}, Str]
+  pub def (call) _self n @ Int -> Str
+    ...
+
+pub class Wider: Func[{Int}, Str]
+  pub def (call) _self n @ (Int | Str) -> Str
+    ...
+
+pub class Narrower: Func[{Int | Str}, Str]
+  pub def (call) _self n @ Int -> Str
+    # error: `(call)` does not match `Func.(call)`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def (call) _self n @ Int -> Str
+    #    |            ^^^^
+    ...
+
+pub class Result: Func[{Int}, Str]
+  pub def (call) _self n @ Int -> Int
+    # error: `(call)` does not match `Func.(call)`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def (call) _self n @ Int -> Int
+    #    |            ^^^^
+    ...

@@ -9,6 +9,10 @@
 //! arguments, or to the member's own where they carry down soundly. An empty
 //! result is bottom, making the edge unreachable.
 //!
+//! Narrowing against `Func` keeps each function and each class that reaches
+//! `Func`, and makes any other class the gradual function type: a subclass may
+//! reach `Func`, so no class is dropped.
+//!
 //! A class's `(==)` may be user-defined, so a literal comparison strips only
 //! other literals and never reduces a class to the literal. Only a `Nil` or a
 //! `Bool` member, whose values are all literals, loses the literal it's unequal
@@ -285,8 +289,12 @@ impl Solver<'_> {
         })
     }
 
-    /// `class` applied to `Unknown` for each binder
+    /// `class` applied to `Unknown` for each binder. `Func` so applied is the
+    /// gradual function type, as it's written.
     fn apply_unknown(&self, class: DeclId) -> TypeId {
+        if self.intrinsic_decl(Intrinsic::Func) == Some(class) {
+            return self.db.gradual_function();
+        }
         let base = self.db.intern(Type::Decl(class));
         let Some(binders) = self.binders(class) else {
             return base;

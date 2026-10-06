@@ -34,6 +34,25 @@ assert_eq (type record) $Func
 assert_throws $TypeError do Type()
 assert_throws $TypeError do Value()
 
+# A type object is called to construct, so it's a `Func`
+class Plain
+assert (type Str Func)
+assert (type Type Func)
+assert (type Plain Func)
+assert (!type(Plain(), Func))
+
+# So is anything native that's called with options, and a class naming `Func`
+let n = 1
+let template = t"${n:>3}"
+assert (type template[0] Func)
+assert (type(std.FmtSpec(), Func))
+class Adder: Func
+  def (call) _self n
+    (n + 1)
+let adder = Adder()
+assert (type adder Func)
+assert_eq (adder 1) 2
+
 assert_eq (type 0.5) $Float
 
 assert_eq (type "hello") $Str

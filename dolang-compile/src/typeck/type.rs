@@ -789,7 +789,9 @@ pub(crate) enum Intrinsic {
     AssignItem,
     /// The class of a tuple, which `Entries` builds
     Tuple,
-    /// Nominal supertype of structural function types; generic semantics are deferred.
+    /// The class of function values. Applied in a type, it is the function type it
+    /// describes; a function type's class is it applied to the function's parts
+    /// (see [`Database::func_class`]).
     Func,
     Int,
     Bool,
@@ -981,6 +983,78 @@ impl Database {
 
     pub(crate) fn intrinsic(&self, intrinsic: Intrinsic) -> Option<TypeId> {
         self.intrinsics.get(intrinsic)
+    }
+
+    /// The default bound of an omitted ambient channel, `Iter[Unknown]` or
+    /// `Sink[Unknown]`, or `Unknown` when `std` doesn't designate one with a
+    /// single positional type binder
+    pub(crate) fn channel_bound(&self, intrinsic: Intrinsic) -> TypeId {
+        let Some(base) = self.intrinsic(intrinsic) else {
+            return self.unknown;
+        };
+        let Type::Decl(decl) = *self.ty(base) else {
+            return self.unknown;
+        };
+        let Type::Quantified { binders, .. } = self.ty(self.declaration(decl).ty) else {
+            return self.unknown;
+        };
+        if !matches!(&binders[..], [binder] if binder.binding == Binding::Positional && binder.kind == Kind::Type)
+        {
+            return self.unknown;
+        }
+        self.intern(Type::Apply {
+            base,
+            args: vec![Argument::Positional(self.unknown)].into(),
+            kind: Kind::Type,
+        })
+    }
+
+    /// The function type of any function, as bare `Func` is: `(...Unknown) ->
+    /// Unknown`, with its ambient channels omitted
+    pub(crate) fn gradual_function(&self) -> TypeId {
+        self.intern(Type::Function(Function {
+            params: self.unknown_schema(),
+            result: self.unknown(),
+            input: None,
+            output: None,
+        }))
+    }
+
+    /// The class of a function type's values: `Func` applied to the function's
+    /// parameters, result and ambient channels, an omitted channel as its default
+    /// bound. A quantified function's binders are taken as `Unknown`, as a type
+    /// test says nothing of them. `Func` that isn't generic is taken bare.
+    pub(crate) fn func_class(&self, mut ty: TypeId) -> Option<TypeId> {
+        let base = self.intrinsic(Intrinsic::Func)?;
+        while let Type::Quantified { binders, body } = self.ty(ty) {
+            let unknowns: Vec<TypeId> = (binders.iter())
+                .map(|binder| self.unknown_of(binder.kind))
+                .collect();
+            ty = self.substitute(*body, &unknowns);
+        }
+        let Type::Function(function) = self.ty(ty) else {
+            return None;
+        };
+        let Type::Decl(decl) = *self.ty(base) else {
+            return Some(base);
+        };
+        let Type::Quantified { binders, .. } = self.ty(self.declaration(decl).ty) else {
+            return Some(base);
+        };
+        if binders.len() != 4 {
+            return Some(base);
+        }
+        let args = [
+            function.params,
+            function.result,
+            (function.input).unwrap_or_else(|| self.channel_bound(Intrinsic::Iter)),
+            (function.output).unwrap_or_else(|| self.channel_bound(Intrinsic::Sink)),
+        ];
+        Some(self.intern(Type::Apply {
+            base,
+            args: args.into_iter().map(Argument::Positional).collect(),
+            kind: Kind::Type,
+        }))
     }
 
     /// Associate a stub type once, before sealing. Missing associations are allowed.

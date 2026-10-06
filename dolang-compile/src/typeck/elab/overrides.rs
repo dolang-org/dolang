@@ -18,19 +18,20 @@
 use std::collections::HashMap;
 
 use super::{
-    DeclNode, Diag, Nonconforming, Tables, UnitDiag, Unresolved, sig,
+    DeclNode, Designated, Diag, Nonconforming, Tables, Uncallable, UnitDiag, Unresolved, sig,
     surface::{Class, Member, MemberScope},
 };
 use crate::{
+    ast::SpecialMethod,
     source::Span,
     typeck::{
         solver::{
-            Inheritance, Issue, Provenance, Requirement, RequirementKind, Residual, Solver, Status,
-            Term,
+            Inheritance, Issue, Provenance, Reach, Requirement, RequirementKind, Residual, Solver,
+            Status, Term,
         },
         r#type::{
-            Argument, Database, DeclId, DeclKind, Kind, MemberKey, Scope, Type, TypeId, UnitId,
-            UnitSpan,
+            Argument, Database, DeclId, DeclKind, Intrinsic, Kind, MemberKey, Scope, Type, TypeId,
+            UnitId, UnitSpan,
         },
     },
 };
@@ -81,12 +82,20 @@ struct Pending {
 
 impl Check<'_, '_> {
     fn run(&mut self) {
+        // A type object's members are its class's, so it is called through the
+        // class's `(init)` or class-level `(call)`, which the solver relates to a
+        // function type directly
+        let designated = self.tables.designated.get(&self.id);
+        if designated == Some(&Designated::Intrinsic(Intrinsic::Type)) {
+            return;
+        }
         let db = self.db;
         let runtime = db.declaration(self.id).source.kind == DeclKind::Class;
         let mut solver = Solver::new(db);
         let environment = solver.rigid_environment(self.id);
         solver.close();
         let instance = self.instance();
+        self.callable(&solver, instance);
         let spans = self.member_spans();
         let mut pending = Vec::new();
         for super_ref in &self.class.supers {
@@ -164,6 +173,33 @@ impl Check<'_, '_> {
                     residual,
                 });
             }
+        }
+    }
+
+    /// Warn of an instance `(call)` in a class that doesn't reach `Func`, since
+    /// the checker won't pass its instances as functions. A subclass may reach
+    /// it, so passing one is never an error.
+    fn callable(&mut self, solver: &Solver<'_>, instance: TypeId) {
+        let (db, tables, unit) = (self.db, self.tables, self.unit);
+        let call = self.class.members.iter().find_map(|member| {
+            let Member::Method { decl, sig } = *member else {
+                return None;
+            };
+            let method = tables.method(decl, sig);
+            let instance = sig::method_scope(tables, unit, method) == Scope::Instance;
+            (instance && matches!(method.special, Some(SpecialMethod::Call)))
+                .then_some(method.name.span)
+        });
+        let Some(span) = call else {
+            return;
+        };
+        let Some(&Type::Decl(func)) = db.intrinsic(Intrinsic::Func).map(|func| db.ty(func)) else {
+            return;
+        };
+        if let Ok(Reach::Unreached) = solver.reach(solver.closed(instance), func) {
+            let class = self.name(self.id).to_owned();
+            self.diags
+                .push((self.unit, Diag::new(Uncallable { span, class })));
         }
     }
 
