@@ -447,12 +447,16 @@ pub class Iterable[T]: @BaseIterable[T]
   pub def chain[*Us] self *values @ ...Iterable[Us] -> Iter[Union[T, ...Us]]
     ...
 
+  @def chomp[U @ (Str | Bin)] self @ Iterable[U] -> Iter[U]
+
   # Returns an iterator with one trailing line terminator removed from each item.
-  pub def chomp[U @ (Str | Bin)] self @ Iterable[U] -> Iter[U]
+  pub def chomp self -> Iter[Str | Bin]
     ...
 
+  @def crimp[U @ (Str | Bin)] self@Iterable[U] terminator@(Str | Bin) = nil -> Iter[U]
+
   # Returns an iterator with a line terminator appended to each item.
-  pub def crimp[U @ (Str | Bin)] self@Iterable[U] terminator@(Str | Bin) = nil -> Iter[U]
+  pub def crimp self terminator@(Str | Bin) = nil -> Iter[Str | Bin]
     ...
 
   # Returns an iterator of `[index, value]` tuples.
@@ -514,12 +518,16 @@ pub class Sinkable[T]: @BaseSinkable[T]
   pub def put self value @ T
     ...
 
+  @def prechomp[U @ (Str | Bin)] self @ Sinkable[U] -> Sink[U]
+
   # Returns a sink that removes one trailing line terminator from each value.
-  pub def prechomp[U @ (Str | Bin)] self @ Sinkable[U] -> Sink[U]
+  pub def prechomp self
     ...
 
+  @def precrimp[U @ (Str | Bin)] self@Sinkable[U] terminator@(Str | Bin) = nil -> Sink[U]
+
   # Returns a sink that appends a line terminator to each value.
-  pub def precrimp[U @ (Str | Bin)] self@Sinkable[U] terminator@(Str | Bin) = nil -> Sink[U]
+  pub def precrimp self terminator@(Str | Bin) = nil
     ...
 
   # Returns a sink that writes only values for which `pred` is truthy.
@@ -546,6 +554,8 @@ pub class Sinkable[T]: @BaseSinkable[T]
 # ```
 #
 pub class Sink[T]: Sinkable[T] @BaseSink[T]
+  @def prechomp[U @ (Str | Bin)] self @ Sink[U] -> Sink[U]
+
   #
   #
   # Creates a wrapper `Sink` which removes a trailing line terminator (`\n` or
@@ -565,8 +575,10 @@ pub class Sink[T]: Sinkable[T] @BaseSink[T]
   # assert_eq $acc ["line"]
   # ```
   #
-  pub def prechomp[U @ (Str | Bin)] self @ Sink[U] -> Sink[U]
+  pub def prechomp self
     ...
+
+  @def precrimp[U @ (Str | Bin)] self@Sink[U] terminator@(Str | Bin) = nil -> Sink[U]
 
   #
   # Creates a wrapper `Sink` that appends a terminator to each value before it is
@@ -590,7 +602,7 @@ pub class Sink[T]: Sinkable[T] @BaseSink[T]
   #   file.precrimp(shell.line_ending()).put "native"
   # ```
   #
-  pub def precrimp[U @ (Str | Bin)] self@Sink[U] terminator@(Str | Bin) = nil -> Sink[U]
+  pub def precrimp self terminator@(Str | Bin) = nil
     ...
 
   #
@@ -2721,6 +2733,8 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[Int, FmtSegment[V]] @Spre
   pub def len self -> Int
     ...
 
+  @def format[B @ {*Value, **Value}] self @ Fmt[V, B] ...bindings @ B -> Str
+
   #
   # Expands the sequence and returns the result: literal text as it stands, and
   # each interpolation through its own specification. This is the only way to get
@@ -2757,7 +2771,7 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[Int, FmtSegment[V]] @Spre
   # assert_eq $stmt.format(1, name: "n") "select * from t where a = 1 and c = n"
   # ```
   #
-  pub def format[B @ {*Value, **Value}] self @ Fmt[V, B] ...bindings @ B -> Str
+  pub def format self ...bindings -> Str
     ...
 
   #
@@ -3008,6 +3022,8 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   pub def chain[*Us] self *values @ ...Iterable[Us] -> Iter[Union[T, ...Us]]
     ...
 
+  @def chomp[U @ (Str | Bin)] self @ Iter[U] -> Iter[U]
+
   #
   # Creates a wrapper `Iter` which removes one trailing line terminator (`\r\n` or
   # `\n`) from each item, if present.
@@ -3030,7 +3046,7 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   # and takes an optional character set. `chomp` is about a line terminator
   # specifically and takes nothing.
   #
-  pub def chomp[U @ (Str | Bin)] self @ Iter[U] -> Iter[U]
+  pub def chomp self -> Iter[Str | Bin]
     ...
 
   #
@@ -3038,6 +3054,8 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   #
   pub def count self -> Int
     ...
+
+  @def crimp[U @ (Str | Bin)] self@Iter[U] terminator@(Str | Bin) = nil -> Iter[U]
 
   #
   # Creates a wrapper `Iter` which appends a line terminator to each item.
@@ -3063,7 +3081,7 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   # run cmd stdin: (["one", "two"].crimp())
   # ```
   #
-  pub def crimp[U @ (Str | Bin)] self@Iter[U] terminator@(Str | Bin) = nil -> Iter[U]
+  pub def crimp self terminator@(Str | Bin) = nil -> Iter[Str | Bin]
     ...
 
   #

@@ -746,6 +746,31 @@ impl Report for BadReceiver {
     }
 }
 
+/// A method implementation's receiver annotation that specializes its class,
+/// which only an overload may do
+struct SpecializedReceiver {
+    span: Span,
+    class: String,
+}
+
+impl Report for SpecializedReceiver {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "only an `@def` overload may specialize `self` to a `{}`",
+            self.class
+        )
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
 /// A type argument, or a binder's default, that doesn't satisfy its binder's bound
 struct BoundViolation {
     span: Span,

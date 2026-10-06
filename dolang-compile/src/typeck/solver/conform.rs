@@ -281,7 +281,8 @@ impl Solver<'_> {
     /// member was found. Each of `D`'s arguments that the walk reaches `C` with
     /// in some position takes the receiver's argument there, and the others stay
     /// as `instance` has them. So a default receiver becomes `instance`, and
-    /// `Iterable[U]` narrowed to `Iter[T]` becomes `Iter[U]`. `None` leaves the
+    /// `Iterable[T]`, written in `Iterable`, narrowed to `Iter[X]` becomes
+    /// `Iter[T]`. `None` leaves the
     /// receiver as written: it isn't a class application, the walk doesn't reach
     /// its class, or `D`'s arguments can't be matched to it.
     fn narrowed(
