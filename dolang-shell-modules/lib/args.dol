@@ -114,17 +114,17 @@ pub @let ArgSpec = BaseDict $
 # symbol, such as `:deploy:` or `:build_docs:`, and its own fields are in a
 # nested [`Args`](args.Args) at `p[p.cmd]`. The result's `handler` field is the matched
 # handler.
-pub @let CmdSpec = BaseDict $
+pub @let CmdSpec[R = Value] = BaseDict $
   cmd: Str
   ?help: Str
   ?usage: Str
-  *(SpecItem | Handler)
+  *(SpecItem[R] | Handler[R])
 
 # An item of an argument specification.
-pub @let SpecItem = (FlagSpec | OptSpec | ArgSpec | CmdSpec)
+pub @let SpecItem[R = Value] = (FlagSpec | OptSpec | ArgSpec | CmdSpec[R])
 
 # A handler, called by [`with`](args.with) with the parsed arguments.
-pub @let Handler = (Args -> Value)
+pub @let Handler[R = Value] = (Args -> R)
 
 # ===========================================================================
 # Public: result type
@@ -641,6 +641,9 @@ class Parser
   pub def sym self
     self.#sym
 
+  pub def has_commands self
+    (self.#sub_cmds.len > 0)
+
   pub def find_subcommand self cmd
     self.#sub_cmds.map(do |p| p[1]).filter(do |s| s.sym == cmd).next()
 
@@ -653,6 +656,16 @@ class Parser
       sub = sub.find_subcommand $cmd
       prog = "$prog $(sub.name)"
     sub.make_help $prog
+
+  pub def check_handled self rec
+    let sub = self
+    while (rec[:cmd:] != nil)
+      let cmd = rec[:cmd:]
+      rec = rec[cmd]
+      sub = sub.find_subcommand $cmd
+    if sub.has_commands()
+      throw self.#err "missing command"
+    throw std.ValueError "no handler for the matched command"
 
   pub def parse self args
     self.init_rec()
@@ -728,7 +741,16 @@ do -> Args
 #
 # ## Returns
 #
-# The handler's result, or the parsed arguments when there is no handler.
+# The handler's result.
+#
+# ## Errors
+#
+# | Exception                      | Condition                                                         |
+# | ------------------------------ | ----------------------------------------------------------------- |
+# | [`Error`](args.Error)          | As for [`parse`](args.parse), or no command where one is required |
+# | [`ValueError`](std.ValueError) | The matched command has no handler                                |
+#
+# `Error` is printed and exits rather than raised, unless `exit` is `false`.
 #
 # ## Example
 #
@@ -745,7 +767,7 @@ do -> Args
 #     do |p|
 #       echo "Rolling back $(p.rollback.service)"
 # ```
-pub def with
+pub def with[R]
   # Arguments to parse. Defaults to `shell.args`.
   :args @ Iterable[Str] = nil
   # Print errors or help and exit. When `false`, raise
@@ -761,8 +783,8 @@ pub def with
   # Replacement for the generated `Usage:` line, after the program name.
   :usage @ Str = nil
   # Spec items, and optionally a handler for the top level.
-  ...spec @ (SpecItem | Handler)
-do -> Value
+  ...spec @ (SpecItem[R] | Handler[R])
+do -> R
   let p = Parser name: (program || prog_default()) :help :usage ...spec
   try
     let result = p.parse
@@ -777,10 +799,9 @@ do -> Value
       echo $msg
       shell.exit 0
     let h = result.handler
-    if h
-      h $result
-    else
-      result
+    if !h
+      p.check_handled $result
+    h $result
   catch Error: e
     if !exit
       throw e
