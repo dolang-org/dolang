@@ -208,14 +208,38 @@ pub(crate) fn method_form(tables: &Tables<'_>, unit: UnitId, method: &Method) ->
 /// specially. A declaration of another module with the same name is only a
 /// lookalike.
 fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
+    let Some((designated, expected)) = designation(tables, decl) else {
+        return;
+    };
     let owner = &tables.decls[decl.index()];
-    let Some(module) = tables.units[owner.unit.index()].module else {
-        return;
-    };
-    let Some(name) = owner.name.filter(|_| owner.outer.is_none()) else {
-        return;
-    };
-    let (designated, expected) = match (module, tables.name(owner.unit, name)) {
+    let name = owner.name.expect("a designated declaration is named");
+    if owner.kind == expected {
+        tables.designated.insert(decl, designated);
+    } else {
+        let expected = match expected {
+            DeclKind::OpaqueAlias => "an opaque alias",
+            DeclKind::Function => "a def",
+            DeclKind::Protocol => "a protocol",
+            _ => "a class",
+        };
+        diags.push((
+            owner.unit,
+            Diag::new(MisdeclaredIntrinsic {
+                span: name.span,
+                expected,
+            }),
+        ));
+    }
+}
+
+/// What a top-level declaration of `std` or `strand` is designated as by its
+/// name, and the kind of declaration it must be, before [`signatures`] records
+/// it
+pub(super) fn designation(tables: &Tables<'_>, decl: DeclId) -> Option<(Designated, DeclKind)> {
+    let owner = &tables.decls[decl.index()];
+    let module = tables.units[owner.unit.index()].module?;
+    let name = owner.name.filter(|_| owner.outer.is_none())?;
+    Some(match (module, tables.name(owner.unit, name)) {
         ("strand", "PipeSender") => (Designated::PipeSender, DeclKind::OpaqueAlias),
         ("strand", "PipeReceiver") => (Designated::PipeReceiver, DeclKind::OpaqueAlias),
         ("std", "Value") => (Designated::Value, DeclKind::Class),
@@ -269,25 +293,8 @@ fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
         ("std", "Unpack") => (Designated::Unpack, DeclKind::Protocol),
         ("std", "getter") => (Designated::Getter, DeclKind::Function),
         ("std", "setter") => (Designated::Setter, DeclKind::Function),
-        _ => return,
-    };
-    if owner.kind == expected {
-        tables.designated.insert(decl, designated);
-    } else {
-        let expected = match expected {
-            DeclKind::OpaqueAlias => "an opaque alias",
-            DeclKind::Function => "a def",
-            DeclKind::Protocol => "a protocol",
-            _ => "a class",
-        };
-        diags.push((
-            owner.unit,
-            Diag::new(MisdeclaredIntrinsic {
-                span: name.span,
-                expected,
-            }),
-        ));
-    }
+        _ => return None,
+    })
 }
 
 /// The type a designated pipe placeholder stands for: its nominee, when that is a

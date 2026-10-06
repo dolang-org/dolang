@@ -34,6 +34,13 @@ assert_eq (type record) $Func
 assert_throws $TypeError do Type()
 assert_throws $TypeError do Value()
 
+# A type object is called to construct, so it's a `Func`
+class Plain
+assert (type Str Func)
+assert (type Type Func)
+assert (type Plain Func)
+assert (!type(Plain(), Func))
+
 assert_eq (type 0.5) $Float
 
 assert_eq (type "hello") $Str

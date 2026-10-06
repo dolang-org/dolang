@@ -81,7 +81,9 @@ pub(crate) struct Tables<'u> {
     pub(crate) sigs: HashMap<(DeclId, usize), Sig>,
     /// The type of each field, by its class and the span of its name
     pub(crate) fields: HashMap<(DeclId, Span), Slot>,
-    /// The ambient channels of each function type written without them, by its `->`
+    /// The ambient channels of each function type written without them, by its
+    /// `->`, and of each use of `Func` in a type that doesn't give them, by its
+    /// span
     pub(crate) func_ambients: HashMap<UnitSpan, [Ambient; 2]>,
     /// The declarations of `std` and `strand` the checker treats specially
     pub(crate) designated: HashMap<DeclId, Designated>,

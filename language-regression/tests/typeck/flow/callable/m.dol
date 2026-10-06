@@ -227,7 +227,15 @@ pub def dynamic x e @ Empty
 #    |   ^^^
 
 pub def funcs f @ Func g @ (Func | Callable)
+  # Bare `Func` is the function type of unknown parameters and result
   let _ = f 1 key: 2
-  #   ^: flow Value
+  #   ^: flow Unknown
   let _ = g 1
-  #   ^: flow Value
+  #   ^: flow Unknown
+
+pub def call_member f @ (Int -> Str)
+  # A function's members are `Func`'s, applied to the function's parts
+  let c = f.(call)
+  #   ^: flow (...{std.Int}, <m.call_member.#0, >m.call_member.#1) -> std.Str
+  let _ = c 1
+  #   ^: flow std.Str

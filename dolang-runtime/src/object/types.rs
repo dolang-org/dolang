@@ -91,6 +91,19 @@ impl<'v> Protocol<'v> for Type {
         crate::fmt!(strand, w, "<type>")
     }
 
+    /// A type object is called to construct its instances, so it is a `Func`
+    fn op_subtype<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        supertype: &DoValue<'v>,
+    ) -> bool {
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype
+                .eq(strand, &strand.singletons().func)
+                .unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
+    }
+
     /// `Type.(call) SomeType ...` performs default instantiation.
     ///
     /// This is the ordinary unbound-method idiom — `Class` is an instance of

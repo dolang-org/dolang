@@ -2389,29 +2389,9 @@ impl<'db> Solver<'db> {
         Ok(())
     }
 
-    /// The default bound of an omitted ambient channel, `Iter[Unknown]` or
-    /// `Sink[Unknown]`, or `Unknown` when `std` doesn't designate one with a
-    /// single positional type binder
+    /// [`Database::channel_bound`] as a term
     fn channel_bound(&self, intrinsic: Intrinsic) -> Term {
-        let unknown = self.closed(self.db.unknown());
-        let Some(base) = self.db.intrinsic(intrinsic) else {
-            return unknown;
-        };
-        let Type::Decl(decl) = *self.db.ty(base) else {
-            return unknown;
-        };
-        let Type::Quantified { binders, .. } = self.db.ty(self.db.declaration(decl).ty) else {
-            return unknown;
-        };
-        if !matches!(&binders[..], [binder] if binder.binding == Binding::Positional && binder.kind == Kind::Type)
-        {
-            return unknown;
-        }
-        self.closed(self.db.intern(Type::Apply {
-            base,
-            args: vec![Argument::Positional(self.db.unknown())].into(),
-            kind: Kind::Type,
-        }))
+        self.closed(self.db.channel_bound(intrinsic))
     }
 
     /// Reduce one relation, recording bounds or child obligations, or return a diagnostic issue.
@@ -2739,9 +2719,17 @@ impl<'db> Solver<'db> {
                         };
                         self.schemas(a, xs, b, ys, Term::View(b), obligation)
                     }
-                    // A function is a literal only if its class is
+                    // A function is a literal only if its class is, whatever its
+                    // class's arguments, so the gradual function's class stands for
+                    // it without its variables
                     (Type::Function(_) | Type::Quantified { .. }, Type::Literal(_)) => {
-                        let backing = (self.db.intrinsic(Intrinsic::Func))
+                        let gradual = self.db.intern(Type::Function(Function {
+                            params: self.db.unknown_schema(),
+                            result: self.db.unknown(),
+                            input: None,
+                            output: None,
+                        }));
+                        let backing = (self.db.func_class(gradual))
                             .ok_or(Residual::MissingIntrinsic(Intrinsic::Func))?;
                         let step = Step::IntrinsicBacking(Intrinsic::Func);
                         self.derive(obligation, self.closed(backing), expected, step);
@@ -2751,8 +2739,8 @@ impl<'db> Solver<'db> {
                 }
             }
             (Head::Structural(view), Head::Nominal(_)) => {
-                // Quantifiers preserve function membership without requiring
-                // instantiation or higher-rank comparison of the signature.
+                // A quantified function belongs to its body's class, its binders
+                // taken as `Unknown` rather than instantiated
                 let mut ty = view.ty;
                 while let Type::Quantified { body, .. } = self.db.ty(ty) {
                     self.spend()?;
@@ -2773,8 +2761,20 @@ impl<'db> Solver<'db> {
                     self.derive(obligation, applied, expected, Step::Instantiation);
                     return Ok(());
                 }
+                // `Func` applied to the function's parts
+                if matches!(self.db.ty(ty), Type::Function(_)) {
+                    let class = (self.db.func_class(view.ty))
+                        .ok_or(Residual::MissingIntrinsic(Intrinsic::Func))?;
+                    let step = Step::IntrinsicBacking(Intrinsic::Func);
+                    self.derive(
+                        obligation,
+                        self.view(class, view.environment),
+                        expected,
+                        step,
+                    );
+                    return Ok(());
+                }
                 let intrinsic = match self.db.ty(view.ty) {
-                    _ if matches!(self.db.ty(ty), Type::Function(_)) => Intrinsic::Func,
                     Type::Literal(literal) => literal.intrinsic(),
                     _ => {
                         return Err(Residual::Unsupported("a structural type below a class").into());

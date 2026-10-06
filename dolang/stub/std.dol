@@ -2826,9 +2826,13 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[Int, FmtSegment[V]] @Spre
 
 #
 # `Func` is the abstract supertype of function values.
-pub class Func
+#
+# Applied in a type, `Func[S, R, In: I, Out: O]` is the function type
+# `(...S) <I >O -> R`; arguments left out are unknown. A class that declares
+# `(call)` names `Func` among its supertypes to be passed as a function.
+pub class Func[S @ {*Value, **Value}, R, :In @ Iter[Value], :Out @ Sink[Never]]
   # Calls the function.
-  pub def (call) _self ...args -> Value
+  pub def (call) _self ...args @ S <In >Out -> R
     ...
 
 # A module object, produced by `import` or by loading a compiled module. Its
@@ -4717,7 +4721,7 @@ pub class TypeError: RuntimeError
 #
 # The type of a class whose instances are `T`. `Type` is the type of all types
 # and cannot be constructed directly.
-pub class Type[T]
+pub class Type[T]: Func
   field instance @ Phantom[T]
 
 #

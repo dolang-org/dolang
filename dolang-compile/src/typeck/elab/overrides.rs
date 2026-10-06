@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 
 use super::{
-    DeclNode, Diag, Nonconforming, Tables, UnitDiag, Unresolved, sig,
+    DeclNode, Designated, Diag, Nonconforming, Tables, UnitDiag, Unresolved, sig,
     surface::{Class, Member, MemberScope},
 };
 use crate::{
@@ -29,8 +29,8 @@ use crate::{
             Term,
         },
         r#type::{
-            Argument, Database, DeclId, DeclKind, Kind, MemberKey, Scope, Type, TypeId, UnitId,
-            UnitSpan,
+            Argument, Database, DeclId, DeclKind, Intrinsic, Kind, MemberKey, Scope, Type, TypeId,
+            UnitId, UnitSpan,
         },
     },
 };
@@ -81,6 +81,13 @@ struct Pending {
 
 impl Check<'_, '_> {
     fn run(&mut self) {
+        // A type object's members are its class's, so it is called through the
+        // class's `(init)` or class-level `(call)`, which the solver relates to a
+        // function type directly
+        let designated = self.tables.designated.get(&self.id);
+        if designated == Some(&Designated::Intrinsic(Intrinsic::Type)) {
+            return;
+        }
         let db = self.db;
         let runtime = db.declaration(self.id).source.kind == DeclKind::Class;
         let mut solver = Solver::new(db);

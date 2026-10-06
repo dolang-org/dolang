@@ -1,0 +1,19 @@
+# `Func` applied in a type is the function type it describes, and its binders
+# take their variance from `(call)` as a function type's parts do.
+
+pub class Value
+pub @let Never = Union[]
+pub @let Union[...Ts] = ...
+pub class Iter[T]
+  pub def next self -> T
+    ...
+pub class Sink[T]
+  pub def send self item @ T -> nil
+    ...
+pub class Func[S @ {*Value, **Value}, R, :In @ Iter[Value], :Out @ Sink[Never]]
+  #            ^: variance contravariant
+  #                                   ^: variance covariant
+  #                                       ^~: variance contravariant
+  #                                                          ^~~: variance contravariant
+  pub def (call) _self ...args @ S <In >Out -> R
+    ...

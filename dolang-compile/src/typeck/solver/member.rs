@@ -221,7 +221,13 @@ impl Solver<'_> {
                         None => return Ok(Receiver::Missing),
                     }
                 }
-                Type::Function(_) => Intrinsic::Func,
+                // `Func` applied to the function's parts
+                Type::Function(_) => {
+                    let class = (self.db.func_class(view.ty))
+                        .ok_or(Residual::MissingIntrinsic(Intrinsic::Func))?;
+                    term = self.view(class, view.environment);
+                    continue;
+                }
                 Type::Literal(literal) => literal.intrinsic(),
                 // Flow makes a use of a union's member of each alternative
                 Type::Union(_) => {
