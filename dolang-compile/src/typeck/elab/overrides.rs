@@ -92,6 +92,11 @@ impl Check<'_, '_> {
         let db = self.db;
         let runtime = db.declaration(self.id).source.kind == DeclKind::Class;
         let mut solver = Solver::new(db);
+        #[cfg(feature = "debug")]
+        {
+            let tables = self.tables;
+            solver.named(move |ty| tables.render_type(db, ty));
+        }
         let environment = solver.rigid_environment(self.id);
         solver.close();
         let instance = self.instance();
