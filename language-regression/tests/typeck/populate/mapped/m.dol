@@ -16,7 +16,7 @@ pub def fork[*Rs] *blocks @ ...(() -> Rs) -> Tuple[...Rs]
   #     ^~~~: decl (...(<in, >out) -> Rs, <in, >out) -> m.Tuple[{...Rs}]
   blocks
 
-pub def chain[...Us] ...values @ ...Box[Us]
+pub def mixed[...Us] ...values @ ...Box[Us]
   #     ^~~~~: decl (...m.Box[Us], <in, >out) -> Unknown
   values
 

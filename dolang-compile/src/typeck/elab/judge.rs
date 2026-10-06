@@ -14,8 +14,8 @@ use crate::{
     RestKind,
     source::Span,
     typeck::r#type::{
-        Argument, Binder, BinderOrigin, Binding, BoundRef, Database, DeclId, Declaration, Element, Kind,
-        Literal, Member, Multiplicity, Scope, Type, TypeId, UnionMember, UnitId, UnitSpan,
+        Argument, Binder, BinderOrigin, Binding, BoundRef, Database, DeclId, Declaration, Element,
+        Kind, Literal, Member, Multiplicity, Scope, Type, TypeId, UnionMember, UnitId, UnitSpan,
         Variance,
     },
 };
@@ -670,9 +670,7 @@ impl Tables<'_> {
                                 self.render_into(db, *ty, naming, &mut out);
                                 out.push(')');
                             }
-                            UnionMember::Type(ty) => {
-                                self.render_into(db, *ty, naming, &mut out)
-                            }
+                            UnionMember::Type(ty) => self.render_into(db, *ty, naming, &mut out),
                             UnionMember::Expand(ty) => {
                                 out.push_str("...");
                                 self.render_into(db, *ty, naming, &mut out);

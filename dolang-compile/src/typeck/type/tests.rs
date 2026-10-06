@@ -1659,10 +1659,7 @@ fn a_mapping_over_a_known_pack_reduces_item_by_item() {
         vec![
             item(Multiplicity::Required, Element::Positional(one)),
             item(Multiplicity::Optional, Element::Positional(two)),
-            item(
-                Multiplicity::Repeated,
-                Element::Keyed { key, value: three },
-            ),
+            item(Multiplicity::Repeated, Element::Keyed { key, value: three }),
             // A known schema is spliced, its items taking on the multiplicity
             item(Multiplicity::Repeated, Element::Include(nested)),
             // One not yet known is mapped in turn
@@ -1670,8 +1667,14 @@ fn a_mapping_over_a_known_pack_reduces_item_by_item() {
         ],
     );
     let elements = [
-        (Multiplicity::Required, Element::Positional(applied(&mut db, one))),
-        (Multiplicity::Optional, Element::Positional(applied(&mut db, two))),
+        (
+            Multiplicity::Required,
+            Element::Positional(applied(&mut db, one)),
+        ),
+        (
+            Multiplicity::Optional,
+            Element::Positional(applied(&mut db, two)),
+        ),
         (
             Multiplicity::Repeated,
             Element::Keyed {

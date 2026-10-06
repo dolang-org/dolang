@@ -131,6 +131,18 @@ pub(crate) enum Variance {
     Contravariant,
 }
 
+impl Variance {
+    /// The variance of a position `inner` to one that is itself `self`
+    pub(crate) fn compose(self, inner: Variance) -> Variance {
+        match (self, inner) {
+            (Variance::Invariant, _) | (_, Variance::Invariant) => Variance::Invariant,
+            (Variance::Covariant, inner) => inner,
+            (Variance::Contravariant, Variance::Covariant) => Variance::Contravariant,
+            (Variance::Contravariant, Variance::Contravariant) => Variance::Covariant,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Rest {
     All,
@@ -1604,7 +1616,12 @@ impl Database {
     /// Add a schema's items to `items` as items of an item of `multiplicity`,
     /// splicing the schemas it includes that are known. Returns whether it's a
     /// schema.
-    fn splice(&self, schema: TypeId, multiplicity: Multiplicity, items: &mut Vec<SchemaItem>) -> bool {
+    fn splice(
+        &self,
+        schema: TypeId,
+        multiplicity: Multiplicity,
+        items: &mut Vec<SchemaItem>,
+    ) -> bool {
         let Type::Schema(spliced) = self.ty(schema) else {
             return false;
         };
@@ -1844,6 +1861,97 @@ impl Database {
     /// are one nearer.
     pub(crate) fn instantiate(&self, root: TypeId, items: &[TypeId]) -> TypeId {
         self.substitute_inner(root, 0, items, true, &mut HashMap::new())
+    }
+
+    /// The variance of `root`, as a mapping's pattern is, in slot `slot` of its
+    /// innermost group: what the positions referring to it have in common, or
+    /// `None` if none does. A position in a form whose variance isn't known,
+    /// such as a quantified type, is invariant.
+    pub(crate) fn slot_variance(&self, root: TypeId, slot: u16) -> Option<Variance> {
+        let mut found = None;
+        self.slot_variance_inner(root, slot, 0, Variance::Covariant, &mut found);
+        found
+    }
+
+    fn slot_variance_inner(
+        &self,
+        id: TypeId,
+        slot: u16,
+        local: u32,
+        variance: Variance,
+        found: &mut Option<Variance>,
+    ) {
+        let mut walk = |ty: TypeId, inner: Variance, groups: u32| {
+            self.slot_variance_inner(ty, slot, local + groups, variance.compose(inner), found)
+        };
+        match *self.ty(id) {
+            Type::Bound { reference, .. } => {
+                if u32::from(reference.depth) == local && reference.slot == slot {
+                    *found = match *found {
+                        Some(seen) if seen != variance => Some(Variance::Invariant),
+                        _ => Some(variance),
+                    };
+                }
+            }
+            Type::Apply { base, ref args, .. } => {
+                let binders = match *self.ty(base) {
+                    Type::Decl(decl) if self.declaration(decl).source.kind.nominal() => {
+                        match self.ty(self.declaration(decl).ty) {
+                            Type::Quantified { binders, .. } if binders.len() == args.len() => {
+                                Some(binders)
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                for (index, arg) in args.iter().enumerate() {
+                    let (Argument::Positional(ty)
+                    | Argument::Keyword(_, ty)
+                    | Argument::Expand(ty)) = *arg;
+                    let inner = match (binders, arg) {
+                        (Some(binders), Argument::Positional(_)) => binders[index].variance,
+                        _ => Variance::Invariant,
+                    };
+                    walk(ty, inner, 0);
+                }
+            }
+            Type::Function(ref function) => {
+                walk(function.params, Variance::Contravariant, 0);
+                for channel in [function.input, function.output].into_iter().flatten() {
+                    walk(channel, Variance::Contravariant, 0);
+                }
+                walk(function.result, Variance::Covariant, 0);
+            }
+            Type::Schema(_) => {
+                self.ty(id)
+                    .visit_children(|ty, groups| walk(ty, Variance::Covariant, groups));
+            }
+            // Each pack is where its pattern places its items, and its count
+            // only adds items
+            Type::Map { ref packs, pattern } => {
+                for (index, &pack) in packs.iter().enumerate() {
+                    let index = u16::try_from(index).expect("a mapping's packs fit a group");
+                    let inner = self.slot_variance(pattern, index);
+                    walk(pack, inner.unwrap_or(Variance::Covariant), 0);
+                }
+                walk(pattern, Variance::Covariant, 1);
+            }
+            Type::Union(ref members) => {
+                for member in members.iter() {
+                    match *member {
+                        UnionMember::Type(ty) => walk(ty, Variance::Covariant, 0),
+                        _ => {
+                            walk(member.id(), Variance::Invariant, 0);
+                            if let Some(key) = member.key() {
+                                walk(key, Variance::Invariant, 0);
+                            }
+                        }
+                    }
+                }
+            }
+            ref ty => ty.visit_children(|ty, groups| walk(ty, Variance::Invariant, groups)),
+        }
     }
 
     /// Replace the references to the group at `cutoff` with `args`. References

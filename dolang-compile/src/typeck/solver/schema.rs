@@ -55,6 +55,9 @@ pub(super) enum Opacity {
     /// A rigid, as its closed view, or a skolem
     Rigid(Term),
     Infer(InferVarId),
+    /// A mapping over a pack being inferred, which relates only to a mapping of
+    /// the same pattern, pack by pack
+    Mapped(Term),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -200,6 +203,26 @@ impl Solver<'_> {
         self.flatten(av, xs, None, None, &mut a, 0)?;
         let mut pairs = self.pair(&a, &b)?;
         self.cross(&a, &b, &mut pairs, obligation)?;
+        // Mappings paired by pattern relate pack by pack; one without a
+        // counterpart would need its pack inferred from the other side's items
+        for &(i, j) in &pairs {
+            match (a.opaque[i].opacity, b.opaque[j].opacity) {
+                (Opacity::Mapped(x), Opacity::Mapped(y) | Opacity::Rigid(y))
+                | (Opacity::Rigid(x), Opacity::Mapped(y)) => {
+                    self.derive(obligation, x, y, Step::Item(a.opaque[i].item));
+                }
+                _ => {}
+            }
+        }
+        let mapped = |shape: &Shape, paired: &dyn Fn(usize) -> bool| {
+            (shape.opaque.iter().enumerate())
+                .any(|(index, o)| matches!(o.opacity, Opacity::Mapped(_)) && !paired(index))
+        };
+        if mapped(&a, &|i| pairs.iter().any(|&(x, _)| x == i))
+            || mapped(&b, &|j| pairs.iter().any(|&(_, y)| y == j))
+        {
+            return Err(Residual::Unsupported("a mapping over a pack being inferred").into());
+        }
         // Every actual rigid without a counterpart stands for its bound
         let paired: HashSet<Term> = pairs
             .iter()
@@ -491,6 +514,92 @@ impl Solver<'_> {
                     self.derive(obligation, av.child(key), bv.child(k), Step::Key(index));
                     self.derive(obligation, av.child(value), bv.child(v), Step::Item(index));
                 }
+                // A mapping's items fit one by one, since it would relate as a
+                // schema including it, which is this one
+                (&Element::Include(schema), _, _)
+                    if let Head::Structural(view) = self.head(av.child(schema))?
+                        && let Type::Map { packs, .. } = self.db.ty(view.ty) =>
+                {
+                    let term = Term::View(view);
+                    // Where the expected side takes any value, only the lanes the
+                    // mapping occupies and the keys it keeps from its packs
+                    // matter, not whether its pattern keeps the order of its
+                    // packs' items
+                    let any = |term: Term| -> Result<bool, Issue> {
+                        Ok(matches!(self.head(term)?, Head::Structural(view)
+                            if view.ty == self.db.top() || matches!(self.db.ty(view.ty), Type::Unknown(_))))
+                    };
+                    let mut lanes = None;
+                    for &pack in packs.iter() {
+                        let pack = self.lanes(view.child(pack), 1)?;
+                        lanes = Some(match lanes {
+                            Some(seen) if seen != pack => Rest::All,
+                            _ => pack,
+                        });
+                    }
+                    let lanes = lanes.expect("a mapping has a pack");
+                    let takes_positional = match (lanes, positional) {
+                        (Rest::Keyed, _) => true,
+                        (_, Some(p)) => any(bv.child(p))?,
+                        (_, None) => false,
+                    };
+                    let takes_keyed = match (lanes, keyed) {
+                        (Rest::Positional, _) => true,
+                        (_, Some((_, v))) => any(bv.child(v))?,
+                        (_, None) => false,
+                    };
+                    if takes_positional && takes_keyed {
+                        if let (Rest::All | Rest::Keyed, Some((k, _))) = (lanes, keyed) {
+                            let top = self.db.top();
+                            let keys = self.db.intern(Type::Schema(
+                                vec![
+                                    SchemaItem {
+                                        multiplicity: Multiplicity::Repeated,
+                                        element: Element::Positional(top),
+                                    },
+                                    SchemaItem {
+                                        multiplicity: Multiplicity::Repeated,
+                                        element: Element::Keyed { key: k, value: top },
+                                    },
+                                ]
+                                .into(),
+                            ));
+                            for &pack in packs.iter() {
+                                let step = Step::Key(index);
+                                self.derive(obligation, view.child(pack), bv.child(keys), step);
+                            }
+                        }
+                        continue;
+                    }
+                    let mut shape = Shape::default();
+                    let keep = HashSet::new();
+                    self.include(term, item.multiplicity, index, Some(&keep), &mut shape, 0)?;
+                    for slot in &shape.positional {
+                        match (*slot, positional) {
+                            (Slot::Atom(atom), Some(p)) => {
+                                self.derive(obligation, atom.ty, bv.child(p), Step::Item(index));
+                            }
+                            (Slot::Atom(_), None) => {
+                                return Err(Issue::Contradiction(Contradiction::Excess(index)));
+                            }
+                            (Slot::Opaque(o), _) if shape.opaque[o].opacity == Opacity::Unknown => {
+                            }
+                            (Slot::Opaque(_), _) => {
+                                return Err(Residual::Unsupported(
+                                    "a mapping over a pack being inferred",
+                                )
+                                .into());
+                            }
+                        }
+                    }
+                    for atom in &shape.keyed {
+                        let Some((k, v)) = keyed else {
+                            return Err(Issue::Contradiction(Contradiction::Excess(index)));
+                        };
+                        self.derive(obligation, atom.key, bv.child(k), Step::Key(index));
+                        self.derive(obligation, atom.value, bv.child(v), Step::Item(index));
+                    }
+                }
                 (&Element::Include(schema), _, _) => {
                     self.derive(obligation, av.child(schema), expected, Step::Item(index));
                 }
@@ -625,8 +734,239 @@ impl Solver<'_> {
                 let bound = self.closed(bound);
                 self.include_rigid(rigid, bound, multiplicity, item, keep, shape, depth)
             }
+            Type::Map { packs, pattern } if multiplicity == Multiplicity::Required => {
+                self.include_map(view, packs, *pattern, item, keep, shape, depth)
+            }
+            Type::Map { .. } => {
+                Err(Residual::Unsupported("an optional or repeated included mapping").into())
+            }
             _ => Err(Residual::Unsupported("this kind of included schema").into()),
         }
+    }
+
+    /// Flatten an included mapping into `shape`: its pattern viewed with the
+    /// corresponding items of its packs as its group, item by item. Over a
+    /// single pack, the dynamic schema stays dynamic, and an opaque rigid or
+    /// skolem becomes the mapping over it alone.
+    #[expect(clippy::too_many_arguments, reason = "an inclusion's parts")]
+    fn include_map(
+        &self,
+        view: TypeView,
+        packs: &[TypeId],
+        pattern: TypeId,
+        item: usize,
+        keep: Option<&HashSet<Term>>,
+        shape: &mut Shape,
+        depth: usize,
+    ) -> Result<(), Issue> {
+        let mut flattened = Vec::new();
+        for &pack in packs {
+            let mut inner = Shape::default();
+            self.include(
+                view.child(pack),
+                Multiplicity::Required,
+                item,
+                None,
+                &mut inner,
+                depth + 1,
+            )?;
+            flattened.push(inner);
+        }
+        let mapped =
+            |items: Vec<Term>| self.view(pattern, self.intern_environment(view.environment, items));
+        let inferred = Residual::Unsupported("a mapping over a pack being inferred");
+        if let [inner] = &flattened[..] {
+            for slot in &inner.positional {
+                match *slot {
+                    Slot::Atom(atom) => shape.positional.push(Slot::Atom(Atom {
+                        ty: mapped(vec![atom.ty]),
+                        ..atom
+                    })),
+                    Slot::Opaque(index) => {
+                        let opaque = inner.opaque[index];
+                        let opacity = match opaque.opacity {
+                            Opacity::Unknown => Opacity::Unknown,
+                            Opacity::Infer(id) => {
+                                Opacity::Mapped(self.mapping(view, pattern, Term::Infer(id)))
+                            }
+                            Opacity::Mapped(_) => return Err(inferred.into()),
+                            Opacity::Rigid(rigid) => {
+                                let mapping = self.mapping(view, pattern, rigid);
+                                if keep.is_some_and(|keep| !keep.contains(&mapping)) {
+                                    // Standing for the mapping over its bound
+                                    // keeps order only if the pattern does
+                                    if matches!(
+                                        self.db.slot_variance(pattern, 0),
+                                        Some(Variance::Invariant | Variance::Contravariant)
+                                    ) {
+                                        return Err(Residual::Unsupported(
+                                            "a mapping over a rigid that its pattern doesn't preserve the order of",
+                                        )
+                                        .into());
+                                    }
+                                    let bound = self.opaque_bound(rigid)?;
+                                    let mapping = self.mapping(view, pattern, bound);
+                                    self.include(
+                                        mapping,
+                                        Multiplicity::Required,
+                                        item,
+                                        keep,
+                                        shape,
+                                        depth + 1,
+                                    )?;
+                                    continue;
+                                }
+                                Opacity::Rigid(mapping)
+                            }
+                        };
+                        shape.positional.push(Slot::Opaque(shape.opaque.len()));
+                        shape.opaque.push(Opaque { opacity, ..opaque });
+                    }
+                }
+            }
+            for atom in &inner.keyed {
+                shape.keyed.push(KeyedAtom {
+                    value: mapped(vec![atom.value]),
+                    ..*atom
+                });
+            }
+            return Ok(());
+        }
+        // Several packs map item by item only once their items are all known
+        if let Some(opaque) = flattened.iter().flat_map(|inner| &inner.opaque).next() {
+            return Err(match opaque.opacity {
+                Opacity::Infer(_) => inferred,
+                _ => Residual::Unsupported("a mapping over several packs not all known"),
+            }
+            .into());
+        }
+        let first = &flattened[0];
+        if flattened.iter().any(|inner| {
+            inner.positional.len() != first.positional.len()
+                || inner.keyed.len() != first.keyed.len()
+        }) {
+            return Err(Issue::Contradiction(Contradiction::MappedPacks));
+        }
+        for index in 0..first.positional.len() {
+            let atoms: Vec<Atom> = (flattened.iter())
+                .map(|inner| match inner.positional[index] {
+                    Slot::Atom(atom) => atom,
+                    Slot::Opaque(_) => unreachable!("no pack has an opaque"),
+                })
+                .collect();
+            if atoms
+                .iter()
+                .any(|atom| atom.multiplicity != atoms[0].multiplicity)
+            {
+                return Err(Issue::Contradiction(Contradiction::MappedPacks));
+            }
+            shape.positional.push(Slot::Atom(Atom {
+                ty: mapped(atoms.iter().map(|atom| atom.ty).collect()),
+                ..atoms[0]
+            }));
+        }
+        for index in 0..first.keyed.len() {
+            let atoms: Vec<KeyedAtom> = flattened.iter().map(|inner| inner.keyed[index]).collect();
+            for atom in &atoms[1..] {
+                if atom.multiplicity != atoms[0].multiplicity {
+                    return Err(Issue::Contradiction(Contradiction::MappedPacks));
+                }
+                if !self.same(atom.key, atoms[0].key)? {
+                    return Err(Residual::Unsupported("mapped packs whose keys may differ").into());
+                }
+            }
+            shape.keyed.push(KeyedAtom {
+                value: mapped(atoms.iter().map(|atom| atom.value).collect()),
+                ..atoms[0]
+            });
+        }
+        Ok(())
+    }
+
+    /// A mapping of `pattern`, viewed in `view`'s environment, over `pack` alone,
+    /// closed where it can be so the same mapping on both sides of a judgment is
+    /// the same term
+    fn mapping(&self, view: TypeView, pattern: TypeId, pack: Term) -> Term {
+        let reference = self.db.intern(Type::Bound {
+            reference: BoundRef::new(0, 0),
+            kind: Kind::Schema,
+        });
+        // The pack's group is outside the pattern's own
+        let pattern = (self.db.shift(pattern, 1, 1)).expect("inserting a group removes none");
+        let map = self.db.intern(Type::Map {
+            packs: vec![reference].into(),
+            pattern,
+        });
+        let pack = self.resolve(pack).unwrap_or(pack);
+        let term = self.view(map, self.intern_environment(view.environment, vec![pack]));
+        self.reify(term).map_or(term, |ty| self.closed(ty))
+    }
+
+    /// The bound of a rigid or skolem an opaque stands for
+    fn opaque_bound(&self, rigid: Term) -> Result<Term, Issue> {
+        let bound = match self.head(rigid)? {
+            Head::Skolem(id) => self.skolems[id.0].bound.get(),
+            Head::Structural(view) if self.rigid(view.ty)?.is_some() => {
+                self.rigid_bound(view.ty).map(|bound| self.closed(bound))
+            }
+            _ => {
+                return Err(Residual::Unsupported("a mapping over a mapping over a rigid").into());
+            }
+        };
+        bound.ok_or_else(|| Residual::Unsupported("an included rigid without a bound").into())
+    }
+
+    /// Relate mappings of the same pattern pack by pack, at the pattern's
+    /// variance in each, when some pack isn't an exposed schema to map item by
+    /// item, as a generic signature's own mapping is in its instantiation.
+    /// Returns whether they relate so.
+    pub(super) fn mappings(
+        &self,
+        a: TypeView,
+        b: TypeView,
+        obligation: ObligationId,
+    ) -> Result<bool, Issue> {
+        if !self.same_pattern(Term::View(a), Term::View(b))? {
+            return Ok(false);
+        }
+        let (Type::Map { packs: xs, pattern }, Type::Map { packs: ys, .. }) =
+            (self.db.ty(a.ty), self.db.ty(b.ty))
+        else {
+            unreachable!("both are mappings")
+        };
+        let mut exposed = true;
+        for pack in (xs.iter().map(|&x| a.child(x))).chain(ys.iter().map(|&y| b.child(y))) {
+            exposed &= matches!(self.head(pack)?,
+                Head::Structural(view) if matches!(self.db.ty(view.ty), Type::Schema(_)));
+        }
+        // A pack whose items the pattern doesn't use relates only by its count
+        let variances: Option<Vec<_>> = (0..xs.len())
+            .map(|index| {
+                let index = u16::try_from(index).expect("a mapping's packs fit a group");
+                self.db.slot_variance(*pattern, index)
+            })
+            .collect();
+        let (false, Some(variances)) = (exposed, variances) else {
+            return Ok(false);
+        };
+        for (index, variance) in variances.into_iter().enumerate() {
+            let (x, y) = (a.child(xs[index]), b.child(ys[index]));
+            if variance != Variance::Contravariant {
+                let step = Step::Argument {
+                    index,
+                    reversed: false,
+                };
+                self.derive(obligation, x, y, step);
+            }
+            if variance != Variance::Covariant {
+                let step = Step::Argument {
+                    index,
+                    reversed: true,
+                };
+                self.derive(obligation, y, x, step);
+            }
+        }
+        Ok(true)
     }
 
     /// Flatten an included rigid or skolem into `shape`: opaque, or its bound if
@@ -678,8 +1018,9 @@ impl Solver<'_> {
         })
     }
 
-    /// Pair the same rigid or variable on both sides, in order. Returns pairs of opaque
-    /// indices, actual first.
+    /// Pair the same rigid or variable on both sides, in order, and a mapping
+    /// over a pack being inferred with one of the same pattern. Returns pairs of
+    /// opaque indices, actual first.
     fn pair(&self, a: &Shape, b: &Shape) -> Result<Vec<(usize, usize)>, Issue> {
         let mut pairs = Vec::new();
         let mut used = HashSet::new();
@@ -687,17 +1028,49 @@ impl Solver<'_> {
             if x.opacity == Opacity::Unknown {
                 continue;
             }
-            if let Some(j) =
-                (0..b.opaque.len()).find(|j| !used.contains(j) && b.opaque[*j].opacity == x.opacity)
-            {
-                used.insert(j);
-                pairs.push((i, j));
+            for (j, y) in b.opaque.iter().enumerate() {
+                if used.contains(&j) {
+                    continue;
+                }
+                let paired = match (x.opacity, y.opacity) {
+                    (Opacity::Mapped(x), Opacity::Mapped(y) | Opacity::Rigid(y))
+                    | (Opacity::Rigid(x), Opacity::Mapped(y)) => self.same_pattern(x, y)?,
+                    // A mapping over a skolem has no closed form to compare
+                    (Opacity::Rigid(x), Opacity::Rigid(y)) => x == y || self.same(x, y)?,
+                    (x, y) => x == y,
+                };
+                if paired {
+                    used.insert(j);
+                    pairs.push((i, j));
+                    break;
+                }
             }
         }
         if !pairs.is_sorted_by_key(|&(_, j)| j) {
             return Err(Residual::Alignment.into());
         }
         Ok(pairs)
+    }
+
+    /// Whether two terms are mappings of the same pattern over as many packs
+    fn same_pattern(&self, a: Term, b: Term) -> Result<bool, Issue> {
+        let (Head::Structural(a), Head::Structural(b)) = (self.head(a)?, self.head(b)?) else {
+            return Ok(false);
+        };
+        let (
+            Type::Map { packs: xs, pattern },
+            Type::Map {
+                packs: ys,
+                pattern: other,
+            },
+        ) = (self.db.ty(a.ty), self.db.ty(b.ty))
+        else {
+            return Ok(false);
+        };
+        Ok(
+            xs.len() == ys.len()
+                && self.same_scoped(a.child(*pattern), 1, b.child(*other), 1, 0)?,
+        )
     }
 
     /// Pair a variable with a rigid or skolem across from it, each without a

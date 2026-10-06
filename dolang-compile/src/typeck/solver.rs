@@ -151,6 +151,9 @@ pub(crate) enum Contradiction {
     Conflict,
     /// An item projection's key has a member its schema doesn't admit
     Unadmitted(TypeId),
+    /// A mapping's packs have items that don't correspond, by count,
+    /// multiplicity or form
+    MappedPacks,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1201,13 +1204,13 @@ impl<'db> Solver<'db> {
                         (Some(binders), Argument::Positional(_)) => binders[index].variance,
                         _ => Variance::Invariant,
                     };
-                    walk(ty, compose(variance, binder), 0)?;
+                    walk(ty, variance.compose(binder), 0)?;
                 }
                 Ok(())
             }
             Type::Function(ref function) => {
                 if inputs {
-                    let flipped = compose(variance, Variance::Contravariant);
+                    let flipped = variance.compose(Variance::Contravariant);
                     walk(function.params, flipped, 0)?;
                     for channel in [function.input, function.output].into_iter().flatten() {
                         walk(channel, flipped, 0)?;
@@ -1232,22 +1235,36 @@ impl<'db> Solver<'db> {
                     match *member {
                         UnionMember::Type(ty) => walk(ty, variance, 0)?,
                         _ => {
-                            walk(member.id(), compose(variance, Variance::Invariant), 0)?;
+                            walk(member.id(), variance.compose(Variance::Invariant), 0)?;
                             if let Some(key) = member.key() {
-                                walk(key, compose(variance, Variance::Invariant), 0)?;
+                                walk(key, variance.compose(Variance::Invariant), 0)?;
                             }
                         }
                     }
                 }
                 Ok(())
             }
-            Type::Quantified { .. } | Type::Map { .. } => {
+            // Each pack is where its pattern places its items, and its count
+            // only adds items
+            Type::Map { ref packs, pattern } => {
+                for (index, &pack) in packs.iter().enumerate() {
+                    let index = u16::try_from(index).expect("a mapping's packs fit a group");
+                    let inner = self.db.slot_variance(pattern, index);
+                    walk(
+                        pack,
+                        variance.compose(inner.unwrap_or(Variance::Covariant)),
+                        0,
+                    )?;
+                }
+                walk(pattern, variance, 1)
+            }
+            Type::Quantified { .. } => {
                 let mut children = Vec::new();
                 self.db
                     .ty(view.ty)
                     .visit_children(|ty, groups| children.push((ty, groups)));
                 for (ty, groups) in children {
-                    walk(ty, compose(variance, Variance::Invariant), groups)?;
+                    walk(ty, variance.compose(Variance::Invariant), groups)?;
                 }
                 Ok(())
             }
@@ -2695,6 +2712,33 @@ impl<'db> Solver<'db> {
                     (Type::Schema(xs), Type::Schema(ys)) => {
                         self.schemas(a, xs, b, ys, expected, obligation)
                     }
+                    // A mapping relates as a schema including it, unless it relates
+                    // to the same mapping pack by pack
+                    (Type::Schema(_) | Type::Map { .. }, Type::Schema(_) | Type::Map { .. }) => {
+                        if self.mappings(a, b, obligation)? {
+                            return Ok(());
+                        }
+                        let schema = |view: TypeView| match self.db.ty(view.ty) {
+                            Type::Map { .. } => TypeView {
+                                ty: self.db.intern(Type::Schema(
+                                    vec![SchemaItem {
+                                        multiplicity: Multiplicity::Required,
+                                        element: Element::Include(view.ty),
+                                    }]
+                                    .into(),
+                                )),
+                                ..view
+                            },
+                            _ => view,
+                        };
+                        let (a, b) = (schema(a), schema(b));
+                        let (Type::Schema(xs), Type::Schema(ys)) =
+                            (self.db.ty(a.ty), self.db.ty(b.ty))
+                        else {
+                            unreachable!("both are schemas")
+                        };
+                        self.schemas(a, xs, b, ys, Term::View(b), obligation)
+                    }
                     // A function is a literal only if its class is
                     (Type::Function(_) | Type::Quantified { .. }, Type::Literal(_)) => {
                         let backing = (self.db.intrinsic(Intrinsic::Func))
@@ -3105,16 +3149,6 @@ fn hole(db: &Database, group: &mut Vec<Term>, term: Term, kind: Kind) -> TypeId 
         reference: BoundRef::new(0, group.len() - 1),
         kind,
     })
-}
-
-/// The variance of a position `inner` to one that is itself `outer`
-fn compose(outer: Variance, inner: Variance) -> Variance {
-    match (outer, inner) {
-        (Variance::Invariant, _) | (_, Variance::Invariant) => Variance::Invariant,
-        (Variance::Covariant, inner) => inner,
-        (Variance::Contravariant, Variance::Covariant) => Variance::Contravariant,
-        (Variance::Contravariant, Variance::Contravariant) => Variance::Covariant,
-    }
 }
 
 mod alternatives;

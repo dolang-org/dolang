@@ -376,10 +376,13 @@ impl<'t, 'u> Populate<'t, 'u> {
         let pack = self.reference(group, head, fields, span, None, Kind::Schema, depth);
         self.pattern = outer;
         let packs = self.pattern.as_mut().expect("in a pattern");
-        let slot = packs.iter().position(|&found| found == pack).unwrap_or_else(|| {
-            packs.push(pack);
-            packs.len() - 1
-        });
+        let slot = packs
+            .iter()
+            .position(|&found| found == pack)
+            .unwrap_or_else(|| {
+                packs.push(pack);
+                packs.len() - 1
+            });
         Some(self.db.intern(Type::Bound {
             reference: BoundRef::new(0, slot),
             kind: Kind::Type,

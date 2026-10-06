@@ -680,3 +680,188 @@ fn a_remainder_admitting_a_literal_key_takes_its_further_items() {
         Contradiction::UnrelatedNominals
     ));
 }
+
+/// A schema reference to slot `slot` of the innermost group
+fn pack(db: &Database, slot: usize) -> TypeId {
+    db.intern(Type::Bound {
+        reference: BoundRef::new(0, slot),
+        kind: Kind::Schema,
+    })
+}
+
+fn map(db: &Database, packs: &[TypeId], pattern: TypeId) -> TypeId {
+    db.intern(Type::Map {
+        packs: packs.iter().copied().collect(),
+        pattern,
+    })
+}
+
+/// A schema alias over schema binders whose body is `body`, applied to `args`,
+/// so a mapping in it is viewed with its packs substituted
+fn applied(db: &mut Database, name: &str, body: TypeId, args: &[TypeId]) -> TypeId {
+    let binders = args
+        .iter()
+        .map(|_| bounded(Kind::Schema, Binding::Positional, None))
+        .collect();
+    let body = quantified(db, binders, body);
+    let (id, alias, mut source) = reserve(db, DeclKind::Alias, name);
+    source.result_kind = Kind::Schema;
+    populate(db, id, source, body, vec![]);
+    db.intern(Type::Apply {
+        base: alias,
+        args: args.iter().copied().map(Argument::Positional).collect(),
+        kind: Kind::Schema,
+    })
+}
+
+#[test]
+fn a_mapping_over_known_packs_relates_item_by_item() {
+    use Multiplicity::{Optional as Opt, Required as Req};
+    let mut db = Database::new();
+    let num = nominal(&mut db, "Num", vec![], vec![]);
+    let int = nominal(&mut db, "Int", vec![], vec![num]);
+    let boxed = nominal(&mut db, "Box", vec![binder(Variance::Covariant)], vec![]);
+    let pair = nominal(
+        &mut db,
+        "Pair",
+        vec![binder(Variance::Covariant), binder(Variance::Covariant)],
+        vec![],
+    );
+    let key = db.intern(Type::Literal(Literal::Sym(db.intern_symbol("k"))));
+    let item = reference(&db, 0, 0);
+    let boxes = map(&db, &[pack(&db, 0)], apply(&db, boxed, &[item]));
+    let pairs = map(
+        &db,
+        &[pack(&db, 0), pack(&db, 1)],
+        apply(&db, pair, &[item, reference(&db, 0, 1)]),
+    );
+    let ints = items(&db, vec![positional(Req, int), positional(Opt, int)]);
+    let keyed_int = items(&db, vec![keyed(Req, key, int)]);
+    let one = schema(&db, &[int]);
+    let two = schema(&db, &[int, int]);
+    let unknown = db.unknown_schema();
+    let mapped = |db: &mut Database, name, body, args: &[TypeId]| {
+        let applied = applied(db, name, body, args);
+        items(db, vec![include(Req, applied)])
+    };
+    let boxed_ints = mapped(&mut db, "BoxedInts", boxes, &[ints]);
+    let boxed_key = mapped(&mut db, "BoxedKey", boxes, &[keyed_int]);
+    let boxed_unknown = mapped(&mut db, "BoxedUnknown", boxes, &[unknown]);
+    let paired = mapped(&mut db, "Paired", pairs, &[one, one]);
+    let misaligned = mapped(&mut db, "Misaligned", pairs, &[one, two]);
+    let box_num = apply(&db, boxed, &[num]);
+    let box_nums = items(
+        &db,
+        vec![positional(Req, box_num), positional(Opt, box_num)],
+    );
+    let key_box_num = items(&db, vec![keyed(Req, key, box_num)]);
+    let pair_ints = schema(&db, &[apply(&db, pair, &[int, int])]);
+    let box_one = schema(&db, &[box_num]);
+    db.seal();
+    for (a, b) in [
+        (boxed_ints, box_nums),
+        (boxed_key, key_box_num),
+        (boxed_unknown, box_one),
+        (paired, pair_ints),
+    ] {
+        assert_eq!(check(&db, a, b).status, Status::Proven, "{a:?} <: {b:?}");
+    }
+    assert!(contradiction(
+        &check(&db, boxed_ints, box_one),
+        Contradiction::Excess(0)
+    ));
+    assert!(contradiction(
+        &check(&db, misaligned, pair_ints),
+        Contradiction::MappedPacks
+    ));
+}
+
+#[test]
+fn a_mapping_over_a_rigid_pairs_up_or_stands_for_its_bound() {
+    use Multiplicity::Required as Req;
+    let mut db = Database::new();
+    let num = nominal(&mut db, "Num", vec![], vec![]);
+    let int = nominal(&mut db, "Int", vec![], vec![num]);
+    let boxed = nominal(&mut db, "Box", vec![binder(Variance::Covariant)], vec![]);
+    let cell = nominal(&mut db, "Cell", vec![binder(Variance::Invariant)], vec![]);
+    let item = reference(&db, 0, 0);
+    let ints = items(&db, vec![positional(Multiplicity::Repeated, int)]);
+    let mapped = |db: &Database, base| {
+        let mapping = map(db, &[pack(db, 0)], apply(db, base, &[item]));
+        items(db, vec![include(Req, mapping)])
+    };
+    let boxes = mapped(&db, boxed);
+    let cells = mapped(&db, cell);
+    let rest = |db: &Database, base, of| {
+        items(
+            db,
+            vec![positional(Multiplicity::Repeated, apply(db, base, &[of]))],
+        )
+    };
+    let box_nums = rest(&db, boxed, num);
+    let cell_ints = rest(&db, cell, int);
+    let box_int = schema(&db, &[apply(&db, boxed, &[int])]);
+    let anything = items(&db, vec![positional(Multiplicity::Repeated, db.top())]);
+    let body = function(&db, &[], db.top());
+    let f = generic(
+        &mut db,
+        vec![bounded(
+            Kind::Schema,
+            Binding::Rest(Rest::Positional),
+            Some(ints),
+        )],
+        body,
+    );
+    db.seal();
+    assert_eq!(under(&db, f, boxes, boxes).status, Status::Proven);
+    // A covariant pattern maps the pack's bound to a bound of the mapping
+    assert_eq!(under(&db, f, boxes, box_nums).status, Status::Proven);
+    assert!(residual(
+        &under(&db, f, cells, cell_ints),
+        Residual::Unsupported(
+            "a mapping over a rigid that its pattern doesn't preserve the order of"
+        )
+    ));
+    // Unless the expected side takes any item in the mapping's lanes
+    assert_eq!(under(&db, f, cells, anything).status, Status::Proven);
+    // Nothing but itself is known to be below the mapping
+    assert!(contradiction(
+        &under(&db, f, box_int, boxes),
+        Contradiction::Rigid
+    ));
+}
+
+#[test]
+fn a_mapping_over_a_pack_being_inferred_pairs_with_one_of_its_pattern() {
+    let mut db = Database::new();
+    let int = nominal(&mut db, "Int", vec![], vec![]);
+    let boxed = nominal(&mut db, "Box", vec![binder(Variance::Covariant)], vec![]);
+    let mapping = map(
+        &db,
+        &[pack(&db, 0)],
+        apply(&db, boxed, &[reference(&db, 0, 0)]),
+    );
+    let params = items(&db, vec![include(Multiplicity::Required, mapping)]);
+    let takes = |db: &Database, params| {
+        db.intern(Type::Function(Function {
+            params,
+            result: db.top(),
+            input: None,
+            output: None,
+        }))
+    };
+    // [*Us] (...Box[Us]) -> Value
+    let generic = quantified(
+        &db,
+        vec![bounded(Kind::Schema, Binding::Rest(Rest::Positional), None)],
+        takes(&db, params),
+    );
+    let concrete = takes(&db, schema(&db, &[apply(&db, boxed, &[int])]));
+    db.seal();
+    assert_eq!(check(&db, generic, generic).status, Status::Proven);
+    // Choosing the pack from the items it maps to is not supported
+    assert!(residual(
+        &check(&db, generic, concrete),
+        Residual::Unsupported("a mapping over a pack being inferred")
+    ));
+}
