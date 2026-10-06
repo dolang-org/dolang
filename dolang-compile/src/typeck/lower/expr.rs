@@ -74,15 +74,13 @@ impl<'u> Scope<'_, '_, 'u> {
                 op: *op,
                 operand: Box::new(self.expr(expr)),
             },
-            ast::Expr::Binary {
-                op: op @ (Op::AmpAmp | Op::BarBar),
-                exprs,
-                ..
-            } => {
+            ast::Expr::Logical { .. } => {
                 let hoist = mem::replace(&mut self.ctx.hoist, false);
-                let value = self.short_circuit(*op, &exprs[0], &exprs[1], span);
+                let join = self.block();
+                self.short_circuit(node, join, join, true);
+                self.switch(join);
                 self.ctx.hoist = hoist;
-                return self.spill(value);
+                return self.spill(expr(ExprKind::Operand, span));
             }
             ast::Expr::Binary { op, exprs, .. } => {
                 let left = self.expr(&exprs[0]);
@@ -507,42 +505,6 @@ impl<'u> Scope<'_, '_, 'u> {
         else_.pop().expect("an `if` has a first branch")
     }
 
-    /// A short circuit whose value is used. Its left operand is pushed, and the
-    /// result is on the stack at the join.
-    fn short_circuit(
-        &mut self,
-        op: Op,
-        left: &'u ast::Expr,
-        right: &'u ast::Expr,
-        span: Span,
-    ) -> Expr {
-        let narrowing = self.narrowing(left);
-        let value = self.expr(left);
-        self.push(value);
-        self.emit(Step::Dup);
-        let long = self.block();
-        let join = self.block();
-        let (then, else_, assumes) = match op {
-            Op::AmpAmp => (long, join, narrowing.truthy),
-            _ => (join, long, narrowing.falsy),
-        };
-        self.end(Terminal::If {
-            cond: expr(ExprKind::Operand, span),
-            then,
-            else_,
-        });
-        self.switch(long);
-        for assume in assumes {
-            self.emit(Step::Assume(assume));
-        }
-        self.emit(Step::Pop);
-        let value = self.expr(right);
-        self.push(value);
-        self.end(Terminal::Branch(join));
-        self.switch(join);
-        expr(ExprKind::Operand, span)
-    }
-
     /// Push a value, unless it's already on top of the stack
     pub(super) fn push(&self, value: Expr) {
         if !matches!(value.kind, ExprKind::Operand) {
@@ -552,34 +514,59 @@ impl<'u> Scope<'_, '_, 'u> {
 
     /// Branch on a condition to `then` or `else_`, narrowing on each edge
     pub(super) fn cond(&mut self, node: &'u ast::Expr, then: BlockId, else_: BlockId) {
+        self.short_circuit(node, then, else_, false);
+    }
+
+    /// Branch on a condition to `then` or `else_`, testing each operand of a short
+    /// circuit once and narrowing on each edge. With `want_result`, the operand
+    /// that decided is on the stack at the target; a target both edges share
+    /// isn't tested for.
+    fn short_circuit(
+        &mut self,
+        node: &'u ast::Expr,
+        then: BlockId,
+        else_: BlockId,
+        want_result: bool,
+    ) {
         match node {
-            ast::Expr::Group { expr, .. } => self.cond(expr, then, else_),
-            ast::Expr::Binary {
-                op: Op::AmpAmp,
-                exprs,
-                ..
-            } => {
-                let middle = self.block();
-                self.cond(&exprs[0], middle, else_);
-                self.switch(middle);
-                self.cond(&exprs[1], then, else_);
-            }
-            ast::Expr::Binary {
-                op: Op::BarBar,
-                exprs,
-                ..
-            } => {
-                let middle = self.block();
-                self.cond(&exprs[0], then, middle);
-                self.switch(middle);
-                self.cond(&exprs[1], then, else_);
-            }
+            ast::Expr::Group { expr, .. } => self.short_circuit(expr, then, else_, want_result),
             ast::Expr::Unary {
                 op: Op::Bang, expr, ..
-            } => self.cond(expr, else_, then),
+            } if !want_result => self.short_circuit(expr, else_, then, false),
+            ast::Expr::Logical { op, exprs, .. } => {
+                let (last, init) = exprs.split_last().expect("a short circuit has operands");
+                for operand in init {
+                    let long = self.block();
+                    let (then, else_) = match op {
+                        Op::AmpAmp => (long, else_),
+                        _ => (then, long),
+                    };
+                    self.short_circuit(operand, then, else_, want_result);
+                    self.switch(long);
+                    if want_result {
+                        self.emit(Step::Pop);
+                    }
+                }
+                self.short_circuit(last, then, else_, want_result);
+            }
+            node if then == else_ => {
+                let value = self.expr(node);
+                if want_result {
+                    self.push(value);
+                } else {
+                    self.emit(Step::Eval(value));
+                }
+                self.end(Terminal::Branch(then));
+            }
             node => {
                 let narrowing = self.narrowing(node);
-                let cond = self.expr(node);
+                let mut cond = self.expr(node);
+                if want_result {
+                    let span = cond.span;
+                    self.push(cond);
+                    self.emit(Step::Dup);
+                    cond = expr(ExprKind::Operand, span);
+                }
                 let then = self.landing(then, narrowing.truthy);
                 let else_ = self.landing(else_, narrowing.falsy);
                 self.end(Terminal::If { cond, then, else_ });

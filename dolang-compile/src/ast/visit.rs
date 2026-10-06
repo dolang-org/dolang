@@ -130,6 +130,7 @@ pub enum NodeKind {
     Group,
     Unary,
     Binary,
+    Logical,
     Range,
     Call,
     Lambda,

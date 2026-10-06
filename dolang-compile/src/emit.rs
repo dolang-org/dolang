@@ -57,27 +57,51 @@ struct FuncEmitter<'a, 'b> {
 impl<'a, 'b> FuncEmitter<'a, 'b> {
     fn topological_sort_rec(
         emitter: &Emitter<'a>,
-        block: BlockRef<'a>,
+        id: BlockId,
         seen: &mut HashSet<BlockId>,
         out: &mut Vec<BlockId>,
     ) {
+        let block = emitter.graph.block(id);
         match block.term.0 {
             // No successors
             TermInfo::Ret | TermInfo::NlBranch(..) => (),
             TermInfo::Branch(bid) => {
                 if seen.insert(bid) {
                     out.push(bid);
-                    Self::topological_sort_rec(emitter, emitter.graph.block(bid), seen, out);
+                    drop(block);
+                    Self::topological_sort_rec(emitter, bid, seen, out);
                 }
             }
+            // Short circuits share their targets, so both may be placed already.  An
+            // `If` needs one successor next, so fall through to a block that branches
+            // to the other.
+            TermInfo::If(tid, fid) if seen.contains(&tid) && seen.contains(&fid) => {
+                let (func, scope, span) = (block.func, block.scope, block.term.1);
+                drop(block);
+                let trampoline = emitter.graph.alloc_block(func, scope);
+                let mut tblock = emitter.graph.block_mut(trampoline);
+                tblock.term = cfg::Term(TermInfo::Branch(fid), span);
+                tblock.inbound.insert(id);
+                drop(tblock);
+                let mut block = emitter.graph.block_mut(id);
+                block.term.0 = TermInfo::If(tid, trampoline);
+                drop(block);
+                let mut fblock = emitter.graph.block_mut(fid);
+                fblock.inbound.remove(&id);
+                fblock.inbound.insert(trampoline);
+                drop(fblock);
+                seen.insert(trampoline);
+                out.push(trampoline);
+            }
             TermInfo::If(tid, fid) | TermInfo::UnpackIf(_, tid, fid) => {
+                drop(block);
                 if seen.insert(tid) {
                     out.push(tid);
-                    Self::topological_sort_rec(emitter, emitter.graph.block(tid), seen, out);
+                    Self::topological_sort_rec(emitter, tid, seen, out);
                 }
                 if seen.insert(fid) {
                     out.push(fid);
-                    Self::topological_sort_rec(emitter, emitter.graph.block(fid), seen, out);
+                    Self::topological_sort_rec(emitter, fid, seen, out);
                 }
             }
         }
@@ -91,7 +115,7 @@ impl<'a, 'b> FuncEmitter<'a, 'b> {
         // Nothing branches to the entry block today, but leaving it out of `seen` would
         // let a back edge to it push a second copy
         seen.insert(enter);
-        Self::topological_sort_rec(emitter, emitter.graph.block(enter), &mut seen, &mut out);
+        Self::topological_sort_rec(emitter, enter, &mut seen, &mut out);
         out.into()
     }
 

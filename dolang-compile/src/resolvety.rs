@@ -1036,6 +1036,11 @@ impl Check<'_> {
                     self.expr(frame, expr);
                 }
             }
+            Expr::Logical { exprs, .. } => {
+                for expr in exprs {
+                    self.expr(frame, expr);
+                }
+            }
             Expr::Range { exprs, .. } => {
                 for expr in exprs.iter_mut().flatten() {
                     self.expr(frame, expr);

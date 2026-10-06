@@ -1396,6 +1396,11 @@ impl<'u> Walk<'_, 'u> {
                     self.expr(frame, expr);
                 }
             }
+            Expr::Logical { exprs, .. } => {
+                for expr in exprs {
+                    self.expr(frame, expr);
+                }
+            }
             Expr::Range { exprs, .. } => {
                 for expr in exprs.iter().flatten() {
                     self.expr(frame, expr);

@@ -1901,6 +1901,12 @@ impl<'a> Elaborater<'a> {
                 self.visit_expr(scope, &mut exprs[0], is_arg)?;
                 self.visit_expr(scope, &mut exprs[1], is_arg)
             }
+            Expr::Logical { exprs, .. } => {
+                for expr in exprs {
+                    self.visit_expr(scope, expr, is_arg)?;
+                }
+                Ok(())
+            }
             Expr::Range { exprs, .. } => {
                 if let Some(start) = &mut exprs[0] {
                     self.visit_expr(scope, start, is_arg)?;

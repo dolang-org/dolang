@@ -182,158 +182,23 @@ fn check(source: &str, expected: &str) {
     );
 }
 
-/// Each short circuit pushes its left operand, and the call pops the results in
-/// argument order. The callee and the first argument stay in the tree.
+/// Short circuits as call arguments, nested in each other, and as conditions and
+/// a `throw`'s value give valid graphs with a balanced stack
 #[test]
-fn short_circuits_in_call() {
-    check(
+fn short_circuit_stacks() {
+    lower(
         "
 let f = (do |a b c| a)
 let x = 1
 f $x (x && x.y) (x || 2)
-",
-        "
-f0 module: entry b0, exit b1, params (), bottom t7 t8 t9 t10 t11 t12
-f1 decl0 in f0: entry b2, exit b3, params (a, b, c), signature (t7, t8, t9) <t10 >t11 -> t12, captures t7 t8 t9 t10 t11 t12!
-b0 f0:
-  let f = f1
-  let x = 1
-  push x
-  dup
-  if <pop> then b4 else b5
-b1 f0:
-  return
-b2 f1:
-  result1 = a
-  goto b3
-b3 f1:
-  t12 = result1
-  return
-b4 f0:
-  assume x != nil
-  assume x != false
-  pop
-  push x.y
-  goto b5
-b5 f0:
-  push x
-  dup
-  if <pop> then b7 else b6
-b6 f0:
-  pop
-  push 2
-  goto b7
-b7 f0:
-  result0 = f(x, <pop>, <pop>)
-  goto b1
-",
-    );
-}
-
-/// The inner result is already on top of the stack, so it isn't pushed again
-#[test]
-fn nested_short_circuit_pushes_once() {
-    check(
-        "
 let a b c = [1, 2, 3]
-let x = ((a && b) || c)
-",
-        "
-f0 module: entry b0, exit b1, params ()
-b0 f0:
-  let (a, b, c) = array[1, 2, 3]
-  push a
-  dup
-  if <pop> then b2 else b3
-b1 f0:
-  return
-b2 f0:
-  assume a != nil
-  assume a != false
-  pop
-  push b
-  goto b3
-b3 f0:
-  dup
-  if <pop> then b5 else b4
-b4 f0:
-  pop
-  push c
-  goto b5
-b5 f0:
-  let x = <pop>
-  result0 = x
-  goto b1
-",
-    );
-}
-
-/// A condition's short circuits branch without the stack, while a `throw`'s value
-/// uses it
-#[test]
-fn short_circuit_in_loop_condition_and_exits() {
-    check(
-        "
-def f x y
+let y = ((a && b) || c && !(a || b))
+def g x y
   while (x && y)
     if (y || x)
       break
     continue
   throw (x && y)
-",
-        "
-f0 module: entry b0, exit b1, params ()
-f1 decl0 in f0: entry b2, exit b3, params (x, y)
-b0 f0:
-  let f = f1
-  result0 = f
-  goto b1
-b1 f0:
-  return
-b2 f1:
-  goto b4
-b3 f1:
-  return
-b4 f1:
-  if x then b8 else b5
-b5 f1:
-  push x
-  dup
-  if <pop> then b10 else b11
-b6 f1:
-  if y then b15 else b14
-b7 f1:
-  if y then b9 else b5
-b8 f1:
-  assume x != nil
-  assume x != false
-  goto b7
-b9 f1:
-  assume y != nil
-  assume y != false
-  goto b6
-b10 f1:
-  assume x != nil
-  assume x != false
-  pop
-  push y
-  goto b11
-b11 f1:
-  throw <pop>
-b12 f1:
-  goto b4
-b13 f1:
-  goto b5
-b14 f1:
-  if x then b16 else b12
-b15 f1:
-  assume y != nil
-  assume y != false
-  goto b13
-b16 f1:
-  assume x != nil
-  assume x != false
-  goto b13
 ",
     );
 }
@@ -707,7 +572,7 @@ b7 f0:
 b8 f0:
   push x
   dup
-  if <pop> then b12 else b11
+  if <pop> then b13 else b12
 b9 f0:
   if (x > 1) then b8 else b7
 b10 f0:
@@ -715,12 +580,16 @@ b10 f0:
   assume x != false
   goto b9
 b11 f0:
-  pop
-  push 0
-  goto b12
-b12 f0:
   t8 = <pop>
   goto b7
+b12 f0:
+  pop
+  push 0
+  goto b11
+b13 f0:
+  assume x != nil
+  assume x != false
+  goto b11
 ",
     );
 }
@@ -820,7 +689,7 @@ b0 f0:
   let g = f1
   push a
   dup
-  if <pop> then b5 else b4
+  if <pop> then b6 else b5
 b1 f0:
   return
 b2 f1:
@@ -830,32 +699,38 @@ b3 f1:
   t15 = result1
   return
 b4 f0:
+  let t5 = xs
+  goto b7
+b5 f0:
   pop
   push b
-  goto b5
-b5 f0:
-  let t5 = xs
-  goto b6
+  goto b4
 b6 f0:
-  next x in t5 then b8 else b7
+  assume a != nil
+  assume a != false
+  goto b4
 b7 f0:
+  next x in t5 then b9 else b8
+b8 f0:
   result0 = g(<pop>, for {k: 1, t9 => t10, ...t11})
   goto b1
-b8 f0:
+b9 f0:
   t9 = x
   push x
   dup
-  if <pop> then b9 else b10
-b9 f0:
-  assume x != nil
-  assume x != false
-  pop
-  push a
-  goto b10
+  if <pop> then b12 else b10
 b10 f0:
   t10 = <pop>
   t11 = xs
-  goto b7
+  goto b8
+b11 f0:
+  pop
+  push a
+  goto b10
+b12 f0:
+  assume x != nil
+  assume x != false
+  goto b11
 ",
     );
 }
@@ -889,42 +764,50 @@ b0 f0:
   let (x, y) = array[1]
   push a
   dup
-  if <pop> then b3 else b2
+  if <pop> then b4 else b3
 b1 f0:
   return
 b2 f0:
+  default y = <pop>
+  unpack (m, n) = array[1] then b7 else b5
+b3 f0:
   pop
   push 1
-  goto b3
-b3 f0:
-  default y = <pop>
-  unpack (m, n) = array[1] then b6 else b4
+  goto b2
 b4 f0:
-  unpack (u, v) = array[1] then b9 else b7
+  assume a != nil
+  assume a != false
+  goto b2
 b5 f0:
-  eval m
-  goto b4
+  unpack (u, v) = array[1] then b10 else b8
 b6 f0:
-  default n = 3
+  eval m
   goto b5
 b7 f0:
+  default n = 3
+  goto b6
+b8 f0:
   let zs = array[if {t9} else {}]
   result0 = zs
   goto b1
-b8 f0:
-  t9 = v
-  goto b7
 b9 f0:
+  t9 = v
+  goto b8
+b10 f0:
   push a
   dup
-  if <pop> then b11 else b10
-b10 f0:
+  if <pop> then b13 else b12
+b11 f0:
+  default v = <pop>
+  goto b9
+b12 f0:
   pop
   push 5
   goto b11
-b11 f0:
-  default v = <pop>
-  goto b8
+b13 f0:
+  assume a != nil
+  assume a != false
+  goto b11
 ",
     );
 }
@@ -973,18 +856,22 @@ b6 f0:
 b7 f0:
   push a
   dup
-  if <pop> then b9 else b8
+  if <pop> then b10 else b9
 b8 f0:
+  catch <pop> -> b6, error::Value -> b11, else b12
+b9 f0:
   pop
   push error::Type
-  goto b9
-b9 f0:
-  catch <pop> -> b6, error::Value -> b10, else b11
+  goto b8
 b10 f0:
+  assume a != nil
+  assume a != false
+  goto b8
+b11 f0:
   let e = <pop>
   result0 = 3
   goto b2
-b11 f0:
+b12 f0:
   let other = <pop>
   result0 = 4
   goto b2

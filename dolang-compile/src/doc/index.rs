@@ -1370,6 +1370,11 @@ impl Index<'_> {
                     self.expr(scope, expr);
                 }
             }
+            Expr::Logical { exprs, .. } => {
+                for expr in exprs {
+                    self.expr(scope, expr);
+                }
+            }
             Expr::Range { exprs, .. } => {
                 for expr in exprs.iter_mut().flatten() {
                     self.expr(scope, expr);
