@@ -1,0 +1,259 @@
+# Flow types that each way the checker lowers a construct produces.
+
+import error
+
+pub def g()
+  nil
+
+# A catch dispatches to its clauses, a catch-all last, each seeing the body's states
+pub def catches()
+  let y = 1
+  try
+    y = "a"
+    g()
+    y = :k:
+  catch error.Type: _
+    let _ = y
+    #       ^: flow std.Str
+  catch error.Value: _
+    let _ = y
+    #       ^: flow std.Str
+  catch _
+    let _ = y
+    #       ^: flow std.Str
+  let _ = y
+  #       ^: flow std.Str | std.Sym
+
+# A class that isn't a path is still tried in order
+pub def dynamic_class()
+  let a = nil
+  let y = 1
+  try
+    g()
+    y = "a"
+  catch error.Type: _
+    y = :k:
+  catch (a || error.Type): _
+    let _ = y
+    #       ^: flow std.Int
+  catch _
+    let _ = y
+    #       ^: flow std.Int
+  let _ = y
+  #       ^: flow std.Int | std.Str | std.Sym
+
+# A `finally` entered from the body and from a clause sees both, then continues
+# only from where it was entered
+pub def finally_from_clause()
+  let y = 1
+  try
+    y = "a"
+    g()
+  catch error.Type: _
+    y = :k:
+  finally
+    let _ = y
+    #       ^: flow std.Str | std.Sym
+  let _ = y
+  #       ^: flow std.Str | std.Sym
+
+pub def returning x @ Int
+  let y = 1
+  try
+    y = "a"
+    return (x + 1)
+  catch _
+    nil
+  finally
+    let _ = y
+    #       ^: flow std.Str
+  let _ = y
+  #       ^: flow std.Str
+
+# Leaving two `finally`s runs each in turn, and the loop's exit sees the state
+pub def nested_finally xs
+  let y = 1
+  for _ = xs
+    try
+      try
+        y = "a"
+        break
+      finally
+        y = :k:
+    finally
+      let _ = y
+      #       ^: flow std.Sym
+  let _ = y
+  #       ^: flow std.Int | std.Sym
+
+pub def formatted x @ Int w @ Int
+  let s = "a${x:$w.2}b"
+  let _ = s
+  #       ^: flow std.Str
+  let t = t"a${x}b$x${#0:$w}"
+  let _ = t
+  #       ^: flow std.Fmt[std.Int, {Unknown}]
+  let b = b"\x01$(b"\x02")"
+  let _ = b
+  #       ^: flow std.Bin
+
+# An `if let` filter binds its pattern in the branch
+pub def filtered ps @ Array[Array[Int]]
+  let r = $
+    for p = ps
+      if let a b = p
+        - [a, b]
+  let _ = r
+  #       ^: flow std.Array[std.Array[std.Int]]
+
+# Short circuits in a comprehension's filter and item narrow as anywhere else
+pub def comprehension_narrowing xs @ Array[Int | nil]
+  let r = $
+    for x = xs
+      if (x && x > 1)
+        - (x || 0)
+  let _ = r
+  #       ^: flow std.Array[std.Int]
+
+# Nested loops and filters with `elif` and `else`
+pub def comprehension_nesting xs @ Array[Int]
+  let r = $
+    for x = xs
+      for y = xs
+        - [x, y]
+        - $str(t"$x-$y")
+      if (x > 1)
+        - 1
+      else if (x > 0)
+        - (do x)
+      else
+        - $x
+  let _ = r
+  #       ^: flow std.Array[((<Unknown, >Unknown) -> std.Int) | std.Array[std.Int] | std.Int | std.Str]
+
+# Keyed items, pairs and spreads in a call's comprehension
+pub def comprehension_call xs @ Array[Int] a @ (Int | nil) b @ Int
+  let g = (do |...rest| rest)
+  g (a || b)
+    for x = xs
+      k: 1
+      (:j:): (x && a)
+      ...xs
+
+# A pattern's defaults are joined after it binds
+pub def defaults_after_bind a @ (Int | nil)
+  bind [1]
+    - _
+    - y = (a || 1)
+  let _ = y
+  #       ^: flow std.Int
+  let z = if bind [1]
+    - _
+    - n = 3
+  do
+    n
+  let _ = z
+  #       ^: flow std.Int | std.Nil
+
+pub def defaults_in_comprehension a @ (Int | nil)
+  let r = $
+    if bind [1]
+      - _
+      - v = (a || 5)
+    do
+      - $v
+  let _ = r
+  #       ^: flow std.Array[std.Int]
+
+pub def destructuring()
+  let a :b ..._c = (1, b: "s")
+  let _ = a
+  #       ^: flow std.Int
+  let _ = b
+  #       ^: flow std.Str
+  bind (1, 2)
+    - _
+    - e = 3
+  let _ = e
+  #       ^: flow std.Int
+  for f g = [[1, 2]]
+    let _ = f
+    #       ^: flow std.Int
+    let _ = g
+    #       ^: flow std.Int
+
+# A refutable sub-pattern fails to where the pattern does
+pub def nested_tests v @ Tuple[Int, Array[Int]]
+  if let a (b _c) = v
+    let _ = a
+    #       ^: flow std.Int
+    let _ = b
+    #       ^: flow std.Int
+  else
+    let _ = v
+    #       ^: flow std.Tuple[{std.Int, std.Array[std.Int]}]
+
+# Optionality belongs to the unpack schema; matching stays unchanged
+pub def optional_defaults()
+  let ?k: (a: a = 1 j: (Int(b = a) | Str(b = "dead"))) = ()
+  let _ = a
+  #       ^: flow std.Int
+  let _ = b
+  #       ^: flow std.Int
+  let Int(c = "dead") = 2
+  let _ = c
+  #       ^: flow std.Int
+  if let ?k: Int(n = 0) = ()
+    let _ = n
+    #       ^: flow std.Int
+
+# A variable a closure assigns reads as every value assigned to it, even once captured
+pub def captures()
+  let m = 1
+  let inc = do
+    m = "s"
+  m = :k:
+  let _ = m
+  #       ^: flow std.Int | std.Str | std.Sym
+  inc()
+
+# A `do` block's parameters are typed by their annotations
+pub def lambda_signature()
+  let f = (do |_a b @ Int :_k :_j @ Str *_pos @ Int **_kw| b)
+  let _ = f
+  #       ^: flow (Unknown, std.Int, _k: Unknown, _j: std.Str, *std.Int, *(std.Sym): Unknown, <Unknown, >Unknown) -> std.Int
+  let g = (do |x <Iter[Int]| -> Int x)
+  let _ = g
+  #       ^: flow (Unknown, <std.Iter[std.Int], >Unknown) -> std.Int
+
+# A `break` and a `return` out of a `do` block
+pub def nonlocal_jumps xs
+  let y = 1
+  for _ = xs
+    xs.each do |z|
+      if z
+        y = "a"
+        break
+      return z
+  let _ = y
+  #       ^: flow std.Int | std.Str
+
+pub class Members
+  pub field a = 1
+  field b = []
+  pub def get self
+    self.#b
+
+# `continue` and `break` leave with the state at the jump
+pub def loops()
+  let y = 1
+  for k v = {a: 1}
+    let _ = v
+    #       ^: flow std.Int
+    if (k == :a:)
+      y = "a"
+      continue
+    y = :k:
+    break
+  let _ = y
+  #       ^: flow std.Int | std.Str | std.Sym

@@ -55,6 +55,9 @@
 //! [`ExprKind::Never`] to the result before continuing to the exit, so the exit
 //! joins the returned value with the guard point's state.
 
+#[cfg(feature = "debug")]
+mod dot;
+#[cfg(feature = "debug")]
 mod dump;
 mod expr;
 #[cfg(test)]
@@ -151,6 +154,7 @@ pub(crate) enum Origin {
     /// Introduced by lowering, such as a `for` loop's iterator or a caught exception
     Synthetic,
     /// The state of one of `self`'s fields in `(init)`
+    #[expect(dead_code, reason = "`(init)` doesn't track field states yet")]
     Field(MemberKey),
     /// A function's result
     Result,
@@ -303,6 +307,7 @@ pub(crate) enum Against {
     Class(Expr),
     /// A value's type, for comparison with a literal
     Value(Expr),
+    #[expect(dead_code, reason = "lowering doesn't narrow to a written type yet")]
     Type(TypeId),
 }
 
@@ -409,10 +414,6 @@ impl Graph {
 
     pub(crate) fn func_mut(&self, id: FuncId) -> RefMut<'_, Func> {
         self.funcs[id.index()].borrow_mut()
-    }
-
-    pub(crate) fn block(&self, id: BlockId) -> Ref<'_, Block> {
-        self.blocks[id.index()].borrow()
     }
 
     pub(crate) fn block_mut(&self, id: BlockId) -> RefMut<'_, Block> {

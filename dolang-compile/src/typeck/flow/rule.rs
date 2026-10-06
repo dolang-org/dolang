@@ -1164,13 +1164,27 @@ impl<'a> Flow<'a, '_> {
             return None;
         }
         let (input, output) = self.channels(at);
-        let mut survivors = overloads.iter().filter(|&&overload| {
-            let (_, _, contradicted) =
-                self.presolve(overload, values, input, output, None, span, true);
-            !contradicted
-        });
-        match (survivors.next(), survivors.next()) {
-            (Some(&survivor), None) => Some(survivor),
+        // Two survivors are as many as it takes to choose none
+        let survivors: Vec<TypeId> = (overloads.iter().copied())
+            .filter(|&overload| {
+                let (_, _, contradicted) =
+                    self.presolve(overload, values, input, output, None, span, true);
+                !contradicted
+            })
+            .take(2)
+            .collect();
+        trace!(
+            "{}: {} overloads, {}",
+            self.tables.locate(self.unit, span),
+            overloads.len(),
+            match survivors[..] {
+                [] => "none takes the call".to_owned(),
+                [survivor] => format!("takes {}", self.show(survivor)),
+                _ => "several take the call".to_owned(),
+            }
+        );
+        match survivors[..] {
+            [survivor] => Some(survivor),
             _ => None,
         }
     }
@@ -1226,6 +1240,12 @@ impl<'a> Flow<'a, '_> {
             let given = self.finish_call(at, state, callee, &mut values, call);
             values.values.drain(..target.receivers.len());
             let given = target.gives(given, bottom);
+            trace!(
+                "{}: alternative {} gives {}",
+                self.tables.locate(self.unit, call.span),
+                self.show(callee),
+                self.show(given)
+            );
             result = self.solver().lub(result, given);
         }
         result
@@ -1262,7 +1282,7 @@ impl<'a> Flow<'a, '_> {
             self.untyped(at, values);
             return unknown;
         }
-        self.conclude(at, expected, |rule| {
+        let given = self.conclude(at, expected, |rule| {
             vec![call_constraint(
                 rule,
                 values,
@@ -1272,7 +1292,14 @@ impl<'a> Flow<'a, '_> {
                 input,
                 output,
             )]
-        })[0]
+        })[0];
+        trace!(
+            "{}: call of {} gives {}",
+            self.tables.locate(self.unit, span),
+            self.show(callee_type),
+            self.show(given)
+        );
+        given
     }
 
     /// Whether a callee is a function, or a union of them, as a variable assigned

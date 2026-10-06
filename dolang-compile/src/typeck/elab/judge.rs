@@ -263,17 +263,20 @@ impl Tables<'_> {
             };
             let _ = write!(out, "{}{name}: {ty}", if optional { "?" } else { "" });
         }
-        out.push(')');
         for (sigil, ambient) in [('<', sig.input), ('>', sig.output)] {
+            if !out.ends_with('(') {
+                out.push_str(", ");
+            }
             match ambient {
                 Ambient::Implicit(binder) => {
-                    let _ = write!(out, " {sigil}#{}", binder.slot);
+                    let _ = write!(out, "{sigil}#{}", binder.slot);
                 }
                 _ => {
-                    let _ = write!(out, " {sigil}{}", self.ambient(ambient));
+                    let _ = write!(out, "{sigil}{}", self.ambient(ambient));
                 }
             }
         }
+        out.push(')');
         let _ = write!(out, " -> {}", slot(&sig.ret));
         out
     }
@@ -301,7 +304,7 @@ impl Tables<'_> {
 
     /// A declaration's name, qualified by its unit and the declarations it is
     /// nested in
-    fn qualified(&self, id: DeclId) -> String {
+    pub(crate) fn qualified(&self, id: DeclId) -> String {
         let decl = &self.decls[id.index()];
         let mut name = match decl.outer {
             Some((outer, _)) => self.qualified(outer),
@@ -313,6 +316,20 @@ impl Tables<'_> {
             None => name.push_str("<closure>"),
         }
         name
+    }
+
+    /// A database declaration's name: a declaration's qualified name, or for one
+    /// of the declarations of a def's or method's signatures, its name and the
+    /// signature's index
+    fn declared(&self, id: DeclId) -> String {
+        if id.index() < self.decls.len() {
+            return self.qualified(id);
+        }
+        let sig = (self.sig_decls.iter()).find(|&(_, &declaration)| declaration == id);
+        match sig {
+            Some((&(decl, sig), _)) => format!("{}#{sig}", self.qualified(decl)),
+            None => unreachable!("every database declaration is a declaration's or a signature's"),
+        }
     }
 
     /// A module's name, or a script's file stem
@@ -560,9 +577,9 @@ impl Tables<'_> {
                     Literal::Sym(sym) => write!(out, ":{}:", db.symbol(*sym)),
                 };
             }
-            Type::Decl(id) => out.push_str(&self.qualified(*id)),
+            Type::Decl(id) => out.push_str(&self.declared(*id)),
             Type::Rigid { decl, slot, .. } => {
-                let _ = write!(out, "{}.#{slot}", self.qualified(*decl));
+                let _ = write!(out, "{}.#{slot}", self.declared(*decl));
             }
             Type::Bound { reference, .. } => match names.get(usize::from(reference.slot)) {
                 Some(name) if reference.depth == depth => out.push_str(name),
@@ -696,13 +713,16 @@ impl Tables<'_> {
             Type::Function(func) => {
                 out.push('(');
                 self.items(db, func.params, names, depth, out);
-                out.push(')');
                 for (sigil, channel) in [('<', func.input), ('>', func.output)] {
                     if let Some(channel) = channel {
-                        let _ = write!(out, " {sigil}");
+                        if !out.ends_with('(') {
+                            out.push_str(", ");
+                        }
+                        out.push(sigil);
                         self.render_into(db, channel, names, depth, out);
                     }
                 }
+                out.push(')');
                 out.push_str(" -> ");
                 self.render_into(db, func.result, names, depth, out);
             }

@@ -6,6 +6,8 @@ mod flow;
 mod lower;
 pub(crate) mod report;
 pub(crate) mod solver;
+#[cfg(feature = "debug")]
+mod trace;
 pub(crate) mod r#type;
 pub(crate) mod typelib;
 
@@ -226,12 +228,20 @@ impl<'u, 's> Builder<'u, 's> {
         elab::specialize(&mut db, &tables, &mut diags);
         let mut unresolved = elab::wellformed(&db, &tables, &mut diags);
         unresolved.extend(elab::overrides(&db, &tables, &mut diags));
+        #[cfg(feature = "debug")]
+        trace::elab(&db, &tables, &unresolved);
         // A unit's bodies are checked only from its source
         let cfgs = (0..tables.units.len())
             .map(|index| {
                 tables.units[index].source?;
                 let ir = lower::lower(&tables, &db, UnitId::from_index(index));
                 debug_assert_eq!(ir.validate(), Ok(()), "lowering builds a valid graph");
+                #[cfg(debug_assertions)]
+                ir.check_stack_depths();
+                #[cfg(feature = "debug")]
+                if let Err(e) = export_dot(&ir, &db, &tables.units[index]) {
+                    dolang_util::debug_eprintln!(topic: "dot", "Typing CFG DOT export failed: {e}");
+                }
                 Some(ir)
             })
             .collect::<Vec<_>>();
@@ -268,6 +278,22 @@ impl<'u, 's> Builder<'u, 's> {
     }
 }
 
+/// Export a unit's typing CFG to a DOT file under `DOLANG_EXPORT_DOT`, if it is set
+#[cfg(feature = "debug")]
+fn export_dot(ir: &cfg::Ir, db: &r#type::Database, info: &elab::UnitInfo) -> std::io::Result<()> {
+    let Some(out) = crate::dot_path(info.path, "typeck.dot")? else {
+        return Ok(());
+    };
+    let file = &info
+        .source
+        .expect("a lowered unit has a source")
+        .compiler
+        .file;
+    ir.dot(db, |span| file.str(span), &mut std::fs::File::create(&out)?)?;
+    dolang_util::debug_eprintln!(topic: "dot", "Typing CFG DOT exported to: {}", out.display());
+    Ok(())
+}
+
 /// The result of checking a set of units.
 ///
 /// A check is *validated* when every well-formedness check passed: the checker
@@ -283,7 +309,7 @@ pub struct Check<'u> {
     /// Well-formedness checks the checker could not decide
     unresolved: Vec<elab::Unresolved>,
     /// Each unit's typing CFG, by [`UnitId`], for a unit checked from source
-    #[cfg_attr(not(test), allow(dead_code, reason = "dumped by tests"))]
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
     cfgs: Vec<Option<cfg::Ir>>,
     /// What flow analysis concluded about each unit, by [`UnitId`], for a unit checked
     /// from source

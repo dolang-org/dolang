@@ -456,11 +456,11 @@ impl<'a> Emitter<'a> {
                 use dolang_bytecode::InstDecoder;
 
                 let cursor = io::Cursor::new(&bytecode);
-                debug_eprintln!("Function #{} bytecode:", id.index());
+                debug_eprintln!(topic: "emit", "Function #{} bytecode:", id.index());
                 let width = ((bytecode.len() - 1).max(1).ilog2() + 1).div_ceil(4).max(2) as usize;
                 for item in InstDecoder::new(cursor).with_offsets() {
                     let item = item.unwrap();
-                    debug_eprintln!("  {:0width$x} {}", item.before, item.inst)
+                    debug_eprintln!(topic: "emit", "  {:0width$x} {}", item.before, item.inst)
                 }
             }
             funcs.push(EmitFunc {

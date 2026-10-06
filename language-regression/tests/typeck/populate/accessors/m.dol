@@ -14,12 +14,12 @@ pub class Config
   #[getter]
   pub def port obj -> Num
     #     ^~~~: member property instance pub get m.Config.port set m.Config.port
-    #     ^~~~: decl (m.Config) <in >out -> m.Num
+    #     ^~~~: decl (m.Config, <in, >out) -> m.Num
     obj.#port
 
   #[setter]
   pub def port obj value @ Num
-    #     ^~~~: decl (m.Config, m.Num) <in >out -> Unknown
+    #     ^~~~: decl (m.Config, m.Num, <in, >out) -> Unknown
     obj.#port = value
 
   #[getter]
@@ -40,7 +40,7 @@ pub class Config
 
   @def pick _self x @ Num -> Num
   #    ^~~~: member method instance pub m.Config.pick
-  #    ^~~~: decl (m.Config, m.Num) <in >out -> m.Num
+  #    ^~~~: decl (m.Config, m.Num, <in, >out) -> m.Num
   pub def pick _self x
-    #     ^~~~: decl (m.Config, Unknown) <in >out -> Unknown
+    #     ^~~~: decl (m.Config, Unknown, <in, >out) -> Unknown
     x

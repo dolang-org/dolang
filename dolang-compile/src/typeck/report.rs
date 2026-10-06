@@ -42,10 +42,6 @@ impl Diag {
         Self(Box::new(info))
     }
 
-    pub(crate) fn span(&self) -> Span {
-        self.0.span()
-    }
-
     /// Resolve the report's locations in `unit`.
     pub(crate) fn resolve(&self, unit: UnitId, info: &UnitInfo<'_>) -> diag::Diag {
         let mut message = String::new();

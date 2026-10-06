@@ -433,7 +433,7 @@ pub(crate) enum DeclNode {
 #[derive(Clone)]
 pub(crate) enum DeclAst<'u> {
     Class(&'u ast::Class),
-    Alias(&'u ast::TypeAlias),
+    Alias(#[expect(dead_code, reason = "an alias has no body to lower")] &'u ast::TypeAlias),
     Defs(Vec<&'u ast::Def>),
     Methods(Vec<&'u ast::Method>),
     Closure(&'u ast::Function),

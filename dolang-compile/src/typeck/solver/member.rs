@@ -37,6 +37,7 @@ pub(crate) struct Found {
     pub(crate) scope: Scope,
     /// Whether it is public. Only a public member can be replaced in a subclass,
     /// so only access to one may dispatch.
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
     pub(crate) public: bool,
     pub(crate) kind: FoundKind,
 }

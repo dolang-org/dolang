@@ -169,7 +169,7 @@ pub def literals ints @ Array[Int]
   #       ^~~~~: flow std.Array[std.Int | std.Str]
   let funcs @ BaseArray[((Int, <Iter[Value], >Sink[Value]) -> Int)] = [(do |x| x.abs())]
   let _ = funcs
-  #       ^~~~~: flow std.Array[(std.Int) <std.Iter[Value] >std.Sink[Value] -> std.Int]
+  #       ^~~~~: flow std.Array[(std.Int, <std.Iter[Value], >std.Sink[Value]) -> std.Int]
   let _bad @ BaseArray[Str] = [1]
   # error: `std.Array[std.Int]` does not fit the annotation `std.BaseArray[std.Str]`
   #   --> m.dol:LL:LL

@@ -15,8 +15,6 @@ pub(crate) mod resolvety;
 pub(crate) mod sig;
 pub mod source;
 pub(crate) mod sym;
-// The database is incubating independently of the compilation pipeline.
-#[allow(dead_code)]
 pub mod typeck;
 mod unit_id;
 pub use unit_id::UnitId;
@@ -1406,7 +1404,7 @@ impl<'a> Config<'a> {
         };
         #[cfg(feature = "debug")]
         if let Err(e) = compiler.export_ast_dot(&ast, false) {
-            debug_eprintln!("AST DOT export failed: {e}")
+            debug_eprintln!(topic: "dot", "AST DOT export failed: {e}")
         }
 
         {
@@ -1416,7 +1414,7 @@ impl<'a> Config<'a> {
         }
         #[cfg(feature = "debug")]
         if let Err(e) = compiler.export_ast_dot(&ast, true) {
-            debug_eprintln!("Resolved AST DOT export failed: {e}")
+            debug_eprintln!(topic: "dot", "Resolved AST DOT export failed: {e}")
         }
 
         compiler.prelude = prelude;
@@ -1578,13 +1576,8 @@ impl Unit<'_> {
         let mut lowerer = self.compiler.lowerer();
         let graph = lowerer.run(&self.ast)?;
         #[cfg(feature = "debug")]
-        {
-            // Export DOT file if environment variable is set
-            if let Ok(output) = std::env::var("DOLANG_EXPORT_DOT")
-                && let Err(e) = self.compiler.export_cfg_dot(&graph, output)
-            {
-                debug_eprintln!("DOT export failed: {e}");
-            }
+        if let Err(e) = self.compiler.export_cfg_dot(&graph) {
+            debug_eprintln!(topic: "dot", "DOT export failed: {e}");
         }
         let mut emitter = self.compiler.emitter(&graph);
         Ok(emitter.emit(write)?)
@@ -1668,64 +1661,48 @@ impl Compiler<'_> {
         }
     }
 
-    /// Export AST to a DOT file based on the DOLANG_EXPORT_DOT environment variable
-    /// Similar to the CFG export functionality
+    /// Exports an AST to a DOT file under `DOLANG_EXPORT_DOT`, if it is set.
     fn export_ast_dot<N: AstNode + ?Sized>(&self, ast: &N, res: bool) -> io::Result<()> {
-        use std::{
-            fs,
-            path::{self, Component},
-        };
-
-        if let Ok(output) = std::env::var("DOLANG_EXPORT_DOT") {
-            let src = path::absolute(self.file.path())?;
-            let cwd = std::env::current_dir()?;
-            let rel = src.strip_prefix(&cwd).unwrap_or(&src);
-            let comps: Vec<_> = rel
-                .components()
-                .filter_map(|c| {
-                    if let Component::Normal(c) = c {
-                        Some(c.to_string_lossy())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            let name = comps.join("_");
-            fs::create_dir_all(&output)?;
-            let out = std::path::Path::new(&output)
-                .join(&name)
-                .with_extension(if res { "res.dot" } else { "ast.dot" });
-            let mut file = fs::File::create(&out)?;
-
-            self.ast_to_dot(ast, &mut file)?;
-            debug_eprintln!("AST DOT exported to: {}", out.display());
+        let ext = if res { "res.dot" } else { "ast.dot" };
+        if let Some(out) = dot_path(self.file.path(), ext)? {
+            self.ast_to_dot(ast, &mut std::fs::File::create(&out)?)?;
+            debug_eprintln!(topic: "dot", "AST DOT exported to: {}", out.display());
         }
-
         Ok(())
     }
 
-    fn export_cfg_dot(&mut self, graph: &cfg::Graph, output: String) -> Result<(), io::Error> {
-        use std::{
-            fs,
-            path::{self, Component},
-        };
-        let src = path::absolute(self.file.path())?;
-        let cwd = std::env::current_dir()?;
-        let rel = src.strip_prefix(cwd).unwrap_or(&src);
-        let comps: Vec<_> = rel
-            .components()
-            .filter_map(|c| {
-                if let Component::Normal(c) = c {
-                    Some(c.to_string_lossy())
-                } else {
-                    None
-                }
-            })
-            .collect();
-        let name = comps.join("_");
-        fs::create_dir_all(&output)?;
-        let out = Path::new(&output).join(&name).with_extension("cfg.dot");
-        let mut file = fs::File::create(&out)?;
-        graph.dot(self, &mut file)
+    /// Exports a CFG to a DOT file under `DOLANG_EXPORT_DOT`, if it is set.
+    fn export_cfg_dot(&mut self, graph: &cfg::Graph) -> io::Result<()> {
+        if let Some(out) = dot_path(self.file.path(), "cfg.dot")? {
+            graph.dot(self, &mut std::fs::File::create(&out)?)?;
+        }
+        Ok(())
     }
+}
+
+/// The path of the DOT file with extension `ext` exported for `source`, under the
+/// directory `DOLANG_EXPORT_DOT` names, or `None` when it is unset.
+///
+/// The file is named for the source path relative to the working directory, its
+/// components joined by `_`. The directory is created if missing.
+#[cfg(feature = "debug")]
+pub(crate) fn dot_path(source: &Path, ext: &str) -> io::Result<Option<std::path::PathBuf>> {
+    use std::path::{self, Component};
+
+    let Some(output) = std::env::var_os("DOLANG_EXPORT_DOT") else {
+        return Ok(None);
+    };
+    let src = path::absolute(source)?;
+    let cwd = std::env::current_dir()?;
+    let rel = src.strip_prefix(&cwd).unwrap_or(&src);
+    let name = rel
+        .components()
+        .filter_map(|c| match c {
+            Component::Normal(c) => Some(c.to_string_lossy()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("_");
+    std::fs::create_dir_all(&output)?;
+    Ok(Some(Path::new(&output).join(name).with_extension(ext)))
 }

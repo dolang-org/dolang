@@ -131,7 +131,7 @@ pub def methods p @ Point
   #    |           ^^^
   let m = p.moved
   let _ = m
-  #       ^: flow forall (std.Int) <#0.0 >#0.1 -> m.Point
+  #       ^: flow forall (std.Int, <#0.0, >#0.1) -> m.Point
   let o = Point.origin()
   let _ = o
   #       ^: flow m.Point
