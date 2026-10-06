@@ -1,0 +1,66 @@
+# A value that isn't a function is passed as one through its signatures: an
+# instance through its `(call)` when its class reaches `Func`, and a class object
+# through its class-level `(call)` or else `(init)`. Overloads are chosen by
+# what the function type admits. Nothing is refuted, since a subclass may reach
+# `Func` or widen its `(call)`.
+
+pub class Adder: Func
+  pub def (call) _self n @ Int -> Str
+    ...
+
+pub class Described: Func[{Int}, Str]
+  pub def (call) _self n @ Int -> Str
+    ...
+
+pub class Plain
+  pub def (call) _self n @ Int -> Str
+    ...
+
+pub class Picker: Func
+  @def (call) self n @ Int -> Int
+  @def (call) self s @ Str -> Str
+  pub def (call) _self x
+    x
+
+pub class Point
+  pub def (init) _self x @ Int
+    ...
+
+pub class Box[T]
+  pub def (init) _self value @ T
+    ...
+
+pub class Factory
+  #[class]
+  pub def (call) _cls n @ Int -> Str
+    ...
+
+def apply f @ (Int -> Str) -> Str
+  f 1
+
+def map_each[T, U] xs @ Array[T] f @ (T -> U) -> Array[U]
+  ...
+
+pub def instances a @ Adder d @ Described p @ Picker
+  let _ = apply $a
+  #   ^: flow std.Str
+  let _ = map_each [1] $a
+  #   ^: flow std.Array[std.Str]
+  let _ = map_each [1] $d
+  #   ^: flow std.Array[std.Str]
+  let _ = map_each [1] $p
+  #   ^: flow std.Array[std.Int]
+  let _ = map_each ["s"] $p
+  #   ^: flow std.Array[std.Str]
+
+pub def objects()
+  let _ = map_each [1] $Point
+  #   ^: flow std.Array[m.Point]
+  let _ = map_each [1] $Box
+  #   ^: flow std.Array[m.Box[std.Int]]
+  let _ = map_each [1] $Factory
+  #   ^: flow std.Array[std.Str]
+
+pub def unrefuted plain @ Plain a @ Adder
+  apply $plain
+  map_each ["s"] $a

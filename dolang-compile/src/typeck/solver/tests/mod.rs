@@ -7,6 +7,7 @@ use dolang_util::alias;
 
 mod alternatives;
 mod basics;
+mod callable;
 mod functions;
 mod inference;
 mod instantiation;

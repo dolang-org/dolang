@@ -247,13 +247,17 @@ impl Solver<'_> {
         unreachable!()
     }
 
-    fn is_intrinsic(&self, decl: DeclId, intrinsic: Intrinsic) -> bool {
+    pub(super) fn is_intrinsic(&self, decl: DeclId, intrinsic: Intrinsic) -> bool {
         self.db
             .intrinsic(intrinsic)
             .is_some_and(|ty| *self.db.ty(ty) == Type::Decl(decl))
     }
 
-    fn instance_member(&self, nominal: Nominal, key: MemberKey) -> Result<Lookup, Issue> {
+    pub(super) fn instance_member(
+        &self,
+        nominal: Nominal,
+        key: MemberKey,
+    ) -> Result<Lookup, Issue> {
         let found = self.search(nominal.clone(), key, |_, member| {
             member.scope() == Scope::Instance
         })?;
@@ -286,7 +290,7 @@ impl Solver<'_> {
         })
     }
 
-    fn object_member(&self, nominal: Nominal, key: MemberKey) -> Result<Lookup, Issue> {
+    pub(super) fn object_member(&self, nominal: Nominal, key: MemberKey) -> Result<Lookup, Issue> {
         let class = nominal.declaration;
         // A static member belongs to its class alone
         let found = self.search(nominal.clone(), key, |owner, member| match member.scope() {

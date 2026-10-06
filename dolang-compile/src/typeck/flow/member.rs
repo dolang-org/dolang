@@ -22,31 +22,12 @@ use crate::{
     typeck::{
         cfg::{Expr, ExprKind, Member},
         elab::Designated,
-        solver::{FoundKind, Issue, Lookup, Residual, Signatures},
-        r#type::{
-            Argument, Binder, BoundRef, DeclId, Element, Function, Intrinsic, Kind, Literal,
-            MemberKey, Multiplicity, Scope, Type, TypeId, UnionMember,
+        solver::{
+            Constructor, FoundKind, Issue, Lookup, Residual, Signature, Signatures, bound_method,
         },
+        r#type::{Intrinsic, Literal, MemberKey, Scope, Type, TypeId, UnionMember},
     },
 };
-
-/// A method's signatures, each with its receiver parameter. A call through an
-/// overloaded method chooses among its overloads (see [`Flow::call_overloaded`]);
-/// any other use of one is dynamic.
-#[derive(Clone, Default)]
-pub(super) struct Signature {
-    /// Its `@def` signatures, empty unless it's overloaded
-    pub(super) overloads: Vec<TypeId>,
-    /// Its implementation's signature, if it has one
-    pub(super) implementation: Option<TypeId>,
-}
-
-impl Signature {
-    /// Its one signature, unless it's overloaded
-    fn single(&self) -> Option<TypeId> {
-        self.overloads.is_empty().then_some(self.implementation)?
-    }
-}
 
 /// How a call reaches a callee (see [`Flow::call_target`]): the signature it
 /// calls, passing `receivers` before its own arguments
@@ -106,18 +87,6 @@ enum Resolved {
     },
 }
 
-/// How a class object is called
-enum Constructor {
-    /// Its class-level `(call)`, which is passed the class object first. `None`
-    /// if it's overloaded.
-    Call(Option<TypeId>),
-    /// Instantiation, running `(init)`: a function from `(init)`'s arguments to
-    /// the instance, quantified over the class's binders. `None` if `(init)` is
-    /// overloaded or its signature doesn't take a receiver.
-    Init(Option<TypeId>),
-    Dynamic,
-}
-
 impl Flow<'_, '_> {
     /// How calling `callee` reaches a signature: a function or an overloaded
     /// function directly, and a class object through its class-level `(call)` if
@@ -141,13 +110,15 @@ impl Flow<'_, '_> {
         }
         if let Some(class) = self.class_of(ty) {
             let generic = matches!(self.db.ty(ty), Type::Quantified { .. });
-            return match self.constructor(class) {
+            return match self.solver().constructor(class) {
                 Constructor::Call(Some(signature)) if !generic => CallTarget {
                     receivers: vec![callee],
                     ..CallTarget::new(Some(signature))
                 },
-                Constructor::Init(Some(constructor)) => CallTarget::new(Some(constructor)),
-                Constructor::Init(None) if !generic => CallTarget {
+                Constructor::Init(Some(signature)) if signature.single().is_some() => {
+                    CallTarget::new(signature.single())
+                }
+                Constructor::Init(_) if !generic => CallTarget {
                     instance: Some(self.db.intern(Type::Decl(class))),
                     ..CallTarget::new(None)
                 },
@@ -473,7 +444,7 @@ impl Flow<'_, '_> {
             Resolved::Field(ty) => ty,
             Resolved::Method(signature, bound) => match (signature.single(), bound) {
                 (None, _) => unknown,
-                (Some(signature), true) => self.bound_method(signature).unwrap_or(unknown),
+                (Some(signature), true) => bound_method(self.db, signature).unwrap_or(unknown),
                 (Some(signature), false) => signature,
             },
             Resolved::Property {
@@ -489,57 +460,6 @@ impl Flow<'_, '_> {
                 self.call_signature(at, state, operands, &get, &[leading[0], name], call)
             }
         }
-    }
-
-    /// A method bound to its receiver: its signature without its receiver
-    /// parameter. `None` if that parameter mentions the method's own binders, which
-    /// binding would have to solve.
-    fn bound_method(&self, signature: TypeId) -> Option<TypeId> {
-        let db = self.db;
-        let (binders, body) = match db.ty(signature) {
-            Type::Quantified { binders, body } => (Some(binders.clone()), *body),
-            _ => (None, signature),
-        };
-        let (function, receiver) = self.drop_receiver(body)?;
-        let Some(binders) = binders else {
-            return Some(function);
-        };
-        let mut own = false;
-        db.walk(receiver, |node, depth| {
-            if let Type::Bound { reference, .. } = *db.ty(node) {
-                own |= u32::from(reference.depth) >= depth;
-            }
-        });
-        (!own).then(|| {
-            db.intern(Type::Quantified {
-                binders,
-                body: function,
-            })
-        })
-    }
-
-    /// A function type without its first parameter, a required positional one,
-    /// and that parameter's type
-    fn drop_receiver(&self, function: TypeId) -> Option<(TypeId, TypeId)> {
-        let db = self.db;
-        let Type::Function(function) = db.ty(function) else {
-            return None;
-        };
-        let Type::Schema(items) = db.ty(function.params) else {
-            return None;
-        };
-        let (first, rest) = items.split_first()?;
-        let (Multiplicity::Required, &Element::Positional(receiver)) =
-            (first.multiplicity, &first.element)
-        else {
-            return None;
-        };
-        let params = db.intern(Type::Schema(rest.iter().cloned().collect()));
-        let dropped = db.intern(Type::Function(Function {
-            params,
-            ..function.clone()
-        }));
-        Some((dropped, receiver))
     }
 
     /// A method call: the member got from the receiver, called with the call's
@@ -1003,114 +923,11 @@ impl Flow<'_, '_> {
             expected: None,
             span: expr.span,
         };
-        match self.constructor(class) {
-            Constructor::Init(Some(constructor)) => {
+        match self.solver().constructor(class) {
+            Constructor::Init(Some(signature)) if let Some(constructor) = signature.single() => {
                 self.call_with(at, state, operands, constructor, &bounds, call)
             }
             _ => self.db.unknown(),
         }
-    }
-
-    /// How a class object is called. `(init)` is looked up on the class applied to
-    /// its rigids, and the constructor's type abstracts them again.
-    fn constructor(&self, class: DeclId) -> Constructor {
-        let db = self.db;
-        let binders: Vec<Binder> = match db.ty(db.declaration(class).ty) {
-            Type::Quantified { binders, .. } => binders.to_vec(),
-            _ => Vec::new(),
-        };
-        let base = db.intern(Type::Decl(class));
-        let instance = match binders.is_empty() {
-            true => base,
-            false => {
-                let args = (binders.iter().enumerate())
-                    .map(|(slot, binder)| {
-                        Argument::Positional(db.intern(Type::Bound {
-                            reference: BoundRef::new(0, slot),
-                            kind: binder.kind,
-                        }))
-                    })
-                    .collect();
-                db.intern(Type::Apply {
-                    base,
-                    args,
-                    kind: Kind::Type,
-                })
-            }
-        };
-        let instance = db.substitute(instance, &db.rigids(class));
-        let Some(class_type) = db.intrinsic(Intrinsic::Type) else {
-            return Constructor::Dynamic;
-        };
-        let object = db.intern(Type::Apply {
-            base: class_type,
-            args: vec![Argument::Positional(instance)].into(),
-            kind: Kind::Type,
-        });
-        let mut solver = self.solver();
-        solver.assume(class);
-        let key = |name| MemberKey {
-            name: db.intern_symbol(name),
-            special: true,
-            private: false,
-        };
-        let signature = |kind: &FoundKind| match kind {
-            FoundKind::Method(Signatures {
-                overloads,
-                implementation: Some(signature),
-            }) if overloads.is_empty() => solver.reify(*signature).ok(),
-            _ => None,
-        };
-        match solver.member(solver.closed(object), key("call")) {
-            Ok(Lookup::Found(found)) if found.scope == Scope::Class => {
-                return Constructor::Call(signature(&found.kind));
-            }
-            Ok(Lookup::Found(_) | Lookup::Missing) => {}
-            Ok(Lookup::Dynamic | Lookup::Fallback { .. }) | Err(_) => return Constructor::Dynamic,
-        }
-        let initializer = match solver.member(solver.closed(instance), key("init")) {
-            Ok(Lookup::Found(found)) => match signature(&found.kind) {
-                Some(signature) => self.initializer(signature, instance),
-                None => return Constructor::Init(None),
-            },
-            Ok(Lookup::Missing) => Some(db.intern(Type::Function(Function {
-                params: db.intern(Type::Schema(Vec::new().into())),
-                result: instance,
-                input: None,
-                output: None,
-            }))),
-            Ok(Lookup::Dynamic | Lookup::Fallback { .. }) | Err(_) => {
-                return Constructor::Dynamic;
-            }
-        };
-        let constructor = initializer
-            .and_then(|ty| db.abstract_rigids(ty, class).ok())
-            .map(|ty| db.merge_groups(&binders, ty));
-        Constructor::Init(constructor)
-    }
-
-    /// `(init)`'s signature taking the arguments a class object is called with,
-    /// and giving the instance
-    fn initializer(&self, signature: TypeId, instance: TypeId) -> Option<TypeId> {
-        let db = self.db;
-        let (binders, body) = match db.ty(signature) {
-            Type::Quantified { binders, body } => (Some(binders.clone()), *body),
-            _ => (None, signature),
-        };
-        let (function, _) = self.drop_receiver(body)?;
-        let Type::Function(function) = db.ty(function) else {
-            unreachable!("a function without its receiver")
-        };
-        let function = db.intern(Type::Function(Function {
-            result: instance,
-            ..function.clone()
-        }));
-        Some(match binders {
-            Some(binders) => db.intern(Type::Quantified {
-                binders,
-                body: function,
-            }),
-            None => function,
-        })
     }
 }
