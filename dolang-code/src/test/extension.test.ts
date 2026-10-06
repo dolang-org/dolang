@@ -92,20 +92,26 @@ suite("Tool Resolution", () => {
     test("missing tool error reports attempted sources", async () => {
         const root = await fs.mkdtemp(path.join(os.tmpdir(), "dolang-code-test-"));
 
-        await assert.rejects(
-            resolveTool("lsp", {
-                context: createContext(root),
-                configuration: createConfiguration(),
-                pathEnv: path.join(root, "missing")
-            }),
-            (error: unknown) => {
-                assert.ok(error instanceof Error);
-                assert.match(error.message, /Unable to find dolang-lsp/);
-                assert.match(error.message, /PATH/);
-                assert.match(error.message, /downloaded release/);
-                return true;
-            }
-        );
+        const originalResolve = GitHubReleaseToolDownloader.prototype.resolve;
+        GitHubReleaseToolDownloader.prototype.resolve = async () => undefined;
+        try {
+            await assert.rejects(
+                resolveTool("lsp", {
+                    context: createContext(root),
+                    configuration: createConfiguration(),
+                    pathEnv: path.join(root, "missing")
+                }),
+                (error: unknown) => {
+                    assert.ok(error instanceof Error);
+                    assert.match(error.message, /Unable to find dolang-lsp/);
+                    assert.match(error.message, /PATH/);
+                    assert.match(error.message, /downloaded release/);
+                    return true;
+                }
+            );
+        } finally {
+            GitHubReleaseToolDownloader.prototype.resolve = originalResolve;
+        }
     });
 
     test("downloader computes stable bundle cache paths", () => {
