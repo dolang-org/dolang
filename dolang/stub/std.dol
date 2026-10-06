@@ -1309,7 +1309,7 @@ pub class Bin: @Index[Range[Int], Bin]
 #
 # Mutable byte buffer; the mutable counterpart to [`Bin`](std.Bin).
 #
-pub class BinBuf: @Index[Int, Int] @Assign[Int, Int]
+pub class BinBuf: @Index[Int, Int] @Assign[Int, Int] Sink[Value]
   #
   #
   # Builds a buffer, optionally seeded with the contents of existing binary data.
@@ -1606,11 +1606,7 @@ pub class BinBuf: @Index[Int, Int] @Assign[Int, Int]
   pub def (assign)[K] self key@K value@AssignItem[{*(Int): Int}, K]
     ...
 
-  # Returns this buffer as a [sink](std.Sink). Values are appended verbatim,
-  # making it suitable for pipeline and process-output capture.
-  #
-  # Use [`precrimp`](std.Sink.precrimp) to add a terminator per value.
-  pub def (sink) self
+  pub def (put) self value@Value -> nil
     ...
 
 
@@ -4202,7 +4198,29 @@ pub class Str: @Index[Range[Int], Str]
 #
 # Mutable UTF-8 string buffer; the mutable counterpart to [`Str`](std.Str).
 #
-pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str]
+# `StrBuf` is a [sink](std.Sink), so it can be the target of a pipeline, of
+# [`strand.put`](strand), or of a
+# [`run`](../../shell/external-programs.md#redirecting-io) redirect. `put` is
+# [`append`](#append-value): the value's string form goes in verbatim, with no
+# line terminator added.
+#
+# ```
+# let buf = StrBuf()
+# run uname -r stdout: $buf
+# ```
+#
+# Line termination is the caller's to choose, so a `StrBuf` can stand in for any
+# other sink without changing what gets written:
+#
+# ```
+# let buf = StrBuf()
+# let out = buf.precrimp()
+# out.put "first"
+# out.put "second"
+# assert_eq $buf.freeze() "first\nsecond\n"
+# ```
+#
+pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   #
   #
   # Builds a buffer, optionally seeded with the contents of an existing string.
@@ -4477,29 +4495,7 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str]
   pub def (assign)[K] self key@K value@AssignItem[{*(Range[Int]): Str}, K]
     ...
 
-  #
-  # `StrBuf` is a [sink](std.Sink), so it can be the target of a pipeline, of
-  # [`strand.put`](strand), or of a
-  # [`run`](../../shell/external-programs.md#redirecting-io) redirect. `put` is
-  # [`append`](#append-value): the value's string form goes in verbatim, with no
-  # line terminator added.
-  #
-  # ```
-  # let buf = StrBuf()
-  # run uname -r stdout: $buf
-  # ```
-  #
-  # Line termination is the caller's to choose, so a `StrBuf` can stand in for any
-  # other sink without changing what gets written:
-  #
-  # ```
-  # let buf = StrBuf()
-  # let out = buf.precrimp()
-  # out.put "first"
-  # out.put "second"
-  # assert_eq $buf.freeze() "first\nsecond\n"
-  # ```
-  pub def (sink) self
+  pub def (put) self value @ Value
     ...
 
 
