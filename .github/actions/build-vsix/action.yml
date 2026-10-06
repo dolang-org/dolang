@@ -29,10 +29,27 @@ runs:
       working-directory: dolang-code
       run: npm run compile
 
+    - name: Run syntax tests
+      shell: bash
+      working-directory: dolang-code
+      run: npm run test:syntax
+
+    - name: Install session bus dependencies
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install --no-install-recommends -y dbus-bin dbus-daemon
+
     - name: Run extension tests
       shell: bash
       working-directory: dolang-code
-      run: xvfb-run -a npm test
+      run: |
+        # Use a private runtime directory and bus instead of the runner's session.
+        XDG_RUNTIME_DIR="$(mktemp -d)"
+        export XDG_RUNTIME_DIR
+        trap 'rm -rf -- "$XDG_RUNTIME_DIR"' EXIT
+        chmod 700 "$XDG_RUNTIME_DIR"
+        dbus-run-session -- xvfb-run -a npm test
 
     - name: Build VSIX
       shell: bash
