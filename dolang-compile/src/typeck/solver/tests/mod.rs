@@ -15,6 +15,7 @@ mod lattice;
 mod members;
 mod narrow;
 mod nominal;
+mod overloads;
 mod projections;
 mod rigids;
 mod schemas;

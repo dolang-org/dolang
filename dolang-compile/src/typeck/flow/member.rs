@@ -4,8 +4,9 @@
 //! runtime makes it: as a call through the member, passing the receiver first to a
 //! method. A use of a union's member is made of each alternative, all of which
 //! must have it, and gives what they give. A receiver the lookup can't decide is
-//! an explicit residual. A call through an overloaded method chooses among its
-//! overloads (see [`Flow::call_overloaded`]); any other use of one is dynamic.
+//! an explicit residual. A call through an overloaded method is a call of its
+//! overloads as a whole, which the solver chooses among (see
+//! [`Type::Overloaded`]); any other use of one is dynamic.
 //!
 //! [`Solver::member`]: crate::typeck::solver::Solver::member
 
@@ -34,6 +35,8 @@ use crate::{
 pub(super) struct CallTarget {
     pub(super) signature: Signature,
     pub(super) receivers: Vec<(TypeId, Span)>,
+    /// The member it calls, if any
+    pub(super) member: Option<Member>,
     /// The instance a constructor with unchecked arguments gives
     instance: Option<TypeId>,
 }
@@ -46,6 +49,7 @@ impl CallTarget {
                 implementation: callee,
             },
             receivers: Vec::new(),
+            member: None,
             instance: None,
         }
     }
@@ -91,9 +95,9 @@ enum Resolved {
 }
 
 impl Flow<'_, '_> {
-    /// How calling `callee` reaches a signature: a function or an overloaded
-    /// function directly, and a class object through its class-level `(call)` if
-    /// it has one, and otherwise instantiation, which runs `(init)` and gives the
+    /// How calling `callee` reaches a signature: a function, or an overloaded
+    /// one, directly, and a class object through its class-level `(call)` if it
+    /// has one, and otherwise instantiation, which runs `(init)` and gives the
     /// instance. Any other callee is sent its `(call)` special method. An unknown
     /// or undecided callee is dynamic; a known one without `(call)` is reported
     /// at `span`.
@@ -102,24 +106,20 @@ impl Flow<'_, '_> {
         if self.callable(ty) || ty == self.db.bottom() {
             return CallTarget::new(Some(ty));
         }
-        if let Some((overloads, implementation)) = self.overloaded(ty) {
-            return CallTarget {
-                signature: Signature {
-                    overloads,
-                    implementation: Some(implementation),
-                },
-                ..CallTarget::new(None)
-            };
-        }
         if let Some(class) = self.class_of(ty) {
             let generic = matches!(self.db.ty(ty), Type::Quantified { .. });
             return match self.solver().constructor(class) {
                 Constructor::Call(Some(signature)) if !generic => CallTarget {
                     receivers: vec![callee],
+                    member: Some(self.special("call")),
                     ..CallTarget::new(Some(signature))
                 },
-                Constructor::Init(Some(signature)) if signature.single().is_some() => {
-                    CallTarget::new(signature.single())
+                Constructor::Init(Some(signature)) if signature.callee(self.db).is_some() => {
+                    CallTarget {
+                        signature,
+                        member: Some(self.special("init")),
+                        ..CallTarget::new(None)
+                    }
                 }
                 Constructor::Init(_) if !generic => CallTarget {
                     instance: Some(self.db.intern(Type::Decl(class))),
@@ -133,6 +133,7 @@ impl Flow<'_, '_> {
             Resolved::Method(signature, bound) => CallTarget {
                 signature,
                 receivers: if bound { vec![callee] } else { Vec::new() },
+                member: Some(member),
                 instance: None,
             },
             Resolved::Missing => {
@@ -332,7 +333,7 @@ impl Flow<'_, '_> {
         self.problem(Problem::MemberUse { span, name, misuse });
     }
 
-    fn member_name(&self, member: Member) -> String {
+    pub(super) fn member_name(&self, member: Member) -> String {
         let name = self.db.symbol(member.key.name);
         match member.key.special {
             true => format!("({name})"),
@@ -355,23 +356,8 @@ impl Flow<'_, '_> {
         receivers: &[(TypeId, Span)],
         call: Call<'_>,
     ) -> TypeId {
-        let Signature {
-            overloads,
-            implementation,
-        } = signature;
-        if overloads.is_empty() {
-            let callee = implementation.unwrap_or(self.db.unknown());
-            return self.call_with(at, state, operands, callee, receivers, call);
-        }
-        self.call_overloaded(
-            at,
-            state,
-            operands,
-            overloads,
-            *implementation,
-            receivers,
-            call,
-        )
+        let callee = signature.callee(self.db).unwrap_or(self.db.unknown());
+        self.call_with(at, state, operands, callee, receivers, call)
     }
 
     /// Reading a member: a field's value, a getter's or `(get)`'s result, or a
@@ -396,6 +382,7 @@ impl Flow<'_, '_> {
             args: &[],
             expected,
             span,
+            callee: None,
         };
         let Some(alternatives) = self.alternatives(receiver, span) else {
             let receiver = (receiver, object.span);
@@ -458,6 +445,10 @@ impl Flow<'_, '_> {
                 ..
             } => {
                 let leading = if passed { &leading[..] } else { &[] };
+                let call = Call {
+                    callee: Some(member),
+                    ..call
+                };
                 self.call_signature(at, state, operands, &getter, leading, call)
             }
             Resolved::Property { getter: None, .. } => {
@@ -466,6 +457,10 @@ impl Flow<'_, '_> {
             }
             Resolved::Fallback { get: Some(get), .. } => {
                 let name = (self.name_literal(member), span);
+                let call = Call {
+                    callee: Some(self.special("get")),
+                    ..call
+                };
                 self.call_signature(at, state, operands, &get, &[leading[0], name], call)
             }
         }
@@ -494,6 +489,7 @@ impl Flow<'_, '_> {
             args,
             expected,
             span: expr.span,
+            callee: None,
         };
         self.send(
             at,
@@ -584,6 +580,7 @@ impl Flow<'_, '_> {
             args: &[],
             expected: None,
             span,
+            callee: None,
         };
         match self.resolve(receiver.0, member, span) {
             Resolved::Dynamic => vec![CallTarget::dynamic(leading)],
@@ -600,6 +597,7 @@ impl Flow<'_, '_> {
                 vec![CallTarget {
                     signature,
                     receivers,
+                    member: Some(member),
                     instance: None,
                 }]
             }
@@ -609,6 +607,10 @@ impl Flow<'_, '_> {
                 ..
             } => {
                 let receivers = if passed { &[receiver][..] } else { &[] };
+                let got = Call {
+                    callee: Some(member),
+                    ..got
+                };
                 let value = self.call_signature(at, state, operands, &getter, receivers, got);
                 self.value_targets((value, receiver.1), leading, span)
             }
@@ -618,6 +620,10 @@ impl Flow<'_, '_> {
             }
             Resolved::Fallback { get: Some(get), .. } => {
                 let name = (self.name_literal(member), span);
+                let got = Call {
+                    callee: Some(self.special("get")),
+                    ..got
+                };
                 let value = self.call_signature(at, state, operands, &get, &[receiver, name], got);
                 self.value_targets((value, receiver.1), leading, span)
             }
@@ -685,6 +691,7 @@ impl Flow<'_, '_> {
             args: &[],
             expected: None,
             span,
+            callee: None,
         };
         match resolved {
             Resolved::Dynamic => {}
@@ -700,6 +707,10 @@ impl Flow<'_, '_> {
             } => {
                 let receivers = [receiver, written];
                 let receivers = &receivers[usize::from(!passed)..];
+                let call = Call {
+                    callee: Some(member),
+                    ..call
+                };
                 self.call_signature(at, state, operands, &setter, receivers, call);
             }
             Resolved::Property { setter: None, .. } => {
@@ -707,6 +718,10 @@ impl Flow<'_, '_> {
             }
             Resolved::Fallback { set: Some(set), .. } => {
                 let receivers = [receiver, (self.name_literal(member), span), written];
+                let call = Call {
+                    callee: Some(self.special("set")),
+                    ..call
+                };
                 self.call_signature(at, state, operands, &set, &receivers, call);
             }
         }
@@ -730,6 +745,7 @@ impl Flow<'_, '_> {
             args: &[],
             expected,
             span: expr.span,
+            callee: None,
         };
         let member = self.special("index");
         let receiver = (receiver, object.span);
@@ -760,6 +776,7 @@ impl Flow<'_, '_> {
             args: &[],
             expected: None,
             span,
+            callee: None,
         };
         let member = self.special("assign");
         let leading = [(key, index.span), (written, value.span)];
@@ -800,6 +817,7 @@ impl Flow<'_, '_> {
             args: &[],
             expected: None,
             span: expr.span,
+            callee: None,
         };
         let member = self.special(name);
         self.send(
@@ -858,6 +876,7 @@ impl Flow<'_, '_> {
             args: &[],
             expected: None,
             span: expr.span,
+            callee: None,
         };
         let (member, reflected) = (self.special(name), self.special(reflected));
         let (lhs, rhs) = ((lhs, left.span), (rhs, right.span));
@@ -935,9 +954,12 @@ impl Flow<'_, '_> {
             args: &[],
             expected: None,
             span: expr.span,
+            callee: None,
         };
         match self.solver().constructor(class) {
-            Constructor::Init(Some(signature)) if let Some(constructor) = signature.single() => {
+            Constructor::Init(Some(signature))
+                if let Some(constructor) = signature.callee(self.db) =>
+            {
                 self.call_with(at, state, operands, constructor, &bounds, call)
             }
             _ => self.db.unknown(),

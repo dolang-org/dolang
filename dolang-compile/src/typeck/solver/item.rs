@@ -4,9 +4,12 @@
 //! where each position is keyed by its index. Each member of the key goes to the
 //! literal item it is, if there is one. Otherwise it goes to the literal items
 //! lying inside it and to the domains that own it, as an actual keyed item goes
-//! to an expected schema's domains (see [`Solver::owning`]). `IndexItem` joins
-//! the selected values, what a read may give, and `AssignItem` meets them, what
-//! a write must fit. A key member the schema doesn't admit whole is unadmitted.
+//! to an expected schema's domains (see [`Solver::owning`]). An `Int` key
+//! selects every fixed position, as it selects every varying one: an index out
+//! of range is a runtime error, as an array's is. `IndexItem` joins the selected
+//! values, what a read may give, and `AssignItem` meets them, what a write must
+//! fit. A key member the schema doesn't admit whole is unadmitted, as a literal
+//! index past the fixed positions is.
 //!
 //! A rigid key is known only by its bound, so it selects exactly only where
 //! every item its bound selects has the same value.
@@ -129,7 +132,12 @@ impl Solver<'_> {
                     }
                 }
             }
-            let mut whole = false;
+            // An index of no particular position may be any of them
+            let mut whole = !promoted.fixed.is_empty()
+                && self
+                    .db
+                    .intrinsic(Intrinsic::Int)
+                    .is_some_and(|int| int == member);
             for (d, admits) in self.owning(member, &keys)? {
                 whole |= admits;
                 values.push(domains[d].1);

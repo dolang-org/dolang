@@ -650,6 +650,17 @@ impl Tables<'_> {
                 }
                 out.push(']');
             }
+            // Its signatures, any of which it's called as
+            Type::Overloaded { overloads, .. } => {
+                for (index, &overload) in overloads.iter().enumerate() {
+                    if index != 0 {
+                        out.push_str(" & ");
+                    }
+                    out.push('(');
+                    self.render_into(db, overload, naming, out);
+                    out.push(')');
+                }
+            }
             Type::Union(members) => {
                 if members.is_empty() {
                     out.push_str("Never");

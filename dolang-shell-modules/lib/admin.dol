@@ -42,8 +42,10 @@ do -> R
   if (sys.os_info().family == :WINDOWS:)
     if security_windows.token_info().is_elevated
       return shell.env $env do
-        if (cd != nil)
-          shell.cd $cd $block
+        # A local, since a test of what a block captures doesn't narrow it
+        let dir = cd
+        if (dir != nil)
+          shell.cd $dir $block
         else
           block()
     let vfs = shell.Vfs.windows_admin :env
@@ -56,8 +58,10 @@ do -> R
   else
     if (security_unix.id().euid == 0)
       return shell.env $env do
-        if (cd != nil)
-          shell.cd $cd $block
+        # A local, since a test of what a block captures doesn't narrow it
+        let dir = cd
+        if (dir != nil)
+          shell.cd $dir $block
         else
           block()
     sudo.with $block :env

@@ -45,7 +45,7 @@ impl Solver<'_> {
             a,
             b,
         };
-        let rules: [Rule<'_>; 9] = [
+        let rules: [Rule<'_>; 10] = [
             Self::identical,
             Self::judgeable,
             Self::variables,
@@ -55,6 +55,7 @@ impl Solver<'_> {
             Self::projections,
             Self::abstract_right,
             Self::union_right,
+            Self::overloaded,
         ];
         for rule in rules {
             if rule(self, &judgment)?.is_break() {
@@ -291,8 +292,12 @@ impl Solver<'_> {
         // A judgment that once had a member to infer through stays with
         // trials, which judge a `do` block without its result
         let tried = self.alternatives.borrow().contains_key(&j.obligation);
-        let closed = (self.reify(j.actual).ok())
-            .filter(|_| !tried && alternatives.iter().all(|&term| self.reify(term).is_ok()));
+        // An overloaded function's members are chosen among, as a call's are
+        let overloaded = matches!(&j.a, Head::Structural(view)
+            if matches!(self.db.ty(view.ty), Type::Overloaded { .. }));
+        let closed = (self.reify(j.actual).ok()).filter(|_| {
+            !tried && !overloaded && alternatives.iter().all(|&term| self.reify(term).is_ok())
+        });
         match closed {
             Some(actual) => self.closed_member(actual, *view, members)?,
             None => {
@@ -302,6 +307,88 @@ impl Solver<'_> {
             }
         }
         Ok(Break(()))
+    }
+
+    /// An overloaded function on the left of a function type is one of its
+    /// overloads, chosen by trials against what the function type's parameters
+    /// alone say (see [`Solver::selection`]); none fitting contradicts it.
+    /// Anywhere else it's its implementation, and dynamic without one. What's
+    /// below it is below each of its signatures.
+    fn overloaded(&self, j: &Judgment) -> Result<ControlFlow<()>, Issue> {
+        if let Head::Structural(view) = &j.b
+            && let Type::Overloaded {
+                overloads,
+                implementation,
+            } = self.db.ty(view.ty)
+        {
+            for (index, &ty) in overloads.iter().enumerate() {
+                self.derive(
+                    j.obligation,
+                    j.actual,
+                    view.child(ty),
+                    Step::Overload(index),
+                );
+            }
+            if let Some(ty) = *implementation {
+                self.derive(j.obligation, j.actual, view.child(ty), Step::Implementation);
+            }
+            return Ok(Break(()));
+        }
+        let Head::Structural(view) = &j.a else {
+            return Ok(Continue(()));
+        };
+        let Type::Overloaded {
+            overloads,
+            implementation,
+        } = self.db.ty(view.ty)
+        else {
+            return Ok(Continue(()));
+        };
+        let function = match &j.b {
+            Head::Structural(function) if self.callee(function.ty) => *function,
+            _ => {
+                if let Some(ty) = *implementation {
+                    let step = Step::Implementation;
+                    self.derive(j.obligation, view.child(ty), j.expected, step);
+                }
+                return Ok(Break(()));
+            }
+        };
+        if let Type::Quantified { binders, body } = self.db.ty(function.ty) {
+            self.skolemization(function, binders, *body, j.actual, j.obligation)?;
+            return Ok(Break(()));
+        }
+        let terms = overloads.iter().map(|&ty| view.child(ty)).collect();
+        let selection = self.selection(j.expected, function)?;
+        let none = Issue::Contradiction(Contradiction::NoOverload);
+        self.choose_selected(
+            j.obligation,
+            terms,
+            j.expected,
+            selection,
+            Step::Overload,
+            none,
+        )?;
+        Ok(Break(()))
+    }
+
+    /// What an overloaded function's overloads are tried against in place of
+    /// `expected`, a function type: the twin registered for it, as a call's has
+    /// `do` blocks whose results don't choose (see [`Solver::blind`]), or else
+    /// the function type with its result `Value`, since only what's passed
+    /// chooses
+    fn selection(&self, expected: Term, function: TypeView) -> Result<Term, Issue> {
+        if let Some(&twin) = self.blinded.get(&self.resolve(expected)?) {
+            return Ok(twin);
+        }
+        let Type::Function(function_type) = self.db.ty(function.ty) else {
+            unreachable!("a function type")
+        };
+        let ty = self.db.intern(Type::Function(Function {
+            result: self.db.top(),
+            ..function_type.clone()
+        }));
+        Ok(self.view(ty, function.environment))
     }
 
     /// Whether a closed type is below a member of a closed union. Testing

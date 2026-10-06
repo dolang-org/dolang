@@ -382,6 +382,15 @@ pub(crate) enum Type {
         packs: alias::Box<[TypeId]>,
         pattern: TypeId,
     },
+    /// An overloaded function's value: its `@def` signatures, one of which a call
+    /// or a function type it's passed as chooses, and its implementation's
+    /// signature, which it relates as anywhere else. Never written; a solver
+    /// exposes an overloaded def as it, and flow builds it from a method's
+    /// signatures.
+    Overloaded {
+        overloads: alias::Box<[TypeId]>,
+        implementation: Option<TypeId>,
+    },
 }
 
 impl Type {
@@ -447,6 +456,14 @@ impl Type {
                 }
                 visit(*pattern, 1);
             }
+            Self::Overloaded {
+                overloads,
+                implementation,
+            } => {
+                for ty in overloads.iter().chain(implementation.iter()) {
+                    visit(*ty, 0);
+                }
+            }
         }
     }
 
@@ -497,6 +514,16 @@ impl Type {
                     })
             }
             (Self::Map { packs: a, .. }, Self::Map { packs: b, .. }) => a.len() == b.len(),
+            (
+                Self::Overloaded {
+                    overloads: a,
+                    implementation: ai,
+                },
+                Self::Overloaded {
+                    overloads: b,
+                    implementation: bi,
+                },
+            ) => a.len() == b.len() && ai.is_some() == bi.is_some(),
             _ => self == other,
         }
     }
@@ -569,6 +596,14 @@ impl Type {
                     *pack = f(*pack, 0)?;
                 }
                 *pattern = f(*pattern, 1)?;
+            }
+            Self::Overloaded {
+                overloads,
+                implementation,
+            } => {
+                for ty in overloads.iter_mut().chain(implementation.iter_mut()) {
+                    *ty = f(*ty, 0)?;
+                }
             }
         }
         Ok(mapped)
@@ -1753,6 +1788,15 @@ impl Database {
                             }
                         }
                     }
+                }
+            }
+            Type::Overloaded {
+                overloads,
+                implementation,
+            } => {
+                assert!(!overloads.is_empty(), "an overload set without overloads");
+                for id in overloads.iter().chain(implementation.iter()) {
+                    self.expect_kind(*id, Kind::Type);
                 }
             }
             Type::Function(func) => {

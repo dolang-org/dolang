@@ -32,6 +32,20 @@ pub(crate) enum Problem {
     ExtraArgument(Span),
     /// A call that doesn't fit its callee in some other way
     Call { span: Span, callee: String },
+    /// A call none of its callee's overloads accepts, with a note for each
+    /// overload saying why
+    NoOverload {
+        span: Span,
+        callee: Option<String>,
+        notes: Vec<String>,
+    },
+    /// A call several of its callee's overloads accept, with nothing dynamic in
+    /// what it passes to excuse it
+    AmbiguousCall {
+        span: Span,
+        callee: Option<String>,
+        survivors: Vec<String>,
+    },
     /// A call whose types index a schema with a key that may be one of its
     /// positions' indexes
     Conflict(Span),
@@ -112,6 +126,8 @@ impl Report for Problem {
             | Problem::MissingArgument(span)
             | Problem::ExtraArgument(span)
             | Problem::Call { span, .. }
+            | Problem::NoOverload { span, .. }
+            | Problem::AmbiguousCall { span, .. }
             | Problem::Conflict(span)
             | Problem::Unadmitted { span, .. }
             | Problem::Misfit { span, .. }
@@ -136,6 +152,12 @@ impl Report for Problem {
             Problem::Argument { causes, .. } => (causes.iter().flatten())
                 .map(|note| (NoteKind::Info, note.clone()))
                 .collect(),
+            Problem::NoOverload { notes, .. } => (notes.iter())
+                .map(|note| (NoteKind::Info, note.clone()))
+                .collect(),
+            Problem::AmbiguousCall { survivors, .. } => (survivors.iter())
+                .map(|survivor| (NoteKind::Info, format!("`{survivor}` accepts them")))
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -157,6 +179,20 @@ impl Report for Problem {
             Problem::MissingArgument(_) => write!(w, "this call is missing an argument"),
             Problem::ExtraArgument(_) => write!(w, "the callee takes no such argument"),
             Problem::Call { callee, .. } => write!(w, "this call does not fit `{callee}`"),
+            Problem::NoOverload {
+                callee: Some(callee),
+                ..
+            } => write!(w, "no overload of `{callee}` accepts these arguments"),
+            Problem::NoOverload { callee: None, .. } => {
+                write!(w, "no overload accepts these arguments")
+            }
+            Problem::AmbiguousCall {
+                callee: Some(callee),
+                ..
+            } => write!(w, "several overloads of `{callee}` accept these arguments"),
+            Problem::AmbiguousCall { callee: None, .. } => {
+                write!(w, "several overloads accept these arguments")
+            }
             Problem::Conflict(_) => write!(
                 w,
                 "this call indexes a schema with a key that may be one of its positions' indexes"

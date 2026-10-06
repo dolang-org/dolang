@@ -36,13 +36,26 @@ impl Signature {
     pub(crate) fn single(&self) -> Option<TypeId> {
         self.overloads.is_empty().then_some(self.implementation)?
     }
+
+    /// What it's called as: its one signature, or its overloads as a whole.
+    /// `None` if it has neither.
+    pub(crate) fn callee(&self, db: &Database) -> Option<TypeId> {
+        if self.overloads.is_empty() {
+            return self.implementation;
+        }
+        Some(db.intern(Type::Overloaded {
+            overloads: self.overloads.iter().copied().collect(),
+            implementation: self.implementation,
+        }))
+    }
 }
 
 /// How a class object is called (see [`Solver::constructor`])
 #[derive(Clone, Debug)]
 pub(crate) enum Constructor {
-    /// Its class-level `(call)`, which is passed the class object first. `None`
-    /// if it's overloaded.
+    /// Its class-level `(call)`, which is passed the class object first, as
+    /// [`Signature::callee`] says it's called. `None` if a signature doesn't
+    /// reify.
     Call(Option<TypeId>),
     /// Instantiation, running `(init)`: functions from `(init)`'s arguments to
     /// the instance, quantified over the class's binders followed by
@@ -108,11 +121,26 @@ impl Solver<'_> {
                 let signature = match &found.kind {
                     FoundKind::Method(Signatures {
                         overloads,
-                        implementation: Some(signature),
-                    }) if overloads.is_empty() => solver.reify(*signature).ok(),
+                        implementation,
+                    }) => {
+                        let reify = |&term| solver.reify(term).ok();
+                        let overloads = overloads.iter().map(reify).collect::<Option<_>>();
+                        let implementation = implementation.as_ref().map(reify);
+                        match (overloads, implementation) {
+                            (Some(overloads), None) => Some(Signature {
+                                overloads,
+                                implementation: None,
+                            }),
+                            (Some(overloads), Some(Some(implementation))) => Some(Signature {
+                                overloads,
+                                implementation: Some(implementation),
+                            }),
+                            _ => None,
+                        }
+                    }
                     _ => None,
                 };
-                return Constructor::Call(signature);
+                return Constructor::Call(signature.and_then(|signature| signature.callee(db)));
             }
             Ok(Lookup::Found(_) | Lookup::Missing) => {}
             Ok(Lookup::Dynamic | Lookup::Fallback { .. }) | Err(_) => return Constructor::Dynamic,

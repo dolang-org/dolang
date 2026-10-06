@@ -120,9 +120,9 @@ impl Flow<'_, '_> {
         self.function_value(decl)
     }
 
-    /// A def's value: its type. An overloaded def's is the def itself, which
-    /// relates as its implementation's type, and which a call chooses an overload
-    /// of (see [`Flow::overloaded`]). Without an implementation, it's dynamic.
+    /// A def's value: its type. An overloaded def's is the def itself, which the
+    /// solver relates as its overloads (see [`Type::Overloaded`]). Without an
+    /// implementation, it's dynamic.
     fn function_value(&self, decl: DeclId) -> TypeId {
         match self.tables.sig_count(decl) {
             1 => self.db.declaration(decl).ty,
@@ -133,19 +133,17 @@ impl Flow<'_, '_> {
         }
     }
 
-    /// An overloaded def's overloads and implementation, if a value is one
-    pub(super) fn overloaded(&self, ty: TypeId) -> Option<(Vec<TypeId>, TypeId)> {
-        let &Type::Decl(decl) = self.db.ty(ty) else {
-            return None;
-        };
-        let declaration = self.db.declaration(decl);
-        if declaration.source.kind != DeclKind::Function {
-            return None;
+    /// Whether a value is an overloaded function: an overloaded def, or a
+    /// method's overloads
+    pub(super) fn overloaded(&self, ty: TypeId) -> bool {
+        match *self.db.ty(ty) {
+            Type::Overloaded { .. } => true,
+            Type::Decl(decl) => {
+                self.db.declaration(decl).source.kind == DeclKind::Function
+                    && !self.db.overloads(decl).is_empty()
+            }
+            _ => false,
         }
-        let overloads = (self.db.overloads(decl).iter())
-            .map(|&overload| self.db.declaration(overload).ty)
-            .collect();
-        Some((overloads, declaration.ty))
     }
 
     /// The value of a class object: `Type[C]`, with a generic class's binders
