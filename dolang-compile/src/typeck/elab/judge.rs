@@ -14,7 +14,7 @@ use crate::{
     RestKind,
     source::Span,
     typeck::r#type::{
-        Argument, Binder, BinderOrigin, Binding, Database, DeclId, Declaration, Element, Kind,
+        Argument, Binder, BinderOrigin, Binding, BoundRef, Database, DeclId, Declaration, Element, Kind,
         Literal, Member, Multiplicity, Scope, Type, TypeId, UnionMember, UnitId, UnitSpan,
         Variance,
     },
@@ -545,18 +545,16 @@ impl Tables<'_> {
     /// by `names`
     fn render(&self, db: &Database, ty: TypeId, names: &[String]) -> String {
         let mut out = String::new();
-        self.render_into(db, ty, names, 0, &mut out);
+        let naming = Naming {
+            names,
+            depth: 0,
+            pattern: None,
+        };
+        self.render_into(db, ty, naming, &mut out);
         out
     }
 
-    fn render_into(
-        &self,
-        db: &Database,
-        ty: TypeId,
-        names: &[String],
-        depth: u16,
-        out: &mut String,
-    ) {
+    fn render_into(&self, db: &Database, ty: TypeId, naming: Naming<'_>, out: &mut String) {
         match db.ty(ty) {
             Type::Top => out.push_str("Value"),
             Type::Unknown(Kind::Type) => out.push_str("Unknown"),
@@ -581,14 +579,14 @@ impl Tables<'_> {
             Type::Rigid { decl, slot, .. } => {
                 let _ = write!(out, "{}.#{slot}", self.declared(*decl));
             }
-            Type::Bound { reference, .. } => match names.get(usize::from(reference.slot)) {
-                Some(name) if reference.depth == depth => out.push_str(name),
-                _ => {
+            Type::Bound { reference, .. } => match naming.name(*reference) {
+                Some(name) => out.push_str(name),
+                None => {
                     let _ = write!(out, "#{}.{}", reference.depth, reference.slot);
                 }
             },
             Type::Apply { base, args, .. } => {
-                self.render_into(db, *base, names, depth, out);
+                self.render_into(db, *base, naming, out);
                 // Lifted arguments are marked
                 let lifted = match db.ty(*base) {
                     Type::Decl(id) => db
@@ -638,15 +636,15 @@ impl Tables<'_> {
                             {
                                 let _ = write!(out, "{}: ", db.symbol(name));
                             }
-                            self.render_into(db, *ty, names, depth, out)
+                            self.render_into(db, *ty, naming, out)
                         }
                         Argument::Keyword(name, ty) => {
                             let _ = write!(out, "{}: ", db.symbol(*name));
-                            self.render_into(db, *ty, names, depth, out);
+                            self.render_into(db, *ty, naming, out);
                         }
                         Argument::Expand(ty) => {
                             out.push_str("...");
-                            self.render_into(db, *ty, names, depth, out);
+                            self.render_into(db, *ty, naming, out);
                         }
                     }
                 }
@@ -669,15 +667,15 @@ impl Tables<'_> {
                                 ) =>
                             {
                                 out.push('(');
-                                self.render_into(db, *ty, names, depth, &mut out);
+                                self.render_into(db, *ty, naming, &mut out);
                                 out.push(')');
                             }
                             UnionMember::Type(ty) => {
-                                self.render_into(db, *ty, names, depth, &mut out)
+                                self.render_into(db, *ty, naming, &mut out)
                             }
                             UnionMember::Expand(ty) => {
                                 out.push_str("...");
-                                self.render_into(db, *ty, names, depth, &mut out);
+                                self.render_into(db, *ty, naming, &mut out);
                             }
                             UnionMember::Keys(ty)
                             | UnionMember::Values(ty)
@@ -688,7 +686,7 @@ impl Tables<'_> {
                                     _ => "Entries",
                                 };
                                 let _ = write!(out, "{name}[...");
-                                self.render_into(db, *ty, names, depth, &mut out);
+                                self.render_into(db, *ty, naming, &mut out);
                                 out.push(']');
                             }
                             UnionMember::IndexItem(schema, key)
@@ -698,9 +696,9 @@ impl Tables<'_> {
                                     _ => "AssignItem",
                                 };
                                 let _ = write!(out, "{name}[");
-                                self.render_into(db, *schema, names, depth, &mut out);
+                                self.render_into(db, *schema, naming, &mut out);
                                 out.push_str(", ");
-                                self.render_into(db, *key, names, depth, &mut out);
+                                self.render_into(db, *key, naming, &mut out);
                                 out.push(']');
                             }
                         }
@@ -712,37 +710,69 @@ impl Tables<'_> {
             }
             Type::Function(func) => {
                 out.push('(');
-                self.items(db, func.params, names, depth, out);
+                self.items(db, func.params, naming, out);
                 for (sigil, channel) in [('<', func.input), ('>', func.output)] {
                     if let Some(channel) = channel {
                         if !out.ends_with('(') {
                             out.push_str(", ");
                         }
                         out.push(sigil);
-                        self.render_into(db, channel, names, depth, out);
+                        self.render_into(db, channel, naming, out);
                     }
                 }
                 out.push(')');
                 out.push_str(" -> ");
-                self.render_into(db, func.result, names, depth, out);
+                self.render_into(db, func.result, naming, out);
             }
             Type::Schema(_) => {
                 out.push('{');
-                self.items(db, ty, names, depth, out);
+                self.items(db, ty, naming, out);
                 out.push('}');
             }
             Type::Quantified { body, .. } => {
                 out.push_str("forall ");
-                self.render_into(db, *body, names, depth + 1, out);
+                self.render_into(db, *body, naming.enter(), out);
+            }
+            Type::Map { packs, pattern } => {
+                out.push_str("{...");
+                self.pattern(db, packs, *pattern, naming, out);
+                out.push('}');
             }
         }
     }
 
+    /// A mapping's pattern, as written: each item is named by its pack
+    fn pattern(
+        &self,
+        db: &Database,
+        packs: &[TypeId],
+        pattern: TypeId,
+        naming: Naming<'_>,
+        out: &mut String,
+    ) {
+        let items = Pattern {
+            depth: naming.depth + 1,
+            packs: (packs.iter())
+                .map(|&pack| {
+                    let mut out = String::new();
+                    self.render_into(db, pack, naming, &mut out);
+                    out
+                })
+                .collect(),
+            outer: naming.pattern,
+        };
+        let naming = Naming {
+            pattern: Some(&items),
+            ..naming.enter()
+        };
+        self.render_into(db, pattern, naming, out);
+    }
+
     /// The items of a schema, or what stands for one
-    fn items(&self, db: &Database, ty: TypeId, names: &[String], depth: u16, out: &mut String) {
+    fn items(&self, db: &Database, ty: TypeId, naming: Naming<'_>, out: &mut String) {
         let Type::Schema(items) = db.ty(ty) else {
             out.push_str("...");
-            return self.render_into(db, ty, names, depth, out);
+            return self.render_into(db, ty, naming, out);
         };
         for (index, item) in items.iter().enumerate() {
             if index != 0 {
@@ -754,24 +784,75 @@ impl Tables<'_> {
                 Multiplicity::Repeated => "*",
             });
             match item.element {
-                Element::Positional(ty) => self.render_into(db, ty, names, depth, out),
+                Element::Positional(ty) => self.render_into(db, ty, naming, out),
                 Element::Keyed { key, value } => {
                     match db.ty(key) {
                         Type::Literal(Literal::Sym(sym)) => out.push_str(db.symbol(*sym)),
                         _ => {
                             out.push('(');
-                            self.render_into(db, key, names, depth, out);
+                            self.render_into(db, key, naming, out);
                             out.push(')');
                         }
                     }
                     out.push_str(": ");
-                    self.render_into(db, value, names, depth, out);
+                    self.render_into(db, value, naming, out);
                 }
                 Element::Include(ty) => {
                     out.push_str("...");
-                    self.render_into(db, ty, names, depth, out);
+                    match db.ty(ty) {
+                        Type::Map { packs, pattern } => {
+                            self.pattern(db, packs, *pattern, naming, out)
+                        }
+                        _ => self.render_into(db, ty, naming, out),
+                    }
                 }
             }
         }
+    }
+}
+
+/// How the references of a rendered type are named
+#[derive(Clone, Copy)]
+struct Naming<'a> {
+    /// The binders of the group the rendered type is interpreted in
+    names: &'a [String],
+    /// How many groups have been entered since
+    depth: u16,
+    /// The innermost mapping whose pattern is being rendered
+    pattern: Option<&'a Pattern<'a>>,
+}
+
+/// A mapping whose pattern is being rendered
+struct Pattern<'a> {
+    /// The depth of the pattern's group
+    depth: u16,
+    /// Each pack, which names its items
+    packs: Vec<String>,
+    outer: Option<&'a Pattern<'a>>,
+}
+
+impl Naming<'_> {
+    fn enter(self) -> Self {
+        Self {
+            depth: self.depth + 1,
+            ..self
+        }
+    }
+
+    /// The name of a reference to the rendered type's group or a pattern's
+    fn name(&self, reference: BoundRef) -> Option<&str> {
+        let level = self.depth.checked_sub(reference.depth)?;
+        let slot = usize::from(reference.slot);
+        if level == 0 {
+            return self.names.get(slot).map(String::as_str);
+        }
+        let mut pattern = self.pattern;
+        while let Some(found) = pattern {
+            if found.depth == level {
+                return found.packs.get(slot).map(String::as_str);
+            }
+            pattern = found.outer;
+        }
+        None
     }
 }

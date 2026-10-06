@@ -1241,7 +1241,7 @@ impl<'db> Solver<'db> {
                 }
                 Ok(())
             }
-            Type::Quantified { .. } => {
+            Type::Quantified { .. } | Type::Map { .. } => {
                 let mut children = Vec::new();
                 self.db
                     .ty(view.ty)
