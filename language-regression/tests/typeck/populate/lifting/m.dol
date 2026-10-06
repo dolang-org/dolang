@@ -9,12 +9,12 @@ pub class Box[T, U]
 
   pub def get self -> T
     #     ^~~: quantifier ^T covariant, ^U invariant, in contravariant, out contravariant
-    #     ^~~: decl (m.Box[T, U]) <in >out -> T
+    #     ^~~: decl (m.Box[T, U], <in, >out) -> T
     self.item
 
   pub def map[V] _self _f @ (T -> V) -> Box[V, U]
     #     ^~~: quantifier ^T covariant, ^U invariant, V invariant, in invariant, out invariant
-    #                       ^~~~~~~~: type (T) <in >out -> V
+    #                       ^~~~~~~~: type (T, <in, >out) -> V
     #                                   ^~~~~~~~~: type m.Box[V, U]
     nil
 

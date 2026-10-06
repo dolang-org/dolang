@@ -152,7 +152,7 @@ pub def wrong c @ Bool xs @ Array[Int]
   spec $
     - (do |y| y)
     name: 1
-# error: expected `{(std.Int) <m.wrong.#0 >m.wrong.#1 -> std.Int, ?name: std.Str, ?icon: std.Str}`, found `{(std.Int) <m.wrong.#0 >m.wrong.#1 -> std.Int, name: 1}`
+# error: expected `{(std.Int, <m.wrong.#0, >m.wrong.#1) -> std.Int, ?name: std.Str, ?icon: std.Str}`, found `{(std.Int, <m.wrong.#0, >m.wrong.#1) -> std.Int, name: 1}`
 #   --> m.dol:LL:LL
 #    |
 # LL | /     - (do |y| y)

@@ -62,11 +62,14 @@ impl Dump<'_, '_> {
                     }
                     self.slot(out, param)?;
                 }
-                write!(out, ") <")?;
+                if !signature.params.is_empty() {
+                    write!(out, ", ")?;
+                }
+                write!(out, "<")?;
                 self.slot(out, signature.input)?;
-                write!(out, " >")?;
+                write!(out, ", >")?;
                 self.slot(out, signature.output)?;
-                write!(out, " -> ")?;
+                write!(out, ") -> ")?;
                 self.slot(out, signature.result)?;
             }
             if !func.captures.is_empty() {

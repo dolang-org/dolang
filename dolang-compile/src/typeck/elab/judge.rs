@@ -263,17 +263,20 @@ impl Tables<'_> {
             };
             let _ = write!(out, "{}{name}: {ty}", if optional { "?" } else { "" });
         }
-        out.push(')');
         for (sigil, ambient) in [('<', sig.input), ('>', sig.output)] {
+            if !out.ends_with('(') {
+                out.push_str(", ");
+            }
             match ambient {
                 Ambient::Implicit(binder) => {
-                    let _ = write!(out, " {sigil}#{}", binder.slot);
+                    let _ = write!(out, "{sigil}#{}", binder.slot);
                 }
                 _ => {
-                    let _ = write!(out, " {sigil}{}", self.ambient(ambient));
+                    let _ = write!(out, "{sigil}{}", self.ambient(ambient));
                 }
             }
         }
+        out.push(')');
         let _ = write!(out, " -> {}", slot(&sig.ret));
         out
     }
@@ -696,13 +699,16 @@ impl Tables<'_> {
             Type::Function(func) => {
                 out.push('(');
                 self.items(db, func.params, names, depth, out);
-                out.push(')');
                 for (sigil, channel) in [('<', func.input), ('>', func.output)] {
                     if let Some(channel) = channel {
-                        let _ = write!(out, " {sigil}");
+                        if !out.ends_with('(') {
+                            out.push_str(", ");
+                        }
+                        out.push(sigil);
                         self.render_into(db, channel, names, depth, out);
                     }
                 }
+                out.push(')');
                 out.push_str(" -> ");
                 self.render_into(db, func.result, names, depth, out);
             }

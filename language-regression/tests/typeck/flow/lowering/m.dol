@@ -129,7 +129,7 @@ pub def comprehension_nesting xs @ Array[Int]
       else
         - $x
   let _ = r
-  #       ^: flow std.Array[(() <Unknown >Unknown -> std.Int) | std.Array[std.Int] | std.Int | std.Str]
+  #       ^: flow std.Array[((<Unknown, >Unknown) -> std.Int) | std.Array[std.Int] | std.Int | std.Str]
 
 # Keyed items, pairs and spreads in a call's comprehension
 pub def comprehension_call xs @ Array[Int] a @ (Int | nil) b @ Int
@@ -221,10 +221,10 @@ pub def captures()
 pub def lambda_signature()
   let f = (do |_a b @ Int :_k :_j @ Str *_pos @ Int **_kw| b)
   let _ = f
-  #       ^: flow (Unknown, std.Int, _k: Unknown, _j: std.Str, *std.Int, *(std.Sym): Unknown) <Unknown >Unknown -> std.Int
+  #       ^: flow (Unknown, std.Int, _k: Unknown, _j: std.Str, *std.Int, *(std.Sym): Unknown, <Unknown, >Unknown) -> std.Int
   let g = (do |x <Iter[Int]| -> Int x)
   let _ = g
-  #       ^: flow (Unknown) <std.Iter[std.Int] >Unknown -> std.Int
+  #       ^: flow (Unknown, <std.Iter[std.Int], >Unknown) -> std.Int
 
 # A `break` and a `return` out of a `do` block
 pub def nonlocal_jumps xs

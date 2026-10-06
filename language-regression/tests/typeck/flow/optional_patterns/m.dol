@@ -174,12 +174,12 @@ pub def dependent_alternative()
 pub def lambda_signatures()
   let f = do |?k: (a = 1)| -> Int a
   let _ = f
-  #       ^: flow (?k: Unknown) <Unknown >Unknown -> std.Int
+  #       ^: flow (?k: Unknown, <Unknown, >Unknown) -> std.Int
   f()
   f k: (2,)
   let g = do |_p ?(q = 2)| -> Int q
   let _ = g
-  #       ^: flow (Unknown, ?Unknown) <Unknown >Unknown -> std.Int
+  #       ^: flow (Unknown, ?Unknown, <Unknown, >Unknown) -> std.Int
   g 1
   g(1, (2,))
   g()
