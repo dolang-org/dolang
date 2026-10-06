@@ -44,6 +44,29 @@ pub def either v @ (Int | nil) n @ Named
   let _ = (n.name || "b")
   #   ^: flow std.Str
 
+# Each operand of a short circuit is narrowed by the tests before it
+pub def chained v @ (Int | Str) c @ Bool
+  let a = (type(v, Int) && c && v)
+  let _ = a
+  #       ^: flow std.Bool | std.Int
+  # Either test failing reaches `v`, and only a truthy `c` is the result
+  let b = (type(v, Int) && c || v)
+  let _ = b
+  #       ^: flow std.Int | std.Str | true
+  let d = (type(v, Str) || (c && v))
+  let _ = d
+  #       ^: flow std.Bool | std.Int
+  let e = ((type(v, Int) && c) && v)
+  let _ = e
+  #       ^: flow std.Bool | std.Int
+  while (type(v, Int) && c)
+    let _ = v
+    #       ^: flow std.Int
+    c = false
+  if !(type(v, Str) || c)
+    let _ = v
+    #       ^: flow std.Int
+
 pub def compared v @ (Int | nil)
   if (v == nil)
     let _ = v
