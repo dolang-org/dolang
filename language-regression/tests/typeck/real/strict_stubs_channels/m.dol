@@ -1,7 +1,7 @@
 # dolang: strict
 # Strict extension stubs reject ambient I/O their caller's channels don't allow.
 
-import time load @sqlite
+import time load @sqlite @term
 
 # A scoped block writes to its caller's output, which a def without `>` lacks
 pub def scoped_silent() -> nil
@@ -33,3 +33,16 @@ pub def transaction_silent conn @ sqlite.Connection -> nil
   # LL |     put "x"
   #    |     ^^^^^^^
   nil
+
+# Joining without an iterable reads the strand's input, which a def without `<`
+# lacks
+pub def join_silent sep @ term.Text -> term.Text
+  sep.join()
+# error: no overload of `join` accepts these arguments
+#   --> m.dol:LL:LL
+#    |
+# LL |   sep.join()
+#    |   ^^^^^^^^^^
+#    |
+#    = note: `(term.Text, std.Iterable[Value]) -> term.Text`: this call is missing an argument
+#    = note: `(term.Text, <std.Iter[Value]) -> term.Text`: this call does not fit `(term.Text, <std.Iter[Value]) -> term.Text`

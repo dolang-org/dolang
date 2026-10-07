@@ -2,7 +2,7 @@
 # Strict extension stubs, used from a strict unit.
 
 import @regex @sys.linux security.unix uuid @url time @patch @xml
-  load zip tar sqlite fs winreg winscm winnet progress http
+  load zip tar sqlite fs winreg winscm winnet progress http shell term
 
 # `Regex.replace` runs a callback with its caller's channels
 pub def replaces re @ regex.Regex >Sink[Str] -> Str
@@ -183,3 +183,42 @@ pub def requests client @ http.Client >Sink[Str] -> Int
   #   ^~~~~~~~~: flow http.Response
   response.close()
   client.post "u" body: ["a", "b"] do |r| r.status
+
+# Standard input is an iterator framed as lines or chunks
+pub def stdin input @ shell.Stdin[Str] -> nil
+  let _lines = input.chomp()
+  #   ^~~~~~: flow std.Iter[std.Str]
+  let chunks = input.chunks()
+  #   ^~~~~~: flow shell.Stdin[std.Bin]
+  for chunk = chunks
+    let _chunk = chunk
+    #   ^~~~~~: flow std.Bin
+  nil
+
+# Standard output is a sink
+pub def stdout output @ shell.Stdout -> Int
+  term.capture $output do 1
+
+# Joining reads the strand's input only without an iterable
+pub def joins sep @ term.Text <Iter[Str] -> term.Text
+  let _ = sep.join ["a"]
+  sep.join()
+
+pub def joins_silent sep @ term.Text -> term.Text
+  sep.join ["a"]
+
+# A VFS launcher runs with the connection as its channels
+pub def launches() -> shell.Vfs
+  shell.Vfs do
+    put "x"
+    nil
+
+# Muted and directory scopes run with their caller's channels
+pub def shell_scopes >Sink[Str] -> Int
+  term.mute do put "mute"
+  let n = shell.cd /tmp do
+    put "cd"
+    1
+  let _n = n
+  #   ^~: flow std.Int
+  n

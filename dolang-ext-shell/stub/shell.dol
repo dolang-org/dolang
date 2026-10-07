@@ -1,3 +1,4 @@
+# dolang: strict
 # Shell context: standard streams, environment, working directory, invocation
 # identity, and the VFS the whole lot is routed through.
 #
@@ -15,12 +16,12 @@ import fs:
 # Every handle reads through one shared buffered reader, so mixing iteration
 # with [`read`](shell.Stdin.read) picks up exactly where the other left off.
 # What differs between handles is only how they frame that stream.
-pub class Stdin
+pub class Stdin[T]: std.Iter[T]
   # Returns a handle that yields lines.
   #
   # This is the default framing, so it is only needed to undo a previous
   # [`chunks`](shell.Stdin.chunks).
-  pub def lines self -> Stdin
+  pub def lines self -> Stdin[Str]
     ...
 
   # Returns a handle that yields arbitrary-sized [`Bin`](std.Bin) chunks.
@@ -31,7 +32,7 @@ pub class Stdin
   # for chunk = shell.stdin.chunks()
   #   hasher.update $chunk
   # ```
-  pub def chunks self -> Stdin
+  pub def chunks self -> Stdin[Bin]
     ...
 
   # Reads raw bytes.
@@ -68,16 +69,16 @@ pub class Stdin
   #     break
   # let body = shell.stdin.read()
   # ```
-  pub def (iter) self
+  pub def (iter) self -> Stdin[T]
     ...
 
   # Yields the next line or chunk.
-  pub def (next) self
+  pub def (next) self -> T
     ...
 
   # Compares two handles, which are equal when they frame the stream the same
   # way.
-  pub def (eq) self other
+  pub def (eq) self other @ Value -> Bool
     ...
 
 # The process's standard output.
@@ -87,7 +88,7 @@ pub class Stdin
 # Always writes to the real stream. Naming this handle is how you opt out of
 # terminal takeover; use [`term.console`](term.Console) to follow it
 # instead.
-pub class Stdout
+pub class Stdout: std.Sink[Value]
   # Writes bytes verbatim.
   #
   # ## Returns
@@ -141,12 +142,12 @@ pub class Stdout
   # let lines = shell.stdout.precrimp()
   # lines.put "hello"                 # writes "hello\n"
   # ```
-  pub def (sink) self
+  pub def (sink) self -> Stdout
     ...
 
   # Compares two handles. All instances are interchangeable, so any two are
   # equal.
-  pub def (eq) self other
+  pub def (eq) self other @ Value -> Bool
     ...
 
 # The process's standard error.
@@ -156,7 +157,7 @@ pub class Stdout
 # Stateless and interchangeable, as [`Stdout`](shell.Stdout) is. Unlike
 # [`term.console`](term.Console), this bypasses extensions that have
 # taken over the terminal shell-wide: it is the error stream itself.
-pub class Stderr
+pub class Stderr: std.Sink[Value]
   # Writes bytes verbatim. Identical in behavior to
   # [`Stdout.write`](shell.Stdout.write).
   #
@@ -182,12 +183,12 @@ pub class Stderr
 
   # Accepts values as a [sink](std.Sink), writing them verbatim, as
   # [`Stdout`](shell.Stdout.(sink)) does.
-  pub def (sink) self
+  pub def (sink) self -> Stderr
     ...
 
   # Compares two handles. All instances are interchangeable, so any two are
   # equal.
-  pub def (eq) self other
+  pub def (eq) self other @ Value -> Bool
     ...
 
 # An execution context: another machine, container, or privilege level.
@@ -214,8 +215,8 @@ pub class Vfs
   # ```
   pub def (init)
     self
-    # VFS server launcher.
-    func @ (() -> Value)
+    # VFS server launcher. Its input and output are the connection.
+    func @ ((<Iter[Value], >Sink[Value]) -> Value)
   do
     ...
 
@@ -383,7 +384,7 @@ do
   func @ (() -> R)
 do -> R
 
-pub def cd ...args
+pub def cd ...args @ Value -> Value
   ...
 
 # Replaces the interpreter with an external program, after shell cleanup.
@@ -403,7 +404,7 @@ pub def exec
   program @ (Str | Path)
   # Program arguments.
   *args @ Value
-do
+do -> std.Never
   ...
 
 # Exits the shell.
@@ -414,7 +415,7 @@ do
 pub def exit
   # Exit status. Defaults to `0`.
   code @ Int = nil
-do
+do -> std.Never
   ...
 
 # Returns the line ending native to the current [`Vfs`](shell.Vfs) target:
@@ -552,12 +553,12 @@ pub @class Env: std.Index[Str, Str] std.Assign[Str, Str | nil] std.Spread[Str, S
     # The block to call.
     body @ (() -> R)
     # Overrides by variable name.
-    ...vars
+    ...vars @ (Str | :INHERIT: | nil)
   do -> R
 
   # Calls a block with variables overridden in place, restoring them when it
   # returns.
-  pub def (call)[R] self *args ...vars -> R
+  pub def (call)[R] self *args @ Value ...vars @ Value -> R
 
 
 # The environment of the current context.
@@ -572,30 +573,28 @@ pub @class Env: std.Index[Str, Str] std.Assign[Str, Str | nil] std.Spread[Str, S
 # ```
 pub let env @ Env = ...
 
-# The path the host reports for the running `dolang` executable, as an
-# [`fs.Path`](fs.Path).
+# The path the host reports for the running `dolang` executable.
 #
 # Not canonicalized.
-pub let exe = ...
+pub let exe @ Path = ...
 
 # What `dolang` is executing.
 #
-# - For `dolang script.dol`, an [`fs.Path`](fs.Path) for `script.dol`
+# - For `dolang script.dol`, the path of `script.dol`
 # - For `dolang -m foo.bar`, the string `"foo.bar"`
 # - In the REPL, `nil`
-pub let program = ...
+pub let program @ (Path | Str | nil) = ...
 
-# A [`Stdin`](shell.Stdin) handle for the process's standard input, and the
-# initial input of the main strand.
-pub let stdin = ...
+# A handle for the process's standard input, and the initial input of the main
+# strand.
+pub let stdin @ Stdin[Str] = ...
 
-# A [`Stdout`](shell.Stdout) handle for the process's standard output, and the
-# initial output of the main strand.
-pub let stdout = ...
+# A handle for the process's standard output, and the initial output of the
+# main strand.
+pub let stdout @ Stdout = ...
 
-# A [`Stderr`](shell.Stderr) handle for the process's standard error.
-pub let stderr = ...
+# A handle for the process's standard error.
+pub let stderr @ Stderr = ...
 
-# A `(major, minor, patch)` [`Tuple`](std.Tuple) with the version of the
-# running `dolang` build.
-pub let VERSION = ...
+# The `(major, minor, patch)` version of the running `dolang` build.
+pub let VERSION @ Tuple[Int, Int, Int] = ...

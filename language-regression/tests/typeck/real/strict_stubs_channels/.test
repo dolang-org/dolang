@@ -1,2 +1,2 @@
-repo-stubs: std strand time load sqlite
+repo-stubs: std strand time load sqlite term
 validated: false

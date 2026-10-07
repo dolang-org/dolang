@@ -1,3 +1,4 @@
+# dolang: strict
 # Terminals and consoles: where human-readable output goes, and how it is
 # styled, measured, captured and silenced.
 #
@@ -179,7 +180,7 @@ pub class Console: std.Sink[Value]
   # pipeline output: (term.console.precrimp())
   #   do strand.from ["building", "linking"]
   # ```
-  pub def (sink) self
+  pub def (sink) self -> Console
     ...
 
 # The dimensions of a terminal-backed [`Console`](term.Console).
@@ -313,7 +314,7 @@ pub class Style: Func
   pub def (init)
     self
     # The [style options](term.style-options).
-    ...options
+    ...options @ Value
   do
     ...
 
@@ -341,7 +342,7 @@ pub class Style: Func
   pub def (call)
     self
     # Values converted to display strings.
-    ...args
+    ...args @ Value
   do -> Text
     ...
 
@@ -491,11 +492,17 @@ pub class Text
   # let sep = text " | " fg: :YELLOW:
   # echo $sep.join([text("ok", fg: :GREEN:), "then", 3])
   # ```
-  pub def join
+  @def join
     self
-    # Values to join. Uses the default input when omitted.
-    iter @ Iterable[Value] = nil
+    # Values to join.
+    iter @ Iterable[Value]
   do -> Text
+
+  # Concatenates the values of the strand's input with this text between them.
+  @def join self <Iter[Value] -> Text
+
+  # Concatenates values with this text between them.
+  pub def join self ...args @ Value -> Value
     ...
 
   # Returns the visible terminal-cell width of the text.
@@ -522,7 +529,7 @@ pub class Text
   # [`encode`](term.Text.encode). `verbatim` reproduces a value as it would
   # have been written in source, and styled text has no source form, so it
   # gives the same content this does.
-  pub def (str) self
+  pub def (str) self -> Str
     ...
 
 # Runs a block with `console` installed as the ambient console, then flushes it
@@ -592,7 +599,7 @@ do -> R
 # ```
 pub def echo
   # Values converted with `verbatim` and written safely.
-  ...args
+  ...args @ Value
 do
   ...
 
@@ -649,7 +656,7 @@ do -> Text
 # ```
 pub def print
   # Values converted to display strings.
-  ...args
+  ...args @ Value
 do
   ...
 
@@ -698,7 +705,7 @@ do -> Str
 # ```
 pub def text
   # Values converted to display strings.
-  ...args
+  ...args @ Value
 do -> Text
   ...
 
@@ -707,7 +714,7 @@ do -> Text
 #
 # Unlike [`output()`](term.output), it is not intercepted by an enclosing
 # [`capture`](term.capture).
-pub let console = ...
+pub let console @ Console = ...
 
 # A [`Console`](term.Console) that forwards every operation to whatever
 # [`output()`](term.output) currently resolves to, resolved fresh on each
@@ -717,4 +724,4 @@ pub let console = ...
 # unnamed program output keeps following capture and `progress` takeover for
 # the life of the process -- see
 # [Terminal output](../../shell/terminal-output.md#child-process-output).
-pub let default = ...
+pub let default @ Console = ...
