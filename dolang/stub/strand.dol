@@ -10,19 +10,28 @@ pub @let PipeReceiver[I] = ...
 # Stores a strand-local value.
 pub class Key[T]
   #
-  # Creates a new strand-local key.
+  # Creates a strand-local key. An initial value is returned in a strand until
+  # that strand sets the key. Without one, the initial value is `nil`.
   #
   # ```
-  # let key = strand.Key()
+  # let key = strand.Key 0
   # ```
   #
-  pub def (init) self
+  @def (init)[U] self @ Key[U | nil]
+
+  @def (init) self value @ T
+
+  pub def (init)
+    self
+    # Value returned until this key is set in the current strand.
+    value @ (T | nil) = nil
+  do
     ...
 
   #
   # Gets or sets the value associated with this key in the current strand.
   #
-  # Defaults to `nil` when the key has not been set in the current
+  # Returns the initial value when the key has not been set in the current
   # strand.
   #
   # ```playground
@@ -44,11 +53,31 @@ pub class Key[T]
   # assert_eq $key.value "parent"
   # ```
   #[getter]
-  pub def value self -> (T | nil)
+  pub def value self -> T
     ...
 
   #[setter]
-  pub def value self value @ (T | nil)
+  pub def value self value @ T
+    ...
+
+  # Runs `block` with a temporary value for this key in the calling strand.
+  # Restores the previous binding when the block returns or raises. Child
+  # strands created inside the block inherit the temporary value.
+  #
+  # ## Example
+  #
+  # ```
+  # let depth = strand.Key 0
+  # depth.with 1 do
+  #   echo $depth.value
+  # ```
+  pub def with[R]
+    self
+    # Temporary value for this key.
+    value @ T
+    # Block to call with the temporary value.
+    block @ (() -> R)
+  do -> R
     ...
 
 

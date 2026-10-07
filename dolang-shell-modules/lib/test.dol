@@ -11,8 +11,6 @@ let pass_style = term.Style fg: :GREEN:
 let name_style = term.Style dim: true
 let note_style = term.Style bold: true
 
-let collect_key @ strand.Key[TestCollection] = strand.Key()
-
 class TestCase
   pub field module name tags func
 
@@ -31,13 +29,19 @@ class TestCollection
     self.#module = module
 
   pub def add self name tags func
+    if (self.#module == nil)
+      throw std.StateError "test registration outside a test file"
     self.#tests.push $TestCase(self.#module, name, Tuple([...self.#tags, ...tags]), func)
 
   pub def add_tags self tags
+    if (self.#module == nil)
+      throw std.StateError "test registration outside a test file"
     self.#tags.push ...tags
 
   pub def take self
     self.#tests
+
+let collect_key @ strand.Key[TestCollection] = strand.Key(TestCollection nil)
 
 # Accumulates parametrize axes around a composed test function. Any
 # decorator that needs to attach metadata beyond a function (currently
@@ -219,14 +223,12 @@ class Harness
       if (errors || warnings)
         throw ModuleCompileError $path $compiled
 
-      collect_key.value = TestCollection $path
-      self.#with_capture $output do self.#with_timeout do load.run $compiled.emit()
-      let cases = (collect_key.value !@ TestCollection).take()
-      collect_key.value = nil
+      let cases = collect_key.with (TestCollection path) do
+        self.#with_capture $output do self.#with_timeout do load.run $compiled.emit()
+        collect_key.value.take()
       cases = [...cases.filter(do |case| self.#matches_filter case)]
       self.#run_module $path $cases
     catch std.RuntimeError: e
-      collect_key.value = nil
       let captured = (self.#capture && output.freeze())
       self.#record_error $e $(strand.error_backtrace()) $path nil $captured
 
@@ -371,7 +373,7 @@ do
   let base_name = (name || str(test_def.func))
 
   if (test_def.params.len == 0)
-    (collect_key.value !@ TestCollection).add $base_name $tag_values $test_def.func
+    collect_key.value.add $base_name $tag_values $test_def.func
     return func
 
   let combos = [[{}, [], []]]
@@ -393,7 +395,7 @@ do
     let case_name = "$base_name/$("/".join(name_parts))"
     let case_tags = [...tag_values, ...extra_tags]
     let case_func = do test_def.func(...kwargs)
-    (collect_key.value !@ TestCollection).add $case_name $case_tags $case_func
+    collect_key.value.add $case_name $case_tags $case_func
 
   func
 
@@ -472,7 +474,7 @@ do
     if !(type tag Str)
       throw std.TypeError "test tags: expected strings"
     tag_values.push $tag
-  (collect_key.value !@ TestCollection).add_tags $tag_values
+  collect_key.value.add_tags $tag_values
 
 # Raised when an assertion fails.
 pub class Assert: std.RuntimeError

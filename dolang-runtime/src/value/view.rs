@@ -542,6 +542,20 @@ impl<'v, 'a> Dict<'v, 'a> {
         borrow.insert(strand, key, value, hv, unique)?;
         Ok(())
     }
+
+    /// Delete all values for `key`. Returns whether the key was present.
+    pub fn delete<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        key: impl Input<'v>,
+    ) -> Result<'v, 's, bool> {
+        let key = Value::from_input(strand, key);
+        let mut borrow = match self.0.borrow_mut() {
+            Some(b) => b,
+            None => return Err(Error::concurrency(strand)),
+        };
+        borrow.delete(strand, &key)
+    }
 }
 
 /// Set view

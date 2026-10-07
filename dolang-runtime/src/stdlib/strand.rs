@@ -16,7 +16,7 @@ use crate::{
     object::{
         array::Array,
         backtrace, channel,
-        native::{Object, Type, TypeBuilder},
+        native::{Mut, Object, Ref, Type, TypeBuilder},
         strand as strand_object, tuple,
     },
     strand::{
@@ -294,6 +294,7 @@ struct Key;
 impl<'v> Object<'v> for Key {
     const NAME: &'v str = "Key";
     const MODULE: &'v str = "strand";
+    const SLOTS: usize = 1;
     type Annex = ();
     type Type = ();
     type TypeAnnex = ();
@@ -302,24 +303,33 @@ impl<'v> Object<'v> for Key {
         this: Type<'v, Self>,
         strand: &'a mut Strand<'v, 's>,
         args: crate::arg::Args<'v, 'a>,
-        out: Slot<'v, 'a>,
+        mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([], []) = unpack!(strand, args, 0, 0)?;
-        this.create(strand, Key, out);
+        let ([], [initial]) = unpack!(strand, args, 0, 1)?;
+        this.create(strand, Key, &mut out);
+        if let Some(initial) = initial {
+            this.cast(&out).unwrap().enter_sync(strand, |strand, inst| {
+                let mut borrow = inst.borrow_mut_unwrap();
+                Output::set(strand, Mut::slot_mut::<0>(&mut borrow), initial);
+            });
+        }
         Ok(())
     }
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
-            .get_with_slots("value", |this, strand, out, [mut key]| {
+            .get_with_slots("value", |this, strand, mut out, [mut key]| {
                 let state = strand.state::<StrandState<'v>>();
                 Output::set(strand, &mut key, this);
                 let root = state.local_root.slot(strand);
-                if root.is_nil() {
-                    return Ok(());
+                if !root.is_nil() {
+                    let dict = root.as_dict(strand).expect("strand local store is a dict");
+                    if dict.get(strand, &key, None, &mut out)? {
+                        return Ok(());
+                    }
                 }
-                let dict = root.as_dict(strand).expect("strand local store is a dict");
-                let _ = dict.get(strand, &key, None, out)?;
+                let borrow = this.borrow(strand)?;
+                Output::set(strand, out, Ref::slot::<0>(&borrow));
                 Ok(())
             })
             .set_with_slots("value", |this, strand, mut value, [mut key]| {
@@ -329,9 +339,38 @@ impl<'v> Object<'v> for Key {
                 let dict = root
                     .as_dict(strand)
                     .expect("strand local store is not a dict");
-                dict.insert(strand, &mut key, &mut value, true)?;
+                dict.insert(strand, &key, &mut value, true)?;
                 Ok(())
             })
+            .method_with_slots(
+                "with",
+                async |this, strand, args, out, [mut key, mut prior]| {
+                    let ([mut value, block], []) = unpack!(strand, args, 2, 0)?;
+                    let state = strand.state::<StrandState<'v>>();
+                    Output::set(strand, &mut key, this);
+                    let root = state.local_root.slot(strand);
+                    let had_prior = if root.is_nil() {
+                        false
+                    } else {
+                        let dict = root.as_dict(strand).expect("strand local store is a dict");
+                        dict.get(strand, &key, None, &mut prior)?
+                    };
+                    let root = unique_local_root(state, strand)?;
+                    let dict = root.as_dict(strand).expect("strand local store is a dict");
+                    dict.insert(strand, &key, &mut value, true)?;
+
+                    let result = call!(strand, block, out).await;
+
+                    let root = unique_local_root(state, strand)?;
+                    let dict = root.as_dict(strand).expect("strand local store is a dict");
+                    if had_prior {
+                        dict.insert(strand, &key, &mut prior, true)?;
+                    } else {
+                        dict.delete(strand, &key)?;
+                    }
+                    result
+                },
+            )
     }
 }
 

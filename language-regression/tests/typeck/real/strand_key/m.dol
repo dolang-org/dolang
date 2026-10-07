@@ -1,0 +1,20 @@
+# dolang: strict
+import strand
+
+pub def initial() -> Int
+  let key = strand.Key 0
+  let value = key.value
+  #   ^~~~~: flow std.Int
+  key.with 1 do key.value
+  value
+
+pub def optional() -> (Int | nil)
+  let key @ strand.Key[Int | nil] = strand.Key()
+  key.value = 1
+  key.value
+
+pub def channels <Iter[Int] >Sink[Int] -> Int
+  let key = strand.Key 0
+  key.with 1 do
+    strand.each do |value| (value + key.value)
+    key.value
