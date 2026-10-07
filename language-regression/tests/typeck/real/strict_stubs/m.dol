@@ -185,7 +185,9 @@ pub def requests client @ http.Client >Sink[Str] -> Int
   client.post "u" body: ["a", "b"] do |r| r.status
 
 # Standard input is an iterator framed as lines or chunks
-pub def stdin input @ shell.Stdin[Str] -> nil
+pub def stdin() -> nil
+  let input = shell.stdin
+  #   ^~~~~: flow shell.Stdin[std.Str]
   let _lines = input.chomp()
   #   ^~~~~~: flow std.Iter[std.Str]
   let chunks = input.chunks()
@@ -196,8 +198,18 @@ pub def stdin input @ shell.Stdin[Str] -> nil
   nil
 
 # Standard output is a sink
-pub def stdout output @ shell.Stdout -> Int
-  term.capture $output do 1
+pub def stdout() -> Int
+  term.capture $shell.stdout do 1
+
+# Module variables have their declared types
+pub def variables() -> nil
+  let _env = shell.env
+  #   ^~~~: flow shell.Env
+  let _console = term.console
+  #   ^~~~~~~~: flow term.Console
+  let _version = shell.VERSION
+  #   ^~~~~~~~: flow std.Tuple[{std.Int, std.Int, std.Int}]
+  nil
 
 # Joining reads the strand's input only without an iterable
 pub def joins sep @ term.Text <Iter[Str] -> term.Text

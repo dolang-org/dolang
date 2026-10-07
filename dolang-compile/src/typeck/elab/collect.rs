@@ -51,6 +51,9 @@ pub(crate) struct Harvest<'u> {
     /// The unit's exports by name, with the name each is bound by. Empty for a unit
     /// that is not a module.
     pub(crate) exports: HashMap<&'u str, (Span, Target<'u>)>,
+    /// Each exported variable, by the span of its name, with its annotation if it
+    /// has one
+    pub(crate) values: HashMap<Span, Option<SiteId>>,
 }
 
 /// Collect the surface of a unit, and resolve its type names as far as it can.
@@ -74,9 +77,9 @@ pub(crate) fn harvest<'u>(unit: &'u Unit<'u>) -> Harvest<'u> {
     };
     let root = &unit.ast.0;
     walk.function(None, root);
-    let exports = match compiler.mode {
+    let (exports, values) = match compiler.mode {
         Mode::Module { .. } => walk.exports(&root.body.stmts),
-        Mode::Script | Mode::Repl => HashMap::new(),
+        Mode::Script | Mode::Repl => (HashMap::new(), HashMap::new()),
     };
     let strings = walk.strings;
     Harvest {
@@ -95,6 +98,7 @@ pub(crate) fn harvest<'u>(unit: &'u Unit<'u>) -> Harvest<'u> {
         sites,
         pending,
         exports,
+        values,
     }
 }
 
@@ -114,6 +118,7 @@ pub(crate) fn link<'u>(
     let mut units: Vec<Option<UnitInfo<'u>>> = (0..count).map(|_| None).collect();
     let mut strings = vec![Vec::new(); count];
     let mut exports = vec![HashMap::new(); count];
+    let mut values = HashMap::new();
     let mut decls = Vec::new();
     let mut pending = Vec::new();
     let mut sites = Vec::new();
@@ -133,6 +138,9 @@ pub(crate) fn link<'u>(
         sites.extend(harvest.sites);
         pending.extend(harvest.pending);
         exports[id.index()] = harvest.exports;
+        values.extend(
+            (harvest.values.into_iter()).map(|(span, site)| (UnitSpan { unit: id, span }, site)),
+        );
         strings[id.index()] = harvest.strings;
         units[id.index()] = Some(harvest.info);
     }
@@ -201,6 +209,7 @@ pub(crate) fn link<'u>(
         referents,
         aliases,
         exports,
+        values,
         sites,
         binder_kinds: HashMap::new(),
         alias_kinds: HashMap::new(),
@@ -1478,23 +1487,54 @@ impl<'u> Walk<'_, 'u> {
         }
     }
 
-    /// The names a module's root block exports, with the name each is bound by.
-    fn exports(&self, stmts: &'u [Stmt]) -> HashMap<&'u str, (Span, Target<'u>)> {
+    /// The names a module's root block exports, with the name each is bound by, and
+    /// the exported variables, with the site of each one's annotation.
+    #[expect(clippy::type_complexity)]
+    fn exports(
+        &self,
+        stmts: &'u [Stmt],
+    ) -> (
+        HashMap<&'u str, (Span, Target<'u>)>,
+        HashMap<Span, Option<SiteId>>,
+    ) {
         let mut exports = HashMap::new();
+        let mut annots = HashMap::new();
         for stmt in stmts {
-            self.export(stmt, &mut exports);
+            self.export(stmt, &mut exports, &mut annots);
         }
-        exports
+        // The root block's annotations, by the span of the type each writes
+        let sites: HashMap<Span, SiteId> = (self.sites.iter().enumerate())
+            .filter(|(_, site)| site.owner.is_none() && site.role == Role::Type)
+            .map(|(index, site)| (site.ty.span(), SiteId::from_index(index)))
+            .collect();
+        let values = (exports.values())
+            .filter_map(|(_, target)| match target {
+                Target::Local(Referent::Value(value)) => Some(value.span),
+                _ => None,
+            })
+            .map(|span| {
+                let site = annots.get(&span).and_then(|ty| sites.get(ty).copied());
+                (span, site)
+            })
+            .collect();
+        (exports, values)
     }
 
-    fn export(&self, stmt: &'u Stmt, exports: &mut HashMap<&'u str, (Span, Target<'u>)>) {
+    /// Add a statement's exports. `annots` collects the span of each exported
+    /// variable's annotation, by the span of its name.
+    fn export(
+        &self,
+        stmt: &'u Stmt,
+        exports: &mut HashMap<&'u str, (Span, Target<'u>)>,
+        annots: &mut HashMap<Span, Span>,
+    ) {
         let file = self.file;
         let mut add = |span: Span, target| {
             exports.insert(file.str(span), (span, target));
         };
         let decl = |span| Target::Local(Referent::Decl(self.declared(span)));
         match stmt {
-            Stmt::NlGuard(guard) => self.export(&guard.body, exports),
+            Stmt::NlGuard(guard) => self.export(&guard.body, exports, annots),
             // Overloads are exported with their implementation, whose function they are
             Stmt::Def(def) if def.pub_span.is_some() => add(def.ident.span, decl(def.ident.span)),
             Stmt::Class(class) if class.pub_span.is_some() => {
@@ -1504,12 +1544,15 @@ impl<'u> Walk<'_, 'u> {
                 add(alias.ident.span, decl(alias.ident.span))
             }
             Stmt::Let(node) if node.pub_span.is_some() => {
-                let mut value = |ident: &Ident| {
+                let mut value = |ident: &Ident, annot: Option<&Annot>| {
                     let value = Referent::Value(UnitSpan {
                         unit: self.unit,
                         span: ident.span,
                     });
                     add(ident.span, Target::Local(value));
+                    if let Some(annot) = annot {
+                        annots.insert(ident.span, annot.ty.span());
+                    }
                 };
                 pattern_names(&node.bind, &mut value);
             }
@@ -1540,27 +1583,28 @@ impl<'u> Walk<'_, 'u> {
     }
 }
 
-/// Call `f` on each name a pattern binds, at any level
-fn pattern_names(pattern: &Pattern, f: &mut impl FnMut(&Ident)) {
+/// Call `f` on each name a pattern binds, at any level, with its annotation if it
+/// has one that types it alone
+fn pattern_names(pattern: &Pattern, f: &mut impl FnMut(&Ident, Option<&Annot>)) {
     let params = match pattern {
         Pattern::Constant { .. } => return,
         Pattern::TypeTest(test) => return pattern_names(&test.pattern, f),
-        Pattern::Ident(PatIdent { ident, .. }) => return f(ident),
+        Pattern::Ident(PatIdent { ident, ty, .. }) => return f(ident, ty.as_deref()),
         Pattern::Unpack(params) => params,
         // Every alternative binds the same names
         Pattern::Alt(alt) => return pattern_names(&alt.alts[0], f),
     };
     for param in params {
         match param {
-            PatItem::Pos { bind, .. }
-            | PatItem::Key { bind, .. }
-            | PatItem::ConstKey { bind, .. } => match bind {
-                PatBind::Ident(ident) => f(ident),
+            PatItem::Pos { bind, ty, .. }
+            | PatItem::Key { bind, ty, .. }
+            | PatItem::ConstKey { bind, ty, .. } => match bind {
+                PatBind::Ident(ident) => f(ident, ty.as_deref()),
                 PatBind::Nested { pattern, .. } => pattern_names(pattern, f),
             },
             PatItem::Rest {
                 ident: Some(ident), ..
-            } => f(ident),
+            } => f(ident, None),
             PatItem::Rest { ident: None, .. } => {}
         }
     }

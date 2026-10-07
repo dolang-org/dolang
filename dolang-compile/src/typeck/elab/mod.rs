@@ -69,6 +69,9 @@ pub(crate) struct Tables<'u> {
     /// Each unit's exports by name, with the name each is bound by. Empty for a unit
     /// that is not a module.
     pub(crate) exports: Vec<HashMap<&'u str, (Span, Target<'u>)>>,
+    /// Each exported variable, by its name, with the site of its annotation if it
+    /// has one
+    pub(crate) values: HashMap<UnitSpan, Option<SiteId>>,
     /// Every type expression written in a declaration or annotation, outermost only,
     /// by [`SiteId`]
     pub(crate) sites: Vec<Site>,

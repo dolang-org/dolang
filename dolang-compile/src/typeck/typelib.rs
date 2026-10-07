@@ -25,7 +25,7 @@ use crate::source::Span;
 mod tests;
 
 const MAGIC: [u8; 8] = *b"\xffdotypel";
-const VERSION: [u8; 3] = [0, 0, 2];
+const VERSION: [u8; 3] = [0, 0, 3];
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 struct Header {
@@ -55,6 +55,8 @@ struct Content<'a> {
     /// By name, so a module's typelib is the same however its exports were hashed
     #[serde(borrow)]
     exports: Vec<Export<'a>>,
+    /// By span, in order
+    values: Vec<Value>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -64,6 +66,15 @@ struct Export<'a> {
     span: Span,
     #[serde(borrow)]
     target: Target<'a>,
+}
+
+/// An exported variable
+#[derive(Serialize, Deserialize)]
+struct Value {
+    /// Its name's
+    #[serde(with = "wire::span")]
+    span: Span,
+    annot: Option<SiteId>,
 }
 
 /// Why a typelib could not be read
@@ -110,6 +121,10 @@ fn encode(harvest: Harvest<'_>) -> Vec<u8> {
         .map(|(name, (span, target))| Export { name, span, target })
         .collect();
     exports.sort_by_key(|export| export.name);
+    let mut values: Vec<_> = (harvest.values.into_iter())
+        .map(|(span, annot)| Value { span, annot })
+        .collect();
+    values.sort_by_key(|value| (value.span.start, value.span.end));
     let content = Content {
         module,
         path: &path,
@@ -120,6 +135,7 @@ fn encode(harvest: Harvest<'_>) -> Vec<u8> {
         sites: harvest.sites,
         pending: harvest.pending,
         exports,
+        values,
     };
     let out = postcard::to_stdvec(&HEADER).expect("a header serializes");
     postcard::to_extend(&content, out).expect("a harvest serializes")
@@ -149,6 +165,12 @@ pub(crate) fn read(bytes: &[u8]) -> Result<Harvest<'_>, Invalid> {
             return Err(Invalid::Malformed("an export is repeated"));
         }
     }
+    let mut values = HashMap::new();
+    for value in content.values {
+        if values.insert(value.span, value.annot).is_some() {
+            return Err(Invalid::Malformed("an exported variable is repeated"));
+        }
+    }
     let mut harvest = Harvest {
         info: UnitInfo {
             module: Some(content.module),
@@ -162,6 +184,7 @@ pub(crate) fn read(bytes: &[u8]) -> Result<Harvest<'_>, Invalid> {
         sites: content.sites,
         pending: content.pending,
         exports,
+        values,
     };
     validate(&mut harvest).map_err(Invalid::Malformed)?;
     Ok(harvest)
@@ -279,6 +302,24 @@ fn validate(harvest: &mut Harvest<'_>) -> Result<(), &'static str> {
                 }
             }
         }
+    }
+    // Each exported variable is listed with its annotation, a type written at the
+    // top level
+    let mut listed = 0;
+    for (_, target) in harvest.exports.values() {
+        if let Target::Local(Referent::Value(value)) = target {
+            let Some(&annot) = harvest.values.get(&value.span) else {
+                return Err("an exported variable is not listed");
+            };
+            if annot.is_some_and(|site| sites[site.index()].owner.is_some()) {
+                return Err("a site is misplaced");
+            }
+            place(annot, Role::Type)?;
+            listed += 1;
+        }
+    }
+    if listed != harvest.values.len() {
+        return Err("a listed variable is not exported");
     }
     if placed.contains(&false) {
         return Err("a site is not on the surface");

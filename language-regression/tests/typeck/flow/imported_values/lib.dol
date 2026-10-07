@@ -1,0 +1,9 @@
+pub class Box
+  pub field n @ Int = 0
+
+pub let count @ Int = 1
+pub let name @ (Str | nil) = nil
+pub let box @ Box = Box()
+pub let loose = 2
+pub let first second @ Str = ["a", "b"]
+pub let :key @ Int ...rest = {key: 1, other: 2}

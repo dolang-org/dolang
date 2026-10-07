@@ -11,7 +11,7 @@ use crate::typeck::{
     solver::Status,
     r#type::{
         Argument, Binding, BoundRef, DeclId, DeclKind, Intrinsic, Kind, SymbolId, Type, TypeId,
-        UnitId,
+        UnitId, UnitSpan,
     },
 };
 
@@ -289,8 +289,9 @@ impl Flow<'_, '_> {
         }
     }
 
-    /// The value of an imported item: a def's type or a class object. A module, a
-    /// module that isn't checked, and any other item are dynamic.
+    /// The value of an imported item: a def's type, a class object, or a variable's
+    /// annotation. A module, a module that isn't checked, an unannotated variable,
+    /// and any other item are dynamic.
     fn import(&self, module: &ModuleRef, item: Option<SymbolId>) -> TypeId {
         let unknown = self.db.unknown();
         let (ModuleRef::Unit(unit), Some(item)) = (module, item) else {
@@ -305,6 +306,7 @@ impl Flow<'_, '_> {
             };
             match target {
                 Target::Local(Referent::Decl(decl)) => return self.decl_value(*decl),
+                Target::Local(Referent::Value(value)) => return self.variable(value),
                 Target::Import { module, item } => {
                     let Some(&next) = self.modules.get(module) else {
                         return unknown;
@@ -316,6 +318,21 @@ impl Flow<'_, '_> {
             }
         }
         unknown
+    }
+
+    /// An exported variable's annotation, written at the top level, so with no
+    /// binders to stand rigids in for
+    fn variable(&self, value: &UnitSpan) -> TypeId {
+        match self.tables.values.get(value) {
+            Some(&Some(site)) => {
+                let site = &self.tables.sites[site.index()];
+                self.tables.site_types[&UnitSpan {
+                    unit: site.unit,
+                    span: site.ty.span(),
+                }]
+            }
+            _ => self.db.unknown(),
+        }
     }
 
     fn decl_value(&self, decl: DeclId) -> TypeId {

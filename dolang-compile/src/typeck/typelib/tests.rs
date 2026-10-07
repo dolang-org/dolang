@@ -6,9 +6,13 @@ use std::{
 use super::{Invalid, encode, read};
 use crate::{
     Config, ErrorKind, Mode, Unit,
+    source::Span,
     typeck::{
         self, Builder, Typelib,
-        elab::surface::{Name, StrId},
+        elab::{
+            Referent, Target,
+            surface::{Name, StrId},
+        },
     },
 };
 
@@ -37,6 +41,9 @@ pub def double x
 
 pub def first[T] items @ Array[T] :key @ Str = \"a\" *rest @ Int -> T
   items[0]
+
+pub let limit @ Int = 1
+pub let loose = 2
 ";
 
 const SCRIPT: &str = "
@@ -46,11 +53,15 @@ import lib:
   - first
   - @Pair
   - @Shape
+  - limit
+  - loose
 let b @ Box[Int] = Box 1
 let p @ Pair[Int] = (1, 2)
 let s @ Shape = nil
 double 2
 first [1]
+let l @ Str = limit
+let m @ Str = loose
 ";
 
 fn compile<'a>(source: &'a str, mode: Mode<'a>) -> Unit<'a> {
@@ -131,12 +142,13 @@ fn duplicate_module() {
 #[test]
 fn describes_module() {
     let source = "
-import json time
+import json time uuid
 import geometry:
   - @Point
 pub @let When = time.Instant
 pub def at p @ Point -> When
-  ...
+  let _id @ uuid.Uuid = nil
+  nil
 pub let unused @ json.Value = nil
 ";
     let bytes = typeck::typelib(&compile(source, Mode::Module { name: "lib" })).unwrap();
@@ -144,7 +156,7 @@ pub let unused @ json.Value = nil
     assert_eq!(typelib.module(), "lib");
     assert_eq!(typelib.path(), Path::new("lib.dol"));
     // A name written only in a body is not on the surface
-    assert_eq!(typelib.imports(), ["geometry", "time"]);
+    assert_eq!(typelib.imports(), ["geometry", "json", "time"]);
 }
 
 #[test]
@@ -192,6 +204,36 @@ fn out_of_range() {
     assert!(matches!(
         read(&encode(harvest)),
         Err(Invalid::Malformed("an ID is out of range"))
+    ));
+}
+
+#[test]
+fn exported_variables() {
+    let bytes = typelib();
+    let harvest = read(&bytes).unwrap();
+    let annotated = |name: &str| {
+        let (_, target) = &harvest.exports[name];
+        let Target::Local(Referent::Value(value)) = target else {
+            panic!("`{name}` is exported as a variable");
+        };
+        harvest.values[&value.span].is_some()
+    };
+    assert!(annotated("limit"));
+    assert!(!annotated("loose"));
+    assert_eq!(harvest.values.len(), 2);
+
+    let mut unlisted = read(&bytes).unwrap();
+    unlisted.values.clear();
+    assert!(matches!(
+        read(&encode(unlisted)),
+        Err(Invalid::Malformed("an exported variable is not listed"))
+    ));
+
+    let mut stray = read(&bytes).unwrap();
+    stray.values.insert(Span::default(), None);
+    assert!(matches!(
+        read(&encode(stray)),
+        Err(Invalid::Malformed("a listed variable is not exported"))
     ));
 }
 
