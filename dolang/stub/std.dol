@@ -2135,9 +2135,6 @@ pub class Num
   pub def (neg)[N @ Num] self @ N -> N
     ...
 
-  pub def (eq) self other @ Value -> Bool
-    ...
-
   pub def (lt) self other @ Num -> Bool
     ...
 
@@ -4875,8 +4872,28 @@ pub class ValueError: RuntimeError
 #
 # `Value` is the abstract supertype of all values.
 #
-# `Value` is not constructible directly.
+# `Value` is not constructible directly. Every value has its members, and a
+# class declares one only to replace it.
 pub class Value
+  # Returns the hash code, which is equal for equal values.
+  pub def (hash) self -> Int
+    ...
+
+  # Compares with another value of any type.
+  pub def (eq) self other @ Value -> Bool
+    ...
+
+  # Returns the string conversion that interpolation uses.
+  pub def (str) self -> Str
+    ...
+
+  # Returns the debug representation.
+  pub def (dbg) self -> Str
+    ...
+
+  # Returns the representation as written in source.
+  pub def (verbatim) self -> Str
+    ...
 
 #
 # Raised on integer division or modulo by zero.

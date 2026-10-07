@@ -38,11 +38,9 @@ pub class Sym
 pub class Nil
 #         ^~~: designated intrinsic Nil
 pub class Iter[T]
-  #       ^~~~: designated intrinsic Iter
   pub def next self -> T
     ...
 pub class Sink[T]
-  #       ^~~~: designated intrinsic Sink
   pub def put self value @ T
     ...
 pub class Type[T]

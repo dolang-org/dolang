@@ -887,32 +887,28 @@ impl Solver<'_> {
                 Step::Return,
             );
         }
-        let channel = |view: TypeView, ty: Option<TypeId>, intrinsic| match ty {
+        // An omitted channel is gradual
+        let channel = |view: TypeView, ty: Option<TypeId>| match ty {
             Some(ty) => view.child(ty),
-            None => self.channel_bound(intrinsic),
+            None => self.closed(self.db.unknown()),
         };
         if a.input.is_some() || b.input.is_some() {
             self.derive(
                 obligation,
-                channel(bv, b.input, Intrinsic::Iter),
-                channel(av, a.input, Intrinsic::Iter),
+                channel(bv, b.input),
+                channel(av, a.input),
                 Step::Input,
             );
         }
         if a.output.is_some() || b.output.is_some() {
             self.derive(
                 obligation,
-                channel(bv, b.output, Intrinsic::Sink),
-                channel(av, a.output, Intrinsic::Sink),
+                channel(bv, b.output),
+                channel(av, a.output),
                 Step::Output,
             );
         }
         Ok(())
-    }
-
-    /// [`Database::channel_bound`] as a term
-    fn channel_bound(&self, intrinsic: Intrinsic) -> Term {
-        self.closed(self.db.channel_bound(intrinsic))
     }
 
     /// Relate a quantified function to a function type through fresh variables

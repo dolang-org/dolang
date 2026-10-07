@@ -112,10 +112,14 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
     }
 
     for (&decl, designated) in &tables.designated {
-        if let Designated::Intrinsic(intrinsic) = designated {
-            let ty = db.intern(Type::Decl(decl));
-            db.set_intrinsic(*intrinsic, ty);
-        }
+        let intrinsic = match *designated {
+            Designated::Intrinsic(intrinsic) => intrinsic,
+            // Its name is top, but its members are every value's
+            Designated::Value => Intrinsic::Value,
+            _ => continue,
+        };
+        let ty = db.intern(Type::Decl(decl));
+        db.set_intrinsic(intrinsic, ty);
     }
 
     let mut populate = Populate {
@@ -1262,6 +1266,10 @@ impl<'t, 'u> Populate<'t, 'u> {
                     .expect("a method is in a class");
                 if group.broken || self.broken.contains(&(class, 0)) {
                     return self.db.unknown();
+                }
+                // Every value is a `Value`'s receiver
+                if self.tables.designated.get(&class) == Some(&Designated::Value) {
+                    return self.db.top();
                 }
                 let count = self.groups[&(class, 0)].len();
                 let base = self.db.intern(Type::Decl(class));

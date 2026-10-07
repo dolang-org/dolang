@@ -51,7 +51,7 @@ fn ambient_channels_are_related_by_variance() {
         &check(&db, a, c),
         Contradiction::DistinctLiterals
     ));
-    // Without `Iter`, an omitted channel is dynamic
+    // An omitted channel is gradual
     assert_eq!(check(&db, a, d).status, Status::Proven);
 }
 
@@ -384,19 +384,17 @@ fn parameter_lists_are_related_contravariantly() {
 }
 
 #[test]
-fn channels_use_their_default_bounds_when_omitted() {
+fn omitted_channels_are_gradual() {
     let mut db = Database::new();
     let num = nominal(&mut db, "Num", vec![], vec![]);
     let int = nominal(&mut db, "Int", vec![], vec![num]);
     let iter = nominal(&mut db, "Iter", vec![binder(Variance::Covariant)], vec![]);
-    db.set_intrinsic(Intrinsic::Iter, iter);
     let sink = nominal(
         &mut db,
         "Sink",
         vec![binder(Variance::Contravariant)],
         vec![],
     );
-    db.set_intrinsic(Intrinsic::Sink, sink);
     let [iter_num, iter_int] = [num, int].map(|t| apply(&db, iter, &[t]));
     let [sink_num, sink_int] = [num, int].map(|t| apply(&db, sink, &[t]));
     let f = |db: &Database, input, output| {
@@ -420,15 +418,12 @@ fn channels_use_their_default_bounds_when_omitted() {
         (writes_ints, writes_nums),
         (plain, reads_ints),
         (reads_ints, plain),
+        (reads_int, plain),
         (plain, plain),
     ] {
         assert_eq!(check(&db, x, y).status, Status::Proven, "{x:?} <: {y:?}");
     }
-    for (x, y) in [
-        (reads_ints, reads_nums),
-        (writes_nums, writes_ints),
-        (reads_int, plain),
-    ] {
+    for (x, y) in [(reads_ints, reads_nums), (writes_nums, writes_ints)] {
         assert_eq!(
             check(&db, x, y).status,
             Status::Contradicted,

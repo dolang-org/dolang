@@ -125,10 +125,6 @@ pub class DateTime
   pub def (lt) self other @ DateTime -> Bool
     ...
 
-  # Hashes the value.
-  pub def (hash) self -> Int
-    ...
-
   # Returns the [`Duration`](time.Duration) from `other` to this instant.
   #
   # ## Example
@@ -275,10 +271,6 @@ pub class Date
   pub def (lt) self other @ Date -> Bool
     ...
 
-  # Hashes the value.
-  pub def (hash) self -> Int
-    ...
-
   # Returns the [`Duration`](time.Duration) between the two dates' midnights.
   #
   # The result is always a whole number of days.
@@ -391,10 +383,6 @@ pub class Month
   pub def (lt) self other @ Month -> Bool
     ...
 
-  # Hashes the value.
-  pub def (hash) self -> Int
-    ...
-
   # Returns the uppercase English name, such as `JANUARY`.
   pub def (str) self -> Str
     ...
@@ -445,10 +433,6 @@ pub class Weekday
   pub def (eq) self other @ Value -> Bool
     ...
 
-  # Hashes the value.
-  pub def (hash) self -> Int
-    ...
-
   # Returns the uppercase English name, such as `MONDAY`.
   pub def (str) self -> Str
     ...
@@ -479,10 +463,6 @@ pub class Duration
 
   # Orders two durations.
   pub def (lt) self other @ Duration -> Bool
-    ...
-
-  # Hashes the value.
-  pub def (hash) self -> Int
     ...
 
   # Returns a compact seconds form, such as `0s`, `2.5s` or `-2.5s`.

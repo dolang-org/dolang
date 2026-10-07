@@ -175,8 +175,9 @@ impl Solver<'_> {
         Ok(lineage)
     }
 
-    /// Where a receiver's members are looked up, walking a rigid through its bound
-    /// and a literal or function to its intrinsic class
+    /// Where a receiver's members are looked up, walking a rigid or skolem through
+    /// its bound, top or an unbounded one to `Value`, and a literal or function to
+    /// its intrinsic class
     fn receiver(&self, mut term: Term) -> Result<Receiver, Issue> {
         for depth in 0.. {
             self.depth(depth)?;
@@ -208,13 +209,14 @@ impl Solver<'_> {
                         }
                     };
                 }
-                Head::Skolem(id) => match self.skolems[id.0].bound.get() {
-                    Some(bound) => {
-                        term = bound;
-                        continue;
-                    }
-                    None => return Ok(Receiver::Missing),
-                },
+                Head::Skolem(id) => {
+                    term = match self.skolems[id.0].bound.get() {
+                        Some(bound) => bound,
+                        // Unbounded, so below top
+                        None => self.closed(self.db.top()),
+                    };
+                    continue;
+                }
                 Head::Structural(view) => view,
             };
             if let Some(class) = self.generic_object(view.ty) {
@@ -227,19 +229,22 @@ impl Solver<'_> {
             }
             let intrinsic = match self.db.ty(ty) {
                 Type::Unknown(_) => return Ok(Receiver::Dynamic),
-                // `Value` declares nothing
-                Type::Top => return Ok(Receiver::Missing),
+                // `Value`'s members are every value's, and without std there are none
+                Type::Top => match self.db.intrinsic(Intrinsic::Value) {
+                    Some(value) => {
+                        term = self.closed(value);
+                        continue;
+                    }
+                    None => return Ok(Receiver::Missing),
+                },
                 // Bottom has no values, so any member is vacuously fine
                 Type::Union(members) if members.is_empty() => return Ok(Receiver::Dynamic),
                 Type::Rigid { .. } => {
                     self.rigid(view.ty)?;
-                    match self.rigid_bound(view.ty) {
-                        Some(bound) => {
-                            term = self.closed(bound);
-                            continue;
-                        }
-                        None => return Ok(Receiver::Missing),
-                    }
+                    // An unbounded rigid is below top
+                    let bound = self.rigid_bound(view.ty).unwrap_or(self.db.top());
+                    term = self.closed(bound);
+                    continue;
                 }
                 // `Func` applied to the function's parts
                 Type::Function(_) => {
@@ -494,6 +499,7 @@ impl Solver<'_> {
         runtime: bool,
         admits: impl Fn(DeclId, &Member) -> bool,
     ) -> Result<Lookup, Issue> {
+        let class = nominal.declaration;
         let found = self.mro(nominal, runtime, &mut HashSet::new(), 0, &mut |visited| {
             Ok(match visited {
                 Visited::Nominal(nominal) => self
@@ -503,7 +509,26 @@ impl Solver<'_> {
                 Visited::Structural => Some(Lookup::Dynamic),
             })
         })?;
-        Ok(found.unwrap_or(Lookup::Missing))
+        if let Some(found) = found {
+            return Ok(found);
+        }
+        // Every class inherits `Value`'s members last, as a lookup's tail rather
+        // than a supertype, so ancestry and subtyping never see it
+        let Some(value) = self.db.intrinsic(Intrinsic::Value) else {
+            return Ok(Lookup::Missing);
+        };
+        let Head::Nominal(value) = self.head(self.closed(value))? else {
+            unreachable!("`Value` is a class")
+        };
+        if value.declaration == class {
+            return Ok(Lookup::Missing);
+        }
+        Ok(self
+            .members(&value)
+            .find(|&(found, member)| found == key && admits(value.declaration, member))
+            .map_or(Lookup::Missing, |(_, member)| {
+                Lookup::Found(self.found(&value, member))
+            }))
     }
 
     fn members(&self, nominal: &Nominal) -> impl Iterator<Item = (MemberKey, &Member)> {
