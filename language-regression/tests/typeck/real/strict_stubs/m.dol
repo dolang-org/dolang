@@ -1,7 +1,7 @@
 # dolang: strict
 # Strict extension stubs, used from a strict unit.
 
-import @regex @sys.linux security.unix uuid @url time @patch @xml load
+import @regex @sys.linux security.unix uuid @url time @patch @xml load zip tar sqlite
 
 # `Regex.replace` runs a callback with its caller's channels
 pub def replaces re @ regex.Regex >Sink[Str] -> Str
@@ -53,3 +53,40 @@ pub def scoped node @ xml.Node >Sink[Str] -> nil
 # Loaded programs may write anything
 pub def loads code @ Bin <Iter[Value] >Sink[Value] -> Value
   load.run $code
+
+# Archive and database scopes run with their caller's channels
+pub def archive_scopes >Sink[Str] -> Int
+  zip.open "a.zip" do |archive|
+    put "zip"
+    archive.open "f" do |_file| put "file"
+  tar.write "a.tar" do |w|
+    w.entry "f" size: 0 do |_entry| put "entry"
+  sqlite.open ":memory:" do |conn|
+    conn.transaction do |_tx| put "tx"
+    let n = conn.execute t"SELECT 1"
+    #   ^: flow std.Int
+    n
+
+# Without a block, `open` returns the handle
+pub def handles() -> nil
+  let archive = zip.open "a.zip"
+  #   ^~~~~~~: flow zip.Archive
+  let conn = sqlite.open ":memory:"
+  #   ^~~~: flow sqlite.Connection
+  archive.close()
+  conn.close()
+  nil
+
+# Entry metadata getters
+pub def entries z @ zip.Entry t @ tar.Entry r @ tar.Reader -> nil
+  let _mode = z.mode
+  #   ^~~~~: flow nil | std.Int
+  let _modified = z.last_modified
+  #   ^~~~~~~~~: flow nil | time.DateTime
+  let _path = t.path
+  #   ^~~~~: flow fs.unix.Path
+  let _owner = t.owner_name
+  #   ^~~~~~: flow nil | std.Str
+  let _compression = r.compression
+  #   ^~~~~~~~~~~~: flow :GZIP: | :NONE: | :ZSTD:
+  nil

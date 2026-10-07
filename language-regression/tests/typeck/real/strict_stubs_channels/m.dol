@@ -1,7 +1,7 @@
 # dolang: strict
 # Strict extension stubs reject ambient I/O their caller's channels don't allow.
 
-import time load
+import time load @sqlite
 
 # A scoped block writes to its caller's output, which a def without `>` lacks
 pub def scoped_silent() -> nil
@@ -22,3 +22,14 @@ pub def loads_silent code @ Bin -> Value
 #    |
 # LL |   load.run $code
 #    |   ^^^^^^^^^^^^^^
+
+# A transaction runs its block with the caller's channels
+pub def transaction_silent conn @ sqlite.Connection -> nil
+  conn.transaction do |_tx|
+    put "x"
+  # error: this call does not fit `forall (#0.0, >std.Sink[#0.0]) -> nil`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |     put "x"
+  #    |     ^^^^^^^
+  nil

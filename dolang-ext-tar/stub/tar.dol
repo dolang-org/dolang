@@ -1,10 +1,37 @@
+# dolang: strict
 # Streams TAR archives with optional gzip or zstd compression.
 
 import
   fs:
     - @Path
+  fs.unix:
+    - @Path: UnixPath
   time:
     - @DateTime
+
+# The type of a TAR entry.
+#
+# | Value            | Description                  |
+# | ---------------- | ---------------------------- |
+# | `:FILE:`         | Regular file                 |
+# | `:DIR:`          | Directory                    |
+# | `:HARDLINK:`     | Hard link                    |
+# | `:SYMLINK:`      | Symbolic link                |
+# | `:FIFO:`         | Named pipe (FIFO)            |
+# | `:CHAR_DEVICE:`  | Character device             |
+# | `:BLOCK_DEVICE:` | Block device                 |
+# | `:CONTIGUOUS:`   | Contiguous file              |
+# | `:UNKNOWN:`      | Any other type               |
+pub @let EntryType = $
+  | :FILE:
+  | :DIR:
+  | :HARDLINK:
+  | :SYMLINK:
+  | :FIFO:
+  | :CHAR_DEVICE:
+  | :BLOCK_DEVICE:
+  | :CONTIGUOUS:
+  | :UNKNOWN:
 
 # Metadata and streaming content for the current TAR entry.
 #
@@ -21,64 +48,63 @@ import
 pub class Entry: Iter[Bin]
   # Device major number, or `nil` when absent.
   #[getter]
-  pub def device_major self
+  pub def device_major self -> (Int | nil)
     ...
 
   # Device minor number, or `nil` when absent.
   #[getter]
-  pub def device_minor self
+  pub def device_minor self -> (Int | nil)
     ...
 
   # Numeric group ID.
   #[getter]
-  pub def gid self
+  pub def gid self -> Int
     ...
 
   # Group name, or `nil` when absent.
   #[getter]
-  pub def group_name self
+  pub def group_name self -> (Str | nil)
     ...
 
   # Link target as an [`fs.unix.Path`](fs.unix.Path), or `nil` when
   # absent.
   #[getter]
-  pub def link_name self
+  pub def link_name self -> (UnixPath | nil)
     ...
 
   # Unix permission bits.
   #[getter]
-  pub def mode self
+  pub def mode self -> Int
     ...
 
   # Modification time as [`DateTime`](time.DateTime).
   #[getter]
-  pub def mtime self
+  pub def mtime self -> DateTime
     ...
 
   # Owner name, or `nil` when absent.
   #[getter]
-  pub def owner_name self
+  pub def owner_name self -> (Str | nil)
     ...
 
   # Entry path as an [`fs.unix.Path`](fs.unix.Path).
   #[getter]
-  pub def path self
+  pub def path self -> UnixPath
     ...
 
   # Declared content size in bytes.
   #[getter]
-  pub def size self
+  pub def size self -> Int
     ...
 
-  # Entry type as `:FILE:`, `:DIR:`, `:HARDLINK:`, `:SYMLINK:`, `:FIFO:`,
-  # `:CHAR_DEVICE:`, `:BLOCK_DEVICE:`, `:CONTIGUOUS:`, or `:UNKNOWN:`.
+  # Entry type.
   #[getter]
-  pub def type self
+  pub def type self -> EntryType
     ...
 
   # Numeric owner ID.
   #[getter]
-  pub def uid self
+  pub def uid self -> Int
     ...
 
   # Reads up to `size` bytes from the current content position.
@@ -143,7 +169,7 @@ pub class EntryWriter: Sink[Str | Bin]
 pub class Reader: Iter[Entry]
   # Detected compression as `:NONE:`, `:GZIP:`, or `:ZSTD:`.
   #[getter]
-  pub def compression self
+  pub def compression self -> (:NONE: | :GZIP: | :ZSTD:)
     ...
 
   # Yields the next [`Entry`](tar.Entry), ending iteration at the end of the
@@ -155,7 +181,7 @@ pub class Reader: Iter[Entry]
 pub class Writer
   # Selected compression as `:NONE:`, `:GZIP:`, or `:ZSTD:`.
   #[getter]
-  pub def compression self
+  pub def compression self -> (:NONE: | :GZIP: | :ZSTD:)
     ...
 
   # Creates a directory entry.
@@ -212,8 +238,8 @@ pub class Writer
     # Entry
     # path.
     path @ (Str | Path)
-    # Exact content size. Required.
-    :size @ Int = nil
+    # Exact content size.
+    :size @ Int
     # Permission bits. Defaults to `0o644`.
     :mode @ Int = nil
     # Owner ID. Defaults to `0`.
