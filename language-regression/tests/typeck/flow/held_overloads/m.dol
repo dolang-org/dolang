@@ -1,0 +1,28 @@
+# An array literal held back for an overloaded callee keeps its literal items
+# when the one overload a fresh array can be is what chooses, as it does against
+# an annotation or a plain parameter
+
+@def g x@Int -> Int
+@def g xs@Iterable[(:A: | :B:)] -> Str
+def g _x @ (Int | Iterable[(:A: | :B:)]) -> (Int | Str)
+  ...
+
+def h _xs@Iterable[(:A: | :B:)] -> nil
+  nil
+
+pub def arrays()
+  let _ @ Array[(:A: | :B:)] = [:A:]
+  h [:A:]
+  let _ = g (:A:,)
+  #   ^: flow std.Str
+  let _ = g [:A:]
+  #   ^: flow std.Str
+  g [:C:]
+# error: no overload of `m.g` accepts these arguments
+#   --> m.dol:LL:LL
+#    |
+# LL |   g [:C:]
+#    |   ^^^^^^^
+#    |
+#    = note: `(std.Int) -> std.Int`: expected `std.Int`, found `std.Array[std.Sym]`
+#    = note: `(std.Iterable[:A: | :B:]) -> std.Str`: expected `std.Iterable[:A: | :B:]`, found `std.Array[std.Sym]`

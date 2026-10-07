@@ -1475,6 +1475,63 @@ impl<'a> Flow<'a, '_> {
                 expectations[index] = expected;
             }
         }
+        // Likewise for an array an overloaded callee takes: its undecided choice
+        // leaves the array's parameter unsolved, so its literal items would
+        // decay. Each overload the call doesn't contradict gives the parameter it
+        // would, and the array takes the one a fresh array can be, if only one is.
+        let overloads = match self.db.ty(callee) {
+            Type::Overloaded { overloads, .. } => overloads.to_vec(),
+            &Type::Decl(decl) if self.overloaded(callee) => (self.db.overloads(decl).iter())
+                .map(|&overload| self.db.declaration(overload).ty)
+                .collect(),
+            _ => Vec::new(),
+        };
+        let array = self.designated(Designated::Array);
+        let arrays: Vec<usize> = (held.iter())
+            .map(|&(index, _)| index)
+            .filter(|&index| {
+                expectations[index].is_none()
+                    && matches!(
+                        values.held[index].expr.kind,
+                        ExprKind::Collection {
+                            kind: Collection::Array,
+                            ..
+                        }
+                    )
+            })
+            .collect();
+        if let Some(array) = array
+            && !arrays.is_empty()
+        {
+            let mut chosen: Vec<Vec<TypeId>> = vec![Vec::new(); arrays.len()];
+            for &overload in &overloads {
+                let (mut solver, held, contradicted) =
+                    self.presolve(overload, values, input, output, None, span);
+                if contradicted {
+                    continue;
+                }
+                default_all(&mut solver, self.db, true, None);
+                for (&index, chosen) in arrays.iter().zip(&mut chosen) {
+                    let term = held
+                        .iter()
+                        .find(|&&(held, _)| held == index)
+                        .map(|&(_, term)| term);
+                    let expected = term
+                        .and_then(|term| expectation(&solver, term))
+                        .filter(|&ty| self.fresh_expected(array, Kind::Type, ty).is_some());
+                    if let Some(ty) = expected
+                        && !chosen.contains(&ty)
+                    {
+                        chosen.push(ty);
+                    }
+                }
+            }
+            for (index, chosen) in arrays.into_iter().zip(chosen) {
+                if let [ty] = chosen[..] {
+                    expectations[index] = Some(ty);
+                }
+            }
+        }
         expectations
     }
 
