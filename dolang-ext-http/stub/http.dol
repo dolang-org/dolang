@@ -1,3 +1,4 @@
+# dolang: strict
 import
   json:
     - @Data: JsonData
@@ -170,15 +171,6 @@ pub class Event
 #
 # ```
 # get https://api.example.com/users do |response|
-#   echo $response.status
-# ```
-#
-# A response can itself be called with a block, for the same effect on one the
-# caller already holds:
-#
-# ```
-# let response = get https://api.example.com/users
-# response do
 #   echo $response.status
 # ```
 pub class Response
@@ -511,7 +503,7 @@ pub class Client: Func
   do -> R
 
   #[class]
-  pub def (call) self ...options
+  pub def (call) self ...options @ Value -> Value
     ...
 
   # Makes a request without a body.
@@ -569,7 +561,7 @@ pub class Client: Func
     block @ (Response -> R)
   do -> R
 
-  pub def get self url ...options
+  pub def get self url @ (Str | Url) ...options @ Value -> Value
     ...
 
   # Makes a request with a body.
@@ -598,7 +590,7 @@ pub class Client: Func
     url @ (Str | Url)
     # Request body -- see
     # [`body`](http.Client.body).
-    :body @ (Str | Bin) = nil
+    :body @ (Str | Bin | Iterable[Value]) = nil
     # Request body, JSON-serialized -- see [`json`](http.Client.json).
     :json @ JsonEncodable = nil
     # Request body streamed with a newline after each element --
@@ -627,7 +619,7 @@ pub class Client: Func
     url @ (Str | Url)
     # Request body -- see
     # [`body`](http.Client.body).
-    :body @ (Str | Bin) = nil
+    :body @ (Str | Bin | Iterable[Value]) = nil
     # Request body, JSON-serialized -- see [`json`](http.Client.json).
     :json @ JsonEncodable = nil
     # Request body streamed with a newline after each element --
@@ -650,7 +642,7 @@ pub class Client: Func
     block @ (Response -> R)
   do -> R
 
-  pub def post self url ...options
+  pub def post self url @ (Str | Url) ...options @ Value -> Value
     ...
 
   # Closes the client, releasing its connection pool.
@@ -700,7 +692,7 @@ do -> Response
   block @ (Response -> R)
 do -> R
 
-pub def get url ...options
+pub def get url @ (Str | Url) ...options @ Value -> Value
   ...
 
 # Makes a `POST` request through a fresh stateless client.
@@ -719,7 +711,7 @@ pub def get url ...options
   # URL to request.
   url @ (Str | Url)
   # Request body.
-  :body @ (Str | Bin) = nil
+  :body @ (Str | Bin | Iterable[Value]) = nil
   # Request body, JSON-serialized.
   :json @ JsonEncodable = nil
   # Request body streamed with a newline after each element.
@@ -741,7 +733,7 @@ do -> Response
   # URL to request.
   url @ (Str | Url)
   # Request body.
-  :body @ (Str | Bin) = nil
+  :body @ (Str | Bin | Iterable[Value]) = nil
   # Request body, JSON-serialized.
   :json @ JsonEncodable = nil
   # Request body streamed with a newline after each element.
@@ -759,5 +751,5 @@ do -> Response
   block @ (Response -> R)
 do -> R
 
-pub def post url ...options
+pub def post url @ (Str | Url) ...options @ Value -> Value
   ...

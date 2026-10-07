@@ -1,3 +1,4 @@
+# dolang: strict
 # Terminal progress bars and spinners.
 #
 # Progress state is implicit: `with` activates a progress context for the
@@ -22,33 +23,32 @@ import std:
 # progress bar when `total` is set and a spinner when it is not; setting
 # `total` switches between the two modes.
 pub class Indicator
-  # The prefix icon, as [`Str`](std.Str).
+  # The prefix icon.
   #
   # Read-only — see [`update`](progress.Indicator.update).
   #[getter]
-  pub def icon self
+  pub def icon self -> Str
     ...
 
-  # The indicator message text, as [`Str`](std.Str).
+  # The indicator message text.
   #
   # Read-only — see [`update`](progress.Indicator.update).
   #[getter]
-  pub def message self
+  pub def message self -> Str
     ...
 
-  # The current position, as [`Int`](std.Int).
+  # The current position.
   #
   # Read-only — see [`update`](progress.Indicator.update).
   #[getter]
-  pub def position self
+  pub def position self -> Int
     ...
 
-  # The total value for bar mode, as [`Int`](std.Int), or `nil` in
-  # spinner mode.
+  # The total value for bar mode, or `nil` in spinner mode.
   #
   # Read-only — see [`update`](progress.Indicator.update).
   #[getter]
-  pub def total self
+  pub def total self -> (Int | nil)
     ...
 
   # Adjusts the position by `n`.
@@ -96,7 +96,7 @@ pub class Indicator
     # New message text.
     :message @ Str = nil
     # New total. `nil` switches to spinner mode.
-    :total @ Int = nil
+    :total @ (Int | nil) = nil
     # Absolute position. Exclusive with `delta`.
     :position @ Int = nil
     # Relative adjustment, positive or negative.

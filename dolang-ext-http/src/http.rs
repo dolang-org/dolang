@@ -1101,23 +1101,6 @@ impl<'v> Object<'v> for Response {
     type Type = ();
     type TypeAnnex = ();
 
-    async fn call<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        mut args: Args<'v, 'a>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        let thunk = match args.next() {
-            Some(Arg::Pos(slot)) => slot,
-            Some(Arg::Key(key, _)) => return Err(Error::unexpected_key(strand, key)),
-            None => return Err(Error::missing_positional(strand, 0)),
-        };
-        let ([], []) = unpack!(strand, args, 0, 0)?;
-        let res = call!(strand, thunk, out).await;
-        drop(this.borrow_mut(strand)?.inner.take());
-        res
-    }
-
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         #[cfg(feature = "json")]
         let mut builder = builder;
