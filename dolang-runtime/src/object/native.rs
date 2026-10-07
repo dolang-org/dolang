@@ -1512,9 +1512,6 @@ async fn default_object_unpack<'v, 'a, 's, T: Object<'v>>(
     strand: &'a mut Strand<'v, 's>,
     unpack: Unpack<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    if Value::from_input(strand, this).is_instance_of(strand, TypeObject::Iter) {
-        return Err(Error::not_supported(strand));
-    }
     let sig = unpack.inner;
     let mut out = unpack.slots;
     let pos_count = sig.required + sig.optional.len();
@@ -1828,27 +1825,10 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             )
             .await
         } else {
-            match method.tag() {
-                sym::GET_METHOD => {
-                    let ([field], []) = unpack!(strand, args, 1, 0)?;
-                    let field = field
-                        .as_sym(strand)
-                        .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
-                    Self::op_get(this, strand, field, out)
-                }
-                sym::SET_METHOD => {
-                    let ([field, value], []) = unpack!(strand, args, 2, 0)?;
-                    let field = field
-                        .as_sym(strand)
-                        .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
-                    Self::op_set(this, strand, field, value)
-                }
-                _ if is_special_mcall(method.tag()) => {
-                    instance_mcall_fallback(strand, &this, method, args, out)
-                        .await
-                        .expect("supported special method")
-                }
-                _ => T::method(Instance::from_recv(&this), strand, method, args, out).await,
+            if is_special_mcall(method.tag()) {
+                instance_mcall_fallback(strand, &this, method, args, out).await
+            } else {
+                T::method(Instance::from_recv(&this), strand, method, args, out).await
             }
         }
     }
@@ -2961,6 +2941,8 @@ impl<'v, 'a> TypeBuilderInner<'v, 'a> {
         inst_vtbl_base: protocol::Vtbl<'v>,
         type_vtbl_base: protocol::Vtbl<'v>,
     ) -> FinishResult<'v, 'a> {
+        // Universal defaults come after declared supertypes and local handlers.
+        self.supertype(TypeObject::Value);
         // Synthesize delegated entries from abstract supertypes.
         for (supertype_idx, supertype) in self.supertypes.iter().enumerate() {
             let inspect = supertype
@@ -2998,14 +2980,11 @@ impl<'v, 'a> TypeBuilderInner<'v, 'a> {
         let entries = merge_entries(self.entries);
         let type_entries = merge_entries(self.type_entries);
 
+        // `Value` supplies the members every value has, through `entries`.
         let mut members = vec![
             Member::method(Sym::well_known(sym::INIT_METHOD)),
-            Member::method(Sym::well_known(sym::STR_METHOD)),
-            Member::method(Sym::well_known(sym::DBG_METHOD)),
             Member::method(Sym::well_known(sym::FMT_METHOD)),
             Member::method(Sym::well_known(sym::BOOL_METHOD)),
-            Member::method(Sym::well_known(sym::HASH_METHOD)),
-            Member::method(Sym::well_known(sym::EQ_METHOD)),
             Member::method(Sym::well_known(sym::LT_METHOD)),
             Member::method(Sym::well_known(sym::NEG_METHOD)),
             Member::method(Sym::well_known(sym::BNOT_METHOD)),
@@ -3686,18 +3665,6 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
                 },
             )
             .await
-        } else if method.tag() == sym::GET_METHOD {
-            let ([field], []) = unpack!(strand, args, 1, 0)?;
-            let field = field
-                .as_sym(strand)
-                .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
-            Self::op_get(this, strand, field, out)
-        } else if method.tag() == sym::SET_METHOD {
-            let ([field, value], []) = unpack!(strand, args, 2, 0)?;
-            let field = field
-                .as_sym(strand)
-                .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
-            Self::op_set(this, strand, field, value)
         } else if let Some((sym, entry)) = this.inst_vtbl().entry_with_sym(method) {
             let name = sym.as_str(strand);
             Strand::async_for_native_frame(
@@ -3725,6 +3692,16 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
                             .cast();
                         unsafe { handler.call(inst, None, strand, trailing, out).await }
                     }
+                    Entry::Delegate(idx, MemberKind::Method) => {
+                        let ([instance], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
+                        if !instance.is_instance_of(strand, this.singleton(strand.vm())) {
+                            return Err(Error::type_error(strand, "invalid native object type"));
+                        }
+                        let supertype = &this.annex().supertypes[*idx];
+                        Delegated::new(supertype, &instance)
+                            .op_mcall(strand, method, trailing, out)
+                            .await
+                    }
                     _ => Err(Error::field(strand, method)),
                 },
             )
@@ -3733,31 +3710,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
             // Fall through to type_mcall_fallback for protocol/special
             // methods (str, dbg, bool, hash, arithmetic, comparison, etc.).
             // It will error for unsupported operations.
-            if matches!(
-                method.tag(),
-                sym::STR_METHOD
-                    | sym::DBG_METHOD
-                    | sym::FMT_METHOD
-                    | sym::BOOL_METHOD
-                    | sym::HASH_METHOD
-                    | sym::EQ_METHOD
-                    | sym::LT_METHOD
-                    | sym::NEG_METHOD
-                    | sym::BNOT_METHOD
-                    | sym::ADD_METHOD
-                    | sym::SUB_METHOD
-                    | sym::RSUB_METHOD
-                    | sym::MUL_METHOD
-                    | sym::DIV_METHOD
-                    | sym::RDIV_METHOD
-                    | sym::EDIV_METHOD
-                    | sym::REDIV_METHOD
-                    | sym::MOD_METHOD
-                    | sym::RMOD_METHOD
-                    | sym::BAND_METHOD
-                    | sym::BOR_METHOD
-                    | sym::BXOR_METHOD
-            ) {
+            if is_special_mcall(method.tag()) {
                 let singleton = this.singleton(strand.vm());
                 type_mcall_fallback(strand, singleton, method, args, out).await
             } else {
@@ -3772,14 +3725,6 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
         field: Sym<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        match field.tag() {
-            sym::GET_METHOD | sym::SET_METHOD => {
-                BoundMethod::create(strand, &this, field, out);
-                return Ok(());
-            }
-            _ => (),
-        }
-
         // Check type-level entries first.
         if let Some(entry) = this.entry(field) {
             return match entry {
@@ -3813,32 +3758,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
             };
         }
         // Special/protocol methods are always callable.
-        if matches!(
-            field.tag(),
-            sym::INIT_METHOD
-                | sym::STR_METHOD
-                | sym::DBG_METHOD
-                | sym::FMT_METHOD
-                | sym::BOOL_METHOD
-                | sym::HASH_METHOD
-                | sym::EQ_METHOD
-                | sym::LT_METHOD
-                | sym::NEG_METHOD
-                | sym::BNOT_METHOD
-                | sym::ADD_METHOD
-                | sym::SUB_METHOD
-                | sym::RSUB_METHOD
-                | sym::MUL_METHOD
-                | sym::DIV_METHOD
-                | sym::RDIV_METHOD
-                | sym::EDIV_METHOD
-                | sym::REDIV_METHOD
-                | sym::MOD_METHOD
-                | sym::RMOD_METHOD
-                | sym::BAND_METHOD
-                | sym::BOR_METHOD
-                | sym::BXOR_METHOD
-        ) {
+        if field.tag() == sym::INIT_METHOD || is_special_mcall(field.tag()) {
             BoundMethod::create(strand, &this, field, out);
             Ok(())
         } else {
@@ -4068,8 +3988,9 @@ mod tests {
     use dolang_bytecode::Variadic;
 
     use crate::{
+        call,
         error::ErrorKind,
-        sig, sym,
+        method, sig, sym,
         test_support::{args_from_slots, with_builder},
         value::TypeObject,
         vm::{Builder, Stateful},
@@ -5247,6 +5168,49 @@ mod tests {
     }
 
     #[test]
+    fn native_value_members_use_protocol_overrides() {
+        struct Override;
+        impl<'v> Object<'v> for Override {
+            const NAME: &'v str = "Override";
+            const MODULE: &'v str = "test";
+            type Annex = ();
+            type Type = ();
+            type TypeAnnex = ();
+
+            fn display<'a, 's>(
+                _this: Instance<'v, 'a, Self>,
+                strand: &'a mut Strand<'v, 's>,
+                w: &mut dyn Format<'v>,
+            ) -> Result<'v, 's, ()> {
+                crate::fmt!(strand, w, "registered")
+            }
+        }
+        with_builder(async |builder| {
+            let ty = builder.register_type::<Override>();
+            builder
+                .enter_with_slots(
+                    async |strand, [mut object, mut out, mut bound, mut type_slot]| {
+                        ty.create(strand, Override, &mut object);
+                        Output::set(strand, &mut type_slot, ty);
+                        let method = Sym::well_known(sym::STR_METHOD);
+                        method!(strand, &object, method, &mut out).await.unwrap();
+                        assert_eq!(out.to_string(strand).unwrap(), "registered");
+                        object
+                            .op_get(strand, method, Slot::reborrow(&mut bound))
+                            .unwrap();
+                        call!(strand, &bound, &mut out).await.unwrap();
+                        assert_eq!(out.to_string(strand).unwrap(), "registered");
+                        method!(strand, &type_slot, method, &mut out, &object)
+                            .await
+                            .unwrap();
+                        assert_eq!(out.to_string(strand).unwrap(), "registered");
+                    },
+                )
+                .await;
+        });
+    }
+
+    #[test]
     fn type_object_inspect_borrows_stable_semantic_members() {
         with_fixture_vm(async |strand, [mut ty_slot]| {
             let state = strand.vm().state::<FixtureState>();
@@ -5263,6 +5227,21 @@ mod tests {
                         TypeObjectWrap::<SlotFixture>::op_inspect(recv.clone(), strand.vm())
                             .unwrap();
                     let members = inspect.members;
+                    for member in strand
+                        .singletons()
+                        .value
+                        .op_inspect(strand)
+                        .unwrap()
+                        .members
+                    {
+                        assert_eq!(
+                            members
+                                .iter()
+                                .filter(|existing| existing.sym == member.sym)
+                                .count(),
+                            1
+                        );
+                    }
                     let kind = |sym| {
                         members
                             .iter()

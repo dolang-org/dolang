@@ -15,7 +15,7 @@ use crate::{
 
 use super::{
     iter,
-    protocol::{GcObj, Protocol, Recv},
+    protocol::{GcObj, Protocol, Recv, instance_get_fallback, instance_mcall_fallback},
 };
 
 /// Result stored in a JoinHandle after a background strand completes.
@@ -171,7 +171,7 @@ impl<'v> Protocol<'v> for Handle<'v> {
                 wait_handle(&this.to_strong(), strand).await
             }
             sym::DONE => Err(Error::type_error(strand, "`done` is a field, not a method")),
-            _ => Err(Error::field(strand, method)),
+            _ => instance_mcall_fallback(strand, &this, method, args, out).await,
         }
     }
 
@@ -191,7 +191,7 @@ impl<'v> Protocol<'v> for Handle<'v> {
                 Output::set(strand, out, done);
                 Ok(())
             }
-            _ => Err(Error::field(strand, field)),
+            _ => instance_get_fallback(strand, &this, field, out),
         }
     }
 }

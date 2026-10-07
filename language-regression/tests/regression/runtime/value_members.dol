@@ -1,0 +1,160 @@
+import std:
+  - hash
+  - verbatim
+  - null
+
+# Defaults expose the existing operations, including when the member is saved.
+def check value
+  assert_eq $value.(str)() (str value)
+  assert_eq $value.(dbg)() (dbg value)
+  assert_eq $value.(verbatim)() (verbatim value)
+  assert_eq $value.(hash)() (hash value)
+  assert_eq $value.(eq)(value) (value == value)
+
+  let stringify = value.(str)
+  let debug = value.(dbg)
+  let source = value.(verbatim)
+  let hashing = value.(hash)
+  let equal = value.(eq)
+  assert_eq (stringify()) (str value)
+  assert_eq (debug()) (dbg value)
+  assert_eq (source()) (verbatim value)
+  assert_eq (hashing()) (hash value) msg: (dbg value)
+  assert_eq (equal value) (value == value)
+
+  assert_eq (Value.(str) value) (str value)
+  assert_eq (Value.(dbg) value) (dbg value)
+  assert_eq (Value.(verbatim) value) (verbatim value)
+  assert_eq (Value.(hash) value) (hash value)
+  assert_eq (Value.(eq) value value) (value == value)
+
+class Plain
+class Explicit: Value
+class Derived: Plain
+class Callable: Func
+class Native: Array
+  def (init) self
+    Array.(init) $self []
+
+let plain = Plain()
+let explicit = Explicit()
+let derived = Derived()
+let callable = Callable()
+let native = Native()
+
+let values = [
+  nil, true, false, 1, 170141183460469231731687303715884105727, 1.5,
+  3.141592653589793, 1.7976931348623157e308, float("NaN"),
+  :symbol:, "text", b"bytes", StrBuf("text"), BinBuf(b"bytes"),
+  [1], {a: 1}, (1, 2), (a: 1), Set([1]), Range(0, 2),
+  (do 1), str, std, [1].iter(), [1].iter().map(do |x| x), null, makefoo(),
+  plain, explicit, derived, callable, native,
+]
+for value = values
+  check $value
+
+assert (plain != Plain())
+assert_eq (Plain.(str) plain) (str plain)
+let unbound = Plain.(str)
+assert_eq (unbound plain) (str plain)
+assert_eq (Plain.(eq) plain plain) true
+assert_eq (Plain.(hash) plain) (hash plain)
+assert_eq (Plain.(dbg) plain) (dbg plain)
+assert_eq (Plain.(verbatim) plain) (verbatim plain)
+assert_eq (Array.(verbatim)([1])) (verbatim([1]))
+assert_eq (Int.(verbatim) 1) "1"
+assert_eq (Bool.(eq) true false) false
+let function = do 1
+assert_eq (Func.(hash) function) (hash function)
+
+# Type-object members are unbound; Value accepts type objects as receivers too.
+for value = [Value, Type, Int, Bool, Func, Array, Plain, type(Plain)]
+  assert_eq (Value.(str) value) (str value)
+  assert_eq (Value.(dbg) value) (dbg value)
+  assert_eq (Value.(verbatim) value) (verbatim value)
+  assert_eq (Value.(hash) value) (hash value)
+  assert_eq (Value.(eq) value value) true
+
+# Overrides still receive self, including inherited and extracted methods.
+class Custom
+  pub def (str) _self
+    "custom"
+  pub def (dbg) _self
+    "debug"
+  pub def (verbatim) _self
+    "source"
+  pub def (hash) _self
+    42
+  pub def (eq) _self other
+    (type other Custom)
+class CustomChild: Custom
+
+# A class's own special method is called directly, not through the protocol
+# operation it implements, so `(hash)` returns what the method returns.
+let custom = CustomChild()
+assert_eq $custom.(str)() "custom"
+assert_eq $custom.(dbg)() "debug"
+assert_eq $custom.(verbatim)() "source"
+assert_eq $custom.(hash)() 42
+assert_eq $custom.(eq)(Custom()) true
+let saved = custom.(hash)
+assert_eq (saved()) 42
+assert_eq (Custom.(hash) custom) 42
+assert_eq (CustomChild.(str) custom) "custom"
+assert_eq (Value.(str) custom) "custom"
+assert_eq (Value.(hash) custom) (hash custom)
+
+class NativeChild: Native
+let native_child = NativeChild()
+check $native_child
+assert_eq (Native.(str) native_child) (str native_child)
+
+# Concrete type calls keep their receiver validation.
+assert_throws $std.TypeError do Int.(str) "text"
+assert_throws $std.TypeError do Plain.(str) 1
+assert_throws $std.MissingPosError do Value.(eq) 1
+assert_throws $std.MissingPosError do Value.(str)()
+
+let universal_str = Value.(str)
+assert_eq (universal_str nil) "nil"
+assert_eq (universal_str plain) (str plain)
+assert_eq (universal_str function) (str function)
+let type_get = Type.(get)
+let class_str = type_get $Plain (sym "(str)")
+assert_eq (class_str plain) (str plain)
+
+# Explicit type calls select that type's implementation, including super calls.
+class BaseText
+  pub def (str) _self
+    "base"
+class ChildText: BaseText
+  pub def (str) self
+    "$(BaseText.(str) self) child"
+let child_text = ChildText()
+check $child_text
+assert_eq $child_text.(str)() "base child"
+assert_eq (BaseText.(str) child_text) "base"
+let base_str = BaseText.(str)
+assert_eq (base_str child_text) "base"
+
+# Metaclass defaults also come from their inspected inventory.
+for class = [Plain, Native, Custom]
+  let metaclass = type $class
+  assert_eq (metaclass.(str) class) (str class)
+  assert_eq (metaclass.(dbg) class) (dbg class)
+  assert_eq (metaclass.(verbatim) class) (verbatim class)
+  assert_eq (metaclass.(hash) class) (hash class)
+  assert_eq (metaclass.(eq) class class) true
+  let stringify_class = metaclass.(str)
+  assert_eq (stringify_class class) (str class)
+
+# Saved accessors keep the namespace receiver when they return another method.
+let namespace_get = std.(get)
+let namespace_hash = namespace_get(sym("(hash)"))
+assert_eq (namespace_hash()) (hash std)
+
+# Direct calls pass their arguments to a class's own special method.
+class Wide
+  pub def (str) _self extra = "none"
+    "wide $extra"
+assert_eq (Wide().(str)("x")) "wide x"

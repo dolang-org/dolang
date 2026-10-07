@@ -17,7 +17,7 @@ use crate::{
     gc::{Collect, Gc, arena::Visit},
     object::{
         iter,
-        protocol::{GcObj, Protocol, Recv},
+        protocol::{GcObj, Protocol, Recv, instance_get_fallback, is_universal_member},
         tuple,
     },
     strand::Strand,
@@ -145,10 +145,7 @@ impl<'v> Protocol<'v> for Module<'v> {
             }
             // No `Iterable` fallback: a module's namespace is reserved for its
             // exports, so it does not claim the supertype (see `Type` below).
-            // This also keeps the default `op_mcall` safe — handing back a
-            // `BoundMethod` here would make it recurse, since the default is
-            // `op_get` followed by `op_call`.
-            Err(_) => Err(Error::field(strand, field)),
+            Err(_) => instance_get_fallback(strand, &this, field, out),
         }
     }
 
@@ -385,7 +382,7 @@ impl<'v> Protocol<'v> for Native<'v> {
                     |strand| getter(strand, out),
                 ),
             },
-            Err(_) => Err(Error::field(strand, field)),
+            Err(_) => instance_get_fallback(strand, &this, field, out),
         }
     }
 
@@ -547,6 +544,10 @@ impl<'v> Protocol<'v> for Namespace<'v> {
         field: Sym<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        // Bind these before a custom inner value can bind them to itself.
+        if is_universal_member(field) {
+            return instance_get_fallback(strand, &this, field, out);
+        }
         let re = this.borrow(strand)?;
         match &re.inner {
             NamespaceInner::Normal(module) => {

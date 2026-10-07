@@ -4,7 +4,7 @@ use crate::value::fmt::Format;
 
 use crate::{
     arg::{Arg, Args},
-    error::{Error, Result},
+    error::Result,
     gc::{Collect, arena::Visit},
     strand::Strand,
     sym::{self, Sym},
@@ -13,7 +13,7 @@ use crate::{
 };
 
 use super::{
-    protocol::{Protocol, Recv, Spread, SpreadContext},
+    protocol::{Protocol, Recv, Spread, SpreadContext, instance_mcall_fallback},
     record::ArgItem,
     tuple,
 };
@@ -127,7 +127,7 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
         args: Args<'v, 'a>,
-        _out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::PUSH => {
@@ -142,7 +142,7 @@ impl<'v> Protocol<'v> for ArgPack<'v> {
                 }
                 Ok(())
             }
-            _ => Err(Error::field(strand, method)),
+            _ => instance_mcall_fallback(strand, &this, method, args, out).await,
         }
     }
 }

@@ -15,7 +15,7 @@ use crate::{
     bytecode::Rest,
     error::{Error, Result},
     gc::{Collect, arena::Visit},
-    object::protocol::{GcObj, members},
+    object::protocol::{GcObj, instance_get_fallback, members},
     sig,
     strand::Strand,
     sym::{self, Sym},
@@ -27,7 +27,7 @@ use crate::{
 use super::{
     BoundMethod, index, iter,
     protocol::{
-        Inspect, Protocol, Recv, Spread, SpreadContext, instance_mcall_fallback, is_special_mcall,
+        Inspect, Protocol, Recv, Spread, SpreadContext, instance_mcall_fallback,
         type_mcall_fallback,
     },
     range,
@@ -446,12 +446,7 @@ impl<'v> Protocol<'v> for str {
                 strand,
                 "Str.len is a field, not a method",
             )),
-            _ if is_special_mcall(method.tag()) => {
-                instance_mcall_fallback(strand, &this, method, args, out)
-                    .await
-                    .expect("supported special method")
-            }
-            _ => Err(Error::field(strand, method)),
+            _ => instance_mcall_fallback(strand, &this, method, args, out).await,
         }
     }
 
@@ -487,7 +482,7 @@ impl<'v> Protocol<'v> for str {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
-            _ => Err(Error::field(strand, field)),
+            _ => instance_get_fallback(strand, &this, field, out),
         }
     }
 }
@@ -1256,7 +1251,7 @@ impl<'v> Protocol<'v> for Type {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
-            _ => Err(Error::field(strand, field)),
+            _ => instance_get_fallback(strand, &this, field, out),
         }
     }
 

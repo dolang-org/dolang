@@ -738,6 +738,14 @@ impl<'v> Object<'v> for Find<'v> {
         Ok(())
     }
 
+    async fn unpack<'a, 's>(
+        _this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _unpack: Unpack<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Err(Error::not_supported(strand))
+    }
+
     async fn next<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

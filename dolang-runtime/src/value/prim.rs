@@ -9,7 +9,10 @@ use std::{
 use crate::{
     arg::Args,
     error::{Error, Result},
-    object::protocol::{instance_mcall_fallback, is_special_mcall},
+    object::{
+        num,
+        protocol::{instance_get_fallback, instance_mcall_fallback, is_special_mcall},
+    },
     strand::Strand,
     sym::Sym,
 };
@@ -79,12 +82,12 @@ impl Prim {
         receiver: &'a Value<'v>,
         strand: &'a mut Strand<'v, 's>,
         field: Sym<'v, 'a>,
-        _out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match self {
-            Prim::Int(_) => crate::object::num::int_get(strand, receiver, field, _out),
-            Prim::F64(_) => crate::object::num::float_get(strand, receiver, field, _out),
-            _ => Err(Error::type_error(strand, "field get not supported")),
+            Prim::Int(_) => num::int_get(strand, receiver, field, out),
+            Prim::F64(_) => num::float_get(strand, receiver, field, out),
+            _ => instance_get_fallback(strand, receiver, field, out),
         }
     }
 
@@ -98,17 +101,15 @@ impl Prim {
         match self {
             Prim::Int(value) => {
                 let receiver = Value::from_prim(strand, self);
-                crate::object::num::int_mcall(strand, &receiver, value, method, args, out).await
+                num::int_mcall(strand, &receiver, value, method, args, out).await
             }
             Prim::F64(value) => {
                 let receiver = Value::from_prim(strand, self);
-                crate::object::num::float_mcall(strand, &receiver, value, method, args, out).await
+                num::float_mcall(strand, &receiver, value, method, args, out).await
             }
-            Prim::Bool(_) if is_special_mcall(method.tag()) => {
+            Prim::Nil | Prim::Bool(_) if is_special_mcall(method.tag()) => {
                 let receiver = Value::from_prim(strand, self);
-                instance_mcall_fallback(strand, &receiver, method, args, out)
-                    .await
-                    .expect("supported special method")
+                instance_mcall_fallback(strand, &receiver, method, args, out).await
             }
             _ => Err(Error::type_error(strand, "method call not supported")),
         }

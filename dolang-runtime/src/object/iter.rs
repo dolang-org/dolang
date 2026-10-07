@@ -11,7 +11,9 @@ use crate::{
     object::{
         BoundMethod,
         protocol::{
-            Delegated, Dispatch, Inspect, Member, Protocol, Recv, Spread, SpreadContext, members,
+            Delegated, Dispatch, Inspect, Member, Protocol, Recv, Spread, SpreadContext,
+            instance_get_fallback, instance_mcall_fallback, is_special_mcall, members,
+            recv_special_mcall,
         },
         tuple,
     },
@@ -230,7 +232,7 @@ pub(crate) fn iter_get<'v, 'a, 's>(
         BoundMethod::create(strand, rcvr, field, out);
         Ok(())
     } else {
-        Err(Error::field(strand, field))
+        instance_get_fallback(strand, rcvr, field, out)
     }
 }
 
@@ -507,6 +509,10 @@ pub(crate) async fn iter_mcall<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
+    if is_special_mcall(method.tag()) {
+        return instance_mcall_fallback(strand, rcvr, method, args, out).await;
+    }
+
     if method.tag() == sym::ITER {
         iterable_mcall(strand, rcvr, method, args, out).await
     } else {
@@ -572,6 +578,10 @@ impl<'v> Protocol<'v> for Iterable {
         mut args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        if is_special_mcall(method.tag()) {
+            return recv_special_mcall(strand, &this, method, args, out).await;
+        }
+
         if let Some(delegator) = this.delegator() {
             args.prepend_self(delegator.dup());
         }
@@ -645,6 +655,10 @@ impl<'v> Protocol<'v> for Sinkable {
         mut args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        if is_special_mcall(method.tag()) {
+            return recv_special_mcall(strand, &this, method, args, out).await;
+        }
+
         if let Some(delegator) = this.delegator() {
             args.prepend_self(delegator.dup());
         }
@@ -676,7 +690,7 @@ pub(crate) fn sink_get<'v, 'a, 's>(
         BoundMethod::create(strand, rcvr, field, out);
         Ok(())
     } else {
-        Err(Error::field(strand, field))
+        instance_get_fallback(strand, rcvr, field, out)
     }
 }
 
@@ -687,6 +701,10 @@ pub(crate) async fn sink_mcall<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
+    if is_special_mcall(method.tag()) {
+        return instance_mcall_fallback(strand, rcvr, method, args, out).await;
+    }
+
     if method.tag() == sym::SINK {
         sinkable_mcall(strand, rcvr, method, args, out).await
     } else {
@@ -719,7 +737,7 @@ pub(crate) fn iterable_get<'v, 'a, 's>(
         BoundMethod::create(strand, rcvr, field, out);
         Ok(())
     } else {
-        Err(Error::field(strand, field))
+        instance_get_fallback(strand, rcvr, field, out)
     }
 }
 
@@ -730,6 +748,10 @@ pub(crate) async fn iterable_mcall<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
+    if is_special_mcall(method.tag()) {
+        return instance_mcall_fallback(strand, rcvr, method, args, out).await;
+    }
+
     strand
         .with_slots(async move |strand, [mut delegator]| {
             Output::set(strand, Slot::reborrow(&mut delegator), rcvr);
@@ -754,7 +776,7 @@ pub(crate) fn sinkable_get<'v, 'a, 's>(
         BoundMethod::create(strand, rcvr, field, out);
         Ok(())
     } else {
-        Err(Error::field(strand, field))
+        instance_get_fallback(strand, rcvr, field, out)
     }
 }
 
@@ -765,6 +787,10 @@ pub(crate) async fn sinkable_mcall<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
+    if is_special_mcall(method.tag()) {
+        return instance_mcall_fallback(strand, rcvr, method, args, out).await;
+    }
+
     strand
         .with_slots(async move |strand, [mut delegator]| {
             Output::set(strand, Slot::reborrow(&mut delegator), rcvr);
@@ -822,7 +848,7 @@ pub(crate) fn iterable_sinkable_get<'v, 'a, 's>(
         BoundMethod::create(strand, rcvr, field, out);
         Ok(())
     } else {
-        Err(Error::field(strand, field))
+        instance_get_fallback(strand, rcvr, field, out)
     }
 }
 
@@ -834,6 +860,10 @@ pub(crate) async fn iterable_sinkable_mcall<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
+    if is_special_mcall(method.tag()) {
+        return instance_mcall_fallback(strand, rcvr, method, args, out).await;
+    }
+
     match classify(method.tag()) {
         Some(Surface::Iterable) => iterable_mcall(strand, rcvr, method, args, out).await,
         Some(Surface::Sinkable) => sinkable_mcall(strand, rcvr, method, args, out).await,
@@ -1488,6 +1518,10 @@ impl<'v> Protocol<'v> for Iter {
         mut args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        if is_special_mcall(method.tag()) {
+            return recv_special_mcall(strand, &this, method, args, out).await;
+        }
+
         if let Some(delegator) = this.delegator() {
             args.prepend_self(delegator.dup());
         }
@@ -1649,6 +1683,10 @@ impl<'v> Protocol<'v> for Sink {
         mut args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        if is_special_mcall(method.tag()) {
+            return recv_special_mcall(strand, &this, method, args, out).await;
+        }
+
         if let Some(delegator) = this.delegator() {
             args.prepend_self(delegator.dup());
         }

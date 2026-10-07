@@ -8,7 +8,7 @@ use crate::{
     gc::{Collect, arena::Visit},
     object::{
         BoundMethod,
-        protocol::{Inspect, Protocol, Recv, members, type_mcall_fallback},
+        protocol::{Inspect, Protocol, Recv, instance_get_fallback, members, type_mcall_fallback},
     },
     strand::Strand,
     sym::{self, Sym},
@@ -665,7 +665,7 @@ impl<'v> Protocol<'v> for Float {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
-            _ => Err(Error::field(strand, field)),
+            _ => instance_get_fallback(strand, &this, field, out),
         }
     }
 

@@ -30,8 +30,10 @@ class Counter: Iter
 
 # Test basic iteration with (next)
 let counter = Counter 0 5
-assert_throws $std.UnsupportedError do let ..._rest = counter
-assert_throws $std.UnsupportedError do let current: _ ..._rest = counter
+# Unpacking reads public fields, not items
+let current: start :stop = counter
+assert_eq $start 0
+assert_eq $stop 5
 assert_eq $counter.current 0
 let results = [...counter]
 assert_eq $results [0, 1, 2, 3, 4]
