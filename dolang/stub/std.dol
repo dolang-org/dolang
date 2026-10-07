@@ -1,3 +1,4 @@
+# dolang: strict
 #
 # The `std` module provides core language facilities.
 
@@ -215,7 +216,7 @@ pub def tuple[*Ts] *values@Ts -> Tuple[...Ts]
 @def type[T] value@Value type@Type[T] -> Bool
 
 # Returns a value's type, or tests whether it's an instance of a type.
-pub def type value *type
+pub def type value@Value *type@Type[Value] -> (Type[Value] | Bool)
   ...
 
 #
@@ -521,13 +522,13 @@ pub class Sinkable[T]: @BaseSinkable[T]
   @def prechomp[U @ (Str | Bin)] self @ Sinkable[U] -> Sink[U]
 
   # Returns a sink that removes one trailing line terminator from each value.
-  pub def prechomp self
+  pub def prechomp self -> Sink[T]
     ...
 
   @def precrimp[U @ (Str | Bin)] self@Sinkable[U] terminator@(Str | Bin) = nil -> Sink[U]
 
   # Returns a sink that appends a line terminator to each value.
-  pub def precrimp self terminator@(Str | Bin) = nil
+  pub def precrimp self terminator@(Str | Bin) = nil -> Sink[T]
     ...
 
   # Returns a sink that writes only values for which `pred` is truthy.
@@ -575,7 +576,7 @@ pub class Sink[T]: Sinkable[T] @BaseSink[T]
   # assert_eq $acc ["line"]
   # ```
   #
-  pub def prechomp self
+  pub def prechomp self -> Sink[T]
     ...
 
   @def precrimp[U @ (Str | Bin)] self@Sink[U] terminator@(Str | Bin) = nil -> Sink[U]
@@ -602,7 +603,7 @@ pub class Sink[T]: Sinkable[T] @BaseSink[T]
   #   file.precrimp(shell.line_ending()).put "native"
   # ```
   #
-  pub def precrimp self terminator@(Str | Bin) = nil
+  pub def precrimp self terminator@(Str | Bin) = nil -> Sink[T]
     ...
 
   #
@@ -699,7 +700,7 @@ pub class BaseArray[T]: Iterable[T] @Unpack[T, Rest: UnpackIter[T]] @Seq[T]
   pub def contains
     self
     # the value to check
-    element
+    element @ Value
   do -> Bool
     ...
 
@@ -1314,7 +1315,7 @@ pub class Bin: @Index[Range[Int], Bin]
   # assert_eq (bin.unpack b"hello") [104, 101, 108, 108, 111]
   # ```
   #[class]
-  pub def unpack self value -> Array[Int]
+  pub def unpack self value @ Value -> Array[Int]
     ...
 
 
@@ -1372,7 +1373,7 @@ pub class BinBuf: @Index[Int, Int] @Assign[Int, Int] Sink[Value]
   pub def append
     self
     # value to append
-    value
+    value @ Value
   do
     ...
 
@@ -1632,7 +1633,7 @@ pub class Bool
 
   #
   # Converts to a boolean.
-  pub def (bool) self
+  pub def (bool) self -> Bool
     ...
 
 
@@ -1777,9 +1778,9 @@ pub class BaseDict[S @ {...}]: @Index[S] @Spread[S] @Unpack[S, Rest: Unpack[S]] 
   pub def contains
     self
     # the key to check
-    key
+    key @ Value
     # optional value to check for (multi-map)
-    value = nil
+    value @ Value = nil
   do -> Bool
     ...
 
@@ -1805,7 +1806,7 @@ pub class BaseDict[S @ {...}]: @Index[S] @Spread[S] @Unpack[S, Rest: Unpack[S]] 
   # Missing keys return `0`.
   #
   #
-  pub def count self key = nil -> Int
+  pub def count self key @ Value = nil -> Int
     ...
 
   #
@@ -1860,7 +1861,7 @@ pub class BaseDict[S @ {...}]: @Index[S] @Spread[S] @Unpack[S, Rest: Unpack[S]] 
   # Missing keys return an empty iterator.
   @def values self -> UnpackIter[Values[S]]
   @def values[K] self key@K -> UnpackIter[IndexItem[S, K]]
-  pub def values self key = nil -> UnpackIter[Values[S]]
+  pub def values self key @ Value = nil -> UnpackIter[Values[S]]
     ...
 
   #
@@ -1933,7 +1934,7 @@ pub class Dict[S @ {...}]: BaseDict[S] @Assign[S]
   # lowercase `dict` factory instead assigns integer keys to positional arguments
   # and symbol keys to key arguments.
   #
-  pub def (init) self source
+  pub def (init) self source @ Value
     ...
 
   #
@@ -1969,7 +1970,7 @@ pub class Dict[S @ {...}]: BaseDict[S] @Assign[S]
   pub def delete
     self
     # the key to remove
-    key
+    key @ Value
   do -> Bool
     ...
 
@@ -2094,31 +2095,31 @@ pub class Num
   pub def clamp[N @ Num] self@N lower@N upper@N -> N
     ...
 
-  pub def (add) self other
+  pub def (add) self other @ Num -> Num
     ...
 
-  pub def (sub) self other
+  pub def (sub) self other @ Num -> Num
     ...
 
-  pub def (mul) self other
+  pub def (mul) self other @ Num -> Num
     ...
 
-  pub def (div) self other
+  pub def (div) self other @ Num -> Float
     ...
 
-  pub def (ediv) self other
+  pub def (ediv) self other @ Num -> Int
     ...
 
-  pub def (mod) self other
+  pub def (mod) self other @ Num -> Num
     ...
 
-  pub def (neg) self
+  pub def (neg)[N @ Num] self @ N -> N
     ...
 
-  pub def (eq) self other
+  pub def (eq) self other @ Value -> Bool
     ...
 
-  pub def (lt) self other
+  pub def (lt) self other @ Num -> Bool
     ...
 
 
@@ -2130,15 +2131,15 @@ pub class Num
 pub class Float: Num
   # Difference between `1.0` and the next greater representable value.
   #[static]
-  pub field EPSILON = nil
+  pub field EPSILON @ Float = ...
 
   # Positive infinity.
   #[static]
-  pub field INF = nil
+  pub field INF @ Float = ...
 
   # A not-a-number value.
   #[static]
-  pub field NAN = nil
+  pub field NAN @ Float = ...
 
   #
   # `Float` accepts a float or an integer that can be represented exactly.
@@ -2155,6 +2156,18 @@ pub class Float: Num
   # ```
   #
   pub def (init) self
+    ...
+
+  pub def (add) self other @ Num -> Float
+    ...
+
+  pub def (sub) self other @ Num -> Float
+    ...
+
+  pub def (mul) self other @ Num -> Float
+    ...
+
+  pub def (mod) self other @ Num -> Float
     ...
 
   # Tests whether the value is NaN.
@@ -2301,7 +2314,7 @@ pub class FmtParam: Func
 
   # Two parameters are equal when they name the same parameter under the same
   # specification and record the same [`source`](#source).
-  pub def (eq) self other
+  pub def (eq) self other @ Value -> Bool
     ...
 
 
@@ -2455,7 +2468,7 @@ pub class FmtSpec: Func
     :kind @ (FmtKind | nil) = nil
   do -> FmtValue[T]
 
-  pub def (call) self ...args
+  pub def (call) self ...args @ Value -> FmtValue[Value]
     ...
 
   #
@@ -2609,7 +2622,7 @@ pub class FmtValue[T]: Func
   # Two bindings are equal when they bind equal values to the same specification
   # and record the same [`source`](#source). `source` is readable and `dbg`
   # renders through it, so bindings that differ in it are distinguishable.
-  pub def (eq) self other
+  pub def (eq) self other @ Value -> Bool
     ...
 
 
@@ -2718,7 +2731,7 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[Int, FmtSegment[V]] @Spre
   # assert_eq $built.format() "a=42;"
   # ```
   #
-  pub def (init) self segments
+  pub def (init) self segments @ Value
     ...
 
   #
@@ -2771,7 +2784,7 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[Int, FmtSegment[V]] @Spre
   # assert_eq $stmt.format(1, name: "n") "select * from t where a = 1 and c = n"
   # ```
   #
-  pub def format self ...bindings -> Str
+  pub def format self ...bindings @ Value -> Str
     ...
 
   #
@@ -2805,7 +2818,7 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[Int, FmtSegment[V]] @Spre
   # than converting it, which is what lets styling interpolated into one survive
   # to the terminal.
   #
-  pub def (iter) self
+  pub def (iter) self -> UnpackIter[FmtSegment[V]]
     ...
 
   #
@@ -2814,7 +2827,7 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[Int, FmtSegment[V]] @Spre
   # [`source`](std.FmtValue.source), so `t"$name"` and `t"${name}"` are not
   # equal.
   #
-  pub def (eq) self other
+  pub def (eq) self other @ Value -> Bool
     ...
 
   #
@@ -2833,7 +2846,7 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[Int, FmtSegment[V]] @Spre
   # assert_eq (verbatim t"n=${count:03d}") (dbg t"n=${count:03d}")
   # ```
   #
-  pub def (fmt) self
+  pub def (fmt) self spec @ FmtSpec -> Str
     ...
 
   # Spreads the segments.
@@ -2921,11 +2934,11 @@ pub class IndexError: RuntimeError
 pub class Int: Num
   # Smallest representable integer.
   #[static]
-  pub field MIN = nil
+  pub field MIN @ Int = ...
 
   # Largest representable integer.
   #[static]
-  pub field MAX = nil
+  pub field MAX @ Int = ...
 
   #
   # `Int` accepts an integer, a boolean, or an integral float. It rejects
@@ -2946,28 +2959,48 @@ pub class Int: Num
   pub def (init) self
     ...
 
+  @def (add) self other@Int -> Int
+  @def (add) self other@Float -> Float
+  pub def (add) self other @ Num -> Num
+    ...
+
+  @def (sub) self other@Int -> Int
+  @def (sub) self other@Float -> Float
+  pub def (sub) self other @ Num -> Num
+    ...
+
+  @def (mul) self other@Int -> Int
+  @def (mul) self other@Float -> Float
+  pub def (mul) self other @ Num -> Num
+    ...
+
+  @def (mod) self other@Int -> Int
+  @def (mod) self other@Float -> Float
+  pub def (mod) self other @ Num -> Num
+    ...
+
   # Computes bitwise AND.
-  pub def (band) self other
+  pub def (band) self other @ (Int | Bool) -> Int
     ...
 
   # Computes bitwise OR.
-  pub def (bor) self other
+  pub def (bor) self other @ (Int | Bool) -> Int
     ...
 
   # Computes bitwise XOR.
-  pub def (bxor) self other
+  pub def (bxor) self other @ (Int | Bool) -> Int
     ...
 
   # Computes bitwise NOT.
-  pub def (bnot) self
+  pub def (bnot) self -> Int
     ...
 
   # Shifts left.
-  pub def (shl) self other
+  pub def (shl) self other @ Int -> Int
     ...
 
   # Shifts right arithmetically, sign-extending negative values.
-  pub def (shr) self other
+  pub def (shr) self other @ Int -> Int
     ...
 
 # Error raised to signal that an iterator is exhausted. This is used
@@ -3255,7 +3288,7 @@ pub class MissingKeyError: RuntimeError
   pub def (init)
     self
     # the missing key
-    key
+    key @ Value
   do
     ...
 
@@ -3295,7 +3328,7 @@ pub class Nil
 #
 pub class Null: Iter[Never] @UnpackIter[Never] Sink[Value]
   # Ends the iteration immediately without yielding a value.
-  pub def (next) self
+  pub def (next) self -> Never
     ...
 
   # Destructures as no items.
@@ -3311,7 +3344,7 @@ pub class Null: Iter[Never] @UnpackIter[Never] Sink[Value]
     ...
 
   # Discards the value.
-  pub def (put) self value
+  pub def (put) self value @ Value
     ...
 
 
@@ -3446,7 +3479,7 @@ pub class Record[...Ts]: Iterable[Tuple[Sym | Int, Value]] @Index[{...Ts}] @Spre
   # ## Errors
   #
   # Raises `TypeError` for any other key that is not a symbol.
-  pub def (init) self source
+  pub def (init) self source @ Value
     ...
 
   #
@@ -3472,7 +3505,7 @@ pub class Record[...Ts]: Iterable[Tuple[Sym | Int, Value]] @Index[{...Ts}] @Spre
   # ## Errors
   #
   # Raises [`UnexpectedPosError`](std.UnexpectedPosError) for positional arguments.
-  pub def with self **updates -> Record
+  pub def with self **updates @ Value -> Record
     ...
 
   # Removes all occurrences of the keys in a new record.
@@ -3580,7 +3613,7 @@ pub class Set[T]: Iterable[T] @Spread[T]
   pub def contains
     self
     # the value to test
-    value
+    value @ Value
   do -> Bool
     ...
 
@@ -3600,7 +3633,7 @@ pub class Set[T]: Iterable[T] @Spread[T]
   pub def delete
     self
     # the value to remove
-    value
+    value @ Value
   do -> Bool
     ...
 
@@ -3790,7 +3823,7 @@ pub class Str: @Index[Range[Int], Str]
   # assert_eq (str 42) "42"
   # ```
   #
-  pub def (init) self value
+  pub def (init) self value @ Value
     ...
 
   #
@@ -4209,7 +4242,7 @@ pub class Str: @Index[Range[Int], Str]
     ...
 
   # Returns an iterator.
-  pub def (iter) self
+  pub def (iter) self -> Iter[Str]
     ...
 
 
@@ -4288,7 +4321,7 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   pub def append
     self
     # value to append
-    value
+    value @ Value
   do
     ...
 
@@ -4557,7 +4590,7 @@ pub class Sym
   # assert_eq :foo: :foo:
   # assert (:foo: != :bar:)
   # ```
-  pub def (eq) self other
+  pub def (eq) self other @ Value -> Bool
     ...
 
   # Symbols compare lexicographically by name.
@@ -4565,7 +4598,7 @@ pub class Sym
   # ```
   # assert (:alpha: < :beta:)
   # ```
-  pub def (lt) self other
+  pub def (lt) self other @ Sym -> Bool
     ...
 
 
@@ -4610,7 +4643,7 @@ pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}, Rest: Unpack[{...Ts}]] I
   pub def (init)
     self
     # values to collect
-    iterable
+    iterable @ Value
   do
     ...
 
@@ -4629,7 +4662,7 @@ pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}, Rest: Unpack[{...Ts}]] I
   pub def contains
     self
     # the value to check
-    element
+    element @ Value
   do -> Bool
     ...
 
@@ -4748,7 +4781,7 @@ pub class UnexpectedKeyError: RuntimeError
   pub def (init)
     self
     # the unexpected key
-    key
+    key @ Value
   do
     ...
 
