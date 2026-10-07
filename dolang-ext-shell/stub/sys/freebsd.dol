@@ -1,3 +1,4 @@
+# dolang: strict
 # The `sys.freebsd` module exposes FreeBSD-specific system types.
 
 import sys.unix
@@ -16,5 +17,5 @@ pub class Errno: sys.unix.Errno
 
   # The originating operating system, `:FREEBSD:`.
   #[getter]
-  pub def os self
+  pub def os self -> :FREEBSD:
     ...

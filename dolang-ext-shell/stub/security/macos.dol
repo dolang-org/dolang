@@ -1,3 +1,4 @@
+# dolang: strict
 # macOS extended access-control-list types and principal identity resolution
 # between Unix uid/gid values and macOS `guid_t` UUIDs.
 
@@ -62,7 +63,7 @@ pub class Mask: Iterable[MaskBit]
   @def (call) cls flags@Iterable[MaskBit] -> Mask
 
   #[class]
-  pub def (call) cls ...flags
+  pub def (call) cls ...flags @ (MaskBit | Iterable[MaskBit]) -> Mask
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -120,7 +121,7 @@ pub class Flags: Iterable[FlagBit]
   @def (call) cls flags@Iterable[FlagBit] -> Flags
 
   #[class]
-  pub def (call) cls ...flags
+  pub def (call) cls ...flags @ (FlagBit | Iterable[FlagBit]) -> Flags
     ...
 
   # Tests whether all flags named by `flag` are set.

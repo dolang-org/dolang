@@ -1,3 +1,4 @@
+# dolang: strict
 # Digest algorithms.
 
 # Supertype for stateful digest handles.

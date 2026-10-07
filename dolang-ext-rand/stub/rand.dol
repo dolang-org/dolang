@@ -1,3 +1,4 @@
+# dolang: strict
 # Random integer sampling, string generation, selection, and shuffling.
 
 import std:

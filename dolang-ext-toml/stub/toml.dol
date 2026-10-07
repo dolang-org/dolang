@@ -1,3 +1,4 @@
+# dolang: strict
 # TOML serialization and deserialization.
 
 import std:

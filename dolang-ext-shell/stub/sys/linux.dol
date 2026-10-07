@@ -1,3 +1,4 @@
+# dolang: strict
 # The `sys.linux` module exposes Linux-specific system types.
 
 import sys.unix
@@ -16,5 +17,5 @@ pub class Errno: sys.unix.Errno
 
   # The originating operating system, `:LINUX:`.
   #[getter]
-  pub def os self
+  pub def os self -> :LINUX:
     ...

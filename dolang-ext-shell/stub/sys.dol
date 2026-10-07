@@ -1,3 +1,4 @@
+# dolang: strict
 # The `sys` module exposes basic information and types associated with systems
 # and platforms supported by Do.
 

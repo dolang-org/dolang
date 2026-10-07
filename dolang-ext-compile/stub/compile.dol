@@ -1,3 +1,4 @@
+# dolang: strict
 # Compiles Do source to bytecode and describes what it declares.
 #
 # ## Usage

@@ -1,3 +1,4 @@
+# dolang: strict
 # YAML serialization and deserialization.
 
 import std:
