@@ -1,0 +1,7 @@
+import foo:
+  first - second
+# error: dash import items must start a line
+#   --> import_packed_item_dash_error.dol:LL:LL
+#    |
+# LL |   first - second
+#    |         ^

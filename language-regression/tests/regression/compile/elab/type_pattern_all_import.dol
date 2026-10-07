@@ -1,6 +1,6 @@
 @import std:
   - Int: Number
-# error: invalid import item
+# error: renamed import items omit `-`
 #   --> type_pattern_all_import.dol:LL:LL
 #    |
 # LL |   - Int: Number

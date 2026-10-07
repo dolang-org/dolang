@@ -87,23 +87,30 @@ the local binding.
 
 ```
 import math:
-  - add
+  add subtract
   subtract: minus
 ```
 
-An item written `- @Item` or `- @Item: name` is named only in
+Plain item names can share a continuation line. The `-` form keeps an item on
+its own line; renamed items use one line each. An item written `@Item`,
+`- @Item`, or `- @Item: name` is named only in
 [types](./types.md#type-only-imports), and is not imported.
 
 The vertical form is useful when importing multiple modules at once:
 
 ```
 import
-  build.tools
+  build.tools math
   build.images: images
   build.deploy:
     - push
     status: deploy_status
 ```
+
+Plain module names, including type-only imports such as `@math`, may share a
+vertical continuation line. Renamed imports and imports with item lists use
+one vertical continuation line each. The first `import` line may contain
+multiple renamed imports.
 
 ## Exporting with `pub`
 

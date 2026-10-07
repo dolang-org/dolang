@@ -1,0 +1,7 @@
+import foo:
+  first: alias second
+# error: renamed import items must be alone on their line
+#   --> import_packed_item_rename_error.dol:LL:LL
+#    |
+# LL |   first: alias second
+#    |                ^^^^^^

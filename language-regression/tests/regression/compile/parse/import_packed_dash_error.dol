@@ -1,0 +1,7 @@
+import
+  foo - bar
+# error: dash module imports must start a line
+#   --> import_packed_dash_error.dol:LL:LL
+#    |
+# LL |   foo - bar
+#    |       ^

@@ -1,7 +1,8 @@
 # dolang: strict
 # Strict extension stubs, used from a strict unit.
 
-import @regex @sys.linux security.unix uuid @url time @patch @xml load zip tar sqlite fs winreg winscm winnet
+import @regex @sys.linux security.unix uuid @url time
+  @patch @xml load zip tar sqlite fs winreg winscm winnet
 
 # `Regex.replace` runs a callback with its caller's channels
 pub def replaces re @ regex.Regex >Sink[Str] -> Str

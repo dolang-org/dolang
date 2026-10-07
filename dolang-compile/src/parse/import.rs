@@ -59,62 +59,161 @@ impl Parser<'_> {
     }
 
     fn parse_import_items(&mut self, scope: &mut Scope) -> Result<Vec<ImportItem>> {
-        use self::{Ident, Op};
-        use TokenInfo::*;
-
         let mut items = Vec::new();
 
         loop {
             match self.peek()? {
-                Some(token!(Dedent)) => break Ok(items),
-                Some(token!(StmtSep)) => {
+                Some(token!(TokenInfo::Dedent)) => break Ok(items),
+                Some(token!(TokenInfo::StmtSep)) => {
                     self.advance();
-                    continue;
                 }
-                _ => (),
+                _ => self.parse_import_item_vert(scope, &mut items, false)?,
             }
-            items.push(match self.next()? {
-                Some(token!(Op(Op::Minus), minus_span)) => {
-                    self.expect(scope, &[ExpectKind::ArgSep])?;
-                    match decay_ident!(self.next()?) {
-                        Some(token!(Ident, span)) => ImportItem::AsIs {
-                            bind: Ident::new(span),
-                            delim_span: minus_span,
-                            type_only: None,
-                        },
-                        Some(token!(At, at_span)) => {
-                            self.parse_type_import_item(scope, minus_span, at_span)?
-                        }
-                        other => {
-                            return Err(self.syntax_error(scope, other, "invalid import item"));
-                        }
+        }
+    }
+
+    fn expect_import_line_end(&mut self, scope: &mut Scope, message: &'static str) -> Result<()> {
+        while matches!(self.peek()?, Some(token!(TokenInfo::ArgSep))) {
+            self.advance();
+        }
+        match self.peek()? {
+            None | Some(token!(TokenInfo::StmtSep | TokenInfo::Dedent)) => Ok(()),
+            token => Err(self.syntax_error(scope, token, message)),
+        }
+    }
+
+    fn parse_import_item_vert(
+        &mut self,
+        scope: &mut Scope,
+        items: &mut Vec<ImportItem>,
+        packed: bool,
+    ) -> Result<()> {
+        use self::{Ident, Op};
+        use TokenInfo::*;
+
+        let item = match decay_ident!(self.peek()?) {
+            Some(token @ token!(Op(Op::Minus), minus_span)) => {
+                if packed {
+                    return Err(self.syntax_error(
+                        scope,
+                        Some(token),
+                        "dash import items must start a line",
+                    ));
+                }
+                self.advance();
+                self.expect(scope, &[ExpectKind::ArgSep])?;
+                let item = match decay_ident!(self.next()?) {
+                    Some(token!(Ident, span)) => ImportItem::AsIs {
+                        bind: Ident::new(span),
+                        delim_span: Some(minus_span),
+                        type_only: None,
+                    },
+                    Some(token!(At, at_span)) => {
+                        self.parse_type_import_item(scope, minus_span, at_span)?
+                    }
+                    Some(token @ token!(Key)) => {
+                        return Err(self.syntax_error(
+                            scope,
+                            Some(token),
+                            "renamed import items omit `-`",
+                        ));
+                    }
+                    other => {
+                        return Err(self.syntax_error(
+                            scope,
+                            other,
+                            "expected item name after `-`",
+                        ));
+                    }
+                };
+                items.push(item);
+                return self.expect_import_line_end(
+                    scope,
+                    "dash import items must be alone on their line",
+                );
+            }
+            Some(token @ token!(At)) => {
+                let at_span = self.advance();
+                match decay_ident!(self.next()?) {
+                    Some(token!(Ident, span)) => ImportItem::AsIs {
+                        bind: Ident::new(span),
+                        delim_span: None,
+                        type_only: Some(TypeOnly {
+                            at_span: Some(at_span),
+                            node: None,
+                        }),
+                    },
+                    Some(token!(Key)) => {
+                        return Err(self.syntax_error(
+                            scope,
+                            Some(token),
+                            "type-only renamed items require `- @Item: name`",
+                        ));
+                    }
+                    other => {
+                        return Err(self.syntax_error(
+                            scope,
+                            other,
+                            "expected item name after `@`",
+                        ));
                     }
                 }
-                Some(mut token @ token!(Literal | Key)) => {
-                    token = self.reinterpret_module_name(scope, token)?;
-                    self.expect(scope, &[ExpectKind::ArgSep])?;
-                    match decay_ident!(self.next()?) {
-                        Some(token!(TokenInfo::Ident, span)) => ImportItem::Renamed {
+            }
+            Some(token!(Ident, span)) => {
+                self.advance();
+                ImportItem::AsIs {
+                    bind: Ident::new(span),
+                    delim_span: None,
+                    type_only: None,
+                }
+            }
+            Some(mut token @ token!(Literal | Key)) => {
+                if packed {
+                    return Err(self.syntax_error(
+                        scope,
+                        Some(token),
+                        "renamed import items must start a line",
+                    ));
+                }
+                self.advance();
+                token = self.reinterpret_module_name(scope, token)?;
+                self.expect(scope, &[ExpectKind::ArgSep])?;
+                match decay_ident!(self.next()?) {
+                    Some(token!(TokenInfo::Ident, span)) => {
+                        items.push(ImportItem::Renamed {
                             item: token.span,
                             bind: Ident::new(span),
                             delim_span: token.span.after_right_char(),
                             minus_span: None,
                             type_only: None,
-                        },
-                        other => {
-                            return Err(self.syntax_error(
-                                scope,
-                                other,
-                                "expected identifier for renamed import",
-                            ));
-                        }
+                        });
+                        return self.expect_import_line_end(
+                            scope,
+                            "renamed import items must be alone on their line",
+                        );
+                    }
+                    other => {
+                        return Err(self.syntax_error(
+                            scope,
+                            other,
+                            "expected identifier for renamed import",
+                        ));
                     }
                 }
-                other => {
-                    return Err(self.syntax_error(scope, other, "invalid import item"));
-                }
-            })
+            }
+            _ => {
+                let token = self.next()?;
+                return Err(self.syntax_error(scope, token, "expected imported item name"));
+            }
+        };
+        items.push(item);
+        if let Some(token!(ArgSep)) = self.peek()? {
+            self.advance();
+            if !matches!(self.peek()?, None | Some(token!(StmtSep | Dedent))) {
+                self.parse_import_item_vert(scope, items, true)?;
+            }
         }
+        Ok(())
     }
 
     /// Parse the rest of `- @Item` or `- @Item: name`, after the `@`.
@@ -134,7 +233,7 @@ impl Parser<'_> {
         match decay_ident!(self.next()?) {
             Some(token!(Ident, span)) => Ok(ImportItem::AsIs {
                 bind: Ident::new(span),
-                delim_span: minus_span,
+                delim_span: Some(minus_span),
                 type_only,
             }),
             Some(token!(Key, item)) => {
@@ -154,7 +253,7 @@ impl Parser<'_> {
                     )),
                 }
             }
-            other => Err(self.syntax_error(scope, other, "invalid import item")),
+            other => Err(self.syntax_error(scope, other, "expected item name after `@`")),
         }
     }
 
@@ -178,71 +277,112 @@ impl Parser<'_> {
         })
     }
 
-    fn parse_import_elem_vert(&mut self, scope: &mut Scope) -> Result<ImportElement> {
+    fn parse_import_elem_vert(
+        &mut self,
+        scope: &mut Scope,
+        elems: &mut Vec<ImportElement>,
+        packed: bool,
+    ) -> Result<()> {
         use self::{Ident, Op};
         use TokenInfo::*;
 
-        match decay_ident!(self.peek()?) {
-            Some(token!(Op(Op::Minus))) => {
+        let element = match decay_ident!(self.peek()?) {
+            Some(token @ token!(Op(Op::Minus))) => {
+                if packed {
+                    return Err(self.syntax_error(
+                        scope,
+                        Some(token),
+                        "dash module imports must start a line",
+                    ));
+                }
                 // FIXME: this needs to go back into AST
                 let _minus_span = self.advance();
                 self.expect(scope, &[ExpectKind::ArgSep])?;
                 if let Some(token!(At)) = decay_ident!(self.peek()?) {
                     let at_span = self.advance();
-                    return self.parse_type_import_module(scope, at_span);
+                    elems.push(self.parse_type_import_module(scope, at_span)?);
+                } else {
+                    let (span, _) = self.parse_module_name(scope, false)?;
+                    elems.push(ImportElement::ModuleAsIs {
+                        module: span,
+                        bind: Ident::new(self.module_name_first(span)),
+                        insert: false,
+                        type_only: None,
+                    });
                 }
-                let (span, _) = self.parse_module_name(scope, false)?;
-                Ok(ImportElement::ModuleAsIs {
-                    module: span,
-                    bind: Ident::new(self.module_name_first(span)),
-                    insert: false,
-                    type_only: None,
-                })
+                return self.expect_import_line_end(
+                    scope,
+                    "dash module imports must be alone on their line",
+                );
             }
             Some(token!(At)) => {
                 let at_span = self.advance();
-                self.parse_type_import_module(scope, at_span)
+                self.parse_type_import_module(scope, at_span)?
             }
-            Some(token!(Ident | Key)) => {
+            Some(token @ token!(Ident | Key)) => {
                 let (module_span, is_key) = self.parse_module_name(scope, true)?;
                 if is_key {
+                    if packed {
+                        return Err(self.syntax_error(
+                            scope,
+                            Some(token),
+                            "module imports using `:` must start a vertical continuation line",
+                        ));
+                    }
                     if let Some(token!(TokenInfo::Indent)) = self.peek()? {
                         self.advance();
                         let items = self.parse_import_items(scope)?;
                         self.expect(scope, &[ExpectKind::Dedent])?;
-                        return Ok(ImportElement::Items {
+                        elems.push(ImportElement::Items {
                             module: module_span,
                             items,
                         });
+                        return Ok(());
                     }
                     self.expect(scope, &[ExpectKind::ArgSep])?;
                     match decay_ident!(self.next()?) {
-                        Some(token!(TokenInfo::Ident, span)) => Ok(ImportElement::ModuleRenamed {
-                            module: module_span,
-                            bind: Ident::new(span),
-                            delim_span: span.after_right_char(),
-                            type_only: None,
-                        }),
-                        other => Err(self.syntax_error(
-                            scope,
-                            other,
-                            "expected identifier for renamed module import",
-                        )),
+                        Some(token!(TokenInfo::Ident, span)) => {
+                            elems.push(ImportElement::ModuleRenamed {
+                                module: module_span,
+                                bind: Ident::new(span),
+                                delim_span: span.after_right_char(),
+                                type_only: None,
+                            });
+                            return self.expect_import_line_end(
+                                scope,
+                                "renamed module imports must be alone on a vertical continuation line",
+                            );
+                        }
+                        other => {
+                            return Err(self.syntax_error(
+                                scope,
+                                other,
+                                "expected identifier for renamed module import",
+                            ));
+                        }
                     }
                 } else {
-                    Ok(ImportElement::ModuleAsIs {
+                    ImportElement::ModuleAsIs {
                         module: module_span,
                         bind: Ident::new(self.module_name_first(module_span)),
                         insert: false,
                         type_only: None,
-                    })
+                    }
                 }
             }
             _ => {
                 let token = self.next()?;
-                Err(self.syntax_error(scope, token, "invalid import"))
+                return Err(self.syntax_error(scope, token, "expected module name to import"));
+            }
+        };
+        elems.push(element);
+        if let Some(token!(ArgSep)) = self.peek()? {
+            self.advance();
+            if !matches!(self.peek()?, None | Some(token!(StmtSep | Dedent))) {
+                self.parse_import_elem_vert(scope, elems, true)?;
             }
         }
+        Ok(())
     }
 
     fn parse_import_vert(
@@ -270,7 +410,7 @@ impl Parser<'_> {
                         pub_span,
                     });
                 }
-                _ => elems.push(self.parse_import_elem_vert(scope)?),
+                _ => self.parse_import_elem_vert(scope, &mut elems, false)?,
             }
         }
     }
@@ -385,7 +525,7 @@ impl Parser<'_> {
                 }
                 _ => {
                     let token = self.next()?;
-                    return Err(self.syntax_error(scope, token, "invalid import"));
+                    return Err(self.syntax_error(scope, token, "expected module name to import"));
                 }
             })
         }

@@ -1,0 +1,7 @@
+import
+  foo: alias bar
+# error: renamed module imports must be alone on a vertical continuation line
+#   --> import_packed_rename_error.dol:LL:LL
+#    |
+# LL |   foo: alias bar
+#    |              ^^^
