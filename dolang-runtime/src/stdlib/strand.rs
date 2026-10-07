@@ -480,65 +480,64 @@ async fn resource_with<'v, 's>(
 async fn map_workers<'v, 's>(
     strand: &mut Strand<'v, 's>,
     count: usize,
-    input: Slot<'v, '_>,
-    output: Slot<'v, '_>,
-    block: Slot<'v, '_>,
+    input: &Value<'v>,
+    output: &Value<'v>,
+    block: &Value<'v>,
+    disconnect_input: bool,
+    disconnect_output: bool,
 ) -> Result<'v, 's, ()> {
     strand
         .with_interrupt_mask(InterruptMask::all(), async move |strand| {
-            let shared_input = &input;
-            let shared_output = &output;
-            let shared_block = &block;
-            let mut strands = Vec::with_capacity(count);
-            let interrupt = strand.interrupt_token().nested(InterruptMask::empty());
-            for _ in 0..count {
-                strands.push(
-                    strand.spawn_scoped(Some(interrupt.clone()), async move |strand| {
-                        let result = strand
-                            .with_slots(
-                                async move |strand,
-                                            [
-                                    mut input,
-                                    mut output,
-                                    mut block,
-                                    mut item,
-                                    mut mapped,
-                                ]| {
-                                    Output::set(strand, &mut input, shared_input);
-                                    Output::set(strand, &mut output, shared_output);
-                                    Output::set(strand, &mut block, shared_block);
-                                    while input.next(strand, &mut item).await? {
-                                        call!(strand, &block, &mut mapped, &item).await?;
-                                        output.put(strand, &mut mapped).await?;
-                                        strand.check_trap_gc()?;
-                                    }
-                                    Ok(())
-                                },
-                            )
-                            .await;
-                        if result.is_err() {
-                            strand.interrupt_token().cancel();
+            let mut redirect = Redirect::new(strand);
+            if disconnect_input {
+                redirect = redirect.input(Singleton::Null);
+            }
+            if disconnect_output {
+                redirect = redirect.output(Singleton::Null);
+            }
+            redirect
+                .enter(async move |strand| {
+                    let mut strands = Vec::with_capacity(count);
+                    let interrupt = strand.interrupt_token().nested(InterruptMask::empty());
+                    for _ in 0..count {
+                        strands.push(strand.spawn_scoped(
+                            Some(interrupt.clone()),
+                            async move |strand| {
+                                let result = strand
+                                    .with_slots(async move |strand, [mut item, mut mapped]| {
+                                        while input.next(strand, &mut item).await? {
+                                            call!(strand, block, &mut mapped, &item).await?;
+                                            output.put(strand, &mut mapped).await?;
+                                            strand.check_trap_gc()?;
+                                        }
+                                        Ok(())
+                                    })
+                                    .await;
+                                if result.is_err() {
+                                    strand.interrupt_token().cancel();
+                                }
+                                result
+                            },
+                        ));
+                    }
+                    let mut first_err: Option<Error<'v, '_>> = None;
+                    for result in join_all(strands).await {
+                        if let Err(error) = result
+                            && first_err.as_ref().is_none_or(|previous| {
+                                previous.kind() == ErrorKind::Canceled
+                                    && error.kind() != ErrorKind::Canceled
+                            })
+                        {
+                            first_err = Some(error);
                         }
-                        result
-                    }),
-                );
-            }
-            let mut first_err: Option<Error<'v, '_>> = None;
-            for result in join_all(strands).await {
-                if let Err(error) = result
-                    && first_err.as_ref().is_none_or(|previous| {
-                        previous.kind() == ErrorKind::Canceled
-                            && error.kind() != ErrorKind::Canceled
-                    })
-                {
-                    first_err = Some(error);
-                }
-            }
-            if let Some(error) = first_err {
-                Err(error)
-            } else {
-                Ok(())
-            }
+                    }
+                    if let Some(error) = first_err {
+                        Err(error)
+                    } else {
+                        Ok(())
+                    }
+                })
+                .await
         })
         .await
 }
@@ -820,12 +819,18 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 let ([func], _) = unpack!(strand, args, 1, 0)?;
                 strand.input(&mut input);
                 strand.output(&mut output);
-                while input.next(strand, &mut value).await? {
-                    call!(strand, &func, &mut tmp, &mut value).await?;
-                    output.put(strand, &mut tmp).await?;
-                    strand.check_trap_gc()?
-                }
-                Ok(())
+                Redirect::new(strand)
+                    .input(Singleton::Null)
+                    .output(Singleton::Null)
+                    .enter(async move |strand| {
+                        while input.next(strand, &mut value).await? {
+                            call!(strand, &func, &mut tmp, &value).await?;
+                            output.put(strand, &mut tmp).await?;
+                            strand.check_trap_gc()?
+                        }
+                        Ok(())
+                    })
+                    .await
             },
         )
         .function_with_slots(
@@ -834,14 +839,20 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 let ([pred], _) = unpack!(strand, args, 1, 0)?;
                 strand.input(&mut input);
                 strand.output(&mut output);
-                while input.next(strand, &mut value).await? {
-                    call!(strand, &pred, &mut tmp, &*value).await?;
-                    if tmp.to_bool(strand)? {
-                        output.put(strand, &mut value).await?;
-                    }
-                    strand.check_trap_gc()?
-                }
-                Ok(())
+                Redirect::new(strand)
+                    .input(Singleton::Null)
+                    .output(Singleton::Null)
+                    .enter(async move |strand| {
+                        while input.next(strand, &mut value).await? {
+                            call!(strand, &pred, &mut tmp, &value).await?;
+                            if tmp.to_bool(strand)? {
+                                output.put(strand, &mut value).await?;
+                            }
+                            strand.check_trap_gc()?
+                        }
+                        Ok(())
+                    })
+                    .await
             },
         )
         .function_with_slots(
@@ -960,6 +971,8 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 if count == 0 {
                     return Err(Error::value(strand, "strand.map: count must be positive"));
                 }
+                let disconnect_input = arg_input.is_none();
+                let disconnect_output = arg_output.is_none();
                 if let Some(arg_input) = arg_input {
                     arg_input.iter(strand, &mut input).await?;
                 } else {
@@ -971,13 +984,23 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     strand.output(&mut output);
                 }
 
-                map_workers(strand, count, input, output, block).await
+                map_workers(
+                    strand,
+                    count,
+                    &input,
+                    &output,
+                    &block,
+                    disconnect_input,
+                    disconnect_output,
+                )
+                .await
             },
         )
         .function_with_slots(
             "pool",
             async move |strand, args, _, [mut input, mut output]| {
                 let ([count, input_or_block], [block]) = unpack!(strand, args, 2, 1)?;
+                let disconnect_input = block.is_none();
                 let block = if let Some(block) = block {
                     input_or_block.iter(strand, &mut input).await?;
                     block
@@ -990,7 +1013,16 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     return Err(Error::value(strand, "strand.pool: count must be positive"));
                 }
                 Output::set(strand, &mut output, Singleton::Null);
-                map_workers(strand, count, input, output, block).await
+                map_workers(
+                    strand,
+                    count,
+                    &input,
+                    &output,
+                    &block,
+                    disconnect_input,
+                    false,
+                )
+                .await
             },
         )
         .function("fork", async move |strand, args, mut out| {

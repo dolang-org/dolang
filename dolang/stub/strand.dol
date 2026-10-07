@@ -323,7 +323,7 @@ pub def collect ...args @ Value -> Value
 # strand-local output.
 pub def each[I, O]
   # a function that transforms a single value
-  func @ (I -> O)
+  func @ ((I, <Value, >Value) -> O)
   < Iter[I]
   > Sink[O]
 do
@@ -346,11 +346,12 @@ do
 
 # Applies a function concurrently to values from the strand-local input,
 # writing results to the strand-local output.
+# The function sees `std.null` as input and output.
 @def map[I, O]
   # number of worker strands
   count @ Int
   # function applied to each input value
-  func @ (I -> O)
+  func @ ((I, <Value, >Value) -> O)
   < Iter[I]
   > Sink[O]
 do -> nil
@@ -361,7 +362,7 @@ do -> nil
   # number of worker strands
   count @ Int
   # function applied to each input value
-  func @ (I -> O)
+  func @ ((I, >Value) -> O)
   # source
   :input @ Iterable[I]
   > Sink[O]
@@ -373,7 +374,7 @@ do -> nil
   # number of worker strands
   count @ Int
   # function applied to each input value
-  func @ (I -> O)
+  func @ ((I, <Value) -> O)
   # destination
   :output @ Sinkable[O]
   < Iter[I]
@@ -429,7 +430,7 @@ pub def pipeline ...args @ Value -> Value
   # iterable of items
   input @ Iterable[T]
   # function applied to each input value
-  func @ (T -> nil)
+  func @ ((T) -> nil)
 do -> nil
 
 # Runs a function over the strand-local input with a fixed number of scoped workers.
@@ -437,7 +438,7 @@ do -> nil
   # number of worker strands
   count @ Int
   # function applied to each input value
-  func @ (T -> nil)
+  func @ ((T, <Value) -> nil)
   < Iter[T]
 do -> nil
 
@@ -514,5 +515,5 @@ do -> Stream[R, O, I]
 
 # Writes the values of the strand-local input that satisfy a predicate to the
 # strand-local output.
-pub def where[T] predicate@(T -> Bool) <Iter[T] >Sink[T]
+pub def where[T] predicate@((T, <Value, >Value) -> Bool) <Iter[T] >Sink[T]
   ...

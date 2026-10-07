@@ -128,6 +128,65 @@ pub def passes_input <Iter[Int]
     nil
   nil
 
+# Worker callbacks lose only the ambient channels their operation uses.
+pub def maps_ambient <Iter[Int] >Sink[Int]
+  strand.map 1 do |x| (x + 1)
+
+pub def map_disconnected <Iter[Int] >Sink[Int]
+  strand.map 1 do |x|
+    let _ = strand.collect()
+    # error: no overload of `strand.collect` accepts these arguments
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     let _ = strand.collect()
+    #    |             ^^^^^^^^^^^^^^^^
+    #    |
+    #    = note: `[I] (<std.Iter[I]) -> std.Array[I]`: this call does not fit `[I] (<std.Iter[I]) -> std.Array[I]`
+    #    = note: `[I, S] (S, <std.Iter[I]) -> S`: this call does not fit `[I, S] (S, <std.Iter[I]) -> S`; this call is missing an argument
+    strand.put 1
+    # error: this call does not fit `forall (#0.0, >std.Sink[#0.0]) -> nil`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     strand.put 1
+    #    |     ^^^^^^^^^^^^
+    (x + 1)
+
+pub def maps_explicit_input <Iter[Str] >Sink[Int]
+  strand.map 1 input: [1] do |x|
+    let _ = strand.collect()
+    (x + 1)
+
+pub def maps_explicit_output <Iter[Int] >Sink[Str]
+  let out @ Array[Int] = []
+  strand.map 1 output: $out do |x|
+    strand.put "side"
+    (x + 1)
+
+pub def maps_explicit_both <Str >Bool
+  let out @ Array[Int] = []
+  strand.map 1 input: [1] output: $out do |x| (x + 1)
+
+pub def pools_ambient <Iter[Int] >Sink[Str]
+  strand.pool 1 do |_x|
+    strand.put "side"
+    nil
+
+pub def pools_explicit <Str >Sink[Int]
+  strand.pool 1 [1] do |x|
+    strand.put $x
+    nil
+
+pub def each_where_channels <Iter[Int] >Sink[Int]
+  strand.each do |x| (x + 1)
+  strand.where do |x|
+    strand.put $x
+    # error: this call does not fit `forall (#0.0, >std.Sink[#0.0]) -> nil`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     strand.put $x
+    #    |     ^^^^^^^^^^^^^
+    true
+
 def run_int f @ ((>Sink[Int]) -> nil) >Sink[Int] -> nil
   f()
 

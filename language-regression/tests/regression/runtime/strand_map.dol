@@ -7,6 +7,9 @@ import
     - from
     - collect
     - spawn
+    - redirect
+    - each
+    - where
   std:
     - Iter
     - ValueError
@@ -109,6 +112,81 @@ pipeline
     pooled.push $value
 pooled.sort()
 assert_eq $pooled [1, 2, 3, 4]
+
+# Each overload disconnects only the channels used by map or pool itself.
+let ambient_output = []
+redirect input: [1] output: $ambient_output do
+  map 1 do |value|
+    assert_eq (strand.input()) $std.null
+    assert_eq (strand.output()) $std.null
+    strand.put 99
+    (value + 1)
+  assert (strand.input() != std.null)
+  strand.put 7
+assert_eq $ambient_output [2, 7]
+
+ambient_output = []
+redirect input: ["ambient"] output: $ambient_output do
+  map 1 input: [1] do |value|
+    assert_eq (strand.input().next()) ambient
+    assert_eq (strand.output()) $std.null
+    (value + 1)
+assert_eq $ambient_output [2]
+
+let explicit_output = []
+ambient_output = []
+redirect input: [1] output: $ambient_output do
+  map 1 output: $explicit_output do |value|
+    assert_eq (strand.input()) $std.null
+    strand.put 99
+    (value + 1)
+assert_eq $ambient_output [99]
+assert_eq $explicit_output [2]
+
+explicit_output = []
+ambient_output = []
+redirect input: ["ambient"] output: $ambient_output do
+  map 1 input: [1] output: $explicit_output do |value|
+    assert_eq (strand.input().next()) ambient
+    strand.put 99
+    (value + 1)
+assert_eq $ambient_output [99]
+assert_eq $explicit_output [2]
+
+ambient_output = []
+redirect input: [1] output: $ambient_output do
+  pool 1 do |value|
+    assert_eq (strand.input()) $std.null
+    strand.put $value
+assert_eq $ambient_output [1]
+
+ambient_output = []
+redirect input: ["ambient"] output: $ambient_output do
+  pool 1 [1] do |value|
+    assert_eq (strand.input().next()) ambient
+    strand.put $value
+assert_eq $ambient_output [1]
+
+# Same-strand pipeline functions restore input after a callback error.
+ambient_output = []
+redirect input: [1, 2] output: $ambient_output do
+  assert_throws $ValueError do each do |_value|
+    assert_eq (strand.input()) $std.null
+    assert_eq (strand.output()) $std.null
+    strand.put 99
+    throw ValueError "stop"
+  assert_eq (strand.input().next()) 2
+assert_eq $ambient_output []
+
+ambient_output = []
+redirect input: [1, 2] output: $ambient_output do
+  assert_throws $ValueError do where do |_value|
+    assert_eq (strand.input()) $std.null
+    assert_eq (strand.output()) $std.null
+    strand.put 99
+    throw ValueError "stop"
+  assert_eq (strand.input().next()) 2
+assert_eq $ambient_output []
 
 assert_throws $ValueError do map 0 input: [] output: [] do |value| value
 assert_throws $ValueError do pool 0 [] do |value| value
