@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     ast::{
-        Block, Class, ClassBody, ClassMember, ClassSuper, Decorator, FieldDecl, FieldInit,
+        Block, Class, ClassBody, ClassMember, ClassSuper, Decorator, Expr, FieldDecl, FieldInit,
         FieldName, Function, Ident, MemberScope, PrimStmt, SpecialMethod, Stmt,
     },
     lex::{Keyword, Op, Token, TokenInfo},
@@ -125,7 +125,26 @@ impl Parser<'_> {
                 self.diags.push(ProtocolFieldDefault(equal_span));
             }
             self.expect(scope, &[ExpectKind::ArgSep])?;
-            let rhs = self.parse_cmd_or_expr(scope, true)?;
+            let rhs = match self.peek()? {
+                Some(token!(Ellipsis, span)) => {
+                    self.advance();
+                    if let Some(token!(ArgSep)) = self.peek()? {
+                        self.advance();
+                    }
+                    match self.peek()? {
+                        None | Some(token!(StmtSep | Dedent)) => {}
+                        other => {
+                            return Err(self.syntax_error(
+                                scope,
+                                other,
+                                "`...` must be the whole value of a `field`",
+                            ));
+                        }
+                    }
+                    Expr::Stub(span)
+                }
+                _ => self.parse_cmd_or_expr(scope, true)?,
+            };
             let init = if let Some(fold) = rhs.fold(self.file) {
                 FieldInit::Const(rhs, fold)
             } else {

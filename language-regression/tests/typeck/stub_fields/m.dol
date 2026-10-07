@@ -1,0 +1,6 @@
+pub class C
+  pub field x y @ Int = ...
+  pub field name @ Str = ...
+
+pub def value c @ C -> Int
+  c.x

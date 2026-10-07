@@ -56,3 +56,13 @@ assert_throws $std.RuntimeError str: "stub function called" do commented()
 # A `let` may stand in `...` for a value it doesn't write
 assert_throws $std.RuntimeError str: "stub function called" do
   let _unwritten @ Int = ...
+
+# Field defaults are deferred until an instance is created.
+class StubFields
+  pub field left right @ Int = ... # supplied by a native implementation
+
+assert_throws $std.RuntimeError str: "stub function called" do StubFields()
+
+class StubField
+  pub field value @ Int = ...
+assert_throws $std.RuntimeError str: "stub function called" do StubField()
