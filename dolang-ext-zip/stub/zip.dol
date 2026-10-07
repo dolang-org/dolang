@@ -1,11 +1,17 @@
+# dolang: strict
 # Reads and writes ZIP archives.
 #
 # The API is VFS-transparent: archive paths use the active VFS context.
 
 import fs:
+  - @FileType
   - @Path
+import fs.unix:
+  - @Path: UnixPath
 import std:
   - @Seq
+import time:
+  - @DateTime
 
 # An open ZIP archive.
 #
@@ -137,7 +143,7 @@ pub class Archive
     func @ (File -> R)
   do -> R
 
-  pub def open self name ...options
+  pub def open self name @ Str ...options @ Value -> Value
     ...
 
   # Creates a symbolic link entry pointing to `target`. Write mode only.
@@ -169,50 +175,49 @@ pub class Archive
 pub class Entry
   # Entry comment.
   #[getter]
-  pub def comment self
+  pub def comment self -> Str
     ...
 
   # Compressed size in bytes.
   #[getter]
-  pub def compressed_size self
+  pub def compressed_size self -> Int
     ...
 
   # Compression method as `:STORED:`, `:DEFLATE:`, `:ZSTD:`, or `:UNKNOWN:`.
   #[getter]
-  pub def compression self
+  pub def compression self -> (:STORED: | :DEFLATE: | :ZSTD: | :UNKNOWN:)
     ...
 
   # CRC-32 checksum of the uncompressed data.
   #[getter]
-  pub def crc32 self
+  pub def crc32 self -> Int
     ...
 
   # Last modification time as [`DateTime`](time.DateTime), or `nil` when
   # the stored timestamp cannot be represented.
   #[getter]
-  pub def last_modified self
+  pub def last_modified self -> (DateTime | nil)
     ...
 
   # Unix permission bits, or `nil` when the archive does not provide Unix
   # metadata.
   #[getter]
-  pub def mode self
+  pub def mode self -> (Int | nil)
     ...
 
   # Entry name as an [`fs.unix.Path`](fs.unix.Path).
   #[getter]
-  pub def name self
+  pub def name self -> UnixPath
     ...
 
   # Uncompressed size in bytes.
   #[getter]
-  pub def size self
+  pub def size self -> Int
     ...
 
-  # Entry type as `:FILE:`, `:DIR:`, `:SYMLINK:`, `:FIFO:`, `:CHAR_DEVICE:`,
-  # `:BLOCK_DEVICE:`, or `:UNKNOWN:`.
+  # Entry type.
   #[getter]
-  pub def type self
+  pub def type self -> FileType
     ...
 
   # Opens the entry for reading.
@@ -242,7 +247,7 @@ pub class Entry
     block @ (File -> R)
   do -> R
 
-  pub def open self ...block
+  pub def open self ...block @ Value -> Value
     ...
 
 # An open file within a ZIP archive.
@@ -360,5 +365,5 @@ do -> R
   func @ (Archive -> R)
 do -> R
 
-pub def open path ...options
+pub def open path @ (Str | Path) ...options @ Value -> Value
   ...

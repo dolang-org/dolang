@@ -2927,12 +2927,13 @@ def unpack_payload root archive
         staging.create_dir all: true
         tar.read $archive do |archive|
           for member = archive
-            if (member.type != :FILE:)
+            let name = member.path.name
+            if (member.type != :FILE: || name == nil)
               continue
             # Flattened onto the disc by basename: the archive's directory
             # layout is a release-artifact detail, and `bootstrap.cmd` copies
             # one directory.
-            let target = (staging / member.path.name)
+            let target = (staging / name)
             target.open wb do |file|
               for chunk = member
                 file.write $chunk

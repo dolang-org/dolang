@@ -1,3 +1,4 @@
+# dolang: strict
 # Reads and writes SQLite databases.
 #
 # ## SQL is a template, never a string
@@ -176,7 +177,7 @@ pub class Connection
     func @ (Statement[S] -> R)
   do -> R
 
-  pub def prepare[S @ {*SqlValue, **SqlValue}] self sql @ Fmt[SqlValue, S] ...options
+  pub def prepare[S @ {*SqlValue, **SqlValue}] self sql @ Fmt[SqlValue, S] ...options @ Value -> Value
     ...
 
   # Runs `func` inside a database transaction.
@@ -534,5 +535,5 @@ do -> Connection
   func @ (Connection -> R)
 do -> R
 
-pub def open path ...options
+pub def open path @ (Str | Path) ...options @ Value -> Value
   ...
