@@ -89,7 +89,7 @@ impl Flow<'_, '_> {
             ExprKind::Collection { .. } => self.collection(at, state, operands, expr, expected),
             ExprKind::Operand => operands.pop_front().expect("an operand for each hole"),
             ExprKind::Never => self.db.bottom(),
-            ExprKind::AmbientInput | ExprKind::Namespace | ExprKind::Error => unknown,
+            ExprKind::Namespace | ExprKind::Error => unknown,
         }
     }
 

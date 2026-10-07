@@ -7,7 +7,7 @@ import time load
 pub def scoped_silent() -> nil
   time.timeout 1 do
     put "x"
-  # error: this call does not fit `forall (#0.0, <std.Iter[Value], >std.Sink[#0.0]) -> nil`
+  # error: this call does not fit `forall (#0.0, <Value, >std.Sink[#0.0]) -> nil`
   #   --> m.dol:LL:LL
   #    |
   # LL |     put "x"

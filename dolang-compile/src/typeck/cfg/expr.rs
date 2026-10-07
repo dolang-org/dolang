@@ -104,8 +104,6 @@ pub(crate) enum ExprKind {
         kind: Collection,
         items: Vec<Item>,
     },
-    /// The strand's ambient input, iterated by a `for` with no iteratee
-    AmbientInput,
     /// A value popped from the operand stack. The operands of a step or terminal pop
     /// bottom-up, in evaluation order.
     Operand,
@@ -220,7 +218,6 @@ impl Expr {
             | ExprKind::Class(_)
             | ExprKind::Import { .. }
             | ExprKind::Lambda(_)
-            | ExprKind::AmbientInput
             | ExprKind::Operand
             | ExprKind::Never
             | ExprKind::Namespace

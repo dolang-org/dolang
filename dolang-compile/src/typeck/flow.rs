@@ -75,8 +75,7 @@ use super::{
     elab::{Designated, Tables},
     solver::{NarrowTarget, Outcome, Provenance, Residual, Solver, Status, Widening},
     r#type::{
-        Argument, Database, DeclId, Element, Function, Intrinsic, Kind, Literal, Multiplicity,
-        Type, TypeId, UnitId,
+        Database, DeclId, Element, Function, Intrinsic, Literal, Multiplicity, Type, TypeId, UnitId,
     },
 };
 use crate::source::Span;
@@ -575,17 +574,15 @@ impl<'a, 'u> Flow<'a, 'u> {
 
     /// Make each `do` block parameter and channel that's still bottom dynamic,
     /// saying whether there was one. In a strict unit, a channel instead takes a
-    /// def's omitted one, `Iter[Value]` as input and `Sink[Never]` as output.
+    /// def's omitted one, `Value`.
     fn dynamic_signatures(&mut self) -> bool {
         let bottom = self.db.bottom();
         let unknown = self.db.unknown();
-        let [input, output] = match self.tables.units[self.unit.index()].strict {
-            true => [
-                self.channel(Intrinsic::Iter, self.db.top()),
-                self.channel(Intrinsic::Sink, bottom),
-            ],
-            false => [unknown; 2],
+        let channel = match self.tables.units[self.unit.index()].strict {
+            true => self.db.top(),
+            false => unknown,
         };
+        let [input, output] = [channel; 2];
         let vars: Vec<(VarId, TypeId)> = (self.ir.funcs())
             .filter_map(|(_, func)| func.signature.as_ref())
             .flat_map(|signature| {
@@ -600,18 +597,6 @@ impl<'a, 'u> Flow<'a, 'u> {
             self.join(var, ty);
         }
         !vars.is_empty()
-    }
-
-    /// A channel class applied to its element type, or `Unknown` if it isn't checked
-    fn channel(&self, intrinsic: Intrinsic, element: TypeId) -> TypeId {
-        match self.db.intrinsic(intrinsic) {
-            Some(base) => self.db.intern(Type::Apply {
-                base,
-                args: vec![Argument::Positional(element)].into(),
-                kind: Kind::Type,
-            }),
-            None => self.db.unknown(),
-        }
     }
 
     /// A variable's joined type, making the block depend on it
@@ -1124,8 +1109,8 @@ impl<'a, 'u> Flow<'a, 'u> {
                 span,
             } => {
                 self.raise(at.ctx, data.handler, &state, unknown);
-                let iterable = self.read(at, &state, *iter).ty;
-                let item = self.next(at, iterable, *span);
+                let iteratee = iter.map(|iter| self.read(at, &state, iter).ty);
+                let item = self.next(at, &mut state, iteratee, *span);
                 let mut bound = state.clone();
                 if self.bind(at, &mut bound, pattern, item, *span) {
                     self.flow(at.ctx, *body, bound);

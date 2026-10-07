@@ -68,11 +68,11 @@ types rather than unknown ones:
 - An omitted return type is `nil`, so a function whose last statement has a
   value it doesn't mean to return ends with `nil`. An `(init)` method's is
   `Value`, since its result is discarded.
-- An omitted `<` is `Iter[Value]` and an omitted `>` is `Sink[Never]`: the
-  function reads its input as `Value` and writes nothing. A function that
-  writes to its output, or calls one that does, annotates `>`. So does a `do`
-  block that isn't passed straight to a call and has no expected type from an
-  annotation or cast:
+- An omitted `<` or `>` is `Value`: the function neither reads its input nor
+  writes its output. A function that reads its input, or calls one that does,
+  annotates `<`, and one that writes annotates `>`. So does a `do` block that
+  isn't passed straight to a call and has no expected type from an annotation
+  or cast:
 
     ```
     let report = do |>Sink[Str]|
@@ -734,9 +734,18 @@ let runner @ ((Int, <Iter[Int], >Sink[Str]) -> Int) = nil
 ```
 
 Omitting one says nothing about that channel, which is what most functions want,
-except in a [strict](#strict-checking) file. A written `<` must be an `Iter`
-and a written `>` a `Sink`. In a declaration the type is compact, as an
-annotation's is.
+except in a [strict](#strict-checking) file. In a declaration the type is
+compact, as an annotation's is.
+
+A channel may be any type, but only what fits a use of it can be done with it. A
+`for` without an iteratee reads the input through its `(next)`, and
+[`strand.put`](strand.put) requires a `Sink`. A function that runs a block with
+its caller's channels binds them whole, so it works whatever they are:
+
+```
+def with[R, I, O] block @ ((<I, >O) -> R) <I >O -> R
+  block()
+```
 
 A lambda's parameter list is delimited by `|`, so its implicits go inside:
 

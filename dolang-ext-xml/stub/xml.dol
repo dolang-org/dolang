@@ -146,9 +146,9 @@ pub class Node: @Index[{*(Str): Str, *(Int): Node | Str}] @Assign[Str, Str] @Spr
     # Value returned when absent.
     :default @ D = nil
     # Function evaluated when absent.
-    :else @ ((<Iter[I], >Sink[O]) -> D) = nil
-    <Iter[I]
-    >Sink[O]
+    :else @ ((<I, >O) -> D) = nil
+    <I
+    >O
   do -> (Str | D)
     ...
 

@@ -122,7 +122,7 @@ impl Ir {
                     exprs.extend(clauses.iter().map(|(expr, _)| expr))
                 }
                 Terminal::Next { iter, pattern, .. } => {
-                    vars.push(*iter);
+                    vars.extend(*iter);
                     pattern.walk(&mut |expr| exprs.push(expr));
                     vars.extend(pattern.vars());
                 }

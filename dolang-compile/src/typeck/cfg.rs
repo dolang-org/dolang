@@ -246,10 +246,11 @@ pub(crate) enum Terminal {
         clauses: Vec<(Expr, BlockId)>,
         otherwise: BlockId,
     },
-    /// Bind the iterator's next item to a pattern and continue to the body, or to
-    /// the exit when it's exhausted
+    /// Bind the next item to a pattern and continue to the body, or to the exit
+    /// when there is none. The item is the `(next)` of the iteratee's `(iter)`,
+    /// or with no iteratee, of the strand's ambient input.
     Next {
-        iter: VarId,
+        iter: Option<VarId>,
         pattern: Pattern,
         body: BlockId,
         exit: BlockId,

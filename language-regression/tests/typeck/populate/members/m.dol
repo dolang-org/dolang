@@ -46,5 +46,5 @@ pub def run f @ (Num -> Num)
 #    ^~~~~~~~: decl (m.Num, <in, >out) -> m.Num
 @def overload x @ Text -> Text
 pub def overload x
-  #     ^~~~~~~~: quantifier in contravariant, out contravariant
+  #     ^~~~~~~~: quantifier in @ Unknown contravariant, out @ Unknown contravariant
   x

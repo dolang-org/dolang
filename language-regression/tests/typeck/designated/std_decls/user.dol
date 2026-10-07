@@ -6,11 +6,11 @@ import std:
 pub let count @ Integer = 0
 #               ^~~~~~~: ref std.Int
 
-# An omitted ambient channel is gradual: its elements are `Unknown`.
+# An omitted ambient channel is gradual: it is bounded by `Unknown`.
 pub def relay()
-  #     ^~~~~: quantifier in @ std.Iter[Unknown] contravariant, out @ std.Sink[Unknown] contravariant
+  #     ^~~~~: quantifier in @ Unknown contravariant, out @ Unknown contravariant
   nil
 
 pub def drain <std.Iter[Integer]
-  #     ^~~~~: quantifier out @ std.Sink[Unknown] contravariant
+  #     ^~~~~: quantifier out @ Unknown contravariant
   nil

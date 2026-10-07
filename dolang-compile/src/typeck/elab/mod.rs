@@ -345,8 +345,8 @@ pub(crate) enum Ambient {
     Of(DeclId, usize),
     /// Dynamic, outside any def
     Unknown,
-    /// Omitted by a strict unit's def or method signature: `Iter[Value]` as input,
-    /// `Sink[Never]` as output, which any caller's channels fit
+    /// Omitted by a strict unit's def or method signature: `Value`, which any
+    /// caller's channel fits and which can't be read or written
     Strict,
 }
 
@@ -392,8 +392,6 @@ pub(crate) enum Designated {
     Record,
     /// `std.Range`, the class of a range
     Range,
-    /// `std.BaseIterable`, which a `for` iterates
-    BaseIterable,
     /// `std.Spread`, which a spread item spreads
     Spread,
     /// `std.Unpack`, which a pattern unpacks
@@ -819,29 +817,6 @@ impl Report for ParameterKeys {
 
     fn span(&self) -> Span {
         self.0
-    }
-}
-
-/// An ambient channel annotation that isn't an `Iter` or a `Sink`
-struct BadChannel {
-    span: Span,
-    output: bool,
-}
-
-impl Report for BadChannel {
-    fn severity(&self) -> Severity {
-        Severity::Error
-    }
-
-    fn message(&self, w: &mut dyn Write) -> fmt::Result {
-        match self.output {
-            false => write!(w, "`<` must be an `Iter`"),
-            true => write!(w, "`>` must be a `Sink`"),
-        }
-    }
-
-    fn span(&self) -> Span {
-        self.span
     }
 }
 

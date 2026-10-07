@@ -168,7 +168,6 @@ impl Tables<'_> {
                     Designated::Dict => "dict".to_owned(),
                     Designated::Record => "record".to_owned(),
                     Designated::Range => "range".to_owned(),
-                    Designated::BaseIterable => "base iterable".to_owned(),
                     Designated::Spread => "spread".to_owned(),
                     Designated::Unpack => "unpack".to_owned(),
                     Designated::PipeSender => "pipe sender".to_owned(),

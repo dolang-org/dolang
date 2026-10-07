@@ -2678,30 +2678,6 @@ impl<'a> Flow<'a, '_> {
         )
     }
 
-    /// The type of the items a `for` iterates: its iteratee must be a
-    /// `BaseIterable[T]`, giving `T`
-    pub(super) fn next(&mut self, at: At, iterable: TypeId, span: Span) -> TypeId {
-        if iterable == self.db.bottom() {
-            return iterable;
-        }
-        let Some(base) = self.designated(Designated::BaseIterable) else {
-            return self.db.unknown();
-        };
-        self.conclude(at, None, |rule| {
-            let element = rule.solver.infer();
-            let target = rule.term(|holes| {
-                let element = holes.hole(element, Kind::Type);
-                holes.apply(base, vec![element])
-            });
-            rule.constrain(
-                rule.closed(iterable),
-                target,
-                Check::Fits(span, Misfit::Iterable),
-            );
-            vec![element]
-        })[0]
-    }
-
     /// The types a pattern's items unpack from a value, which must be an
     /// `Unpack[S]`, diagnosed at `span`; `None` if the pattern can't match it.
     /// The pattern is walked against `S` (see [`Solver::unpack_pattern`]), giving
