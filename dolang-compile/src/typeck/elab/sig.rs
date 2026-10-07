@@ -7,12 +7,18 @@
 //! written binders; population bounds it. A method's unannotated receiver is its
 //! class applied to the class's own binders; an annotated one specializes an
 //! overload, and is checked, once the database is sealed.
+//!
+//! A strict unit must annotate its parameters and fields instead. Its omitted
+//! return types are `nil` (`Value` for `(init)`, whose result is discarded) and
+//! its omitted channels take the conservative [`Ambient::Strict`], so its
+//! signatures come from its declarations alone, with nothing dynamic.
 
 use super::{
     Ambient, BadNominee, BinderRef, DeclNode, Designated, Diag, KindOf, MisdeclaredIntrinsic,
-    PIPES, ParamTy, Referent, RestSlot, Sig, Slot, Tables, UnitDiag,
+    MissingAnnotation, PIPES, ParamTy, Referent, RestSlot, Sig, Slot, Tables, UnitDiag,
     surface::{BinderKind, Decorator, Member, Method, ParamKind, Signature},
 };
+use crate::ast::SpecialMethod;
 use crate::typeck::r#type::{DeclId, DeclKind, Intrinsic, Kind, Scope, UnitId, UnitSpan};
 
 /// Complete every def and method signature, record every field's type, and find
@@ -36,9 +42,12 @@ pub(crate) fn signatures(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
                         }
                     }
                     tables.sigs.insert((decl, sig), completed);
+                    missing_params(tables, decl, sig, diags);
                 }
             }
             DeclNode::Class(class) => {
+                let unit = tables.decls[decl.index()].unit;
+                let strict = tables.units[unit.index()].strict;
                 let mut fields = Vec::new();
                 for member in &class.members {
                     let Member::Field(field) = member else {
@@ -47,6 +56,15 @@ pub(crate) fn signatures(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
                     let slot = field.annot.map_or(Slot::Unknown, Slot::Annot);
                     for name in &field.names {
                         fields.push(((decl, name.span), slot));
+                        if strict && field.annot.is_none() {
+                            diags.push((
+                                unit,
+                                Diag::new(MissingAnnotation {
+                                    span: name.span,
+                                    what: "field",
+                                }),
+                            ));
+                        }
                     }
                 }
                 tables.fields.extend(fields);
@@ -82,13 +100,17 @@ pub(crate) fn function<'t>(tables: &'t Tables<'_>, decl: DeclId, sig: usize) -> 
 
 /// The ambient channels of a def or method signature, as a function type written
 /// within it without its own takes them: the channel written on the signature, or
-/// the implicit binder standing for one omitted.
+/// for one omitted, the implicit binder standing for it, or a strict unit's
+/// conservative channel.
 pub(crate) fn channels(tables: &Tables<'_>, decl: DeclId, sig: usize) -> [Ambient; 2] {
     let func = function(tables, decl, sig);
+    let strict = is_strict(tables, decl);
     let mut slot = tables.binders(decl, sig).len();
     [func.input.is_some(), func.output.is_some()].map(|written| {
         if written {
             Ambient::Of(decl, sig)
+        } else if strict {
+            Ambient::Strict
         } else {
             let binder = BinderRef { decl, sig, slot };
             slot += 1;
@@ -97,12 +119,25 @@ pub(crate) fn channels(tables: &Tables<'_>, decl: DeclId, sig: usize) -> [Ambien
     })
 }
 
+/// Whether a declaration is of a strict unit
+fn is_strict(tables: &Tables<'_>, decl: DeclId) -> bool {
+    tables.units[tables.decls[decl.index()].unit.index()].strict
+}
+
 fn complete(tables: &Tables<'_>, decl: DeclId, sig: usize) -> Sig {
     let unit = tables.decls[decl.index()].unit;
     let func = function(tables, decl, sig);
-    let receiver = match &tables.decls[decl.index()].node {
-        DeclNode::Methods(methods) => method_scope(tables, unit, &methods[sig]) == Scope::Instance,
-        _ => false,
+    let (receiver, init) = match &tables.decls[decl.index()].node {
+        DeclNode::Methods(methods) => (
+            method_scope(tables, unit, &methods[sig]) == Scope::Instance,
+            matches!(methods[sig].special, Some(SpecialMethod::Init)),
+        ),
+        _ => (false, false),
+    };
+    let omitted = match (is_strict(tables, decl), init) {
+        (false, _) => Slot::Unknown,
+        (true, true) => Slot::Top,
+        (true, false) => Slot::Nil,
     };
     let params = params(tables, unit, func, receiver);
     let [input, output] = channels(tables, decl, sig).map(|ambient| match ambient {
@@ -114,7 +149,41 @@ fn complete(tables: &Tables<'_>, decl: DeclId, sig: usize) -> Sig {
         receiver,
         input,
         output,
-        ret: func.ret.map_or(Slot::Unknown, Slot::Annot),
+        ret: func.ret.map_or(omitted, Slot::Annot),
+    }
+}
+
+/// Diagnose the parameters a strict unit's def or method signature leaves
+/// unannotated. A method's receiver is typed by its class, and so is exempt.
+fn missing_params(tables: &Tables<'_>, decl: DeclId, sig: usize, diags: &mut Vec<UnitDiag>) {
+    if !is_strict(tables, decl) {
+        return;
+    }
+    let unit = tables.decls[decl.index()].unit;
+    let (name, receiver) = match &tables.decls[decl.index()].node {
+        DeclNode::Defs(defs) => (defs[sig].name, false),
+        DeclNode::Methods(methods) => (
+            methods[sig].name,
+            method_scope(tables, unit, &methods[sig]) != Scope::Static,
+        ),
+        _ => unreachable!("only a def or method has a signature"),
+    };
+    let func = function(tables, decl, sig);
+    for (index, param) in func.params.iter().enumerate() {
+        if param.annot.is_some() || (receiver && index == 0) {
+            continue;
+        }
+        let what = match param.kind {
+            ParamKind::Rest { .. } => "rest parameter",
+            _ => "parameter",
+        };
+        diags.push((
+            unit,
+            Diag::new(MissingAnnotation {
+                span: param.name.unwrap_or(name).span,
+                what,
+            }),
+        ));
     }
 }
 

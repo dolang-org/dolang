@@ -4,6 +4,7 @@ pub(crate) mod ast;
 pub(crate) mod cfg;
 pub(crate) mod constant;
 pub mod diag;
+pub(crate) mod directive;
 pub(crate) mod doc;
 pub(crate) mod elab;
 pub(crate) mod emit;
@@ -1294,6 +1295,7 @@ pub struct Config<'a> {
     recover: bool,
     document: bool,
     typecheck: bool,
+    strict: Option<bool>,
 }
 
 impl Default for Config<'_> {
@@ -1311,6 +1313,7 @@ impl<'a> Config<'a> {
             recover: false,
             document: false,
             typecheck: false,
+            strict: None,
         };
         this.prelude()
             .import_module("std")
@@ -1361,6 +1364,19 @@ impl<'a> Config<'a> {
         self
     }
 
+    /// Check the unit strictly, overriding any `# dolang: strict` or
+    /// `# dolang: nostrict` directive among its first lines.
+    ///
+    /// A strict unit must annotate its defs' parameters and its fields, and its
+    /// defs' omitted return types and ambient channels are typed conservatively
+    /// rather than dynamically.
+    ///
+    /// Default: what the unit's directive says, or `false`.
+    pub fn strict(&mut self, strict: bool) -> &mut Self {
+        self.strict = Some(strict);
+        self
+    }
+
     /// Configure a prelude, a collection of standard imports which are injected into the code.
     ///
     /// Note that prelude imports which are not referenced by the code are omitted from compilation, even
@@ -1393,6 +1409,8 @@ impl<'a> Config<'a> {
         };
         let mut prelude = mem::take(&mut compiler.prelude);
         let diags = Diags::new();
+        let directives = directive::scan(&compiler.file, &diags);
+        let strict = self.strict.or(directives.strict).unwrap_or(false);
         let mut comments = vec![];
 
         let (mut ast, mut failed) = {
@@ -1441,6 +1459,7 @@ impl<'a> Config<'a> {
             diags,
             failed,
             resolved,
+            strict,
         }
     }
 }
@@ -1457,9 +1476,17 @@ pub struct Unit<'a> {
     diags: Diags,
     failed: bool,
     resolved: bool,
+    /// Whether the unit is checked strictly
+    strict: bool,
 }
 
 impl Unit<'_> {
+    /// Whether the unit is checked strictly: as [`Config::strict`] set, or else as
+    /// its directive says.
+    pub fn strict(&self) -> bool {
+        self.strict
+    }
+
     /// Iterate diagnostics generated while building the unit.
     ///
     /// Diagnostics are yielded in the order they were generated.

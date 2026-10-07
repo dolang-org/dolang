@@ -1023,6 +1023,10 @@ pub def compile
   :document @ Bool = nil
   # Prepare the unit for [`check`](compile.check). Defaults to `false`.
   :typecheck @ Bool = nil
+  # Check the unit strictly, overriding its `# dolang: strict` or
+  # `# dolang: nostrict` directive. Defaults to what the directive says, or
+  # `false` without one.
+  :strict @ Bool = nil
 do -> Unit
   ...
 

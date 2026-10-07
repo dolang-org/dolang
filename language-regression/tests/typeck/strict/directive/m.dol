@@ -1,0 +1,6 @@
+#!/usr/bin/env dolang
+# dolang: strict nostrict
+
+pub def f x
+  #     ^: sig (x: Unknown, <#0, >#1) -> Unknown
+  x

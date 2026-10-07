@@ -1,0 +1,80 @@
+# dolang: strict
+# A strict unit must annotate its defs' parameters and its fields. A method's
+# receiver is typed by its class, and a lambda by its context.
+
+pub def shown a @ Int b :k = "x" *rest **kw @ Int
+  #     ^~~~~: sig (a: Int, b: Unknown, ?:k: Unknown, *rest: {*Unknown}, **kw: {**Int}, <strict, >strict) -> nil
+  # error: a strict unit must annotate this parameter
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def shown a @ Int b :k = "x" *rest **kw @ Int
+  #    |                       ^
+  # error: a strict unit must annotate this parameter
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def shown a @ Int b :k = "x" *rest **kw @ Int
+  #    |                          ^
+  # error: a strict unit must annotate this rest parameter
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def shown a @ Int b :k = "x" *rest **kw @ Int
+  #    |                                   ^^^^
+  let _ = [a, b, k, rest, kw]
+  nil
+
+pub def annotated a @ Int -> Int
+  #     ^~~~~~~~~: sig (a: Int, <strict, >strict) -> Int
+  a
+
+@def over x -> Int
+# error: a strict unit must annotate this parameter
+#   --> m.dol:LL:LL
+#    |
+# LL | @def over x -> Int
+#    |           ^
+@def over x @ Str -> Str
+pub def over x
+  # error: a strict unit must annotate this parameter
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def over x
+  #    |              ^
+  x
+
+pub class Point
+  pub field x @ Int = 0
+  pub field y = 0
+  # error: a strict unit must annotate this field
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   pub field y = 0
+  #    |             ^
+
+  pub def (init) self x @ Int
+    #      ^~~~: sig (self: Self, x: Int, <strict, >strict) -> Value
+    self.x = x
+
+  pub def moved self dx -> Point
+    # error: a strict unit must annotate this parameter
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def moved self dx -> Point
+    #    |                      ^^
+    Point (self.x + dx)
+
+  #[class]
+  pub def origin _cls -> Point
+    Point 0
+
+  #[static]
+  pub def make x -> Point
+    # error: a strict unit must annotate this parameter
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def make x -> Point
+    #    |                ^
+    Point $x
+
+pub def lambdas() -> Int
+  let f = do |x| x
+  f 1

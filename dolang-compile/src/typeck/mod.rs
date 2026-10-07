@@ -100,7 +100,7 @@ impl<'a> Typelib<'a> {
 /// A unit to check
 enum Input<'u, 's> {
     Source(&'u Unit<'s>),
-    Typelib(elab::Harvest<'u>),
+    Typelib(Box<elab::Harvest<'u>>),
 }
 
 /// Collects the units to check together.
@@ -180,7 +180,7 @@ impl<'u, 's> Builder<'u, 's> {
     /// | [`ErrorKind::DuplicateModule`](crate::ErrorKind::DuplicateModule) | A module of the same name was already added |
     pub fn typelib(&mut self, typelib: &Typelib<'u>) -> Result<UnitId, Error> {
         self.module(typelib.module())?;
-        self.units.push(Input::Typelib(typelib.0.clone()));
+        self.units.push(Input::Typelib(Box::new(typelib.0.clone())));
         Ok(UnitId::from_index(self.units.len() - 1))
     }
 
@@ -207,7 +207,7 @@ impl<'u, 's> Builder<'u, 's> {
         let harvests: Vec<elab::Harvest<'u>> = (self.units.into_iter())
             .map(|input| match input {
                 Input::Source(unit) => elab::harvest(unit),
-                Input::Typelib(harvest) => harvest,
+                Input::Typelib(harvest) => *harvest,
             })
             .collect();
         let mut order: Vec<UnitId> = (0..harvests.len()).map(UnitId::from_index).collect();

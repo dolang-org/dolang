@@ -1,0 +1,56 @@
+# dolang: strict
+# A strict unit's omitted channels are `<Iter[Value]` and `>Sink[Never]`,
+# which any caller's channels fit.
+
+import lax
+
+# Writing or reading as something specific needs the channel annotated
+pub def writes()
+  #     ^~~~~~: sig (<strict, >strict) -> nil
+  put 1
+  # error: this call does not fit `forall (#0.0, <#0.1, >std.Sink[#0.0]) -> Unknown`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   put 1
+  #    |   ^^^^^
+  nil
+
+pub def writes_declared >Sink[Int]
+  put 1
+  nil
+
+pub def reads()
+  let xs = strand.collect()
+  let _ = xs
+  #       ^~: flow std.Array[Value]
+  nil
+
+pub def reads_int()
+  let _xs @ Array[Int] = strand.collect()
+  # error: `std.Array[Value]` does not fit the annotation `std.Array[std.Int]`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _xs @ Array[Int] = strand.collect()
+  #    |                          ^^^^^^^^^^^^^^^^
+  nil
+
+# A function type without its own channels takes the def's
+pub def each f @ ((Int) -> nil)
+  #                     ^~: ambient <strict >strict
+  f 1
+
+# A strict caller's own output is `Sink[Never]`, so a callee that writes needs
+# it annotated; a non-strict callee's `Unknown` channels pass for now
+pub def calls()
+  writes_declared()
+  # error: this call does not fit `(<std.Iter[Value], >std.Sink[std.Int]) -> nil`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   writes_declared()
+  #    |   ^^^^^^^^^^^^^^^^^
+  lax.anything 1
+  nil
+
+pub def calls_strict()
+  each do |_x| nil
+  nil

@@ -553,7 +553,7 @@ impl<'t> Collect<'t, '_> {
                 self.ty(implicit, u);
                 self.expanding.pop();
             }
-            Ambient::Written | Ambient::Unknown => {}
+            Ambient::Written | Ambient::Unknown | Ambient::Strict => {}
         }
     }
 

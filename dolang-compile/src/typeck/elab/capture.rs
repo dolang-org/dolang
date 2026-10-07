@@ -245,7 +245,7 @@ impl Needs<'_, '_> {
                 self.ty(node, unit, self.tables.site_ty(implicit));
                 self.expanding.pop();
             }
-            Ambient::Written | Ambient::Unknown => {}
+            Ambient::Written | Ambient::Unknown | Ambient::Strict => {}
         }
     }
 }
