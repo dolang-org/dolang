@@ -245,7 +245,7 @@ impl Solver<'_> {
     /// that carry down from `member`, and `Unknown` for the rest
     fn below(&self, class: DeclId, member: &Nominal) -> TypeId {
         let Some(binders) = self.binders(class) else {
-            return self.db.intern(Type::Decl(class));
+            return self.apply_unknown(class);
         };
         let (Ok(Some(descent)), Ok(arguments), Some(member_binders)) = (
             self.descent(class, member.declaration),

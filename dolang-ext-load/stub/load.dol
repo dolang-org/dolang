@@ -81,7 +81,7 @@ do -> Value
 # ```
 pub def import_handler
   # Called with the requested module name.
-  callback @ (Str -> Value)
+  callback @ ((Str, <Value, >Value) -> Value)
 do -> ImportHandler
   ...
 
@@ -113,7 +113,7 @@ pub def run
   # Compiled Do bytecode.
   bytecode @ Bin
   # Program-specific module importer, called with the requested module name.
-  :importer @ (Str -> Value) = nil
+  :importer @ ((Str, <Value, >Value) -> Value) = nil
   <Iter[Value]
   >Sink[Value]
 do -> Value

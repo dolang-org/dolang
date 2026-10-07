@@ -587,10 +587,12 @@ in place of the receiver. Call the class to create a new instance.
 
 Invoked when an instance is called like a function. As a class or static member
 it instead governs calling the class itself; see
-[Class and Static Members](#class-and-static-members).
+[Class and Static Members](#class-and-static-members). A class whose instances
+are passed as functions names `Func` among its supertypes; the type checker then
+takes its `(call)`'s signature as theirs.
 
 ```
-class Multiplier
+class Multiplier: Func
   field factor = 1
 
   def (init) self factor

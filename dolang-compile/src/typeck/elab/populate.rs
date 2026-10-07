@@ -454,7 +454,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                         Some(implicit) => self.intern(group, implicit, Kind::Type, depth),
                         None => {
                             let ambient =
-                                ambients.map_or(Ambient::Unknown, |ambients| ambients[index]);
+                                ambients.map_or(Ambient::Value, |ambients| ambients[index]);
                             self.ambient(group, ambient, index, depth)
                         }
                     });
@@ -505,8 +505,8 @@ impl<'t, 'u> Populate<'t, 'u> {
                 self.expanding.pop();
                 ty
             }
-            Ambient::Strict => self.db.top(),
-            Ambient::Written | Ambient::Unknown => self.db.unknown(),
+            Ambient::Value => self.db.top(),
+            Ambient::Written => self.db.unknown(),
         }
     }
 
@@ -623,13 +623,14 @@ impl<'t, 'u> Populate<'t, 'u> {
                     (Some(Designated::Never), None) => return self.db.bottom(),
                     _ => {}
                 }
-                let ty = self.apply(group, decl, args, (head, fields, span), depth);
-                match tables.designated.get(&decl) {
-                    Some(Designated::Intrinsic(Intrinsic::Func)) if !supertype => {
-                        self.function(group, decl, ty, span, depth)
-                    }
-                    _ => ty,
+                // Bare `Func` in a type is any function
+                if let (Some(Designated::Intrinsic(Intrinsic::Func)), None) =
+                    (tables.designated.get(&decl), args)
+                    && !supertype
+                {
+                    return self.db.gradual_function();
                 }
+                self.apply(group, decl, args, (head, fields, span), depth)
             }
             _ => self.unknown(expected),
         }
@@ -682,11 +683,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                         && !matches!(written.kind, BinderKind::Rest(_))
                         && !matches!(
                             tables.designated.get(&decl),
-                            Some(
-                                Designated::Fmt
-                                    | Designated::FmtValue
-                                    | Designated::Intrinsic(Intrinsic::Func)
-                            )
+                            Some(Designated::Fmt | Designated::FmtValue)
                         )
                 }) {
                     let name = tables.dotted(group.unit, *head, fields);
@@ -854,59 +851,6 @@ impl<'t, 'u> Populate<'t, 'u> {
         })
     }
 
-    /// A use of `Func` as the function type it describes: its parameters,
-    /// result and ambient channels, a channel it doesn't give taken as a function
-    /// type without its own takes it. An application whose arguments stay as
-    /// written, after an expansion of an unknown pack, stays nominal.
-    fn function(
-        &mut self,
-        group: Group<'_>,
-        decl: DeclId,
-        ty: TypeId,
-        span: Span,
-        depth: usize,
-    ) -> TypeId {
-        let tables = self.tables;
-        let written = tables.binders(decl, 0);
-        if !matches!(
-            written,
-            [s, r, i, o] if s.kind == BinderKind::Pos
-                && r.kind == BinderKind::Pos
-                && i.kind == BinderKind::Key
-                && o.kind == BinderKind::Key
-        ) {
-            return ty;
-        }
-        let Type::Apply { args: applied, .. } = self.db.ty(ty) else {
-            return ty;
-        };
-        let &[
-            Argument::Positional(params),
-            Argument::Positional(result),
-            Argument::Positional(input),
-            Argument::Positional(output),
-        ] = &applied[..]
-        else {
-            return ty;
-        };
-        let ambients = tables.func_ambients.get(&UnitSpan {
-            unit: group.unit,
-            span,
-        });
-        let [input, output] = [(0, input), (1, output)].map(|(index, given)| {
-            match ambients.map_or(Ambient::Written, |ambients| ambients[index]) {
-                Ambient::Written => given,
-                ambient => self.ambient(group, ambient, index, depth),
-            }
-        });
-        self.db.intern(Type::Function(Function {
-            params,
-            result,
-            input: Some(input),
-            output: Some(output),
-        }))
-    }
-
     /// The body of a pipe placeholder: its nominee applied to the placeholder's
     /// binders in order, or `Unknown` without one
     fn pipe(&mut self, group: Group<'_>, placeholder: DeclId) -> TypeId {
@@ -952,9 +896,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         let Some(default) = written.default else {
             return matches!(
                 tables.designated.get(&binder.decl),
-                Some(
-                    Designated::Fmt | Designated::FmtValue | Designated::Intrinsic(Intrinsic::Func)
-                )
+                Some(Designated::Fmt | Designated::FmtValue)
             )
             .then(|| self.unknown(self.kind(binder)));
         };
@@ -1044,8 +986,9 @@ impl<'t, 'u> Populate<'t, 'u> {
                 Some(written) => written
                     .bound
                     .map(|bound| self.bound(group, binder, tables.site_ty(bound))),
-                // An omitted channel is gradual
-                None => Some(self.db.unknown()),
+                // An omitted channel is unbounded; the body sees it by its unit's
+                // mode
+                None => None,
             };
             // A lifted binder is always passed, so it needs no default
             let default = match origin {

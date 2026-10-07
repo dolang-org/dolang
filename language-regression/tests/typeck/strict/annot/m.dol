@@ -3,7 +3,7 @@
 # receiver is typed by its class, and a lambda by its context.
 
 pub def shown a @ Int b :k = "x" *rest **kw @ Int
-  #     ^~~~~: sig (a: Int, b: Unknown, ?:k: Unknown, *rest: {*Unknown}, **kw: {**Int}, <strict, >strict) -> nil
+  #     ^~~~~: sig (a: Int, b: Unknown, ?:k: Unknown, *rest: {*Unknown}, **kw: {**Int}, <#0, >#1) -> nil
   # error: a strict unit must annotate this parameter
   #   --> m.dol:LL:LL
   #    |
@@ -23,7 +23,7 @@ pub def shown a @ Int b :k = "x" *rest **kw @ Int
   nil
 
 pub def annotated a @ Int -> Int
-  #     ^~~~~~~~~: sig (a: Int, <strict, >strict) -> Int
+  #     ^~~~~~~~~: sig (a: Int, <#0, >#1) -> Int
   a
 
 @def over x -> Int
@@ -51,7 +51,7 @@ pub class Point
   #    |             ^
 
   pub def (init) self x @ Int
-    #      ^~~~: sig (self: Self, x: Int, <strict, >strict) -> Value
+    #      ^~~~: sig (self: Self, x: Int, <#0, >#1) -> Value
     self.x = x
 
   pub def moved self dx -> Point

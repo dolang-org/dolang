@@ -390,7 +390,7 @@ struct Walk<'c, 'u> {
     /// found within it
     owner: Option<(DeclId, usize)>,
     /// The def or method signature whose ambient channels the types being walked
-    /// share, absent outside any def or within a class or alias declared in one
+    /// share, absent outside a def's signature
     sig: Option<(DeclId, usize)>,
     /// The declarations of the unit's blocks, by the span of the name each declares,
     /// with the signature each def is among its function's
@@ -856,9 +856,12 @@ impl<'u> Walk<'_, 'u> {
             .ret
             .as_ref()
             .map(|ret| self.ty(&frame, &ret.ty, Role::Type));
+        // A def's channels are shared only by the types of its signature
+        let sig = self.sig.take();
         for stmt in &func.body.stmts {
             self.stmt(&frame, stmt);
         }
+        self.sig = sig;
         surface::Signature {
             params,
             input,
@@ -944,6 +947,13 @@ impl<'u> Walk<'_, 'u> {
         *self.node(id) = DeclNode::Closure(surface::Closure { span, sig });
     }
 
+    /// Walk a parameter's default, which like a body is outside its def's signature.
+    fn default(&mut self, frame: &Frame<'_, 'u>, expr: &'u Expr) {
+        let sig = self.sig.take();
+        self.expr(frame, expr);
+        self.sig = sig;
+    }
+
     /// The name an item binds, walking a sub-pattern, which binds none of its own
     fn bind(&mut self, frame: &Frame<'_, 'u>, bind: &'u PatBind) -> Option<Name> {
         match bind {
@@ -962,7 +972,7 @@ impl<'u> Walk<'_, 'u> {
         match param {
             PatItem::Pos { bind, ty, default } => {
                 if let Some(default) = default {
-                    self.expr(frame, &default.expr);
+                    self.default(frame, &default.expr);
                 }
                 surface::Param {
                     kind: ParamKind::Pos,
@@ -980,7 +990,7 @@ impl<'u> Walk<'_, 'u> {
                 ..
             } => {
                 if let Some(default) = default {
-                    self.expr(frame, &default.expr);
+                    self.default(frame, &default.expr);
                 }
                 surface::Param {
                     kind: ParamKind::Key {
@@ -1001,7 +1011,7 @@ impl<'u> Walk<'_, 'u> {
             } => {
                 self.expr(frame, key_expr);
                 if let Some(default) = default {
-                    self.expr(frame, &default.expr);
+                    self.default(frame, &default.expr);
                 }
                 let key = match key_const {
                     Const::Str(value) => Some(ConstLit::Str(value.as_str().into())),

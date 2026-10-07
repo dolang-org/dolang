@@ -289,8 +289,7 @@ impl Tables<'_> {
                 format!("{}#{}", self.qualified(binder.decl), binder.slot)
             }
             Ambient::Of(decl, _) => format!("of {}", self.qualified(decl)),
-            Ambient::Unknown => "Unknown".to_owned(),
-            Ambient::Strict => "strict".to_owned(),
+            Ambient::Value => "Value".to_owned(),
         }
     }
 
@@ -786,9 +785,12 @@ impl Tables<'_> {
                 self.items(db, ty, naming, out);
                 out.push('}');
             }
-            Type::Quantified { body, .. } => {
+            // Its implicit channels are left out, as they were written
+            Type::Quantified { binders, body } => {
+                let implicit = |slot: u16| binders[usize::from(slot)].binding == Binding::Implicit;
+                let body = without_channels(db, *body, &implicit, 0);
                 out.push_str("forall ");
-                self.render_into(db, *body, naming.enter(), out);
+                self.render_into(db, body, naming.enter(), out);
             }
             Type::Map { packs, pattern } => {
                 out.push_str("{...");

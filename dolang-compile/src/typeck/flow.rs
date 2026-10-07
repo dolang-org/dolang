@@ -289,6 +289,9 @@ impl<'a, 'u> Flow<'a, 'u> {
         for &decl in &self.scope {
             solver.assume(decl);
         }
+        if !self.tables.units[self.unit.index()].strict {
+            solver.gradual();
+        }
         #[cfg(feature = "debug")]
         {
             let (db, tables) = (self.db, self.tables);
@@ -573,8 +576,8 @@ impl<'a, 'u> Flow<'a, 'u> {
     }
 
     /// Make each `do` block parameter and channel that's still bottom dynamic,
-    /// saying whether there was one. In a strict unit, a channel instead takes a
-    /// def's omitted one, `Value`.
+    /// saying whether there was one. In a strict unit, a channel instead takes
+    /// `Value`, as a def's omitted one is seen there.
     fn dynamic_signatures(&mut self) -> bool {
         let bottom = self.db.bottom();
         let unknown = self.db.unknown();

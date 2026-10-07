@@ -49,7 +49,7 @@ pub def annotated()
   let f @ ((Int) -> Int) = do |y| y
   #                            ^: flow std.Int
   let _ = f
-  #       ^: flow (std.Int, <m.annotated.#0, >m.annotated.#1) -> std.Int
+  #       ^: flow (std.Int, <Value, >Value) -> std.Int
 
 # A block's result is known once the block is analyzed, however the blocks that
 # give it depend on each other

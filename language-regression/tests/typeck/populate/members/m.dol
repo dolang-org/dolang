@@ -35,16 +35,15 @@ pub class Counter[T]
     #     ^~~~: decl (T, <in, >out) -> m.Counter[T]
     Counter(x)
 
-# A closure is lifted over the implicit channels of the def whose channels its
-# function types take.
+# A closure's function types don't share its def's channels
 pub def run f @ (Num -> Num)
   let g = do |h @ (Num -> Num)| h
-  #               ^~~~~~~~~~~~: type (m.Num, <in, >out) -> m.Num
-  g(f)
+  #               ^~~~~~~~~~~~: type (m.Num, <Value, >Value) -> m.Num
+  [f, g]
 
 @def overload x @ Num -> Num
 #    ^~~~~~~~: decl (m.Num, <in, >out) -> m.Num
 @def overload x @ Text -> Text
 pub def overload x
-  #     ^~~~~~~~: quantifier in @ Unknown contravariant, out @ Unknown contravariant
+  #     ^~~~~~~~: quantifier in contravariant, out contravariant
   x

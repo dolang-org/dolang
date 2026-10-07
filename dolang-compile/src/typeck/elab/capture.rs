@@ -2,8 +2,7 @@
 //! over.
 //!
 //! A declaration needs the outer binders it names anywhere, in its signature,
-//! members or body, including the implicit binders a function type written without
-//! channels takes. It also needs what each type declaration it names needs, since a
+//! members or body. It also needs what each type declaration it names needs, since a
 //! reference passes those as leading arguments, and what each declaration nested in
 //! it needs, since they are in scope there. A method needs all of its class's
 //! binders. A lifted binder keeps its bound, so a declaration also needs what the
@@ -165,12 +164,8 @@ impl Needs<'_, '_> {
 
     fn ty(&mut self, node: usize, unit: UnitId, ty: &TypeExpr) {
         match ty {
-            TypeExpr::Name { head, fields, .. } => {
+            TypeExpr::Name { head, .. } => {
                 self.name(node, unit, head.span);
-                let span = fields
-                    .last()
-                    .map_or(head.span, |field| head.span | field.span);
-                self.func(node, unit, span);
             }
             TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}
             TypeExpr::App { base, args, .. } => {
@@ -178,7 +173,6 @@ impl Needs<'_, '_> {
                 for arg in args {
                     self.ty(node, unit, arg.ty());
                 }
-                self.func(node, unit, ty.span());
             }
             TypeExpr::Schema { params, .. } => self.params(node, unit, params),
             TypeExpr::Group { ty, .. } => self.ty(node, unit, ty),
@@ -212,15 +206,6 @@ impl Needs<'_, '_> {
         }
     }
 
-    /// The channels a use of `Func` takes where it doesn't give them
-    fn func(&mut self, node: usize, unit: UnitId, span: Span) {
-        let tables = self.tables;
-        let ambients = tables.func_ambients.get(&UnitSpan { unit, span });
-        for (index, ambient) in ambients.into_iter().flatten().enumerate() {
-            self.ambient(node, *ambient, index);
-        }
-    }
-
     fn params(&mut self, node: usize, unit: UnitId, params: &[TypeParam]) {
         for ty in params.iter().flat_map(TypeParam::tys) {
             self.ty(node, unit, ty);
@@ -245,7 +230,7 @@ impl Needs<'_, '_> {
                 self.ty(node, unit, self.tables.site_ty(implicit));
                 self.expanding.pop();
             }
-            Ambient::Written | Ambient::Unknown | Ambient::Strict => {}
+            Ambient::Written | Ambient::Value => {}
         }
     }
 }

@@ -16,7 +16,7 @@ pub class Box[T]
 
   @def int _self @ Box[Int] -> T
   #    ^~~: decl (m.Box[m.Int], <in, >out) -> m.Int
-  #    ^~~: quantifier ^T covariant, in @ Unknown contravariant, out @ Unknown contravariant
+  #    ^~~: quantifier ^T covariant, in contravariant, out contravariant
   pub def int _self -> T
     nil
 

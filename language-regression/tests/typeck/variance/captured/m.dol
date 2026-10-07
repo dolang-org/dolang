@@ -14,6 +14,6 @@ pub def outer[T] _x @ T
     # ^~~~~: captured T covariant
     nil
   def plain _p @ Plain
-    # ^~~~~: quantifier in @ Unknown contravariant, out @ Unknown contravariant
+    # ^~~~~: quantifier in contravariant, out contravariant
     nil
   (reads, plain, Local)

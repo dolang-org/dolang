@@ -343,11 +343,8 @@ pub(crate) enum Ambient {
     Implicit(BinderRef),
     /// The channel written on the def or method signature `(decl, sig)`
     Of(DeclId, usize),
-    /// Dynamic, outside any def
-    Unknown,
-    /// Omitted by a strict unit's def or method signature: `Value`, which any
-    /// caller's channel fits and which can't be read or written
-    Strict,
+    /// `Value`, outside a def's signature
+    Value,
 }
 
 /// A def or method signature, completed with the defaults for what it omits

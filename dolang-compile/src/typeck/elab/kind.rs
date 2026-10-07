@@ -10,8 +10,8 @@
 use std::collections::HashMap;
 
 use super::{
-    Ambient, BinderRef, Designated, Head, KindMismatch, KindOf, NotAType, NotGeneric,
-    PatternWithoutPack, Referent, Role, Site, Tables, TooManyTypeArgs, UnknownTypeKeyword,
+    Ambient, BinderRef, Head, KindMismatch, KindOf, NotAType, NotGeneric, PatternWithoutPack,
+    Referent, Role, Site, Tables, TooManyTypeArgs, UnknownTypeKeyword,
     surface::{
         Binder, BinderKind, Name, Super, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam,
         TypeParamKind,
@@ -23,7 +23,7 @@ use crate::{
     typeck::{
         elab::{DeclNode, Diag, UnitDiag, sig},
         report::Report,
-        r#type::{DeclId, DeclKind, Intrinsic, Kind, UnitId, UnitSpan},
+        r#type::{DeclId, DeclKind, Kind, UnitId, UnitSpan},
     },
 };
 
@@ -366,47 +366,6 @@ impl<'t> Check<'_, 't, '_> {
         }
     }
 
-    /// Record the channels a use of `Func` in a type takes where its arguments
-    /// don't give them, as a function type without its own does, keyed by the
-    /// use's span. A supertype stays an application, so it takes none.
-    fn func(&mut self, named: &Named<'t>, args: &[TypeArg], span: Span) {
-        let tables = self.tables;
-        let Named::Generic(_, owner, _, decl, binders) = *named else {
-            return;
-        };
-        let func = (Designated::Intrinsic(Intrinsic::Func), DeclKind::Class);
-        if sig::designation(tables, decl) != Some(func) || tables.decls[decl.index()].kind != func.1
-        {
-            return;
-        }
-        let [_, _, input, output] = binders else {
-            return;
-        };
-        let written = [input, output].map(|binder| {
-            let name = tables.name(owner, binder.name);
-            args.iter().any(|arg| {
-                matches!(&arg.kind, TypeArgKind::Key { name: key, .. }
-                    if tables.name(self.unit, *key) == name)
-            })
-        });
-        if written == [true, true] {
-            return;
-        }
-        let channels = match self.ambient {
-            Some((decl, sig)) => sig::channels(tables, decl, sig),
-            None => [Ambient::Unknown; 2],
-        };
-        let ambients = [0, 1].map(|index| match written[index] {
-            true => Ambient::Written,
-            false => channels[index],
-        });
-        let span = UnitSpan {
-            unit: self.unit,
-            span,
-        };
-        self.func_ambients.insert(span, ambients);
-    }
-
     fn expect(&mut self, span: Span, expected: Option<Kind>, found: Kind, declared: Option<Span>) {
         if let Some(expected) = expected
             && expected != found
@@ -428,7 +387,6 @@ impl<'t> Check<'_, 't, '_> {
                     .map_or(head.span, |field| head.span | field.span);
                 let named = self.named(head.span);
                 self.name(span, head, fields, &named, expected);
-                self.func(&named, &[], span);
             }
             TypeExpr::App { base, args, .. } => {
                 let base = base.ungrouped();
@@ -439,7 +397,6 @@ impl<'t> Check<'_, 't, '_> {
                             self.name(base.span(), head, fields, &named, None);
                         }
                         self.args(&named, args, ty.span());
-                        self.func(&named, args, ty.span());
                     }
                     _ => {
                         self.check(base, None);
@@ -474,7 +431,7 @@ impl<'t> Check<'_, 't, '_> {
                 if input.is_none() || output.is_none() {
                     let channels = match self.ambient {
                         Some((decl, sig)) => sig::channels(self.tables, decl, sig),
-                        None => [Ambient::Unknown; 2],
+                        None => [Ambient::Value; 2],
                     };
                     let written = [input.is_some(), output.is_some()];
                     let ambients = [0, 1].map(|index| match written[index] {

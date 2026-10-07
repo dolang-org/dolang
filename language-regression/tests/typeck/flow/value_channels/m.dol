@@ -1,0 +1,62 @@
+# Outside a def's signature, a function type takes `Value` for each channel it
+# omits, so a function of that type can neither read nor write.
+
+@let Callback = ((Int) -> nil)
+#                      ^~: ambient <Value >Value
+
+pub class Holder
+  pub field cb @ ((Int) -> nil) = do |_x| nil
+  #                     ^~: ambient <Value >Value
+
+pub class Box[T]
+  pub field item @ T = nil
+
+pub class CallbackBox: Box[(Int) -> nil]
+#                                ^~: ambient <Value >Value
+
+pub def local()
+  let _ = ((do |_x| nil) @ ((Int) -> nil))
+  #                               ^~: ambient <Value >Value
+  let g = do |f @ ((Int) -> nil)| f
+  #                      ^~: ambient <Value >Value
+  g
+
+# A callback in a def's signature takes the def's channels, so it can't escape
+# to where a function takes `Value`
+pub def keep f @ ((Int) -> nil)
+  let _g @ ((Int) -> nil) = f
+# error: `(std.Int, <m.keep.#0, >m.keep.#1) -> nil` does not fit the annotation `(std.Int, <Value, >Value) -> nil`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _g @ ((Int) -> nil) = f
+#    |                             ^
+
+pub def store h @ Holder f @ ((Int) -> nil)
+  h.cb = f
+# error: expected `(std.Int, <Value, >Value) -> nil`, found `(std.Int, <m.store.#0, >m.store.#1) -> nil`
+#   --> m.dol:LL:LL
+#    |
+# LL |   h.cb = f
+#    |          ^
+#    |
+#    = note: `m.store.#1` doesn't accept `Value`
+#    = note: `m.store.#0` doesn't accept `Value`
+
+# One marked as taking `Value` can
+pub def store_marked h @ Holder f @ ((Int, <Value, >Value) -> nil)
+  h.cb = f
+
+# A block taking `Value` channels can't write
+pub def writer()
+  let _w @ Callback = do |x| put $x
+# error: this call does not fit `forall (#0.0, >std.Sink[#0.0]) -> nil`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _w @ Callback = do |x| put $x
+#    |                              ^^^^^^
+
+# An alias passes channels through its binders
+@let Handler[I, O] = ((Int, <I, >O) -> nil)
+
+pub def run f @ Handler[Iter[Int], Sink[Str]] <Iter[Int] >Sink[Str]
+  f 1

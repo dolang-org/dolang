@@ -3,15 +3,14 @@
 //! treats specially.
 //!
 //! An omitted annotation on a def is dynamic, whatever the def's visibility. An
-//! omitted ambient channel is an implicit binder of the signature, following its
-//! written binders; population bounds it. A method's unannotated receiver is its
-//! class applied to the class's own binders; an annotated one specializes an
-//! overload, and is checked, once the database is sealed.
+//! omitted ambient channel is an unbounded implicit binder of the signature,
+//! following its written binders, in either mode. A method's unannotated receiver
+//! is its class applied to the class's own binders; an annotated one specializes
+//! an overload, and is checked, once the database is sealed.
 //!
 //! A strict unit must annotate its parameters and fields instead. Its omitted
-//! return types are `nil` (`Value` for `(init)`, whose result is discarded) and
-//! its omitted channels take the conservative [`Ambient::Strict`], so its
-//! signatures come from its declarations alone, with nothing dynamic.
+//! return types are `nil` (`Value` for `(init)`, whose result is discarded), so
+//! its signatures come from its declarations alone, with nothing dynamic.
 
 use super::{
     Ambient, BadNominee, BinderRef, DeclNode, Designated, Diag, KindOf, MisdeclaredIntrinsic,
@@ -100,17 +99,13 @@ pub(crate) fn function<'t>(tables: &'t Tables<'_>, decl: DeclId, sig: usize) -> 
 
 /// The ambient channels of a def or method signature, as a function type written
 /// within it without its own takes them: the channel written on the signature, or
-/// for one omitted, the implicit binder standing for it, or a strict unit's
-/// conservative channel.
+/// for one omitted, the implicit binder standing for it.
 pub(crate) fn channels(tables: &Tables<'_>, decl: DeclId, sig: usize) -> [Ambient; 2] {
     let func = function(tables, decl, sig);
-    let strict = is_strict(tables, decl);
     let mut slot = tables.binders(decl, sig).len();
     [func.input.is_some(), func.output.is_some()].map(|written| {
         if written {
             Ambient::Of(decl, sig)
-        } else if strict {
-            Ambient::Strict
         } else {
             let binder = BinderRef { decl, sig, slot };
             slot += 1;

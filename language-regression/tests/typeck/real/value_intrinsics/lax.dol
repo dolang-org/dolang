@@ -1,0 +1,8 @@
+# A non-strict unit's overloads are proved against `Value`'s as a strict unit's
+# are, since its omitted channels are the same unbounded binders.
+
+pub class Broadcast
+  @def (eq) _self _other @ Int -> Array[Bool]
+  @def (eq) _self _other @ Value -> Bool
+  pub def (eq) _self _other
+    true

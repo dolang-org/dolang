@@ -114,17 +114,18 @@ pub @let ArgSpec = BaseDict $
 # symbol, such as `:deploy:` or `:build_docs:`, and its own fields are in a
 # nested [`Args`](args.Args) at `p[p.cmd]`. The result's `handler` field is the matched
 # handler.
-pub @let CmdSpec[R = Value] = BaseDict $
+pub @let CmdSpec[R, I, O] = BaseDict $
   cmd: Str
   ?help: Str
   ?usage: Str
-  *(SpecItem[R] | Handler[R])
+  *(SpecItem[R, I, O] | Handler[R, I, O])
 
 # An item of an argument specification.
-pub @let SpecItem[R = Value] = (FlagSpec | OptSpec | ArgSpec | CmdSpec[R])
+pub @let SpecItem[R, I, O] = (FlagSpec | OptSpec | ArgSpec | CmdSpec[R, I, O])
 
-# A handler, called by [`with`](args.with) with the parsed arguments.
-pub @let Handler[R = Value] = (Args -> R)
+# A handler, called by [`with`](args.with) with the parsed arguments and its
+# caller's strand input and output.
+pub @let Handler[R, I, O] = ((Args[R, I, O], <I, >O) -> R)
 
 # ===========================================================================
 # Public: result type
@@ -142,7 +143,7 @@ pub @let Handler[R = Value] = (Args -> R)
 # ```
 # let :format :file = p
 # ```
-pub class Args: @Unpack[Sym, Value]
+pub class Args[R, I, O]: @Unpack[Sym, Value]
   field values
 
   def (init) self values
@@ -162,6 +163,11 @@ pub class Args: @Unpack[Sym, Value]
 
   def (spread) self
     self.#values
+
+  # The matched handler, if any.
+  #[getter]
+  pub def handler self -> (Handler[R, I, O] | nil)
+    self.#values[:handler:]
 
 # ===========================================================================
 # Public: error type
@@ -713,7 +719,7 @@ def prog_default()
 #
 # echo "format=$(p.format) file=$(p.file)"
 # ```
-pub def parse
+pub def parse[R, I, O]
   # Arguments to parse. Defaults to `shell.args`.
   :args @ Iterable[Str] = nil
   # Program name shown in help output and error messages.
@@ -726,8 +732,8 @@ pub def parse
   # Replacement for the generated `Usage:` line, after the program name.
   :usage @ Str = nil
   # Spec items, and optionally a handler for the top level.
-  ...spec @ (SpecItem | Handler)
-do -> Args
+  ...spec @ (SpecItem[R, I, O] | Handler[R, I, O])
+do -> Args[R, I, O]
   let p = Parser name: (program || prog_default()) :help :usage ...spec
   p.parse
     if (args != nil)
@@ -767,7 +773,7 @@ do -> Args
 #     do |p|
 #       echo "Rolling back $(p.rollback.service)"
 # ```
-pub def with[R]
+pub def with[R, I, O]
   # Arguments to parse. Defaults to `shell.args`.
   :args @ Iterable[Str] = nil
   # Print errors or help and exit. When `false`, raise
@@ -783,7 +789,9 @@ pub def with[R]
   # Replacement for the generated `Usage:` line, after the program name.
   :usage @ Str = nil
   # Spec items, and optionally a handler for the top level.
-  ...spec @ (SpecItem[R] | Handler[R])
+  ...spec @ (SpecItem[R, I, O] | Handler[R, I, O])
+  <I
+  >O
 do -> R
   let p = Parser name: (program || prog_default()) :help :usage ...spec
   try

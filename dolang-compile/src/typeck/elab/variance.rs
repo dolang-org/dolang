@@ -455,17 +455,11 @@ impl<'t> Collect<'t, '_> {
     fn ty(&mut self, ty: &'t TypeExpr, u: Use) {
         match ty {
             TypeExpr::Group { ty, .. } => self.ty(ty, u),
-            TypeExpr::Name { head, fields, .. } => {
-                match self.referent(head.span) {
-                    Some(&Referent::Binder(binder)) => self.uses(binder, u),
-                    Some(&Referent::Decl(decl)) if self.is_type(decl) => self.captures(decl, u),
-                    _ => {}
-                }
-                let span = fields
-                    .last()
-                    .map_or(head.span, |field| head.span | field.span);
-                self.func(span, u);
-            }
+            TypeExpr::Name { head, .. } => match self.referent(head.span) {
+                Some(&Referent::Binder(binder)) => self.uses(binder, u),
+                Some(&Referent::Decl(decl)) if self.is_type(decl) => self.captures(decl, u),
+                _ => {}
+            },
             TypeExpr::App { base, args, .. } => {
                 let mut head = &**base;
                 while let TypeExpr::Group { ty, .. } = head {
@@ -475,7 +469,6 @@ impl<'t> Collect<'t, '_> {
                     && let Some(&Referent::Decl(decl)) = self.referent(head.span)
                     && self.is_type(decl)
                 {
-                    self.func(ty.span(), u);
                     return self.app(decl, args, u);
                 }
                 // What a binder, an external or an erroneous name takes is unknown
@@ -516,19 +509,6 @@ impl<'t> Collect<'t, '_> {
         }
     }
 
-    /// Walk the channels a use of `Func` takes where it doesn't give them, as a
-    /// function type's
-    fn func(&mut self, span: Span, u: Use) {
-        let tables = self.tables;
-        let ambients = tables.func_ambients.get(&UnitSpan {
-            unit: self.unit,
-            span,
-        });
-        for (index, ambient) in ambients.into_iter().flatten().enumerate() {
-            self.ambient(*ambient, index, u.flip());
-        }
-    }
-
     /// Walk the ambient channel a function type without its own takes.
     fn ambient(&mut self, ambient: Ambient, index: usize, u: Use) {
         match ambient {
@@ -553,7 +533,7 @@ impl<'t> Collect<'t, '_> {
                 self.ty(implicit, u);
                 self.expanding.pop();
             }
-            Ambient::Written | Ambient::Unknown | Ambient::Strict => {}
+            Ambient::Written | Ambient::Value => {}
         }
     }
 
