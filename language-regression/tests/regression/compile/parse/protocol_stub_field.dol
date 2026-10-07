@@ -1,0 +1,7 @@
+@class C
+  pub field value @ Int = ...
+# error: a protocol field has no default
+#   --> protocol_stub_field.dol:LL:LL
+#    |
+# LL |   pub field value @ Int = ...
+#    |                         ^

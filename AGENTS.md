@@ -876,7 +876,9 @@ and a field's type, with names linked to their documentation:
   type-only supertype, as in `class Blake3: @State`.
 - Give a module value its literal when it has one (`pub let PI @ Float =
   3.141592653589793`), and otherwise `...`, as in `pub let args @ Args = ...`.
-  Running such a `let` raises an error, as calling a stub function does.
+  Fields whose values the native implementation supplies also use `...`, as in
+  `pub field name @ Str = ...`. Protocol fields cannot have defaults.
+  Evaluating a `...` value raises an error, as calling a stub function does.
 
 #### Links
 

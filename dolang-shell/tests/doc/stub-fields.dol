@@ -1,0 +1,5 @@
+# Documents fields supplied by a native implementation.
+
+pub class C
+  # Supplied by the implementation.
+  pub field value @ Int = ...

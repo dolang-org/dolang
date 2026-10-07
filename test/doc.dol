@@ -65,3 +65,16 @@ def type_only_items_appear_only_when_public()
 def tokens_are_written_only_when_asked_for()
   assert (!(json.decode(describe()).contains("tokens")))
   assert (json.decode(describe("--tokens")).contains("tokens"))
+
+#[test]
+def stub_field_has_no_documented_default()
+  let buf = BinBuf()
+  run $shell.exe -m compile extract --doc --strict --module stub_fields
+    $(FIXTURE / "stub-fields.dol")
+    stdout: $buf
+    mode: :CHUNK:
+  let entities = json.decode(Str(buf.freeze()))["doc"]["entities"]
+  let member = entities[0]["members"][0]
+  assert_eq $member["name"] value
+  assert_eq $member["type"]["name"] Int
+  assert (!member.contains("default"))

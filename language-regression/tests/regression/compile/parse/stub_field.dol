@@ -1,0 +1,7 @@
+class C
+  pub field value @ Int = ... 1
+# error: `...` must be the whole value of a `field`
+#   --> stub_field.dol:LL:LL
+#    |
+# LL |   pub field value @ Int = ... 1
+#    |                               ^
