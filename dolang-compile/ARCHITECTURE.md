@@ -492,14 +492,17 @@ member.
 `typeck/solver/member.rs` finds a receiver's member as the runtime does. It is a
 query on the solver, not a judgment: it adds no bounds, but the receiver is a
 term, possibly holding inference variables, and its class is reached through the
-same substitution-carrying walk as subtyping. A rigid in scope is looked up
-through its bound, and a literal or function through its intrinsic class. An
-unsolved variable is residual, a union is unsupported until alternatives are
-judged, `Unknown` is dynamic, and `Value` has no members.
+same substitution-carrying walk as subtyping. A rigid or skolem in scope is
+looked up through its bound, a literal or function through its intrinsic class,
+and top, or a rigid or skolem without a bound, through the `Value` class, whose
+members every value has. An unsolved variable is residual, a union is
+unsupported until alternatives are judged, and `Unknown` is dynamic.
 
 The class and its ancestors are searched in MRO order, left to right and depth
 first, and the first member of the name wins. A supertype that isn't nominal
-makes a member not yet found dynamic. Instance members and type-object members
+makes a member not yet found dynamic. A member no ancestor has is then looked up
+on `Value`, last. `Value` ends every search without being anyone's supertype, so
+ancestry and subtyping never see it. Instance members and type-object members
 are separate namespaces. An instance with no member of an ordinary name falls
 back to its class's `(get)` and `(set)` methods. A class object has type
 `Type[C]`: its members are `C`'s class members, its static members only on `C`
@@ -556,8 +559,8 @@ the arguments that make it reach `C[a…]` along the supertype the member was
 found through: a default receiver becomes the declaration's own type, and
 `chomp[U] self @ Iterable[U]` checked for `Iter[T]` takes `self @ Iter[U]`. The
 provided method keeps its receiver, so one callable on fewer instances fails.
-A receiver that isn't a class application, or can't be matched, stays as
-written.
+`Value`'s receiver, top, becomes the declaration's own type. Any other receiver
+that isn't a class application, or can't be matched, stays as written.
 
 ### Assignments and fixed point
 
@@ -1266,7 +1269,10 @@ it names, under its own rigids, in one closed solver whose variables it settles
 itself. Every requirement the solver states is constrained there, and a
 contradicted one is reported: an override where it is declared, and an
 inherited member, a missing one or a class a claim needs at the supertype
-reference. The checks are local, as well-formedness's are. An instance `(call)`
+reference. Each is also checked against `Value`, which it has without naming
+it, though only for the members it declares itself: an override of `(eq)` must
+still accept any value, and a narrower one is an overload beside it. The checks
+are local, as well-formedness's are. An instance `(call)`
 in a class or protocol that doesn't reach `Func` is warned of, since the solver
 won't pass its instances as functions.
 

@@ -344,8 +344,6 @@ pub(super) fn designation(tables: &Tables<'_>, decl: DeclId) -> Option<(Designat
         ("std", "Sym") => (Designated::Intrinsic(Intrinsic::Sym), DeclKind::Class),
         ("std", "Nil") => (Designated::Intrinsic(Intrinsic::Nil), DeclKind::Class),
         ("std", "Str") => (Designated::Intrinsic(Intrinsic::Str), DeclKind::Class),
-        ("std", "Iter") => (Designated::Intrinsic(Intrinsic::Iter), DeclKind::Class),
-        ("std", "Sink") => (Designated::Intrinsic(Intrinsic::Sink), DeclKind::Class),
         ("std", "Type") => (Designated::Intrinsic(Intrinsic::Type), DeclKind::Class),
         ("std", "Fmt") => (Designated::Fmt, DeclKind::Class),
         ("std", "FmtValue") => (Designated::FmtValue, DeclKind::Class),

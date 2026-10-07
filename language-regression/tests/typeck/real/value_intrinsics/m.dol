@@ -1,0 +1,61 @@
+# dolang: strict
+# Every value has `Value`'s members, whatever its type declares.
+
+pub def anything x @ Value -> Int
+  let s = x.(str)()
+  #   ^: flow std.Str
+  let h = x.(hash)()
+  #   ^: flow std.Int
+  x.(next)()
+  # error: `Value` has no member `(next)`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   x.(next)()
+  #    |   ^^^^^^^^^^
+  (s.len + h)
+
+pub def generic[T] x @ T -> Bool
+  let e = x.(eq)(1)
+  #   ^: flow std.Bool
+  e
+
+pub class Plain
+  pub field n @ Int = 0
+
+pub def plain p @ Plain -> Str
+  let d = p.(dbg)()
+  #   ^: flow std.Str
+  let v = Plain.(verbatim)(p)
+  #   ^: flow std.Str
+  "$d$v"
+
+# A protocol requiring one is satisfied by a class that inherits it from `Value`
+pub @class Hashes
+  pub def (hash) self -> Int
+
+pub class Hashed: @Hashes
+  pub field n @ Int = 0
+
+pub def hashes h @ Hashes -> Hashes
+  h
+
+pub def passes() -> Hashes
+  hashes (Hashed())
+
+# An override must still compare with any value
+pub class Narrow
+  pub def (eq) _self _other @ Narrow -> Bool
+    # error: `(eq)` does not match `Value.(eq)`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def (eq) _self _other @ Narrow -> Bool
+    #    |            ^^
+    true
+
+# A narrower comparison is an overload beside the general one
+pub class Broadcast
+  @def (eq) _self _other @ Int -> Array[Bool]
+  @def (eq) _self _other @ Value -> Bool
+  pub def (eq) _self _other @ Value -> Value
+    true
+

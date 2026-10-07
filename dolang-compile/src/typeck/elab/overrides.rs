@@ -146,6 +146,9 @@ impl Check<'_, '_> {
                 }
             }
         }
+        if designated != Some(&Designated::Value) {
+            self.value(&solver, instance, runtime, &spans, &mut pending);
+        }
         for check in pending {
             let mut fork = solver.clone();
             for (actual, expected) in check.pairs {
@@ -205,6 +208,35 @@ impl Check<'_, '_> {
             let class = self.name(self.id).to_owned();
             self.diags
                 .push((self.unit, Diag::new(Uncallable { span, class })));
+        }
+    }
+
+    /// Relate the members the declaration declares itself to `Value`'s, which it
+    /// has without naming it. One it inherits was related where it's declared.
+    fn value(
+        &mut self,
+        solver: &Solver<'_>,
+        instance: TypeId,
+        runtime: bool,
+        spans: &HashMap<(MemberKey, bool), Span>,
+        pending: &mut Vec<Pending>,
+    ) {
+        let db = self.db;
+        if db.intrinsic(Intrinsic::Value).is_none() {
+            return;
+        }
+        let Some(name) = self.tables.decls[self.id.index()].name else {
+            return;
+        };
+        match solver.conformance(instance, solver.closed(db.top()), runtime) {
+            Ok(requirements) => {
+                for requirement in requirements {
+                    if requirement.provider == Some(self.id) {
+                        self.requirement(pending, spans, name.span, requirement);
+                    }
+                }
+            }
+            Err(issue) => self.undecided(name.span, issue),
         }
     }
 

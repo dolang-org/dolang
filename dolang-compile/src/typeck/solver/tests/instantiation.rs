@@ -159,7 +159,6 @@ fn ambient_binders_are_bounded_by_the_callers_channels() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
     let iter = nominal(&mut db, "Iter", vec![binder(Variance::Covariant)], vec![]);
-    db.set_intrinsic(Intrinsic::Iter, iter);
     let iter_unknown = apply(&db, iter, &[db.unknown()]);
     let iter_int = apply(&db, iter, &[int]);
     let input = reference(&db, 0, 0);

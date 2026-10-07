@@ -840,12 +840,11 @@ pub(crate) enum Intrinsic {
     Sym,
     Nil,
     Str,
-    /// Bounds an omitted ambient input channel, as `Iter[Unknown]`
-    Iter,
-    /// Bounds an omitted ambient output channel, as `Sink[Unknown]`
-    Sink,
     /// `Type[C]`, the type of the class object whose instances are `C`
     Type,
+    /// The class whose members every value has, which top's members are
+    /// looked up on and every class's lookup falls back to
+    Value,
 }
 
 /// Optional associations to elaborated stub types, populated before sealing.
@@ -864,9 +863,8 @@ struct Intrinsics {
     sym: Option<TypeId>,
     nil: Option<TypeId>,
     str: Option<TypeId>,
-    iter: Option<TypeId>,
-    sink: Option<TypeId>,
     ty: Option<TypeId>,
+    value: Option<TypeId>,
 }
 
 impl Intrinsics {
@@ -885,9 +883,8 @@ impl Intrinsics {
             Intrinsic::Sym => self.sym,
             Intrinsic::Nil => self.nil,
             Intrinsic::Str => self.str,
-            Intrinsic::Iter => self.iter,
-            Intrinsic::Sink => self.sink,
             Intrinsic::Type => self.ty,
+            Intrinsic::Value => self.value,
         }
     }
 
@@ -906,9 +903,8 @@ impl Intrinsics {
             Intrinsic::Sym => &mut self.sym,
             Intrinsic::Nil => &mut self.nil,
             Intrinsic::Str => &mut self.str,
-            Intrinsic::Iter => &mut self.iter,
-            Intrinsic::Sink => &mut self.sink,
             Intrinsic::Type => &mut self.ty,
+            Intrinsic::Value => &mut self.value,
         }
     }
 }
@@ -1027,30 +1023,6 @@ impl Database {
         self.intrinsics.get(intrinsic)
     }
 
-    /// The default bound of an omitted ambient channel, `Iter[Unknown]` or
-    /// `Sink[Unknown]`, or `Unknown` when `std` doesn't designate one with a
-    /// single positional type binder
-    pub(crate) fn channel_bound(&self, intrinsic: Intrinsic) -> TypeId {
-        let Some(base) = self.intrinsic(intrinsic) else {
-            return self.unknown;
-        };
-        let Type::Decl(decl) = *self.ty(base) else {
-            return self.unknown;
-        };
-        let Type::Quantified { binders, .. } = self.ty(self.declaration(decl).ty) else {
-            return self.unknown;
-        };
-        if !matches!(&binders[..], [binder] if binder.binding == Binding::Positional && binder.kind == Kind::Type)
-        {
-            return self.unknown;
-        }
-        self.intern(Type::Apply {
-            base,
-            args: vec![Argument::Positional(self.unknown)].into(),
-            kind: Kind::Type,
-        })
-    }
-
     /// The function type of any function, as bare `Func` is: `(...Unknown) ->
     /// Unknown`, with its ambient channels omitted
     pub(crate) fn gradual_function(&self) -> TypeId {
@@ -1089,8 +1061,9 @@ impl Database {
         let args = [
             function.params,
             function.result,
-            (function.input).unwrap_or_else(|| self.channel_bound(Intrinsic::Iter)),
-            (function.output).unwrap_or_else(|| self.channel_bound(Intrinsic::Sink)),
+            // An omitted channel is gradual
+            function.input.unwrap_or(self.unknown),
+            function.output.unwrap_or(self.unknown),
         ];
         Some(self.intern(Type::Apply {
             base,

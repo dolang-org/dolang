@@ -310,6 +310,10 @@ impl Solver<'_> {
                 _ => None,
             }
         };
+        // `Value`'s receiver is every value, which includes the instances
+        if receiver == self.db.top() {
+            return Ok(Some(instance));
+        }
         let (Some((class, args)), Some((own, rigids))) = (applied(receiver), applied(instance))
         else {
             return Ok(None);
