@@ -222,6 +222,8 @@ pub(crate) struct UnitInfo<'u> {
     pub(crate) newlines: Vec<u32>,
     /// The unit, when it is checked from source
     pub(crate) source: Option<&'u Unit<'u>>,
+    /// Whether the unit is checked strictly
+    pub(crate) strict: bool,
 }
 
 impl UnitInfo<'_> {
@@ -309,6 +311,10 @@ pub(crate) enum Slot {
     Unknown,
     /// An omitted receiver annotation: the class applied to its own binders
     SelfType,
+    /// A strict unit's omitted return type
+    Nil,
+    /// A strict unit's omitted `(init)` return type, whose result is discarded
+    Top,
 }
 
 /// The type of a rest parameter, before it is interned
@@ -339,6 +345,9 @@ pub(crate) enum Ambient {
     Of(DeclId, usize),
     /// Dynamic, outside any def
     Unknown,
+    /// Omitted by a strict unit's def or method signature: `Iter[Value]` as input,
+    /// `Sink[Never]` as output, which any caller's channels fit
+    Strict,
 }
 
 /// A def or method signature, completed with the defaults for what it omits
@@ -946,6 +955,27 @@ impl Report for MisdeclaredIntrinsic {
 
     fn message(&self, w: &mut dyn Write) -> fmt::Result {
         write!(w, "the checker requires this to be {}", self.expected)
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+/// An annotation a strict unit omits
+#[derive(Clone)]
+struct MissingAnnotation {
+    span: Span,
+    what: &'static str,
+}
+
+impl Report for MissingAnnotation {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "a strict unit must annotate this {}", self.what)
     }
 
     fn span(&self) -> Span {

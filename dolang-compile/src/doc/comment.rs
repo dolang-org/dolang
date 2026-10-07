@@ -5,7 +5,10 @@
 //! rather than in each consumer is what lets a consumer ask a node for its
 //! documentation instead of rescanning the source for it.
 
-use crate::source::{File, Offset, Span};
+use crate::{
+    directive,
+    source::{File, Offset, Span},
+};
 
 /// The doc comment blocks of a file, in source order.
 pub(crate) struct Blocks {
@@ -26,6 +29,8 @@ impl Blocks {
         let has_shebang = comments
             .first()
             .is_some_and(|comment| comment.start == 0 && file.slice(*comment).starts_with(b"#!"));
+        // The file's documentation may follow its directives directly
+        let mut initial_line = u32::from(has_shebang);
         let mut blocks: Vec<Span> = Vec::new();
         for comment in comments {
             // The lexer's span runs to the line terminator, so it can carry a
@@ -38,12 +43,17 @@ impl Blocks {
             if !own_line(file, span.start) || shebang(file, span) {
                 continue;
             }
+            if directive::is_directive(file, span) {
+                if blocks.is_empty() && file.coord(span.start).line == initial_line {
+                    initial_line += 1;
+                }
+                continue;
+            }
             match blocks.last_mut() {
                 Some(last) if adjacent(file, last.end, span.start) => *last = *last | span,
                 _ => blocks.push(span),
             }
         }
-        let initial_line = u32::from(has_shebang);
         let root = blocks
             .first()
             .filter(|block| file.coord(block.start).line == initial_line)
@@ -105,4 +115,49 @@ fn adjacent(file: &File<'_>, from: Offset, to: Offset) -> bool {
     });
     between.iter().all(u8::is_ascii_whitespace)
         && between.iter().filter(|byte| **byte == b'\n').count() == 1
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    /// The file's documentation, with each line's comment found by its `#`
+    fn root(source: &str) -> Option<&str> {
+        let file = File::new(Path::new("test.dol"), source.as_bytes());
+        let mut comments = Vec::new();
+        let mut start = 0;
+        for line in source.split_inclusive('\n') {
+            if let Some(hash) = line.find('#') {
+                comments.push(Span {
+                    start: (start + hash) as Offset,
+                    end: (start + line.trim_end().len()) as Offset,
+                });
+            }
+            start += line.len();
+        }
+        let blocks = Blocks::new(&file, &comments);
+        blocks
+            .root()
+            .map(|span| &source[span.start as usize..span.end as usize])
+    }
+
+    #[test]
+    fn directive_precedes_root() {
+        assert_eq!(
+            root("# dolang: strict\n# Docs.\n\ndef f()\n  1\n"),
+            Some("# Docs.")
+        );
+        assert_eq!(
+            root("#!/usr/bin/env dolang\n# dolang: strict\n# Docs.\n"),
+            Some("# Docs.")
+        );
+        assert_eq!(root("# dolang: strict\n\n# Docs.\n"), None);
+        // A directive within the documentation ends its block
+        assert_eq!(
+            root("# Docs.\n# dolang: strict\n# More.\n"),
+            Some("# Docs.")
+        );
+    }
 }

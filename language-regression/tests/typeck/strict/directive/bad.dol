@@ -1,0 +1,10 @@
+# dolang: strct
+# warning: unknown directive setting `strct`
+#   --> bad.dol:LL:LL
+#    |
+# LL | # dolang: strct
+#    |           ^^^^^
+
+# An unknown setting is diagnosed.
+pub def h()
+  nil

@@ -1,0 +1,16 @@
+
+
+
+
+
+
+
+
+
+
+# dolang: strict
+
+# Too far down to count.
+pub def g x
+  #     ^: sig (x: Unknown, <#0, >#1) -> Unknown
+  x

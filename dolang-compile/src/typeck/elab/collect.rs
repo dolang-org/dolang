@@ -88,6 +88,7 @@ pub(crate) fn harvest<'u>(unit: &'u Unit<'u>) -> Harvest<'u> {
             path: compiler.file.path(),
             newlines: compiler.file.newlines().to_vec(),
             source: Some(unit),
+            strict: unit.strict,
         },
         strings,
         decls,

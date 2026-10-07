@@ -1,3 +1,4 @@
+# dolang: strict
 # Side-effect-free matching with compiled glob patterns.
 #
 # This module does not walk the filesystem and does not overlap with the

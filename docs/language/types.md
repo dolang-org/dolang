@@ -51,6 +51,31 @@ Unknown type information is distinct from [`Value`](std.Value). `Value` admits
 every runtime value, but few operations are available on it. Unknown types
 allows uses that the checker cannot verify.
 
+### Strict Checking
+
+A file opts into strict checking with a directive comment on one of its first 10
+lines:
+
+```
+# dolang: strict
+```
+
+A strict file must annotate its named functions' parameters and its classes'
+fields. A method's receiver is still typed by its class, and a `do` block still
+takes its types from where it is passed. Omissions that remain have conservative
+types rather than unknown ones:
+
+- An omitted return type is `nil`, so a function whose last statement has a
+  value it doesn't mean to return ends with `nil`. An `(init)` method's is
+  `Value`, since its result is discarded.
+- An omitted `<` is `Iter[Value]` and an omitted `>` is `Sink[Never]`: the
+  function reads its input as `Value` and writes nothing. A function that
+  writes to its output, or calls one that does, annotates `>`.
+
+`# dolang: nostrict` turns strict checking off. Strictness belongs to the file,
+so strict and non-strict modules can import each other; `--strict` is unrelated
+and only makes warnings fail the check.
+
 ### Narrowing
 
 Conditions refine a local variable's type on the branches they select. The
@@ -701,9 +726,10 @@ def collect count @ Int <Iter[Int] >Sink[Str] -> nil
 let runner @ ((Int, <Iter[Int], >Sink[Str]) -> Int) = nil
 ```
 
-Omitting one says nothing about that channel, which is what most functions
-want. In a declaration the type is compact, as an annotation's is, so a union
-needs parentheses: `<(Iter[Int] | nil)`.
+Omitting one says nothing about that channel, which is what most functions want,
+except in a [strict](#strict-checking) file. A written `<` must be an `Iter`
+and a written `>` a `Sink`. In a declaration the type is compact, as an
+annotation's is.
 
 A lambda's parameter list is delimited by `|`, so its implicits go inside:
 

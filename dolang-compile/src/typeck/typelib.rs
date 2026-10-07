@@ -25,7 +25,7 @@ use crate::source::Span;
 mod tests;
 
 const MAGIC: [u8; 8] = *b"\xffdotypel";
-const VERSION: [u8; 3] = [0, 0, 1];
+const VERSION: [u8; 3] = [0, 0, 2];
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 struct Header {
@@ -44,6 +44,8 @@ struct Content<'a> {
     /// The module's path, which only locates its diagnostics
     path: &'a str,
     newlines: Vec<u32>,
+    /// Whether the module was checked strictly, which its signatures depend on
+    strict: bool,
     #[serde(borrow)]
     strings: Vec<&'a str>,
     decls: Vec<Decl<'a>>,
@@ -112,6 +114,7 @@ fn encode(harvest: Harvest<'_>) -> Vec<u8> {
         module,
         path: &path,
         newlines: harvest.info.newlines,
+        strict: harvest.info.strict,
         strings: harvest.strings,
         decls: harvest.decls,
         sites: harvest.sites,
@@ -152,6 +155,7 @@ pub(crate) fn read(bytes: &[u8]) -> Result<Harvest<'_>, Invalid> {
             path: Path::new(content.path),
             newlines: content.newlines,
             source: None,
+            strict: content.strict,
         },
         strings: content.strings,
         decls: content.decls,

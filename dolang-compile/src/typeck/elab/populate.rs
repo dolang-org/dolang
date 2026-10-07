@@ -280,9 +280,9 @@ impl<'t, 'u> Populate<'t, 'u> {
             .unwrap_or_else(|| self.db.unknown())
     }
 
-    /// The default bound of an omitted ambient channel, `Iter[Unknown]` or
-    /// `Sink[Unknown]`, when `std` designates one with a single type binder
-    fn ambient_bound(&mut self, intrinsic: Intrinsic) -> Option<TypeId> {
+    /// `Iter[arg]` or `Sink[arg]`, the type of an omitted ambient channel, when
+    /// `std` designates the class with a single type binder
+    fn channel(&mut self, intrinsic: Intrinsic, arg: TypeId) -> Option<TypeId> {
         let base = self.db.intrinsic(intrinsic)?;
         let Type::Decl(decl) = *self.db.ty(base) else {
             return None;
@@ -299,7 +299,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         single.then(|| {
             self.db.intern(Type::Apply {
                 base,
-                args: vec![Argument::Positional(self.db.unknown())].into(),
+                args: vec![Argument::Positional(arg)].into(),
                 kind: Kind::Type,
             })
         })
@@ -526,6 +526,11 @@ impl<'t, 'u> Populate<'t, 'u> {
                 self.expanding.pop();
                 ty
             }
+            Ambient::Strict => match index {
+                0 => self.channel(Intrinsic::Iter, self.db.top()),
+                _ => self.channel(Intrinsic::Sink, self.db.bottom()),
+            }
+            .unwrap_or_else(|| self.db.unknown()),
             Ambient::Written | Ambient::Unknown => self.db.unknown(),
         }
     }
@@ -1065,10 +1070,13 @@ impl<'t, 'u> Populate<'t, 'u> {
                     .bound
                     .map(|bound| self.bound(group, binder, tables.site_ty(bound))),
                 // An omitted channel is gradual: its elements are `Unknown`
-                None => self.ambient_bound(match self.db.symbol(name) {
-                    "<" => Intrinsic::Iter,
-                    _ => Intrinsic::Sink,
-                }),
+                None => {
+                    let intrinsic = match self.db.symbol(name) {
+                        "<" => Intrinsic::Iter,
+                        _ => Intrinsic::Sink,
+                    };
+                    self.channel(intrinsic, self.db.unknown())
+                }
             };
             // A lifted binder is always passed, so it needs no default
             let default = match origin {
@@ -1229,14 +1237,16 @@ impl<'t, 'u> Populate<'t, 'u> {
                     let func = sig::function(tables, id, sig);
                     let params = self.params(id, group, func, &completed.params);
                     let [input, output] = [
-                        (completed.input, func.input),
-                        (completed.output, func.output),
+                        (0, completed.input, func.input),
+                        (1, completed.output, func.output),
                     ]
-                    .map(|(ambient, written)| match (ambient, written) {
-                        (Ambient::Written, Some(implicit)) => {
-                            self.intern(group, tables.site_ty(implicit), Kind::Type, 0)
+                    .map(|(index, ambient, written)| {
+                        match (ambient, written) {
+                            (Ambient::Written, Some(implicit)) => {
+                                self.intern(group, tables.site_ty(implicit), Kind::Type, 0)
+                            }
+                            (ambient, _) => self.ambient(group, ambient, index, 0),
                         }
-                        (ambient, _) => self.ambient(group, ambient, 0, 0),
                     });
                     let result = self.slot(id, group, &completed.ret);
                     let body = self.db.intern(Type::Function(Function {
@@ -1278,6 +1288,8 @@ impl<'t, 'u> Populate<'t, 'u> {
         match *slot {
             Slot::Annot(ty) => self.intern(group, self.tables.site_ty(ty), Kind::Type, 0),
             Slot::Unknown => self.db.unknown(),
+            Slot::Nil => self.db.intern(Type::Literal(Literal::Nil)),
+            Slot::Top => self.db.top(),
             // The class, applied to its own binders, which lead a method's group
             Slot::SelfType => {
                 let (class, _) = self.tables.decls[id.index()]

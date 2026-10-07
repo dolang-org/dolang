@@ -3055,6 +3055,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
     let recover = builder.sym("recover");
     let document = builder.sym("document");
     let typecheck = builder.sym("typecheck");
+    let strict = builder.sym("strict");
 
     builder
         .module("compile")
@@ -3160,7 +3161,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
             },
         )
         .function("compile", async move |strand, args, mut out| {
-            let ([path, source], [module, prelude, recover, document, typecheck]) = unpack!(
+            let ([path, source], [module, prelude, recover, document, typecheck, strict]) = unpack!(
                 strand,
                 args,
                 2,
@@ -3169,7 +3170,8 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                 prelude = None,
                 recover = None,
                 document = None,
-                typecheck = None
+                typecheck = None,
+                strict = None
             )?;
 
             let module = module
@@ -3221,6 +3223,9 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                     .transpose()?
                     .unwrap_or(false),
             );
+            if let Some(strict) = strict.filter(|strict| !strict.is_nil()) {
+                config.strict(strict.to_bool(strand)?);
+            }
 
             if let Some(prelude) = prelude {
                 apply_prelude_value(strand, &mut config, &prelude)?;

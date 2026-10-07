@@ -222,6 +222,8 @@ impl Tables<'_> {
             Slot::Annot(ty) => text(ty),
             Slot::Unknown => "Unknown".to_owned(),
             Slot::SelfType => "Self".to_owned(),
+            Slot::Nil => "nil".to_owned(),
+            Slot::Top => "Value".to_owned(),
         };
         let mut out = String::from("(");
         for (index, (param, ty)) in func.params.iter().zip(&sig.params).enumerate() {
@@ -289,6 +291,7 @@ impl Tables<'_> {
             }
             Ambient::Of(decl, _) => format!("of {}", self.qualified(decl)),
             Ambient::Unknown => "Unknown".to_owned(),
+            Ambient::Strict => "strict".to_owned(),
         }
     }
 

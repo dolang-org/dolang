@@ -1,0 +1,54 @@
+# dolang: strict
+# A strict unit's omitted return type is `nil`.
+
+pub def ends_nil()
+  #     ^~~~~~~~: sig (<strict, >strict) -> nil
+  nil
+
+# A procedure ending in an incidental value needs a trailing `nil`
+pub def ends_value a @ Array[Int]
+  a.pop()
+# error: `std.Int` does not fit the declared result `nil`
+#   --> m.dol:LL:LL
+#    |
+# LL |   a.pop()
+#    |   ^^^^^^^
+
+pub def ends_trailing a @ Array[Int]
+  a.pop()
+  nil
+
+pub def ends_for a @ Array[Int]
+  for x = a
+    x
+
+pub def ends_while c @ Bool
+  while c
+    c = false
+
+# A branch's value is the result, as is `nil` from a missing `else`
+pub def ends_if c @ Bool
+  if c
+    1
+# error: `1` does not fit the declared result `nil`
+#   --> m.dol:LL:LL
+#    |
+# LL |     1
+#    |     ^
+
+pub def ends_if_nil c @ Bool
+  if c
+    ends_nil()
+
+# An assignment's value is the result
+pub def ends_assign()
+  let x = 1
+  x = 2
+# error: `std.Int` does not fit the declared result `nil`
+#   --> m.dol:LL:LL
+#    |
+# LL |   x = 2
+#    |     ^
+
+pub def ends_call()
+  ends_nil()
