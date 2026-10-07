@@ -118,3 +118,47 @@ pub def spawns()
     nil
   s.join()
   nil
+
+# A block no call receives runs with a def's omitted channels
+pub def named()
+  let f = do
+    put "x"
+    # error: this call does not fit `forall (#0.0, <std.Iter[Value], >std.Sink[#0.0]) -> nil`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     put "x"
+    #    |     ^^^^^^^
+    nil
+  run $f
+  nil
+
+pub def named_declared >Sink[Str]
+  let f = do |>Sink[Str]|
+    put "x"
+    nil
+  run $f
+  nil
+
+# An expected function type gives a block its channels
+pub def annotated >Sink[Int]
+  let f @ ((>Sink[Int]) -> nil) = do
+    put 1
+    put "x"
+    # error: this call does not fit `forall (#0.0, <std.Iter[Value], >std.Sink[#0.0]) -> nil`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     put "x"
+    #    |     ^^^^^^^
+    nil
+  f()
+  nil
+
+pub def cast >Sink[Int]
+  let f = ((do put "x") @ ((>Sink[Int]) -> nil))
+  # error: this call does not fit `forall (#0.0, <std.Iter[Value], >std.Sink[#0.0]) -> nil`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let f = ((do put "x") @ ((>Sink[Int]) -> nil))
+  #    |                ^^^^^^^
+  f()
+  nil

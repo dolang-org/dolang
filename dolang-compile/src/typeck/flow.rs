@@ -75,7 +75,8 @@ use super::{
     elab::{Designated, Tables},
     solver::{NarrowTarget, Outcome, Provenance, Residual, Solver, Status, Widening},
     r#type::{
-        Database, DeclId, Element, Function, Intrinsic, Literal, Multiplicity, Type, TypeId, UnitId,
+        Argument, Database, DeclId, Element, Function, Intrinsic, Kind, Literal, Multiplicity,
+        Type, TypeId, UnitId,
     },
 };
 use crate::source::Span;
@@ -573,24 +574,44 @@ impl<'a, 'u> Flow<'a, 'u> {
     }
 
     /// Make each `do` block parameter and channel that's still bottom dynamic,
-    /// saying whether there was one
+    /// saying whether there was one. In a strict unit, a channel instead takes a
+    /// def's omitted one, `Iter[Value]` as input and `Sink[Never]` as output.
     fn dynamic_signatures(&mut self) -> bool {
         let bottom = self.db.bottom();
         let unknown = self.db.unknown();
-        let vars: Vec<VarId> = (self.ir.funcs())
+        let [input, output] = match self.tables.units[self.unit.index()].strict {
+            true => [
+                self.channel(Intrinsic::Iter, self.db.top()),
+                self.channel(Intrinsic::Sink, bottom),
+            ],
+            false => [unknown; 2],
+        };
+        let vars: Vec<(VarId, TypeId)> = (self.ir.funcs())
             .filter_map(|(_, func)| func.signature.as_ref())
             .flat_map(|signature| {
-                (signature.params.iter().copied())
-                    .chain([signature.input, signature.output])
-                    .flatten()
+                (signature.params.iter().map(|&var| (var, unknown)))
+                    .chain([(signature.input, input), (signature.output, output)])
+                    .filter_map(|(var, ty)| Some((var?, ty)))
             })
-            .filter(|var| self.joined.get(var).is_none_or(|&(ty, _)| ty == bottom))
+            .filter(|(var, _)| self.joined.get(var).is_none_or(|&(ty, _)| ty == bottom))
             .collect();
-        for &var in &vars {
+        for &(var, ty) in &vars {
             trace!("no call gives {}", self.var_name(var));
-            self.join(var, unknown);
+            self.join(var, ty);
         }
         !vars.is_empty()
+    }
+
+    /// A channel class applied to its element type, or `Unknown` if it isn't checked
+    fn channel(&self, intrinsic: Intrinsic, element: TypeId) -> TypeId {
+        match self.db.intrinsic(intrinsic) {
+            Some(base) => self.db.intern(Type::Apply {
+                base,
+                args: vec![Argument::Positional(element)].into(),
+                kind: Kind::Type,
+            }),
+            None => self.db.unknown(),
+        }
     }
 
     /// A variable's joined type, making the block depend on it
