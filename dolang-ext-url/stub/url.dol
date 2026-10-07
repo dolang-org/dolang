@@ -1,3 +1,4 @@
+# dolang: strict
 # URL parsing and construction utilities.
 
 import std:
@@ -27,24 +28,24 @@ pub class Url
 
   # The decoded fragment string, or `nil` if absent.
   #[getter]
-  pub def fragment self
+  pub def fragment self -> (Str | nil)
     ...
 
   # The host string, or `nil` if the URL has no host.
   #[getter]
-  pub def host self
+  pub def host self -> (Str | nil)
     ...
 
   # The decoded last path component, or `nil` if there is no filename.
   #
   # This returns `nil` for URLs whose path is empty or ends with `/`.
   #[getter]
-  pub def name self
+  pub def name self -> (Str | nil)
     ...
 
   # The decoded password, or `nil` if not present.
   #[getter]
-  pub def password self
+  pub def password self -> (Str | nil)
     ...
 
   # The serialized path component.
@@ -52,12 +53,12 @@ pub class Url
   # This preserves percent-encoding. Use [`segments`](url.Url.segments) for decoded
   # path segments.
   #[getter]
-  pub def path self
+  pub def path self -> Str
     ...
 
   # The explicit port number, or `nil` if not present.
   #[getter]
-  pub def port self
+  pub def port self -> (Int | nil)
     ...
 
   # Immutable dictionary-like view of decoded query pairs.
@@ -83,12 +84,12 @@ pub class Url
 
   # The raw query string without the leading `?`, or `nil` if absent.
   #[getter]
-  pub def query_raw self
+  pub def query_raw self -> (Str | nil)
     ...
 
   # The URL scheme, such as `"https"` or `"file"`.
   #[getter]
-  pub def scheme self
+  pub def scheme self -> Str
     ...
 
   # Immutable array-like view of decoded path segments.
@@ -109,7 +110,7 @@ pub class Url
 
   # The decoded username, or `nil` if not present.
   #[getter]
-  pub def username self
+  pub def username self -> (Str | nil)
     ...
 
   # Returns a new `Url` with its fragment replaced.
@@ -139,7 +140,7 @@ pub class Url
     # Decoded key/value pairs.
     pairs @ Iterable[Tuple[Value, Value]] = nil
     # Query values keyed by argument name.
-    **keys
+    **keys @ Value
   do -> Url
     ...
 
@@ -154,7 +155,11 @@ pub class Url
     ...
 
   # Compares two URLs by their parsed values.
-  pub def (eq) self other
+  pub def (eq) self other @ Value -> Bool
+    ...
+
+  # Orders two URLs by their parsed values.
+  pub def (lt) self other @ Url -> Bool
     ...
 
   # Appends a decoded path segment and returns a new `Url`.
@@ -174,9 +179,9 @@ pub class Url
     self
     # Path segment or absolute path.
     other @ Str
-  do
+  do -> Url
     ...
 
   # Returns the canonical serialized URL.
-  pub def (str) self
+  pub def (str) self -> Str
     ...

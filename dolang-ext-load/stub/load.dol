@@ -1,3 +1,4 @@
+# dolang: strict
 # Executes Do bytecode and registers runtime import handlers.
 
 # A registered runtime import handler.
@@ -53,7 +54,7 @@ pub class ImportHandler
 pub def import
   # Module name to import.
   name @ Str
-do
+do -> Value
   ...
 
 # Registers a module import handler.
@@ -113,5 +114,7 @@ pub def run
   bytecode @ Bin
   # Program-specific module importer, called with the requested module name.
   :importer @ (Str -> Value) = nil
+  <Iter[Value]
+  >Sink[Value]
 do -> Value
   ...
