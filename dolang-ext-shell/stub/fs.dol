@@ -1,3 +1,4 @@
+# dolang: strict
 # Filesystem access: paths, files, directories, metadata, and permissions.
 #
 # Ordinary metadata such as size, timestamps, ownership, permissions, and file
@@ -469,7 +470,7 @@ pub class File: Iter[Str | Bin] Sink[Value]
     desc @ SecDescSpec = nil
     # Components, as [`sec_desc`](security.windows.sec_desc) takes them, instead
     # of or alongside `desc`.
-    ...options
+    **options @ Value
   do
     ...
 
@@ -688,7 +689,7 @@ pub class File: Iter[Str | Bin] Sink[Value]
   pub def (put)
     self
     # Value to write.
-    value
+    value @ Value
   do
     ...
 
@@ -956,7 +957,7 @@ pub class Metadata
   # This representation matches the `owner` argument accepted by
   # [`update_metadata`](fs.update_metadata).
   #[getter]
-  pub def owner self
+  pub def owner self -> (Int | Sid)
     ...
 
   # Owning group: the gid as an [`Int`](std.Int) on Unix, or the primary
@@ -965,7 +966,7 @@ pub class Metadata
   # This representation matches the `group` argument accepted by
   # [`update_metadata`](fs.update_metadata).
   #[getter]
-  pub def group self
+  pub def group self -> (Int | Sid)
     ...
 
   # Permissions and file type. Unix only.
@@ -1447,7 +1448,7 @@ pub class Path
     func @ (BinFile -> R)
   do -> R
 
-  pub def open self ...options
+  pub def open self ...options @ Value -> Value
     ...
 
   # The method form of [`fs.read`](fs.read) for a text file.
@@ -1460,7 +1461,7 @@ pub class Path
     mode @ "b"
   do -> Bin
 
-  pub def read self ...options
+  pub def read self ...options @ Value -> Value
     ...
 
   # The method form of [`fs.write`](fs.write).
@@ -1832,7 +1833,7 @@ do -> R
 # [`BinFile`](fs.BinFile) for binary modes. The default mode is `"r"`.
 #
 # With a block, passes it the file and closes the file when the block exits.
-pub def open path ...options
+pub def open path @ (Str | Path) ...options @ Value -> Value
   ...
 
 # Reads the entire contents of a text file in one call.
@@ -1865,7 +1866,7 @@ do -> Str
   mode @ "b"
 do -> Bin
 
-pub def read path ...options
+pub def read path @ (Str | Path) ...options @ Value -> Value
   ...
 
 # Writes the entire contents of a file in one call, creating or truncating it.

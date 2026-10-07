@@ -1,7 +1,7 @@
 # dolang: strict
 # Strict extension stubs, used from a strict unit.
 
-import @regex @sys.linux security.unix uuid @url time @patch @xml load zip tar sqlite
+import @regex @sys.linux security.unix uuid @url time @patch @xml load zip tar sqlite fs
 
 # `Regex.replace` runs a callback with its caller's channels
 pub def replaces re @ regex.Regex >Sink[Str] -> Str
@@ -89,4 +89,31 @@ pub def entries z @ zip.Entry t @ tar.Entry r @ tar.Reader -> nil
   #   ^~~~~~: flow nil | std.Str
   let _compression = r.compression
   #   ^~~~~~~~~~~~: flow :GZIP: | :NONE: | :ZSTD:
+  nil
+
+# File scopes run with their caller's channels and return the block's result
+pub def file_scopes >Sink[Str] -> Int
+  let n = fs.open "a.txt" do |file|
+    put "open"
+    file.lock (..) do |_lock|
+      put "lock"
+      1
+  let _n = n
+  #   ^~: flow std.Int
+  let dir = fs.with_temp_dir do |dir|
+    put "temp"
+    dir
+  let _dir = dir
+  #   ^~~~: flow fs.Path
+  let bin = fs.Path("a.bin").open "rb" do |file| file.read()
+  let _bin = bin
+  #   ^~~~: flow std.Bin
+  n
+
+# Ownership is a uid/gid or a SID, depending on the platform
+pub def owners meta @ fs.Metadata -> nil
+  let _owner = meta.owner
+  #   ^~~~~~: flow security.windows.Sid | std.Int
+  let _group = meta.group
+  #   ^~~~~~: flow security.windows.Sid | std.Int
   nil
