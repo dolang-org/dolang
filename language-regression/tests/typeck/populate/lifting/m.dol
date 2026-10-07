@@ -8,12 +8,12 @@ pub class Box[T, U]
   pub field item @ T = nil
 
   pub def get self -> T
-    #     ^~~: quantifier ^T covariant, ^U invariant, in contravariant, out contravariant
+    #     ^~~: quantifier ^T covariant, ^U invariant, in @ Unknown contravariant, out @ Unknown contravariant
     #     ^~~: decl (m.Box[T, U], <in, >out) -> T
     self.item
 
   pub def map[V] _self _f @ (T -> V) -> Box[V, U]
-    #     ^~~: quantifier ^T covariant, ^U invariant, V invariant, in invariant, out invariant
+    #     ^~~: quantifier ^T covariant, ^U invariant, V invariant, in @ Unknown invariant, out @ Unknown invariant
     #                       ^~~~~~~~: type (T, <in, >out) -> V
     #                                   ^~~~~~~~~: type m.Box[V, U]
     nil
@@ -27,18 +27,18 @@ pub def outer[A, B] _a @ A _b @ B
   class Local
     #   ^~~~~: quantifier ^B covariant
     pub def get _self -> B
-      #     ^~~: quantifier ^B covariant, in contravariant, out contravariant
+      #     ^~~: quantifier ^B covariant, in @ Unknown contravariant, out @ Unknown contravariant
       ...
   class Via
     #   ^~~: quantifier ^B invariant
     pub field local @ Local = nil
     #                 ^~~~~: type m.outer.Local[^B]
   def uses_alias x @ OnlyA
-    # ^~~~~~~~~~: quantifier ^A contravariant, in contravariant, out contravariant
+    # ^~~~~~~~~~: quantifier ^A contravariant, in @ Unknown contravariant, out @ Unknown contravariant
     #                ^~~~~: type m.outer.OnlyA[^A]
     x
   def body_only x
-    # ^~~~~~~~~: quantifier ^B invariant, in contravariant, out contravariant
+    # ^~~~~~~~~: quantifier ^B invariant, in @ Unknown contravariant, out @ Unknown contravariant
     let y @ B = x
     #       ^: type B
     y
@@ -50,7 +50,7 @@ pub def outer[A, B] _a @ A _b @ B
 pub class Bounded[T, U @ Box[T, Num]]
   pub field u @ U = nil
   pub def peek self -> U
-    #     ^~~~: quantifier ^T invariant, ^U @ m.Box[T, m.Num] covariant, in contravariant, out contravariant
+    #     ^~~~: quantifier ^T invariant, ^U @ m.Box[T, m.Num] covariant, in @ Unknown contravariant, out @ Unknown contravariant
     self.u
 
 pub def bounded[T, U @ Box[T, Num]] _u @ U

@@ -7,8 +7,13 @@ import m
 pub def anything _x
   m.writes()
   m.each do |y| put $y
-# error: this call does not fit `forall (#0.0, <std.Iter[Value], >std.Sink[#0.0]) -> nil`
+# error: this call does not fit `forall (#0.0, <Value, >std.Sink[#0.0]) -> nil`
 #   --> lax.dol:LL:LL
 #    |
 # LL |   m.each do |y| put $y
 #    |                 ^^^^^^
+
+pub def loops()
+  for x
+    let _ = x
+    #       ^: flow Unknown

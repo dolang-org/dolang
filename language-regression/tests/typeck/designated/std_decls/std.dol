@@ -70,8 +70,6 @@ pub class Record
 #         ^~~~~~: designated record
 pub class Range
 #         ^~~~~: designated range
-pub @class BaseIterable
-#          ^~~~~~~~~~~~: designated base iterable
 pub @class Spread
 #          ^~~~~~: designated spread
 pub class Unpack

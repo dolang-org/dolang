@@ -257,7 +257,10 @@ impl Dump<'_, '_> {
                 write!(out, "next ")?;
                 self.pattern(out, pattern)?;
                 write!(out, " in ")?;
-                self.var(out, *iter)?;
+                match iter {
+                    Some(iter) => self.var(out, *iter)?,
+                    None => write!(out, "<input>")?,
+                }
                 write!(out, " then b{} else b{}", body.index(), exit.index())
             }
             Terminal::Return => write!(out, "return"),
@@ -490,7 +493,6 @@ impl Dump<'_, '_> {
                 self.items(out, items)?;
                 write!(out, "]")
             }
-            ExprKind::AmbientInput => write!(out, "<input>"),
             ExprKind::Operand => write!(out, "<pop>"),
             ExprKind::Never => write!(out, "never"),
             ExprKind::Namespace => write!(out, "<namespace>"),

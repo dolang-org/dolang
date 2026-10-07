@@ -138,7 +138,7 @@ pub class Regex
     # A plain [`Str`](std.Str) is inserted literally, including any `$`
     # characters. A callback receives a [`Captures`](regex.Captures) for each
     # match and must return a `Str`.
-    replacement @ (Str | Fmt | ((Captures, <Iter[I], >Sink[O]) -> Str))
+    replacement @ (Str | Fmt | ((Captures, <I, >O) -> Str))
     # How many matches to replace. Replaces all matches when omitted.
     #
     # - `limit: N` (positive) — replace at most N matches.
@@ -146,8 +146,8 @@ pub class Regex
     #
     # Negative limits are not supported.
     :limit @ Int = nil
-    <Iter[I]
-    >Sink[O]
+    <I
+    >O
   do -> Str
     ...
 

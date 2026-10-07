@@ -55,8 +55,8 @@ do
   # LL |   let _ = t[2]
   #    |           ^^^^
   #    |
-  #    = note: `[K] (std.Tuple[{std.Int, std.Str}], K, <std.Iter[Value], >std.Sink[Never]) -> IndexItem[{...{std.Int, std.Str}}, K]`: this call selects by `2`, which isn't one of the schema's keys
-  #    = note: `(std.Tuple[{std.Int, std.Str}], std.Range[std.Int], <std.Iter[Value], >std.Sink[Never]) -> std.Tuple[{*std.Int | std.Str}]`: expected `std.Range[std.Int]`, found `2`
+  #    = note: `[K] (std.Tuple[{std.Int, std.Str}], K, <Value, >Value) -> IndexItem[{...{std.Int, std.Str}}, K]`: this call selects by `2`, which isn't one of the schema's keys
+  #    = note: `(std.Tuple[{std.Int, std.Str}], std.Range[std.Int], <Value, >Value) -> std.Tuple[{*std.Int | std.Str}]`: expected `std.Range[std.Int]`, found `2`
   let _ = b[0]
   #   ^: flow std.Int
   b[0] = 1
@@ -68,8 +68,8 @@ do
   # LL |   b[0] = "x"
   #    |   ^^^^^^^^^^
   #    |
-  #    = note: `[K] (std.BinBuf, K, AssignItem[{*(std.Int): std.Int}, K], <std.Iter[Value], >std.Sink[Never]) -> nil`: expected `std.Int`, found `"x"`
-  #    = note: `(std.BinBuf, std.Range[std.Int], std.Bin, <std.Iter[Value], >std.Sink[Never]) -> nil`: expected `std.Bin`, found `"x"`; expected `std.Range[std.Int]`, found `0`
+  #    = note: `[K] (std.BinBuf, K, AssignItem[{*(std.Int): std.Int}, K], <Value, >Value) -> nil`: expected `std.Int`, found `"x"`
+  #    = note: `(std.BinBuf, std.Range[std.Int], std.Bin, <Value, >Value) -> nil`: expected `std.Bin`, found `"x"`; expected `std.Range[std.Int]`, found `0`
   let _ = f[0]
   #   ^: flow std.FmtSegment[Unknown]
 

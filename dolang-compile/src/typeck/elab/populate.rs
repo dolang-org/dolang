@@ -280,31 +280,6 @@ impl<'t, 'u> Populate<'t, 'u> {
             .unwrap_or_else(|| self.db.unknown())
     }
 
-    /// `Iter[arg]` or `Sink[arg]`, the type of an omitted ambient channel, when
-    /// `std` designates the class with a single type binder
-    fn channel(&mut self, intrinsic: Intrinsic, arg: TypeId) -> Option<TypeId> {
-        let base = self.db.intrinsic(intrinsic)?;
-        let Type::Decl(decl) = *self.db.ty(base) else {
-            return None;
-        };
-        let tables = self.tables;
-        let binder = BinderRef {
-            decl,
-            sig: 0,
-            slot: 0,
-        };
-        let single = matches!(tables.binders(decl, 0), [written] if written.kind == BinderKind::Pos)
-            && tables.lifted[&decl].is_empty()
-            && self.kind(binder) == Kind::Type;
-        single.then(|| {
-            self.db.intern(Type::Apply {
-                base,
-                args: vec![Argument::Positional(arg)].into(),
-                kind: Kind::Type,
-            })
-        })
-    }
-
     fn schema(&self, items: Vec<SchemaItem>) -> TypeId {
         self.db.intern(Type::Schema(items.into()))
     }
@@ -526,11 +501,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                 self.expanding.pop();
                 ty
             }
-            Ambient::Strict => match index {
-                0 => self.channel(Intrinsic::Iter, self.db.top()),
-                _ => self.channel(Intrinsic::Sink, self.db.bottom()),
-            }
-            .unwrap_or_else(|| self.db.unknown()),
+            Ambient::Strict => self.db.top(),
             Ambient::Written | Ambient::Unknown => self.db.unknown(),
         }
     }
@@ -1069,14 +1040,8 @@ impl<'t, 'u> Populate<'t, 'u> {
                 Some(written) => written
                     .bound
                     .map(|bound| self.bound(group, binder, tables.site_ty(bound))),
-                // An omitted channel is gradual: its elements are `Unknown`
-                None => {
-                    let intrinsic = match self.db.symbol(name) {
-                        "<" => Intrinsic::Iter,
-                        _ => Intrinsic::Sink,
-                    };
-                    self.channel(intrinsic, self.db.unknown())
-                }
+                // An omitted channel is gradual
+                None => Some(self.db.unknown()),
             };
             // A lifted binder is always passed, so it needs no default
             let default = match origin {

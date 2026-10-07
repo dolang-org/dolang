@@ -210,7 +210,7 @@ fn non_local() {
         &graph,
         header,
         Terminal::Next {
-            iter,
+            iter: Some(iter),
             pattern: Pattern::Unpack(Vec::new()),
             body,
             exit: loop_exit,

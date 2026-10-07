@@ -2540,10 +2540,11 @@ def write_bundle path members info domain_xml
             do while let chunk = file.read $BUNDLE_CHUNK
               strand.put $chunk
             do for chunk
+              let bytes = (chunk !@ Bin)
               strand.fork
-                do entry.write $chunk
-                do state.update $chunk
-              ind.delta $chunk.len
+                do entry.write $bytes
+                do state.update $bytes
+              ind.delta $bytes.len
       digests[member.kind] = "${state.digest():x}"
     archive.open $MANIFEST_MEMBER mode: 0o644 do |entry|
       entry.write $ bundle_manifest $info $members $domain_xml $digests
@@ -2754,10 +2755,11 @@ def extract_member bundle member dest
         do while let chunk = file.read $BUNDLE_CHUNK
           strand.put $chunk
         do for chunk
+          let bytes = (chunk !@ Bin)
           strand.fork
-            do out.write $chunk
-            do state.update $chunk
-          ind.delta $chunk.len
+            do out.write $bytes
+            do state.update $bytes
+          ind.delta $bytes.len
     let actual = "${state.digest():x}"
     if (actual != member.hex)
       let expected = member.hex

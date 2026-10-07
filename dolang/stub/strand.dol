@@ -103,9 +103,9 @@ pub class Resource
   pub def with[R, I, O]
     self
     # scoped work to execute
-    block @ ((<Iter[I], >Sink[O]) -> R)
-    <Iter[I]
-    >Sink[O]
+    block @ ((<I, >O) -> R)
+    <I
+    >O
   do -> R
     ...
 
@@ -305,9 +305,9 @@ do
 # Runs blocks concurrently and returns their results in block order.
 pub def fork[*Rs, I, O]
   # functions to execute concurrently
-  *blocks @ ...((<Iter[I], >Sink[O]) -> Rs)
-  <Iter[I]
-  >Sink[O]
+  *blocks @ ...((<I, >O) -> Rs)
+  <I
+  >O
 do -> Tuple[...Rs]
   ...
 
@@ -378,8 +378,8 @@ pub def map count@Int func@Value ...options@Value -> nil
   # pipeline stages
   ...stages @ ((<Iter[Value], >Sink[Value]) -> Value)
   # final stage
-  final @ ((<Iter[Value], >Sink[O]) -> R)
-  >Sink[O]
+  final @ ((<Iter[Value], >O) -> R)
+  >O
 do -> R
 
 # Connects pipeline stages and runs them concurrently, writing the last stage's
@@ -406,7 +406,7 @@ pub def pipeline ...args @ Value -> Value
   input @ Iterable[T]
   # function applied to each input value
   func @ (T -> nil)
-  >Sink[O]
+  >O
 do -> nil
 
 # Runs a function over the strand-local input with a fixed number of scoped workers.
@@ -416,7 +416,7 @@ do -> nil
   # function applied to each input value
   func @ (T -> nil)
   < Iter[T]
-  >Sink[O]
+  >O
 do -> nil
 
 pub def pool count@Int ...args@Value -> nil
@@ -426,7 +426,7 @@ pub def pool count@Int ...args@Value -> nil
 pub def put[T] value@T >Sink[T]
   ...
 
-# Calls a function with the strand-local input or output replaced, returning its
+# Calls a function with the strand-local input and output replaced, returning its
 # result.
 #
 # The previous input and output are restored when `block` returns or raises.
@@ -442,22 +442,50 @@ pub def put[T] value@T >Sink[T]
 #   strand.each do |x| (x * 2)
 # assert_eq $doubled [2, 4, 6]
 # ```
-pub def redirect[R, I, O]
+@def redirect[R, I, O]
   # replacement for the strand-local input
-  :input @ Iterable[I] = nil
+  :input @ Iterable[I]
   # replacement for the strand-local output
-  :output @ Sinkable[O] = nil
+  :output @ Sinkable[O]
   # function to call
   block @ ((<Iter[I], >Sink[O]) -> R)
 do -> R
+
+# Calls a function with the strand-local input replaced, returning its result.
+@def redirect[R, I, O]
+  # replacement for the strand-local input
+  :input @ Iterable[I]
+  # function to call
+  block @ ((<Iter[I], >O) -> R)
+  >O
+do -> R
+
+# Calls a function with the strand-local output replaced, returning its result.
+@def redirect[R, I, O]
+  # replacement for the strand-local output
+  :output @ Sinkable[O]
+  # function to call
+  block @ ((<I, >Sink[O]) -> R)
+  <I
+do -> R
+
+# Calls a function, returning its result.
+@def redirect[R, I, O]
+  # function to call
+  block @ ((<I, >O) -> R)
+  <I
+  >O
+do -> R
+
+pub def redirect ...args @ Value -> Value
   ...
 
 # Runs a function in a background strand.
 pub def spawn[R, I, O]
   # the function to execute
-  func @ ((<Iter[I], >Sink[O]) -> R)
-  <Iter[I]
-  >Sink[O]
+  func @ ((<I, >O) -> R)
+  <I
+  >O
 do -> Strand[R]
   ...
 

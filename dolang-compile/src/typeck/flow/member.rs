@@ -486,6 +486,54 @@ impl Flow<'_, '_> {
         )
     }
 
+    /// The type of the item a `for` takes, as the runtime gets it: the `(next)` of
+    /// its iteratee's `(iter)`, or without an iteratee, of the function's ambient
+    /// input. A function that doesn't declare its input reads it dynamically.
+    pub(super) fn next(
+        &mut self,
+        at: At,
+        state: &mut State,
+        iteratee: Option<TypeId>,
+        span: Span,
+    ) -> TypeId {
+        let iterator = match iteratee {
+            Some(iteratee) => self.send_special(at, state, iteratee, "iter", span),
+            None => match self.channels(at).0 {
+                Some(input) => input,
+                None => return self.db.unknown(),
+            },
+        };
+        self.send_special(at, state, iterator, "next", span)
+    }
+
+    /// Call a receiver's special member with no arguments
+    fn send_special(
+        &mut self,
+        at: At,
+        state: &mut State,
+        receiver: TypeId,
+        name: &str,
+        span: Span,
+    ) -> TypeId {
+        let call = Call {
+            args: &[],
+            expected: None,
+            span,
+            callee: None,
+        };
+        let member = self.special(name);
+        let mut operands = VecDeque::new();
+        self.send(
+            at,
+            state,
+            &mut operands,
+            (receiver, span),
+            member,
+            &[],
+            call,
+        )
+    }
+
     /// Call a receiver's member with `leading` arguments, already evaluated, and
     /// then `call`'s own
     #[expect(clippy::too_many_arguments, reason = "a call through a member")]

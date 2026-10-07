@@ -404,7 +404,7 @@ pub @class MutSeq[T]: AssignSeq[T]
   #
   # [`IndexError`](std.IndexError) if the item does not exist and there is no
   # `default` or `else`.
-  pub def pop[D = Never]
+  pub def pop[D = Never, I, O]
     self
     # The position to remove. Negative indexes count from the end.
     index @ Int = nil
@@ -412,7 +412,9 @@ pub @class MutSeq[T]: AssignSeq[T]
     :default @ D = nil
     # A block whose result to return when the item does not exist and there is
     # no `default`.
-    :else @ (() -> D) = nil
+    :else @ ((<I, >O) -> D) = nil
+    <I
+    >O
   do -> (T | D)
 
   # Removes the item at `index` if it exists, returning whether it did.
@@ -437,11 +439,11 @@ pub class Iterable[T]: @BaseIterable[T]
     ...
 
   # Tests whether every item is truthy, or satisfies `pred`.
-  pub def all self pred @ (T -> Value) = nil -> Bool
+  pub def all[I, O] self pred @ ((T, <I, >O) -> Value) = nil <I >O -> Bool
     ...
 
   # Tests whether any item is truthy, or satisfies `pred`.
-  pub def any self pred @ (T -> Value) = nil -> Bool
+  pub def any[I, O] self pred @ ((T, <I, >O) -> Value) = nil <I >O -> Bool
     ...
 
   # Returns an iterator followed by the additional iterables.
@@ -469,11 +471,18 @@ pub class Iterable[T]: @BaseIterable[T]
     ...
 
   # Returns the first value for which `pred` is truthy.
-  pub def find[D = T] self pred@(T -> Value) :default@D = nil :else@(() -> D) = nil -> (T | D)
+  pub def find[D = T, I, O]
+    self
+    pred @ ((T, <I, >O) -> Value)
+    :default @ D = nil
+    :else @ ((<I, >O) -> D) = nil
+    <I
+    >O
+  do -> (T | D)
     ...
 
   # Accumulates a value left-to-right with `func`.
-  pub def fold[A] self init@A func@((A, T) -> A) -> A
+  pub def fold[A, I, O] self init@A func@((A, T, <I, >O) -> A) <I >O -> A
     ...
 
   # Returns an iterator that maps each item through `func`.
@@ -729,12 +738,14 @@ pub class BaseArray[T]: Iterable[T] @Unpack[T, Rest: UnpackIter[T]] @Seq[T]
   # assert_eq (arr.get 5 else: do "computed") "computed"
   # ```
   #
-  pub def get[D = nil]
+  pub def get[D = nil, I, O]
     self
     # the index to access
     index @ Int
     :default @ D = nil
-    :else @ (() -> D) = nil
+    :else @ ((<I, >O) -> D) = nil
+    <I
+    >O
   do -> (T | D)
     ...
 
@@ -901,12 +912,14 @@ pub class Array[T]: BaseArray[T] Sinkable[T] @MutSeq[T]
   # assert_eq (empty.pop default: "none") "none"
   # ```
   #
-  pub def pop[D = Never]
+  pub def pop[D = Never, I, O]
     self
     # optional index to remove; defaults to the last element
     index @ Int = nil
     :default @ D = nil
-    :else @ (() -> D) = nil
+    :else @ ((<I, >O) -> D) = nil
+    <I
+    >O
   do -> (T | D)
     ...
 
@@ -944,10 +957,12 @@ pub class Array[T]: BaseArray[T] Sinkable[T] @MutSeq[T]
   # assert_eq $arr ["cc", "bbb", "a"]
   # ```
   #
-  pub def sort
+  pub def sort[I, O]
     self
-    :key @ (T -> Value) = nil
+    :key @ ((T, <I, >O) -> Value) = nil
     :reverse @ Bool = nil
+    <I
+    >O
   do
     ...
 
@@ -1823,14 +1838,16 @@ pub class BaseDict[S @ {...}]: @Index[S] @Spread[S] @Unpack[S, Rest: Unpack[S]] 
   # assert_eq (d.get :missing: default: "unknown") "unknown"
   # ```
   #
-  pub def get[K, D = nil]
+  pub def get[K, D = nil, I, O]
     self
     # the key to look up
     key @ K
     # which value to retrieve when a key has multiple values (0-indexed; negative counts from end; default: last)
     instance @ Int = nil
     :default @ D = nil
-    :else @ (() -> D) = nil
+    :else @ ((<I, >O) -> D) = nil
+    <I
+    >O
   do -> (IndexItem[S, K] | D)
     ...
 
@@ -2008,14 +2025,16 @@ pub class Dict[S @ {...}]: BaseDict[S] @Assign[S]
   # assert_eq (d.pop "multi" 0) "second"
   # ```
   #
-  pub def pop[K, D = Never]
+  pub def pop[K, D = Never, I, O]
     self
     # the key to remove
     key @ K
     # which value to remove when a key has multiple values (0-indexed; negative counts from end; default: first)
     instance @ Int = nil
     :default @ D = nil
-    :else @ (() -> D) = nil
+    :else @ ((<I, >O) -> D) = nil
+    <I
+    >O
   do -> (IndexItem[S, K] | D)
     ...
 
@@ -2219,7 +2238,7 @@ pub @let FmtKind = $
 # Applied in a type, `Func[S, R, In: I, Out: O]` is the function type
 # `(...S) <I >O -> R`; arguments left out are unknown. A class that declares
 # `(call)` names `Func` among its supertypes to be passed as a function.
-pub class Func[S @ {*Value, **Value}, R, :In @ Iter[Value], :Out @ Sink[Never]]
+pub class Func[S @ {*Value, **Value}, R, :In, :Out]
   # Calls the function.
   pub def (call) _self ...args @ S <In >Out -> R
     ...
@@ -3035,7 +3054,7 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   #
   # Empty iterators return `true`.
   #
-  pub def all self pred @ (T -> Value) = nil -> Bool
+  pub def all[I, O] self pred @ ((T, <I, >O) -> Value) = nil <I >O -> Bool
     ...
 
   #
@@ -3045,7 +3064,7 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   #
   # Empty iterators return `false`.
   #
-  pub def any self pred @ (T -> Value) = nil -> Bool
+  pub def any[I, O] self pred @ ((T, <I, >O) -> Value) = nil <I >O -> Bool
     ...
 
   #
@@ -3140,7 +3159,14 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   # Raises [`RuntimeError`](std.RuntimeError) if no value matches and
   # no fallback is provided.
   #
-  pub def find[D = T] self pred@(T -> Value) :default@D = nil :else@(() -> D) = nil -> (T | D)
+  pub def find[D = T, I, O]
+    self
+    pred @ ((T, <I, >O) -> Value)
+    :default @ D = nil
+    :else @ ((<I, >O) -> D) = nil
+    <I
+    >O
+  do -> (T | D)
     ...
 
   #
@@ -3148,7 +3174,7 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   #
   # Returns `init` unchanged if the iterator is empty.
   #
-  pub def fold[A] self init@A func@((A, T) -> A) -> A
+  pub def fold[A, I, O] self init@A func@((A, T, <I, >O) -> A) <I >O -> A
     ...
 
   @def kv[K, V] self @ Iter[Unpack[{K, V}]] -> Spread[K, V]
@@ -3204,7 +3230,13 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   # Raises [`IterStop`](std.IterStop) when exhausted and no fallback
   # is provided.
   #
-  pub def next[D = T] self :default@D = nil :else@(() -> D) = nil -> (T | D)
+  pub def next[D = T, I, O]
+    self
+    :default @ D = nil
+    :else @ ((<I, >O) -> D) = nil
+    <I
+    >O
+  do -> (T | D)
     ...
 
   #
@@ -3485,7 +3517,14 @@ pub class Record[...Ts]: Iterable[Tuple[Sym | Int, Value]] @Index[{...Ts}] @Spre
   #
   # Gets the value for a symbol or position, with an optional default.
   #
-  pub def get[D = nil] self key@(Int | Sym) :default@D = nil :else@(() -> D) = nil -> (Value | D)
+  pub def get[D = nil, I, O]
+    self
+    key @ (Int | Sym)
+    :default @ D = nil
+    :else @ ((<I, >O) -> D) = nil
+    <I
+    >O
+  do -> (Value | D)
     ...
 
   # Replaces keys in a new record, leaving the original unchanged.
@@ -4679,12 +4718,14 @@ pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}, Rest: Unpack[{...Ts}]] I
   # alternative is provided. Negative indexes count from the end.
   #
   #
-  pub def get[D = nil]
+  pub def get[D = nil, I, O]
     self
     # the index to access
     index @ Int
     :default @ D = nil
-    :else @ (() -> D) = nil
+    :else @ ((<I, >O) -> D) = nil
+    <I
+    >O
   do -> (Union[...Ts] | D)
     ...
 

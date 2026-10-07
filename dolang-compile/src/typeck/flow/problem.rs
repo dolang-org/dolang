@@ -121,7 +121,6 @@ pub(crate) enum Misfit {
     Binary,
     /// A format specification's width or precision
     Int,
-    Iterable,
     Spreadable,
     Unpackable,
 }
@@ -217,7 +216,6 @@ impl Report for Problem {
                 let required = match misfit {
                     Misfit::Binary => "binary",
                     Misfit::Int => "an `Int`",
-                    Misfit::Iterable => "iterable",
                     Misfit::Spreadable => "spreadable",
                     Misfit::Unpackable => "unpackable",
                 };

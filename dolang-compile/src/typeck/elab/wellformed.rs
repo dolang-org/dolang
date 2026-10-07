@@ -12,26 +12,26 @@
 //! Written types are checked where they are written, to point diagnostics at the
 //! offending application: each type argument, including defaults and variadic
 //! items, against its binder's bound; each function type's parameters for symbol
-//! keys, except within a `Phantom` argument, which only marks variance; and each
-//! written ambient channel for reaching `Iter` or `Sink`. A declaration's own
-//! signature and binder defaults are checked as declared. Recursion among
-//! transparent aliases must be contractive and regular.
+//! keys, except within a `Phantom` argument, which only marks variance. An
+//! ambient channel may be any type; reading or writing it is checked where that
+//! happens. A declaration's own signature and binder defaults are checked as
+//! declared. Recursion among transparent aliases must be contractive and regular.
 
 use std::collections::{HashMap, HashSet};
 
 use super::{
-    BadChannel, BadRecursion, BoundViolation, DeclNode, Designated, Diag, Fill, Head,
-    ParameterKeys, Referent, Role, Tables, UnitDiag,
+    BadRecursion, BoundViolation, DeclNode, Designated, Diag, Fill, Head, ParameterKeys, Referent,
+    Role, Tables, UnitDiag,
     surface::{Class, Name, TypeArg, TypeExpr, TypeParam, TypeParamKind},
 };
 use crate::{
     source::Span,
     typeck::{
         report::Report,
-        solver::{Issue, Provenance, Reach, Residual, Solver, Status},
+        solver::{Issue, Provenance, Residual, Solver, Status},
         r#type::{
-            Argument, Binder, Binding, BoundRef, Database, DeclId, Intrinsic, Rest, Type, TypeId,
-            UnitId, UnitSpan,
+            Argument, Binder, Binding, BoundRef, Database, DeclId, Rest, Type, TypeId, UnitId,
+            UnitSpan,
         },
     },
 };
@@ -139,20 +139,6 @@ impl Check<'_, '_> {
         }
     }
 
-    /// Whether a type interpreted in `scope`'s group reaches `target`
-    fn reaches(&self, scope: Option<DeclId>, ty: TypeId, target: DeclId) -> Verdict {
-        let mut solver = Solver::new(self.db);
-        let environment = match scope {
-            Some(decl) => solver.rigid_environment(decl),
-            None => solver.empty_environment(),
-        };
-        match solver.reach(solver.view(ty, environment), target) {
-            Ok(Reach::Reached(_) | Reach::Dynamic) => Verdict::Holds,
-            Ok(Reach::Unreached) | Err(Issue::Contradiction(_)) => Verdict::Fails,
-            Err(Issue::Residual(residual)) => Verdict::Undecided(residual),
-        }
-    }
-
     /// Diagnose a failed check, or record an undecided one
     fn report(&mut self, verdict: Verdict, span: UnitSpan, diag: impl Report + 'static) {
         #[cfg(feature = "debug")]
@@ -235,11 +221,6 @@ impl Check<'_, '_> {
         if let Type::Function(function) = self.db.ty(id) {
             let verdict = self.relate(scope, function.params, self.db.rest_shape(Rest::All));
             self.report(verdict, span, ParameterKeys(span.span));
-            for (channel, output) in [(function.input, false), (function.output, true)] {
-                if let Some(channel) = channel {
-                    self.channel(scope, channel, output, span);
-                }
-            }
             return false;
         }
         let Type::Apply { base, args, .. } = self.db.ty(id) else {
@@ -340,48 +321,6 @@ impl Check<'_, '_> {
             let verdict = self.relate(scope, function.params, self.db.rest_shape(Rest::All));
             self.report(verdict, span, ParameterKeys(span.span));
         }
-        let TypeExpr::Func { input, output, .. } = ty else {
-            unreachable!()
-        };
-        for (written, channel, output) in [
-            (input, function.input, false),
-            (output, function.output, true),
-        ] {
-            if let (Some(written), Some(channel)) = (written, channel) {
-                self.channel(
-                    scope,
-                    channel,
-                    output,
-                    UnitSpan {
-                        unit,
-                        span: written.span(),
-                    },
-                );
-            }
-        }
-    }
-
-    /// Check that a written channel reaches `Iter` or `Sink`, when designated
-    fn channel(&mut self, scope: Option<DeclId>, ty: TypeId, output: bool, span: UnitSpan) {
-        let intrinsic = match output {
-            false => Intrinsic::Iter,
-            true => Intrinsic::Sink,
-        };
-        let Some(target) = self.db.intrinsic(intrinsic) else {
-            return;
-        };
-        let Type::Decl(target) = *self.db.ty(target) else {
-            return;
-        };
-        let verdict = self.reaches(scope, ty, target);
-        self.report(
-            verdict,
-            span,
-            BadChannel {
-                span: span.span,
-                output,
-            },
-        );
     }
 
     /// Check a declaration signature as declared: its binder defaults, and a def's
@@ -393,7 +332,7 @@ impl Check<'_, '_> {
         }
         let declaration = self.db.declaration(decl);
         let Type::Quantified { binders, body } = self.db.ty(declaration.ty) else {
-            return self.function_signature(id, sig, decl, declaration.ty);
+            return self.function_signature(id, decl, declaration.ty);
         };
         for (slot, binder) in binders.iter().enumerate() {
             let (Some(default), Some(span)) = (binder.default, declaration.binders[slot].default)
@@ -418,7 +357,7 @@ impl Check<'_, '_> {
                 },
             );
         }
-        self.function_signature(id, sig, decl, *body);
+        self.function_signature(id, decl, *body);
     }
 
     /// Check a class's supertypes, which are applications with no type expression
@@ -434,35 +373,16 @@ impl Check<'_, '_> {
         }
     }
 
-    fn function_signature(&mut self, id: DeclId, sig: usize, decl: DeclId, body: TypeId) {
-        let node = &self.tables.decls[id.index()].node;
-        let func = match node {
-            DeclNode::Defs(_) | DeclNode::Methods(_) | DeclNode::Closure(_) => node.signature(sig),
-            DeclNode::Class(_) | DeclNode::Alias(_) => return,
-        };
+    fn function_signature(&mut self, id: DeclId, decl: DeclId, body: TypeId) {
+        if let DeclNode::Class(_) | DeclNode::Alias(_) = self.tables.decls[id.index()].node {
+            return;
+        }
         let Type::Function(function) = self.db.ty(body) else {
             return;
         };
-        let unit = self.tables.decls[id.index()].unit;
         let name = self.db.declaration(decl).source.span;
         let verdict = self.relate(Some(decl), function.params, self.db.rest_shape(Rest::All));
         self.report(verdict, name, ParameterKeys(name.span));
-        for (written, channel, output) in [
-            (func.input, function.input, false),
-            (func.output, function.output, true),
-        ] {
-            if let (Some(written), Some(channel)) = (written, channel) {
-                self.channel(
-                    Some(decl),
-                    channel,
-                    output,
-                    UnitSpan {
-                        unit,
-                        span: self.tables.site_ty(written).span(),
-                    },
-                );
-            }
-        }
     }
 
     /// Check recursion among transparent aliases: every cycle must pass through a

@@ -66,6 +66,20 @@ pub def iterated()
     let _ = x
     #       ^: flow std.Int
 
+# A `for` takes the `(next)` of its iteratee's `(iter)`
+class Hollow
+  pub def (iter) _self -> Int
+    1
+
+pub def hollow()
+  for _ = Hollow()
+    # error: `std.Int` has no member `(next)`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   for _ = Hollow()
+    #    |           ^^^^^^^^
+    nil
+
 pub def unpacked()
   let a b = [1, 2]
   let _ = a
@@ -105,7 +119,7 @@ pub def wrong()
   # LL |   let _ @ Str = 1
   #    |                 ^
   for _ = 1
-    # error: `1` is not iterable
+    # error: `1` has no member `(iter)`
     #   --> m.dol:LL:LL
     #    |
     # LL |   for _ = 1

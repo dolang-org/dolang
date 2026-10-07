@@ -537,8 +537,8 @@ pub def timeout[R, I, O]
   # arguments](time.duration-arguments).
   duration @ (Duration | Int | Float)
   # Block to run.
-  block @ ((<Iter[I], >Sink[O]) -> R)
-  <Iter[I]
-  >Sink[O]
+  block @ ((<I, >O) -> R)
+  <I
+  >O
 do -> R
   ...

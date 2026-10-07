@@ -51,5 +51,5 @@ pub def scoped node @ xml.Node >Sink[Str] -> nil
   nil
 
 # Loaded programs may write anything
-pub def loads code @ Bin >Sink[Value] -> Value
+pub def loads code @ Bin <Iter[Value] >Sink[Value] -> Value
   load.run $code

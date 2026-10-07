@@ -219,8 +219,8 @@ other's (see [Schemas](#schemas)), its result is a subtype of the other's, and
 its ambient channels are supertypes of the other's. Channels are implicit
 arguments, so both are contravariant; since `Sink` is contravariant in its
 element type, a function that writes `Int`s can be given a `Sink[Num]`. An
-omitted channel stands for its default bound, `Iter[Unknown]` or
-`Sink[Unknown]`, or `Unknown` when `std` doesn't designate one. Union-left
+omitted channel stands for its default bound, `Unknown`, or in a strict unit,
+for `Value`. Union-left
 judgments require every member. A closed union-right judgment accepts a member
 proved by an isolated, closed subtype query, which cannot add inference bounds
 or diagnostic edges to the calling solver; one with a term still to infer
@@ -965,7 +965,9 @@ The rules are:
   couldn't resolve counts as undecided, so defaulting rounds reach it. Once no
   undecided rule is left, a block's parameters and channels that nothing gave
   anything become `Unknown`, which may start more rounds.
-- A `for` item is `T` of `iteratee <: BaseIterable[T]`. An unpacking pattern
+- A `for` item is what the `(next)` of the iteratee's `(iter)` gives, as calls
+  of those members; without an iteratee, the `(next)` of the function's input
+  channel, or `Unknown` if it declares none. An unpacking pattern
   requires `value <: Unpack[...]` and is walked (`solver/unpack.rs`) against
   the `S` each member of the value's solved type reaches, as the runtime binds
   it: positional items by count, keyed items by key. An item takes the join of
@@ -1117,8 +1119,9 @@ Signature completion fills each def and method signature with the defaults for
 what it omits, the same for public and private definitions. An omitted
 parameter, rest or return annotation is `Unknown`, a rest's as each of its
 items. An omitted ambient channel is an implicit binder following the
-signature's written binders. It is gradual, bounded by `Iter[Unknown]` or
-`Sink[Unknown]` when `std` designates them, and unbounded otherwise. A method's
+signature's written binders. It is gradual, bounded by `Unknown`; a strict
+unit's is `Value` instead. A channel may be any type: a `for` without an
+iteratee reads the input through its `(next)`. A method's
 unannotated receiver is its class applied to its own binders, except on a
 `class` or `static` method. A function type written without channels in a def's
 signature or body, but not in a nested class or alias, shares that def's

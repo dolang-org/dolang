@@ -1031,27 +1031,31 @@ impl<'u> Scope<'_, '_, 'u> {
         self.switch(exit);
     }
 
-    /// The head of a `for` whose body binds in `frame`: the iteratee is bound to
-    /// the iterator, and the header takes its next item. Returns the header, body
-    /// and exit blocks, with the header ended.
+    /// The head of a `for` whose body binds in `frame`: the iteratee, if any, is
+    /// bound to the iterator, and the header takes its next item, or without one,
+    /// the ambient input's. Returns the header, body and exit blocks, with the
+    /// header ended.
     pub(super) fn next_head<B>(
         &mut self,
         node: &'u For<B>,
         frame: &Rc<Frame<'u>>,
     ) -> (BlockId, BlockId, BlockId) {
-        let iter = match self.entry(node.iter) {
-            Some(Entry::Var(var)) => var,
-            _ => self.synthetic(),
+        let (iter, span) = match &node.expr {
+            Some(value) => {
+                let iter = match self.entry(node.iter) {
+                    Some(Entry::Var(var)) => var,
+                    _ => self.synthetic(),
+                };
+                let value = self.expr(value);
+                let span = value.span;
+                self.emit(Step::Let {
+                    pattern: Pattern::Bind(iter),
+                    value,
+                });
+                (Some(iter), span)
+            }
+            None => (None, node.for_span),
         };
-        let value = match &node.expr {
-            Some(value) => self.expr(value),
-            None => expr(ExprKind::AmbientInput, node.for_span),
-        };
-        let span = value.span;
-        self.emit(Step::Let {
-            pattern: Pattern::Bind(iter),
-            value,
-        });
         let header = self.block();
         let exit = self.block();
         let body = self.block();
