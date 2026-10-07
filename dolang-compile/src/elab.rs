@@ -1541,6 +1541,21 @@ impl<'s> Scope<'s> {
         }
     }
 
+    fn mark_exported(&self, res: Res, epoch: Epoch) {
+        match self {
+            Self::Base => unreachable!(),
+            Self::Class { parent, .. } => parent.mark_exported(res, epoch),
+            Self::Nested { parent, .. } if res.depth > 0 => parent.mark_exported(
+                Res {
+                    depth: res.depth - 1,
+                    ..res
+                },
+                epoch,
+            ),
+            Self::Nested { .. } => self.mark_local_exported(res.index, epoch),
+        }
+    }
+
     fn resolve_inner(
         &self,
         id: sym::Id,
@@ -2117,15 +2132,23 @@ impl<'a> Elaborater<'a> {
         match node {
             LValue::Ident(id) => {
                 self.visit_ident(scope, id)?;
-                if let Some(res) = id.res
-                    && let Origin::SelfParam(receiver) = scope.origin(res)
-                {
-                    self.diags.push(ReceiverAccess {
-                        span: id.span,
-                        receiver: Some(receiver),
-                        message: "method receiver bindings cannot be reassigned",
-                    });
-                    self.fail = true;
+                if let Some(res) = id.res {
+                    match scope.origin(res) {
+                        Origin::SelfParam(receiver) => {
+                            self.diags.push(ReceiverAccess {
+                                span: id.span,
+                                receiver: Some(receiver),
+                                message: "method receiver bindings cannot be reassigned",
+                            });
+                            self.fail = true;
+                        }
+                        Origin::PreludeItem { .. } | Origin::PreludeModule
+                            if self.mode == Mode::Repl =>
+                        {
+                            scope.mark_exported(res, self.epoch);
+                        }
+                        _ => {}
+                    }
                 }
                 Ok(())
             }
