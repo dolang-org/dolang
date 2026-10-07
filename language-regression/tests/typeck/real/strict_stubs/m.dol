@@ -1,8 +1,8 @@
 # dolang: strict
 # Strict extension stubs, used from a strict unit.
 
-import @regex @sys.linux security.unix uuid @url time
-  @patch @xml load zip tar sqlite fs winreg winscm winnet
+import @regex @sys.linux security.unix uuid @url time @patch @xml
+  load zip tar sqlite fs winreg winscm winnet progress http
 
 # `Regex.replace` runs a callback with its caller's channels
 pub def replaces re @ regex.Regex >Sink[Str] -> Str
@@ -155,3 +155,31 @@ pub def registry target @ winreg.LinkTarget entry @ winreg.Value -> nil
   let _service = winscm.ServiceAccessMask.from_int 0x10
   #   ^~~~~~~~: flow winscm.ServiceAccessMask
   nil
+
+# Progress scopes run with their caller's channels
+pub def progress_scopes >Sink[Str] -> Int
+  let n = progress.with do
+    progress.show total: 3 do |w|
+      put "show"
+      let _total = w.total
+      #   ^~~~~~: flow nil | std.Int
+      let _message = w.message
+      #   ^~~~~~~~: flow std.Str
+      w.delta()
+      1
+  let _n = n
+  #   ^~: flow std.Int
+  n
+
+# Request scopes run with their caller's channels
+pub def requests client @ http.Client >Sink[Str] -> Int
+  let status = http.get "u" do |r|
+    put "get"
+    r.status
+  let _status = status
+  #   ^~~~~~~: flow std.Int
+  let response = http.get "u"
+  let _response = response
+  #   ^~~~~~~~~: flow http.Response
+  response.close()
+  client.post "u" body: ["a", "b"] do |r| r.status
