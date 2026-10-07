@@ -1150,6 +1150,26 @@ impl<'db> Solver<'db> {
         Ok(raised)
     }
 
+    /// The unsolved variables whose solutions could decide the given terms':
+    /// those at an output position of theirs, including through the bounds of a
+    /// variable reached, whose default is chosen from them. A function's
+    /// parameters and channels are inputs, which the terms' solutions don't
+    /// depend on.
+    pub(crate) fn deciding(&self, terms: &[Term]) -> Result<HashSet<InferVarId>, Residual> {
+        let mut deciding = HashSet::new();
+        let mut visit = |id: InferVarId, _: Variance| {
+            if !deciding.insert(id) {
+                return Vec::new();
+            }
+            let bounds = self.bounds(id);
+            bounds.lower().chain(bounds.upper()).collect()
+        };
+        for &term in terms {
+            self.variances(term, Variance::Covariant, false, &mut visit, 0, 0)?;
+        }
+        Ok(deciding)
+    }
+
     /// The unsolved variables a default would lock in by choosing a literal: those
     /// that the given terms, at the given variances, reach at a position that
     /// isn't covariant, where a later value can't widen them. A variable's bounds
@@ -1596,6 +1616,39 @@ impl<'db> Solver<'db> {
         self.inference[id.0].defaulted.set(true);
         self.commit(id, self.closed(candidate));
         Ok(self.closed(candidate))
+    }
+
+    /// Default a type variable without lower bounds to the meet of its upper
+    /// bounds, as the greatest type they show to fit them. A variable with a
+    /// lower bound, without upper bounds, or with an upper bound that isn't yet
+    /// solved is left unsolved, for its caller to default otherwise. Only a
+    /// caller that has given up waiting for lower bounds uses this: [`Self::default`]
+    /// never invents a type from no lower bounds.
+    pub(crate) fn default_upper(&mut self, id: InferVarId) -> Result<TypeId, Residual> {
+        let bounds = &self.bounds[id.0];
+        if self.assignment(id).is_some()
+            || self.inference[id.0].kind != Kind::Type
+            || bounds.lower().next().is_some()
+        {
+            return Err(Residual::Inference);
+        }
+        let upper = bounds
+            .upper()
+            .map(|term| self.reify(term))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut upper = upper.into_iter();
+        let first = upper.next().ok_or(Residual::Inference)?;
+        let candidate = upper.try_fold(first, |met, ty| {
+            self.meet(met, ty).map_err(|issue| match issue {
+                Issue::Residual(residual) => residual,
+                Issue::Contradiction(_) => Residual::Unsupported("meeting upper bounds"),
+            })
+        })?;
+        self.inference[id.0].defaulted.set(true);
+        self.commit(id, self.closed(candidate));
+        #[cfg(feature = "debug")]
+        trace!(self, "?{} defaulted from its upper bounds", id.0);
+        Ok(candidate)
     }
 
     /// Whether a candidate can be shown to satisfy each of a variable's solved

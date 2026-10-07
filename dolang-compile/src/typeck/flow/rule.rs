@@ -1475,6 +1475,63 @@ impl<'a> Flow<'a, '_> {
                 expectations[index] = expected;
             }
         }
+        // Likewise for an array an overloaded callee takes: its undecided choice
+        // leaves the array's parameter unsolved, so its literal items would
+        // decay. Each overload the call doesn't contradict gives the parameter it
+        // would, and the array takes the one a fresh array can be, if only one is.
+        let overloads = match self.db.ty(callee) {
+            Type::Overloaded { overloads, .. } => overloads.to_vec(),
+            &Type::Decl(decl) if self.overloaded(callee) => (self.db.overloads(decl).iter())
+                .map(|&overload| self.db.declaration(overload).ty)
+                .collect(),
+            _ => Vec::new(),
+        };
+        let array = self.designated(Designated::Array);
+        let arrays: Vec<usize> = (held.iter())
+            .map(|&(index, _)| index)
+            .filter(|&index| {
+                expectations[index].is_none()
+                    && matches!(
+                        values.held[index].expr.kind,
+                        ExprKind::Collection {
+                            kind: Collection::Array,
+                            ..
+                        }
+                    )
+            })
+            .collect();
+        if let Some(array) = array
+            && !arrays.is_empty()
+        {
+            let mut chosen: Vec<Vec<TypeId>> = vec![Vec::new(); arrays.len()];
+            for &overload in &overloads {
+                let (mut solver, held, contradicted) =
+                    self.presolve(overload, values, input, output, None, span);
+                if contradicted {
+                    continue;
+                }
+                default_all(&mut solver, self.db, true, None);
+                for (&index, chosen) in arrays.iter().zip(&mut chosen) {
+                    let term = held
+                        .iter()
+                        .find(|&&(held, _)| held == index)
+                        .map(|&(_, term)| term);
+                    let expected = term
+                        .and_then(|term| expectation(&solver, term))
+                        .filter(|&ty| self.fresh_expected(array, Kind::Type, ty).is_some());
+                    if let Some(ty) = expected
+                        && !chosen.contains(&ty)
+                    {
+                        chosen.push(ty);
+                    }
+                }
+            }
+            for (index, chosen) in arrays.into_iter().zip(chosen) {
+                if let [ty] = chosen[..] {
+                    expectations[index] = Some(ty);
+                }
+            }
+        }
         expectations
     }
 
@@ -2908,9 +2965,12 @@ fn outputs(results: &[Term], parameters: &[Term]) -> Vec<(Term, Variance)> {
 
 /// Solve, defaulting every unsolved variable whose lower bounds are solved, and,
 /// if `bare`, then any variable without lower bounds to its binder's default, or
-/// without one, to the dynamic type of its kind, until nothing more can be
-/// defaulted. Literals decay as
-/// [`default_where`] decays them.
+/// without one, unless it decides one of `roots`' results (see
+/// [`Solver::deciding`]),
+/// to the meet of its upper bounds (see [`Solver::default_upper`]), until
+/// nothing more can be defaulted. A round that can default no bare
+/// variable these ways defaults them all to the dynamic type of their kind.
+/// Literals decay as [`default_where`] decays them.
 fn default_all(
     solver: &mut Solver<'_>,
     db: &Database,
@@ -2929,10 +2989,30 @@ fn default_all(
         if bare.is_empty() {
             break;
         }
+        // A variable that decides a result isn't given its upper bounds, which
+        // would be the most the result could be, not what it is
+        let results: Vec<Term> = (roots.unwrap_or_default().iter())
+            .filter(|&&(_, variance)| variance == Variance::Covariant)
+            .map(|&(term, _)| term)
+            .collect();
+        let deciding =
+            (solver.deciding(&results)).unwrap_or_else(|_| solver.unresolved().collect());
+        // An upper bound may wait on another bare variable's default, so one
+        // whose bounds don't give a default yet waits a round for it
+        let count = bare.len();
+        let mut deferred = Vec::new();
         for id in bare {
-            let default = (solver.fallback(id))
-                .unwrap_or_else(|| solver.closed(db.unknown_of(solver.variable_kind(id))));
-            solver.constrain(default, Term::Infer(id), Provenance::default());
+            if let Some(default) = solver.fallback(id) {
+                solver.constrain(default, Term::Infer(id), Provenance::default());
+            } else if deciding.contains(&id) || solver.default_upper(id).is_err() {
+                deferred.push(id);
+            }
+        }
+        if deferred.len() == count {
+            for id in deferred {
+                let unknown = solver.closed(db.unknown_of(solver.variable_kind(id)));
+                solver.constrain(unknown, Term::Infer(id), Provenance::default());
+            }
         }
         outcomes = default_where(solver, |_| true, roots);
     }

@@ -70,7 +70,14 @@ types rather than unknown ones:
   `Value`, since its result is discarded.
 - An omitted `<` is `Iter[Value]` and an omitted `>` is `Sink[Never]`: the
   function reads its input as `Value` and writes nothing. A function that
-  writes to its output, or calls one that does, annotates `>`.
+  writes to its output, or calls one that does, annotates `>`. So does a `do`
+  block that isn't passed straight to a call and has no expected type from an
+  annotation or cast:
+
+    ```
+    let report = do |>Sink[Str]|
+      put done
+    ```
 
 `# dolang: nostrict` turns strict checking off. Strictness belongs to the file,
 so strict and non-strict modules can import each other; `--strict` is unrelated
