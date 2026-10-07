@@ -1,3 +1,4 @@
+# dolang: strict
 # Floating-point mathematics and integer number theory.
 #
 # Except where noted, functions accept only [`Int`](std.Int) and
@@ -56,6 +57,10 @@ pub def log2 x @ (Int | Float) -> Float
 # Computes the base-ten logarithm.
 pub def log10 x @ (Int | Float) -> Float
   ...
+
+@def pow base@Int exponent@Int -> (Int | Float)
+@def pow base@Float exponent@(Int | Float) -> Float
+@def pow base@(Int | Float) exponent@Float -> Float
 
 # Raises `base` to `exponent`.
 #

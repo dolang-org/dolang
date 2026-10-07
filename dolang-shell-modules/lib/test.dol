@@ -11,7 +11,7 @@ let pass_style = term.Style fg: :GREEN:
 let name_style = term.Style dim: true
 let note_style = term.Style bold: true
 
-let collect_key = strand.Key()
+let collect_key @ strand.Key[TestCollection] = strand.Key()
 
 class TestCase
   pub field module name tags func
@@ -221,7 +221,7 @@ class Harness
 
       collect_key.value = TestCollection $path
       self.#with_capture $output do self.#with_timeout do load.run $compiled.emit()
-      let cases = collect_key.value.take()
+      let cases = (collect_key.value !@ TestCollection).take()
       collect_key.value = nil
       cases = [...cases.filter(do |case| self.#matches_filter case)]
       self.#run_module $path $cases
@@ -371,7 +371,7 @@ do
   let base_name = (name || str(test_def.func))
 
   if (test_def.params.len == 0)
-    collect_key.value.add $base_name $tag_values $test_def.func
+    (collect_key.value !@ TestCollection).add $base_name $tag_values $test_def.func
     return func
 
   let combos = [[{}, [], []]]
@@ -393,7 +393,7 @@ do
     let case_name = "$base_name/$("/".join(name_parts))"
     let case_tags = [...tag_values, ...extra_tags]
     let case_func = do test_def.func(...kwargs)
-    collect_key.value.add $case_name $case_tags $case_func
+    (collect_key.value !@ TestCollection).add $case_name $case_tags $case_func
 
   func
 
@@ -472,7 +472,7 @@ do
     if !(type tag Str)
       throw std.TypeError "test tags: expected strings"
     tag_values.push $tag
-  collect_key.value.add_tags $tag_values
+  (collect_key.value !@ TestCollection).add_tags $tag_values
 
 # Raised when an assertion fails.
 pub class Assert: std.RuntimeError

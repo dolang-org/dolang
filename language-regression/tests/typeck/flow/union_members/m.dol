@@ -118,7 +118,7 @@ pub def missing p @ (Cat | Rock)
 #    |           ^^^^^^
 
 # Operators dispatch on each alternative of the left operand
-pub def operators p @ (Cat | Dog) n @ (Int | Str)
+pub def operators p @ (Cat | Dog) n @ (Int | Float)
   let q = (p + 1)
   let _ = q
   #       ^: flow m.Cat | m.Dog
@@ -128,7 +128,9 @@ pub def operators p @ (Cat | Dog) n @ (Int | Str)
   #    |
   # LL |   let _ = (p + "a")
   #    |                ^^^
-  let _ = (n + 1)
+  let r = (n + 1)
+  let _ = r
+  #       ^: flow std.Float | std.Int
 
 # An alternative without the operator dispatches on the right operand
 pub def reflected x @ (Dir | Str) d @ Dir
@@ -151,6 +153,14 @@ pub def indexed p @ (Cat | Dog) a @ (Array[Int] | Array[Str])
 # A union alias's alternatives are its union's
 pub def decoded d @ Data
   let _ = d["key"]
+  # error: no overload of `(index)` accepts these arguments
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = d["key"]
+  #    |           ^^^^^^^^
+  #    |
+  #    = note: `[K] (std.Array[json.Data], K, <std.Iter[Value], >std.Sink[Never]) -> IndexItem[{*(std.Int): json.Data}, K]`: this call selects by `"key"`, which isn't one of the schema's keys
+  #    = note: `(std.Array[json.Data], std.Range[std.Int], <std.Iter[Value], >std.Sink[Never]) -> std.Array[json.Data]`: expected `std.Range[std.Int]`, found `"key"`
   # error: `nil`, `std.Bool`, `std.Float` and `std.Int` in `json.Data` have no member `(index)`
   #   --> m.dol:LL:LL
   #    |
@@ -161,14 +171,6 @@ pub def decoded d @ Data
   #    |
   # LL |   let _ = d["key"]
   #    |           ^^^^^^^^
-  # error: no overload of `(index)` accepts these arguments
-  #   --> m.dol:LL:LL
-  #    |
-  # LL |   let _ = d["key"]
-  #    |           ^^^^^^^^
-  #    |
-  #    = note: `[K] (std.Array[json.Data], K) -> IndexItem[{*(std.Int): json.Data}, K]`: this call selects by `"key"`, which isn't one of the schema's keys
-  #    = note: `(std.Array[json.Data], std.Range[std.Int]) -> std.Array[json.Data]`: expected `std.Range[std.Int]`, found `"key"`
   if (type(d, Dict))
     let v = d["key"]
     let _ = v

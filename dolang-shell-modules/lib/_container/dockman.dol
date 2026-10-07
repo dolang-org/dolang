@@ -1016,7 +1016,7 @@ pub class Runtime
         if all
           --all
       do each do |id|
-        id = id.trim()
+        id = (id !@ Str).trim()
         let data = inspected $ sub do self.cli inspect --type image $id
         Image $self $data
 
@@ -1028,7 +1028,7 @@ pub class Runtime
         if (filter != nil)
           --filter $filter
       do each do |id|
-        id = id.trim()
+        id = (id !@ Str).trim()
         let data = inspect_container $self $id
         Container $self $data
 

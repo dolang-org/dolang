@@ -1,3 +1,4 @@
+# dolang: strict
 #
 # Concurrency primitives.
 #
@@ -7,7 +8,7 @@ pub @let PipeSender[I] = ...
 pub @let PipeReceiver[I] = ...
 
 # Stores a strand-local value.
-pub class Key
+pub class Key[T]
   #
   # Creates a new strand-local key.
   #
@@ -43,11 +44,11 @@ pub class Key
   # assert_eq $key.value "parent"
   # ```
   #[getter]
-  pub def value self
+  pub def value self -> (T | nil)
     ...
 
   #[setter]
-  pub def value self value
+  pub def value self value @ (T | nil)
     ...
 
 
@@ -99,10 +100,12 @@ pub class Resource
   # network.with do
   #   fetch_data()
   # ```
-  pub def with[R]
+  pub def with[R, I, O]
     self
     # scoped work to execute
-    block @ (() -> R)
+    block @ ((<Iter[I], >Sink[O]) -> R)
+    <Iter[I]
+    >Sink[O]
   do -> R
     ...
 
@@ -144,7 +147,7 @@ pub class Sender[T]: std.Sink[T]
   pub def close
     self
     # Optional error value to propagate
-    error = nil
+    error @ Value = nil
     # Optional backtrace for that error
     :backtrace @ Backtrace = nil
   do
@@ -286,7 +289,7 @@ do -> Tuple[Sender[T], Receiver[T]]
 # Collects the strand-local input into a sink, returning the sink.
 @def collect[I, S @ Sinkable[I]] target@S <Iter[I] -> S
 
-pub def collect ...args
+pub def collect ...args @ Value -> Value
   ...
 
 # Transforms each value of the strand-local input and writes the result to the
@@ -300,9 +303,11 @@ do
   ...
 
 # Runs blocks concurrently and returns their results in block order.
-pub def fork[*Rs]
+pub def fork[*Rs, I, O]
   # functions to execute concurrently
-  *blocks @ ...(() -> Rs)
+  *blocks @ ...((<Iter[I], >Sink[O]) -> Rs)
+  <Iter[I]
+  >Sink[O]
 do -> Tuple[...Rs]
   ...
 
@@ -362,45 +367,59 @@ do -> nil
   :output @ Sinkable[O]
 do -> nil
 
-pub def map count func ...options
+pub def map count@Int func@Value ...options@Value -> nil
   ...
 
 # Connects pipeline stages and runs them concurrently, returning the last
 # stage's result.
-@def pipeline[R]
+@def pipeline[R, O]
+  # override strand-local input for the first stage
+  :input @ Iterable[Value] = nil
+  # pipeline stages
+  ...stages @ ((<Iter[Value], >Sink[Value]) -> Value)
+  # final stage
+  final @ ((<Iter[Value], >Sink[O]) -> R)
+  >Sink[O]
+do -> R
+
+# Connects pipeline stages and runs them concurrently, writing the last stage's
+# output to a sink and returning its result.
+@def pipeline[R, O]
   # override strand-local input for the first stage
   :input @ Iterable[Value] = nil
   # override strand-local output for the last stage
-  :output @ Sinkable[Value] = nil
+  :output @ Sinkable[O]
   # pipeline stages
-  ...stages @ (() -> Value)
+  ...stages @ ((<Iter[Value], >Sink[Value]) -> Value)
   # final stage
-  final @ (() -> R)
+  final @ ((<Iter[Value], >Sink[O]) -> R)
 do -> R
 
-pub def pipeline ...
+pub def pipeline ...args @ Value -> Value
   ...
 
 # Runs a function over an iterator with a fixed number of scoped workers.
-@def pool[T]
+@def pool[T, O]
   # number of worker strands
   count @ Int
   # iterable of items
   input @ Iterable[T]
   # function applied to each input value
   func @ (T -> nil)
+  >Sink[O]
 do -> nil
 
 # Runs a function over the strand-local input with a fixed number of scoped workers.
-@def pool[T]
+@def pool[T, O]
   # number of worker strands
   count @ Int
   # function applied to each input value
   func @ (T -> nil)
   < Iter[T]
+  >Sink[O]
 do -> nil
 
-pub def pool count ...args
+pub def pool count@Int ...args@Value -> nil
   ...
 
 # Writes a value to the strand-local output.
@@ -434,9 +453,11 @@ do -> R
   ...
 
 # Runs a function in a background strand.
-pub def spawn[R]
+pub def spawn[R, I, O]
   # the function to execute
-  func @ (() -> R)
+  func @ ((<Iter[I], >Sink[O]) -> R)
+  <Iter[I]
+  >Sink[O]
 do -> Strand[R]
   ...
 

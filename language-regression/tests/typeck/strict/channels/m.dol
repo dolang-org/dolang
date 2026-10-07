@@ -8,7 +8,7 @@ import lax
 pub def writes()
   #     ^~~~~~: sig (<strict, >strict) -> nil
   put 1
-  # error: this call does not fit `forall (#0.0, <#0.1, >std.Sink[#0.0]) -> Unknown`
+  # error: this call does not fit `forall (#0.0, <std.Iter[Value], >std.Sink[#0.0]) -> nil`
   #   --> m.dol:LL:LL
   #    |
   # LL |   put 1
