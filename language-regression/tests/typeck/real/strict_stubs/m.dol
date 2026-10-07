@@ -1,7 +1,7 @@
 # dolang: strict
 # Strict extension stubs, used from a strict unit.
 
-import @regex @sys.linux security.unix
+import @regex @sys.linux security.unix uuid @url time @patch @xml load
 
 # `Regex.replace` runs a callback with its caller's channels
 pub def replaces re @ regex.Regex >Sink[Str] -> Str
@@ -24,3 +24,32 @@ pub def permission() -> security.unix.Permission
   #   ^: flow security.unix.Permission
   let _ = security.unix.Permission [:EXECUTE:]
   p
+
+
+# Value-type getters and class constants
+pub def values u @ url.Url p @ patch.Patch -> nil
+  let _id = uuid.Uuid.NIL
+  #   ^~~: flow uuid.Uuid
+  let _port = u.port
+  #   ^~~~~: flow nil | std.Int
+  let _month = time.Month.JANUARY
+  #   ^~~~~~: flow time.Month
+  let _kind = p.type
+  #   ^~~~~: flow :COPY: | :CREATE: | :DELETE: | :MODIFY: | :MOVE:
+  nil
+
+# Scoped blocks run with their caller's channels
+pub def scoped node @ xml.Node >Sink[Str] -> nil
+  let n = time.timeout 1 do
+    put "x"
+    1
+  let _n = n
+  #   ^~: flow std.Int
+  let _ = node.attr "id" else: do
+    put "y"
+    "d"
+  nil
+
+# Loaded programs may write anything
+pub def loads code @ Bin >Sink[Value] -> Value
+  load.run $code

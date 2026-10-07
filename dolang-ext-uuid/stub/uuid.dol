@@ -1,14 +1,15 @@
+# dolang: strict
 # UUID and Windows GUID generation, parsing, and field access.
 
 # Parsed or generated UUID value.
 pub class Uuid
   # The max `Uuid`, `ffffffff-ffff-ffff-ffff-ffffffffffff`.
   #[class]
-  pub field MAX = nil
+  pub field MAX @ Uuid = ...
 
   # The nil `Uuid`, `00000000-0000-0000-0000-000000000000`.
   #[class]
-  pub field NIL = nil
+  pub field NIL @ Uuid = ...
 
   # Parses UUID text or binary, or copies an existing `Uuid`.
   #
@@ -47,37 +48,41 @@ pub class Uuid
 
   # The raw 16-byte binary form.
   #[getter]
-  pub def bytes self
+  pub def bytes self -> Bin
     ...
 
   # The simple lowercase hexadecimal form without hyphens.
   #[getter]
-  pub def hex self
+  pub def hex self -> Str
     ...
 
   # The UUID variant: `:NCS:`, `:RFC4122:`, `:MICROSOFT:`, or `:FUTURE:`.
   #[getter]
-  pub def variant self
+  pub def variant self -> (:NCS: | :RFC4122: | :MICROSOFT: | :FUTURE:)
     ...
 
   # The UUID version number, such as `4` for a randomly generated UUID.
   #[getter]
-  pub def version self
+  pub def version self -> Int
     ...
 
   # Compares two UUID values.
-  pub def (eq) self other
+  pub def (eq) self other @ Value -> Bool
+    ...
+
+  # Orders two UUID values.
+  pub def (lt) self other @ Uuid -> Bool
     ...
 
   # Returns the canonical hyphenated UUID text.
-  pub def (str) self
+  pub def (str) self -> Str
     ...
 
 # Windows globally unique identifier mirroring the native `GUID` fields.
 pub class Guid
   # The nil `Guid`, `00000000-0000-0000-0000-000000000000`.
   #[class]
-  pub field NIL = nil
+  pub field NIL @ Guid = ...
 
   # Parses canonical GUID text or binary, or copies an existing `Guid`.
   #
@@ -101,38 +106,43 @@ pub class Guid
     ...
 
   # Generates a random `Guid`.
+  #[class]
   pub def generate self -> Guid
     ...
 
   # The raw 16-byte native Windows in-memory GUID packet.
   #[getter]
-  pub def bytes self
+  pub def bytes self -> Bin
     ...
 
   # The `Data1` field.
   #[getter]
-  pub def data1 self
+  pub def data1 self -> Int
     ...
 
   # The `Data2` field.
   #[getter]
-  pub def data2 self
+  pub def data2 self -> Int
     ...
 
   # The `Data3` field.
   #[getter]
-  pub def data3 self
+  pub def data3 self -> Int
     ...
 
   # The 8-byte `Data4` field.
   #[getter]
-  pub def data4 self
+  pub def data4 self -> Bin
     ...
 
   # Compares two GUID values.
-  pub def (eq) self other
+  pub def (eq) self other @ Value -> Bool
+    ...
+
+  # Orders two GUID values.
+  pub def (lt) self other @ Guid -> Bool
     ...
 
   # Returns the canonical hyphenated GUID text.
-  pub def (str) self
+  pub def (str) self -> Str
     ...

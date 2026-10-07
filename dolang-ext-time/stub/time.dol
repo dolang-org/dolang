@@ -1,3 +1,4 @@
+# dolang: strict
 # UTC instants, calendar dates, durations, sleeping, and scoped timeouts.
 #
 # Everything here is UTC. There is no local-time or time-zone support, and no
@@ -117,15 +118,15 @@ pub class DateTime
     ...
 
   # Compares two instants.
-  pub def (eq) self other
+  pub def (eq) self other @ Value -> Bool
     ...
 
   # Orders two instants.
-  pub def (lt) self other
+  pub def (lt) self other @ DateTime -> Bool
     ...
 
   # Hashes the value.
-  pub def (hash) self
+  pub def (hash) self -> Int
     ...
 
   # Returns the [`Duration`](time.Duration) from `other` to this instant.
@@ -144,7 +145,7 @@ pub class DateTime
     ...
 
   # Returns the RFC 3339 representation, as [`rfc`](time.DateTime.rfc) does.
-  pub def (str) self
+  pub def (str) self -> Str
     ...
 
 # A calendar date, with no time of day and no time zone.
@@ -267,15 +268,15 @@ pub class Date
     ...
 
   # Compares two dates.
-  pub def (eq) self other
+  pub def (eq) self other @ Value -> Bool
     ...
 
   # Orders two dates.
-  pub def (lt) self other
+  pub def (lt) self other @ Date -> Bool
     ...
 
   # Hashes the value.
-  pub def (hash) self
+  pub def (hash) self -> Int
     ...
 
   # Returns the [`Duration`](time.Duration) between the two dates' midnights.
@@ -289,7 +290,7 @@ pub class Date
     ...
 
   # Returns the `YYYY-MM-DD` form, as [`rfc`](time.Date.rfc) does.
-  pub def (str) self
+  pub def (str) self -> Str
     ...
 
 # A calendar month.
@@ -305,6 +306,54 @@ pub class Date
 # assert (Month.JANUARY < Month.FEBRUARY)
 # ```
 pub class Month
+  # January.
+  #[class]
+  pub field JANUARY @ Month = ...
+
+  # February.
+  #[class]
+  pub field FEBRUARY @ Month = ...
+
+  # March.
+  #[class]
+  pub field MARCH @ Month = ...
+
+  # April.
+  #[class]
+  pub field APRIL @ Month = ...
+
+  # May.
+  #[class]
+  pub field MAY @ Month = ...
+
+  # June.
+  #[class]
+  pub field JUNE @ Month = ...
+
+  # July.
+  #[class]
+  pub field JULY @ Month = ...
+
+  # August.
+  #[class]
+  pub field AUGUST @ Month = ...
+
+  # September.
+  #[class]
+  pub field SEPTEMBER @ Month = ...
+
+  # October.
+  #[class]
+  pub field OCTOBER @ Month = ...
+
+  # November.
+  #[class]
+  pub field NOVEMBER @ Month = ...
+
+  # December.
+  #[class]
+  pub field DECEMBER @ Month = ...
+
   # Returns the following month, wrapping from December to January.
   pub def next self -> Month
     ...
@@ -335,19 +384,19 @@ pub class Month
     ...
 
   # Compares two months.
-  pub def (eq) self other
+  pub def (eq) self other @ Value -> Bool
     ...
 
   # Orders two months, in calendar order.
-  pub def (lt) self other
+  pub def (lt) self other @ Month -> Bool
     ...
 
   # Hashes the value.
-  pub def (hash) self
+  pub def (hash) self -> Int
     ...
 
   # Returns the uppercase English name, such as `JANUARY`.
-  pub def (str) self
+  pub def (str) self -> Str
     ...
 
 # A day of the week.
@@ -356,6 +405,34 @@ pub class Month
 # There is no constructor, and the type is not indexable the way
 # [`Month`](time.Month) is. Weekdays are not ordered, so `<` and friends raise.
 pub class Weekday
+  # Monday.
+  #[class]
+  pub field MONDAY @ Weekday = ...
+
+  # Tuesday.
+  #[class]
+  pub field TUESDAY @ Weekday = ...
+
+  # Wednesday.
+  #[class]
+  pub field WEDNESDAY @ Weekday = ...
+
+  # Thursday.
+  #[class]
+  pub field THURSDAY @ Weekday = ...
+
+  # Friday.
+  #[class]
+  pub field FRIDAY @ Weekday = ...
+
+  # Saturday.
+  #[class]
+  pub field SATURDAY @ Weekday = ...
+
+  # Sunday.
+  #[class]
+  pub field SUNDAY @ Weekday = ...
+
   # Returns the following weekday, wrapping from Sunday to Monday.
   pub def next self -> Weekday
     ...
@@ -365,15 +442,15 @@ pub class Weekday
     ...
 
   # Compares two weekdays.
-  pub def (eq) self other
+  pub def (eq) self other @ Value -> Bool
     ...
 
   # Hashes the value.
-  pub def (hash) self
+  pub def (hash) self -> Int
     ...
 
   # Returns the uppercase English name, such as `MONDAY`.
-  pub def (str) self
+  pub def (str) self -> Str
     ...
 
 # A signed time span, with nanosecond precision.
@@ -397,19 +474,19 @@ pub class Duration
     ...
 
   # Compares two durations.
-  pub def (eq) self other
+  pub def (eq) self other @ Value -> Bool
     ...
 
   # Orders two durations.
-  pub def (lt) self other
+  pub def (lt) self other @ Duration -> Bool
     ...
 
   # Hashes the value.
-  pub def (hash) self
+  pub def (hash) self -> Int
     ...
 
   # Returns a compact seconds form, such as `0s`, `2.5s` or `-2.5s`.
-  pub def (str) self
+  pub def (str) self -> Str
     ...
 
 # Suspends the current strand.
@@ -455,11 +532,13 @@ do
 # timeout 1 do
 #   sleep 10
 # ```
-pub def timeout[R]
+pub def timeout[R, I, O]
   # How long the block may run. See [Duration
   # arguments](time.duration-arguments).
   duration @ (Duration | Int | Float)
   # Block to run.
-  block @ (() -> R)
+  block @ ((<Iter[I], >Sink[O]) -> R)
+  <Iter[I]
+  >Sink[O]
 do -> R
   ...

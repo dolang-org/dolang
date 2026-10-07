@@ -1,3 +1,4 @@
+# dolang: strict
 # Parses, edits, validates, and serializes XML element trees.
 
 import std:
@@ -33,26 +34,26 @@ pub class Attr
 
   # Read-only local attribute name.
   #[getter]
-  pub def name self
+  pub def name self -> Str
     ...
 
   # Read-only namespace URI, or `nil` for no namespace.
   #[getter]
-  pub def namespace self
+  pub def namespace self -> (Str | nil)
     ...
 
   # Read-only preferred prefix, or `nil`.
   #[getter]
-  pub def prefix self
+  pub def prefix self -> (Str | nil)
     ...
 
   # Read-only qualified name formed from `prefix` and `name`.
   #[getter]
-  pub def qname self
+  pub def qname self -> Str
     ...
 
   # Mutable attribute value.
-  pub field value = nil
+  pub field value @ Str = ...
 
 # A parentless XML element.
 #
@@ -110,24 +111,24 @@ pub class Node: @Index[{*(Str): Str, *(Int): Node | Str}] @Assign[Str, Str] @Spr
     ...
 
   # Mutable namespace URI, or `nil` for no namespace.
-  pub field namespace = nil
+  pub field namespace @ (Str | nil) = ...
 
   # Mutable dict containing the complete effective namespace snapshot.
   #
   # Keys are prefix strings; `""` is the default namespace. Parsed descendants
   # retain inherited bindings so they can be detached and serialized.
-  pub field namespaces = nil
+  pub field namespaces @ Dict[Str, Str] = ...
 
   # Mutable preferred prefix, or `nil`.
-  pub field prefix = nil
+  pub field prefix @ (Str | nil) = ...
 
   # Read-only qualified name formed from `prefix` and `tag`.
   #[getter]
-  pub def qname self
+  pub def qname self -> Str
     ...
 
   # Mutable local element name.
-  pub field tag = nil
+  pub field tag @ Str = ...
 
   # Gets the first attribute matching an expanded name.
   #
@@ -136,7 +137,7 @@ pub class Node: @Index[{*(Str): Str, *(Int): Node | Str}] @Assign[Str, Str] @Spr
   # ```
   # let id = node.attr "id" namespace: "urn:inventory"
   # ```
-  pub def attr[D = nil]
+  pub def attr[D = nil, I, O]
     self
     # Local attribute name.
     name @ Str
@@ -145,7 +146,9 @@ pub class Node: @Index[{*(Str): Str, *(Int): Node | Str}] @Assign[Str, Str] @Spr
     # Value returned when absent.
     :default @ D = nil
     # Function evaluated when absent.
-    :else @ (() -> D) = nil
+    :else @ ((<Iter[I], >Sink[O]) -> D) = nil
+    <Iter[I]
+    >Sink[O]
   do -> (Str | D)
     ...
 
@@ -206,7 +209,7 @@ pub class Node: @Index[{*(Str): Str, *(Int): Node | Str}] @Assign[Str, Str] @Spr
     ...
 
   # Iterates the children.
-  pub def (iter) self
+  pub def (iter) self -> Iter[Node | Str]
     ...
 
   # Spreads the children positionally.
