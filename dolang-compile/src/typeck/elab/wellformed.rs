@@ -217,12 +217,6 @@ impl Check<'_, '_> {
         let Some(&id) = self.tables.expr_types.get(&span) else {
             return false;
         };
-        // `Func[...]`, which is the function type it describes
-        if let Type::Function(function) = self.db.ty(id) {
-            let verdict = self.relate(scope, function.params, self.db.rest_shape(Rest::All));
-            self.report(verdict, span, ParameterKeys(span.span));
-            return false;
-        }
         let Type::Apply { base, args, .. } = self.db.ty(id) else {
             return false;
         };

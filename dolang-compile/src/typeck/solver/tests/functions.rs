@@ -81,46 +81,6 @@ fn functions_have_intrinsic_nominal_supertype() {
 }
 
 #[test]
-fn a_function_belongs_to_func_applied_to_its_parts() {
-    let mut db = Database::new();
-    let base = nominal(&mut db, "Base", vec![], vec![]);
-    let sub = nominal(&mut db, "Sub", vec![], vec![base]);
-    let returns = nominal(
-        &mut db,
-        "Returns",
-        vec![binder(Variance::Covariant)],
-        vec![],
-    );
-    // `Func[S, R, :In, :Out]: Returns[R]`
-    let result = reference(&db, 0, 1);
-    let returns_result = apply(&db, returns, &[result]);
-    let mut channel = binder(Variance::Contravariant);
-    channel.binding = Binding::Keyword(db.intern_symbol("In"));
-    let mut params = binder(Variance::Contravariant);
-    params.kind = Kind::Schema;
-    let func = nominal(
-        &mut db,
-        "Func",
-        vec![
-            params,
-            binder(Variance::Covariant),
-            channel.clone(),
-            channel,
-        ],
-        vec![returns_result],
-    );
-    db.set_intrinsic(Intrinsic::Func, func);
-    let other = nominal(&mut db, "Other", vec![], vec![]);
-    let f = function(&db, &[base], sub);
-    let [returns_base, returns_sub, returns_other] =
-        [base, sub, other].map(|ty| apply(&db, returns, &[ty]));
-    db.seal();
-    assert_eq!(check(&db, f, returns_sub).status, Status::Proven);
-    assert_eq!(check(&db, f, returns_base).status, Status::Proven);
-    assert_eq!(check(&db, f, returns_other).status, Status::Contradicted);
-}
-
-#[test]
 fn missing_func_intrinsic_is_residual() {
     let mut db = Database::new();
     let nominal = nominal(&mut db, "Func", vec![], vec![]);

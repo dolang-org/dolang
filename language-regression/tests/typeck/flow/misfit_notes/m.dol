@@ -54,7 +54,7 @@ pub def needs_b _d @ Dict[{a: Int, b: Int}] -> nil
 
 pub def reversed()
   takes $needs_b
-# error: expected `(std.Dict[{a: std.Int}], <m.reversed.#0, >m.reversed.#1) -> nil`, found `forall (std.Dict[{a: std.Int, b: std.Int}], <#0.0, >#0.1) -> nil`
+# error: expected `(std.Dict[{a: std.Int}], <m.reversed.#0, >m.reversed.#1) -> nil`, found `forall (std.Dict[{a: std.Int, b: std.Int}]) -> nil`
 #   --> m.dol:LL:LL
 #    |
 # LL |   takes $needs_b

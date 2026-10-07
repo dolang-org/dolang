@@ -194,9 +194,9 @@ pub(crate) enum Step {
     BoundPropagation,
     Assignment,
     UnionMember(usize),
-    /// A rigid reduced to its written or default bound
+    /// A rigid reduced to its written bound, or a rest's shape
     RigidBound,
-    /// A rigid reduced to the default bound of an omitted ambient channel
+    /// An omitted ambient channel's rigid reduced to a gradual unit's `Unknown`
     ImplicitBound,
     /// A schema item's positional type, keyed value or included schema
     Item(usize),
@@ -438,6 +438,9 @@ pub(crate) struct Solver<'db> {
     exhausted: Cell<bool>,
     /// The declarations being checked, whose rigids' bounds are assumptions
     scope: HashSet<DeclId>,
+    /// Whether the declarations being checked are of a gradual unit, whose body
+    /// sees an omitted channel as `Unknown` rather than `Value`
+    gradual: bool,
     /// Each rigid's bound, once computed
     rigid_bounds: RefCell<HashMap<TypeId, Option<TypeId>>>,
     /// Whether the judgments own the root scope's variables, so solving settles
@@ -521,6 +524,7 @@ impl<'db> Solver<'db> {
             work: Cell::new(0),
             exhausted: Cell::new(false),
             scope: HashSet::new(),
+            gradual: false,
             rigid_bounds: RefCell::new(HashMap::new()),
             closed: false,
             alternatives: RefCell::new(HashMap::new()),
@@ -592,10 +596,18 @@ impl<'db> Solver<'db> {
         self.generic_members.get_mut().clear();
     }
 
+    /// Check the assumed declarations as a gradual unit's: an omitted channel's
+    /// rigid is bounded by `Unknown`, so the body's use of it is dynamic
+    pub(crate) fn gradual(&mut self) {
+        self.gradual = true;
+        self.rigid_bounds.get_mut().clear();
+    }
+
     /// A solver for a side query about `class`, its rigids assumed
     pub(super) fn side_query(&self, class: DeclId) -> Solver<'db> {
         let mut solver = Solver::new(self.db);
         solver.scope = self.scope.clone();
+        solver.gradual = self.gradual;
         solver.assume(class);
         #[cfg(feature = "debug")]
         {
@@ -632,7 +644,8 @@ impl<'db> Solver<'db> {
     }
 
     /// A rigid's bound, with its declaration's rigids for its group. A rest binder
-    /// without one is bounded by its rest mode's shape.
+    /// without one is bounded by its rest mode's shape, and an omitted channel by
+    /// `Unknown` when checking a gradual unit.
     fn rigid_bound(&self, ty: TypeId) -> Option<TypeId> {
         if let Some(&bound) = self.rigid_bounds.borrow().get(&ty) {
             return bound;
@@ -644,7 +657,10 @@ impl<'db> Solver<'db> {
             unreachable!("a rigid of a declaration without binders")
         };
         let binder = &binders[usize::from(slot)];
-        let bound = self.db.binder_bound(binder, &self.db.rigids(decl));
+        let bound = match binder.binding {
+            Binding::Implicit if self.gradual && binder.bound.is_none() => Some(self.db.unknown()),
+            _ => self.db.binder_bound(binder, &self.db.rigids(decl)),
+        };
         self.rigid_bounds.borrow_mut().insert(ty, bound);
         bound
     }
@@ -1033,6 +1049,7 @@ impl<'db> Solver<'db> {
             },
         );
         nested.scope = self.scope.clone();
+        nested.gradual = self.gradual;
         #[cfg(feature = "debug")]
         {
             nested.names = self.names.clone();

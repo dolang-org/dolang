@@ -34,12 +34,13 @@ pub def reads <Iter[Int] x
   #     ^~~~~: sig (x: Unknown, <written, >#0) -> Unknown
   x
 
-# A function type without its own channels shares the enclosing def's
+# A function type without its own channels in a def's signature shares the
+# def's; one in its body takes `Value`
 pub def each f @ ((Int) -> nil)
   #                     ^~: ambient <m.each#0 >m.each#1
-  let cb @ ((Int) -> nil) = f
-  #               ^~: ambient <m.each#0 >m.each#1
-  cb
+  let cb @ ((Int) -> nil) = do |_x| nil
+  #               ^~: ambient <Value >Value
+  [f, cb]
 
 pub def pipe <Iter[Int] f @ (() -> nil)
   #                             ^~: ambient <of m.pipe >m.pipe#0
@@ -49,9 +50,9 @@ pub def half f @ ((<Iter[Str]) -> nil)
   #                            ^~: ambient <written >m.half#1
   f
 
-# Outside any def, they are dynamic
-pub let handler @ (() -> nil) = nil
-#                     ^~: ambient <Unknown >Unknown
+# Outside any def, they are `Value`
+pub let handler @ (() -> nil) = do nil
+#                     ^~: ambient <Value >Value
 
 @def pick x @ Int -> Int
 #    ^~~~: sig (x: Int, <#0, >#1) -> Int

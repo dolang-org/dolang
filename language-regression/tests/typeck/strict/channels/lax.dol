@@ -1,17 +1,12 @@
-# Calls into a strict unit from a non-strict one pass, but a function type in a
-# strict signature takes its conservative channels, so a callback passed to
-# one can't write.
+# Calls into a strict unit from a non-strict one pass, and a function type in a
+# strict signature takes the def's channels, as it would in a non-strict one, so
+# a callback passed to one runs with its caller's.
 
 import m
 
 pub def anything _x
   m.writes()
   m.each do |y| put $y
-# error: this call does not fit `forall (#0.0, <Value, >std.Sink[#0.0]) -> nil`
-#   --> lax.dol:LL:LL
-#    |
-# LL |   m.each do |y| put $y
-#    |                 ^^^^^^
 
 pub def loops()
   for x

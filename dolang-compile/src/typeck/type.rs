@@ -831,9 +831,8 @@ pub(crate) enum Intrinsic {
     AssignItem,
     /// The class of a tuple, which `Entries` builds
     Tuple,
-    /// The class of function values. Applied in a type, it is the function type it
-    /// describes; a function type's class is it applied to the function's parts
-    /// (see [`Database::func_class`]).
+    /// The class of function values, and of every function type (see
+    /// [`Database::func_class`]). Bare in a type, it is the gradual function type.
     Func,
     Int,
     Bool,
@@ -1034,42 +1033,14 @@ impl Database {
         }))
     }
 
-    /// The class of a function type's values: `Func` applied to the function's
-    /// parameters, result and ambient channels, an omitted channel as its default
-    /// bound. A quantified function's binders are taken as `Unknown`, as a type
-    /// test says nothing of them. `Func` that isn't generic is taken bare.
+    /// The class of a function type's values, `Func`, or `None` if the type isn't
+    /// a function, quantified or not
     pub(crate) fn func_class(&self, mut ty: TypeId) -> Option<TypeId> {
         let base = self.intrinsic(Intrinsic::Func)?;
-        while let Type::Quantified { binders, body } = self.ty(ty) {
-            let unknowns: Vec<TypeId> = (binders.iter())
-                .map(|binder| self.unknown_of(binder.kind))
-                .collect();
-            ty = self.substitute(*body, &unknowns);
+        while let Type::Quantified { body, .. } = self.ty(ty) {
+            ty = *body;
         }
-        let Type::Function(function) = self.ty(ty) else {
-            return None;
-        };
-        let Type::Decl(decl) = *self.ty(base) else {
-            return Some(base);
-        };
-        let Type::Quantified { binders, .. } = self.ty(self.declaration(decl).ty) else {
-            return Some(base);
-        };
-        if binders.len() != 4 {
-            return Some(base);
-        }
-        let args = [
-            function.params,
-            function.result,
-            // An omitted channel is gradual
-            function.input.unwrap_or(self.unknown),
-            function.output.unwrap_or(self.unknown),
-        ];
-        Some(self.intern(Type::Apply {
-            base,
-            args: args.into_iter().map(Argument::Positional).collect(),
-            kind: Kind::Type,
-        }))
+        matches!(self.ty(ty), Type::Function(_)).then_some(base)
     }
 
     /// Associate a stub type once, before sealing. Missing associations are allowed.

@@ -1,14 +1,15 @@
 # dolang: strict
-# A strict unit's omitted channels are `<Value` and `>Value`, which any caller's
-# channels fit and which can't be read or written.
+# A strict unit's omitted channels are unbounded implicit binders, as a
+# non-strict unit's are, which any caller's channels fit. Its body sees them as
+# `Value`, which can't be read or written.
 
 import lax
 
 # Writing or reading as something specific needs the channel annotated
 pub def writes()
-  #     ^~~~~~: sig (<strict, >strict) -> nil
+  #     ^~~~~~: sig (<#0, >#1) -> nil
   put 1
-  # error: this call does not fit `forall (#0.0, <Value, >std.Sink[#0.0]) -> nil`
+  # error: this call does not fit `forall (#0.0, >std.Sink[#0.0]) -> nil`
   #   --> m.dol:LL:LL
   #    |
   # LL |   put 1
@@ -27,8 +28,8 @@ pub def reads()
   # LL |   let _xs = strand.collect()
   #    |             ^^^^^^^^^^^^^^^^
   #    |
-  #    = note: `[I] (<std.Iter[I], >Value) -> std.Array[I]`: this call does not fit `[I] (<std.Iter[I], >Value) -> std.Array[I]`
-  #    = note: `[I, S] (S, <std.Iter[I], >Value) -> S`: this call does not fit `[I, S] (S, <std.Iter[I], >Value) -> S`; this call is missing an argument
+  #    = note: `[I] (<std.Iter[I]) -> std.Array[I]`: this call does not fit `[I] (<std.Iter[I]) -> std.Array[I]`
+  #    = note: `[I, S] (S, <std.Iter[I]) -> S`: this call does not fit `[I, S] (S, <std.Iter[I]) -> S`; this call is missing an argument
   nil
 
 pub def reads_declared <Iter[Int]
@@ -40,7 +41,7 @@ pub def reads_declared <Iter[Int]
 # A `for` without an iteratee takes its input's `(next)`
 pub def loops()
   for _x
-    # error: `Value` has no member `(next)`
+    # error: `m.loops.#0` has no member `(next)`
     #   --> m.dol:LL:LL
     #    |
     # LL |   for _x
@@ -70,14 +71,14 @@ pub def opaque <Int >Str
 
 # A function type without its own channels takes the def's
 pub def each f @ ((Int) -> nil)
-  #                     ^~: ambient <strict >strict
+  #                     ^~: ambient <m.each#0 >m.each#1
   f 1
 
-# A strict caller's own output is `Value`, so a callee that writes needs
-# it annotated; a non-strict callee's `Unknown` channels pass for now
+# A strict caller's own output is seen as `Value`, so a callee that writes
+# needs it annotated; a non-strict callee's omitted channels fit anything
 pub def calls()
   writes_declared()
-  # error: this call does not fit `(<Value, >std.Sink[std.Int]) -> nil`
+  # error: this call does not fit `forall (>std.Sink[std.Int]) -> nil`
   #   --> m.dol:LL:LL
   #    |
   # LL |   writes_declared()
@@ -99,7 +100,7 @@ def feed[I] f @ ((<I) -> nil) <I -> nil
 pub def passes_quiet()
   run do
     put "x"
-    # error: this call does not fit `forall (#0.0, <Value, >std.Sink[#0.0]) -> nil`
+    # error: this call does not fit `forall (#0.0, >std.Sink[#0.0]) -> nil`
     #   --> m.dol:LL:LL
     #    |
     # LL |     put "x"
@@ -111,7 +112,7 @@ pub def passes_declared >Sink[Int]
   run do
     put 1
     put "x"
-    # error: this call does not fit `forall (#0.0, <Value, >std.Sink[#0.0]) -> nil`
+    # error: this call does not fit `forall (#0.0, >std.Sink[#0.0]) -> nil`
     #   --> m.dol:LL:LL
     #    |
     # LL |     put "x"
@@ -133,7 +134,7 @@ def run_int f @ ((>Sink[Int]) -> nil) >Sink[Int] -> nil
 pub def passes_fixed >Sink[Int]
   run_int do
     put "x"
-    # error: this call does not fit `forall (#0.0, <Value, >std.Sink[#0.0]) -> nil`
+    # error: this call does not fit `forall (#0.0, >std.Sink[#0.0]) -> nil`
     #   --> m.dol:LL:LL
     #    |
     # LL |     put "x"
@@ -144,7 +145,7 @@ pub def passes_fixed >Sink[Int]
 pub def spawns()
   let s = strand.spawn do
     put "x"
-    # error: this call does not fit `forall (#0.0, <Value, >std.Sink[#0.0]) -> nil`
+    # error: this call does not fit `forall (#0.0, >std.Sink[#0.0]) -> nil`
     #   --> m.dol:LL:LL
     #    |
     # LL |     put "x"
@@ -157,7 +158,7 @@ pub def spawns()
 pub def named()
   let f = do
     put "x"
-    # error: this call does not fit `forall (#0.0, <Value, >std.Sink[#0.0]) -> nil`
+    # error: this call does not fit `forall (#0.0, >std.Sink[#0.0]) -> nil`
     #   --> m.dol:LL:LL
     #    |
     # LL |     put "x"
@@ -178,7 +179,7 @@ pub def annotated >Sink[Int]
   let f @ ((>Sink[Int]) -> nil) = do
     put 1
     put "x"
-    # error: this call does not fit `forall (#0.0, <Value, >std.Sink[#0.0]) -> nil`
+    # error: this call does not fit `forall (#0.0, >std.Sink[#0.0]) -> nil`
     #   --> m.dol:LL:LL
     #    |
     # LL |     put "x"
@@ -189,7 +190,7 @@ pub def annotated >Sink[Int]
 
 pub def cast >Sink[Int]
   let f = ((do put "x") @ ((>Sink[Int]) -> nil))
-  # error: this call does not fit `forall (#0.0, <Value, >std.Sink[#0.0]) -> nil`
+  # error: this call does not fit `forall (#0.0, >std.Sink[#0.0]) -> nil`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let f = ((do put "x") @ ((>Sink[Int]) -> nil))
@@ -208,7 +209,7 @@ pub def callback d @ Dict[Str, Int] >Sink[Str]
 pub def deferred xs @ Array[Int] >Sink[Str]
   let _ = xs.iter().map do |x|
     put "x"
-    # error: this call does not fit `forall (#0.0, <Value, >std.Sink[#0.0]) -> nil`
+    # error: this call does not fit `forall (#0.0, >std.Sink[#0.0]) -> nil`
     #   --> m.dol:LL:LL
     #    |
     # LL |     put "x"
@@ -229,7 +230,7 @@ pub def redirects_output()
   let out @ Array[Int] = []
   strand.redirect output: $out do
     for _x
-      # error: `Value` has no member `(next)`
+      # error: `m.redirects_output.#0` has no member `(next)`
       #   --> m.dol:LL:LL
       #    |
       # LL |     for _x

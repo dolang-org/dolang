@@ -1,21 +1,19 @@
-# A use of `Func` in a type is the function type it describes, taking the
-# channels it doesn't give as a function type without its own does: bare `Func`
-# is the function of unknown parameters and result. As a supertype, it stays an
-# application.
+# Bare `Func` in a type is the function of unknown parameters and result. It
+# takes no arguments. As a supertype, it stays nominal.
 
 pub class Num
 pub class Text
 
-pub let applied @ Func[{Num}, Text] = nil
-#                 ^~~~~~~~~~~~~~~~~: type (m.Num, <Unknown, >Unknown) -> m.Text
-pub let arrow @ ((Num) -> Text) = nil
-#               ^~~~~~~~~~~~~~~: type (m.Num, <Unknown, >Unknown) -> m.Text
 pub let bare @ Func = nil
-#              ^~~~: type (...Unknown{}, <Unknown, >Unknown) -> Unknown
-pub let channels @ Func[{}, Text, In: Iter[Num], Out: Sink[Text]] = nil
-#                  ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~: type (<std.Iter[m.Num], >std.Sink[m.Text]) -> m.Text
-pub let nested @ Func[{Func[{Num}, Text]}, Func] = nil
-#                ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~: type ((m.Num, <Unknown, >Unknown) -> m.Text, <Unknown, >Unknown) -> (...Unknown{}, <Unknown, >Unknown) -> Unknown
+#              ^~~~: type (...Unknown{}) -> Unknown
+pub let applied @ Func[{Num}, Text] = nil
+# error: type takes no type arguments
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let applied @ Func[{Num}, Text] = nil
+#    |                   ^^^^^^^^^^^^^^^^^
+pub let nested @ ((Func) -> Text) = nil
+#                ^~~~~~~~~~~~~~~~: type ((...Unknown{}) -> Unknown, <Value, >Value) -> m.Text
 
-pub class Handler: Func[{Num}, Text]
-#         ^~~~~~~: decl nominal <: std.Func[{m.Num}, m.Text]
+pub class Handler: Func
+#         ^~~~~~~: decl nominal <: std.Func

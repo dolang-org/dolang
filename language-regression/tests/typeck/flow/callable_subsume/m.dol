@@ -8,8 +8,8 @@ pub class Adder: Func
   pub def (call) _self n @ Int -> Str
     ...
 
-pub class Described: Func[{Int}, Str]
-  pub def (call) _self n @ Int -> Str
+pub class Ident: Func
+  pub def (call)[T] _self x @ T -> T
     ...
 
 pub class Plain
@@ -46,13 +46,13 @@ def apply f @ (Int -> Str) -> Str
 def map_each[T, U] xs @ Array[T] f @ (T -> U) -> Array[U]
   ...
 
-pub def instances a @ Adder d @ Described p @ Picker
+pub def instances a @ Adder i @ Ident p @ Picker
   let _ = apply $a
   #   ^: flow std.Str
   let _ = map_each [1] $a
   #   ^: flow std.Array[std.Str]
-  let _ = map_each [1] $d
-  #   ^: flow std.Array[std.Str]
+  let _ = map_each [1] $i
+  #   ^: flow std.Array[std.Int]
   let _ = map_each [1] $p
   #   ^: flow std.Array[std.Int]
   let _ = map_each ["s"] $p

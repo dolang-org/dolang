@@ -8,9 +8,9 @@ pub let count @ Integer = 0
 
 # An omitted ambient channel is gradual: it is bounded by `Unknown`.
 pub def relay()
-  #     ^~~~~: quantifier in @ Unknown contravariant, out @ Unknown contravariant
+  #     ^~~~~: quantifier in contravariant, out contravariant
   nil
 
 pub def drain <std.Iter[Integer]
-  #     ^~~~~: quantifier out @ Unknown contravariant
+  #     ^~~~~: quantifier out contravariant
   nil

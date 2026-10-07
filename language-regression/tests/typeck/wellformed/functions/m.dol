@@ -1,5 +1,5 @@
-# A function's parameters have symbol keys, except within `Phantom`, and its
-# written channels reach `Iter` and `Sink`.
+# A function's parameters have symbol keys, except within `Phantom`. Its
+# written channels may be any type.
 
 import std:
   - @Iter

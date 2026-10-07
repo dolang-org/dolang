@@ -570,11 +570,9 @@ impl Solver<'_> {
                 };
                 self.schemas(a, xs, b, ys, Term::View(b), obligation)
             }
-            // A function is a literal only if its class is, whatever its
-            // class's arguments, so the gradual function's class stands for
-            // it without its variables
+            // A function is a literal only if its class is
             (Type::Function(_) | Type::Quantified { .. }, Type::Literal(_)) => {
-                let backing = (self.db.func_class(self.db.gradual_function()))
+                let backing = (self.db.intrinsic(Intrinsic::Func))
                     .ok_or(Residual::MissingIntrinsic(Intrinsic::Func))?;
                 let step = Step::IntrinsicBacking(Intrinsic::Func);
                 self.derive(obligation, self.closed(backing), expected, step);
@@ -606,9 +604,8 @@ impl Solver<'_> {
             self.derive(obligation, applied, expected, Step::Instantiation);
             return Ok(());
         }
-        // A quantified function belongs to its body's class, its binders
-        // taken as `Unknown` rather than instantiated: `Func` applied to
-        // the function's parts
+        // A quantified function belongs to its body's class, `Func`, as an
+        // unquantified one does
         let mut ty = view.ty;
         while let Type::Quantified { body, .. } = self.db.ty(ty) {
             self.spend()?;

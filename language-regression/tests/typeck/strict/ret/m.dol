@@ -2,7 +2,7 @@
 # A strict unit's omitted return type is `nil`.
 
 pub def ends_nil()
-  #     ^~~~~~~~: sig (<strict, >strict) -> nil
+  #     ^~~~~~~~: sig (<#0, >#1) -> nil
   nil
 
 # A procedure ending in an incidental value needs a trailing `nil`

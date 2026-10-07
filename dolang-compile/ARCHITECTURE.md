@@ -218,9 +218,9 @@ A function type is a subtype of another when its parameter list includes the
 other's (see [Schemas](#schemas)), its result is a subtype of the other's, and
 its ambient channels are supertypes of the other's. Channels are implicit
 arguments, so both are contravariant; since `Sink` is contravariant in its
-element type, a function that writes `Int`s can be given a `Sink[Num]`. An
-omitted channel stands for its default bound, `Unknown`, or in a strict unit,
-for `Value`. Union-left
+element type, a function that writes `Int`s can be given a `Sink[Num]`. A
+def's omitted channel is an unbounded implicit binder, which a use instantiates
+as it does any other. Union-left
 judgments require every member. A closed union-right judgment accepts a member
 proved by an isolated, closed subtype query, which cannot add inference bounds
 or diagnostic edges to the calling solver; one with a term still to infer
@@ -352,19 +352,19 @@ substituted, and a rest binder without one is bounded by its mode's shape,
 the bounds of anything else. Probes inherit the assumed declarations.
 
 A rigid is a subtype of itself, top and `Unknown`, and bottom and `Unknown` are
-subtypes of it. Otherwise, an assumed rigid on the left reduces to its bound,
-labeled so a strictness policy can find reductions through an omitted ambient
-channel's default bound. An unbounded one, or one on the right, contradicts the
-judgment. Forwarding an omitted ambient channel to a callee is identity and
-never consults its default bound; using its elements reduces through the bound,
-so a strict mode can reject proofs carrying that label and ask for the channel
-to be annotated. A union on the right is proved by a member identical to the
-left side before alternatives are probed. A positional pack's items are each
-below a union that expands the same pack, so `{...Ts}` is below
-`{*Union[...Ts]}` without the pack's bound. Rigids are closed, so they reify to
-themselves and assignments may contain them. A rigid of a declaration not
-assumed has escaped its own check: it is related only to itself and top, and
-reifying it is residual.
+subtypes of it. Otherwise, an assumed rigid on the left reduces to its bound. An
+omitted ambient channel's rigid has none in the database; the solver checking a
+body gives it its unit's: `Unknown` in a gradual unit, so using the channel's
+elements is dynamic, and none in a strict one, so reading or writing it needs
+the channel annotated. A reduction through it is labeled as one. An unbounded
+rigid, or one on the right, contradicts the judgment. Forwarding an omitted
+ambient channel to a callee is identity and never consults a bound. A union on
+the right is proved by a member identical to the left side before alternatives
+are probed. A positional pack's items are each below a union that expands the
+same pack, so `{...Ts}` is below `{*Union[...Ts]}` without the pack's bound.
+Rigids are closed, so they reify to themselves and assignments may contain them.
+A rigid of a declaration not assumed has escaped its own check: it is related
+only to itself and top, and reifying it is residual.
 
 `reach` walks a term to a target declaration through the substitution-carrying
 inheritance walk, continuing through an assumed rigid's bound, and returns the
@@ -687,16 +687,17 @@ Setup needs exclusive access, while reduction and insertion preserve borrowed
 solver state.
 
 `Intrinsic::Func` associates the runtime function supertype with the checker.
-Written in a type, `Func[S, R, In: I, Out: O]` is the function type
-`(...S) <I >O -> R`, and bare `Func` is the gradual function; only a supertype
-list keeps it nominal. A function type's class is `Func` applied to its parts
-(`Database::func_class`), so a function reaches `Func`'s supertypes and members.
-A missing registration is residual.
+It takes no arguments: a quantified function type has no application of it,
+which would need a higher-kinded type. Written in a type, `Func` is the gradual
+function; only a supertype list keeps it nominal. Every function type's class is
+`Func` (`Database::func_class`), so a function reaches `Func`'s supertypes and
+members. A function's `(call)` is the function itself, quantified or not. A
+missing registration is residual.
 
 A value that isn't a function is below a function type through its signatures
-(`solver/callable.rs`). An instance's class must reach `Func`: one naming
-`Func` with arguments is called as the function they describe, and one naming
-bare `Func` through its own `(call)`. A class object `Type[C]` is called through
+(`solver/callable.rs`). An instance's class must reach `Func`, and is called
+through its own `(call)`. Narrowing by `Func` relies on that edge: a class below
+a function type must narrow as one. A class object `Type[C]` is called through
 `C`'s class-level `(call)`, or else through its `(init)` with `C`'s binders
 merged into the constructor's, so a generic class's arguments are inferred. The
 signatures are judged as alternatives on the left (see
@@ -1121,30 +1122,30 @@ type.
 Signature completion fills each def and method signature with the defaults for
 what it omits, the same for public and private definitions. An omitted
 parameter, rest or return annotation is `Unknown`, a rest's as each of its
-items. An omitted ambient channel is an implicit binder following the
-signature's written binders. It is gradual, bounded by `Unknown`; a strict
-unit's is `Value` instead. A channel may be any type: a `for` without an
-iteratee reads the input through its `(next)`. A method's
-unannotated receiver is its class applied to its own binders, except on a
-`class` or `static` method. A function type written without channels in a def's
-signature or body, but not in a nested class or alias, shares that def's
-channels; elsewhere they are `Unknown`. A closure is populated with its
-annotations and `Unknown` for what it omits, channels included; CFG flow infers
-the omissions separately, without changing the database. Top-level declarations
-of a checked `std` module named `Value`, `Phantom`, `Union`, `Keys`, `Values`,
-`Entries`, `Func`, `Int`, `Bool`, `Sym`, `Nil`, `Str`, `Iter` and `Sink` are
-designated for special treatment; the same name in another module is only a
-lookalike. So are the classes that literal and constructor expressions produce,
-`Float`, `Bin`, `Array`, `Dict`, `Tuple`, `Record`, `Range` and the `Fmt`
-classes, which the check tables record without the database needing them, except
-`Tuple`, which `Entries` builds. A checked `strand`
-module's opaque `PipeSender` and `PipeReceiver` are designated too: each
-stands for the class the `Builder` nominates, resolved as if the placeholder
-imported it, and is populated as a transparent alias of that class applied to
-its binders, whose variance it takes. A nominee in no checked module leaves the
-placeholder `Unknown`; one that isn't a class, or can't take the placeholder's
-type arguments positionally, is diagnosed on the placeholder. The `kind`,
-`sig`, `ambient` and `designated` judgments report these results.
+items. An omitted ambient channel is an unbounded implicit binder following the
+signature's written binders, in either mode; only how the body sees it depends
+on the unit (see [Rigids](#rigids)). A channel may be any type: a `for` without
+an iteratee reads the input through its `(next)`. A method's unannotated
+receiver is its class applied to its own binders, except on a `class` or
+`static` method. A function type written without channels in a def's signature
+shares that def's channels; elsewhere, the def's body included, they are
+`Value`. A closure is populated with its annotations and
+`Unknown` for what it omits, channels included; CFG flow infers the omissions
+separately, without changing the database. Top-level declarations of a checked
+`std` module named `Value`, `Phantom`, `Union`, `Keys`, `Values`, `Entries`,
+`Func`, `Int`, `Bool`, `Sym`, `Nil`, `Str`, `Iter` and `Sink` are designated for
+special treatment; the same name in another module is only a lookalike. So are
+the classes that literal and constructor expressions produce, `Float`, `Bin`,
+`Array`, `Dict`, `Tuple`, `Record`, `Range` and the `Fmt` classes, which the
+check tables record without the database needing them, except `Tuple`, which
+`Entries` builds. A checked `strand` module's opaque `PipeSender` and
+`PipeReceiver` are designated too: each stands for the class the `Builder`
+nominates, resolved as if the placeholder imported it, and is populated as a
+transparent alias of that class applied to its binders, whose variance it takes.
+A nominee in no checked module leaves the placeholder `Unknown`; one that isn't
+a class, or can't take the placeholder's type arguments positionally, is
+diagnosed on the placeholder. The `kind`, `sig`, `ambient` and `designated`
+judgments report these results.
 
 Variance is inferred for every binder, and for each outer binder a nested
 declaration uses, before anything is interned, since a quantified type's binders
@@ -1178,10 +1179,9 @@ binders.
 
 Every declaration is closed. Before variance, the captures pass finds the outer
 binders each is lifted over: those it names anywhere, in its signature, members
-or body, including the implicit binders a function type written without channels
-takes, and those that what it names, or what is nested in it, is lifted over. A
-method is lifted over all of its class's binders, and a lifted binder keeps its
-bound, so a declaration also takes what its lifted binders' bounds name.
+or body, and those that what it names, or what is nested in it, is lifted over.
+A method is lifted over all of its class's binders, and a lifted binder keeps
+its bound, so a declaration also takes what its lifted binders' bounds name.
 
 Population then interns each declaration signature over one flat group: the
 binders it is lifted over, outermost first, then its written binders, then its

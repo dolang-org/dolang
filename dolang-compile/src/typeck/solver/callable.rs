@@ -8,7 +8,7 @@
 //!
 //! A value relates to a function type through its class only if the class
 //! reaches `Func`, which marks it as passable as a function. It's below the type
-//! when one of its signatures is, chosen by trials when it has several (see
+//! when one of its own `(call)`'s signatures is, chosen by trials when it has several (see
 //! [`Solver::choose_left`]). A class that doesn't reach `Func`, or none of whose
 //! signatures fits, refutes nothing: a subclass may reach `Func`, and may widen
 //! its `(call)`'s parameters and narrow its result. A judgment through a chosen
@@ -302,20 +302,14 @@ impl Solver<'_> {
         let &Type::Decl(func) = self.db.ty(func) else {
             return Err(Residual::MissingIntrinsic(Intrinsic::Func).into());
         };
-        let Some(reached) = self.ancestor(nominal.clone(), func, &mut HashSet::new(), 0)? else {
+        // Only a class reaching `Func` is a function, as narrowing by `Func` takes it
+        if self
+            .ancestor(nominal.clone(), func, &mut HashSet::new(), 0)?
+            .is_none()
+        {
             return Err(Residual::Unsupported("a class that doesn't reach `Func`").into());
-        };
-        // Arguments given to `Func` describe the function its `(call)` conforms to;
-        // without them, its own `(call)` says
-        let mut bare = true;
-        for &argument in &reached.arguments {
-            bare &= self.is_unknown(&self.head(argument)?);
         }
-        let receiver = match bare {
-            true => nominal,
-            false => reached,
-        };
-        match self.instance_member(receiver, key)? {
+        match self.instance_member(nominal, key)? {
             Lookup::Found(found) => self.bound(&found.kind),
             Lookup::Missing => Err(Residual::Unsupported("a `Func` without `(call)`").into()),
             Lookup::Dynamic | Lookup::Fallback { .. } => Ok(None),

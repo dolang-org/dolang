@@ -15,7 +15,7 @@ pub def narrowed()
   spec
     - cmd: c
       do |n| n
-    # error: expected `{cmd: std.Str, *((std.Int, <Unknown, >Unknown) -> std.Str) | m.Item[std.Str]}`, found `{cmd: "c", (std.Int, <Unknown, >Unknown) -> std.Int}`
+    # error: expected `{cmd: std.Str, *((std.Int, <Value, >Value) -> std.Str) | m.Item[std.Str]}`, found `{cmd: "c", (std.Int, <Value, >Value) -> std.Int}`
     #   --> m.dol:LL:LL
     #    |
     # LL |       - cmd: c
@@ -24,5 +24,5 @@ pub def narrowed()
     #    | |______________^
     #    |
     #    = note: `std.Int` does not fit `std.Str`
-    #    = note: in `(std.Int, <Unknown, >Unknown) -> std.Int`
+    #    = note: in `(std.Int, <Value, >Value) -> std.Int`
     do |n| "top $n"

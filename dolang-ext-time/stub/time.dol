@@ -512,13 +512,11 @@ do
 # timeout 1 do
 #   sleep 10
 # ```
-pub def timeout[R, I, O]
+pub def timeout[R]
   # How long the block may run. See [Duration
   # arguments](time.duration-arguments).
   duration @ (Duration | Int | Float)
   # Block to run.
-  block @ ((<I, >O) -> R)
-  <I
-  >O
+  block @ (() -> R)
 do -> R
   ...

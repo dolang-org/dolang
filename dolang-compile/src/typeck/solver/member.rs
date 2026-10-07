@@ -91,6 +91,9 @@ impl Solver<'_> {
     /// found with [`Self::private_member`].
     pub(crate) fn member(&self, receiver: Term, key: MemberKey) -> Result<Lookup, Issue> {
         assert!(!key.private, "a private member is its class's own");
+        if let Some(found) = self.function_call(receiver, key)? {
+            return Ok(Lookup::Found(found));
+        }
         match self.receiver(receiver)? {
             Receiver::Instance(nominal) => self.instance_member(nominal, key),
             Receiver::Object(nominal) => self.object_member(nominal, key),
@@ -98,6 +101,34 @@ impl Solver<'_> {
             Receiver::Missing => Ok(Lookup::Missing),
             Receiver::Dynamic => Ok(Lookup::Dynamic),
         }
+    }
+
+    /// A function's `(call)`: the function itself, already bound, quantified or
+    /// not. `Func`'s own `(call)` says nothing of its signature.
+    fn function_call(&self, receiver: Term, key: MemberKey) -> Result<Option<Found>, Issue> {
+        if !key.special || key.name != self.db.intern_symbol("call") {
+            return Ok(None);
+        }
+        let Head::Structural(view) = self.head(receiver)? else {
+            return Ok(None);
+        };
+        let Some(func) = self.db.func_class(view.ty) else {
+            return Ok(None);
+        };
+        let &Type::Decl(class) = self.db.ty(func) else {
+            return Err(Residual::MissingIntrinsic(Intrinsic::Func).into());
+        };
+        Ok(Some(Found {
+            class,
+            scope: Scope::Instance,
+            public: true,
+            bound: true,
+            kind: FoundKind::Method(Signatures {
+                overloads: Vec::new(),
+                implementation: Some(Term::View(view)),
+                function: None,
+            }),
+        }))
     }
 
     /// Look up a private member of `class` through `receiver`. Private access is
@@ -246,7 +277,6 @@ impl Solver<'_> {
                     term = self.closed(bound);
                     continue;
                 }
-                // `Func` applied to the function's parts
                 Type::Function(_) => {
                     let class = (self.db.func_class(view.ty))
                         .ok_or(Residual::MissingIntrinsic(Intrinsic::Func))?;

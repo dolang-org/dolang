@@ -13,47 +13,6 @@ fn bare_func(db: &mut Database) -> TypeId {
     func
 }
 
-/// `Func[S, R, :In, :Out]`, whose `(call)` is `(self, ...S <In >Out) -> R`,
-/// registered as the intrinsic
-fn generic_func(db: &mut Database) -> TypeId {
-    let mut params = binder(Variance::Contravariant);
-    params.kind = Kind::Schema;
-    let channel = |db: &Database, name| Binder {
-        binding: Binding::Keyword(db.intern_symbol(name)),
-        ..binder(Variance::Contravariant)
-    };
-    let binders = vec![
-        params,
-        binder(Variance::Covariant),
-        channel(db, "In"),
-        channel(db, "Out"),
-    ];
-    let mut func = Class::new(db, "Func", binders.clone());
-    let (id, _, source) = reserve(db, DeclKind::Function, "call");
-    let s = db.intern(Type::Bound {
-        reference: BoundRef::new(0, 0),
-        kind: Kind::Schema,
-    });
-    let call = db.intern(Type::Function(Function {
-        params: items(
-            db,
-            vec![
-                positional(Multiplicity::Required, func.receiver(db)),
-                include(Multiplicity::Required, s),
-            ],
-        ),
-        result: reference(db, 0, 1),
-        input: Some(reference(db, 0, 2)),
-        output: Some(reference(db, 0, 3)),
-    }));
-    let ty = quantified(db, binders, call);
-    populate(db, id, source, ty, vec![]);
-    func.method(special(db, "call"), id, Scope::Instance);
-    let func = func.finish(db, vec![]);
-    db.set_intrinsic(Intrinsic::Func, func);
-    func
-}
-
 /// `Type[T]`, registered as the intrinsic
 fn class_type(db: &mut Database) -> TypeId {
     let ty = nominal(db, "Type", vec![binder(Variance::Covariant)], vec![]);
@@ -117,29 +76,6 @@ fn a_class_that_doesnt_reach_func_is_residual() {
             "a class that doesn't reach `Func`"
         ));
     }
-}
-
-#[test]
-fn func_arguments_describe_the_function() {
-    let mut db = Database::new();
-    let int = int(&mut db);
-    let str = nominal(&mut db, "Str", vec![], vec![]);
-    let func = generic_func(&mut db);
-    let unknown = db.unknown();
-    let unknown_schema = db.unknown_schema();
-    // `Handler: Func[{Int}, Str]` without a `(call)` of its own
-    let described = apply(&db, func, &[schema(&db, &[int]), str, unknown, unknown]);
-    let handler = Class::new(&mut db, "Handler", vec![]).finish(&mut db, vec![described]);
-    // `Echo: Func` declares its own
-    let bare = apply(&db, func, &[unknown_schema, unknown, unknown, unknown]);
-    let echo = calls(&mut db, "Echo", &[str], str, vec![bare]);
-    let [int_str, int_int, str_str] =
-        [(int, str), (int, int), (str, str)].map(|(param, result)| function(&db, &[param], result));
-    db.seal();
-    assert_eq!(check(&db, handler, int_str).status, Status::Proven);
-    assert!(residual(&check(&db, handler, int_int), UNFIT));
-    assert_eq!(check(&db, echo, str_str).status, Status::Proven);
-    assert!(residual(&check(&db, echo, int_str), UNFIT));
 }
 
 #[test]

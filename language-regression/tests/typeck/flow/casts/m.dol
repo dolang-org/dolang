@@ -46,7 +46,7 @@ pub def blocks()
   let f = (do |x| x.name @ ((Item) -> Str))
   #            ^: flow m.Item
   let _ = f
-  #       ^: flow (m.Item, <m.blocks.#0, >m.blocks.#1) -> std.Str
+  #       ^: flow (m.Item, <Value, >Value) -> std.Str
 
 # Branches join at the cast's type
 pub def joined flag @ Bool
@@ -72,14 +72,14 @@ pub def misfits()
   #    |            ^^^^^^^^
   let _ = (do |y| y @ ((Int) -> Str))
   #            ^: flow std.Int
-  # error: `(std.Int, <m.misfits.#0, >m.misfits.#1) -> std.Int` does not fit the cast's type `(std.Int, <m.misfits.#0, >m.misfits.#1) -> std.Str`
+  # error: `(std.Int, <Value, >Value) -> std.Int` does not fit the cast's type `(std.Int, <Value, >Value) -> std.Str`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _ = (do |y| y @ ((Int) -> Str))
   #    |            ^^^^^^^^
   let _h @ ((Int) -> Str) = do |z| z
   #                             ^: flow std.Int
-  # error: `(std.Int, <m.misfits.#0, >m.misfits.#1) -> std.Int` does not fit the annotation `(std.Int, <m.misfits.#0, >m.misfits.#1) -> std.Str`
+  # error: `(std.Int, <Value, >Value) -> std.Int` does not fit the annotation `(std.Int, <Value, >Value) -> std.Str`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _h @ ((Int) -> Str) = do |z| z
