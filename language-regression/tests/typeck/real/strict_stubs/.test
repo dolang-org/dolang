@@ -1,2 +1,2 @@
-repo-stubs: std strand regex sys sys.unix sys.linux security security.unix fs uuid url time patch xml load fs.unix zip tar sqlite
+repo-stubs: std strand regex sys sys.unix sys.linux security security.unix fs uuid url time patch xml load fs.unix zip tar sqlite security.windows
 validated: true
