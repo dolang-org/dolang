@@ -1,7 +1,7 @@
 # dolang: strict
 # Strict extension stubs, used from a strict unit.
 
-import @regex @sys.linux security.unix uuid @url time @patch @xml load zip tar sqlite fs
+import @regex @sys.linux security.unix uuid @url time @patch @xml load zip tar sqlite fs winreg winscm winnet
 
 # `Regex.replace` runs a callback with its caller's channels
 pub def replaces re @ regex.Regex >Sink[Str] -> Str
@@ -116,4 +116,41 @@ pub def owners meta @ fs.Metadata -> nil
   #   ^~~~~~: flow security.windows.Sid | std.Int
   let _group = meta.group
   #   ^~~~~~: flow security.windows.Sid | std.Int
+  nil
+
+# Registry, service and connection scopes run with their caller's channels
+pub def windows_scopes >Sink[Str] -> Int
+  let n = winreg.open :CURRENT_USER: do |root|
+    put "root"
+    root.open "Environment" do |_env|
+      put "env"
+      1
+  let _n = n
+  #   ^~: flow std.Int
+  let status = winscm.open do |manager|
+    put "manager"
+    manager.open_service "Spooler" do |service|
+      put "service"
+      service.query_status()
+  let _status = status
+  #   ^~~~~~~: flow winscm.Status
+  let name = winnet.connect r"\\server\share" do |conn|
+    put "connect"
+    conn.name
+  let _name = name
+  #   ^~~~~: flow std.Str
+  n
+
+# Registry getters and access masks
+pub def registry target @ winreg.LinkTarget entry @ winreg.Value -> nil
+  let _native = target.native
+  #   ^~~~~~~: flow std.Str
+  let _subpath = target.subpath
+  #   ^~~~~~~~: flow nil | std.Str
+  let _entry_name = entry.name
+  #   ^~~~~~~~~~~: flow std.Str
+  let _key = winreg.AccessMask :READ: :WRITE_DAC:
+  #   ^~~~: flow winreg.AccessMask
+  let _service = winscm.ServiceAccessMask.from_int 0x10
+  #   ^~~~~~~~: flow winscm.ServiceAccessMask
   nil

@@ -1,3 +1,4 @@
+# dolang: strict
 # Unix filesystem types.
 
 import fs
@@ -119,7 +120,7 @@ pub class Mode: Iterable[ModeBit]
   @def (call) cls flags@Iterable[ModeBit] -> Mode
 
   #[class]
-  pub def (call) cls ...flags
+  pub def (call) cls ...flags @ (ModeBit | Iterable[ModeBit]) -> Mode
     ...
 
   # Tests whether all flags named by `flag` are set.

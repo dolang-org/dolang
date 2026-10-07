@@ -1,3 +1,4 @@
+# dolang: strict
 # Windows NetAPI and related bindings: local accounts, groups, SMB shares and
 # connections, and domain membership.
 #
@@ -993,7 +994,7 @@ do -> Connection
   func @ (Connection -> R)
 do -> R
 
-pub def connect remote ...options
+pub def connect remote @ Str ...options @ Value -> Value
   ...
 
 # Obtains a handle to an existing connection.
