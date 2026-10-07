@@ -2377,6 +2377,28 @@ impl<'a> Flow<'a, '_> {
         })[0]
     }
 
+    /// A `do` block a type is expected of, which types it as a call types the
+    /// block it's given. Whoever expected it reports a block that doesn't fit.
+    /// Without an expectation, or a signature to line it up with, it's
+    /// instantiated as it is anywhere else.
+    pub(super) fn expected_lambda(
+        &mut self,
+        at: At,
+        func: FuncId,
+        expected: Option<TypeId>,
+    ) -> TypeId {
+        let Some((expected, lambda)) =
+            expected.and_then(|expected| Some((expected, self.contextual(at, func)?)))
+        else {
+            return self.lambda(at, func);
+        };
+        self.conclude(at, None, |rule| {
+            let term = rule.lambda(&lambda);
+            rule.constrain(term, rule.closed(expected), Check::Quiet);
+            vec![term]
+        })[0]
+    }
+
     /// A value stored where its type must be `ty`, as a field is
     pub(super) fn store(&mut self, at: At, value: TypeId, ty: TypeId, span: Span) {
         if value == self.db.bottom() {

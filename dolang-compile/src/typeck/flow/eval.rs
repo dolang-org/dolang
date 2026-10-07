@@ -8,6 +8,7 @@ use super::{At, Flow, State, problem::Problem};
 use crate::typeck::{
     cfg::{Expr, ExprKind, FuncId, FuncKind},
     elab::{Designated, ModuleRef, Referent, Target},
+    solver::Status,
     r#type::{
         Argument, Binding, BoundRef, DeclId, DeclKind, Intrinsic, Kind, SymbolId, Type, TypeId,
         UnitId,
@@ -70,9 +71,14 @@ impl Flow<'_, '_> {
                 self.eval(at, state, operands, value);
                 self.intrinsic(Intrinsic::Bool)
             }
+            &ExprKind::Cast {
+                ref value,
+                ty,
+                checked,
+            } => self.cast(at, state, operands, value, ty, checked),
             &ExprKind::Class(decl) => self.class_object(decl),
             ExprKind::Import { module, item } => self.import(module, *item),
-            &ExprKind::Lambda(func) => self.lambda(at, func),
+            &ExprKind::Lambda(func) => self.expected_lambda(at, func, expected),
             ExprKind::Call { .. } => self.call(at, state, operands, expr, expected),
             ExprKind::Invoke { .. } => self.invoke(at, state, operands, expr, expected),
             ExprKind::Get { .. } => self.get(at, state, operands, expr, expected),
@@ -85,6 +91,68 @@ impl Flow<'_, '_> {
             ExprKind::Never => self.db.bottom(),
             ExprKind::AmbientInput | ExprKind::Namespace | ExprKind::Error => unknown,
         }
+    }
+
+    /// A cast's type, unless its value never arrives. A checked cast gives its value
+    /// the type as an expectation, and reports a value that doesn't fit it. When
+    /// reporting, an unchecked cast first tries the check, and warns if it passes.
+    fn cast(
+        &mut self,
+        at: At,
+        state: &mut State,
+        operands: &mut VecDeque<TypeId>,
+        value: &Expr,
+        ty: TypeId,
+        checked: bool,
+    ) -> TypeId {
+        let span = value.span;
+        if !checked
+            && self.observing()
+            && span != Span::INVALID
+            && self.trial(at, state, operands, value, ty)
+        {
+            self.problem(Problem::Assertion {
+                span,
+                ty: self.tables.render_type(self.db, ty),
+            });
+        }
+        let found = match checked {
+            true => self.expect(at, state, operands, value, Some(ty)),
+            false => self.eval(at, state, operands, value),
+        };
+        if found == self.db.bottom() {
+            return found;
+        }
+        if checked
+            && self.observing()
+            && span != Span::INVALID
+            && self.conform(found, ty, span) == Status::Contradicted
+        {
+            self.problem(Problem::Cast {
+                span,
+                found: self.tables.render_type(self.db, found),
+                ty: self.tables.render_type(self.db, ty),
+            });
+        }
+        ty
+    }
+
+    /// Whether a value can be shown to fit a type it's expected of, on copies of
+    /// its operands and state, leaving nothing the trial reports or records
+    fn trial(
+        &mut self,
+        at: At,
+        state: &State,
+        operands: &VecDeque<TypeId>,
+        value: &Expr,
+        ty: TypeId,
+    ) -> bool {
+        let saved = self.results.clone();
+        let mut operands = operands.iter().take(super::holes(value)).copied().collect();
+        let found = self.expect(at, &mut state.clone(), &mut operands, value, Some(ty));
+        let fits = found != self.db.bottom() && self.relate(found, ty).status == Status::Proven;
+        self.results = saved;
+        fits
     }
 
     /// Instantiate a closure outside a rule that types it. Nothing here gives a

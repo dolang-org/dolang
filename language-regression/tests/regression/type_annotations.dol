@@ -230,3 +230,19 @@ assert_eq (segregate 1 k: 2) ((1,), (k: 2))
 let schema @ Dict[{name: Str, *Int, **Str}] = {name: "n", 1, x: "y"}
 let callback @ ((Int, *Str, **Bool) -> nil) = nil
 assert_eq [schema[0], callback] [1, nil]
+
+# Casts are the identity
+assert_eq (1 + 2 @ Int) 3
+assert_eq (1 + 2 !@ Int) 3
+assert_eq ( 1 @Int ) 1
+assert_eq $(1 @ (Int | nil)) 1
+assert_eq ((1 @ Int) !@ Int) 1
+assert_eq (nil !@ Int) nil
+assert_eq ([1, 2] @ Array[Int]) [1, 2]
+assert_eq ({port: 1} @ Dict[{?port: Int}]) {port: 1}
+let cast_double = (do |n| n * 2 @ ((Int) -> Int))
+assert_eq $cast_double(3) 6
+assert_eq (head((["a"] !@ Array[Str]))) "a"
+assert_eq $(:STABLE: @ (:STABLE: | :TESTING:)) :STABLE:
+let unchecked = ("x" !@ (Int | nil))
+assert_eq $unchecked "x"

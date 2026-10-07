@@ -128,6 +128,7 @@ pub enum NodeKind {
     EscapeByte,
     Stub,
     Group,
+    Cast,
     Unary,
     Binary,
     Logical,

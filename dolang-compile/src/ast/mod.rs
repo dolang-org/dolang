@@ -665,6 +665,14 @@ pub(crate) enum Expr {
         expr: Box<Expr>,
         delim: Option<GroupDelim>,
     },
+    /// A cast, `(expr @ T)`, or an unchecked one, `(expr !@ T)`. The annotation
+    /// spans the `@` or `!@`.
+    Cast {
+        expr: Box<Expr>,
+        annot: Box<Annot>,
+        checked: bool,
+        paren_span: Span,
+    },
     Unary {
         op: Op,
         expr: Box<Expr>,
@@ -813,7 +821,7 @@ impl Expr {
                 Some(Const::Bin(acc))
             }
             Expr::EscapeByte(b, _) => Some(Const::Bin(vec![*b])),
-            Expr::Group { expr, .. } => expr.fold(file),
+            Expr::Group { expr, .. } | Expr::Cast { expr, .. } => expr.fold(file),
             _ => None,
         }
     }
@@ -939,7 +947,7 @@ impl Expr {
             Expr::Ident(_) => SideEffect::VarRef,
 
             // Grouping - check inner expression
-            Expr::Group { expr, .. } => expr.side_effect(),
+            Expr::Group { expr, .. } | Expr::Cast { expr, .. } => expr.side_effect(),
 
             // Unary operations - unlikely side effect
             Expr::Unary { expr, .. } => expr.side_effect().unlikely(),
@@ -1278,6 +1286,17 @@ impl Node for Expr {
                 }
                 visit.node(&**expr)
             }
+            Expr::Cast {
+                expr,
+                annot,
+                paren_span,
+                ..
+            } => {
+                visit.token(Token::Delim, paren_span.left_char(), None)?;
+                visit.node(&**expr)?;
+                visit.node(&**annot)?;
+                visit.token(Token::Delim, paren_span.right_char(), None)
+            }
             Expr::Unary { expr, op_span, .. } => {
                 visit.token(Token::Operator, *op_span, None)?;
                 visit.node(&**expr)
@@ -1413,6 +1432,7 @@ impl Node for Expr {
             Expr::EscapeByte(_, _) => NodeKind::EscapeByte,
             Expr::Stub(_) => NodeKind::Stub,
             Expr::Group { .. } => NodeKind::Group,
+            Expr::Cast { .. } => NodeKind::Cast,
             Expr::Unary { .. } => NodeKind::Unary,
             Expr::Binary { .. } => NodeKind::Binary,
             Expr::Logical { .. } => NodeKind::Logical,

@@ -300,7 +300,7 @@ impl<'u> Scope<'_, '_, 'u> {
 
     /// An annotation's type, with its group's binders as the rigids its body is
     /// checked under
-    fn annotation(&self, annot: &ast::Annot) -> Option<TypeId> {
+    pub(super) fn annotation(&self, annot: &ast::Annot) -> Option<TypeId> {
         use crate::ast::visit::Node;
 
         let span = annot.ty.span();

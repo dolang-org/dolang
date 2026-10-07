@@ -718,6 +718,16 @@ type whose only positional parameter is a schema, any others being keyword
 parameters, takes `Foo[T]` for `Foo[{*T}]` and `Foo[K, V]` for
 `Foo[{*(K): V}]`; prefer these to a schema with a single rest item.
 
+A cast takes the whole contents of its parentheses, with a compact type.
+`(e @ T)` checks `e` against `T` and has type `T`; `(e !@ T)` has type `T`
+unchecked, and warns if `@` would pass. Neither has a runtime effect. As a call
+argument, a cast needs its own parentheses: `f((x @ T))`.
+
+```
+let names = ([] @ Array[Str])
+let dir = (path.parent !@ Path)
+```
+
 ### Concurrency
 
 ```

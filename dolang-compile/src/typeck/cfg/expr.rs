@@ -6,7 +6,7 @@ use crate::{
     source::Span,
     typeck::{
         elab::ModuleRef,
-        r#type::{DeclId, Literal, MemberKey, SymbolId},
+        r#type::{DeclId, Literal, MemberKey, SymbolId, TypeId},
     },
 };
 
@@ -24,6 +24,13 @@ pub(crate) enum ExprKind {
             expect(dead_code, reason = "read by the debug dump")
         )]
         class: Option<DeclId>,
+    },
+    /// A cast, `(value @ ty)`, or an unchecked one, `(value !@ ty)`, whose result
+    /// is `ty`
+    Cast {
+        value: Box<Expr>,
+        ty: TypeId,
+        checked: bool,
     },
     Literal(Literal),
     Float,
@@ -193,7 +200,7 @@ impl Expr {
                 receiver.walk(visit);
                 Item::walk_all(args, visit);
             }
-            ExprKind::TypeTest { value, .. } => value.walk(visit),
+            ExprKind::TypeTest { value, .. } | ExprKind::Cast { value, .. } => value.walk(visit),
             ExprKind::Get { object, .. } => object.walk(visit),
             ExprKind::Index { object, index, .. } => {
                 object.walk(visit);

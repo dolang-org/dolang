@@ -1031,6 +1031,10 @@ impl Check<'_> {
     fn expr(&mut self, frame: &Frame<'_>, expr: &mut Expr) {
         match expr {
             Expr::Group { expr, .. } | Expr::Unary { expr, .. } => self.expr(frame, expr),
+            Expr::Cast { expr, annot, .. } => {
+                self.expr(frame, expr);
+                self.ty(frame, &mut annot.ty);
+            }
             Expr::Binary { exprs, .. } | Expr::Index { exprs, .. } => {
                 for expr in exprs.iter_mut() {
                     self.expr(frame, expr);

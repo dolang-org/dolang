@@ -1,0 +1,111 @@
+# A cast's value is its type. A checked cast, `@`, checks its value with the
+# type as an expectation, as an annotated `let` does; an unchecked one, `!@`,
+# doesn't check it.
+
+@let Release = (:STABLE: | :TESTING:)
+
+def pick[T] x @ T y @ T -> T
+  # warning: unused variable
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | def pick[T] x @ T y @ T -> T
+  #    |                   ^
+  x
+
+pub def results()
+  let a = (1 @ Int)
+  let _ = a
+  #       ^: flow std.Int
+  let b = (1 @ (Int | nil))
+  let _ = b
+  #       ^: flow nil | std.Int
+  let c = ("x" !@ Int)
+  let _ = c
+  #       ^: flow std.Int
+
+# The expectation keeps a literal exact where a generic would decay it
+pub def literals r @ Release
+  let kept = (pick r (:STABLE: @ Release))
+  let _ = kept
+  #       ^~~~: flow m.Release
+
+# A collection takes the cast's schema
+pub def collections()
+  let empty = ([] @ Array[(Str | nil)])
+  let _ = empty
+  #       ^~~~~: flow std.Array[nil | std.Str]
+  let options = ({port: 1} @ Dict[{?port: Int}])
+  let _ = options
+  #       ^~~~~~~: flow std.Dict[{?port: std.Int}]
+
+pub class Item
+  pub field name @ Str = ""
+
+# A `do` block takes the cast's type as an expectation
+pub def blocks()
+  let f = (do |x| x.name @ ((Item) -> Str))
+  #            ^: flow m.Item
+  let _ = f
+  #       ^: flow (m.Item, <m.blocks.#0, >m.blocks.#1) -> std.Str
+
+# Branches join at the cast's type
+pub def joined flag @ Bool
+  let v = if flag
+    (1 @ (Int | Str))
+  else
+    "s"
+  let _ = v
+  #       ^: flow std.Int | std.Str
+
+pub def misfits()
+  let _ = ("x" @ Int)
+  # error: `"x"` does not fit the cast's type `std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = ("x" @ Int)
+  #    |            ^^^
+  let _ = ([1, "a"] @ Array[Int])
+  # error: `std.Array[std.Int | std.Str]` does not fit the cast's type `std.Array[std.Int]`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = ([1, "a"] @ Array[Int])
+  #    |            ^^^^^^^^
+  let _ = (do |y| y @ ((Int) -> Str))
+  #            ^: flow std.Int
+  # error: `(std.Int, <m.misfits.#0, >m.misfits.#1) -> std.Int` does not fit the cast's type `(std.Int, <m.misfits.#0, >m.misfits.#1) -> std.Str`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = (do |y| y @ ((Int) -> Str))
+  #    |            ^^^^^^^^
+  let _h @ ((Int) -> Str) = do |z| z
+  #                             ^: flow std.Int
+  # error: `(std.Int, <m.misfits.#0, >m.misfits.#1) -> std.Int` does not fit the annotation `(std.Int, <m.misfits.#0, >m.misfits.#1) -> std.Str`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _h @ ((Int) -> Str) = do |z| z
+  #    |                             ^^^^^^^^
+
+pub class Node
+  pub field parent @ (Node | nil) = nil
+
+# An unchecked cast warns where the check would pass, including on a dynamic
+# value; one that wouldn't leaves nothing of the check behind
+pub def assertions node @ Node untyped
+  let r = (:STABLE: !@ Release)
+  # warning: this value fits `m.Release`, so `@` suffices
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let r = (:STABLE: !@ Release)
+  #    |            ^^^^^^^^
+  let _ = r
+  #       ^: flow m.Release
+  let _ = (untyped !@ Int)
+  # warning: this value fits `std.Int`, so `@` suffices
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = (untyped !@ Int)
+  #    |            ^^^^^^^
+  let _ = ([1, "a"] !@ Array[Int])
+  let up = (node.parent !@ Node)
+  let _ = up
+  #       ^~: flow m.Node

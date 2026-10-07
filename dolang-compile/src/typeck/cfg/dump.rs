@@ -499,6 +499,11 @@ impl Dump<'_, '_> {
                 self.expr(out, value)?;
                 write!(out, ", {class:?})")
             }
+            ExprKind::Cast { value, ty, checked } => {
+                write!(out, "{}(", if *checked { "cast" } else { "assert" })?;
+                self.expr(out, value)?;
+                write!(out, ", {ty:?})")
+            }
             ExprKind::Error => write!(out, "<error>"),
         }
     }
