@@ -1,3 +1,4 @@
+# dolang: strict
 # The `sys.windows` module exposes Windows-specific system types.
 #
 import sys

@@ -1,0 +1,26 @@
+# dolang: strict
+# Strict extension stubs, used from a strict unit.
+
+import @regex @sys.linux security.unix
+
+# `Regex.replace` runs a callback with its caller's channels
+pub def replaces re @ regex.Regex >Sink[Str] -> Str
+  re.replace "a b" do |_caps|
+    put "match"
+    "x"
+
+pub def replaces_text re @ regex.Regex -> Str
+  re.replace "a b" "x"
+
+# A platform's error number narrows its originating system
+pub def os e @ sys.linux.Errno -> :LINUX:
+  let os = e.os
+  #   ^~: flow :LINUX:
+  os
+
+# A flag set is built from symbols or one iterable of them
+pub def permission() -> security.unix.Permission
+  let p = security.unix.Permission :READ: :WRITE:
+  #   ^: flow security.unix.Permission
+  let _ = security.unix.Permission (:EXECUTE:,)
+  p

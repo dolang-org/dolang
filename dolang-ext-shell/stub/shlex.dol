@@ -1,3 +1,4 @@
+# dolang: strict
 # Shell quoting and word splitting.
 #
 # The quoting these functions produce is POSIX shell quoting, suitable for a

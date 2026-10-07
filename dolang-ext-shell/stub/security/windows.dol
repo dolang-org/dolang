@@ -1,3 +1,4 @@
+# dolang: strict
 # Windows security identifiers, access-control lists, and security
 # descriptors.
 #
@@ -402,7 +403,7 @@ pub class AccessMask: Iterable[AccessRight]
   @def (call) cls flags@Iterable[AccessRight] -> AccessMask
 
   #[class]
-  pub def (call) cls ...flags
+  pub def (call) cls ...flags @ (AccessRight | Iterable[AccessRight]) -> AccessMask
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -482,7 +483,7 @@ pub class AceFlags: Iterable[AceFlag]
   @def (call) cls flags@Iterable[AceFlag] -> AceFlags
 
   #[class]
-  pub def (call) cls ...flags
+  pub def (call) cls ...flags @ (AceFlag | Iterable[AceFlag]) -> AceFlags
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -552,7 +553,7 @@ pub class SecDescControl: Iterable[SecDescControlFlag]
   @def (call) cls flags@Iterable[SecDescControlFlag] -> SecDescControl
 
   #[class]
-  pub def (call) cls ...flags
+  pub def (call) cls ...flags @ (SecDescControlFlag | Iterable[SecDescControlFlag]) -> SecDescControl
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -604,7 +605,7 @@ pub class SecInfo: Iterable[SecInfoComponent]
   @def (call) cls flags@Iterable[SecInfoComponent] -> SecInfo
 
   #[class]
-  pub def (call) cls ...flags
+  pub def (call) cls ...flags @ (SecInfoComponent | Iterable[SecInfoComponent]) -> SecInfo
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -664,7 +665,7 @@ pub class TokenGroupAttributes: Iterable[TokenGroupAttribute]
   @def (call) cls flags@Iterable[TokenGroupAttribute] -> TokenGroupAttributes
 
   #[class]
-  pub def (call) cls ...flags
+  pub def (call) cls ...flags @ (TokenGroupAttribute | Iterable[TokenGroupAttribute]) -> TokenGroupAttributes
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -1076,7 +1077,7 @@ pub class SecDesc
     :rm_control @ Int = nil
   do
 
-  pub def (init) self ...args
+  pub def (init) self ...args @ Value
     ...
 
   # The control flags, excluding the self-relative storage flag.

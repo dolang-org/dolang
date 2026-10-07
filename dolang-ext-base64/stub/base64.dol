@@ -1,3 +1,4 @@
+# dolang: strict
 # Base64 encoding and decoding (RFC 4648).
 #
 # ## Alphabets

@@ -1,3 +1,4 @@
+# dolang: strict
 # Platform-neutral security APIs.
 
 import

@@ -1,3 +1,4 @@
+# dolang: strict
 # Unix security types and uid/gid identity lookups.
 
 import std:
@@ -65,7 +66,7 @@ pub class Permission: Iterable[PermissionBit]
   @def (call) cls flags@Iterable[PermissionBit] -> Permission
 
   #[class]
-  pub def (call) cls ...flags
+  pub def (call) cls ...flags @ (PermissionBit | Iterable[PermissionBit]) -> Permission
     ...
 
   # Tests whether all flags named by `flag` are set.

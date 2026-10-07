@@ -1,3 +1,4 @@
+# dolang: strict
 # The `sys.unix` module exposes Unix-specific system types.
 import sys
 
@@ -5,5 +6,5 @@ import sys
 pub class Errno: sys.ErrorCode
   # The originating operating system, as `:LINUX:`, `:MACOS:`, or `:FREEBSD:`.
   #[getter]
-  pub def os self
+  pub def os self -> (:LINUX: | :MACOS: | :FREEBSD:)
     ...
