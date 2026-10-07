@@ -1,0 +1,7 @@
+import
+  foo bar: alias
+# error: module imports using `:` must start a vertical continuation line
+#   --> import_packed_key_error.dol:LL:LL
+#    |
+# LL |   foo bar: alias
+#    |       ^^^

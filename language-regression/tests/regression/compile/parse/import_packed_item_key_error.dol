@@ -1,0 +1,7 @@
+import foo:
+  first second: alias
+# error: renamed import items must start a line
+#   --> import_packed_item_key_error.dol:LL:LL
+#    |
+# LL |   first second: alias
+#    |         ^^^^^^

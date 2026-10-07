@@ -7,7 +7,7 @@ import foo.=
 
 import foo:
   - 123
-# error: invalid import item
+# error: expected item name after `-`
 #   --> import_errors.dol:LL:LL
 #    |
 # LL |   - 123

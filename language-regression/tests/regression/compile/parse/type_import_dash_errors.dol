@@ -1,6 +1,6 @@
 import c:
   @Bar: Baz
-# error: invalid import item
+# error: type-only renamed items require `- @Item: name`
 #   --> type_import_dash_errors.dol:LL:LL
 #    |
 # LL |   @Bar: Baz

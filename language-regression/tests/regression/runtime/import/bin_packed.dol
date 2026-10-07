@@ -1,0 +1,28 @@
+import
+  import_fixture nested.child
+
+assert_eq (import_fixture.add 1 2) 3
+assert_eq $nested.child.value 42
+
+import import_fixture: first nested.child: second
+assert_eq (first.add 2 3) 5
+assert_eq $second.value 42
+
+# Type-only imports may share a line with ordinary imports.
+import
+  @missing_module import_fixture
+  @missing.dotted @missing.other
+
+def accepts x @ missing_module.Thing y @ missing.dotted.Thing z @ missing.other.Thing
+  [x, y, z]
+
+assert_eq (accepts 1 2 3) [1, 2, 3]
+
+import import_fixture:
+  add @Adder
+
+def accepts_item_type x @Adder
+  x
+
+assert_eq (add 2 3) 5
+assert_eq (accepts_item_type 4) 4

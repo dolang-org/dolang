@@ -2025,7 +2025,7 @@ impl Node for While {
 pub(crate) enum ImportItem {
     AsIs {
         bind: Ident,
-        delim_span: Span,
+        delim_span: Option<Span>,
         type_only: Option<TypeOnly>,
     },
     Renamed {
@@ -2116,7 +2116,9 @@ impl Node for ImportItem {
                 delim_span,
                 type_only,
             } => {
-                visit.token(Token::Delim, *delim_span, None)?;
+                if let Some(span) = delim_span {
+                    visit.token(Token::Delim, *span, None)?;
+                }
                 if let Some(span) = type_only.as_ref().and_then(|ty| ty.at_span) {
                     visit.token(Token::Annotation, span, None)?;
                 }
