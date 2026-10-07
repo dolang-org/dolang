@@ -1,0 +1,85 @@
+# An imported variable takes the type of its annotation, also through a
+# re-export. One without an annotation, or bound by a rest, is dynamic.
+
+import lib
+import re:
+  - count
+  - renamed
+
+let a = lib.count
+#   ^: flow std.Int
+# warning: unused variable
+#   --> main.dol:LL:LL
+#    |
+# LL | let a = lib.count
+#    |     ^
+let b = lib.name
+#   ^: flow nil | std.Str
+# warning: unused variable
+#   --> main.dol:LL:LL
+#    |
+# LL | let b = lib.name
+#    |     ^
+let c = lib.box.n
+#   ^: flow std.Int
+# warning: unused variable
+#   --> main.dol:LL:LL
+#    |
+# LL | let c = lib.box.n
+#    |     ^
+let d = lib.loose
+#   ^: flow Unknown
+# warning: unused variable
+#   --> main.dol:LL:LL
+#    |
+# LL | let d = lib.loose
+#    |     ^
+let e = lib.first
+#   ^: flow Unknown
+# warning: unused variable
+#   --> main.dol:LL:LL
+#    |
+# LL | let e = lib.first
+#    |     ^
+let f = lib.second
+#   ^: flow std.Str
+# warning: unused variable
+#   --> main.dol:LL:LL
+#    |
+# LL | let f = lib.second
+#    |     ^
+let g = lib.key
+#   ^: flow std.Int
+# warning: unused variable
+#   --> main.dol:LL:LL
+#    |
+# LL | let g = lib.key
+#    |     ^
+let h = lib.rest
+#   ^: flow Unknown
+# warning: unused variable
+#   --> main.dol:LL:LL
+#    |
+# LL | let h = lib.rest
+#    |     ^
+let i = count
+#   ^: flow std.Int
+# warning: unused variable
+#   --> main.dol:LL:LL
+#    |
+# LL | let i = count
+#    |     ^
+let j = renamed
+#   ^: flow lib.Box
+# warning: unused variable
+#   --> main.dol:LL:LL
+#    |
+# LL | let j = renamed
+#    |     ^
+
+let _wrong @ Str = lib.count
+# error: `std.Int` does not fit the annotation `std.Str`
+#   --> main.dol:LL:LL
+#    |
+# LL | let _wrong @ Str = lib.count
+#    |                    ^^^^^^^^^

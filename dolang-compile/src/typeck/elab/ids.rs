@@ -33,6 +33,9 @@ impl Harvest<'_> {
         for (_, target) in self.exports.values_mut() {
             target.visit(ids);
         }
+        for site in self.values.values_mut() {
+            site.visit(ids);
+        }
     }
 
     /// The harvest cut down to its surface: what a unit that imports it can see.
@@ -79,6 +82,10 @@ impl Harvest<'_> {
                 }
                 DeclNode::Alias(_) | DeclNode::Defs(_) | DeclNode::Closure(_) => {}
             }
+        }
+        // Exported variables are on the surface, whether annotated or not
+        for site in self.values.values_mut() {
+            site.visit(&mut used);
         }
         for (site, _) in (self.sites.iter_mut())
             .zip(used.sites.clone())

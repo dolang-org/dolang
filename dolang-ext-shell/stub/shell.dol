@@ -512,7 +512,7 @@ pub @class Env: std.Index[Str, Str] std.Assign[Str, Str | nil] std.Spread[Str, S
   # let tmp = env.get TMPDIR else: do
   #   fs.temp_dir()
   # ```
-  pub def get[D]
+  pub def get[D = nil]
     self
     # The variable name.
     name @ Str
@@ -521,7 +521,7 @@ pub @class Env: std.Index[Str, Str] std.Assign[Str, Str | nil] std.Spread[Str, S
     # A block whose result to return when the variable is unset and there is no
     # `default`.
     :else @ (() -> D) = nil
-  do -> (Str | D | nil)
+  do -> (Str | D)
 
   # Calls `body` with overrides from a dict in place, restoring them when it
   # returns.
