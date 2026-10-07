@@ -147,10 +147,10 @@ let first = do |(a _ | (a))| a
 assert_eq (first ([1, 2])) 1
 assert_eq (first ([3])) 3
 
-# A pattern as a block's value gives the value matched.
+# A pattern as a block's last statement gives nil.
 def matched value
   let (Array((_y)) | _y) = value
-assert_eq (matched ([6])) [6]
+assert_eq (matched ([6])) nil
 
 # Bindings captured by a closure are stored in the body.
 if bind [[1], 2]

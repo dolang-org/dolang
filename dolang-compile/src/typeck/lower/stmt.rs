@@ -251,35 +251,18 @@ impl<'u> Scope<'_, '_, 'u> {
             let frame = self.ctx.frame.clone();
             self.nested_lets(vec![(var, pattern, pattern.span())], &frame);
             self.pattern_defaults(pattern, &frame, false);
-            if let Some(dest) = dest {
-                self.assign(dest, expr(ExprKind::Copy(var), span));
-            }
+            self.value_nil(dest, span);
             return;
         }
-        // A destructured value is needed again for `dest`
-        let value = match (dest, pattern) {
-            (Some(_), ast::Pattern::Unpack(_)) => expr(ExprKind::Copy(self.temporary(value)), span),
-            _ => value,
-        };
-        let copy = match value.kind {
-            ExprKind::Var(var) | ExprKind::Copy(var) => Some(var),
-            _ => None,
-        };
         let frame = self.ctx.frame.clone();
-        let (bound_pattern, nested) = self.pattern(pattern, &frame);
-        let bound = match bound_pattern {
-            Pattern::Bind(var) => Some(var),
-            Pattern::Unpack(_) => copy,
-        };
+        let (bound, nested) = self.pattern(pattern, &frame);
         self.emit(Step::Let {
-            pattern: bound_pattern,
+            pattern: bound,
             value,
         });
         self.nested_lets(nested, &frame);
         self.pattern_defaults(pattern, &frame, false);
-        if let (Some(dest), Some(var)) = (dest, bound) {
-            self.assign(dest, expr(ExprKind::Copy(var), span));
-        }
+        self.value_nil(dest, span);
     }
 
     fn assignment(&mut self, node: &'u Assign, dest: Option<VarId>) {
@@ -293,14 +276,12 @@ impl<'u> Scope<'_, '_, 'u> {
             };
             self.assigned(var);
             self.assign(var, value);
-            if let Some(dest) = dest {
-                self.assign(dest, expr(ExprKind::Copy(var), span));
-            }
+            self.value_nil(dest, span);
             return;
         }
         // The target's operands would lie below the value's, so a value that is
-        // needed again, or that is lowered to blocks, is bound first
-        let early = (dest.is_some() || !matches!(node.rhs, PrimStmt::Expr(_))).then(|| {
+        // lowered to blocks is bound first
+        let early = (!matches!(node.rhs, PrimStmt::Expr(_))).then(|| {
             let value = self.prim_value(&node.rhs);
             self.temporary(value)
         });
@@ -327,9 +308,7 @@ impl<'u> Scope<'_, '_, 'u> {
             None => self.prim_value(&node.rhs),
         };
         self.emit(Step::Assign { target, value });
-        if let (Some(dest), Some(var)) = (dest, early) {
-            self.assign(dest, expr(ExprKind::Copy(var), span));
-        }
+        self.value_nil(dest, span);
     }
 
     /// Lower a pattern's top level in `frame`, where its names are bound, with the

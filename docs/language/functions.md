@@ -30,12 +30,18 @@ A function returns the result of its final statement:
 | Statement     | Result                                           |
 | ------------- | ------------------------------------------------ |
 | command       | function return value                            |
-| `let`         | value of right-hand side                         |
-| `bind`        | value of scrutinee                               |
 | `if`          | result of selected branch, or `nil` if none runs |
+| `match`       | result of selected arm, or `nil` if none matches |
 | `try`/`catch` | result of `try` (no error) or invoked `catch`    |
 
-All other statements have a `nil` result.
+All other statements, including `let`, `bind` and assignments, have a `nil`
+result. To return a bound value, end with it:
+
+```
+def area w h
+  let a = (w * h)
+  a
+```
 
 ## Explicit Return
 

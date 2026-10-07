@@ -3,5 +3,5 @@ import strand:
 
 let ran = false
 let handle = spawn do ran = true
-assert $ handle.join()
+assert_eq (handle.join()) nil
 assert $ran

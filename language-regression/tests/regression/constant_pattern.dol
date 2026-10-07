@@ -94,7 +94,7 @@ let closure = do captured
 assert_eq (closure()) 42
 def successful()
   let "ok" _n = ["ok", 9]
-assert_eq (successful()) ["ok", 9]
+assert_eq (successful()) nil
 
 # Value assertions and conditional tests both use ordinary equality.
 class Equal

@@ -1201,7 +1201,6 @@ impl<'t, 'u> Populate<'t, 'u> {
             Slot::Annot(ty) => self.intern(group, self.tables.site_ty(ty), Kind::Type, 0),
             Slot::Unknown => self.db.unknown(),
             Slot::Nil => self.db.intern(Type::Literal(Literal::Nil)),
-            Slot::Top => self.db.top(),
             // The class, applied to its own binders, which lead a method's group
             Slot::SelfType => {
                 let (class, _) = self.tables.decls[id.index()]

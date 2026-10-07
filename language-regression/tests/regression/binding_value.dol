@@ -1,0 +1,48 @@
+# `let`, `bind` and assignments give nil as a block's last statement.
+class Box
+  pub field value = nil
+  field secret = nil
+
+  pub def hide self value
+    self.#secret = value
+
+def let_()
+  let _x = 1
+assert_eq (let_()) nil
+
+def unpack()
+  let _a _b = [1, 2]
+assert_eq (unpack()) nil
+
+def bind_()
+  bind [1, 2]
+    - _a
+    - _b
+assert_eq (bind_()) nil
+
+def local()
+  let x = 1
+  x = 2
+assert_eq (local()) nil
+
+def field box
+  box.value = 3
+let box = Box()
+assert_eq (field box) nil
+assert_eq $box.value 3
+assert_eq (box.hide 4) nil
+
+def index items
+  items[0] = 5
+let items = [0]
+assert_eq (index items) nil
+assert_eq $items [5]
+
+let f = do |x| x = 6
+assert_eq (f 1) nil
+
+# The value is the last line's to give.
+def kept()
+  let x = 7
+  x
+assert_eq (kept()) 7

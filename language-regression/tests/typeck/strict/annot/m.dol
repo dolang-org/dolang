@@ -51,7 +51,7 @@ pub class Point
   #    |             ^
 
   pub def (init) self x @ Int
-    #      ^~~~: sig (self: Self, x: Int, <#0, >#1) -> Value
+    #      ^~~~: sig (self: Self, x: Int, <#0, >#1) -> nil
     self.x = x
 
   pub def moved self dx -> Point
