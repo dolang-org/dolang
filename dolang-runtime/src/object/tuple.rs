@@ -8,7 +8,7 @@ use crate::{
     call,
     error::{Error, Result},
     gc::{self, Collect, arena::Visit},
-    object::protocol::{Protocol, Recv, members},
+    object::protocol::{Protocol, Recv, instance_get_fallback, members},
     sig::{Unpack, UnpackKeyKind},
     strand::Strand,
     sym::{self, Sym},
@@ -385,9 +385,7 @@ impl<'v> Protocol<'v> for [Value<'v>] {
                 "tuple.len is a field, not a method",
             )),
             _ if is_special_mcall(method.tag()) => {
-                instance_mcall_fallback(strand, &this, method, args, out)
-                    .await
-                    .expect("supported special method")
+                instance_mcall_fallback(strand, &this, method, args, out).await
             }
             _ => iter::iterable_mcall(strand, &this, method, args, out).await,
         }
@@ -801,7 +799,7 @@ impl<'v> Protocol<'v> for Type {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
-            _ => Err(Error::field(strand, field)),
+            _ => instance_get_fallback(strand, &this, field, out),
         }
     }
 

@@ -29,8 +29,8 @@ use crate::{
 use super::{
     BoundMethod, index, iter,
     protocol::{
-        GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, instance_mcall_fallback,
-        is_special_mcall, type_mcall_fallback,
+        GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, instance_get_fallback,
+        instance_mcall_fallback, is_special_mcall, type_mcall_fallback,
     },
     tuple,
 };
@@ -1973,9 +1973,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 "dict.len is a field, not a method",
             )),
             _ if is_special_mcall(method.tag()) => {
-                instance_mcall_fallback(strand, &this, method, args, out)
-                    .await
-                    .expect("supported special method")
+                instance_mcall_fallback(strand, &this, method, args, out).await
             }
             _ => iter::iterable_mcall(strand, &this, method, args, out).await,
         }
@@ -2694,7 +2692,7 @@ impl<'v> Protocol<'v> for Type {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
-            _ => Err(Error::field(strand, field)),
+            _ => instance_get_fallback(strand, &this, field, out),
         }
     }
 

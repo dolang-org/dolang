@@ -14,7 +14,7 @@ use crate::{
     vm::Vm,
 };
 
-use super::protocol::{Inspect, Protocol, Recv};
+use super::protocol::{Inspect, Protocol, Recv, instance_get_fallback};
 
 pub(crate) fn create<'v>(
     strand: &mut Strand<'v, '_>,
@@ -90,7 +90,7 @@ impl<'v> Protocol<'v> for Backtrace<'v> {
             members: members![
                 Getter(sym::LEN),
                 Method(sym::ITER_METHOD),
-                Method(sym::FMT_METHOD)
+                Method(sym::FMT_METHOD),
             ],
             type_members: &[],
         })
@@ -339,7 +339,7 @@ impl<'v> Protocol<'v> for Frame<'v> {
                 }
                 Ok(())
             }
-            _ => Err(Error::field(strand, field)),
+            _ => instance_get_fallback(strand, &this, field, out),
         }
     }
 }

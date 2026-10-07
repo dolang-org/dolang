@@ -7,7 +7,7 @@ use dolang_util::alias;
 use crate::{
     Program,
     arg::Args,
-    error::{Error, Result},
+    error::Result,
     frame::{CallFrame, Upvars},
     gc::{Annex, Collect, Gc, arena::Visit},
     object::protocol::members,
@@ -20,7 +20,7 @@ use crate::{
 
 use super::{
     BoundMethod,
-    protocol::{Inspect, Protocol, Recv},
+    protocol::{Inspect, Protocol, Recv, instance_get_fallback, recv_special_mcall},
 };
 
 /// Type-erased native function. The closure `F` is stored behind a `NonNull<()>`
@@ -416,23 +416,23 @@ impl<'v> Protocol<'v> for Type {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
-            _ => Err(Error::field(strand, field)),
+            _ => instance_get_fallback(strand, &this, field, out),
         }
     }
 
     async fn op_mcall<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
+        this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
         args: Args<'v, 'a>,
-        _out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
                 let ([_self_val], []) = unpack!(strand, args, 1, 0)?;
                 Ok(())
             }
-            _ => Err(Error::field(strand, method)),
+            _ => recv_special_mcall(strand, &this, method, args, out).await,
         }
     }
 }

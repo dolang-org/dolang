@@ -20,8 +20,8 @@ use crate::{
 use super::{
     BoundMethod, index, iter,
     protocol::{
-        GcObj, Inspect, Protocol, Recv, instance_mcall_fallback, is_special_mcall,
-        type_mcall_fallback,
+        GcObj, Inspect, Protocol, Recv, instance_get_fallback, instance_mcall_fallback,
+        is_special_mcall, type_mcall_fallback,
     },
     range,
 };
@@ -490,9 +490,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
             }
             sym::LEN => Err(Error::type_error(strand, "len is a field, not a method")),
             _ if is_special_mcall(method.tag()) => {
-                instance_mcall_fallback(strand, &this, method, args, out)
-                    .await
-                    .expect("supported special method")
+                instance_mcall_fallback(strand, &this, method, args, out).await
             }
             _ => iter::sink_mcall(strand, &this, method, args, out).await,
         }
@@ -702,7 +700,7 @@ impl<'v> Protocol<'v> for Class {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
-            _ => Err(Error::field(strand, field)),
+            _ => instance_get_fallback(strand, &this, field, out),
         }
     }
 }

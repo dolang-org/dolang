@@ -18,7 +18,7 @@ use crate::{
     strand::{Pinned, Strand},
     sym::{self, Sym},
     unpack,
-    value::{Input, InputBy, Output, Slot, Slots, TypeObject, Value, private::Sealed},
+    value::{Input, InputBy, Output, Slot, Slots, StrEmbryo, TypeObject, Value, private::Sealed},
     vm::{Alloc, Vm},
 };
 
@@ -120,30 +120,15 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        match method.tag() {
-            sym::GET_METHOD => {
-                let ([field], []) = unpack!(strand, args, 1, 0)?;
-                let field = field
-                    .as_sym(strand)
-                    .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
-                Self::op_get(this, strand, field, out)
-            }
-            sym::SET_METHOD => {
-                let ([field, value], []) = unpack!(strand, args, 2, 0)?;
-                let field = field
-                    .as_sym(strand)
-                    .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
-                Self::op_set(this, strand, field, value)
-            }
-            _ => {
-                strand
-                    .with_slots(async move |strand, [mut func]| {
-                        Self::op_get(this, strand, method, Slot::reborrow(&mut func))?;
-                        func.op_call(strand, args, out).await
-                    })
-                    .await
-            }
+        if is_special_mcall(method.tag()) {
+            return recv_special_mcall(strand, &this, method, args, out).await;
         }
+        strand
+            .with_slots(async move |strand, [mut func]| {
+                Self::op_get(this, strand, method, Slot::reborrow(&mut func))?;
+                func.op_call(strand, args, out).await
+            })
+            .await
     }
 
     fn op_type<'a, 's>(this: Recv<'v, 'a, Self>, strand: &'a mut Strand<'v, 's>, out: Slot<'v, 'a>);
@@ -415,12 +400,11 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         field: Sym<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        match field.tag() {
-            sym::GET_METHOD | sym::SET_METHOD => {
-                BoundMethod::create(strand, &this, field, out);
-                Ok(())
-            }
-            _ => Err(Error::type_error(strand, "field get not supported")),
+        if is_universal_member(field) {
+            BoundMethod::create(strand, &this, field, out);
+            Ok(())
+        } else {
+            Err(Error::type_error(strand, "field get not supported"))
         }
     }
 
@@ -2111,43 +2095,30 @@ pub(crate) async fn type_mcall_fallback<'v, 's>(
     args: Args<'v, '_>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    // Handle the special case of a `(get)` or `(set)` intended for the class object itself
-    // rather than qualified method invocation on an instance
-    match method.tag() {
-        sym::GET_METHOD if args.len() == 1 => {
-            let ([field], []) = unpack!(strand, args, 1, 0)?;
-            let field = field
-                .as_sym(strand)
-                .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
-            return ty.op_get(strand, field, out);
-        }
-        sym::SET_METHOD if args.len() == 2 => {
-            let ([field, value], []) = unpack!(strand, args, 2, 0)?;
-            let field = field
-                .as_sym(strand)
-                .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
-            return ty.op_set(strand, field, value);
-        }
-        _ => (),
-    }
-
     let ([this], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
-    let (receiver, delegator) =
-        if let Some(inst) = this.downcast_ref(strand.builtin_types().class_instance) {
-            (
-                get_native_slot(strand, inst, ty)
-                    .ok_or_else(|| Error::type_error(strand, "not a native object subclass"))?,
-                Some(&*this),
-            )
-        } else {
-            strand.with_slots_sync(|strand, [mut tmp]| {
-                this.op_type(strand, Slot::reborrow(&mut tmp));
-                if !tmp.repr_eq(strand, ty) {
-                    return Err(Error::type_error(strand, "invalid native object type"));
-                }
-                Ok((&*this, None))
-            })?
-        };
+    let (receiver, delegator) = if ty
+        .op_inspect(strand)
+        .is_some_and(|inspect| inspect.is_abstract)
+    {
+        if !this.is_instance_of(strand, ty) {
+            return Err(Error::type_error(strand, "invalid type for unbound method"));
+        }
+        (&*this, None)
+    } else if let Some(inst) = this.downcast_ref(strand.builtin_types().class_instance) {
+        (
+            get_native_slot(strand, inst, ty)
+                .ok_or_else(|| Error::type_error(strand, "not a native object subclass"))?,
+            Some(&*this),
+        )
+    } else {
+        strand.with_slots_sync(|strand, [mut tmp]| {
+            this.op_type(strand, Slot::reborrow(&mut tmp));
+            if !tmp.repr_eq(strand, ty) {
+                return Err(Error::type_error(strand, "invalid native object type"));
+            }
+            Ok((&*this, None))
+        })?
+    };
 
     if is_special_mcall(method.tag()) {
         special_mcall(strand, receiver, delegator, method, trailing, out).await
@@ -2163,27 +2134,82 @@ pub(crate) async fn type_mcall_fallback<'v, 's>(
     }
 }
 
+/// The members every value has, which `Value` advertises. Any value can be
+/// asked for a field by name with `(get)` and `(set)`, though it may refuse.
+pub(crate) fn value_members<'v, 'a>() -> &'a [Member<'v, 'a>] {
+    members![
+        Method(sym::HASH_METHOD),
+        Method(sym::EQ_METHOD),
+        Method(sym::STR_METHOD),
+        Method(sym::DBG_METHOD),
+        Method(sym::VERBATIM_METHOD),
+        Method(sym::GET_METHOD),
+        Method(sym::SET_METHOD),
+    ]
+}
+
+/// Whether `field` is a member every value has.
+pub(crate) fn is_universal_member(field: Sym<'_, '_>) -> bool {
+    value_members().iter().any(|member| member.sym == field)
+}
+
+/// Return a bound method for a member every value has.
+pub(crate) fn instance_get_fallback<'v, 'a, 's>(
+    strand: &mut Strand<'v, 's>,
+    receiver: impl Input<'v>,
+    field: Sym<'v, 'a>,
+    out: Slot<'v, 'a>,
+) -> Result<'v, 's, ()> {
+    if is_universal_member(field) {
+        BoundMethod::create(strand, receiver, field, out);
+        Ok(())
+    } else {
+        Err(Error::field(strand, field))
+    }
+}
+
 /// Handle the special methods supported by qualified native method calls.
-/// All other symbols belong to the caller's ordinary method-call fallback.
+/// Any other symbol is a missing field.
 pub(crate) async fn instance_mcall_fallback<'v, 'a, 's>(
     strand: &mut Strand<'v, 's>,
     receiver: impl Input<'v>,
     method: Sym<'v, 'a>,
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
-) -> Option<Result<'v, 's, ()>> {
-    if is_special_mcall(method.tag()) {
-        let receiver = Value::from_input(strand.vm(), receiver);
-        Some(special_mcall(strand, &receiver, None, method, args, out).await)
-    } else {
-        None
+) -> Result<'v, 's, ()> {
+    if !is_special_mcall(method.tag()) {
+        return Err(Error::field(strand, method));
     }
+    let receiver = Value::from_input(strand.vm(), receiver);
+    special_mcall(strand, &receiver, None, method, args, out).await
+}
+
+/// Handle a special method called through `this`, which may be delegated to. A
+/// type object called directly takes the instance as its first argument, as for
+/// [`type_mcall_fallback`]. Any other symbol is a missing field.
+pub(crate) async fn recv_special_mcall<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
+    strand: &mut Strand<'v, 's>,
+    this: &Recv<'v, 'a, T>,
+    method: Sym<'v, 'a>,
+    args: Args<'v, 'a>,
+    out: Slot<'v, 'a>,
+) -> Result<'v, 's, ()> {
+    if this.delegator().is_none() && is_special_mcall(method.tag()) {
+        let receiver = Value::from_object(this.receiver.to_strong());
+        if receiver.is_instance_of(strand, TypeObject::Type) {
+            return type_mcall_fallback(strand, &receiver, method, args, out).await;
+        }
+    }
+    instance_mcall_fallback(strand, this, method, args, out).await
 }
 
 pub(crate) fn is_special_mcall(tag: sym::Tag) -> bool {
     matches!(
         tag,
-        sym::STR_METHOD
+        sym::GET_METHOD
+            | sym::SET_METHOD
+            | sym::STR_METHOD
+            | sym::VERBATIM_METHOD
             | sym::DBG_METHOD
             | sym::FMT_METHOD
             | sym::BOOL_METHOD
@@ -2228,20 +2254,39 @@ async fn special_mcall<'v, 'a, 's>(
     }
 
     match method.tag() {
+        sym::GET_METHOD => {
+            let ([field], []) = unpack!(strand, args, 1, 0)?;
+            let field = field
+                .as_sym(strand)
+                .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
+            dispatch!(op_get, field, out)?;
+        }
+        sym::SET_METHOD => {
+            let ([field, value], []) = unpack!(strand, args, 2, 0)?;
+            let field = field
+                .as_sym(strand)
+                .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
+            dispatch!(op_set, field, value)?;
+        }
+        sym::VERBATIM_METHOD => {
+            let mut format = StrEmbryo::new();
+            dispatch!(op_verbatim, &mut format)?;
+            format.finish(strand, out);
+        }
         sym::STR_METHOD => {
-            let mut format = crate::value::StrEmbryo::new();
+            let mut format = StrEmbryo::new();
             dispatch!(op_display, &mut format)?;
             format.finish(strand, out);
         }
         sym::DBG_METHOD => {
-            let mut format = crate::value::StrEmbryo::new();
+            let mut format = StrEmbryo::new();
             dispatch!(op_debug, &mut format)?;
             format.finish(strand, out);
         }
         sym::FMT_METHOD => {
             let ([spec], []) = unpack!(strand, args, 1, 0)?;
             let spec = crate::stdlib::fmt::spec_of(strand, &spec)?;
-            let mut format = crate::value::StrEmbryo::new();
+            let mut format = StrEmbryo::new();
             dispatch!(op_fmt, &spec, &mut format)?;
             format.finish(strand, out);
         }

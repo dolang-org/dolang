@@ -10,7 +10,10 @@ use crate::{
     gc::{Collect, arena::Visit},
     object::{
         BoundMethod, class,
-        protocol::{Inspect, Protocol, Recv, members, type_mcall_fallback},
+        protocol::{
+            Inspect, Protocol, Recv, instance_get_fallback, members, recv_special_mcall,
+            type_mcall_fallback, value_members,
+        },
     },
     strand::Strand,
     sym::{self, Sym},
@@ -34,6 +37,14 @@ unsafe impl Collect for Value {
 }
 
 impl<'v> Protocol<'v> for Value {
+    fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
+        Some(Inspect {
+            is_abstract: true,
+            members: value_members(),
+            type_members: members![],
+        })
+    }
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -75,6 +86,14 @@ unsafe impl Collect for Type {
 }
 
 impl<'v> Protocol<'v> for Type {
+    fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
+        Some(Inspect {
+            is_abstract: true,
+            members: value_members(),
+            type_members: members![],
+        })
+    }
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -135,28 +154,7 @@ impl<'v> Protocol<'v> for Type {
                     None => receiver.op_call(strand, trailing, out).await,
                 }
             }
-            sym::GET_METHOD => {
-                let ([field], []) = unpack!(strand, args, 1, 0)?;
-                let field = field
-                    .as_sym(strand)
-                    .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
-                Self::op_get(this, strand, field, out)
-            }
-            sym::SET_METHOD => {
-                let ([field, value], []) = unpack!(strand, args, 2, 0)?;
-                let field = field
-                    .as_sym(strand)
-                    .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
-                Self::op_set(this, strand, field, value)
-            }
-            _ => {
-                strand
-                    .with_slots(async move |strand, [mut func]| {
-                        Self::op_get(this, strand, method, Slot::reborrow(&mut func))?;
-                        func.op_call(strand, args, out).await
-                    })
-                    .await
-            }
+            _ => recv_special_mcall(strand, &this, method, args, out).await,
         }
     }
 
@@ -287,7 +285,7 @@ impl<'v> Protocol<'v> for Bool {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
-            _ => Err(Error::field(strand, field)),
+            _ => instance_get_fallback(strand, &this, field, out),
         }
     }
 

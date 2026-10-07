@@ -71,3 +71,43 @@ let c = Child()
 c.write_parent 123
 assert_eq $c.value 123
 assert_eq (c.read_parent()) 123
+
+# Type-object accessors always require an instance. The metaclass proxy names
+# the class object's own scope explicitly.
+class Settings
+  pub field value = 1
+  #[class]
+  pub field version = 2
+
+let settings = Settings()
+assert_eq (Settings.(get) settings :value:) 1
+Settings.(set) $settings :value: 3
+assert_eq $settings.value 3
+assert_eq (type(Settings).(get) Settings :version:) 2
+type(Settings).(set) $Settings :version: 4
+assert_eq $Settings.version 4
+let class_get = type(Settings).(get)
+let class_set = type(Settings).(set)
+assert_eq (class_get Settings :version:) 4
+class_set $Settings :version: 5
+assert_eq $Settings.version 5
+
+assert_throws $std.MissingPosError do Settings.(get) :version:
+assert_throws $std.MissingPosError do Settings.(set) :version: 6
+assert_throws $std.TypeError do Settings.(get) 1 :value:
+assert_throws $std.TypeError do type(Settings).(get) 1 :version:
+
+# Native type accessors follow the same convention.
+let array = [1, 2]
+assert_eq (Array.(get) array :len:) 2
+let native_get = Array.(get)
+assert_eq (native_get array :len:) 2
+assert_throws $std.RuntimeError do Array.(get) :len:
+assert_throws $std.RuntimeError do Array.(set) :len: 6
+assert_throws $std.TypeError do Array.(get) 1 :len:
+
+class DerivedSettings: Settings
+assert_eq (type(Settings).(get) DerivedSettings :version:) 2
+type(Settings).(set) $DerivedSettings :version: 8
+assert_eq $DerivedSettings.version 8
+assert_eq $Settings.version 5

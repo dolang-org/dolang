@@ -184,6 +184,12 @@ another:
 assert_eq (type(Counter).bump(Derived)) 2
 ```
 
+Type-object accessors also take an explicit receiver:
+`C.(get)(instance, :field:)` and `C.(set)(instance, :field:, value)` address
+instance members. To address a class object's own fields, use
+`type(C).(get)(C, :field:)` and
+`type(C).(set)(C, :field:, value)`.
+
 Two type objects are equal when they stand for the same class, and they hash to
 match, so they work as dict keys. A type object is a subtype of
 [`Type`](std.Type), so `type Counter Type` holds.

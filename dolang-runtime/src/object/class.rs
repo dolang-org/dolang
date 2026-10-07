@@ -23,7 +23,8 @@ use crate::{
         field_iter::FieldIter,
         native,
         protocol::{
-            Delegated, Dispatch, Inspect, MemberKind, Recv, Spread, SpreadContext, members,
+            Delegated, Dispatch, Inspect, MemberKind, Recv, Spread, SpreadContext,
+            instance_mcall_fallback, is_special_mcall, members,
         },
         sym::SymObj,
         tuple,
@@ -32,7 +33,7 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{Output, Slot, Slots, Value},
+    value::{Output, Slot, Slots, TypeObject, Value},
     vm::{Builder, Stateful, Vm},
 };
 
@@ -419,7 +420,12 @@ pub(crate) async fn create<'v, 's>(
     let mut entry_map = HashMap::new();
     let mut type_entry_map = HashMap::new();
 
-    for sup in supers.iter() {
+    // Every class ends its MRO with `Value`, which supplies the members every
+    // value has, unless it names `Value` itself.
+    let value = Value::from_input(strand.vm(), TypeObject::Value);
+    let value = (!supers.iter().any(|sup| sup.repr_eq(strand, &value))).then_some(value);
+
+    for sup in supers.iter().chain(&value) {
         if let Some(cls) = sup.downcast_ref(strand.builtin_types().class_object) {
             let cls = cls.annex();
             // Inherit parent's native supers (dedup by repr_eq).
@@ -525,6 +531,19 @@ pub(crate) async fn create<'v, 's>(
                 }
             }
         }
+    }
+
+    // Type-object members inherit the protocol methods inspected from Type.
+    // Instance defaults come from the inspected runtime supertypes above.
+    let metatype = strand.singletons().type_obj.dup();
+    let inspect = metatype
+        .op_inspect(strand)
+        .expect("Type supports inspection");
+    for member in inspect.members {
+        type_entry_map.insert(
+            member.sym,
+            ClassTypeEntry::Delegate(metatype.dup(), member.kind),
+        );
     }
 
     // Apply this class's own entries, overriding
@@ -1002,25 +1021,35 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
         field: Sym<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        match field.tag() {
-            sym::GET_METHOD | sym::SET_METHOD => {
+        let me = this.annex();
+        // Instance methods take priority, unbound
+        match me.entry(field) {
+            Some(ClassEntry::Method(v)) => {
+                out.store(v.dup());
+                return Ok(());
+            }
+            // An inherited native method has no function of its own. Bind it to
+            // the class, whose `op_mcall` takes the instance first, as a native
+            // type object's unbound methods do.
+            Some(
+                ClassEntry::Abstract(_, MemberKind::Method)
+                | ClassEntry::Delegate(_, MemberKind::Method),
+            ) => {
                 BoundMethod::create(strand, &this, field, out);
                 return Ok(());
             }
             _ => (),
         }
-
-        let me = this.annex();
         match me.type_entry(field) {
             Some(ClassTypeEntry::Method { .. }) => {
                 BoundMethod::create(strand, &this, field, out);
-                return Ok(());
+                Ok(())
             }
             Some(ClassTypeEntry::Field { slot, .. }) => {
                 let slot = *slot;
                 let borrow = this.borrow(strand)?;
                 Output::set(strand, out, &borrow.type_fields[slot]);
-                return Ok(());
+                Ok(())
             }
             Some(ClassTypeEntry::Property {
                 property:
@@ -1029,31 +1058,22 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                         ..
                     },
                 ..
-            }) => {
-                return strand.sync(async |strand| {
-                    method!(strand, getter, Sym::well_known(sym::GET), out, &this).await
-                });
+            }) => strand.sync(async |strand| {
+                method!(strand, getter, Sym::well_known(sym::GET), out, &this).await
+            }),
+            Some(ClassTypeEntry::Property { .. }) => Err(Error::field(strand, field)),
+            Some(ClassTypeEntry::Delegate(_, MemberKind::Method)) => {
+                BoundMethod::create(strand, &this, field, out);
+                Ok(())
             }
-            Some(ClassTypeEntry::Property { .. }) => return Err(Error::field(strand, field)),
-            Some(ClassTypeEntry::Delegate(type_obj, kind)) => {
-                if *kind == MemberKind::Method {
-                    BoundMethod::create(strand, &this, field, out);
-                    return Ok(());
-                }
-                return strand.with_slots_sync(|strand, [mut delegator]| {
+            Some(ClassTypeEntry::Delegate(type_obj, _)) => {
+                strand.with_slots_sync(|strand, [mut delegator]| {
                     Output::set(strand, Slot::reborrow(&mut delegator), &this);
                     Delegated::new(type_obj, &delegator).op_get(strand, field, out)
-                });
+                })
             }
-            None => (),
+            None => Err(Error::field(strand, field)),
         }
-
-        // Only methods are accessible on the class type object itself
-        if let Some(v) = me.method(field) {
-            out.store(v.dup());
-            return Ok(());
-        }
-        Err(Error::field(strand, field))
     }
 
     fn op_set<'a, 's>(
@@ -1125,13 +1145,6 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
     ) -> Result<'v, 's, ()> {
         let me = this.annex();
         match method.tag() {
-            sym::GET_METHOD if args.len() == 1 => {
-                let ([field], []) = unpack!(strand, args, 1, 0)?;
-                let field = field
-                    .as_sym(strand)
-                    .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
-                Self::op_get(this, strand, field, out)
-            }
             sym::GET_METHOD => {
                 let ([obj, field], []) = unpack!(strand, args, 2, 0)?;
                 let field = field
@@ -1204,13 +1217,6 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                         _ => Err(Error::field(strand, field)),
                     },
                 }
-            }
-            sym::SET_METHOD if args.len() == 2 => {
-                let ([field, value], []) = unpack!(strand, args, 2, 0)?;
-                let field = field
-                    .as_sym(strand)
-                    .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
-                Self::op_set(this, strand, field, value)
             }
             sym::SET_METHOD => {
                 let ([obj, field, mut value], []) = unpack!(strand, args, 3, 0)?;
@@ -1293,6 +1299,40 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                 }
             }
             _ => {
+                // Instance methods take priority, called unbound on an explicit instance.
+                if let Some(v) = me.method(method) {
+                    return v.op_call(strand, args, out).await;
+                }
+                let inherited = match me.entry(method) {
+                    Some(ClassEntry::Abstract(type_obj, MemberKind::Method)) => {
+                        Some((type_obj, false))
+                    }
+                    Some(ClassEntry::Delegate(slot, MemberKind::Method)) => {
+                        Some((&me.native_supers[*slot], true))
+                    }
+                    _ => None,
+                };
+                if let Some((supertype, native)) = inherited {
+                    let ([instance], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
+                    if !instance.is_instance_of(strand, &this) {
+                        return Err(Error::type_error(strand, "invalid class object type"));
+                    }
+                    let receiver = if native {
+                        // The instance may be of a subclass, whose native slots differ.
+                        let borrow = instance
+                            .downcast_ref(strand.builtin_types().class_instance)
+                            .ok_or_else(|| {
+                                Error::type_error(strand, "invalid class object type")
+                            })?;
+                        get_native_slot(strand, borrow, supertype)
+                            .ok_or_else(|| Error::type_error(strand, "native slot uninitialized"))?
+                    } else {
+                        supertype
+                    };
+                    return Delegated::new(receiver, &instance)
+                        .op_mcall(strand, method, trailing, out)
+                        .await;
+                }
                 match me.type_entry(method) {
                     // A class method receives the class it was reached through as
                     // its first argument. Inherited entries are copied into the
@@ -1335,13 +1375,8 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                             })
                             .await;
                     }
-                    None => (),
+                    None => Err(Error::field(strand, method)),
                 }
-                // Only methods are callable on the class type object itself
-                if let Some(v) = me.method(method) {
-                    return v.op_call(strand, args, out).await;
-                }
-                Err(Error::field(strand, method))
             }
         }
     }
@@ -1551,8 +1586,8 @@ impl<'v> Protocol<'v> for ClassTypeProxy<'v> {
         }
     }
 
-    /// Class-level methods only. An unbound accessor for a class *field* has no
-    /// clear meaning, and the value is already reachable as `Class.field`.
+    /// Class-level methods and protocol accessors are unbound. Class fields
+    /// themselves are reached through the class object, as `Class.field`.
     fn op_get<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1562,6 +1597,10 @@ impl<'v> Protocol<'v> for ClassTypeProxy<'v> {
         match this.get().class(strand.vm()).type_entry(field) {
             Some(ClassTypeEntry::Method { value, .. }) => {
                 Output::set(strand, out, value);
+                Ok(())
+            }
+            Some(ClassTypeEntry::Delegate(_, MemberKind::Method)) => {
+                BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
             _ => Err(Error::field(strand, field)),
@@ -1575,25 +1614,24 @@ impl<'v> Protocol<'v> for ClassTypeProxy<'v> {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        // The receiver rides in `args`, so a class method reached this way can be
-        // retargeted at a different class: `type(Base).m $Derived`.
-        if !matches!(
-            this.get().class(strand.vm()).type_entry(method),
-            Some(ClassTypeEntry::Method { .. })
-        ) {
-            return Err(Error::field(strand, method));
+        let class = this.get().class(strand.vm());
+        match class.type_entry(method) {
+            Some(ClassTypeEntry::Method { value, .. }) => value.op_call(strand, args, out).await,
+            Some(ClassTypeEntry::Delegate(supertype, MemberKind::Method)) => {
+                let ([receiver], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
+                if receiver
+                    .downcast_ref(strand.builtin_types().class_object)
+                    .is_none()
+                    || !receiver.op_subtype(strand, &this.get().class)
+                {
+                    return Err(Error::type_error(strand, "invalid class object type"));
+                }
+                Delegated::new(supertype, &receiver)
+                    .op_mcall(strand, method, trailing, out)
+                    .await
+            }
+            _ => Err(Error::field(strand, method)),
         }
-        strand
-            .with_slots(async move |strand, [mut func]| {
-                let Some(ClassTypeEntry::Method { value, .. }) =
-                    this.get().class(strand.vm()).type_entry(method)
-                else {
-                    unreachable!("checked above")
-                };
-                Output::set(strand, Slot::reborrow(&mut func), value);
-                func.op_call(strand, args, out).await
-            })
-            .await
     }
 }
 
@@ -2157,13 +2195,6 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         field: Sym<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        match field.tag() {
-            sym::GET_METHOD | sym::SET_METHOD => {
-                BoundMethod::create(strand, &this, field, out);
-                return Ok(());
-            }
-            _ => (),
-        }
         let annex = this.annex();
         match annex.class.annex().entry(field) {
             Some(ClassEntry::Field(slot_idx)) => {
@@ -2272,24 +2303,6 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         mut args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        match method.tag() {
-            sym::GET_METHOD => {
-                let ([field], []) = unpack!(strand, args, 1, 0)?;
-                let field = field
-                    .as_sym(strand)
-                    .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
-                return Self::op_get(this, strand, field, out);
-            }
-            sym::SET_METHOD => {
-                let ([field, value], []) = unpack!(strand, args, 2, 0)?;
-                let field = field
-                    .as_sym(strand)
-                    .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
-                return Self::op_set(this, strand, field, value);
-            }
-            _ => (),
-        }
-
         let class = this.annex().class.annex();
         match class.entry(method) {
             Some(ClassEntry::Method(v)) => {
@@ -2346,6 +2359,10 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     .await;
             }
             None => {}
+        }
+
+        if is_special_mcall(method.tag()) {
+            return instance_mcall_fallback(strand, &this, method, args, out).await;
         }
 
         if let Some(v) = class.method(Sym::well_known(sym::GET_METHOD)) {
@@ -2417,11 +2434,6 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                             .await
                     })
                     .await
-            }
-            _ if Value::from_object(this.to_strong())
-                .is_instance_of(strand, crate::value::TypeObject::Iter) =>
-            {
-                Err(Error::not_supported(strand))
             }
             _ => default_class_unpack(this, strand, sig, out).await,
         }

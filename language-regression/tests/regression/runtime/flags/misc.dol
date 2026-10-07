@@ -41,12 +41,15 @@ DerivedFlags.type_property = 7
 FurtherDerivedFlags.type_property = 8
 DerivedFlags.type_writeonly = 9
 
-# A native type member wins over an unbound instance method with the same name.
+# An unbound instance method wins over a native type member with the same name.
+# The metaclass proxy still reaches the type member.
 class ShadowFlags: TestFlags
   pub def from_int _self _value
     "instance method"
 
-assert_eq (ShadowFlags.from_int 4) $exec
+let from_int = ShadowFlags.from_int
+assert_eq (from_int nil 4) "instance method"
+assert_eq (type(ShadowFlags).from_int ShadowFlags 4) $exec
 let all = (rw | exec)
 assert_eq [...all] [:READ:, :WRITE:, :EXEC:]
 

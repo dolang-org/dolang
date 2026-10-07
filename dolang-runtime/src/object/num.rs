@@ -7,7 +7,8 @@ use crate::{
     object::{
         BoundMethod,
         protocol::{
-            Inspect, Member, Protocol, Recv, instance_mcall_fallback, members, type_mcall_fallback,
+            Inspect, Member, Protocol, Recv, instance_get_fallback, instance_mcall_fallback,
+            members, type_mcall_fallback,
         },
     },
     strand::Strand,
@@ -77,7 +78,7 @@ pub(crate) fn int_get<'v, 'a, 's>(
             BoundMethod::create(strand, rcvr, field, out);
             Ok(())
         }
-        _ => Err(Error::field(strand, field)),
+        _ => instance_get_fallback(strand, rcvr, field, out),
     }
 }
 
@@ -199,10 +200,7 @@ pub(crate) async fn int_mcall<'v, 'a, 's>(
         sym::MIN | sym::MAX | sym::CLAMP => {
             default_mcall(strand, &receiver, method, args, out).await
         }
-        _ => match instance_mcall_fallback(strand, &receiver, method, args, out).await {
-            Some(result) => result,
-            None => Err(Error::field(strand, method)),
-        },
+        _ => instance_mcall_fallback(strand, &receiver, method, args, out).await,
     }
 }
 
@@ -237,10 +235,7 @@ pub(crate) async fn float_mcall<'v, 'a, 's>(
     } else if matches!(method.tag(), sym::MIN | sym::MAX | sym::CLAMP) {
         default_mcall(strand, &receiver, method, args, out).await
     } else {
-        match instance_mcall_fallback(strand, &receiver, method, args, out).await {
-            Some(result) => result,
-            None => Err(Error::field(strand, method)),
-        }
+        instance_mcall_fallback(strand, &receiver, method, args, out).await
     }
 }
 
