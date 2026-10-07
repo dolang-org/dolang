@@ -1,3 +1,4 @@
+# dolang: strict
 # Reads and writes the Windows registry.
 #
 # This API is VFS-aware: it operates through the VFS in scope for the current
@@ -168,7 +169,7 @@ pub class AccessMask: WindowsAccessMask
   @def (call) cls flags@Iterable[AccessRight] -> AccessMask
 
   #[class]
-  pub def (call) cls ...flags
+  pub def (call) cls ...flags @ (AccessRight | Iterable[AccessRight]) -> AccessMask
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -225,7 +226,7 @@ pub class Key
     func @ (Key -> R)
   do -> R
 
-  pub def create self subpath ...options
+  pub def create self subpath @ Str ...options @ Value -> Value
     ...
 
   # Deletes a subkey.
@@ -402,7 +403,7 @@ pub class Key
     func @ (Key -> R)
   do -> R
 
-  pub def open self subpath ...options
+  pub def open self subpath @ Str ...options @ Value -> Value
     ...
 
   # Reads a registry link without following it.
@@ -472,7 +473,7 @@ pub class Key
     # Value name; `""` is the key's default value.
     name @ Str
     # The Do value to write.
-    value
+    value @ (Str | Iterable[Str] | Bool | Int | Bin | nil)
     # Value kind to store under. Omit to let the kind be decided from what is already there, or
     # from `value` itself.
     #
@@ -534,7 +535,7 @@ pub class Key
     desc @ SecDescSpec = nil
     # Components, as [`sec_desc`](security.windows.sec_desc) takes them, instead
     # of or alongside `desc`.
-    ...options
+    **options @ Value
   do
     ...
 
@@ -560,9 +561,9 @@ pub class Key
 #
 # Returned by [`Key.read_link`](winreg.Key.read_link).
 pub class LinkTarget
-  # The lossless `\Registry\...` target as a [`Str`](std.Str).
+  # The lossless `\Registry\...` target.
   #[getter]
-  pub def native self
+  pub def native self -> Str
     ...
 
   # The canonical registry root the target lives under, or `nil` when the
@@ -574,7 +575,7 @@ pub class LinkTarget
   # The target path relative to [`root`](winreg.LinkTarget.root), or `nil` when the native
   # path is not recognized.
   #[getter]
-  pub def subpath self
+  pub def subpath self -> (Str | nil)
     ...
 
 # One named value read from a key.
@@ -590,10 +591,9 @@ pub class Value
   pub def kind self -> (ValueKind | Int)
     ...
 
-  # The value's name as a [`Str`](std.Str). A key's default value has
-  # the name `""`.
+  # The value's name. A key's default value has the name `""`.
   #[getter]
-  pub def name self
+  pub def name self -> Str
     ...
 
   # The value's data in its natural Do representation.
@@ -650,5 +650,5 @@ do -> Key
   func @ (Key -> R)
 do -> R
 
-pub def open root ...options
+pub def open root @ RegistryRoot ...options @ Value -> Value
   ...

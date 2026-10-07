@@ -1,3 +1,4 @@
+# dolang: strict
 # Manages Windows services.
 #
 # This API is VFS-aware: it operates through the VFS in scope for the current
@@ -123,6 +124,7 @@ pub @let ManagerAccessRight = $
 pub class ManagerAccessMask: AccessMask
   # Builds a mask from a native integer, preserving every bit including ones
   # this type does not name.
+  #[class]
   pub def from_int
     self
     # Native Windows access mask.
@@ -145,7 +147,7 @@ pub class ManagerAccessMask: AccessMask
   @def (call) cls flags@Iterable[ManagerAccessRight] -> ManagerAccessMask
 
   #[class]
-  pub def (call) cls ...flags
+  pub def (call) cls ...flags @ (ManagerAccessRight | Iterable[ManagerAccessRight]) -> ManagerAccessMask
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -201,6 +203,7 @@ pub @let ServiceAccessRight = $
 pub class ServiceAccessMask: AccessMask
   # Builds a mask from a native integer, preserving every bit including ones
   # this type does not name.
+  #[class]
   pub def from_int
     self
     # Native Windows access mask.
@@ -223,7 +226,7 @@ pub class ServiceAccessMask: AccessMask
   @def (call) cls flags@Iterable[ServiceAccessRight] -> ServiceAccessMask
 
   #[class]
-  pub def (call) cls ...flags
+  pub def (call) cls ...flags @ (ServiceAccessRight | Iterable[ServiceAccessRight]) -> ServiceAccessMask
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -264,6 +267,7 @@ pub @let ServiceTypeFlag = $
 pub class ServiceType: Iterable[ServiceTypeFlag]
   # Builds a value from a native integer, preserving every bit including ones
   # this type does not name.
+  #[class]
   pub def from_int
     self
     # Native service type mask.
@@ -286,7 +290,7 @@ pub class ServiceType: Iterable[ServiceTypeFlag]
   @def (call) cls flags@Iterable[ServiceTypeFlag] -> ServiceType
 
   #[class]
-  pub def (call) cls ...flags
+  pub def (call) cls ...flags @ (ServiceTypeFlag | Iterable[ServiceTypeFlag]) -> ServiceType
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -350,6 +354,7 @@ pub @let NotifyChange = $
 pub class NotifyMask: Iterable[NotifyChange]
   # Builds a mask from a native integer, preserving every bit including ones
   # this type does not name.
+  #[class]
   pub def from_int
     self
     # Native notification mask.
@@ -372,7 +377,7 @@ pub class NotifyMask: Iterable[NotifyChange]
   @def (call) cls flags@Iterable[NotifyChange] -> NotifyMask
 
   #[class]
-  pub def (call) cls ...flags
+  pub def (call) cls ...flags @ (NotifyChange | Iterable[NotifyChange]) -> NotifyMask
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -440,6 +445,7 @@ pub @let AcceptedControl = $
 pub class ServiceControlsAccepted: Iterable[AcceptedControl]
   # Builds a value from a native integer, preserving every bit including ones
   # this type does not name.
+  #[class]
   pub def from_int
     self
     # Native controls-accepted mask.
@@ -462,7 +468,7 @@ pub class ServiceControlsAccepted: Iterable[AcceptedControl]
   @def (call) cls flags@Iterable[AcceptedControl] -> ServiceControlsAccepted
 
   #[class]
-  pub def (call) cls ...flags
+  pub def (call) cls ...flags @ (AcceptedControl | Iterable[AcceptedControl]) -> ServiceControlsAccepted
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -557,7 +563,7 @@ pub class ScManager
     func @ (Service -> R)
   do -> R
 
-  pub def open_service self name ...options
+  pub def open_service self name @ Str ...options @ Value -> Value
     ...
 
   # Creates a service.
@@ -635,7 +641,7 @@ pub class ScManager
     func @ (Service -> R)
   do -> R
 
-  pub def create_service self name ...options
+  pub def create_service self name @ Str ...options @ Value -> Value
     ...
 
   # Opens a live forward enumeration of matching services. Entries are fetched
@@ -782,7 +788,7 @@ pub class Service
     desc @ SecDescSpec = nil
     # Components, as [`sec_desc`](security.windows.sec_desc) takes them, instead
     # of or alongside `desc`.
-    ...options
+    **options @ Value
   do
     ...
 
@@ -939,5 +945,5 @@ do -> ScManager
   func @ (ScManager -> R)
 do -> R
 
-pub def open ...options
+pub def open ...options @ Value -> Value
   ...
