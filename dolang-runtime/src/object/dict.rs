@@ -329,6 +329,35 @@ impl<'v> Dict<'v> {
         Ok(())
     }
 
+    pub(crate) fn delete<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        key: &Value<'v>,
+    ) -> Result<'v, 's, bool> {
+        let mut hasher = DefaultHasher::new();
+        key.op_hash(strand, &mut hasher)?;
+        let hash = hasher.finish();
+        let Some(bucket) = self.find(strand, hash, key)? else {
+            return Ok(false);
+        };
+        unsafe {
+            self.total_pairs -= bucket.as_ref().value.len();
+            match &bucket.as_ref().value {
+                EntryValue::Single { index, .. } => {
+                    *self.index.get_unchecked_mut(*index) = None;
+                }
+                EntryValue::Multi(items) => {
+                    for (_, index) in items.iter() {
+                        *self.index.get_unchecked_mut(*index) = None;
+                    }
+                }
+            }
+            self.table.erase(bucket);
+        }
+        self.epoch += 1;
+        Ok(true)
+    }
+
     pub(crate) fn from_args<'s>(
         strand: &mut Strand<'v, 's>,
         args: Args<'v, '_>,
@@ -2456,29 +2485,8 @@ impl<'v> Dict<'v> {
         key: Slot<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let mut hasher = DefaultHasher::new();
-        key.op_hash(strand, &mut hasher)?;
-        let hv = hasher.finish();
         let mut dict = this.borrow_mut(strand)?;
-        let mut deleted = false;
-        if let Some(bucket) = dict.find(strand, hv, &key)? {
-            unsafe {
-                dict.total_pairs -= bucket.as_ref().value.len();
-                match &bucket.as_ref().value {
-                    EntryValue::Single { index, .. } => {
-                        *dict.index.get_unchecked_mut(*index) = None;
-                    }
-                    EntryValue::Multi(items) => {
-                        for (_, index) in items.iter() {
-                            *dict.index.get_unchecked_mut(*index) = None;
-                        }
-                    }
-                }
-                dict.table.erase(bucket)
-            }
-            dict.epoch += 1;
-            deleted = true;
-        }
+        let deleted = dict.delete(strand, &key)?;
         Output::set(strand, out, deleted);
         Ok(())
     }

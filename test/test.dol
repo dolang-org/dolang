@@ -9,7 +9,13 @@ import proc shell term
     - assert_throws
     - assert_type
     - test
+    tags: register_tags
     run: run_tests
+
+#[test]
+def registration_requires_active_collection()
+  assert_throws $std.StateError do register_tags "orphan"
+  assert_throws $std.StateError do test do nil
 
 #[test]
 def ignored_tests_are_omitted_from_report()

@@ -27,11 +27,7 @@ def with_rules path block
     block $previous
   else
     let rules = load_rules $path
-    rules_key.value = rules
-    try
-      block $rules
-    finally
-      rules_key.value = previous
+    rules_key.with $rules do block $rules
 
 def list_rules rules
   echo "Available tasks:"

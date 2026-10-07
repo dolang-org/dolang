@@ -38,3 +38,44 @@ assert_eq $key.value "parent"
 
 key.value = nil
 assert_eq $key.value nil
+
+let depth = Key 0
+assert_eq $depth.value 0
+let default_child = spawn do depth.value
+assert_eq $default_child.join() 0
+assert_eq (fork do depth.value) (Tuple([0]))
+
+let other = Key "before"
+let result = depth.with 1 do
+  assert_eq $depth.value 1
+  let scoped_child = spawn do depth.value
+  assert_eq $scoped_child.join() 1
+  assert_eq (fork do depth.value) (Tuple([1]))
+  other.value = "after"
+  assert_eq (depth.with 2 do depth.value) 2
+  assert_eq $depth.value 1
+  depth.value = 3
+  assert_eq $depth.value 3
+  :DONE:
+assert_eq $result :DONE:
+assert_eq $depth.value 0
+assert_eq $other.value "after"
+
+depth.value = 4
+try
+  depth.with 5 do
+    depth.value = 6
+    throw "boom"
+catch _
+  nil
+assert_eq $depth.value 4
+
+try
+  depth.with 7 do throw "boom"
+catch _
+  nil
+assert_eq $depth.value 4
+
+let maybe = Key()
+assert_eq (maybe.with "temporary" do maybe.value) "temporary"
+assert_eq $maybe.value nil
