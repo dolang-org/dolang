@@ -440,7 +440,7 @@ impl Check<'_> {
                     }
                     let decl = decls.decl(index);
                     match var.origin {
-                        Origin::Source(span) | Origin::SelfParam(span) => {
+                        Origin::Source(span) | Origin::SelfParam(span) | Origin::Import(span) => {
                             span.start < site || (decl.is_some() && in_body.get())
                         }
                         Origin::PreludeModule | Origin::PreludeItem { .. } | Origin::Repl => true,
@@ -530,7 +530,7 @@ impl Check<'_> {
                     }
                     let decl = decls.decl(index);
                     let visible = match var.origin {
-                        Origin::Source(span) | Origin::SelfParam(span) => {
+                        Origin::Source(span) | Origin::SelfParam(span) | Origin::Import(span) => {
                             span.start < site || (decl.is_some() && in_body.get())
                         }
                         Origin::PreludeModule | Origin::PreludeItem { .. } | Origin::Repl => true,

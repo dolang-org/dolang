@@ -7,11 +7,11 @@ use crate::source::Span;
 use super::{At, Flow, State, problem::Problem};
 use crate::typeck::{
     cfg::{Expr, ExprKind, FuncId, FuncKind},
-    elab::{Designated, ModuleRef, Referent, Target},
+    elab::{Designated, ModuleRef, Referent, Tables, Target},
     solver::Status,
     r#type::{
-        Argument, Binding, BoundRef, DeclId, DeclKind, Intrinsic, Kind, SymbolId, Type, TypeId,
-        UnitId, UnitSpan,
+        Argument, Binding, BoundRef, Database, DeclId, DeclKind, Intrinsic, Kind, SymbolId, Type,
+        TypeId, UnitId, UnitSpan,
     },
 };
 
@@ -76,7 +76,7 @@ impl Flow<'_, '_> {
                 ty,
                 checked,
             } => self.cast(at, state, operands, value, ty, checked),
-            &ExprKind::Class(decl) => self.class_object(decl),
+            &ExprKind::Class(decl) => class_object(self.db, decl),
             ExprKind::Import { module, item } => self.import(module, *item),
             &ExprKind::Lambda(func) => self.expected_lambda(at, func, expected),
             ExprKind::Call { .. } => self.call(at, state, operands, expr, expected),
@@ -185,20 +185,7 @@ impl Flow<'_, '_> {
         {
             return unknown;
         }
-        self.function_value(decl)
-    }
-
-    /// A def's value: its type. An overloaded def's is the def itself, which the
-    /// solver relates as its overloads (see [`Type::Overloaded`]). Without an
-    /// implementation, it's dynamic.
-    fn function_value(&self, decl: DeclId) -> TypeId {
-        match self.tables.sig_count(decl) {
-            1 => self.db.declaration(decl).ty,
-            _ => match self.db.implementation(decl) {
-                Some(_) => self.db.intern(Type::Decl(decl)),
-                None => self.db.unknown(),
-            },
-        }
+        function_value(self.db, self.tables, decl)
     }
 
     /// Whether a value is an overloaded function: an overloaded def, or a
@@ -212,54 +199,6 @@ impl Flow<'_, '_> {
             }
             _ => false,
         }
-    }
-
-    /// The value of a class object: `Type[C]`, with a generic class's binders
-    /// hoisted, so that `Array` is `forall T. Type[Array[T]]`
-    pub(super) fn class_object(&self, decl: DeclId) -> TypeId {
-        let Some(class_type) = self.db.intrinsic(Intrinsic::Type) else {
-            return self.db.unknown();
-        };
-        let ty = self.db.declaration(decl).ty;
-        let base = self.db.intern(Type::Decl(decl));
-        let apply = |arg| {
-            self.db.intern(Type::Apply {
-                base: class_type,
-                args: vec![Argument::Positional(arg)].into(),
-                kind: Kind::Type,
-            })
-        };
-        let Type::Quantified { binders, .. } = self.db.ty(ty) else {
-            return apply(base);
-        };
-        if binders.is_empty() {
-            return apply(base);
-        }
-        // An application gives a keyword binder's argument in its slot, as a
-        // positional binder's
-        if binders
-            .iter()
-            .any(|binder| !matches!(binder.binding, Binding::Positional | Binding::Keyword(_)))
-        {
-            return self.db.unknown();
-        }
-        let args = (binders.iter().enumerate())
-            .map(|(slot, binder)| {
-                Argument::Positional(self.db.intern(Type::Bound {
-                    reference: BoundRef::new(0, slot),
-                    kind: binder.kind,
-                }))
-            })
-            .collect();
-        let instance = self.db.intern(Type::Apply {
-            base,
-            args,
-            kind: Kind::Type,
-        });
-        self.db.intern(Type::Quantified {
-            binders: binders.clone(),
-            body: apply(instance),
-        })
     }
 
     /// The class `C` a class object's type `Type[C]` gives
@@ -293,31 +232,44 @@ impl Flow<'_, '_> {
     /// annotation. A module, a module that isn't checked, an unannotated variable,
     /// and any other item are dynamic.
     fn import(&self, module: &ModuleRef, item: Option<SymbolId>) -> TypeId {
-        let unknown = self.db.unknown();
-        let (ModuleRef::Unit(unit), Some(item)) = (module, item) else {
-            return unknown;
+        let Some(item) = item else {
+            return self.db.unknown();
+        };
+        match self.export(module, item) {
+            Some(Target::Local(Referent::Decl(decl))) => self.decl_value(*decl),
+            Some(Target::Local(Referent::Value(value))) => self.variable(value),
+            _ => self.db.unknown(),
+        }
+    }
+
+    /// What writing a module's member must give: what reading it gives. A module
+    /// it re-exports can't be written, since typing names it by import.
+    pub(super) fn written_import(&self, module: &ModuleRef, item: SymbolId) -> Option<TypeId> {
+        match self.export(module, item) {
+            Some(Target::Module(_)) => None,
+            _ => Some(self.import(module, Some(item))),
+        }
+    }
+
+    /// The export a checked module's item names, following re-exports of items
+    fn export(&self, module: &ModuleRef, item: SymbolId) -> Option<&Target<'_>> {
+        let ModuleRef::Unit(unit) = module else {
+            return None;
         };
         let mut unit: UnitId = *unit;
         let mut name: &str = self.db.symbol(item);
         // Re-exports are followed, up to a limit that only a cycle reaches
         for _ in 0..64 {
-            let Some((_, target)) = self.tables.exports[unit.index()].get(name) else {
-                return unknown;
-            };
+            let (_, target) = self.tables.exports[unit.index()].get(name)?;
             match target {
-                Target::Local(Referent::Decl(decl)) => return self.decl_value(*decl),
-                Target::Local(Referent::Value(value)) => return self.variable(value),
                 Target::Import { module, item } => {
-                    let Some(&next) = self.modules.get(module) else {
-                        return unknown;
-                    };
-                    unit = next;
+                    unit = *self.modules.get(module)?;
                     name = item;
                 }
-                _ => return unknown,
+                target => return Some(target),
             }
         }
-        unknown
+        None
     }
 
     /// An exported variable's annotation, written at the top level, so with no
@@ -338,11 +290,72 @@ impl Flow<'_, '_> {
     fn decl_value(&self, decl: DeclId) -> TypeId {
         let declaration = self.db.declaration(decl);
         match declaration.source.kind {
-            DeclKind::Class | DeclKind::Protocol => self.class_object(decl),
-            DeclKind::Function => self.function_value(decl),
+            DeclKind::Class | DeclKind::Protocol => class_object(self.db, decl),
+            DeclKind::Function => function_value(self.db, self.tables, decl),
             DeclKind::OpaqueAlias | DeclKind::Alias | DeclKind::Closure | DeclKind::Annotation => {
                 self.db.unknown()
             }
         }
     }
+}
+
+/// A def's value: its type. An overloaded def's is the def itself, which the
+/// solver relates as its overloads (see [`Type::Overloaded`]). Without an
+/// implementation, it's dynamic.
+pub(crate) fn function_value(db: &Database, tables: &Tables<'_>, decl: DeclId) -> TypeId {
+    match tables.sig_count(decl) {
+        1 => db.declaration(decl).ty,
+        _ => match db.implementation(decl) {
+            Some(_) => db.intern(Type::Decl(decl)),
+            None => db.unknown(),
+        },
+    }
+}
+
+/// The value of a class object: `Type[C]`, with a generic class's binders
+/// hoisted, so that `Array` is `forall T. Type[Array[T]]`
+pub(crate) fn class_object(db: &Database, decl: DeclId) -> TypeId {
+    let Some(class_type) = db.intrinsic(Intrinsic::Type) else {
+        return db.unknown();
+    };
+    let ty = db.declaration(decl).ty;
+    let base = db.intern(Type::Decl(decl));
+    let apply = |arg| {
+        db.intern(Type::Apply {
+            base: class_type,
+            args: vec![Argument::Positional(arg)].into(),
+            kind: Kind::Type,
+        })
+    };
+    let Type::Quantified { binders, .. } = db.ty(ty) else {
+        return apply(base);
+    };
+    if binders.is_empty() {
+        return apply(base);
+    }
+    // An application gives a keyword binder's argument in its slot, as a
+    // positional binder's
+    if binders
+        .iter()
+        .any(|binder| !matches!(binder.binding, Binding::Positional | Binding::Keyword(_)))
+    {
+        return db.unknown();
+    }
+    let args = (binders.iter().enumerate())
+        .map(|(slot, binder)| {
+            Argument::Positional(db.intern(Type::Bound {
+                reference: BoundRef::new(0, slot),
+                kind: binder.kind,
+            }))
+        })
+        .collect();
+    let instance = db.intern(Type::Apply {
+        base,
+        args,
+        kind: Kind::Type,
+    });
+    db.intern(Type::Quantified {
+        binders: binders.clone(),
+        body: apply(instance),
+    })
 }

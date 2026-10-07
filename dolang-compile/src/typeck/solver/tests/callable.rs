@@ -35,11 +35,10 @@ fn calls(
     class.finish(db, supers)
 }
 
-fn residual(outcome: &Outcome, what: &'static str) -> bool {
-    outcome.status == Status::Unresolved && has(outcome, Residual::Unsupported(what).into())
+/// Whether none of a callable's signatures fits
+fn unfit(outcome: &Outcome) -> bool {
+    contradiction(outcome, Contradiction::NoOverload)
 }
-
-const UNFIT: &str = "a callable none of whose signatures fits";
 
 #[test]
 fn an_instance_reaching_func_is_called_through_its_call() {
@@ -55,13 +54,13 @@ fn an_instance_reaching_func_is_called_through_its_call() {
     db.seal();
     assert_eq!(check(&db, adder, fits).status, Status::Proven);
     assert_eq!(check(&db, adder, wider).status, Status::Proven);
-    // A subclass may narrow the result or widen the parameters
-    assert!(residual(&check(&db, adder, result), UNFIT));
-    assert!(residual(&check(&db, adder, params), UNFIT));
+    // An `Adder` itself doesn't fit, whatever a subclass may do
+    assert!(unfit(&check(&db, adder, result)));
+    assert!(unfit(&check(&db, adder, params)));
 }
 
 #[test]
-fn a_class_that_doesnt_reach_func_is_residual() {
+fn a_class_that_doesnt_reach_func_isnt_a_function() {
     let mut db = Database::new();
     let int = int(&mut db);
     bare_func(&mut db);
@@ -69,12 +68,13 @@ fn a_class_that_doesnt_reach_func_is_residual() {
     let without = Class::new(&mut db, "Without", vec![]).finish(&mut db, vec![]);
     let f = function(&db, &[int], int);
     db.seal();
-    // A subclass may reach `Func`
+    // A subclass may reach `Func`, but an instance of the class itself doesn't
     for class in [plain, without] {
-        assert!(residual(
-            &check(&db, class, f),
-            "a class that doesn't reach `Func`"
-        ));
+        let outcome = check(&db, class, f);
+        assert!(
+            contradiction(&outcome, Contradiction::UnrelatedNominals),
+            "{outcome:?}"
+        );
     }
 }
 
@@ -125,7 +125,7 @@ fn a_class_object_is_called_through_init() {
     let nullary = function(&db, &[], empty);
     db.seal();
     assert_eq!(check(&db, point_object, constructs).status, Status::Proven);
-    assert!(residual(&check(&db, point_object, wrong), UNFIT));
+    assert!(unfit(&check(&db, point_object, wrong)));
     assert_eq!(check(&db, empty_object, nullary).status, Status::Proven);
 }
 
@@ -148,7 +148,7 @@ fn a_class_level_call_takes_precedence() {
     let constructs = function(&db, &[str], factory);
     db.seal();
     assert_eq!(check(&db, object, calls).status, Status::Proven);
-    assert!(residual(&check(&db, object, constructs), UNFIT));
+    assert!(unfit(&check(&db, object, constructs)));
 }
 
 #[test]
@@ -210,7 +210,7 @@ fn trials_choose_among_overloaded_calls() {
     assert_eq!(check(&db, pick, int_int).status, Status::Proven);
     assert_eq!(check(&db, pick, str_str).status, Status::Proven);
     // The implementation isn't an alternative
-    assert!(residual(&check(&db, pick, int_str), UNFIT));
+    assert!(unfit(&check(&db, pick, int_str)));
 
     // Both fit a function of variables
     let mut s = Solver::new(&db);
@@ -240,7 +240,7 @@ fn a_union_of_callables_is_below_what_each_is() {
 }
 
 #[test]
-fn a_chosen_signature_never_contradicts() {
+fn a_chosen_signature_is_held_to_its_parameters() {
     let mut db = Database::new();
     let int = int(&mut db);
     let str = nominal(&mut db, "Str", vec![], vec![]);
@@ -256,5 +256,8 @@ fn a_chosen_signature_never_contradicts() {
     s.solve();
     s.constrain(s.closed(str), x, Provenance::default());
     let outcome = s.solve().remove(0);
-    assert!(residual(&outcome, UNFIT), "{outcome:?}");
+    assert!(
+        contradiction(&outcome, Contradiction::UnrelatedNominals),
+        "{outcome:?}"
+    );
 }

@@ -66,6 +66,8 @@ pub(crate) struct Var {
 pub(crate) enum Origin {
     Source(Span),
     SelfParam(Span),
+    /// Bound by an `import` element, which can't be reassigned
+    Import(Span),
     PreludeModule,
     PreludeItem {
         module: dolang_util::intern::StrId,
@@ -78,7 +80,7 @@ pub(crate) enum Origin {
 impl Origin {
     pub(crate) fn name(self) -> Option<Span> {
         match self {
-            Self::Source(span) | Self::SelfParam(span) => Some(span),
+            Self::Source(span) | Self::SelfParam(span) | Self::Import(span) => Some(span),
             _ => None,
         }
     }

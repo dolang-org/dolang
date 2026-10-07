@@ -177,6 +177,10 @@ pub(crate) struct Var {
     /// Starts as bottom rather than unassigned: a comprehension's bindings and item
     /// values, which are assigned only on the paths its structure accounts for
     pub(crate) bottom: bool,
+    /// Exported from a module, so an importer may assign it anything that fits
+    /// its annotation, or anything at all without one. Such a variable is also
+    /// interprocedural and volatile.
+    pub(crate) exported: bool,
 }
 
 pub(crate) struct Block {
@@ -404,6 +408,7 @@ impl Graph {
             interprocedural: false,
             volatile: false,
             bottom: false,
+            exported: false,
         }));
         self.func_mut(owner).vars.push(id);
         id

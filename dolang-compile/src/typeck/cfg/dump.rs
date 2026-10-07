@@ -175,6 +175,7 @@ impl Dump<'_, '_> {
                         self.expr(out, index)?;
                         write!(out, "]")?;
                     }
+                    Target::Import { module, item, .. } => self.import(out, module, Some(*item))?,
                 }
                 write!(out, " = ")?;
                 self.expr(out, value)
@@ -320,6 +321,17 @@ impl Dump<'_, '_> {
         write!(out, ")")
     }
 
+    fn import(&self, out: &mut String, module: &ModuleRef, item: Option<SymbolId>) -> fmt::Result {
+        match module {
+            ModuleRef::Unit(unit) => write!(out, "<unit{}>", unit.index())?,
+            ModuleRef::External(name) => write!(out, "{name}")?,
+        }
+        if let Some(item) = item {
+            write!(out, "::{}", self.db.symbol(item))?;
+        }
+        Ok(())
+    }
+
     fn member(&self, out: &mut String, member: &Member) -> fmt::Result {
         let name = self.db.symbol(member.key.name);
         match (member.key.special, member.key.private) {
@@ -420,16 +432,7 @@ impl Dump<'_, '_> {
             }
             ExprKind::Var(var) | ExprKind::Copy(var) => self.var(out, *var),
             ExprKind::Class(decl) => write!(out, "class{}", decl.index()),
-            ExprKind::Import { module, item } => {
-                match module {
-                    ModuleRef::Unit(unit) => write!(out, "<unit{}>", unit.index())?,
-                    ModuleRef::External(name) => write!(out, "{name}")?,
-                }
-                if let Some(item) = item {
-                    write!(out, "::{}", self.db.symbol(*item))?;
-                }
-                Ok(())
-            }
+            ExprKind::Import { module, item } => self.import(out, module, *item),
             ExprKind::Lambda(func) => write!(out, "f{}", func.index()),
             ExprKind::Call { callee, args, .. } => {
                 self.expr(out, callee)?;

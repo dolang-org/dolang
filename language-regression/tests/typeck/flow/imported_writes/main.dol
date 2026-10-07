@@ -1,0 +1,36 @@
+# Writing a module's member must give what reading it gives, also through a
+# re-export. A re-exported module can't be written.
+
+import lib re
+
+lib.count = 2
+lib.count = "y"
+# error: expected `std.Int`, found `"y"`
+#   --> main.dol:LL:LL
+#    |
+# LL | lib.count = "y"
+#    |             ^^^
+lib.loose = "anything"
+lib.twice = (do |x @ Int| -> Int x)
+lib.twice = (do |x @ Str| -> Str x)
+# error: expected `forall (std.Int) -> std.Int`, found `(std.Str, <Value, >Value) -> std.Str`
+#   --> main.dol:LL:LL
+#    |
+# LL | lib.twice = (do |x @ Str| -> Str x)
+#    |              ^^^^^^^^^^^^^^^^^^^^^
+#    |
+#    = note: `std.Str` does not fit `std.Int`
+#    = note: `std.Str` doesn't accept `std.Int`
+#    = note: in `{std.Str}`
+re.count = "z"
+# error: expected `std.Int`, found `"z"`
+#   --> main.dol:LL:LL
+#    |
+# LL | re.count = "z"
+#    |            ^^^
+re.lib = lib
+# error: `lib` is a module, which can't be assigned
+#   --> main.dol:LL:LL
+#    |
+# LL | re.lib = lib
+#    | ^^^^^^

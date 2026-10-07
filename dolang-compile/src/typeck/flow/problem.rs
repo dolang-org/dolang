@@ -112,6 +112,8 @@ pub(crate) enum MemberUse {
     Write,
     /// Assigning to a method
     Method,
+    /// Assigning to a module's re-export of a module
+    Module,
 }
 
 /// What a value is required to be
@@ -274,6 +276,7 @@ impl Report for Problem {
                 MemberUse::Read => write!(w, "`{name}` has no getter"),
                 MemberUse::Write => write!(w, "`{name}` has no setter"),
                 MemberUse::Method => write!(w, "`{name}` is a method, which can't be assigned"),
+                MemberUse::Module => write!(w, "`{name}` is a module, which can't be assigned"),
             },
             Problem::Unassigned {
                 name,

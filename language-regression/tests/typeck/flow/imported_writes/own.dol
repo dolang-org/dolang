@@ -1,0 +1,55 @@
+# A module's def and class are declared with their values' types, which importers
+# read, so reassigning one is checked against it
+
+pub def twice x @ Int -> Int
+  (x * 2)
+
+pub class Box
+  pub field n @ Int = 0
+
+twice = (do |x @ Int| -> Int x)
+twice = (do |x @ Str| -> Str x)
+# error: `(std.Str, <Value, >Value) -> std.Str` does not fit the annotation `forall (std.Int) -> std.Int`
+#   --> own.dol:LL:LL
+#    |
+# LL | twice = (do |x @ Str| -> Str x)
+#    |          ^^^^^^^^^^^^^^^^^^^^^
+twice = "nope"
+# error: `"nope"` does not fit the annotation `forall (std.Int) -> std.Int`
+#   --> own.dol:LL:LL
+#    |
+# LL | twice = "nope"
+#    |         ^^^^^^
+twice = nil
+# error: `nil` does not fit the annotation `forall (std.Int) -> std.Int`
+#   --> own.dol:LL:LL
+#    |
+# LL | twice = nil
+#    |         ^^^
+Box = Box
+Box = 1
+# error: `1` does not fit the annotation `std.Type[own.Box]`
+#   --> own.dol:LL:LL
+#    |
+# LL | Box = 1
+#    |       ^
+
+pub def rebind()
+  twice = (do |x @ Str| -> Str x)
+# error: `(std.Str, <Value, >Value) -> std.Str` does not fit the annotation `forall (std.Int) -> std.Int`
+#   --> own.dol:LL:LL
+#    |
+# LL |   twice = (do |x @ Str| -> Str x)
+#    |            ^^^^^^^^^^^^^^^^^^^^^
+
+# An importer may write an exported variable, so the module reads it as what
+# fits its annotation, or as dynamic without one
+pub let loose = 2
+pub let count @ (Int | nil) = 1
+
+pub def read()
+  let a = loose
+  #   ^: flow Unknown
+  let b = count
+  #   ^: flow nil | std.Int
+  [a, b]

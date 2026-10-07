@@ -63,6 +63,8 @@ mod trace;
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
+pub(crate) use eval::{class_object, function_value};
+use problem::MemberUse;
 pub(crate) use problem::Problem;
 pub(crate) use state::Fact;
 use state::{Contexts, CtxId, State};
@@ -207,6 +209,16 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// binding saw, and report
     fn analyze(mut self) -> Results {
         let bottom = self.db.bottom();
+        // What an importer may assign an exported variable is already joined
+        for (_, func) in self.ir.funcs() {
+            for &var in &func.vars {
+                let data = self.ir.var(var);
+                if data.exported {
+                    let ty = data.annotation.unwrap_or(self.db.unknown());
+                    self.joined.insert(var, (ty, Widening::default()));
+                }
+            }
+        }
         for (_, func) in self.ir.funcs() {
             let vars = (func.vars.iter())
                 .map(|&var| Fact {
@@ -698,7 +710,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             }
             Step::Assign { target, value } => {
                 let count = match target {
-                    Target::Var(_) => 0,
+                    Target::Var(_) | Target::Import { .. } => 0,
                     Target::Field { object, .. } => holes(object),
                     Target::Index { object, index, .. } => holes(object) + holes(index),
                 };
@@ -721,6 +733,25 @@ impl<'a, 'u> Flow<'a, 'u> {
                         let parts = [object, index, value];
                         let span = object.span | value.span;
                         self.assign_index(at, state, &mut operands, parts, span);
+                    }
+                    Target::Import {
+                        ref module,
+                        item,
+                        span,
+                    } => {
+                        let expected = self.written_import(module, item);
+                        let ty = self.expect(at, state, &mut operands, value, expected);
+                        match expected {
+                            Some(expected) => self.store(at, ty, expected, value.span),
+                            None if self.observing() && span != Span::INVALID => {
+                                self.problem(Problem::MemberUse {
+                                    span,
+                                    name: self.db.symbol(item).to_owned(),
+                                    misuse: MemberUse::Module,
+                                });
+                            }
+                            None => {}
+                        }
                     }
                 }
             }
@@ -824,7 +855,15 @@ impl<'a, 'u> Flow<'a, 'u> {
             };
         }
         if data.interprocedural {
-            self.join(var, ty);
+            // A value that doesn't fit the annotation is reported where it's
+            // written, and every read elsewhere sees the annotation instead
+            let joined = match data.annotation {
+                Some(annotation) if self.relate(ty, annotation).status == Status::Contradicted => {
+                    annotation
+                }
+                _ => ty,
+            };
+            self.join(var, joined);
         }
         ty
     }

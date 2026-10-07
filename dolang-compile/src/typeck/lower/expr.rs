@@ -272,7 +272,7 @@ impl<'u> Scope<'_, '_, 'u> {
     }
 
     /// A dotted path through a module to an item of it, or to the module itself
-    fn import_path(&self, node: &ast::Expr) -> Option<ExprKind> {
+    pub(super) fn import_path(&self, node: &ast::Expr) -> Option<ExprKind> {
         let mut fields = Vec::new();
         let mut node = node;
         let head = loop {

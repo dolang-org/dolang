@@ -173,8 +173,20 @@ pub(crate) enum Item {
 /// What an assignment writes
 pub(crate) enum Target {
     Var(VarId),
-    Field { object: Expr, member: Member },
-    Index { object: Expr, index: Expr },
+    Field {
+        object: Expr,
+        member: Member,
+    },
+    Index {
+        object: Expr,
+        index: Expr,
+    },
+    /// A module's member, through an import path to the module, spanning the path
+    Import {
+        module: ModuleRef,
+        item: SymbolId,
+        span: Span,
+    },
 }
 
 impl Expr {

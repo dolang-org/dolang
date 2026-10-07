@@ -125,3 +125,21 @@ fn imports_lists_statement_and_prelude_modules() {
     let unit = Config::new().unit(Path::new("unit.dol"), source);
     assert!(unit.imports().is_empty());
 }
+
+#[test]
+fn repl_reassigns_only_prelude_items() {
+    let refused = |source: &str| {
+        let mut config = config(Mode::Repl);
+        (config.prelude().import_module("std"))
+            .import_items("env")
+            .item("count")
+            .commit();
+        let unit = config.unit(Path::new("repl.dol"), source.as_bytes());
+        (unit.diagnostics())
+            .any(|diag| diag.message().to_string() == "imported bindings cannot be reassigned")
+    };
+    // The REPL threads its environment through the prelude's items
+    assert!(!refused("count = 1\n"));
+    assert!(refused("std = 1\n"));
+    assert!(refused("import json\njson = 1\n"));
+}

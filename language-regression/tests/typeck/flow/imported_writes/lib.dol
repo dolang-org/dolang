@@ -1,0 +1,5 @@
+pub let count @ Int = 1
+pub let loose = 2
+
+pub def twice x @ Int -> Int
+  (x * 2)

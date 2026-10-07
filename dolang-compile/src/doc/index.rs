@@ -151,7 +151,9 @@ impl Scope<'_> {
             (ScopeKind::Lexical { vars, .. }, TypeEntry::Var(index)) => {
                 let var = vars.get(index)?.get();
                 match var.origin {
-                    Origin::Source(span) | Origin::SelfParam(span) => Some((span, var.node)),
+                    Origin::Source(span) | Origin::SelfParam(span) | Origin::Import(span) => {
+                        Some((span, var.node))
+                    }
                     // A prelude binding has no source name to compare
                     _ => return var.node,
                 }
