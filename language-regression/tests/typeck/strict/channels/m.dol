@@ -54,3 +54,67 @@ pub def calls()
 pub def calls_strict()
   each do |_x| nil
   nil
+
+# A block passed through a callee's generic channels runs with the caller's
+def run[O] f @ ((>Sink[O]) -> nil) >Sink[O] -> nil
+  f()
+
+def feed[I] f @ ((<Iter[I]) -> nil) <Iter[I] -> nil
+  f()
+
+pub def passes_quiet()
+  run do
+    put "x"
+    # error: this call does not fit `forall (#0.0, <std.Iter[Value], >std.Sink[#0.0]) -> nil`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     put "x"
+    #    |     ^^^^^^^
+    nil
+  nil
+
+pub def passes_declared >Sink[Int]
+  run do
+    put 1
+    put "x"
+    # error: this call does not fit `forall (#0.0, <std.Iter[Value], >std.Sink[#0.0]) -> nil`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     put "x"
+    #    |     ^^^^^^^
+    nil
+  nil
+
+pub def passes_input <Iter[Int]
+  feed do
+    let xs = strand.collect()
+    let _ = xs
+    #       ^~: flow std.Array[std.Int]
+    nil
+  nil
+
+def run_int f @ ((>Sink[Int]) -> nil) >Sink[Int] -> nil
+  f()
+
+pub def passes_fixed >Sink[Int]
+  run_int do
+    put "x"
+    # error: this call does not fit `forall (#0.0, <std.Iter[Value], >std.Sink[#0.0]) -> nil`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     put "x"
+    #    |     ^^^^^^^
+    nil
+  nil
+
+pub def spawns()
+  let s = strand.spawn do
+    put "x"
+    # error: this call does not fit `forall (#0.0, <std.Iter[Value], >std.Sink[#0.0]) -> nil`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     put "x"
+    #    |     ^^^^^^^
+    nil
+  s.join()
+  nil

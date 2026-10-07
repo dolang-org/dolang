@@ -2908,9 +2908,12 @@ fn outputs(results: &[Term], parameters: &[Term]) -> Vec<(Term, Variance)> {
 
 /// Solve, defaulting every unsolved variable whose lower bounds are solved, and,
 /// if `bare`, then any variable without lower bounds to its binder's default, or
-/// without one, to the dynamic type of its kind, until nothing more can be
-/// defaulted. Literals decay as
-/// [`default_where`] decays them.
+/// without one, unless it decides one of `roots`' results (see
+/// [`Solver::deciding`]),
+/// to the meet of its upper bounds (see [`Solver::default_upper`]), until
+/// nothing more can be defaulted. A round that can default no bare
+/// variable these ways defaults them all to the dynamic type of their kind.
+/// Literals decay as [`default_where`] decays them.
 fn default_all(
     solver: &mut Solver<'_>,
     db: &Database,
@@ -2929,10 +2932,30 @@ fn default_all(
         if bare.is_empty() {
             break;
         }
+        // A variable that decides a result isn't given its upper bounds, which
+        // would be the most the result could be, not what it is
+        let results: Vec<Term> = (roots.unwrap_or_default().iter())
+            .filter(|&&(_, variance)| variance == Variance::Covariant)
+            .map(|&(term, _)| term)
+            .collect();
+        let deciding =
+            (solver.deciding(&results)).unwrap_or_else(|_| solver.unresolved().collect());
+        // An upper bound may wait on another bare variable's default, so one
+        // whose bounds don't give a default yet waits a round for it
+        let count = bare.len();
+        let mut deferred = Vec::new();
         for id in bare {
-            let default = (solver.fallback(id))
-                .unwrap_or_else(|| solver.closed(db.unknown_of(solver.variable_kind(id))));
-            solver.constrain(default, Term::Infer(id), Provenance::default());
+            if let Some(default) = solver.fallback(id) {
+                solver.constrain(default, Term::Infer(id), Provenance::default());
+            } else if deciding.contains(&id) || solver.default_upper(id).is_err() {
+                deferred.push(id);
+            }
+        }
+        if deferred.len() == count {
+            for id in deferred {
+                let unknown = solver.closed(db.unknown_of(solver.variable_kind(id)));
+                solver.constrain(unknown, Term::Infer(id), Provenance::default());
+            }
         }
         outcomes = default_where(solver, |_| true, roots);
     }

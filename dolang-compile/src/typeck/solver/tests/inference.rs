@@ -112,6 +112,35 @@ fn new_constraints_after_quiescence_propagate() {
 }
 
 #[test]
+fn bare_variables_default_to_the_meet_of_their_upper_bounds() {
+    let mut db = Database::new();
+    let a = nominal(&mut db, "A", vec![], vec![]);
+    let b = nominal(&mut db, "B", vec![], vec![a]);
+    db.seal();
+    let mut s = Solver::new(&db);
+    let id = |term| match term {
+        Term::Infer(id) => id,
+        _ => unreachable!(),
+    };
+    let met = s.infer();
+    s.constrain(met, s.closed(a), Provenance::default());
+    s.constrain(met, s.closed(b), Provenance::default());
+    let never = s.infer();
+    s.constrain(never, s.closed(db.bottom()), Provenance::default());
+    let lower = s.infer();
+    s.constrain(s.closed(b), lower, Provenance::default());
+    s.constrain(lower, s.closed(a), Provenance::default());
+    let unbounded = s.infer();
+    s.solve();
+    assert_eq!(s.default_upper(id(met)), Ok(b));
+    assert_eq!(s.default_upper(id(never)), Ok(db.bottom()));
+    assert!(s.default_upper(id(lower)).is_err());
+    assert!(s.default_upper(id(unbounded)).is_err());
+    // The defaulted variables' bounds hold; the one with a lower bound waits
+    assert!(s.solve()[..3].iter().all(|r| r.status == Status::Proven));
+}
+
+#[test]
 fn multiple_upper_bounds_are_checked_separately() {
     let mut db = Database::new();
     let a = nominal(&mut db, "A", vec![], vec![]);
