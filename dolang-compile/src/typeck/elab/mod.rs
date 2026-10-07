@@ -313,8 +313,6 @@ pub(crate) enum Slot {
     SelfType,
     /// A strict unit's omitted return type
     Nil,
-    /// A strict unit's omitted `(init)` return type, whose result is discarded
-    Top,
 }
 
 /// The type of a rest parameter, before it is interned

@@ -222,7 +222,6 @@ impl Tables<'_> {
             Slot::Unknown => "Unknown".to_owned(),
             Slot::SelfType => "Self".to_owned(),
             Slot::Nil => "nil".to_owned(),
-            Slot::Top => "Value".to_owned(),
         };
         let mut out = String::from("(");
         for (index, (param, ty)) in func.params.iter().zip(&sig.params).enumerate() {

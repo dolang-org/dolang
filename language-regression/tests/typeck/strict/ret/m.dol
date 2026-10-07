@@ -40,15 +40,10 @@ pub def ends_if_nil c @ Bool
   if c
     ends_nil()
 
-# An assignment's value is the result
+# An assignment's value is `nil`
 pub def ends_assign()
   let x = 1
   x = 2
-# error: `std.Int` does not fit the declared result `nil`
-#   --> m.dol:LL:LL
-#    |
-# LL |   x = 2
-#    |     ^
 
 pub def ends_call()
   ends_nil()

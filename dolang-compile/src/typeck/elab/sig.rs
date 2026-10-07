@@ -9,15 +9,14 @@
 //! an overload, and is checked, once the database is sealed.
 //!
 //! A strict unit must annotate its parameters and fields instead. Its omitted
-//! return types are `nil` (`Value` for `(init)`, whose result is discarded), so
-//! its signatures come from its declarations alone, with nothing dynamic.
+//! return types are `nil`, so its signatures come from its declarations alone,
+//! with nothing dynamic.
 
 use super::{
     Ambient, BadNominee, BinderRef, DeclNode, Designated, Diag, KindOf, MisdeclaredIntrinsic,
     MissingAnnotation, PIPES, ParamTy, Referent, RestSlot, Sig, Slot, Tables, UnitDiag,
     surface::{BinderKind, Decorator, Member, Method, ParamKind, Signature},
 };
-use crate::ast::SpecialMethod;
 use crate::typeck::r#type::{DeclId, DeclKind, Intrinsic, Kind, Scope, UnitId, UnitSpan};
 
 /// Complete every def and method signature, record every field's type, and find
@@ -122,17 +121,13 @@ fn is_strict(tables: &Tables<'_>, decl: DeclId) -> bool {
 fn complete(tables: &Tables<'_>, decl: DeclId, sig: usize) -> Sig {
     let unit = tables.decls[decl.index()].unit;
     let func = function(tables, decl, sig);
-    let (receiver, init) = match &tables.decls[decl.index()].node {
-        DeclNode::Methods(methods) => (
-            method_scope(tables, unit, &methods[sig]) == Scope::Instance,
-            matches!(methods[sig].special, Some(SpecialMethod::Init)),
-        ),
-        _ => (false, false),
+    let receiver = match &tables.decls[decl.index()].node {
+        DeclNode::Methods(methods) => method_scope(tables, unit, &methods[sig]) == Scope::Instance,
+        _ => false,
     };
-    let omitted = match (is_strict(tables, decl), init) {
-        (false, _) => Slot::Unknown,
-        (true, true) => Slot::Top,
-        (true, false) => Slot::Nil,
+    let omitted = match is_strict(tables, decl) {
+        false => Slot::Unknown,
+        true => Slot::Nil,
     };
     let params = params(tables, unit, func, receiver);
     let [input, output] = channels(tables, decl, sig).map(|ambient| match ambient {

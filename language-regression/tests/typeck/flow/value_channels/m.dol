@@ -55,6 +55,25 @@ pub def writer()
 # LL |   let _w @ Callback = do |x| put $x
 #    |                              ^^^^^^
 
+# Nor can one assigned to a field, which takes the field's type
+pub def field_writer h @ Holder
+  h.cb = do |x| put $x
+# error: this call does not fit `forall (#0.0, >std.Sink[#0.0]) -> nil`
+#   --> m.dol:LL:LL
+#    |
+# LL |   h.cb = do |x| put $x
+#    |                 ^^^^^^
+
+pub def field_result h @ Holder
+  h.cb = do |z| z
+# error: expected `(std.Int, <Value, >Value) -> nil`, found `(std.Int, <Value, >Value) -> std.Int`
+#   --> m.dol:LL:LL
+#    |
+# LL |   h.cb = do |z| z
+#    |          ^^^^^^^^
+#    |
+#    = note: `std.Int` does not fit `nil`
+
 # An alias passes channels through its binders
 @let Handler[I, O] = ((Int, <I, >O) -> nil)
 

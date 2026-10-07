@@ -66,8 +66,7 @@ takes its types from where it is passed. Omissions that remain have conservative
 types rather than unknown ones:
 
 - An omitted return type is `nil`, so a function whose last statement has a
-  value it doesn't mean to return ends with `nil`. An `(init)` method's is
-  `Value`, since its result is discarded.
+  value it doesn't mean to return ends with `nil`.
 - An omitted `<` or `>` is `Value` in the function's body, so it neither reads
     its input nor writes its output. A function that reads its input, or calls
     one that does, annotates `<`, and one that writes annotates `>`. So does a

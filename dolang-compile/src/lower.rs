@@ -1311,12 +1311,12 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
     fn lower_pattern(&mut self, bind: &'a Pattern, want_result: bool) -> Result<()> {
         let span = bind.span();
-        if want_result {
-            self.block.insts.push(Inst(InstInfo::Dup, span));
-        }
         let plan = self.pattern_plan(self.graph.scope(self.block.scope), bind)?;
         self.lower_bind_plan(plan, span);
         self.lower_pattern_defaults(bind, span)?;
+        if want_result {
+            self.lower_load_nil(span);
+        }
 
         Ok(())
     }
@@ -1334,9 +1334,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 self.lower_prim_stmt(rhs, true)?;
                 let res = id.res.as_ref().expect("unresolved assignment lhs");
                 let var = self.resolve_var(res.index, res.depth);
-                if want_result {
-                    self.block.insts.push(Inst(InstInfo::Dup, span));
-                }
                 match var {
                     Var::Local(index) => self
                         .block
@@ -1347,20 +1344,14 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                         .insts
                         .push(Inst(InstInfo::StoreUpvar(index, depth), *equal_span)),
                 }
-                Ok(())
             }
             LValue::Field { object, field, .. } => {
                 self.lower_expr(object)?;
                 self.lower_prim_stmt(rhs, true)?;
-                if want_result {
-                    self.block.insts.push(Inst(InstInfo::Dup, span));
-                    self.block.insts.push(Inst(InstInfo::Swap(1, 2), span));
-                }
                 self.block.insts.push(Inst(
                     InstInfo::Set(self.symtab.id(&self.bintab.id_str(self.file.str(*field)))),
                     *equal_span,
                 ));
-                Ok(())
             }
             LValue::PrivateField {
                 object,
@@ -1369,27 +1360,20 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             } => {
                 self.lower_expr(object)?;
                 self.lower_prim_stmt(rhs, true)?;
-                if want_result {
-                    self.block.insts.push(Inst(InstInfo::Dup, span));
-                    self.block.insts.push(Inst(InstInfo::Swap(1, 2), span));
-                }
                 self.block.insts.push(Inst(InstInfo::Set(*id), *equal_span));
-                Ok(())
             }
             LValue::PrivateField { res: None, .. } => unreachable!(),
             LValue::Index { exprs, .. } => {
                 self.lower_expr(&exprs[0])?;
                 self.lower_expr(&exprs[1])?;
                 self.lower_prim_stmt(rhs, true)?;
-                if want_result {
-                    self.block.insts.push(Inst(InstInfo::Dup, span));
-                    self.block.insts.push(Inst(InstInfo::Swap(1, 2), span));
-                    self.block.insts.push(Inst(InstInfo::Swap(2, 3), span));
-                }
                 self.block.insts.push(Inst(InstInfo::Assign, *equal_span));
-                Ok(())
             }
         }
+        if want_result {
+            self.lower_load_nil(span);
+        }
+        Ok(())
     }
 
     /// Lower the test of a conditional branch and set the current block's terminator.
