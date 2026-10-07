@@ -690,9 +690,9 @@ impl Parser<'_> {
                     break Ok((items, implicits, dashed));
                 }
                 // In shell mode, `r|` and `t|` start here strings, but in a
-                // pattern they are a name followed by `|`
+                // pattern or lambda parameter list they are a name followed by `|`
                 Some(token @ token!(TokenInfo::RBar | TokenInfo::TBar))
-                    if matches!(mode, PatMode::HorizBind | PatMode::Arm) =>
+                    if matches!(mode, PatMode::HorizBind | PatMode::Arm | PatMode::Lambda) =>
                 {
                     self.advance();
                     let name = token.span.left_char();

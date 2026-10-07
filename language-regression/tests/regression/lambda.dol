@@ -24,3 +24,14 @@ assert_eq (endpoint "localhost" port: 443) ["localhost", 443]
 let renamed = (do |value: received = 1| received)
 assert_eq $renamed() 1
 assert_eq (renamed value: 2) 2
+
+# `r|` is a parameter followed by the closing bar, not a raw here string.
+let raw_named = do |r|
+  r
+assert_eq (raw_named 7) 7
+
+let last_raw_named = do |a r| (a + r)
+assert_eq (last_raw_named 2 3) 5
+
+let expr_raw_named = (do |r| r)
+assert_eq (expr_raw_named 9) 9
