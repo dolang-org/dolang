@@ -93,8 +93,11 @@ fn a_generic_call_is_instantiated() {
 
     let mut s = Solver::new(&db);
     let r = s.infer();
-    let expected = s.call(&[CallArgument::Positional(s.closed(int))], r, None, None);
-    s.constrain(s.closed(identity), expected, Provenance::default());
+    let (args, identity) = (
+        [CallArgument::Positional(s.closed(int))],
+        s.closed(identity),
+    );
+    constrain_call(&mut s, identity, &args, r, None);
     s.solve();
     let outcomes = default_all(&mut s);
     assert!(
@@ -178,8 +181,8 @@ fn a_generic_class_object_infers_its_arguments() {
 
     let mut s = Solver::new(&db);
     let r = s.infer();
-    let expected = s.call(&[CallArgument::Positional(s.closed(int))], r, None, None);
-    s.constrain(s.closed(object), expected, Provenance::default());
+    let (args, object) = ([CallArgument::Positional(s.closed(int))], s.closed(object));
+    constrain_call(&mut s, object, &args, r, None);
     s.solve();
     let outcomes = default_all(&mut s);
     assert!(
@@ -215,8 +218,8 @@ fn trials_choose_among_overloaded_calls() {
     // Both fit a function of variables
     let mut s = Solver::new(&db);
     let (x, r) = (s.infer(), s.infer());
-    let expected = s.call(&[CallArgument::Positional(x)], r, None, None);
-    s.constrain(s.closed(pick), expected, Provenance::default());
+    let pick = s.closed(pick);
+    constrain_call(&mut s, pick, &[CallArgument::Positional(x)], r, None);
     let outcome = s.solve().remove(0);
     assert_eq!(outcome.status, Status::Unresolved);
     assert!(has(&outcome, Residual::Ambiguous.into()));
@@ -251,8 +254,8 @@ fn a_chosen_signature_is_held_to_its_parameters() {
     // The signature is chosen before its parameter is known
     let mut s = Solver::new(&db);
     let (x, r) = (s.infer(), s.infer());
-    let expected = s.call(&[CallArgument::Positional(x)], r, None, None);
-    s.constrain(s.closed(adder), expected, Provenance::default());
+    let adder = s.closed(adder);
+    constrain_call(&mut s, adder, &[CallArgument::Positional(x)], r, None);
     s.solve();
     s.constrain(s.closed(str), x, Provenance::default());
     let outcome = s.solve().remove(0);

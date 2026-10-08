@@ -1,0 +1,23 @@
+# A parameter list binds by count, so an item reaches a rest only after every
+# optional parameter before it is filled.
+
+pub class A
+  pub def f _self x @ Int = nil *options @ Str
+    ...
+
+# Inherited unchanged
+pub class B: A
+
+pub class C: A
+  pub def f _self x @ Int = nil *options @ Str
+    ...
+
+# A call without arguments no longer fits
+pub class D: A
+  pub def f _self x @ Int *options @ Str
+    # error: `f` does not match `A.f`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def f _self x @ Int *options @ Str
+    #    |           ^
+    ...

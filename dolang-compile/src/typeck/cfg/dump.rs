@@ -11,7 +11,7 @@ use crate::{
     source::Span,
     typeck::{
         elab::ModuleRef,
-        r#type::{Database, Literal},
+        r#type::{Database, Literal, SymbolId},
     },
 };
 

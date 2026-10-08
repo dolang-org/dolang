@@ -23,8 +23,8 @@ fn solve_call<'db>(
         .iter()
         .map(|&ty| CallArgument::Positional(s.closed(ty)))
         .collect();
-    let expected = s.call(&args, result, None, None);
-    s.constrain(s.closed(callee), expected, Provenance::default());
+    let callee = s.closed(callee);
+    constrain_call(&mut s, callee, &args, result, None);
     let outcome = s.solve().remove(0);
     (s, result, outcome)
 }
@@ -46,13 +46,8 @@ fn generic_callees_are_instantiated_once_per_use() {
     let mut results = Vec::new();
     for arg in [int, str] {
         let result = s.infer();
-        let expected = s.call(
-            &[CallArgument::Positional(s.closed(arg))],
-            result,
-            None,
-            None,
-        );
-        s.constrain(s.closed(id), expected, Provenance::default());
+        let (args, id) = ([CallArgument::Positional(s.closed(arg))], s.closed(id));
+        constrain_call(&mut s, id, &args, result, None);
         results.push(result);
     }
     assert!(s.solve().iter().all(|o| o.status == Status::Unresolved));
@@ -177,8 +172,8 @@ fn ambient_binders_are_bounded_by_the_callers_channels() {
     db.seal();
     let mut s = Solver::new(&db);
     let result = s.infer();
-    let expected = s.call(&[], result, Some(s.closed(iter_int)), None);
-    s.constrain(s.closed(f), expected, Provenance::default());
+    let (f, input) = (s.closed(f), s.closed(iter_int));
+    constrain_call(&mut s, f, &[], result, Some(input));
     assert_eq!(s.solve()[0].status, Status::Unresolved);
     // The channel's variable defaults to the caller's channel, and the result to it
     assert!(
@@ -411,16 +406,12 @@ fn pack_binders_take_the_remaining_arguments() {
     let mut s = Solver::new(&db);
     let [int_term, str_term] = [int, str].map(|ty| s.closed(ty));
     let a_name = db.intern_symbol("a");
-    let expected = s.call(
-        &[
-            CallArgument::Keyword(b, str_term),
-            CallArgument::Keyword(a_name, int_term),
-        ],
-        s.closed(db.top()),
-        None,
-        None,
-    );
-    s.constrain(s.closed(options), expected, Provenance::default());
+    let args = [
+        CallArgument::Keyword(b, str_term),
+        CallArgument::Keyword(a_name, int_term),
+    ];
+    let (options, top) = (s.closed(options), s.closed(db.top()));
+    constrain_call(&mut s, options, &args, top, None);
     assert_eq!(s.solve()[0].status, Status::Unresolved);
     assert_eq!(lower_schema(&s), vec![Ok(named_rest)]);
 }

@@ -8,9 +8,11 @@
 //! does, and a domain takes the rest. Positional and keyed items are
 //! independent.
 //!
-//! A parameter list binds by count. The schema a value holds may fill its
-//! multiplicities any way that fits, so where counting is refuted, a filling
-//! still fits when its types prove some path ([`Relation::language`]).
+//! A parameter list binds by count, so on the actual side it fills only as
+//! counting does. Other schemas may fill their multiplicities any way that
+//! fits, and the schema a value holds may also be taken by any filling of the
+//! expected side: where counting is refuted, a filling still fits when its
+//! types prove some path ([`Fill`]).
 //!
 //! Both sides are flattened into lanes of atoms, splicing inclusions. Schemas
 //! that can't be exposed stay opaque: the same rigid on both sides pairs up, an
@@ -1157,7 +1159,8 @@ impl Solver<'_> {
 
     /// Align positional atoms by count, trying every way of filling the actual
     /// atoms' multiplicities, and derive each atom's type below every expected
-    /// atom its items can land on.
+    /// atom its items can land on. An actual parameter list fills only as it
+    /// binds by count.
     fn align(&self, xs: &[Atom], ys: &[Atom], obligation: ObligationId) -> Result<(), Issue> {
         let required = ys
             .iter()
@@ -1187,7 +1190,21 @@ impl Solver<'_> {
         if combinations.is_none() {
             return Err(Residual::Alignment.into());
         }
-        let language = self.obligations[obligation.0].relation.language;
+        // Advance to the next combination, if there is one
+        let advance = |digits: &mut [usize]| {
+            for (digit, &choice) in digits.iter_mut().zip(&choices) {
+                *digit += 1;
+                if *digit < choice {
+                    return true;
+                }
+                *digit = 0;
+            }
+            false
+        };
+        let fill = match self.obligations[obligation.0].relation {
+            Relation::Subtype { fill, .. } => fill,
+            Relation::Call(_) => Fill::Arguments,
+        };
         let mut decided = HashMap::new();
         let mut pairs = BTreeSet::new();
         let mut digits = vec![0; xs.len()];
@@ -1201,6 +1218,22 @@ impl Solver<'_> {
                     _ => digit,
                 })
                 .collect();
+            // A parameter list fills an optional item before any later optional
+            // or repeated one
+            let unbound = fill == Fill::Parameters
+                && xs.iter().zip(&counts).enumerate().any(|(i, (x, &count))| {
+                    x.multiplicity == Multiplicity::Optional
+                        && count == 0
+                        && (xs[i + 1..].iter().zip(&counts[i + 1..])).any(|(later, &count)| {
+                            later.multiplicity != Multiplicity::Required && count > 0
+                        })
+                });
+            if unbound {
+                if advance(&mut digits) {
+                    continue;
+                }
+                break;
+            }
             let counted = self.count(xs, &counts, ys, required, optional, repeated);
             // The items a value holds fit when any filling of the expected side
             // fits them, which counting may miss: it suffices that its types
@@ -1216,26 +1249,18 @@ impl Solver<'_> {
                     refuted
                 }
             };
-            if !(language && refuted && self.filled(&mut decided, xs, &counts, ys)?) {
+            let contents = fill == Fill::Contents;
+            if !(contents && refuted && self.filled(&mut decided, xs, &counts, ys)?) {
                 pairs.extend(counted?);
             }
-            // Advance to the next combination
-            let mut index = 0;
-            loop {
-                if index == digits.len() {
-                    for (i, j) in pairs {
-                        self.derive(obligation, xs[i].ty, ys[j].ty, Step::Item(xs[i].item));
-                    }
-                    return Ok(());
-                }
-                digits[index] += 1;
-                if digits[index] < choices[index] {
-                    break;
-                }
-                digits[index] = 0;
-                index += 1;
+            if !advance(&mut digits) {
+                break;
             }
         }
+        for (i, j) in pairs {
+            self.derive(obligation, xs[i].ty, ys[j].ty, Step::Item(xs[i].item));
+        }
+        Ok(())
     }
 
     /// The pairs of actual and expected atoms that one filling of the actual

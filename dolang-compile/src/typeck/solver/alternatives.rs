@@ -1,7 +1,7 @@
 //! Judgments that need one of their alternatives to hold: a union on the right
 //! whose terms aren't all closed, where a member must be chosen to infer through,
-//! or a callable or overloaded function on the left with several signatures, one
-//! of which must fit.
+//! or a callable or overloaded function on the left or called, with several
+//! signatures, one of which must fit.
 //!
 //! Alternatives are judged by trials, each on a fork of the solver: a trial adds
 //! the alternative's own judgment and solves, so nothing it finds reaches the
@@ -53,11 +53,10 @@ pub(crate) struct Rejection<'db> {
 /// A judgment that needs one of its alternatives to hold
 #[derive(Clone)]
 pub(super) struct Alternatives<'db> {
-    /// Each alternative's own judgment, `actual <: expected`
-    judgments: Vec<(Term, Term)>,
-    /// What trials relate the alternatives to in place of their judgments'
-    /// expected sides, if anything
-    selection: Option<Term>,
+    /// Each alternative's own judgment
+    judgments: Vec<Relation>,
+    /// What trials judge in place of each alternative's judgment, if anything
+    selections: Option<Vec<Relation>>,
     /// What the judgment is when no alternative is possible
     none: Issue,
     /// The generation its trials last ran at
@@ -93,7 +92,9 @@ impl<'db> Solver<'db> {
         step: fn(usize) -> Step,
         none: Issue,
     ) -> Result<(), Issue> {
-        let judgments = terms.into_iter().map(|term| (actual, term)).collect();
+        let judgments = (terms.into_iter())
+            .map(|term| self.alternative(obligation, actual, term))
+            .collect();
         self.choose_judgment(obligation, judgments, None, step, none)
     }
 
@@ -107,7 +108,9 @@ impl<'db> Solver<'db> {
         step: fn(usize) -> Step,
         none: Issue,
     ) -> Result<(), Issue> {
-        let judgments = terms.into_iter().map(|term| (term, expected)).collect();
+        let judgments = (terms.into_iter())
+            .map(|term| self.alternative(obligation, term, expected))
+            .collect();
         self.choose_judgment(obligation, judgments, None, step, none)
     }
 
@@ -122,8 +125,44 @@ impl<'db> Solver<'db> {
         step: fn(usize) -> Step,
         none: Issue,
     ) -> Result<(), Issue> {
-        let judgments = terms.into_iter().map(|term| (term, expected)).collect();
-        self.choose_judgment(obligation, judgments, Some(selection), step, none)
+        let (judgments, selections) = (terms.into_iter())
+            .map(|term| {
+                (
+                    self.alternative(obligation, term, expected),
+                    self.alternative(obligation, term, selection),
+                )
+            })
+            .unzip();
+        self.choose_judgment(obligation, judgments, Some(selections), step, none)
+    }
+
+    /// Relate the call trials chose among `calls` in place of `obligation`'s,
+    /// labeled by `step`, where trials judge `selections` instead, if any
+    pub(super) fn choose_call(
+        &self,
+        obligation: ObligationId,
+        calls: Vec<Call>,
+        selections: Option<Vec<Call>>,
+        step: fn(usize) -> Step,
+        none: Issue,
+    ) -> Result<(), Issue> {
+        let judgments = calls.into_iter().map(Relation::Call).collect();
+        let selections = selections.map(|calls| calls.into_iter().map(Relation::Call).collect());
+        self.choose_judgment(obligation, judgments, selections, step, none)
+    }
+
+    /// An alternative's judgment, `actual <: expected`, reading schemas as its
+    /// parent's does
+    fn alternative(&self, obligation: ObligationId, actual: Term, expected: Term) -> Relation {
+        let fill = match self.obligations[obligation.0].relation {
+            Relation::Subtype { fill, .. } => fill,
+            Relation::Call(_) => Fill::Arguments,
+        };
+        Relation::Subtype {
+            actual,
+            expected,
+            fill,
+        }
     }
 
     /// The trials that rejected each alternative of a judgment none of whose
@@ -145,8 +184,8 @@ impl<'db> Solver<'db> {
     fn choose_judgment(
         &self,
         obligation: ObligationId,
-        judgments: Vec<(Term, Term)>,
-        selection: Option<Term>,
+        judgments: Vec<Relation>,
+        selections: Option<Vec<Relation>>,
         step: fn(usize) -> Step,
         none: Issue,
     ) -> Result<(), Issue> {
@@ -154,7 +193,7 @@ impl<'db> Solver<'db> {
             let mut records = self.alternatives.borrow_mut();
             let record = records.entry(obligation).or_insert_with(|| Alternatives {
                 judgments,
-                selection,
+                selections,
                 none,
                 tried: None,
                 verdict: Verdict::Untried,
@@ -168,8 +207,8 @@ impl<'db> Solver<'db> {
                 Verdict::Failed(issue) => Err(issue),
             }
         };
-        let (index, (actual, expected)) = verdict?;
-        self.derive(obligation, actual, expected, step(index));
+        let (index, judgment) = verdict?;
+        self.derive_relation(obligation, judgment, step(index));
         Ok(())
     }
 
@@ -273,22 +312,39 @@ impl<'db> Solver<'db> {
         &self,
         id: ObligationId,
     ) -> Result<(Verdict, Vec<usize>, Vec<Rejection<'db>>), Residual> {
-        let (judgments, selection, none) = {
+        let (judgments, selections, none) = {
             let records = self.alternatives.borrow();
             let record = &records[&id];
-            (record.judgments.clone(), record.selection, record.none)
+            (
+                record.judgments.clone(),
+                record.selections.clone(),
+                record.none,
+            )
         };
-        let language = self.obligations[id.0].relation.language;
         let mut possible = Vec::new();
         let mut rejections = Vec::new();
-        for (index, &(actual, expected)) in judgments.iter().enumerate() {
-            let resolved = self.resolve(actual)?;
-            let actual = self.blinded.get(&resolved).copied().unwrap_or(actual);
+        for (index, &judgment) in judgments.iter().enumerate() {
             // Only the arguments choose an overload, under the least choice of
             // its own binders, as a call of it alone is solved
-            let owned = selection.is_some();
-            let expected = selection.unwrap_or(expected);
-            let (status, free, fork, outcome) = self.trial(actual, expected, language, owned)?;
+            let owned = selections.is_some();
+            let relation =
+                match (selections.as_ref()).map_or(judgment, |selections| selections[index]) {
+                    Relation::Subtype {
+                        actual,
+                        expected,
+                        fill,
+                    } => {
+                        let resolved = self.resolve(actual)?;
+                        let actual = self.blinded.get(&resolved).copied().unwrap_or(actual);
+                        Relation::Subtype {
+                            actual,
+                            expected,
+                            fill,
+                        }
+                    }
+                    call => call,
+                };
+            let (status, free, fork, outcome) = self.trial(relation, owned)?;
             match status {
                 Status::Contradicted => rejections.push(Rejection {
                     index,
@@ -306,25 +362,18 @@ impl<'db> Solver<'db> {
         })
     }
 
-    /// Solve `actual <: expected` on a fork of this solver, whose work is charged
-    /// to this one. Returns the judgment's status, whether the fork's bounds and
+    /// Solve `relation` on a fork of this solver, whose work is charged to this
+    /// one. Returns the judgment's status, whether the fork's bounds and
     /// assignments stayed as they were, the fork, and the judgment's outcome
     /// there. If `owned`, the fork settles the variables it creates. A fork that
     /// exhausts the budget exhausts this solver too, since they share it.
     fn trial(
         &self,
-        actual: Term,
-        expected: Term,
-        language: bool,
+        relation: Relation,
         owned: bool,
     ) -> Result<(Status, bool, Solver<'db>, Outcome), Residual> {
         self.spend()?;
-        trace!(
-            self,
-            "trial {} <: {}",
-            self.render(actual),
-            self.render(expected)
-        );
+        trace!(self, "trial {}", self.render_relation(relation));
         let mut fork = self.clone();
         fork.trial_depth += 1;
         fork.trials_from = fork.obligations.len();
@@ -336,11 +385,7 @@ impl<'db> Solver<'db> {
             fork.indent += 1;
         }
         let generation = fork.generation.get();
-        let obligation = fork.enqueue(Relation {
-            actual,
-            expected,
-            language,
-        });
+        let obligation = fork.enqueue(relation);
         let constraint = ConstraintId(fork.roots.len());
         fork.roots.push(Root {
             obligation,

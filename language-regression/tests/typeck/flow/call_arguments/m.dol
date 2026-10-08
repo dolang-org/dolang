@@ -1,0 +1,27 @@
+# Spread arguments fill any way that fits, unlike a parameter list: a
+# `(?Int, *Str)` may hold a lone `Str`, which lands on a parameter for an `Int`
+# whether or not it is optional.
+
+def required x @ Int *rest @ Str
+  ...
+
+def optional x @ Int = nil *rest @ Str
+  ...
+
+def loose x @ (Int | Str) = nil *rest @ Str
+  ...
+
+pub def spread items @ (?Int, *Str)
+  required ...items
+  # error: this call is missing an argument
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   required ...items
+  #    |   ^^^^^^^^^^^^^^^^^
+  optional ...items
+  # error: expected `std.Int`, found `std.Str`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   optional ...items
+  #    |               ^^^^^
+  loose ...items

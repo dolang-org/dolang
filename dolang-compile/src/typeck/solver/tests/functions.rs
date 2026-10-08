@@ -3,8 +3,8 @@ use super::*;
 /// Check a call of `callee` with `args`, expecting a result below `result`
 fn call(db: &Database, callee: TypeId, args: &[CallArgument], result: TypeId) -> Outcome {
     let mut s = Solver::new(db);
-    let expected = s.call(args, s.closed(result), None, None);
-    s.constrain(s.closed(callee), expected, Provenance::default());
+    let (callee, result) = (s.closed(callee), s.closed(result));
+    constrain_call(&mut s, callee, args, result, None);
     s.solve().remove(0)
 }
 
@@ -284,13 +284,9 @@ fn a_call_result_variable_is_bounded_by_the_callee_result() {
     db.seal();
     let mut s = Solver::new(&db);
     let result = s.infer();
-    let expected = s.call(
-        &[CallArgument::Positional(s.closed(int))],
-        result,
-        None,
-        None,
-    );
-    s.constrain(s.closed(f), expected, Provenance::default());
+    let args = [CallArgument::Positional(s.closed(int))];
+    let f = s.closed(f);
+    constrain_call(&mut s, f, &args, result, None);
     assert_eq!(s.solve()[0].status, Status::Unresolved);
     let lower: Vec<_> = s.bounds(variable_id(result)).lower().collect();
     assert_eq!(lower, vec![s.closed(str)]);
@@ -341,6 +337,47 @@ fn parameter_lists_are_related_contravariantly() {
         &check(&db, two, any),
         Contradiction::Missing(0)
     ));
+}
+
+#[test]
+fn parameter_lists_fill_by_count() {
+    use Multiplicity::{Optional as Opt, Repeated as Rep, Required as Req};
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let f = |db: &Database, first| {
+        let params = items(db, vec![positional(first, int), positional(Rep, str)]);
+        db.intern(Type::Function(Function {
+            params,
+            result: int,
+            input: None,
+            output: None,
+        }))
+    };
+    let optional = f(&db, Opt);
+    let required = f(&db, Req);
+    let spread = items(&db, vec![positional(Opt, int), positional(Rep, str)]);
+    db.seal();
+    // A `Str` lands in the rest only once the optional `Int` is filled
+    assert_eq!(check(&db, optional, optional).status, Status::Proven);
+    assert_eq!(check(&db, optional, required).status, Status::Proven);
+    assert!(contradiction(
+        &check(&db, required, optional),
+        Contradiction::Missing(0)
+    ));
+
+    // Arguments fill freely, so a lone `Str` may land on the `Int`
+    let mut s = Solver::new(&db);
+    let (spread, callee, result) = (s.closed(spread), s.closed(optional), s.infer());
+    constrain_call(
+        &mut s,
+        callee,
+        &[CallArgument::Spread(spread)],
+        result,
+        None,
+    );
+    let outcome = s.solve().remove(0);
+    assert_eq!(outcome.status, Status::Contradicted, "{outcome:?}");
 }
 
 #[test]
