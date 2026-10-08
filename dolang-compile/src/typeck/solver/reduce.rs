@@ -570,6 +570,15 @@ impl Solver<'_> {
                 };
                 self.schemas(a, xs, b, ys, Term::View(b), obligation)
             }
+            // A literal is a function only if its class is
+            (Type::Literal(literal), Type::Function(_)) => {
+                let intrinsic = literal.intrinsic();
+                let backing =
+                    (self.db.intrinsic(intrinsic)).ok_or(Residual::MissingIntrinsic(intrinsic))?;
+                let step = Step::IntrinsicBacking(intrinsic);
+                self.derive(obligation, self.closed(backing), expected, step);
+                Ok(())
+            }
             // A function is a literal only if its class is
             (Type::Function(_) | Type::Quantified { .. }, Type::Literal(_)) => {
                 let backing = (self.db.intrinsic(Intrinsic::Func))

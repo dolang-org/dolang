@@ -1,0 +1,80 @@
+import import_fixture nested.child
+import import_fixture: fixture
+import import_fixture:
+  - add
+  value: renamed
+
+add = 1
+# error: imported bindings cannot be reassigned
+#   --> import_assign.dol:LL:LL
+#    |
+# LL |   - add
+#    |     --- imported here
+# ...
+# LL | add = 1
+#    | ^^^
+renamed = 2
+# error: imported bindings cannot be reassigned
+#   --> import_assign.dol:LL:LL
+#    |
+# LL |   value: renamed
+#    |          ------- imported here
+# ...
+# LL | renamed = 2
+#    | ^^^^^^^
+import_fixture = 3
+# error: imported bindings cannot be reassigned
+#   --> import_assign.dol:LL:LL
+#    |
+# LL | import import_fixture nested.child
+#    |        -------------- imported here
+# ...
+# LL | import_fixture = 3
+#    | ^^^^^^^^^^^^^^
+fixture = 4
+# error: imported bindings cannot be reassigned
+#   --> import_assign.dol:LL:LL
+#    |
+# LL | import import_fixture: fixture
+#    |                        ------- imported here
+# ...
+# LL | fixture = 4
+#    | ^^^^^^^
+nested = 5
+# error: imported bindings cannot be reassigned
+#   --> import_assign.dol:LL:LL
+#    |
+# LL | import import_fixture nested.child
+#    |                       ------ imported here
+# ...
+# LL | nested = 5
+#    | ^^^^^^
+echo = 6
+# error: imported bindings cannot be reassigned
+#   --> import_assign.dol:LL:LL
+#    |
+# LL | echo = 6
+#    | ^^^^
+std = 7
+# error: imported bindings cannot be reassigned
+#   --> import_assign.dol:LL:LL
+#    |
+# LL | std = 7
+#    | ^^^
+
+def inner()
+  # warning: unused variable
+  #   --> import_assign.dol:LL:LL
+  #    |
+  # LL | def inner()
+  #    |     ^^^^^
+  import import_fixture:
+    - add
+  add = 8
+# error: imported bindings cannot be reassigned
+#   --> import_assign.dol:LL:LL
+#    |
+# LL |     - add
+#    |       --- imported here
+# LL |   add = 8
+#    |   ^^^

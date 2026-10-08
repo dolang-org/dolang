@@ -1,0 +1,47 @@
+# A value isn't a function unless its class reaches `Func` and one of its
+# `(call)`'s signatures fits. What a subclass may do matters only to narrowing.
+
+pub class Adder: Func
+  pub def (call) _self n @ Int -> Str
+    ...
+
+pub class Plain
+  pub def (call) _self n @ Int -> Str
+    # warning: `Plain` has a `(call)` but not `Func` as a supertype, so it isn't passed as a function
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def (call) _self n @ Int -> Str
+    #    |            ^^^^
+    ...
+
+def apply f @ (Int -> Str) -> Str
+  f 1
+
+def map_each[T, U] xs @ Array[T] f @ (T -> U) -> Array[U]
+  ...
+
+pub def refuted plain @ Plain a @ Adder
+  apply $plain
+  # error: expected `(std.Int, <m.refuted.#0, >m.refuted.#1) -> std.Str`, found `m.Plain`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   apply $plain
+  #    |          ^^^^^
+  map_each ["s"] $a
+  # error: expected `(std.Str, <m.refuted.#0, >m.refuted.#1) -> Unknown`, found `m.Adder`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   map_each ["s"] $a
+  #    |                   ^
+  apply "s"
+  # error: expected `(std.Int, <m.refuted.#0, >m.refuted.#1) -> std.Str`, found `"s"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   apply "s"
+  #    |         ^^^
+  apply nil
+# error: expected `(std.Int, <m.refuted.#0, >m.refuted.#1) -> std.Str`, found `nil`
+#   --> m.dol:LL:LL
+#    |
+# LL |   apply nil
+#    |         ^^^

@@ -1,8 +1,7 @@
 # A value that isn't a function is passed as one through its signatures: an
 # instance through its `(call)` when its class reaches `Func`, and a class object
 # through its class-level `(call)` or else `(init)`. Overloads are chosen by
-# what the function type admits. Nothing is refuted, since a subclass may reach
-# `Func` or widen its `(call)`.
+# what the function type admits.
 
 pub class Adder: Func
   pub def (call) _self n @ Int -> Str
@@ -10,15 +9,6 @@ pub class Adder: Func
 
 pub class Ident: Func
   pub def (call)[T] _self x @ T -> T
-    ...
-
-pub class Plain
-  pub def (call) _self n @ Int -> Str
-    # warning: `Plain` has a `(call)` but not `Func` as a supertype, so it isn't passed as a function
-    #   --> m.dol:LL:LL
-    #    |
-    # LL |   pub def (call) _self n @ Int -> Str
-    #    |            ^^^^
     ...
 
 pub class Picker: Func
@@ -65,7 +55,3 @@ pub def objects()
   #   ^: flow std.Array[m.Box[std.Int]]
   let _ = map_each [1] $Factory
   #   ^: flow std.Array[std.Str]
-
-pub def unrefuted plain @ Plain a @ Adder
-  apply $plain
-  map_each ["s"] $a

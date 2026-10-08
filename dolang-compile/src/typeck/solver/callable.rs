@@ -10,17 +10,12 @@
 //! reaches `Func`, which marks it as passable as a function. It's below the type
 //! when one of its own `(call)`'s signatures is, chosen by trials when it has several (see
 //! [`Solver::choose_left`]). A class that doesn't reach `Func`, or none of whose
-//! signatures fits, refutes nothing: a subclass may reach `Func`, and may widen
-//! its `(call)`'s parameters and narrow its result. A judgment through a chosen
-//! signature is likewise never contradicted (see [`Step::Callable`]). Refuting
-//! one waits on final classes.
+//! signatures fits, isn't below it: some of its values are of the class itself.
+//! That a subclass may reach `Func`, or widen its `(call)`'s parameters and
+//! narrow its result, matters only to narrowing (see [`narrow`]).
 
 use super::*;
 use crate::typeck::r#type::{MemberKey, Scope};
-
-/// What relating a callable is when none of its signatures fits
-pub(super) const UNFIT: Residual =
-    Residual::Unsupported("a callable none of whose signatures fits");
 
 /// A method's signatures, each with its receiver parameter
 #[derive(Clone, Debug, Default)]
@@ -249,7 +244,7 @@ impl Solver<'_> {
             signatures,
             expected,
             Step::Callable,
-            UNFIT.into(),
+            Issue::Contradiction(Contradiction::NoOverload),
         )
     }
 
@@ -307,7 +302,7 @@ impl Solver<'_> {
             .ancestor(nominal.clone(), func, &mut HashSet::new(), 0)?
             .is_none()
         {
-            return Err(Residual::Unsupported("a class that doesn't reach `Func`").into());
+            return Err(Issue::Contradiction(Contradiction::UnrelatedNominals));
         }
         match self.instance_member(nominal, key)? {
             Lookup::Found(found) => self.bound(&found.kind),

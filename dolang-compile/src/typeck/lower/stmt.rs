@@ -23,7 +23,8 @@ use crate::{
             VarId,
         },
         elab::Referent,
-        r#type::{DeclId, DeclKind, Literal, UnitSpan},
+        flow::{class_object, function_value},
+        r#type::{DeclId, DeclKind, Literal, TypeId, UnitSpan},
     },
 };
 
@@ -287,9 +288,17 @@ impl<'u> Scope<'_, '_, 'u> {
         });
         let target = match &node.lhs {
             LValue::Ident(_) => unreachable!("assigned above"),
-            LValue::Field { object, field, .. } => Target::Field {
-                object: self.expr(object),
-                member: self.member_key(*field, false, false),
+            LValue::Field { object, field, .. } => match self.import_path(object) {
+                // A module's member is the module's export
+                Some(ExprKind::Import { module, item: None }) => Target::Import {
+                    module,
+                    item: self.lower.symbol(self.text(*field)),
+                    span: object.span() | *field,
+                },
+                _ => Target::Field {
+                    object: self.expr(object),
+                    member: self.member_key(*field, false, false),
+                },
             },
             LValue::PrivateField { object, field, .. } => Target::Field {
                 object: self.expr(object),
@@ -1253,16 +1262,40 @@ impl<'u> Scope<'_, '_, 'u> {
         let id = self.function_value(decl, &def.func, false, self.ctx.class);
         let value = expr(ExprKind::Lambda(id), def.ident.span);
         let value = self.decorate(&def.decorators, value);
-        self.bind_name(&def.ident, value, dest);
+        let declared = (def.decorators.is_empty())
+            .then(|| {
+                self.declared(decl, || {
+                    function_value(self.lower.db, self.lower.tables, decl)
+                })
+            })
+            .flatten();
+        self.bind_name(&def.ident, value, declared, dest);
     }
 
-    fn bind_name(&mut self, ident: &Ident, value: Expr, dest: Option<VarId>) {
+    /// The type a def's or class's variable is declared with: its value's, unless
+    /// it's lifted over an enclosing declaration's binders, which its value would
+    /// need applied. Decorators replace the value, so their caller leaves it out.
+    fn declared(&self, decl: DeclId, value: impl FnOnce() -> TypeId) -> Option<TypeId> {
+        let lifted = self.lower.tables.lifted.get(&decl);
+        lifted.is_none_or(|lifted| lifted.is_empty()).then(value)
+    }
+
+    fn bind_name(
+        &mut self,
+        ident: &Ident,
+        value: Expr,
+        declared: Option<TypeId>,
+        dest: Option<VarId>,
+    ) {
         let span = ident.span;
         let Some(var) = self.var(ident) else {
             self.emit(Step::Eval(value));
             self.value_nil(dest, span);
             return;
         };
+        if declared.is_some() {
+            self.graph().var_mut(var).annotation = declared;
+        }
         self.emit(Step::Let {
             pattern: Pattern::Bind(var),
             value,
@@ -1319,6 +1352,11 @@ impl<'u> Scope<'_, '_, 'u> {
             self.value_nil(dest, span);
             return;
         };
+        if class.decorators.is_empty()
+            && let Some(ty) = self.declared(decl, || class_object(self.lower.db, decl))
+        {
+            self.graph().var_mut(var).annotation = Some(ty);
+        }
         self.emit(Step::Let {
             pattern: Pattern::Bind(var),
             value,

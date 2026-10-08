@@ -158,8 +158,8 @@ pub(crate) enum Contradiction {
     /// A mapping's packs have items that don't correspond, by count,
     /// multiplicity or form
     MappedPacks,
-    /// No overload of an overloaded function fits the function type it's
-    /// related to (see [`Solver::rejections`])
+    /// No overload of an overloaded function, or no signature of a callable, fits
+    /// the function type it's related to (see [`Solver::rejections`])
     NoOverload,
 }
 
@@ -214,8 +214,7 @@ pub(crate) enum Step {
     /// variable's lower bound
     Promotion,
     /// A callable value's signature by its index among those it's called with,
-    /// below a function type. A contradiction under it leaves the judgment
-    /// unresolved instead, since a subclass may fit (see [`callable`]).
+    /// below a function type, chosen by trials
     Callable(usize),
     /// An overloaded function's signature by its index among its overloads,
     /// chosen by trials
@@ -2380,18 +2379,12 @@ impl<'db> Solver<'db> {
     fn outcome(&self, constraint: ConstraintId) -> Outcome {
         let root = self.roots[constraint.0].obligation;
         let mut diagnostics = vec![];
-        // A contradiction under a callable's signature leaves it unresolved
-        let soften = |issue, soft| match issue {
-            Issue::Contradiction(_) if soft => callable::UNFIT.into(),
-            _ => issue,
-        };
-        let softens = |soft, step: &Step| soft || matches!(step, Step::Callable(_));
         // Iterative DFS keeps reporting safe even when the obligation graph is deep.
-        let mut stack = vec![(root, false, false)];
+        let mut stack = vec![(root, false)];
         let mut active = HashSet::new();
         let mut visited = HashSet::new();
         let mut path = vec![];
-        while let Some((id, exit, soft)) = stack.pop() {
+        while let Some((id, exit)) = stack.pop() {
             if exit {
                 active.remove(&id);
                 path.pop();
@@ -2417,23 +2410,19 @@ impl<'db> Solver<'db> {
                     path: path.clone(),
                 }),
                 State::Issue(issue) => diagnostics.push(Diagnostic {
-                    issue: soften(issue, soft),
+                    issue,
                     path: path.clone(),
                 }),
                 State::Reduced => {}
             }
-            stack.push((id, true, soft));
+            stack.push((id, true));
             for dependency in self.obligations[id.0].dependencies.iter().filter(|d| {
                 self.obligations[id.0]
                     .active
                     .borrow()
                     .contains(&(d.obligation, d.step.clone()))
             }) {
-                stack.push((
-                    dependency.obligation,
-                    false,
-                    softens(soft, &dependency.step),
-                ));
+                stack.push((dependency.obligation, false));
             }
         }
         // Historical edges explain contradictions, but are not current proof
@@ -2441,15 +2430,14 @@ impl<'db> Solver<'db> {
         // what the assignment was drawn from, so one is taken only where no other
         // reaches it.
         for assignments in [false, true] {
-            let mut history = vec![(root, vec![root], false)];
+            let mut history = vec![(root, vec![root])];
             let mut seen = HashSet::new();
-            while let Some((id, path, soft)) = history.pop() {
+            while let Some((id, path)) = history.pop() {
                 if !seen.insert(id) {
                     continue;
                 }
                 if let State::Issue(issue @ Issue::Contradiction(_)) =
                     self.obligations[id.0].state.get()
-                    && let issue = soften(issue, soft)
                     && !diagnostics
                         .iter()
                         .any(|d| d.path.last() == Some(&id) && d.issue == issue)
@@ -2465,7 +2453,7 @@ impl<'db> Solver<'db> {
                     }
                     let mut next = path.clone();
                     next.push(dependency.obligation);
-                    history.push((dependency.obligation, next, softens(soft, &dependency.step)));
+                    history.push((dependency.obligation, next));
                 }
             }
         }

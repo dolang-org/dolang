@@ -786,6 +786,45 @@ impl Annotate for ReceiverAccess {
     }
 }
 
+/// An assignment to a name an import or the prelude binds, which typing takes
+/// to keep naming the export
+#[derive(Clone)]
+struct ImportAssign {
+    span: Span,
+    import: Option<Span>,
+}
+
+impl Diagnose for ImportAssign {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        w.write_str("imported bindings cannot be reassigned")
+    }
+    fn span(&self) -> Span {
+        self.span
+    }
+    fn annotations(&self) -> Box<dyn Iterator<Item = Box<dyn Annotate>>> {
+        Box::new(
+            self.import
+                .map(|_| Box::new(self.clone()) as Box<dyn Annotate>)
+                .into_iter(),
+        )
+    }
+}
+
+impl Annotate for ImportAssign {
+    fn kind(&self) -> AnnotationKind {
+        AnnotationKind::Context
+    }
+    fn span(&self) -> Span {
+        self.import.unwrap()
+    }
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        w.write_str("imported here")
+    }
+}
+
 fn ungroup(mut expr: &Expr) -> &Expr {
     while let Expr::Group { expr: inner, .. } = expr {
         expr = inner;
@@ -2142,10 +2181,24 @@ impl<'a> Elaborater<'a> {
                             });
                             self.fail = true;
                         }
-                        Origin::PreludeItem { .. } | Origin::PreludeModule
-                            if self.mode == Mode::Repl =>
-                        {
+                        // The REPL threads its environment through the
+                        // prelude's items
+                        Origin::PreludeItem { .. } if self.mode == Mode::Repl => {
                             scope.mark_exported(res, self.epoch);
+                        }
+                        Origin::Import(import) => {
+                            self.diags.push(ImportAssign {
+                                span: id.span,
+                                import: Some(import),
+                            });
+                            self.fail = true;
+                        }
+                        Origin::PreludeItem { .. } | Origin::PreludeModule => {
+                            self.diags.push(ImportAssign {
+                                span: id.span,
+                                import: None,
+                            });
+                            self.fail = true;
                         }
                         _ => {}
                     }
@@ -2703,7 +2756,7 @@ impl<'a> Elaborater<'a> {
                         .symtab
                         .id(&self.bintab.id_str(self.file.str(bind.span)));
                     let name = self.module_span_first(*module);
-                    let node = Origin::Source(name);
+                    let node = Origin::Import(name);
                     if let Ok(res) = scope.promote(id, node, self.epoch)
                         && res.depth == 0
                     {
@@ -2731,7 +2784,7 @@ impl<'a> Elaborater<'a> {
                     let id = self
                         .symtab
                         .id(&self.bintab.id_str(self.file.str(bind.span)));
-                    let node = Origin::Source(bind.span);
+                    let node = Origin::Import(bind.span);
                     let index = scope.insert(id, node, self.epoch, exported);
                     bind.res = Some(Res {
                         index,
@@ -2754,7 +2807,7 @@ impl<'a> Elaborater<'a> {
                         let id = self
                             .symtab
                             .id(&self.bintab.id_str(self.file.str(bind.span)));
-                        let node = Origin::Source(bind.span);
+                        let node = Origin::Import(bind.span);
                         let index = scope.insert(id, node, self.epoch, exported);
                         bind.res = Some(Res {
                             index,

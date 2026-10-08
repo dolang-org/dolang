@@ -5,7 +5,7 @@ use std::{ptr, rc::Rc};
 
 use super::{Ctx, Lower, Scope};
 use crate::{
-    PreludeImport,
+    Mode, PreludeImport,
     ast::{self, Class, Def, Function, Ident, ImportElement, Method, Res, Stmt},
     typeck::{
         cfg::{FuncId, Origin, VarId},
@@ -111,18 +111,29 @@ impl<'u> Lower<'_, 'u> {
         if parent.is_none() {
             self.prelude(&mut entries);
         }
+        let unit = self.tables.units[self.unit.index()]
+            .source
+            .expect("only a unit with source is lowered");
+        let module = parent.is_none() && matches!(unit.compiler.mode, Mode::Module { .. });
         let entries = entries
             .into_iter()
             .zip(vars)
             .map(|(entry, var)| {
                 entry.unwrap_or_else(|| {
                     let origin = match var.origin {
-                        ast::Origin::Source(span) | ast::Origin::SelfParam(span) => {
-                            Origin::Source(span)
-                        }
+                        ast::Origin::Source(span)
+                        | ast::Origin::SelfParam(span)
+                        | ast::Origin::Import(span) => Origin::Source(span),
                         _ => Origin::Synthetic,
                     };
-                    Entry::Var(self.graph.alloc_var(func, origin, None))
+                    let id = self.graph.alloc_var(func, origin, None);
+                    if module && var.exported {
+                        let mut data = self.graph.var_mut(id);
+                        data.exported = true;
+                        data.interprocedural = true;
+                        data.volatile = true;
+                    }
+                    Entry::Var(id)
                 })
             })
             .collect();

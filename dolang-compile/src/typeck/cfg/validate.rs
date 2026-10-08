@@ -93,6 +93,7 @@ impl Ir {
                             Target::Var(var) => vars.push(*var),
                             Target::Field { object, .. } => exprs.push(object),
                             Target::Index { object, index, .. } => exprs.extend([object, index]),
+                            Target::Import { .. } => {}
                         }
                         exprs.push(value);
                     }
@@ -315,7 +316,7 @@ impl Ir {
                     }
                     Step::Assign { target, value } => {
                         let target = match target {
-                            Target::Var(_) => 0,
+                            Target::Var(_) | Target::Import { .. } => 0,
                             Target::Field { object, .. } => operands(object),
                             Target::Index { object, index, .. } => {
                                 operands(object) + operands(index)
