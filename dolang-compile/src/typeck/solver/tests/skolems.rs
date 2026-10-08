@@ -208,7 +208,7 @@ fn skolemizing_is_repeatable() {
     let mut s = Solver::new(&db);
     let v = s.infer();
     // (Value) -> ?v, reprocessed once `?v` is solved
-    let actual = s.call(&[CallArgument::Positional(s.closed(top))], v, None, None);
+    let actual = function_term(&s, &[s.closed(top)], v);
     s.constrain(actual, s.closed(expected), Provenance::default());
     assert_eq!(s.solve()[0].status, Status::Unresolved);
     s.constrain(v, s.closed(int), Provenance::default());
@@ -444,7 +444,7 @@ fn escaping_skolems_are_promoted_to_their_bounds() {
     let mut s = Solver::new(&db);
     let v = s.infer();
     // (?v) -> Int: `?v` is outside `T`'s scope, so it takes `T`'s bound
-    let actual = s.call(&[CallArgument::Positional(v)], s.closed(int), None, None);
+    let actual = function_term(&s, &[v], s.closed(int));
     s.constrain(actual, s.closed(expected), Provenance::default());
     s.solve();
     assert!(uses(&s, &Step::Promotion));
@@ -463,7 +463,7 @@ fn skolems_never_escape_through_variables() {
     let mut s = Solver::new(&db);
     let v = s.infer();
     // (?v) -> ?v <: [T] (T) -> T: `?v` would have to be `T`
-    let actual = s.call(&[CallArgument::Positional(v)], v, None, None);
+    let actual = function_term(&s, &[v], v);
     let expected = identity(&db, Variance::Invariant);
     s.constrain(actual, s.closed(expected), Provenance::default());
     let outcome = s.solve().remove(0);

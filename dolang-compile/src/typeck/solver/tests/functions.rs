@@ -3,8 +3,8 @@ use super::*;
 /// Check a call of `callee` with `args`, expecting a result below `result`
 fn call(db: &Database, callee: TypeId, args: &[CallArgument], result: TypeId) -> Outcome {
     let mut s = Solver::new(db);
-    let expected = s.call(args, s.closed(result), None, None);
-    s.constrain(s.closed(callee), expected, Provenance::default());
+    let (callee, result) = (s.closed(callee), s.closed(result));
+    constrain_call(&mut s, callee, args, result, None);
     s.solve().remove(0)
 }
 
@@ -284,13 +284,9 @@ fn a_call_result_variable_is_bounded_by_the_callee_result() {
     db.seal();
     let mut s = Solver::new(&db);
     let result = s.infer();
-    let expected = s.call(
-        &[CallArgument::Positional(s.closed(int))],
-        result,
-        None,
-        None,
-    );
-    s.constrain(s.closed(f), expected, Provenance::default());
+    let args = [CallArgument::Positional(s.closed(int))];
+    let f = s.closed(f);
+    constrain_call(&mut s, f, &args, result, None);
     assert_eq!(s.solve()[0].status, Status::Unresolved);
     let lower: Vec<_> = s.bounds(variable_id(result)).lower().collect();
     assert_eq!(lower, vec![s.closed(str)]);

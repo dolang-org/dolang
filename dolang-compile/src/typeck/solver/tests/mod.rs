@@ -226,6 +226,45 @@ fn include(multiplicity: Multiplicity, schema: TypeId) -> SchemaItem {
     item(multiplicity, Element::Include(schema))
 }
 
+/// Constrain a call of `callee` with `args`, each passed once, giving `result`
+fn constrain_call(
+    s: &mut Solver<'_>,
+    callee: Term,
+    args: &[CallArgument],
+    result: Term,
+    input: Option<Term>,
+) -> ConstraintId {
+    let args: Vec<_> = (args.iter())
+        .map(|&arg| (Multiplicity::Required, arg))
+        .collect();
+    let call = Call {
+        callee,
+        arguments: s.arguments_schema(&args),
+        result,
+        input,
+        output: None,
+    };
+    s.constrain_call(call, Provenance::default())
+}
+
+/// A function type of terms, `(params) -> result`
+fn function_term(s: &Solver<'_>, params: &[Term], result: Term) -> Term {
+    let mut group = Vec::new();
+    let mut slot = |term| hole(s.db, &mut group, term, Kind::Type);
+    let params: Vec<_> = (params.iter())
+        .map(|&term| positional(Multiplicity::Required, slot(term)))
+        .collect();
+    let function = Function {
+        params: s.db.intern(Type::Schema(params.into())),
+        result: slot(result),
+        input: None,
+        output: None,
+    };
+    let ty = s.db.intern(Type::Function(function));
+    let environment = s.intern_environment(s.empty_environment(), group);
+    s.view(ty, environment)
+}
+
 fn contradiction(outcome: &Outcome, contradiction: Contradiction) -> bool {
     outcome.status == Status::Contradicted && has(outcome, Issue::Contradiction(contradiction))
 }

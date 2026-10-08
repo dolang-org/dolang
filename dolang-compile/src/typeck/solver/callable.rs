@@ -251,7 +251,7 @@ impl Solver<'_> {
 
     /// The signatures a nominal value is called with as a function, without
     /// their receivers. `None` if they're dynamic.
-    fn call_signatures(&self, nominal: Nominal) -> Result<Option<Signatures>, Issue> {
+    pub(super) fn call_signatures(&self, nominal: Nominal) -> Result<Option<Signatures>, Issue> {
         let key = MemberKey {
             name: self.db.intern_symbol("call"),
             special: true,

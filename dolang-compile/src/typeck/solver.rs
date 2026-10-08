@@ -78,13 +78,50 @@ struct Environment {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct Relation {
-    pub(crate) actual: Term,
-    pub(crate) expected: Term,
-    /// Whether schemas relate as the items a value holds, which may fill the
-    /// expected side's multiplicities any way that fits, rather than as
-    /// arguments bound to a parameter list by count
-    pub(crate) language: bool,
+pub(crate) enum Relation {
+    /// `actual <: expected`
+    Subtype {
+        actual: Term,
+        expected: Term,
+        /// Whether schemas relate as the items a value holds, which may fill the
+        /// expected side's multiplicities any way that fits, rather than as
+        /// arguments bound to a parameter list by count
+        language: bool,
+    },
+    /// A call of a callee (see [`Solver::constrain_call`])
+    Call(Call),
+}
+
+impl Relation {
+    /// What the relation checks: a subtype's actual side, or a call's callee
+    pub(crate) fn checked(self) -> Term {
+        match self {
+            Relation::Subtype { actual, .. } => actual,
+            Relation::Call(call) => call.callee,
+        }
+    }
+
+    /// A subtype's sides, `(actual, expected)`
+    pub(crate) fn sides(self) -> Option<(Term, Term)> {
+        match self {
+            Relation::Subtype {
+                actual, expected, ..
+            } => Some((actual, expected)),
+            Relation::Call(_) => None,
+        }
+    }
+}
+
+/// A call: `callee` takes `arguments`, a schema of the items passed, and the
+/// ambient channels, and gives `result`. A callee that is a function relates its
+/// parameters to the arguments, which fill them any way that fits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct Call {
+    pub(crate) callee: Term,
+    pub(crate) arguments: Term,
+    pub(crate) result: Term,
+    pub(crate) input: Option<Term>,
+    pub(crate) output: Option<Term>,
 }
 
 /// An argument of a call, by how it is passed
@@ -185,6 +222,8 @@ pub(crate) enum Step {
     },
     /// A function's parameter list, related contravariantly
     Parameters,
+    /// A call's arguments below its callee's parameter list
+    Arguments,
     Return,
     /// A function's ambient input channel, related contravariantly
     Input,
@@ -214,7 +253,7 @@ pub(crate) enum Step {
     /// variable's lower bound
     Promotion,
     /// A callable value's signature by its index among those it's called with,
-    /// below a function type, chosen by trials
+    /// below a function type or called in its place, chosen by trials
     Callable(usize),
     /// An overloaded function's signature by its index among its overloads,
     /// chosen by trials
@@ -582,6 +621,31 @@ impl<'db> Solver<'db> {
         }
     }
 
+    /// A relation for a trace: `actual <: expected`, or a call as
+    /// `callee(arguments) -> result`
+    #[cfg(feature = "debug")]
+    fn render_relation(&self, relation: Relation) -> String {
+        match relation {
+            Relation::Subtype {
+                actual, expected, ..
+            } => format!("{} <: {}", self.render(actual), self.render(expected)),
+            Relation::Call(call) => {
+                let channel = |sigil, term: Option<Term>| {
+                    term.map(|term| format!(" {sigil}{}", self.render(term)))
+                        .unwrap_or_default()
+                };
+                format!(
+                    "{}({}){}{} -> {}",
+                    self.render(call.callee),
+                    self.render(call.arguments),
+                    channel('<', call.input),
+                    channel('>', call.output),
+                    self.render(call.result)
+                )
+            }
+        }
+    }
+
     /// Declare that no caller will default the root scope's variables, as in a
     /// judgment between two declarations' types. Solving then settles them after
     /// every skolem scope's, as it settles those.
@@ -750,47 +814,6 @@ impl<'db> Solver<'db> {
 
     pub(crate) fn closed(&self, ty: TypeId) -> Term {
         self.view(ty, self.empty_environment())
-    }
-
-    /// The function type a call expects of its callee: `(args) <input >output ->
-    /// result`. Constraining the callee's type below it checks the call.
-    /// Contradictions and derivations under the parameter list name an argument
-    /// by its index in `args`, through [`Step::Item`] and [`Step::Key`].
-    #[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
-    pub(crate) fn call(
-        &self,
-        args: &[CallArgument],
-        result: Term,
-        input: Option<Term>,
-        output: Option<Term>,
-    ) -> Term {
-        let args: Vec<_> = (args.iter())
-            .map(|&arg| (Multiplicity::Required, arg))
-            .collect();
-        self.call_items(&args, result, input, output)
-    }
-
-    /// [`Solver::call`] with arguments that may be passed zero or more times, as a
-    /// comprehension passes them
-    pub(crate) fn call_items(
-        &self,
-        args: &[(Multiplicity, CallArgument)],
-        result: Term,
-        input: Option<Term>,
-        output: Option<Term>,
-    ) -> Term {
-        let mut group = Vec::new();
-        let params = self.arguments(args, &mut group);
-        let mut slot = |term: Term, kind| hole(self.db, &mut group, term, kind);
-        let function = Function {
-            params,
-            result: slot(result, Kind::Type),
-            input: input.map(|term| slot(term, Kind::Type)),
-            output: output.map(|term| slot(term, Kind::Type)),
-        };
-        let ty = self.db.intern(Type::Function(function));
-        let environment = self.intern_environment(self.empty_environment(), group);
-        self.view(ty, environment)
     }
 
     /// The schema of items passed as arguments are
@@ -1015,10 +1038,17 @@ impl<'db> Solver<'db> {
     }
 
     fn subscribe(&self, obligation: ObligationId) -> Result<(), Residual> {
-        let relation = self.obligation(obligation).relation;
         let mut leaves = HashSet::new();
-        self.leaves(relation.actual, 0, 0, &mut leaves)?;
-        self.leaves(relation.expected, 0, 0, &mut leaves)?;
+        match self.obligation(obligation).relation {
+            Relation::Subtype {
+                actual, expected, ..
+            } => {
+                self.leaves(actual, 0, 0, &mut leaves)?;
+                self.leaves(expected, 0, 0, &mut leaves)?;
+            }
+            // A call waits only on its callee: what it derives waits on the rest
+            Relation::Call(call) => self.leaves(call.callee, 0, 0, &mut leaves)?,
+        }
         for leaf in leaves {
             let Term::Infer(variable) = leaf else {
                 continue;
@@ -1761,11 +1791,38 @@ impl<'db> Solver<'db> {
             self.render(actual),
             self.render(expected)
         );
-        let obligation = self.enqueue(Relation {
+        let obligation = self.enqueue(Relation::Subtype {
             actual,
             expected,
             language: false,
         });
+        self.root(obligation, provenance)
+    }
+
+    /// Register a call of `callee` as a diagnostic root (see [`Call`]).
+    /// `arguments` is a schema, as [`Self::arguments_schema`] builds.
+    /// Contradictions and derivations under [`Step::Arguments`] name an argument
+    /// by its index among the arguments, through [`Step::Item`] and [`Step::Key`].
+    /// An overloaded callee's overloads are tried against the arguments' twin
+    /// (see [`Self::blind`]), with the result `Value`.
+    pub(crate) fn constrain_call(&mut self, call: Call, provenance: Provenance) -> ConstraintId {
+        assert_eq!(self.kind(call.callee), Kind::Type, "call kind mismatch");
+        assert_eq!(
+            self.kind(call.arguments),
+            Kind::Schema,
+            "call kind mismatch"
+        );
+        trace!(
+            self,
+            "#{}: {}",
+            self.roots.len(),
+            self.render_relation(Relation::Call(call))
+        );
+        let obligation = self.enqueue(Relation::Call(call));
+        self.root(obligation, provenance)
+    }
+
+    fn root(&mut self, obligation: ObligationId, provenance: Provenance) -> ConstraintId {
         let id = ConstraintId(self.roots.len());
         self.roots.push(Root {
             obligation,
@@ -1801,16 +1858,36 @@ impl<'db> Solver<'db> {
         );
         // A type argument's schema is the items a value holds, and a parameter
         // list binds by count. Bounds settle by count, the stricter reading.
-        let language = match step {
-            Step::Argument { .. } => true,
-            Step::Parameters | Step::BoundPropagation | Step::Assignment => false,
-            _ => self.obligations[parent.0].relation.language,
+        let language = match (&step, self.obligations[parent.0].relation) {
+            (Step::Argument { .. }, _) => true,
+            (Step::Parameters | Step::Arguments | Step::BoundPropagation | Step::Assignment, _) => {
+                false
+            }
+            (_, Relation::Subtype { language, .. }) => language,
+            (_, Relation::Call(_)) => false,
         };
-        let child = self.enqueue(Relation {
+        let relation = Relation::Subtype {
             actual,
             expected,
             language,
-        });
+        };
+        self.derive_relation(parent, relation, step);
+    }
+
+    /// Add a child call obligation and a labeled dependency from its parent, a
+    /// call whose callee it calls in its place
+    fn derive_call(&self, parent: ObligationId, call: Call, step: Step) {
+        assert_eq!(
+            self.kind(call.callee),
+            Kind::Type,
+            "derived call kind mismatch"
+        );
+        self.derive_relation(parent, Relation::Call(call), step);
+    }
+
+    /// Add a child obligation and a labeled dependency from its parent
+    fn derive_relation(&self, parent: ObligationId, relation: Relation, step: Step) {
+        let child = self.enqueue(relation);
         if step != Step::BoundPropagation && step != Step::Assignment {
             self.obligations[parent.0]
                 .active
@@ -2498,6 +2575,7 @@ fn hole(db: &Database, group: &mut Vec<Term>, term: Term, kind: Kind) -> TypeId 
 }
 
 mod alternatives;
+mod call;
 mod callable;
 mod conform;
 mod item;

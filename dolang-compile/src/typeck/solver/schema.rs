@@ -10,7 +10,7 @@
 //!
 //! A parameter list binds by count. The schema a value holds may fill its
 //! multiplicities any way that fits, so where counting is refuted, a filling
-//! still fits when its types prove some path ([`Relation::language`]).
+//! still fits when its types prove some path ([`Relation::Subtype`]).
 //!
 //! Both sides are flattened into lanes of atoms, splicing inclusions. Schemas
 //! that can't be exposed stay opaque: the same rigid on both sides pairs up, an
@@ -1187,7 +1187,10 @@ impl Solver<'_> {
         if combinations.is_none() {
             return Err(Residual::Alignment.into());
         }
-        let language = self.obligations[obligation.0].relation.language;
+        let language = matches!(
+            self.obligations[obligation.0].relation,
+            Relation::Subtype { language: true, .. }
+        );
         let mut decided = HashMap::new();
         let mut pairs = BTreeSet::new();
         let mut digits = vec![0; xs.len()];

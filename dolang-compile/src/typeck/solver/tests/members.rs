@@ -223,8 +223,8 @@ fn members_are_found_in_mro_order_with_their_class_arguments() {
     let expected = function(&db, &[base_int], int);
     assert!(same_type(&mut s, signature, expected));
     let r = s.infer();
-    let call = s.call(&[CallArgument::Positional(s.closed(sub))], r, None, None);
-    s.constrain(signature, call, Provenance::default());
+    let args = [CallArgument::Positional(s.closed(sub))];
+    constrain_call(&mut s, signature, &args, r, None);
     assert!(
         s.solve()
             .iter()
@@ -466,11 +466,11 @@ fn generic_class_objects_have_members_quantified_over_its_binders() {
         CallArgument::Positional(s.closed(box_int)),
         CallArgument::Positional(s.closed(show)),
     ];
-    let call = s.call(&args, r, None, None);
-    s.constrain(s.closed(expected), call, Provenance::default());
+    let expected = s.closed(expected);
+    constrain_call(&mut s, expected, &args, r, None);
     let made = s.infer();
-    let call = s.call(&[CallArgument::Positional(s.closed(int))], made, None, None);
-    s.constrain(s.closed(make), call, Provenance::default());
+    let (args, make) = ([CallArgument::Positional(s.closed(int))], s.closed(make));
+    constrain_call(&mut s, make, &args, made, None);
     s.solve();
     let outcomes = default_all(&mut s);
     assert!(
@@ -623,9 +623,8 @@ fn every_signature_of_an_overloaded_method_is_applied() {
         CallArgument::Positional(s.closed(box_int)),
         CallArgument::Positional(s.closed(show)),
     ];
-    let call = s.call(&args, r, None, None);
     let map = signatures.implementation.expect("an implementation");
-    s.constrain(map, call, Provenance::default());
+    constrain_call(&mut s, map, &args, r, None);
     s.solve();
     let outcomes = default_all(&mut s);
     assert!(

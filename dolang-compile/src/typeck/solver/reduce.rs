@@ -25,9 +25,12 @@ impl Solver<'_> {
     /// [`Break`] or failing, or leave it to the next with [`Continue`]. Past
     /// [`Self::variables`], neither head is an inference variable.
     pub(super) fn reduce(&self, obligation: ObligationId) -> Result<(), Issue> {
-        let Relation {
-            actual, expected, ..
-        } = self.obligations[obligation.0].relation;
+        let (actual, expected) = match self.obligations[obligation.0].relation {
+            Relation::Subtype {
+                actual, expected, ..
+            } => (actual, expected),
+            Relation::Call(call) => return self.call(obligation, call),
+        };
         self.record_bounds(obligation, actual, expected)?;
         // Anything is below top and the dynamic type, even what can't be exposed
         let b = self.head(expected)?;
@@ -373,7 +376,7 @@ impl Solver<'_> {
             return Ok(Break(()));
         }
         let terms = overloads.iter().map(|&ty| view.child(ty)).collect();
-        let selection = self.selection(j.expected, function)?;
+        let selection = self.selection(function)?;
         let none = Issue::Contradiction(Contradiction::NoOverload);
         self.choose_selected(
             j.obligation,
@@ -387,14 +390,9 @@ impl Solver<'_> {
     }
 
     /// What an overloaded function's overloads are tried against in place of
-    /// `expected`, a function type: the twin registered for it, as a call's has
-    /// `do` blocks whose results don't choose (see [`Solver::blind`]), or else
-    /// the function type with its result `Value`, since only what's passed
-    /// chooses
-    fn selection(&self, expected: Term, function: TypeView) -> Result<Term, Issue> {
-        if let Some(&twin) = self.blinded.get(&self.resolve(expected)?) {
-            return Ok(twin);
-        }
+    /// `function`, a function type: it with its result `Value`, since only what's
+    /// passed chooses
+    fn selection(&self, function: TypeView) -> Result<Term, Issue> {
         let Type::Function(function_type) = self.db.ty(function.ty) else {
             unreachable!("a function type")
         };
@@ -808,7 +806,7 @@ impl Solver<'_> {
 
     /// A contradiction if a union's projection has a schema whose keyed view has
     /// a key that may be a position's index (see [`Database::promoted`])
-    fn conflicting(&self, members: &[UnionMember]) -> Result<(), Issue> {
+    pub(super) fn conflicting(&self, members: &[UnionMember]) -> Result<(), Issue> {
         let conflict =
             (members.iter()).any(|&member| matches!(self.db.project(member), Projected::Conflict));
         match conflict {
@@ -930,11 +928,32 @@ impl Solver<'_> {
         expected: Term,
         obligation: ObligationId,
     ) -> Result<(), Issue> {
+        let environment = self.instantiate_binders(view, binders, &[expected], obligation)?;
+        self.derive(
+            obligation,
+            self.view(body, environment),
+            expected,
+            Step::Instantiation,
+        );
+        Ok(())
+    }
+
+    /// The environment of fresh variables for a quantified type's binders, each
+    /// below its bound, related by `obligation` to `others`
+    pub(super) fn instantiate_binders(
+        &self,
+        view: TypeView,
+        binders: &[Binder],
+        others: &[Term],
+        obligation: ObligationId,
+    ) -> Result<EnvironmentId, Issue> {
         let known = self.instantiations.borrow().get(&obligation).copied();
         let environment = match known {
             Some(environment) => environment,
             None => {
-                let scope = self.scope(&[Term::View(view), expected])?;
+                let mut terms = vec![Term::View(view)];
+                terms.extend_from_slice(others);
+                let scope = self.scope(&terms)?;
                 let group: Vec<Term> = binders
                     .iter()
                     .map(|binder| match binder.binding {
@@ -974,13 +993,7 @@ impl Solver<'_> {
             };
             self.derive(obligation, term, bound, Step::InstantiationBound(index));
         }
-        self.derive(
-            obligation,
-            self.view(body, environment),
-            expected,
-            Step::Instantiation,
-        );
-        Ok(())
+        Ok(environment)
     }
 
     /// Relate a type to a quantified type through a skolem for each of its

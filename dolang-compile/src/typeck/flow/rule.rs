@@ -32,8 +32,9 @@ use crate::{
         },
         elab::Designated,
         solver::{
-            CallArgument, Contradiction, Diagnostic, InferVarId, Issue, ObligationId, Outcome,
-            PatternShape, Provenance, Residual, Solver, Status, Step as Derivation, Term,
+            Call as SolverCall, CallArgument, Contradiction, Diagnostic, InferVarId, Issue,
+            ObligationId, Outcome, PatternShape, Provenance, Relation, Residual, Solver, Status,
+            Step as Derivation, Term,
         },
         r#type::{
             Argument, BoundRef, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
@@ -867,7 +868,7 @@ impl<'a> Flow<'a, '_> {
                 Status::Contradicted => {
                     let relation = solver.obligation(root(outcome)).relation;
                     // The callee, or the value that doesn't fit
-                    let actual = self.render_term(solver, relation.actual);
+                    let actual = self.render_term(solver, relation.checked());
                     let problems: Vec<Problem> = match check {
                         // An argument is reported once, with a note for each of
                         // its parts that doesn't fit
@@ -919,7 +920,8 @@ impl<'a> Flow<'a, '_> {
                             vec![Problem::Argument {
                                 span,
                                 found: actual.clone().unwrap_or_else(|| "?".to_owned()),
-                                expected: self.render_term(solver, relation.expected),
+                                expected: (relation.sides())
+                                    .and_then(|(_, expected)| self.render_term(solver, expected)),
                                 causes: notes,
                             }]
                         }
@@ -947,7 +949,7 @@ impl<'a> Flow<'a, '_> {
         for rejection in solver.rejections(overloaded) {
             let trial = &*rejection.solver;
             let outcome = &rejection.outcome;
-            let overload = trial.obligation(root(outcome)).relation.actual;
+            let overload = trial.obligation(root(outcome)).relation.checked();
             let overload = (trial.reify(overload).ok())
                 .map(|ty| self.overload(solver, overloaded, rejection.index, ty));
             let mut problems = Vec::new();
@@ -991,9 +993,15 @@ impl<'a> Flow<'a, '_> {
         if possible.is_empty() {
             return None;
         }
-        let relation = solver.obligation(overloaded).relation;
-        let selection = solver.reify(solver.twin(relation.expected)).ok();
-        let gradual = selection.is_none_or(|selection| {
+        let Relation::Call(call) = solver.obligation(overloaded).relation else {
+            return Some(None);
+        };
+        // What chooses: the arguments' twin and the ambient channels
+        let selection = [Some(solver.twin(call.arguments)), call.input, call.output];
+        let gradual = (selection.into_iter().flatten()).any(|term| {
+            let Ok(selection) = solver.reify(term) else {
+                return true;
+            };
             let mut unknown = false;
             self.db.walk(selection, |node, _| {
                 unknown |= matches!(self.db.ty(node), Type::Unknown(_));
@@ -1003,7 +1011,7 @@ impl<'a> Flow<'a, '_> {
         if gradual {
             return Some(None);
         }
-        let overloads = match solver.reify(relation.actual).map(|ty| self.db.ty(ty)) {
+        let overloads = match solver.reify(call.callee).map(|ty| self.db.ty(ty)) {
             Ok(Type::Overloaded { overloads, .. }) => overloads.clone(),
             Ok(&Type::Decl(decl)) => (self.db.overloads(decl).iter())
                 .map(|&overload| self.db.declaration(overload).ty)
@@ -1026,7 +1034,7 @@ impl<'a> Flow<'a, '_> {
         index: usize,
         ty: TypeId,
     ) -> String {
-        let callee = solver.obligation(overloaded).relation.actual;
+        let callee = solver.obligation(overloaded).relation.checked();
         let function = match solver.reify(callee).map(|ty| self.db.ty(ty)) {
             Ok(&Type::Overloaded { function, .. }) => function,
             Ok(&Type::Decl(decl)) => Some(decl),
@@ -1065,35 +1073,35 @@ impl<'a> Flow<'a, '_> {
         if steps.len() + 1 != path.len() {
             return fallback;
         }
-        let Some(params) = steps
-            .iter()
-            .position(|step| *step == Derivation::Parameters)
-        else {
+        let Some(arguments) = steps.iter().position(|step| *step == Derivation::Arguments) else {
             return fallback;
         };
-        match steps.get(params + 1) {
+        match steps.get(arguments + 1) {
             Some(&(Derivation::Item(index) | Derivation::Key(index))) => {
                 let Some(&arg) = args.get(index) else {
                     return fallback;
                 };
-                let relation = solver.obligation(path[params + 2]).relation;
-                let Some(found) = self.render_term(solver, relation.actual) else {
+                let sides = |index: usize| solver.obligation(path[index]).relation.sides();
+                let Some((actual, expected)) = sides(arguments + 2) else {
+                    return fallback;
+                };
+                let Some(found) = self.render_term(solver, actual) else {
                     return fallback;
                 };
                 // A parameter whose type is left unsolved shows the bound of it
                 // that the argument doesn't fit
-                let expected = self
-                    .render_term(solver, relation.expected)
-                    .or_else(|| match steps.get(params + 2) {
-                        Some(Derivation::BoundPropagation) => {
-                            let bound = solver.obligation(path[params + 3]).relation;
-                            self.render_term(solver, bound.expected)
-                        }
-                        _ => None,
-                    });
+                let expected =
+                    self.render_term(solver, expected)
+                        .or_else(|| match steps.get(arguments + 2) {
+                            Some(Derivation::BoundPropagation) => {
+                                let (_, bound) = sides(arguments + 3)?;
+                                self.render_term(solver, bound)
+                            }
+                            _ => None,
+                        });
                 // What fails may lie deeper than the argument's own relation, as
                 // in a binder's bound its type solves
-                let causes = (self.cause(solver, path, &steps, params + 2, contradiction))
+                let causes = (self.cause(solver, path, &steps, arguments + 2, contradiction))
                     .into_iter()
                     .collect();
                 Problem::Argument {
@@ -1140,19 +1148,21 @@ impl<'a> Flow<'a, '_> {
             })
             .collect();
         let reversed = |index: usize| index > start && reversed[index - start - 1];
+        // Below a check's root, only subtypes are derived
+        let sides = |index: usize| solver.obligation(path[index]).relation.sides();
         let found_side = |index: usize| {
-            let relation = solver.obligation(path[index]).relation;
-            match reversed(index) {
-                false => relation.actual,
-                true => relation.expected,
-            }
+            let (actual, expected) = sides(index)?;
+            Some(match reversed(index) {
+                false => actual,
+                true => expected,
+            })
         };
-        let leaf = solver.obligation(path[end - 1]).relation;
-        let actual = self.render_term(solver, leaf.actual)?;
-        let expected = self.render_term(solver, leaf.expected)?;
+        let (leaf_actual, leaf_expected) = sides(end - 1)?;
+        let actual = self.render_term(solver, leaf_actual)?;
+        let expected = self.render_term(solver, leaf_expected)?;
         let note = match (contradiction, reversed(end - 1)) {
             (Contradiction::Missing(item), flipped) => {
-                match (self.schema_item(solver, leaf.expected, item), flipped) {
+                match (self.schema_item(solver, leaf_expected, item), flipped) {
                     (Some(item), false) => format!("`{actual}` may be missing {item}"),
                     (Some(item), true) => {
                         format!("`{expected}` requires {item}, which `{actual}` may be missing")
@@ -1160,7 +1170,7 @@ impl<'a> Flow<'a, '_> {
                     (None, _) => format!("`{actual}` may be missing an item of `{expected}`"),
                 }
             }
-            (Contradiction::Excess(item), _) => match self.schema_item(solver, leaf.actual, item) {
+            (Contradiction::Excess(item), _) => match self.schema_item(solver, leaf_actual, item) {
                 Some(item) => format!("`{expected}` doesn't admit {item}"),
                 None => format!("`{expected}` doesn't admit every item of `{actual}`"),
             },
@@ -1169,14 +1179,15 @@ impl<'a> Flow<'a, '_> {
             (_, true) => format!("`{expected}` doesn't accept `{actual}`"),
         };
         let mut notes = vec![note];
-        let shown = self.render_term(solver, found_side(start));
-        let mut last = self.render_term(solver, found_side(end - 1));
+        let shown = found_side(start).and_then(|term| self.render_term(solver, term));
+        let mut last = found_side(end - 1).and_then(|term| self.render_term(solver, term));
         for index in (start + 1..end - 1).rev() {
             // Only steps into a type's parts are where a reader can look
             if !matches!(
                 steps[index - 1],
                 Derivation::Argument { .. }
                     | Derivation::Parameters
+                    | Derivation::Arguments
                     | Derivation::Return
                     | Derivation::Input
                     | Derivation::Output
@@ -1186,7 +1197,8 @@ impl<'a> Flow<'a, '_> {
             ) {
                 continue;
             }
-            let Some(around) = self.render_term(solver, found_side(index)) else {
+            let Some(around) = found_side(index).and_then(|term| self.render_term(solver, term))
+            else {
                 continue;
             };
             if Some(&around) == last.as_ref() || Some(&around) == shown.as_ref() {
@@ -3092,8 +3104,8 @@ fn received(values: &mut Values<'_>, receivers: &[(TypeId, Span)], bottom: TypeI
     );
 }
 
-/// The constraint of a call: its callee below the function type its arguments
-/// call it as. Returns the variable standing for its result. An overloaded
+/// The constraint of a call: its callee called with its arguments (see
+/// [`Solver::constrain_call`]). Returns the variable standing for its result. An overloaded
 /// callee's overloads are tried against what the arguments alone say, with each
 /// `do` block's result hidden as it is from other alternatives (see
 /// [`Solver::blind`]), and the result `Value`.
@@ -3112,7 +3124,6 @@ fn call_constraint(
         input.map(|ty| rule.closed(ty)),
         output.map(|ty| rule.closed(ty)),
     );
-    let call = rule.solver.call_items(&arguments, result, input, output);
     let blinded: Vec<(Multiplicity, CallArgument)> = (arguments.iter())
         .map(|&(multiplicity, argument)| {
             let twin = |term| rule.solver.twin(term);
@@ -3125,15 +3136,23 @@ fn call_constraint(
             (multiplicity, argument)
         })
         .collect();
-    let top = rule.closed(rule.db.top());
-    let selection = rule.solver.call_items(&blinded, top, input, output);
-    rule.solver.blind(call, selection);
+    let blinded = rule.solver.arguments_schema(&blinded);
+    let arguments = rule.solver.arguments_schema(&arguments);
+    rule.solver.blind(arguments, blinded);
+    let call = SolverCall {
+        callee: rule.closed(callee),
+        arguments,
+        result,
+        input,
+        output,
+    };
     let check = Check::Call {
         span,
         args: spans,
         callee: name,
     };
-    rule.constrain(rule.closed(callee), call, check);
+    rule.solver.constrain_call(call, Provenance::default());
+    rule.checks.push(check);
     result
 }
 

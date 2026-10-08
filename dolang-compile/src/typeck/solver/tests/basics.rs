@@ -273,8 +273,7 @@ fn shared_reductions_preserve_each_root_and_dependency() {
             .unwrap();
         assert_eq!(diagnostic.path.len(), 2);
         let leaf = s.obligation(*diagnostic.path.last().unwrap());
-        assert_eq!(leaf.relation.actual, s.closed(a));
-        assert_eq!(leaf.relation.expected, s.closed(b));
+        assert_eq!(leaf.relation.sides(), Some((s.closed(a), s.closed(b))));
         let parent = s.obligation(diagnostic.path[0]);
         assert!(
             parent
@@ -380,7 +379,7 @@ fn shared_insertion_preserves_borrowed_solver_state() {
         environment,
         s.intern_environment(s.empty_environment(), vec![variable])
     );
-    assert_eq!(obligation.relation.actual, s.closed(one));
+    assert_eq!(obligation.relation.checked(), s.closed(one));
     assert_eq!(bounds.lower().count(), 0);
     assert!(
         solver
