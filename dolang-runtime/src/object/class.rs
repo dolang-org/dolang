@@ -1868,42 +1868,103 @@ fn class_sync_binary_op<'v, 'a, 's>(
     method_sym: sym::Tag,
     other: &Value<'v>,
 ) -> Result<'v, 's, Value<'v>> {
+    let entry = this.annex().class.annex().entry_by_tag(method_sym);
+    if let Some(entry) = entry {
+        class_sync_binary_op_entry(this, strand, method_sym, other, entry)
+    } else {
+        Err(Error::not_supported(strand))
+    }
+}
+
+fn class_dispatch_binary_op<'v, 'a, 's>(
+    receiver: impl Dispatch<'v, 'a>,
+    strand: &'a mut Strand<'v, 's>,
+    method_sym: sym::Tag,
+    other: &Value<'v>,
+) -> Result<'v, 's, Value<'v>> {
+    match method_sym {
+        sym::ADD_METHOD => receiver.op_add(strand, other),
+        sym::RADD_METHOD => receiver.op_radd(strand, other),
+        sym::SUB_METHOD => receiver.op_sub(strand, other),
+        sym::RSUB_METHOD => receiver.op_rsub(strand, other),
+        sym::MUL_METHOD => receiver.op_mul(strand, other),
+        sym::RMUL_METHOD => receiver.op_rmul(strand, other),
+        sym::DIV_METHOD => receiver.op_div(strand, other),
+        sym::RDIV_METHOD => receiver.op_rdiv(strand, other),
+        sym::EDIV_METHOD => receiver.op_ediv(strand, other),
+        sym::REDIV_METHOD => receiver.op_rediv(strand, other),
+        sym::MOD_METHOD => receiver.op_mod(strand, other),
+        sym::RMOD_METHOD => receiver.op_rmod(strand, other),
+        sym::BAND_METHOD => receiver.op_band(strand, other),
+        sym::RBAND_METHOD => receiver.op_rband(strand, other),
+        sym::BOR_METHOD => receiver.op_bor(strand, other),
+        sym::RBOR_METHOD => receiver.op_rbor(strand, other),
+        sym::BXOR_METHOD => receiver.op_bxor(strand, other),
+        sym::RBXOR_METHOD => receiver.op_rbxor(strand, other),
+        sym::SHL_METHOD => receiver.op_shl(strand, other),
+        sym::RSHL_METHOD => receiver.op_rshl(strand, other),
+        sym::SHR_METHOD => receiver.op_shr(strand, other),
+        sym::RSHR_METHOD => receiver.op_rshr(strand, other),
+        sym::EQ_METHOD => receiver.op_eq(strand, other),
+        sym::REQ_METHOD => receiver.op_req(strand, other),
+        sym::NE_METHOD => receiver.op_ne(strand, other),
+        sym::RNE_METHOD => receiver.op_rne(strand, other),
+        sym::LT_METHOD => receiver.op_lt(strand, other),
+        _ => unreachable!(),
+    }
+}
+
+fn class_sync_binary_op_entry<'v, 'a, 's>(
+    this: Recv<'v, 'a, ClassInstance<'v>>,
+    strand: &mut Strand<'v, 's>,
+    method_sym: sym::Tag,
+    other: &Value<'v>,
+    entry: &ClassEntry<'v>,
+) -> Result<'v, 's, Value<'v>> {
     let annex = this.annex();
-    match annex.class.annex().entry_by_tag(method_sym) {
-        Some(ClassEntry::Method(v)) => strand.with_slots_sync(move |strand, [mut result]| {
+    match entry {
+        ClassEntry::Method(v) => strand.with_slots_sync(move |strand, [mut result]| {
             strand.sync(async |strand| call!(strand, v, &mut result, &this, other).await)?;
             Ok(result.take())
         }),
-        Some(ClassEntry::Delegate(slot, _)) => {
+        ClassEntry::Delegate(slot, _) => {
             let native = annex.natives[*slot]
                 .get()
                 .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
             strand.with_slots_sync(|strand, [mut delegator]| {
                 Output::set(strand, Slot::reborrow(&mut delegator), &this);
                 let native = Delegated::new(native, &delegator);
-                match method_sym {
-                    sym::ADD_METHOD => native.op_add(strand, other),
-                    sym::SUB_METHOD => native.op_sub(strand, other),
-                    sym::RSUB_METHOD => native.op_rsub(strand, other),
-                    sym::MUL_METHOD => native.op_mul(strand, other),
-                    sym::DIV_METHOD => native.op_div(strand, other),
-                    sym::RDIV_METHOD => native.op_rdiv(strand, other),
-                    sym::EDIV_METHOD => native.op_ediv(strand, other),
-                    sym::REDIV_METHOD => native.op_rediv(strand, other),
-                    sym::MOD_METHOD => native.op_mod(strand, other),
-                    sym::RMOD_METHOD => native.op_rmod(strand, other),
-                    sym::BAND_METHOD => native.op_band(strand, other),
-                    sym::BOR_METHOD => native.op_bor(strand, other),
-                    sym::BXOR_METHOD => native.op_bxor(strand, other),
-                    sym::SHL_METHOD => native.op_shl(strand, other),
-                    sym::SHR_METHOD => native.op_shr(strand, other),
-                    sym::EQ_METHOD => native.op_eq(strand, other),
-                    sym::LT_METHOD => native.op_lt(strand, other),
-                    _ => unreachable!(),
-                }
+                class_dispatch_binary_op(native, strand, method_sym, other)
             })
         }
-        _ => Err(Error::not_supported(strand)),
+        ClassEntry::Abstract(type_obj, _) => strand.with_slots_sync(|strand, [mut delegator]| {
+            Output::set(strand, Slot::reborrow(&mut delegator), &this);
+            let abstract_type = Delegated::new(type_obj, &delegator);
+            class_dispatch_binary_op(abstract_type, strand, method_sym, other)
+        }),
+        _ => Err(Error::runtime(
+            strand,
+            "invalid class binary operator entry",
+        )),
+    }
+}
+
+fn class_sync_commutative_op<'v, 'a, 's>(
+    this: Recv<'v, 'a, ClassInstance<'v>>,
+    strand: &mut Strand<'v, 's>,
+    reverse: sym::Tag,
+    other: &Value<'v>,
+    fallback: fn(
+        Recv<'v, 'a, ClassInstance<'v>>,
+        &mut Strand<'v, 's>,
+        &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>>,
+) -> Result<'v, 's, Value<'v>> {
+    let entry = this.annex().class.annex().entry_by_tag(reverse);
+    if let Some(entry) = entry {
+        class_sync_binary_op_entry(this, strand, reverse, other, entry)
+    } else {
+        fallback(this, strand, other)
     }
 }
 
@@ -2600,6 +2661,13 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
     ) -> Result<'v, 's, Value<'v>> {
         class_sync_binary_op(this, strand, sym::ADD_METHOD, other)
     }
+    fn op_radd<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        class_sync_commutative_op(this, strand, sym::RADD_METHOD, other, Self::op_add)
+    }
 
     fn op_sub<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -2623,6 +2691,13 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         class_sync_binary_op(this, strand, sym::MUL_METHOD, other)
+    }
+    fn op_rmul<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        class_sync_commutative_op(this, strand, sym::RMUL_METHOD, other, Self::op_mul)
     }
 
     fn op_div<'a, 's>(
@@ -2680,6 +2755,13 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
     ) -> Result<'v, 's, Value<'v>> {
         class_sync_binary_op(this, strand, sym::BAND_METHOD, other)
     }
+    fn op_rband<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        class_sync_commutative_op(this, strand, sym::RBAND_METHOD, other, Self::op_band)
+    }
 
     fn op_bor<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -2687,6 +2769,13 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         class_sync_binary_op(this, strand, sym::BOR_METHOD, other)
+    }
+    fn op_rbor<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        class_sync_commutative_op(this, strand, sym::RBOR_METHOD, other, Self::op_bor)
     }
 
     fn op_bxor<'a, 's>(
@@ -2696,6 +2785,13 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
     ) -> Result<'v, 's, Value<'v>> {
         class_sync_binary_op(this, strand, sym::BXOR_METHOD, other)
     }
+    fn op_rbxor<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        class_sync_commutative_op(this, strand, sym::RBXOR_METHOD, other, Self::op_bxor)
+    }
 
     fn op_shl<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -2704,6 +2800,13 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
     ) -> Result<'v, 's, Value<'v>> {
         class_sync_binary_op(this, strand, sym::SHL_METHOD, other)
     }
+    fn op_rshl<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        class_sync_binary_op(this, strand, sym::RSHL_METHOD, other)
+    }
 
     fn op_shr<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -2711,6 +2814,13 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         class_sync_binary_op(this, strand, sym::SHR_METHOD, other)
+    }
+    fn op_rshr<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        class_sync_binary_op(this, strand, sym::RSHR_METHOD, other)
     }
 
     fn op_neg<'a, 's>(
@@ -2733,6 +2843,46 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         class_sync_binary_op(this, strand, sym::EQ_METHOD, other)
+    }
+    fn op_ne<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        let class = this.annex().class.annex();
+        let has_method = matches!(
+            class.entry_by_tag(sym::NE_METHOD),
+            Some(ClassEntry::Method(_))
+        );
+        let has_native = matches!(
+            class.entry_by_tag(sym::NE_METHOD),
+            Some(ClassEntry::Delegate(_, _))
+        );
+        let overrides_eq = matches!(
+            class.entry_by_tag(sym::EQ_METHOD),
+            Some(ClassEntry::Method(_))
+        );
+        if has_method || (has_native && !overrides_eq) {
+            class_sync_binary_op(this, strand, sym::NE_METHOD, other)
+        } else {
+            Ok(Value::from_bool(
+                !Self::op_eq(this, strand, other)?.op_bool(strand)?,
+            ))
+        }
+    }
+    fn op_rne<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        class_sync_commutative_op(this, strand, sym::RNE_METHOD, other, Self::op_ne)
+    }
+    fn op_req<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        class_sync_commutative_op(this, strand, sym::REQ_METHOD, other, Self::op_eq)
     }
 
     fn op_lt<'a, 's>(

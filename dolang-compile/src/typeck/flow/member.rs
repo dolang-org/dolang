@@ -866,8 +866,7 @@ impl Flow<'_, '_> {
     /// A binary operator: `==` and `!=` are `Bool`s, and the comparisons require
     /// `(lt)` and are `Bool`s. The others call their special methods. As the
     /// runtime does, an operator its left operand lacks is dispatched on its right:
-    /// a commutative one calls the same method with the operands swapped, and
-    /// another its reflected method, such as `(rsub)` for `(sub)`.
+    /// its reflected method, such as `(radd)` for `(add)`.
     pub(super) fn binary(
         &mut self,
         at: At,
@@ -889,19 +888,20 @@ impl Flow<'_, '_> {
         // The method, the one the right operand is dispatched to, and whether it's a
         // comparison
         let (name, reflected, compared) = match op {
-            Op::EqEq | Op::BangEq => return boolean,
+            Op::EqEq => ("eq", "req", true),
+            Op::BangEq => ("ne", "rne", true),
             Op::Lt | Op::LtEq | Op::Gt | Op::GtEq => ("lt", "lt", true),
-            Op::Plus => ("add", "add", false),
+            Op::Plus => ("add", "radd", false),
             Op::Minus => ("sub", "rsub", false),
-            Op::Star => ("mul", "mul", false),
+            Op::Star => ("mul", "rmul", false),
             Op::Slash => ("div", "rdiv", false),
             Op::SlashSlash => ("ediv", "rediv", false),
             Op::Percent => ("mod", "rmod", false),
-            Op::Amp => ("band", "band", false),
-            Op::Bar => ("bor", "bor", false),
-            Op::Caret => ("bxor", "bxor", false),
-            Op::LtLt => ("shl", "shl", false),
-            Op::GtGt => ("shr", "shr", false),
+            Op::Amp => ("band", "rband", false),
+            Op::Bar => ("bor", "rbor", false),
+            Op::Caret => ("bxor", "rbxor", false),
+            Op::LtLt => ("shl", "rshl", false),
+            Op::GtGt => ("shr", "rshr", false),
             _ => return self.db.unknown(),
         };
         let call = Call {
@@ -925,11 +925,27 @@ impl Flow<'_, '_> {
             };
             let alternative = (ty, lhs.1);
             let span = call.span;
-            let reflect = self.lacks(ty, member, span) && !self.lacks(rhs.0, reflected, span);
+            let reflected_member = if matches!(
+                op,
+                Op::Plus | Op::Star | Op::Amp | Op::Bar | Op::Caret | Op::EqEq | Op::BangEq
+            ) && self.lacks(rhs.0, reflected, span)
+            {
+                member
+            } else {
+                reflected
+            };
+            let reflect =
+                self.lacks(ty, member, span) && !self.lacks(rhs.0, reflected_member, span);
             targets.extend(match reflect {
-                true => {
-                    self.member_targets(at, state, operands, rhs, reflected, &[alternative], span)
-                }
+                true => self.member_targets(
+                    at,
+                    state,
+                    operands,
+                    rhs,
+                    reflected_member,
+                    &[alternative],
+                    span,
+                ),
                 false => self.reached(
                     at,
                     state,

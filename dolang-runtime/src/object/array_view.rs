@@ -494,6 +494,7 @@ impl<'v> Protocol<'v> for View<'v> {
             .is_some_and(|other| this.as_header() == other.into_raw().cast());
         Ok(Value::from_bool(equal))
     }
+
     fn op_index<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

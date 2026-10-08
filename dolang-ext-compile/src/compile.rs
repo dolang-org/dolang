@@ -1638,6 +1638,7 @@ impl<'v> Object<'v> for NodeIdObject {
         };
         Ok(other.enter_sync(strand, |_strand, other| *this.annex() == *other.annex()))
     }
+
     fn hash<'a, 's>(
         this: Instance<'v, 'a, Self>,
         _strand: &'a mut Strand<'v, 's>,

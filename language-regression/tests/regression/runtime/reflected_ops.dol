@@ -1,0 +1,124 @@
+# Forward and reflected methods are distinct, including for operators whose
+# built-in implementations happen to be commutative.
+class Left
+  pub field tag = "left"
+
+class Right
+  def (add) _self _other
+    "add"
+  def (radd) _self other
+    "radd:$(other.tag)"
+  def (mul) _self _other
+    "mul"
+  def (rmul) _self other
+    "rmul:$(other.tag)"
+  def (rband) _self other
+    "rband:$(other.tag)"
+  def (rbor) _self other
+    "rbor:$(other.tag)"
+  def (rbxor) _self other
+    "rbxor:$(other.tag)"
+  def (rshl) _self other
+    "rshl:$(other.tag)"
+  def (rshr) _self other
+    "rshr:$(other.tag)"
+
+let left = Left()
+let right = Right()
+assert_eq (right + left) "add"
+assert_eq (left + right) "radd:left"
+assert_eq (right * left) "mul"
+assert_eq (left * right) "rmul:left"
+assert_eq (left & right) "rband:left"
+assert_eq (left | right) "rbor:left"
+assert_eq (left ^ right) "rbxor:left"
+assert_eq (left << right) "rshl:left"
+assert_eq (left >> right) "rshr:left"
+assert_eq (right.(radd) left) "radd:left"
+
+class ForwardOnly
+  def (add) _self _other
+    10
+assert_eq (left + ForwardOnly()) 10
+
+class ForwardCommutative
+  def (mul) _self _other
+    20
+  def (band) _self _other
+    30
+  def (bor) _self _other
+    40
+  def (bxor) _self _other
+    50
+  def (eq) _self _other
+    true
+  def (ne) _self _other
+    true
+let forward = ForwardCommutative()
+assert_eq (left * forward) 20
+assert_eq (left & forward) 30
+assert_eq (left | forward) 40
+assert_eq (left ^ forward) 50
+assert (left == forward)
+assert (left != forward)
+
+class NumericForward: std.Num
+  def (add) _self _other
+    60
+  def (mul) _self _other
+    70
+let numeric_forward = NumericForward()
+assert_eq (left + numeric_forward) 60
+assert_eq (left * numeric_forward) 70
+
+class Mixed
+  def (add) _self other
+    "add:$other"
+  def (radd) _self other
+    "radd:$other"
+  def (rshl) _self other
+    "rshl:$other"
+let mixed = Mixed()
+assert_eq (mixed + 3) "add:3"
+assert_eq (3 + mixed) "radd:3"
+assert_eq (3 << mixed) "rshl:3"
+
+class Decline
+  pub field tag = "decline"
+  def (add) _self _other
+    throw std.UnsupportedError()
+class Fail
+  def (add) _self _other
+    throw std.ValueError "forward failed"
+assert_eq (Decline() + right) "radd:decline"
+assert_throws $std.ValueError do (Fail() + right)
+
+class ReflectedFail
+  def (radd) _self _other
+    throw std.ValueError "reflected failed"
+assert_throws $std.ValueError do (left + ReflectedFail())
+
+class CompareLeft
+  def (eq) _self _other
+    throw std.UnsupportedError()
+class CompareRight
+  def (eq) _self _other
+    true
+  def (req) _self _other
+    false
+  def (ne) _self _other
+    true
+  def (rne) _self _other
+    false
+let lhs = CompareLeft()
+let rhs = CompareRight()
+assert (rhs == lhs)
+assert_not (lhs == rhs)
+assert (rhs != lhs)
+assert_not (lhs != rhs)
+assert_not (rhs.(req) lhs)
+assert_not (rhs.(rne) lhs)
+
+# Strict equality and inequality remain the final fallback.
+assert_not (Left() == Right())
+assert (Left() != Right())

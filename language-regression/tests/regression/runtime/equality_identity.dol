@@ -31,9 +31,12 @@ class Unsupported
     throw std.UnsupportedError()
 class Reflected
   pub field calls = 0
-  def (eq) self _other
+  def (req) self _other
     self.calls = (self.calls + 1)
     true
+  def (rne) self _other
+    self.calls = (self.calls + 1)
+    false
 let unsupported = Unsupported()
 let reflected = Reflected()
 assert (unsupported == reflected)
@@ -49,6 +52,8 @@ assert (unsupported != 1)
 # A real error must propagate, including when the operands are identical.
 class Broken
   def (eq) _self _other
+    throw std.ValueError "comparison failed"
+  def (req) _self _other
     throw std.ValueError "comparison failed"
 let broken = Broken()
 assert_throws $std.ValueError do (broken == broken)

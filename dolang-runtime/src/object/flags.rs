@@ -430,6 +430,15 @@ impl<'v, F: FlagLike> Object<'v> for Flags<F> {
         binop(this, strand, other, out, BitAnd::bitand)
     }
 
+    fn rband<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        binop(this, strand, other, out, BitAnd::bitand)
+    }
+
     fn bor<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -439,7 +448,25 @@ impl<'v, F: FlagLike> Object<'v> for Flags<F> {
         binop(this, strand, other, out, BitOr::bitor)
     }
 
+    fn rbor<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        binop(this, strand, other, out, BitOr::bitor)
+    }
+
     fn bxor<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        binop(this, strand, other, out, BitXor::bitxor)
+    }
+
+    fn rbxor<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,

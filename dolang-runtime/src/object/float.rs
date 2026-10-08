@@ -125,6 +125,14 @@ impl<'v> Protocol<'v> for f64 {
         binop(strand, *this.get(), other, Prim::op_add)
     }
 
+    fn op_radd<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        binop(strand, *this.get(), other, Prim::op_add)
+    }
+
     fn op_sub<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -142,6 +150,14 @@ impl<'v> Protocol<'v> for f64 {
     }
 
     fn op_mul<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        binop(strand, *this.get(), other, Prim::op_mul)
+    }
+
+    fn op_rmul<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
@@ -365,6 +381,14 @@ impl<'v> Protocol<'v> for Verbatim {
         binop(strand, this.get().value, other, Prim::op_add)
     }
 
+    fn op_radd<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        binop(strand, this.get().value, other, Prim::op_add)
+    }
+
     fn op_sub<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -382,6 +406,14 @@ impl<'v> Protocol<'v> for Verbatim {
     }
 
     fn op_mul<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        binop(strand, this.get().value, other, Prim::op_mul)
+    }
+
+    fn op_rmul<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
@@ -572,9 +604,11 @@ impl<'v> Protocol<'v> for Float {
                 Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
                 Method(sym::ADD_METHOD),
+                Method(sym::RADD_METHOD),
                 Method(sym::SUB_METHOD),
                 Method(sym::RSUB_METHOD),
                 Method(sym::MUL_METHOD),
+                Method(sym::RMUL_METHOD),
                 Method(sym::DIV_METHOD),
                 Method(sym::RDIV_METHOD),
                 Method(sym::EDIV_METHOD),
@@ -583,6 +617,9 @@ impl<'v> Protocol<'v> for Float {
                 Method(sym::RMOD_METHOD),
                 Method(sym::NEG_METHOD),
                 Method(sym::EQ_METHOD),
+                Method(sym::REQ_METHOD),
+                Method(sym::NE_METHOD),
+                Method(sym::RNE_METHOD),
                 Method(sym::LT_METHOD),
                 Method(sym::BOOL_METHOD),
                 Method(sym::HASH_METHOD),
@@ -631,9 +668,11 @@ impl<'v> Protocol<'v> for Float {
             | sym::DBG_METHOD
             | sym::FMT_METHOD
             | sym::ADD_METHOD
+            | sym::RADD_METHOD
             | sym::SUB_METHOD
             | sym::RSUB_METHOD
             | sym::MUL_METHOD
+            | sym::RMUL_METHOD
             | sym::DIV_METHOD
             | sym::RDIV_METHOD
             | sym::EDIV_METHOD
@@ -642,6 +681,9 @@ impl<'v> Protocol<'v> for Float {
             | sym::RMOD_METHOD
             | sym::NEG_METHOD
             | sym::EQ_METHOD
+            | sym::REQ_METHOD
+            | sym::NE_METHOD
+            | sym::RNE_METHOD
             | sym::LT_METHOD
             | sym::BOOL_METHOD
             | sym::HASH_METHOD => {

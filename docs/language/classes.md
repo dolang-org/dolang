@@ -522,15 +522,30 @@ it is a different type), the runtime tries the **reverse** variant on the right
 operand. For example, `5 * myobj` first tries `int.(mul)`, and if that fails
 for this operand type, falls back to `myobj.(rmul)`:
 
-| Forward  | Reverse   | Operator |
-| -------- | --------- | -------- |
-| `(sub)`  | `(rsub)`  | `-`      |
-| `(div)`  | `(rdiv)`  | `/`      |
-| `(ediv)` | `(rediv)` | `//`     |
-| `(mod)`  | `(rmod)`  | `%`      |
+| Forward   | Reflected  | Operator |
+| --------- | ---------- | -------- |
+| `(add)`   | `(radd)`   | `+`      |
+| `(sub)`   | `(rsub)`   | `-`      |
+| `(mul)`   | `(rmul)`   | `*`      |
+| `(div)`   | `(rdiv)`   | `/`      |
+| `(ediv)`  | `(rediv)`  | `//`     |
+| `(mod)`   | `(rmod)`   | `%`      |
+| `(band)`  | `(rband)`  | `&`      |
+| `(bor)`   | `(rbor)`   | `|`      |
+| `(bxor)`  | `(rbxor)`  | `^`      |
+| `(shl)`   | `(rshl)`   | `<<`     |
+| `(shr)`   | `(rshr)`   | `>>`     |
+| `(eq)`    | `(req)`    | `==`     |
+| `(ne)`    | `(rne)`    | `!=`     |
 
-Shift operators do not have reverse variants. Use `(shl)` for `<<` and `(shr)`
-for `>>`.
+The reflected method receives the right operand as `self` and the original
+left operand as its argument. When a reflected method for `+`, `*`, `&`, `|`,
+`^`, `==`, or `!=` is absent, the right operand's forward method is used.
+Other missing reflected methods decline the operation. Equality then falls
+back to strict equality. When `(ne)` is absent, it negates `(eq)`; when
+`(rne)` is absent, it uses `(ne)`. Only an
+`UnsupportedError` from the left method triggers the reflected method. Other
+errors propagate.
 
 **Ordering:** Defining `(lt)` and `(eq)` is sufficient for all four comparison
 operators. `<=`, `>`, and `>=` are derived automatically:

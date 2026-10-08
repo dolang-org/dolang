@@ -37,6 +37,26 @@ unsafe impl Collect for Value {
 }
 
 impl<'v> Protocol<'v> for Value {
+    fn op_req<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &DoValue<'v>,
+    ) -> Result<'v, 's, DoValue<'v>> {
+        this.delegator()
+            .ok_or_else(|| Error::not_supported(strand))?
+            .op_eq_direct(strand, other)
+    }
+
+    fn op_rne<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &DoValue<'v>,
+    ) -> Result<'v, 's, DoValue<'v>> {
+        this.delegator()
+            .ok_or_else(|| Error::not_supported(strand))?
+            .op_ne_direct(strand, other)
+    }
+
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: true,
@@ -254,9 +274,15 @@ impl<'v> Protocol<'v> for Bool {
                 Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
                 Method(sym::EQ_METHOD),
+                Method(sym::REQ_METHOD),
+                Method(sym::NE_METHOD),
+                Method(sym::RNE_METHOD),
                 Method(sym::BAND_METHOD),
+                Method(sym::RBAND_METHOD),
                 Method(sym::BOR_METHOD),
+                Method(sym::RBOR_METHOD),
                 Method(sym::BXOR_METHOD),
+                Method(sym::RBXOR_METHOD),
                 Method(sym::BNOT_METHOD),
                 Method(sym::BOOL_METHOD),
                 Method(sym::HASH_METHOD),
@@ -276,9 +302,15 @@ impl<'v> Protocol<'v> for Bool {
             | sym::DBG_METHOD
             | sym::FMT_METHOD
             | sym::EQ_METHOD
+            | sym::REQ_METHOD
+            | sym::NE_METHOD
+            | sym::RNE_METHOD
             | sym::BAND_METHOD
+            | sym::RBAND_METHOD
             | sym::BOR_METHOD
+            | sym::RBOR_METHOD
             | sym::BXOR_METHOD
+            | sym::RBXOR_METHOD
             | sym::BNOT_METHOD
             | sym::BOOL_METHOD
             | sym::HASH_METHOD => {

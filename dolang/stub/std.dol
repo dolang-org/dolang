@@ -2103,10 +2103,16 @@ pub class Num
   pub def (add) self other @ Num -> Num
     ...
 
+  pub def (radd) self other @ Num -> Num
+    ...
+
   pub def (sub) self other @ Num -> Num
     ...
 
   pub def (mul) self other @ Num -> Num
+    ...
+
+  pub def (rmul) self other @ Num -> Num
     ...
 
   pub def (div) self other @ Num -> Float
@@ -2163,10 +2169,16 @@ pub class Float: Num
   pub def (add) self other @ Num -> Float
     ...
 
+  pub def (radd) self other @ Num -> Float
+    ...
+
   pub def (sub) self other @ Num -> Float
     ...
 
   pub def (mul) self other @ Num -> Float
+    ...
+
+  pub def (rmul) self other @ Num -> Float
     ...
 
   pub def (mod) self other @ Num -> Float
@@ -2982,12 +2994,21 @@ pub class Int: Num
   pub def (band) self other @ (Int | Bool) -> Int
     ...
 
+  pub def (rband) self other @ (Int | Bool) -> Int
+    ...
+
   # Computes bitwise OR.
   pub def (bor) self other @ (Int | Bool) -> Int
     ...
 
+  pub def (rbor) self other @ (Int | Bool) -> Int
+    ...
+
   # Computes bitwise XOR.
   pub def (bxor) self other @ (Int | Bool) -> Int
+    ...
+
+  pub def (rbxor) self other @ (Int | Bool) -> Int
     ...
 
   # Computes bitwise NOT.
@@ -2998,8 +3019,14 @@ pub class Int: Num
   pub def (shl) self other @ Int -> Int
     ...
 
+  pub def (rshl) self other @ Int -> Int
+    ...
+
   # Shifts right arithmetically, sign-extending negative values.
   pub def (shr) self other @ Int -> Int
+    ...
+
+  pub def (rshr) self other @ Int -> Int
     ...
 
 # Error raised to signal that an iterator is exhausted. This is used
@@ -4856,6 +4883,18 @@ pub class Value
 
   # Compares with another value of any type.
   pub def (eq) self other @ Value -> Bool
+    ...
+
+  # Compares with another value when this value is the right operand.
+  pub def (req) self other @ Value -> Bool
+    ...
+
+  # Compares with another value for inequality.
+  pub def (ne) self other @ Value -> Bool
+    ...
+
+  # Compares for inequality when this value is the right operand.
+  pub def (rne) self other @ Value -> Bool
     ...
 
   # Returns the string conversion that interpolation uses.

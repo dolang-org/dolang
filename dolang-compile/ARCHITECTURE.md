@@ -990,19 +990,20 @@ The rules are:
   an optional item that is always absent.
 - A binary string's parts must be `Bin`, and an interpolation's width and
   precision `Int`.
-- A member use (`flow/member.rs`) looks its member up (see "Member lookup") and
-  is checked as the runtime makes it, as a call through the member where there
-  is one. A method call passes the receiver first to an instance's method, and
-  calls a field's value or a getter's result as it is. A read gives a field's
-  type, a getter's or `(get)`'s result, or a method bound to its receiver, which
-  is its signature without the receiver parameter unless that mentions the
-  method's own binders. A write must fit a field's type, or calls the setter or
-  `(set)`. Indexing calls `(index)`, and an index target `(assign)`. An operator
-  calls its special method on its left operand, or, as the runtime does, when
-  that lacks it, on its right: the same method with the operands swapped for a
-  commutative operator, and the reflected one (`(rsub)`, `(rdiv)`, `(rediv)`,
-  `(rmod)`) otherwise. `==`, `!=` and `!` are `Bool`, and the comparisons
-  require `(lt)` and are `Bool`. A missing member, and a
+- A member use (`flow/member.rs`) looks its member up (see "Member lookup")
+  and is checked as the runtime makes it, as a call through the member where
+  there is one. A method call passes the receiver first to an instance's method,
+  and calls a field's value or a getter's result as it is. A read gives a
+  field's type, a getter's or `(get)`'s result, or a method bound to its
+  receiver. The bound method's signature omits the receiver parameter unless
+  that mentions the method's own binders. A write must fit a field's type or
+  call the setter or `(set)`. Indexing calls `(index)`, and an index target
+  `(assign)`. An operator
+  calls its special method on its left operand, or its reflected method on its
+  right when the left lacks the operation. For commutative operators, the
+  right operand's forward method is used when its reflected method is absent.
+  `==`, `!=` and `!` are `Bool`, and
+  the comparisons require `(lt)` and are `Bool`. A missing member, and a
   read or write its kind doesn't allow, are reported. A lookup that can't
   decide is an unresolved check. An overloaded method is dynamic except where
   it's called.

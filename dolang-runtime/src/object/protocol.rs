@@ -208,6 +208,13 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
     ) -> Result<'v, 's, Value<'v>> {
         Err(Error::not_supported(strand))
     }
+    fn op_req<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        Self::op_eq(this, strand, other)
+    }
 
     fn op_ne<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -217,6 +224,13 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         Ok(Value::from_bool(
             !Self::op_eq(this, strand, other)?.op_bool(strand)?,
         ))
+    }
+    fn op_rne<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        Self::op_ne(this, strand, other)
     }
 
     fn op_neg<'a, 's>(
@@ -240,6 +254,13 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
     ) -> Result<'v, 's, Value<'v>> {
         Err(Error::not_supported(strand))
     }
+    fn op_rband<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        Self::op_band(this, strand, other)
+    }
 
     fn op_bor<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -247,6 +268,13 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         Err(Error::not_supported(strand))
+    }
+    fn op_rbor<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        Self::op_bor(this, strand, other)
     }
 
     fn op_bxor<'a, 's>(
@@ -256,8 +284,22 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
     ) -> Result<'v, 's, Value<'v>> {
         Err(Error::not_supported(strand))
     }
+    fn op_rbxor<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        Self::op_bxor(this, strand, other)
+    }
 
     fn op_shl<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        _other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        Err(Error::not_supported(strand))
+    }
+    fn op_rshl<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
@@ -272,6 +314,13 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
     ) -> Result<'v, 's, Value<'v>> {
         Err(Error::not_supported(strand))
     }
+    fn op_rshr<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        _other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        Err(Error::not_supported(strand))
+    }
 
     fn op_add<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -279,6 +328,13 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         Err(Error::not_supported(strand))
+    }
+    fn op_radd<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        Self::op_add(this, strand, other)
     }
 
     fn op_sub<'a, 's>(
@@ -303,6 +359,13 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         _other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         Err(Error::not_supported(strand))
+    }
+    fn op_rmul<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        Self::op_mul(this, strand, other)
     }
 
     fn op_div<'a, 's>(
@@ -539,16 +602,25 @@ pub(crate) fn default_fmt<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
 #[derive(Clone, Copy)]
 enum BinOp {
     Eq,
+    Req,
     Ne,
+    Rne,
     Band,
+    Rband,
     Bor,
+    Rbor,
     Bxor,
+    Rbxor,
     Shl,
+    Rshl,
     Shr,
+    Rshr,
     Add,
+    Radd,
     Sub,
     Rsub,
     Mul,
+    Rmul,
     Div,
     Rdiv,
     Ediv,
@@ -1181,16 +1253,25 @@ fn op_bin_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
         let this = Recv::from_erased(this);
         match op {
             BinOp::Eq => T::op_eq(this, strand, other),
+            BinOp::Req => T::op_req(this, strand, other),
             BinOp::Ne => T::op_ne(this, strand, other),
+            BinOp::Rne => T::op_rne(this, strand, other),
             BinOp::Band => T::op_band(this, strand, other),
+            BinOp::Rband => T::op_rband(this, strand, other),
             BinOp::Bor => T::op_bor(this, strand, other),
+            BinOp::Rbor => T::op_rbor(this, strand, other),
             BinOp::Bxor => T::op_bxor(this, strand, other),
+            BinOp::Rbxor => T::op_rbxor(this, strand, other),
             BinOp::Shl => T::op_shl(this, strand, other),
+            BinOp::Rshl => T::op_rshl(this, strand, other),
             BinOp::Shr => T::op_shr(this, strand, other),
+            BinOp::Rshr => T::op_rshr(this, strand, other),
             BinOp::Add => T::op_add(this, strand, other),
+            BinOp::Radd => T::op_radd(this, strand, other),
             BinOp::Sub => T::op_sub(this, strand, other),
             BinOp::Rsub => T::op_rsub(this, strand, other),
             BinOp::Mul => T::op_mul(this, strand, other),
+            BinOp::Rmul => T::op_rmul(this, strand, other),
             BinOp::Div => T::op_div(this, strand, other),
             BinOp::Rdiv => T::op_rdiv(this, strand, other),
             BinOp::Ediv => T::op_ediv(this, strand, other),
@@ -1536,8 +1617,18 @@ pub(crate) trait Dispatch<'v, 'a> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>>;
+    fn op_rband<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>>;
 
     fn op_bor<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>>;
+    fn op_rbor<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
@@ -1548,8 +1639,18 @@ pub(crate) trait Dispatch<'v, 'a> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>>;
+    fn op_rbxor<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>>;
 
     fn op_shl<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>>;
+    fn op_rshl<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
@@ -1560,8 +1661,18 @@ pub(crate) trait Dispatch<'v, 'a> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>>;
+    fn op_rshr<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>>;
 
     fn op_add<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>>;
+    fn op_radd<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
@@ -1580,6 +1691,11 @@ pub(crate) trait Dispatch<'v, 'a> {
     ) -> Result<'v, 's, Value<'v>>;
 
     fn op_mul<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>>;
+    fn op_rmul<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
@@ -1626,8 +1742,18 @@ pub(crate) trait Dispatch<'v, 'a> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>>;
+    fn op_req<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>>;
 
     fn op_ne<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>>;
+    fn op_rne<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
@@ -1815,6 +1941,13 @@ impl<'v, 'a, T: AsRecv<'v, 'a>> Dispatch<'v, 'a> for T {
     ) -> Result<'v, 's, Value<'v>> {
         unsafe { invoke!(self, op_bin, strand, BinOp::Eq, other) }
     }
+    fn op_req<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Req, other) }
+    }
 
     fn op_ne<'s>(
         &self,
@@ -1822,6 +1955,13 @@ impl<'v, 'a, T: AsRecv<'v, 'a>> Dispatch<'v, 'a> for T {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         unsafe { invoke!(self, op_bin, strand, BinOp::Ne, other) }
+    }
+    fn op_rne<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Rne, other) }
     }
 
     fn op_neg<'s>(&self, strand: &'a mut Strand<'v, 's>) -> Result<'v, 's, Value<'v>> {
@@ -1839,6 +1979,13 @@ impl<'v, 'a, T: AsRecv<'v, 'a>> Dispatch<'v, 'a> for T {
     ) -> Result<'v, 's, Value<'v>> {
         unsafe { invoke!(self, op_bin, strand, BinOp::Band, other) }
     }
+    fn op_rband<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Rband, other) }
+    }
 
     fn op_bor<'s>(
         &self,
@@ -1846,6 +1993,13 @@ impl<'v, 'a, T: AsRecv<'v, 'a>> Dispatch<'v, 'a> for T {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         unsafe { invoke!(self, op_bin, strand, BinOp::Bor, other) }
+    }
+    fn op_rbor<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Rbor, other) }
     }
 
     fn op_bxor<'s>(
@@ -1855,6 +2009,13 @@ impl<'v, 'a, T: AsRecv<'v, 'a>> Dispatch<'v, 'a> for T {
     ) -> Result<'v, 's, Value<'v>> {
         unsafe { invoke!(self, op_bin, strand, BinOp::Bxor, other) }
     }
+    fn op_rbxor<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Rbxor, other) }
+    }
 
     fn op_shl<'s>(
         &self,
@@ -1862,6 +2023,13 @@ impl<'v, 'a, T: AsRecv<'v, 'a>> Dispatch<'v, 'a> for T {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         unsafe { invoke!(self, op_bin, strand, BinOp::Shl, other) }
+    }
+    fn op_rshl<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Rshl, other) }
     }
 
     fn op_shr<'s>(
@@ -1871,6 +2039,13 @@ impl<'v, 'a, T: AsRecv<'v, 'a>> Dispatch<'v, 'a> for T {
     ) -> Result<'v, 's, Value<'v>> {
         unsafe { invoke!(self, op_bin, strand, BinOp::Shr, other) }
     }
+    fn op_rshr<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Rshr, other) }
+    }
 
     fn op_add<'s>(
         &self,
@@ -1878,6 +2053,13 @@ impl<'v, 'a, T: AsRecv<'v, 'a>> Dispatch<'v, 'a> for T {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         unsafe { invoke!(self, op_bin, strand, BinOp::Add, other) }
+    }
+    fn op_radd<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Radd, other) }
     }
 
     fn op_sub<'s>(
@@ -1902,6 +2084,13 @@ impl<'v, 'a, T: AsRecv<'v, 'a>> Dispatch<'v, 'a> for T {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         unsafe { invoke!(self, op_bin, strand, BinOp::Mul, other) }
+    }
+    fn op_rmul<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Rmul, other) }
     }
 
     fn op_div<'s>(
@@ -2140,6 +2329,9 @@ pub(crate) fn value_members<'v, 'a>() -> &'a [Member<'v, 'a>] {
     members![
         Method(sym::HASH_METHOD),
         Method(sym::EQ_METHOD),
+        Method(sym::REQ_METHOD),
+        Method(sym::NE_METHOD),
+        Method(sym::RNE_METHOD),
         Method(sym::STR_METHOD),
         Method(sym::DBG_METHOD),
         Method(sym::VERBATIM_METHOD),
@@ -2215,13 +2407,18 @@ pub(crate) fn is_special_mcall(tag: sym::Tag) -> bool {
             | sym::BOOL_METHOD
             | sym::HASH_METHOD
             | sym::EQ_METHOD
+            | sym::REQ_METHOD
+            | sym::NE_METHOD
+            | sym::RNE_METHOD
             | sym::LT_METHOD
             | sym::NEG_METHOD
             | sym::BNOT_METHOD
             | sym::ADD_METHOD
+            | sym::RADD_METHOD
             | sym::SUB_METHOD
             | sym::RSUB_METHOD
             | sym::MUL_METHOD
+            | sym::RMUL_METHOD
             | sym::DIV_METHOD
             | sym::RDIV_METHOD
             | sym::EDIV_METHOD
@@ -2229,10 +2426,15 @@ pub(crate) fn is_special_mcall(tag: sym::Tag) -> bool {
             | sym::MOD_METHOD
             | sym::RMOD_METHOD
             | sym::BAND_METHOD
+            | sym::RBAND_METHOD
             | sym::BOR_METHOD
+            | sym::RBOR_METHOD
             | sym::BXOR_METHOD
+            | sym::RBXOR_METHOD
             | sym::SHL_METHOD
+            | sym::RSHL_METHOD
             | sym::SHR_METHOD
+            | sym::RSHR_METHOD
     )
 }
 
@@ -2307,6 +2509,30 @@ async fn special_mcall<'v, 'a, 's>(
             };
             out.store(value);
         }
+        sym::REQ_METHOD => {
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            let value = match delegator {
+                Some(delegator) => Delegated::new(receiver, delegator).op_req(strand, &other)?,
+                None => receiver.op_req(strand, &other)?,
+            };
+            out.store(value);
+        }
+        sym::NE_METHOD => {
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            let value = match delegator {
+                Some(delegator) => Delegated::new(receiver, delegator).op_ne(strand, &other)?,
+                None => receiver.op_ne(strand, &other)?,
+            };
+            out.store(value);
+        }
+        sym::RNE_METHOD => {
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            let value = match delegator {
+                Some(delegator) => Delegated::new(receiver, delegator).op_rne(strand, &other)?,
+                None => receiver.op_rne(strand, &other)?,
+            };
+            out.store(value);
+        }
         sym::LT_METHOD => {
             let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_lt, &other)?);
@@ -2321,6 +2547,10 @@ async fn special_mcall<'v, 'a, 's>(
             let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_add, &other)?);
         }
+        sym::RADD_METHOD => {
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            out.store(dispatch!(op_radd, &other)?);
+        }
         sym::SUB_METHOD => {
             let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_sub, &other)?);
@@ -2332,6 +2562,10 @@ async fn special_mcall<'v, 'a, 's>(
         sym::MUL_METHOD => {
             let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_mul, &other)?);
+        }
+        sym::RMUL_METHOD => {
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            out.store(dispatch!(op_rmul, &other)?);
         }
         sym::DIV_METHOD => {
             let ([other], []) = unpack!(strand, args, 1, 0)?;
@@ -2361,21 +2595,41 @@ async fn special_mcall<'v, 'a, 's>(
             let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_band, &other)?);
         }
+        sym::RBAND_METHOD => {
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            out.store(dispatch!(op_rband, &other)?);
+        }
         sym::BOR_METHOD => {
             let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_bor, &other)?);
+        }
+        sym::RBOR_METHOD => {
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            out.store(dispatch!(op_rbor, &other)?);
         }
         sym::BXOR_METHOD => {
             let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_bxor, &other)?);
         }
+        sym::RBXOR_METHOD => {
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            out.store(dispatch!(op_rbxor, &other)?);
+        }
         sym::SHL_METHOD => {
             let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_shl, &other)?);
         }
+        sym::RSHL_METHOD => {
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            out.store(dispatch!(op_rshl, &other)?);
+        }
         sym::SHR_METHOD => {
             let ([other], []) = unpack!(strand, args, 1, 0)?;
             out.store(dispatch!(op_shr, &other)?);
+        }
+        sym::RSHR_METHOD => {
+            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            out.store(dispatch!(op_rshr, &other)?);
         }
         _ => unreachable!("special_mcall requires a supported symbol"),
     }
