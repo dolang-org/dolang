@@ -108,7 +108,7 @@ pub def chosen p @ Picker x u @ (Int | Str)
   # A block's result doesn't choose, but is checked against what's chosen
   let _ = p.each 1 do |v| v
   #   ^: flow std.Str
-# error: expected `(std.Int, <m.chosen.#0, >m.chosen.#1) -> std.Str`, found `(std.Int, <m.chosen.#0, >m.chosen.#1) -> std.Int`
+# error: expected `(std.Int) -> std.Str`, found `(std.Int) -> std.Int`
 #   --> m.dol:LL:LL
 #    |
 # LL |   let _ = p.each 1 do |v| v
@@ -161,7 +161,7 @@ pub def functions()
   let _ = apply $twice
   #   ^: flow std.Int
   negate $twice
-  # error: expected `(std.Bool, <m.functions.#0, >m.functions.#1) -> std.Bool`, found `m.twice`
+  # error: expected `(std.Bool) -> std.Bool`, found `m.twice`
   #   --> m.dol:LL:LL
   #    |
   # LL |   negate $twice

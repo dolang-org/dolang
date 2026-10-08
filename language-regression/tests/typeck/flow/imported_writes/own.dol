@@ -9,7 +9,7 @@ pub class Box
 
 twice = (do |x @ Int| -> Int x)
 twice = (do |x @ Str| -> Str x)
-# error: `(std.Str, <Value, >Value) -> std.Str` does not fit the annotation `(std.Int) -> std.Int`
+# error: `(std.Str) -> std.Str` does not fit the annotation `(std.Int) -> std.Int`
 #   --> own.dol:LL:LL
 #    |
 # LL | twice = (do |x @ Str| -> Str x)
@@ -36,7 +36,7 @@ Box = 1
 
 pub def rebind()
   twice = (do |x @ Str| -> Str x)
-# error: `(std.Str, <Value, >Value) -> std.Str` does not fit the annotation `(std.Int) -> std.Int`
+# error: `(std.Str) -> std.Str` does not fit the annotation `(std.Int) -> std.Int`
 #   --> own.dol:LL:LL
 #    |
 # LL |   twice = (do |x @ Str| -> Str x)

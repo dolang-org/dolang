@@ -41,7 +41,7 @@ pub def reads_declared <Iter[Int]
 # A `for` without an iteratee takes its input's `(next)`
 pub def loops()
   for _x
-    # error: `m.loops.#0` has no member `(next)`
+    # error: the input of `m.loops` has no member `(next)`
     #   --> m.dol:LL:LL
     #    |
     # LL |   for _x
@@ -289,7 +289,7 @@ pub def redirects_output()
   let out @ Array[Int] = []
   strand.redirect output: $out do
     for _x
-      # error: `m.redirects_output.#0` has no member `(next)`
+      # error: the input of `m.redirects_output` has no member `(next)`
       #   --> m.dol:LL:LL
       #    |
       # LL |     for _x

@@ -17,7 +17,7 @@ pub def scoped_silent() -> nil
 # A loaded program may write anything, so its caller needs an output for `Value`
 pub def loads_silent code @ Bin -> Value
   load.run $code
-# error: this call does not fit `(std.Bin, ?importer: (std.Str, <Value, >Value) -> Value, <std.Iter[Value], >std.Sink[Value]) -> Value`
+# error: this call does not fit `(std.Bin, ?importer: (std.Str) -> Value, <std.Iter[Value], >std.Sink[Value]) -> Value`
 #   --> m.dol:LL:LL
 #    |
 # LL |   load.run $code

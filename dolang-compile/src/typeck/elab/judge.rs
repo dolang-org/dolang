@@ -540,47 +540,6 @@ impl Tables<'_> {
         db.render(ty, self, Style::Full)
     }
 
-    /// A signature of the function `decl`, `ty`, as a diagnostic shows it: its
-    /// own written binders named and listed before it, as in `[K] (K) -> K`, and
-    /// the ambient channels its declaration leaves implicit left out. Binders
-    /// `ty` holds before its own, as a class's in a constructor, are shown as
-    /// references.
-    pub(crate) fn render_signature(&self, db: &Database, decl: DeclId, ty: TypeId) -> String {
-        let Type::Quantified { binders, body } = db.ty(ty) else {
-            return self.render_type(db, ty);
-        };
-        let Type::Function(function) = db.ty(*body) else {
-            return self.render_type(db, ty);
-        };
-        let declaration = db.declaration(decl);
-        let own: Vec<(BinderOrigin, String)> = (declaration.binders.iter())
-            .zip(self.names(db, declaration))
-            .filter(|(binder, _)| binder.origin != BinderOrigin::Lifted)
-            .map(|(binder, name)| (binder.origin, name))
-            .collect();
-        let Some(offset) = binders.len().checked_sub(own.len()) else {
-            return self.render_type(db, ty);
-        };
-        let names: Vec<String> = (0..offset)
-            .map(|slot| format!("#0.{slot}"))
-            .chain(own.iter().map(|(_, name)| name.clone()))
-            .collect();
-        let implicit = |slot: u16| {
-            let slot = usize::from(slot);
-            slot >= offset && own[slot - offset].0 == BinderOrigin::Implicit
-        };
-        let shown = db.without_channels(db.intern(Type::Function(function.clone())), &implicit, 0);
-        let written: Vec<&str> = (own.iter())
-            .filter(|(origin, _)| *origin == BinderOrigin::Written)
-            .map(|(_, name)| name.as_str())
-            .collect();
-        let rendered = self.render(db, shown, &names);
-        match written[..] {
-            [] => rendered,
-            _ => format!("@[{}] {rendered}", written.join(", ")),
-        }
-    }
-
     /// A type as interned, with the binders of the group it is interpreted in named
     /// by `names`
     fn render(&self, db: &Database, ty: TypeId, names: &[String]) -> String {

@@ -113,7 +113,7 @@ impl Flow<'_, '_> {
         {
             self.problem(Problem::Assertion {
                 span,
-                ty: self.tables.render_type(self.db, ty),
+                ty: self.subject(ty),
             });
         }
         let found = match checked {
@@ -128,11 +128,8 @@ impl Flow<'_, '_> {
             && span != Span::INVALID
             && self.conform(found, ty, span) == Status::Contradicted
         {
-            self.problem(Problem::Cast {
-                span,
-                found: self.tables.render_type(self.db, found),
-                ty: self.tables.render_type(self.db, ty),
-            });
+            let (found, ty) = self.pair(found, ty);
+            self.problem(Problem::Cast { span, found, ty });
         }
         ty
     }

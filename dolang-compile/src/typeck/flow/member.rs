@@ -304,8 +304,8 @@ impl Flow<'_, '_> {
         if !self.observing() {
             return;
         }
-        let receiver = self.tables.render_type(self.db, receiver);
-        let within = within.map(|union| self.tables.render_type(self.db, union));
+        let receiver = self.subject(receiver);
+        let within = within.map(|union| self.subject(union));
         let name = self.member_name(member);
         if within.is_some()
             && let Some(results) = &mut self.results

@@ -5,7 +5,7 @@ use std::fmt::{self, Write};
 use crate::{
     diag::{NoteKind, Severity},
     source::Span,
-    typeck::report::Report,
+    typeck::{report::Report, r#type::Shown},
 };
 
 /// A diagnosed problem, with the types it names rendered
@@ -22,8 +22,8 @@ pub(crate) enum Problem {
     /// doesn't fit, then each type found around it
     Argument {
         span: Span,
-        found: String,
-        expected: Option<String>,
+        found: Shown,
+        expected: Option<Shown>,
         causes: Vec<Vec<String>>,
     },
     /// A call that doesn't pass one of its callee's required parameters
@@ -50,43 +50,39 @@ pub(crate) enum Problem {
     /// positions' indexes
     Conflict(Span),
     /// A call whose types select by a key its schema doesn't admit
-    Unadmitted { span: Span, key: String },
+    Unadmitted { span: Span, key: Shown },
     /// A value that doesn't fit what its use requires of it
     Misfit {
         span: Span,
-        found: String,
+        found: Shown,
         misfit: Misfit,
     },
     /// A pattern that can't unpack a value of the type found
-    Impossible { span: Span, found: String },
+    Impossible { span: Span, found: Shown },
     /// A value that doesn't fit a variable's annotation, or a function's declared
     /// result
     Annotation {
         span: Span,
-        found: String,
-        annotation: String,
+        found: Shown,
+        annotation: Shown,
         result: bool,
     },
     /// A value that doesn't fit the type it's cast to
-    Cast {
-        span: Span,
-        found: String,
-        ty: String,
-    },
+    Cast { span: Span, found: Shown, ty: Shown },
     /// An unchecked cast whose value can be shown to fit its type
-    Assertion { span: Span, ty: String },
+    Assertion { span: Span, ty: Shown },
     /// A default that neither fits its variable's annotation nor is a sentinel
     Default {
         span: Span,
-        found: String,
-        annotation: String,
+        found: Shown,
+        annotation: Shown,
     },
     /// A member the receiver doesn't have, or alternatives of the union `within`
     /// don't
     MissingMember {
         span: Span,
-        receivers: Vec<String>,
-        within: Option<String>,
+        receivers: Vec<Shown>,
+        within: Option<Shown>,
         name: String,
     },
     /// A member used in a way its kind doesn't allow
@@ -185,8 +181,8 @@ impl Report for Problem {
                 found,
                 expected: Some(expected),
                 ..
-            } if found != expected => write!(w, "expected `{expected}`, found `{found}`"),
-            Problem::Argument { found, .. } => write!(w, "`{found}` does not fit this parameter"),
+            } if found != expected => write!(w, "expected {expected}, found {found}"),
+            Problem::Argument { found, .. } => write!(w, "{found} does not fit this parameter"),
             Problem::MissingArgument(_) => write!(w, "this call is missing an argument"),
             Problem::ExtraArgument(_) => write!(w, "the callee takes no such argument"),
             Problem::Call { callee, .. } => write!(w, "this call does not fit `{callee}`"),
@@ -211,7 +207,7 @@ impl Report for Problem {
             Problem::Unadmitted { key, .. } => {
                 write!(
                     w,
-                    "this call selects by `{key}`, which isn't one of the schema's keys"
+                    "this call selects by {key}, which isn't one of the schema's keys"
                 )
             }
             Problem::Misfit { found, misfit, .. } => {
@@ -221,37 +217,34 @@ impl Report for Problem {
                     Misfit::Spreadable => "spreadable",
                     Misfit::Unpackable => "unpackable",
                 };
-                write!(w, "`{found}` is not {required}")
+                write!(w, "{found} is not {required}")
             }
             Problem::Impossible { found, .. } => {
-                write!(w, "`{found}` can never unpack as this pattern")
+                write!(w, "{found} can never unpack as this pattern")
             }
             Problem::Annotation {
                 found,
                 annotation,
                 result: false,
                 ..
-            } => write!(w, "`{found}` does not fit the annotation `{annotation}`"),
+            } => write!(w, "{found} does not fit the annotation {annotation}"),
             Problem::Annotation {
                 found,
                 annotation,
                 result: true,
                 ..
-            } => write!(
-                w,
-                "`{found}` does not fit the declared result `{annotation}`"
-            ),
+            } => write!(w, "{found} does not fit the declared result {annotation}"),
             Problem::Cast { found, ty, .. } => {
-                write!(w, "`{found}` does not fit the cast's type `{ty}`")
+                write!(w, "{found} does not fit the cast's type {ty}")
             }
             Problem::Assertion { ty, .. } => {
-                write!(w, "this value fits `{ty}`, so `@` suffices")
+                write!(w, "this value fits {ty}, so `@` suffices")
             }
             Problem::Default {
                 found, annotation, ..
             } => write!(
                 w,
-                "default `{found}` does not fit the annotation `{annotation}`, and isn't a `nil` or symbol sentinel"
+                "default {found} does not fit the annotation {annotation}, and isn't a `nil` or symbol sentinel"
             ),
             Problem::MissingMember {
                 receivers,
@@ -259,7 +252,7 @@ impl Report for Problem {
                 name,
                 ..
             } => {
-                let quoted: Vec<_> = receivers.iter().map(|r| format!("`{r}`")).collect();
+                let quoted: Vec<_> = receivers.iter().map(Shown::to_string).collect();
                 let receivers = match &quoted[..] {
                     [.., last] if quoted.len() > 1 => {
                         format!("{} and {last}", quoted[..quoted.len() - 1].join(", "))
@@ -268,7 +261,7 @@ impl Report for Problem {
                 };
                 let has = if quoted.len() > 1 { "have" } else { "has" };
                 match within {
-                    Some(within) => write!(w, "{receivers} in `{within}` {has} no member `{name}`"),
+                    Some(within) => write!(w, "{receivers} in {within} {has} no member `{name}`"),
                     None => write!(w, "{receivers} {has} no member `{name}`"),
                 }
             }

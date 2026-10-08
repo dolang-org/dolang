@@ -31,7 +31,7 @@ pub def counted()
   #    |              ^^^^
   let _ @ ((Int, ?Str, *Bool) -> nil) = optional
   let _ @ ((Int, *Bool) -> nil) = optional
-# error: `(std.Int, ?std.Str, *std.Bool) -> nil` does not fit the annotation `(std.Int, *std.Bool, <Value, >Value) -> nil`
+# error: `(std.Int, ?std.Str, *std.Bool) -> nil` does not fit the annotation `(std.Int, *std.Bool) -> nil`
 #   --> m.dol:LL:LL
 #    |
 # LL |   let _ @ ((Int, *Bool) -> nil) = optional

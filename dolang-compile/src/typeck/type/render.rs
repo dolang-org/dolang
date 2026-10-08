@@ -3,7 +3,11 @@
 //! The environment a type is rendered in answers questions of fact about it, as
 //! [`Names`]; a [`Style`] decides what of it is shown.
 
-use std::{borrow::Cow, convert::Infallible, fmt::Write};
+use std::{
+    borrow::Cow,
+    convert::Infallible,
+    fmt::{self, Write},
+};
 
 use super::{
     Argument, Binder, BinderOrigin, Binding, BoundRef, Database, DeclId, Element, Kind, Literal,
@@ -16,6 +20,10 @@ pub(crate) trait Names {
     fn declaration(&self, id: DeclId) -> Cow<'_, str>;
     /// The collection a declaration's applications are written as, if any
     fn collection(&self, id: DeclId) -> Option<Collection>;
+    /// Whether `decl`'s binders are in scope, so its rigids are named bare
+    fn in_scope(&self, _decl: DeclId) -> bool {
+        false
+    }
 }
 
 /// A class whose applications have a literal form
@@ -36,12 +44,153 @@ pub(crate) enum Collection {
 pub(crate) enum Style {
     /// Everything, as interned
     Full,
+    /// As a reader would write it: a rigid by its binder's name, an omitted
+    /// channel's by its role, and a function's channels left out where they're
+    /// omitted channels' or `Value`, as a function type written outside a
+    /// signature takes. Lifted arguments are left out.
+    Reader,
+    /// As [`Style::Reader`], but with every function's channels shown, to tell
+    /// apart types only they do
+    Channels,
+}
+
+/// A type as the subject of a diagnostic's sentence
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Shown {
+    Type(String),
+    /// The rigid of a function's omitted channel, which no type names
+    Channel {
+        /// The function's declaration
+        owner: String,
+        input: bool,
+        bound: Option<String>,
+    },
+}
+
+impl fmt::Display for Shown {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Shown::Type(ty) => write!(f, "`{ty}`"),
+            Shown::Channel {
+                owner,
+                input,
+                bound,
+            } => {
+                let role = if *input { "input" } else { "output" };
+                write!(f, "the {role} of `{owner}`")?;
+                match bound {
+                    Some(bound) => write!(f, " (`{bound}`)"),
+                    None => Ok(()),
+                }
+            }
+        }
+    }
 }
 
 impl Database {
     /// A closed type
     pub(crate) fn render(&self, ty: TypeId, names: &dyn Names, style: Style) -> String {
         self.render_in(ty, &[], names, style)
+    }
+
+    /// A closed type of the declaration `decl`, its binders named as the
+    /// declaration names them, unless its lifted binders are already applied.
+    /// Binders it has before the declaration's, as a constructor has its
+    /// class's, are named as any quantifier's are.
+    pub(crate) fn render_declared(
+        &self,
+        decl: DeclId,
+        ty: TypeId,
+        names: &dyn Names,
+        style: Style,
+    ) -> String {
+        let sources = &self.declaration(decl).binders;
+        let mut declared: Vec<String> = (sources.iter())
+            .map(|binder| self.symbol(binder.name).to_owned())
+            .collect();
+        match self.ty(ty) {
+            Type::Quantified { binders, body } => {
+                if binders.len() < declared.len() {
+                    let lifted = (sources.iter())
+                        .take_while(|binder| binder.origin == BinderOrigin::Lifted)
+                        .count();
+                    if binders.len() + lifted != declared.len() {
+                        return self.render(ty, names, style);
+                    }
+                    declared.drain(..lifted);
+                }
+                let renderer = Renderer {
+                    db: self,
+                    names,
+                    style,
+                };
+                let naming = Naming {
+                    names: &[],
+                    depth: 0,
+                    groups: None,
+                };
+                let mut out = String::new();
+                renderer.quantified(binders, *body, &declared, naming, &mut out);
+                out
+            }
+            _ => self.render(ty, names, style),
+        }
+    }
+
+    /// A closed type as the subject of a diagnostic's sentence: an omitted
+    /// channel's rigid is described, unless `style` shows everything
+    pub(crate) fn subject(&self, ty: TypeId, names: &dyn Names, style: Style) -> Shown {
+        if style != Style::Full
+            && let Type::Rigid { decl, slot, .. } = *self.ty(ty)
+            && let Some(input) = self.channel(decl, slot)
+        {
+            let bound = match self.ty(self.declaration(decl).ty) {
+                Type::Quantified { binders, .. } => binders[usize::from(slot)].bound,
+                _ => None,
+            };
+            return Shown::Channel {
+                owner: names.declaration(decl).into_owned(),
+                input,
+                bound: bound.map(|bound| {
+                    let bound = self.substitute(bound, &self.rigids(decl));
+                    self.render(bound, names, style)
+                }),
+            };
+        }
+        Shown::Type(self.render(ty, names, style))
+    }
+
+    /// The closed types a diagnostic sets against each other, with every channel
+    /// shown if nothing else tells them apart
+    pub(crate) fn pair(
+        &self,
+        found: TypeId,
+        expected: TypeId,
+        names: &dyn Names,
+        style: Style,
+    ) -> (Shown, Shown) {
+        let pair = (
+            self.subject(found, names, style),
+            self.subject(expected, names, style),
+        );
+        match style {
+            Style::Reader if pair.0 == pair.1 => self.pair(found, expected, names, Style::Channels),
+            _ => pair,
+        }
+    }
+
+    /// Whether `decl`'s binder `slot` stands for an omitted channel, and if so
+    /// whether its input
+    fn channel(&self, decl: DeclId, slot: u16) -> Option<bool> {
+        let declaration = self.declaration(decl);
+        let Type::Quantified { binders, .. } = self.ty(declaration.ty) else {
+            return None;
+        };
+        if binders.get(usize::from(slot))?.binding != Binding::Implicit {
+            return None;
+        }
+        let source = declaration.binders.get(usize::from(slot))?;
+        Some(self.symbol(source.name) == "<")
     }
 
     /// A type with the binders of the group it is interpreted in named by `binders`
@@ -97,7 +246,6 @@ impl Database {
 struct Renderer<'a> {
     db: &'a Database,
     names: &'a dyn Names,
-    #[expect(dead_code, reason = "every style shows everything for now")]
     style: Style,
 }
 
@@ -125,9 +273,7 @@ impl Renderer<'_> {
                 };
             }
             Type::Decl(id) => out.push_str(&self.names.declaration(*id)),
-            Type::Rigid { decl, slot, .. } => {
-                let _ = write!(out, "{}.#{slot}", self.names.declaration(*decl));
-            }
+            Type::Rigid { decl, slot, .. } => self.rigid(*decl, *slot, out),
             Type::Bound { reference, .. } => match naming.name(*reference) {
                 Some(name) => out.push_str(name),
                 None => {
@@ -191,7 +337,10 @@ impl Renderer<'_> {
                 for (index, arg) in args.iter().enumerate().take(shown) {
                     let mut out = String::new();
                     if index < lifted {
-                        out.push('^');
+                        match self.style {
+                            Style::Full => out.push('^'),
+                            Style::Reader | Style::Channels => continue,
+                        }
                     }
                     let binder = binders.get(index);
                     match arg {
@@ -233,6 +382,10 @@ impl Renderer<'_> {
                         }
                     }
                     shown_args.push(out);
+                }
+                // Nothing is shown of only lifted arguments
+                if lifted > 0 && shown == lifted && self.style != Style::Full {
+                    return;
                 }
                 out.push('[');
                 out.push_str(&shown_args.join(", "));
@@ -309,7 +462,9 @@ impl Renderer<'_> {
                 out.push('(');
                 self.items(func.params, naming, out);
                 for (sigil, channel) in [('<', func.input), ('>', func.output)] {
-                    if let Some(channel) = channel {
+                    if let Some(channel) = channel
+                        && !self.omits(channel)
+                    {
                         if !out.ends_with('(') {
                             out.push_str(", ");
                         }
@@ -326,56 +481,102 @@ impl Renderer<'_> {
                 self.items(ty, naming, out);
                 out.push('}');
             }
-            // Its implicit channels are left out, as they were written, and so are
-            // its implicit binders
-            Type::Quantified { binders, body } => {
-                let implicit = |slot: u16| binders[usize::from(slot)].binding == Binding::Implicit;
-                let body = db.without_channels(*body, &implicit, 0);
-                if binders.is_empty() {
-                    return self.render_into(body, naming, out);
-                }
-                let mut next = 1;
-                let mut listed = Vec::new();
-                let names = (binders.iter())
-                    .map(|binder| {
-                        let name = match binder.binding {
-                            Binding::Implicit => return None,
-                            Binding::Keyword(name) => db.symbol(name).to_owned(),
-                            _ => loop {
-                                let name = format!("T{next}");
-                                next += 1;
-                                if !naming.taken(&name) {
-                                    break name;
-                                }
-                            },
-                        };
-                        let sigil = match binder.binding {
-                            Binding::Keyword(_) => ":",
-                            Binding::Rest(Rest::All) => "...",
-                            Binding::Rest(Rest::Positional) => "*",
-                            Binding::Rest(Rest::Keyed) => "**",
-                            _ => "",
-                        };
-                        listed.push(format!("{sigil}{name}"));
-                        Some(name)
-                    })
-                    .collect();
-                if !listed.is_empty() {
-                    let _ = write!(out, "@[{}] ", listed.join(", "));
-                }
-                let group = Group {
-                    depth: naming.depth + 1,
-                    names,
-                    outer: naming.groups,
-                };
-                self.render_into(body, naming.within(&group), out);
-            }
+            Type::Quantified { binders, body } => self.quantified(binders, *body, &[], naming, out),
             Type::Map { packs, pattern } => {
                 out.push_str("{...");
                 self.pattern(packs, *pattern, naming, out);
                 out.push('}');
             }
         }
+    }
+
+    /// A quantified type, its last binders named by `declared` and the others
+    /// made up. Its implicit channels are left out, as they were written, and so
+    /// are its implicit binders.
+    fn quantified(
+        &self,
+        binders: &[Binder],
+        body: TypeId,
+        declared: &[String],
+        naming: Naming<'_>,
+        out: &mut String,
+    ) {
+        let db = self.db;
+        let implicit = |slot: u16| binders[usize::from(slot)].binding == Binding::Implicit;
+        let body = db.without_channels(body, &implicit, 0);
+        if binders.is_empty() {
+            return self.render_into(body, naming, out);
+        }
+        let offset = binders.len() - declared.len();
+        let mut next = 1;
+        let mut listed = Vec::new();
+        let names = (binders.iter().enumerate())
+            .map(|(slot, binder)| {
+                let name = match binder.binding {
+                    Binding::Implicit => return None,
+                    _ if slot >= offset => declared[slot - offset].clone(),
+                    Binding::Keyword(name) => db.symbol(name).to_owned(),
+                    _ => loop {
+                        let name = format!("T{next}");
+                        next += 1;
+                        if !naming.taken(&name) && !declared.contains(&name) {
+                            break name;
+                        }
+                    },
+                };
+                let sigil = match binder.binding {
+                    Binding::Keyword(_) => ":",
+                    Binding::Rest(Rest::All) => "...",
+                    Binding::Rest(Rest::Positional) => "*",
+                    Binding::Rest(Rest::Keyed) => "**",
+                    _ => "",
+                };
+                listed.push(format!("{sigil}{name}"));
+                Some(name)
+            })
+            .collect();
+        if !listed.is_empty() {
+            let _ = write!(out, "@[{}] ", listed.join(", "));
+        }
+        let group = Group {
+            depth: naming.depth + 1,
+            names,
+            outer: naming.groups,
+        };
+        self.render_into(body, naming.within(&group), out);
+    }
+
+    /// A rigid: everything shows its slot; a reader sees its binder's name, or
+    /// for an omitted channel's, its role
+    fn rigid(&self, decl: DeclId, slot: u16, out: &mut String) {
+        let db = self.db;
+        let owner = self.names.declaration(decl);
+        if self.style == Style::Full {
+            let _ = write!(out, "{owner}.#{slot}");
+        } else if let Some(input) = db.channel(decl, slot) {
+            let role = if input { "input" } else { "output" };
+            let _ = write!(out, "({role} of {owner})");
+        } else if let Some(binder) = db.declaration(decl).binders.get(usize::from(slot)) {
+            let name = db.symbol(binder.name);
+            match self.names.in_scope(decl) {
+                true => out.push_str(name),
+                false => {
+                    let _ = write!(out, "{owner}.{name}");
+                }
+            }
+        } else {
+            let _ = write!(out, "{owner}.#{slot}");
+        }
+    }
+
+    /// Whether a function's channel is left out (see [`Style::Reader`])
+    fn omits(&self, channel: TypeId) -> bool {
+        let db = self.db;
+        self.style == Style::Reader
+            && match *db.ty(channel) {
+                Type::Rigid { decl, slot, .. } => db.channel(decl, slot).is_some(),
+                _ => channel == db.top(),
+            }
     }
 
     /// An application of a collection class in its literal form, if it has one
