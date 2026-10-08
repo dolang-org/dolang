@@ -511,8 +511,8 @@ itself.
 ## Type Syntax
 
 An annotation or return type is a compact type expression which admits only
-dotted type names and application of generic arguments. More complex type
-expressions require parentheses for grouping. This applies
+dotted type names, application of generic arguments, and forms in `[]` or `{}`.
+More complex type expressions require parentheses for grouping. This applies
 *even in contexts that are otherwise space-insensitive*: in
 `(do |x @ Int| -> Array[Int] [x])`, the space after `Array[Int]` ends the type.
 Within a type's own `()`, `[]`, and `{}`, whitespace is insignificant.
@@ -523,7 +523,9 @@ Within a type's own `()`, `[]`, and `{}`, whitespace is insignificant.
 | `:SYM:`, `"str"`, `42`, `true`, `nil` | Constant                  |
 | `Array[Int]`                          | Apply generic arguments   |
 | `(Str \| Path)`                       | Union                     |
-| `{name: Str, ?port: Int}`             | Schema                    |
+| `(Int, Str)`, `(name: Str, Int)`      | Tuple or record           |
+| `[Int]`                               | Array                     |
+| `{name: Str, ?port: Int}`             | Dict or schema            |
 | `(Int, ?Int) -> Int`                  | Function                  |
 
 ### Names
@@ -584,10 +586,90 @@ let target @ (
 ) = nil
 ```
 
+### Collections
+
+`()`, `[]`, and `{}` write the types of the matching literals. Each stands for a
+standard class:
+
+| Syntax                    | Stands for                      |
+| ------------------------- | ------------------------------- |
+| `(Int, Str)`              | `Tuple[Int, Str]`               |
+| `(name: Str, Int)`        | `Record[...{name: Str, Int}]`   |
+| `[Int]`                   | `Array[Int]`                    |
+| `{name: Str, ?port: Int}` | `Dict[{name: Str, ?port: Int}]` |
+
+Each form stands for the class itself, never a less specific type. A parameter
+that only reads should name one such as `Seq[T]`, `Iterable[T]`, or
+`BaseDict[S]`.
+
+```
+let pair @ (Int, Str) = (1, "a")
+let names @ [Str] = []
+let options @ {name: Str, ?port: Int} = {name: "db"}
+def count rows @ [{id: Int}] -> Int
+  rows.len
+```
+
+#### Tuples and Records
+
+Parentheses hold [schema](./types.md#schemas) items. A form with an explicitly
+keyed item is a record: `key: T`, `(K): T`, or an item quantified `**`.
+Otherwise it is a tuple. A single item without a quantifier or trailing comma is
+grouping, as in a value:
+
+| Syntax       | Is                  |
+| ------------ | ------------------- |
+| `(Int)`      | `Int`               |
+| `(Int,)`     | A one-item tuple    |
+| `()`         | The empty tuple     |
+| `(*Int)`     | A tuple of any size |
+| `(Int, **)`  | A record            |
+
+An inclusion `...S` never makes a form a record. In a tuple, including a schema
+that may admit keyed items is an error; write `Record[...]` to include it. For a
+tuple of any items, write `(*)` rather than `(...)`.
+
+#### Arrays
+
+`[T]` takes one element type. `[Int, Str]` and `[]` are errors; write a union
+element such as `[Int | Str]`, or a tuple type.
+
+#### Dicts
+
+Braces also write schemas. A brace is a dict type only where a type is
+required, and a schema everywhere else:
+
+| Position                                                    | `{...}` is      |
+| ----------------------------------------------------------- | --------------- |
+| Annotation, return type, cast, union member                 | `Dict[{...}]`   |
+| Argument for a type binder, as in `Array[{a: Int}]`         | `Dict[{...}]`   |
+| Argument for a schema binder, as in `Dict[{a: Int}]`        | The schema      |
+| Binder bound, as in `S @ {...}`                             | The schema      |
+| Alias body, as in `@let Fields = {a: Int}`                  | The schema      |
+
+So an alias of a brace names a schema, and naming it where a type is required
+is an error. Write `Dict[Fields]` for a dict with that schema.
+
+A [vertical](./types.md#vertical-layout) schema written with `$` where a type is
+required follows the rule for vertical data: it is a dict if it has an
+explicitly keyed item, and otherwise a tuple of its items.
+
+Here `meta` is a `Dict[{owner: Str}]` and `at` is an `(Int, Int)`:
+
+```
+@let Config = Dict $
+  name: Str
+  meta: $
+    owner: Str
+  at: $
+    Int Int
+```
+
 ### Schemas
 
 A schema is not itself a type, but a description of positional and keyed items
-and their types which can parameterize a `Dict`, argument pack, etc. Schemas are
+and their types which can parameterize a `Dict`, argument pack, etc. A brace
+written where a type is required is a [dict type](./types.md#dicts). Schemas are
 closed: they admit only the items they list, unless a
 [quantifier](./types.md#quantifiers) or an [open item](./types.md#open-items)
 admits more.
