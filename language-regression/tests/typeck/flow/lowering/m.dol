@@ -1,6 +1,7 @@
 # Flow types that each way the checker lowers a construct produces.
 
 import error
+import std
 
 pub def g()
   nil
@@ -41,6 +42,22 @@ pub def dynamic_class()
     #       ^: flow std.Int
   let _ = y
   #       ^: flow std.Int | std.Str | std.Sym
+
+# An exception is a class's instance when its clause names the class, and
+# otherwise dynamic, whatever was thrown
+pub def exceptions cls
+  try
+    throw 1
+  catch std.TypeError: e
+    let _ = e
+    #       ^: flow std.TypeError
+  catch cls: e
+    let _ = e
+    #       ^: flow Unknown
+  catch e
+    let _ = e
+    #       ^: flow Unknown
+  nil
 
 # A `finally` entered from the body and from a clause sees both, then continues
 # only from where it was entered

@@ -1,0 +1,31 @@
+# dolang: strict
+# A strict unit's exceptions are `Value` unless a clause names their class.
+
+import std
+
+pub def caught cls @ Value
+  try
+    throw 1
+  catch std.TypeError: e
+    let _ = e
+    #       ^: flow std.TypeError
+  catch cls: e
+    let _ = e
+    #       ^: flow Value
+  catch e
+    let _ = e
+    #       ^: flow Value
+  nil
+
+# Using one as something specific needs a clause naming its class
+pub def used()
+  try
+    throw 1
+  catch e
+    let _ = e.message
+  # error: `Value` has no member `message`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |     let _ = e.message
+  #    |             ^^^^^^^^^
+  nil
