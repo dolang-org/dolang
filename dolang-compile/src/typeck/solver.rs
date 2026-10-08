@@ -83,13 +83,26 @@ pub(crate) enum Relation {
     Subtype {
         actual: Term,
         expected: Term,
-        /// Whether schemas relate as the items a value holds, which may fill the
-        /// expected side's multiplicities any way that fits, rather than as
-        /// arguments bound to a parameter list by count
-        language: bool,
+        /// How each side's schemas fill their multiplicities
+        fill: Fill,
     },
     /// A call of a callee (see [`Solver::constrain_call`])
     Call(Call),
+}
+
+/// How the schemas of a subtype relation fill their multiplicities. A parameter
+/// list binds by count: each required item takes one, optional items take what
+/// is left over from left to right, and a repeated item takes the rest. Other
+/// schemas may fill any way that fits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Fill {
+    /// Both sides are parameter lists, as when functions relate
+    Parameters,
+    /// Items passed on the actual side bound to a parameter list on the
+    /// expected side, as at a call
+    Arguments,
+    /// The items values hold on both sides, as in a type argument
+    Contents,
 }
 
 impl Relation {
@@ -1794,7 +1807,7 @@ impl<'db> Solver<'db> {
         let obligation = self.enqueue(Relation::Subtype {
             actual,
             expected,
-            language: false,
+            fill: Fill::Arguments,
         });
         self.root(obligation, provenance)
     }
@@ -1856,20 +1869,20 @@ impl<'db> Solver<'db> {
             self.kind(expected),
             "derived constraint kind mismatch"
         );
-        // A type argument's schema is the items a value holds, and a parameter
-        // list binds by count. Bounds settle by count, the stricter reading.
-        let language = match (&step, self.obligations[parent.0].relation) {
-            (Step::Argument { .. }, _) => true,
-            (Step::Parameters | Step::Arguments | Step::BoundPropagation | Step::Assignment, _) => {
-                false
-            }
-            (_, Relation::Subtype { language, .. }) => language,
-            (_, Relation::Call(_)) => false,
+        // A type argument's schema is the items a value holds, and functions
+        // relate parameter lists. Bounds settle with the actual side filling
+        // freely, the stricter reading.
+        let fill = match (&step, self.obligations[parent.0].relation) {
+            (Step::Argument { .. }, _) => Fill::Contents,
+            (Step::Parameters, _) => Fill::Parameters,
+            (Step::Arguments | Step::BoundPropagation | Step::Assignment, _) => Fill::Arguments,
+            (_, Relation::Subtype { fill, .. }) => fill,
+            (_, Relation::Call(_)) => Fill::Arguments,
         };
         let relation = Relation::Subtype {
             actual,
             expected,
-            language,
+            fill,
         };
         self.derive_relation(parent, relation, step);
     }

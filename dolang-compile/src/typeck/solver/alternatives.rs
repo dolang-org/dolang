@@ -154,14 +154,14 @@ impl<'db> Solver<'db> {
     /// An alternative's judgment, `actual <: expected`, reading schemas as its
     /// parent's does
     fn alternative(&self, obligation: ObligationId, actual: Term, expected: Term) -> Relation {
-        let language = match self.obligations[obligation.0].relation {
-            Relation::Subtype { language, .. } => language,
-            Relation::Call(_) => false,
+        let fill = match self.obligations[obligation.0].relation {
+            Relation::Subtype { fill, .. } => fill,
+            Relation::Call(_) => Fill::Arguments,
         };
         Relation::Subtype {
             actual,
             expected,
-            language,
+            fill,
         }
     }
 
@@ -332,14 +332,14 @@ impl<'db> Solver<'db> {
                     Relation::Subtype {
                         actual,
                         expected,
-                        language,
+                        fill,
                     } => {
                         let resolved = self.resolve(actual)?;
                         let actual = self.blinded.get(&resolved).copied().unwrap_or(actual);
                         Relation::Subtype {
                             actual,
                             expected,
-                            language,
+                            fill,
                         }
                     }
                     call => call,

@@ -340,6 +340,47 @@ fn parameter_lists_are_related_contravariantly() {
 }
 
 #[test]
+fn parameter_lists_fill_by_count() {
+    use Multiplicity::{Optional as Opt, Repeated as Rep, Required as Req};
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let f = |db: &Database, first| {
+        let params = items(db, vec![positional(first, int), positional(Rep, str)]);
+        db.intern(Type::Function(Function {
+            params,
+            result: int,
+            input: None,
+            output: None,
+        }))
+    };
+    let optional = f(&db, Opt);
+    let required = f(&db, Req);
+    let spread = items(&db, vec![positional(Opt, int), positional(Rep, str)]);
+    db.seal();
+    // A `Str` lands in the rest only once the optional `Int` is filled
+    assert_eq!(check(&db, optional, optional).status, Status::Proven);
+    assert_eq!(check(&db, optional, required).status, Status::Proven);
+    assert!(contradiction(
+        &check(&db, required, optional),
+        Contradiction::Missing(0)
+    ));
+
+    // Arguments fill freely, so a lone `Str` may land on the `Int`
+    let mut s = Solver::new(&db);
+    let (spread, callee, result) = (s.closed(spread), s.closed(optional), s.infer());
+    constrain_call(
+        &mut s,
+        callee,
+        &[CallArgument::Spread(spread)],
+        result,
+        None,
+    );
+    let outcome = s.solve().remove(0);
+    assert_eq!(outcome.status, Status::Contradicted, "{outcome:?}");
+}
+
+#[test]
 fn omitted_channels_are_gradual() {
     let mut db = Database::new();
     let num = nominal(&mut db, "Num", vec![], vec![]);
