@@ -303,7 +303,8 @@ fn generic_members_carry_arguments_down() {
     );
     let other = nominal(&mut db, "Other", vec![], vec![]);
     db.seal();
-    let s = Solver::new(&db);
+    let mut s = Solver::new(&db);
+    s.gradual();
     let unknown = db.unknown();
     let upper = |ty, target| class(&s, ty, Relation::Upper, false, target);
 
@@ -325,6 +326,18 @@ fn generic_members_carry_arguments_down() {
     // Nothing carries from an unrelated member
     assert_eq!(upper(other, array), apply(&db, array, &[unknown]));
     assert_eq!(upper(db.top(), array), apply(&db, array, &[unknown]));
+
+    // A strict unit's solver gives an uncarried covariant binder its bound, and
+    // keeps a member it can't narrow without an invariant binder's argument
+    let strict = Solver::new(&db);
+    let upper = |ty, target| class(&strict, ty, Relation::Upper, false, target);
+    let array_value = apply(&db, array, &[db.top()]);
+    assert_eq!(upper(seq_int, array), array_int);
+    assert_eq!(upper(seq_int, vec), seq_int);
+    assert_eq!(upper(other, array), array_value);
+    assert_eq!(upper(db.top(), array), array_value);
+    assert_eq!(upper(db.top(), vec), db.top());
+    assert_eq!(upper(unknown, array), apply(&db, array, &[unknown]));
 }
 
 #[test]

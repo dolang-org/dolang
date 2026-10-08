@@ -164,7 +164,8 @@ impl Solver<'_> {
 
     /// The meet of two closed types, where it needs no intersection: the lower
     /// of two that are ordered, the bottom type for two literals or classes that
-    /// can't share a value, and otherwise the dynamic type
+    /// can't share a value, and otherwise the dynamic type, or unresolved for a
+    /// strict unit's solver
     pub(super) fn meet(&self, a: TypeId, b: TypeId) -> Result<TypeId, Issue> {
         if a == b {
             return Ok(a);
@@ -181,10 +182,13 @@ impl Solver<'_> {
             && above == Status::Contradicted
             && self.class_like(a)?
             && self.class_like(b)?;
-        Ok(match disjoint {
-            true => self.db.bottom(),
-            false => self.db.unknown(),
-        })
+        match (disjoint, self.gradual) {
+            (true, _) => Ok(self.db.bottom()),
+            (false, true) => Ok(self.db.unknown()),
+            (false, false) => {
+                Err(Residual::Unsupported("a meet of types neither ordered nor disjoint").into())
+            }
+        }
     }
 
     /// Whether a type is a literal or an instance of a class. The runtime gives a

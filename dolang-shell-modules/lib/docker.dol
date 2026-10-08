@@ -73,7 +73,7 @@ pub def run
   # Entrypoint override.
   :entrypoint @ Str = nil
   # Arguments passed to `cmd`.
-  ...args
+  *args
 do -> nil
   docker.run $image $cmd :cd :env :pull :name :mounts :labels :ports :networks
     :user :entrypoint ...args
@@ -107,7 +107,7 @@ pub def create
   # Restart policy.
   :restart @ RestartSpec = nil
   # Arguments passed to `cmd`.
-  ...args
+  *args
 do -> Container
   docker.create $image $cmd :cd :env :pull :name :mounts :labels :ports
     :networks :user :entrypoint :restart ...args
@@ -161,7 +161,7 @@ pub def build
   # | `add`    | [`AddSpec`](docker.AddSpec)     | Add a file to the image              |
   # | `patch`  | [`PatchSpec`](docker.PatchSpec) | Apply a patch inside the image       |
   # | `commit` | `Str`                        | Commit a layer with a message        |
-  ...steps
+  **steps
 do -> Image
   docker.build :pull :mounts :cd :env :from ...steps
 
@@ -206,7 +206,7 @@ pub def save
   # Platform to save.
   :platform @ Platform = nil
   # Image references to save. Only `:DOCKER_ARCHIVE:` holds more than one.
-  ...images @ Str
+  *images @ Str
 do -> (Str | Path)
   docker.save $target :format :platform ...images
 

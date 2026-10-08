@@ -239,6 +239,13 @@ pub def lambda_signature()
   let f = (do |_a b @ Int :_k :_j @ Str *_pos @ Int **_kw| b)
   let _ = f
   #       ^: flow (Unknown, std.Int, _k: Unknown, _j: std.Str, *std.Int, *(std.Sym): Unknown, <Unknown, >Unknown) -> std.Int
+  let h = do |*pos @ Int **kw|
+    let _ = pos
+    #       ^~~: flow std.Tuple[{*std.Int}]
+    let _ = kw
+    #       ^~: flow std.Record[{*(std.Sym): Unknown}]
+    nil
+  h 1
   let g = (do |x <Iter[Int]| -> Int x)
   let _ = g
   #       ^: flow (Unknown, <std.Iter[std.Int], >Unknown) -> std.Int
@@ -274,3 +281,16 @@ pub def loops()
     break
   let _ = y
   #       ^: flow std.Int | std.Str | std.Sym
+
+# A rest binds a tuple or record of the items its declared schema leaves it
+pub def rests a @ Int *pos @ Int **kw @ Str
+  let _ = pos
+  #       ^~~: flow std.Tuple[{*std.Int}]
+  let _ = kw
+  #       ^~: flow std.Record[{*(std.Sym): std.Str}]
+  a
+
+pub def mixed ...all @ Int
+  let _ = all
+  #       ^~~: flow std.Record[{*std.Int, *(std.Sym): std.Int}]
+  nil

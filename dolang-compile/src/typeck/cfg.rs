@@ -126,7 +126,7 @@ pub(crate) struct Func {
 }
 
 /// A `do` block's callable state: variables its parent owns and it captures,
-/// each absent where the item is annotated. Its call joins what it expects into
+/// each absent where the item is annotated or a rest. Its call joins what it expects into
 /// the parameters and channels, which the block's entry binds from; its exit
 /// joins its result into `result`.
 pub(crate) struct Signature {

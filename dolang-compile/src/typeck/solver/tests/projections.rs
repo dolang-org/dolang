@@ -154,9 +154,11 @@ fn selecting(db: &Database, meet: bool, schema: TypeId, key: TypeId) -> TypeId {
     db.intern(Type::Union(vec![member].into()))
 }
 
-/// What an item projection evaluates to, or the issue evaluating it raises
+/// What an item projection evaluates to, or the issue evaluating it raises, for
+/// a gradual unit
 fn evaluated(db: &Database, projection: TypeId) -> Result<TypeId, Issue> {
-    let s = Solver::new(db);
+    let mut s = Solver::new(db);
+    s.gradual();
     Ok(s.evaluate_items(projection)?.expect("an item projection"))
 }
 
@@ -267,6 +269,13 @@ fn item_projections_meet_without_intersections() {
         let projection = selecting(db, true, schema, ab);
         assert_eq!(evaluated(db, projection), Ok(expected), "{schema:?}");
     }
+    // A strict unit's solver leaves that intersection unresolved
+    let projection = selecting(db, true, protocols, ab);
+    let strict = Solver::new(db).evaluate_items(projection);
+    assert!(
+        matches!(strict, Err(Issue::Residual(Residual::Unsupported(_)))),
+        "{strict:?}"
+    );
 }
 
 #[test]

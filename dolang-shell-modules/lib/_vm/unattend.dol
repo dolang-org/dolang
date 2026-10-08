@@ -71,7 +71,7 @@ def provision_command()
 # Every element needs it named: `xml.encode` derives namespace declarations
 # per node rather than from parent pointers, so a child of a namespaced node
 # that does not carry one of its own is serialized into no namespace at all.
-def unattend_node tag ...items
+def unattend_node tag *items
   xml.Node $tag namespace: $UNATTEND_NS ...items
 
 # `wcm:action="add"`, which the schema requires on every member of a repeated
@@ -79,7 +79,7 @@ def unattend_node tag ...items
 def wcm_add()
   xml.Attr action add namespace: $WCM_NS prefix: wcm
 
-def unattend_component name ...items
+def unattend_component name *items
   let attrs = COMPONENT_ATTRS.copy()
   attrs[:name:] = name
   xml.Node component namespace: $UNATTEND_NS attrs: $attrs ...items

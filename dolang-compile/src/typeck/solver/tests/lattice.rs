@@ -136,7 +136,7 @@ fn common_supertypes_are_the_least_shared_ancestor() {
 }
 
 #[test]
-fn widening_goes_to_a_common_supertype_then_unknown() {
+fn widening_goes_to_a_common_supertype_then_unknown_or_value() {
     let mut db = Database::new();
     let t = reference(&db, 0, 0);
     let int = int(&mut db);
@@ -151,7 +151,8 @@ fn widening_goes_to_a_common_supertype_then_unknown() {
     );
     let one = literal(&db, 1);
     db.seal();
-    let s = Solver::new(&db);
+    let mut s = Solver::new(&db);
+    s.gradual();
 
     // `x = [x]` in a loop, from an array: every member is an `Iter`
     let mut widening = Widening::default();
@@ -180,6 +181,21 @@ fn widening_goes_to_a_common_supertype_then_unknown() {
         state = widening.join(&s, state, apply(&db, array, &[state]));
     }
     assert_eq!(state, db.unknown());
+
+    // A strict unit's solver widens to `Value` instead
+    let strict = Solver::new(&db);
+    let mut widening = Widening::default();
+    let mut state = apply(&db, array, &[nil]);
+    for _ in 0..=2 * WIDENING_LIMIT {
+        state = widening.join(&strict, state, apply(&db, array, &[state]));
+    }
+    assert_eq!(state, db.top());
+    let mut widening = Widening::default();
+    let mut state = nil;
+    for _ in 0..=WIDENING_LIMIT {
+        state = widening.join(&strict, state, apply(&db, array, &[state]));
+    }
+    assert_eq!(state, db.top());
 
     // A join that stops growing never widens
     let mut widening = Widening::default();

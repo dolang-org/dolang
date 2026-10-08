@@ -61,8 +61,8 @@ impl<'u> Scope<'_, '_, 'u> {
     }
 
     /// A `do` block's signature: a variable of its parent's, which it captures, for
-    /// each item written without an annotation. Its exit joins its result into the
-    /// result's variable.
+    /// each item written without an annotation other than a rest, whose type its
+    /// declared schema gives. Its exit joins its result into the result's variable.
     fn signature(&self, func: &Function, result: VarId, exit: BlockId) {
         let graph = self.graph();
         let parent = graph
@@ -84,7 +84,7 @@ impl<'u> Scope<'_, '_, 'u> {
                     PatItem::Pos { ty: Some(_), .. }
                         | PatItem::Key { ty: Some(_), .. }
                         | PatItem::ConstKey { ty: Some(_), .. }
-                        | PatItem::Rest { ty: Some(_), .. }
+                        | PatItem::Rest { .. }
                 ))
             })
             .collect();

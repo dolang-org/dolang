@@ -137,8 +137,9 @@ impl Solver<'_> {
                 let constructor = db.intern(Type::Function(Function {
                     params: db.intern(Type::Schema(Vec::new().into())),
                     result: instance,
-                    input: None,
-                    output: None,
+                    // It does no I/O, so its channels take any caller's
+                    input: Some(db.top()),
+                    output: Some(db.top()),
                 }));
                 return Constructor::Init(abstracted(constructor).map(|constructor| Signature {
                     overloads: Vec::new(),

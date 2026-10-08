@@ -1688,7 +1688,7 @@ pub class CanceledError: Error
 # See [`static`](std.static) for the uninherited counterpart, and
 # [Class and Static Members](../../language/classes.md#class-and-static-members)
 # for the full semantics.
-pub let class = ...
+pub let class @ Value = ...
 
 #
 # Raised on compilation errors.
@@ -3847,7 +3847,7 @@ pub class StateError: RuntimeError
 # See [`class`](std.class) for the inherited counterpart, and
 # [Class and Static Members](../../language/classes.md#class-and-static-members)
 # for the full semantics.
-pub let static = ...
+pub let static @ Value = ...
 
 #
 # Strings are immutable sequences of UTF-8 bytes.

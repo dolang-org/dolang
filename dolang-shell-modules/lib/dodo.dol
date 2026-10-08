@@ -53,14 +53,13 @@ def highlight_arg arg
 
 # Runs the external command `cmd`, first printing a highlighted
 # message showing the command to the terminal
-pub def show ...cmd
-  let prog *args ** = cmd
+pub def show prog *args **opts
   print
     (highlight_prog prog)
     for arg = args
       " " (highlight_arg arg)
     "\n"
-  proc.run ...cmd
+  proc.run $prog ...args ...opts
 
 # Runs a dodo task from `dodo.dol` in the current directory,
 # equivalent to running `dolang -m dodo ...argv`, but correctly

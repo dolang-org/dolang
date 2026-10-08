@@ -426,7 +426,16 @@ impl Solver<'_> {
                 let unknowns: Vec<_> = (binders.iter())
                     .map(|binder| db.unknown_of(binder.kind))
                     .collect();
-                FoundKind::Field(self.closed(db.substitute(abstracted(ty)?, &unknowns)))
+                let abstracted = abstracted(ty)?;
+                let field = db.substitute(abstracted, &unknowns);
+                // Only a gradual unit's solver reads binders it can't name as `Unknown`
+                if !self.gradual
+                    && self.contains_unknown(field)
+                    && !self.contains_unknown(abstracted)
+                {
+                    return Err(Residual::Unsupported("a generic class object's field").into());
+                }
+                FoundKind::Field(self.closed(field))
             }
             FoundKind::Method(method) => FoundKind::Method(signatures(method)?),
             FoundKind::Property { getter, setter } => FoundKind::Property {

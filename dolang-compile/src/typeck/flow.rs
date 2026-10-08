@@ -77,10 +77,11 @@ use super::{
     elab::{Designated, Tables},
     solver::{NarrowTarget, Outcome, Provenance, Residual, Solver, Status, Widening},
     r#type::{
-        Database, DeclId, Element, Function, Intrinsic, Literal, Multiplicity, Type, TypeId, UnitId,
+        Argument, Database, DeclId, Element, Function, Intrinsic, Kind, Literal, Multiplicity,
+        SchemaItem, Type, TypeId, UnitId,
     },
 };
-use crate::source::Span;
+use crate::{RestKind, source::Span};
 
 /// What flow concluded about a unit
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
@@ -295,13 +296,27 @@ impl<'a, 'u> Flow<'a, 'u> {
         results
     }
 
+    /// Whether the unit is strict, so the checker doesn't make up `Unknown` in it
+    fn strict(&self) -> bool {
+        self.tables.units[self.unit.index()].strict
+    }
+
+    /// Where the checker can't type a construct: a strict unit records the check
+    /// as undecided. Either way, `Unknown` stands for the result.
+    fn gap(&mut self, span: Span, reason: &'static str) -> TypeId {
+        if self.strict() {
+            self.undecided(span, Residual::Unsupported(reason));
+        }
+        self.db.unknown()
+    }
+
     /// A solver that holds the region's rigids as its assumptions
     fn solver(&self) -> Solver<'a> {
         let mut solver = Solver::new(self.db);
         for &decl in &self.scope {
             solver.assume(decl);
         }
-        if !self.tables.units[self.unit.index()].strict {
+        if !self.strict() {
             solver.gradual();
         }
         #[cfg(feature = "debug")]
@@ -588,16 +603,15 @@ impl<'a, 'u> Flow<'a, 'u> {
     }
 
     /// Make each `do` block parameter and channel that's still bottom dynamic,
-    /// saying whether there was one. In a strict unit, a channel instead takes
-    /// `Value`, as a def's omitted one is seen there.
+    /// saying whether there was one. In a strict unit, each instead takes
+    /// `Value`, as a def's omitted channel is seen there.
     fn dynamic_signatures(&mut self) -> bool {
         let bottom = self.db.bottom();
-        let unknown = self.db.unknown();
-        let channel = match self.tables.units[self.unit.index()].strict {
+        let unknown = match self.strict() {
             true => self.db.top(),
-            false => unknown,
+            false => self.db.unknown(),
         };
-        let [input, output] = [channel; 2];
+        let [input, output] = [unknown; 2];
         let vars: Vec<(VarId, TypeId)> = (self.ir.funcs())
             .filter_map(|(_, func)| func.signature.as_ref())
             .flat_map(|signature| {
@@ -915,8 +929,9 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
     }
 
-    /// Bind a function's parameters at its entry. A def's come from its signature,
-    /// and a `do` block's from its signature variables, or else their annotations.
+    /// Bind a function's parameters at its entry. A def's come from its declared
+    /// type, and a `do` block's from its signature variables, or else its declared
+    /// type.
     fn bind_params(&mut self, at: At, state: &mut State) {
         let func = self.ir.func(at.func);
         if !matches!(func.kind, FuncKind::Decl(_)) {
@@ -925,17 +940,16 @@ impl<'a, 'u> Flow<'a, 'u> {
         let Pattern::Unpack(items) = &func.params else {
             unreachable!("parameters are a pattern of items")
         };
-        let unknown = self.db.unknown();
+        let declared = (self.declared_params(at.func, items))
+            .unwrap_or_else(|| vec![self.db.unknown(); items.len()]);
         let types: Vec<TypeId> = match &func.signature {
-            Some(signature) => (items.iter().zip(&signature.params))
-                .map(|(item, &slot)| match slot {
+            Some(signature) => (signature.params.iter().zip(declared))
+                .map(|(&slot, declared)| match slot {
                     Some(var) => self.joined(var, at),
-                    None => (item.var)
-                        .and_then(|var| self.ir.var(var).annotation)
-                        .unwrap_or(unknown),
+                    None => declared,
                 })
                 .collect(),
-            None => self.declared_params(at.func, items),
+            None => declared,
         };
         for (item, ty) in items.iter().zip(types) {
             if let Some(var) = item.var {
@@ -944,37 +958,56 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
     }
 
-    /// The types a def's or method's signature gives its parameters, under its
-    /// rigids; `Unknown` for a rest, whose items can be several of the schema's,
-    /// or for every one if they don't line up
-    fn declared_params(&self, func: FuncId, params: &[PatternItem]) -> Vec<TypeId> {
-        let unknown = self.db.unknown();
-        let fallback = vec![unknown; params.len()];
-        let Some(function) = &self.declared[func.index()] else {
-            return fallback;
+    /// The types a function's declared type gives its parameters, under its
+    /// rigids: a single its item's type, and a rest a `Tuple` or `Record` of its
+    /// items, as the runtime binds it. `None` without a declared type. If they
+    /// don't line up, each parameter is a gap.
+    fn declared_params(&mut self, func: FuncId, params: &[PatternItem]) -> Option<Vec<TypeId>> {
+        let schema = self.declared[func.index()].as_ref()?.params;
+        let shares = match self.db.ty(schema) {
+            Type::Schema(items) => shares(params, items),
+            _ => None,
         };
-        let Type::Schema(items) = self.db.ty(function.params) else {
-            return fallback;
+        let Some(shares) = shares else {
+            let types = (params.iter())
+                .map(|param| match param.var.map(|var| self.ir.var(var).origin) {
+                    Some(Origin::Source(span)) => {
+                        self.gap(span, "a parameter its declared type doesn't line up with")
+                    }
+                    _ => self.db.unknown(),
+                })
+                .collect();
+            return Some(types);
         };
-        let mut singles = (items.iter())
-            .filter(|item| {
-                item.multiplicity != Multiplicity::Repeated
-                    && !matches!(item.element, Element::Include(_))
-            })
-            .map(|item| match item.element {
-                Element::Positional(ty) | Element::Keyed { value: ty, .. } => ty,
-                Element::Include(_) => unreachable!("not a rest"),
-            });
-        let types: Option<Vec<TypeId>> = (params.iter())
-            .map(|param| match param.key {
-                PatternKey::Rest(_) => Some(unknown),
-                _ => singles.next(),
+        let types = (params.iter().zip(shares))
+            .map(|(param, share)| match (&param.key, share) {
+                (&PatternKey::Rest(kind), items) => self.rest_type(kind, items),
+                (_, [item]) => match item.element {
+                    Element::Positional(ty) | Element::Keyed { value: ty, .. } => ty,
+                    Element::Include(_) => unreachable!("not a rest"),
+                },
+                _ => unreachable!("a single's share is one item"),
             })
             .collect();
-        match types {
-            Some(types) if singles.next().is_none() => types,
-            _ => fallback,
+        Some(types)
+    }
+
+    /// What a rest of `kind` binds for its share of a parameter schema: a `*` rest
+    /// a `Tuple`, and any other a `Record`
+    fn rest_type(&self, kind: RestKind, items: &[SchemaItem]) -> TypeId {
+        let base = match kind {
+            RestKind::Pos => self.intrinsic(Intrinsic::Tuple),
+            RestKind::Key | RestKind::Mixed => self.designated_type(Designated::Record),
+        };
+        if base == self.db.unknown() {
+            return base;
         }
+        let schema = self.db.intern(Type::Schema(items.to_vec().into()));
+        self.db.intern(Type::Apply {
+            base,
+            args: vec![Argument::Positional(schema)].into(),
+            kind: Kind::Type,
+        })
     }
 
     /// What a variable holds: its fact where its owner caches its type, and its
@@ -1123,7 +1156,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let solver = self.solver();
                 // A clause whose class isn't known, or a catch-all, binds a
                 // dynamic exception outside a strict unit
-                let strict = self.tables.units[self.unit.index()].strict;
+                let strict = self.strict();
                 let unknown = self.db.unknown();
                 let unclassed = |rest| match strict {
                     true => rest,
@@ -1343,4 +1376,38 @@ fn order(ir: &Ir) -> (Vec<u32>, Vec<bool>) {
         }
     }
     (rank, widens)
+}
+
+/// Each parameter's share of its declared schema's `items`, in order: one item
+/// for a single, and for a rest an included pack or the run of repeated items its
+/// kind takes. `None` if they don't line up.
+fn shares<'i>(params: &[PatternItem], items: &'i [SchemaItem]) -> Option<Vec<&'i [SchemaItem]>> {
+    let mut shares = Vec::with_capacity(params.len());
+    let mut start = 0;
+    for param in params {
+        let first = items.get(start)?;
+        let single = first.multiplicity != Multiplicity::Repeated
+            && !matches!(first.element, Element::Include(_));
+        let len = match param.key {
+            PatternKey::Rest(_) if matches!(first.element, Element::Include(_)) => 1,
+            PatternKey::Rest(kind) => (items[start..].iter())
+                .take_while(|item| {
+                    item.multiplicity == Multiplicity::Repeated
+                        && match item.element {
+                            Element::Positional(_) => kind != RestKind::Key,
+                            Element::Keyed { .. } => kind != RestKind::Pos,
+                            Element::Include(_) => false,
+                        }
+                })
+                .count(),
+            _ if single => 1,
+            _ => return None,
+        };
+        if len == 0 {
+            return None;
+        }
+        shares.push(&items[start..start + len]);
+        start += len;
+    }
+    (start == items.len()).then_some(shares)
 }

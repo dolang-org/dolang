@@ -441,14 +441,22 @@ fn generic_class_objects_have_members_quantified_over_its_binders() {
         s.reify(getter.implementation.expect("a getter")),
         Ok(generic(vec![class.clone()], function(&db, &[], t)))
     );
-    // A class-level field's type takes the class's binders as `Unknown`
+    // A class-level field's type takes the class's binders as `Unknown` in a
+    // gradual unit. A strict unit's can't read one that needs them.
     let field =
         |s: &Solver<'_>, name| match found(s.member(s.closed(box_object), key(&db, name))).kind {
             FoundKind::Field(ty) => s.reify(ty).expect("a closed field"),
             _ => panic!("a field"),
         };
     assert_eq!(field(&s, "count"), int);
-    assert_eq!(field(&s, "zero"), db.unknown());
+    let mut gradual = Solver::new(&db);
+    gradual.gradual();
+    assert_eq!(field(&gradual, "zero"), db.unknown());
+    let zero = s.member(s.closed(box_object), key(&db, "zero"));
+    assert!(
+        matches!(zero, Err(Issue::Residual(Residual::Unsupported(_)))),
+        "{zero:?}"
+    );
 
     // A call infers the class's binders from its arguments
     let r = s.infer();
