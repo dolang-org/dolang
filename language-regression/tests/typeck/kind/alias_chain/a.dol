@@ -14,3 +14,5 @@ pub let bad @ Mid = nil
 #    |
 # LL | pub let bad @ Mid = nil
 #    |               ^^^
+#    |
+#    = help: for a dict with this schema, write `Dict[Mid]`

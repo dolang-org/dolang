@@ -175,7 +175,8 @@ impl Check<'_, '_> {
                     self.ty(unit, scope, member, phantom);
                 }
             }
-            // The designated classes these forms stand for bound nothing
+            // The designated classes these forms stand for, including those a schema
+            // stands for where a type is required, bound nothing
             TypeExpr::Schema { params, .. }
             | TypeExpr::Tuple { params, .. }
             | TypeExpr::Record { params, .. } => {
@@ -510,11 +511,17 @@ impl Check<'_, '_> {
                     self.guarded(unit, alias, members, arg.ty(), guarded || nominal, found);
                 }
             }
-            TypeExpr::Schema { params, .. } => {
+            TypeExpr::Schema { params, span, .. } => {
+                // A schema that is a collection applies a class, which guards its items
+                let collection = self
+                    .tables
+                    .braces
+                    .contains_key(&UnitSpan { unit, span: *span });
                 for param in params {
                     // An inclusion's items are the schema's own
-                    let guarded =
-                        guarded || !matches!(param.kind, Some(TypeParamKind::Include { .. }));
+                    let guarded = guarded
+                        || collection
+                        || !matches!(param.kind, Some(TypeParamKind::Include { .. }));
                     for ty in param.tys() {
                         self.guarded(unit, alias, members, ty, guarded, found);
                     }

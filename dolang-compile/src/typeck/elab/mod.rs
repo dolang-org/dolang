@@ -88,6 +88,9 @@ pub(crate) struct Tables<'u> {
     /// `->`, and of each use of `Func` in a type that doesn't give them, by its
     /// span
     pub(crate) func_ambients: HashMap<UnitSpan, [Ambient; 2]>,
+    /// The class each schema written where a type is required stands for, by its
+    /// span: `std.Dict` of the schema, or `std.Tuple` of its items
+    pub(crate) braces: HashMap<UnitSpan, Designated>,
     /// The declarations of `std` and `strand` the checker treats specially
     pub(crate) designated: HashMap<DeclId, Designated>,
     /// What each of `strand`'s pipe placeholders nominates, by name, resolved where
@@ -113,8 +116,8 @@ pub(crate) struct Tables<'u> {
     pub(crate) groups: HashMap<(DeclId, usize), Vec<BinderRef>>,
     /// Each type expression written in source, interned in its group, by its span
     pub(crate) site_types: HashMap<UnitSpan, TypeId>,
-    /// Each application and function type written in source, nested or not,
-    /// interned in its group, by its span
+    /// Each application, collection form and function type written in source,
+    /// nested or not, interned in its group, by its span
     pub(crate) expr_types: HashMap<UnitSpan, TypeId>,
 }
 
@@ -624,6 +627,8 @@ struct KindMismatch {
     expected: Kind,
     /// Where the kind was declared, when in the same unit
     declared: Option<Span>,
+    /// The schema alias named where a type is expected, which a dict could take
+    alias: Option<String>,
 }
 
 impl Report for KindMismatch {
@@ -650,6 +655,18 @@ impl Report for KindMismatch {
 
     fn annotations(&self) -> Vec<Annotation> {
         declared_here(self.declared)
+    }
+
+    fn notes(&self) -> Vec<(NoteKind, String)> {
+        self.alias
+            .iter()
+            .map(|alias| {
+                (
+                    NoteKind::Help,
+                    format!("for a dict with this schema, write `Dict[{alias}]`"),
+                )
+            })
+            .collect()
     }
 }
 

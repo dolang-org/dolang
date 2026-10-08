@@ -10,13 +10,13 @@ use std::fmt::{self, Write};
 
 use serde::{Deserialize, Serialize};
 
-use super::Tables;
+use super::{Designated, Tables};
 use crate::{
     RestKind,
     ast::SpecialMethod,
     source::Span,
     typeck::{
-        r#type::{DeclId, UnitId},
+        r#type::{DeclId, Intrinsic, UnitId, UnitSpan},
         typelib::wire,
     },
 };
@@ -80,11 +80,15 @@ pub(crate) enum TypeExpr {
         base: Box<TypeExpr>,
         args: Vec<TypeArg>,
     },
-    /// A schema, e.g. `{name: Str, ?port: Int}`
+    /// A schema, e.g. `{name: Str, ?port: Int}`. Where a type is required, it is
+    /// `std.Dict` of itself, or `std.Tuple` of its items when it is `tuple`.
     Schema {
         #[serde(with = "wire::span")]
         span: Span,
         params: Vec<TypeParam>,
+        /// Whether it is written vertically without an explicitly keyed item, as an
+        /// array's data is
+        tuple: bool,
     },
     /// A parenthesized type
     Group {
@@ -550,7 +554,13 @@ impl Printer<'_, '_> {
                 }
                 out.write_char(']')
             }
-            TypeExpr::Schema { params, .. } => {
+            // A vertical schema that is a tuple prints as one
+            TypeExpr::Schema { params, span, .. }
+                if self.tables.braces.get(&UnitSpan {
+                    unit: self.unit,
+                    span: *span,
+                }) != Some(&Designated::Intrinsic(Intrinsic::Tuple)) =>
+            {
                 out.write_char('{')?;
                 self.params(params, None, None, out)?;
                 out.write_char('}')
@@ -560,7 +570,9 @@ impl Printer<'_, '_> {
                 self.ty(ty, out)?;
                 out.write_char(')')
             }
-            TypeExpr::Tuple { params, .. } | TypeExpr::Record { params, .. } => {
+            TypeExpr::Schema { params, .. }
+            | TypeExpr::Tuple { params, .. }
+            | TypeExpr::Record { params, .. } => {
                 out.write_char('(')?;
                 self.params(params, None, None, out)?;
                 // A lone item without a quantifier would only group without its comma

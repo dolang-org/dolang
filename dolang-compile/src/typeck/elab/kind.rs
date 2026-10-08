@@ -10,8 +10,8 @@
 use std::collections::HashMap;
 
 use super::{
-    Ambient, BinderRef, Head, KindMismatch, KindOf, NotAType, NotGeneric, PatternWithoutPack,
-    Referent, Role, Site, Tables, TooManyTypeArgs, UnknownTypeKeyword,
+    Ambient, BinderRef, Designated, Head, KindMismatch, KindOf, NotAType, NotGeneric,
+    PatternWithoutPack, Referent, Role, Site, Tables, TooManyTypeArgs, UnknownTypeKeyword,
     surface::{
         Binder, BinderKind, Name, Super, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam,
         TypeParamKind,
@@ -23,7 +23,7 @@ use crate::{
     typeck::{
         elab::{DeclNode, Diag, UnitDiag, sig},
         report::Report,
-        r#type::{DeclId, DeclKind, Kind, UnitId, UnitSpan},
+        r#type::{DeclId, DeclKind, Intrinsic, Kind, UnitId, UnitSpan},
     },
 };
 
@@ -99,6 +99,7 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
         packs: None,
         diags,
         func_ambients: HashMap::new(),
+        braces: HashMap::new(),
     };
     for site in &check.tables.sites {
         check.site(site);
@@ -113,8 +114,9 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
             }
         }
     }
-    let func_ambients = check.func_ambients;
+    let (func_ambients, braces) = (check.func_ambients, check.braces);
     tables.func_ambients = func_ambients;
+    tables.braces = braces;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -253,6 +255,7 @@ struct Check<'a, 't, 'u> {
     packs: Option<usize>,
     diags: &'a mut Vec<UnitDiag>,
     func_ambients: HashMap<UnitSpan, [Ambient; 2]>,
+    braces: HashMap<UnitSpan, Designated>,
 }
 
 impl<'t> Check<'_, 't, '_> {
@@ -359,6 +362,20 @@ impl<'t> Check<'_, 't, '_> {
                     return;
                 }
                 let declared = (unit == self.unit).then_some(declared);
+                // Only an alias declares a schema with a name a dict could take
+                if expected == Some(Kind::Type)
+                    && kind.kind == Kind::Schema
+                    && let Named::Generic(..) = named
+                {
+                    let alias = Some(self.tables.dotted(self.unit, *head, fields));
+                    self.diag(KindMismatch {
+                        span,
+                        expected: Kind::Type,
+                        declared,
+                        alias,
+                    });
+                    return;
+                }
                 self.expect(span, expected, kind.kind, declared);
             }
             Named::NotAType => {
@@ -377,6 +394,7 @@ impl<'t> Check<'_, 't, '_> {
                 span,
                 expected,
                 declared,
+                alias: None,
             });
         }
     }
@@ -408,9 +426,20 @@ impl<'t> Check<'_, 't, '_> {
                 }
                 self.expect(ty.span(), expected, Kind::Type, None);
             }
-            TypeExpr::Schema { params, .. } => {
+            TypeExpr::Schema { params, tuple, .. } => {
                 self.items(params);
-                self.expect(ty.span(), expected, Kind::Schema, None);
+                // Where a type is required, a schema is a collection, as data is
+                if expected == Some(Kind::Type) {
+                    let class = match tuple {
+                        true => Designated::Intrinsic(Intrinsic::Tuple),
+                        false => Designated::Dict,
+                    };
+                    let span = UnitSpan {
+                        unit: self.unit,
+                        span: ty.span(),
+                    };
+                    self.braces.insert(span, class);
+                }
             }
             TypeExpr::Tuple { params, .. } | TypeExpr::Record { params, .. } => {
                 self.items(params);

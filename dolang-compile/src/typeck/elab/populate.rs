@@ -379,11 +379,16 @@ impl<'t, 'u> Populate<'t, 'u> {
         // Well-formedness checks these where they are written, in the group they are
         // written in, not where a def's channels are taken by a function type. A
         // pattern's interior is not checked.
-        if let TypeExpr::App { .. }
-        | TypeExpr::Tuple { .. }
-        | TypeExpr::Record { .. }
-        | TypeExpr::Array { .. }
-        | TypeExpr::Func { .. } = ty
+        let dict = matches!(ty, TypeExpr::Schema { .. }) && expected == Kind::Type;
+        if (dict
+            || matches!(
+                ty,
+                TypeExpr::App { .. }
+                    | TypeExpr::Tuple { .. }
+                    | TypeExpr::Record { .. }
+                    | TypeExpr::Array { .. }
+                    | TypeExpr::Func { .. }
+            ))
             && self.expanding.is_empty()
             && self.pattern.is_none()
         {
@@ -428,8 +433,21 @@ impl<'t, 'u> Populate<'t, 'u> {
                 let items = self.items(group, params, false, depth);
                 self.schema(items)
             }
+            TypeExpr::Schema { params, span, .. } if expected == Kind::Type => {
+                let class = self.tables.braces.get(&UnitSpan {
+                    unit: group.unit,
+                    span: *span,
+                });
+                debug_assert!(class.is_some(), "kind checking classifies each brace");
+                let class = class.copied().unwrap_or(Designated::Dict);
+                if class == Designated::Intrinsic(Intrinsic::Tuple) {
+                    self.keyed_inclusions(group.unit, params, true);
+                }
+                let items = self.items(group, params, false, depth);
+                self.collection(class, self.schema(items))
+            }
             TypeExpr::Tuple { params, .. } if expected == Kind::Type => {
-                self.keyed_inclusions(group.unit, params);
+                self.keyed_inclusions(group.unit, params, false);
                 let items = self.items(group, params, false, depth);
                 let tuple = Designated::Intrinsic(Intrinsic::Tuple);
                 self.collection(tuple, self.schema(items))
@@ -507,9 +525,10 @@ impl<'t, 'u> Populate<'t, 'u> {
         })
     }
 
-    /// Report each item of a tuple form that may admit keyed items. An inclusion
-    /// never makes a record, so what it includes can't change the form's meaning.
-    fn keyed_inclusions(&mut self, unit: UnitId, params: &[TypeParam]) {
+    /// Report each item of a tuple form, parenthesized or `vertical`, that may admit
+    /// keyed items. An inclusion never makes a record or dict, so what it includes
+    /// can't change the form's meaning.
+    fn keyed_inclusions(&mut self, unit: UnitId, params: &[TypeParam], vertical: bool) {
         for param in params {
             match &param.kind {
                 Some(TypeParamKind::Open(span)) => {
@@ -518,6 +537,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                         KeyedInclusion {
                             span: *span,
                             open: true,
+                            vertical,
                         },
                     );
                 }
@@ -527,6 +547,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                         KeyedInclusion {
                             span: ty.span(),
                             open: false,
+                            vertical,
                         },
                     );
                 }
@@ -1677,6 +1698,8 @@ impl Report for BareGeneric {
 struct KeyedInclusion {
     span: Span,
     open: bool,
+    /// Whether the tuple is a vertical schema, rather than parenthesized
+    vertical: bool,
 }
 
 impl Report for KeyedInclusion {
@@ -1699,10 +1722,14 @@ impl Report for KeyedInclusion {
     }
 
     fn notes(&self) -> Vec<(NoteKind, String)> {
-        let note = match self.open {
-            true => "`(*)` is a tuple of any positional items",
-            false => {
+        let note = match (self.open, self.vertical) {
+            (true, false) => "`(*)` is a tuple of any positional items",
+            (true, true) => "a vertical `*` alone admits any positional items",
+            (false, false) => {
                 "a keyed item makes a record; to include keyed items without one, write `Record[...{...}]`"
+            }
+            (false, true) => {
+                "a keyed item makes a dict; to include keyed items in a record, apply `Record ...$` to these items"
             }
         };
         vec![(NoteKind::Help, note.to_owned())]

@@ -496,7 +496,16 @@ impl<'t> Collect<'t, '_> {
                     self.ty(arg.ty(), Use::BOTH);
                 }
             }
-            TypeExpr::Schema { params, .. } => self.items(params, u),
+            TypeExpr::Schema { params, span, .. } => {
+                let brace = UnitSpan {
+                    unit: self.unit,
+                    span: *span,
+                };
+                match self.tables.braces.get(&brace) {
+                    Some(&class) => self.designated(class, u, |this, u| this.items(params, u)),
+                    None => self.items(params, u),
+                }
+            }
             TypeExpr::Tuple { params, .. } => {
                 let role = Designated::Intrinsic(Intrinsic::Tuple);
                 self.designated(role, u, |this, u| this.items(params, u));
