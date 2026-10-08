@@ -273,6 +273,7 @@ impl<'v> Global<'v> {
                     app: type_subtype!(AppTypeTag, type_expr),
                     schema: type_subtype!(SchemaTypeTag, type_expr),
                     parens: type_subtype!(ParensTypeTag, type_expr),
+                    array: type_subtype!(ArrayTypeTag, type_expr),
                     union: type_subtype!(UnionTypeTag, type_expr),
                     func: type_subtype!(FuncTypeTag, type_expr),
                 },
@@ -527,7 +528,7 @@ macro_rules! type_tags {
 type_tags! {
     TypeExprTag=>"TypeExpr", NameTypeTag=>"NameType", ConstTypeTag=>"ConstType",
     AppTypeTag=>"AppType", SchemaTypeTag=>"SchemaType", ParensTypeTag=>"ParensType",
-    UnionTypeTag=>"UnionType",
+    ArrayTypeTag=>"ArrayType", UnionTypeTag=>"UnionType",
     FuncTypeTag=>"FuncType", TypeArgTag=>"TypeArg", PosTypeArgTag=>"PosTypeArg",
     KeyTypeArgTag=>"KeyTypeArg", ExpandTypeArgTag=>"ExpandTypeArg",
     TypeParamTag=>"TypeParam", PosTypeParamTag=>"PosTypeParam",
@@ -541,6 +542,7 @@ pub(crate) struct TypeExprTypes<'v> {
     app: Type<'v, TypeExprObject<AppTypeTag>>,
     schema: Type<'v, TypeExprObject<SchemaTypeTag>>,
     parens: Type<'v, TypeExprObject<ParensTypeTag>>,
+    array: Type<'v, TypeExprObject<ArrayTypeTag>>,
     union: Type<'v, TypeExprObject<UnionTypeTag>>,
     func: Type<'v, TypeExprObject<FuncTypeTag>>,
 }
@@ -2301,6 +2303,7 @@ fn create_type_expr<'v, 's>(
         App,
         Schema,
         Parens,
+        Array,
         Union,
         Func,
     }
@@ -2343,6 +2346,10 @@ fn create_type_expr<'v, 's>(
             compile::TypeKind::Parens { params } => {
                 create_type_params(global, strand, unit, params, &mut first)?;
                 (Which::Parens, TypeDetail::None)
+            }
+            compile::TypeKind::Array { elem } => {
+                create_type_expr(global, strand, unit, elem, &mut first)?;
+                (Which::Array, TypeDetail::None)
             }
             compile::TypeKind::Union { members } => {
                 Output::set(strand, &mut first, Empty::Array);
@@ -2405,6 +2412,7 @@ fn create_type_expr<'v, 's>(
             Which::App => make!(t.app),
             Which::Schema => make!(t.schema),
             Which::Parens => make!(t.parens),
+            Which::Array => make!(t.array),
             Which::Union => make!(t.union),
             Which::Func => make!(t.func),
         }
@@ -2630,6 +2638,7 @@ impl<'v, T: TypeMarker + 'static> Object<'v> for TypeExprObject<T> {
             "ConstType" => builder.get("value", slot!(0)),
             "AppType" => builder.get("base", slot!(0)).get("args", slot!(1)),
             "SchemaType" | "ParensType" => builder.get("params", slot!(0)),
+            "ArrayType" => builder.get("elem", slot!(0)),
             "UnionType" => builder.get("members", slot!(0)),
             "FuncType" => builder
                 .get("params", slot!(0))
@@ -3138,6 +3147,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .value("AppType", global.types.type_kinds.app)
         .value("SchemaType", global.types.type_kinds.schema)
         .value("ParensType", global.types.type_kinds.parens)
+        .value("ArrayType", global.types.type_kinds.array)
         .value("UnionType", global.types.type_kinds.union)
         .value("FuncType", global.types.type_kinds.func)
         .value("TypeArg", global.types.type_arg)

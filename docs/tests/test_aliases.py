@@ -217,6 +217,14 @@ class CompilerTests(unittest.TestCase):
         self.assertIn("@let Named = (name: Str, ?port: Int)", rendered)
         self.assertIn("@let Grouped = Array[Int]", rendered)
 
+    def test_array_types(self):
+        rendered = self.round_trip('''
+@let Ints = [Int]
+@let Rows = [[Str | nil]]
+''')
+        self.assertIn("@let Ints = [Int]", rendered)
+        self.assertIn("@let Rows = [[Str | nil]]", rendered)
+
     def test_source_layout_does_not_control_output(self):
         compact = self.round_trip("@let A = (Str | Int | Float | Bool | nil)\n")
         vertical = self.round_trip("@let A = $\n  | Str\n  | Int\n  | Float\n  | Bool\n  | nil\n")

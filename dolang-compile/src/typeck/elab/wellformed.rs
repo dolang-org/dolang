@@ -168,6 +168,8 @@ impl Check<'_, '_> {
         match ty {
             TypeExpr::Name { .. } | TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}
             TypeExpr::Group { ty, .. } => self.ty(unit, scope, ty, phantom),
+            // `std.Array` bounds nothing
+            TypeExpr::Array { elem, .. } => self.ty(unit, scope, elem, phantom),
             TypeExpr::Union { members, .. } => {
                 for member in members {
                     self.ty(unit, scope, member, phantom);
@@ -524,6 +526,7 @@ impl Check<'_, '_> {
                     self.guarded(unit, alias, members, ty, true, found);
                 }
             }
+            TypeExpr::Array { elem, .. } => self.guarded(unit, alias, members, elem, true, found),
             TypeExpr::Func {
                 params,
                 input,

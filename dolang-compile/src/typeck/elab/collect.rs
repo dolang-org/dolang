@@ -486,6 +486,10 @@ impl<'u> Walk<'_, 'u> {
                     false => TypeExpr::Tuple { span, params },
                 }
             }
+            ast::TypeExpr::Array { elem, .. } => TypeExpr::Array {
+                span,
+                elem: Box::new(self.surface(elem)),
+            },
             ast::TypeExpr::Union { members, .. } => TypeExpr::Union {
                 span,
                 members: members.iter().map(|member| self.surface(member)).collect(),
@@ -1784,7 +1788,8 @@ impl Aliases<'_, '_> {
             | TypeExpr::Func { .. }
             | TypeExpr::Schema { .. }
             | TypeExpr::Tuple { .. }
-            | TypeExpr::Record { .. } => Head::Structural,
+            | TypeExpr::Record { .. }
+            | TypeExpr::Array { .. } => Head::Structural,
             TypeExpr::Error { .. } => Head::Error,
         }
     }

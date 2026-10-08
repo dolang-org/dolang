@@ -836,6 +836,19 @@ def parenthesized_types_are_exposed()
   assert_type $compile.NameType $grouped
 
 #[test]
+def array_types_are_exposed()
+  let source = r|-
+    pub @let Ints = [Int]
+  let unit = compile.compile "arrays.dol" $source document: true
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
+  let ints = (types_of(nodes, (named_node source nodes compile.Alias "Ints")[0])[0][1].expr)
+  assert_type $compile.ArrayType $ints
+  assert_eq (span_text(source, ints.span)) "[Int]"
+  assert_type $compile.NameType $ints.elem
+  assert_eq (span_text(source, ints.elem.span)) "Int"
+
+#[test]
 def sibling_module_type_imports_resolve_separately()
   # Modules are not nested, so sibling imports bind the same head and only the
   # whole path says which module a dotted name comes from.

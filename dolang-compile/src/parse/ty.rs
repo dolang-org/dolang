@@ -1,8 +1,8 @@
 use super::{
     ExprMode, Parser, Result, Scope,
     diag::{
-        DuplicateImplicit, ImplicitInSchema, ImplicitWithoutArrow, InvalidConstType, NonConstExpr,
-        OptionalQuant, OptionalTypeArg, QuantifiedImplicit,
+        ArrayTypeElems, DuplicateImplicit, ImplicitInSchema, ImplicitWithoutArrow,
+        InvalidConstType, NonConstExpr, OptionalQuant, OptionalTypeArg, QuantifiedImplicit,
     },
     stream::ExpectKind,
 };
@@ -24,6 +24,8 @@ enum Params {
     Func,
     /// A schema's, in `{}`
     Schema,
+    /// An array type's, in `[]`
+    Array,
     /// A vertical schema introduced by `$`.
     Vertical,
 }
@@ -33,6 +35,7 @@ impl Params {
         match self {
             Params::Func => ExpectKind::RightParen,
             Params::Schema => ExpectKind::RightBrace,
+            Params::Array => ExpectKind::RightBracket,
             Params::Vertical => ExpectKind::Dedent,
         }
     }
@@ -42,6 +45,7 @@ impl Params {
             (self, info),
             (Params::Func, TokenInfo::RightParen)
                 | (Params::Schema, TokenInfo::RightBrace)
+                | (Params::Array, TokenInfo::RightBracket)
                 | (Params::Vertical, TokenInfo::Dedent)
         )
     }
@@ -600,6 +604,33 @@ impl Parser<'_> {
                     params,
                     brace_span: Some(brace_span),
                     dollar_span: None,
+                }
+            }
+            Some(token!(TokenInfo::LeftBracket)) => {
+                let left = self.advance();
+                let (mut params, _, bracket_span) =
+                    self.parse_type_params(scope, Params::Array, left)?;
+                if let [
+                    TypeParam {
+                        quant: None,
+                        kind: Some(TypeParamKind::Pos(_)),
+                        delim_span: None,
+                        ..
+                    },
+                ] = params.as_slice()
+                    && let Some(TypeParam {
+                        kind: Some(TypeParamKind::Pos(elem)),
+                        ..
+                    }) = params.pop()
+                {
+                    TypeExpr::Array {
+                        elem: Box::new(elem),
+                        bracket_span,
+                    }
+                } else {
+                    self.fail = true;
+                    self.diags.push(ArrayTypeElems(bracket_span));
+                    TypeExpr::Error
                 }
             }
             Some(

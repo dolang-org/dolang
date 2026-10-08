@@ -95,6 +95,7 @@ let TYPE_KIND_NAMES = $
   $compile.AppType: "AppType"
   $compile.SchemaType: "SchemaType"
   $compile.ParensType: "ParensType"
+  $compile.ArrayType: "ArrayType"
   $compile.UnionType: "UnionType"
   $compile.FuncType: "FuncType"
 
@@ -183,6 +184,8 @@ def type_expr_json id_to_index expr
       type(expr, compile.FuncType)
     )
       params: [...expr.params.map do |param| (type_param_json id_to_index param)]
+    if type(expr, compile.ArrayType)
+      elem: (type_expr_json id_to_index expr.elem)
     if type(expr, compile.UnionType)
       members: [...expr.members.map do |member| (type_expr_json id_to_index member)]
     if (type(expr, compile.FuncType) && expr.input != nil)
@@ -538,6 +541,10 @@ class Document
       $
         kind: "parens"
         params: (self.#type_params(expr.params))
+    else if type(expr, compile.ArrayType)
+      $
+        kind: "array"
+        elem: (self.#type_tree(expr.elem))
     else if type(expr, compile.UnionType)
       let members = []
       for member = expr.members

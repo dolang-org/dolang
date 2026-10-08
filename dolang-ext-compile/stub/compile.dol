@@ -617,6 +617,13 @@ pub class ParensType: TypeExpr
   pub def params self -> Array[TypeParam]
     ...
 
+# An array type, such as `[Int]`.
+pub class ArrayType: TypeExpr
+  # The element type.
+  #[getter]
+  pub def elem self -> TypeExpr
+    ...
+
 # A union, such as `(Str | Path)`.
 pub class UnionType: TypeExpr
   # The members, in the order written.

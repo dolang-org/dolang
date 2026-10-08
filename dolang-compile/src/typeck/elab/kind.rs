@@ -222,6 +222,7 @@ impl Infer {
             TypeExpr::App { .. }
             | TypeExpr::Tuple { .. }
             | TypeExpr::Record { .. }
+            | TypeExpr::Array { .. }
             | TypeExpr::Union { .. }
             | TypeExpr::Func { .. }
             | TypeExpr::Const { .. } => Term::Known(Kind::Type),
@@ -413,6 +414,10 @@ impl<'t> Check<'_, 't, '_> {
             }
             TypeExpr::Tuple { params, .. } | TypeExpr::Record { params, .. } => {
                 self.items(params);
+                self.expect(ty.span(), expected, Kind::Type, None);
+            }
+            TypeExpr::Array { elem, .. } => {
+                self.check(elem, Some(Kind::Type));
                 self.expect(ty.span(), expected, Kind::Type, None);
             }
             TypeExpr::Union { members, .. } => {
@@ -687,6 +692,7 @@ impl Tables<'_> {
             TypeExpr::App { .. }
             | TypeExpr::Tuple { .. }
             | TypeExpr::Record { .. }
+            | TypeExpr::Array { .. }
             | TypeExpr::Union { .. }
             | TypeExpr::Func { .. }
             | TypeExpr::Const { .. } => Some(Kind::Type),

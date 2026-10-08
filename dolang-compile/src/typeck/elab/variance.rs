@@ -504,6 +504,9 @@ impl<'t> Collect<'t, '_> {
             TypeExpr::Record { params, .. } => {
                 self.designated(Designated::Record, u, |this, u| this.items(params, u));
             }
+            TypeExpr::Array { elem, .. } => {
+                self.designated(Designated::Array, u, |this, u| this.ty(elem, u));
+            }
             TypeExpr::Union { members, .. } => {
                 for member in members {
                     self.ty(member, u);

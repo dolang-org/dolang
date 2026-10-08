@@ -413,7 +413,7 @@ impl Visit for TypeExpr {
             TypeExpr::Schema { params, .. }
             | TypeExpr::Tuple { params, .. }
             | TypeExpr::Record { params, .. } => params.visit(ids),
-            TypeExpr::Group { ty, .. } => ty.visit(ids),
+            TypeExpr::Group { ty, .. } | TypeExpr::Array { elem: ty, .. } => ty.visit(ids),
             TypeExpr::Union { members, .. } => members.visit(ids),
             TypeExpr::Func {
                 params,

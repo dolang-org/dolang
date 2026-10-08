@@ -790,6 +790,9 @@ impl<'a> TypeExpr<'a> {
             doc::TypeKind::Parens { params: items } => TypeKind::Parens {
                 params: params(items),
             },
+            doc::TypeKind::Array { elem } => TypeKind::Array {
+                elem: TypeExpr { file, expr: elem },
+            },
             doc::TypeKind::Union { members } => TypeKind::Union {
                 members: TypeExprs {
                     file,
@@ -839,6 +842,11 @@ pub enum TypeKind<'a> {
     Parens {
         /// The items
         params: TypeParams<'a>,
+    },
+    /// An array type, e.g. `[Int]`
+    Array {
+        /// The element type
+        elem: TypeExpr<'a>,
     },
     /// A union, e.g. `(Str | Path)`
     Union {

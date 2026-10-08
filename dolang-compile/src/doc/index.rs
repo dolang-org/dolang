@@ -456,6 +456,9 @@ impl Index<'_> {
             TypeExpr::Parens { params, .. } => doc::TypeKind::Parens {
                 params: self.type_params(params)?,
             },
+            TypeExpr::Array { elem, .. } => doc::TypeKind::Array {
+                elem: alias::Box::new(self.type_expr(elem)?),
+            },
             TypeExpr::Group { ty: inner, .. } => self.type_expr(inner)?.kind,
             TypeExpr::Union { members, .. } => doc::TypeKind::Union {
                 members: members

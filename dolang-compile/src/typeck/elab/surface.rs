@@ -105,6 +105,12 @@ pub(crate) enum TypeExpr {
         span: Span,
         params: Vec<TypeParam>,
     },
+    /// An array type, e.g. `[Int]`: `std.Array` of its element type
+    Array {
+        #[serde(with = "wire::span")]
+        span: Span,
+        elem: Box<TypeExpr>,
+    },
     /// A union, e.g. `Str | Path`
     Union {
         #[serde(with = "wire::span")]
@@ -207,6 +213,7 @@ impl TypeExpr {
             | TypeExpr::Group { span, .. }
             | TypeExpr::Tuple { span, .. }
             | TypeExpr::Record { span, .. }
+            | TypeExpr::Array { span, .. }
             | TypeExpr::Union { span, .. }
             | TypeExpr::Func { span, .. }
             | TypeExpr::Error { span } => *span,
@@ -231,7 +238,7 @@ impl TypeExpr {
                     ty.names(f);
                 }
             }
-            TypeExpr::Group { ty, .. } => ty.names(f),
+            TypeExpr::Group { ty, .. } | TypeExpr::Array { elem: ty, .. } => ty.names(f),
             TypeExpr::Union { members, .. } => {
                 for member in members {
                     member.names(f);
@@ -567,6 +574,11 @@ impl Printer<'_, '_> {
                     out.write_char(',')?;
                 }
                 out.write_char(')')
+            }
+            TypeExpr::Array { elem, .. } => {
+                out.write_char('[')?;
+                self.ty(elem, out)?;
+                out.write_char(']')
             }
             TypeExpr::Union { members, .. } => {
                 for (index, member) in members.iter().enumerate() {

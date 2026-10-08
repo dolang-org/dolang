@@ -382,6 +382,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         if let TypeExpr::App { .. }
         | TypeExpr::Tuple { .. }
         | TypeExpr::Record { .. }
+        | TypeExpr::Array { .. }
         | TypeExpr::Func { .. } = ty
             && self.expanding.is_empty()
             && self.pattern.is_none()
@@ -436,6 +437,10 @@ impl<'t, 'u> Populate<'t, 'u> {
             TypeExpr::Record { params, .. } if expected == Kind::Type => {
                 let items = self.items(group, params, false, depth);
                 self.collection(Designated::Record, self.schema(items))
+            }
+            TypeExpr::Array { elem, .. } if expected == Kind::Type => {
+                let elem = self.intern(group, elem, Kind::Type, depth);
+                self.collection(Designated::Array, elem)
             }
             TypeExpr::Union { members, .. } if expected == Kind::Type => {
                 let members: Vec<_> = members

@@ -461,6 +461,10 @@ def _render_type(
         lone = len(items) == 1 and items[0].get("kind") == "pos" and not items[0].get("quant")
         rendered = f"({params},)" if lone else f"({params})"
         binding = _BINDS_COMPACT
+    elif kind == "array":
+        elem = _render_type(ty["elem"], scope, _BINDS_FUNC, plain, code=code)
+        rendered = f"[{elem}]" if plain or code else f"\\[{elem}\\]"
+        binding = _BINDS_COMPACT
     elif kind == "union":
         rendered = " | ".join(
             _render_type(member, scope, _BINDS_COMPACT, plain, code=code) for member in ty["members"]

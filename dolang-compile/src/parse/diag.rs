@@ -452,6 +452,40 @@ impl Diagnose for ImplicitWithoutArrow {
     }
 }
 
+#[derive(Clone)]
+pub(super) struct ArrayTypeElems(pub(super) Span);
+
+impl Diagnose for ArrayTypeElems {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "an array type takes one element type")
+    }
+
+    fn notes(&self) -> Box<dyn Iterator<Item = Box<dyn Note>>> {
+        Box::new([Box::new(self.clone()) as Box<dyn Note>].into_iter())
+    }
+}
+
+impl Note for ArrayTypeElems {
+    fn kind(&self) -> NoteKind {
+        NoteKind::Help
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "write a union for elements of several types, as in `[Int | Str]`, or a tuple type, as in `(Int, Str)`"
+        )
+    }
+}
+
 pub(super) struct RequiredAfterOptional(pub(super) Span);
 
 impl Diagnose for RequiredAfterOptional {
