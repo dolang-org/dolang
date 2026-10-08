@@ -1,0 +1,78 @@
+# Where a type is required, a brace is `Dict` of its schema.
+
+pub let named @ {name: Str} = ...
+#               ^~~~~~~~~~~: type std.Dict[{name: std.Str}]
+pub let nested @ {items: [Str]} = ...
+#                ^~~~~~~~~~~~~~: type std.Dict[{items: std.Array[std.Str]}]
+pub let rows @ Array[{a: Int}] = ...
+#              ^~~~~~~~~~~~~~~: type std.Array[std.Dict[{a: std.Int}]]
+pub let optional @ ({a: Int} | nil) = ...
+#                  ^~~~~~~~~~~~~~~~: type nil | std.Dict[{a: std.Int}]
+pub let callback @ (({a: Int}) -> nil) = ...
+#                  ^~~~~~~~~~~~~~~~~~~: type (std.Dict[{a: std.Int}], <Value, >Value) -> nil
+
+# `Dict` itself takes the brace as its schema
+pub let spelled @ Dict[{a: Int}] = ...
+#                 ^~~~~~~~~~~~~~: type std.Dict[{a: std.Int}]
+
+# A vertical schema in a key's value is a dict too
+pub @let Config = Dict $
+  #      ^~~~~~: decl std.Dict[{name: std.Str, meta: std.Dict[{owner: std.Str}]}]
+  name: Str
+  meta: $
+    owner: Str
+
+# Without a key, as an array's data is, it is a tuple of its items
+pub @let Point = Dict $
+  #      ^~~~~: decl std.Dict[{at: std.Tuple[{std.Int, std.Int}], tags: std.Tuple[{*std.Str}]}]
+  at: $
+    Int Int
+  tags: $
+    *Str
+pub @let Nested = Tuple $
+  #      ^~~~~~: decl std.Tuple[{std.Tuple[{std.Int}]}]
+  Int
+pub let spelled_pair @ Tuple[Int, Int] = ...
+#                      ^~~~~~~~~~~~~~~: type std.Tuple[{std.Int, std.Int}]
+pub @let Spread = Tuple ...$
+  #      ^~~~~~: decl std.Tuple[{...{std.Int}}]
+  Int
+pub @let Mixed = Dict $
+  pair: $
+    Int
+    ...Shape
+# error: included schema may have keyed items, which a tuple type can't hold
+#   --> m.dol:LL:LL
+#    |
+# LL |     ...Shape
+#    |        ^^^^^
+#    |
+#    = help: a keyed item makes a dict; to include keyed items in a record, apply `Record ...$` to these items
+
+# A dict guards a recursive alias, as any class does
+pub @let Tree = (nil | {child: Tree})
+#        ^~~~: decl nil | std.Dict[{child: m.Tree}]
+
+# A binder's bound and an alias's body stay schemas
+pub def keys[S @ {...}] table @ Dict[S] -> nil
+  #          ^: kind schema
+  ...
+pub @let Shape = {a: Int}
+pub let shaped @ Dict[Shape] = ...
+#                ^~~~~~~~~~~: type std.Dict[m.Shape]
+pub let bad @ Shape = ...
+# error: expected a type, found a schema
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @let Shape = {a: Int}
+#    |          ----- declared here
+# ...
+# LL | pub let bad @ Shape = ...
+#    |               ^^^^^
+#    |
+#    = help: for a dict with this schema, write `Dict[Shape]`
+
+pub def cast value
+  let row = (value @ {a: Int})
+  #                  ^~~~~~~~: type std.Dict[{a: std.Int}]
+  row

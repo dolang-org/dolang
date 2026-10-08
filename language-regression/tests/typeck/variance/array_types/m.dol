@@ -1,0 +1,11 @@
+# An array type is invariant in its element type, as `Array` is.
+
+pub @let List[T] = [T]
+#             ^: variance invariant
+pub @let Rows[T] = [(T, Int)]
+#             ^: variance invariant
+
+pub class Box[T]
+  #           ^: variance invariant
+  pub def items self -> [T]
+    ...

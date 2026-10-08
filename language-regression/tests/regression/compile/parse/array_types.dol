@@ -1,0 +1,50 @@
+def a x@[Int] -> [Int]
+  x
+def b x @ [Int] -> [[Str]]
+  x
+def c :items @ [Str] = []
+  items
+def d a b@[Int]
+  b
+let e @ [Int | Str] = []
+let f = ([] @ [(Int, Str)])
+let g @ [] = []
+# error: an array type takes one element type
+#   --> array_types.dol:LL:LL
+#    |
+# LL | let g @ [] = []
+#    |         ^^
+#    |
+#    = help: write a union for elements of several types, as in `[Int | Str]`, or a tuple type, as in `(Int, Str)`
+let h @ [Int, Str] = []
+# error: an array type takes one element type
+#   --> array_types.dol:LL:LL
+#    |
+# LL | let h @ [Int, Str] = []
+#    |         ^^^^^^^^^^
+#    |
+#    = help: write a union for elements of several types, as in `[Int | Str]`, or a tuple type, as in `(Int, Str)`
+let i @ [*Int] = []
+# error: an array type takes one element type
+#   --> array_types.dol:LL:LL
+#    |
+# LL | let i @ [*Int] = []
+#    |         ^^^^^^
+#    |
+#    = help: write a union for elements of several types, as in `[Int | Str]`, or a tuple type, as in `(Int, Str)`
+let j @ [Int,] = []
+# error: an array type takes one element type
+#   --> array_types.dol:LL:LL
+#    |
+# LL | let j @ [Int,] = []
+#    |         ^^^^^^
+#    |
+#    = help: write a union for elements of several types, as in `[Int | Str]`, or a tuple type, as in `(Int, Str)`
+let k @ [name: Str] = []
+# error: an array type takes one element type
+#   --> array_types.dol:LL:LL
+#    |
+# LL | let k @ [name: Str] = []
+#    |         ^^^^^^^^^^^
+#    |
+#    = help: write a union for elements of several types, as in `[Int | Str]`, or a tuple type, as in `(Int, Str)`

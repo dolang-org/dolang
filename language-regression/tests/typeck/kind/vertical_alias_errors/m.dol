@@ -1,22 +1,17 @@
 pub class Num
-pub class Tuple[*_Ts]
 
-# Schemas remain a different kind from types, including inside unions.
-pub @let BadUnion = $
-  | {Num}
-# error: expected a type, found a schema
-#   --> m.dol:LL:LL
-#    |
-# LL |   | {Num}
-#    |     ^^^^^
-
-# Ordinary application passes one schema argument; it does not expand it.
-pub @let BadTuple = Tuple $
+# Schema aliases remain a different kind from types, including inside unions.
+pub @let Items = $
   Num
+pub @let BadUnion = $
+  | Items
 # error: expected a type, found a schema
 #   --> m.dol:LL:LL
 #    |
-# LL |   pub @let BadTuple = Tuple $
-#    |  ___________________________^
-# LL | |   Num
-#    | |_____^
+# LL | pub @let Items = $
+#    |          ----- declared here
+# ...
+# LL |   | Items
+#    |     ^^^^^
+#    |
+#    = help: for a dict with this schema, write `Dict[Items]`

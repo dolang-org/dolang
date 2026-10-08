@@ -1,21 +1,3 @@
-let a @(?Int) = 1
-# error: parenthesized type is a parameter list, which must be followed by `->`
-#   --> type_errors.dol:LL:LL
-#    |
-# LL | let a @(?Int) = 1
-#    |        ^^^^^^
-let b @() = 1
-# error: parenthesized type is a parameter list, which must be followed by `->`
-#   --> type_errors.dol:LL:LL
-#    |
-# LL | let b @() = 1
-#    |        ^^
-let c @(Int, Str) = 1
-# error: parenthesized type is a parameter list, which must be followed by `->`
-#   --> type_errors.dol:LL:LL
-#    |
-# LL | let c @(Int, Str) = 1
-#    |        ^^^^^^^^^^
 let d @Array[?Int] = 1
 # error: type arguments cannot be optional
 #   --> type_errors.dol:LL:LL

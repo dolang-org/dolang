@@ -216,6 +216,7 @@ pub(crate) fn link<'u>(
         sigs: HashMap::new(),
         fields: HashMap::new(),
         func_ambients: HashMap::new(),
+        braces: HashMap::new(),
         designated: HashMap::new(),
         nominees,
         pipes: HashMap::new(),
@@ -465,13 +466,28 @@ impl<'u> Walk<'_, 'u> {
                 base: Box::new(self.surface(base)),
                 args: args.iter().map(|arg| self.surface_arg(arg)).collect(),
             },
-            ast::TypeExpr::Schema { params, .. } => TypeExpr::Schema {
+            ast::TypeExpr::Schema {
+                params, brace_span, ..
+            } => TypeExpr::Schema {
                 span,
                 params: self.surface_params(params),
+                tuple: brace_span.is_none() && !keyed(params),
             },
             ast::TypeExpr::Group { ty, .. } => TypeExpr::Group {
                 span,
                 ty: Box::new(self.surface(ty)),
+            },
+            ast::TypeExpr::Parens { params, .. } => {
+                let keyed = keyed(params);
+                let params = self.surface_params(params);
+                match keyed {
+                    true => TypeExpr::Record { span, params },
+                    false => TypeExpr::Tuple { span, params },
+                }
+            }
+            ast::TypeExpr::Array { elem, .. } => TypeExpr::Array {
+                span,
+                elem: Box::new(self.surface(elem)),
             },
             ast::TypeExpr::Union { members, .. } => TypeExpr::Union {
                 span,
@@ -542,7 +558,7 @@ impl<'u> Walk<'_, 'u> {
                     P::Include { ty, .. } => TypeParamKind::Include {
                         ty: self.surface(ty),
                     },
-                    P::Open { .. } => TypeParamKind::Open,
+                    P::Open { ellipsis_span } => TypeParamKind::Open(*ellipsis_span),
                 }),
             })
             .collect()
@@ -1583,6 +1599,16 @@ impl<'u> Walk<'_, 'u> {
     }
 }
 
+/// Whether items written as data are keyed: whether one is explicitly keyed, which
+/// makes parenthesized items a record and vertical ones a dict. An inclusion isn't,
+/// so the form's meaning never depends on what it includes.
+fn keyed(params: &[ast::TypeParam]) -> bool {
+    params.iter().any(|param| {
+        matches!(param.quant, Some(ast::TypeQuant::StarStar(_)))
+            || matches!(param.kind, Some(ast::TypeParamKind::Key { .. }))
+    })
+}
+
 /// Call `f` on each name a pattern binds, at any level, with its annotation if it
 /// has one that types it alone
 fn pattern_names(pattern: &Pattern, f: &mut impl FnMut(&Ident, Option<&Annot>)) {
@@ -1769,7 +1795,10 @@ impl Aliases<'_, '_> {
             TypeExpr::Const { .. }
             | TypeExpr::Union { .. }
             | TypeExpr::Func { .. }
-            | TypeExpr::Schema { .. } => Head::Structural,
+            | TypeExpr::Schema { .. }
+            | TypeExpr::Tuple { .. }
+            | TypeExpr::Record { .. }
+            | TypeExpr::Array { .. } => Head::Structural,
             TypeExpr::Error { .. } => Head::Error,
         }
     }

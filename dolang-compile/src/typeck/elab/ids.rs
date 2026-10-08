@@ -410,8 +410,10 @@ impl Visit for TypeExpr {
                 base.visit(ids);
                 args.visit(ids);
             }
-            TypeExpr::Schema { params, .. } => params.visit(ids),
-            TypeExpr::Group { ty, .. } => ty.visit(ids),
+            TypeExpr::Schema { params, .. }
+            | TypeExpr::Tuple { params, .. }
+            | TypeExpr::Record { params, .. } => params.visit(ids),
+            TypeExpr::Group { ty, .. } | TypeExpr::Array { elem: ty, .. } => ty.visit(ids),
             TypeExpr::Union { members, .. } => members.visit(ids),
             TypeExpr::Func {
                 params,
@@ -453,7 +455,7 @@ impl Visit for TypeParam {
                 }
                 ty.visit(ids);
             }
-            Some(TypeParamKind::Open) | None => {}
+            Some(TypeParamKind::Open(_)) | None => {}
         }
     }
 }

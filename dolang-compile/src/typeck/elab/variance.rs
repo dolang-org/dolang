@@ -452,6 +452,25 @@ impl<'t> Collect<'t, '_> {
         }
     }
 
+    /// Walk, with `walk`, what a form standing for a designated class applies to its
+    /// only binder. What a class that isn't checked takes is unknown.
+    fn designated(&mut self, role: Designated, u: Use, walk: impl FnOnce(&mut Self, Use)) {
+        let Some(decl) = self.tables.designated_decl(role) else {
+            return walk(self, Use::BOTH);
+        };
+        self.captures(decl, u);
+        self.path.push((
+            decl,
+            BinderRef {
+                decl,
+                sig: 0,
+                slot: 0,
+            },
+        ));
+        walk(self, u);
+        self.path.pop();
+    }
+
     fn ty(&mut self, ty: &'t TypeExpr, u: Use) {
         match ty {
             TypeExpr::Group { ty, .. } => self.ty(ty, u),
@@ -477,7 +496,26 @@ impl<'t> Collect<'t, '_> {
                     self.ty(arg.ty(), Use::BOTH);
                 }
             }
-            TypeExpr::Schema { params, .. } => self.items(params, u),
+            TypeExpr::Schema { params, span, .. } => {
+                let brace = UnitSpan {
+                    unit: self.unit,
+                    span: *span,
+                };
+                match self.tables.braces.get(&brace) {
+                    Some(&class) => self.designated(class, u, |this, u| this.items(params, u)),
+                    None => self.items(params, u),
+                }
+            }
+            TypeExpr::Tuple { params, .. } => {
+                let role = Designated::Intrinsic(Intrinsic::Tuple);
+                self.designated(role, u, |this, u| this.items(params, u));
+            }
+            TypeExpr::Record { params, .. } => {
+                self.designated(Designated::Record, u, |this, u| this.items(params, u));
+            }
+            TypeExpr::Array { elem, .. } => {
+                self.designated(Designated::Array, u, |this, u| this.ty(elem, u));
+            }
             TypeExpr::Union { members, .. } => {
                 for member in members {
                     self.ty(member, u);
@@ -550,7 +588,7 @@ impl<'t> Collect<'t, '_> {
                     }
                     self.ty(ty, u);
                 }
-                Some(TypeParamKind::Open) | None => {}
+                Some(TypeParamKind::Open(_)) | None => {}
             }
         }
     }

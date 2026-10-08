@@ -204,6 +204,14 @@ pub(crate) enum TypeKind {
     Schema {
         params: alias::Box<[TypeParam]>,
     },
+    /// A tuple or record type, such as `(Int, Str)`
+    Parens {
+        params: alias::Box<[TypeParam]>,
+    },
+    /// An array type, such as `[Int]`
+    Array {
+        elem: alias::Box<TypeExpr>,
+    },
     Union {
         members: alias::Box<[TypeExpr]>,
     },

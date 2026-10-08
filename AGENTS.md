@@ -698,8 +698,17 @@ An annotation or return type is a compact type, so the first whitespace after
 it begins ends it, even inside `()`. Parenthesize unions and function types:
 `@Str|Path` is not a union, but `@(Str | Path)` is. Other forms:
 `@Dict[Str, Array[Int]]`, `@{name: Str, ?port: Int}`, `@((Int, ?Int) -> Int)`,
-`@(:a: | :b:)`. Braces form schemas rather than types; use `Dict[{...}]` for a
-dict with a schema. A schema item is an element -- `T` positional, `key: T` or
+`@(:a: | :b:)`. Collection forms mirror the literals and always mean the class
+itself: `(Int, Str)` is `Tuple[Int, Str]`, `(Int,)` a one-item tuple, `()` the
+empty tuple, `(Int)` just grouping; a form with an explicitly keyed item
+(`key: T`, `(K): T`, `**`) is a record, `(name: Str, Int)`; `[T]` is
+`Array[T]` (exactly one element type). A brace is `Dict[{...}]` only where a
+type is required (annotation, return type, cast, union member, argument for a
+type binder as in `Array[{a: Int}]`); it stays a schema as an alias body, a
+bound, or an argument for a schema binder (`Dict[{a: Int}]`), so a brace alias
+used as a type needs `Dict[Alias]`. A vertical `$` schema where a type is
+required is a dict if it has a keyed item, else a tuple of its items. A schema
+item is an element -- `T` positional, `key: T` or
 `(K): T` keyed, `...S` including a schema's items -- optionally preceded by a
 quantifier saying how many it admits: `?` zero or one, `*` zero or more, `**`
 zero or more keyed (`**V` is `*(Sym): V`). An item takes at most one

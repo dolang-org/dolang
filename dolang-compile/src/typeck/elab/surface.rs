@@ -10,13 +10,13 @@ use std::fmt::{self, Write};
 
 use serde::{Deserialize, Serialize};
 
-use super::Tables;
+use super::{Designated, Tables};
 use crate::{
     RestKind,
     ast::SpecialMethod,
     source::Span,
     typeck::{
-        r#type::{DeclId, UnitId},
+        r#type::{DeclId, Intrinsic, UnitId, UnitSpan},
         typelib::wire,
     },
 };
@@ -80,17 +80,40 @@ pub(crate) enum TypeExpr {
         base: Box<TypeExpr>,
         args: Vec<TypeArg>,
     },
-    /// A schema, e.g. `{name: Str, ?port: Int}`
+    /// A schema, e.g. `{name: Str, ?port: Int}`. Where a type is required, it is
+    /// `std.Dict` of itself, or `std.Tuple` of its items when it is `tuple`.
     Schema {
         #[serde(with = "wire::span")]
         span: Span,
         params: Vec<TypeParam>,
+        /// Whether it is written vertically without an explicitly keyed item, as an
+        /// array's data is
+        tuple: bool,
     },
     /// A parenthesized type
     Group {
         #[serde(with = "wire::span")]
         span: Span,
         ty: Box<TypeExpr>,
+    },
+    /// A tuple type, e.g. `(Int, Str)`: `std.Tuple` of the schema of its items
+    Tuple {
+        #[serde(with = "wire::span")]
+        span: Span,
+        params: Vec<TypeParam>,
+    },
+    /// A record type, e.g. `(name: Str, Int)`: `std.Record` of the schema of its
+    /// items
+    Record {
+        #[serde(with = "wire::span")]
+        span: Span,
+        params: Vec<TypeParam>,
+    },
+    /// An array type, e.g. `[Int]`: `std.Array` of its element type
+    Array {
+        #[serde(with = "wire::span")]
+        span: Span,
+        elem: Box<TypeExpr>,
     },
     /// A union, e.g. `Str | Path`
     Union {
@@ -172,8 +195,8 @@ pub(crate) enum TypeParamKind {
     Key { key: TypeKey, ty: TypeExpr },
     /// `...S`
     Include { ty: TypeExpr },
-    /// `...`
-    Open,
+    /// `...`, spanning it
+    Open(#[serde(with = "wire::span")] Span),
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -192,6 +215,9 @@ impl TypeExpr {
             | TypeExpr::App { span, .. }
             | TypeExpr::Schema { span, .. }
             | TypeExpr::Group { span, .. }
+            | TypeExpr::Tuple { span, .. }
+            | TypeExpr::Record { span, .. }
+            | TypeExpr::Array { span, .. }
             | TypeExpr::Union { span, .. }
             | TypeExpr::Func { span, .. }
             | TypeExpr::Error { span } => *span,
@@ -209,12 +235,14 @@ impl TypeExpr {
                     arg.ty().names(f);
                 }
             }
-            TypeExpr::Schema { params, .. } => {
+            TypeExpr::Schema { params, .. }
+            | TypeExpr::Tuple { params, .. }
+            | TypeExpr::Record { params, .. } => {
                 for ty in params.iter().flat_map(TypeParam::tys) {
                     ty.names(f);
                 }
             }
-            TypeExpr::Group { ty, .. } => ty.names(f),
+            TypeExpr::Group { ty, .. } | TypeExpr::Array { elem: ty, .. } => ty.names(f),
             TypeExpr::Union { members, .. } => {
                 for member in members {
                     member.names(f);
@@ -269,7 +297,7 @@ impl TypeParam {
                 },
                 Some(ty),
             ),
-            Some(TypeParamKind::Open) | None => (None, None),
+            Some(TypeParamKind::Open(_)) | None => (None, None),
         };
         key_ty.into_iter().chain(ty)
     }
@@ -526,7 +554,13 @@ impl Printer<'_, '_> {
                 }
                 out.write_char(']')
             }
-            TypeExpr::Schema { params, .. } => {
+            // A vertical schema that is a tuple prints as one
+            TypeExpr::Schema { params, span, .. }
+                if self.tables.braces.get(&UnitSpan {
+                    unit: self.unit,
+                    span: *span,
+                }) != Some(&Designated::Intrinsic(Intrinsic::Tuple)) =>
+            {
                 out.write_char('{')?;
                 self.params(params, None, None, out)?;
                 out.write_char('}')
@@ -535,6 +569,28 @@ impl Printer<'_, '_> {
                 out.write_char('(')?;
                 self.ty(ty, out)?;
                 out.write_char(')')
+            }
+            TypeExpr::Schema { params, .. }
+            | TypeExpr::Tuple { params, .. }
+            | TypeExpr::Record { params, .. } => {
+                out.write_char('(')?;
+                self.params(params, None, None, out)?;
+                // A lone item without a quantifier would only group without its comma
+                if let [
+                    TypeParam {
+                        quant: None,
+                        kind: Some(TypeParamKind::Pos(_)),
+                    },
+                ] = params[..]
+                {
+                    out.write_char(',')?;
+                }
+                out.write_char(')')
+            }
+            TypeExpr::Array { elem, .. } => {
+                out.write_char('[')?;
+                self.ty(elem, out)?;
+                out.write_char(']')
             }
             TypeExpr::Union { members, .. } => {
                 for (index, member) in members.iter().enumerate() {
@@ -595,7 +651,7 @@ impl Printer<'_, '_> {
                     out.write_str("...")?;
                     self.ty(ty, out)?;
                 }
-                Some(TypeParamKind::Open) => out.write_str("...")?,
+                Some(TypeParamKind::Open(_)) => out.write_str("...")?,
                 None => {}
             }
         }

@@ -787,6 +787,12 @@ impl<'a> TypeExpr<'a> {
             doc::TypeKind::Schema { params: items } => TypeKind::Schema {
                 params: params(items),
             },
+            doc::TypeKind::Parens { params: items } => TypeKind::Parens {
+                params: params(items),
+            },
+            doc::TypeKind::Array { elem } => TypeKind::Array {
+                elem: TypeExpr { file, expr: elem },
+            },
             doc::TypeKind::Union { members } => TypeKind::Union {
                 members: TypeExprs {
                     file,
@@ -831,6 +837,16 @@ pub enum TypeKind<'a> {
     Schema {
         /// The parameters
         params: TypeParams<'a>,
+    },
+    /// A tuple or record type, e.g. `(Int, Str)` or `(name: Str)`
+    Parens {
+        /// The items
+        params: TypeParams<'a>,
+    },
+    /// An array type, e.g. `[Int]`
+    Array {
+        /// The element type
+        elem: TypeExpr<'a>,
     },
     /// A union, e.g. `(Str | Path)`
     Union {

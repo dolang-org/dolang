@@ -25,7 +25,7 @@ use crate::source::Span;
 mod tests;
 
 const MAGIC: [u8; 8] = *b"\xffdotypel";
-const VERSION: [u8; 3] = [0, 0, 3];
+const VERSION: [u8; 3] = [0, 0, 4];
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 struct Header {

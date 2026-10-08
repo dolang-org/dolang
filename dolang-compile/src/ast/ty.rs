@@ -35,6 +35,17 @@ pub(crate) enum TypeExpr {
     },
     /// A parenthesized type
     Group { ty: Box<TypeExpr>, paren_span: Span },
+    /// Parenthesized items that `->` doesn't follow: a tuple, e.g. `(Int, Str)`, or
+    /// a record when an item is keyed, e.g. `(name: Str, Int)`
+    Parens {
+        params: Vec<TypeParam>,
+        paren_span: Span,
+    },
+    /// An array type, e.g. `[Int]`
+    Array {
+        elem: Box<TypeExpr>,
+        bracket_span: Span,
+    },
     /// A union, e.g. `Str | Path`
     Union {
         members: Vec<TypeExpr>,
@@ -247,12 +258,12 @@ impl TypeExpr {
                     arg.each_name(f);
                 }
             }
-            TypeExpr::Schema { params, .. } => {
+            TypeExpr::Schema { params, .. } | TypeExpr::Parens { params, .. } => {
                 for param in params {
                     param.each_name(f);
                 }
             }
-            TypeExpr::Group { ty, .. } => ty.each_name(f),
+            TypeExpr::Group { ty, .. } | TypeExpr::Array { elem: ty, .. } => ty.each_name(f),
             TypeExpr::Union { members, .. } => {
                 for member in members {
                     member.each_name(f);
@@ -290,12 +301,12 @@ impl TypeExpr {
                     arg.ty().names(f);
                 }
             }
-            TypeExpr::Schema { params, .. } => {
+            TypeExpr::Schema { params, .. } | TypeExpr::Parens { params, .. } => {
                 for ty in params.iter().flat_map(TypeParam::tys) {
                     ty.names(f);
                 }
             }
-            TypeExpr::Group { ty, .. } => ty.names(f),
+            TypeExpr::Group { ty, .. } | TypeExpr::Array { elem: ty, .. } => ty.names(f),
             TypeExpr::Union { members, .. } => {
                 for member in members {
                     member.names(f);
@@ -436,6 +447,16 @@ impl Node for TypeExpr {
                 visit.token(Token::Delim, paren_span.left_char(), None)?;
                 visit.node(&**ty)?;
                 visit.token(Token::Delim, paren_span.right_char(), None)
+            }
+            TypeExpr::Parens { params, paren_span } => {
+                visit.token(Token::Delim, paren_span.left_char(), None)?;
+                params.accept(visit)?;
+                visit.token(Token::Delim, paren_span.right_char(), None)
+            }
+            TypeExpr::Array { elem, bracket_span } => {
+                visit.token(Token::Delim, bracket_span.left_char(), None)?;
+                visit.node(&**elem)?;
+                visit.token(Token::Delim, bracket_span.right_char(), None)
             }
             TypeExpr::Union {
                 members,

@@ -1,8 +1,8 @@
 use super::{
     ExprMode, Parser, Result, Scope,
     diag::{
-        DuplicateImplicit, ImplicitInSchema, InvalidConstType, NonConstExpr, OptionalQuant,
-        OptionalTypeArg, ParamsWithoutArrow, QuantifiedImplicit,
+        ArrayTypeElems, DuplicateImplicit, ImplicitInSchema, ImplicitWithoutArrow,
+        InvalidConstType, NonConstExpr, OptionalQuant, OptionalTypeArg, QuantifiedImplicit,
     },
     stream::ExpectKind,
 };
@@ -24,6 +24,8 @@ enum Params {
     Func,
     /// A schema's, in `{}`
     Schema,
+    /// An array type's, in `[]`
+    Array,
     /// A vertical schema introduced by `$`.
     Vertical,
 }
@@ -33,6 +35,7 @@ impl Params {
         match self {
             Params::Func => ExpectKind::RightParen,
             Params::Schema => ExpectKind::RightBrace,
+            Params::Array => ExpectKind::RightBracket,
             Params::Vertical => ExpectKind::Dedent,
         }
     }
@@ -42,6 +45,7 @@ impl Params {
             (self, info),
             (Params::Func, TokenInfo::RightParen)
                 | (Params::Schema, TokenInfo::RightBrace)
+                | (Params::Array, TokenInfo::RightBracket)
                 | (Params::Vertical, TokenInfo::Dedent)
         )
     }
@@ -602,6 +606,33 @@ impl Parser<'_> {
                     dollar_span: None,
                 }
             }
+            Some(token!(TokenInfo::LeftBracket)) => {
+                let left = self.advance();
+                let (mut params, _, bracket_span) =
+                    self.parse_type_params(scope, Params::Array, left)?;
+                if let [
+                    TypeParam {
+                        quant: None,
+                        kind: Some(TypeParamKind::Pos(_)),
+                        delim_span: None,
+                        ..
+                    },
+                ] = params.as_slice()
+                    && let Some(TypeParam {
+                        kind: Some(TypeParamKind::Pos(elem)),
+                        ..
+                    }) = params.pop()
+                {
+                    TypeExpr::Array {
+                        elem: Box::new(elem),
+                        bracket_span,
+                    }
+                } else {
+                    self.fail = true;
+                    self.diags.push(ArrayTypeElems(bracket_span));
+                    TypeExpr::Error
+                }
+            }
             Some(
                 token!(
                     TokenInfo::Sym
@@ -874,7 +905,8 @@ impl Parser<'_> {
         }
     }
 
-    /// Interpret a parenthesized list that `->` does not follow.
+    /// Interpret a parenthesized list that `->` does not follow: a grouped type, or
+    /// a tuple or record type.
     fn finish_params(&mut self, group: Group) -> TypeExpr {
         match group {
             Group::Type(ty) => ty,
@@ -883,6 +915,12 @@ impl Parser<'_> {
                 implicits,
                 paren_span,
             } => {
+                // An implicit describes a function, so it leaves no other type
+                if implicits.input.is_some() || implicits.output.is_some() {
+                    self.fail = true;
+                    self.diags.push(ImplicitWithoutArrow(paren_span));
+                    return TypeExpr::Error;
+                }
                 if let [
                     TypeParam {
                         quant: None,
@@ -891,9 +929,6 @@ impl Parser<'_> {
                         ..
                     },
                 ] = params.as_slice()
-                    // An implicit describes a function, so it leaves no grouped type
-                    && implicits.input.is_none()
-                    && implicits.output.is_none()
                     && let Some(TypeParam {
                         kind: Some(TypeParamKind::Pos(ty)),
                         ..
@@ -904,9 +939,7 @@ impl Parser<'_> {
                         paren_span,
                     }
                 } else {
-                    self.fail = true;
-                    self.diags.push(ParamsWithoutArrow(paren_span));
-                    TypeExpr::Error
+                    TypeExpr::Parens { params, paren_span }
                 }
             }
         }

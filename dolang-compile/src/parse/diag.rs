@@ -433,9 +433,9 @@ impl Diagnose for OptionalQuant {
     }
 }
 
-pub(super) struct ParamsWithoutArrow(pub(super) Span);
+pub(super) struct ImplicitWithoutArrow(pub(super) Span);
 
-impl Diagnose for ParamsWithoutArrow {
+impl Diagnose for ImplicitWithoutArrow {
     fn span(&self) -> Span {
         self.0
     }
@@ -447,7 +447,41 @@ impl Diagnose for ParamsWithoutArrow {
     fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
-            "parenthesized type is a parameter list, which must be followed by `->`"
+            "a parameter list with an implicit parameter must be followed by `->`"
+        )
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct ArrayTypeElems(pub(super) Span);
+
+impl Diagnose for ArrayTypeElems {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "an array type takes one element type")
+    }
+
+    fn notes(&self) -> Box<dyn Iterator<Item = Box<dyn Note>>> {
+        Box::new([Box::new(self.clone()) as Box<dyn Note>].into_iter())
+    }
+}
+
+impl Note for ArrayTypeElems {
+    fn kind(&self) -> NoteKind {
+        NoteKind::Help
+    }
+
+    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "write a union for elements of several types, as in `[Int | Str]`, or a tuple type, as in `(Int, Str)`"
         )
     }
 }
