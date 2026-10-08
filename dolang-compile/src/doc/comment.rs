@@ -40,7 +40,7 @@ impl Blocks {
                 start: comment.start,
                 end: comment.start + text.trim_end().len() as Offset,
             };
-            if !own_line(file, span.start) || shebang(file, span) {
+            if !directive::own_line(file, span.start) || shebang(file, span) {
                 continue;
             }
             if directive::is_directive(file, span) {
@@ -96,15 +96,6 @@ impl Blocks {
 /// and without this it would document whatever declaration came first.
 fn shebang(file: &File<'_>, span: Span) -> bool {
     span.start == 0 && file.slice(span).starts_with(b"#!")
-}
-
-/// Whether only whitespace precedes `offset` on its line.
-fn own_line(file: &File<'_>, offset: Offset) -> bool {
-    file.content()[..offset as usize]
-        .iter()
-        .rev()
-        .take_while(|byte| **byte != b'\n')
-        .all(u8::is_ascii_whitespace)
 }
 
 /// Whether `to` starts on the line directly below the one `from` ends on.

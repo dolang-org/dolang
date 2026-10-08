@@ -1,10 +1,9 @@
 //! Directives: settings a source file gives its own compilation, in comments
 //! near its top.
 //!
-//! A directive is a line of the form `# dolang: setting, ...` among the first
-//! [`LINES`] lines, with settings separated by commas or whitespace. Lines are
-//! scanned as text, not lexed, so a line of a here string that looks like a
-//! directive counts as one.
+//! A directive is a comment on its own line of the form
+//! `# dolang: setting, ...` among the first [`LINES`] lines, with settings
+//! separated by commas or whitespace.
 
 use std::fmt::{self, Write};
 
@@ -28,15 +27,16 @@ pub(crate) struct Directives {
 
 /// Scan a file's directives, diagnosing settings that aren't known. A later
 /// setting overrides an earlier one.
-pub(crate) fn scan(file: &File<'_>, diags: &Diags) -> Directives {
+pub(crate) fn scan(file: &File<'_>, comments: &[Span], diags: &Diags) -> Directives {
     let mut directives = Directives::default();
-    for line in lines(file) {
-        let text = file.slice(line);
-        let Some(settings) = settings(text) else {
+    for &comment in comments {
+        if !is_directive(file, comment) {
             continue;
-        };
-        // The settings are a subslice of the line
-        let base = line.start + (settings.as_ptr() as usize - text.as_ptr() as usize) as Offset;
+        }
+        let text = file.slice(comment);
+        let settings = settings(text).expect("directive comment has settings");
+        // The settings are a subslice of the comment.
+        let base = comment.start + (settings.as_ptr() as usize - text.as_ptr() as usize) as Offset;
         let mut start = 0;
         for word in settings.split(|&b| b == b',' || b.is_ascii_whitespace()) {
             let span = Span {
@@ -55,23 +55,20 @@ pub(crate) fn scan(file: &File<'_>, diags: &Diags) -> Directives {
     directives
 }
 
-/// Whether a comment on its own line is a directive, which documents nothing
+/// Whether a comment is a directive, which documents nothing
 pub(crate) fn is_directive(file: &File<'_>, comment: Span) -> bool {
-    (file.coord(comment.start).line as usize) < LINES && settings(file.slice(comment)).is_some()
+    (file.coord(comment.start).line as usize) < LINES
+        && own_line(file, comment.start)
+        && settings(file.slice(comment)).is_some()
 }
 
-/// The spans of the lines scanned for directives, without their terminators
-fn lines<'a>(file: &'a File<'_>) -> impl Iterator<Item = Span> + 'a {
-    let len = file.content().len() as Offset;
-    let ends = file.newlines().iter().copied().chain([len]);
-    let starts = [0]
-        .into_iter()
-        .chain(file.newlines().iter().map(|&nl| nl + 1));
-    starts
-        .zip(ends)
-        .take(LINES)
-        .filter(move |&(start, _)| start <= len)
-        .map(|(start, end)| Span { start, end })
+/// Whether only whitespace precedes `offset` on its line.
+pub(crate) fn own_line(file: &File<'_>, offset: Offset) -> bool {
+    file.content()[..offset as usize]
+        .iter()
+        .rev()
+        .take_while(|byte| **byte != b'\n')
+        .all(u8::is_ascii_whitespace)
 }
 
 /// The settings of a directive line, or `None` if it isn't one
@@ -104,43 +101,65 @@ mod tests {
 
     use super::*;
 
-    fn scan_str(source: &str) -> (Directives, usize) {
-        let file = File::new(Path::new("test.dol"), source.as_bytes());
-        let diags = Diags::new();
-        let directives = scan(&file, &diags);
-        (directives, diags.iter().count())
+    fn scan_str(source: &str) -> (bool, Vec<String>) {
+        let unit = crate::Config::new().unit(Path::new("test.dol"), source.as_bytes());
+        (
+            unit.strict(),
+            unit.diagnostics()
+                .map(|diag| diag.message().to_string())
+                .collect(),
+        )
     }
 
     #[test]
     fn strict() {
-        assert_eq!(scan_str("# dolang: strict\n").0.strict, Some(true));
-        assert_eq!(scan_str("#dolang:strict").0.strict, Some(true));
-        assert_eq!(
-            scan_str("#!/usr/bin/env dolang\n# dolang: strict\n")
-                .0
-                .strict,
-            Some(true)
-        );
-        assert_eq!(
-            scan_str("  # dolang: strict, nostrict\n").0.strict,
-            Some(false)
-        );
+        assert!(scan_str("# dolang: strict\n").0);
+        assert!(scan_str("#dolang:strict").0);
+        assert!(scan_str("#!/usr/bin/env dolang\n# dolang: strict\n").0);
+        assert!(!scan_str("  # dolang: strict, nostrict\n").0);
+        assert!(scan_str("# dolang: nostrict\n# dolang: strict\n").0);
+        assert!(!scan_str("# dolang: strict\n# dolang: nostrict\n").0);
     }
 
     #[test]
     fn absent() {
-        assert_eq!(scan_str("").0.strict, None);
-        assert_eq!(scan_str("# strict\necho dolang: strict\n").0.strict, None);
+        assert!(!scan_str("").0);
+        assert!(!scan_str("# strict\necho dolang: strict\n").0);
         let late = format!("{}# dolang: strict\n", "\n".repeat(LINES));
-        assert_eq!(scan_str(&late).0.strict, None);
+        assert!(!scan_str(&late).0);
         let last = format!("{}# dolang: strict\n", "\n".repeat(LINES - 1));
-        assert_eq!(scan_str(&last).0.strict, Some(true));
+        assert!(scan_str(&last).0);
     }
 
     #[test]
     fn unknown() {
-        let (directives, diags) = scan_str("# dolang: strict, sloppy\n");
-        assert_eq!(directives.strict, Some(true));
-        assert_eq!(diags, 1);
+        let (strict, diags) = scan_str("# dolang: strict, sloppy\n");
+        assert!(strict);
+        assert_eq!(diags, ["unknown directive setting `sloppy`"]);
+    }
+
+    #[test]
+    fn here_strings_are_not_directives() {
+        for marker in ["|", "r|"] {
+            let source = format!("let doc = {marker}\n  # dolang: strict, sloppy\ndoc\n");
+            let (strict, diags) = scan_str(&source);
+            assert!(!strict, "{marker}");
+            assert!(diags.is_empty(), "{marker}: {diags:?}");
+        }
+    }
+
+    #[test]
+    fn trailing_comment_is_not_a_directive() {
+        let (strict, diags) = scan_str("let x = 1  # dolang: strict, sloppy\nx\n");
+        assert!(!strict);
+        assert!(diags.is_empty(), "{diags:?}");
+    }
+
+    #[test]
+    fn config_strict_overrides_directive() {
+        let mut config = crate::Config::new();
+        config.strict(false);
+        let unit = config.unit(Path::new("test.dol"), b"# dolang: strict\n");
+        assert!(!unit.strict());
     }
 }

@@ -1425,8 +1425,6 @@ impl<'a> Config<'a> {
         };
         let mut prelude = mem::take(&mut compiler.prelude);
         let diags = Diags::new();
-        let directives = directive::scan(&compiler.file, &diags);
-        let strict = self.strict.or(directives.strict).unwrap_or(false);
         let mut comments = vec![];
 
         let (mut ast, mut failed) = {
@@ -1436,6 +1434,8 @@ impl<'a> Config<'a> {
             let failed = parser.failed();
             (ast, failed)
         };
+        let directives = directive::scan(&compiler.file, &comments, &diags);
+        let strict = self.strict.or(directives.strict).unwrap_or(false);
         #[cfg(feature = "debug")]
         if let Err(e) = compiler.export_ast_dot(&ast, false) {
             debug_eprintln!(topic: "dot", "AST DOT export failed: {e}")
