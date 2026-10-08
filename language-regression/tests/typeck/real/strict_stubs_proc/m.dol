@@ -1,0 +1,118 @@
+# dolang: strict
+# `proc` overloads its calls on whether `stdin:` and `stdout:` are given and on
+# `mode:`, so a program touches only the channels it isn't redirected from.
+
+import proc fs:
+  - @Path
+
+# Unredirected output is written as lines, which a def without `>` lacks
+pub def writes_silent <Iter[Value] -> nil
+  proc.run echo x
+  # error: no overload of `(call)` accepts these arguments
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   proc.run echo x
+  #    |   ^^^^^^^^^^^^^^^
+  #    |
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Str] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], ?mode: :LINE:, *Value, *(std.Sym): Value, <std.Iter[Value], >std.Sink[std.Str]) -> nil`: this call does not fit `(proc.Run, fs.Path | std.Str | std.Sym, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Str] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], ?mode: :LINE:, *Value, *(std.Sym): Value, <std.Iter[Value], >std.Sink[std.Str]) -> nil`
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Bin] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], mode: :CHUNK:, *Value, *(std.Sym): Value, <std.Iter[Value], >std.Sink[std.Bin]) -> nil`: this call does not fit `(proc.Run, fs.Path | std.Str | std.Sym, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Bin] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], mode: :CHUNK:, *Value, *(std.Sym): Value, <std.Iter[Value], >std.Sink[std.Bin]) -> nil`; this call is missing an argument
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, stdout: fs.Path | std.Sinkable[std.Str] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Str] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], ?mode: :LINE:, *Value, *(std.Sym): Value, <std.Iter[Value]) -> nil`: this call is missing an argument
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, stdout: fs.Path | std.Sinkable[std.Bin] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Bin] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], mode: :CHUNK:, *Value, *(std.Sym): Value, <std.Iter[Value]) -> nil`: this call is missing an argument
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, stdin: fs.Path | std.Iterable[Value] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Str] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], ?mode: :LINE:, *Value, *(std.Sym): Value, >std.Sink[std.Str]) -> nil`: this call does not fit `(proc.Run, fs.Path | std.Str | std.Sym, stdin: fs.Path | std.Iterable[Value] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Str] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], ?mode: :LINE:, *Value, *(std.Sym): Value, >std.Sink[std.Str]) -> nil`; this call is missing an argument
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, stdin: fs.Path | std.Iterable[Value] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Bin] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], mode: :CHUNK:, *Value, *(std.Sym): Value, >std.Sink[std.Bin]) -> nil`: this call does not fit `(proc.Run, fs.Path | std.Str | std.Sym, stdin: fs.Path | std.Iterable[Value] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Bin] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], mode: :CHUNK:, *Value, *(std.Sym): Value, >std.Sink[std.Bin]) -> nil`; this call is missing an argument
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, stdin: fs.Path | std.Iterable[Value] | std.Str, stdout: fs.Path | std.Sinkable[std.Str] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Str] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], ?mode: :LINE:, *Value, *(std.Sym): Value) -> nil`: this call is missing an argument
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, stdin: fs.Path | std.Iterable[Value] | std.Str, stdout: fs.Path | std.Sinkable[std.Bin] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Bin] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], mode: :CHUNK:, *Value, *(std.Sym): Value) -> nil`: this call is missing an argument
+  nil
+
+pub def writes_lines <Iter[Value] >Sink[Str] -> nil
+  proc.run echo x
+  nil
+
+# Chunk mode writes `Bin`
+pub def writes_chunks_as_lines <Iter[Value] >Sink[Str] -> nil
+  proc.run cat mode: :CHUNK:
+  # error: no overload of `(call)` accepts these arguments
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   proc.run cat mode: :CHUNK:
+  #    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  #    |
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Str] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], ?mode: :LINE:, *Value, *(std.Sym): Value, <std.Iter[Value], >std.Sink[std.Str]) -> nil`: expected `:LINE:`, found `:CHUNK:`
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Bin] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], mode: :CHUNK:, *Value, *(std.Sym): Value, <std.Iter[Value], >std.Sink[std.Bin]) -> nil`: this call does not fit `(proc.Run, fs.Path | std.Str | std.Sym, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Bin] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], mode: :CHUNK:, *Value, *(std.Sym): Value, <std.Iter[Value], >std.Sink[std.Bin]) -> nil`
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, stdout: fs.Path | std.Sinkable[std.Str] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Str] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], ?mode: :LINE:, *Value, *(std.Sym): Value, <std.Iter[Value]) -> nil`: this call is missing an argument
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, stdout: fs.Path | std.Sinkable[std.Bin] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Bin] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], mode: :CHUNK:, *Value, *(std.Sym): Value, <std.Iter[Value]) -> nil`: this call is missing an argument
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, stdin: fs.Path | std.Iterable[Value] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Str] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], ?mode: :LINE:, *Value, *(std.Sym): Value, >std.Sink[std.Str]) -> nil`: this call is missing an argument
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, stdin: fs.Path | std.Iterable[Value] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Bin] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], mode: :CHUNK:, *Value, *(std.Sym): Value, >std.Sink[std.Bin]) -> nil`: this call does not fit `(proc.Run, fs.Path | std.Str | std.Sym, stdin: fs.Path | std.Iterable[Value] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Bin] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], mode: :CHUNK:, *Value, *(std.Sym): Value, >std.Sink[std.Bin]) -> nil`; this call is missing an argument
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, stdin: fs.Path | std.Iterable[Value] | std.Str, stdout: fs.Path | std.Sinkable[std.Str] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Str] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], ?mode: :LINE:, *Value, *(std.Sym): Value) -> nil`: this call is missing an argument
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, stdin: fs.Path | std.Iterable[Value] | std.Str, stdout: fs.Path | std.Sinkable[std.Bin] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Bin] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], mode: :CHUNK:, *Value, *(std.Sym): Value) -> nil`: this call is missing an argument
+  nil
+
+pub def writes_chunks <Iter[Value] >Sink[Bin] -> nil
+  proc.run cat mode: :CHUNK:
+  nil
+
+# Unredirected input is read from the strand, which a def without `<` lacks
+pub def reads_silent() -> nil
+  let out = ([] @ Array[Str])
+  proc.run cat stdout: $out
+  # error: no overload of `(call)` accepts these arguments
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   proc.run cat stdout: $out
+  #    |   ^^^^^^^^^^^^^^^^^^^^^^^^^
+  #    |
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Str] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], ?mode: :LINE:, *Value, *(std.Sym): Value, <std.Iter[Value], >std.Sink[std.Str]) -> nil`: this call does not fit `(proc.Run, fs.Path | std.Str | std.Sym, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Str] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], ?mode: :LINE:, *Value, *(std.Sym): Value, <std.Iter[Value], >std.Sink[std.Str]) -> nil`
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Bin] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], mode: :CHUNK:, *Value, *(std.Sym): Value, <std.Iter[Value], >std.Sink[std.Bin]) -> nil`: this call does not fit `(proc.Run, fs.Path | std.Str | std.Sym, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Bin] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], mode: :CHUNK:, *Value, *(std.Sym): Value, <std.Iter[Value], >std.Sink[std.Bin]) -> nil`; this call is missing an argument
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, stdout: fs.Path | std.Sinkable[std.Str] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Str] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], ?mode: :LINE:, *Value, *(std.Sym): Value, <std.Iter[Value]) -> nil`: this call does not fit `(proc.Run, fs.Path | std.Str | std.Sym, stdout: fs.Path | std.Sinkable[std.Str] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Str] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], ?mode: :LINE:, *Value, *(std.Sym): Value, <std.Iter[Value]) -> nil`
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, stdout: fs.Path | std.Sinkable[std.Bin] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Bin] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], mode: :CHUNK:, *Value, *(std.Sym): Value, <std.Iter[Value]) -> nil`: this call does not fit `(proc.Run, fs.Path | std.Str | std.Sym, stdout: fs.Path | std.Sinkable[std.Bin] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Bin] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], mode: :CHUNK:, *Value, *(std.Sym): Value, <std.Iter[Value]) -> nil`; this call is missing an argument
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, stdin: fs.Path | std.Iterable[Value] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Str] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], ?mode: :LINE:, *Value, *(std.Sym): Value, >std.Sink[std.Str]) -> nil`: this call does not fit `(proc.Run, fs.Path | std.Str | std.Sym, stdin: fs.Path | std.Iterable[Value] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Str] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], ?mode: :LINE:, *Value, *(std.Sym): Value, >std.Sink[std.Str]) -> nil`; this call is missing an argument
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, stdin: fs.Path | std.Iterable[Value] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Bin] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], mode: :CHUNK:, *Value, *(std.Sym): Value, >std.Sink[std.Bin]) -> nil`: this call does not fit `(proc.Run, fs.Path | std.Str | std.Sym, stdin: fs.Path | std.Iterable[Value] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Bin] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], mode: :CHUNK:, *Value, *(std.Sym): Value, >std.Sink[std.Bin]) -> nil`; this call is missing an argument
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, stdin: fs.Path | std.Iterable[Value] | std.Str, stdout: fs.Path | std.Sinkable[std.Str] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Str] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], ?mode: :LINE:, *Value, *(std.Sym): Value) -> nil`: this call is missing an argument
+  #    = note: `(proc.Run, fs.Path | std.Str | std.Sym, stdin: fs.Path | std.Iterable[Value] | std.Str, stdout: fs.Path | std.Sinkable[std.Bin] | std.Str, ?stderr: :STDOUT: | fs.Path | std.Sinkable[std.Bin] | std.Str, ?policy: std.BaseDict[{?signal: proc.Signal | std.Int, ?grace: std.Float | std.Int | time.Duration, ?force: std.Bool}], mode: :CHUNK:, *Value, *(std.Sym): Value) -> nil`: this call is missing an argument
+  nil
+
+# Redirecting both streams leaves the caller's channels alone
+pub def redirected path @ Path -> nil
+  let out = ([] @ Array[Str])
+  proc.run cat stdin: $path stdout: $out
+  nil
+
+# A program proxy takes the same overloads
+pub def proxy <Iter[Value] >Sink[Str] -> nil
+  let git = proc.run[:git:]
+  let _ = git
+  #       ^~~: flow proc.Program
+  git status
+  nil
+
+# `sub` gives its block an output of its own
+pub def captures <Iter[Value] -> Str
+  proc.sub do proc.run echo x
+
+# `console` gives its block the console and no input
+pub def effect() -> nil
+  proc.console do
+    proc.run make
+    proc.run cat
+  nil
+
+# `run` destructures by name with a trailing rest, and spreads as no items
+pub def names() -> nil
+  let :git "clang++": clang ...rest = proc.run
+  let _ = git
+  #       ^~~: flow proc.Program
+  let _ = clang
+  #       ^~~~~: flow proc.Program
+  let _ = rest
+  #       ^~~~: flow proc.Run
+  let _ = {...proc.run}
+  nil
+
+pub def positional() -> nil
+  let _a ... = proc.run
+  # error: `proc.Run` can never unpack as this pattern
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _a ... = proc.run
+  #    |                ^^^^^^^^
+  nil

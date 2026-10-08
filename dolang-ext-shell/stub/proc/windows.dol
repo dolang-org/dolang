@@ -1,3 +1,5 @@
+# dolang: strict
+#
 # Encodes and decodes arguments for Windows native process launches.
 #
 # These functions follow the MSVC-compatible convention used by Rust process
@@ -39,7 +41,7 @@ do -> Str
 pub def quote
   # Value to quote, converted to a string as
   # [`std.verbatim`](std.verbatim) would.
-  arg
+  arg @ Value
 do -> Str
   ...
 

@@ -1,4 +1,4 @@
-import proc sys sys.unix sys.windows _vfs
+import proc sys sys.unix sys.windows _vfs term
   testlib.vfs:
     - vfs
   test:
@@ -214,6 +214,22 @@ def program_proxies()
   assert_type $proc.Program $run[:echo:]
   assert_type $proc.Program $constructed
   assert_type $proc.Program $rest_run[:echo:]
+
+#[test]
+def run_spreads_empty()
+  assert_eq {...run} {}
+  assert_eq [...run] []
+
+#[test]
+def console_redirects()
+  let input = strand.redirect input: [1, 2] do
+    proc.console do collect()
+  assert_eq $input []
+  let shown = term.sub do
+    let captured = sub do
+      proc.console do strand.put "shown"
+    assert_eq $captured ""
+  assert_eq $shown "shown"
 
 #[test]
 #[vfs]

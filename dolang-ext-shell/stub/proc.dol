@@ -1,3 +1,5 @@
+# dolang: strict
+#
 # Process invocation and output capture: running external programs, and
 # inspecting or controlling processes that are not children of this one.
 #
@@ -13,6 +15,8 @@ import
     - @TokenInfo
   std:
     - @BaseDict
+    - @Never
+    - @Unpack
   time:
     - @Duration
 
@@ -286,7 +290,7 @@ pub class PipeSender[T]: std.Sink[T]
   pub def close
     self
     # Error value to propagate to the receiver.
-    error = nil
+    error @ Value = nil
     # Backtrace for `error`.
     :backtrace @ strand.Backtrace = nil
   do
@@ -399,26 +403,109 @@ pub class Program: Func
   # let git = Program git
   # git status --short
   # ```
-  pub def (call)
+  @def (call)
     self
-    # Source for
-    # standard input.
-    :stdin @ (Path | Iter[Value]) = nil
-    # Destination for
-    # standard output.
-    :stdout @ (Path | Sink[Value]) = nil
     # Destination for standard error, or `:STDOUT:` to merge it with standard
     # output.
-    :stderr @ (Path | Sink[Value] | :STDOUT:) = nil
+    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
     # Per-launch termination overrides: `signal`,
     # `grace` and `force`, as
     # [`with_policy`](proc.with_policy) takes them.
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
-    # Output framing. Defaults to `:LINE:`.
-    :mode @ (:LINE: | :CHUNK:) = nil
+    # Output framing: [`Str`](std.Str) lines by default, or
+    # [`Bin`](std.Bin) chunks with `:CHUNK:`.
+    :mode @ :LINE: = nil
     # Command-line arguments.
-    ...args
-  do
+    ...args @ Value
+    < Iter[Value]
+    > Sink[Str]
+  do -> nil
+
+  # Runs the program, reading the strand's input and writing the strand's output
+  # as chunks.
+  @def (call)
+    self
+    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :mode @ :CHUNK:
+    ...args @ Value
+    < Iter[Value]
+    > Sink[Bin]
+  do -> nil
+
+  # Runs the program, reading the strand's input and writing `stdout:` as lines.
+  @def (call)
+    self
+    # Destination for
+    # standard output.
+    :stdout @ (Path | Str | Sinkable[Str])
+    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :mode @ :LINE: = nil
+    ...args @ Value
+    < Iter[Value]
+  do -> nil
+
+  # Runs the program, reading the strand's input and writing `stdout:` as
+  # chunks.
+  @def (call)
+    self
+    :stdout @ (Path | Str | Sinkable[Bin])
+    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :mode @ :CHUNK:
+    ...args @ Value
+    < Iter[Value]
+  do -> nil
+
+  # Runs the program, reading `stdin:` and writing the strand's output as lines.
+  @def (call)
+    self
+    # Source for
+    # standard input.
+    :stdin @ (Path | Str | Iterable[Value])
+    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :mode @ :LINE: = nil
+    ...args @ Value
+    > Sink[Str]
+  do -> nil
+
+  # Runs the program, reading `stdin:` and writing the strand's output as
+  # chunks.
+  @def (call)
+    self
+    :stdin @ (Path | Str | Iterable[Value])
+    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :mode @ :CHUNK:
+    ...args @ Value
+    > Sink[Bin]
+  do -> nil
+
+  # Runs the program, reading `stdin:` and writing `stdout:` as lines.
+  @def (call)
+    self
+    :stdin @ (Path | Str | Iterable[Value])
+    :stdout @ (Path | Str | Sinkable[Str])
+    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :mode @ :LINE: = nil
+    ...args @ Value
+  do -> nil
+
+  # Runs the program, reading `stdin:` and writing `stdout:` as chunks.
+  @def (call)
+    self
+    :stdin @ (Path | Str | Iterable[Value])
+    :stdout @ (Path | Str | Sinkable[Bin])
+    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :mode @ :CHUNK:
+    ...args @ Value
+  do -> nil
+
+  pub def (call) self ...args @ Value -> nil
     ...
 
 # How a process that is not a child of this one exited.
@@ -537,7 +624,7 @@ do -> Proc
   block @ (Proc -> R)
 do -> R
 
-pub def open target ...block
+pub def open target @ Value ...block @ Value -> Value
   ...
 
 # Captures the output of a block as a string.
@@ -554,14 +641,34 @@ pub def open target ...block
 # let output = sub do run echo hello
 # assert_eq $output "hello"
 # ```
-pub def sub
+pub def sub[R]
   # Block whose output to capture.
-  block @ (() -> Value)
+  block @ ((>Sink[Value]) -> R)
   # Remove one trailing LF or CRLF. True by
   # default. This is a whole-capture strip, not a per-value one: it removes at
   # most one line ending, from the end of the finished string.
   :chomp @ Bool = true
 do -> Str
+  ...
+
+# Runs a block for its effect on the console: its input is
+# [`std.null`](std.null) and its output is [`term.default`](term.default).
+#
+# Programs run inside it read nothing and write to the console, whatever the
+# caller's input and output are, so a caller that only runs programs for their
+# effect needs no channels of its own.
+#
+# ## Example
+#
+# ```
+# console do
+#   run make
+#   run make install
+# ```
+pub def console[R]
+  # Block to run.
+  block @ ((<Iter[Never], >Sink[Value]) -> R)
+do -> R
   ...
 
 # Runs a block with temporary process termination defaults.
@@ -594,7 +701,7 @@ do -> R
 # the [launch arguments accepted by `Program`](proc.Program.(call)). Index it
 # with a [`Str`](std.Str) or [`fs.Path`](fs.Path) to create a
 # proxy. Destructuring requires a trailing `...` or `**`; symbol and string keys create
-# proxies with the corresponding program names.
+# proxies with the corresponding program names. It spreads as no items.
 #
 # ## Example
 #
@@ -604,4 +711,128 @@ do -> R
 #
 # let :git :cargo "clang++": clang ... = run
 # ```
-pub let run = ...
+pub let run @ Run = ...
+
+# The type of [`run`](proc.run).
+pub @class Run: Func Unpack[{*(Str | Sym): Program}, Rest: Run]
+  # Runs a program with the supplied command-line arguments, as
+  # [`Program.(call)`](proc.Program.(call)) does.
+  @def (call)
+    self
+    # Program name or path.
+    program @ (Str | Sym | Path)
+    # Destination for standard error, or `:STDOUT:` to merge it with standard
+    # output.
+    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
+    # Per-launch termination overrides: `signal`,
+    # `grace` and `force`, as
+    # [`with_policy`](proc.with_policy) takes them.
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    # Output framing: [`Str`](std.Str) lines by default, or
+    # [`Bin`](std.Bin) chunks with `:CHUNK:`.
+    :mode @ :LINE: = nil
+    # Command-line arguments.
+    ...args @ Value
+    < Iter[Value]
+    > Sink[Str]
+  do -> nil
+
+  # Runs the program, reading the strand's input and writing the strand's output
+  # as chunks.
+  @def (call)
+    self
+    program @ (Str | Sym | Path)
+    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :mode @ :CHUNK:
+    ...args @ Value
+    < Iter[Value]
+    > Sink[Bin]
+  do -> nil
+
+  # Runs the program, reading the strand's input and writing `stdout:` as lines.
+  @def (call)
+    self
+    program @ (Str | Sym | Path)
+    # Destination for
+    # standard output.
+    :stdout @ (Path | Str | Sinkable[Str])
+    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :mode @ :LINE: = nil
+    ...args @ Value
+    < Iter[Value]
+  do -> nil
+
+  # Runs the program, reading the strand's input and writing `stdout:` as
+  # chunks.
+  @def (call)
+    self
+    program @ (Str | Sym | Path)
+    :stdout @ (Path | Str | Sinkable[Bin])
+    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :mode @ :CHUNK:
+    ...args @ Value
+    < Iter[Value]
+  do -> nil
+
+  # Runs the program, reading `stdin:` and writing the strand's output as lines.
+  @def (call)
+    self
+    program @ (Str | Sym | Path)
+    # Source for
+    # standard input.
+    :stdin @ (Path | Str | Iterable[Value])
+    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :mode @ :LINE: = nil
+    ...args @ Value
+    > Sink[Str]
+  do -> nil
+
+  # Runs the program, reading `stdin:` and writing the strand's output as
+  # chunks.
+  @def (call)
+    self
+    program @ (Str | Sym | Path)
+    :stdin @ (Path | Str | Iterable[Value])
+    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :mode @ :CHUNK:
+    ...args @ Value
+    > Sink[Bin]
+  do -> nil
+
+  # Runs the program, reading `stdin:` and writing `stdout:` as lines.
+  @def (call)
+    self
+    program @ (Str | Sym | Path)
+    :stdin @ (Path | Str | Iterable[Value])
+    :stdout @ (Path | Str | Sinkable[Str])
+    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :mode @ :LINE: = nil
+    ...args @ Value
+  do -> nil
+
+  # Runs the program, reading `stdin:` and writing `stdout:` as chunks.
+  @def (call)
+    self
+    program @ (Str | Sym | Path)
+    :stdin @ (Path | Str | Iterable[Value])
+    :stdout @ (Path | Str | Sinkable[Bin])
+    :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
+    :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
+    :mode @ :CHUNK:
+    ...args @ Value
+  do -> nil
+
+  pub def (call) self ...args @ Value -> nil
+
+  # Creates a proxy for a program.
+  pub def (index)
+    self
+    # Program name or path.
+    name @ (Str | Sym | Path)
+  do -> Program
