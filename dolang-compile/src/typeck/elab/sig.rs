@@ -8,7 +8,8 @@
 //! is its class applied to the class's own binders; an annotated one specializes
 //! an overload, and is checked, once the database is sealed.
 //!
-//! A strict unit must annotate its parameters and fields instead. Its omitted
+//! A strict unit must annotate its parameters, fields and exported variables
+//! instead. Its omitted
 //! return types are `nil`, so its signatures come from its declarations alone,
 //! with nothing dynamic.
 
@@ -71,6 +72,7 @@ pub(crate) fn signatures(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
         }
         designate(tables, decl, diags);
     }
+    missing_values(tables, diags);
     let mut placeholders: Vec<_> = tables
         .designated
         .iter()
@@ -172,6 +174,28 @@ fn missing_params(tables: &Tables<'_>, decl: DeclId, sig: usize, diags: &mut Vec
             Diag::new(MissingAnnotation {
                 span: param.name.unwrap_or(name).span,
                 what,
+            }),
+        ));
+    }
+}
+
+/// Diagnose the exported variables a strict unit checked from source leaves
+/// unannotated
+fn missing_values(tables: &Tables<'_>, diags: &mut Vec<UnitDiag>) {
+    let mut missing: Vec<UnitSpan> = (tables.values.iter())
+        .filter(|&(value, site)| {
+            let unit = &tables.units[value.unit.index()];
+            site.is_none() && unit.strict && unit.source.is_some()
+        })
+        .map(|(&value, _)| value)
+        .collect();
+    missing.sort_by_key(|value| (value.unit, value.span.start));
+    for value in missing {
+        diags.push((
+            value.unit,
+            Diag::new(MissingAnnotation {
+                span: value.span,
+                what: "exported variable",
             }),
         ));
     }

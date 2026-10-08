@@ -1269,6 +1269,17 @@ impl<'t, 'u> Populate<'t, 'u> {
                     items.push(Self::item(multiplicity, Element::Keyed { key, value }));
                 }
                 (ParamKind::Rest { .. }, ParamTy::Rest(rest)) => match rest {
+                    // No call gives a `do` block's rest its items, so a strict
+                    // unit's admits any
+                    RestSlot::Items(kind, Slot::Unknown)
+                        if self.tables.units[group.unit.index()].strict
+                            && matches!(
+                                self.tables.decls[id.index()].node,
+                                DeclNode::Closure(_)
+                            ) =>
+                    {
+                        items.extend(rest_items(*kind, self.db.top(), sym));
+                    }
                     RestSlot::Items(kind, slot) => {
                         let ty = self.slot(id, group, slot);
                         items.extend(rest_items(*kind, ty, sym));

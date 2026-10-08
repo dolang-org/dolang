@@ -9,7 +9,9 @@
 //! in a loop. [`Widening`] counts a flow variable's increases at a widening point
 //! and widens in two stages: first to the least ancestor its union's members
 //! share, then to `Unknown`. Sharing only `Value` widens to `Unknown` directly,
-//! since a static top would make every later use a contradiction.
+//! since a static top would make every later use a contradiction. A strict
+//! unit's solver widens to `Value` instead, and those contradictions ask for an
+//! annotation.
 //!
 //! Narrowing by a condition's relations is in [`super::narrow`].
 
@@ -32,11 +34,14 @@ impl Widening {
             return old;
         }
         self.increases += 1;
-        let unknown = solver.db.unknown();
+        let top = match solver.gradual {
+            true => solver.db.unknown(),
+            false => solver.db.top(),
+        };
         if self.increases > 2 * WIDENING_LIMIT {
-            unknown
+            top
         } else if self.increases > WIDENING_LIMIT {
-            solver.common_supertype(joined).unwrap_or(unknown)
+            solver.common_supertype(joined).unwrap_or(top)
         } else {
             joined
         }

@@ -145,10 +145,10 @@ pub def held ints @ Array[Int] strs @ Array[Str]
   let _ = twice 1 [(do |y| y)]
   #                        ^: flow Unknown
 
-# A rest parameter isn't typed from its items yet
+# A rest parameter binds a tuple of its items
 pub def rested *xs @ Str
   let _ = xs
-  #       ^~: flow Unknown
+  #       ^~: flow std.Tuple[{*std.Str}]
 
 # A `return` in a block returns from its def
 pub def early xs @ Array[Int] -> Int

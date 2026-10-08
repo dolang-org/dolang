@@ -1002,7 +1002,7 @@ pub class Runtime
       throw e
     self.container $output.trim()
 
-  pub def build self :pull = :MISSING: :mounts = [] :cd = nil :env = {} :from ...args
+  pub def build self :pull = :MISSING: :mounts = [] :cd = nil :env = {} :from **args
     with_temp_dir parent: $runtime_dir() do |subdir|
       subdir.update_metadata mode: 0o700
       let b = Builder $self $subdir $_vfs.bin() $mounts $cd $env
@@ -1470,7 +1470,7 @@ pub class Builder
         self.#runtime.quiet_cli tag $img_id $tag
     self.#runtime.image $img_id
 
-  pub def build self from :pull = :MISSING: ...args
+  pub def build self from :pull = :MISSING: **args
     let spec = {...args}
     let tags = [...spec.values :tag:]
     spec.delete :tag:

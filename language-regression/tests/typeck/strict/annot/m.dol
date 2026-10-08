@@ -1,6 +1,7 @@
 # dolang: strict
-# A strict unit must annotate its defs' parameters and its fields. A method's
-# receiver is typed by its class, and a lambda by its context.
+# A strict unit must annotate its defs' parameters, its fields and its exported
+# variables. A method's receiver is typed by its class, and a lambda by its
+# context.
 
 pub def shown a @ Int b :k = "x" *rest **kw @ Int
   #     ^~~~~: sig (a: Int, b: Unknown, ?:k: Unknown, *rest: {*Unknown}, **kw: {**Int}, <#0, >#1) -> nil
@@ -76,5 +77,14 @@ pub class Point
     Point $x
 
 pub def lambdas() -> Int
-  let f = do |x| x
+  let f @ ((Int) -> Int) = do |x| x
   f 1
+
+pub let count @ Int = 0
+pub let total = 0
+# error: a strict unit must annotate this exported variable
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let total = 0
+#    |         ^^^^^
+let _local = 0

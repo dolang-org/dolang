@@ -611,8 +611,63 @@ fn atoms(
     }
 }
 
+/// A `do` block's declared type, with what `fill` gives each parameter and
+/// channel its signature leaves to the calls it's passed to, in order. A rest's
+/// element type isn't left to them. `None` if the declared type doesn't line up
+/// with its parameters.
+pub(super) fn passed_signature(
+    db: &Database,
+    data: &super::super::cfg::Func,
+    declared: &Function,
+    mut fill: impl FnMut(VarId) -> TypeId,
+) -> Option<Function> {
+    let signature = data.signature.as_ref()?;
+    let (Pattern::Unpack(pattern), Type::Schema(items)) = (&data.params, db.ty(declared.params))
+    else {
+        return None;
+    };
+    // A rest can give several schema items, and every other parameter one
+    let mut singles = (pattern.iter().zip(&signature.params))
+        .filter(|(item, _)| !matches!(item.key, PatternKey::Rest(_)))
+        .map(|(_, &var)| var);
+    let mut schema = Vec::with_capacity(items.len());
+    for item in items.iter() {
+        let rest = item.multiplicity == Multiplicity::Repeated
+            || matches!(item.element, Element::Include(_));
+        let passed = match rest {
+            true => None,
+            false => singles.next()?,
+        };
+        let element = match (passed, &item.element) {
+            (None, element) => element.clone(),
+            (Some(var), Element::Positional(_)) => Element::Positional(fill(var)),
+            (Some(var), &Element::Keyed { key, .. }) => Element::Keyed {
+                key,
+                value: fill(var),
+            },
+            (Some(_), Element::Include(_)) => unreachable!("not a rest"),
+        };
+        schema.push(self::item(item.multiplicity, element));
+    }
+    if singles.next().is_some() {
+        return None;
+    }
+    let mut channel = |var: Option<VarId>, declared: Option<TypeId>| match var {
+        Some(var) => Some(fill(var)),
+        None => declared,
+    };
+    let input = channel(signature.input, declared.input);
+    let output = channel(signature.output, declared.output);
+    Some(Function {
+        params: db.intern(Type::Schema(schema.into())),
+        input,
+        output,
+        ..declared.clone()
+    })
+}
+
 /// Hold an item back, if it takes an expectation that its position doesn't give
-/// yet: a collection literal, call or template. Its operands are set aside
+/// yet: a collection literal, range, call or template. Its operands are set aside
 /// with it. One in an `if` outside every `for` isn't, since the `if`'s branches are compared as
 /// they're gathered. Returns its index into [`Values::held`].
 fn hold<'e>(
@@ -625,7 +680,10 @@ fn hold<'e>(
 ) -> Option<usize> {
     let takes = matches!(
         value.kind,
-        ExprKind::Collection { .. } | ExprKind::Call { .. } | ExprKind::Fmt(_)
+        ExprKind::Collection { .. }
+            | ExprKind::Range { .. }
+            | ExprKind::Call { .. }
+            | ExprKind::Fmt(_)
     );
     if !gathering.hold
         || expected.is_some()
@@ -673,6 +731,7 @@ impl<'a> Flow<'a, '_> {
     fn conclude(
         &mut self,
         at: At,
+        span: Span,
         expected: Option<TypeId>,
         build: impl Fn(&mut Rule<'_, 'a>) -> Vec<Term>,
     ) -> Vec<TypeId> {
@@ -751,8 +810,18 @@ impl<'a> Flow<'a, '_> {
             Some(values) if !contradicted && !unresolved => values,
             _ if self.defaulting || self.observing() => {
                 (solver, results, checks, lambdas, outcomes, _) = attempt(true, Some(seeded));
-                (results.iter())
-                    .map(|&term| solver.reify(term).unwrap_or(self.db.unknown()))
+                let reified: Vec<_> = (results.iter())
+                    .map(|&term| solver.reify(term).ok())
+                    .collect();
+                // A strict unit's defaulting leaves what nothing determines
+                // unresolved. A check it leaves unresolved is recorded instead.
+                let decided = (outcomes[..checks.len()].iter())
+                    .all(|outcome| outcome.status != Status::Unresolved);
+                if reified.contains(&None) && decided {
+                    self.gap(span, "a type nothing determines");
+                }
+                (reified.into_iter())
+                    .map(|ty| ty.unwrap_or(self.db.unknown()))
                     .collect()
             }
             _ => {
@@ -1215,7 +1284,10 @@ impl<'a> Flow<'a, '_> {
             Type::Union(members) if callee.0 != self.db.bottom() => (members.iter())
                 .map(|member| match *member {
                     UnionMember::Type(ty) => self.call_target((ty, callee.1), span),
-                    _ => self.call_target((self.db.unknown(), callee.1), span),
+                    _ => {
+                        self.gap(span, "a projection in a union callee");
+                        self.call_target((self.db.unknown(), callee.1), span)
+                    }
                 })
                 .collect(),
             _ => vec![self.call_target(callee, span)],
@@ -1371,7 +1443,7 @@ impl<'a> Flow<'a, '_> {
             self.untyped(at, values);
             return unknown;
         }
-        let given = self.conclude(at, expected, |rule| {
+        let given = self.conclude(at, span, expected, |rule| {
             vec![call_constraint(
                 rule,
                 values,
@@ -1721,18 +1793,13 @@ impl<'a> Flow<'a, '_> {
     /// A `do` block as a call's argument: its declared function type, with a hole
     /// for each parameter and channel its signature leaves to the call, and for
     /// its result until that's known. A rest's element type isn't left to the
-    /// call, so it's dynamic. `None` if the block has no signature, or its declared
-    /// type doesn't line up with its parameters.
+    /// call. `None` if the block has no signature, or its declared type doesn't
+    /// line up with its parameters.
     fn contextual(&mut self, at: At, func: FuncId) -> Option<Lambda> {
         let (db, ir) = (self.db, self.ir);
         let data = ir.func(func);
         let signature = data.signature.as_ref()?;
         let declared = self.declared[func.index()].clone()?;
-        let (Pattern::Unpack(pattern), Type::Schema(items)) =
-            (&data.params, db.ty(declared.params))
-        else {
-            return None;
-        };
         let mut holes = Vec::new();
         let hole = |holes: &mut Vec<Hole>, filled| {
             holes.push(filled);
@@ -1741,41 +1808,14 @@ impl<'a> Flow<'a, '_> {
                 kind: Kind::Type,
             })
         };
-        // A rest can give several schema items, and every other parameter one
-        let mut singles = (pattern.iter().zip(&signature.params))
-            .filter(|(item, _)| !matches!(item.key, PatternKey::Rest(_)))
-            .map(|(_, &var)| var);
-        let mut schema = Vec::with_capacity(items.len());
-        for item in items.iter() {
-            let rest = item.multiplicity == Multiplicity::Repeated
-                || matches!(item.element, Element::Include(_));
-            let passed = match rest {
-                true => None,
-                false => singles.next()?,
-            };
-            let element = match (passed, &item.element) {
-                (None, element) => element.clone(),
-                (Some(var), Element::Positional(_)) => {
-                    Element::Positional(hole(&mut holes, Hole::Passed(var)))
-                }
-                (Some(var), &Element::Keyed { key, .. }) => Element::Keyed {
-                    key,
-                    value: hole(&mut holes, Hole::Passed(var)),
-                },
-                (Some(_), Element::Include(_)) => unreachable!("not a rest"),
-            };
-            schema.push(self::item(item.multiplicity, element));
-        }
-        if singles.next().is_some() {
-            return None;
-        }
-        let mut channel = |var: Option<VarId>, declared: Option<TypeId>| match var {
-            Some(var) => Some(hole(&mut holes, Hole::Passed(var))),
-            None => declared,
-        };
-        let input = channel(signature.input, declared.input);
-        let output = channel(signature.output, declared.output);
-        let params = db.intern(Type::Schema(schema.into()));
+        let Function {
+            params,
+            input,
+            output,
+            ..
+        } = passed_signature(db, data, &declared, |var| {
+            hole(&mut holes, Hole::Passed(var))
+        })?;
         let function = |result| {
             db.intern(Type::Function(Function {
                 params,
@@ -1798,12 +1838,6 @@ impl<'a> Flow<'a, '_> {
             None => declared.result,
         };
         let ty = function(result);
-        let unknown = db.unknown();
-        for (item, &var) in pattern.iter().zip(&signature.params) {
-            if let (PatternKey::Rest(_), Some(var)) = (&item.key, var) {
-                self.join(var, unknown);
-            }
-        }
         Some(Lambda {
             func,
             ty,
@@ -2087,7 +2121,7 @@ impl<'a> Flow<'a, '_> {
     /// Instantiate each `do` block among values that no rule types
     fn untyped(&mut self, at: At, values: &Values<'_>) {
         for lambda in values.lambdas() {
-            self.lambda(at, lambda.func);
+            self.lambda(at, lambda.func, Span::INVALID);
         }
     }
 
@@ -2169,9 +2203,13 @@ impl<'a> Flow<'a, '_> {
         if values.never {
             return self.db.bottom();
         }
-        let class = class.filter(|_| {
-            !values.comprehension || matches!(kind, Collection::Array | Collection::Dict)
-        });
+        if values.comprehension
+            && !matches!(kind, Collection::Array | Collection::Dict)
+            && class.is_some()
+        {
+            self.untyped(at, &values);
+            return self.gap(expr.span, "a comprehension in a tuple or record");
+        }
         let Some(class) = class else {
             self.untyped(at, &values);
             return unknown;
@@ -2180,7 +2218,7 @@ impl<'a> Flow<'a, '_> {
         let int = self.intrinsic(Intrinsic::Int);
         let array_expected = expected_array.map(|(ty, _)| ty).or(expected);
         let result = match (kind, expected_dict) {
-            (Collection::Array, _) => self.conclude(at, array_expected, |rule| {
+            (Collection::Array, _) => self.conclude(at, expr.span, array_expected, |rule| {
                 let element = rule.solver.infer();
                 for placed in &values.values {
                     match placed.value {
@@ -2216,13 +2254,15 @@ impl<'a> Flow<'a, '_> {
             }),
             // What's expected of a dict checks its items one by one, where joining
             // them would lose which is where
-            (Collection::Dict, Some((ty, schema))) => self.conclude(at, expected, |rule| {
-                let (arguments, _) = rule.arguments(&values, spread, expr.span);
-                let exact = rule.solver.arguments_schema(&arguments);
-                rule.constrain(exact, rule.closed(schema), Check::Expected(expr.span));
-                vec![rule.closed(ty)]
-            }),
-            (Collection::Dict, None) => self.conclude(at, expected, |rule| {
+            (Collection::Dict, Some((ty, schema))) => {
+                self.conclude(at, expr.span, expected, |rule| {
+                    let (arguments, _) = rule.arguments(&values, spread, expr.span);
+                    let exact = rule.solver.arguments_schema(&arguments);
+                    rule.constrain(exact, rule.closed(schema), Check::Expected(expr.span));
+                    vec![rule.closed(ty)]
+                })
+            }
+            (Collection::Dict, None) => self.conclude(at, expr.span, expected, |rule| {
                 let keys = rule.solver.infer();
                 let entries = rule.solver.infer();
                 let entry = |rule: &mut Rule<'_, 'a>, key: TypeId, value: Term| {
@@ -2269,7 +2309,7 @@ impl<'a> Flow<'a, '_> {
                     Collection::Tuple => Rest::Positional,
                     _ => Rest::All,
                 };
-                self.conclude(at, expected, |rule| {
+                self.conclude(at, expr.span, expected, |rule| {
                     let mut elements = Vec::new();
                     for placed in &values.values {
                         match placed.value {
@@ -2422,7 +2462,8 @@ impl<'a> Flow<'a, '_> {
         let Some(ty) = ty else {
             return result;
         };
-        self.conclude(at, None, |rule| {
+        let span = values.first().map_or(Span::INVALID, |&(_, span)| span);
+        self.conclude(at, span, None, |rule| {
             for &(value, span) in values {
                 rule.constrain(
                     rule.closed(value),
@@ -2443,13 +2484,14 @@ impl<'a> Flow<'a, '_> {
         at: At,
         func: FuncId,
         expected: Option<TypeId>,
+        span: Span,
     ) -> TypeId {
         let Some((expected, lambda)) =
             expected.and_then(|expected| Some((expected, self.contextual(at, func)?)))
         else {
-            return self.lambda(at, func);
+            return self.lambda(at, func, span);
         };
-        self.conclude(at, None, |rule| {
+        self.conclude(at, span, None, |rule| {
             let term = rule.lambda(&lambda);
             rule.constrain(term, rule.closed(expected), Check::Quiet);
             vec![term]
@@ -2461,7 +2503,7 @@ impl<'a> Flow<'a, '_> {
         if value == self.db.bottom() {
             return;
         }
-        self.conclude(at, None, |rule| {
+        self.conclude(at, span, None, |rule| {
             rule.constrain(rule.closed(value), rule.closed(ty), Check::Expected(span));
             Vec::new()
         });
@@ -2581,10 +2623,11 @@ impl<'a> Flow<'a, '_> {
                 Element::Keyed { key, .. } => key,
                 Element::Include(_) => return preview,
             };
-            let value = self
-                .solver()
-                .schema_item(expected, key)
-                .unwrap_or(self.db.unknown());
+            let value = match source.element {
+                Element::Positional(value) | Element::Keyed { value, .. } => value,
+                Element::Include(_) => unreachable!("not an item"),
+            };
+            let value = self.solver().schema_item(expected, key).unwrap_or(value);
             let element = match source.element {
                 Element::Positional(_) => Element::Positional(value),
                 _ => Element::Keyed { key, value },
@@ -2627,8 +2670,12 @@ impl<'a> Flow<'a, '_> {
         let prefix = (0..).take_while(|index| positional.contains(index)).count();
         let mut items = Vec::new();
         let mut keyed = Vec::new();
+        // Any value fills a hole, dynamically outside a strict unit
+        let value = match self.strict() {
+            true => self.db.top(),
+            false => self.db.unknown(),
+        };
         for (key, (span, name)) in holes {
-            let value = self.db.unknown();
             let element = match name {
                 Literal::Int(index) if index < prefix as i128 => {
                     items.push((
@@ -2720,7 +2767,7 @@ impl<'a> Flow<'a, '_> {
             }
         }
         if let Some(unpacked) = self.solver().unpack_pattern(value, unpack, &pattern) {
-            self.conclude(at, None, |rule| {
+            self.conclude(at, span, None, |rule| {
                 let target = rule.term(|holes| {
                     let unknown = holes.db.unknown();
                     let schema = holes.schema(vec![
@@ -2756,7 +2803,7 @@ impl<'a> Flow<'a, '_> {
                 .collect();
             return Some(types);
         }
-        let types = self.conclude(at, None, |rule| {
+        let types = self.conclude(at, span, None, |rule| {
             let vars: Vec<Option<Term>> = (items.iter())
                 .map(|item| match item.key {
                     PatternKey::Pos | PatternKey::Key(_) => Some(rule.solver.infer()),
@@ -2945,8 +2992,9 @@ fn outputs(results: &[Term], parameters: &[Term]) -> Vec<(Term, Variance)> {
 /// [`Solver::deciding`]),
 /// to the meet of its upper bounds (see [`Solver::default_upper`]), until
 /// nothing more can be defaulted. A round that can default no bare
-/// variable these ways defaults them all to the dynamic type of their kind.
-/// Literals decay as [`default_where`] decays them.
+/// variable these ways defaults them all to the dynamic type of their kind, or
+/// for a strict unit's solver, which doesn't make up `Unknown`, leaves them
+/// unresolved. Literals decay as [`default_where`] decays them.
 fn default_all(
     solver: &mut Solver<'_>,
     db: &Database,
@@ -2985,6 +3033,9 @@ fn default_all(
             }
         }
         if deferred.len() == count {
+            if !solver.is_gradual() {
+                break;
+            }
             for id in deferred {
                 let unknown = solver.closed(db.unknown_of(solver.variable_kind(id)));
                 solver.constrain(unknown, Term::Infer(id), Provenance::default());

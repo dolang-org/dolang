@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 
 use crate::source::Span;
 
-use super::{At, Flow, State, problem::Problem};
+use super::{At, Flow, State, problem::Problem, rule::passed_signature};
 use crate::typeck::{
     cfg::{Expr, ExprKind, FuncId, FuncKind},
     elab::{Designated, ModuleRef, Referent, Tables, Target},
@@ -78,14 +78,14 @@ impl Flow<'_, '_> {
             } => self.cast(at, state, operands, value, ty, checked),
             &ExprKind::Class(decl) => class_object(self.db, decl),
             ExprKind::Import { module, item } => self.import(module, *item),
-            &ExprKind::Lambda(func) => self.expected_lambda(at, func, expected),
+            &ExprKind::Lambda(func) => self.expected_lambda(at, func, expected, expr.span),
             ExprKind::Call { .. } => self.call(at, state, operands, expr, expected),
             ExprKind::Invoke { .. } => self.invoke(at, state, operands, expr, expected),
             ExprKind::Get { .. } => self.get(at, state, operands, expr, expected),
             ExprKind::Index { .. } => self.index(at, state, operands, expr, expected),
             ExprKind::Unary { .. } => self.unary(at, state, operands, expr),
             ExprKind::Binary { .. } => self.binary(at, state, operands, expr),
-            ExprKind::Range { .. } => self.range(at, state, operands, expr),
+            ExprKind::Range { .. } => self.range(at, state, operands, expr, expected),
             ExprKind::Collection { .. } => self.collection(at, state, operands, expr, expected),
             ExprKind::Operand => operands.pop_front().expect("an operand for each hole"),
             ExprKind::Never => self.db.bottom(),
@@ -159,16 +159,24 @@ impl Flow<'_, '_> {
     /// `do` block's parameters and channels anything; once the analysis is stuck,
     /// those still bottom are dynamic (see [`Flow::analyze`]). Its value is
     /// its declared type under its rigids, with the result its variable joins, if
-    /// that's left to it. A nested def's value is its declared type, unless it's
+    /// that's left to it, and in a strict unit, so are its parameters and
+    /// channels. A nested def's value is its declared type, unless it's
     /// nested in a generic declaration, whose binders it would need applied, or
-    /// it's overloaded.
-    pub(super) fn lambda(&mut self, at: At, func: FuncId) -> TypeId {
+    /// it's overloaded. What it can't type is a gap at `span`.
+    pub(super) fn lambda(&mut self, at: At, func: FuncId, span: Span) -> TypeId {
         let unknown = self.db.unknown();
         let data = self.ir.func(func);
         if let Some(signature) = &data.signature {
             let Some(mut declared) = self.declared[func.index()].clone() else {
-                return unknown;
+                return self.gap(span, "a `do` block without a declared type");
             };
+            // In a strict unit, what it's passed is what its body was checked with
+            if self.strict()
+                && let Some(passed) =
+                    passed_signature(self.db, data, &declared, |var| self.joined(var, at))
+            {
+                declared = passed;
+            }
             if let Some(var) = signature.result {
                 declared.result = self.joined(var, at);
             }
@@ -183,7 +191,7 @@ impl Flow<'_, '_> {
             .get(&decl)
             .is_some_and(|lifted| !lifted.is_empty())
         {
-            return unknown;
+            return self.gap(span, "a nested def's value in a generic declaration");
         }
         function_value(self.db, self.tables, decl)
     }

@@ -5,9 +5,12 @@
 //! true intersection with the target. An intersection that can't be represented
 //! is over-approximated by the member or by `C`, and a reach that can't be proven
 //! gives the conservative outcome: a member is kept by a negative relation and
-//! becomes `C` by a positive one. A member becomes `C` applied to `Unknown`
-//! arguments, or to the member's own where they carry down soundly. An empty
-//! result is bottom, making the edge unreachable.
+//! becomes `C` by a positive one. A member becomes `C` applied to the member's
+//! own arguments where they carry down soundly. A gradual unit's solver gives
+//! the rest `Unknown`. A strict unit's gives a covariant binder its bound and a
+//! contravariant one bottom, and keeps the member where an invariant binder
+//! leaves no sound argument. An empty result is bottom, making the edge
+//! unreachable.
 //!
 //! Narrowing against `Func` keeps each function and each class that reaches
 //! `Func`, and makes any other class the gradual function type: a subclass may
@@ -100,13 +103,18 @@ impl Solver<'_> {
         class: DeclId,
     ) -> Option<TypeId> {
         let seen = self.classify(kept);
-        let whole = || self.apply_unknown(class);
+        // An `Unknown` member stays dynamic as `C`
+        let unknown = matches!(seen, Member::Unknown);
+        let whole = || match unknown {
+            true => self.apply_unknown(class),
+            false => self.whole(class, kept),
+        };
         match (relation, negated) {
             (Narrowing::Upper, false) => match seen {
                 Member::Class(nominal) => match self.reaches(&nominal, class) {
                     Some(true) => Some(kept),
                     Some(false) if self.disjoint(&nominal, class) => None,
-                    _ => Some(self.below(class, &nominal)),
+                    _ => Some(self.below(class, &nominal, kept)),
                 },
                 Member::Literal(_, Some(nominal)) => match self.reaches(&nominal, class) {
                     Some(true) => Some(kept),
@@ -127,7 +135,7 @@ impl Solver<'_> {
             (Narrowing::Exact, false) => match seen {
                 Member::Class(nominal) if nominal.declaration == class => Some(kept),
                 Member::Class(nominal) => match self.descent(class, nominal.declaration) {
-                    Ok(Some(_)) => Some(self.below(class, &nominal)),
+                    Ok(Some(_)) => Some(self.below(class, &nominal, kept)),
                     // An instance of exactly `C` is a member's only if `C` reaches it
                     Ok(None) => None,
                     Err(_) => Some(whole()),
@@ -241,11 +249,69 @@ impl Solver<'_> {
         result
     }
 
-    /// `class`, which a value of `member` is an instance of, with the arguments
-    /// that carry down from `member`, and `Unknown` for the rest
-    fn below(&self, class: DeclId, member: &Nominal) -> TypeId {
-        let Some(binders) = self.binders(class) else {
+    /// `class` as a whole, for a member `kept` whose class says nothing of it.
+    /// A gradual solver applies it to `Unknown`; a strict one approximates its
+    /// arguments soundly, or keeps the member when it can't.
+    fn whole(&self, class: DeclId, kept: TypeId) -> TypeId {
+        if self.gradual {
             return self.apply_unknown(class);
+        }
+        self.approximate(class, &|_| None).unwrap_or(kept)
+    }
+
+    /// `class` applied to `carried`'s argument for each binder that has one, and
+    /// for the rest a covariant binder's bound or a contravariant one's bottom;
+    /// `None` when a binder has neither
+    fn approximate(
+        &self,
+        class: DeclId,
+        carried: &dyn Fn(usize) -> Option<TypeId>,
+    ) -> Option<TypeId> {
+        let base = self.db.intern(Type::Decl(class));
+        let Some(binders) = self.binders(class) else {
+            return Some(base);
+        };
+        let args = (binders.iter().enumerate())
+            .map(|(slot, binder)| {
+                carried(slot)
+                    .or_else(|| self.sound_argument(binder, binders))
+                    .map(Argument::Positional)
+            })
+            .collect::<Option<_>>()?;
+        Some(self.db.intern(Type::Apply {
+            base,
+            args,
+            kind: Kind::Type,
+        }))
+    }
+
+    /// An argument every instance's own is below or above, as the binder varies,
+    /// written without `Unknown`. A bound that needs the other arguments isn't one.
+    fn sound_argument(&self, binder: &Binder, binders: &[Binder]) -> Option<TypeId> {
+        if binder.kind != Kind::Type {
+            return None;
+        }
+        match binder.variance {
+            Variance::Covariant => match binder.bound {
+                None => Some(self.db.top()),
+                Some(_) => {
+                    let unknowns: Vec<_> = (binders.iter())
+                        .map(|binder| self.db.unknown_of(binder.kind))
+                        .collect();
+                    let bound = self.db.binder_bound(binder, &unknowns)?;
+                    (!self.contains_unknown(bound)).then_some(bound)
+                }
+            },
+            Variance::Contravariant => Some(self.db.bottom()),
+            Variance::Invariant => None,
+        }
+    }
+
+    /// `class`, which a value of `member` is an instance of, with the arguments
+    /// that carry down from `member`, and the rest as for [`Solver::whole`]
+    fn below(&self, class: DeclId, member: &Nominal, kept: TypeId) -> TypeId {
+        let Some(binders) = self.binders(class) else {
+            return self.whole(class, kept);
         };
         let (Ok(Some(descent)), Ok(arguments), Some(member_binders)) = (
             self.descent(class, member.declaration),
@@ -256,10 +322,10 @@ impl Solver<'_> {
                 .collect::<Result<Vec<_>, _>>(),
             self.binders(member.declaration),
         ) else {
-            return self.apply_unknown(class);
+            return self.whole(class, kept);
         };
         let rigids = self.db.rigids(class);
-        let args = binders
+        let carried: Vec<Option<TypeId>> = binders
             .iter()
             .zip(rigids)
             .map(|(binder, rigid)| {
@@ -276,10 +342,17 @@ impl Solver<'_> {
                             .then_some(argument)
                     });
                 let first = carried.next().flatten();
-                let argument = first
-                    .filter(|&first| carried.all(|other| other == Some(first)))
-                    .unwrap_or_else(|| self.db.unknown_of(binder.kind));
-                Argument::Positional(argument)
+                first.filter(|&first| carried.all(|other| other == Some(first)))
+            })
+            .collect();
+        if !self.gradual {
+            return self
+                .approximate(class, &|slot| carried[slot])
+                .unwrap_or(kept);
+        }
+        let args = (binders.iter().zip(carried))
+            .map(|(binder, carried)| {
+                Argument::Positional(carried.unwrap_or_else(|| self.db.unknown_of(binder.kind)))
             })
             .collect();
         self.db.intern(Type::Apply {

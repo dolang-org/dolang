@@ -1,0 +1,81 @@
+# dolang: strict
+# A strict unit's checker doesn't make up `Unknown`: it takes a sound type, or
+# leaves a judgment undecided.
+
+import std
+
+pub class Box
+  pub field side @ Int = 0
+
+# A variable that keeps growing widens to `Value`
+pub def widened xs @ Array[Int]
+  let x = 1
+  for _ = xs
+    x = [x]
+  let _ = x
+  #       ^: flow Value
+  nil
+
+# Narrowing `Value` to a generic class gives a covariant binder its bound. An
+# invariant binder has no sound argument, so the value isn't narrowed.
+pub def narrowed v @ Value
+  if type(v, Iter)
+    let _ = v
+    #       ^: flow std.Iter[Value]
+  if type(v, Array)
+    let _ = v
+    #       ^: flow Value
+  if type(v, Box)
+    let _ = v
+    #       ^: flow m.Box
+  nil
+
+# A `do` block's parameter that nothing gives a type is `Value`, as its channels
+# are. Calling the variable that holds it doesn't type it.
+pub def uncalled() -> Int
+  let f = do |x| x
+  let _ = f
+  #       ^: flow (Value, <Value, >Value) -> Value
+  f 1
+# error: `Value` does not fit the declared result `std.Int`
+#   --> m.dol:LL:LL
+#    |
+# LL |   f 1
+#    |   ^^^
+
+pub class Over
+  @def pick self x @ Int -> Int
+  @def pick self x @ Str -> Str
+  pub def pick _self x @ (Int | Str)
+    x
+
+# What the checker can't type leaves its use undecided, as an overloaded method
+# taken as a value does
+pub def overloaded o @ Over
+  let _ = o.pick
+  #       ^~~~~~: wf undecided Unsupported("an overloaded method as a value")
+  nil
+
+# A boundless range takes its element type from what's expected of it, and
+# without an expectation, nothing determines it
+pub def ranges() -> Range[Int]
+  let _ = (..)
+  #        ^~: wf undecided Inference
+  (..)
+
+# No call gives a `do` block's rest its items, so any are admitted
+pub def rest()
+  let f = do |*xs **kw|
+    let _ = xs
+    #       ^~: flow std.Tuple[{*Value}]
+    let _ = kw
+    #       ^~: flow std.Record[{*(std.Sym): Value}]
+    nil
+  f 1 k: 2
+
+# Any value fills a template's hole
+pub def holes()
+  let t = t"${#0}"
+  let _ = t
+  #       ^: flow std.Fmt[Never, {Value}]
+  nil

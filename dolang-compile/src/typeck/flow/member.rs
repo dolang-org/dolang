@@ -10,7 +10,7 @@
 //!
 //! [`Solver::member`]: crate::typeck::solver::Solver::member
 
-use std::collections::VecDeque;
+use std::{cell::Cell, collections::VecDeque};
 
 use super::{
     At, Flow, State,
@@ -126,7 +126,10 @@ impl Flow<'_, '_> {
                     instance: Some(self.db.intern(Type::Decl(class))),
                     ..CallTarget::new(None)
                 },
-                _ => CallTarget::new(None),
+                _ => {
+                    self.gap(span, "a constructor the checker can't type");
+                    CallTarget::new(None)
+                }
             };
         }
         let member = self.special("call");
@@ -141,7 +144,11 @@ impl Flow<'_, '_> {
                 self.missing(ty, None, member, span);
                 CallTarget::new(None)
             }
-            _ => CallTarget::new(None),
+            Resolved::Dynamic => CallTarget::new(None),
+            _ => {
+                self.gap(span, "a `(call)` that isn't a method");
+                CallTarget::new(None)
+            }
         }
     }
 
@@ -178,17 +185,32 @@ impl Flow<'_, '_> {
                 return Resolved::Dynamic;
             }
         };
-        // A method whose signatures don't all reify is dynamic
-        let signature = |signatures: &Signatures| solver.reified(signatures).unwrap_or_default();
+        // A member whose type or signatures don't all reify is dynamic, and a gap
+        let unreified = Cell::new(false);
+        let signature = |signatures: &Signatures| {
+            solver.reified(signatures).unwrap_or_else(|| {
+                unreified.set(true);
+                Signature::default()
+            })
+        };
         let method = |kind: &FoundKind| match kind {
             FoundKind::Method(signatures) => signature(signatures),
-            _ => Signature::default(),
+            _ => {
+                unreified.set(true);
+                Signature::default()
+            }
         };
         let signatures =
             |signatures: Option<Signatures>| signatures.map(|signatures| signature(&signatures));
-        match lookup {
+        let resolved = match lookup {
             Lookup::Found(found) => match found.kind {
-                FoundKind::Field(ty) => solver.reify(ty).map_or(Resolved::Dynamic, Resolved::Field),
+                FoundKind::Field(ty) => solver.reify(ty).map_or_else(
+                    |_| {
+                        unreified.set(true);
+                        Resolved::Dynamic
+                    },
+                    Resolved::Field,
+                ),
                 ref kind @ FoundKind::Method(_) => {
                     // A class object reaches an instance method unbound
                     let object = self.class_of(receiver).is_some();
@@ -213,7 +235,11 @@ impl Flow<'_, '_> {
             },
             Lookup::Missing => Resolved::Missing,
             Lookup::Dynamic => Resolved::Dynamic,
+        };
+        if unreified.get() {
+            self.gap(span, "a member the checker can't type");
         }
+        resolved
     }
 
     /// A union receiver's alternatives, each of which a member use is made of,
@@ -419,8 +445,13 @@ impl Flow<'_, '_> {
             }
             Resolved::Field(ty) => ty,
             Resolved::Method(signature, bound) => match (signature.single(), bound) {
-                (None, _) => unknown,
-                (Some(signature), true) => bound_method(self.db, signature).unwrap_or(unknown),
+                // A method that didn't reify is already a gap
+                (None, _) if signature.callee(self.db).is_none() => unknown,
+                (None, _) => self.gap(span, "an overloaded method as a value"),
+                (Some(signature), true) => match bound_method(self.db, signature) {
+                    Some(bound) => bound,
+                    None => self.gap(span, "a method bound to a receiver it's generic in"),
+                },
                 (Some(signature), false) => signature,
             },
             Resolved::Property {
@@ -488,7 +519,8 @@ impl Flow<'_, '_> {
 
     /// The type of the item a `for` takes, as the runtime gets it: the `(next)` of
     /// its iteratee's `(iter)`, or without an iteratee, of the function's ambient
-    /// input. A function that doesn't declare its input reads it dynamically.
+    /// input. A function that doesn't declare its input reads it dynamically, and
+    /// in a strict unit as `Value`.
     pub(super) fn next(
         &mut self,
         at: At,
@@ -500,6 +532,7 @@ impl Flow<'_, '_> {
             Some(iteratee) => self.send_special(at, state, iteratee, "iter", span),
             None => match self.channels(at).0 {
                 Some(input) => input,
+                None if self.strict() => return self.db.top(),
                 None => return self.db.unknown(),
             },
         };
@@ -843,7 +876,7 @@ impl Flow<'_, '_> {
             Op::Bang => return self.intrinsic(Intrinsic::Bool),
             Op::Minus => "neg",
             Op::Tilde => "bnot",
-            _ => return self.db.unknown(),
+            _ => return self.gap(expr.span, "an operator without a rule"),
         };
         let call = Call {
             args: &[],
@@ -902,7 +935,7 @@ impl Flow<'_, '_> {
             Op::Caret => ("bxor", "rbxor", false),
             Op::LtLt => ("shl", "rshl", false),
             Op::GtGt => ("shr", "rshr", false),
-            _ => return self.db.unknown(),
+            _ => return self.gap(expr.span, "an operator without a rule"),
         };
         let call = Call {
             args: &[],
@@ -976,14 +1009,16 @@ impl Flow<'_, '_> {
         }
     }
 
-    /// A range: a `Range` constructed from its bounds. Since both have the same
-    /// type, the bounds present are passed first.
+    /// A range: a `Range` constructed from its bounds, solved toward what's
+    /// expected of it. Since both have the same type, the bounds present are
+    /// passed first.
     pub(super) fn range(
         &mut self,
         at: At,
         state: &mut State,
         operands: &mut VecDeque<TypeId>,
         expr: &Expr,
+        expected: Option<TypeId>,
     ) -> TypeId {
         let ExprKind::Range { bounds } = &expr.kind else {
             unreachable!("a range")
@@ -1000,7 +1035,7 @@ impl Flow<'_, '_> {
         };
         let call = Call {
             args: &[],
-            expected: None,
+            expected,
             span: expr.span,
             callee: None,
         };
@@ -1010,7 +1045,7 @@ impl Flow<'_, '_> {
             {
                 self.call_with(at, state, operands, constructor, &bounds, call)
             }
-            _ => self.db.unknown(),
+            _ => self.gap(expr.span, "a range without a constructor"),
         }
     }
 }

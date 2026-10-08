@@ -438,7 +438,9 @@ pub(crate) struct Solver<'db> {
     /// The declarations being checked, whose rigids' bounds are assumptions
     scope: HashSet<DeclId>,
     /// Whether the declarations being checked are of a gradual unit, whose body
-    /// sees an omitted channel as `Unknown` rather than `Value`
+    /// sees an omitted channel as `Unknown` rather than `Value`. Such a solver
+    /// also makes up `Unknown` where a strict unit's takes a sound type or leaves
+    /// the judgment unresolved: in widening, `meet` and narrowing.
     gradual: bool,
     /// Each rigid's bound, once computed
     rigid_bounds: RefCell<HashMap<TypeId, Option<TypeId>>>,
@@ -600,6 +602,11 @@ impl<'db> Solver<'db> {
     pub(crate) fn gradual(&mut self) {
         self.gradual = true;
         self.rigid_bounds.get_mut().clear();
+    }
+
+    /// Whether it checks a gradual unit's declarations (see [`Self::gradual`])
+    pub(crate) fn is_gradual(&self) -> bool {
+        self.gradual
     }
 
     /// A solver for a side query about `class`, its rigids assumed
