@@ -572,20 +572,62 @@ impl<'v> Value<'v> {
         }
     }
 
-    // Commutatative binary operation
-    fn binop_comm<'a, 's>(
+    // Dispatch on this operand only. Abstract reflected defaults use these
+    // methods to call the forward operation without reflecting back.
+    fn binop_direct<'s>(
         &self,
-        strand: &'a mut Strand<'v, 's>,
-        other: &'a Value<'v>,
-        prim: fn(&Prim, &mut Strand<'v, 's>, &Prim) -> Result<'v, 's, Prim>,
-        obj: for<'b> fn(
-            &BaseBorrow<'v, 'b, Header>,
-            &'b mut Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+        op: for<'a> fn(
+            &BaseBorrow<'v, 'a, Header>,
+            &mut Strand<'v, 's>,
             &Value<'v>,
         ) -> Result<'v, 's, Value<'v>>,
     ) -> Result<'v, 's, Value<'v>> {
-        // Left/right object handlers are symmetric
-        self.binop(strand, other, prim, obj, obj)
+        match self.case() {
+            Case::Object(this) => op(&this, strand, other),
+            Case::Prim(_) => Err(Error::not_supported(strand)),
+        }
+    }
+
+    pub(crate) fn op_add_direct<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        self.binop_direct(strand, other, |this, strand, other| {
+            this.op_add(strand, other)
+        })
+    }
+
+    pub(crate) fn op_mul_direct<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        self.binop_direct(strand, other, |this, strand, other| {
+            this.op_mul(strand, other)
+        })
+    }
+
+    pub(crate) fn op_eq_direct<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        self.binop_direct(strand, other, |this, strand, other| {
+            this.op_eq(strand, other)
+        })
+    }
+
+    pub(crate) fn op_ne_direct<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        self.binop_direct(strand, other, |this, strand, other| {
+            this.op_ne(strand, other)
+        })
     }
 
     pub(crate) fn op_band<'a, 's>(
@@ -593,9 +635,13 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         other: &'a Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        self.binop_comm(strand, other, Prim::op_band, |this, strand, other| {
-            this.op_band(strand, other)
-        })
+        self.binop(
+            strand,
+            other,
+            Prim::op_band,
+            |this, strand, other| this.op_band(strand, other),
+            |this, strand, other| this.op_rband(strand, other),
+        )
     }
 
     pub(crate) fn op_bor<'a, 's>(
@@ -603,9 +649,13 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         other: &'a Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        self.binop_comm(strand, other, Prim::op_bor, |this, strand, other| {
-            this.op_bor(strand, other)
-        })
+        self.binop(
+            strand,
+            other,
+            Prim::op_bor,
+            |this, strand, other| this.op_bor(strand, other),
+            |this, strand, other| this.op_rbor(strand, other),
+        )
     }
 
     pub(crate) fn op_bxor<'a, 's>(
@@ -613,9 +663,13 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         other: &'a Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        self.binop_comm(strand, other, Prim::op_bxor, |this, strand, other| {
-            this.op_bxor(strand, other)
-        })
+        self.binop(
+            strand,
+            other,
+            Prim::op_bxor,
+            |this, strand, other| this.op_bxor(strand, other),
+            |this, strand, other| this.op_rbxor(strand, other),
+        )
     }
 
     pub(crate) fn op_shl<'a, 's>(
@@ -623,9 +677,13 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         other: &'a Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        self.binop_comm(strand, other, Prim::op_shl, |this, strand, other| {
-            this.op_shl(strand, other)
-        })
+        self.binop(
+            strand,
+            other,
+            Prim::op_shl,
+            |this, strand, other| this.op_shl(strand, other),
+            |this, strand, other| this.op_rshl(strand, other),
+        )
     }
 
     pub(crate) fn op_shr<'a, 's>(
@@ -633,9 +691,13 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         other: &'a Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        self.binop_comm(strand, other, Prim::op_shr, |this, strand, other| {
-            this.op_shr(strand, other)
-        })
+        self.binop(
+            strand,
+            other,
+            Prim::op_shr,
+            |this, strand, other| this.op_shr(strand, other),
+            |this, strand, other| this.op_rshr(strand, other),
+        )
     }
 
     pub(crate) fn op_add<'a, 's>(
@@ -643,9 +705,13 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         other: &'a Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        self.binop_comm(strand, other, Prim::op_add, |this, strand, other| {
-            this.op_add(strand, other)
-        })
+        self.binop(
+            strand,
+            other,
+            Prim::op_add,
+            |this, strand, other| this.op_add(strand, other),
+            |this, strand, other| this.op_radd(strand, other),
+        )
     }
 
     pub(crate) fn op_sub<'a, 's>(
@@ -667,9 +733,13 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         other: &'a Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        self.binop_comm(strand, other, Prim::op_mul, |this, strand, other| {
-            this.op_mul(strand, other)
-        })
+        self.binop(
+            strand,
+            other,
+            Prim::op_mul,
+            |this, strand, other| this.op_mul(strand, other),
+            |this, strand, other| this.op_rmul(strand, other),
+        )
     }
 
     pub(crate) fn op_div<'a, 's>(
@@ -715,6 +785,104 @@ impl<'v> Value<'v> {
     }
 
     // Reverse operations: receiver is the right operand, argument is the left operand
+
+    pub(crate) fn op_radd<'a, 's>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &'a Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        self.binop(
+            strand,
+            other,
+            Prim::op_add,
+            |this, strand, other| this.op_radd(strand, other),
+            |this, strand, other| this.op_add(strand, other),
+        )
+    }
+
+    pub(crate) fn op_rmul<'a, 's>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &'a Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        self.binop(
+            strand,
+            other,
+            Prim::op_mul,
+            |this, strand, other| this.op_rmul(strand, other),
+            |this, strand, other| this.op_mul(strand, other),
+        )
+    }
+
+    pub(crate) fn op_rband<'a, 's>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &'a Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        self.binop(
+            strand,
+            other,
+            Prim::op_band,
+            |this, strand, other| this.op_rband(strand, other),
+            |this, strand, other| this.op_band(strand, other),
+        )
+    }
+
+    pub(crate) fn op_rbor<'a, 's>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &'a Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        self.binop(
+            strand,
+            other,
+            Prim::op_bor,
+            |this, strand, other| this.op_rbor(strand, other),
+            |this, strand, other| this.op_bor(strand, other),
+        )
+    }
+
+    pub(crate) fn op_rbxor<'a, 's>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &'a Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        self.binop(
+            strand,
+            other,
+            Prim::op_bxor,
+            |this, strand, other| this.op_rbxor(strand, other),
+            |this, strand, other| this.op_bxor(strand, other),
+        )
+    }
+
+    pub(crate) fn op_rshl<'a, 's>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &'a Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        self.binop(
+            strand,
+            other,
+            |left, strand, right| right.op_shl(strand, left),
+            |this, strand, other| this.op_rshl(strand, other),
+            |this, strand, other| this.op_shl(strand, other),
+        )
+    }
+
+    pub(crate) fn op_rshr<'a, 's>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &'a Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        self.binop(
+            strand,
+            other,
+            |left, strand, right| right.op_shr(strand, left),
+            |this, strand, other| this.op_rshr(strand, other),
+            |this, strand, other| this.op_shr(strand, other),
+        )
+    }
 
     pub(crate) fn op_rsub<'a, 's>(
         &self,
@@ -782,8 +950,32 @@ impl<'v> Value<'v> {
                 Ok(Value::from_bool(left.op_eq(strand, &right)))
             }
             (Case::Object(left), Case::Prim(_)) => left.op_eq(strand, other),
-            (Case::Prim(_), Case::Object(right)) => right.op_eq(strand, self),
+            (Case::Prim(_), Case::Object(right)) => right.op_req(strand, self),
             (Case::Object(left), Case::Object(right)) => match left.op_eq(strand, other) {
+                Err(error) if error.kind() == ErrorKind::Unsupported => right.op_req(strand, self),
+                result => result,
+            },
+        };
+        match result {
+            Err(error) if error.kind() == ErrorKind::Unsupported => {
+                Ok(Value::from_bool(self.repr_eq(strand, other)))
+            }
+            result => result,
+        }
+    }
+
+    pub(crate) fn op_req<'a, 's>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &'a Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        let result = match (self.case(), other.case()) {
+            (Case::Prim(left), Case::Prim(right)) => {
+                Ok(Value::from_bool(left.op_eq(strand, &right)))
+            }
+            (Case::Object(left), Case::Prim(_)) => left.op_req(strand, other),
+            (Case::Prim(_), Case::Object(right)) => right.op_eq(strand, self),
+            (Case::Object(left), Case::Object(right)) => match left.op_req(strand, other) {
                 Err(error) if error.kind() == ErrorKind::Unsupported => right.op_eq(strand, self),
                 result => result,
             },
@@ -806,8 +998,32 @@ impl<'v> Value<'v> {
                 Ok(Value::from_bool(left.op_ne(strand, &right)))
             }
             (Case::Object(left), Case::Prim(_)) => left.op_ne(strand, other),
-            (Case::Prim(_), Case::Object(right)) => right.op_ne(strand, self),
+            (Case::Prim(_), Case::Object(right)) => right.op_rne(strand, self),
             (Case::Object(left), Case::Object(right)) => match left.op_ne(strand, other) {
+                Err(error) if error.kind() == ErrorKind::Unsupported => right.op_rne(strand, self),
+                result => result,
+            },
+        };
+        match result {
+            Err(error) if error.kind() == ErrorKind::Unsupported => {
+                Ok(Value::from_bool(!self.repr_eq(strand, other)))
+            }
+            result => result,
+        }
+    }
+
+    pub(crate) fn op_rne<'a, 's>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &'a Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        let result = match (self.case(), other.case()) {
+            (Case::Prim(left), Case::Prim(right)) => {
+                Ok(Value::from_bool(left.op_ne(strand, &right)))
+            }
+            (Case::Object(left), Case::Prim(_)) => left.op_rne(strand, other),
+            (Case::Prim(_), Case::Object(right)) => right.op_ne(strand, self),
+            (Case::Object(left), Case::Object(right)) => match left.op_rne(strand, other) {
                 Err(error) if error.kind() == ErrorKind::Unsupported => right.op_ne(strand, self),
                 result => result,
             },
@@ -1848,42 +2064,84 @@ impl<'v, 'a> Dispatch<'v, 'a> for Delegated<'v, 'a, &'a Value<'v>> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        delegated_binop!(self, strand, other, op_band, op_band)
+        delegated_binop!(self, strand, other, op_band, op_rband)
+    }
+    fn op_rband<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        delegated_binop!(self, strand, other, op_rband, op_band)
     }
     fn op_bor<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        delegated_binop!(self, strand, other, op_bor, op_bor)
+        delegated_binop!(self, strand, other, op_bor, op_rbor)
+    }
+    fn op_rbor<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        delegated_binop!(self, strand, other, op_rbor, op_bor)
     }
     fn op_bxor<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        delegated_binop!(self, strand, other, op_bxor, op_bxor)
+        delegated_binop!(self, strand, other, op_bxor, op_rbxor)
+    }
+    fn op_rbxor<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        delegated_binop!(self, strand, other, op_rbxor, op_bxor)
     }
     fn op_shl<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        delegated_binop!(self, strand, other, op_shl, op_shl)
+        delegated_binop!(self, strand, other, op_shl, op_rshl)
+    }
+    fn op_rshl<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        delegated_binop!(self, strand, other, op_rshl, op_shl)
     }
     fn op_shr<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        delegated_binop!(self, strand, other, op_shr, op_shr)
+        delegated_binop!(self, strand, other, op_shr, op_rshr)
+    }
+    fn op_rshr<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        delegated_binop!(self, strand, other, op_rshr, op_shr)
     }
     fn op_add<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        delegated_binop!(self, strand, other, op_add, op_add)
+        delegated_binop!(self, strand, other, op_add, op_radd)
+    }
+    fn op_radd<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        delegated_binop!(self, strand, other, op_radd, op_add)
     }
     fn op_sub<'s>(
         &self,
@@ -1904,7 +2162,14 @@ impl<'v, 'a> Dispatch<'v, 'a> for Delegated<'v, 'a, &'a Value<'v>> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        delegated_binop!(self, strand, other, op_mul, op_mul)
+        delegated_binop!(self, strand, other, op_mul, op_rmul)
+    }
+    fn op_rmul<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        delegated_binop!(self, strand, other, op_rmul, op_mul)
     }
     fn op_div<'s>(
         &self,
@@ -1958,6 +2223,18 @@ impl<'v, 'a> Dispatch<'v, 'a> for Delegated<'v, 'a, &'a Value<'v>> {
             Case::Prim(_) => self.receiver.op_eq(strand, other),
         }
     }
+    fn op_req<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        match self.receiver.case() {
+            Case::Object(receiver) => {
+                Delegated::new(receiver, self.delegator).op_req(strand, other)
+            }
+            Case::Prim(_) => self.receiver.op_req(strand, other),
+        }
+    }
     fn op_ne<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
@@ -1966,6 +2243,18 @@ impl<'v, 'a> Dispatch<'v, 'a> for Delegated<'v, 'a, &'a Value<'v>> {
         match self.receiver.case() {
             Case::Object(receiver) => Delegated::new(receiver, self.delegator).op_ne(strand, other),
             Case::Prim(_) => self.receiver.op_ne(strand, other),
+        }
+    }
+    fn op_rne<'s>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        match self.receiver.case() {
+            Case::Object(receiver) => {
+                Delegated::new(receiver, self.delegator).op_rne(strand, other)
+            }
+            Case::Prim(_) => self.receiver.op_rne(strand, other),
         }
     }
     fn op_lt<'s>(

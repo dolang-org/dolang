@@ -611,6 +611,7 @@ impl<'v> Object<'v> for Date {
             Err(Error::not_supported(strand))
         }
     }
+
     fn lt<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -855,6 +856,7 @@ impl<'v> Object<'v> for Month {
             Err(Error::not_supported(strand))
         }
     }
+
     fn lt<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

@@ -35,9 +35,11 @@ unsafe impl Collect for Num {
 fn num_members<'v, 'a>() -> &'a [Member<'v, 'a>] {
     members![
         Method(sym::ADD_METHOD),
+        Method(sym::RADD_METHOD),
         Method(sym::SUB_METHOD),
         Method(sym::RSUB_METHOD),
         Method(sym::MUL_METHOD),
+        Method(sym::RMUL_METHOD),
         Method(sym::DIV_METHOD),
         Method(sym::RDIV_METHOD),
         Method(sym::EDIV_METHOD),
@@ -240,6 +242,26 @@ pub(crate) async fn float_mcall<'v, 'a, 's>(
 }
 
 impl<'v> Protocol<'v> for Num {
+    fn op_radd<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        this.delegator()
+            .ok_or_else(|| Error::not_supported(strand))?
+            .op_add_direct(strand, other)
+    }
+
+    fn op_rmul<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        this.delegator()
+            .ok_or_else(|| Error::not_supported(strand))?
+            .op_mul_direct(strand, other)
+    }
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

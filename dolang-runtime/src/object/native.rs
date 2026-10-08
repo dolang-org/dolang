@@ -1071,6 +1071,17 @@ pub trait Object<'v>: Sized + 'v {
     ) -> Result<'v, 's, bool> {
         Err(Error::not_supported(strand))
     }
+    /// Implements reflected eq: `other` is the left operand and this object is the right.
+    ///
+    /// # Default
+    /// Delegates to [`eq`](Self::eq).
+    fn req<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, bool> {
+        Self::eq(this, strand, other)
+    }
 
     /// Compares this object to another for inequality.
     /// # Default
@@ -1081,6 +1092,13 @@ pub trait Object<'v>: Sized + 'v {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         Self::eq(this, strand, other).map(|b| !b)
+    }
+    fn rne<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, bool> {
+        Self::ne(this, strand, other)
     }
 
     /// Computes the boolean negation of this object.
@@ -1139,6 +1157,18 @@ pub trait Object<'v>: Sized + 'v {
             format!("addition not supported: {}", Self::NAME),
         ))
     }
+    /// Implements reflected add: `other` is the left operand and this object is the right.
+    ///
+    /// # Default
+    /// Delegates to [`add`](Self::add).
+    fn radd<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Self::add(this, strand, other, out)
+    }
 
     /// Computes the difference of this object and another.
     /// # Default
@@ -1186,6 +1216,18 @@ pub trait Object<'v>: Sized + 'v {
             strand,
             format!("multiplication not supported: {}", Self::NAME),
         ))
+    }
+    /// Implements reflected mul: `other` is the left operand and this object is the right.
+    ///
+    /// # Default
+    /// Delegates to [`mul`](Self::mul).
+    fn rmul<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Self::mul(this, strand, other, out)
     }
 
     /// Computes the quotient of this object and another.
@@ -1299,6 +1341,18 @@ pub trait Object<'v>: Sized + 'v {
             format!("bitwise and not supported: {}", Self::NAME),
         ))
     }
+    /// Implements reflected band: `other` is the left operand and this object is the right.
+    ///
+    /// # Default
+    /// Delegates to [`band`](Self::band).
+    fn rband<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Self::band(this, strand, other, out)
+    }
 
     /// Computes the bitwise OR of this object and another.
     /// # Default
@@ -1314,6 +1368,18 @@ pub trait Object<'v>: Sized + 'v {
             strand,
             format!("bitwise or not supported: {}", Self::NAME),
         ))
+    }
+    /// Implements reflected bor: `other` is the left operand and this object is the right.
+    ///
+    /// # Default
+    /// Delegates to [`bor`](Self::bor).
+    fn rbor<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Self::bor(this, strand, other, out)
     }
 
     /// Computes the bitwise XOR of this object and another.
@@ -1331,6 +1397,18 @@ pub trait Object<'v>: Sized + 'v {
             format!("bitwise xor not supported: {}", Self::NAME),
         ))
     }
+    /// Implements reflected bxor: `other` is the left operand and this object is the right.
+    ///
+    /// # Default
+    /// Delegates to [`bxor`](Self::bxor).
+    fn rbxor<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Self::bxor(this, strand, other, out)
+    }
 
     /// Computes the left shift of this object and another.
     /// # Default
@@ -1347,6 +1425,19 @@ pub trait Object<'v>: Sized + 'v {
             format!("left shift not supported: {}", Self::NAME),
         ))
     }
+    /// Implements reflected shl: `other` is the left operand and this object is the right.
+    ///
+    /// # Default
+    /// Returns `Unsupported` so the caller can try its final fallback.
+    #[allow(unused_variables)]
+    fn rshl<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Err(Error::not_supported(strand))
+    }
 
     /// Computes the right shift of this object and another.
     /// # Default
@@ -1362,6 +1453,19 @@ pub trait Object<'v>: Sized + 'v {
             strand,
             format!("right shift not supported: {}", Self::NAME),
         ))
+    }
+    /// Implements reflected shr: `other` is the left operand and this object is the right.
+    ///
+    /// # Default
+    /// Returns `Unsupported` so the caller can try its final fallback.
+    #[allow(unused_variables)]
+    fn rshr<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Err(Error::not_supported(strand))
     }
 
     /// Compares this object to another for less-than ordering.
@@ -2010,6 +2114,21 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         Ok(Value::from_bool(result))
     }
 
+    fn op_req<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        let result = Strand::for_native_frame(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(req)")),
+            |strand| T::req(Instance::from_recv(&this), strand, other),
+        )?;
+        Ok(Value::from_bool(result))
+    }
+
     fn op_ne<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -2021,6 +2140,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(ne)")),
             |strand| T::ne(Instance::from_recv(&this), strand, other),
+        )?;
+        Ok(Value::from_bool(result))
+    }
+    fn op_rne<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        let result = Strand::for_native_frame(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(rne)")),
+            |strand| T::rne(Instance::from_recv(&this), strand, other),
         )?;
         Ok(Value::from_bool(result))
     }
@@ -2077,6 +2210,28 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         )?;
         Ok(out)
     }
+    fn op_rband<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        let mut out = Value::NIL;
+        Strand::for_native_frame(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(rband)")),
+            |strand| {
+                T::rband(
+                    Instance::from_recv(&this),
+                    strand,
+                    other,
+                    Slot::new(&mut out),
+                )
+            },
+        )?;
+        Ok(out)
+    }
 
     fn op_bor<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -2091,6 +2246,28 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(bor)")),
             |strand| {
                 T::bor(
+                    Instance::from_recv(&this),
+                    strand,
+                    other,
+                    Slot::new(&mut out),
+                )
+            },
+        )?;
+        Ok(out)
+    }
+    fn op_rbor<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        let mut out = Value::NIL;
+        Strand::for_native_frame(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(rbor)")),
+            |strand| {
+                T::rbor(
                     Instance::from_recv(&this),
                     strand,
                     other,
@@ -2123,6 +2300,28 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         )?;
         Ok(out)
     }
+    fn op_rbxor<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        let mut out = Value::NIL;
+        Strand::for_native_frame(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(rbxor)")),
+            |strand| {
+                T::rbxor(
+                    Instance::from_recv(&this),
+                    strand,
+                    other,
+                    Slot::new(&mut out),
+                )
+            },
+        )?;
+        Ok(out)
+    }
 
     fn op_shl<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -2137,6 +2336,28 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(shl)")),
             |strand| {
                 T::shl(
+                    Instance::from_recv(&this),
+                    strand,
+                    other,
+                    Slot::new(&mut out),
+                )
+            },
+        )?;
+        Ok(out)
+    }
+    fn op_rshl<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        let mut out = Value::NIL;
+        Strand::for_native_frame(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(rshl)")),
+            |strand| {
+                T::rshl(
                     Instance::from_recv(&this),
                     strand,
                     other,
@@ -2169,6 +2390,28 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         )?;
         Ok(out)
     }
+    fn op_rshr<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        let mut out = Value::NIL;
+        Strand::for_native_frame(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(rshr)")),
+            |strand| {
+                T::rshr(
+                    Instance::from_recv(&this),
+                    strand,
+                    other,
+                    Slot::new(&mut out),
+                )
+            },
+        )?;
+        Ok(out)
+    }
 
     fn op_add<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -2183,6 +2426,28 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(add)")),
             |strand| {
                 T::add(
+                    Instance::from_recv(&this),
+                    strand,
+                    other,
+                    Slot::new(&mut out),
+                )
+            },
+        )?;
+        Ok(out)
+    }
+    fn op_radd<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        let mut out = Value::NIL;
+        Strand::for_native_frame(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(radd)")),
+            |strand| {
+                T::radd(
                     Instance::from_recv(&this),
                     strand,
                     other,
@@ -2252,6 +2517,28 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(mul)")),
             |strand| {
                 T::mul(
+                    Instance::from_recv(&this),
+                    strand,
+                    other,
+                    Slot::new(&mut out),
+                )
+            },
+        )?;
+        Ok(out)
+    }
+    fn op_rmul<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        let mut out = Value::NIL;
+        Strand::for_native_frame(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(rmul)")),
+            |strand| {
+                T::rmul(
                     Instance::from_recv(&this),
                     strand,
                     other,
@@ -2980,18 +3267,25 @@ impl<'v, 'a> TypeBuilderInner<'v, 'a> {
         let entries = merge_entries(self.entries);
         let type_entries = merge_entries(self.type_entries);
 
-        // `Value` supplies the members every value has, through `entries`.
+        // These methods are forwarded by ObjectWrap to Object. The native type
+        // advertises them even when Object uses a default implementation.
         let mut members = vec![
             Member::method(Sym::well_known(sym::INIT_METHOD)),
             Member::method(Sym::well_known(sym::FMT_METHOD)),
             Member::method(Sym::well_known(sym::BOOL_METHOD)),
+            Member::method(Sym::well_known(sym::EQ_METHOD)),
+            Member::method(Sym::well_known(sym::REQ_METHOD)),
+            Member::method(Sym::well_known(sym::NE_METHOD)),
+            Member::method(Sym::well_known(sym::RNE_METHOD)),
             Member::method(Sym::well_known(sym::LT_METHOD)),
             Member::method(Sym::well_known(sym::NEG_METHOD)),
             Member::method(Sym::well_known(sym::BNOT_METHOD)),
             Member::method(Sym::well_known(sym::ADD_METHOD)),
+            Member::method(Sym::well_known(sym::RADD_METHOD)),
             Member::method(Sym::well_known(sym::SUB_METHOD)),
             Member::method(Sym::well_known(sym::RSUB_METHOD)),
             Member::method(Sym::well_known(sym::MUL_METHOD)),
+            Member::method(Sym::well_known(sym::RMUL_METHOD)),
             Member::method(Sym::well_known(sym::DIV_METHOD)),
             Member::method(Sym::well_known(sym::RDIV_METHOD)),
             Member::method(Sym::well_known(sym::EDIV_METHOD)),
@@ -2999,10 +3293,20 @@ impl<'v, 'a> TypeBuilderInner<'v, 'a> {
             Member::method(Sym::well_known(sym::MOD_METHOD)),
             Member::method(Sym::well_known(sym::RMOD_METHOD)),
             Member::method(Sym::well_known(sym::BAND_METHOD)),
+            Member::method(Sym::well_known(sym::RBAND_METHOD)),
             Member::method(Sym::well_known(sym::BOR_METHOD)),
+            Member::method(Sym::well_known(sym::RBOR_METHOD)),
             Member::method(Sym::well_known(sym::BXOR_METHOD)),
+            Member::method(Sym::well_known(sym::RBXOR_METHOD)),
+            Member::method(Sym::well_known(sym::SHL_METHOD)),
+            Member::method(Sym::well_known(sym::RSHL_METHOD)),
+            Member::method(Sym::well_known(sym::SHR_METHOD)),
+            Member::method(Sym::well_known(sym::RSHR_METHOD)),
         ];
-        members.extend(entries.iter().map(|(sym, entry)| {
+        // Entries resolve local handlers and abstract supertypes by MRO,
+        // including Value last when it was not named explicitly. An entry's
+        // semantic kind wins over the forwarded method of the same name.
+        for (sym, entry) in &entries {
             let kind = match entry {
                 Entry::Method(_) => MemberKind::Method,
                 Entry::Getter(_) => MemberKind::Getter,
@@ -3010,8 +3314,12 @@ impl<'v, 'a> TypeBuilderInner<'v, 'a> {
                 Entry::Property(_, _) => MemberKind::Property,
                 Entry::Delegate(_, kind) => *kind,
             };
-            Member::new(*sym, kind)
-        }));
+            if let Some(existing) = members.iter_mut().find(|member| member.sym == *sym) {
+                existing.kind = kind;
+            } else {
+                members.push(Member::new(*sym, kind));
+            }
+        }
         let mut type_members = type_entries
             .iter()
             .map(|(sym, entry)| {

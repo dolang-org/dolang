@@ -1,0 +1,32 @@
+# The right operand supplies the reflected member when the left lacks an operator.
+pub class Left
+  pub field value @ Int = 0
+
+pub class Right
+  pub def (radd) _self other @ Left -> Str
+    str $other.value
+
+  pub def (rshl) _self other @ Left -> Str
+    str $other.value
+
+  pub def (rne) _self _other @ Value -> Bool
+    true
+
+pub def add left @ Left right @ Right -> Str
+  (left + right)
+
+pub def shift left @ Left right @ Right -> Str
+  (left << right)
+
+pub def compare left @ Left right @ Right -> Bool
+  (left != right)
+
+pub def call_reflected left @ Left right @ Right -> Bool
+  (right.(rne) left)
+
+pub class ForwardOnly
+  pub def (add) _self other @ Left -> Str
+    str $other.value
+
+pub def add_forward left @ Left right @ ForwardOnly -> Str
+  (left + right)

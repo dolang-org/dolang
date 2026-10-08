@@ -27,6 +27,7 @@ assert_eq (x % y) 0
 assert_eq (3 + x) 24
 assert_eq (28 - x) 7
 assert_eq (3 * x) 63
+assert_eq (x.(radd) 3) 24
 assert_eq (147 // x) 7
 assert_eq (22 % x) 1
 
@@ -37,12 +38,19 @@ assert_eq (-x) -21
 assert_eq (x & 15) 5
 assert_eq (x | 2) 23
 assert_eq (x ^ 4) 17
+assert_eq (3 & x) 1
+assert_eq (3 | x) 23
+assert_eq (3 ^ x) 22
+assert_eq (2 << x) 4194304
+assert_eq (2147483648 >> x) 1024
 assert_eq (~x) -22
 
 # Comparison
 assert (x == x)
 assert (y < x)
 assert (x == 21)
+assert (21 == x)
+assert_not (21 != x)
 
 # Bool
 assert (bool x)
@@ -55,3 +63,21 @@ assert_eq (hash x) (hash (MyInt 21))
 assert_eq (str (FmtValue x kind: :BIN:)) "10101"
 assert_eq (str (FmtValue x kind: :OCT:)) "25"
 assert_eq (str (FmtValue x kind: :HEX:)) "15"
+
+# A Do equality override supplies default inequality; reflected inequality
+# delegates to the native supertype.
+class NonReflexiveInt: Int
+  def (init) self value
+    Int.(init) $self $value
+
+  def (eq) _self _other
+    false
+
+  def (req) _self _other
+    false
+
+let nonreflexive = NonReflexiveInt 4
+assert_not (nonreflexive == nonreflexive)
+assert (nonreflexive != nonreflexive)
+assert_not (4 == nonreflexive)
+assert_not (4 != nonreflexive)
