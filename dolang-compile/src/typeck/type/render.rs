@@ -10,8 +10,8 @@ use std::{
 };
 
 use super::{
-    Argument, Binder, BinderOrigin, Binding, BoundRef, Database, DeclId, Element, Kind, Literal,
-    Multiplicity, Rest, SchemaItem, Type, TypeId, UnionMember,
+    Argument, Binder, BinderOrigin, Binding, BoundRef, Database, DeclId, Element, Intrinsic, Kind,
+    Literal, Multiplicity, Rest, SchemaItem, Type, TypeId, UnionMember,
 };
 
 /// What the environment a type is rendered in knows about it
@@ -250,6 +250,17 @@ struct Renderer<'a> {
 }
 
 impl Renderer<'_> {
+    /// The class a projecting intrinsic is applied as: its designated declaration,
+    /// or its bare name where none is designated
+    fn head(&self, intrinsic: Intrinsic, naming: Naming<'_>, out: &mut String) {
+        match self.db.intrinsic(intrinsic) {
+            Some(ty) => self.render_into(ty, naming, out),
+            None => {
+                let _ = write!(out, "{intrinsic:?}");
+            }
+        }
+    }
+
     fn render_into(&self, ty: TypeId, naming: Naming<'_>, out: &mut String) {
         let db = self.db;
         match db.ty(ty) {
@@ -430,22 +441,24 @@ impl Renderer<'_> {
                             UnionMember::Keys(ty)
                             | UnionMember::Values(ty)
                             | UnionMember::Entries(ty) => {
-                                let name = match member {
-                                    UnionMember::Keys(_) => "Keys",
-                                    UnionMember::Values(_) => "Values",
-                                    _ => "Entries",
+                                let head = match member {
+                                    UnionMember::Keys(_) => Intrinsic::Keys,
+                                    UnionMember::Values(_) => Intrinsic::Values,
+                                    _ => Intrinsic::Entries,
                                 };
-                                let _ = write!(out, "{name}[...");
+                                self.head(head, naming, &mut out);
+                                out.push_str("[...");
                                 self.render_into(*ty, naming, &mut out);
                                 out.push(']');
                             }
                             UnionMember::IndexItem(schema, key)
                             | UnionMember::AssignItem(schema, key) => {
-                                let name = match member {
-                                    UnionMember::IndexItem(..) => "IndexItem",
-                                    _ => "AssignItem",
+                                let head = match member {
+                                    UnionMember::IndexItem(..) => Intrinsic::IndexItem,
+                                    _ => Intrinsic::AssignItem,
                                 };
-                                let _ = write!(out, "{name}[");
+                                self.head(head, naming, &mut out);
+                                out.push('[');
                                 self.render_into(*schema, naming, &mut out);
                                 out.push_str(", ");
                                 self.render_into(*key, naming, &mut out);

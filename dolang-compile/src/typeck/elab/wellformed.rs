@@ -110,8 +110,7 @@ impl Check<'_, '_> {
         let mut solver = Solver::new(self.db);
         #[cfg(feature = "debug")]
         {
-            let (db, tables) = (self.db, self.tables);
-            solver.named(move |ty| tables.render_type(db, ty));
+            solver.named(self.tables, crate::typeck::r#type::Style::Full);
         }
         let environment = match scope {
             Some(decl) => solver.rigid_environment(decl),

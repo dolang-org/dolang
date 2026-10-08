@@ -325,8 +325,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
         #[cfg(feature = "debug")]
         {
-            let (db, tables) = (self.db, self.tables);
-            solver.named(move |ty| tables.render_type(db, ty));
+            solver.named(self.tables, crate::typeck::r#type::Style::Full);
         }
         solver
     }
