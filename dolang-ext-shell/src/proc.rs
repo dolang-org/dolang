@@ -5,7 +5,7 @@ use dolang::{
         object::{TypeBuilder, fmt},
         strand::Redirect,
         unpack,
-        value::{TypeObject, View},
+        value::{Singleton, TypeObject, View},
         vm::Register,
     },
 };
@@ -353,6 +353,19 @@ pub(crate) fn configure_vm<'v>(
                     Ok(())
                 })
         })
+        .function_with_slots(
+            "console",
+            async move |strand, args, out, [mut input, mut output]| {
+                let ([func], []) = unpack!(strand, args, 1, 0)?;
+                Output::set(strand, &mut input, Singleton::Null);
+                dolang_ext_term::default_output(strand, &mut output);
+                Redirect::new(strand)
+                    .input(&input)
+                    .output(&output)
+                    .enter(async move |strand| call!(strand, func, out).await)
+                    .await
+            },
+        )
         .function("enumerate", async move |strand, args, out| {
             let ([], []) = unpack!(strand, args, 0, 0)?;
             let vfs = global.local.get(strand).vfs();

@@ -8,7 +8,7 @@ use dolang::runtime::object::fmt;
 use dolang::runtime::{
     AllocExt, Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
     method,
-    object::{Rest, TypeBuilder, Unpack, UnpackItem},
+    object::{Rest, Spread, SpreadContext, TypeBuilder, Unpack, UnpackItem},
     unpack,
     value::{Nil, Singleton, TypeObject},
     vm::Register,
@@ -943,6 +943,17 @@ impl<'v> Object<'v> for Run<'v> {
         let ([name], [], args) = unpack!(strand, args, 1, 0, ...)?;
         let name = program_name_from_value(strand, global, &name)?;
         dispatch_run(strand, &name, args, global).await
+    }
+
+    /// Every name is a valid key, but none can be listed, so `run` spreads as
+    /// no items.
+    async fn spread<'a, 's>(
+        _this: Instance<'v, 'a, Self>,
+        _strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        _sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        Ok(())
     }
 
     async fn unpack<'a, 's>(
