@@ -662,7 +662,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
         for step in &data.steps {
             if throws(step) {
-                self.raise(at.ctx, data.handler, &state, self.db.unknown());
+                self.raise(at.ctx, data.handler, &state);
             }
             if !self.step(at, &mut state, step) {
                 return;
@@ -671,14 +671,15 @@ impl<'a, 'u> Flow<'a, 'u> {
         self.terminal(at, state);
     }
 
-    /// Join a state into a handler, with the exception alone on the stack
-    fn raise(&mut self, ctx: CtxId, handler: Option<BlockId>, state: &State, exception: TypeId) {
+    /// Join a state into a handler, with the exception alone on the stack. Which
+    /// exceptions a body raises isn't modeled, so the exception is `Value`.
+    fn raise(&mut self, ctx: CtxId, handler: Option<BlockId>, state: &State) {
         let Some(handler) = handler else {
             return;
         };
         let state = State {
             vars: state.vars.clone(),
-            stack: vec![exception],
+            stack: vec![self.db.top()],
             dup: false,
         };
         self.flow(ctx, handler, state);
@@ -1072,12 +1073,11 @@ impl<'a, 'u> Flow<'a, 'u> {
 
     fn terminal(&mut self, at: At, mut state: State) {
         let data = self.ir.block(at.block);
-        let unknown = self.db.unknown();
         match &data.terminal {
             &Terminal::Branch(target) => self.flow(at.ctx, target, state),
             Terminal::If { cond, then, else_ } => {
                 if has_rule(cond) {
-                    self.raise(at.ctx, data.handler, &state, unknown);
+                    self.raise(at.ctx, data.handler, &state);
                 }
                 let dup = state.dup && matches!(cond.kind, ExprKind::Operand);
                 state.dup = false;
@@ -1106,7 +1106,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 else_,
             } => {
                 let mut operands = Self::operands(&mut state, holes(value));
-                self.raise(at.ctx, data.handler, &state, unknown);
+                self.raise(at.ctx, data.handler, &state);
                 let ty = self.eval(at, &mut state, &mut operands, value);
                 let mut bound = state.clone();
                 if self.bind(at, &mut bound, pattern, ty, value.span) {
@@ -1118,9 +1118,17 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let count = clauses.iter().map(|(class, _)| holes(class)).sum();
                 let mut operands = Self::operands(&mut state, count);
                 if clauses.iter().any(|(class, _)| has_rule(class)) {
-                    self.raise(at.ctx, data.handler, &state, unknown);
+                    self.raise(at.ctx, data.handler, &state);
                 }
                 let solver = self.solver();
+                // A clause whose class isn't known, or a catch-all, binds a
+                // dynamic exception outside a strict unit
+                let strict = self.tables.units[self.unit.index()].strict;
+                let unknown = self.db.unknown();
+                let unclassed = |rest| match strict {
+                    true => rest,
+                    false => unknown,
+                };
                 let mut rest = *state.stack.last().expect("the exception");
                 for (class, clause) in clauses {
                     let ty = self.eval(at, &mut state, &mut operands, class);
@@ -1132,7 +1140,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                             rest = solver.narrow(rest, upper, true, target);
                             caught
                         }
-                        None => rest,
+                        None => unclassed(rest),
                     };
                     if caught != self.db.bottom() {
                         let mut entered = state.clone();
@@ -1140,7 +1148,8 @@ impl<'a, 'u> Flow<'a, 'u> {
                         self.flow(at.ctx, *clause, entered);
                     }
                 }
-                *state.stack.last_mut().expect("the exception") = rest;
+                // A generated rethrow only pops the exception, so this is for a catch-all
+                *state.stack.last_mut().expect("the exception") = unclassed(rest);
                 self.flow(at.ctx, *otherwise, state);
             }
             Terminal::Next {
@@ -1150,7 +1159,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 exit,
                 span,
             } => {
-                self.raise(at.ctx, data.handler, &state, unknown);
+                self.raise(at.ctx, data.handler, &state);
                 let iteratee = iter.map(|iter| self.read(at, &state, iter).ty);
                 let item = self.next(at, &mut state, iteratee, *span);
                 let mut bound = state.clone();
@@ -1161,11 +1170,11 @@ impl<'a, 'u> Flow<'a, 'u> {
             }
             Terminal::Throw(value) => {
                 if has_rule(value) {
-                    self.raise(at.ctx, data.handler, &state, unknown);
+                    self.raise(at.ctx, data.handler, &state);
                 }
                 let mut operands = Self::operands(&mut state, holes(value));
-                let ty = self.eval(at, &mut state, &mut operands, value);
-                self.raise(at.ctx, data.handler, &state, ty);
+                self.eval(at, &mut state, &mut operands, value);
+                self.raise(at.ctx, data.handler, &state);
             }
             &Terminal::Leave { entry, tag } => {
                 let ctx = self.contexts.push(at.ctx, tag);
@@ -1178,7 +1187,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let outer = self.contexts.truncate(at.ctx, depth);
                 match tag {
                     Tag::Goto(target) => self.flow(outer, target, state),
-                    Tag::Rethrow => self.raise(outer, data.handler, &state, unknown),
+                    Tag::Rethrow => self.raise(outer, data.handler, &state),
                 }
             }
             Terminal::Guard { next, targets } => {
@@ -1192,7 +1201,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             }
             Terminal::ReturnFrom { func, value } => {
                 if has_rule(value) {
-                    self.raise(at.ctx, data.handler, &state, unknown);
+                    self.raise(at.ctx, data.handler, &state);
                 }
                 let result = self.ir.func(*func).result;
                 let expected = self.result_annotation(result);
