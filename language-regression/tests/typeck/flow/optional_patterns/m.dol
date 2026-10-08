@@ -94,7 +94,7 @@ pub def empty_and_constants()
 
 pub def required_inner()
   let ?k: (j: (a = 1)) = (k: ())
-  # error: `std.Tuple[{}]` can never unpack as this pattern
+  # error: `()` can never unpack as this pattern
   #   --> m.dol:LL:LL
   #    |
   # LL |   let ?k: (j: (a = 1)) = (k: ())
@@ -125,7 +125,7 @@ pub def loops values @ Array[Record[...{?k: Tuple[Int]}]]
     for ?k: (a = "none") = values
       - $a
   let _ = xs
-  #       ^~: flow std.Array[std.Int | std.Str]
+  #       ^~: flow [std.Int | std.Str]
 
 pub def accepts block @ ((?k: Tuple[Int]) -> (Int | Str))
   ...

@@ -11,7 +11,7 @@ pub def fitting :n @ Int = 1
 
 pub def expected :xs @ Array[Int] = []
   let _ = xs
-  #       ^~: flow std.Array[std.Int]
+  #       ^~: flow [std.Int]
 
 pub def sentinel :limit @ Int = nil
   let _ = limit

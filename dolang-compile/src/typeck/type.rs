@@ -2405,4 +2405,4 @@ mod render;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use render::{Names, Style};
+pub(crate) use render::{Collection, Names, Style};

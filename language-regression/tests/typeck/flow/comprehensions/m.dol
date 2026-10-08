@@ -53,7 +53,7 @@ pub def collected xs @ Array[Int]
       "k": $x
       key: a
   let _ = d
-  #       ^: flow std.Dict[{*(std.Str | std.Sym): std.Int | std.Str}]
+  #       ^: flow std.Dict[std.Str | std.Sym, std.Int | std.Str]
   let ys = $
     for x = xs
       if (x > 0)
@@ -61,7 +61,7 @@ pub def collected xs @ Array[Int]
       else
         - a
   let _ = ys
-  #       ^~: flow std.Array[std.Int | std.Str]
+  #       ^~: flow [std.Int | std.Str]
 
 # A `do` block among the items is typed against what's expected of it
 pub def typed xs @ Array[Int]
@@ -113,7 +113,7 @@ pub def specified xs @ Array[Int]
     name: a
   let d @ Dict[{name: Str, ?port: Int}] = {name: "a"}
   let _ = d
-  #       ^: flow std.Dict[{name: std.Str, ?port: std.Int}]
+  #       ^: flow {name: std.Str, ?port: std.Int}
   specs
     for _x = xs
       - icon: b

@@ -12,7 +12,7 @@ pub def covariance items @ Array[Str] view @ BaseArray[Str]
   reads $items
   reads $view
   writes $items
-  # error: expected `std.Array[std.Str | std.Sym]`, found `std.Array[std.Str]`
+  # error: expected `[std.Str | std.Sym]`, found `[std.Str]`
   #   --> m.dol:LL:LL
   #    |
   # LL |   writes $items
@@ -20,13 +20,13 @@ pub def covariance items @ Array[Str] view @ BaseArray[Str]
   #    |
   #    = note: `std.Str` doesn't accept `std.Sym`
   writes $view
-  # error: expected `std.Array[std.Str | std.Sym]`, found `std.BaseArray[std.Str]`
+  # error: expected `[std.Str | std.Sym]`, found `std.BaseArray[std.Str]`
   #   --> m.dol:LL:LL
   #    |
   # LL |   writes $view
   #    |           ^^^^
   let _ = items
-  #       ^~~~~: flow std.Array[std.Str]
+  #       ^~~~~: flow [std.Str]
 
 pub def read view @ BaseArray[Int]
   let _ = view.len
@@ -48,9 +48,9 @@ pub def read view @ BaseArray[Int]
   let _ = view.iter()
   #   ^: flow std.UnpackIter[std.Int]
   let _ = view.pairs()
-  #   ^: flow std.UnpackIter[std.Tuple[{std.Int, std.Int}]]
+  #   ^: flow std.UnpackIter[(std.Int, std.Int)]
   let _ = [...view]
-  #   ^: flow std.Array[std.Int]
+  #   ^: flow [std.Int]
   let first ...rest = view
   let _ = first
   #       ^~~~~: flow std.Int
@@ -115,9 +115,9 @@ pub def not_sink view @ BaseArray[Int]
 
 pub def mutable items @ Array[Int] replacement @ BaseArray[Int]
   let _ = items.copy()
-  #   ^: flow std.Array[std.Int]
+  #   ^: flow [std.Int]
   let _ = items[1..3]
-  #   ^: flow std.Array[std.Int]
+  #   ^: flow [std.Int]
   items[..] = replacement
   items[..] = (1, 2)
   items[0] = 1
@@ -133,7 +133,7 @@ pub def sequences seq @ Seq[Str]
   # LL |   reads $seq
   #    |          ^^^
   reads ("a", "b")
-  # error: expected `std.BaseArray[std.Str | std.Sym]`, found `std.Tuple[{"a", "b"}]`
+  # error: expected `std.BaseArray[std.Str | std.Sym]`, found `("a", "b")`
   #   --> m.dol:LL:LL
   #    |
   # LL |   reads ("a", "b")
@@ -148,30 +148,30 @@ pub def sequences seq @ Seq[Str]
 pub def literals ints @ Array[Int]
   let ordinary @ BaseArray[Int | Str] = [1]
   let _ = ordinary
-  #       ^~~~~~~~: flow std.Array[std.Int | std.Str]
+  #       ^~~~~~~~: flow [std.Int | std.Str]
   ordinary.push "later"
   let empty @ BaseArray[Int | Str] = []
   let _ = empty
-  #       ^~~~~: flow std.Array[std.Int | std.Str]
+  #       ^~~~~: flow [std.Int | std.Str]
   let spread @ BaseArray[Int | Str] = [...ints]
   let _ = spread
-  #       ^~~~~~: flow std.Array[std.Int | std.Str]
+  #       ^~~~~~: flow [std.Int | std.Str]
   let nested @ BaseArray[BaseArray[Int | Str]] = [[1]]
   let _ = nested
-  #       ^~~~~~: flow std.Array[std.BaseArray[std.Int | std.Str]]
+  #       ^~~~~~: flow [std.BaseArray[std.Int | std.Str]]
   let comprehension @ BaseArray[Int | Str] = $
     for item = ints
       - $item
   let _ = comprehension
-  #       ^~~~~~~~~~~~~: flow std.Array[std.Int | std.Str]
+  #       ^~~~~~~~~~~~~: flow [std.Int | std.Str]
   let union @ (nil | BaseArray[Int | Str]) = [1]
   let _ = union
-  #       ^~~~~: flow std.Array[std.Int | std.Str]
+  #       ^~~~~: flow [std.Int | std.Str]
   let funcs @ BaseArray[((Int, <Iter[Value], >Sink[Value]) -> Int)] = [(do |x| x.abs())]
   let _ = funcs
-  #       ^~~~~: flow std.Array[(std.Int, <std.Iter[Value], >std.Sink[Value]) -> std.Int]
+  #       ^~~~~: flow [(std.Int, <std.Iter[Value], >std.Sink[Value]) -> std.Int]
   let _bad @ BaseArray[Str] = [1]
-  # error: `std.Array[std.Int]` does not fit the annotation `std.BaseArray[std.Str]`
+  # error: `[std.Int]` does not fit the annotation `std.BaseArray[std.Str]`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _bad @ BaseArray[Str] = [1]
@@ -188,7 +188,7 @@ pub def literal_call()
   reads ["a"]
   reads []
   reads [1]
-# error: expected `std.BaseArray[std.Str | std.Sym]`, found `std.Array[std.Int]`
+# error: expected `std.BaseArray[std.Str | std.Sym]`, found `[std.Int]`
 #   --> m.dol:LL:LL
 #    |
 # LL |   reads [1]

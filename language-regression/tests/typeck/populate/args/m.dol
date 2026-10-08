@@ -28,17 +28,17 @@ pub let keyword @ Keyed[Text, K: Text] = nil
 pub let keyword_default @ Keyed[Text] = nil
 #                         ^~~~~~~~~~~: type m.Keyed[m.Text]
 pub let items @ Tuple[Num, Text] = nil
-#               ^~~~~~~~~~~~~~~~: type m.Tuple[{m.Num, m.Text}]
+#               ^~~~~~~~~~~~~~~~: type m.Tuple[m.Num, m.Text]
 pub let empty @ Tuple[] = nil
-#               ^~~~~~~: type m.Tuple[{}]
+#               ^~~~~~~: type m.Tuple[]
 pub let expanded @ Tuple[Num, ...Text] = nil
-#                  ^~~~~~~~~~~~~~~~~~~: type m.Tuple[{m.Num, *m.Text}]
+#                  ^~~~~~~~~~~~~~~~~~~: type m.Tuple[m.Num, ...m.Text]
 pub let keyed @ Record[a: Num] = nil
-#               ^~~~~~~~~~~~~~: type m.Record[{a: m.Num}]
+#               ^~~~~~~~~~~~~~: type m.Record[a: m.Num]
 pub let short @ Table[Num] = nil
-#               ^~~~~~~~~~: type m.Table[{*m.Num}]
+#               ^~~~~~~~~~: type m.Table[m.Num]
 pub let short_keyed @ Table[Text, Num] = nil
-#                     ^~~~~~~~~~~~~~~~: type m.Table[{*(m.Text): m.Num}]
+#                     ^~~~~~~~~~~~~~~~: type m.Table[m.Text, m.Num]
 pub let whole @ Table[{Num}] = nil
 #               ^~~~~~~~~~~~: type m.Table[{m.Num}]
 pub let later @ Early[] = nil

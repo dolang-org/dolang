@@ -49,7 +49,7 @@ pub def chosen()
   spec {flag: "v"} {opt: "n", default: 1}
   let f @ (Flag | Opt) = {opt: "n", help: "count"}
   let _ = f
-  #       ^: flow std.Dict[{opt: std.Str, ?default: std.Int, ?help: std.Str}]
+  #       ^: flow {opt: std.Str, ?default: std.Int, ?help: std.Str}
   spec
     - flag: verbose
       help: be chatty

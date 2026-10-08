@@ -14,8 +14,8 @@ use crate::{
     RestKind,
     source::Span,
     typeck::r#type::{
-        BinderOrigin, Database, DeclId, Declaration, Kind, Member, Names, Scope, Style, Type,
-        TypeId, UnitId, UnitSpan, Variance,
+        BinderOrigin, Collection, Database, DeclId, Declaration, Intrinsic, Kind, Member, Names,
+        Scope, Style, Type, TypeId, UnitId, UnitSpan, Variance,
     },
 };
 
@@ -577,7 +577,7 @@ impl Tables<'_> {
         let rendered = self.render(db, shown, &names);
         match written[..] {
             [] => rendered,
-            _ => format!("[{}] {rendered}", written.join(", ")),
+            _ => format!("@[{}] {rendered}", written.join(", ")),
         }
     }
 
@@ -591,5 +591,15 @@ impl Tables<'_> {
 impl Names for Tables<'_> {
     fn declaration(&self, id: DeclId) -> Cow<'_, str> {
         Cow::Owned(self.declared(id))
+    }
+
+    fn collection(&self, id: DeclId) -> Option<Collection> {
+        match self.designated.get(&id)? {
+            Designated::Array => Some(Collection::Array),
+            Designated::Intrinsic(Intrinsic::Tuple) => Some(Collection::Tuple),
+            Designated::Record => Some(Collection::Record),
+            Designated::Dict => Some(Collection::Dict),
+            _ => None,
+        }
     }
 }

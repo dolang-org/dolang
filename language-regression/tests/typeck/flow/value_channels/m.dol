@@ -49,7 +49,7 @@ pub def store_marked h @ Holder f @ ((Int, <Value, >Value) -> nil)
 # A block taking `Value` channels can't write
 pub def writer()
   let _w @ Callback = do |x| put $x
-# error: this call does not fit `forall (#0.0, >std.Sink[#0.0]) -> nil`
+# error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
 #   --> m.dol:LL:LL
 #    |
 # LL |   let _w @ Callback = do |x| put $x
@@ -58,7 +58,7 @@ pub def writer()
 # Nor can one assigned to a field, which takes the field's type
 pub def field_writer h @ Holder
   h.cb = do |x| put $x
-# error: this call does not fit `forall (#0.0, >std.Sink[#0.0]) -> nil`
+# error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
 #   --> m.dol:LL:LL
 #    |
 # LL |   h.cb = do |x| put $x

@@ -40,18 +40,18 @@ pub def instances a @ Adder i @ Ident p @ Picker
   let _ = apply $a
   #   ^: flow std.Str
   let _ = map_each [1] $a
-  #   ^: flow std.Array[std.Str]
+  #   ^: flow [std.Str]
   let _ = map_each [1] $i
-  #   ^: flow std.Array[std.Int]
+  #   ^: flow [std.Int]
   let _ = map_each [1] $p
-  #   ^: flow std.Array[std.Int]
+  #   ^: flow [std.Int]
   let _ = map_each ["s"] $p
-  #   ^: flow std.Array[std.Str]
+  #   ^: flow [std.Str]
 
 pub def objects()
   let _ = map_each [1] $Point
-  #   ^: flow std.Array[m.Point]
+  #   ^: flow [m.Point]
   let _ = map_each [1] $Box
-  #   ^: flow std.Array[m.Box[std.Int]]
+  #   ^: flow [m.Box[std.Int]]
   let _ = map_each [1] $Factory
-  #   ^: flow std.Array[std.Str]
+  #   ^: flow [std.Str]

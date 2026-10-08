@@ -14,7 +14,7 @@ pub def tuple_rest()
   #       ^: flow std.Unpack[{std.Str, std.Bool}]
   let xs = [...r]
   let _ = xs
-  #       ^~: flow std.Array[std.Bool | std.Str]
+  #       ^~: flow [std.Bool | std.Str]
 
 pub def array_rest xs @ Array[Int]
   let a ...r = xs
@@ -34,7 +34,7 @@ pub def quantified source @ Unpack[{Int, ?Str, *Bool}]
   #       ^: flow std.Spread[{?std.Str, *std.Bool}]
   let _ _ ...t = source
   let _ = t
-  #       ^: flow std.Spread[{*std.Bool}]
+  #       ^: flow std.Spread[std.Bool]
 
 pub def keyed()
   let :a ...r = (a: 1, b: "x")
@@ -87,7 +87,7 @@ pub def iterators s @ Str
 pub def dict_rest d @ Dict[Str, Int]
   let "a": _a ...r = d
   let _ = r
-  #       ^: flow std.Unpack[{*(std.Str): std.Int}]
+  #       ^: flow std.Unpack[std.Str, std.Int]
 
 pub def dynamic v
   let a ...r = v
@@ -131,14 +131,14 @@ pub def impossible()
     #    |                  ^
     nil
   if let _foo _bar = (4,)
-    # error: `std.Tuple[{4}]` can never unpack as this pattern
+    # error: `(4,)` can never unpack as this pattern
     #   --> m.dol:LL:LL
     #    |
     # LL |   if let _foo _bar = (4,)
     #    |                      ^^^^
     nil
   let _a _b = (4,)
-# error: `std.Tuple[{4}]` can never unpack as this pattern
+# error: `(4,)` can never unpack as this pattern
 #   --> m.dol:LL:LL
 #    |
 # LL |   let _a _b = (4,)

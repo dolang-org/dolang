@@ -13,14 +13,13 @@ pub def writes _d @ Dict[{a: (Int | Str)}]
 pub def passed d @ Dict[{a: Int}]
   reads $d
   writes $d
-# error: expected `std.Dict[{a: std.Int | std.Str}]`, found `std.Dict[{a: std.Int}]`
+# error: expected `{a: std.Int | std.Str}`, found `{a: std.Int}`
 #   --> m.dol:LL:LL
 #    |
 # LL |   writes $d
 #    |           ^
 #    |
 #    = note: `std.Int` doesn't accept `std.Str`
-#    = note: in `{a: std.Int}`
 
 # It reads as a dict does, but a copy is only as writable as the original
 pub def read b @ BaseDict[{a: Int}]
@@ -53,4 +52,4 @@ pub def literal()
   #    = note: `"x"` does not fit `std.Int`
   let d @ BaseDict[{?port: Int}] = {port: 1}
   let _ = d
-  #       ^: flow std.Dict[{?port: std.Int}]
+  #       ^: flow {?port: std.Int}

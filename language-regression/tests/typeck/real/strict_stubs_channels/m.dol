@@ -7,7 +7,7 @@ import time load @sqlite @term
 pub def scoped_silent() -> nil
   time.timeout 1 do
     put "x"
-  # error: this call does not fit `forall (#0.0, >std.Sink[#0.0]) -> nil`
+  # error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
   #   --> m.dol:LL:LL
   #    |
   # LL |     put "x"
@@ -27,7 +27,7 @@ pub def loads_silent code @ Bin -> Value
 pub def transaction_silent conn @ sqlite.Connection -> nil
   conn.transaction do |_tx|
     put "x"
-  # error: this call does not fit `forall (#0.0, >std.Sink[#0.0]) -> nil`
+  # error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
   #   --> m.dol:LL:LL
   #    |
   # LL |     put "x"

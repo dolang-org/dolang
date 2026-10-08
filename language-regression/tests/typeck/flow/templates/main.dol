@@ -151,7 +151,7 @@ pub def database conn @ Connection
   # LL |   stmt.execute 1 typo: 2
   #    |   ^^^^^^^^^^^^^^^^^^^^^^
   stmt.execute 1 id: [1]
-  # error: expected `sqlite.SqlValue`, found `std.Array[std.Int]`
+  # error: expected `sqlite.SqlValue`, found `[std.Int]`
   #   --> main.dol:LL:LL
   #    |
   # LL |   stmt.execute 1 id: [1]
@@ -166,13 +166,13 @@ pub def database conn @ Connection
   #    |
   #    = note: `{typo: 2}` may be missing `id: Unknown`
   conn.execute t"SELECT ${#id}" id: [1]
-  # error: expected `{*sqlite.SqlValue, *(std.Sym): sqlite.SqlValue}`, found `{id: std.Array[std.Int]}`
+  # error: expected `{*sqlite.SqlValue, *(std.Sym): sqlite.SqlValue}`, found `{id: [std.Int]}`
   #   --> main.dol:LL:LL
   #    |
   # LL |   conn.execute t"SELECT ${#id}" id: [1]
   #    |                                     ^^^
   #    |
-  #    = note: `std.Array[std.Int]` does not fit `sqlite.SqlValue`
+  #    = note: `[std.Int]` does not fit `sqlite.SqlValue`
   conn.prepare t"SELECT ${#id}" do |prepared|
     prepared.execute id: 1
     prepared.query typo: 1
@@ -197,8 +197,8 @@ pub def database conn @ Connection
 # LL |   conn.prepare t"SELECT $([1, 2])"
 #    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 #    |
-#    = note: `[S] (sqlite.Connection, std.Fmt[sqlite.SqlValue, S]) -> sqlite.Statement[S]`: expected `std.Fmt[sqlite.SqlValue, {}]`, found `std.Fmt[std.Array[std.Int], {}]`
-#    = note: `[S, R] (sqlite.Connection, std.Fmt[sqlite.SqlValue, S], (sqlite.Statement[S]) -> R) -> R`: this call is missing an argument
+#    = note: `@[S] (sqlite.Connection, std.Fmt[sqlite.SqlValue, S]) -> sqlite.Statement[S]`: expected `std.Fmt[sqlite.SqlValue, {}]`, found `std.Fmt[[std.Int], {}]`
+#    = note: `@[S, R] (sqlite.Connection, std.Fmt[sqlite.SqlValue, S], (sqlite.Statement[S]) -> R) -> R`: this call is missing an argument
 
 pub def variance narrow @ Fmt[Int, {x: Int}] wide @ Fmt[Value, {x: Value}] bare @ Fmt
   let _ @ Fmt[Value, {x: Int}] = narrow

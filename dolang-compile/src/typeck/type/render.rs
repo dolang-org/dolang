@@ -7,13 +7,28 @@ use std::{borrow::Cow, convert::Infallible, fmt::Write};
 
 use super::{
     Argument, Binder, BinderOrigin, Binding, BoundRef, Database, DeclId, Element, Kind, Literal,
-    Multiplicity, Type, TypeId, UnionMember,
+    Multiplicity, Rest, SchemaItem, Type, TypeId, UnionMember,
 };
 
 /// What the environment a type is rendered in knows about it
 pub(crate) trait Names {
     /// A declaration's qualified name, including a signature declaration's
     fn declaration(&self, id: DeclId) -> Cow<'_, str>;
+    /// The collection a declaration's applications are written as, if any
+    fn collection(&self, id: DeclId) -> Option<Collection>;
+}
+
+/// A class whose applications have a literal form
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Collection {
+    /// `[T]`
+    Array,
+    /// `(A, B)`
+    Tuple,
+    /// `(k: A, B)`
+    Record,
+    /// `{k: A, B}`
+    Dict,
 }
 
 /// What a rendered type shows
@@ -45,7 +60,7 @@ impl Database {
         let naming = Naming {
             names: binders,
             depth: 0,
-            pattern: None,
+            groups: None,
         };
         let mut out = String::new();
         renderer.render_into(ty, naming, &mut out);
@@ -120,6 +135,11 @@ impl Renderer<'_> {
                 }
             },
             Type::Apply { base, args, .. } => {
+                if let Type::Decl(id) = db.ty(*base)
+                    && self.collection(*id, args, naming, out)
+                {
+                    return;
+                }
                 self.render_into(*base, naming, out);
                 // Lifted arguments are marked
                 let lifted = match db.ty(*base) {
@@ -155,33 +175,67 @@ impl Renderer<'_> {
                         shown -= 1;
                     }
                 }
-                out.push('[');
-                for (index, arg) in args.iter().enumerate().take(shown) {
-                    if index != 0 {
-                        out.push_str(", ");
+                // The argument for a lone positional schema binder is written as its
+                // only item's element when that item repeats
+                let mut positional = (binders.iter().enumerate().skip(lifted))
+                    .filter(|(_, binder)| !matches!(binder.binding, Binding::Keyword(_)));
+                let schema = match (positional.next(), positional.next()) {
+                    (Some((index, binder)), None)
+                        if binder.kind == Kind::Schema && binder.binding == Binding::Positional =>
+                    {
+                        Some(index)
                     }
+                    _ => None,
+                };
+                let mut shown_args = Vec::new();
+                for (index, arg) in args.iter().enumerate().take(shown) {
+                    let mut out = String::new();
                     if index < lifted {
                         out.push('^');
                     }
+                    let binder = binders.get(index);
                     match arg {
-                        Argument::Positional(ty) => {
-                            if let Some(Binding::Keyword(name)) =
-                                binders.get(index).map(|binder| binder.binding)
-                            {
+                        Argument::Positional(ty) => match binder.map(|binder| binder.binding) {
+                            Some(Binding::Keyword(name)) => {
                                 let _ = write!(out, "{}: ", db.symbol(name));
+                                self.render_into(*ty, naming, &mut out)
                             }
-                            self.render_into(*ty, naming, out)
-                        }
+                            Some(Binding::Rest(_)) if index >= lifted => {
+                                if let Some(items) = self.flat(*ty) {
+                                    shown_args.extend(self.arguments(&items, naming));
+                                    continue;
+                                }
+                                self.render_into(*ty, naming, &mut out)
+                            }
+                            _ if schema == Some(index)
+                                && let Some(element) = self.repeated(*ty) =>
+                            {
+                                match element {
+                                    Element::Keyed { key, value } => {
+                                        self.render_into(key, naming, &mut out);
+                                        out.push_str(", ");
+                                        self.render_into(value, naming, &mut out);
+                                    }
+                                    Element::Positional(ty) | Element::Include(ty) => {
+                                        self.render_into(ty, naming, &mut out)
+                                    }
+                                }
+                            }
+                            _ => self.render_into(*ty, naming, &mut out),
+                        },
                         Argument::Keyword(name, ty) => {
                             let _ = write!(out, "{}: ", db.symbol(*name));
-                            self.render_into(*ty, naming, out);
+                            self.render_into(*ty, naming, &mut out);
                         }
                         Argument::Expand(ty) => {
                             out.push_str("...");
-                            self.render_into(*ty, naming, out);
+                            self.render_into(*ty, naming, &mut out);
                         }
                     }
+                    shown_args.push(out);
                 }
+                out.push('[');
+                out.push_str(&shown_args.join(", "));
                 out.push(']');
             }
             // Its signatures, any of which it's called as
@@ -272,12 +326,49 @@ impl Renderer<'_> {
                 self.items(ty, naming, out);
                 out.push('}');
             }
-            // Its implicit channels are left out, as they were written
+            // Its implicit channels are left out, as they were written, and so are
+            // its implicit binders
             Type::Quantified { binders, body } => {
                 let implicit = |slot: u16| binders[usize::from(slot)].binding == Binding::Implicit;
                 let body = db.without_channels(*body, &implicit, 0);
-                out.push_str("forall ");
-                self.render_into(body, naming.enter(), out);
+                if binders.is_empty() {
+                    return self.render_into(body, naming, out);
+                }
+                let mut next = 1;
+                let mut listed = Vec::new();
+                let names = (binders.iter())
+                    .map(|binder| {
+                        let name = match binder.binding {
+                            Binding::Implicit => return None,
+                            Binding::Keyword(name) => db.symbol(name).to_owned(),
+                            _ => loop {
+                                let name = format!("T{next}");
+                                next += 1;
+                                if !naming.taken(&name) {
+                                    break name;
+                                }
+                            },
+                        };
+                        let sigil = match binder.binding {
+                            Binding::Keyword(_) => ":",
+                            Binding::Rest(Rest::All) => "...",
+                            Binding::Rest(Rest::Positional) => "*",
+                            Binding::Rest(Rest::Keyed) => "**",
+                            _ => "",
+                        };
+                        listed.push(format!("{sigil}{name}"));
+                        Some(name)
+                    })
+                    .collect();
+                if !listed.is_empty() {
+                    let _ = write!(out, "@[{}] ", listed.join(", "));
+                }
+                let group = Group {
+                    depth: naming.depth + 1,
+                    names,
+                    outer: naming.groups,
+                };
+                self.render_into(body, naming.within(&group), out);
             }
             Type::Map { packs, pattern } => {
                 out.push_str("{...");
@@ -287,62 +378,196 @@ impl Renderer<'_> {
         }
     }
 
+    /// An application of a collection class in its literal form, if it has one
+    fn collection(
+        &self,
+        id: DeclId,
+        args: &[Argument],
+        naming: Naming<'_>,
+        out: &mut String,
+    ) -> bool {
+        let Some(collection) = self.names.collection(id) else {
+            return false;
+        };
+        let [Argument::Positional(arg)] = *args else {
+            return false;
+        };
+        if collection == Collection::Array {
+            out.push('[');
+            self.render_into(arg, naming, out);
+            out.push(']');
+            return true;
+        }
+        let Some(items) = self.flat(arg) else {
+            return false;
+        };
+        let keyed = (items.iter()).any(|item| matches!(item.element, Element::Keyed { .. }));
+        let (open, close) = match collection {
+            Collection::Array => unreachable!(),
+            Collection::Tuple => match *items {
+                _ if keyed => return false,
+                // A lone item would be grouping
+                [ref item] if item.multiplicity == Multiplicity::Required => match item.element {
+                    Element::Positional(_) => ("(", ",)"),
+                    _ => return false,
+                },
+                _ => ("(", ")"),
+            },
+            // Only an explicitly keyed item makes parentheses a record
+            Collection::Record if keyed => ("(", ")"),
+            Collection::Record => return false,
+            // A lone repeated item is written as arguments
+            Collection::Dict if self.repeated(arg).is_some() => return false,
+            Collection::Dict => ("{", "}"),
+        };
+        out.push_str(open);
+        self.item_list(&items, naming, out);
+        out.push_str(close);
+        true
+    }
+
+    /// The element of a literal schema's only item, if it repeats and isn't an
+    /// inclusion
+    fn repeated(&self, ty: TypeId) -> Option<Element> {
+        match self.flat(ty)?.as_slice() {
+            [item]
+                if item.multiplicity == Multiplicity::Repeated
+                    && !matches!(item.element, Element::Include(_)) =>
+            {
+                Some(item.element.clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// A literal schema's items, with the items of the literal schemas it
+    /// includes in place of their inclusions
+    fn flat(&self, ty: TypeId) -> Option<Vec<SchemaItem>> {
+        let Type::Schema(items) = self.db.ty(ty) else {
+            return None;
+        };
+        let mut flat = Vec::with_capacity(items.len());
+        for item in items.iter() {
+            if item.multiplicity == Multiplicity::Required
+                && let Element::Include(included) = item.element
+                && let Some(included) = self.flat(included)
+            {
+                flat.extend(included);
+            } else {
+                flat.push(item.clone());
+            }
+        }
+        Some(flat)
+    }
+
+    /// A pack's items as the type arguments that give them
+    fn arguments(&self, items: &[SchemaItem], naming: Naming<'_>) -> Vec<String> {
+        let db = self.db;
+        let mut args = Vec::new();
+        // Items with no argument of their own are included together
+        let mut rest = Vec::new();
+        let flush = |rest: &mut Vec<SchemaItem>, args: &mut Vec<String>| {
+            if !rest.is_empty() {
+                let mut out = String::from("...{");
+                self.item_list(rest, naming, &mut out);
+                out.push('}');
+                args.push(out);
+                rest.clear();
+            }
+        };
+        for item in items {
+            let mut out = String::new();
+            match (item.multiplicity, &item.element) {
+                (Multiplicity::Required, Element::Positional(ty)) => {
+                    self.render_into(*ty, naming, &mut out)
+                }
+                (Multiplicity::Required, Element::Keyed { key, .. })
+                    if matches!(db.ty(*key), Type::Literal(Literal::Sym(_))) =>
+                {
+                    self.item(item, naming, &mut out)
+                }
+                (Multiplicity::Repeated, Element::Positional(_))
+                | (Multiplicity::Required, Element::Include(_)) => {
+                    self.item(item, naming, &mut out);
+                    // `*T` is given as `...T`
+                    if out.starts_with('*') {
+                        out.replace_range(..1, "...");
+                    }
+                }
+                _ => {
+                    rest.push(item.clone());
+                    continue;
+                }
+            }
+            flush(&mut rest, &mut args);
+            args.push(out);
+        }
+        flush(&mut rest, &mut args);
+        args
+    }
+
     /// A mapping's pattern, as written: each item is named by its pack
     fn pattern(&self, packs: &[TypeId], pattern: TypeId, naming: Naming<'_>, out: &mut String) {
-        let items = Pattern {
+        let group = Group {
             depth: naming.depth + 1,
-            packs: (packs.iter())
+            names: (packs.iter())
                 .map(|&pack| {
                     let mut out = String::new();
                     self.render_into(pack, naming, &mut out);
-                    out
+                    Some(out)
                 })
                 .collect(),
-            outer: naming.pattern,
+            outer: naming.groups,
         };
-        let naming = Naming {
-            pattern: Some(&items),
-            ..naming.enter()
-        };
-        self.render_into(pattern, naming, out);
+        self.render_into(pattern, naming.within(&group), out);
     }
 
     /// The items of a schema, or what stands for one
     fn items(&self, ty: TypeId, naming: Naming<'_>, out: &mut String) {
-        let db = self.db;
-        let Type::Schema(items) = db.ty(ty) else {
-            out.push_str("...");
-            return self.render_into(ty, naming, out);
-        };
+        match self.flat(ty) {
+            Some(items) => self.item_list(&items, naming, out),
+            None => {
+                out.push_str("...");
+                self.render_into(ty, naming, out);
+            }
+        }
+    }
+
+    fn item_list(&self, items: &[SchemaItem], naming: Naming<'_>, out: &mut String) {
         for (index, item) in items.iter().enumerate() {
             if index != 0 {
                 out.push_str(", ");
             }
-            out.push_str(match item.multiplicity {
-                Multiplicity::Required => "",
-                Multiplicity::Optional => "?",
-                Multiplicity::Repeated => "*",
-            });
-            match item.element {
-                Element::Positional(ty) => self.render_into(ty, naming, out),
-                Element::Keyed { key, value } => {
-                    match db.ty(key) {
-                        Type::Literal(Literal::Sym(sym)) => out.push_str(db.symbol(*sym)),
-                        _ => {
-                            out.push('(');
-                            self.render_into(key, naming, out);
-                            out.push(')');
-                        }
+            self.item(item, naming, out);
+        }
+    }
+
+    fn item(&self, item: &SchemaItem, naming: Naming<'_>, out: &mut String) {
+        let db = self.db;
+        out.push_str(match item.multiplicity {
+            Multiplicity::Required => "",
+            Multiplicity::Optional => "?",
+            Multiplicity::Repeated => "*",
+        });
+        match item.element {
+            Element::Positional(ty) => self.render_into(ty, naming, out),
+            Element::Keyed { key, value } => {
+                match db.ty(key) {
+                    Type::Literal(Literal::Sym(sym)) => out.push_str(db.symbol(*sym)),
+                    _ => {
+                        out.push('(');
+                        self.render_into(key, naming, out);
+                        out.push(')');
                     }
-                    out.push_str(": ");
-                    self.render_into(value, naming, out);
                 }
-                Element::Include(ty) => {
-                    out.push_str("...");
-                    match db.ty(ty) {
-                        Type::Map { packs, pattern } => self.pattern(packs, *pattern, naming, out),
-                        _ => self.render_into(ty, naming, out),
-                    }
+                out.push_str(": ");
+                self.render_into(value, naming, out);
+            }
+            Element::Include(ty) => {
+                out.push_str("...");
+                match db.ty(ty) {
+                    Type::Map { packs, pattern } => self.pattern(packs, *pattern, naming, out),
+                    _ => self.render_into(ty, naming, out),
                 }
             }
         }
@@ -356,20 +581,20 @@ struct Naming<'a> {
     names: &'a [String],
     /// How many groups have been entered since
     depth: u16,
-    /// The innermost mapping whose pattern is being rendered
-    pattern: Option<&'a Pattern<'a>>,
+    /// The innermost group entered whose binders are named
+    groups: Option<&'a Group<'a>>,
 }
 
-/// A mapping whose pattern is being rendered
-struct Pattern<'a> {
-    /// The depth of the pattern's group
+/// A group entered while rendering: a quantifier's, or a mapping's pattern's
+struct Group<'a> {
+    /// The depth of the group
     depth: u16,
-    /// Each pack, which names its items
-    packs: Vec<String>,
-    outer: Option<&'a Pattern<'a>>,
+    /// Each binder's name, if it has one
+    names: Vec<Option<String>>,
+    outer: Option<&'a Group<'a>>,
 }
 
-impl Naming<'_> {
+impl<'a> Naming<'a> {
     fn enter(self) -> Self {
         Self {
             depth: self.depth + 1,
@@ -377,20 +602,43 @@ impl Naming<'_> {
         }
     }
 
-    /// The name of a reference to the rendered type's group or a pattern's
+    /// Entering `group`
+    fn within<'b>(self, group: &'b Group<'b>) -> Naming<'b>
+    where
+        'a: 'b,
+    {
+        Naming {
+            groups: Some(group),
+            ..self.enter()
+        }
+    }
+
+    /// The name of a reference to the rendered type's group or an entered one
     fn name(&self, reference: BoundRef) -> Option<&str> {
         let level = self.depth.checked_sub(reference.depth)?;
         let slot = usize::from(reference.slot);
         if level == 0 {
             return self.names.get(slot).map(String::as_str);
         }
-        let mut pattern = self.pattern;
-        while let Some(found) = pattern {
+        let mut group = self.groups;
+        while let Some(found) = group {
             if found.depth == level {
-                return found.packs.get(slot).map(String::as_str);
+                return found.names.get(slot)?.as_deref();
             }
-            pattern = found.outer;
+            group = found.outer;
         }
         None
+    }
+
+    /// Whether `name` already names a binder
+    fn taken(&self, name: &str) -> bool {
+        let mut group = self.groups;
+        while let Some(found) = group {
+            if found.names.iter().flatten().any(|taken| taken == name) {
+                return true;
+            }
+            group = found.outer;
+        }
+        self.names.iter().any(|taken| taken == name)
     }
 }

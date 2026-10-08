@@ -87,7 +87,7 @@ pub def typed v @ (Int | Str)
 pub def generic v @ (Int | Array[Str])
   if (type(v, Array))
     let _ = v
-    #       ^: flow std.Array[std.Str]
+    #       ^: flow [std.Str]
   else
     let _ = v
     #       ^: flow std.Int

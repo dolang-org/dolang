@@ -8,7 +8,7 @@ pub def kinds _d @ Dict[{kind: (:a: | :b:), name: Str}]
 pub def decayed()
   let d = {kind: :a:, name: "x"}
   kinds $d
-# error: expected `std.Dict[{kind: :a: | :b:, name: std.Str}]`, found `std.Dict[{*(std.Sym): std.Str | std.Sym}]`
+# error: expected `{kind: :a: | :b:, name: std.Str}`, found `std.Dict[std.Sym, std.Str | std.Sym]`
 #   --> m.dol:LL:LL
 #    |
 # LL |   kinds $d
@@ -54,15 +54,13 @@ pub def needs_b _d @ Dict[{a: Int, b: Int}] -> nil
 
 pub def reversed()
   takes $needs_b
-# error: expected `(std.Dict[{a: std.Int}], <m.reversed.#0, >m.reversed.#1) -> nil`, found `forall (std.Dict[{a: std.Int, b: std.Int}]) -> nil`
+# error: expected `({a: std.Int}, <m.reversed.#0, >m.reversed.#1) -> nil`, found `({a: std.Int, b: std.Int}) -> nil`
 #   --> m.dol:LL:LL
 #    |
 # LL |   takes $needs_b
 #    |          ^^^^^^^
 #    |
 #    = note: `{a: std.Int}` doesn't admit `b: std.Int`
-#    = note: in `std.Dict[{a: std.Int, b: std.Int}]`
-#    = note: in `{std.Dict[{a: std.Int, b: std.Int}]}`
+#    = note: in `{{a: std.Int, b: std.Int}}`
 #    = note: `{a: std.Int, b: std.Int}` requires `b: std.Int`, which `{a: std.Int}` may be missing
-#    = note: in `std.Dict[{a: std.Int, b: std.Int}]`
-#    = note: in `{std.Dict[{a: std.Int, b: std.Int}]}`
+#    = note: in `{{a: std.Int, b: std.Int}}`
