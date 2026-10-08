@@ -1,10 +1,15 @@
+# dolang: strict
+
 import base64 rand shell sys std xdg
 import
   regex:
     - Regex
   fs:
+    - @Path
     - with_temp_dir
 import fs.unix: unix_fs
+import std:
+  - @BaseDict
 
 # Survives unquoted in both POSIX shells and cmd.exe. The base64 alphabet is a
 # subset, so an encoded value always matches.
@@ -18,15 +23,15 @@ let BARE = Regex r"^[A-Za-z0-9_.:/=@+,-]+$"
 # and cmd.exe on a Windows one. Since the answering system is unknown when the
 # command is built, no quoting style is portable; base64 sidesteps quoting
 # altogether.
-def option encode name value
+def option encode@Value name@Str value@Value -> Tuple[Str, Str]
   let value = str $value
   if (encode && !(BARE.match value))
-    return ["$name-base64", (base64.encode value)]
-  [name, value]
+    return ("$name-base64", (base64.encode value))
+  (name, value)
 
 # `--login-env` carries its value in the option itself rather than as a
 # separate argument, so it cannot be spread like the others.
-def login_option encode shell
+def login_option encode@Value shell@Str -> Str
   let name value = option $encode "--login-env" $shell
   "$name=$value"
 
@@ -34,7 +39,7 @@ def login_option encode shell
 # either a raw integer or an `fs.unix.Mode` flags value. A `Mode`'s
 # file-type bits (`IFREG`, `IFDIR`, ...) aren't meaningful for a chmod-style
 # operation, so they're masked off rather than propagated.
-pub def parse_mode value
+pub def parse_mode value @ (Int | unix_fs.Mode | nil) -> (Int | nil)
   if (value == nil)
     nil
   else if (type value Int)
@@ -44,7 +49,7 @@ pub def parse_mode value
   else
     throw std.TypeError "mode: expected Int or fs.unix.Mode"
 
-pub def bin exe = nil
+pub def bin exe @ Path = nil -> Path
   let vfs_exe = shell.vfs_exe()
   if vfs_exe
     return vfs_exe
@@ -70,7 +75,7 @@ pub def bin exe = nil
 #
 # The default alphabet is ASCII, so this is 32 bytes, well over the protocol's
 # 16 byte minimum.
-pub def key()
+pub def key() -> Str
   rand.string 32
 
 # Frames a key the way `--key-stdin` reads it: one length byte followed by that
@@ -79,7 +84,7 @@ pub def key()
 # The result is an array because it is handed to a launch as `stdin:`. A `Bin`
 # item crosses that boundary verbatim, with no line ending appended, so the
 # agent sees exactly these bytes.
-pub def key_input key
+pub def key_input key @ Str -> Iterable[Bin]
   let bytes = Bin $key
   let buf = BinBuf()
   buf.push $bytes.len
@@ -95,40 +100,40 @@ pub def key_input key
 # explicit `nil` `parent:` (it only accepts `Path`/`Str` there), so `nil`
 # is not passed through -- `with_temp_dir`'s own default (`$TMPDIR`, falling
 # back to `/tmp`) is used instead.
-pub def with_socket_dir
-  thunk
-do
-  let body = do |subdir|
-    subdir.update_metadata mode: 0o700
-    thunk $subdir
+pub def with_socket_dir[R] thunk @ (Path -> R) -> R
   let runtime_dir = xdg.runtime_dir()
-  if (runtime_dir != nil)
-    with_temp_dir parent: $runtime_dir $body
-  else
-    with_temp_dir $body
+  with_temp_dir
+    if (runtime_dir != nil)
+      parent: $runtime_dir
+    do |subdir|
+      subdir.update_metadata mode: 0o700
+      thunk $subdir
 
-def env_key key
+def env_key key @ (Str | Sym) -> Str
   if (type key Str || type key Sym)
     return str $key
   throw std.TypeError "env key: expected Str or Sym"
 
-def validate_env overrides
+def validate_env overrides @ BaseDict[(Str | Sym), Value] -> nil
   if !(type overrides Dict)
     throw std.TypeError "env: expected Dict"
 
-def env_pairs overrides
+def env_pairs overrides @ BaseDict[(Str | Sym), Value] -> Array[Tuple[Str, Value]]
   validate_env $overrides
-  let pairs = []
+  let pairs @ Array[Tuple[Str, Value]] = []
   for key value = overrides
     let key = env_key $key
     if (value == :INHERIT:)
       value = shell.env.get $key
-    pairs.push [key, value]
+    pairs.push (key, value)
   pairs
 
-pub def env_args cd overrides
-  let unsets = []
-  let sets = []
+pub def env_args
+  cd @ (Path | Str | nil)
+  overrides @ BaseDict[(Str | Sym), Value]
+do -> Array[Str | Path]
+  let unsets @ Array[Str] = []
+  let sets @ Array[Str] = []
   let pairs = env_pairs $overrides
   for k v = pairs
     if (v == nil)
@@ -140,7 +145,12 @@ pub def env_args cd overrides
       -C $cd
     ...unsets ...sets
 
-pub def vfs_args cd overrides :login = false :encode = false
+pub def vfs_args
+  cd @ (Path | Str | nil)
+  overrides @ BaseDict[(Str | Sym), Value]
+  :login @ (Bool | Str) = false
+  :encode @ Value = false
+do -> Array[Str]
   return $
     if login
       if (login == true)

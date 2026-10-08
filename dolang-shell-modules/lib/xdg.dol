@@ -1,3 +1,4 @@
+# dolang: strict
 # XDG Base Directory Specification helpers.
 #
 # Returns `fs.Path` values for standard user directories, respecting environment
@@ -7,7 +8,7 @@
 import fs:
   - Path
 
-def env_path name
+def env_path name @ Str -> (Path | nil)
   let value = env.get $name
   if (value == nil || value == "")
     return nil
@@ -17,12 +18,12 @@ def env_path name
   else
     nil
 
-def env_path_list name
+def env_path_list name @ Str -> (Array[Path] | nil)
   let value = env.get $name
   if (value == nil || value == "")
     return nil
 
-  let paths = []
+  let paths @ Array[Path] = []
   for path = value.split ":"
     let path = Path $path
     if path.is_absolute
