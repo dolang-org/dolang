@@ -203,6 +203,20 @@ class CompilerTests(unittest.TestCase):
         self.assertIn("?small: (Str | nil)", rendered)
         self.assertIn("...$", rendered)
 
+    def test_parenthesized_types(self):
+        rendered = self.round_trip('''
+@let Pair = (Int, Str)
+@let Single = (Int,)
+@let Empty = ()
+@let Named = (name: Str, ?port: Int)
+@let Grouped = Array[(Int)]
+''')
+        self.assertIn("@let Pair = (Int, Str)", rendered)
+        self.assertIn("@let Single = (Int,)", rendered)
+        self.assertIn("@let Empty = ()", rendered)
+        self.assertIn("@let Named = (name: Str, ?port: Int)", rendered)
+        self.assertIn("@let Grouped = Array[Int]", rendered)
+
     def test_source_layout_does_not_control_output(self):
         compact = self.round_trip("@let A = (Str | Int | Float | Bool | nil)\n")
         vertical = self.round_trip("@let A = $\n  | Str\n  | Int\n  | Float\n  | Bool\n  | nil\n")

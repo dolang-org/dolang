@@ -220,6 +220,8 @@ impl Infer {
             }
             // Applying a schema is an error, reported where it is checked
             TypeExpr::App { .. }
+            | TypeExpr::Tuple { .. }
+            | TypeExpr::Record { .. }
             | TypeExpr::Union { .. }
             | TypeExpr::Func { .. }
             | TypeExpr::Const { .. } => Term::Known(Kind::Type),
@@ -409,6 +411,10 @@ impl<'t> Check<'_, 't, '_> {
                 self.items(params);
                 self.expect(ty.span(), expected, Kind::Schema, None);
             }
+            TypeExpr::Tuple { params, .. } | TypeExpr::Record { params, .. } => {
+                self.items(params);
+                self.expect(ty.span(), expected, Kind::Type, None);
+            }
             TypeExpr::Union { members, .. } => {
                 for member in members {
                     self.check(member, Some(Kind::Type));
@@ -465,7 +471,7 @@ impl<'t> Check<'_, 't, '_> {
                     self.check(ty, Some(Kind::Type));
                 }
                 Some(TypeParamKind::Include { ty }) => self.check(ty, Some(Kind::Schema)),
-                Some(TypeParamKind::Open) | None => {}
+                Some(TypeParamKind::Open(_)) | None => {}
             }
         }
     }
@@ -679,6 +685,8 @@ impl Tables<'_> {
                 }
             }
             TypeExpr::App { .. }
+            | TypeExpr::Tuple { .. }
+            | TypeExpr::Record { .. }
             | TypeExpr::Union { .. }
             | TypeExpr::Func { .. }
             | TypeExpr::Const { .. } => Some(Kind::Type),

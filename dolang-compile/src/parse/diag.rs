@@ -433,9 +433,9 @@ impl Diagnose for OptionalQuant {
     }
 }
 
-pub(super) struct ParamsWithoutArrow(pub(super) Span);
+pub(super) struct ImplicitWithoutArrow(pub(super) Span);
 
-impl Diagnose for ParamsWithoutArrow {
+impl Diagnose for ImplicitWithoutArrow {
     fn span(&self) -> Span {
         self.0
     }
@@ -447,7 +447,7 @@ impl Diagnose for ParamsWithoutArrow {
     fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
-            "parenthesized type is a parameter list, which must be followed by `->`"
+            "a parameter list with an implicit parameter must be followed by `->`"
         )
     }
 }

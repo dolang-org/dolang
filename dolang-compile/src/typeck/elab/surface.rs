@@ -92,6 +92,19 @@ pub(crate) enum TypeExpr {
         span: Span,
         ty: Box<TypeExpr>,
     },
+    /// A tuple type, e.g. `(Int, Str)`: `std.Tuple` of the schema of its items
+    Tuple {
+        #[serde(with = "wire::span")]
+        span: Span,
+        params: Vec<TypeParam>,
+    },
+    /// A record type, e.g. `(name: Str, Int)`: `std.Record` of the schema of its
+    /// items
+    Record {
+        #[serde(with = "wire::span")]
+        span: Span,
+        params: Vec<TypeParam>,
+    },
     /// A union, e.g. `Str | Path`
     Union {
         #[serde(with = "wire::span")]
@@ -172,8 +185,8 @@ pub(crate) enum TypeParamKind {
     Key { key: TypeKey, ty: TypeExpr },
     /// `...S`
     Include { ty: TypeExpr },
-    /// `...`
-    Open,
+    /// `...`, spanning it
+    Open(#[serde(with = "wire::span")] Span),
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -192,6 +205,8 @@ impl TypeExpr {
             | TypeExpr::App { span, .. }
             | TypeExpr::Schema { span, .. }
             | TypeExpr::Group { span, .. }
+            | TypeExpr::Tuple { span, .. }
+            | TypeExpr::Record { span, .. }
             | TypeExpr::Union { span, .. }
             | TypeExpr::Func { span, .. }
             | TypeExpr::Error { span } => *span,
@@ -209,7 +224,9 @@ impl TypeExpr {
                     arg.ty().names(f);
                 }
             }
-            TypeExpr::Schema { params, .. } => {
+            TypeExpr::Schema { params, .. }
+            | TypeExpr::Tuple { params, .. }
+            | TypeExpr::Record { params, .. } => {
                 for ty in params.iter().flat_map(TypeParam::tys) {
                     ty.names(f);
                 }
@@ -269,7 +286,7 @@ impl TypeParam {
                 },
                 Some(ty),
             ),
-            Some(TypeParamKind::Open) | None => (None, None),
+            Some(TypeParamKind::Open(_)) | None => (None, None),
         };
         key_ty.into_iter().chain(ty)
     }
@@ -536,6 +553,21 @@ impl Printer<'_, '_> {
                 self.ty(ty, out)?;
                 out.write_char(')')
             }
+            TypeExpr::Tuple { params, .. } | TypeExpr::Record { params, .. } => {
+                out.write_char('(')?;
+                self.params(params, None, None, out)?;
+                // A lone item without a quantifier would only group without its comma
+                if let [
+                    TypeParam {
+                        quant: None,
+                        kind: Some(TypeParamKind::Pos(_)),
+                    },
+                ] = params[..]
+                {
+                    out.write_char(',')?;
+                }
+                out.write_char(')')
+            }
             TypeExpr::Union { members, .. } => {
                 for (index, member) in members.iter().enumerate() {
                     if index != 0 {
@@ -595,7 +627,7 @@ impl Printer<'_, '_> {
                     out.write_str("...")?;
                     self.ty(ty, out)?;
                 }
-                Some(TypeParamKind::Open) => out.write_str("...")?,
+                Some(TypeParamKind::Open(_)) => out.write_str("...")?,
                 None => {}
             }
         }

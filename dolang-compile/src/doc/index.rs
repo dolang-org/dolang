@@ -453,6 +453,9 @@ impl Index<'_> {
             TypeExpr::Schema { params, .. } => doc::TypeKind::Schema {
                 params: self.type_params(params)?,
             },
+            TypeExpr::Parens { params, .. } => doc::TypeKind::Parens {
+                params: self.type_params(params)?,
+            },
             TypeExpr::Group { ty: inner, .. } => self.type_expr(inner)?.kind,
             TypeExpr::Union { members, .. } => doc::TypeKind::Union {
                 members: members

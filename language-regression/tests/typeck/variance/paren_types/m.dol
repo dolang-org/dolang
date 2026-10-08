@@ -1,0 +1,13 @@
+# A tuple or record type varies as the `Tuple` or `Record` it stands for does.
+
+pub @let Pair[T] = (T, T)
+#             ^: variance covariant
+pub @let Named[T] = (name: T, Int)
+#              ^: variance covariant
+pub @let Callback[T] = ((T -> nil), Int)
+#                 ^: variance contravariant
+
+pub class Box[T]
+  #           ^: variance covariant
+  pub def pair self -> (T, T)
+    ...

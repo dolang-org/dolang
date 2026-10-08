@@ -787,6 +787,9 @@ impl<'a> TypeExpr<'a> {
             doc::TypeKind::Schema { params: items } => TypeKind::Schema {
                 params: params(items),
             },
+            doc::TypeKind::Parens { params: items } => TypeKind::Parens {
+                params: params(items),
+            },
             doc::TypeKind::Union { members } => TypeKind::Union {
                 members: TypeExprs {
                     file,
@@ -830,6 +833,11 @@ pub enum TypeKind<'a> {
     /// A schema, e.g. `{name: Str, ?port: Int}`
     Schema {
         /// The parameters
+        params: TypeParams<'a>,
+    },
+    /// A tuple or record type, e.g. `(Int, Str)` or `(name: Str)`
+    Parens {
+        /// The items
         params: TypeParams<'a>,
     },
     /// A union, e.g. `(Str | Path)`

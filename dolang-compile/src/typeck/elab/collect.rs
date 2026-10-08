@@ -473,6 +473,19 @@ impl<'u> Walk<'_, 'u> {
                 span,
                 ty: Box::new(self.surface(ty)),
             },
+            // An explicitly keyed item makes a record. An inclusion doesn't, so the
+            // form's meaning never depends on what it includes.
+            ast::TypeExpr::Parens { params, .. } => {
+                let keyed = params.iter().any(|param| {
+                    matches!(param.quant, Some(ast::TypeQuant::StarStar(_)))
+                        || matches!(param.kind, Some(ast::TypeParamKind::Key { .. }))
+                });
+                let params = self.surface_params(params);
+                match keyed {
+                    true => TypeExpr::Record { span, params },
+                    false => TypeExpr::Tuple { span, params },
+                }
+            }
             ast::TypeExpr::Union { members, .. } => TypeExpr::Union {
                 span,
                 members: members.iter().map(|member| self.surface(member)).collect(),
@@ -542,7 +555,7 @@ impl<'u> Walk<'_, 'u> {
                     P::Include { ty, .. } => TypeParamKind::Include {
                         ty: self.surface(ty),
                     },
-                    P::Open { .. } => TypeParamKind::Open,
+                    P::Open { ellipsis_span } => TypeParamKind::Open(*ellipsis_span),
                 }),
             })
             .collect()
@@ -1769,7 +1782,9 @@ impl Aliases<'_, '_> {
             TypeExpr::Const { .. }
             | TypeExpr::Union { .. }
             | TypeExpr::Func { .. }
-            | TypeExpr::Schema { .. } => Head::Structural,
+            | TypeExpr::Schema { .. }
+            | TypeExpr::Tuple { .. }
+            | TypeExpr::Record { .. } => Head::Structural,
             TypeExpr::Error { .. } => Head::Error,
         }
     }

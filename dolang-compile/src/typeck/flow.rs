@@ -1249,9 +1249,7 @@ impl<'a, 'u> Flow<'a, 'u> {
 
     /// The declaration a designated role of `std` or `strand` is, if it's checked
     fn designated(&self, role: Designated) -> Option<DeclId> {
-        (self.tables.designated.iter())
-            .find(|&(_, &designated)| designated == role)
-            .map(|(&decl, _)| decl)
+        self.tables.designated_decl(role)
     }
 
     /// A designated class's instance type, or `Unknown` if it isn't checked

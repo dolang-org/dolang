@@ -174,7 +174,9 @@ impl Needs<'_, '_> {
                     self.ty(node, unit, arg.ty());
                 }
             }
-            TypeExpr::Schema { params, .. } => self.params(node, unit, params),
+            TypeExpr::Schema { params, .. }
+            | TypeExpr::Tuple { params, .. }
+            | TypeExpr::Record { params, .. } => self.params(node, unit, params),
             TypeExpr::Group { ty, .. } => self.ty(node, unit, ty),
             TypeExpr::Union { members, .. } => {
                 for member in members {

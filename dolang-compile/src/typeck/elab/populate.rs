@@ -29,7 +29,7 @@ use super::{
 use crate::{
     RestKind,
     ast::SpecialMethod,
-    diag::Severity,
+    diag::{NoteKind, Severity},
     source::Span,
     typeck::report::Report,
     typeck::r#type::{
@@ -379,7 +379,10 @@ impl<'t, 'u> Populate<'t, 'u> {
         // Well-formedness checks these where they are written, in the group they are
         // written in, not where a def's channels are taken by a function type. A
         // pattern's interior is not checked.
-        if let TypeExpr::App { .. } | TypeExpr::Func { .. } = ty
+        if let TypeExpr::App { .. }
+        | TypeExpr::Tuple { .. }
+        | TypeExpr::Record { .. }
+        | TypeExpr::Func { .. } = ty
             && self.expanding.is_empty()
             && self.pattern.is_none()
         {
@@ -423,6 +426,16 @@ impl<'t, 'u> Populate<'t, 'u> {
             TypeExpr::Schema { params, .. } if expected == Kind::Schema => {
                 let items = self.items(group, params, false, depth);
                 self.schema(items)
+            }
+            TypeExpr::Tuple { params, .. } if expected == Kind::Type => {
+                self.keyed_inclusions(group.unit, params);
+                let items = self.items(group, params, false, depth);
+                let tuple = Designated::Intrinsic(Intrinsic::Tuple);
+                self.collection(tuple, self.schema(items))
+            }
+            TypeExpr::Record { params, .. } if expected == Kind::Type => {
+                let items = self.items(group, params, false, depth);
+                self.collection(Designated::Record, self.schema(items))
             }
             TypeExpr::Union { members, .. } if expected == Kind::Type => {
                 let members: Vec<_> = members
@@ -473,6 +486,103 @@ impl<'t, 'u> Populate<'t, 'u> {
                 self.db.intern(Type::Literal(literal))
             }
             _ => self.unknown(expected),
+        }
+    }
+
+    /// A designated class applied to `arg` for its only binder, or `Unknown` if the
+    /// class isn't checked
+    fn collection(&self, role: Designated, arg: TypeId) -> TypeId {
+        let Some(decl) = self.tables.designated_decl(role) else {
+            return self.unknown(Kind::Type);
+        };
+        self.db.intern(Type::Apply {
+            base: self.db.intern(Type::Decl(decl)),
+            args: vec![Argument::Positional(arg)].into(),
+            kind: Kind::Type,
+        })
+    }
+
+    /// Report each item of a tuple form that may admit keyed items. An inclusion
+    /// never makes a record, so what it includes can't change the form's meaning.
+    fn keyed_inclusions(&mut self, unit: UnitId, params: &[TypeParam]) {
+        for param in params {
+            match &param.kind {
+                Some(TypeParamKind::Open(span)) => {
+                    self.report(
+                        unit,
+                        KeyedInclusion {
+                            span: *span,
+                            open: true,
+                        },
+                    );
+                }
+                Some(TypeParamKind::Include { ty }) if self.may_key(unit, ty, &mut Vec::new()) => {
+                    self.report(
+                        unit,
+                        KeyedInclusion {
+                            span: ty.span(),
+                            open: false,
+                        },
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Whether a schema of `unit` may admit keyed items. What it is when no
+    /// declaration says, as for an external name, constrains nothing, so it may not.
+    fn may_key(&self, unit: UnitId, ty: &TypeExpr, aliases: &mut Vec<DeclId>) -> bool {
+        let tables = self.tables;
+        match ty {
+            TypeExpr::Group { ty, .. } => self.may_key(unit, ty, aliases),
+            // An application's arguments only fill the alias's binders
+            TypeExpr::App { base, .. } => self.may_key(unit, base, aliases),
+            TypeExpr::Schema { params, .. } => {
+                params
+                    .iter()
+                    .any(|param| match (&param.quant, &param.kind) {
+                        (Some(TypeQuant::StarStar), _)
+                        | (_, Some(TypeParamKind::Key { .. } | TypeParamKind::Open(_))) => true,
+                        (_, Some(TypeParamKind::Include { ty })) => self.may_key(unit, ty, aliases),
+                        _ => false,
+                    })
+            }
+            TypeExpr::Name { head, .. } => match tables.referents.get(&UnitSpan {
+                unit,
+                span: head.span,
+            }) {
+                Some(&Referent::Decl(decl)) => {
+                    let DeclNode::Alias(alias) = &tables.decls[decl.index()].node else {
+                        return false;
+                    };
+                    let Some(body) = alias.body.filter(|_| !aliases.contains(&decl)) else {
+                        return false;
+                    };
+                    aliases.push(decl);
+                    let owner = tables.decls[decl.index()].unit;
+                    let may = self.may_key(owner, tables.site_ty(body), aliases);
+                    aliases.pop();
+                    may
+                }
+                Some(&Referent::Binder(binder)) => {
+                    let written = &tables.binders(binder.decl, binder.sig)[binder.slot];
+                    let owner = tables.decls[binder.decl.index()].unit;
+                    // A bound of a variadic binder may bound each item instead
+                    let bound = written
+                        .bound
+                        .map(|bound| tables.site_ty(bound))
+                        .filter(|bound| tables.kind_of(owner, bound) == Some(Kind::Schema));
+                    match (written.kind, bound) {
+                        (BinderKind::Key | BinderKind::Rest(RestKind::Pos), _) => false,
+                        (BinderKind::Rest(RestKind::Key), _) => true,
+                        (_, Some(bound)) => self.may_key(owner, bound, aliases),
+                        (_, None) => true,
+                    }
+                }
+                _ => false,
+            },
+            _ => false,
         }
     }
 
@@ -563,7 +673,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                     let ty = self.intern(group, ty, Kind::Schema, depth);
                     items.push(Self::item(multiplicity, Element::Include(ty)));
                 }
-                Some(TypeParamKind::Open) => {
+                Some(TypeParamKind::Open(_)) => {
                     items.push(Self::item(Multiplicity::Repeated, Element::Positional(top)));
                     items.push(Self::item(
                         Multiplicity::Repeated,
@@ -1554,6 +1664,43 @@ impl Report for BareGeneric {
 
     fn span(&self) -> Span {
         self.span
+    }
+}
+
+/// An item of a tuple form that may admit keyed items: a bare `...` when `open`,
+/// and otherwise an inclusion
+struct KeyedInclusion {
+    span: Span,
+    open: bool,
+}
+
+impl Report for KeyedInclusion {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        match self.open {
+            true => write!(w, "`...` admits keyed items, which a tuple type can't hold"),
+            false => write!(
+                w,
+                "included schema may have keyed items, which a tuple type can't hold"
+            ),
+        }
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+
+    fn notes(&self) -> Vec<(NoteKind, String)> {
+        let note = match self.open {
+            true => "`(*)` is a tuple of any positional items",
+            false => {
+                "a keyed item makes a record; to include keyed items without one, write `Record[...{...}]`"
+            }
+        };
+        vec![(NoteKind::Help, note.to_owned())]
     }
 }
 

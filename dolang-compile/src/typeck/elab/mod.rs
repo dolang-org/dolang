@@ -139,6 +139,13 @@ impl<'u> Tables<'u> {
         }
     }
 
+    /// The declaration designated `role`, if it is checked
+    pub(crate) fn designated_decl(&self, role: Designated) -> Option<DeclId> {
+        (self.designated.iter())
+            .find(|&(_, &designated)| designated == role)
+            .map(|(&decl, _)| decl)
+    }
+
     /// Signature `sig` of a method declaration
     pub(crate) fn method(&self, decl: DeclId, sig: usize) -> &Method {
         match &self.decls[decl.index()].node {

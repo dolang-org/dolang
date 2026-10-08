@@ -454,6 +454,13 @@ def _render_type(
     elif kind == "schema":
         rendered = f"{{{_render_type_params(ty['params'], scope, plain, code=code)}}}"
         binding = _BINDS_COMPACT
+    elif kind == "parens":
+        params = _render_type_params(ty["params"], scope, plain, code=code)
+        # A lone item without a quantifier would only group without its comma
+        items = ty["params"]
+        lone = len(items) == 1 and items[0].get("kind") == "pos" and not items[0].get("quant")
+        rendered = f"({params},)" if lone else f"({params})"
+        binding = _BINDS_COMPACT
     elif kind == "union":
         rendered = " | ".join(
             _render_type(member, scope, _BINDS_COMPACT, plain, code=code) for member in ty["members"]

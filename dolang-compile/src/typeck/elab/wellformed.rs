@@ -173,7 +173,10 @@ impl Check<'_, '_> {
                     self.ty(unit, scope, member, phantom);
                 }
             }
-            TypeExpr::Schema { params, .. } => {
+            // The designated classes these forms stand for bound nothing
+            TypeExpr::Schema { params, .. }
+            | TypeExpr::Tuple { params, .. }
+            | TypeExpr::Record { params, .. } => {
                 for ty in params.iter().flat_map(TypeParam::tys) {
                     self.ty(unit, scope, ty, phantom);
                 }
@@ -513,6 +516,12 @@ impl Check<'_, '_> {
                     for ty in param.tys() {
                         self.guarded(unit, alias, members, ty, guarded, found);
                     }
+                }
+            }
+            // These forms apply a class, which guards them as any nominal type does
+            TypeExpr::Tuple { params, .. } | TypeExpr::Record { params, .. } => {
+                for ty in params.iter().flat_map(TypeParam::tys) {
+                    self.guarded(unit, alias, members, ty, true, found);
                 }
             }
             TypeExpr::Func {

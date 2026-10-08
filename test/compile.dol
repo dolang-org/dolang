@@ -818,6 +818,24 @@ def type_followups_are_exposed()
   unit.emit()
 
 #[test]
+def parenthesized_types_are_exposed()
+  let source = r|-
+    pub @let Pair = (Int, name: Str)
+    pub @let Grouped = (Int)
+  let unit = compile.compile "parens.dol" $source document: true
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
+  let pair = (types_of(nodes, (named_node source nodes compile.Alias "Pair")[0])[0][1].expr)
+  assert_type $compile.ParensType $pair
+  assert_eq (span_text(source, pair.span)) "(Int, name: Str)"
+  assert_eq [...pair.params.map(do |param| type param)] $
+    - $compile.PosTypeParam
+    - $compile.KeyTypeParam
+  # A lone item without a quantifier or a trailing comma only groups
+  let grouped = (types_of(nodes, (named_node source nodes compile.Alias "Grouped")[0])[0][1].expr)
+  assert_type $compile.NameType $grouped
+
+#[test]
 def sibling_module_type_imports_resolve_separately()
   # Modules are not nested, so sibling imports bind the same head and only the
   # whole path says which module a dotted name comes from.

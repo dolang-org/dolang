@@ -610,6 +610,13 @@ pub class SchemaType: TypeExpr
   pub def params self -> Array[TypeParam]
     ...
 
+# A tuple or record type, such as `(Int, Str)` or `(name: Str)`.
+pub class ParensType: TypeExpr
+  # The items.
+  #[getter]
+  pub def params self -> Array[TypeParam]
+    ...
+
 # A union, such as `(Str | Path)`.
 pub class UnionType: TypeExpr
   # The members, in the order written.
