@@ -356,9 +356,11 @@ return $
     do |args|
       env MIRIFLAGS: -Zmiri-disable-isolation do
         run_cargo +nightly miri test
-          for crate = MIRI_CRATES
-            -p $crate
-          ...args.args
+          if args.args
+            ...args.args
+          else
+            for crate = MIRI_CRATES
+              -p $crate
 
   build:
     help: build main artifacts
