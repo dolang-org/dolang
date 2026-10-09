@@ -1,6 +1,7 @@
 #![deny(warnings)]
 
 pub mod alias;
+pub mod frozen;
 pub mod hashbrown;
 pub mod intern;
 pub mod mono;

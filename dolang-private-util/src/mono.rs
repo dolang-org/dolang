@@ -11,11 +11,20 @@ use std::{
     ptr::{NonNull, copy_nonoverlapping, drop_in_place},
 };
 
-use crate::hashbrown::raw::RawTable;
+use crate::{
+    frozen::{Freeze, Frozen},
+    hashbrown::raw::RawTable,
+};
 
 pub struct MonoVec<T> {
     inner: UnsafeCell<Inner<T, 0>>,
 }
+
+// Safety: the vector owns its elements; the pointers are only its storage.
+unsafe impl<T: Send> Send for MonoVec<T> {}
+
+// Safety: frozen views only read the length and elements.
+unsafe impl<T: Sync> Freeze for MonoVec<T> {}
 
 struct Inner<T, const C: usize> {
     _data: PhantomData<T>,
@@ -344,6 +353,32 @@ impl<T> IndexMut<usize> for MonoVec<T> {
     }
 }
 
+impl<T> Frozen<MonoVec<T>> {
+    pub fn len(&self) -> usize {
+        unsafe { self.inner() }.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        unsafe { self.inner() }.is_empty()
+    }
+
+    pub fn get(&self, index: usize) -> Option<&T> {
+        unsafe { self.inner() }.get(index)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        unsafe { self.inner() }.iter()
+    }
+}
+
+impl<T> Index<usize> for Frozen<MonoVec<T>> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        unsafe { &self.inner()[index] }
+    }
+}
+
 /// A hash map that permits insertion through a shared reference.
 ///
 /// References to keys and values stay valid as the map grows. Entries cannot
@@ -424,8 +459,82 @@ impl<K, V, S> MonoHashMap<K, V, S> {
 
     /// Returns whether key lookups can find the entry at `index`.
     pub(crate) fn is_indexed(&self, index: usize) -> bool {
+        self.indexed_in(&self.index.borrow(), index)
+    }
+
+    fn indexed_in(&self, table: &RawTable<usize>, index: usize) -> bool {
         let hash = self.entries[index].hash;
-        self.index.borrow().get(hash, |&j| j == index).is_some()
+        table.get(hash, |&j| j == index).is_some()
+    }
+}
+
+// Safety: frozen views read the index without its borrow flag, and only run
+// the hasher and keys' `Hash` and `Eq` through shared references.
+unsafe impl<K: Sync, V: Sync, S: Sync> Freeze for MonoHashMap<K, V, S> {}
+
+impl<K, V, S> Frozen<MonoHashMap<K, V, S>> {
+    /// The key index, read without its borrow flag.
+    fn index(&self) -> &RawTable<usize> {
+        // Safety: no `RefMut` can be outstanding, since the map was frozen
+        // from ownership or an exclusive borrow, and the view never inserts.
+        unsafe { &*self.inner().index.as_ptr() }
+    }
+
+    pub fn len(&self) -> usize {
+        unsafe { self.inner() }.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        unsafe { self.inner() }.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
+        unsafe { self.inner() }.iter()
+    }
+
+    /// Returns the entry at insertion index `index`.
+    pub(crate) fn get_index(&self, index: usize) -> Option<(&K, &V)> {
+        unsafe { self.inner() }.get_index(index)
+    }
+
+    /// Returns whether key lookups can find the entry at `index`.
+    pub(crate) fn is_indexed(&self, index: usize) -> bool {
+        unsafe { self.inner() }.indexed_in(self.index(), index)
+    }
+}
+
+impl<K: Hash + Eq, V, S: BuildHasher> Frozen<MonoHashMap<K, V, S>> {
+    pub fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        self.get_key_value(key).map(|(_, v)| v)
+    }
+
+    pub fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        self.get_index(self.get_index_of(key)?)
+    }
+
+    pub fn contains_key<Q>(&self, key: &Q) -> bool
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        self.get_index_of(key).is_some()
+    }
+
+    /// Returns the insertion index of `key`.
+    pub(crate) fn get_index_of<Q>(&self, key: &Q) -> Option<usize>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        unsafe { self.inner() }.find_in(self.index(), key)
     }
 }
 
@@ -492,9 +601,16 @@ impl<K: Hash + Eq, V, S: BuildHasher> MonoHashMap<K, V, S> {
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
+        self.find_in(&self.index.borrow(), key)
+    }
+
+    fn find_in<Q>(&self, table: &RawTable<usize>, key: &Q) -> Option<usize>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
         let hash = self.hasher.hash_one(key);
-        self.index
-            .borrow()
+        table
             .get(hash, |&i| {
                 <K as Borrow<Q>>::borrow(&self.entries[i].key) == key
             })
@@ -696,6 +812,45 @@ impl<T: Clone, S: Clone> Clone for MonoHashSet<T, S> {
     }
 }
 
+// Safety: frozen views only read through a frozen view of the map.
+unsafe impl<T: Sync, S: Sync> Freeze for MonoHashSet<T, S> {}
+
+impl<T, S> Frozen<MonoHashSet<T, S>> {
+    fn map(&self) -> &Frozen<MonoHashMap<T, (), S>> {
+        unsafe { self.part(|set| &set.map) }
+    }
+
+    pub fn len(&self) -> usize {
+        self.map().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map().is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        self.map().iter().map(|(k, _)| k)
+    }
+}
+
+impl<T: Hash + Eq, S: BuildHasher> Frozen<MonoHashSet<T, S>> {
+    pub fn get<Q>(&self, value: &Q) -> Option<&T>
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        self.map().get_key_value(value).map(|(k, _)| k)
+    }
+
+    pub fn contains<Q>(&self, value: &Q) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        self.map().contains_key(value)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -812,6 +967,59 @@ mod test {
                 .take(SIZE)
                 .eq((0..SIZE).map(|i| i.to_string()).collect::<Vec<_>>().iter())
         );
+    }
+
+    #[test]
+    fn frozen_shared_between_threads() {
+        const N: usize = 100;
+        let mut vec = MonoVec::new();
+        let mut map = MonoHashMap::new();
+        let mut set = MonoHashSet::new();
+        for i in 0..N {
+            vec.push(i);
+            map.try_insert(i.to_string(), i).unwrap();
+            set.try_insert(i.to_string()).unwrap();
+        }
+        let (fvec, fmap, fset) = (
+            Frozen::from_mut(&mut vec),
+            Frozen::from_mut(&mut map),
+            Frozen::from_mut(&mut set),
+        );
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    assert_eq!(fvec.len(), N);
+                    assert!(fvec.iter().copied().eq(0..N));
+                    assert_eq!(fmap.len(), N);
+                    assert_eq!(fset.len(), N);
+                    for i in 0..N {
+                        let key = i.to_string();
+                        assert_eq!(fvec[i], i);
+                        assert_eq!(fmap.get(key.as_str()), Some(&i));
+                        assert_eq!(fmap.get_index_of(key.as_str()), Some(i));
+                        assert!(fmap.is_indexed(i));
+                        assert_eq!(fset.get(key.as_str()), Some(&key));
+                    }
+                    assert!(!fmap.contains_key("missing"));
+                    assert!(!fset.contains("missing"));
+                });
+            }
+        });
+        vec.push(N);
+        map.try_insert(N.to_string(), N).unwrap();
+        set.try_insert(N.to_string()).unwrap();
+        assert_eq!((vec.len(), map.len(), set.len()), (N + 1, N + 1, N + 1));
+    }
+
+    #[test]
+    fn frozen_round_trip() {
+        let map = MonoHashMap::new();
+        map.try_insert("a", 1).unwrap();
+        let frozen = Frozen::new(map);
+        assert_eq!(frozen.get_key_value("a"), Some((&"a", &1)));
+        let map = frozen.into_inner();
+        assert_eq!(map.try_insert_index("b", 2), Ok(1));
+        assert_eq!(map.get_index_of("a"), Some(0));
     }
 
     #[derive(Debug)]
