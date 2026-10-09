@@ -1305,9 +1305,10 @@ impl Database {
     /// `Values` or `Entries` intrinsic is a union of its projection. A union is
     /// flattened, with its members sorted and deduplicated, and each projection of
     /// a schema among them is evaluated as far as the schema is known (see
-    /// [`Self::project`]). A union with `Top` is `Top`, and one with a single
-    /// member is it. A mapping whose packs are known is reduced (see
-    /// [`Self::reduce_map`]). Children are assumed canonical already.
+    /// [`Self::project`]), a projection of `{...S}` being one of `S`. A union
+    /// with `Top` is `Top`, and one with a single member is it. A mapping whose
+    /// packs are known is reduced (see [`Self::reduce_map`]). Children are
+    /// assumed canonical already.
     pub(crate) fn normalize(&self, ty: Type) -> Type {
         match ty {
             Type::Quantified { binders, body } if binders.is_empty() => self.ty(body).clone(),
@@ -1329,12 +1330,26 @@ impl Database {
                             Type::Union(nested) => normalized.extend_from_slice(nested),
                             _ => normalized.push(member),
                         },
-                        _ => match self.project(member) {
-                            Projected::Reduced(members) => {
-                                pending.extend(members.into_iter().rev())
+                        _ => {
+                            // A projection of `{...S}` is the same projection of `S`
+                            if let Type::Schema(items) = self.ty(member.id())
+                                && let [
+                                    SchemaItem {
+                                        multiplicity: Multiplicity::Required,
+                                        element: Element::Include(inner),
+                                    },
+                                ] = items[..]
+                            {
+                                pending.push(member.with(inner));
+                                continue;
                             }
-                            Projected::Pending | Projected::Conflict => normalized.push(member),
-                        },
+                            match self.project(member) {
+                                Projected::Reduced(members) => {
+                                    pending.extend(members.into_iter().rev())
+                                }
+                                Projected::Pending | Projected::Conflict => normalized.push(member),
+                            }
+                        }
                     }
                 }
                 normalized.sort_unstable();
