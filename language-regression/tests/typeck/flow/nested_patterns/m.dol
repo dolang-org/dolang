@@ -59,7 +59,7 @@ pub def conditional v @ (Tuple[Int, Tuple[Str, Bool]] | Tuple[Int, Tuple[Str]])
     #       ^: flow std.Bool
     nil
   if let _a (_b _c) = (1, (2,))
-    # error: `std.Tuple[{2}]` can never unpack as this pattern
+    # error: `(2,)` can never unpack as this pattern
     #   --> m.dol:LL:LL
     #    |
     # LL |   if let _a (_b _c) = (1, (2,))
@@ -76,13 +76,13 @@ pub def loops xs @ Array[Tuple[Str, Tuple[Int, Int]]]
     for _key (_lo hi) = xs
       - $hi
   let _ = ys
-  #       ^~: flow std.Array[std.Int]
+  #       ^~: flow [std.Int]
   let zs = $
     for x = xs
       if let _k (lo _hi) = x
         - $lo
   let _ = zs
-  #       ^~: flow std.Array[std.Int]
+  #       ^~: flow [std.Int]
 
 pub def params()
   do |a (b c = 0)|

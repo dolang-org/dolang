@@ -31,7 +31,7 @@ pub def counted()
   #    |              ^^^^
   let _ @ ((Int, ?Str, *Bool) -> nil) = optional
   let _ @ ((Int, *Bool) -> nil) = optional
-# error: `forall (std.Int, ?std.Str, *std.Bool) -> nil` does not fit the annotation `(std.Int, *std.Bool, <Value, >Value) -> nil`
+# error: `(std.Int, ?std.Str, *std.Bool) -> nil` does not fit the annotation `(std.Int, *std.Bool) -> nil`
 #   --> m.dol:LL:LL
 #    |
 # LL |   let _ @ ((Int, *Bool) -> nil) = optional
@@ -41,7 +41,7 @@ pub def held()
   let _ @ Unpack[{Int, ?Str, *Bool}] = (1, true)
   let _ @ Unpack[{Int, ?Str, *Bool}] = (1, "a", true, false)
   let _ @ Unpack[{Int, ?Str, *Bool}] = (1, 2)
-# error: `std.Tuple[{1, 2}]` does not fit the annotation `std.Unpack[{std.Int, ?std.Str, *std.Bool}]`
+# error: `(1, 2)` does not fit the annotation `std.Unpack[{std.Int, ?std.Str, *std.Bool}]`
 #   --> m.dol:LL:LL
 #    |
 # LL |   let _ @ Unpack[{Int, ?Str, *Bool}] = (1, 2)
@@ -52,7 +52,7 @@ pub def destructured r @ Unpack[{key: Int, *key: Str}]
   let _ = key
   #       ^~~: flow std.Int
   let _ = rest
-  #       ^~~~: flow std.Spread[{*key: std.Str}]
+  #       ^~~~: flow std.Spread[:key:, std.Str]
 
 pub def domain_first r @ Unpack[{**Str, key: Int}]
   let :key ...rest = r

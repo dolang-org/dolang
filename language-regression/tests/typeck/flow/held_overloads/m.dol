@@ -24,5 +24,5 @@ pub def arrays()
 # LL |   g [:C:]
 #    |   ^^^^^^^
 #    |
-#    = note: `(std.Int) -> std.Int`: expected `std.Int`, found `std.Array[std.Sym]`
-#    = note: `(std.Iterable[:A: | :B:]) -> std.Str`: expected `std.Iterable[:A: | :B:]`, found `std.Array[std.Sym]`
+#    = note: `(std.Int) -> std.Int`: expected `std.Int`, found `[std.Sym]`
+#    = note: `(std.Iterable[:A: | :B:]) -> std.Str`: expected `std.Iterable[:A: | :B:]`, found `[std.Sym]`

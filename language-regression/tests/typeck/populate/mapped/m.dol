@@ -13,7 +13,7 @@ pub class Tuple[*Ts]
 pub @let Phantom[...Ts] = ...
 
 pub def fork[*Rs] *blocks @ ...(() -> Rs) -> Tuple[...Rs]
-  #     ^~~~: decl (...(<in, >out) -> Rs, <in, >out) -> m.Tuple[{...Rs}]
+  #     ^~~~: decl (...(<in, >out) -> Rs, <in, >out) -> m.Tuple[...Rs]
   blocks
 
 pub def mixed[...Us] ...values @ ...Box[Us]

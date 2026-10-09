@@ -21,10 +21,10 @@ pub let v @ Vertical = nil
 pub let i @ Inline = nil
 
 pub @let Expanded = Tuple ...$
-  #      ^~~~~~~~: decl m.Tuple[{...{m.Num, m.Text}}]
+  #      ^~~~~~~~: decl m.Tuple[m.Num, m.Text]
   Num Text
 pub @let ExpandedInline = Tuple[...{Num, Text}]
-#        ^~~~~~~~~~~~~~: decl m.Tuple[{...{m.Num, m.Text}}]
+#        ^~~~~~~~~~~~~~: decl m.Tuple[m.Num, m.Text]
 pub let pair @ Expanded = nil
 
 pub @let Appended = Tagged[Num] $
@@ -35,10 +35,10 @@ pub @let AppendedInline = Tagged[Num, {value: Text}]
 pub let tagged @ Appended = nil
 
 pub @let Fields = Record ...$
-  #      ^~~~~~: decl m.Record[{...{value: m.Text}}]
+  #      ^~~~~~: decl m.Record[value: m.Text]
   value: Text
 pub @let FieldsInline = Record[...{value: Text}]
-#        ^~~~~~~~~~~~: decl m.Record[{...{value: m.Text}}]
+#        ^~~~~~~~~~~~: decl m.Record[value: m.Text]
 pub let fields @ Fields = nil
 
 pub @let Choice = $

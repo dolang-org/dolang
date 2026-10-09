@@ -2401,5 +2401,8 @@ impl Database {
     }
 }
 
+mod render;
 #[cfg(test)]
 mod tests;
+
+pub(crate) use render::{Collection, Names, Shown, Style};

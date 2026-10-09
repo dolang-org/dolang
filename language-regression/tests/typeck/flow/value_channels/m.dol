@@ -25,7 +25,7 @@ pub def local()
 # to where a function takes `Value`
 pub def keep f @ ((Int) -> nil)
   let _g @ ((Int) -> nil) = f
-# error: `(std.Int, <m.keep.#0, >m.keep.#1) -> nil` does not fit the annotation `(std.Int, <Value, >Value) -> nil`
+# error: `(std.Int, <(input of m.keep), >(output of m.keep)) -> nil` does not fit the annotation `(std.Int, <Value, >Value) -> nil`
 #   --> m.dol:LL:LL
 #    |
 # LL |   let _g @ ((Int) -> nil) = f
@@ -33,14 +33,14 @@ pub def keep f @ ((Int) -> nil)
 
 pub def store h @ Holder f @ ((Int) -> nil)
   h.cb = f
-# error: expected `(std.Int, <Value, >Value) -> nil`, found `(std.Int, <m.store.#0, >m.store.#1) -> nil`
+# error: expected `(std.Int, <Value, >Value) -> nil`, found `(std.Int, <(input of m.store), >(output of m.store)) -> nil`
 #   --> m.dol:LL:LL
 #    |
 # LL |   h.cb = f
 #    |          ^
 #    |
-#    = note: `m.store.#1` doesn't accept `Value`
-#    = note: `m.store.#0` doesn't accept `Value`
+#    = note: the output of `m.store` doesn't accept `Value`
+#    = note: the input of `m.store` doesn't accept `Value`
 
 # One marked as taking `Value` can
 pub def store_marked h @ Holder f @ ((Int, <Value, >Value) -> nil)
@@ -49,7 +49,7 @@ pub def store_marked h @ Holder f @ ((Int, <Value, >Value) -> nil)
 # A block taking `Value` channels can't write
 pub def writer()
   let _w @ Callback = do |x| put $x
-# error: this call does not fit `forall (#0.0, >std.Sink[#0.0]) -> nil`
+# error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
 #   --> m.dol:LL:LL
 #    |
 # LL |   let _w @ Callback = do |x| put $x
@@ -58,7 +58,7 @@ pub def writer()
 # Nor can one assigned to a field, which takes the field's type
 pub def field_writer h @ Holder
   h.cb = do |x| put $x
-# error: this call does not fit `forall (#0.0, >std.Sink[#0.0]) -> nil`
+# error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
 #   --> m.dol:LL:LL
 #    |
 # LL |   h.cb = do |x| put $x
@@ -66,7 +66,7 @@ pub def field_writer h @ Holder
 
 pub def field_result h @ Holder
   h.cb = do |z| z
-# error: expected `(std.Int, <Value, >Value) -> nil`, found `(std.Int, <Value, >Value) -> std.Int`
+# error: expected `(std.Int) -> nil`, found `(std.Int) -> std.Int`
 #   --> m.dol:LL:LL
 #    |
 # LL |   h.cb = do |z| z

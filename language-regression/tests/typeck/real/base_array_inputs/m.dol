@@ -28,7 +28,7 @@ pub def read_view items @ BaseArray[Int]
   let _ = rand.pick $items
   #   ^: flow std.Int
   rand.shuffle $items
-# error: expected `std.Array[Unknown]`, found `std.BaseArray[std.Int]`
+# error: expected `[Unknown]`, found `std.BaseArray[std.Int]`
 #   --> m.dol:LL:LL
 #    |
 # LL |   rand.shuffle $items
@@ -36,19 +36,19 @@ pub def read_view items @ BaseArray[Int]
 
 pub def not_array()
   rand.pick (1, 2)
-  # error: expected `std.BaseArray[Unknown]`, found `std.Tuple[{1, 2}]`
+  # error: expected `std.BaseArray[Unknown]`, found `(1, 2)`
   #   --> m.dol:LL:LL
   #    |
   # LL |   rand.pick (1, 2)
   #    |             ^^^^^^
   let _ @ BaseDict[progress.Colors] = {attrs: (:BOLD:,)}
-# error: expected `progress.Colors`, found `{attrs: std.Tuple[{:BOLD:}]}`
+# error: expected `progress.Colors`, found `{attrs: (:BOLD:,)}`
 #   --> m.dol:LL:LL
 #    |
 # LL |   let _ @ BaseDict[progress.Colors] = {attrs: (:BOLD:,)}
 #    |                                       ^^^^^^^^^^^^^^^^^^
 #    |
-#    = note: `std.Tuple[{:BOLD:}]` does not fit `std.BaseArray[progress.Attr]`
+#    = note: `(:BOLD:,)` does not fit `std.BaseArray[progress.Attr]`
 
 pub def decoded()
   let data = json.decode "[]"

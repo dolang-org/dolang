@@ -13,7 +13,7 @@ lib.count = "y"
 lib.loose = "anything"
 lib.twice = (do |x @ Int| -> Int x)
 lib.twice = (do |x @ Str| -> Str x)
-# error: expected `forall (std.Int) -> std.Int`, found `(std.Str, <Value, >Value) -> std.Str`
+# error: expected `(std.Int) -> std.Int`, found `(std.Str) -> std.Str`
 #   --> main.dol:LL:LL
 #    |
 # LL | lib.twice = (do |x @ Str| -> Str x)

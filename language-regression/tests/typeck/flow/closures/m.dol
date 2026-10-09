@@ -19,7 +19,7 @@ pub def mapped()
   let ys = map [1, 2] do |x| [x]
   #                       ^: flow std.Int
   let _ = ys
-  #       ^~: flow std.Array[std.Array[std.Int]]
+  #       ^~: flow [[std.Int]]
 
 pub def applied()
   apply 1 do |y|
@@ -148,7 +148,7 @@ pub def held ints @ Array[Int] strs @ Array[Str]
 # A rest parameter binds a tuple of its items
 pub def rested *xs @ Str
   let _ = xs
-  #       ^~: flow std.Tuple[{*std.Str}]
+  #       ^~: flow (*std.Str)
 
 # A `return` in a block returns from its def
 pub def early xs @ Array[Int] -> Int

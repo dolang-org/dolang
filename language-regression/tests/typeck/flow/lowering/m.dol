@@ -121,7 +121,7 @@ pub def filtered ps @ Array[Array[Int]]
       if let a b = p
         - [a, b]
   let _ = r
-  #       ^: flow std.Array[std.Array[std.Int]]
+  #       ^: flow [[std.Int]]
 
 # Short circuits in a comprehension's filter and item narrow as anywhere else
 pub def comprehension_narrowing xs @ Array[Int | nil]
@@ -130,7 +130,7 @@ pub def comprehension_narrowing xs @ Array[Int | nil]
       if (x && x > 1)
         - (x || 0)
   let _ = r
-  #       ^: flow std.Array[std.Int]
+  #       ^: flow [std.Int]
 
 # Nested loops and filters with `elif` and `else`
 pub def comprehension_nesting xs @ Array[Int]
@@ -146,7 +146,7 @@ pub def comprehension_nesting xs @ Array[Int]
       else
         - $x
   let _ = r
-  #       ^: flow std.Array[((<Unknown, >Unknown) -> std.Int) | std.Array[std.Int] | std.Int | std.Str]
+  #       ^: flow [((<Unknown, >Unknown) -> std.Int) | [std.Int] | std.Int | std.Str]
 
 # Keyed items, pairs and spreads in a call's comprehension
 pub def comprehension_call xs @ Array[Int] a @ (Int | nil) b @ Int
@@ -180,7 +180,7 @@ pub def defaults_in_comprehension a @ (Int | nil)
     do
       - $v
   let _ = r
-  #       ^: flow std.Array[std.Int]
+  #       ^: flow [std.Int]
 
 pub def destructuring()
   let a :b ..._c = (1, b: "s")
@@ -208,7 +208,7 @@ pub def nested_tests v @ Tuple[Int, Array[Int]]
     #       ^: flow std.Int
   else
     let _ = v
-    #       ^: flow std.Tuple[{std.Int, std.Array[std.Int]}]
+    #       ^: flow (std.Int, [std.Int])
 
 # Optionality belongs to the unpack schema; matching stays unchanged
 pub def optional_defaults()
@@ -241,9 +241,9 @@ pub def lambda_signature()
   #       ^: flow (Unknown, std.Int, _k: Unknown, _j: std.Str, *std.Int, *(std.Sym): Unknown, <Unknown, >Unknown) -> std.Int
   let h = do |*pos @ Int **kw|
     let _ = pos
-    #       ^~~: flow std.Tuple[{*std.Int}]
+    #       ^~~: flow (*std.Int)
     let _ = kw
-    #       ^~: flow std.Record[{*(std.Sym): Unknown}]
+    #       ^~: flow (*(std.Sym): Unknown)
     nil
   h 1
   let g = (do |x <Iter[Int]| -> Int x)
@@ -285,12 +285,12 @@ pub def loops()
 # A rest binds a tuple or record of the items its declared schema leaves it
 pub def rests a @ Int *pos @ Int **kw @ Str
   let _ = pos
-  #       ^~~: flow std.Tuple[{*std.Int}]
+  #       ^~~: flow (*std.Int)
   let _ = kw
-  #       ^~: flow std.Record[{*(std.Sym): std.Str}]
+  #       ^~: flow (*(std.Sym): std.Str)
   a
 
 pub def mixed ...all @ Int
   let _ = all
-  #       ^~~: flow std.Record[{*std.Int, *(std.Sym): std.Int}]
+  #       ^~~: flow (*std.Int, *(std.Sym): std.Int)
   nil

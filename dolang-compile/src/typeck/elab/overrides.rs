@@ -94,8 +94,7 @@ impl Check<'_, '_> {
         let mut solver = Solver::new(db);
         #[cfg(feature = "debug")]
         {
-            let tables = self.tables;
-            solver.named(move |ty| tables.render_type(db, ty));
+            solver.named(self.tables, crate::typeck::r#type::Style::Full);
         }
         let environment = solver.rigid_environment(self.id);
         solver.close();

@@ -55,6 +55,7 @@ mod eval;
 mod member;
 mod problem;
 mod rule;
+mod shown;
 mod state;
 #[cfg(test)]
 mod tests;
@@ -115,6 +116,8 @@ struct Flow<'a, 'u> {
     unit: UnitId,
     /// Each function's declared type, under its rigids, if it's a function type
     declared: Vec<Option<Function>>,
+    /// The function of the running block
+    current: Option<FuncId>,
     /// The declarations whose rigids states may hold, which every solver assumes
     scope: Vec<DeclId>,
     /// Each block's place in the queue: its reverse postorder index
@@ -187,6 +190,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             tables,
             unit,
             declared,
+            current: None,
             scope,
             rank,
             widens,
@@ -321,8 +325,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
         #[cfg(feature = "debug")]
         {
-            let (db, tables) = (self.db, self.tables);
-            solver.named(move |ty| tables.render_type(db, ty));
+            solver.named(self.tables, crate::typeck::r#type::Style::Full);
         }
         solver
     }
@@ -390,8 +393,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             },
         };
         if self.conform(ty, annotation, span) == Status::Contradicted {
-            let found = self.tables.render_type(self.db, ty);
-            let annotation = self.tables.render_type(self.db, annotation);
+            let (found, annotation) = self.pair(ty, annotation);
             self.problem(Problem::Annotation {
                 span,
                 found,
@@ -660,6 +662,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         let ir = self.ir;
         let data = ir.block(block);
         let func = ir.func(data.func);
+        self.current = Some(data.func);
         let at = At {
             block,
             ctx,
@@ -844,8 +847,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         match outcome.status {
             Status::Proven => {}
             Status::Contradicted => {
-                let found = self.tables.render_type(self.db, ty);
-                let annotation = self.tables.render_type(self.db, annotation);
+                let (found, annotation) = self.pair(ty, annotation);
                 self.problem(Problem::Default {
                     span,
                     found,
@@ -898,7 +900,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             Pattern::Unpack(items) => {
                 let Some(types) = self.unpack(at, state, items, ty, span) else {
                     if self.observing() {
-                        let found = self.tables.render_type(self.db, ty);
+                        let found = self.subject(ty);
                         self.problem(Problem::Impossible { span, found });
                     }
                     return false;

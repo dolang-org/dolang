@@ -67,9 +67,9 @@ pub def ranges() -> Range[Int]
 pub def rest()
   let f = do |*xs **kw|
     let _ = xs
-    #       ^~: flow std.Tuple[{*Value}]
+    #       ^~: flow (*Value)
     let _ = kw
-    #       ^~: flow std.Record[{*(std.Sym): Value}]
+    #       ^~: flow (*(std.Sym): Value)
     nil
   f 1 k: 2
 

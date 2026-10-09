@@ -33,10 +33,10 @@ pub def literals r @ Release
 pub def collections()
   let empty = ([] @ Array[(Str | nil)])
   let _ = empty
-  #       ^~~~~: flow std.Array[nil | std.Str]
+  #       ^~~~~: flow [nil | std.Str]
   let options = ({port: 1} @ Dict[{?port: Int}])
   let _ = options
-  #       ^~~~~~~: flow std.Dict[{?port: std.Int}]
+  #       ^~~~~~~: flow {?port: std.Int}
 
 pub class Item
   pub field name @ Str = ""
@@ -65,21 +65,21 @@ pub def misfits()
   # LL |   let _ = ("x" @ Int)
   #    |            ^^^
   let _ = ([1, "a"] @ Array[Int])
-  # error: `std.Array[std.Int | std.Str]` does not fit the cast's type `std.Array[std.Int]`
+  # error: `[std.Int | std.Str]` does not fit the cast's type `[std.Int]`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _ = ([1, "a"] @ Array[Int])
   #    |            ^^^^^^^^
   let _ = (do |y| y @ ((Int) -> Str))
   #            ^: flow std.Int
-  # error: `(std.Int, <Value, >Value) -> std.Int` does not fit the cast's type `(std.Int, <Value, >Value) -> std.Str`
+  # error: `(std.Int) -> std.Int` does not fit the cast's type `(std.Int) -> std.Str`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _ = (do |y| y @ ((Int) -> Str))
   #    |            ^^^^^^^^
   let _h @ ((Int) -> Str) = do |z| z
   #                             ^: flow std.Int
-  # error: `(std.Int, <Value, >Value) -> std.Int` does not fit the annotation `(std.Int, <Value, >Value) -> std.Str`
+  # error: `(std.Int) -> std.Int` does not fit the annotation `(std.Int) -> std.Str`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _h @ ((Int) -> Str) = do |z| z

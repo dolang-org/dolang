@@ -29,7 +29,7 @@ pub class Pinned[T]: Box[T]
     # LL |   pub def only self @ Pinned[Int] -> T
     #    |           ^^^^
     self.item
-# error: `m.Int` does not fit the declared result `m.Pinned.#0`
+# error: `m.Int` does not fit the declared result `T`
 #   --> m.dol:LL:LL
 #    |
 # LL |     self.item

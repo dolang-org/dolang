@@ -11,7 +11,7 @@ pub def narrow value @ (Int | Str)
 pub def generic value @ (Array[Int] | Str)
   if let Array(xs) = value
     let _ = xs
-    #       ^~: flow std.Array[std.Int]
+    #       ^~: flow [std.Int]
   else
     let _ = value
     #       ^~~~~: flow std.Str
@@ -29,7 +29,7 @@ pub def failed_unpack value @ (Array[Int] | Str)
     #       ^: flow std.Int
   else
     let _ = value
-    #       ^~~~~: flow std.Array[std.Int] | std.Str
+    #       ^~~~~: flow [std.Int] | std.Str
 
 pub def falsy value @ Bool
   if let Bool(b) = value
@@ -63,7 +63,7 @@ pub def vertical value @ (Array[Int] | Str)
       xs
   do
     let _ = xs
-    #       ^~: flow std.Array[std.Int]
+    #       ^~: flow [std.Int]
   else
     let _ = value
     #       ^~~~~: flow std.Str

@@ -208,7 +208,7 @@ pub def variables() -> nil
   let _console = term.console
   #   ^~~~~~~~: flow term.Console
   let _version = shell.VERSION
-  #   ^~~~~~~~: flow std.Tuple[{std.Int, std.Int, std.Int}]
+  #   ^~~~~~~~: flow (std.Int, std.Int, std.Int)
   nil
 
 # Joining reads the strand's input only without an iterable

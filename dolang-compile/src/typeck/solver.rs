@@ -523,7 +523,7 @@ pub(crate) struct Solver<'db> {
     blinded: HashMap<Term, Term>,
     /// How traces render a type (see [`Solver::named`])
     #[cfg(feature = "debug")]
-    names: Option<std::rc::Rc<dyn Fn(TypeId) -> String + 'db>>,
+    names: Option<(&'db dyn super::r#type::Names, super::r#type::Style)>,
     /// How many trials and side queries the solver is nested in, which indents
     /// its traces
     #[cfg(feature = "debug")]
@@ -595,11 +595,15 @@ impl<'db> Solver<'db> {
         }
     }
 
-    /// Render types in traces with `names`, if `typeck.solver` is traced
+    /// Render types in traces with `names` in `style`, if `typeck.solver` is traced
     #[cfg(feature = "debug")]
-    pub(crate) fn named(&mut self, names: impl Fn(TypeId) -> String + 'db) {
+    pub(crate) fn named(
+        &mut self,
+        names: &'db dyn super::r#type::Names,
+        style: super::r#type::Style,
+    ) {
         if dolang_util::debug_enabled!("typeck.solver") {
-            self.names = Some(std::rc::Rc::new(names));
+            self.names = Some((names, style));
         }
     }
 
@@ -614,7 +618,7 @@ impl<'db> Solver<'db> {
             },
             Term::Skolem(id) => format!("!{}", id.0),
             Term::View(view) => {
-                let Some(names) = &self.names else {
+                let Some((names, style)) = self.names else {
                     return format!("{view:?}");
                 };
                 // Rendering mustn't spend the work it limits
@@ -623,13 +627,14 @@ impl<'db> Solver<'db> {
                 self.work.set(work);
                 self.exhausted.set(exhausted);
                 if let Ok(ty) = reified {
-                    return names(ty);
+                    return self.db.render(ty, names, style);
                 }
                 let group = (self.environments.get_by_index(view.environment.0))
                     .map(|environment| environment.group.clone())
                     .unwrap_or_default();
                 let group: Vec<String> = group.into_iter().map(|term| self.render(term)).collect();
-                format!("{} with [{}]", names(view.ty), group.join(", "))
+                let ty = self.db.render(view.ty, names, style);
+                format!("{ty} with [{}]", group.join(", "))
             }
         }
     }
@@ -694,7 +699,7 @@ impl<'db> Solver<'db> {
         solver.assume(class);
         #[cfg(feature = "debug")]
         {
-            solver.names = self.names.clone();
+            solver.names = self.names;
         }
         solver
     }
@@ -1101,7 +1106,7 @@ impl<'db> Solver<'db> {
         nested.gradual = self.gradual;
         #[cfg(feature = "debug")]
         {
-            nested.names = self.names.clone();
+            nested.names = self.names;
             nested.indent = self.indent + 1;
         }
         Ok(nested)

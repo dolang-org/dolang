@@ -22,25 +22,25 @@ def map_each[T, U] xs @ Array[T] f @ (T -> U) -> Array[U]
 
 pub def refuted plain @ Plain a @ Adder
   apply $plain
-  # error: expected `(std.Int, <m.refuted.#0, >m.refuted.#1) -> std.Str`, found `m.Plain`
+  # error: expected `(std.Int) -> std.Str`, found `m.Plain`
   #   --> m.dol:LL:LL
   #    |
   # LL |   apply $plain
   #    |          ^^^^^
   map_each ["s"] $a
-  # error: expected `(std.Str, <m.refuted.#0, >m.refuted.#1) -> Unknown`, found `m.Adder`
+  # error: expected `(std.Str) -> Unknown`, found `m.Adder`
   #   --> m.dol:LL:LL
   #    |
   # LL |   map_each ["s"] $a
   #    |                   ^
   apply "s"
-  # error: expected `(std.Int, <m.refuted.#0, >m.refuted.#1) -> std.Str`, found `"s"`
+  # error: expected `(std.Int) -> std.Str`, found `"s"`
   #   --> m.dol:LL:LL
   #    |
   # LL |   apply "s"
   #    |         ^^^
   apply nil
-# error: expected `(std.Int, <m.refuted.#0, >m.refuted.#1) -> std.Str`, found `nil`
+# error: expected `(std.Int) -> std.Str`, found `nil`
 #   --> m.dol:LL:LL
 #    |
 # LL |   apply nil

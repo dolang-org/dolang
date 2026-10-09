@@ -15,7 +15,7 @@ pub def template n @ Int
   source.format 1 name: "ok"
   let segments = [...source]
   let _ = segments
-  #       ^~~~~~~~: flow std.Array[std.FmtSegment[std.Int]]
+  #       ^~~~~~~~: flow [std.FmtSegment[std.Int]]
   for part = segments
     if let FmtParam(_) = part
       nil
@@ -28,7 +28,7 @@ pub def template n @ Int
   let _ = first
   #       ^~~~~: flow std.FmtSegment[std.Int]
   let _ = rest
-  #       ^~~~: flow std.Spread[{*std.FmtSegment[std.Int]}]
+  #       ^~~~: flow std.Spread[std.FmtSegment[std.Int]]
   let slice = source[0..2]
   let _ = slice
   #       ^~~~~: flow std.Seq[std.FmtSegment[std.Int]]

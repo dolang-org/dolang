@@ -40,7 +40,7 @@ do
   let _ = a[0]
   #   ^: flow std.Int
   let _ = a[1..3]
-  #   ^: flow std.Array[std.Int]
+  #   ^: flow [std.Int]
   let _ = r[i]
   #   ^: flow std.Str
   # An `Int` may be any position, and a literal must be one
@@ -55,8 +55,8 @@ do
   # LL |   let _ = t[2]
   #    |           ^^^^
   #    |
-  #    = note: `[K] (std.Tuple[{std.Int, std.Str}], K) -> IndexItem[{...{std.Int, std.Str}}, K]`: this call selects by `2`, which isn't one of the schema's keys
-  #    = note: `(std.Tuple[{std.Int, std.Str}], std.Range[std.Int]) -> std.Tuple[{*std.Int | std.Str}]`: expected `std.Range[std.Int]`, found `2`
+  #    = note: `@[K] ((std.Int, std.Str), K) -> std.IndexItem[{std.Int, std.Str}, K]`: this call selects by `2`, which isn't one of the schema's keys
+  #    = note: `((std.Int, std.Str), std.Range[std.Int]) -> (*std.Int | std.Str)`: expected `std.Range[std.Int]`, found `2`
   let _ = b[0]
   #   ^: flow std.Int
   b[0] = 1
@@ -68,7 +68,7 @@ do
   # LL |   b[0] = "x"
   #    |   ^^^^^^^^^^
   #    |
-  #    = note: `[K] (std.BinBuf, K, AssignItem[{*(std.Int): std.Int}, K]) -> nil`: expected `std.Int`, found `"x"`
+  #    = note: `@[K] (std.BinBuf, K, std.AssignItem[{*(std.Int): std.Int}, K]) -> nil`: expected `std.Int`, found `"x"`
   #    = note: `(std.BinBuf, std.Range[std.Int], std.Bin) -> nil`: expected `std.Bin`, found `"x"`; expected `std.Range[std.Int]`, found `0`
   let _ = f[0]
   #   ^: flow std.FmtSegment[Unknown]
@@ -108,7 +108,7 @@ pub def chosen p @ Picker x u @ (Int | Str)
   # A block's result doesn't choose, but is checked against what's chosen
   let _ = p.each 1 do |v| v
   #   ^: flow std.Str
-# error: expected `(std.Int, <m.chosen.#0, >m.chosen.#1) -> std.Str`, found `(std.Int, <m.chosen.#0, >m.chosen.#1) -> std.Int`
+# error: expected `(std.Int) -> std.Str`, found `(std.Int) -> std.Int`
 #   --> m.dol:LL:LL
 #    |
 # LL |   let _ = p.each 1 do |v| v
@@ -161,7 +161,7 @@ pub def functions()
   let _ = apply $twice
   #   ^: flow std.Int
   negate $twice
-  # error: expected `(std.Bool, <m.functions.#0, >m.functions.#1) -> std.Bool`, found `m.twice`
+  # error: expected `(std.Bool) -> std.Bool`, found `m.twice`
   #   --> m.dol:LL:LL
   #    |
   # LL |   negate $twice

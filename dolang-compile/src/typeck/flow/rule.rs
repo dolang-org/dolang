@@ -38,7 +38,8 @@ use crate::{
         },
         r#type::{
             Argument, BoundRef, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
-            Multiplicity, Rest, SchemaItem, SymbolId, Type, TypeId, UnionMember, Variance,
+            Multiplicity, Rest, SchemaItem, Shown, Style, SymbolId, Type, TypeId, UnionMember,
+            Variance,
         },
     },
 };
@@ -868,7 +869,7 @@ impl<'a> Flow<'a, '_> {
                 Status::Contradicted => {
                     let relation = solver.obligation(root(outcome)).relation;
                     // The callee, or the value that doesn't fit
-                    let actual = self.render_term(solver, relation.checked());
+                    let actual = solver.reify(relation.checked()).ok();
                     let problems: Vec<Problem> = match check {
                         // An argument is reported once, with a note for each of
                         // its parts that doesn't fit
@@ -895,7 +896,7 @@ impl<'a> Flow<'a, '_> {
                                     args,
                                     &path,
                                     contradiction,
-                                    &actual,
+                                    &actual.map(|callee| self.shown(callee)),
                                 );
                                 merge(&mut problems, problem);
                             }
@@ -903,7 +904,8 @@ impl<'a> Flow<'a, '_> {
                         }
                         &Check::Fits(span, misfit) => vec![Problem::Misfit {
                             span,
-                            found: actual.clone().unwrap_or_else(|| "?".to_owned()),
+                            found: actual
+                                .map_or(Shown::Type("?".to_owned()), |found| self.subject(found)),
                             misfit,
                         }],
                         &Check::Expected(span) => {
@@ -917,11 +919,24 @@ impl<'a> Flow<'a, '_> {
                                     notes.push(note);
                                 }
                             }
+                            let expected = (relation.sides())
+                                .and_then(|(_, expected)| solver.reify(expected).ok());
+                            let (found, expected) = match (actual, expected) {
+                                (Some(found), Some(expected)) => {
+                                    let (found, expected) = self.pair(found, expected);
+                                    (found, Some(expected))
+                                }
+                                (found, _) => (
+                                    found.map_or(Shown::Type("?".to_owned()), |found| {
+                                        self.subject(found)
+                                    }),
+                                    None,
+                                ),
+                            };
                             vec![Problem::Argument {
                                 span,
-                                found: actual.clone().unwrap_or_else(|| "?".to_owned()),
-                                expected: (relation.sides())
-                                    .and_then(|(_, expected)| self.render_term(solver, expected)),
+                                found,
+                                expected,
                                 causes: notes,
                             }]
                         }
@@ -1026,7 +1041,7 @@ impl<'a> Flow<'a, '_> {
     }
 
     /// An overload of the overloaded callee of `overloaded`'s judgment, by its
-    /// index, as its declaration names it (see [`Tables::render_signature`])
+    /// index, as its declaration names it
     fn overload(
         &self,
         solver: &Solver<'_>,
@@ -1041,8 +1056,8 @@ impl<'a> Flow<'a, '_> {
             _ => None,
         };
         match function.and_then(|function| self.db.overloads(function).get(index)) {
-            Some(&decl) => self.tables.render_signature(self.db, decl, ty),
-            None => self.tables.render_type(self.db, ty),
+            Some(&decl) => (self.db).render_declared(decl, ty, &self.names(), Style::Reader),
+            None => self.shown(ty),
         }
     }
 
@@ -1061,7 +1076,7 @@ impl<'a> Flow<'a, '_> {
         match contradiction {
             Contradiction::Conflict => return Problem::Conflict(span),
             Contradiction::Unadmitted(key) => {
-                let key = self.tables.render_type(self.db, key);
+                let key = self.subject(key);
                 return Problem::Unadmitted { span, key };
             }
             _ => {}
@@ -1085,20 +1100,29 @@ impl<'a> Flow<'a, '_> {
                 let Some((actual, expected)) = sides(arguments + 2) else {
                     return fallback;
                 };
-                let Some(found) = self.render_term(solver, actual) else {
+                let Some(found) = solver.reify(actual).ok() else {
                     return fallback;
                 };
                 // A parameter whose type is left unsolved shows the bound of it
                 // that the argument doesn't fit
                 let expected =
-                    self.render_term(solver, expected)
+                    solver
+                        .reify(expected)
+                        .ok()
                         .or_else(|| match steps.get(arguments + 2) {
                             Some(Derivation::BoundPropagation) => {
                                 let (_, bound) = sides(arguments + 3)?;
-                                self.render_term(solver, bound)
+                                solver.reify(bound).ok()
                             }
                             _ => None,
                         });
+                let (found, expected) = match expected {
+                    Some(expected) => {
+                        let (found, expected) = self.pair(found, expected);
+                        (found, Some(expected))
+                    }
+                    None => (self.subject(found), None),
+                };
                 // What fails may lie deeper than the argument's own relation, as
                 // in a binder's bound its type solves
                 let causes = (self.cause(solver, path, &steps, arguments + 2, contradiction))
@@ -1158,25 +1182,27 @@ impl<'a> Flow<'a, '_> {
             })
         };
         let (leaf_actual, leaf_expected) = sides(end - 1)?;
-        let actual = self.render_term(solver, leaf_actual)?;
-        let expected = self.render_term(solver, leaf_expected)?;
+        let (actual, expected) = self.pair(
+            solver.reify(leaf_actual).ok()?,
+            solver.reify(leaf_expected).ok()?,
+        );
         let note = match (contradiction, reversed(end - 1)) {
             (Contradiction::Missing(item), flipped) => {
                 match (self.schema_item(solver, leaf_expected, item), flipped) {
-                    (Some(item), false) => format!("`{actual}` may be missing {item}"),
+                    (Some(item), false) => format!("{actual} may be missing {item}"),
                     (Some(item), true) => {
-                        format!("`{expected}` requires {item}, which `{actual}` may be missing")
+                        format!("{expected} requires {item}, which {actual} may be missing")
                     }
-                    (None, _) => format!("`{actual}` may be missing an item of `{expected}`"),
+                    (None, _) => format!("{actual} may be missing an item of {expected}"),
                 }
             }
             (Contradiction::Excess(item), _) => match self.schema_item(solver, leaf_actual, item) {
-                Some(item) => format!("`{expected}` doesn't admit {item}"),
-                None => format!("`{expected}` doesn't admit every item of `{actual}`"),
+                Some(item) => format!("{expected} doesn't admit {item}"),
+                None => format!("{expected} doesn't admit every item of {actual}"),
             },
             _ if end == start + 1 => return None,
-            (_, false) => format!("`{actual}` does not fit `{expected}`"),
-            (_, true) => format!("`{expected}` doesn't accept `{actual}`"),
+            (_, false) => format!("{actual} does not fit {expected}"),
+            (_, true) => format!("{expected} doesn't accept {actual}"),
         };
         let mut notes = vec![note];
         let shown = found_side(start).and_then(|term| self.render_term(solver, term));
@@ -1219,10 +1245,7 @@ impl<'a> Flow<'a, '_> {
         };
         let item = items.get(index)?;
         let positional = matches!(item.element, Element::Positional(_));
-        let rendered = (self.tables).render_type(
-            self.db,
-            self.db.intern(Type::Schema(vec![item.clone()].into())),
-        );
+        let rendered = self.shown(self.db.intern(Type::Schema(vec![item.clone()].into())));
         let inner = rendered.strip_prefix('{')?.strip_suffix('}')?;
         Some(match positional {
             true => format!("positional `{inner}`"),
@@ -1232,8 +1255,7 @@ impl<'a> Flow<'a, '_> {
 
     /// A term's type as a diagnostic shows it, if it's solved
     fn render_term(&self, solver: &Solver<'_>, term: Term) -> Option<String> {
-        let ty = solver.reify(term).ok()?;
-        Some(self.tables.render_type(self.db, ty))
+        Some(self.shown(solver.reify(term).ok()?))
     }
 
     /// A call: its callee's type below the function type its arguments call it as.
@@ -1433,7 +1455,7 @@ impl<'a> Flow<'a, '_> {
         let Call { expected, span, .. } = call;
         let name = match (call.callee, self.db.ty(callee_type)) {
             (Some(member), _) => Some(self.member_name(member)),
-            (None, Type::Decl(_)) => Some(self.tables.render_type(self.db, callee_type)),
+            (None, Type::Decl(_)) => Some(self.shown(callee_type)),
             _ => None,
         };
         let bottom = self.db.bottom();

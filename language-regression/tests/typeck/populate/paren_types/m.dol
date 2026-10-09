@@ -3,33 +3,33 @@
 # only groups.
 
 pub let pair @ (Int, Str) = ...
-#              ^~~~~~~~~~: type std.Tuple[{std.Int, std.Str}]
+#              ^~~~~~~~~~: type (std.Int, std.Str)
 pub let single @ (Int,) = ...
-#                ^~~~~~: type std.Tuple[{std.Int}]
+#                ^~~~~~: type (std.Int,)
 pub let empty @ () = ...
-#               ^~: type std.Tuple[{}]
+#               ^~: type ()
 pub let optional @ (Int, ?Str) = ...
-#                  ^~~~~~~~~~~: type std.Tuple[{std.Int, ?std.Str}]
+#                  ^~~~~~~~~~~: type (std.Int, ?std.Str)
 pub let lone_optional @ (?Int) = ...
-#                       ^~~~~~: type std.Tuple[{?std.Int}]
+#                       ^~~~~~: type (?std.Int)
 pub let repeated @ (*Int) = ...
-#                  ^~~~~~: type std.Tuple[{*std.Int}]
+#                  ^~~~~~: type (*std.Int)
 pub let grouped @ Iter[(Int)] = ...
 #                 ^~~~~~~~~~~: type std.Iter[std.Int]
 pub let nested @ ((Int, Str), (a: Int)) = ...
-#                ^~~~~~~~~~~~~~~~~~~~~~: type std.Tuple[{std.Tuple[{std.Int, std.Str}], std.Record[{a: std.Int}]}]
+#                ^~~~~~~~~~~~~~~~~~~~~~: type ((std.Int, std.Str), (a: std.Int))
 
 # Any keyed item makes a record, optional or repeated
 pub let named @ (name: Str, Int) = ...
-#               ^~~~~~~~~~~~~~~~: type std.Record[{name: std.Str, std.Int}]
+#               ^~~~~~~~~~~~~~~~: type (name: std.Str, std.Int)
 pub let maybe_named @ (?name: Str) = ...
-#                     ^~~~~~~~~~~~: type std.Record[{?name: std.Str}]
+#                     ^~~~~~~~~~~~: type (?name: std.Str)
 pub let flags @ (Int, **Bool) = ...
-#               ^~~~~~~~~~~~~: type std.Record[{std.Int, *(std.Sym): std.Bool}]
+#               ^~~~~~~~~~~~~: type (std.Int, *(std.Sym): std.Bool)
 
 # A function type's parameters are still a parameter list
 pub let callback @ (((Int, Str)) -> nil) = ...
-#                  ^~~~~~~~~~~~~~~~~~~~~: type (std.Tuple[{std.Int, std.Str}], <Value, >Value) -> nil
+#                  ^~~~~~~~~~~~~~~~~~~~~: type ((std.Int, std.Str), <Value, >Value) -> nil
 
 # An inclusion never makes a record, so one that may bring in keyed items is an
 # error rather than a change of meaning
@@ -37,7 +37,7 @@ pub let callback @ (((Int, Str)) -> nil) = ...
 @let Keyed = {Int, ?key: Str}
 @let Indirect = {...Keyed}
 pub let spread @ (Bool, ...Positional) = ...
-#                ^~~~~~~~~~~~~~~~~~~~~: type std.Tuple[{std.Bool, ...m.Positional}]
+#                ^~~~~~~~~~~~~~~~~~~~~: type (std.Bool, ...m.Positional)
 pub let keyed_spread @ (Bool, ...Keyed) = ...
 # error: included schema may have keyed items, which a tuple type can't hold
 #   --> m.dol:LL:LL
@@ -55,7 +55,7 @@ pub let indirect_spread @ (...Indirect) = ...
 #    |
 #    = help: a keyed item makes a record; to include keyed items without one, write `Record[...{...}]`
 pub let keyed_record @ (flag: Bool, ...Keyed) = ...
-#                      ^~~~~~~~~~~~~~~~~~~~~~: type std.Record[{flag: std.Bool, ...m.Keyed}]
+#                      ^~~~~~~~~~~~~~~~~~~~~~: type (flag: std.Bool, ...m.Keyed)
 pub let open @ (...) = ...
 # error: `...` admits keyed items, which a tuple type can't hold
 #   --> m.dol:LL:LL

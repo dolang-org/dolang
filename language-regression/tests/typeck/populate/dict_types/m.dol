@@ -1,41 +1,41 @@
 # Where a type is required, a brace is `Dict` of its schema.
 
 pub let named @ {name: Str} = ...
-#               ^~~~~~~~~~~: type std.Dict[{name: std.Str}]
+#               ^~~~~~~~~~~: type {name: std.Str}
 pub let nested @ {items: [Str]} = ...
-#                ^~~~~~~~~~~~~~: type std.Dict[{items: std.Array[std.Str]}]
+#                ^~~~~~~~~~~~~~: type {items: [std.Str]}
 pub let rows @ Array[{a: Int}] = ...
-#              ^~~~~~~~~~~~~~~: type std.Array[std.Dict[{a: std.Int}]]
+#              ^~~~~~~~~~~~~~~: type [{a: std.Int}]
 pub let optional @ ({a: Int} | nil) = ...
-#                  ^~~~~~~~~~~~~~~~: type nil | std.Dict[{a: std.Int}]
+#                  ^~~~~~~~~~~~~~~~: type nil | {a: std.Int}
 pub let callback @ (({a: Int}) -> nil) = ...
-#                  ^~~~~~~~~~~~~~~~~~~: type (std.Dict[{a: std.Int}], <Value, >Value) -> nil
+#                  ^~~~~~~~~~~~~~~~~~~: type ({a: std.Int}, <Value, >Value) -> nil
 
 # `Dict` itself takes the brace as its schema
 pub let spelled @ Dict[{a: Int}] = ...
-#                 ^~~~~~~~~~~~~~: type std.Dict[{a: std.Int}]
+#                 ^~~~~~~~~~~~~~: type {a: std.Int}
 
 # A vertical schema in a key's value is a dict too
 pub @let Config = Dict $
-  #      ^~~~~~: decl std.Dict[{name: std.Str, meta: std.Dict[{owner: std.Str}]}]
+  #      ^~~~~~: decl {name: std.Str, meta: {owner: std.Str}}
   name: Str
   meta: $
     owner: Str
 
 # Without a key, as an array's data is, it is a tuple of its items
 pub @let Point = Dict $
-  #      ^~~~~: decl std.Dict[{at: std.Tuple[{std.Int, std.Int}], tags: std.Tuple[{*std.Str}]}]
+  #      ^~~~~: decl {at: (std.Int, std.Int), tags: (*std.Str)}
   at: $
     Int Int
   tags: $
     *Str
 pub @let Nested = Tuple $
-  #      ^~~~~~: decl std.Tuple[{std.Tuple[{std.Int}]}]
+  #      ^~~~~~: decl ((std.Int,),)
   Int
 pub let spelled_pair @ Tuple[Int, Int] = ...
-#                      ^~~~~~~~~~~~~~~: type std.Tuple[{std.Int, std.Int}]
+#                      ^~~~~~~~~~~~~~~: type (std.Int, std.Int)
 pub @let Spread = Tuple ...$
-  #      ^~~~~~: decl std.Tuple[{...{std.Int}}]
+  #      ^~~~~~: decl (std.Int,)
   Int
 pub @let Mixed = Dict $
   pair: $
@@ -51,7 +51,7 @@ pub @let Mixed = Dict $
 
 # A dict guards a recursive alias, as any class does
 pub @let Tree = (nil | {child: Tree})
-#        ^~~~: decl nil | std.Dict[{child: m.Tree}]
+#        ^~~~: decl nil | {child: m.Tree}
 
 # A binder's bound and an alias's body stay schemas
 pub def keys[S @ {...}] table @ Dict[S] -> nil
@@ -74,5 +74,5 @@ pub let bad @ Shape = ...
 
 pub def cast value
   let row = (value @ {a: Int})
-  #                  ^~~~~~~~: type std.Dict[{a: std.Int}]
+  #                  ^~~~~~~~: type {a: std.Int}
   row

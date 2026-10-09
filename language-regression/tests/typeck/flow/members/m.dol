@@ -140,7 +140,7 @@ pub def methods p @ Point
   #    |           ^^^
   let m = p.moved
   let _ = m
-  #       ^: flow forall (std.Int) -> m.Point
+  #       ^: flow (std.Int) -> m.Point
   let o = Point.origin()
   let _ = o
   #       ^: flow m.Point
@@ -190,7 +190,7 @@ pub def generic_objects b @ Box[Int] items @ Array[Str] cls @ Type[Box[Int]]
   #       ^: flow m.Box[std.Str]
   let m = Box.map
   let _ = m
-  #       ^: flow forall (m.Box[#0.0], (#0.0) -> #0.1) -> m.Box[#0.1]
+  #       ^: flow @[T1, T2] (m.Box[T1], (T1) -> T2) -> m.Box[T2]
   let n = Box.make 1
   let _ = n
   #       ^: flow m.Box[std.Int]
@@ -302,7 +302,7 @@ pub def looked d @ Dict[{a: Int, b: Str}] k @ Sym i @ Index[{a: Int}] o @ Dict[{
 pub def iterated d @ Dict[{a: Int, b: Str}] s @ Dict[{*(Str): Int}]
   for p = d
     let _ = p
-    #       ^: flow std.Tuple[{:a:, std.Int}] | std.Tuple[{:b:, std.Str}]
+    #       ^: flow (:a:, std.Int) | (:b:, std.Str)
   for k v = d
     let _ = k
     #       ^: flow :a: | :b:

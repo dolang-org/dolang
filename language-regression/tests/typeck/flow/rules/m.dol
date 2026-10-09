@@ -35,31 +35,31 @@ pub def called()
 pub def collected()
   let xs = [1, "a"]
   let _ = xs
-  #       ^~: flow std.Array[std.Int | std.Str]
+  #       ^~: flow [std.Int | std.Str]
   let d = {a: 1}
   let _ = d
-  #       ^: flow std.Dict[{*(std.Sym): std.Int}]
+  #       ^: flow std.Dict[std.Sym, std.Int]
   let t = (1, "a")
   let _ = t
-  #       ^: flow std.Tuple[{std.Int, std.Str}]
+  #       ^: flow (std.Int, std.Str)
   let r = (a: 1)
   let _ = r
-  #       ^: flow std.Record[{a: std.Int}]
+  #       ^: flow (a: std.Int)
   let e = []
   let _ = e
-  #       ^: flow std.Array[Unknown]
+  #       ^: flow [Unknown]
   let s = [...xs, :k:]
   let _ = s
-  #       ^: flow std.Array[std.Int | std.Str | std.Sym]
+  #       ^: flow [std.Int | std.Str | std.Sym]
   let c = $
     for x = xs
       - $x
   let _ = c
-  #       ^: flow std.Array[std.Int | std.Str]
+  #       ^: flow [std.Int | std.Str]
   # An annotated local's array takes the annotation's element type
   let ys @ Array[Int | nil] = [1]
   let _ = ys
-  #       ^~: flow std.Array[nil | std.Int]
+  #       ^~: flow [nil | std.Int]
 
 pub def iterated()
   for x = [1, 2]
@@ -147,10 +147,10 @@ pub def rebuilt c @ Bool n @ Int s @ Str
   while c
     let ys = [x]
     let _ = ys
-    #       ^~: flow std.Array[std.Int | std.Str]
+    #       ^~: flow [std.Int | std.Str]
     let d = {k: x}
     let _ = d
-    #       ^: flow std.Dict[{*(std.Sym): std.Int | std.Str}]
+    #       ^: flow std.Dict[std.Sym, std.Int | std.Str]
     if c
       x = first [s]
 
@@ -173,7 +173,7 @@ def bounded[U @ {a: Int}] _d @ Dict[U]
 # doesn't fit
 pub def outside_bound d @ Dict[{b: Int}]
   bounded $d
-# error: `std.Dict[{b: std.Int}]` does not fit this parameter
+# error: `{b: std.Int}` does not fit this parameter
 #   --> m.dol:LL:LL
 #    |
 # LL |   bounded $d
