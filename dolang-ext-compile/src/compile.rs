@@ -374,7 +374,6 @@ pub(crate) struct UnitObject<'v> {
     unit: Option<compile::Unit<'static>>,
     _backing: Backing<'v>,
     path: Box<Path>,
-    _module: Option<String>,
     identity: u64,
     /// Where each `Type` node's expression sits in the `UNIT_TYPES` array, once converted
     type_index: Option<HashMap<compile::NodeId, usize>>,
@@ -3214,15 +3213,11 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
             };
 
             let path: Box<Path> = Path::new(&path.to_string(strand)?).into();
-            // SAFETY: `path` and `module` are heap-backed fields retained after
-            // the borrowing compiler unit and dropped after it.
-            let static_path: &'static Path = unsafe { mem::transmute(path.as_ref()) };
-            let static_module: Option<&'static str> = module
-                .as_deref()
-                .map(|name| unsafe { mem::transmute(name) });
             let mut config = Config::new();
-            config.mode(if let Some(module) = static_module {
-                Mode::Module { name: module }
+            config.mode(if let Some(module) = module {
+                Mode::Module {
+                    name: module.into(),
+                }
             } else {
                 Mode::Script
             });
@@ -3256,7 +3251,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                 ext.apply(&mut config).unwrap();
             }
 
-            let unit = config.unit(static_path, backing.bytes());
+            let unit = config.unit(&path, backing.bytes());
             let identity = global.next_unit_id.get();
             global.next_unit_id.set(identity.strict_add(1));
             global.types.unit.create(
@@ -3265,7 +3260,6 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                     unit: Some(unit),
                     _backing: backing,
                     path,
-                    _module: module,
                     identity,
                     type_index: None,
                 },

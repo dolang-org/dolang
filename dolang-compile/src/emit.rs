@@ -597,7 +597,7 @@ impl<'a> Emitter<'a> {
                 })
                 .collect(),
         };
-        let module_name = match self.mode {
+        let module_name = match &self.mode {
             Mode::Module { name } => Some(
                 self.debugbintab
                     .range(self.debugbintab.id_str(name).as_bin_id()),

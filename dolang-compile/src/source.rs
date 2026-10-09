@@ -1,5 +1,5 @@
 use std::{
-    cell::OnceCell,
+    borrow::Cow,
     fmt::{self, Debug, Write},
     ops::{BitOr, Range},
     path::{Path, PathBuf},
@@ -7,9 +7,9 @@ use std::{
 
 use crate::diag::{self, Annotation, AnnotationKind, NoteKind, Pos, Severity};
 
-use dolang_util::mono::MonoVec;
+use dolang_util::{frozen::Frozen, mono::MonoVec};
 
-use super::{Compiler, UnitId};
+use super::UnitId;
 
 pub(crate) type Offset = u32;
 
@@ -142,45 +142,41 @@ impl From<(Offset, Offset)> for Coord {
 #[derive(Clone)]
 pub(crate) struct File<'s> {
     path: PathBuf,
-    content: &'s [u8],
-    newlines: OnceCell<Vec<Offset>>,
+    content: Cow<'s, [u8]>,
+    newlines: Vec<Offset>,
 }
 
 impl<'s> File<'s> {
-    pub(crate) fn new(path: &Path, content: &'s [u8]) -> Self {
+    pub(crate) fn new(path: &Path, content: Cow<'s, [u8]>) -> Self {
+        let mut newlines = Vec::new();
+        let mut iter = content.iter();
+        let mut cur = 0usize;
+        while let Some(pos) = iter.position(|&c| c == b'\n') {
+            newlines.push(Offset::try_from(cur + pos).unwrap());
+            cur += pos + 1;
+        }
         File {
             path: path.to_owned(),
             content,
-            newlines: Default::default(),
+            newlines,
         }
     }
 
-    pub(crate) fn content(&self) -> &'s [u8] {
-        self.content
+    pub(crate) fn content(&self) -> &[u8] {
+        &self.content
     }
 
-    pub(crate) fn slice(&self, span: Span) -> &'s [u8] {
+    pub(crate) fn slice(&self, span: Span) -> &[u8] {
         &self.content[span.start as usize..span.end as usize]
     }
 
-    pub(crate) fn str(&self, span: Span) -> &'s str {
+    pub(crate) fn str(&self, span: Span) -> &str {
         str::from_utf8(self.slice(span)).expect("invalid utf-8")
     }
 
     /// The offset of each newline in the file
     pub(crate) fn newlines(&self) -> &[Offset] {
-        self.newlines.get_or_init(|| {
-            let mut newlines: Vec<Offset> = Default::default();
-            let mut iter = self.content.iter();
-            let mut cur = 0usize;
-
-            while let Some(pos) = iter.position(|&c| c == b'\n') {
-                newlines.push(Offset::try_from(cur + pos).unwrap());
-                cur += pos + 1;
-            }
-
-            newlines
-        })
+        &self.newlines
     }
 
     pub(crate) fn coord(&self, offset: Offset) -> Coord {
@@ -215,24 +211,24 @@ pub(crate) fn coord(newlines: &[Offset], offset: Offset) -> Coord {
 pub(crate) trait Annotate {
     fn kind(&self) -> AnnotationKind;
     fn span(&self) -> Span;
-    fn message(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result;
+    fn message(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result;
 }
 
 pub(crate) trait Note {
     fn kind(&self) -> NoteKind;
-    fn message(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result;
+    fn message(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result;
 }
 
 pub(crate) trait Patch {
     fn span(&self) -> Span;
-    fn message(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result;
-    fn sub(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result;
+    fn message(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result;
+    fn sub(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result;
 }
 
 pub(crate) trait Diagnose {
     fn span(&self) -> Span;
     fn severity(&self) -> Severity;
-    fn message(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result;
+    fn message(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result;
 
     fn annotations(&self) -> Box<dyn Iterator<Item = Box<dyn Annotate>>> {
         Box::new([].into_iter())
@@ -247,38 +243,38 @@ pub(crate) trait Diagnose {
     }
 }
 
-pub struct Diag(Box<dyn Diagnose>);
+pub struct Diag(Box<dyn Diagnose + Send + Sync>);
 
 impl Diag {
-    pub(crate) fn new(info: impl Diagnose + 'static) -> Self {
+    pub(crate) fn new(info: impl Diagnose + Send + Sync + 'static) -> Self {
         Self(Box::new(info))
     }
 
-    pub(crate) fn resolve_span(compiler: &Compiler<'_>, span: Span) -> diag::Span {
-        let coords = compiler.file.coord_span(span);
+    pub(crate) fn resolve_span(file: &File<'_>, span: Span) -> diag::Span {
+        let coords = file.coord_span(span);
         diag::Span::new(
             Pos::new(span.start as usize, coords.start.line, coords.start.column),
             Pos::new(span.end as usize, coords.end.line, coords.end.column),
         )
     }
 
-    pub(crate) fn resolve(&self, compiler: &Compiler<'_>) -> diag::Diag {
-        self.resolve_in(compiler, None)
+    pub(crate) fn resolve(&self, file: &File<'_>) -> diag::Diag {
+        self.resolve_in(file, None)
     }
 
     /// Resolve the diagnostic, naming `unit` as the one its locations are in.
-    pub(crate) fn resolve_in(&self, compiler: &Compiler<'_>, unit: Option<UnitId>) -> diag::Diag {
-        let span = diag::SourceSpan::new(unit, Self::resolve_span(compiler, self.0.span()));
+    pub(crate) fn resolve_in(&self, file: &File<'_>, unit: Option<UnitId>) -> diag::Diag {
+        let span = diag::SourceSpan::new(unit, Self::resolve_span(file, self.0.span()));
         let mut msg = String::new();
-        self.0.message(compiler, &mut msg).unwrap();
+        self.0.message(file, &mut msg).unwrap();
         diag::Diag::new(
             self.0.severity(),
             span,
             msg,
             self.0.annotations().map(|a| {
-                let span = diag::SourceSpan::new(unit, Self::resolve_span(compiler, a.span()));
+                let span = diag::SourceSpan::new(unit, Self::resolve_span(file, a.span()));
                 let mut message = String::new();
-                a.message(compiler, &mut message).unwrap();
+                a.message(file, &mut message).unwrap();
                 Annotation {
                     kind: a.kind(),
                     span,
@@ -287,18 +283,18 @@ impl Diag {
             }),
             self.0.notes().map(|n| {
                 let mut message = String::new();
-                n.message(compiler, &mut message).unwrap();
+                n.message(file, &mut message).unwrap();
                 diag::Note {
                     kind: n.kind(),
                     message,
                 }
             }),
             self.0.patches().map(|p| {
-                let span = diag::SourceSpan::new(unit, Self::resolve_span(compiler, p.span()));
+                let span = diag::SourceSpan::new(unit, Self::resolve_span(file, p.span()));
                 let mut sub = String::new();
-                p.sub(compiler, &mut sub).unwrap();
+                p.sub(file, &mut sub).unwrap();
                 let mut message = String::new();
-                p.message(compiler, &mut message).unwrap();
+                p.message(file, &mut message).unwrap();
                 diag::Patch { span, sub, message }
             }),
         )
@@ -316,11 +312,11 @@ impl Diags {
         }
     }
 
-    pub(crate) fn push(&self, info: impl Diagnose + 'static) {
+    pub(crate) fn push(&self, info: impl Diagnose + Send + Sync + 'static) {
         self.vec.push(Diag::new(info))
     }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = &Diag> {
-        self.vec.iter()
+    pub(crate) fn freeze(self) -> Frozen<MonoVec<Diag>> {
+        Frozen::new(self.vec)
     }
 }

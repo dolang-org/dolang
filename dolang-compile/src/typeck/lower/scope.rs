@@ -117,7 +117,7 @@ impl<'u> Lower<'_, 'u> {
         let unit = self.tables.units[self.unit.index()]
             .source
             .expect("only a unit with source is lowered");
-        let module = parent.is_none() && matches!(unit.compiler.mode, Mode::Module { .. });
+        let module = parent.is_none() && matches!(unit.mode, Mode::Module { .. });
         let entries = entries
             .into_iter()
             .zip(vars)
@@ -215,7 +215,7 @@ impl<'u> Lower<'_, 'u> {
         let unit = self.tables.units[self.unit.index()]
             .source
             .expect("only a unit with source is lowered");
-        for import in &unit.compiler.prelude {
+        for import in &unit.prelude {
             match import {
                 PreludeImport::Items { module, items } => {
                     for item in items {

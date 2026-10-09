@@ -58,14 +58,13 @@ pub(crate) struct Harvest<'u> {
 
 /// Collect the surface of a unit, and resolve its type names as far as it can.
 pub(crate) fn harvest<'u>(unit: &'u Unit<'u>) -> Harvest<'u> {
-    let compiler = &unit.compiler;
     let mut decls = Vec::new();
     let mut pending = Vec::new();
     let mut sites = Vec::new();
     let mut walk = Walk {
         unit: local(),
-        file: &compiler.file,
-        prelude: &compiler.prelude,
+        file: &unit.file,
+        prelude: &unit.prelude,
         decls: &mut decls,
         pending: &mut pending,
         sites: &mut sites,
@@ -77,19 +76,19 @@ pub(crate) fn harvest<'u>(unit: &'u Unit<'u>) -> Harvest<'u> {
     };
     let root = &unit.ast.0;
     walk.function(None, root);
-    let (exports, values) = match compiler.mode {
+    let (exports, values) = match unit.mode {
         Mode::Module { .. } => walk.exports(&root.body.stmts),
         Mode::Script | Mode::Repl => (HashMap::new(), HashMap::new()),
     };
     let strings = walk.strings;
     Harvest {
         info: UnitInfo {
-            module: match compiler.mode {
-                Mode::Module { name } => Some(name),
+            module: match &unit.mode {
+                Mode::Module { name } => Some(&**name),
                 Mode::Script | Mode::Repl => None,
             },
-            path: compiler.file.path(),
-            newlines: compiler.file.newlines().to_vec(),
+            path: unit.file.path(),
+            newlines: unit.file.newlines().to_vec(),
             source: Some(unit),
             strict: unit.strict,
         },

@@ -703,7 +703,7 @@ mod tests {
         out: impl Output<'v>,
     ) {
         let mut config = Config::new();
-        config.mode(Mode::Module { name });
+        config.mode(Mode::Module { name: name.into() });
         let mut bytes = Vec::new();
         config
             .unit(Path::new("<test>"), source.as_bytes())

@@ -263,7 +263,7 @@ fn run(config: Arc<dyn Config>) -> Outcome {
                     load::load(
                         strand,
                         &path,
-                        compile::Mode::Module { name },
+                        compile::Mode::Module { name: name.into() },
                         &[],
                         cli.strict,
                         cli.cache,

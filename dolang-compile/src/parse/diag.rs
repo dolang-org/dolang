@@ -4,10 +4,9 @@ use std::{
 };
 
 use crate::{
-    Compiler,
     diag::{AnnotationKind, NoteKind, Severity},
     lex::Op,
-    source::{Annotate, Diagnose, Note, Patch, Span},
+    source::{Annotate, Diagnose, File, Note, Patch, Span},
 };
 
 pub(super) struct SyntaxDiag {
@@ -25,7 +24,7 @@ impl SyntaxDiag {
 }
 
 impl Diagnose for SyntaxDiag {
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "{}", self.message)
     }
 
@@ -41,7 +40,7 @@ impl Diagnose for SyntaxDiag {
 pub(super) struct InvalidLValue(pub(super) Span);
 
 impl Diagnose for InvalidLValue {
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "expression isn't a valid assignment target")
     }
 
@@ -57,7 +56,7 @@ impl Diagnose for InvalidLValue {
 pub(super) struct InvalidCompactOp(pub(super) Op, pub(super) Span);
 
 impl Diagnose for InvalidCompactOp {
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "operator not allowed in compact expressions: {}", self.0)
     }
 
@@ -84,20 +83,20 @@ impl Patch for ImplicitDelimitedConcat {
         }
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
             "insert `$` if you intended for the entire argument to be an expression"
         )
     }
 
-    fn sub(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn sub(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "$")
     }
 }
 
 impl Diagnose for ImplicitDelimitedConcat {
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
             "implicit concatenation not permitted after delimited expression"
@@ -134,7 +133,7 @@ impl Patch for AmbigIndexPatch {
         }
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         match self.0 {
             AmbigIndexPatchKind::NoSpace => write!(w, "remove space"),
             AmbigIndexPatchKind::Parens => {
@@ -143,11 +142,11 @@ impl Patch for AmbigIndexPatch {
         }
     }
 
-    fn sub(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        let index = compiler.file.str(self.2);
+    fn sub(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        let index = file.str(self.2);
         match self.0 {
             AmbigIndexPatchKind::NoSpace => {
-                let lhs = compiler.file.str(self.1);
+                let lhs = file.str(self.1);
                 write!(w, "{lhs}{index}")
             }
             AmbigIndexPatchKind::Parens => write!(w, "({index})"),
@@ -156,7 +155,7 @@ impl Patch for AmbigIndexPatch {
 }
 
 impl Diagnose for AmbigIndex {
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "index separated by whitespace is misleading")
     }
 
@@ -205,7 +204,7 @@ impl Patch for MisleadingCallPatch {
         self.1.callee_span | self.1.paren_span
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         match self.0 {
             MisleadingCallPatchKind::NoSpace => write!(w, "remove space"),
             MisleadingCallPatchKind::Parens => {
@@ -215,9 +214,9 @@ impl Patch for MisleadingCallPatch {
         }
     }
 
-    fn sub(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        let callee = compiler.file.str(self.1.callee_span);
-        let args = compiler.file.str(self.1.paren_span);
+    fn sub(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        let callee = file.str(self.1.callee_span);
+        let args = file.str(self.1.paren_span);
         match self.0 {
             MisleadingCallPatchKind::NoSpace => write!(w, "{callee}{args}"),
             MisleadingCallPatchKind::Parens => write!(w, "{callee}({args})"),
@@ -226,7 +225,7 @@ impl Patch for MisleadingCallPatch {
 }
 
 impl Diagnose for MisleadingCall {
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "call arguments separated by whitespace are misleading")
     }
 
@@ -257,12 +256,8 @@ impl Diagnose for BadFloat {
         Severity::Error
     }
 
-    fn message(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(
-            w,
-            "invalid floating point constant: {}",
-            compiler.file.str(self.0)
-        )
+    fn message(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "invalid floating point constant: {}", file.str(self.0))
     }
 
     fn span(&self) -> Span {
@@ -277,7 +272,7 @@ impl Diagnose for BadFmtParamName {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "parameter position must be a non-negative integer")
     }
 
@@ -293,7 +288,7 @@ impl Diagnose for FmtParamOutsideSeq {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
             "a parameter is only valid in a `t\"...\"` sequence, which keeps \
@@ -321,11 +316,11 @@ impl Patch for MisleadingArg {
         }
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "insert a space")
     }
 
-    fn sub(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn sub(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, " ")
     }
 }
@@ -339,7 +334,7 @@ impl Annotate for MisleadingArg {
         self.arg0_span
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "expression is actually an argument to this function")
     }
 }
@@ -349,7 +344,7 @@ impl Diagnose for MisleadingArg {
         Severity::Warning
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "juxtaposed argument is misleading")
     }
 
@@ -377,7 +372,7 @@ impl Diagnose for NonConstExpr {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "expression is not a constant")
     }
 }
@@ -393,7 +388,7 @@ impl Diagnose for InvalidConstType {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
             "a constant type must be a symbol, string, integer, boolean, or `nil`"
@@ -412,7 +407,7 @@ impl Diagnose for OptionalTypeArg {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "type arguments cannot be optional")
     }
 }
@@ -428,7 +423,7 @@ impl Diagnose for OptionalQuant {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "an item cannot be both optional and repeated")
     }
 }
@@ -444,7 +439,7 @@ impl Diagnose for ImplicitWithoutArrow {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
             "a parameter list with an implicit parameter must be followed by `->`"
@@ -464,7 +459,7 @@ impl Diagnose for ArrayTypeElems {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "an array type takes one element type")
     }
 
@@ -478,7 +473,7 @@ impl Note for ArrayTypeElems {
         NoteKind::Help
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
             "write a union for elements of several types, as in `[Int | Str]`, or a tuple type, as in `(Int, Str)`"
@@ -497,7 +492,7 @@ impl Diagnose for RequiredAfterOptional {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
             "required positional items must precede any optional positional items"
@@ -518,11 +513,11 @@ impl Diagnose for OptionalNeedsDefault {
         Severity::Error
     }
 
-    fn message(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
             "binding `{}` under `?` needs a default",
-            compiler.file.str(self.0)
+            file.str(self.0)
         )
     }
 }
@@ -539,11 +534,11 @@ impl Diagnose for OptionalName {
         Severity::Error
     }
 
-    fn message(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
             "`?` only precedes a sub-pattern; give `{}` a default instead",
-            compiler.file.str(self.0)
+            file.str(self.0)
         )
     }
 }
@@ -559,7 +554,7 @@ impl Diagnose for OptionalNamedRest {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "a rest under `?` cannot bind a name")
     }
 }
@@ -575,7 +570,7 @@ impl Diagnose for ImplicitInPattern {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "a pattern cannot have an implicit parameter")
     }
 }
@@ -591,7 +586,7 @@ impl Diagnose for ImplicitInSchema {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "a schema cannot have an implicit parameter")
     }
 }
@@ -607,7 +602,7 @@ impl Diagnose for DuplicateImplicit {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "duplicate implicit parameter")
     }
 }
@@ -623,7 +618,7 @@ impl Diagnose for QuantifiedImplicit {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "an implicit parameter cannot be quantified")
     }
 }
@@ -639,7 +634,7 @@ impl Diagnose for RestMustBeTrailing {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "rest item must be trailing")
     }
 }
@@ -656,7 +651,7 @@ impl Diagnose for MisleadingDollar {
         Severity::Warning
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "misleading `$`")
     }
 
@@ -683,7 +678,7 @@ impl Note for MisleadingDollar {
         NoteKind::Info
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
             "`$` is always a low-precedence call in full expression contexts"
@@ -703,14 +698,14 @@ impl Patch for MisleadingDollarPatch {
         }
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         match self {
             MisleadingDollarPatch::Remove(_) => write!(w, "remove the `$`"),
             MisleadingDollarPatch::Insert(_) => write!(w, "insert a space"),
         }
     }
 
-    fn sub(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn sub(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         match self {
             MisleadingDollarPatch::Remove(_) => Ok(()),
             MisleadingDollarPatch::Insert(_) => write!(w, " "),
@@ -729,7 +724,7 @@ impl Diagnose for SpecialMethodOutsideClass {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "special methods are only valid in a class body")
     }
 }
@@ -746,7 +741,7 @@ impl Diagnose for RedundantTypeOnly {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "a protocol's supertypes are already type-only")
     }
 }
@@ -762,7 +757,7 @@ impl Diagnose for ProtocolFieldDefault {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "a protocol field has no default")
     }
 }

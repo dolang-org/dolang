@@ -14,10 +14,7 @@ impl Flow<'_, '_> {
 
     pub(super) fn var_name(&self, var: VarId) -> String {
         let source = self.tables.units[self.unit.index()].source;
-        let file = &source
-            .expect("flow analyzes a unit from source")
-            .compiler
-            .file;
+        let file = &source.expect("flow analyzes a unit from source").file;
         self.ir.var_name(var, |span| file.str(span))
     }
 

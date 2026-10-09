@@ -76,7 +76,7 @@ fn compile<'a>(source: &'a str, mode: Mode<'a>) -> Unit<'a> {
 }
 
 fn typelib() -> Vec<u8> {
-    typeck::typelib(&compile(MODULE, Mode::Module { name: "lib" })).unwrap()
+    typeck::typelib(&compile(MODULE, Mode::Module { name: "lib".into() })).unwrap()
 }
 
 /// Check the script against a typelib, returning its diagnostics.
@@ -108,7 +108,7 @@ fn round_trip() {
 #[test]
 fn checks_against_typelib() {
     let script = compile(SCRIPT, Mode::Script);
-    let module = compile(MODULE, Mode::Module { name: "lib" });
+    let module = compile(MODULE, Mode::Module { name: "lib".into() });
     let mut builder = Builder::new();
     builder.unit(&module).unwrap();
     builder.unit(&script).unwrap();
@@ -132,7 +132,7 @@ fn script_has_no_typelib() {
 fn duplicate_module() {
     let bytes = typelib();
     let typelib = Typelib::read(&bytes).unwrap();
-    let module = compile(MODULE, Mode::Module { name: "lib" });
+    let module = compile(MODULE, Mode::Module { name: "lib".into() });
     let mut builder = Builder::new();
     builder.unit(&module).unwrap();
     let error = builder.typelib(&typelib).unwrap_err();
@@ -151,7 +151,7 @@ pub def at p @ Point -> When
   nil
 pub let unused @ json.Value = nil
 ";
-    let bytes = typeck::typelib(&compile(source, Mode::Module { name: "lib" })).unwrap();
+    let bytes = typeck::typelib(&compile(source, Mode::Module { name: "lib".into() })).unwrap();
     let typelib = Typelib::read(&bytes).unwrap();
     assert_eq!(typelib.module(), "lib");
     assert_eq!(typelib.path(), Path::new("lib.dol"));

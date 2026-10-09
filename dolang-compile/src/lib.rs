@@ -21,6 +21,7 @@ mod unit_id;
 pub use unit_id::UnitId;
 
 use std::{
+    borrow::Cow,
     convert::Infallible,
     error,
     fmt::{self, Display},
@@ -41,14 +42,18 @@ use self::{
     lex::Lexer,
     lower::Lowerer,
     parse::Parser,
-    source::{Diags, File},
+    source::{Diag, Diags, File},
 };
 
 pub use ast::{Context, visit::Token};
 
 #[cfg(feature = "debug")]
 use dolang_util::debug_eprintln;
-use dolang_util::intern::{self, BinTable};
+use dolang_util::{
+    frozen::Frozen,
+    intern::{self, BinTable},
+    mono::MonoVec,
+};
 
 use ast::Res;
 
@@ -1126,7 +1131,7 @@ pub enum Mode<'a> {
     /// Compile as script: return value is value of final statement or early return
     Script,
     /// Compile as module: return value is a module of top-level bindings, or that of early return
-    Module { name: &'a str },
+    Module { name: Cow<'a, str> },
     /// Compile in REPL mode:
     /// - Return value is a module of top-level bindings, including private bindings (e.g. imports)
     /// - Early return is disallowed at top level
@@ -1408,13 +1413,15 @@ impl<'a> Config<'a> {
     ///
     /// # Arguments
     /// - `path`: The path of the source file; used in backtraces
-    /// - `content`: The source as a byte slice
-    pub fn unit<'b>(&self, path: &'b Path, content: &'b [u8]) -> Unit<'b>
+    /// - `content`: The source, borrowed or owned. A unit built from owned source and a
+    ///   `Config<'static>` is a `Unit<'static>`, which may be sent and shared between
+    ///   threads.
+    pub fn unit<'b>(&self, path: &Path, content: impl Into<Cow<'b, [u8]>>) -> Unit<'b>
     where
         'a: 'b,
     {
         let mut compiler = Compiler {
-            file: File::new(path, content),
+            file: File::new(path, content.into()),
             symtab: sym::Table::new(),
             bintab: BinTable::new(),
             consttab: constant::Table::new(),
@@ -1469,10 +1476,17 @@ impl<'a> Config<'a> {
             .then(|| doc::index(&mut ast, &mut compiler.prelude, &compiler.file, &comments));
         Unit {
             document,
-            compiler,
             ast,
             comments,
-            diags,
+            file: compiler.file,
+            mode: compiler.mode,
+            prelude: compiler.prelude,
+            symtab: Frozen::new(compiler.symtab),
+            bintab: Frozen::new(compiler.bintab),
+            consttab: Frozen::new(compiler.consttab),
+            packtab: Frozen::new(compiler.packtab),
+            unpacktab: Frozen::new(compiler.unpacktab),
+            diags: diags.freeze(),
             failed,
             resolved,
             strict,
@@ -1483,18 +1497,31 @@ impl<'a> Config<'a> {
 /// A parsed and elaborated compilation unit.
 ///
 /// A unit retains the compiler state which produced it, so diagnostics are resolved
-/// lazily as they are iterated.
+/// lazily as they are iterated. That state is frozen, so a `Unit<'static>` may be sent
+/// and shared between threads.
 pub struct Unit<'a> {
     document: Option<doc::Table>,
-    compiler: Compiler<'a>,
     ast: ast::Root,
     comments: Vec<source::Span>,
-    diags: Diags,
+    file: File<'a>,
+    mode: Mode<'a>,
+    prelude: Vec<PreludeImport>,
+    symtab: Frozen<sym::Table>,
+    bintab: Frozen<BinTable>,
+    consttab: Frozen<constant::Table>,
+    packtab: Frozen<sig::PackTable>,
+    unpacktab: Frozen<sig::UnpackTable>,
+    diags: Frozen<MonoVec<Diag>>,
     failed: bool,
     resolved: bool,
     /// Whether the unit is checked strictly
     strict: bool,
 }
+
+const _: () = {
+    const fn shared<T: Send + Sync>() {}
+    shared::<Unit<'static>>();
+};
 
 impl Unit<'_> {
     /// Whether the unit is checked strictly: as [`Config::strict`] set, or else as
@@ -1507,7 +1534,7 @@ impl Unit<'_> {
     ///
     /// Diagnostics are yielded in the order they were generated.
     pub fn diagnostics(&self) -> impl Iterator<Item = diag::Diag> + '_ {
-        self.diags.iter().map(|diag| diag.resolve(&self.compiler))
+        self.diags.iter().map(|diag| diag.resolve(&self.file))
     }
 
     /// Iterate the document nodes of the unit: its declarations and constructs.
@@ -1546,7 +1573,7 @@ impl Unit<'_> {
             (0..table.len())
                 .filter_map(|index| match &table[doc::Id::from_index(index)].kind {
                     doc::Kind::ImportModule { module, .. }
-                    | doc::Kind::ImportItem { module, .. } => Some(self.compiler.file.str(*module)),
+                    | doc::Kind::ImportItem { module, .. } => Some(self.file.str(*module)),
                     doc::Kind::PreludeModule { module, .. }
                     | doc::Kind::PreludeItem { module, .. } => Some(&**module),
                     _ => None,
@@ -1568,7 +1595,7 @@ impl Unit<'_> {
         }
         let node = &table[id];
         Some(Node {
-            file: &self.compiler.file,
+            file: &self.file,
             node,
         })
     }
@@ -1582,16 +1609,16 @@ impl Unit<'_> {
     /// - `tokens`: Where to send semantic tokens.
     pub fn tokens(&self, tokens: &mut impl EmitToken) {
         let ControlFlow::Continue(()) = self.ast.accept(&mut VisitAdapter {
-            file: &self.compiler.file,
+            file: &self.file,
             emit: tokens,
         });
         for comment in self.comments.iter() {
-            let content = self.compiler.file.str(*comment);
+            let content = self.file.str(*comment);
             let slice = content.trim_end();
             tokens.emit(
                 Token::Comment,
                 convert_span(
-                    &self.compiler.file,
+                    &self.file,
                     source::Span {
                         start: comment.start,
                         end: comment.start + slice.len() as u32,
@@ -1612,17 +1639,27 @@ impl Unit<'_> {
     /// - [`ErrorKind::Fail`]: The unit contains at least one error; consult
     ///   [`Unit::diagnostics`].
     /// - [`ErrorKind::Io`]: Writing bytecode failed with an [`io::Error`].
-    pub fn emit(mut self, write: &mut impl Write) -> Result<(), Error> {
+    pub fn emit(self, write: &mut impl Write) -> Result<(), Error> {
         if self.failed {
             return Err(Error(ErrorInfo::Fail));
         }
-        let mut lowerer = self.compiler.lowerer();
+        let mut compiler = Compiler {
+            file: self.file,
+            symtab: self.symtab.into_inner(),
+            bintab: self.bintab.into_inner(),
+            consttab: self.consttab.into_inner(),
+            packtab: self.packtab.into_inner(),
+            unpacktab: self.unpacktab.into_inner(),
+            mode: self.mode,
+            prelude: self.prelude,
+        };
+        let mut lowerer = compiler.lowerer();
         let graph = lowerer.run(&self.ast)?;
         #[cfg(feature = "debug")]
-        if let Err(e) = self.compiler.export_cfg_dot(&graph) {
+        if let Err(e) = compiler.export_cfg_dot(&graph) {
             debug_eprintln!(topic: "dot", "DOT export failed: {e}");
         }
-        let mut emitter = self.compiler.emitter(&graph);
+        let mut emitter = compiler.emitter(&graph);
         Ok(emitter.emit(write)?)
     }
 }

@@ -273,7 +273,7 @@ impl Source {
         let mut config = match &self.module {
             None => compile_setup(None, prelude, Mode::Script),
             // Modules are loaded without the command line's prelude
-            Some(name) => compile_setup(None, &[], Mode::Module { name }),
+            Some(name) => compile_setup(None, &[], Mode::Module { name: name.into() }),
         };
         config.typecheck(true);
         config

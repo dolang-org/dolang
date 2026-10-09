@@ -2362,7 +2362,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             .insts
             .push(Inst(InstInfo::LoadConst(class_name), span));
 
-        let module_name = match self.params.mode {
+        let module_name = match &self.params.mode {
             Mode::Module { name } => name,
             _ => "",
         };

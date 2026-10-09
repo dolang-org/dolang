@@ -74,7 +74,7 @@ mod detail {
             ])
             .commit();
         if let Some(name) = module {
-            config.mode(Mode::Module { name });
+            config.mode(Mode::Module { name: name.into() });
         }
         let mut out = Vec::new();
         let unit = config.unit(path, content);

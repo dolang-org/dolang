@@ -42,7 +42,9 @@ mod tests {
 
         fn write(&self, name: &str, module: &str) {
             let mut config = Config::new();
-            config.mode(Mode::Module { name: module });
+            config.mode(Mode::Module {
+                name: module.into(),
+            });
             config.typecheck(true);
             let path = PathBuf::from("fixture.dol");
             let unit = config.unit(&path, b"pub let value = 1\n");

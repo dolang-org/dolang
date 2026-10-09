@@ -243,7 +243,9 @@ fn run(case: &Path) {
                 config.prelude().clear();
             }
             if let Some(name) = &source.module {
-                config.mode(Mode::Module { name });
+                config.mode(Mode::Module {
+                    name: name.as_str().into(),
+                });
             }
             config.unit(&source.path, &source.content)
         })

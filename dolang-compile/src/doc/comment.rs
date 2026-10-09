@@ -116,7 +116,7 @@ mod tests {
 
     /// The file's documentation, with each line's comment found by its `#`
     fn root(source: &str) -> Option<&str> {
-        let file = File::new(Path::new("test.dol"), source.as_bytes());
+        let file = File::new(Path::new("test.dol"), source.as_bytes().into());
         let mut comments = Vec::new();
         let mut start = 0;
         for line in source.split_inclusive('\n') {

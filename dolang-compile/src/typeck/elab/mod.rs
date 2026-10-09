@@ -214,7 +214,6 @@ impl<'u> Tables<'u> {
         self.units[unit.index()]
             .source
             .expect("only a unit with source is read as text")
-            .compiler
             .file
             .str(span)
     }

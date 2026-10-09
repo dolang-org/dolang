@@ -219,7 +219,7 @@ fn templates_are_order_independent() {
     let mut config = Config::new();
     config
         .typecheck(true)
-        .mode(crate::Mode::Module { name: "std" });
+        .mode(crate::Mode::Module { name: "std".into() });
     let std = config.unit(
         Path::new("std.dol"),
         include_bytes!("../../../../dolang/stub/std.dol"),

@@ -8,7 +8,6 @@
 use std::fmt::{self, Write};
 
 use crate::{
-    Compiler,
     diag::Severity,
     source::{Diagnose, Diags, File, Offset, Span},
 };
@@ -89,8 +88,8 @@ impl Diagnose for UnknownSetting {
         Severity::Warning
     }
 
-    fn message(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        let setting = String::from_utf8_lossy(compiler.file.slice(self.0));
+    fn message(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        let setting = String::from_utf8_lossy(file.slice(self.0));
         write!(w, "unknown directive setting `{setting}`")
     }
 }
