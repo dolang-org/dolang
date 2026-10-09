@@ -36,11 +36,12 @@ use crate::{
     },
 };
 
-/// Check that every class and protocol conforms to its supertypes. Violations
-/// are diagnosed; undecided checks are returned.
+/// Check that every class and protocol of `unit` conforms to its supertypes.
+/// Violations are diagnosed; undecided checks are returned.
 pub(crate) fn overrides(
     db: &Database,
     tables: &Tables<'_>,
+    unit: UnitId,
     diags: &mut Vec<UnitDiag>,
 ) -> Vec<Unresolved> {
     let mut unresolved = Vec::new();
@@ -48,6 +49,9 @@ pub(crate) fn overrides(
         let DeclNode::Class(class) = &decl.node else {
             continue;
         };
+        if decl.unit != unit {
+            continue;
+        }
         let mut check = Check {
             db,
             tables,

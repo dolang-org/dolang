@@ -42,11 +42,29 @@ pub(crate) struct Unresolved {
     pub(crate) residual: Residual,
 }
 
-/// Check the well-formedness of every declaration and written type. Violations
-/// are diagnosed; undecided checks are returned.
+/// The bound written on each binder, by its span, for diagnostics that quote one
+pub(crate) type Bounds<'t> = HashMap<UnitSpan, &'t TypeExpr>;
+
+pub(crate) fn bounds<'t>(tables: &'t Tables<'_>) -> Bounds<'t> {
+    (tables.sites.iter())
+        .filter(|site| matches!(site.role, Role::Bound(_)))
+        .map(|site| {
+            let span = UnitSpan {
+                unit: site.unit,
+                span: site.ty.span(),
+            };
+            (span, &site.ty)
+        })
+        .collect()
+}
+
+/// Check the well-formedness of `unit`'s declarations and written types.
+/// Violations are diagnosed; undecided checks are returned.
 pub(crate) fn wellformed(
     db: &Database,
     tables: &Tables<'_>,
+    bounds: &Bounds<'_>,
+    unit: UnitId,
     diags: &mut Vec<UnitDiag>,
 ) -> Vec<Unresolved> {
     let mut check = Check {
@@ -54,30 +72,42 @@ pub(crate) fn wellformed(
         tables,
         diags,
         unresolved: Vec::new(),
-        bounds: (tables.sites.iter())
-            .filter(|site| matches!(site.role, Role::Bound(_)))
-            .map(|site| {
-                let span = UnitSpan {
-                    unit: site.unit,
-                    span: site.ty.span(),
-                };
-                (span, &site.ty)
-            })
-            .collect(),
+        bounds,
     };
-    for site in &tables.sites {
+    for site in tables.sites.iter().filter(|site| site.unit == unit) {
         if matches!(site.role, Role::Pattern) {
             continue;
         }
         let scope = site.group().map(|key| check.declaration(key));
         check.ty(site.unit, scope, &site.ty, false);
     }
-    for index in 0..tables.decls.len() {
+    for (index, decl) in tables.decls.iter().enumerate() {
+        if decl.unit != unit {
+            continue;
+        }
         let id = DeclId::from_index(index);
         for sig in 0..tables.sig_count(id) {
             check.signature(id, sig);
         }
     }
+    check.unresolved
+}
+
+/// Check that recursion among every unit's transparent aliases is contractive and
+/// regular. A cycle may cross units, so this is checked over them all at once.
+pub(crate) fn recursion(
+    db: &Database,
+    tables: &Tables<'_>,
+    bounds: &Bounds<'_>,
+    diags: &mut Vec<UnitDiag>,
+) -> Vec<Unresolved> {
+    let mut check = Check {
+        db,
+        tables,
+        diags,
+        unresolved: Vec::new(),
+        bounds,
+    };
     check.recursion();
     check.unresolved
 }
@@ -94,8 +124,7 @@ struct Check<'a, 'u> {
     tables: &'a Tables<'u>,
     diags: &'a mut Vec<UnitDiag>,
     unresolved: Vec<Unresolved>,
-    /// Each binder bound written, by its span
-    bounds: HashMap<UnitSpan, &'a TypeExpr>,
+    bounds: &'a Bounds<'a>,
 }
 
 impl Check<'_, '_> {

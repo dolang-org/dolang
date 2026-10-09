@@ -26,8 +26,8 @@ fn agree_with(source: &str, inspect: impl FnOnce(&Check<'_>)) {
     let ir = check.cfgs[UnitId::from_index(0).index()]
         .as_ref()
         .expect("a unit with source is lowered");
-    let forward = Flow::new(ir, &check.db, &check.tables, false).analyze();
-    let reversed = Flow::new(ir, &check.db, &check.tables, true).analyze();
+    let forward = Flow::new(ir, &check.forks[0], &check.tables, false).analyze();
+    let reversed = Flow::new(ir, &check.forks[0], &check.tables, true).analyze();
     assert_eq!(forward, reversed);
     assert_eq!(Some(forward), check.flows[0]);
     inspect(&check);
@@ -85,7 +85,7 @@ def dynamic x e @ Empty
             ] {
                 let types: Vec<_> = flow.facts.iter()
                     .filter(|(span, _)| check.tables.text(UnitId::from_index(0), **span) == name)
-                    .map(|(_, fact)| check.tables.render_type(&check.db, fact.ty))
+                    .map(|(_, fact)| check.tables.render_type(&check.forks[0], fact.ty))
                     .collect();
                 assert!(!types.is_empty(), "no facts for {name}");
                 assert!(
@@ -256,8 +256,8 @@ pub def run n @ Int width @ Int text @ Str
     builder.unit(&script).unwrap();
     let check = builder.check();
     let ir = check.cfgs[1].as_ref().unwrap();
-    let forward = Flow::new(ir, &check.db, &check.tables, false).analyze();
-    let reversed = Flow::new(ir, &check.db, &check.tables, true).analyze();
+    let forward = Flow::new(ir, &check.forks[1], &check.tables, false).analyze();
+    let reversed = Flow::new(ir, &check.forks[1], &check.tables, true).analyze();
     assert_eq!(forward, reversed);
     assert_eq!(Some(&forward), check.flows[1].as_ref());
     assert!(forward.unresolved.is_empty(), "{:?}", forward.unresolved);
@@ -274,7 +274,7 @@ pub def run n @ Int width @ Int text @ Str
         .facts
         .iter()
         .filter(|(span, _)| check.tables.text(UnitId::from_index(1), **span) == "chosen")
-        .map(|(_, fact)| check.tables.render_type(&check.db, fact.ty))
+        .map(|(_, fact)| check.tables.render_type(&check.forks[0], fact.ty))
         .collect();
     assert!(!types.is_empty());
     assert!(types.iter().all(|ty| ty == "std.Int"), "{types:?}");

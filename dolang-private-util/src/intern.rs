@@ -135,6 +135,15 @@ impl<T, Tag> Table<T, Tag> {
         self.map.get_index(index).map(|(t, _)| t)
     }
 
+    /// The number of `Id`s issued, fresh ones included.
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
     pub fn iter(&self) -> Iter<'_, T, Tag> {
         Iter {
             map: &self.map,
@@ -199,6 +208,15 @@ impl<T, Tag> Frozen<Table<T, Tag>> {
 
     pub fn get_by_index(&self, index: usize) -> Option<&T> {
         unsafe { self.inner() }.get_by_index(index)
+    }
+
+    /// The number of `Id`s issued, fresh ones included.
+    pub fn len(&self) -> usize {
+        unsafe { self.inner() }.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        unsafe { self.inner() }.is_empty()
     }
 
     pub fn iter(&self) -> Iter<'_, T, Tag> {

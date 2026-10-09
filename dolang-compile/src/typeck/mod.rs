@@ -11,7 +11,7 @@ mod trace;
 pub(crate) mod r#type;
 pub(crate) mod typelib;
 
-use std::{collections::HashSet, path::Path};
+use std::{collections::HashSet, path::Path, sync::Arc};
 
 use crate::{
     Error, ErrorInfo, Mode, Unit, UnitId,
@@ -226,43 +226,48 @@ impl<'u, 's> Builder<'u, 's> {
         elab::populate(&mut db, &mut tables, &mut diags);
         db.seal();
         elab::specialize(&mut db, &tables, &mut diags);
-        let mut unresolved = elab::wellformed(&db, &tables, &mut diags);
-        unresolved.extend(elab::overrides(&db, &tables, &mut diags));
-        #[cfg(feature = "debug")]
-        trace::elab(&db, &tables, &unresolved);
-        // A unit's bodies are checked only from its source
-        let cfgs = (0..tables.units.len())
-            .map(|index| {
-                tables.units[index].source?;
-                let ir = lower::lower(&tables, &db, UnitId::from_index(index));
-                debug_assert_eq!(ir.validate(), Ok(()), "lowering builds a valid graph");
-                #[cfg(debug_assertions)]
-                ir.check_stack_depths();
-                #[cfg(feature = "debug")]
-                if let Err(e) = export_dot(&ir, &db, &tables.units[index]) {
-                    dolang_util::debug_eprintln!(topic: "dot", "Typing CFG DOT export failed: {e}");
-                }
-                Some(ir)
-            })
+        let bounds = elab::bounds(&tables);
+        let mut recursion = Vec::new();
+        let recursion_unresolved = elab::recursion(&db, &tables, &bounds, &mut recursion);
+        // Every later pass runs in a fork per unit, so no unit's results depend on
+        // what another interned
+        let shared = db.share();
+        let mut outputs = (0..tables.units.len())
+            .map(|index| check_unit(&shared, &tables, &bounds, UnitId::from_index(index)))
             .collect::<Vec<_>>();
-        let flows: Vec<Option<flow::Results>> = cfgs
-            .iter()
-            .map(|ir| ir.as_ref().map(|ir| flow::analyze(ir, &db, &tables)))
-            .collect();
-        for (index, results) in flows.iter().enumerate() {
-            let Some(results) = results else {
-                continue;
-            };
+        // Gather each kind of output across units, in the order the passes ran
+        let mut unresolved = Vec::new();
+        for output in &mut outputs {
+            diags.append(&mut output.wellformed.0);
+            unresolved.append(&mut output.wellformed.1);
+        }
+        diags.append(&mut recursion);
+        unresolved.extend(recursion_unresolved);
+        for output in &mut outputs {
+            diags.append(&mut output.overrides.0);
+            unresolved.append(&mut output.overrides.1);
+        }
+        #[cfg(feature = "debug")]
+        trace::elab(&r#type::Database::fork(&shared), &tables, &unresolved);
+        let mut forks = Vec::with_capacity(outputs.len());
+        let mut cfgs = Vec::with_capacity(outputs.len());
+        let mut flows = Vec::with_capacity(outputs.len());
+        for (index, output) in outputs.into_iter().enumerate() {
             let unit = UnitId::from_index(index);
-            for problem in &results.problems {
-                diags.push((unit, report::Diag::new(problem.clone())));
-            }
-            unresolved.extend(results.unresolved.iter().map(|&(span, residual)| {
-                elab::Unresolved {
-                    span: r#type::UnitSpan { unit, span },
-                    residual,
+            if let Some(results) = &output.flow {
+                for problem in &results.problems {
+                    diags.push((unit, report::Diag::new(problem.clone())));
                 }
-            }));
+                unresolved.extend(results.unresolved.iter().map(|&(span, residual)| {
+                    elab::Unresolved {
+                        span: r#type::UnitSpan { unit, span },
+                        residual,
+                    }
+                }));
+            }
+            forks.push(output.db);
+            cfgs.push(output.cfg);
+            flows.push(output.flow);
         }
         Check {
             cfgs,
@@ -272,9 +277,55 @@ impl<'u, 's> Builder<'u, 's> {
                 .map(|(unit, diag)| diag.resolve(*unit, &tables.units[unit.index()]))
                 .collect(),
             tables,
-            db,
+            shared,
+            forks,
             unresolved,
         }
+    }
+}
+
+/// What checking a unit in a fork of its own concludes
+struct UnitOutput {
+    /// The fork, which the unit's results are interned in
+    db: r#type::Database,
+    wellformed: (Vec<elab::UnitDiag>, Vec<elab::Unresolved>),
+    overrides: (Vec<elab::UnitDiag>, Vec<elab::Unresolved>),
+    cfg: Option<cfg::Ir>,
+    flow: Option<flow::Results>,
+}
+
+/// Check a unit's declarations, and for a unit with source, its bodies, in a new
+/// fork of `shared`
+fn check_unit(
+    shared: &Arc<r#type::Shared>,
+    tables: &elab::Tables<'_>,
+    bounds: &elab::Bounds<'_>,
+    unit: UnitId,
+) -> UnitOutput {
+    let db = r#type::Database::fork(shared);
+    let mut wellformed = Vec::new();
+    let wellformed_unresolved = elab::wellformed(&db, tables, bounds, unit, &mut wellformed);
+    let mut overrides = Vec::new();
+    let overrides_unresolved = elab::overrides(&db, tables, unit, &mut overrides);
+    // A unit's bodies are checked only from its source
+    let cfg = tables.units[unit.index()].source.map(|_| {
+        let ir = lower::lower(tables, &db, unit);
+        debug_assert_eq!(ir.validate(), Ok(()), "lowering builds a valid graph");
+        #[cfg(debug_assertions)]
+        ir.check_stack_depths();
+        #[cfg(feature = "debug")]
+        if let Err(e) = export_dot(&ir, &db, &tables.units[unit.index()]) {
+            dolang_util::debug_eprintln!(topic: "dot", "Typing CFG DOT export failed: {e}");
+        }
+        ir
+    });
+    let flow = cfg.as_ref().map(|ir| flow::analyze(ir, &db, tables));
+    UnitOutput {
+        db,
+        wellformed: (wellformed, wellformed_unresolved),
+        overrides: (overrides, overrides_unresolved),
+        cfg,
+        flow,
     }
 }
 
@@ -301,7 +352,10 @@ fn export_dot(ir: &cfg::Ir, db: &r#type::Database, info: &elab::UnitInfo) -> std
 pub struct Check<'u> {
     diagnostics: Vec<Diag>,
     tables: elab::Tables<'u>,
-    db: r#type::Database,
+    /// The database every unit's fork is of
+    shared: Arc<r#type::Shared>,
+    /// Each unit's fork, by [`UnitId`], which its results are interned in
+    forks: Vec<r#type::Database>,
     /// Well-formedness checks the checker could not decide
     unresolved: Vec<elab::Unresolved>,
     /// Each unit's typing CFG, by [`UnitId`], for a unit checked from source
@@ -371,11 +425,12 @@ impl Check<'_> {
     #[doc(hidden)]
     pub fn judgments(&self, unit: UnitId) -> Vec<Judgment> {
         let info = &self.tables.units[unit.index()];
-        let mut judgments = self.tables.judgments(&self.db, unit, &self.unresolved);
+        let db = &self.forks[unit.index()];
+        let mut judgments = self.tables.judgments(db, unit, &self.unresolved);
         let facts = self.flows[unit.index()].iter().flat_map(|flow| &flow.facts);
         judgments.extend(facts.map(|(&span, fact)| {
-            let ty = self.tables.render_type(&self.db, fact.ty);
-            let value = match (fact.unassigned, fact.ty == self.db.bottom()) {
+            let ty = self.tables.render_type(db, fact.ty);
+            let value = match (fact.unassigned, fact.ty == db.bottom()) {
                 (false, _) => ty,
                 (true, true) => "unassigned".to_owned(),
                 (true, false) => format!("{ty} | unassigned"),
@@ -400,7 +455,7 @@ impl Check<'_> {
     pub fn smoke(&self) {
         use solver::{Provenance, Solver};
 
-        let db = &self.db;
+        let db = &r#type::Database::fork(&self.shared);
         let mut solver = Solver::new(db);
         let relate = |solver: &mut Solver<'_>, ty, kinds: &[r#type::Kind]| {
             let group = kinds
@@ -448,7 +503,7 @@ impl Check<'_> {
         use solver::Solver;
         use r#type::{Element, Member, Scope, Type};
 
-        let db = &self.db;
+        let db = &r#type::Database::fork(&self.shared);
         let declared = |ty| match *db.ty(ty) {
             Type::Decl(decl) => Some(decl),
             Type::Apply { base, .. } => match *db.ty(base) {
