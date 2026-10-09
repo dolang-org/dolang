@@ -1,3 +1,4 @@
+# dolang: strict
 # Convenience helpers for the common “compile if needed, cache, then execute”
 # workflow.
 #
@@ -11,7 +12,7 @@ import compile digest fs load std shell
 # - script path: basename without the last extension
 # - `-m` module: module name string
 # - unset / REPL: `dolang`
-def default_app()
+def default_app() -> Str
   let p = shell.program
   if (p == nil)
     "dolang"
@@ -20,13 +21,13 @@ def default_app()
   else
     p
 
-def normalize_app app
+def normalize_app app @ (Str | nil) -> Str
   app = (app || default_app()).replace("/", "_").replace("\\", "_")
   if (app == "")
     throw std.RuntimeError "cache app name must not be empty"
   app
 
-def module_name path name
+def module_name path @ fs.Path name @ (Str | nil) -> Str
   if (name != nil)
     name
   else
@@ -35,56 +36,52 @@ def module_name path name
       throw std.RuntimeError "can't derive module name from path: $path"
     stem
 
-def inject_keys inject
+def inject_keys inject @ std.BaseDict[Sym, Value] -> [Sym]
   let keys = [...inject.keys()]
   if !(keys.all do |k| type k Sym)
     throw std.TypeError "inject key: expected `Sym`"
   keys
 
-def cache_root app
+def cache_root app @ (Str | nil) -> fs.Path
   let path = (fs.cache_dir() / normalize_app app  / "bytecode")
   path.create_dir all: true
   path
 
-def synthetic_module_name key
+def synthetic_module_name key @ Str -> Str
   "\$$key\$"
 
-def cache_usable cache path
+def cache_usable cache @ fs.Path path @ fs.Path -> Bool
   (cache.exists() && path.metadata().modified < cache.metadata().modified)
 
 # Values a script reads as the fields of an imported module.
 class Namespace
-  field values
+  field values @ Record
 
-  def (init) self values
+  def (init) self values @ Value
     self.#values = Record $values
 
-  def (get) self name
+  def (get) self name @ Sym -> Value
     self.#values.get $name else: do throw std.FieldError $name
 
-  def (set) _self _name _value
+  def (set) _self _name @ Sym _value @ Value
     throw std.ImmutableError()
 
-def injected_module inject
-  Namespace $inject
-
-def normalize_imports imports
-  let normalized = {}
+def normalize_imports imports @ std.BaseDict[Str | Sym, Value] -> Dict[Str, Value]
+  let normalized @ Dict[Str, Value] = {}
   for name value = imports
-    value = if (type value Dict)
+    normalized[str name] = if (type value Dict)
       Namespace $value
     else
       value
-    name = if (type name Sym)
-      str $name
-    else
-      name
-    normalized[name] = value
   normalized
 
 # Calls `func` with `shell.args` and `shell.program` overridden by whichever of
 # `args` and `program` is given
-def with_invocation args program func
+def with_invocation[R]
+  args @ (Iterable[Value] | nil)
+  program @ (Str | fs.Path | nil)
+  func @ (() -> R)
+do -> R
   shell.with_override
     if (args != nil)
       args: $args
@@ -92,16 +89,32 @@ def with_invocation args program func
       program: $program
     - $func
 
+# A source to compile, cache and run: a module when it has a `name`, otherwise a
+# script
 class Operation
-  field path mode name prelude inject import key cache synthetic
+  field path @ fs.Path
+  field name @ (Str | nil)
+  field prelude @ std.BaseDict[Str | Sym, compile.PreludeBinding]
+  field inject @ std.BaseDict[Sym, Value]
+  field import @ Dict[Str, Value]
+  field key @ Str
+  field cache @ fs.Path
+  field synthetic @ Str
 
-  def (init) self path :mode :name :app :prelude :inject :import
+  def (init)
+    self
+    path @ (Str | fs.Path)
+    :name @ (Str | nil)
+    :app @ (Str | nil)
+    :prelude @ std.BaseDict[Str | Sym, compile.PreludeBinding]
+    :inject @ std.BaseDict[Sym, Value]
+    :import @ std.BaseDict[Str | Sym, Value]
+  do
     if !(type inject Dict)
       throw std.TypeError "inject: expected `Dict`"
     if !(type import Dict)
       throw std.TypeError "import: expected `Dict`"
     self.#path = fs.Path $path
-    self.#mode = mode
     self.#name = name
     self.#prelude = prelude
     self.#inject = inject
@@ -110,11 +123,11 @@ class Operation
     self.#cache = (cache_root app / "$(self.#key).dolc")
     self.#synthetic = synthetic_module_name $self.#key
 
-  def cache_key self
+  def cache_key self -> Str
     let state = digest.Blake3()
     state.update $ str $ self.#path.absolute().normalize()
     state.update "\0"
-    state.update $self.#mode
+    state.update (self.#name == nil && "script" || "module")
     state.update "\0"
     state.update (self.#name || "")
     state.update "\0"
@@ -123,16 +136,17 @@ class Operation
     state.update (str $ inject_keys self.#inject)
     "${state.digest():x}"
 
-  def compile self
+  def compile self -> compile.Unit
     let source = self.#path.read()
     let prelude = {...self.#prelude, $self.#synthetic: inject_keys self.#inject}
-    if (self.#mode == "script")
-      compile.compile $self.#path $source prelude: $prelude
+    let name = self.#name
+    if (name == nil)
+      compile.compile "$(self.#path)" $source prelude: $prelude
     else
-      compile.compile $self.#path $source module: $self.#name prelude: $prelude
+      compile.compile "$(self.#path)" $source module: $name prelude: $prelude
 
-  def run_loaded self bytecode
-    let module = injected_module $self.#inject
+  def run_loaded self bytecode @ Bin <Iter[Value] >Sink[Value] -> Value
+    let module = Namespace $self.#inject
     let synthetic = self.#synthetic
     let imports = self.#import
     load.run $bytecode importer: do |name|
@@ -141,7 +155,7 @@ class Operation
       else
         imports.get $name else: do load.import $name
 
-  def compile_cached self
+  def compile_cached self <Iter[Value] >Sink[Value] -> Value
     let compiled = self.#compile()
     let diagnostics = [...compiled.diagnostics()]
     for diag = diagnostics
@@ -152,7 +166,7 @@ class Operation
     self.#cache.write $bytecode
     self.#run_loaded $bytecode
 
-  pub def run self
+  pub def run self <Iter[Value] >Sink[Value] -> Value
     if cache_usable $self.#cache $self.#path
       try
         return self.#run_loaded $ self.#cache.read "b"
@@ -196,8 +210,10 @@ pub def run
   # Identity the script sees as [`shell.program`](shell.program). Defaults to
   # the caller's.
   :program @ (Str | fs.Path) = nil
+  <Iter[Value]
+  >Sink[Value]
 do -> Value
-  let op = Operation $path mode: "script" name: nil :app :prelude :inject :import
+  let op = Operation $path name: nil :app :prelude :inject :import
   with_invocation $args $program do op.run()
 
 # Compiles a module if needed, caches the bytecode, and loads it.
@@ -234,7 +250,11 @@ pub def module
   # Identity the module sees as [`shell.program`](shell.program) while it
   # loads. Defaults to the caller's.
   :program @ (Str | fs.Path) = nil
+  <Iter[Value]
+  >Sink[Value]
 do -> std.Module
   let name = module_name (fs.Path path) $name
-  let op = Operation $path mode: "module" :name :app :prelude :inject :import
-  with_invocation $args $program do op.run()
+  let op = Operation $path :name :app :prelude :inject :import
+  # Unsound while a module's top level can `return` something else (#1029)
+  let module = with_invocation $args $program do op.run()
+  (module !@ std.Module)
