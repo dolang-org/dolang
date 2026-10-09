@@ -66,7 +66,7 @@ pub(crate) struct Var {
 pub(crate) enum Origin {
     Source(Span),
     SelfParam(Span),
-    /// Bound by an `import` element, which can't be reassigned
+    /// A module bound by an `import` element, which can't be reassigned
     Import(Span),
     PreludeModule,
     PreludeItem {

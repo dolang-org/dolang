@@ -1,0 +1,18 @@
+# dolang: strict
+# A member a checked module doesn't export is reported, not dynamic.
+import fs
+
+pub def r() -> nil
+  strand.bogus()
+  # error: module `strand` has no export `bogus`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   strand.bogus()
+  #    |   ^^^^^^^^^^^^
+  fs.bogus()
+  # error: module `fs` has no export `bogus`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   fs.bogus()
+  #    |   ^^^^^^^^
+  nil

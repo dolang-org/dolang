@@ -757,7 +757,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                         item,
                         span,
                     } => {
-                        let expected = self.written_import(module, item);
+                        let expected = self.written_import(module, item, span);
                         let ty = self.expect(at, state, &mut operands, value, expected);
                         match expected {
                             Some(expected) => self.store(at, ty, expected, value.span),
@@ -1041,14 +1041,24 @@ impl<'a, 'u> Flow<'a, 'u> {
             return true;
         }
         let mut none = VecDeque::new();
+        let bottom = self.db.bottom();
+        // An operand with no value yet, such as a captured variable whose
+        // accumulator hasn't grown, leaves nothing: narrowing nothing would let the
+        // edge's state join a wider type than the operand later narrows to
         let target = match &assume.against {
             &Against::Decl(decl) => Some(NarrowTarget::Class(decl)),
             Against::Class(class) => {
                 let ty = self.eval(at, state, &mut none, class);
+                if ty == bottom {
+                    return false;
+                }
                 self.class_of(ty).map(NarrowTarget::Class)
             }
             Against::Value(value) => {
                 let ty = self.eval(at, state, &mut none, value);
+                if ty == bottom {
+                    return false;
+                }
                 let literal = self.db.literal(ty).is_some();
                 literal.then(|| NarrowTarget::Literal(self.db.regular(ty)))
             }
@@ -1066,7 +1076,6 @@ impl<'a, 'u> Flow<'a, 'u> {
             return true;
         }
         let fact = &mut state.vars[self.slots[assume.var.index()]];
-        let bottom = self.db.bottom();
         if fact.ty == bottom {
             return true;
         }

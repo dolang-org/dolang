@@ -786,8 +786,8 @@ impl Annotate for ReceiverAccess {
     }
 }
 
-/// An assignment to a name an import or the prelude binds, which typing takes
-/// to keep naming the export
+/// An assignment to a module an import or the prelude binds, or to a prelude
+/// item, which typing takes to keep naming what it imports
 #[derive(Clone)]
 struct ImportAssign {
     span: Span,
@@ -2807,7 +2807,9 @@ impl<'a> Elaborater<'a> {
                         let id = self
                             .symtab
                             .id(&self.bintab.id_str(self.file.str(bind.span)));
-                        let node = Origin::Import(bind.span);
+                        // An ordinary variable, which typing assigns the export at
+                        // the import
+                        let node = Origin::Source(bind.span);
                         let index = scope.insert(id, node, self.epoch, exported);
                         bind.res = Some(Res {
                             index,

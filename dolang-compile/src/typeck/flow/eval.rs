@@ -77,7 +77,7 @@ impl Flow<'_, '_> {
                 checked,
             } => self.cast(at, state, operands, value, ty, checked),
             &ExprKind::Class(decl) => class_object(self.db, decl),
-            ExprKind::Import { module, item } => self.import(module, *item),
+            ExprKind::Import { module, item } => self.import(module, *item, expr.span),
             &ExprKind::Lambda(func) => self.expected_lambda(at, func, expected, expr.span),
             ExprKind::Call { .. } => self.call(at, state, operands, expr, expected),
             ExprKind::Invoke { .. } => self.invoke(at, state, operands, expr, expected),
@@ -235,11 +235,13 @@ impl Flow<'_, '_> {
 
     /// The value of an imported item: a def's type, a class object, or a variable's
     /// annotation. A module, a module that isn't checked, an unannotated variable,
-    /// and any other item are dynamic.
-    fn import(&self, module: &ModuleRef, item: Option<SymbolId>) -> TypeId {
+    /// and any other item are dynamic. An item a checked module doesn't export is
+    /// reported at `span`.
+    fn import(&mut self, module: &ModuleRef, item: Option<SymbolId>, span: Span) -> TypeId {
         let Some(item) = item else {
             return self.db.unknown();
         };
+        self.check_export(module, item, span);
         match self.export(module, item) {
             Some(Target::Local(Referent::Decl(decl))) => self.decl_value(*decl),
             Some(Target::Local(Referent::Value(value))) => self.variable(value),
@@ -249,10 +251,34 @@ impl Flow<'_, '_> {
 
     /// What writing a module's member must give: what reading it gives. A module
     /// it re-exports can't be written, since typing names it by import.
-    pub(super) fn written_import(&self, module: &ModuleRef, item: SymbolId) -> Option<TypeId> {
+    pub(super) fn written_import(
+        &mut self,
+        module: &ModuleRef,
+        item: SymbolId,
+        span: Span,
+    ) -> Option<TypeId> {
         match self.export(module, item) {
             Some(Target::Module(_)) => None,
-            _ => Some(self.import(module, Some(item))),
+            _ => Some(self.import(module, Some(item), span)),
+        }
+    }
+
+    /// Report an item a checked module doesn't export. One that a re-export names
+    /// is reported where the re-exporting module imports it.
+    fn check_export(&mut self, module: &ModuleRef, item: SymbolId, span: Span) {
+        let &ModuleRef::Unit(unit) = module else {
+            return;
+        };
+        if !self.observing() || span == Span::INVALID {
+            return;
+        }
+        let name = self.db.symbol(item);
+        if !self.tables.exports[unit.index()].contains_key(name) {
+            self.problem(Problem::MissingExport {
+                span,
+                module: self.tables.units[unit.index()].name(),
+                item: name.to_owned(),
+            });
         }
     }
 

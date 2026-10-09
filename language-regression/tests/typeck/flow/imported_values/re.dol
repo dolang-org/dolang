@@ -1,3 +1,9 @@
 pub import lib:
   - count
   box: renamed
+  - gone
+# error: module `lib` has no export `gone`
+#   --> re.dol:LL:LL
+#    |
+# LL |   - gone
+#    |     ^^^^
