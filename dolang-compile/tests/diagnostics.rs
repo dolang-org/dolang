@@ -13,12 +13,12 @@ fn builder_assigns_ids_in_order_and_rejects_duplicate_modules() {
     let first = config(Mode::Module {
         name: "first".into(),
     })
-    .unit(path, b"");
+    .unit(path, "");
     let second = config(Mode::Module {
         name: "second".into(),
     })
-    .unit(path, b"");
-    let script = config(Mode::Script).unit(path, b"");
+    .unit(path, "");
+    let script = config(Mode::Script).unit(path, "");
     // Checking needs resolved types, not the document index
     assert!(script.nodes().next().is_none());
     let mut checker = typeck::Builder::new();
@@ -35,8 +35,8 @@ fn builder_assigns_ids_in_order_and_rejects_duplicate_modules() {
 #[test]
 fn builder_rejects_units_without_resolved_types() {
     let path = Path::new("unit.dol");
-    let failed = config(Mode::Script).unit(path, b"let =\n");
-    let unchecked = Config::new().unit(path, b"");
+    let failed = config(Mode::Script).unit(path, "let =\n");
+    let unchecked = Config::new().unit(path, "");
     let mut checker = typeck::Builder::new();
     assert!(matches!(
         checker.unit(&failed).map_err(|error| error.kind()),
@@ -50,7 +50,7 @@ fn builder_rejects_units_without_resolved_types() {
 
 #[test]
 fn check_excludes_unit_diagnostics() {
-    let unit = config(Mode::Script).unit(Path::new("unit.dol"), b"let x @ Missing = 1\n");
+    let unit = config(Mode::Script).unit(Path::new("unit.dol"), "let x @ Missing = 1\n");
     assert!(unit.diagnostics().next().is_some());
     let mut checker = typeck::Builder::new();
     checker.unit(&unit).unwrap();
@@ -66,8 +66,7 @@ fn oversized_binder_group_is_diagnosed_and_seals() {
         "pub class Big[{}]\npub let big @ Big[] = nil\n",
         binders.join(", ")
     );
-    let unit =
-        config(Mode::Module { name: "m".into() }).unit(Path::new("m.dol"), source.as_bytes());
+    let unit = config(Mode::Module { name: "m".into() }).unit(Path::new("m.dol"), source);
     let mut checker = typeck::Builder::new();
     checker.unit(&unit).unwrap();
     let check = checker.check();
@@ -86,14 +85,14 @@ fn oversized_binder_group_is_diagnosed_and_seals() {
 fn judgments_do_not_depend_on_the_order_units_are_added() {
     let geo = config(Mode::Module { name: "geo".into() }).unit(
         Path::new("geo.dol"),
-        b"pub class Box[T]\n  pub field item @ T = nil\npub def get[T] b @ Box[T] -> T\n  b.item\n",
+        "pub class Box[T]\n  pub field item @ T = nil\npub def get[T] b @ Box[T] -> T\n  b.item\n",
     );
     let user = config(Mode::Module {
         name: "user".into(),
     })
     .unit(
         Path::new("user.dol"),
-        b"import geo:\n  - Box\npub class Crate[T]: Box[T]\n  pub field extra @ Box[T] = nil\n",
+        "import geo:\n  - Box\npub class Crate[T]: Box[T]\n  pub field extra @ Box[T] = nil\n",
     );
     let judge = |units: [(&'static str, &dolang_compile::Unit<'_>); 2]| {
         let mut checker = typeck::Builder::new();
@@ -130,11 +129,10 @@ fn results_do_not_depend_on_threads() {
         config(Mode::Module {
             name: name.to_owned().into(),
         })
-        .unit(Path::new(&format!("{name}.dol")), source.as_bytes())
+        .unit(Path::new(&format!("{name}.dol")), source)
     };
-    let script = |path: &str, source: &'static str| {
-        config(Mode::Script).unit(Path::new(path), source.as_bytes())
-    };
+    let script =
+        |path: &str, source: &'static str| config(Mode::Script).unit(Path::new(path), source);
     let units = [
         module(
             "geo",
@@ -207,7 +205,7 @@ fn results_do_not_depend_on_threads() {
 
 #[test]
 fn imports_lists_statement_and_prelude_modules() {
-    let source = b"import zeta\nimport alpha.beta:\n  - Item\ndef f()\n  import zeta: z\n  import @gamma\n  spawn f\n";
+    let source = "import zeta\nimport alpha.beta:\n  - Item\ndef f()\n  import zeta: z\n  import @gamma\n  spawn f\n";
     let mut config = config(Mode::Script);
     config.document(true);
     let unit = config.unit(Path::new("unit.dol"), source);
@@ -218,6 +216,16 @@ fn imports_lists_statement_and_prelude_modules() {
 }
 
 #[test]
+fn unit_source_round_trips() {
+    let path = Path::new("unit.dol");
+    let source = "# ünïcödé\nlet x = \"π\"\n";
+    let unit = Config::new().unit(path, source);
+    assert!(std::ptr::eq(unit.source(), source));
+    let unit: Unit<'static> = Config::new().unit(path, source.to_owned());
+    assert_eq!(unit.source(), source);
+}
+
+#[test]
 fn repl_reassigns_only_prelude_items() {
     let refused = |source: &str| {
         let mut config = config(Mode::Repl);
@@ -225,7 +233,7 @@ fn repl_reassigns_only_prelude_items() {
             .import_items("env")
             .item("count")
             .commit();
-        let unit = config.unit(Path::new("repl.dol"), source.as_bytes());
+        let unit = config.unit(Path::new("repl.dol"), source);
         (unit.diagnostics())
             .any(|diag| diag.message().to_string() == "imported bindings cannot be reassigned")
     };
@@ -253,10 +261,9 @@ fn owned_unit_is_shared_between_threads() {
     };
 
     let source = "let x @ Missing = 1\n";
-    let expected =
-        messages(&config(Mode::Module { name: "m".into() }).unit(path, source.as_bytes()));
+    let expected = messages(&config(Mode::Module { name: "m".into() }).unit(path, source));
     assert!(!expected.is_empty());
-    let unit: Unit<'static> = config(module()).unit(path, source.as_bytes().to_vec());
+    let unit: Unit<'static> = config(module()).unit(path, source.to_owned());
     let unit = thread::spawn(move || unit).join().unwrap();
     thread::scope(|scope| {
         let readers = [(); 2].map(|()| scope.spawn(|| messages(&unit)));
@@ -266,7 +273,7 @@ fn owned_unit_is_shared_between_threads() {
     });
 
     let source = "pub let x = 1\n";
-    let expected = emit(config(Mode::Module { name: "m".into() }).unit(path, source.as_bytes()));
-    let unit: Unit<'static> = config(module()).unit(path, source.as_bytes().to_vec());
+    let expected = emit(config(Mode::Module { name: "m".into() }).unit(path, source));
+    let unit: Unit<'static> = config(module()).unit(path, source.to_owned());
     assert_eq!(thread::spawn(move || emit(unit)).join().unwrap(), expected);
 }

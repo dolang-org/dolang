@@ -1,4 +1,4 @@
-use std::{cell::OnceCell, mem, str::Utf8Error};
+use std::{cell::OnceCell, mem};
 
 use dolang_util::mono::MonoVec;
 
@@ -37,12 +37,6 @@ pub(crate) struct Lowerer<'c> {
 
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct Error {}
-
-impl From<Utf8Error> for Error {
-    fn from(_value: Utf8Error) -> Self {
-        Self {}
-    }
-}
 
 pub(crate) type Result<T> = std::result::Result<T, Error>;
 

@@ -77,7 +77,9 @@ mod detail {
             config.mode(Mode::Module { name: name.into() });
         }
         let mut out = Vec::new();
-        let unit = config.unit(path, content);
+        let source = std::str::from_utf8(content)
+            .unwrap_or_else(|e| panic!("{}: not UTF-8: {e}", path.display()));
+        let unit = config.unit(path, source);
         let diags: Vec<_> = unit.diagnostics().collect();
         let res = unit.emit(&mut out);
         (res.map(|_| Bytecode::new(out)), diags, directives)
@@ -358,7 +360,7 @@ fn constant_pattern_without_prelude() {
     config.prelude().clear();
     let mut bytes = Vec::new();
     config
-        .unit(std::path::Path::new("constant.dol"), b"let 200 = 404\n")
+        .unit(std::path::Path::new("constant.dol"), "let 200 = 404\n")
         .emit(&mut bytes)
         .unwrap();
     let bytecode = Bytecode::new(bytes);

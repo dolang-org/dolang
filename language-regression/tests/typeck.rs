@@ -247,7 +247,7 @@ fn run(case: &Path) {
                     name: name.as_str().into(),
                 });
             }
-            config.unit(&source.path, &source.content)
+            config.unit(&source.path, source.text())
         })
         .collect();
 

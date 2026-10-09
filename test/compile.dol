@@ -91,6 +91,10 @@ def error()
   assert_type $Array $diag.patches
 
 #[test]
+def source_must_be_text()
+  assert_throws $std.TypeError do compile.compile "bin.dol" b"(1 + 1)"
+
+#[test]
 def nodes()
   let source = r|-
     pub def greet name :punctuation = "!" ...rest

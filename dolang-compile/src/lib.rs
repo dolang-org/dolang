@@ -1413,10 +1413,11 @@ impl<'a> Config<'a> {
     ///
     /// # Arguments
     /// - `path`: The path of the source file; used in backtraces
-    /// - `content`: The source, borrowed or owned. A unit built from owned source and a
+    /// - `content`: The source text, borrowed or owned; [`Unit::source`] gives it back.
+    ///   Decoding it is the caller's job. A unit built from owned source and a
     ///   `Config<'static>` is a `Unit<'static>`, which may be sent and shared between
     ///   threads.
-    pub fn unit<'b>(&self, path: &Path, content: impl Into<Cow<'b, [u8]>>) -> Unit<'b>
+    pub fn unit<'b>(&self, path: &Path, content: impl Into<Cow<'b, str>>) -> Unit<'b>
     where
         'a: 'b,
     {
@@ -1524,6 +1525,11 @@ const _: () = {
 };
 
 impl Unit<'_> {
+    /// The source the unit was built from.
+    pub fn source(&self) -> &str {
+        self.file.content()
+    }
+
     /// Whether the unit is checked strictly: as [`Config::strict`] set, or else as
     /// its directive says.
     pub fn strict(&self) -> bool {

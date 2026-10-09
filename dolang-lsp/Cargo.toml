@@ -38,7 +38,7 @@ workspace = true
 
 [dependencies.tokio]
 workspace = true
-features = ["macros", "rt", "rt-multi-thread", "io-std", "time"]
+features = ["macros", "rt", "rt-multi-thread", "io-std", "sync", "time"]
 
 
 [dependencies.tower-lsp-server]

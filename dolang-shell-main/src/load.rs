@@ -34,7 +34,7 @@ pub(crate) async fn compile<'v, 's, 'a>(
     let mut warnings = 0usize;
     let mut diagnostics = Vec::new();
 
-    let unit = compile_setup(dynamic, prelude, mode).unit(path, source.as_bytes());
+    let unit = compile_setup(dynamic, prelude, mode).unit(path, source);
 
     for diag in unit.diagnostics() {
         match diag.severity() {
@@ -128,7 +128,7 @@ pub(crate) fn unit<'a>(
 ) -> compile::Unit<'a> {
     let mut config = compile_setup(dynamic, prelude, Mode::Repl);
     config.recover(true).document(true);
-    config.unit(path, source.as_bytes())
+    config.unit(path, source)
 }
 
 async fn file_is_newer(older: &Path, newer: &Path) -> bool {
@@ -324,7 +324,7 @@ pub(crate) async fn check<'v, 's>(
     };
     let mut config = sources[0].config(prelude);
     config.document(true);
-    let unit = config.unit(path, sources[0].text.as_bytes());
+    let unit = config.unit(path, sources[0].text.as_str());
     queue(unit.imports(), &mut pending);
     drop(unit);
     while let Some(name) = pending.pop() {
@@ -337,7 +337,7 @@ pub(crate) async fn check<'v, 's>(
             };
             let mut config = source.config(prelude);
             config.document(true);
-            let unit = config.unit(&source.path, source.text.as_bytes());
+            let unit = config.unit(&source.path, source.text.as_str());
             queue(unit.imports(), &mut pending);
             drop(unit);
             sources.push(source);
@@ -355,7 +355,7 @@ pub(crate) async fn check<'v, 's>(
         .map(|source| {
             source
                 .config(prelude)
-                .unit(&source.path, source.text.as_bytes())
+                .unit(&source.path, source.text.as_str())
         })
         .collect();
     let mut errors = 0usize;

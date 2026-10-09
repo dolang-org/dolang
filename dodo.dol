@@ -235,6 +235,23 @@ def with_mkdocs func
 def cargo_test spec rest
   spec.cargo test ...rest
 
+# dolang-lsp's build.rs bakes a static hover doc index out of the same
+# per-module JSON dump `dodo mkdocs` uses (see tools/docgen.dol's
+# extract_doc_json), and embeds the bundled modules' typelibs. Generates both
+# with the dolang binary built here, then runs `block` with the build pointed
+# at them via env vars. dolang-lsp isn't a default workspace member, so plain
+# builds and tests don't build it a second time without them.
+def with_lsp_bundle spec block
+  spec.cargo build --bin dolang
+  let doc_json = (spec.target_dir / "lsp-doc-json").absolute()
+  docgen().extract_doc_json $spec $doc_json
+  let typelibs = (spec.target_dir / "lsp-typelibs").absolute()
+  docgen().extract_typelibs $spec $typelibs
+  env DOLANG_LSP_DOC_JSON_DIR: $doc_json DOLANG_LSP_TYPELIB_DIR: $typelibs do block()
+
+def lsp_test spec rest
+  with_lsp_bundle $spec do spec.cargo test -p dolang-lsp ...rest
+
 def shell_test spec args
   spec.cargo_vfs run --bin dolang -- --module-path testlib -m test
     ...(args.args || default_shell_tests args.slow args.release)
@@ -268,6 +285,7 @@ def typecheck spec rest :all = false
 def both_test spec args
   typecheck $spec [] all: true
   cargo_test $spec []
+  lsp_test $spec []
   shell_test $spec $ Options slow: $args.slow release: $args.release
 
 def can_write_dir path
@@ -387,6 +405,14 @@ return $
       collect: true
     do |args|
       cargo_test (Spec args) $args.args
+
+  "lsp-test":
+    help: run dolang-lsp tests against the bundled typelibs and doc index
+    - arg: args
+      help: "arguments to `cargo test`"
+      collect: true
+    do |args|
+      lsp_test (Spec args) $args.args
 
   typecheck:
     help: type check sources, searching the repository's modules and stubs for their imports
@@ -580,6 +606,7 @@ return $
     do |args|
       let spec = Spec $args
       spec.cargo clippy --all-targets
+      spec.cargo clippy -p dolang-lsp --all-targets
       run_cargo fmt --check
 
   "lint-docs":
@@ -619,18 +646,8 @@ return $
       # statically absorbs the UCRT along with it, leaving imports on OS DLLs
       # only.
       with_build_env $spec do
-        spec.cargo build --bin dolang
         vfs_spec.cargo build --bin dolang-vfs
-        # dolang-lsp's build.rs bakes a static hover doc index out of the
-        # same per-module JSON dump `dodo mkdocs` uses (see
-        # tools/docgen.dol's extract_doc_json) -- generate it with the
-        # dolang binary just built, then point the build at it via env var.
-        let doc_json = (spec.target_dir / "lsp-doc-json").absolute()
-        docgen().extract_doc_json $spec $doc_json
-        let typelibs = (spec.target_dir / "lsp-typelibs").absolute()
-        docgen().extract_typelibs $spec $typelibs
-        env DOLANG_LSP_DOC_JSON_DIR: $doc_json DOLANG_LSP_TYPELIB_DIR: $typelibs do
-          spec.cargo build --bin dolang-lsp
+        with_lsp_bundle $spec do spec.cargo build -p dolang-lsp --bin dolang-lsp
 
       if is_windows
         verify_windows_crt $spec dolang

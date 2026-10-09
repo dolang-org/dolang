@@ -34,7 +34,7 @@ impl SourceFile {
         let unit = Config::new()
             .document(true)
             .recover(true)
-            .unit(path, source.as_bytes());
+            .unit(path, source.as_str());
         unit.tokens(&mut |token, span, node: Option<NodeId>, context| {
             let kind = node.and_then(|id| unit.node(id)).map(|node| node.kind());
             tokens.push((token, span, classify_node(kind.as_ref()), context));

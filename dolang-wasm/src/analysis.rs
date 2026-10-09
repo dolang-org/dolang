@@ -90,7 +90,7 @@ pub(crate) fn diagnostics(unit: &Unit<'_>, source: &str) -> Vec<Diagnostic> {
 pub(crate) fn analyze(source: &str) -> Analysis {
     let mut config = super::config();
     config.recover(true).document(true);
-    let unit = config.unit(Path::new("playground.dol"), source.as_bytes());
+    let unit = config.unit(Path::new("playground.dol"), source);
     let offsets = Offsets::new(source);
     let mut tokens = Vec::new();
     unit.tokens(&mut |token, span: Span, node: Option<NodeId>, context| {

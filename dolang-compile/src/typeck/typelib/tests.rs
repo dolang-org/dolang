@@ -67,7 +67,7 @@ let m @ Str = loose
 fn compile<'a>(source: &'a str, mode: Mode<'a>) -> Unit<'a> {
     let mut config = Config::new();
     config.typecheck(true).mode(mode);
-    let unit = config.unit(Path::new("lib.dol"), source.as_bytes());
+    let unit = config.unit(Path::new("lib.dol"), source);
     let diags: Vec<_> = (unit.diagnostics())
         .map(|diag| diag.message().to_string())
         .collect();

@@ -14,7 +14,7 @@ fn agree(source: &str) {
 fn agree_with(source: &str, inspect: impl FnOnce(&Check<'_>)) {
     let mut config = Config::new();
     config.typecheck(true);
-    let unit = config.unit(Path::new("test.dol"), source.as_bytes());
+    let unit = config.unit(Path::new("test.dol"), source);
     let diags: Vec<_> = unit
         .diagnostics()
         .map(|diag| diag.message().to_string())
@@ -222,7 +222,7 @@ fn templates_are_order_independent() {
         .mode(crate::Mode::Module { name: "std".into() });
     let std = config.unit(
         Path::new("std.dol"),
-        include_bytes!("../../../../dolang/stub/std.dol"),
+        include_str!("../../../../dolang/stub/std.dol"),
     );
     assert!(!std.failed);
     let source = r#"
@@ -249,7 +249,7 @@ pub def run n @ Int width @ Int text @ Str
   let _ = bad_width
 "#;
     config.mode(crate::Mode::Script);
-    let script = config.unit(Path::new("test.dol"), source.as_bytes());
+    let script = config.unit(Path::new("test.dol"), source);
     assert!(!script.failed);
     let mut builder = Builder::new();
     builder.unit(&std).unwrap();

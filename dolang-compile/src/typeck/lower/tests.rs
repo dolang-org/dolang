@@ -6,7 +6,7 @@ use crate::{Config, typeck::Builder};
 fn lower(source: &str) {
     let mut config = Config::new();
     config.typecheck(true);
-    let unit = config.unit(Path::new("test.dol"), source.as_bytes());
+    let unit = config.unit(Path::new("test.dol"), source);
     let diags: Vec<_> = unit
         .diagnostics()
         .map(|diag| diag.message().to_string())

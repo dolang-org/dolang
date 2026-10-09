@@ -979,7 +979,7 @@ pub class Pos
 #
 # | Exception    | Condition                          |
 # | ------------ | ---------------------------------- |
-# | `TypeError`  | `source` is not `Str` or `Bin`     |
+# | `TypeError`  | `source` is not `Str`              |
 # | `TypeError`  | `module` is present but not `Str`  |
 # | `ValueError` | `prelude` is malformed             |
 #
@@ -1015,7 +1015,7 @@ pub def compile
   # diagnostics.
   path @ Str
   # Source code to compile.
-  source @ (Str | Bin)
+  source @ Str
   # Compile in module mode under this name.
   #
   # Without it the source is compiled as a script, and running the bytecode
