@@ -445,7 +445,7 @@ do
   let test_def = to_test_def $func
   for name values = axes
     if !(type name Sym)
-      throw std.UnexpectedPos $name
+      throw std.UnexpectedPosError $name
     if (values.len == 0)
       throw std.ValueError "parametrize: '$name' has no values"
     test_def.params.push [name, [...values.map(normalize_param_value)]]
