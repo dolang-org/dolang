@@ -138,7 +138,9 @@ pub fn bundle(spec: &Bundle<'_>) {
 
         let mut config = Config::new();
         match spec.compile_mode {
-            CompileMode::Module => config.mode(Mode::Module { name: &name }),
+            CompileMode::Module => config.mode(Mode::Module {
+                name: name.as_str().into(),
+            }),
             CompileMode::Script => config.mode(Mode::Script),
         };
         config.typecheck(typelib_out.is_some());

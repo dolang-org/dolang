@@ -37,7 +37,7 @@ pub fn typelib(unit: &Unit<'_>) -> Result<Vec<u8>, Error> {
     if !unit.resolved {
         return Err(Error(ErrorInfo::Unresolved));
     }
-    let Mode::Module { .. } = unit.compiler.mode else {
+    let Mode::Module { .. } = unit.mode else {
         return Err(Error(ErrorInfo::NotModule));
     };
     Ok(typelib::write(elab::harvest(unit)))
@@ -160,7 +160,7 @@ impl<'u, 's> Builder<'u, 's> {
         if !unit.resolved {
             return Err(Error(ErrorInfo::Unresolved));
         }
-        if let Mode::Module { name } = unit.compiler.mode {
+        if let Mode::Module { name } = &unit.mode {
             self.module(name)?;
         }
         self.units.push(Input::Source(unit));
@@ -284,11 +284,7 @@ fn export_dot(ir: &cfg::Ir, db: &r#type::Database, info: &elab::UnitInfo) -> std
     let Some(out) = crate::dot_path(info.path, "typeck.dot")? else {
         return Ok(());
     };
-    let file = &info
-        .source
-        .expect("a lowered unit has a source")
-        .compiler
-        .file;
+    let file = &info.source.expect("a lowered unit has a source").file;
     ir.dot(db, |span| file.str(span), &mut std::fs::File::create(&out)?)?;
     dolang_util::debug_eprintln!(topic: "dot", "Typing CFG DOT exported to: {}", out.display());
     Ok(())

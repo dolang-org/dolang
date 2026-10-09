@@ -1,5 +1,5 @@
-use dolang_compile::{Config, ErrorKind, Mode, typeck};
-use std::path::Path;
+use dolang_compile::{Config, ErrorKind, Mode, Unit, typeck};
+use std::{path::Path, thread};
 
 fn config(mode: Mode<'_>) -> Config<'_> {
     let mut config = Config::new();
@@ -10,8 +10,14 @@ fn config(mode: Mode<'_>) -> Config<'_> {
 #[test]
 fn builder_assigns_ids_in_order_and_rejects_duplicate_modules() {
     let path = Path::new("same.dol");
-    let first = config(Mode::Module { name: "first" }).unit(path, b"");
-    let second = config(Mode::Module { name: "second" }).unit(path, b"");
+    let first = config(Mode::Module {
+        name: "first".into(),
+    })
+    .unit(path, b"");
+    let second = config(Mode::Module {
+        name: "second".into(),
+    })
+    .unit(path, b"");
     let script = config(Mode::Script).unit(path, b"");
     // Checking needs resolved types, not the document index
     assert!(script.nodes().next().is_none());
@@ -60,7 +66,8 @@ fn oversized_binder_group_is_diagnosed_and_seals() {
         "pub class Big[{}]\npub let big @ Big[] = nil\n",
         binders.join(", ")
     );
-    let unit = config(Mode::Module { name: "m" }).unit(Path::new("m.dol"), source.as_bytes());
+    let unit =
+        config(Mode::Module { name: "m".into() }).unit(Path::new("m.dol"), source.as_bytes());
     let mut checker = typeck::Builder::new();
     checker.unit(&unit).unwrap();
     let check = checker.check();
@@ -77,11 +84,14 @@ fn oversized_binder_group_is_diagnosed_and_seals() {
 
 #[test]
 fn judgments_do_not_depend_on_the_order_units_are_added() {
-    let geo = config(Mode::Module { name: "geo" }).unit(
+    let geo = config(Mode::Module { name: "geo".into() }).unit(
         Path::new("geo.dol"),
         b"pub class Box[T]\n  pub field item @ T = nil\npub def get[T] b @ Box[T] -> T\n  b.item\n",
     );
-    let user = config(Mode::Module { name: "user" }).unit(
+    let user = config(Mode::Module {
+        name: "user".into(),
+    })
+    .unit(
         Path::new("user.dol"),
         b"import geo:\n  - Box\npub class Crate[T]: Box[T]\n  pub field extra @ Box[T] = nil\n",
     );
@@ -142,4 +152,40 @@ fn repl_reassigns_only_prelude_items() {
     assert!(!refused("count = 1\n"));
     assert!(refused("std = 1\n"));
     assert!(refused("import json\njson = 1\n"));
+}
+
+#[test]
+fn owned_unit_is_shared_between_threads() {
+    let path = Path::new("m.dol");
+    let module = || Mode::Module {
+        name: String::from("m").into(),
+    };
+    let messages = |unit: &Unit<'_>| {
+        (unit.diagnostics())
+            .map(|diag| diag.message().to_string())
+            .collect::<Vec<_>>()
+    };
+    let emit = |unit: Unit<'_>| {
+        let mut out = Vec::new();
+        unit.emit(&mut out).unwrap();
+        out
+    };
+
+    let source = "let x @ Missing = 1\n";
+    let expected =
+        messages(&config(Mode::Module { name: "m".into() }).unit(path, source.as_bytes()));
+    assert!(!expected.is_empty());
+    let unit: Unit<'static> = config(module()).unit(path, source.as_bytes().to_vec());
+    let unit = thread::spawn(move || unit).join().unwrap();
+    thread::scope(|scope| {
+        let readers = [(); 2].map(|()| scope.spawn(|| messages(&unit)));
+        for reader in readers {
+            assert_eq!(reader.join().unwrap(), expected);
+        }
+    });
+
+    let source = "pub let x = 1\n";
+    let expected = emit(config(Mode::Module { name: "m".into() }).unit(path, source.as_bytes()));
+    let unit: Unit<'static> = config(module()).unit(path, source.as_bytes().to_vec());
+    assert_eq!(thread::spawn(move || emit(unit)).join().unwrap(), expected);
 }

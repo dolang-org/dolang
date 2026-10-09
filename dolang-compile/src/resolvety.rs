@@ -16,7 +16,6 @@ use std::{
 use dolang_util::intern::BinTable;
 
 use crate::{
-    Compiler,
     ast::{
         AliasBody, Annot, Arg, Arm, ArrayElem, Binders, Block, Class, ClassMember, Decorator, Def,
         DictElem, Expr, ExprBody, FieldInit, For, Function, Ident, If, ImportElement, LValue,
@@ -35,7 +34,7 @@ impl Diagnose for UnboundType {
         Severity::Warning
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "unbound type name")
     }
 
@@ -51,7 +50,7 @@ impl Diagnose for DottedNonImport {
         Severity::Warning
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "a dotted type name must begin with an import")
     }
 
@@ -67,7 +66,7 @@ impl Diagnose for UnusedBinder {
         Severity::Warning
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "unused binder")
     }
 
@@ -83,7 +82,7 @@ impl Diagnose for UnusedTypeImport {
         Severity::Warning
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "unused type import")
     }
 
@@ -99,7 +98,7 @@ impl Diagnose for OverloadWithoutImpl {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "type-only def has no implementation")
     }
 
@@ -115,7 +114,7 @@ impl Diagnose for RepeatedMethod {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
             "method is already declared; declare overloads with `@def`"
@@ -133,7 +132,7 @@ impl Diagnose for TypeShadowsValue {
     fn severity(&self) -> Severity {
         Severity::Warning
     }
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "type name shadows a value of the same name")
     }
     fn span(&self) -> Span {
@@ -147,7 +146,7 @@ impl Diagnose for AliasShadowsEarly {
     fn severity(&self) -> Severity {
         Severity::Warning
     }
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
             "type name refers to its block's alias, not the outer type it shadows"
@@ -164,7 +163,7 @@ impl Diagnose for ValueShadowsType {
     fn severity(&self) -> Severity {
         Severity::Warning
     }
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "value name shadows a type of the same name")
     }
     fn span(&self) -> Span {

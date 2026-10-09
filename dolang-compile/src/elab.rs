@@ -8,7 +8,7 @@ use std::{
 use dolang_util::{intern::BinTable, mono::MonoVec};
 
 use crate::{
-    Compiler, Mode, PreludeImport,
+    Mode, PreludeImport,
     ast::{
         self, Alternation, Arg, ArrayElem, Assign, Bind, Block, Class, CondPattern, Def, DictElem,
         Expand, Expr, ExprBody, For, Function, GetVariant, Ident, If, Import, ImportElement,
@@ -28,7 +28,7 @@ impl Diagnose for Unbound {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "unbound identifier")
     }
 
@@ -48,7 +48,7 @@ impl Diagnose for ClassFromSamePattern {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "a type-test class cannot be bound by the same pattern")
     }
 
@@ -68,7 +68,7 @@ impl Annotate for ClassFromSamePattern {
     fn span(&self) -> Span {
         self.binding_span
     }
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "bound here")
     }
 }
@@ -85,7 +85,7 @@ impl Diagnose for DuplicatePatternBinding {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "a pattern cannot bind the same name twice")
     }
 
@@ -105,7 +105,7 @@ impl Annotate for DuplicatePatternBinding {
     fn span(&self) -> Span {
         self.previous
     }
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "first bound here")
     }
 }
@@ -125,7 +125,7 @@ impl Diagnose for AltNameMismatch {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
             "alternatives must bind the same names, but this one doesn't bind `{}`",
@@ -149,7 +149,7 @@ impl Annotate for AltNameMismatch {
     fn span(&self) -> Span {
         self.binding
     }
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "bound here")
     }
 }
@@ -184,7 +184,7 @@ impl Diagnose for UseBeforeInit {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "use of binding before its declaration has run")
     }
 
@@ -211,7 +211,7 @@ impl Annotate for UseBeforeInit {
             .expect("only constructed when decl_span is Some")
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "declared here, but not yet initialized at this use")
     }
 }
@@ -223,7 +223,7 @@ impl Diagnose for DuplicateMemberScope {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "a field may have only one `class` or `static` decorator")
     }
 
@@ -239,7 +239,7 @@ impl Diagnose for UnsupportedFieldDecorator {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
             "only the prelude `class` and `static` decorators are supported on a field"
@@ -258,7 +258,7 @@ impl Diagnose for BadBreak {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "break outside of loop")
     }
 
@@ -274,7 +274,7 @@ impl Diagnose for InappropriatePub {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "`pub` may only be used at the top level")
     }
 
@@ -290,7 +290,7 @@ impl Diagnose for PubOverload {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
             "a type-only `def` is exported with its implementation, so it cannot be `pub`"
@@ -309,7 +309,7 @@ impl Diagnose for BadContinue {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "continue outside of loop")
     }
 
@@ -325,7 +325,7 @@ impl Diagnose for BadReturn {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "return at top level of REPL")
     }
 
@@ -345,8 +345,8 @@ impl Diagnose for BadNl {
         Severity::Error
     }
 
-    fn message(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(w, "non-local {} not allowed", compiler.file.str(self.span))
+    fn message(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "non-local {} not allowed", file.str(self.span))
     }
 
     fn span(&self) -> Span {
@@ -368,7 +368,7 @@ impl Annotate for BadNl {
         self.lambda_span
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "this closure is not in argument position")
     }
 }
@@ -380,7 +380,7 @@ impl Diagnose for Unreachable {
         Severity::Warning
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "unreachable statement")
     }
 
@@ -396,7 +396,7 @@ impl Diagnose for UnusedVar {
         Severity::Warning
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "unused variable")
     }
 
@@ -415,7 +415,7 @@ impl Diagnose for Uncallable {
         Severity::Warning
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "attempt to call non-function value")
     }
 
@@ -440,7 +440,7 @@ impl Annotate for UncallableHead {
         self.span
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "this expression is never a function")
     }
 
@@ -459,7 +459,7 @@ impl Diagnose for BinaryOpAsArg {
         Severity::Warning
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "function call where expression may be intended")
     }
 
@@ -490,12 +490,12 @@ impl Patch for BinaryOpPatch {
         self.span
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "wrap entire expression in parentheses")
     }
 
-    fn sub(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        let original_text = compiler.file.str(self.span);
+    fn sub(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        let original_text = file.str(self.span);
         write!(w, "({})", original_text)
     }
 }
@@ -522,7 +522,7 @@ impl Diagnose for NotAsArg {
         Severity::Warning
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "literal string where logical negation may be intended")
     }
 
@@ -563,11 +563,11 @@ impl Patch for NotDollarPatch {
         self.span
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "place `!` after `$`")
     }
 
-    fn sub(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn sub(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "$!")
     }
 }
@@ -581,7 +581,7 @@ impl Annotate for BinaryOpAnnotation {
         self.span
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "this token is a literal string")
     }
 
@@ -600,7 +600,7 @@ impl Diagnose for NoEffect {
         Severity::Warning
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "statement with no effect")
     }
 
@@ -620,7 +620,7 @@ impl crate::source::Note for NoEffectNote {
         crate::diag::NoteKind::Help
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "considering removing this statement")
     }
 }
@@ -637,7 +637,7 @@ impl Diagnose for NoEffectVar {
         Severity::Warning
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "statement with no effect")
     }
 
@@ -656,12 +656,12 @@ impl Patch for NoEffectVar {
         self.expr_span
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "add () to make this a call")
     }
 
-    fn sub(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        let original = compiler.file.str(self.expr_span);
+    fn sub(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        let original = file.str(self.expr_span);
         write!(w, "{}()", original)
     }
 }
@@ -678,7 +678,7 @@ impl Diagnose for NoApparentEffect {
         Severity::Warning
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "statement with no apparent effect")
     }
 
@@ -697,12 +697,12 @@ impl Patch for NoApparentEffect {
         self.expr_span
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "bind result to _ to suppress warning")
     }
 
-    fn sub(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        let original = compiler.file.str(self.expr_span);
+    fn sub(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        let original = file.str(self.expr_span);
         write!(w, "let _ = {}", original)
     }
 }
@@ -719,7 +719,7 @@ impl Diagnose for DiscardedComputation {
         Severity::Warning
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "result of computation discarded")
     }
 
@@ -738,12 +738,12 @@ impl Patch for DiscardedComputation {
         self.expr_span
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "bind result to _ to suppress warning")
     }
 
-    fn sub(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        let original = compiler.file.str(self.expr_span);
+    fn sub(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        let original = file.str(self.expr_span);
         write!(w, "let _ = {}", original)
     }
 }
@@ -759,7 +759,7 @@ impl Diagnose for ReceiverAccess {
     fn severity(&self) -> Severity {
         Severity::Error
     }
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         w.write_str(self.message)
     }
     fn span(&self) -> Span {
@@ -781,7 +781,7 @@ impl Annotate for ReceiverAccess {
     fn span(&self) -> Span {
         self.receiver.unwrap()
     }
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         w.write_str("method receiver declared here")
     }
 }
@@ -798,7 +798,7 @@ impl Diagnose for ImportAssign {
     fn severity(&self) -> Severity {
         Severity::Error
     }
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         w.write_str("imported bindings cannot be reassigned")
     }
     fn span(&self) -> Span {
@@ -820,7 +820,7 @@ impl Annotate for ImportAssign {
     fn span(&self) -> Span {
         self.import.unwrap()
     }
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         w.write_str("imported here")
     }
 }
@@ -849,7 +849,7 @@ impl Diagnose for NoPrivateField {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "no private field `{}` in scope", self.name)
     }
 
@@ -871,11 +871,11 @@ impl Patch for PrivateFieldWithoutHash {
         }
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "use `.#` to access private field")
     }
 
-    fn sub(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn sub(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(w, "#")
     }
 }
@@ -885,8 +885,8 @@ impl Diagnose for PrivateFieldWithoutHash {
         Severity::Warning
     }
 
-    fn message(&self, compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(w, "`{}` is private", compiler.file.str(self.span))
+    fn message(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "`{}` is private", file.str(self.span))
     }
 
     fn span(&self) -> Span {

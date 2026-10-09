@@ -6,7 +6,6 @@ use std::{
 use phf::phf_map;
 
 use super::{
-    Compiler,
     diag::Severity,
     source::{Diagnose, Diags, File, Offset, Span},
 };
@@ -162,7 +161,7 @@ impl Diagnose for ErrorDiag {
         Severity::Error
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         use ErrorDiagKind::*;
 
         write!(
@@ -197,7 +196,7 @@ impl Diagnose for WarnDiag {
         Severity::Warning
     }
 
-    fn message(&self, _compiler: &Compiler<'_>, w: &mut dyn Write) -> fmt::Result {
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         use WarnDiagKind::*;
 
         write!(

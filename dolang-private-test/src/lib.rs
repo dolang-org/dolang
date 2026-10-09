@@ -40,7 +40,7 @@ pub fn compile_standard(
     apply_compiler_extensions(&mut config);
     let directives = configure_compiler(&mut config, &content);
     if let Some(name) = module {
-        config.mode(Mode::Module { name });
+        config.mode(Mode::Module { name: name.into() });
     }
     let mut out = Vec::new();
     let unit = config.unit(path, &content);
