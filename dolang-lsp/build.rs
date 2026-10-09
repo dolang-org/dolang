@@ -127,6 +127,14 @@ enum TypeJson {
     Schema {
         params: Vec<TypeParamJson>,
     },
+    /// A parenthesized tuple or record form
+    Parens {
+        params: Vec<TypeParamJson>,
+    },
+    /// The `[T]` form
+    Array {
+        elem: Box<TypeJson>,
+    },
     Union {
         members: Vec<TypeJson>,
     },
@@ -214,6 +222,20 @@ impl TypeJson {
             TypeJson::Schema { params } => {
                 (format!("{{{}}}", render_params(params)), Binding::Compact)
             }
+            TypeJson::Parens { params } => {
+                // A lone item without a quantifier would only group without its comma
+                let lone =
+                    matches!(&params[..], [param] if param.kind == "pos" && param.quant.is_none());
+                let comma = if lone { "," } else { "" };
+                (
+                    format!("({}{comma})", render_params(params)),
+                    Binding::Compact,
+                )
+            }
+            TypeJson::Array { elem } => (
+                format!("[{}]", elem.render(Binding::Func)),
+                Binding::Compact,
+            ),
             TypeJson::Union { members } => (
                 members
                     .iter()
