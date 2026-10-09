@@ -71,7 +71,7 @@ def run_cargo ...args
 
 class Spec
   pub field target tuple profile channel target_dir
-  field extra
+  field extra debug
 
   def (init)
     self args
@@ -86,6 +86,7 @@ class Spec
     self.profile = (profile || "debug")
     self.channel = channel
     self.#extra = extra
+    self.#debug = args.debug
     self.target_dir = if variant
       (Path("target") / self.tuple / variant / self.profile)
     else
@@ -108,6 +109,8 @@ class Spec
         --$self.profile
       else if (self.profile != "debug")
         --profile $self.profile
+      if self.#debug
+        --features debug
       ...self.#extra ...rest
 
   pub def cargo_vfs self ...rest
@@ -117,10 +120,18 @@ class Spec
 # Stands in for parsed arguments where a spec or test run is built outside a
 # task.
 class Options
-  pub field target args slow release
+  pub field target args slow release debug
 
-  def (init) self :target = nil :args = nil :slow = false :release = false
+  def (init)
+    self
+    :target = nil
+    :args = nil
+    :slow = false
+    :release = false
+    :debug = false
+  do
     self.target = target
+    self.debug = debug
     self.args = args
     self.slow = slow
     self.release = release
@@ -320,6 +331,8 @@ return $
       help: target platform
       default: nil
       values: [...TARGETS.keys()]
+    - flag: debug
+      help: build with the `debug` feature (e.g. type checker tracing)
   default: build
 
   "test-asan":
