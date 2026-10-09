@@ -250,8 +250,9 @@ impl Solver<'_> {
                         )
                         .into());
                     };
+                    // The key may refer to the view's binders
                     let projected = self.db.intern(Type::Union(vec![member.with(bound)].into()));
-                    (self.closed(projected), Step::RigidBound)
+                    (view.child(projected), Step::RigidBound)
                 }
                 _ => return Err(Residual::Unsupported("an unevaluated projection").into()),
             };
