@@ -1416,6 +1416,11 @@ impl<'t, 'u> Populate<'t, 'u> {
                     {
                         items.extend(rest_items(*kind, self.db.top(), sym));
                     }
+                    // An omitted annotation leaves the whole pack unchecked
+                    RestSlot::Items(_, Slot::Unknown) => {
+                        let schema = self.db.unknown_schema();
+                        items.push(Self::item(Multiplicity::Required, Element::Include(schema)));
+                    }
                     RestSlot::Items(kind, slot) => {
                         let ty = self.slot(id, group, slot);
                         items.extend(rest_items(*kind, ty, sym));

@@ -17,7 +17,8 @@
 //! Both sides are flattened into lanes of atoms, splicing inclusions. Schemas
 //! that can't be exposed stay opaque: the same rigid on both sides pairs up, an
 //! actual rigid otherwise stands for its bound, and the dynamic schema leaves
-//! the lanes it occupies unchecked. Inclusion holds when every way of filling
+//! the lanes it occupies unchecked but for the required items that lead the
+//! positional lane, whose positions it can't change. Inclusion holds when every way of filling
 //! the actual side's multiplicities fits the expected side; each actual atom
 //! must then fit every expected atom its items can land on.
 //!
@@ -280,6 +281,8 @@ impl Solver<'_> {
         };
         if !open(&a, Opaque::positional) && !open(&b, Opaque::positional) {
             self.positional(&a, &b, obligation)?;
+        } else {
+            self.prefix(&a, &b, obligation)?;
         }
         self.keyed(
             &a.keyed,
@@ -1153,6 +1156,53 @@ impl Solver<'_> {
                 return Err(Residual::Alignment.into());
             }
             self.align(x, y, obligation)?;
+        }
+        Ok(())
+    }
+
+    /// Relate positional lanes beside the dynamic schema. Each side's leading
+    /// required atoms take the first positions whatever it holds, so they pair
+    /// up in order, and a closed side must have room for the other's.
+    fn prefix(&self, a: &Shape, b: &Shape, obligation: ObligationId) -> Result<(), Issue> {
+        let leading = |shape: &Shape| {
+            let mut atoms = Vec::new();
+            for slot in &shape.positional {
+                match *slot {
+                    Slot::Atom(atom) if atom.multiplicity == Multiplicity::Required => {
+                        atoms.push(atom)
+                    }
+                    Slot::Opaque(index) if !shape.opaque[index].positional() => {}
+                    _ => break,
+                }
+            }
+            atoms
+        };
+        // The most items a lane without positional opaques holds
+        let most = |shape: &Shape| {
+            let mut total = 0;
+            for slot in &shape.positional {
+                match *slot {
+                    Slot::Atom(atom) => total += range(atom.multiplicity).1?,
+                    Slot::Opaque(index) if !shape.opaque[index].positional() => {}
+                    Slot::Opaque(_) => return None,
+                }
+            }
+            Some(total)
+        };
+        let xs = leading(a);
+        let ys = leading(b);
+        if let Some(most) = most(a)
+            && let Some(missing) = ys.get(most)
+        {
+            return Err(Issue::Contradiction(Contradiction::Missing(missing.item)));
+        }
+        if let Some(most) = most(b)
+            && let Some(excess) = xs.get(most)
+        {
+            return Err(Issue::Contradiction(Contradiction::Excess(excess.item)));
+        }
+        for (x, y) in xs.iter().zip(&ys) {
+            self.derive(obligation, x.ty, y.ty, Step::Item(x.item));
         }
         Ok(())
     }

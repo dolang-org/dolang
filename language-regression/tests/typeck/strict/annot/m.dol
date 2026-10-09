@@ -4,7 +4,7 @@
 # context.
 
 pub def shown a @ Int b :k = "x" *rest **kw @ Int
-  #     ^~~~~: sig (a: Int, b: Unknown, ?:k: Unknown, *rest: {*Unknown}, **kw: {**Int}, <#0, >#1) -> nil
+  #     ^~~~~: sig (a: Int, b: Unknown, ?:k: Unknown, *rest: Unknown{}, **kw: {**Int}, <#0, >#1) -> nil
   # error: a strict unit must annotate this parameter
   #   --> m.dol:LL:LL
   #    |

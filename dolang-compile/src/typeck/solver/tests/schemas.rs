@@ -567,7 +567,7 @@ fn the_dynamic_schema_leaves_its_lanes_unchecked() {
     let str = nominal(&mut db, "Str", vec![], vec![]);
     let [a, b] = ["a", "b"].map(|k| db.intern(Type::Literal(Literal::Sym(db.intern_symbol(k)))));
     let unknown = include(Req, db.unknown_schema());
-    let open_int = items(&db, vec![positional(Req, int), unknown.clone()]);
+    let open_maybe_int = items(&db, vec![positional(Opt, int), unknown.clone()]);
     let strs = items(&db, vec![positional(Req, str)]);
     let open_a_str = items(&db, vec![keyed(Req, a, str), unknown.clone()]);
     let open_a_twice = items(
@@ -581,7 +581,7 @@ fn the_dynamic_schema_leaves_its_lanes_unchecked() {
     let open_a_int = items(&db, vec![keyed(Req, a, int), unknown.clone()]);
     let open_maybe_a = items(&db, vec![keyed(Opt, a, int), unknown]);
     db.seal();
-    for (x, y) in [(open_int, strs), (open, a_int), (b_int, open_maybe_a)] {
+    for (x, y) in [(open_maybe_int, strs), (open, a_int), (b_int, open_maybe_a)] {
         assert_eq!(check(&db, x, y).status, Status::Proven, "{x:?} <: {y:?}");
     }
     // Explicit keyed items are still what they say
@@ -595,6 +595,45 @@ fn the_dynamic_schema_leaves_its_lanes_unchecked() {
     ));
     assert!(contradiction(
         &check(&db, open_a_twice, a_int),
+        Contradiction::Excess(1)
+    ));
+}
+
+#[test]
+fn required_items_before_the_dynamic_schema_are_checked() {
+    use Multiplicity::{Optional as Opt, Required as Req};
+    let mut db = Database::new();
+    let int = nominal(&mut db, "Int", vec![], vec![]);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let unknown = include(Req, db.unknown_schema());
+    let open_int = items(&db, vec![positional(Req, int), unknown.clone()]);
+    let open_strs = items(
+        &db,
+        vec![positional(Req, str), positional(Req, str), unknown.clone()],
+    );
+    let ints = items(&db, vec![positional(Req, int)]);
+    let int_str = items(&db, vec![positional(Req, int), positional(Req, str)]);
+    let strs = items(&db, vec![positional(Req, str)]);
+    let maybe_str = items(&db, vec![positional(Opt, str)]);
+    let empty = items(&db, vec![]);
+    db.seal();
+    for (x, y) in [(int_str, open_int), (ints, open_int), (open_int, ints)] {
+        assert_eq!(check(&db, x, y).status, Status::Proven, "{x:?} <: {y:?}");
+    }
+    assert!(contradiction(
+        &check(&db, strs, open_int),
+        Contradiction::UnrelatedNominals
+    ));
+    assert!(contradiction(
+        &check(&db, open_int, strs),
+        Contradiction::UnrelatedNominals
+    ));
+    assert!(contradiction(
+        &check(&db, empty, open_int),
+        Contradiction::Missing(0)
+    ));
+    assert!(contradiction(
+        &check(&db, open_strs, maybe_str),
         Contradiction::Excess(1)
     ));
 }

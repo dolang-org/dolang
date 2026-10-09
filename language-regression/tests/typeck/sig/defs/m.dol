@@ -2,15 +2,15 @@
 # an implicit binder of its signature, whatever the def's visibility.
 
 pub def shown a @ Int b :k @ Str = "x" *rest **kw -> Int
-  #     ^~~~~: sig (a: Int, b: Unknown, ?:k: Str, *rest: {*Unknown}, **kw: {**Unknown}, <#0, >#1) -> Int
+  #     ^~~~~: sig (a: Int, b: Unknown, ?:k: Str, *rest: Unknown{}, **kw: Unknown{}, <#0, >#1) -> Int
   [a, b, k, rest, kw]
 
 def hidden a @ Int b :k @ Str = "x" *rest **kw -> Int
-  # ^~~~~~: sig (a: Int, b: Unknown, ?:k: Str, *rest: {*Unknown}, **kw: {**Unknown}, <#0, >#1) -> Int
+  # ^~~~~~: sig (a: Int, b: Unknown, ?:k: Str, *rest: Unknown{}, **kw: Unknown{}, <#0, >#1) -> Int
   [a, b, k, rest, kw]
 
 pub def mixed ...rest
-  #     ^~~~~: sig (...rest: {*Unknown, **Unknown}, <#0, >#1) -> Unknown
+  #     ^~~~~: sig (...rest: Unknown{}, <#0, >#1) -> Unknown
   rest
 
 pub def generic[T] x @ T -> T
