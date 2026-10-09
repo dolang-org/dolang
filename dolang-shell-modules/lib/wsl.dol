@@ -1,3 +1,4 @@
+# dolang: strict
 # Run block-scoped operations between Windows and WSL Linux through a remote
 # VFS.
 
@@ -8,15 +9,15 @@ import std:
   - @BaseDict
   - RuntimeError
 
-def require_windows()
+def require_windows() -> nil
   if (sys.os_info().family != :WINDOWS:)
     throw RuntimeError "wsl.with_linux requires a Windows VFS target"
 
-def require_linux()
+def require_linux() -> nil
   if (sys.os_info().os != :LINUX:)
     throw RuntimeError "wsl.with_windows requires a Linux VFS target"
 
-def find_windows_command()
+def find_windows_command() -> [Str | Path]
   require_linux()
   let vfs = run["dolang-vfs.exe"].which()
   if (vfs != nil)
@@ -40,7 +41,7 @@ pub def with_linux[R]
   # Linux user. Defaults to WSL's configured default.
   :user @ Str = nil
   # Linux VFS launcher command and arguments.
-  :command @ Iterable[Str] = ["dolang-vfs"]
+  :command @ Iterable[Value] = ["dolang-vfs"]
   # Initial Linux working directory.
   :cd @ (Str | Path) = nil
   # Initial Linux environment overrides.
@@ -50,7 +51,13 @@ do -> R
   let executable = run["wsl.exe"].which()
   if (executable == nil)
     throw RuntimeError "wsl.with_linux: wsl.exe was not found"
-  let argv = _wsl.build_linux_command $command :distro :user :cd :env
+  let argv = _wsl.build_linux_command $command :env
+    if (distro != nil)
+      :distro
+    if (user != nil)
+      :user
+    if (cd != nil)
+      :cd
   argv[0] = executable
   _wsl.with_command $argv $block
 
@@ -62,12 +69,14 @@ pub def with_windows[R]
   # Windows VFS launcher command and arguments.
   # Defaults to `dolang-vfs.exe`, preferring `dolang.exe --vfs` as a
   # fallback.
-  :command @ Iterable[Str] = find_windows_command()
+  :command @ Iterable[Value] = find_windows_command()
   # Initial Windows working directory.
   :cd @ (Str | Path) = nil
   # Initial Windows environment overrides.
   :env @ BaseDict[Str | Sym, Value] = {}
 do -> R
   require_linux()
-  let argv = _wsl.build_windows_command $command :cd :env
+  let argv = _wsl.build_windows_command $command :env
+    if (cd != nil)
+      :cd
   _wsl.with_command $argv $block

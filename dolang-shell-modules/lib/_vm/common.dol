@@ -1,7 +1,21 @@
+# dolang: strict
 # Helpers shared by more than one of the `_vm` modules.
+
+import fs:
+  - @Path
 
 # Runs a host program in a locale-independent environment, so that output this
 # module parses back is not translated.
-pub def cli program ...args
+pub def cli
+  program @ (Str | Path)
+  :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
+  *args @ Value
+  <Iter[Value]
+  >Sink[Str]
+do -> nil
   env LC_ALL: C LANG: C do
+    # A local, since a test of what a block captures doesn't narrow it
+    let err = stderr
     run $program ...args
+      if (err != nil)
+        stderr: $err

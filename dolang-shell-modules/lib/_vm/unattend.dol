@@ -1,3 +1,4 @@
+# dolang: strict
 # Synthesis of `autounattend.xml`, the answer file that drives an unattended
 # Windows install, and of the two command lines it runs in the guest.
 #
@@ -26,7 +27,7 @@ let WCM_NS = "http://schemas.microsoft.com/WMIConfig/2002/State"
 
 # Every `<component>` in an unattend document carries the same assembly
 # identity; only `name` varies.
-let COMPONENT_ATTRS = $
+let COMPONENT_ATTRS @ {**Str} = $
   processorArchitecture: amd64
   publicKeyToken: "31bf3856ad364e35"
   language: neutral
@@ -48,7 +49,7 @@ let UNATTEND_LOCALE = "en-US"
 # what encodes an argument list as one — the same encoding Windows parses back
 # out. Quoting it by hand would work until the day an argument contained
 # something the rules care about.
-def bootstrap_command()
+def bootstrap_command() -> Str
   let drives = " ".join(PROVISION_DRIVES)
   let scan = r#"@if exist %i:\bootstrap.cmd call %i:\bootstrap.cmd"#
   proc.windows.join ["cmd.exe", "/c", "for %i in ($drives) do $scan"]
@@ -59,7 +60,7 @@ def bootstrap_command()
 # No `cmd.exe`: the script writes its own transcript, so there is no redirect
 # and nothing left for a shell to do. A program and its arguments, encoded by
 # `proc.windows.join` rather than by hand.
-def provision_command()
+def provision_command() -> Str
   let root = WINDOWS_ROOT
   proc.windows.join $
     - "$root\\dolang.exe"
@@ -71,22 +72,22 @@ def provision_command()
 # Every element needs it named: `xml.encode` derives namespace declarations
 # per node rather than from parent pointers, so a child of a namespaced node
 # that does not carry one of its own is serialized into no namespace at all.
-def unattend_node tag *items
+def unattend_node tag @ Str *items @ (xml.Node | xml.Attr | Str) -> xml.Node
   xml.Node $tag namespace: $UNATTEND_NS ...items
 
 # `wcm:action="add"`, which the schema requires on every member of a repeated
 # list — partitions, driver paths, accounts, commands.
-def wcm_add()
+def wcm_add() -> xml.Attr
   xml.Attr action add namespace: $WCM_NS prefix: wcm
 
-def unattend_component name *items
+def unattend_component name @ Str *items @ (xml.Node | xml.Attr | Str) -> xml.Node
   let attrs = COMPONENT_ATTRS.copy()
   attrs[:name:] = name
   xml.Node component namespace: $UNATTEND_NS attrs: $attrs ...items
 
 # The `<InstallFrom>` selecting an edition off multi-edition media, or `nil`
 # to let Setup pick — which on retail media means stopping to ask.
-def unattend_install_from edition index
+def unattend_install_from edition @ (Str | nil) index @ (Int | nil) -> xml.Node
   let key = (edition != nil && "/IMAGE/NAME" || "/IMAGE/INDEX")
   let value = (edition != nil && edition || str(index))
   unattend_node InstallFrom
@@ -101,7 +102,7 @@ def unattend_install_from edition index
 # Setup is given an explicit layout rather than an existing partition because
 # the disk it installs onto is blank — `create` sizes an overlay with no
 # backing image on this path — so there is nothing for it to find.
-def unattend_disk_config()
+def unattend_disk_config() -> xml.Node
   unattend_node DiskConfiguration
     $ unattend_node WillShowUI "OnError"
     $ unattend_node Disk
@@ -146,8 +147,8 @@ def unattend_disk_config()
 # rather than naming the one that is right: the letter the driver disc gets
 # is not knowable from here, and Setup logs and skips a path that is not
 # there.
-def unattend_driver_paths()
-  let paths = []
+def unattend_driver_paths() -> xml.Node
+  let paths @ [xml.Node] = []
   let order = 1
   for drive = PROVISION_DRIVES
     for subpath = DRIVER_SUBPATHS
@@ -186,8 +187,13 @@ def unattend_driver_paths()
 # There is deliberately no answer file for the boot *after* a caller's own
 # `sysprep /generalize`. That one is a caller decision, placed with an ordinary
 # `add:` writing `C:\Windows\Panther\unattend.xml`.
-pub def unattend_xml user :edition = nil :index = nil :drivers = false
-  let install_from = nil
+pub def unattend_xml
+  user @ Str
+  :edition @ Str = nil
+  :index @ Int = nil
+  :drivers @ Bool = false
+do -> Str
+  let install_from @ (xml.Node | nil) = nil
   if (edition != nil || index != nil)
     install_from = unattend_install_from $edition $index
 

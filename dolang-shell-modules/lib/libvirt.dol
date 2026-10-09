@@ -785,7 +785,8 @@ def copy_chunks total input output indicator
       let chunk = input.read $CHUNK_SIZE :offset
       strand.put [offset, chunk]
     do strand.pool $PARALLEL $strand.input() do |item|
-      let offset chunk = item
+      # Pipeline stages pass `Value`s; the first stage puts these pairs
+      let offset chunk = (item !@ (Int, Bin))
       output.write $chunk :offset
       indicator.delta $chunk.len
 

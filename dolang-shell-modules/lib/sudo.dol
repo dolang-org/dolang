@@ -1,3 +1,4 @@
+# dolang: strict
 # Run direct commands or block-scoped operations with elevated privileges via
 # `sudo`.
 import _vfs shell proc time
@@ -10,12 +11,58 @@ import _vfs shell proc time
 
 let :sudo ... = proc.run
 
-def run_agent
-  thunk
-  :user = nil
-  :cd = nil
-  :env = {}
-do
+# Runs a verbatim command through `sudo`.
+#
+# ## Example
+#
+# ```
+# sudo.run install -m 0644 example.conf /etc/example.conf
+# ```
+pub def run
+  # Program to run.
+  cmd @ (Str | Path)
+  # Account to use instead of root.
+  :user @ Str = nil
+  # Working directory requested via
+  # sudo.
+  :cd @ (Str | Path) = nil
+  # Environment requested via sudo policy.
+  :env @ BaseDict[Str | Sym, Str | :INHERIT: | nil] = {}
+  # Arguments passed verbatim to `cmd`.
+  *args @ Value
+  <Iter[Value]
+  >Sink[Str]
+do -> nil
+  shell.env $env do sudo
+    if (user != nil)
+      -u $user
+    if (cd != nil)
+      -D $cd
+    if (env.len > 0)
+      --preserve-env=$(",".join(env.keys()))
+    -- $cmd ...args
+
+# Runs a block with elevated privileges through `sudo`.
+#
+# Filesystem access and spawned programs use a temporary elevated VFS for the
+# duration of the block. Pass `user` to run as an account other than root.
+#
+# ## Example
+#
+# ```
+# sudo.with do run cat /etc/shadow
+# ```
+pub def with[R]
+  # Block to run.
+  func @ (() -> R)
+  # Account to use instead of root.
+  :user @ Str = nil
+  # Initial elevated directory.
+  :cd @ (Str | Path) = nil
+  # Initial environment overrides.
+  :env @ BaseDict[Str | Sym, Value] = {}
+  <Iter[Value]
+do -> R
   let agent = _vfs.bin()
 
   _vfs.with_socket_dir do |subdir|
@@ -37,66 +84,6 @@ do
         strand.next()
         let a = shell.Vfs.unix_socket $socket :key
         try
-          return strand.redirect :input do a.with $thunk
+          return strand.redirect :input do a.with $func
         finally
           time.timeout 30 do a.stop()
-
-def run_command
-  cmd
-  :user = nil
-  :cd = nil
-  :env = {}
-  ...args
-do
-  shell.env $env do sudo
-    if (user != nil)
-      -u $user
-    if (cd != nil)
-      -D $cd
-    if (env.len > 0)
-      --preserve-env=$(",".join(env.keys()))
-    -- $cmd ...args
-
-# Runs a verbatim command through `sudo`.
-#
-# ## Example
-#
-# ```
-# sudo.run install -m 0644 example.conf /etc/example.conf
-# ```
-pub def run
-  # Program to run.
-  cmd
-  # Account to use instead of root.
-  :user @ Str = nil
-  # Working directory requested via
-  # sudo.
-  :cd @ (Str | Path) = nil
-  # Environment requested via sudo policy.
-  :env @ BaseDict[Str | Sym, Value] = {}
-  # Arguments passed verbatim to `cmd`.
-  *args
-do -> nil
-  run_command $cmd :user :cd :env ...args
-
-# Runs a block with elevated privileges through `sudo`.
-#
-# Filesystem access and spawned programs use a temporary elevated VFS for the
-# duration of the block. Pass `user` to run as an account other than root.
-#
-# ## Example
-#
-# ```
-# sudo.with do run cat /etc/shadow
-# ```
-pub def with[R]
-  # Block to run.
-  func @ (() -> R)
-  # Account to use instead of root.
-  :user @ Str = nil
-  # Initial elevated directory.
-  :cd @ (Str | Path) = nil
-  # Initial environment overrides.
-  :env @ BaseDict[Str | Sym, Value] = {}
-do -> R
-  run_agent $func :user :cd :env

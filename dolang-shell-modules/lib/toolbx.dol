@@ -1,6 +1,11 @@
+# dolang: strict
 import _vfs proc time
+  fs:
+    - @Path
   shell:
     - Vfs
+  std:
+    - @BaseDict
   _container.common:
     - runtime_dir
   strand:
@@ -8,23 +13,30 @@ import _vfs proc time
 
 let :toolbox ... = proc.run
 
-def run_command
-  :name = nil
-  :cd = nil
-  :env = {}
-  ...args
-do
+pub def run
+  cmd @ (Str | Path)
+  :name @ Str = nil
+  :cd @ (Str | Path) = nil
+  :env @ BaseDict[Str | Sym, Value] = {}
+  *args @ Value
+  <Iter[Value]
+  >Sink[Str]
+do -> nil
   toolbox run
     if (name != nil)
       --container $name
-    -- env ...(_vfs.env_args cd env) ...args
+    -- env ...(_vfs.env_args cd env) $cmd ...args
 
-def run_agent
-  thunk
-  :name = nil
-  :cd = nil
-  :env = {}
-do
+# Run a function inside a toolbox container.
+#
+# The block sees the toolbox filesystem and process environment.
+pub def with[R]
+  block @ (() -> R)
+  :name @ Str = nil
+  :cd @ (Str | Path) = nil
+  :env @ BaseDict[Str | Sym, Value] = {}
+  <Iter[Value]
+do -> R
   let socket = "$(runtime_dir())/toolbox-vfs-$name"
   let agent = _vfs.bin()
   let input = strand.input()
@@ -32,33 +44,20 @@ do
   # cannot identify the client, so the session is keyed instead: `--accept`
   # serves one peer that proves the key, and unlinks the socket once it has.
   let key = _vfs.key()
-  pipeline
-    do run_command :cd :env :name $agent --key-stdin --accept $socket
-      stdin: (_vfs.key_input key)
+  pipeline input: (_vfs.key_input key)
+    do
+      # Locals, since a test of what a block captures doesn't narrow it
+      let container = name
+      let dir = cd
+      run $agent --key-stdin --accept $socket :env
+        if (container != nil)
+          name: $container
+        if (dir != nil)
+          cd: $dir
     do
       strand.next()
       let agent = Vfs.unix_socket $socket :key
       try
-        return strand.redirect input: $input do agent.with $thunk
+        return strand.redirect input: $input do agent.with $block
       finally
         time.timeout 30 do agent.stop()
-
-pub def run
-  cmd
-  :name = nil
-  :cd = nil
-  :env = {}
-  *args
-do
-  run_command :name :cd :env $cmd ...args
-
-# Run a function inside a toolbox container.
-#
-# The block sees the toolbox filesystem and process environment.
-pub def with[R]
-  block @ (() -> R)
-  :name = nil
-  :cd = nil
-  :env = {}
-do -> R
-  run_agent :name :cd :env $block

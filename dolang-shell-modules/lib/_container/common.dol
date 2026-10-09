@@ -1,23 +1,24 @@
-import 
+# dolang: strict
+import
   fs:
    - Path
   xdg
 
 let :id ... = run
 
-pub def runtime_dir()
+pub def runtime_dir <Iter[Value] -> Path
   (xdg.runtime_dir() || Path "/run/user/$(sub do id "-u")")
 
-pub def cache_home()
+pub def cache_home() -> Path
   xdg.cache_home()
 
-pub def cache_root()
+pub def cache_root() -> Path
   let path = (cache_home() / "dolang-container")
   if !path.exists()
     path.create_dir all: true
   path
 
-pub def cache_dir id
+pub def cache_dir id @ Str -> Path
   let path = (cache_root() / "mounts" / id.replace "/" "_")
   if !path.exists()
     path.create_dir all: true
