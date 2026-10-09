@@ -4661,7 +4661,7 @@ pub class TimedOutError: RuntimeError
 # object is in the prelude, so `Tuple(iterable)` is available without an
 # explicit import.
 #
-pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}, Rest: Unpack[{...Ts}]] Iterable[Union[...Ts]] @Index[{...Ts}] @Seq[Union[...Ts]]
+pub class Tuple[*Ts]: @Spread[Ts] @Unpack[Ts, Rest: Unpack[Ts]] Iterable[Union[...Ts]] @Index[Ts] @Seq[Union[...Ts]]
   #
   #
   # Builds a tuple from an iterable.
@@ -4739,7 +4739,7 @@ pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}, Rest: Unpack[{...Ts}]] I
   pub def pairs self -> UnpackIter[Tuple[Int, Value]]
     ...
 
-  @def (index)[K] self key@K -> IndexItem[{...Ts}, K]
+  @def (index)[K] self key@K -> IndexItem[Ts, K]
   @def (index) self range@Range[Int] -> Tuple[...Union[...Ts]]
 
   #
@@ -4780,11 +4780,11 @@ pub class Tuple[*Ts]: @Spread[{...Ts}] @Unpack[{...Ts}, Rest: Unpack[{...Ts}]] I
   # for k v = {name: "Alice", age: 30}
   #   echo "$k = $v"
   # ```
-  pub def (unpack) self -> Unpack[{...Ts}, Rest: Unpack[{...Ts}]]
+  pub def (unpack) self -> Unpack[Ts, Rest: Unpack[Ts]]
     ...
 
   # Spreads the items.
-  pub def (spread) self -> Spread[{...Ts}]
+  pub def (spread) self -> Spread[Ts]
     ...
 
 
