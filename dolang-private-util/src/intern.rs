@@ -11,7 +11,10 @@ use std::{
     slice,
 };
 
-use crate::mono::{MonoHashMap, MonoVec};
+use crate::{
+    frozen::{Freeze, Frozen},
+    mono::{MonoHashMap, MonoVec},
+};
 
 /// An interned value's index, stored plus one so `Option<Id>` needs no tag.
 pub struct Id<Tag>(NonZeroU32, PhantomData<*const Tag>);
@@ -134,15 +137,17 @@ impl<T, Tag> Table<T, Tag> {
 
     pub fn iter(&self) -> Iter<'_, T, Tag> {
         Iter {
-            table: self,
+            map: &self.map,
             index: 0,
+            phantom: PhantomData,
         }
     }
 }
 
 pub struct Iter<'a, T, Tag> {
-    table: &'a Table<T, Tag>,
+    map: &'a MonoHashMap<T, ()>,
     index: usize,
+    phantom: PhantomData<Tag>,
 }
 
 impl<'a, T, Tag> Iterator for Iter<'a, T, Tag> {
@@ -150,7 +155,7 @@ impl<'a, T, Tag> Iterator for Iter<'a, T, Tag> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let index = self.index;
-        let value = self.table.get_by_index(index)?;
+        let (value, _) = self.map.get_index(index)?;
         self.index += 1;
         Some((Id::new(index), value))
     }
@@ -168,6 +173,44 @@ impl<T, Tag> Index<Id<Tag>> for Table<T, Tag> {
 impl<T, Tag> Default for Table<T, Tag> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// Safety: frozen views only read through a frozen view of the map.
+unsafe impl<T: Sync, Tag> Freeze for Table<T, Tag> {}
+
+impl<T, Tag> Frozen<Table<T, Tag>> {
+    fn map(&self) -> &Frozen<MonoHashMap<T, ()>> {
+        unsafe { self.part(|table| &table.map) }
+    }
+
+    /// Returns the `Id` of a value already interned.
+    pub fn get<Q>(&self, k: &Q) -> Option<Id<Tag>>
+    where
+        T: Hash + Eq + Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        self.map().get_index_of(k).map(Id::new)
+    }
+
+    pub fn is_fresh(&self, id: Id<Tag>) -> bool {
+        !self.map().is_indexed(id.index())
+    }
+
+    pub fn get_by_index(&self, index: usize) -> Option<&T> {
+        unsafe { self.inner() }.get_by_index(index)
+    }
+
+    pub fn iter(&self) -> Iter<'_, T, Tag> {
+        unsafe { self.inner() }.iter()
+    }
+}
+
+impl<T, Tag> Index<Id<Tag>> for Frozen<Table<T, Tag>> {
+    type Output = T;
+
+    fn index(&self, index: Id<Tag>) -> &Self::Output {
+        unsafe { &self.inner()[index] }
     }
 }
 
@@ -361,6 +404,53 @@ impl Index<StrId> for BinTable {
     }
 }
 
+// Safety: the table owns its segments, and the blobs only point into them.
+unsafe impl Send for BinTable {}
+
+// Safety: frozen views only read the segments, the `Cell` lengths and a frozen
+// view of the index.
+unsafe impl Freeze for BinTable {}
+
+impl Frozen<BinTable> {
+    /// Returns the `BinId` of bytes already interned.
+    pub fn get(&self, bytes: &[u8]) -> Option<BinId> {
+        let index = unsafe { self.part(|table| &table.index) };
+        index.get_index_of(bytes).map(|i| BinId(Id::new(i)))
+    }
+
+    /// Returns the `StrId` of a string already interned.
+    pub fn get_str(&self, s: &str) -> Option<StrId> {
+        self.get(s.as_bytes()).map(|id| StrId(id.0))
+    }
+
+    /// Returns the logical offsets of `id`'s bytes.
+    pub fn range(&self, id: BinId) -> Range<usize> {
+        unsafe { self.inner() }.range(id)
+    }
+
+    /// Copies every interned byte string into one buffer, at its logical
+    /// offsets.
+    pub fn flatten(&self) -> Vec<u8> {
+        unsafe { self.inner() }.flatten()
+    }
+}
+
+impl Index<BinId> for Frozen<BinTable> {
+    type Output = [u8];
+
+    fn index(&self, index: BinId) -> &Self::Output {
+        unsafe { &self.inner()[index] }
+    }
+}
+
+impl Index<StrId> for Frozen<BinTable> {
+    type Output = str;
+
+    fn index(&self, index: StrId) -> &Self::Output {
+        unsafe { &self.inner()[index] }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -383,6 +473,46 @@ mod test {
             assert_eq!(&flat[table.range(id)], &table[id]);
         }
         assert_eq!(flat.len(), 10 + big.len());
+    }
+
+    #[test]
+    fn frozen_shared_between_threads() {
+        const N: usize = 100;
+        let mut table = Table::<String, ()>::new();
+        let mut bins = BinTable::new();
+        let fresh = table.fresh(String::from("0"));
+        let ids: Vec<_> = (0..N).map(|i| table.id(&i.to_string())).collect();
+        let strs: Vec<_> = (0..N).map(|i| bins.id_str(&i.to_string())).collect();
+        let flat = bins.flatten();
+        let (ftable, fbins) = (Frozen::from_mut(&mut table), Frozen::from_mut(&mut bins));
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    assert!(ftable.is_fresh(fresh));
+                    assert_eq!(fbins.flatten(), flat);
+                    for i in 0..N {
+                        let key = i.to_string();
+                        assert_eq!(ftable.get(key.as_str()), Some(ids[i]));
+                        assert!(!ftable.is_fresh(ids[i]));
+                        assert_eq!(ftable[ids[i]], key);
+                        assert_eq!(fbins.get_str(&key), Some(strs[i]));
+                        assert_eq!(&fbins[strs[i]], key);
+                        assert_eq!(&flat[fbins.range(strs[i].as_bin_id())], key.as_bytes());
+                    }
+                    assert!(
+                        ftable
+                            .iter()
+                            .skip(1)
+                            .map(|(id, _)| id)
+                            .eq(ids.iter().copied())
+                    );
+                    assert_eq!(ftable.get("missing"), None);
+                    assert_eq!(fbins.get(b"missing"), None);
+                });
+            }
+        });
+        assert_eq!(table.id("new").index(), N + 1);
+        assert_eq!(bins.id_str("1"), strs[1]);
     }
 
     #[test]
