@@ -63,7 +63,7 @@ pub(crate) fn is_directive(file: &File<'_>, comment: Span) -> bool {
 
 /// Whether only whitespace precedes `offset` on its line.
 pub(crate) fn own_line(file: &File<'_>, offset: Offset) -> bool {
-    file.content()[..offset as usize]
+    file.content().as_bytes()[..offset as usize]
         .iter()
         .rev()
         .take_while(|byte| **byte != b'\n')
@@ -89,8 +89,7 @@ impl Diagnose for UnknownSetting {
     }
 
     fn message(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
-        let setting = String::from_utf8_lossy(file.slice(self.0));
-        write!(w, "unknown directive setting `{setting}`")
+        write!(w, "unknown directive setting `{}`", file.str(self.0))
     }
 }
 
@@ -101,7 +100,7 @@ mod tests {
     use super::*;
 
     fn scan_str(source: &str) -> (bool, Vec<String>) {
-        let unit = crate::Config::new().unit(Path::new("test.dol"), source.as_bytes());
+        let unit = crate::Config::new().unit(Path::new("test.dol"), source);
         (
             unit.strict(),
             unit.diagnostics()
@@ -158,7 +157,7 @@ mod tests {
     fn config_strict_overrides_directive() {
         let mut config = crate::Config::new();
         config.strict(false);
-        let unit = config.unit(Path::new("test.dol"), b"# dolang: strict\n");
+        let unit = config.unit(Path::new("test.dol"), "# dolang: strict\n");
         assert!(!unit.strict());
     }
 }

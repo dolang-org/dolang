@@ -47,7 +47,7 @@ mod tests {
             });
             config.typecheck(true);
             let path = PathBuf::from("fixture.dol");
-            let unit = config.unit(&path, b"pub let value = 1\n");
+            let unit = config.unit(&path, "pub let value = 1\n");
             fs::write(
                 self.0.join(format!("{name}.dolt")),
                 typeck::typelib(&unit).unwrap(),

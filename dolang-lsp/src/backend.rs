@@ -950,7 +950,7 @@ impl Backend {
                     }
                 }
             }
-            let unit = config.unit(&path, content.as_bytes());
+            let unit = config.unit(&path, content);
             let hovers = build_hovers(&unit, content);
             for diag in unit.diagnostics() {
                 let mut out = Diagnostic::new_simple(

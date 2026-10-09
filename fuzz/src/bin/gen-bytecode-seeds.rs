@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn compile_seed(path: &Path, source: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut bytecode = Vec::new();
-    let unit = Config::new().unit(path, source.as_bytes());
+    let unit = Config::new().unit(path, source);
     let diagnostics: Vec<_> = unit.diagnostics().collect();
 
     unit.emit(&mut bytecode).map_err(|err| {

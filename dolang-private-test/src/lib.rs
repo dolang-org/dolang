@@ -43,7 +43,10 @@ pub fn compile_standard(
         config.mode(Mode::Module { name: name.into() });
     }
     let mut out = Vec::new();
-    let unit = config.unit(path, &content);
+    let source = content
+        .to_str()
+        .unwrap_or_else(|e| panic!("{}: not UTF-8: {e}", path.display()));
+    let unit = config.unit(path, source);
     let diags: Vec<_> = unit.diagnostics().collect();
     let res = unit.emit(&mut out);
     let bytecode = res.ok().map(|_| Bytecode::new(out));

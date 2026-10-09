@@ -706,7 +706,7 @@ mod tests {
         config.mode(Mode::Module { name: name.into() });
         let mut bytes = Vec::new();
         config
-            .unit(Path::new("<test>"), source.as_bytes())
+            .unit(Path::new("<test>"), source)
             .emit(&mut bytes)
             .unwrap();
         Bytecode::new(bytes).run(strand, out).await.unwrap();

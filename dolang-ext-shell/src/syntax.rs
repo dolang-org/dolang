@@ -166,7 +166,7 @@ mod tests {
         let unit = Config::new()
             .document(true)
             .recover(true)
-            .unit(Path::new("example.dol"), source.as_bytes());
+            .unit(Path::new("example.dol"), source);
         unit.tokens(&mut |token, span, node: Option<NodeId>, context| {
             let kind = node.and_then(|id| unit.node(id)).map(|node| node.kind());
             tokens.push((token, span, classify_node(kind.as_ref()), context));

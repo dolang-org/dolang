@@ -1610,7 +1610,7 @@ impl<'a> Lexer<'a> {
         diags: &'a Diags,
         comment: Option<&'a mut dyn Comment>,
     ) -> Lexer<'a> {
-        let raw = RawLexer::new(CopyIter(file.content().iter()), diags, comment);
+        let raw = RawLexer::new(CopyIter(file.content().as_bytes().iter()), diags, comment);
         Lexer {
             file,
             raw,

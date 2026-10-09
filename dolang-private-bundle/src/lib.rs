@@ -149,7 +149,7 @@ pub fn bundle(spec: &Bundle<'_>) {
         let mut had_error = false;
         let mut had_warning = false;
         let compiler_path_str = compiler_path.display().to_string();
-        let unit = config.unit(&compiler_path, source.as_bytes());
+        let unit = config.unit(&compiler_path, source.as_str());
         for diag in unit.diagnostics() {
             match diag.severity() {
                 Severity::Error => had_error = true,

@@ -74,7 +74,7 @@ fn config() -> Config<'static> {
 async fn execute(source: String, host: Host, signal: AbortSignal) -> RunResult {
     let mut response = RunResult::default();
     let config = config();
-    let unit = config.unit(Path::new("playground.dol"), source.as_bytes());
+    let unit = config.unit(Path::new("playground.dol"), source.as_str());
     response.diagnostics = analysis::diagnostics(&unit, &source);
     let mut bytes = Vec::new();
     if let Err(error) = unit.emit(&mut bytes) {

@@ -193,7 +193,7 @@ fn run(path: &Path) {
         "{}: fixture has no annotations",
         path.display()
     );
-    let tokens = tokenize(path, &content);
+    let tokens = tokenize(path, source);
 
     let mut failures = String::new();
     for annotation in &annotations {
@@ -221,7 +221,7 @@ fn run(path: &Path) {
 }
 
 /// Compile the fixture and flatten its token stream.
-fn tokenize(path: &Path, content: &[u8]) -> Vec<Tok> {
+fn tokenize(path: &Path, source: &str) -> Vec<Tok> {
     let mut config = Config::new();
     config.document(true);
     // The default prelude pulls in more than a compile-only test needs; naming
@@ -236,7 +236,7 @@ fn tokenize(path: &Path, content: &[u8]) -> Vec<Tok> {
         .commit();
     config.recover(true);
 
-    let unit = config.unit(path, content);
+    let unit = config.unit(path, source);
 
     let errors: Vec<String> = unit
         .diagnostics()

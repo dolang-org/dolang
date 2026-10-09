@@ -142,16 +142,16 @@ impl From<(Offset, Offset)> for Coord {
 #[derive(Clone)]
 pub(crate) struct File<'s> {
     path: PathBuf,
-    content: Cow<'s, [u8]>,
+    content: Cow<'s, str>,
     newlines: Vec<Offset>,
 }
 
 impl<'s> File<'s> {
-    pub(crate) fn new(path: &Path, content: Cow<'s, [u8]>) -> Self {
+    pub(crate) fn new(path: &Path, content: Cow<'s, str>) -> Self {
         let mut newlines = Vec::new();
-        let mut iter = content.iter();
+        let mut iter = content.bytes();
         let mut cur = 0usize;
-        while let Some(pos) = iter.position(|&c| c == b'\n') {
+        while let Some(pos) = iter.position(|c| c == b'\n') {
             newlines.push(Offset::try_from(cur + pos).unwrap());
             cur += pos + 1;
         }
@@ -162,16 +162,17 @@ impl<'s> File<'s> {
         }
     }
 
-    pub(crate) fn content(&self) -> &[u8] {
+    pub(crate) fn content(&self) -> &str {
         &self.content
     }
 
     pub(crate) fn slice(&self, span: Span) -> &[u8] {
-        &self.content[span.start as usize..span.end as usize]
+        &self.content.as_bytes()[span.start as usize..span.end as usize]
     }
 
+    /// The text of `span`, whose ends the lexer put on character boundaries
     pub(crate) fn str(&self, span: Span) -> &str {
-        str::from_utf8(self.slice(span)).expect("invalid utf-8")
+        &self.content[span.start as usize..span.end as usize]
     }
 
     /// The offset of each newline in the file

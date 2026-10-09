@@ -351,28 +351,10 @@ struct SpanData {
     end: PosData,
 }
 
-enum Backing<'v> {
-    Str(PinStr<'v, 'static>),
-    Bin(PinBin<'v, 'static>),
-}
-
-impl Backing<'_> {
-    fn bytes(&self) -> &'static [u8] {
-        // SAFETY: the pin is retained for the lifetime of the compiler unit and
-        // its owning Do value is rooted in the unit's GC slot.
-        unsafe {
-            mem::transmute(match self {
-                Self::Str(v) => v.as_bytes(),
-                Self::Bin(v) => &**v,
-            })
-        }
-    }
-}
-
 pub(crate) struct UnitObject<'v> {
     // Fields are dropped in declaration order: the borrowing unit before its pin.
     unit: Option<compile::Unit<'static>>,
-    _backing: Backing<'v>,
+    _backing: PinStr<'v, 'static>,
     path: Box<Path>,
     identity: u64,
     /// Where each `Type` node's expression sits in the `UNIT_TYPES` array, once converted
@@ -2695,40 +2677,22 @@ impl<'v> Object<'v> for Diagnostic {
                                 // source outlives its pin, which is dropped at the end of
                                 // this method.
                                 backings.push(match item.view(strand) {
-                                    View::Str(s) => Some(Backing::Str(unsafe {
-                                        s.pin().into_static_unchecked()
-                                    })),
-                                    View::Bin(b) => Some(Backing::Bin(unsafe {
-                                        b.pin().into_static_unchecked()
-                                    })),
+                                    View::Str(s) => {
+                                        Some(unsafe { s.pin().into_static_unchecked() })
+                                    }
                                     // A unit checked from its typelib
                                     View::Nil => None,
                                     _ => {
                                         return Err(Error::type_error(
                                             strand,
-                                            "source: expected `Str` or `Bin`",
+                                            "source: expected `Str`",
                                         ));
                                     }
                                 });
                             }
                             Ok(backings)
                         })?;
-                        let mut texts = Vec::with_capacity(backings.len());
-                        for backing in &backings {
-                            let Some(backing) = backing else {
-                                texts.push(None);
-                                continue;
-                            };
-                            match std::str::from_utf8(backing.bytes()) {
-                                Ok(text) => texts.push(Some(text)),
-                                Err(_) => {
-                                    return Err(Error::type_error(
-                                        strand,
-                                        "source: expected valid utf-8",
-                                    ));
-                                }
-                            }
-                        }
+                        let texts: Vec<_> = backings.iter().map(Option::as_deref).collect();
                         let paths: Vec<_> = annex.paths.iter().map(String::as_str).collect();
                         crate::render::render_diag(
                             &paths,
@@ -3206,11 +3170,12 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
 
             // SAFETY: the source value is installed in UNIT_SOURCE below. The
             // GC root supplies liveness and this retained pin supplies address stability.
-            let backing = match source.view(strand) {
-                View::Str(s) => Backing::Str(unsafe { s.pin().into_static_unchecked() }),
-                View::Bin(b) => Backing::Bin(unsafe { b.pin().into_static_unchecked() }),
-                _ => return Err(Error::type_error(strand, "source: expected `Str` or `Bin`")),
+            let View::Str(text) = source.view(strand) else {
+                return Err(Error::type_error(strand, "source: expected `Str`"));
             };
+            let backing: PinStr<'v, 'static> = unsafe { text.pin().into_static_unchecked() };
+            // SAFETY: the pin is retained after the borrowing unit and dropped after it.
+            let text: &'static str = unsafe { mem::transmute::<&str, _>(&*backing) };
 
             let path: Box<Path> = Path::new(&path.to_string(strand)?).into();
             let mut config = Config::new();
@@ -3251,7 +3216,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                 ext.apply(&mut config).unwrap();
             }
 
-            let unit = config.unit(&path, backing.bytes());
+            let unit = config.unit(&path, text);
             let identity = global.next_unit_id.get();
             global.next_unit_id.set(identity.strict_add(1));
             global.types.unit.create(
