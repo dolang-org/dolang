@@ -1,13 +1,17 @@
+# dolang: strict
 import _vfs time
 import
+  fs:
+    - @Path
   shell:
     - Vfs
   std:
+    - @BaseDict
     - UnexpectedKeyError
     - UnexpectedPosError
     - ValueError
 
-def yes_no value
+def yes_no value @ Bool -> Str
   if value
     "yes"
   else
@@ -16,26 +20,45 @@ def yes_no value
 let HOST_KEY_VALID = $
   :DEFAULT: :STRICT: :ACCEPT_NEW:
 
+# The options `build_command` takes after the host.
+pub @let Options = $
+  ?user: Str
+  ?port: Int
+  ?identities_only: Bool
+  ?forward_agent: Bool
+  ?connect_timeout: Int
+  ?keepalive_interval: Int
+  ?keepalive_count: Int
+  ?batch: Bool
+  ?host_key: (:DEFAULT: | :STRICT: | :ACCEPT_NEW:)
+  ?known_hosts: (Str | Path)
+  ?command: Iterable[Value]
+  ?cd: (Str | Path)
+  ?env: BaseDict[Str | Sym, Value]
+  ?login_env: (Bool | Str)
+  *identity: (Str | Path)
+  *jump: Str
+
 pub def build_command
-  host
-  :user = nil
-  :port = nil
-  :identities_only = false
-  :forward_agent = false
-  :connect_timeout = nil
-  :keepalive_interval = nil
-  :keepalive_count = nil
-  :batch = false
-  :host_key = :DEFAULT:
-  :known_hosts = nil
-  :command = ["dolang-vfs"]
-  :cd = nil
-  :env = {}
-  :login_env = true
-  ...options
-do
-  let identities = []
-  let jumps = []
+  host @ Str
+  :user @ Str = nil
+  :port @ Int = nil
+  :identities_only @ Bool = false
+  :forward_agent @ Bool = false
+  :connect_timeout @ Int = nil
+  :keepalive_interval @ Int = nil
+  :keepalive_count @ Int = nil
+  :batch @ Bool = false
+  :host_key @ (:DEFAULT: | :STRICT: | :ACCEPT_NEW:) = :DEFAULT:
+  :known_hosts @ (Str | Path) = nil
+  :command @ Iterable[Value] = ["dolang-vfs"]
+  :cd @ (Str | Path) = nil
+  :env @ BaseDict[Str | Sym, Value] = {}
+  :login_env @ (Bool | Str) = true
+  ...options @ (Str | Path)
+do -> [Value]
+  let identities @ [Value] = []
+  let jumps @ [Value] = []
   for key value = options
     if (key == :identity:)
       identities.push $value
@@ -82,35 +105,16 @@ do
       -o StrictHostKeyChecking=accept-new
     if (known_hosts != nil)
       -o UserKnownHostsFile=$known_hosts
-    -- $host ...Iterable.iter(command) ...vfs_args --stdio
+    -- $host ...command.iter() ...vfs_args --stdio
 
-pub def with_program
-  executable
-  host
-  block
-  :user = nil
-  :port = nil
-  :identities_only = false
-  :forward_agent = false
-  :connect_timeout = nil
-  :keepalive_interval = nil
-  :keepalive_count = nil
-  :batch = false
-  :host_key = :DEFAULT:
-  :known_hosts = nil
-  :command = ["dolang-vfs"]
-  :cd = nil
-  :env = {}
-  :login_env = true
-  ...options
-do
-  let argv = build_command $host :user :port
-    :identities_only :forward_agent :connect_timeout
-    :keepalive_interval :keepalive_count :batch
-    :host_key :known_hosts :command :cd :env
-    :login_env ...options
-  argv[0] = executable
-  let vfs = Vfs do run ...argv
+pub def with_program[R]
+  executable @ (Str | Path)
+  host @ Str
+  block @ (() -> R)
+  ...options @ Options
+do -> R
+  let _ *args = build_command $host ...options
+  let vfs = Vfs do run $executable ...args
   try
     vfs.with $block
   finally

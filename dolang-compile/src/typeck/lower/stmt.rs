@@ -185,10 +185,37 @@ impl<'u> Scope<'_, '_, 'u> {
             Stmt::Def(def) => self.def(def, dest),
             Stmt::Class(class) if class.is_protocol() => self.value_nil(dest, span),
             Stmt::Class(class) => self.class(class, dest),
-            // Imports bind names that lowering resolves itself
-            Stmt::Import(_) | Stmt::TypeAlias(_) => self.value_nil(dest, span),
+            Stmt::Import(import) => {
+                self.import(import);
+                self.value_nil(dest, span);
+            }
+            Stmt::TypeAlias(_) => self.value_nil(dest, span),
         }
         false
+    }
+
+    /// Assign each item an import binds the module's export, spanned as the item's
+    /// name there. Module imports bind names that lowering resolves itself.
+    fn import(&self, import: &'u ast::Import) {
+        for element in &import.elements {
+            let ast::ImportElement::Items { items, .. } = element else {
+                continue;
+            };
+            for node in items {
+                if let Some(Entry::Item {
+                    module,
+                    item,
+                    var: Some(var),
+                }) = self.entry(node.bind().res)
+                {
+                    let value = ExprKind::Import {
+                        module: self.lower.module(module),
+                        item: Some(self.lower.symbol(item)),
+                    };
+                    self.assign(var, expr(value, node.item()));
+                }
+            }
+        }
     }
 
     fn value_nil(&self, dest: Option<VarId>, span: Span) {

@@ -3493,7 +3493,7 @@ pub class Range[T @ Num]: Iterable[T] @Spread[T]
 # ```
 # let updated = old.with status: ready
 # ```
-pub class Record[...Ts]: Iterable[Tuple[Sym | Int, Value]] @Index[{...Ts}] @Spread[{...Ts}] @Unpack[{...Ts}, Rest: Unpack[{...Ts}]]
+pub class Record[...Ts]: Iterable[Entries[Ts]] @Index[Ts] @Spread[Ts] @Unpack[Ts, Rest: Unpack[Ts]]
   #
   #
   # Builds a record from one spreadable source of key-value pairs.
@@ -3577,19 +3577,19 @@ pub class Record[...Ts]: Iterable[Tuple[Sym | Int, Value]] @Index[{...Ts}] @Spre
 
   # Iterates record items as `[key, value]` pairs in order. A positional item's
   # key is its position.
-  pub def (iter) self -> UnpackIter[Tuple[Sym | Int, Value]]
+  pub def (iter) self -> UnpackIter[Entries[Ts]]
     ...
 
   # Unpacks record items by position and symbol.
-  pub def (unpack) self -> Unpack[{...Ts}, Rest: Unpack[{...Ts}]]
+  pub def (unpack) self -> Unpack[Ts, Rest: Unpack[Ts]]
     ...
 
   # Returns the value at a position or key.
-  pub def (index)[K] self key@K -> IndexItem[{...Ts}, K]
+  pub def (index)[K] self key@K -> IndexItem[Ts, K]
     ...
 
   # Spreads the record's items.
-  pub def (spread) self -> Spread[{...Ts}]
+  pub def (spread) self -> Spread[Ts]
     ...
 
 

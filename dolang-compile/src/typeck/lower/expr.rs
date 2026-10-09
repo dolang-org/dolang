@@ -256,11 +256,15 @@ impl<'u> Scope<'_, '_, 'u> {
 
     fn ident(&mut self, ident: &Ident) -> ExprKind {
         match self.entry(ident.res) {
-            Some(Entry::Var(var)) => {
+            Some(Entry::Var(var) | Entry::Item { var: Some(var), .. }) => {
                 self.capture(var);
                 ExprKind::Var(var)
             }
-            Some(Entry::Item { module, item }) => ExprKind::Import {
+            Some(Entry::Item {
+                module,
+                item,
+                var: None,
+            }) => ExprKind::Import {
                 module: self.lower.module(module),
                 item: Some(self.lower.symbol(item)),
             },
@@ -705,7 +709,8 @@ impl<'u> Scope<'_, '_, 'u> {
             self.entry(ident.res),
             Some(Entry::Item {
                 module: "std",
-                item: "type"
+                item: "type",
+                ..
             })
         )
     }

@@ -34,3 +34,9 @@ re.lib = lib
 #    |
 # LL | re.lib = lib
 #    | ^^^^^^
+lib.nope = 1
+# error: module `lib` has no export `nope`
+#   --> main.dol:LL:LL
+#    |
+# LL | lib.nope = 1
+#    | ^^^^^^^^

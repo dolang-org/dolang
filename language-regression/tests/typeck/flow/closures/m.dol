@@ -165,3 +165,16 @@ pub def wrong xs @ Array[Int] -> Int
   # LL |     return "a"
   #    |            ^^^
   0
+
+# A block that never completes gives the binder its result decides `Never`
+pub def called[R] f @ (() -> R) -> R
+  ...
+
+pub def never c x @ Int
+  let y = if c
+    called do
+      return x
+  else
+    "s"
+  let _ = y
+  #       ^: flow std.Str

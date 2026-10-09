@@ -60,8 +60,8 @@ impl<'u> Frame<'u> {
     /// The variables it declares
     pub(super) fn vars(&self) -> impl Iterator<Item = VarId> {
         self.entries.iter().filter_map(|entry| match entry {
-            Entry::Var(var) => Some(*var),
-            Entry::Modules(_) | Entry::Item { .. } => None,
+            Entry::Var(var) | Entry::Item { var: Some(var), .. } => Some(*var),
+            Entry::Modules(_) | Entry::Item { var: None, .. } => None,
         })
     }
 
@@ -80,10 +80,12 @@ pub(super) enum Entry<'u> {
     Var(VarId),
     /// Modules imported under one name, each with how a path spells it
     Modules(Vec<Spelled<'u>>),
-    /// An item imported from a module
+    /// An item imported from a module. An import statement binds it to a variable
+    /// it assigns; the prelude binds it to none.
     Item {
         module: &'u str,
         item: &'u str,
+        var: Option<VarId>,
     },
 }
 
@@ -94,8 +96,9 @@ pub(super) struct Spelled<'u> {
 }
 
 impl<'u> Lower<'_, 'u> {
-    /// Enter a scope of `func`, allocating its variables. Its statements' imports
-    /// bind names that aren't variables, as does the prelude in the root scope.
+    /// Enter a scope of `func`, allocating its variables. Its statements' module
+    /// imports bind names that aren't variables, as does the prelude in the root
+    /// scope.
     pub(super) fn frame(
         &self,
         func: FuncId,
@@ -106,7 +109,7 @@ impl<'u> Lower<'_, 'u> {
     ) -> Rc<Frame<'u>> {
         let mut entries: Vec<Option<Entry<'u>>> = vec![None; vars.len()];
         for stmt in stmts {
-            self.imports(stmt, &mut entries);
+            self.imports(func, stmt, &mut entries);
         }
         if parent.is_none() {
             self.prelude(&mut entries);
@@ -144,9 +147,9 @@ impl<'u> Lower<'_, 'u> {
         })
     }
 
-    fn imports(&self, stmt: &'u Stmt, entries: &mut [Option<Entry<'u>>]) {
+    fn imports(&self, func: FuncId, stmt: &'u Stmt, entries: &mut [Option<Entry<'u>>]) {
         let import = match stmt {
-            Stmt::NlGuard(guard) => return self.imports(&guard.body, entries),
+            Stmt::NlGuard(guard) => return self.imports(func, &guard.body, entries),
             Stmt::Import(import) => import,
             _ => return,
         };
@@ -182,15 +185,25 @@ impl<'u> Lower<'_, 'u> {
                     },
                 ),
                 ImportElement::Items { module, items } => {
+                    // Never exported, even by a public import: an importer reaches
+                    // the item through the module that exports it
                     for item in items.iter().filter(|item| !item.is_type_only()) {
-                        set_entry(
-                            entries,
-                            item.bind().res,
-                            Entry::Item {
-                                module: self.text(*module),
-                                item: self.text(item.item()),
-                            },
-                        );
+                        let bind = item.bind();
+                        let Some(Res {
+                            index, depth: 0, ..
+                        }) = bind.res
+                        else {
+                            continue;
+                        };
+                        let Some(slot) = entries.get_mut(index) else {
+                            continue;
+                        };
+                        let var = self.graph.alloc_var(func, Origin::Source(bind.span), None);
+                        *slot = Some(Entry::Item {
+                            module: self.text(*module),
+                            item: self.text(item.item()),
+                            var: Some(var),
+                        });
                     }
                 }
                 ImportElement::ModuleAsIs { .. } | ImportElement::ModuleRenamed { .. } => {}
@@ -212,6 +225,7 @@ impl<'u> Lower<'_, 'u> {
                             Entry::Item {
                                 module,
                                 item: &item.item,
+                                var: None,
                             },
                         );
                     }
@@ -273,11 +287,11 @@ impl<'u> Scope<'_, '_, 'u> {
     /// function owns it
     pub(super) fn var(&self, ident: &Ident) -> Option<VarId> {
         match self.entry(ident.res)? {
-            Entry::Var(var) => {
+            Entry::Var(var) | Entry::Item { var: Some(var), .. } => {
                 self.capture(var);
                 Some(var)
             }
-            Entry::Modules(_) | Entry::Item { .. } => None,
+            Entry::Modules(_) | Entry::Item { var: None, .. } => None,
         }
     }
 

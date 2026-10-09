@@ -1,3 +1,4 @@
+# dolang: strict
 # Run block-scoped operations on SSH hosts through a remote VFS.
 import _ssh
   fs:
@@ -87,7 +88,7 @@ pub def with[R]
   # Override the known-hosts file.
   :known_hosts @ (Str | Path) = nil
   # Remote VFS launcher command and arguments.
-  :command @ Iterable[Str] = ["dolang-vfs"]
+  :command @ Iterable[Value] = ["dolang-vfs"]
   # Initial remote working directory.
   :cd @ (Str | Path) = nil
   # Initial remote environment overrides.
@@ -104,23 +105,30 @@ pub def with[R]
   # | ---------- | ------------------------------------| -------------------------- |
   # | `identity` | [`Str`](std.Str)\|[`Path`](fs.Path) | Identity file. Repeatable  |
   # | `jump`     | [`Str`](std.Str)                    | Jump host. Repeatable      |
-  ...options
+  ...options @ {*identity: (Str | Path), *jump: Str}
 do -> R
   _ssh.with_program ssh
     $host
     $block
-    :user
-    :port
     :identities_only
     :forward_agent
-    :connect_timeout
-    :keepalive_interval
-    :keepalive_count
     :batch
     :host_key
-    :known_hosts
     :command
-    :cd
     :env
     :login_env
+    if (user != nil)
+      :user
+    if (port != nil)
+      :port
+    if (connect_timeout != nil)
+      :connect_timeout
+    if (keepalive_interval != nil)
+      :keepalive_interval
+    if (keepalive_count != nil)
+      :keepalive_count
+    if (known_hosts != nil)
+      :known_hosts
+    if (cd != nil)
+      :cd
     ...options

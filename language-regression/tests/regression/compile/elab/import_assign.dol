@@ -1,3 +1,6 @@
+# A module an import binds, and anything the prelude binds, can't be reassigned.
+# An imported item is an ordinary variable.
+
 import import_fixture nested.child
 import import_fixture: fixture
 import import_fixture:
@@ -5,23 +8,7 @@ import import_fixture:
   value: renamed
 
 add = 1
-# error: imported bindings cannot be reassigned
-#   --> import_assign.dol:LL:LL
-#    |
-# LL |   - add
-#    |     --- imported here
-# ...
-# LL | add = 1
-#    | ^^^
 renamed = 2
-# error: imported bindings cannot be reassigned
-#   --> import_assign.dol:LL:LL
-#    |
-# LL |   value: renamed
-#    |          ------- imported here
-# ...
-# LL | renamed = 2
-#    | ^^^^^^^
 import_fixture = 3
 # error: imported bindings cannot be reassigned
 #   --> import_assign.dol:LL:LL
@@ -71,10 +58,3 @@ def inner()
   import import_fixture:
     - add
   add = 8
-# error: imported bindings cannot be reassigned
-#   --> import_assign.dol:LL:LL
-#    |
-# LL |     - add
-#    |       --- imported here
-# LL |   add = 8
-#    |   ^^^

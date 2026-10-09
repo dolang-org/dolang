@@ -1,24 +1,32 @@
+# dolang: strict
 # Synthesis of the cloud-init configuration a Linux or BSD guest is
 # provisioned by on its first boot, and of the seed ISO that carries it.
 
 import digest shlex yaml
   fs:
+    - @Path
     - with_temp_dir
   _vm.common:
     - cli
 
 # Written by the last `runcmd` entry and polled for over SSH once the guest
 # answers: the signal that cloud-init has finished with the guest.
-pub let READY_PATH = "/var/tmp/dolang-cloud-init-ready"
+pub let READY_PATH @ Str = "/var/tmp/dolang-cloud-init-ready"
 
 # Renders the `#cloud-config` user data provisioning the guest.
-pub def cloud_config user public_key packages boot write_files
+pub def cloud_config
+  user @ Str
+  public_key @ Str
+  packages @ [Str]
+  boot @ Iterable[Iterable[Value]]
+  write_files @ [yaml.Encodable]
+do -> Str
   let run = ["set -e"]
   for entry = boot
     run.push (shlex.join entry)
   run.push "touch $(shlex.quote READY_PATH)"
 
-  let user_config = $
+  let user_config @ {**yaml.Encodable} = $
     name: $user
     groups:
       - wheel
@@ -45,7 +53,7 @@ pub def cloud_config user public_key packages boot write_files
 
 # Builds the cloud-init seed ISO, cached under a digest of its contents so
 # identical configurations share one.
-pub def build_seed root user_data
+pub def build_seed root @ Path user_data @ Str <Iter[Value] >Sink[Str] -> Path
   let key = "${digest.blake3(user_data):x}"
   let entry = (root / "seeds" / key)
   entry.create_dir all: true
@@ -53,7 +61,7 @@ pub def build_seed root user_data
   let lock_path = destination.add_ext lock
   lock_path.open a+ do |lock| lock.lock (..) do |_|
     if !destination.exists()
-      with_temp_dir parent: $destination.parent do |dir|
+      with_temp_dir parent: $entry do |dir|
         let user_data_path = (dir / "user-data")
         let metadata_path = (dir / "meta-data")
         let temporary = (dir / "seed.iso")

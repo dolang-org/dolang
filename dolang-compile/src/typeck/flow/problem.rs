@@ -91,6 +91,12 @@ pub(crate) enum Problem {
         name: String,
         misuse: MemberUse,
     },
+    /// An item a checked module doesn't export
+    MissingExport {
+        span: Span,
+        module: String,
+        item: String,
+    },
     /// A variable read where it may not be assigned yet
     Unassigned {
         span: Span,
@@ -143,6 +149,7 @@ impl Report for Problem {
             | Problem::Default { span, .. }
             | Problem::MissingMember { span, .. }
             | Problem::MemberUse { span, .. }
+            | Problem::MissingExport { span, .. }
             | Problem::Unassigned { span, .. } => span,
         }
     }
@@ -271,6 +278,9 @@ impl Report for Problem {
                 MemberUse::Method => write!(w, "`{name}` is a method, which can't be assigned"),
                 MemberUse::Module => write!(w, "`{name}` is a module, which can't be assigned"),
             },
+            Problem::MissingExport { module, item, .. } => {
+                write!(w, "module `{module}` has no export `{item}`")
+            }
             Problem::Unassigned {
                 name,
                 definitely: true,

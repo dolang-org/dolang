@@ -1,3 +1,4 @@
+# dolang: strict
 # Guest-side provisioning payload for an unattended Windows install: the batch
 # file the `specialize` pass runs to stage the payload onto the system disk,
 # and the `provision.dol` the `auditUser` pass then runs out of it.
@@ -12,8 +13,8 @@ import compile std
 # path there is no payload to copy over SSH afterwards: the binaries reach the
 # guest on the provisioning media, so the command is known before the guest
 # exists.
-pub let WINDOWS_ROOT = "C:\\dolang"
-pub let WINDOWS_VFS_COMMAND = "$WINDOWS_ROOT\\dolang-vfs.exe"
+pub let WINDOWS_ROOT @ Str = "C:\\dolang"
+pub let WINDOWS_VFS_COMMAND @ Str = "$WINDOWS_ROOT\\dolang-vfs.exe"
 
 # Run from the `specialize` pass, as SYSTEM, with networking possibly still
 # down. It copies the payload off the provisioning disc onto the system disk.
@@ -28,7 +29,7 @@ pub let WINDOWS_VFS_COMMAND = "$WINDOWS_ROOT\\dolang-vfs.exe"
 # It exits zero unconditionally. A nonzero exit here stops Setup behind a
 # dialog with no way to answer it, which costs a full reinstall to discover;
 # a failure to copy surfaces instead as the guest never answering SSH.
-pub let BOOTSTRAP_CMD = r|
+pub let BOOTSTRAP_CMD @ Str = r|
   @echo off
   setlocal
   set "ROOT=C:\dolang"
@@ -50,7 +51,7 @@ pub let BOOTSTRAP_CMD = r|
 # cannot be a bundled module — it would not be in that release. It ships as
 # source on the provisioning disc instead, which is why the load-time compile
 # check below exists.
-pub let PROVISION_SOURCE = r|
+pub let PROVISION_SOURCE @ Str = r|
   import fs json proc std sys term winreg winscm
     security.windows:
       - Sid
@@ -282,7 +283,7 @@ pub let PROVISION_SOURCE = r|
 # full reinstall. Any diagnostic counts, warnings included: an unused import in
 # a script nothing ever lints is exactly the kind of mistake this is here to
 # catch. The bytecode is discarded; only the source ships.
-def check_provision_source()
+def check_provision_source >Sink[Str] -> nil
   let result = compile.compile "provision.dol" $PROVISION_SOURCE
   let diagnostics = [...result.diagnostics()]
   if (diagnostics.len == 0)

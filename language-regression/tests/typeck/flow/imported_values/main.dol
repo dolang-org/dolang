@@ -83,3 +83,55 @@ let _wrong @ Str = lib.count
 #    |
 # LL | let _wrong @ Str = lib.count
 #    |                    ^^^^^^^^^
+
+# A missing export is reported where it's accessed, or at the import that binds
+# it, read or not. One a re-export names is reported at the re-export.
+import re
+import lib:
+  - absent
+  # error: module `lib` has no export `absent`
+  #   --> main.dol:LL:LL
+  #    |
+  # LL |   - absent
+  #    |     ^^^^^^
+  - unread
+# warning: unused variable
+#   --> main.dol:LL:LL
+#    |
+# LL |   - unread
+#    |     ^^^^^^
+# error: module `lib` has no export `unread`
+#   --> main.dol:LL:LL
+#    |
+# LL |   - unread
+#    |     ^^^^^^
+let _k = lib.nope
+# error: module `lib` has no export `nope`
+#   --> main.dol:LL:LL
+#    |
+# LL | let _k = lib.nope
+#    |          ^^^^^^^^
+lib.nope()
+# error: module `lib` has no export `nope`
+#   --> main.dol:LL:LL
+#    |
+# LL | lib.nope()
+#    | ^^^^^^^^
+let _l = absent
+let _m = re.gone
+
+# An imported item is a variable that the import assigns, which a def reads
+def _reads()
+  let n = count
+  #   ^: flow std.Int
+  n
+
+# A def narrows against an imported class, which the import assigns after the
+# def's first pass reads it
+import lib:
+  - Box
+def _narrows x @ (Box | Str)
+  if (type x Box)
+    let n = x.n
+    #   ^: flow std.Int
+    n

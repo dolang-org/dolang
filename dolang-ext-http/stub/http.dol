@@ -303,6 +303,35 @@ pub class Response
   pub def close self
     ...
 
+# Options of a request, which every request function and [`Client`](http.Client)
+# method takes.
+#
+# | Option    | Description                                                                                                    |
+# | --------- | -------------------------------------------------------------------------------------------------------------- |
+# | `headers` | Request headers -- see [`headers`](http.Client.headers)                                                        |
+# | `query`   | Query parameters -- see [`query`](http.Client.query)                                                           |
+# | `status`  | `:IGNORE:` to return a response whose status is outside `200..=299` instead of raising [`Status`](http.Status) |
+pub @let RequestOptions = $
+  ?headers: BaseDict[Value, Value]
+  ?query: BaseDict[Value, Value]
+  ?status: (:IGNORE: | "IGNORE")
+
+# Options of a request with a body: those of
+# [`RequestOptions`](http.RequestOptions), and at most one of these.
+#
+# | Option      | Description                                                                                 |
+# | ----------- | ------------------------------------------------------------------------------------------- |
+# | `body`      | Request body -- see [`body`](http.Client.body)                                              |
+# | `json`      | Request body, JSON-serialized -- see [`json`](http.Client.json)                             |
+# | `lines`     | Request body streamed with a newline after each element -- see [`lines`](http.Client.lines) |
+# | `multipart` | Multipart form parts -- see [`multipart`](http.Client.multipart)                            |
+pub @let BodyOptions = $
+  ...RequestOptions
+  ?body: (Str | Bin | Iterable[Value])
+  ?json: JsonEncodable
+  ?lines: Iterable[Value]
+  ?multipart: Iterable[Dict[{name: Str, ...}]]
+
 # An HTTP client.
 #
 # A client holds the configuration and any session state its requests share.
@@ -508,14 +537,12 @@ pub class Client: Func
 
   # Makes a request without a body.
   #
-  # `head`, `delete`, `options`, `trace` and `connect` take the same arguments.
-  #
   # ## Errors
   #
-  # | Exception               | Condition                                              |
-  # | ----------------------- | ------------------------------------------------------ |
-  # | [`Status`](http.Status) | The response is non-2xx and `status:` was not passed   |
-  # | [`Error`](http.Error)   | A transport or protocol failure                        |
+  # | Exception               | Condition                                            |
+  # | ----------------------- | ---------------------------------------------------- |
+  # | [`Status`](http.Status) | The response is non-2xx and `status:` was not passed |
+  # | [`Error`](http.Error)   | A transport or protocol failure                      |
   #
   # ## Example
   #
@@ -529,16 +556,8 @@ pub class Client: Func
     self
     # URL to request.
     url @ (Str | Url)
-    # Request headers -- see
-    # [`headers`](http.Client.headers).
-    :headers @ BaseDict[Value, Value] = nil
-    # Query parameters -- see
-    # [`query`](http.Client.query).
-    :query @ BaseDict[Value, Value] = nil
-    # Pass `:IGNORE:` to return the response even
-    # when its status is outside `200..=299`, instead of raising
-    # [`Status`](http.Status).
-    :status @ (:IGNORE: | "IGNORE") = nil
+    # Request options.
+    ...options @ RequestOptions
   do -> Response
 
   # Makes a request without a body and calls `block` with the response. The
@@ -547,17 +566,9 @@ pub class Client: Func
     self
     # URL to request.
     url @ (Str | Url)
-    # Request headers -- see
-    # [`headers`](http.Client.headers).
-    :headers @ BaseDict[Value, Value] = nil
-    # Query parameters -- see
-    # [`query`](http.Client.query).
-    :query @ BaseDict[Value, Value] = nil
-    # Pass `:IGNORE:` to return the response even
-    # when its status is outside `200..=299`, instead of raising
-    # [`Status`](http.Status).
-    :status @ (:IGNORE: | "IGNORE") = nil
-    # Called with the [`Response`](http.Response). Omit to receive the response instead.
+    # Request options.
+    ...options @ RequestOptions
+    # Called with the [`Response`](http.Response).
     block @ (Response -> R)
   do -> R
 
@@ -565,9 +576,6 @@ pub class Client: Func
     ...
 
   # Makes a request with a body.
-  #
-  # `put` and `patch` take the same arguments. At most one of `body`, `json`,
-  # `lines` and `multipart` may be given.
   #
   # ## Errors
   #
@@ -588,27 +596,8 @@ pub class Client: Func
     self
     # URL to request.
     url @ (Str | Url)
-    # Request body -- see
-    # [`body`](http.Client.body).
-    :body @ (Str | Bin | Iterable[Value]) = nil
-    # Request body, JSON-serialized -- see [`json`](http.Client.json).
-    :json @ JsonEncodable = nil
-    # Request body streamed with a newline after each element --
-    # see [`lines`](http.Client.lines).
-    :lines @ Iterable[Value] = nil
-    # Multipart form parts -- see
-    # [`multipart`](http.Client.multipart).
-    :multipart @ Iterable[Dict[{name: Str, ...}]] = nil
-    # Request headers -- see
-    # [`headers`](http.Client.headers).
-    :headers @ BaseDict[Value, Value] = nil
-    # Query parameters -- see
-    # [`query`](http.Client.query).
-    :query @ BaseDict[Value, Value] = nil
-    # Pass `:IGNORE:` to return the response even
-    # when its status is outside `200..=299`, instead of raising
-    # [`Status`](http.Status).
-    :status @ (:IGNORE: | "IGNORE") = nil
+    # Request options.
+    ...options @ BodyOptions
   do -> Response
 
   # Makes a request with a body and calls `block` with the response. The
@@ -617,32 +606,181 @@ pub class Client: Func
     self
     # URL to request.
     url @ (Str | Url)
-    # Request body -- see
-    # [`body`](http.Client.body).
-    :body @ (Str | Bin | Iterable[Value]) = nil
-    # Request body, JSON-serialized -- see [`json`](http.Client.json).
-    :json @ JsonEncodable = nil
-    # Request body streamed with a newline after each element --
-    # see [`lines`](http.Client.lines).
-    :lines @ Iterable[Value] = nil
-    # Multipart form parts -- see
-    # [`multipart`](http.Client.multipart).
-    :multipart @ Iterable[Dict[{name: Str, ...}]] = nil
-    # Request headers -- see
-    # [`headers`](http.Client.headers).
-    :headers @ BaseDict[Value, Value] = nil
-    # Query parameters -- see
-    # [`query`](http.Client.query).
-    :query @ BaseDict[Value, Value] = nil
-    # Pass `:IGNORE:` to return the response even
-    # when its status is outside `200..=299`, instead of raising
-    # [`Status`](http.Status).
-    :status @ (:IGNORE: | "IGNORE") = nil
-    # Called with the [`Response`](http.Response). Omit to receive the response instead.
+    # Request options.
+    ...options @ BodyOptions
+    # Called with the [`Response`](http.Response).
     block @ (Response -> R)
   do -> R
 
   pub def post self url @ (Str | Url) ...options @ Value -> Value
+    ...
+
+  # Makes a `HEAD` request, as [`get`](http.Client.get) does.
+  @def head
+    self
+    # URL to request.
+    url @ (Str | Url)
+    # Request options.
+    ...options @ RequestOptions
+  do -> Response
+
+  # Makes a `HEAD` request and calls `block` with the response, as
+  # [`get`](http.Client.get) does.
+  @def head[R]
+    self
+    # URL to request.
+    url @ (Str | Url)
+    # Request options.
+    ...options @ RequestOptions
+    # Called with the [`Response`](http.Response).
+    block @ (Response -> R)
+  do -> R
+
+  pub def head self url @ (Str | Url) ...options @ Value -> Value
+    ...
+
+  # Makes a `DELETE` request, as [`get`](http.Client.get) does.
+  @def delete
+    self
+    # URL to request.
+    url @ (Str | Url)
+    # Request options.
+    ...options @ RequestOptions
+  do -> Response
+
+  # Makes a `DELETE` request and calls `block` with the response, as
+  # [`get`](http.Client.get) does.
+  @def delete[R]
+    self
+    # URL to request.
+    url @ (Str | Url)
+    # Request options.
+    ...options @ RequestOptions
+    # Called with the [`Response`](http.Response).
+    block @ (Response -> R)
+  do -> R
+
+  pub def delete self url @ (Str | Url) ...options @ Value -> Value
+    ...
+
+  # Makes an `OPTIONS` request, as [`get`](http.Client.get) does.
+  @def options
+    self
+    # URL to request.
+    url @ (Str | Url)
+    # Request options.
+    ...options @ RequestOptions
+  do -> Response
+
+  # Makes an `OPTIONS` request and calls `block` with the response, as
+  # [`get`](http.Client.get) does.
+  @def options[R]
+    self
+    # URL to request.
+    url @ (Str | Url)
+    # Request options.
+    ...options @ RequestOptions
+    # Called with the [`Response`](http.Response).
+    block @ (Response -> R)
+  do -> R
+
+  pub def options self url @ (Str | Url) ...options @ Value -> Value
+    ...
+
+  # Makes a `TRACE` request, as [`get`](http.Client.get) does.
+  @def trace
+    self
+    # URL to request.
+    url @ (Str | Url)
+    # Request options.
+    ...options @ RequestOptions
+  do -> Response
+
+  # Makes a `TRACE` request and calls `block` with the response, as
+  # [`get`](http.Client.get) does.
+  @def trace[R]
+    self
+    # URL to request.
+    url @ (Str | Url)
+    # Request options.
+    ...options @ RequestOptions
+    # Called with the [`Response`](http.Response).
+    block @ (Response -> R)
+  do -> R
+
+  pub def trace self url @ (Str | Url) ...options @ Value -> Value
+    ...
+
+  # Makes a `CONNECT` request, as [`get`](http.Client.get) does.
+  @def connect
+    self
+    # URL to request.
+    url @ (Str | Url)
+    # Request options.
+    ...options @ RequestOptions
+  do -> Response
+
+  # Makes a `CONNECT` request and calls `block` with the response, as
+  # [`get`](http.Client.get) does.
+  @def connect[R]
+    self
+    # URL to request.
+    url @ (Str | Url)
+    # Request options.
+    ...options @ RequestOptions
+    # Called with the [`Response`](http.Response).
+    block @ (Response -> R)
+  do -> R
+
+  pub def connect self url @ (Str | Url) ...options @ Value -> Value
+    ...
+
+  # Makes a `PUT` request, as [`post`](http.Client.post) does.
+  @def put
+    self
+    # URL to request.
+    url @ (Str | Url)
+    # Request options.
+    ...options @ BodyOptions
+  do -> Response
+
+  # Makes a `PUT` request and calls `block` with the response, as
+  # [`post`](http.Client.post) does.
+  @def put[R]
+    self
+    # URL to request.
+    url @ (Str | Url)
+    # Request options.
+    ...options @ BodyOptions
+    # Called with the [`Response`](http.Response).
+    block @ (Response -> R)
+  do -> R
+
+  pub def put self url @ (Str | Url) ...options @ Value -> Value
+    ...
+
+  # Makes a `PATCH` request, as [`post`](http.Client.post) does.
+  @def patch
+    self
+    # URL to request.
+    url @ (Str | Url)
+    # Request options.
+    ...options @ BodyOptions
+  do -> Response
+
+  # Makes a `PATCH` request and calls `block` with the response, as
+  # [`post`](http.Client.post) does.
+  @def patch[R]
+    self
+    # URL to request.
+    url @ (Str | Url)
+    # Request options.
+    ...options @ BodyOptions
+    # Called with the [`Response`](http.Response).
+    block @ (Response -> R)
+  do -> R
+
+  pub def patch self url @ (Str | Url) ...options @ Value -> Value
     ...
 
   # Closes the client, releasing its connection pool.
@@ -653,10 +791,12 @@ pub class Client: Func
 
 # Makes a `GET` request through a fresh stateless client.
 #
-# `head`, `delete`, `options`, `trace` and `connect` do the same for their own
-# verbs, and take the same arguments. See
-# [`Client.get`](http.Client.get) for the arguments and
-# [`Client`](http.Client.request-options) for what each option means.
+# ## Errors
+#
+# | Exception               | Condition                                            |
+# | ----------------------- | ---------------------------------------------------- |
+# | [`Status`](http.Status) | The response is non-2xx and `status:` was not passed |
+# | [`Error`](http.Error)   | A transport or protocol failure                      |
 #
 # ## Example
 #
@@ -667,27 +807,17 @@ pub class Client: Func
 @def get
   # URL to request.
   url @ (Str | Url)
-  # Request headers.
-  :headers @ BaseDict[Value, Value] = nil
-  # Query parameters.
-  :query @ BaseDict[Value, Value] = nil
-  # Pass `:IGNORE:` to return the response even when
-  # its status is outside `200..=299`.
-  :status @ (:IGNORE: | "IGNORE") = nil
+  # Request options.
+  ...options @ RequestOptions
 do -> Response
 
-# Makes a `GET` request through a fresh stateless client and calls `block` with
-# the response. The response is closed when `block` returns.
+# Makes a `GET` request through a fresh stateless client and calls `block`
+# with the response. The response is closed when `block` returns.
 @def get[R]
   # URL to request.
   url @ (Str | Url)
-  # Request headers.
-  :headers @ BaseDict[Value, Value] = nil
-  # Query parameters.
-  :query @ BaseDict[Value, Value] = nil
-  # Pass `:IGNORE:` to return the response even when
-  # its status is outside `200..=299`.
-  :status @ (:IGNORE: | "IGNORE") = nil
+  # Request options.
+  ...options @ RequestOptions
   # Called with the [`Response`](http.Response).
   block @ (Response -> R)
 do -> R
@@ -697,9 +827,12 @@ pub def get url @ (Str | Url) ...options @ Value -> Value
 
 # Makes a `POST` request through a fresh stateless client.
 #
-# `put` and `patch` do the same for their own verbs, and take the same
-# arguments. See [`Client.post`](http.Client.post) for the arguments and
-# [`Client`](http.Client.request-options) for what each option means.
+# ## Errors
+#
+# | Exception               | Condition                                            |
+# | ----------------------- | ---------------------------------------------------- |
+# | [`Status`](http.Status) | The response is non-2xx and `status:` was not passed |
+# | [`Error`](http.Error)   | A transport or protocol failure                      |
 #
 # ## Example
 #
@@ -710,21 +843,8 @@ pub def get url @ (Str | Url) ...options @ Value -> Value
 @def post
   # URL to request.
   url @ (Str | Url)
-  # Request body.
-  :body @ (Str | Bin | Iterable[Value]) = nil
-  # Request body, JSON-serialized.
-  :json @ JsonEncodable = nil
-  # Request body streamed with a newline after each element.
-  :lines @ Iterable[Value] = nil
-  # Multipart form parts.
-  :multipart @ Iterable[Dict[{name: Str, ...}]] = nil
-  # Request headers.
-  :headers @ BaseDict[Value, Value] = nil
-  # Query parameters.
-  :query @ BaseDict[Value, Value] = nil
-  # Pass `:IGNORE:` to return the response even when
-  # its status is outside `200..=299`.
-  :status @ (:IGNORE: | "IGNORE") = nil
+  # Request options.
+  ...options @ BodyOptions
 do -> Response
 
 # Makes a `POST` request through a fresh stateless client and calls `block`
@@ -732,24 +852,172 @@ do -> Response
 @def post[R]
   # URL to request.
   url @ (Str | Url)
-  # Request body.
-  :body @ (Str | Bin | Iterable[Value]) = nil
-  # Request body, JSON-serialized.
-  :json @ JsonEncodable = nil
-  # Request body streamed with a newline after each element.
-  :lines @ Iterable[Value] = nil
-  # Multipart form parts.
-  :multipart @ Iterable[Dict[{name: Str, ...}]] = nil
-  # Request headers.
-  :headers @ BaseDict[Value, Value] = nil
-  # Query parameters.
-  :query @ BaseDict[Value, Value] = nil
-  # Pass `:IGNORE:` to return the response even when
-  # its status is outside `200..=299`.
-  :status @ (:IGNORE: | "IGNORE") = nil
+  # Request options.
+  ...options @ BodyOptions
   # Called with the [`Response`](http.Response).
   block @ (Response -> R)
 do -> R
 
 pub def post url @ (Str | Url) ...options @ Value -> Value
+  ...
+
+# Makes a `HEAD` request through a fresh stateless client, as [`get`](http.get)
+# does.
+@def head
+  # URL to request.
+  url @ (Str | Url)
+  # Request options.
+  ...options @ RequestOptions
+do -> Response
+
+# Makes a `HEAD` request through a fresh stateless client and calls `block` with
+# the response, as [`get`](http.get) does.
+@def head[R]
+  # URL to request.
+  url @ (Str | Url)
+  # Request options.
+  ...options @ RequestOptions
+  # Called with the [`Response`](http.Response).
+  block @ (Response -> R)
+do -> R
+
+pub def head url @ (Str | Url) ...options @ Value -> Value
+  ...
+
+# Makes a `DELETE` request through a fresh stateless client, as
+# [`get`](http.get) does.
+@def delete
+  # URL to request.
+  url @ (Str | Url)
+  # Request options.
+  ...options @ RequestOptions
+do -> Response
+
+# Makes a `DELETE` request through a fresh stateless client and calls `block`
+# with the response, as [`get`](http.get) does.
+@def delete[R]
+  # URL to request.
+  url @ (Str | Url)
+  # Request options.
+  ...options @ RequestOptions
+  # Called with the [`Response`](http.Response).
+  block @ (Response -> R)
+do -> R
+
+pub def delete url @ (Str | Url) ...options @ Value -> Value
+  ...
+
+# Makes an `OPTIONS` request through a fresh stateless client, as
+# [`get`](http.get) does.
+@def options
+  # URL to request.
+  url @ (Str | Url)
+  # Request options.
+  ...options @ RequestOptions
+do -> Response
+
+# Makes an `OPTIONS` request through a fresh stateless client and calls `block`
+# with the response, as [`get`](http.get) does.
+@def options[R]
+  # URL to request.
+  url @ (Str | Url)
+  # Request options.
+  ...options @ RequestOptions
+  # Called with the [`Response`](http.Response).
+  block @ (Response -> R)
+do -> R
+
+pub def options url @ (Str | Url) ...options @ Value -> Value
+  ...
+
+# Makes a `TRACE` request through a fresh stateless client, as [`get`](http.get)
+# does.
+@def trace
+  # URL to request.
+  url @ (Str | Url)
+  # Request options.
+  ...options @ RequestOptions
+do -> Response
+
+# Makes a `TRACE` request through a fresh stateless client and calls `block`
+# with the response, as [`get`](http.get) does.
+@def trace[R]
+  # URL to request.
+  url @ (Str | Url)
+  # Request options.
+  ...options @ RequestOptions
+  # Called with the [`Response`](http.Response).
+  block @ (Response -> R)
+do -> R
+
+pub def trace url @ (Str | Url) ...options @ Value -> Value
+  ...
+
+# Makes a `CONNECT` request through a fresh stateless client, as
+# [`get`](http.get) does.
+@def connect
+  # URL to request.
+  url @ (Str | Url)
+  # Request options.
+  ...options @ RequestOptions
+do -> Response
+
+# Makes a `CONNECT` request through a fresh stateless client and calls `block`
+# with the response, as [`get`](http.get) does.
+@def connect[R]
+  # URL to request.
+  url @ (Str | Url)
+  # Request options.
+  ...options @ RequestOptions
+  # Called with the [`Response`](http.Response).
+  block @ (Response -> R)
+do -> R
+
+pub def connect url @ (Str | Url) ...options @ Value -> Value
+  ...
+
+# Makes a `PUT` request through a fresh stateless client, as [`post`](http.post)
+# does.
+@def put
+  # URL to request.
+  url @ (Str | Url)
+  # Request options.
+  ...options @ BodyOptions
+do -> Response
+
+# Makes a `PUT` request through a fresh stateless client and calls `block` with
+# the response, as [`post`](http.post) does.
+@def put[R]
+  # URL to request.
+  url @ (Str | Url)
+  # Request options.
+  ...options @ BodyOptions
+  # Called with the [`Response`](http.Response).
+  block @ (Response -> R)
+do -> R
+
+pub def put url @ (Str | Url) ...options @ Value -> Value
+  ...
+
+# Makes a `PATCH` request through a fresh stateless client, as
+# [`post`](http.post) does.
+@def patch
+  # URL to request.
+  url @ (Str | Url)
+  # Request options.
+  ...options @ BodyOptions
+do -> Response
+
+# Makes a `PATCH` request through a fresh stateless client and calls `block`
+# with the response, as [`post`](http.post) does.
+@def patch[R]
+  # URL to request.
+  url @ (Str | Url)
+  # Request options.
+  ...options @ BodyOptions
+  # Called with the [`Response`](http.Response).
+  block @ (Response -> R)
+do -> R
+
+pub def patch url @ (Str | Url) ...options @ Value -> Value
   ...
