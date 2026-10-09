@@ -6,6 +6,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex, RwLock, mpsc},
     thread,
+    time::{Duration, Instant},
 };
 
 use tokio::sync::{
@@ -18,9 +19,11 @@ use tower_lsp_server::{
     Client, ClientSocket, LanguageServer, LspService, jsonrpc::Result, ls_types::*,
 };
 
-use dolang_compile::{Config as CompileConfig, Context, Kind, NodeId, Token, Unit, diag};
+use dolang_compile::{
+    Config as CompileConfig, Context, ErrorKind, Kind, NodeId, Token, Unit, UnitId, diag, typeck,
+};
 
-use crate::doc_index;
+use crate::{doc_index, typelib_index};
 
 const TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
     SemanticTokenModifier::DEFAULT_LIBRARY,
@@ -29,6 +32,8 @@ const TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
     SemanticTokenModifier::STATIC,
 ];
 const CONFIG_FILE_NAME: &str = ".dolang-lsp.toml";
+/// How long a document's edits must settle before it is type checked
+const CHECK_DELAY: Duration = Duration::from_millis(300);
 
 const LEGEND_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::ENUM_MEMBER,
@@ -603,7 +608,7 @@ impl Stamp {
 struct Document {
     stamp: Stamp,
     /// The unit the projection came from, which holds the document's source
-    #[allow(dead_code, reason = "kept for type checking the document")]
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
     unit: Arc<Unit<'static>>,
     tokens: Vec<SemanticToken>,
     /// Token range to the declaration it names, sorted by range start
@@ -696,6 +701,13 @@ enum Event {
         diagnostics: Vec<Diagnostic>,
         done: Option<oneshot::Sender<()>>,
     },
+    /// A check of the document's projection with the given stamp, with its
+    /// compile diagnostics
+    Checked {
+        uri: Uri,
+        stamp: Stamp,
+        diagnostics: Vec<Diagnostic>,
+    },
     Closed(Uri, u64),
 }
 
@@ -704,22 +716,57 @@ struct Open {
     stamp: Stamp,
     settings: Option<Arc<Settings>>,
     unit: Arc<Unit<'static>>,
+    encoding: PositionEncodingKind,
+    /// The unit's compile diagnostics
+    diagnostics: Vec<Diagnostic>,
+    /// The checker's diagnostics for the unit, once it has been checked
+    checked: Option<Vec<Diagnostic>>,
 }
 
-/// Compiles documents off the event loop, on a thread of its own.
+/// Compiles documents off the event loop, on a thread of its own, and type
+/// checks them once their edits settle.
 ///
-/// Projections go to the applier task, which stores them and publishes their
-/// diagnostics in the order the worker made them.
+/// Projections and checks go to the applier task, which stores projections and
+/// publishes diagnostics in the order the worker made them.
 struct Worker {
     events: UnboundedSender<Event>,
     open: HashMap<Uri, Open>,
     /// The epoch each document last closed in; older work for it is dropped
     closed: HashMap<Uri, u64>,
+    /// How long edits must settle before a check, or `None` not to check
+    check_delay: Option<Duration>,
+    /// When each document with an unchecked unit is due to be checked
+    pending: HashMap<Uri, Instant>,
+    typelibs: Typelibs,
 }
 
 impl Worker {
     fn run(mut self, requests: mpsc::Receiver<Request>) {
-        while let Ok(first) = requests.recv() {
+        loop {
+            // Few documents are open, so a scan finds the next check soon enough
+            let due = self
+                .pending
+                .iter()
+                .min_by_key(|(_, deadline)| **deadline)
+                .map(|(uri, deadline)| (uri.clone(), *deadline));
+            let first = match due {
+                None => match requests.recv() {
+                    Ok(first) => first,
+                    Err(mpsc::RecvError) => break,
+                },
+                Some((uri, deadline)) => {
+                    match requests.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                    {
+                        Ok(first) => first,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            self.pending.remove(&uri);
+                            self.check(uri);
+                            continue;
+                        }
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+            };
             let batch: Vec<_> = iter::once(first).chain(requests.try_iter()).collect();
             // Only the newest edit of each document is worth compiling
             let superseded: Vec<bool> = (0..batch.len())
@@ -768,8 +815,12 @@ impl Worker {
             return;
         }
         let cached = open
-            .filter(|open| open.settings == settings && open.unit.source() == text)
-            .map(|open| open.unit.clone());
+            .filter(|open| {
+                open.settings == settings && open.encoding == encoding && open.unit.source() == text
+            })
+            .map(|open| (open.unit.clone(), open.checked.clone()));
+        let (cached, checked) = cached.unzip();
+        let checked = checked.flatten();
         let projected = panic::catch_unwind(AssertUnwindSafe(|| {
             let unit = cached
                 .unwrap_or_else(|| Arc::new(compile_document(&path, text, settings.as_deref())));
@@ -782,20 +833,62 @@ impl Worker {
             return;
         };
         self.closed.remove(&uri);
+        // An unchanged unit keeps its check; a changed one waits for its edits
+        // to settle, each edit pushing the check back
+        let published = match (&checked, self.check_delay) {
+            (Some(checked), _) => [&diagnostics[..], checked].concat(),
+            (None, Some(delay)) => {
+                self.pending.insert(uri.clone(), Instant::now() + delay);
+                diagnostics.clone()
+            }
+            (None, None) => diagnostics.clone(),
+        };
         self.open.insert(
             uri.clone(),
             Open {
                 stamp,
                 settings,
                 unit,
+                encoding,
+                diagnostics,
+                checked,
             },
         );
         _ = self.events.send(Event::Projected {
             uri,
             document,
-            diagnostics,
+            diagnostics: published,
             done,
         });
+    }
+
+    /// Checks a document whose check is due, if it is still open and unchecked.
+    fn check(&mut self, uri: Uri) {
+        let Some(open) = self.open.get_mut(&uri) else {
+            return;
+        };
+        if open.checked.is_some() {
+            return;
+        }
+        let start = Instant::now();
+        let checked = panic::catch_unwind(AssertUnwindSafe(|| {
+            check_document(&uri, &open.unit, &open.encoding, &mut self.typelibs)
+        }));
+        log::debug!("checked {} in {:?}", uri.as_str(), start.elapsed());
+        // The compile diagnostics already published are all there is to say
+        // about a unit the checker can't take
+        let checked = checked.unwrap_or_else(|_| {
+            log::error!("failed to check {}", uri.as_str());
+            None
+        });
+        open.checked = Some(checked.clone().unwrap_or_default());
+        if let Some(checked) = checked {
+            _ = self.events.send(Event::Checked {
+                uri,
+                stamp: open.stamp,
+                diagnostics: [&open.diagnostics[..], &checked].concat(),
+            });
+        }
     }
 
     fn close(&mut self, uri: Uri, epoch: u64) {
@@ -805,6 +898,7 @@ impl Worker {
             .is_some_and(|open| open.stamp.epoch <= epoch)
         {
             self.open.remove(&uri);
+            self.pending.remove(&uri);
         }
         let closed = self.closed.entry(uri.clone()).or_default();
         *closed = (*closed).max(epoch);
@@ -823,6 +917,14 @@ fn apply(documents: &Documents, uri: Uri, document: Document) -> bool {
     }
     documents.insert(uri, Arc::new(document));
     true
+}
+
+/// Whether the stored projection of a document is the one with `stamp`.
+fn current(documents: &Documents, uri: &Uri, stamp: Stamp) -> bool {
+    let documents = documents.lock().expect("documents lock poisoned");
+    documents
+        .get(uri)
+        .is_some_and(|document| document.stamp == stamp)
 }
 
 /// Applies the worker's events in order, publishing each stored projection's
@@ -844,6 +946,18 @@ async fn publish(client: Client, documents: Documents, mut events: UnboundedRece
                     _ = done.send(());
                 }
             }
+            Event::Checked {
+                uri,
+                stamp,
+                diagnostics,
+            } => {
+                // Unless a newer projection has replaced what was checked
+                if current(&documents, &uri, stamp) {
+                    client
+                        .publish_diagnostics(uri, diagnostics, stamp.version)
+                        .await;
+                }
+            }
             Event::Closed(uri, epoch) => {
                 let mut documents = documents.lock().expect("documents lock poisoned");
                 if documents
@@ -860,7 +974,7 @@ async fn publish(client: Client, documents: Documents, mut events: UnboundedRece
 /// Compiles a document as the server projects it.
 fn compile_document(path: &Path, text: String, settings: Option<&Settings>) -> Unit<'static> {
     let mut config = CompileConfig::new();
-    config.recover(true).document(true);
+    config.recover(true).document(true).typecheck(true);
     if let Some(settings) = settings {
         let mut prelude = config.prelude();
         for import in settings.prelude.iter() {
@@ -883,6 +997,173 @@ fn compile_document(path: &Path, text: String, settings: Option<&Settings>) -> U
         }
     }
     config.unit(path, text)
+}
+
+/// The bundled typelibs, decoded as checks first need them.
+#[derive(Default)]
+struct Typelibs(HashMap<String, Option<typeck::Typelib<'static>>>);
+
+impl Typelibs {
+    /// The typelibs of the bundled modules a unit imports, directly or through
+    /// other typelibs, each once.
+    fn imported_by(&mut self, unit: &Unit<'_>) -> Vec<&typeck::Typelib<'static>> {
+        let mut queue: Vec<String> = unit.imports().into_iter().map(str::to_owned).collect();
+        let mut seen = HashSet::new();
+        while let Some(name) = queue.pop() {
+            if seen.contains(&name) {
+                continue;
+            }
+            let typelib = self.0.entry(name.clone()).or_insert_with(|| {
+                let bytes = typelib_index::lookup(&name)?;
+                typeck::Typelib::read(bytes)
+                    .inspect_err(|err| log::error!("bundled typelib {name} is unreadable: {err}"))
+                    .ok()
+            });
+            if let Some(typelib) = typelib {
+                queue.extend(typelib.imports().into_iter().map(str::to_owned));
+            }
+            seen.insert(name);
+        }
+        let mut found: Vec<_> = seen
+            .iter()
+            .filter_map(|name| self.0[name].as_ref())
+            .collect();
+        found.sort_by_key(|typelib| typelib.module());
+        found
+    }
+}
+
+/// Type checks a document's unit against the bundled typelibs it imports.
+///
+/// Returns the checker's diagnostics located in the document, or `None` when the
+/// unit failed to compile and can't be checked.  An import that isn't bundled is
+/// unknown to the checker, which says nothing about it.
+fn check_document(
+    uri: &Uri,
+    unit: &Unit<'static>,
+    encoding: &PositionEncodingKind,
+    typelibs: &mut Typelibs,
+) -> Option<Vec<Diagnostic>> {
+    let mut builder = typeck::Builder::new();
+    // The shell's pipelines connect stages with `proc`'s pipes
+    builder.pipes(("proc", "PipeSender"), ("proc", "PipeReceiver"));
+    let id = match builder.unit(unit) {
+        Ok(id) => id,
+        Err(err) if matches!(err.kind(), ErrorKind::Fail) => return None,
+        Err(err) => {
+            log::error!("cannot check {}: {err}", uri.as_str());
+            return None;
+        }
+    };
+    for typelib in typelibs.imported_by(unit) {
+        if let Err(err) = builder.typelib(typelib) {
+            log::error!("cannot check against {}: {err}", typelib.module());
+        }
+    }
+    let check = builder.check();
+    let index = DocumentIndex::new(unit.source(), encoding.clone());
+    let mut diagnostics = Vec::new();
+    for diag in check.diagnostics() {
+        if diag.span().unit() == Some(id) {
+            let relate = |range, span: &diag::SourceSpan, message: String| {
+                relate_checked(uri, &index, &check, id, range, span, message)
+            };
+            convert_diag(&index, diag, relate, &mut diagnostics);
+        }
+    }
+    Some(diagnostics)
+}
+
+/// Related information for a span a checker diagnostic in the document `id`
+/// annotates, which may lie in another unit.
+///
+/// A typelib's unit has no source here; its spans are located by line and byte
+/// column at the path its typelib was written from.  A bundled typelib's path
+/// is relative to the source tree it was built in, so its spans are named in
+/// the message, on the diagnostic's own range.
+fn relate_checked(
+    uri: &Uri,
+    index: &DocumentIndex<'_>,
+    check: &typeck::Check<'_>,
+    id: UnitId,
+    range: Range,
+    span: &diag::SourceSpan,
+    message: String,
+) -> DiagnosticRelatedInformation {
+    let unit = match span.unit() {
+        Some(unit) if unit != id => unit,
+        _ => {
+            return DiagnosticRelatedInformation {
+                location: Location::new(uri.clone(), index.range_from_span(&span.span())),
+                message,
+            };
+        }
+    };
+    let path = check.path(unit);
+    let (start, end) = (span.span().start(), span.span().end());
+    match path
+        .is_absolute()
+        .then(|| Uri::from_file_path(path))
+        .flatten()
+    {
+        Some(uri) => DiagnosticRelatedInformation {
+            location: Location::new(
+                uri,
+                Range::new(
+                    Position::new(start.line_offset(), start.column_offset()),
+                    Position::new(end.line_offset(), end.column_offset()),
+                ),
+            ),
+            message,
+        },
+        None => DiagnosticRelatedInformation {
+            location: Location::new(uri.clone(), range),
+            message: format!(
+                "{}:{}:{}: {message}",
+                path.display(),
+                start.line_number(),
+                start.column_number()
+            ),
+        },
+    }
+}
+
+fn severity(severity: diag::Severity) -> DiagnosticSeverity {
+    match severity {
+        diag::Severity::Error => DiagnosticSeverity::ERROR,
+        diag::Severity::Warning => DiagnosticSeverity::WARNING,
+        _ => DiagnosticSeverity::INFORMATION,
+    }
+}
+
+/// Converts a diagnostic located in the document, appending it and its notes
+/// to `out`.
+///
+/// `relate` makes related information for an annotation from the
+/// diagnostic's range, the annotation's span and its message.
+fn convert_diag(
+    index: &DocumentIndex<'_>,
+    diag: &diag::Diag,
+    relate: impl Fn(Range, &diag::SourceSpan, String) -> DiagnosticRelatedInformation,
+    out: &mut Vec<Diagnostic>,
+) {
+    let range = index.range_from_span(&diag.span().span());
+    let mut converted = Diagnostic::new_simple(range, diag.message().to_string());
+    converted.severity = Some(severity(diag.severity()));
+    converted.related_information = Some(
+        diag.annotations()
+            .map(|ann| relate(range, &ann.span(), ann.message().to_string()))
+            .collect(),
+    );
+    out.push(converted);
+    for note in diag.notes() {
+        let mut converted = Diagnostic::new_simple(range, note.message().to_string());
+        converted.severity = Some(match note.kind() {
+            diag::NoteKind::Help => DiagnosticSeverity::HINT,
+            _ => DiagnosticSeverity::INFORMATION,
+        });
+        out.push(converted);
+    }
 }
 
 #[derive(Debug)]
@@ -956,6 +1237,12 @@ impl<'a> DocumentIndex<'a> {
 
 impl Backend {
     pub(crate) fn new(client: Client) -> Self {
+        Self::with_check_delay(client, Some(CHECK_DELAY))
+    }
+
+    /// A backend that type checks documents once their edits have settled for
+    /// `check_delay`, or never.
+    fn with_check_delay(client: Client, check_delay: Option<Duration>) -> Self {
         let documents = Documents::default();
         let (worker, requests) = mpsc::channel();
         let (events, applied) = unbounded_channel();
@@ -963,6 +1250,9 @@ impl Backend {
             events,
             open: HashMap::new(),
             closed: HashMap::new(),
+            check_delay,
+            pending: HashMap::new(),
+            typelibs: Typelibs::default(),
         };
         // The thread exits once the backend drops its sender, and the applier
         // once the thread drops its own
@@ -1225,43 +1515,15 @@ fn project(
     let index = DocumentIndex::new(content, encoding.clone());
     let hovers = build_hovers(&unit, content);
     for diag in unit.diagnostics() {
-        let mut out = Diagnostic::new_simple(
-            index.range_from_span(&diag.span().span()),
-            diag.message().to_string(),
-        );
-        out.severity = Some(match diag.severity() {
-            diag::Severity::Error => DiagnosticSeverity::ERROR,
-            diag::Severity::Warning => DiagnosticSeverity::WARNING,
-            _ => DiagnosticSeverity::INFORMATION,
-        });
-        let mut related = Vec::new();
-        for ann in diag.annotations() {
-            related.push(DiagnosticRelatedInformation {
-                location: Location::new(uri.clone(), index.range_from_span(&ann.span().span())),
-                message: ann.message().to_string(),
-            });
-        }
-        out.related_information = Some(related);
-        diags.push(out);
-        for note in diag.notes() {
-            let mut out = Diagnostic::new_simple(
-                index.range_from_span(&diag.span().span()),
-                note.message().to_string(),
-            );
-            out.severity = Some(match note.kind() {
-                diag::NoteKind::Help => DiagnosticSeverity::HINT,
-                _ => DiagnosticSeverity::INFORMATION,
-            });
-            diags.push(out);
-        }
+        let relate = |_, span: &diag::SourceSpan, message: String| DiagnosticRelatedInformation {
+            location: Location::new(uri.clone(), index.range_from_span(&span.span())),
+            message,
+        };
+        convert_diag(&index, &diag, relate, &mut diags);
 
         let diagnostic_range = index.range_from_span(&diag.span().span());
         let diagnostic_message = diag.message().to_string();
-        let diagnostic_severity = match diag.severity() {
-            diag::Severity::Error => DiagnosticSeverity::ERROR,
-            diag::Severity::Warning => DiagnosticSeverity::WARNING,
-            _ => DiagnosticSeverity::INFORMATION,
-        };
+        let diagnostic_severity = severity(diag.severity());
 
         for patch in diag.patches() {
             patches.push(Patch {
@@ -1743,8 +2005,19 @@ mod tests {
     }
 
     impl Harness {
+        /// A server that doesn't type check, so each change publishes once.
         fn new() -> Self {
-            let (service, socket) = build_service();
+            Self::with_check_delay(None)
+        }
+
+        /// A server that type checks documents once edits settle for `delay`.
+        fn checking(delay: Duration) -> Self {
+            Self::with_check_delay(Some(delay))
+        }
+
+        fn with_check_delay(delay: Option<Duration>) -> Self {
+            let (service, socket) =
+                LspService::new(move |client| Backend::with_check_delay(client, delay));
             Self {
                 service,
                 socket,
@@ -1868,6 +2141,17 @@ mod tests {
         async fn quiet(&mut self) {
             let next = tokio::time::timeout(Duration::from_millis(250), self.socket.next()).await;
             assert!(next.is_err(), "unexpected message: {next:?}");
+        }
+
+        /// The next diagnostics the server publishes, waiting long enough for a
+        /// debug build's check on a loaded machine.
+        async fn next_publish(&mut self) -> PublishDiagnosticsParams {
+            let request = tokio::time::timeout(Duration::from_secs(30), self.socket.next())
+                .await
+                .expect("no diagnostics published")
+                .unwrap();
+            assert_eq!(request.method(), notification::PublishDiagnostics::METHOD);
+            serde_json::from_value(request.params().cloned().unwrap()).unwrap()
         }
     }
 
@@ -2913,5 +3197,109 @@ mod tests {
             })
             .await;
         assert!(tokens.is_none());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn check_publishes_after_compile_and_survives_save() {
+        // Only `dodo lsp-test` builds with the bundled typelibs
+        if typelib_index::lookup("math").is_none() {
+            return;
+        }
+        let mut harness = Harness::checking(Duration::from_millis(50));
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///check-test.dol".parse().unwrap();
+        let text = "import math\nmath.sqrt \"a\"\n";
+        let compiled = harness.open(uri.clone(), text, 1).await;
+        assert_eq!(compiled.diagnostics, []);
+
+        let checked = harness.next_publish().await;
+        assert_eq!(checked.version, Some(1));
+        let [diagnostic] = &checked.diagnostics[..] else {
+            panic!("expected one diagnostic: {:#?}", checked.diagnostics);
+        };
+        assert_eq!(diagnostic.severity, Some(DiagnosticSeverity::ERROR));
+        assert_eq!(
+            diagnostic.range,
+            Range::new(Position::new(1, 10), Position::new(1, 13))
+        );
+
+        // Saving the checked text reuses the unit and keeps its check
+        let request = Request::build(notification::DidSaveTextDocument::METHOD)
+            .params(json!(DidSaveTextDocumentParams {
+                text: Some(text.to_owned()),
+                text_document: TextDocumentIdentifier { uri },
+            }))
+            .finish();
+        let service = &mut harness.service;
+        let socket = &mut harness.socket;
+        let save = async move { service.ready().await.unwrap().call(request).await.unwrap() };
+        let observe = async move {
+            let published = socket.next().await.unwrap();
+            let params: PublishDiagnosticsParams =
+                serde_json::from_value(published.params().cloned().unwrap()).unwrap();
+            let refresh = socket.next().await.unwrap();
+            let (_, id, _) = refresh.into_parts();
+            socket
+                .send(Response::from_ok(id.unwrap(), Value::Null))
+                .await
+                .unwrap();
+            params
+        };
+        let (save, saved) = tokio::join!(save, observe);
+        assert_eq!(save, None);
+        assert_eq!(saved.diagnostics, checked.diagnostics);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rapid_edits_check_only_the_last() {
+        let mut harness = Harness::checking(Duration::from_millis(200));
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///rapid-test.dol".parse().unwrap();
+        harness.open(uri.clone(), "let a = 1\n", 1).await;
+        harness.change(uri.clone(), "let b = 2\n", 2).await;
+        harness.change(uri.clone(), "let c = 3\n", 3).await;
+
+        // Until v3's check, after its projection
+        let mut versions = Vec::new();
+        while versions.iter().filter(|&&v| v == 3).count() < 2 {
+            versions.push(harness.next_publish().await.version.unwrap());
+        }
+        harness.quiet().await;
+        let count = |version| versions.iter().filter(|&&v| v == version).count();
+        assert_eq!(count(1), 0, "{versions:?}");
+        // Its projection, unless the worker coalesced it with the next
+        assert!(count(2) <= 1, "{versions:?}");
+        // Its projection and its check
+        assert_eq!(count(3), 2, "{versions:?}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stale_check_is_discarded() {
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///stale-check-test.dol".parse().unwrap();
+        harness.open(uri.clone(), "let a = 1\n", 2).await;
+
+        let backend = harness.service.inner();
+        let stored = backend.document(&uri).unwrap().stamp;
+        let older = Stamp {
+            version: Some(1),
+            ..stored
+        };
+        assert!(current(&backend.documents, &uri, stored));
+        assert!(!current(&backend.documents, &uri, older));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn unbundled_import_reports_nothing() {
+        let mut harness = Harness::checking(Duration::from_millis(50));
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///unbundled-test.dol".parse().unwrap();
+        let text = "import not_bundled\nnot_bundled.f 1\n";
+        harness.open(uri, text, 1).await;
+
+        let checked = harness.next_publish().await;
+        assert_eq!(checked.diagnostics, []);
+        harness.quiet().await;
     }
 }

@@ -1,7 +1,5 @@
 //! Bundled typelibs, looked up by module name without loading source or extensions.
 
-// The checking integration will consume this lookup.
-#[allow(dead_code)]
 pub(crate) fn lookup(name: &str) -> Option<&'static [u8]> {
     lookup_in(ENTRIES, name)
 }

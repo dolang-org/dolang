@@ -767,7 +767,8 @@ dodo fmt                   # format Rust
 dodo lint                  # check for clippy and formatting warnings
 dodo cargo-test            # (cargo test, use `--` to pass arbitrary additional arguments to cargo)
 dodo shell-test            # (shell integration tests, use `--` to specify alternate arguments to `dolang -m test`)
-dodo test                  # cargo and shell tests
+dodo lsp-test              # dolang-lsp tests against the bundled typelibs (not in cargo-test)
+dodo test                  # cargo, LSP and shell tests
 dodo mkdocs                # build language docs (MkDocs site in site/)
 dodo fmt-docs              # Format Markdown with rumdl
 dodo lint-docs             # check for Markdown errors with rumdl

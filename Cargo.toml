@@ -64,7 +64,6 @@ default-members = [
   "dolang-ext-winnet",
   "dolang-bytecode",
   "dolang-compile",
-  "dolang-lsp",
   "dolang-runtime",
   "dolang-shell-main",
   "dolang-shell-modules",
