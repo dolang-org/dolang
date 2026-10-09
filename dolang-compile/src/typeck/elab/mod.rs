@@ -48,7 +48,7 @@ pub(crate) use populate::populate;
 pub(crate) use sig::signatures;
 pub(crate) use specialize::specialize;
 pub(crate) use variance::variances;
-pub(crate) use wellformed::{Unresolved, wellformed};
+pub(crate) use wellformed::{Bounds, Unresolved, bounds, recursion, wellformed};
 
 /// The names of `strand`'s pipe placeholders, sender first
 pub(crate) const PIPES: [&str; 2] = ["PipeSender", "PipeReceiver"];

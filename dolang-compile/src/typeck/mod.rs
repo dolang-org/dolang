@@ -11,7 +11,17 @@ mod trace;
 pub(crate) mod r#type;
 pub(crate) mod typelib;
 
-use std::{collections::HashSet, path::Path};
+use std::{
+    collections::HashSet,
+    num::NonZeroUsize,
+    panic,
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    thread,
+};
 
 use crate::{
     Error, ErrorInfo, Mode, Unit, UnitId,
@@ -113,6 +123,8 @@ pub struct Builder<'u, 's> {
     /// The types `strand.PipeSender` and `strand.PipeReceiver` stand for, by module
     /// and item
     pipes: [(&'u str, &'u str); 2],
+    /// The most threads to check units on, if not the available parallelism
+    threads: Option<NonZeroUsize>,
 }
 
 impl Default for Builder<'_, '_> {
@@ -127,7 +139,15 @@ impl<'u, 's> Builder<'u, 's> {
             units: Vec::new(),
             modules: HashSet::new(),
             pipes: [("strand", "Sender"), ("strand", "Receiver")],
+            threads: None,
         }
+    }
+
+    /// Check units on up to `threads` threads. Defaults to the available
+    /// parallelism. The results don't depend on it.
+    pub fn threads(&mut self, threads: NonZeroUsize) -> &mut Self {
+        self.threads = Some(threads);
+        self
     }
 
     /// Nominate the types `strand.PipeSender` and `strand.PipeReceiver` stand for,
@@ -226,43 +246,46 @@ impl<'u, 's> Builder<'u, 's> {
         elab::populate(&mut db, &mut tables, &mut diags);
         db.seal();
         elab::specialize(&mut db, &tables, &mut diags);
-        let mut unresolved = elab::wellformed(&db, &tables, &mut diags);
-        unresolved.extend(elab::overrides(&db, &tables, &mut diags));
+        let bounds = elab::bounds(&tables);
+        let mut recursion = Vec::new();
+        let recursion_unresolved = elab::recursion(&db, &tables, &bounds, &mut recursion);
+        // Every later pass runs in a fork per unit, so no unit's results depend on
+        // what another interned
+        let shared = db.share();
+        let mut outputs = check_units(&shared, &tables, &bounds, self.threads);
+        // Gather each kind of output across units, in the order the passes ran
+        let mut unresolved = Vec::new();
+        for output in &mut outputs {
+            diags.append(&mut output.wellformed.0);
+            unresolved.append(&mut output.wellformed.1);
+        }
+        diags.append(&mut recursion);
+        unresolved.extend(recursion_unresolved);
+        for output in &mut outputs {
+            diags.append(&mut output.overrides.0);
+            unresolved.append(&mut output.overrides.1);
+        }
         #[cfg(feature = "debug")]
-        trace::elab(&db, &tables, &unresolved);
-        // A unit's bodies are checked only from its source
-        let cfgs = (0..tables.units.len())
-            .map(|index| {
-                tables.units[index].source?;
-                let ir = lower::lower(&tables, &db, UnitId::from_index(index));
-                debug_assert_eq!(ir.validate(), Ok(()), "lowering builds a valid graph");
-                #[cfg(debug_assertions)]
-                ir.check_stack_depths();
-                #[cfg(feature = "debug")]
-                if let Err(e) = export_dot(&ir, &db, &tables.units[index]) {
-                    dolang_util::debug_eprintln!(topic: "dot", "Typing CFG DOT export failed: {e}");
-                }
-                Some(ir)
-            })
-            .collect::<Vec<_>>();
-        let flows: Vec<Option<flow::Results>> = cfgs
-            .iter()
-            .map(|ir| ir.as_ref().map(|ir| flow::analyze(ir, &db, &tables)))
-            .collect();
-        for (index, results) in flows.iter().enumerate() {
-            let Some(results) = results else {
-                continue;
-            };
+        trace::elab(&r#type::Database::fork(&shared), &tables, &unresolved);
+        let mut forks = Vec::with_capacity(outputs.len());
+        let mut cfgs = Vec::with_capacity(outputs.len());
+        let mut flows = Vec::with_capacity(outputs.len());
+        for (index, output) in outputs.into_iter().enumerate() {
             let unit = UnitId::from_index(index);
-            for problem in &results.problems {
-                diags.push((unit, report::Diag::new(problem.clone())));
-            }
-            unresolved.extend(results.unresolved.iter().map(|&(span, residual)| {
-                elab::Unresolved {
-                    span: r#type::UnitSpan { unit, span },
-                    residual,
+            if let Some(results) = &output.flow {
+                for problem in &results.problems {
+                    diags.push((unit, report::Diag::new(problem.clone())));
                 }
-            }));
+                unresolved.extend(results.unresolved.iter().map(|&(span, residual)| {
+                    elab::Unresolved {
+                        span: r#type::UnitSpan { unit, span },
+                        residual,
+                    }
+                }));
+            }
+            forks.push(output.db);
+            cfgs.push(output.cfg);
+            flows.push(output.flow);
         }
         Check {
             cfgs,
@@ -272,9 +295,135 @@ impl<'u, 's> Builder<'u, 's> {
                 .map(|(unit, diag)| diag.resolve(*unit, &tables.units[unit.index()]))
                 .collect(),
             tables,
-            db,
+            shared,
+            forks,
             unresolved,
         }
+    }
+}
+
+/// What checking a unit in a fork of its own concludes
+struct UnitOutput {
+    /// The fork, which the unit's results are interned in
+    db: r#type::Database,
+    wellformed: (Vec<elab::UnitDiag>, Vec<elab::Unresolved>),
+    overrides: (Vec<elab::UnitDiag>, Vec<elab::Unresolved>),
+    cfg: Option<cfg::Ir>,
+    flow: Option<flow::Results>,
+}
+
+// Units are checked on other threads than the one that shares them
+const _: () = {
+    const fn send<T: Send>() {}
+    const fn sync<T: Sync>() {}
+    send::<UnitOutput>();
+    sync::<elab::Tables<'_>>();
+    sync::<elab::Bounds<'_>>();
+};
+
+/// The stack each checking thread gets, as much as a main thread's, since lowering,
+/// flow analysis and the solver recurse
+const STACK_SIZE: usize = 8 * 1024 * 1024;
+
+/// Check every unit with [`check_unit`], on up to `threads` threads, giving their
+/// outputs by [`UnitId`]
+fn check_units(
+    shared: &Arc<r#type::Shared>,
+    tables: &elab::Tables<'_>,
+    bounds: &elab::Bounds<'_>,
+    threads: Option<NonZeroUsize>,
+) -> Vec<UnitOutput> {
+    let count = tables.units.len();
+    let mut threads = threads
+        .or_else(|| thread::available_parallelism().ok())
+        .map_or(1, NonZeroUsize::get)
+        .min(count);
+    // Without threads to spawn, or with traces that would interleave
+    if cfg!(target_family = "wasm")
+        || cfg!(feature = "debug") && std::env::var_os("DOLANG_DEBUG").is_some()
+    {
+        threads = 1;
+    }
+    if threads <= 1 {
+        return (0..count)
+            .map(|index| check_unit(shared, tables, bounds, UnitId::from_index(index)))
+            .collect();
+    }
+    // Largest first, so that no large unit starts last; typelibs only check
+    // declarations
+    let mut order: Vec<UnitId> = (0..count).map(UnitId::from_index).collect();
+    order.sort_by_key(|unit| {
+        let info = &tables.units[unit.index()];
+        std::cmp::Reverse(info.source.map_or(0, |_| info.newlines.len()))
+    });
+    let next = AtomicUsize::new(0);
+    let work = || {
+        let mut done = Vec::new();
+        while let Some(&unit) = order.get(next.fetch_add(1, Ordering::Relaxed)) {
+            done.push((unit, check_unit(shared, tables, bounds, unit)));
+        }
+        done
+    };
+    let mut slots: Vec<Option<UnitOutput>> = (0..count).map(|_| None).collect();
+    thread::scope(|scope| {
+        let workers: Vec<_> = (1..threads)
+            .map(|_| {
+                thread::Builder::new()
+                    .stack_size(STACK_SIZE)
+                    .spawn_scoped(scope, work)
+                    .expect("failed to spawn a checking thread")
+            })
+            .collect();
+        let mut done = work();
+        for worker in workers {
+            // Keep a worker's own panic, which the scope would otherwise replace
+            done.extend(
+                worker
+                    .join()
+                    .unwrap_or_else(|payload| panic::resume_unwind(payload)),
+            );
+        }
+        for (unit, output) in done {
+            slots[unit.index()] = Some(output);
+        }
+    });
+    (slots.into_iter())
+        .map(|output| output.expect("every unit is checked"))
+        .collect()
+}
+
+/// Check a unit's declarations, and for a unit with source, its bodies, in a new
+/// fork of `shared`
+fn check_unit(
+    shared: &Arc<r#type::Shared>,
+    tables: &elab::Tables<'_>,
+    bounds: &elab::Bounds<'_>,
+    unit: UnitId,
+) -> UnitOutput {
+    let db = r#type::Database::fork(shared);
+    let mut wellformed = Vec::new();
+    let wellformed_unresolved = elab::wellformed(&db, tables, bounds, unit, &mut wellformed);
+    let mut overrides = Vec::new();
+    let overrides_unresolved = elab::overrides(&db, tables, unit, &mut overrides);
+    // A unit's bodies are checked only from its source
+    let cfg = tables.units[unit.index()].source.map(|_| {
+        let ir = lower::lower(tables, &db, unit);
+        debug_assert_eq!(ir.validate(), Ok(()), "lowering builds a valid graph");
+        #[cfg(debug_assertions)]
+        ir.check_stack_depths();
+        #[cfg(feature = "debug")]
+        if let Err(e) = export_dot(&ir, &db, &tables.units[unit.index()]) {
+            dolang_util::debug_eprintln!(topic: "dot", "Typing CFG DOT export failed: {e}");
+        }
+        ir
+    });
+    let flow = cfg.as_ref().map(|ir| flow::analyze(ir, &db, tables));
+    UnitOutput {
+        db,
+        wellformed: (wellformed, wellformed_unresolved),
+        overrides: (overrides, overrides_unresolved),
+        cfg,
+        flow,
     }
 }
 
@@ -301,7 +450,10 @@ fn export_dot(ir: &cfg::Ir, db: &r#type::Database, info: &elab::UnitInfo) -> std
 pub struct Check<'u> {
     diagnostics: Vec<Diag>,
     tables: elab::Tables<'u>,
-    db: r#type::Database,
+    /// The database every unit's fork is of
+    shared: Arc<r#type::Shared>,
+    /// Each unit's fork, by [`UnitId`], which its results are interned in
+    forks: Vec<r#type::Database>,
     /// Well-formedness checks the checker could not decide
     unresolved: Vec<elab::Unresolved>,
     /// Each unit's typing CFG, by [`UnitId`], for a unit checked from source
@@ -371,11 +523,12 @@ impl Check<'_> {
     #[doc(hidden)]
     pub fn judgments(&self, unit: UnitId) -> Vec<Judgment> {
         let info = &self.tables.units[unit.index()];
-        let mut judgments = self.tables.judgments(&self.db, unit, &self.unresolved);
+        let db = &self.forks[unit.index()];
+        let mut judgments = self.tables.judgments(db, unit, &self.unresolved);
         let facts = self.flows[unit.index()].iter().flat_map(|flow| &flow.facts);
         judgments.extend(facts.map(|(&span, fact)| {
-            let ty = self.tables.render_type(&self.db, fact.ty);
-            let value = match (fact.unassigned, fact.ty == self.db.bottom()) {
+            let ty = self.tables.render_type(db, fact.ty);
+            let value = match (fact.unassigned, fact.ty == db.bottom()) {
                 (false, _) => ty,
                 (true, true) => "unassigned".to_owned(),
                 (true, false) => format!("{ty} | unassigned"),
@@ -400,7 +553,7 @@ impl Check<'_> {
     pub fn smoke(&self) {
         use solver::{Provenance, Solver};
 
-        let db = &self.db;
+        let db = &r#type::Database::fork(&self.shared);
         let mut solver = Solver::new(db);
         let relate = |solver: &mut Solver<'_>, ty, kinds: &[r#type::Kind]| {
             let group = kinds
@@ -448,7 +601,7 @@ impl Check<'_> {
         use solver::Solver;
         use r#type::{Element, Member, Scope, Type};
 
-        let db = &self.db;
+        let db = &r#type::Database::fork(&self.shared);
         let declared = |ty| match *db.ty(ty) {
             Type::Decl(decl) => Some(decl),
             Type::Apply { base, .. } => match *db.ty(base) {

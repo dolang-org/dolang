@@ -1419,10 +1419,84 @@ fn forward_schema_kinds_are_checked_when_sealing() {
     let empty = db.intern(Type::Schema(alias::Box::default()));
     db.populate(id, definition(source, empty));
     db.seal();
-    assert!(matches!(db.declarations, Declarations::Frozen(_)));
+    assert!(db.is_sealed());
     assert_eq!(db.kind(reference), Kind::Schema);
     assert_eq!(db.declaration(id).ty, empty);
     assert_eq!(db.intern(db.ty(callable).clone()), callable);
+}
+
+/// A shared database holding the literal `1`, a declaration of it, and the symbol `a`
+fn shared() -> (Arc<Shared>, TypeId, DeclId, SymbolId) {
+    let mut db = Database::new();
+    db.allocate_unit();
+    let one = int(&mut db, 1);
+    let (id, _, source) = declare(&mut db, DeclKind::Alias, "One");
+    db.populate(id, definition(source, one));
+    let a = db.intern_symbol("a");
+    db.seal();
+    (db.share(), one, id, a)
+}
+
+#[test]
+fn forks_read_their_base() {
+    let (base, one, id, a) = shared();
+    let mut fork = Database::fork(&base);
+    assert!(fork.is_sealed());
+    assert_eq!(int(&mut fork, 1), one);
+    assert_eq!(fork.declaration(id).ty, one);
+    assert_eq!(fork.intern_symbol("a"), a);
+    assert_eq!(fork.symbol(a), "a");
+    assert_eq!(fork.top(), base.fixed.top);
+}
+
+#[test]
+fn forks_intern_after_their_base() {
+    let (base, one, ..) = shared();
+    let mut fork = Database::fork(&base);
+    let two = int(&mut fork, 2);
+    assert!(two.index() >= base.types.len());
+    assert_eq!(int(&mut fork, 2), two);
+    assert_eq!(fork.ty(two), &Type::Literal(Literal::Int(2)));
+    let both = union(&mut fork, &[two, one]);
+    assert_eq!(
+        fork.ty(both),
+        &Type::Union(alias::Box::from(vec![
+            UnionMember::Type(one),
+            UnionMember::Type(two),
+        ]))
+    );
+    let b = fork.intern_symbol("b");
+    assert!(b.index() >= base.symbols.len());
+    assert_eq!(fork.symbol(b), "b");
+    let fresh = fork.fresh_symbol("b");
+    assert_ne!(fresh, b);
+    assert_eq!(fork.symbol(fresh), "b");
+}
+
+#[test]
+fn forks_are_independent() {
+    let (base, ..) = shared();
+    let mut first = Database::fork(&base);
+    let mut second = Database::fork(&base);
+    let two = int(&mut first, 2);
+    let three = int(&mut second, 3);
+    assert_eq!(two, three);
+    assert_eq!(first.ty(two), &Type::Literal(Literal::Int(2)));
+    assert_eq!(second.ty(three), &Type::Literal(Literal::Int(3)));
+    assert_eq!(int(&mut second, 2).index(), three.index() + 1);
+}
+
+#[test]
+#[should_panic(expected = "declaration database is shared")]
+fn forks_cannot_build() {
+    let (base, ..) = shared();
+    Database::fork(&base).allocate();
+}
+
+#[test]
+#[should_panic(expected = "only a sealed database")]
+fn sharing_requires_sealing() {
+    Database::new().share();
 }
 
 #[test]

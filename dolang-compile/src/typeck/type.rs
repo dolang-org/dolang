@@ -1,6 +1,8 @@
 //! Canonical structures and allocated source declarations.
 //!
-//! IDs belong to one database; they must not be mixed between databases. Equality
+//! IDs belong to one database; they must not be mixed between databases. A fork
+//! of a shared database (see [`Database::fork`]) reads its base's IDs as its
+//! own, but the IDs it issues are its alone. Equality
 //! is structural, not a subtype judgment. In particular, equal open types can
 //! mean different things in different environments. Declaration references retain
 //! source identity and are leaves of structural traversal.
@@ -31,9 +33,10 @@ use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     num::NonZeroU32,
+    sync::Arc,
 };
 
-use dolang_util::{alias, intern};
+use dolang_util::{alias, frozen::Frozen, intern};
 
 use crate::source::Span;
 
@@ -908,39 +911,78 @@ impl Intrinsics {
     }
 }
 
-pub(crate) struct Database {
+/// What a database that isn't a fork holds besides its types and symbols
+struct Local {
+    declarations: Declarations,
+    /// Each function's signatures, when it has more than one
+    overloads: HashMap<DeclId, alias::Box<[DeclId]>>,
+    intrinsics: Intrinsics,
+    pending_kinds: RefCell<Vec<(TypeId, Kind)>>,
+}
+
+/// A sealed database, frozen to be the base of forks on any thread
+pub(crate) struct Shared {
+    types: Frozen<intern::Table<Type, TypeTag>>,
+    symbols: Frozen<intern::Table<String, SymbolTag>>,
+    declarations: alias::Box<[Declaration]>,
+    overloads: HashMap<DeclId, alias::Box<[DeclId]>>,
+    intrinsics: Intrinsics,
+    fixed: Fixed,
+    unsupported: u32,
+}
+
+/// What every database has from its creation, which its forks share
+#[derive(Clone, Copy)]
+struct Fixed {
     top: TypeId,
     bottom: TypeId,
     unknown: TypeId,
     unknown_schema: TypeId,
-    intrinsics: Intrinsics,
-    types: intern::Table<Type, TypeTag>,
-    symbols: intern::Table<String, SymbolTag>,
     unit_count: usize,
-    declarations: Declarations,
-    /// Each function's signatures, when it has more than one
-    overloads: HashMap<DeclId, alias::Box<[DeclId]>>,
-    pending_kinds: RefCell<Vec<(TypeId, Kind)>>,
+}
+
+enum Phase {
+    Local(Local),
+    Fork(Arc<Shared>),
+}
+
+pub(crate) struct Database {
+    phase: Phase,
+    /// Every type, or in a fork, those its base lacks, numbered after the base's
+    types: intern::Table<Type, TypeTag>,
+    /// Every symbol, or in a fork, those its base lacks, as for types
+    symbols: intern::Table<String, SymbolTag>,
+    fixed: Fixed,
     /// How many unsupported stand-ins have been interned
-    #[expect(dead_code, reason = "no written type needs a stand-in now")]
     unsupported: Cell<u32>,
 }
+
+const _: () = {
+    const fn send<T: Send>() {}
+    const fn shared<T: Send + Sync>() {}
+    send::<Database>();
+    shared::<Shared>();
+};
 
 impl Default for Database {
     fn default() -> Self {
         let types = intern::Table::new();
         Self {
-            top: types.id_owned(Type::Top),
-            bottom: types.id_owned(Type::Union(alias::Box::default())),
-            unknown: types.id_owned(Type::Unknown(Kind::Type)),
-            unknown_schema: types.id_owned(Type::Unknown(Kind::Schema)),
-            intrinsics: Intrinsics::default(),
+            fixed: Fixed {
+                top: types.id_owned(Type::Top),
+                bottom: types.id_owned(Type::Union(alias::Box::default())),
+                unknown: types.id_owned(Type::Unknown(Kind::Type)),
+                unknown_schema: types.id_owned(Type::Unknown(Kind::Schema)),
+                unit_count: 0,
+            },
+            phase: Phase::Local(Local {
+                declarations: Declarations::Building(Vec::new()),
+                overloads: HashMap::new(),
+                intrinsics: Intrinsics::default(),
+                pending_kinds: RefCell::new(Vec::new()),
+            }),
             types,
             symbols: intern::Table::new(),
-            unit_count: 0,
-            declarations: Declarations::Building(Vec::new()),
-            overloads: HashMap::new(),
-            pending_kinds: RefCell::new(Vec::new()),
             unsupported: Cell::new(0),
         }
     }
@@ -948,30 +990,107 @@ impl Default for Database {
 
 impl Database {
     pub(crate) fn is_sealed(&self) -> bool {
-        matches!(self.declarations, Declarations::Frozen(_))
+        match &self.phase {
+            Phase::Local(local) => matches!(local.declarations, Declarations::Frozen(_)),
+            Phase::Fork(_) => true,
+        }
     }
 
     pub(crate) fn new() -> Self {
         Self::default()
     }
 
+    /// Freeze a sealed database to be shared by forks.
+    pub(crate) fn share(self) -> Arc<Shared> {
+        let Phase::Local(Local {
+            declarations: Declarations::Frozen(declarations),
+            overloads,
+            intrinsics,
+            pending_kinds,
+        }) = self.phase
+        else {
+            panic!("only a sealed database that isn't a fork can be shared");
+        };
+        assert!(
+            pending_kinds.into_inner().is_empty(),
+            "every kind is known once sealed"
+        );
+        Arc::new(Shared {
+            types: Frozen::new(self.types),
+            symbols: Frozen::new(self.symbols),
+            declarations,
+            overloads,
+            intrinsics,
+            fixed: self.fixed,
+            unsupported: self.unsupported.get(),
+        })
+    }
+
+    /// A database that reads `base`'s types, symbols and declarations, and interns
+    /// what `base` lacks into its own tables. Its new IDs are its alone, and its
+    /// declarations can't change.
+    pub(crate) fn fork(base: &Arc<Shared>) -> Self {
+        Self {
+            phase: Phase::Fork(base.clone()),
+            types: intern::Table::new(),
+            symbols: intern::Table::new(),
+            fixed: base.fixed,
+            unsupported: Cell::new(base.unsupported),
+        }
+    }
+
+    fn base(&self) -> Option<&Shared> {
+        match &self.phase {
+            Phase::Local(_) => None,
+            Phase::Fork(base) => Some(base),
+        }
+    }
+
+    fn local(&self) -> &Local {
+        match &self.phase {
+            Phase::Local(local) => local,
+            Phase::Fork(_) => panic!("declaration database is shared"),
+        }
+    }
+
+    fn local_mut(&mut self) -> &mut Local {
+        match &mut self.phase {
+            Phase::Local(local) => local,
+            Phase::Fork(_) => panic!("declaration database is shared"),
+        }
+    }
+
+    fn try_declaration(&self, id: DeclId) -> Option<&Declaration> {
+        match &self.phase {
+            Phase::Local(local) => local.declarations.get(id),
+            Phase::Fork(base) => Some(&base.declarations[id.index()]),
+        }
+    }
+
+    fn intrinsics(&self) -> &Intrinsics {
+        match &self.phase {
+            Phase::Local(local) => &local.intrinsics,
+            Phase::Fork(base) => &base.intrinsics,
+        }
+    }
+
     pub(crate) fn top(&self) -> TypeId {
-        self.top
+        self.fixed.top
     }
 
     /// The empty union, interned before any source declarations.
     pub(crate) fn bottom(&self) -> TypeId {
-        self.bottom
+        self.fixed.bottom
     }
 
     /// The dynamic type, interned before any source declarations.
     pub(crate) fn unknown(&self) -> TypeId {
-        self.unknown
+        self.fixed.unknown
     }
 
     /// The dynamic schema, interned before any source declarations.
     pub(crate) fn unknown_schema(&self) -> TypeId {
-        self.unknown_schema
+        self.fixed.unknown_schema
     }
 
     /// A new stand-in for a written type the database can't represent, distinct
@@ -986,8 +1105,8 @@ impl Database {
     /// The dynamic type or schema of a kind
     pub(crate) fn unknown_of(&self, kind: Kind) -> TypeId {
         match kind {
-            Kind::Type => self.unknown,
-            Kind::Schema => self.unknown_schema,
+            Kind::Type => self.fixed.unknown,
+            Kind::Schema => self.fixed.unknown_schema,
         }
     }
 
@@ -995,7 +1114,11 @@ impl Database {
     /// a function with one signature. The function's own ID is its implementation,
     /// unless it's among these: then it has none (see [`Self::implementation`]).
     pub(crate) fn overloads(&self, id: DeclId) -> &[DeclId] {
-        self.overloads.get(&id).map_or(&[], |overloads| overloads)
+        let overloads = match &self.phase {
+            Phase::Local(local) => &local.overloads,
+            Phase::Fork(base) => &base.overloads,
+        };
+        overloads.get(&id).map_or(&[], |overloads| overloads)
     }
 
     /// A function's implementation signature: its own ID, unless it's overloaded
@@ -1013,13 +1136,15 @@ impl Database {
             "an overloaded function has overloads"
         );
         assert!(
-            self.overloads.insert(id, overloads.into()).is_none(),
+            (self.local_mut().overloads)
+                .insert(id, overloads.into())
+                .is_none(),
             "overloads already set: {id:?}"
         );
     }
 
     pub(crate) fn intrinsic(&self, intrinsic: Intrinsic) -> Option<TypeId> {
-        self.intrinsics.get(intrinsic)
+        self.intrinsics().get(intrinsic)
     }
 
     /// The function type of any function, as bare `Func` is: `(...Unknown) ->
@@ -1051,11 +1176,14 @@ impl Database {
             "intrinsic already set: {intrinsic:?}"
         );
         self.expect_kind(ty, Kind::Type);
-        *self.intrinsics.slot_mut(intrinsic) = Some(ty);
+        *self.local_mut().intrinsics.slot_mut(intrinsic) = Some(ty);
     }
 
     pub(crate) fn ty(&self, id: TypeId) -> &Type {
-        &self.types[id]
+        match self.base() {
+            Some(base) if id.index() < base.types.len() => &base.types[id],
+            base => &self.types[TypeId::new(id.index() - base.map_or(0, |base| base.types.len()))],
+        }
     }
 
     /// The literal a literal type is, fresh or regular
@@ -1076,8 +1204,13 @@ impl Database {
 
     /// Every declaration of a sealed database
     pub(crate) fn declarations(&self) -> impl Iterator<Item = (DeclId, &Declaration)> {
-        let Declarations::Frozen(declarations) = &self.declarations else {
-            panic!("declaration database is not sealed");
+        let declarations = match &self.phase {
+            Phase::Local(Local {
+                declarations: Declarations::Frozen(declarations),
+                ..
+            }) => declarations,
+            Phase::Fork(base) => &base.declarations,
+            Phase::Local(_) => panic!("declaration database is not sealed"),
         };
         declarations
             .iter()
@@ -1086,31 +1219,42 @@ impl Database {
     }
 
     pub(crate) fn declaration(&self, id: DeclId) -> &Declaration {
-        self.declarations.get(id).expect("unpopulated declaration")
+        self.try_declaration(id).expect("unpopulated declaration")
     }
 
     pub(crate) fn symbol(&self, id: SymbolId) -> &str {
-        &self.symbols[id]
+        match self.base() {
+            Some(base) if id.index() < base.symbols.len() => &base.symbols[id],
+            base => {
+                &self.symbols[SymbolId::new(id.index() - base.map_or(0, |base| base.symbols.len()))]
+            }
+        }
     }
 
     pub(crate) fn intern_symbol(&self, text: &str) -> SymbolId {
-        self.symbols.id(text)
+        match self.base() {
+            None => self.symbols.id(text),
+            Some(base) => base.symbols.get(text).unwrap_or_else(|| {
+                SymbolId::new(base.symbols.len() + self.symbols.id(text).index())
+            }),
+        }
     }
 
     #[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
     pub(crate) fn fresh_symbol(&self, text: &str) -> SymbolId {
-        self.symbols.fresh(text.into())
+        let id = self.symbols.fresh(text.into());
+        SymbolId::new(self.base().map_or(0, |base| base.symbols.len()) + id.index())
     }
 
     pub(crate) fn allocate_unit(&mut self) -> UnitId {
         self.require_open();
-        let id = UnitId::from_index(self.unit_count);
-        self.unit_count += 1;
+        let id = UnitId::from_index(self.fixed.unit_count);
+        self.fixed.unit_count += 1;
         id
     }
 
     pub(crate) fn allocate(&mut self) -> DeclId {
-        let slots = self.declarations.building_mut();
+        let slots = self.local_mut().declarations.building_mut();
         let id = DeclId::from_index(slots.len());
         slots.push(None);
         id
@@ -1119,30 +1263,30 @@ impl Database {
     pub(crate) fn populate(&mut self, id: DeclId, declaration: Declaration) {
         self.require_open();
         assert!(
-            self.declarations.get(id).is_none(),
+            self.try_declaration(id).is_none(),
             "declaration already populated: {id:?}"
         );
         self.validate_declaration(&declaration);
-        self.declarations.building_mut()[id.index()] = Some(declaration);
+        self.local_mut().declarations.building_mut()[id.index()] = Some(declaration);
     }
 
     /// Replace a sealed declaration's type, validating it as population does.
     /// Sealing closes the set of declarations; a checked one may still be refined.
     pub(crate) fn retype(&mut self, id: DeclId, ty: TypeId) {
-        let Declarations::Frozen(declarations) = &mut self.declarations else {
+        let Declarations::Frozen(declarations) = &mut self.local_mut().declarations else {
             panic!("declaration database is not sealed");
         };
         declarations[id.index()].ty = ty;
         self.validate_declaration(self.declaration(id));
         assert!(
-            self.pending_kinds.borrow().is_empty(),
+            self.local().pending_kinds.borrow().is_empty(),
             "every kind is known once sealed"
         );
     }
 
     fn validate_declaration(&self, declaration: &Declaration) {
         assert!(
-            declaration.source.span.unit.index() < self.unit_count,
+            declaration.source.span.unit.index() < self.fixed.unit_count,
             "unallocated unit ID"
         );
         self.expect_kind(declaration.ty, declaration.source.result_kind);
@@ -1196,7 +1340,8 @@ impl Database {
     }
 
     pub(crate) fn seal(&mut self) {
-        let Declarations::Building(slots) = &self.declarations else {
+        let local = self.local();
+        let Declarations::Building(slots) = &local.declarations else {
             panic!("declaration database is sealed");
         };
         for (index, slot) in slots.iter().enumerate() {
@@ -1229,7 +1374,7 @@ impl Database {
                 );
             }
         }
-        for (id, overloads) in &self.overloads {
+        for (id, overloads) in &local.overloads {
             for overload in overloads.iter().chain([id]) {
                 assert!(
                     matches!(
@@ -1247,20 +1392,21 @@ impl Database {
             }
         }
         // Keep these checks even when normalization discarded the original node.
-        for &(ty, expected) in self.pending_kinds.borrow().iter() {
+        for &(ty, expected) in local.pending_kinds.borrow().iter() {
             assert_eq!(self.kind(ty), expected, "type kind mismatch");
         }
-        self.pending_kinds.get_mut().clear();
-        let declarations = std::mem::take(self.declarations.building_mut())
+        let local = self.local_mut();
+        local.pending_kinds.get_mut().clear();
+        let declarations = std::mem::take(local.declarations.building_mut())
             .into_iter()
             .map(Option::unwrap)
             .collect();
-        self.declarations = Declarations::Frozen(declarations);
+        local.declarations = Declarations::Frozen(declarations);
     }
 
     fn require_open(&self) {
         assert!(
-            matches!(self.declarations, Declarations::Building(_)),
+            matches!(self.local().declarations, Declarations::Building(_)),
             "declaration database is sealed"
         );
     }
@@ -1277,8 +1423,7 @@ impl Database {
                 Some(*kind)
             }
             Type::Decl(id) => self
-                .declarations
-                .get(*id)
+                .try_declaration(*id)
                 .map(|decl| decl.source.result_kind),
             Type::Quantified { body, .. } => self.known_kind(*body),
             Type::Unknown(kind) | Type::Unsupported { kind, .. } => Some(*kind),
@@ -1290,14 +1435,21 @@ impl Database {
         if let Some(actual) = self.known_kind(id) {
             assert_eq!(actual, expected, "type kind mismatch");
         } else {
-            self.pending_kinds.borrow_mut().push((id, expected));
+            // Only an unpopulated declaration's kind is unknown, so never once sealed
+            self.local().pending_kinds.borrow_mut().push((id, expected));
         }
     }
 
     pub(crate) fn intern(&self, ty: Type) -> TypeId {
         self.validate(&ty);
         let ty = self.normalize(ty);
-        self.types.id_owned(ty)
+        match self.base() {
+            None => self.types.id_owned(ty),
+            Some(base) => base
+                .types
+                .get(&ty)
+                .unwrap_or_else(|| TypeId::new(base.types.len() + self.types.id_owned(ty).index())),
+        }
     }
 
     /// A type's canonical outer form, which interning gives it: a quantifier
@@ -1448,7 +1600,9 @@ impl Database {
                 .map_or(Projected::Pending, Projected::Reduced);
         }
         let items = match self.ty(schema) {
-            Type::Unknown(_) => return Projected::Reduced(vec![UnionMember::Type(self.unknown)]),
+            Type::Unknown(_) => {
+                return Projected::Reduced(vec![UnionMember::Type(self.fixed.unknown)]);
+            }
             // Selecting by a key takes the solver
             _ if member.key().is_some() => return Projected::Pending,
             Type::Schema(items) => items,
@@ -1728,7 +1882,7 @@ impl Database {
             | Type::Fresh(_)
             | Type::Bound { .. } => {}
             Type::Decl(id) | Type::Rigid { decl: id, .. } => {
-                self.declarations.get(*id);
+                self.try_declaration(*id);
             }
             Type::Apply { base, args, .. } => {
                 // A constructor can return either kind. Arity/kind matching of
@@ -1763,7 +1917,7 @@ impl Database {
             } => {
                 assert!(!overloads.is_empty(), "an overload set without overloads");
                 if let Some(function) = function {
-                    self.declarations.get(*function);
+                    self.try_declaration(*function);
                 }
                 for id in overloads.iter().chain(implementation.iter()) {
                     self.expect_kind(*id, Kind::Type);

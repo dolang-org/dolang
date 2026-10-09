@@ -1647,7 +1647,7 @@ struct Fixup<'a, 'u> {
 }
 
 impl<'u> Fixup<'_, 'u> {
-    fn diag(&mut self, unit: UnitId, info: impl super::Report + 'static) {
+    fn diag(&mut self, unit: UnitId, info: impl super::Report + Send + 'static) {
         self.diags.push((unit, Diag::new(info)));
     }
 

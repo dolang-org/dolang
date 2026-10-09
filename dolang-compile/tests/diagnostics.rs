@@ -125,6 +125,87 @@ fn judgments_do_not_depend_on_the_order_units_are_added() {
 }
 
 #[test]
+fn results_do_not_depend_on_threads() {
+    let module = |name: &str, source: &'static str| {
+        config(Mode::Module {
+            name: name.to_owned().into(),
+        })
+        .unit(Path::new(&format!("{name}.dol")), source.as_bytes())
+    };
+    let script = |path: &str, source: &'static str| {
+        config(Mode::Script).unit(Path::new(path), source.as_bytes())
+    };
+    let units = [
+        module(
+            "geo",
+            "pub class Box[T]\n  pub field item @ T = nil\npub def get[T] b @ Box[T] -> T\n  b.item\n",
+        ),
+        module(
+            "user",
+            "import geo:\n  - Box\n  - get\nimport split:\n  - Num\npub class Crate[T]: Box[T]\n  pub field extra @ Box[T] = nil\npub class Bounded[T @ Num]\npub let bad @ Bounded[Crate[Num]] = nil\npub def unbox b @ Box[Num] -> Crate[Num]\n  get $b\n",
+        ),
+        module(
+            "split",
+            "pub class Num\npub class Split[*Ts, U @ Num]\n  pub def items _self -> Split[...Ts, U]\n    nil\npub def split[*Xs] x @ Split[...Xs, Num]\n  x\n",
+        ),
+        script(
+            "first.dol",
+            "import geo:\n  - Box\nimport split:\n  - Num\nlet b @ Box[Num] = (Box())\nlet n @ Box[Num] = b.item\n",
+        ),
+        script(
+            "second.dol",
+            "import user:\n  - Crate\n  - Bounded\nlet c = (Crate())\nlet x @ Bounded[Crate[Crate[Int]]] = nil\n",
+        ),
+    ];
+    let check = |threads: usize| {
+        let mut checker = typeck::Builder::new();
+        checker.threads(threads.try_into().unwrap());
+        let ids = units.each_ref().map(|unit| checker.unit(unit).unwrap());
+        let check = checker.check();
+        check.smoke();
+        let diagnostics: Vec<String> = check
+            .diagnostics()
+            .map(|diag| {
+                let annotations: Vec<_> = (diag.annotations())
+                    .map(|annotation| (annotation.span(), annotation.message().to_string()))
+                    .collect();
+                let notes: Vec<_> = (diag.notes())
+                    .map(|note| note.message().to_string())
+                    .collect();
+                format!(
+                    "{:?} {:?} {} {annotations:?} {notes:?}",
+                    diag.severity(),
+                    diag.span(),
+                    diag.message()
+                )
+            })
+            .collect();
+        let judgments: Vec<Vec<String>> = ids
+            .iter()
+            .map(|&id| {
+                (check.judgments(id).into_iter())
+                    .map(|judgment| {
+                        format!("{} {:?} {}", judgment.name, judgment.span, judgment.value)
+                    })
+                    .collect()
+            })
+            .collect();
+        (
+            diagnostics,
+            check.validated(),
+            format!("{:?}", check.undecided()),
+            judgments,
+        )
+    };
+    let sequential = check(1);
+    // The fixture exercises errors, undecided checks and judgments in every unit
+    assert!(!sequential.0.is_empty());
+    assert!(!sequential.1);
+    assert!(sequential.3.iter().all(|judgments| !judgments.is_empty()));
+    assert_eq!(sequential, check(4));
+}
+
+#[test]
 fn imports_lists_statement_and_prelude_modules() {
     let source = b"import zeta\nimport alpha.beta:\n  - Item\ndef f()\n  import zeta: z\n  import @gamma\n  spawn f\n";
     let mut config = config(Mode::Script);
