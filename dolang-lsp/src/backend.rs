@@ -1,12 +1,18 @@
 use std::{
     borrow::Cow,
-    collections::{HashMap, HashSet, hash_map::Entry},
-    fs, mem,
+    collections::{HashMap, HashSet},
+    fs, iter, mem,
+    panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock, mpsc},
+    thread,
 };
 
-use tokio::sync::Mutex;
+use tokio::sync::{
+    Mutex as AsyncMutex,
+    mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
+    oneshot,
+};
 use toml::{Table, Value as TomlValue};
 use tower_lsp_server::{
     Client, ClientSocket, LanguageServer, LspService, jsonrpc::Result, ls_types::*,
@@ -571,9 +577,34 @@ struct Decl {
     hover: Option<String>,
 }
 
-#[derive(Debug, Default)]
+/// Orders the projections of one document.
+///
+/// Handlers run concurrently, so edits can reach the worker out of order; the
+/// client's version says which is newer.  Each open starts a new epoch, so a
+/// reopened document outranks whatever its previous session left in flight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct Stamp {
+    epoch: u64,
+    version: Option<i32>,
+}
+
+impl Stamp {
+    /// A document saved without being opened.
+    const UNOPENED: Self = Self {
+        epoch: 0,
+        version: None,
+    };
+}
+
+/// What the worker made of one version of a document.
+///
+/// A newer projection replaces the whole document, so handlers hold an `Arc`
+/// of one rather than a lock.
 struct Document {
-    content: String,
+    stamp: Stamp,
+    /// The unit the projection came from, which holds the document's source
+    #[allow(dead_code, reason = "kept for type checking the document")]
+    unit: Arc<Unit<'static>>,
     tokens: Vec<SemanticToken>,
     /// Token range to the declaration it names, sorted by range start
     refs: Vec<(Range, NodeId)>,
@@ -609,7 +640,7 @@ pub(crate) enum Import {
     ItemAs(String, String, String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Settings {
     pub(crate) prelude: Vec<Import>,
 }
@@ -621,12 +652,237 @@ struct Config {
     settings: HashMap<PathBuf, Arc<Settings>>,
 }
 
-#[derive(Debug)]
+type Documents = Arc<Mutex<HashMap<Uri, Arc<Document>>>>;
+
+/// The epoch of each open document, and the last one handed out.
+#[derive(Default)]
+struct Epochs {
+    last: u64,
+    open: HashMap<Uri, u64>,
+}
+
 pub(crate) struct Backend {
+    documents: Documents,
+    epochs: Mutex<Epochs>,
+    worker: mpsc::Sender<Request>,
     client: Client,
-    documents: Mutex<HashMap<Uri, Arc<Mutex<Document>>>>,
-    config: Mutex<Config>,
+    config: AsyncMutex<Config>,
     position_encoding: RwLock<PositionEncodingKind>,
+}
+
+/// A document's text to compile, from an open, an edit or a save.
+struct Job {
+    uri: Uri,
+    path: PathBuf,
+    text: String,
+    /// A save has none, and takes the document's latest
+    stamp: Option<Stamp>,
+    settings: Option<Arc<Settings>>,
+    encoding: PositionEncodingKind,
+    /// Told once the projection is stored and its diagnostics published
+    done: Option<oneshot::Sender<()>>,
+}
+
+enum Request {
+    Compile(Job),
+    /// The document closed in the given epoch
+    Close(Uri, u64),
+}
+
+enum Event {
+    Projected {
+        uri: Uri,
+        document: Document,
+        diagnostics: Vec<Diagnostic>,
+        done: Option<oneshot::Sender<()>>,
+    },
+    Closed(Uri, u64),
+}
+
+/// The unit the worker last compiled for a document.
+struct Open {
+    stamp: Stamp,
+    settings: Option<Arc<Settings>>,
+    unit: Arc<Unit<'static>>,
+}
+
+/// Compiles documents off the event loop, on a thread of its own.
+///
+/// Projections go to the applier task, which stores them and publishes their
+/// diagnostics in the order the worker made them.
+struct Worker {
+    events: UnboundedSender<Event>,
+    open: HashMap<Uri, Open>,
+    /// The epoch each document last closed in; older work for it is dropped
+    closed: HashMap<Uri, u64>,
+}
+
+impl Worker {
+    fn run(mut self, requests: mpsc::Receiver<Request>) {
+        while let Ok(first) = requests.recv() {
+            let batch: Vec<_> = iter::once(first).chain(requests.try_iter()).collect();
+            // Only the newest edit of each document is worth compiling
+            let superseded: Vec<bool> = (0..batch.len())
+                .map(|i| match &batch[i] {
+                    Request::Compile(Job {
+                        uri,
+                        stamp: Some(stamp),
+                        ..
+                    }) => batch[i + 1..].iter().any(|later| match later {
+                        Request::Compile(later) => {
+                            later.uri == *uri && later.stamp.is_some_and(|later| later >= *stamp)
+                        }
+                        Request::Close(later, epoch) => later == uri && stamp.epoch <= *epoch,
+                    }),
+                    _ => false,
+                })
+                .collect();
+            for (request, superseded) in batch.into_iter().zip(superseded) {
+                match request {
+                    Request::Compile(_) if superseded => {}
+                    Request::Compile(job) => self.compile(job),
+                    Request::Close(uri, epoch) => self.close(uri, epoch),
+                }
+            }
+        }
+    }
+
+    fn compile(&mut self, job: Job) {
+        let Job {
+            uri,
+            path,
+            text,
+            stamp,
+            settings,
+            encoding,
+            done,
+        } = job;
+        let open = self.open.get(&uri);
+        let stamp = stamp.unwrap_or_else(|| open.map_or(Stamp::UNOPENED, |open| open.stamp));
+        if self
+            .closed
+            .get(&uri)
+            .is_some_and(|&epoch| stamp.epoch <= epoch)
+            || open.is_some_and(|open| stamp < open.stamp)
+        {
+            return;
+        }
+        let cached = open
+            .filter(|open| open.settings == settings && open.unit.source() == text)
+            .map(|open| open.unit.clone());
+        let projected = panic::catch_unwind(AssertUnwindSafe(|| {
+            let unit = cached
+                .unwrap_or_else(|| Arc::new(compile_document(&path, text, settings.as_deref())));
+            let (document, diagnostics) = project(&uri, stamp, unit.clone(), &encoding);
+            (unit, document, diagnostics)
+        }));
+        // The panic hook has logged the panic itself
+        let Ok((unit, document, diagnostics)) = projected else {
+            log::error!("failed to compile {}", path.display());
+            return;
+        };
+        self.closed.remove(&uri);
+        self.open.insert(
+            uri.clone(),
+            Open {
+                stamp,
+                settings,
+                unit,
+            },
+        );
+        _ = self.events.send(Event::Projected {
+            uri,
+            document,
+            diagnostics,
+            done,
+        });
+    }
+
+    fn close(&mut self, uri: Uri, epoch: u64) {
+        if self
+            .open
+            .get(&uri)
+            .is_some_and(|open| open.stamp.epoch <= epoch)
+        {
+            self.open.remove(&uri);
+        }
+        let closed = self.closed.entry(uri.clone()).or_default();
+        *closed = (*closed).max(epoch);
+        _ = self.events.send(Event::Closed(uri, epoch));
+    }
+}
+
+/// Stores a projection unless the document already has a newer one.
+fn apply(documents: &Documents, uri: Uri, document: Document) -> bool {
+    let mut documents = documents.lock().expect("documents lock poisoned");
+    if documents
+        .get(&uri)
+        .is_some_and(|stored| stored.stamp > document.stamp)
+    {
+        return false;
+    }
+    documents.insert(uri, Arc::new(document));
+    true
+}
+
+/// Applies the worker's events in order, publishing each stored projection's
+/// diagnostics.
+async fn publish(client: Client, documents: Documents, mut events: UnboundedReceiver<Event>) {
+    while let Some(event) = events.recv().await {
+        match event {
+            Event::Projected {
+                uri,
+                document,
+                diagnostics,
+                done,
+            } => {
+                let version = document.stamp.version;
+                if apply(&documents, uri.clone(), document) {
+                    client.publish_diagnostics(uri, diagnostics, version).await;
+                }
+                if let Some(done) = done {
+                    _ = done.send(());
+                }
+            }
+            Event::Closed(uri, epoch) => {
+                let mut documents = documents.lock().expect("documents lock poisoned");
+                if documents
+                    .get(&uri)
+                    .is_some_and(|document| document.stamp.epoch <= epoch)
+                {
+                    documents.remove(&uri);
+                }
+            }
+        }
+    }
+}
+
+/// Compiles a document as the server projects it.
+fn compile_document(path: &Path, text: String, settings: Option<&Settings>) -> Unit<'static> {
+    let mut config = CompileConfig::new();
+    config.recover(true).document(true);
+    if let Some(settings) = settings {
+        let mut prelude = config.prelude();
+        for import in settings.prelude.iter() {
+            match import {
+                Import::Module(module) => {
+                    prelude = prelude.import_module(module.clone());
+                }
+                Import::Item(module, item) => {
+                    let items = prelude.import_items(module.clone());
+                    prelude = items.item(item.clone()).commit();
+                }
+                Import::ModuleAs(module, bind) => {
+                    prelude = prelude.import_module_with_name(module.clone(), bind.clone());
+                }
+                Import::ItemAs(module, item, bind) => {
+                    let items = prelude.import_items(module.clone());
+                    prelude = items.item_with_name(item.clone(), bind.clone()).commit();
+                }
+            }
+        }
+    }
+    config.unit(path, text)
 }
 
 #[derive(Debug)]
@@ -700,11 +956,70 @@ impl<'a> DocumentIndex<'a> {
 
 impl Backend {
     pub(crate) fn new(client: Client) -> Self {
+        let documents = Documents::default();
+        let (worker, requests) = mpsc::channel();
+        let (events, applied) = unbounded_channel();
+        let worker_state = Worker {
+            events,
+            open: HashMap::new(),
+            closed: HashMap::new(),
+        };
+        // The thread exits once the backend drops its sender, and the applier
+        // once the thread drops its own
+        thread::Builder::new()
+            .name("dolang-lsp-compile".to_owned())
+            .stack_size(8 << 20)
+            .spawn(move || worker_state.run(requests))
+            .expect("failed to spawn the compile worker");
+        tokio::spawn(publish(client.clone(), documents.clone(), applied));
         Self {
+            documents,
+            epochs: Default::default(),
+            worker,
             client,
-            documents: Default::default(),
             config: Default::default(),
             position_encoding: RwLock::new(PositionEncodingKind::UTF16),
+        }
+    }
+
+    /// The latest projection of a document.
+    fn document(&self, uri: &Uri) -> Option<Arc<Document>> {
+        let documents = self.documents.lock().expect("documents lock poisoned");
+        documents.get(uri).cloned()
+    }
+
+    /// The epoch a document was opened in, or 0 if it is not open.
+    fn epoch(&self, uri: &Uri) -> u64 {
+        let epochs = self.epochs.lock().expect("epochs lock poisoned");
+        epochs.open.get(uri).copied().unwrap_or(0)
+    }
+
+    /// Sends a document's text to the worker.
+    async fn submit(
+        &self,
+        uri: Uri,
+        text: String,
+        stamp: Option<Stamp>,
+        done: Option<oneshot::Sender<()>>,
+    ) {
+        let Some(path) = uri_to_file_path(&uri).map(Cow::into_owned) else {
+            return;
+        };
+        if !is_dolang_source(&path) {
+            return;
+        }
+        let settings = self.find_settings(&path).await;
+        let job = Job {
+            uri,
+            path,
+            text,
+            stamp,
+            settings,
+            encoding: self.position_encoding(),
+            done,
+        };
+        if self.worker.send(Request::Compile(job)).is_err() {
+            log::error!("the compile worker has exited");
         }
     }
 
@@ -891,218 +1206,172 @@ impl Backend {
             .expect("position encoding lock poisoned")
             .clone()
     }
+}
 
-    async fn on_change(&self, params: TextDocumentItem) {
-        let TextDocumentItem {
-            uri, text, version, ..
-        } = params;
+/// Projects a compiled document into what requests answer from.
+fn project(
+    uri: &Uri,
+    stamp: Stamp,
+    unit: Arc<Unit<'static>>,
+    encoding: &PositionEncodingKind,
+) -> (Document, Vec<Diagnostic>) {
+    let mut diags = Vec::new();
+    let mut tokens = Vec::new();
+    let mut refs = Vec::new();
+    let mut decls: HashMap<NodeId, Decl> = HashMap::new();
+    let mut patches = Vec::new();
 
-        let document = {
-            let mut guard = self.documents.lock().await;
-            match guard.entry(uri.clone()) {
-                Entry::Occupied(entry) => entry.get().clone(),
-                Entry::Vacant(entry) => {
-                    let doc = Arc::new(Mutex::new(Default::default()));
-                    entry.insert(doc.clone());
-                    doc
-                }
-            }
-        };
-        let mut diags = Vec::new();
-        let Some(path) = uri_to_file_path(&uri) else {
-            return;
-        };
-        if !is_dolang_source(&path) {
-            return;
+    let content = unit.source();
+    let index = DocumentIndex::new(content, encoding.clone());
+    let hovers = build_hovers(&unit, content);
+    for diag in unit.diagnostics() {
+        let mut out = Diagnostic::new_simple(
+            index.range_from_span(&diag.span().span()),
+            diag.message().to_string(),
+        );
+        out.severity = Some(match diag.severity() {
+            diag::Severity::Error => DiagnosticSeverity::ERROR,
+            diag::Severity::Warning => DiagnosticSeverity::WARNING,
+            _ => DiagnosticSeverity::INFORMATION,
+        });
+        let mut related = Vec::new();
+        for ann in diag.annotations() {
+            related.push(DiagnosticRelatedInformation {
+                location: Location::new(uri.clone(), index.range_from_span(&ann.span().span())),
+                message: ann.message().to_string(),
+            });
         }
-        {
-            let settings = self.find_settings(&path).await;
-
-            let mut guard = document.lock().await;
-            guard.content = text;
-            let mut tokens = Vec::new();
-            let mut refs = Vec::new();
-            let mut decls: HashMap<NodeId, Decl> = HashMap::new();
-            let mut patches = Vec::new();
-
-            let content = guard.content.as_str();
-            let index = DocumentIndex::new(content, self.position_encoding());
-            let mut config = CompileConfig::new();
-            config.recover(true).document(true);
-            if let Some(settings) = settings {
-                let mut prelude = config.prelude();
-                for import in settings.prelude.iter() {
-                    match import {
-                        Import::Module(module) => {
-                            prelude = prelude.import_module(module.clone());
-                        }
-                        Import::Item(module, item) => {
-                            let items = prelude.import_items(module.clone());
-                            prelude = items.item(item.clone()).commit();
-                        }
-                        Import::ModuleAs(module, bind) => {
-                            prelude = prelude.import_module_with_name(module.clone(), bind.clone());
-                        }
-                        Import::ItemAs(module, item, bind) => {
-                            let items = prelude.import_items(module.clone());
-                            prelude = items.item_with_name(item.clone(), bind.clone()).commit();
-                        }
-                    }
-                }
-            }
-            let unit = config.unit(&path, content);
-            let hovers = build_hovers(&unit, content);
-            for diag in unit.diagnostics() {
-                let mut out = Diagnostic::new_simple(
-                    index.range_from_span(&diag.span().span()),
-                    diag.message().to_string(),
-                );
-                out.severity = Some(match diag.severity() {
-                    diag::Severity::Error => DiagnosticSeverity::ERROR,
-                    diag::Severity::Warning => DiagnosticSeverity::WARNING,
-                    _ => DiagnosticSeverity::INFORMATION,
-                });
-                let mut related = Vec::new();
-                for ann in diag.annotations() {
-                    related.push(DiagnosticRelatedInformation {
-                        location: Location::new(
-                            uri.clone(),
-                            index.range_from_span(&ann.span().span()),
-                        ),
-                        message: ann.message().to_string(),
-                    });
-                }
-                out.related_information = Some(related);
-                diags.push(out);
-                for note in diag.notes() {
-                    let mut out = Diagnostic::new_simple(
-                        index.range_from_span(&diag.span().span()),
-                        note.message().to_string(),
-                    );
-                    out.severity = Some(match note.kind() {
-                        diag::NoteKind::Help => DiagnosticSeverity::HINT,
-                        _ => DiagnosticSeverity::INFORMATION,
-                    });
-                    diags.push(out);
-                }
-
-                let diagnostic_range = index.range_from_span(&diag.span().span());
-                let diagnostic_message = diag.message().to_string();
-                let diagnostic_severity = match diag.severity() {
-                    diag::Severity::Error => DiagnosticSeverity::ERROR,
-                    diag::Severity::Warning => DiagnosticSeverity::WARNING,
-                    _ => DiagnosticSeverity::INFORMATION,
-                };
-
-                for patch in diag.patches() {
-                    patches.push(Patch {
-                        diagnostic_range,
-                        diagnostic_severity,
-                        diagnostic_message: diagnostic_message.clone(),
-                        patch_range: index.range_from_span(&patch.span().span()),
-                        replacement: patch.sub().to_string(),
-                        title: patch.message().to_string(),
-                    });
-                }
-            }
-            let statics = static_fields(&unit);
-            unit.tokens(
-                &mut |leaf, span: diag::Span, node: Option<NodeId>, context: Context| {
-                    // Punctuation and sigils have no semantic token type, so
-                    // they are left to the client's own syntax highlighting.
-                    if span.start().byte_offset() != span.end().byte_offset()
-                        && !matches!(leaf, Token::Delim | Token::Sigil)
-                    {
-                        let doc_node = node.and_then(|id| unit.node(id));
-                        let kind = doc_node.map(|node| node.kind());
-                        let (token_type, mut modifiers) =
-                            classify_token(leaf, kind.as_ref(), context);
-                        if let Some(id) = node {
-                            let range = index.range_from_span(&span);
-                            match doc_node.and_then(|node| node.definition()) {
-                                Some(def) => {
-                                    modifiers |= declaration_modifiers(&span, &def, id, &statics);
-                                    refs.push((range, id));
-                                    decls
-                                        .entry(id)
-                                        .or_insert_with(|| Decl {
-                                            name_range: index.range_from_span(&def),
-                                            uses: Vec::new(),
-                                            hover: hovers.get(&id).cloned(),
-                                        })
-                                        .uses
-                                        .push(range);
-                                }
-                                // A prelude binding has no source text, so
-                                // there is nowhere in this file to jump to --
-                                // but it may still have hover text pulled
-                                // from the static doc index (see
-                                // external_hover), which has nothing to do
-                                // with a definition span. Index it too, using
-                                // its own span as a stand-in "declaration"
-                                // location since there is no real one; this
-                                // also gets it references/highlight for free.
-                                None if hovers.contains_key(&id) => {
-                                    refs.push((range, id));
-                                    decls
-                                        .entry(id)
-                                        .or_insert_with(|| Decl {
-                                            name_range: range,
-                                            uses: Vec::new(),
-                                            hover: hovers.get(&id).cloned(),
-                                        })
-                                        .uses
-                                        .push(range);
-                                }
-                                None => {}
-                            }
-                        }
-                        tokens.push((token_type, modifiers, span));
-                    }
-                },
+        out.related_information = Some(related);
+        diags.push(out);
+        for note in diag.notes() {
+            let mut out = Diagnostic::new_simple(
+                index.range_from_span(&diag.span().span()),
+                note.message().to_string(),
             );
-
-            let mut pre_line = 0;
-            let mut pre_start = 0;
-
-            tokens.sort_by_key(|(_, _, range)| range.start().byte_offset());
-            refs.sort_by_key(|(range, _)| range.start);
-            for decl in decls.values_mut() {
-                decl.uses.sort_by_key(|range| range.start);
-            }
-            let symbols = build_symbols(&unit, &index);
-
-            guard.tokens = tokens
-                .into_iter()
-                .map(|(token_type, modifiers, range)| {
-                    let start = index.position_from_offset(range.start().byte_offset());
-                    let delta_line = start.line - pre_line;
-                    let token = SemanticToken {
-                        delta_line,
-                        delta_start: if delta_line == 0 {
-                            start.character - pre_start
-                        } else {
-                            start.character
-                        },
-                        length: index.token_length(&range),
-                        token_type,
-                        token_modifiers_bitset: modifiers,
-                    };
-                    pre_line = start.line;
-                    pre_start = start.character;
-                    token
-                })
-                .collect();
-
-            guard.patches = patches;
-            guard.refs = refs;
-            guard.decls = decls;
-            guard.symbols = symbols;
+            out.severity = Some(match note.kind() {
+                diag::NoteKind::Help => DiagnosticSeverity::HINT,
+                _ => DiagnosticSeverity::INFORMATION,
+            });
+            diags.push(out);
         }
-        self.client
-            .publish_diagnostics(uri, diags, Some(version))
-            .await
+
+        let diagnostic_range = index.range_from_span(&diag.span().span());
+        let diagnostic_message = diag.message().to_string();
+        let diagnostic_severity = match diag.severity() {
+            diag::Severity::Error => DiagnosticSeverity::ERROR,
+            diag::Severity::Warning => DiagnosticSeverity::WARNING,
+            _ => DiagnosticSeverity::INFORMATION,
+        };
+
+        for patch in diag.patches() {
+            patches.push(Patch {
+                diagnostic_range,
+                diagnostic_severity,
+                diagnostic_message: diagnostic_message.clone(),
+                patch_range: index.range_from_span(&patch.span().span()),
+                replacement: patch.sub().to_string(),
+                title: patch.message().to_string(),
+            });
+        }
     }
+    let statics = static_fields(&unit);
+    unit.tokens(
+        &mut |leaf, span: diag::Span, node: Option<NodeId>, context: Context| {
+            // Punctuation and sigils have no semantic token type, so
+            // they are left to the client's own syntax highlighting.
+            if span.start().byte_offset() != span.end().byte_offset()
+                && !matches!(leaf, Token::Delim | Token::Sigil)
+            {
+                let doc_node = node.and_then(|id| unit.node(id));
+                let kind = doc_node.map(|node| node.kind());
+                let (token_type, mut modifiers) = classify_token(leaf, kind.as_ref(), context);
+                if let Some(id) = node {
+                    let range = index.range_from_span(&span);
+                    match doc_node.and_then(|node| node.definition()) {
+                        Some(def) => {
+                            modifiers |= declaration_modifiers(&span, &def, id, &statics);
+                            refs.push((range, id));
+                            decls
+                                .entry(id)
+                                .or_insert_with(|| Decl {
+                                    name_range: index.range_from_span(&def),
+                                    uses: Vec::new(),
+                                    hover: hovers.get(&id).cloned(),
+                                })
+                                .uses
+                                .push(range);
+                        }
+                        // A prelude binding has no source text, so
+                        // there is nowhere in this file to jump to --
+                        // but it may still have hover text pulled
+                        // from the static doc index (see
+                        // external_hover), which has nothing to do
+                        // with a definition span. Index it too, using
+                        // its own span as a stand-in "declaration"
+                        // location since there is no real one; this
+                        // also gets it references/highlight for free.
+                        None if hovers.contains_key(&id) => {
+                            refs.push((range, id));
+                            decls
+                                .entry(id)
+                                .or_insert_with(|| Decl {
+                                    name_range: range,
+                                    uses: Vec::new(),
+                                    hover: hovers.get(&id).cloned(),
+                                })
+                                .uses
+                                .push(range);
+                        }
+                        None => {}
+                    }
+                }
+                tokens.push((token_type, modifiers, span));
+            }
+        },
+    );
+
+    let mut pre_line = 0;
+    let mut pre_start = 0;
+
+    tokens.sort_by_key(|(_, _, range)| range.start().byte_offset());
+    refs.sort_by_key(|(range, _)| range.start);
+    for decl in decls.values_mut() {
+        decl.uses.sort_by_key(|range| range.start);
+    }
+    let symbols = build_symbols(&unit, &index);
+
+    let tokens = tokens
+        .into_iter()
+        .map(|(token_type, modifiers, range)| {
+            let start = index.position_from_offset(range.start().byte_offset());
+            let delta_line = start.line - pre_line;
+            let token = SemanticToken {
+                delta_line,
+                delta_start: if delta_line == 0 {
+                    start.character - pre_start
+                } else {
+                    start.character
+                },
+                length: index.token_length(&range),
+                token_type,
+                token_modifiers_bitset: modifiers,
+            };
+            pre_line = start.line;
+            pre_start = start.character;
+            token
+        })
+        .collect();
+
+    let document = Document {
+        stamp,
+        unit,
+        tokens,
+        refs,
+        decls,
+        symbols,
+        patches,
+    };
+    (document, diags)
 }
 
 impl LanguageServer for Backend {
@@ -1194,17 +1463,31 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        self.on_change(params.text_document).await
+        let TextDocumentItem {
+            uri, text, version, ..
+        } = params.text_document;
+        let epoch = {
+            let mut epochs = self.epochs.lock().expect("epochs lock poisoned");
+            epochs.last += 1;
+            let epoch = epochs.last;
+            epochs.open.insert(uri.clone(), epoch);
+            epoch
+        };
+        let stamp = Stamp {
+            epoch,
+            version: Some(version),
+        };
+        self.submit(uri, text, Some(stamp), None).await
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
-        self.on_change(TextDocumentItem {
-            language_id: "dol".to_owned(),
-            text: params.content_changes.into_iter().next().unwrap().text,
-            uri: params.text_document.uri,
-            version: params.text_document.version,
-        })
-        .await
+        let uri = params.text_document.uri;
+        let stamp = Stamp {
+            epoch: self.epoch(&uri),
+            version: Some(params.text_document.version),
+        };
+        let text = params.content_changes.into_iter().next().unwrap().text;
+        self.submit(uri, text, Some(stamp), None).await
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
@@ -1215,13 +1498,12 @@ impl LanguageServer for Backend {
             return;
         }
         if let Some(text) = params.text {
-            let item = TextDocumentItem {
-                language_id: "dol".to_owned(),
-                uri: params.text_document.uri,
-                text,
-                version: -1,
-            };
-            self.on_change(item).await;
+            let (done, stored) = oneshot::channel();
+            self.submit(params.text_document.uri, text, None, Some(done))
+                .await;
+            // Refresh once the saved text's tokens are stored, or the worker
+            // has passed over it
+            _ = stored.await;
             _ = self.client.semantic_tokens_refresh().await;
         }
     }
@@ -1230,17 +1512,11 @@ impl LanguageServer for Backend {
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
-        let Some(document) = self
-            .documents
-            .lock()
-            .await
-            .get(&params.text_document.uri)
-            .cloned()
-        else {
+        let Some(document) = self.document(&params.text_document.uri) else {
             return Ok(None);
         };
         Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
-            data: document.lock().await.tokens.clone(),
+            data: document.tokens.clone(),
             ..Default::default()
         })))
     }
@@ -1249,12 +1525,11 @@ impl LanguageServer for Backend {
         &self,
         params: CodeActionParams,
     ) -> Result<Option<Vec<CodeActionOrCommand>>> {
-        let document = match self.documents.lock().await.get(&params.text_document.uri) {
-            Some(doc) => doc.clone(),
-            None => return Ok(None),
+        let Some(document) = self.document(&params.text_document.uri) else {
+            return Ok(None);
         };
 
-        let patches = &document.lock().await.patches;
+        let patches = &document.patches;
         let mut actions = Vec::new();
 
         for patch in patches {
@@ -1299,7 +1574,18 @@ impl LanguageServer for Backend {
         Ok(())
     }
 
-    async fn did_close(&self, _: DidCloseTextDocumentParams) {}
+    async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        let uri = params.text_document.uri;
+        let epoch = {
+            let mut epochs = self.epochs.lock().expect("epochs lock poisoned");
+            epochs.open.remove(&uri).unwrap_or(0)
+        };
+        // Through the worker, so the document is dropped after any projection
+        // still on its way
+        if self.worker.send(Request::Close(uri, epoch)).is_err() {
+            log::error!("the compile worker has exited");
+        }
+    }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
         log::debug!("change config: {params:?}")
@@ -1315,18 +1601,12 @@ impl LanguageServer for Backend {
         &self,
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
-        let document = match self
-            .documents
-            .lock()
-            .await
-            .get(&params.text_document_position_params.text_document.uri)
-        {
-            Some(doc) => doc.clone(),
-            None => return Ok(None),
+        let Some(document) = self.document(&params.text_document_position_params.text_document.uri)
+        else {
+            return Ok(None);
         };
-        let guard = document.lock().await;
         let pos = &params.text_document_position_params.position;
-        let Some(decl) = guard.decl_at(pos) else {
+        let Some(decl) = document.decl_at(pos) else {
             return Ok(None);
         };
         Ok(Some(GotoDefinitionResponse::Scalar(Location {
@@ -1340,18 +1620,12 @@ impl LanguageServer for Backend {
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
-        let document = match self
-            .documents
-            .lock()
-            .await
-            .get(&params.text_document_position_params.text_document.uri)
-        {
-            Some(doc) => doc.clone(),
-            None => return Ok(None),
+        let Some(document) = self.document(&params.text_document_position_params.text_document.uri)
+        else {
+            return Ok(None);
         };
-        let guard = document.lock().await;
         let pos = &params.text_document_position_params.position;
-        let Some((range, decl)) = guard.reference_at(pos) else {
+        let Some((range, decl)) = document.reference_at(pos) else {
             return Ok(None);
         };
         let Some(markdown) = decl.hover.as_ref() else {
@@ -1370,26 +1644,19 @@ impl LanguageServer for Backend {
         &self,
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
-        let Some(document) = self
-            .documents
-            .lock()
-            .await
-            .get(&params.text_document.uri)
-            .cloned()
-        else {
+        let Some(document) = self.document(&params.text_document.uri) else {
             return Ok(None);
         };
-        let symbols = document.lock().await.symbols.clone();
+        let symbols = document.symbols.clone();
         Ok(Some(DocumentSymbolResponse::Nested(symbols)))
     }
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         let uri = &params.text_document_position.text_document.uri;
-        let Some(document) = self.documents.lock().await.get(uri).cloned() else {
+        let Some(document) = self.document(uri) else {
             return Ok(None);
         };
-        let guard = document.lock().await;
-        let Some(decl) = guard.decl_at(&params.text_document_position.position) else {
+        let Some(decl) = document.decl_at(&params.text_document_position.position) else {
             return Ok(None);
         };
         let include_declaration = params.context.include_declaration;
@@ -1407,11 +1674,10 @@ impl LanguageServer for Backend {
         params: DocumentHighlightParams,
     ) -> Result<Option<Vec<DocumentHighlight>>> {
         let uri = &params.text_document_position_params.text_document.uri;
-        let Some(document) = self.documents.lock().await.get(uri).cloned() else {
+        let Some(document) = self.document(uri) else {
             return Ok(None);
         };
-        let guard = document.lock().await;
-        let Some(decl) = guard.decl_at(&params.text_document_position_params.position) else {
+        let Some(decl) = document.decl_at(&params.text_document_position_params.position) else {
             return Ok(None);
         };
         Ok(Some(
@@ -1582,6 +1848,26 @@ mod tests {
             .await;
             self.next_client_notification::<notification::PublishDiagnostics>()
                 .await
+        }
+
+        async fn change(&mut self, uri: Uri, text: &str, version: i32) {
+            self.send_notification::<notification::DidChangeTextDocument>(
+                DidChangeTextDocumentParams {
+                    text_document: VersionedTextDocumentIdentifier { uri, version },
+                    content_changes: vec![TextDocumentContentChangeEvent {
+                        range: None,
+                        range_length: None,
+                        text: text.to_owned(),
+                    }],
+                },
+            )
+            .await;
+        }
+
+        /// Asserts the server sends the client nothing more for a while.
+        async fn quiet(&mut self) {
+            let next = tokio::time::timeout(Duration::from_millis(250), self.socket.next()).await;
+            assert!(next.is_err(), "unexpected message: {next:?}");
         }
     }
 
@@ -2551,5 +2837,81 @@ mod tests {
 
         let (save, ()) = tokio::join!(save, observe);
         assert_eq!(save, None);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stale_projection_is_discarded() {
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///stale-test.dol".parse().unwrap();
+        let path = Path::new("/stale-test.dol");
+        let newer = "let newer = 1\n";
+        let older = "# older\nlet older = 1\n";
+        harness.open(uri.clone(), newer, 2).await;
+
+        let backend = harness.service.inner();
+        let stored = backend.document(&uri).unwrap();
+        let stale = Stamp {
+            version: Some(1),
+            ..stored.stamp
+        };
+        let unit = Arc::new(compile_document(path, older.to_owned(), None));
+        let (document, _) = project(&uri, stale, unit, &PositionEncodingKind::UTF16);
+        assert!(!apply(&backend.documents, uri.clone(), document));
+        let document = backend.document(&uri).unwrap();
+        assert_eq!(document.unit.source(), newer);
+        assert_eq!(document.tokens, stored.tokens);
+
+        // Reopening starts a new epoch, which outranks every earlier version
+        let reopened = harness.open(uri.clone(), older, 1).await;
+        assert_eq!(reopened.version, Some(1));
+        let document = harness.service.inner().document(&uri).unwrap();
+        assert_eq!(document.unit.source(), older);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn out_of_order_changes_publish_the_newest() {
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///order-test.dol".parse().unwrap();
+        harness.open(uri.clone(), "let a = 1\n", 1).await;
+
+        harness.change(uri.clone(), "let c = 3\n", 3).await;
+        harness.change(uri.clone(), "let b = 2\n", 2).await;
+        let published = harness
+            .next_client_notification::<notification::PublishDiagnostics>()
+            .await;
+        assert_eq!(published.version, Some(3));
+        harness.quiet().await;
+        let document = harness.service.inner().document(&uri).unwrap();
+        assert_eq!(document.unit.source(), "let c = 3\n");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn did_close_forgets_the_document() {
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let closed: Uri = "file:///closed-test.dol".parse().unwrap();
+        harness.open(closed.clone(), "let a = 1\n", 1).await;
+        harness
+            .send_notification::<notification::DidCloseTextDocument>(DidCloseTextDocumentParams {
+                text_document: TextDocumentIdentifier {
+                    uri: closed.clone(),
+                },
+            })
+            .await;
+        // The worker handles requests in order, so once a later document is
+        // published the close has been applied
+        let other: Uri = "file:///open-test.dol".parse().unwrap();
+        harness.open(other, "let b = 2\n", 1).await;
+
+        let tokens = harness
+            .send_request::<request::SemanticTokensFullRequest>(SemanticTokensParams {
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                text_document: TextDocumentIdentifier { uri: closed },
+            })
+            .await;
+        assert!(tokens.is_none());
     }
 }
