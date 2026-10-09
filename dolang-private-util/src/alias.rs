@@ -7,6 +7,10 @@ use std::{
 
 pub struct Box<T: ?Sized>(NonNull<T>);
 
+// Safety: the box uniquely owns its value, as `std::boxed::Box` does.
+unsafe impl<T: ?Sized + Send> Send for Box<T> {}
+unsafe impl<T: ?Sized + Sync> Sync for Box<T> {}
+
 impl Box<str> {
     pub fn new_str(value: impl AsRef<str>) -> Self {
         String::from(value.as_ref()).into()
