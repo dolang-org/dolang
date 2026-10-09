@@ -344,6 +344,10 @@ pub def from[O]
 do
   ...
 
+# Returns the strand-local input.
+pub def input[I] <I -> I
+  ...
+
 # Applies a function concurrently to values from the strand-local input,
 # writing results to the strand-local output.
 # The function sees `std.null` as input and output.
@@ -394,6 +398,28 @@ do -> nil
 do -> nil
 
 pub def map count@Int func@Value ...options@Value -> nil
+  ...
+
+# Reads the next value of the strand-local input.
+#
+# ## Errors
+#
+# `std.IterStop` if the input is exhausted.
+@def next[I] <Iter[I] -> I
+
+# Reads the next value of the strand-local input, or returns `default` if the
+# input is exhausted.
+@def next[I, D] :default @ D <Iter[I] -> (I | D)
+
+# Reads the next value of the strand-local input, or returns the result of
+# calling `else` if the input is exhausted.
+@def next[I, E] :else @ (() -> E) <Iter[I] -> (I | E)
+
+pub def next ...args @ Value -> Value
+  ...
+
+# Returns the strand-local output.
+pub def output[O] >O -> O
   ...
 
 # Connects pipeline stages and runs them concurrently, returning the last
@@ -511,6 +537,15 @@ pub def stream[R, I, O]
   # the function to execute
   func @ ((<PipeReceiver[I], >PipeSender[O]) -> R)
 do -> Stream[R, O, I]
+  ...
+
+# Raises a value as an exception.
+pub def throw
+  # Value to raise.
+  value @ Value
+  # Backtrace to report instead of the current strand's calls.
+  :backtrace @ Backtrace = nil
+do -> std.Never
   ...
 
 # Writes the values of the strand-local input that satisfy a predicate to the
