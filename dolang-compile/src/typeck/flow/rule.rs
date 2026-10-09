@@ -7,9 +7,10 @@
 //! queue empties, the earliest block of each function whose latest run left a rule
 //! undecided runs again, once, defaulting the unsolved variables of each rule it
 //! leaves undecided, upstream first; a variable with no lower bounds becomes
-//! dynamic. The final pass defaults every rule it leaves undecided. A rule's
-//! results are its latest run's: the analysis converges because the joins at block
-//! entries and accumulators widen.
+//! dynamic, and a `do` block's result that isn't known yet is bottom. The final
+//! pass defaults every rule it leaves undecided. A rule's results are its latest
+//! run's: the analysis converges because the joins at block entries and
+//! accumulators widen.
 //!
 //! A value of bottom type is never produced, so a rule with such an input doesn't
 //! run: its results are bottom. An item of a comprehension is the exception, since
@@ -729,7 +730,9 @@ impl<'a> Flow<'a, '_> {
     /// pre-seeded as an upper bound on the first result, unless that contradicts:
     /// then the check against the expectation reports it instead. A rule left
     /// undecided is solved again with defaulting if its block defaults, or in the
-    /// final pass; otherwise it marks its block undecided.
+    /// final pass; otherwise it marks its block undecided. Defaulting takes a `do`
+    /// block's result that isn't known yet to be bottom: the block never completes,
+    /// until its result grows and runs the rule again.
     fn conclude(
         &mut self,
         at: At,
@@ -759,6 +762,12 @@ impl<'a> Flow<'a, '_> {
                 _ => false,
             };
             let outcomes = if default {
+                // The blocks it passes values to have run with them, so a result
+                // that isn't known yet is one that never completes
+                for &term in &lambdas.1 {
+                    let bottom = solver.closed(self.db.bottom());
+                    solver.constrain(bottom, term, Provenance::default());
+                }
                 let roots = outputs(&results, &[]);
                 default_all(&mut solver, self.db, true, Some(&roots))
             } else {
@@ -2986,8 +2995,9 @@ fn root(outcome: &Outcome) -> ObligationId {
 /// What a rule passes the `do` blocks it's given: each variable's solution, once
 /// everything that defaulting can solve is. It runs after the rule is concluded,
 /// so its defaults decide nothing. A block's result that isn't known yet is taken
-/// to be bottom here, so that a callee's binder it also bounds, as `T` in
-/// `fold[T] init@T f@((T, T) -> T)`, is solved from the other bounds.
+/// to be bottom here, as a defaulting run takes it, so that a callee's binder it
+/// also bounds, as `T` in `fold[T] init@T f@((T, T) -> T)`, is solved from the
+/// other bounds.
 fn passed(
     solver: &mut Solver<'_>,
     db: &Database,

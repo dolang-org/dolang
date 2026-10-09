@@ -1,0 +1,42 @@
+# dolang: strict
+# A `do` block that only leaves by `return` or `throw` gives a call `Never`, as
+# the result a callee's binder takes from it.
+
+def call[R] f @ (() -> R) -> R
+  f()
+
+def both[R] f @ (() -> R) g @ (() -> R) -> R
+  g()
+  f()
+
+def give[R] f @ ((Int) -> R) -> R
+  f(1)
+
+pub def returned x @ Int c @ Bool -> Int
+  let y = if c
+    call do
+      return x
+  else
+    x
+  y
+# ^: flow std.Int
+
+pub def thrown()
+  call do
+    throw "no"
+
+# The binder takes another block's result as well
+pub def joined x @ Int -> Int
+  let y = both
+    - do
+        return x
+    - do 5
+  y
+# ^: flow std.Int
+
+# A block that's passed a value
+pub def passed x @ Int -> Int
+  give do |n|
+    let _ = n
+    #       ^: flow std.Int
+    return (x + n)
