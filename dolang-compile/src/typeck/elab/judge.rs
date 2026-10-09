@@ -249,6 +249,7 @@ impl Tables<'_> {
             };
             let ty = match ty {
                 ParamTy::Single(single) => slot(single),
+                ParamTy::Rest(RestSlot::Items(_, Slot::Unknown)) => "Unknown{}".to_owned(),
                 ParamTy::Rest(RestSlot::Items(kind, item)) => {
                     let item = slot(item);
                     match kind {

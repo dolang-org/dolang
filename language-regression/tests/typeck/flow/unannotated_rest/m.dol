@@ -1,0 +1,63 @@
+# An unannotated rest holds the dynamic schema, so spreading it is unchecked for
+# arity, while it is still known to be a `Tuple` or `Record`.
+
+def one x
+  x
+
+pub def spread ...xs
+  let _ = xs
+  #       ^~: flow std.Record[...Unknown{}]
+  one ...xs
+
+pub def positional *xs
+  let _ = xs
+  #       ^~: flow std.Tuple[...Unknown{}]
+  one ...xs
+
+pub def keyed **xs
+  let _ = xs
+  #       ^~: flow std.Record[...Unknown{}]
+  one ...xs
+
+pub def member ...xs
+  xs.bogus
+# error: `std.Record[...Unknown{}]` has no member `bogus`
+#   --> m.dol:LL:LL
+#    |
+# LL |   xs.bogus
+#    |   ^^^^^^^^
+
+# Its own callers pass anything in its place
+pub def callers()
+  spread()
+  spread 1 2 k: 3
+  positional 1 2
+
+# The required parameters before it are still checked
+def led a @ Int ...xs
+  [a, xs]
+
+pub def leading()
+  led 1 "x" k: 2
+  led "x"
+  # error: expected `std.Int`, found `"x"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   led "x"
+  #    |       ^^^
+  led()
+# error: this call is missing an argument
+#   --> m.dol:LL:LL
+#    |
+# LL |   led()
+#    |   ^^^^^
+
+# So are required arguments before a dynamic spread
+pub def spread_after ...xs
+  one 1 ...xs
+  one 1 2 ...xs
+# error: the callee takes no such argument
+#   --> m.dol:LL:LL
+#    |
+# LL |   one 1 2 ...xs
+#    |         ^
