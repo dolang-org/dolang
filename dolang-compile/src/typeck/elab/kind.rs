@@ -259,7 +259,7 @@ struct Check<'a, 't, 'u> {
 }
 
 impl<'t> Check<'_, 't, '_> {
-    fn diag(&mut self, info: impl Report + 'static) {
+    fn diag(&mut self, info: impl Report + Send + 'static) {
         self.diags.push((self.unit, Diag::new(info)));
     }
 

@@ -11,7 +11,17 @@ mod trace;
 pub(crate) mod r#type;
 pub(crate) mod typelib;
 
-use std::{collections::HashSet, path::Path, sync::Arc};
+use std::{
+    collections::HashSet,
+    num::NonZeroUsize,
+    panic,
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    thread,
+};
 
 use crate::{
     Error, ErrorInfo, Mode, Unit, UnitId,
@@ -113,6 +123,8 @@ pub struct Builder<'u, 's> {
     /// The types `strand.PipeSender` and `strand.PipeReceiver` stand for, by module
     /// and item
     pipes: [(&'u str, &'u str); 2],
+    /// The most threads to check units on, if not the available parallelism
+    threads: Option<NonZeroUsize>,
 }
 
 impl Default for Builder<'_, '_> {
@@ -127,7 +139,15 @@ impl<'u, 's> Builder<'u, 's> {
             units: Vec::new(),
             modules: HashSet::new(),
             pipes: [("strand", "Sender"), ("strand", "Receiver")],
+            threads: None,
         }
+    }
+
+    /// Check units on up to `threads` threads. Defaults to the available
+    /// parallelism. The results don't depend on it.
+    pub fn threads(&mut self, threads: NonZeroUsize) -> &mut Self {
+        self.threads = Some(threads);
+        self
     }
 
     /// Nominate the types `strand.PipeSender` and `strand.PipeReceiver` stand for,
@@ -232,9 +252,7 @@ impl<'u, 's> Builder<'u, 's> {
         // Every later pass runs in a fork per unit, so no unit's results depend on
         // what another interned
         let shared = db.share();
-        let mut outputs = (0..tables.units.len())
-            .map(|index| check_unit(&shared, &tables, &bounds, UnitId::from_index(index)))
-            .collect::<Vec<_>>();
+        let mut outputs = check_units(&shared, &tables, &bounds, self.threads);
         // Gather each kind of output across units, in the order the passes ran
         let mut unresolved = Vec::new();
         for output in &mut outputs {
@@ -292,6 +310,86 @@ struct UnitOutput {
     overrides: (Vec<elab::UnitDiag>, Vec<elab::Unresolved>),
     cfg: Option<cfg::Ir>,
     flow: Option<flow::Results>,
+}
+
+// Units are checked on other threads than the one that shares them
+const _: () = {
+    const fn send<T: Send>() {}
+    const fn sync<T: Sync>() {}
+    send::<UnitOutput>();
+    sync::<elab::Tables<'_>>();
+    sync::<elab::Bounds<'_>>();
+};
+
+/// The stack each checking thread gets, as much as a main thread's, since lowering,
+/// flow analysis and the solver recurse
+const STACK_SIZE: usize = 8 * 1024 * 1024;
+
+/// Check every unit with [`check_unit`], on up to `threads` threads, giving their
+/// outputs by [`UnitId`]
+fn check_units(
+    shared: &Arc<r#type::Shared>,
+    tables: &elab::Tables<'_>,
+    bounds: &elab::Bounds<'_>,
+    threads: Option<NonZeroUsize>,
+) -> Vec<UnitOutput> {
+    let count = tables.units.len();
+    let mut threads = threads
+        .or_else(|| thread::available_parallelism().ok())
+        .map_or(1, NonZeroUsize::get)
+        .min(count);
+    // Without threads to spawn, or with traces that would interleave
+    if cfg!(target_family = "wasm")
+        || cfg!(feature = "debug") && std::env::var_os("DOLANG_DEBUG").is_some()
+    {
+        threads = 1;
+    }
+    if threads <= 1 {
+        return (0..count)
+            .map(|index| check_unit(shared, tables, bounds, UnitId::from_index(index)))
+            .collect();
+    }
+    // Largest first, so that no large unit starts last; typelibs only check
+    // declarations
+    let mut order: Vec<UnitId> = (0..count).map(UnitId::from_index).collect();
+    order.sort_by_key(|unit| {
+        let info = &tables.units[unit.index()];
+        std::cmp::Reverse(info.source.map_or(0, |_| info.newlines.len()))
+    });
+    let next = AtomicUsize::new(0);
+    let work = || {
+        let mut done = Vec::new();
+        while let Some(&unit) = order.get(next.fetch_add(1, Ordering::Relaxed)) {
+            done.push((unit, check_unit(shared, tables, bounds, unit)));
+        }
+        done
+    };
+    let mut slots: Vec<Option<UnitOutput>> = (0..count).map(|_| None).collect();
+    thread::scope(|scope| {
+        let workers: Vec<_> = (1..threads)
+            .map(|_| {
+                thread::Builder::new()
+                    .stack_size(STACK_SIZE)
+                    .spawn_scoped(scope, work)
+                    .expect("failed to spawn a checking thread")
+            })
+            .collect();
+        let mut done = work();
+        for worker in workers {
+            // Keep a worker's own panic, which the scope would otherwise replace
+            done.extend(
+                worker
+                    .join()
+                    .unwrap_or_else(|payload| panic::resume_unwind(payload)),
+            );
+        }
+        for (unit, output) in done {
+            slots[unit.index()] = Some(output);
+        }
+    });
+    (slots.into_iter())
+        .map(|output| output.expect("every unit is checked"))
+        .collect()
 }
 
 /// Check a unit's declarations, and for a unit with source, its bodies, in a new

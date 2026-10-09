@@ -168,7 +168,7 @@ impl Check<'_, '_> {
     }
 
     /// Diagnose a failed check, or record an undecided one
-    fn report(&mut self, verdict: Verdict, span: UnitSpan, diag: impl Report + 'static) {
+    fn report(&mut self, verdict: Verdict, span: UnitSpan, diag: impl Report + Send + 'static) {
         #[cfg(feature = "debug")]
         if !matches!(verdict, Verdict::Holds) {
             let mut message = String::new();

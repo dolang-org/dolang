@@ -35,10 +35,10 @@ pub(crate) struct Annotation {
 /// A report, with the unit whose spans it points into
 pub(crate) type UnitDiag = (UnitId, Diag);
 
-pub(crate) struct Diag(Box<dyn Report>);
+pub(crate) struct Diag(Box<dyn Report + Send>);
 
 impl Diag {
-    pub(crate) fn new(info: impl Report + 'static) -> Self {
+    pub(crate) fn new(info: impl Report + Send + 'static) -> Self {
         Self(Box::new(info))
     }
 

@@ -230,7 +230,7 @@ struct Populate<'t, 'u> {
 }
 
 impl<'t, 'u> Populate<'t, 'u> {
-    fn report(&mut self, unit: UnitId, info: impl Report + 'static) {
+    fn report(&mut self, unit: UnitId, info: impl Report + Send + 'static) {
         if self.reported.insert((unit, info.span())) {
             self.diags.push((unit, Diag::new(info)));
         }
