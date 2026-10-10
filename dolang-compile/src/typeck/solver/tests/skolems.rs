@@ -496,3 +496,126 @@ fn variables_below_quantified_types_are_residual() {
     assert!(s.bounds(variable_id(v)).upper().next().is_none());
     assert!(s.skolems.is_empty());
 }
+
+/// `{*(K): V, ...}`
+fn domains(db: &Database, pairs: &[(TypeId, TypeId)]) -> TypeId {
+    let pairs = pairs
+        .iter()
+        .map(|&(key, value)| keyed(Multiplicity::Repeated, key, value));
+    items(db, pairs.collect())
+}
+
+#[test]
+fn item_projections_imply_key_bounds() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let range = nominal(&mut db, "Range", vec![], vec![]);
+    let bin = nominal(&mut db, "Bin", vec![], vec![]);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let nil = db.intern(Type::Literal(Literal::Nil));
+    let k = reference(&db, 0, 0);
+    let by_range = domains(&db, &[(range, bin)]);
+    let by_int = domains(&db, &[(int, bin)]);
+    let generic = |db: &Database, params: &[TypeId], result| {
+        quantified(
+            db,
+            vec![binder(Variance::Invariant)],
+            function(db, params, result),
+        )
+    };
+    // [K] (K) -> IndexItem[{*(Range): Bin}, K]
+    let read = generic(&db, &[k], selecting(&db, false, by_range, k));
+    // [K] (K) -> IndexItem[{*(Int): Bin}, K]
+    let read_int = generic(&db, &[k], selecting(&db, false, by_int, k));
+    // [K] (K, AssignItem[{*(Range): Bin}, K]) -> nil
+    let write = generic(&db, &[k, selecting(&db, true, by_range, k)], nil);
+    db.seal();
+    // `K` is bounded by `Keys[S]`, so the plain form conforms
+    for (actual, expected) in [
+        (function(&db, &[range], bin), read),
+        (function(&db, &[range, bin], nil), write),
+    ] {
+        let mut s = Solver::new(&db);
+        s.constrain(s.closed(actual), s.closed(expected), Provenance::default());
+        let outcome = s.solve().remove(0);
+        assert_eq!(outcome.status, Status::Proven, "{outcome:?}");
+        assert!(uses(&s, &Step::ImpliedBound));
+    }
+    // A key type that isn't among the schema's keys
+    let outcome = check(&db, function(&db, &[range], bin), read_int);
+    assert!(
+        contradiction(&outcome, Contradiction::UnrelatedNominals),
+        "{outcome:?}"
+    );
+    // The key selects only `Bin`
+    let outcome = check(&db, function(&db, &[range], str), read);
+    assert!(
+        contradiction(&outcome, Contradiction::UnrelatedNominals),
+        "{outcome:?}"
+    );
+    let outcome = check(&db, function(&db, &[range, str], nil), write);
+    assert!(
+        contradiction(&outcome, Contradiction::UnrelatedNominals),
+        "{outcome:?}"
+    );
+}
+
+#[test]
+fn skolem_keys_select_by_their_bounds() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let range = nominal(&mut db, "Range", vec![], vec![]);
+    let bin = nominal(&mut db, "Bin", vec![], vec![]);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let k = reference(&db, 0, 0);
+    let both = domains(&db, &[(range, bin), (str, int)]);
+    let range_str = db.intern(Type::Union(
+        vec![UnionMember::Type(range), UnionMember::Type(str)].into(),
+    ));
+    let bin_int = db.intern(Type::Union(
+        vec![UnionMember::Type(bin), UnionMember::Type(int)].into(),
+    ));
+    let body = function(&db, &[k], selecting(&db, false, both, k));
+    // [K @ Range] (K) -> IndexItem[{*(Range): Bin, *(Str): Int}, K]
+    let declared = quantified(
+        &db,
+        vec![bounded(Kind::Type, Binding::Positional, Some(range))],
+        body,
+    );
+    // [K] (K) -> IndexItem[{*(Range): Bin, *(Str): Int}, K]
+    let implied = quantified(&db, vec![binder(Variance::Invariant)], body);
+    db.seal();
+    // A bound within one domain selects its value. `K` is also bounded by the
+    // implied `Range | Str`, and is below `Range` through its declared bound.
+    let outcome = check(&db, function(&db, &[range], bin), declared);
+    assert_eq!(outcome.status, Status::Proven, "{outcome:?}");
+    // A bound over domains with different values selects neither
+    let outcome = check(&db, function(&db, &[range_str], bin_int), implied);
+    assert_eq!(outcome.status, Status::Unresolved, "{outcome:?}");
+}
+
+#[test]
+fn nested_projections_imply_no_key_bounds() {
+    let mut db = Database::new();
+    let range = nominal(&mut db, "Range", vec![], vec![]);
+    let bin = nominal(&mut db, "Bin", vec![], vec![]);
+    let s = domains(&db, &[(range, bin)]);
+    // [K] (K) -> [J] (J) -> IndexItem[S, K]
+    let inner = quantified(
+        &db,
+        vec![binder(Variance::Invariant)],
+        function(
+            &db,
+            &[reference(&db, 0, 0)],
+            selecting(&db, false, s, reference(&db, 1, 0)),
+        ),
+    );
+    let outer = quantified(
+        &db,
+        vec![binder(Variance::Invariant)],
+        function(&db, &[reference(&db, 0, 0)], inner),
+    );
+    db.seal();
+    assert_eq!(db.item_keys(outer), [0]);
+    assert_eq!(db.implied_bounds(outer), []);
+}

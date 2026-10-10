@@ -411,7 +411,17 @@ under an environment of them. The body must hold for every choice of the
 binders, so it must hold for these. A skolem is solver-local and never enters a
 canonical type; reifying one is an escape. Its bound is the binder's bound read
 in the skolemization's environment, which carries F-bounds and outer
-substitutions, and a rest binder without one is bounded by its shape. Skolems
+substitutions, and a rest binder without one is bounded by its shape. A
+binder that selects items of a schema `S` in the body, as the key of
+`IndexItem[S, K]` or `AssignItem[S, K]` outside any nested quantifier, is also
+bounded by `Keys[S]`: a key outside them has no item, so the body promises
+nothing for it. The implied bound is never declared, so it leaves variance
+alone; it is why `(index) self key@Str -> Int` conforms to `(index)[K] self
+key@K -> IndexItem[{*(Str): Int}, K]`. A rigid has the bounds its
+declaration's type implies as well, which instantiation establishes beside the
+declared one. A rigid or skolem with several bounds is below whatever one of
+them is below, found by probing each; a rule that reduces it to one bound takes
+the declared one first. Skolems
 follow the rules of rigids: a skolem is below itself, top and `Unknown`, and
 bottom and `Unknown` are below it; on the left it reduces to its bound, labeled
 as a rigid's is, and otherwise it contradicts the judgment. One without a bound
@@ -449,7 +459,9 @@ quantifier on the right by contravariance. Residual forms are:
 - a projection whose schema or key holds a skolem, since projections are
   evaluated by reifying them. It stays unevaluated and relates only to an
   identical projection, a member of a union on the left proved by the same
-  member on the right.
+  member on the right. The exception is an item projection of a closed schema
+  by a skolem key, which selects as a rigid key does: the value every item one
+  of its bounds selects has, where there is one.
 
 ### Alternatives and trials
 

@@ -264,3 +264,50 @@ fn reach_walks_rigids_through_their_bounds() {
         Ok(Reach::Dynamic)
     ));
 }
+
+#[test]
+fn item_projections_imply_rigid_key_bounds() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let bound = items(&db, vec![keyed(Multiplicity::Repeated, str, int)]);
+    let s = db.intern(Type::Bound {
+        reference: BoundRef::new(0, 0),
+        kind: Kind::Schema,
+    });
+    let k = reference(&db, 0, 1);
+    let binders = || {
+        vec![
+            bounded(Kind::Schema, Binding::Positional, Some(bound)),
+            binder(Variance::Invariant),
+        ]
+    };
+    // f[S @ {*(Str): Int}, K] (K) -> IndexItem[S, K]
+    let body = function(&db, &[k], selecting(&db, false, s, k));
+    let f = generic(&mut db, binders(), body);
+    // g[S @ {*(Str): Int}, K] (K) -> Int
+    let body = function(&db, &[k], int);
+    let g = generic(&mut db, binders(), body);
+    db.seal();
+    // `K` is below `Keys[S]`, so below `Str`
+    let mut solver = Solver::new(&db);
+    let env = solver.rigid_environment(f);
+    solver.constrain(
+        solver.view(k, env),
+        solver.view(str, env),
+        Provenance::default(),
+    );
+    let outcome = solver.solve().remove(0);
+    assert_eq!(outcome.status, Status::Proven, "{outcome:?}");
+    assert!((solver.obligations.iter()).any(|o| {
+        o.active
+            .borrow()
+            .iter()
+            .any(|(_, step)| *step == Step::ImpliedBound)
+    }));
+    let outcome = under(&db, f, k, int);
+    assert_eq!(outcome.status, Status::Contradicted, "{outcome:?}");
+    // Without a projection by it, `K` is unbounded
+    let outcome = under(&db, g, k, str);
+    assert_eq!(outcome.status, Status::Contradicted, "{outcome:?}");
+}
