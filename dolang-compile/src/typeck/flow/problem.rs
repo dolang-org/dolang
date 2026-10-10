@@ -78,12 +78,14 @@ pub(crate) enum Problem {
         annotation: Shown,
     },
     /// A member the receiver doesn't have, or alternatives of the union `within`
-    /// don't
+    /// don't, with a note for each reason a `(get)` or `(set)` fallback refused
+    /// its name
     MissingMember {
         span: Span,
         receivers: Vec<Shown>,
         within: Option<Shown>,
         name: String,
+        reasons: Vec<String>,
     },
     /// A member used in a way its kind doesn't allow
     MemberUse {
@@ -168,6 +170,9 @@ impl Report for Problem {
                 .collect(),
             Problem::NoOverload { notes, .. } => (notes.iter())
                 .map(|note| (NoteKind::Info, note.clone()))
+                .collect(),
+            Problem::MissingMember { reasons, .. } => (reasons.iter())
+                .map(|reason| (NoteKind::Info, reason.clone()))
                 .collect(),
             Problem::AmbiguousCall { survivors, .. } => (survivors.iter())
                 .map(|survivor| (NoteKind::Info, format!("`{survivor}` accepts them")))

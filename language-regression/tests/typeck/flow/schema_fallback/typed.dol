@@ -1,0 +1,17 @@
+# dolang: strict
+# A strict implementation typed as its overload is checked against it: the
+# private record has the same schema, so indexing it gives the projection
+
+import std:
+  - @IndexItem
+  - @Keys
+
+pub class Typed[S @ {**Value}]
+  field values @ Record[...S]
+
+  def (init) self values @ Record[...S]
+    self.#values = values
+
+  pub def (get)[K @ Keys[S]] self name @ K -> IndexItem[S, K]
+    self.#values[name]
+
