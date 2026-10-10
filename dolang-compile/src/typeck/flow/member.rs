@@ -24,7 +24,8 @@ use crate::{
         cfg::{Expr, ExprKind, Item, Member},
         elab::Designated,
         solver::{
-            Constructor, FoundKind, Issue, Lookup, Residual, Signature, Signatures, bound_method,
+            Access, Constructor, FoundKind, Issue, Lookup, Residual, Signature, Signatures,
+            bound_method,
         },
         r#type::{Intrinsic, Literal, MemberKey, Scope, Type, TypeId, UnionMember},
     },
@@ -133,7 +134,7 @@ impl Flow<'_, '_> {
             };
         }
         let member = self.special("call");
-        match self.resolve(ty, member, span) {
+        match self.resolve(ty, member, Access::Any, span) {
             Resolved::Method(signature, bound) => CallTarget {
                 signature,
                 receivers: if bound { vec![callee] } else { Vec::new() },
@@ -166,16 +167,19 @@ impl Flow<'_, '_> {
 
     /// Look up a receiver's member. What the lookup can't decide is recorded at
     /// `span` as an unresolved check.
-    fn resolve(&mut self, receiver: TypeId, member: Member, span: Span) -> Resolved {
+    fn resolve(
+        &mut self,
+        receiver: TypeId,
+        member: Member,
+        access: Access,
+        span: Span,
+    ) -> Resolved {
         if matches!(self.db.ty(receiver), Type::Unknown(_)) {
             return Resolved::Dynamic;
         }
         let solver = self.solver();
         let term = solver.closed(receiver);
-        let lookup = match member.class {
-            Some(class) => solver.private_member(term, class, member.key),
-            None => solver.member(term, member.key),
-        };
+        let lookup = solver.reach_member(term, member.class, member.key, access);
         let lookup = match lookup {
             Ok(lookup) => lookup,
             Err(issue) => {
@@ -437,7 +441,7 @@ impl Flow<'_, '_> {
         let span = call.span;
         let leading = [receiver];
         let receiver = receiver.0;
-        match self.resolve(receiver, member, span) {
+        match self.resolve(receiver, member, Access::Any, span) {
             Resolved::Dynamic => unknown,
             Resolved::Missing | Resolved::Fallback { get: None, .. } => {
                 self.missing(receiver, within, member, span);
@@ -647,7 +651,7 @@ impl Flow<'_, '_> {
             span,
             callee: None,
         };
-        match self.resolve(receiver.0, member, span) {
+        match self.resolve(receiver.0, member, Access::Any, span) {
             Resolved::Dynamic => vec![CallTarget::dynamic(leading)],
             Resolved::Missing | Resolved::Fallback { get: None, .. } => {
                 self.missing(receiver.0, within, member, span);
@@ -716,7 +720,7 @@ impl Flow<'_, '_> {
             None => (None, vec![Some(receiver)]),
         };
         let resolved: Vec<_> = (alternatives.into_iter().flatten())
-            .map(|ty| (ty, self.resolve(ty, member, span)))
+            .map(|ty| (ty, self.resolve(ty, member, Access::Class, span)))
             .collect();
         let field = |resolved: &Resolved| matches!(resolved, Resolved::Field(_));
         let accessor = |resolved: &Resolved| {
@@ -1041,10 +1045,17 @@ impl Flow<'_, '_> {
     fn lacks(&mut self, ty: TypeId, member: Member, span: Span) -> bool {
         match self.alternatives(ty, span) {
             Some(alternatives) => alternatives.into_iter().all(|alternative| {
-                alternative
-                    .is_some_and(|ty| matches!(self.resolve(ty, member, span), Resolved::Missing))
+                alternative.is_some_and(|ty| {
+                    matches!(
+                        self.resolve(ty, member, Access::Any, span),
+                        Resolved::Missing
+                    )
+                })
             }),
-            None => matches!(self.resolve(ty, member, span), Resolved::Missing),
+            None => matches!(
+                self.resolve(ty, member, Access::Any, span),
+                Resolved::Missing
+            ),
         }
     }
 

@@ -564,3 +564,69 @@ do
 #    |             ^^^^^
 #    |
 #    = note: `std.Int` doesn't accept `std.Str`
+
+pub class Shadow: Func
+  pub def tag self -> Int
+    ...
+
+  #[class]
+  pub def tag cls -> Str
+    ...
+
+  pub def mode self -> Int
+    ...
+
+  #[class]
+  pub field mode @ Str = "a"
+
+  pub field level @ Int = 0
+
+  #[class]
+  pub field level @ Str = "a"
+
+  pub def (call) self -> Int
+    ...
+
+  #[class]
+  pub def (call) _cls n @ Int -> Str
+    ...
+
+pub class Inherits: Shadow
+
+pub class Labelled
+  pub def label self -> Int
+    ...
+
+pub class Relabelled: Labelled
+  #[class]
+  pub def label cls -> Str
+    ...
+
+# Through a class object, an instance method is found first, unbound. An
+# instance field isn't reached, and an assignment reaches only class members.
+pub def shadowed()
+  let t = Shadow.tag
+  let _ = t
+  #       ^: flow (m.Shadow) -> std.Int
+  let i = Inherits.tag
+  let _ = i
+  #       ^: flow (m.Shadow) -> std.Int
+  let r = Relabelled.label
+  let _ = r
+  #       ^: flow (m.Labelled) -> std.Int
+  let l = Shadow.level
+  let _ = l
+  #       ^: flow std.Str
+  Shadow.level = "b"
+  Shadow.mode = "b"
+  Shadow.mode = 1
+  # error: expected `std.Str`, found `1`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   Shadow.mode = 1
+  #    |                 ^
+
+  # Construction reaches only a class `(call)`
+  let s = Shadow 1
+  let _ = s
+  #       ^: flow std.Str

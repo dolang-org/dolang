@@ -35,7 +35,7 @@ use super::r#type::{
 
 /// A member of a generic class's object: its class, the class a private one is
 /// looked up through, and its key
-type GenericMember = (DeclId, Option<DeclId>, MemberKey);
+type GenericMember = (DeclId, Option<DeclId>, MemberKey, member::Access);
 
 macro_rules! id {
     ($name:ident) => {
@@ -2608,7 +2608,7 @@ use alternatives::Alternatives;
 pub(crate) use callable::{Constructor, Signature, bound_method};
 pub(crate) use conform::{Inheritance, Requirement, RequirementKind};
 pub(crate) use lattice::Widening;
-pub(crate) use member::{FoundKind, Lookup, Signatures};
+pub(crate) use member::{Access, FoundKind, Lookup, Signatures};
 pub(crate) use narrow::Target as NarrowTarget;
 pub(crate) use unpack::PatternShape;
 

@@ -86,18 +86,43 @@ enum Receiver {
     Dynamic,
 }
 
+/// What a use of a member reaches through a class object
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Access {
+    /// A read or call: an instance method first, unbound, then a class member
+    Any,
+    /// An assignment, or the class's own `(call)` constructing it: only a class
+    /// member
+    Class,
+}
+
 impl Solver<'_> {
     /// Look up an ordinary or special member of `receiver`. A private member is
     /// found with [`Self::private_member`].
     pub(crate) fn member(&self, receiver: Term, key: MemberKey) -> Result<Lookup, Issue> {
+        self.reach_member(receiver, None, key, Access::Any)
+    }
+
+    /// Look up a member of `receiver` as `access` reaches it, a private one of
+    /// `private`
+    pub(crate) fn reach_member(
+        &self,
+        receiver: Term,
+        private: Option<DeclId>,
+        key: MemberKey,
+        access: Access,
+    ) -> Result<Lookup, Issue> {
+        if let Some(class) = private {
+            return self.private_lookup(receiver, class, key, access);
+        }
         assert!(!key.private, "a private member is its class's own");
         if let Some(found) = self.function_call(receiver, key)? {
             return Ok(Lookup::Found(found));
         }
         match self.receiver(receiver)? {
             Receiver::Instance(nominal) => self.instance_member(nominal, key),
-            Receiver::Object(nominal) => self.object_member(nominal, key),
-            Receiver::Generic(class) => self.generic_member(class, None, key),
+            Receiver::Object(nominal) => self.object_member(nominal, key, access),
+            Receiver::Generic(class) => self.generic_member(class, None, key, access),
             Receiver::Missing => Ok(Lookup::Missing),
             Receiver::Dynamic => Ok(Lookup::Dynamic),
         }
@@ -139,22 +164,46 @@ impl Solver<'_> {
         class: DeclId,
         key: MemberKey,
     ) -> Result<Lookup, Issue> {
+        self.private_lookup(receiver, class, key, Access::Any)
+    }
+
+    fn private_lookup(
+        &self,
+        receiver: Term,
+        class: DeclId,
+        key: MemberKey,
+        access: Access,
+    ) -> Result<Lookup, Issue> {
         assert!(key.private, "an ordinary member is looked up by name");
-        let (nominal, instance) = match self.receiver(receiver)? {
-            Receiver::Instance(nominal) => (nominal, true),
-            Receiver::Object(nominal) => (nominal, false),
-            Receiver::Generic(generic) => return self.generic_member(generic, Some(class), key),
+        let (nominal, object) = match self.receiver(receiver)? {
+            Receiver::Instance(nominal) => (nominal, false),
+            Receiver::Object(nominal) => (nominal, true),
+            Receiver::Generic(generic) => {
+                return self.generic_member(generic, Some(class), key, access);
+            }
             Receiver::Missing => return Ok(Lookup::Missing),
             Receiver::Dynamic => return Ok(Lookup::Dynamic),
         };
         let Some(nominal) = self.ancestor(nominal, class, &mut HashSet::new(), 0)? else {
             return Ok(Lookup::Missing);
         };
-        let found = self.members(&nominal).find(|(found, member)| {
-            *found == key && (member.scope() == Scope::Instance) == instance
-        });
+        let member = |instance: bool| {
+            self.members(&nominal)
+                .find(|(found, member)| {
+                    *found == key && (member.scope() == Scope::Instance) == instance
+                })
+                .map(|(_, member)| member)
+        };
+        let found = match (object, access) {
+            (false, _) => member(true),
+            // A class object reaches an instance method first, unbound
+            (true, Access::Any) => member(true)
+                .filter(|member| matches!(member, Member::Method { .. } | Member::Decorated { .. }))
+                .or_else(|| member(false)),
+            (true, Access::Class) => member(false),
+        };
         Ok(match found {
-            Some((_, member)) => Lookup::Found(self.found(&nominal, member)),
+            Some(member) => Lookup::Found(self.found(&nominal, member)),
             None => Lookup::Missing,
         })
     }
@@ -347,12 +396,13 @@ impl Solver<'_> {
         class: DeclId,
         private: Option<DeclId>,
         key: MemberKey,
+        access: Access,
     ) -> Result<Lookup, Issue> {
-        let cached = (class, private, key);
+        let cached = (class, private, key, access);
         if let Some(lookup) = self.generic_members.borrow().get(&cached) {
             return lookup.clone();
         }
-        let lookup = self.lift_member(class, private, key);
+        let lookup = self.lift_member(class, private, key, access);
         (self.generic_members.borrow_mut()).insert(cached, lookup.clone());
         lookup
     }
@@ -362,6 +412,7 @@ impl Solver<'_> {
         class: DeclId,
         private: Option<DeclId>,
         key: MemberKey,
+        access: Access,
     ) -> Result<Lookup, Issue> {
         let db = self.db;
         let class_type =
@@ -384,10 +435,7 @@ impl Solver<'_> {
         });
         let solver = self.side_query(class);
         let receiver = solver.closed(object);
-        let found = match private {
-            Some(owner) => solver.private_member(receiver, owner, key)?,
-            None => solver.member(receiver, key)?,
-        };
+        let found = solver.reach_member(receiver, private, key, access)?;
         let Lookup::Found(found) = found else {
             return Ok(found);
         };
@@ -494,29 +542,35 @@ impl Solver<'_> {
         })
     }
 
-    pub(super) fn object_member(&self, nominal: Nominal, key: MemberKey) -> Result<Lookup, Issue> {
-        let class = nominal.declaration;
-        // A static member belongs to its class alone
-        let found = self.search(nominal.clone(), key, |owner, member| match member.scope() {
-            Scope::Instance => false,
-            Scope::Class => true,
-            Scope::Static => owner == class,
-        })?;
-        if !matches!(found, Lookup::Missing) {
-            return Ok(found);
-        }
-        // Only an instance method is reached through its class, unbound
-        Ok(
-            match self.search(nominal, key, |_, member| member.scope() == Scope::Instance)? {
+    /// A member of `nominal`'s class object. As at runtime, a read or call
+    /// reaches an instance method first, unbound, and then a class member. An
+    /// instance field or property isn't reached and hides nothing.
+    pub(super) fn object_member(
+        &self,
+        nominal: Nominal,
+        key: MemberKey,
+        access: Access,
+    ) -> Result<Lookup, Issue> {
+        if access == Access::Any {
+            match self.search(nominal.clone(), key, |_, member| {
+                member.scope() == Scope::Instance
+            })? {
                 Lookup::Found(found)
                     if matches!(found.kind, FoundKind::Method(_) | FoundKind::Unknown) =>
                 {
-                    Lookup::Found(found)
+                    return Ok(Lookup::Found(found));
                 }
-                Lookup::Dynamic => Lookup::Dynamic,
-                _ => Lookup::Missing,
-            },
-        )
+                Lookup::Dynamic => return Ok(Lookup::Dynamic),
+                _ => {}
+            }
+        }
+        // A static member belongs to its class alone
+        let class = nominal.declaration;
+        self.search(nominal, key, |owner, member| match member.scope() {
+            Scope::Instance => false,
+            Scope::Class => true,
+            Scope::Static => owner == class,
+        })
     }
 
     /// The first member of `key` in MRO order that `admits`

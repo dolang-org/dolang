@@ -184,6 +184,11 @@ another:
 assert_eq (type(Counter).bump(Derived)) 2
 ```
 
+Reading or calling `C.name` finds an instance method first, unbound, before a
+class or static member of the same name, which is then reachable only through
+`type(C)`. Instance fields and properties aren't reached through the class and
+hide nothing. Assigning `C.name = value` reaches only class and static members.
+
 Type-object accessors also take an explicit receiver:
 `C.(get)(instance, :field:)` and `C.(set)(instance, :field:, value)` address
 instance members. To address a class object's own fields, use

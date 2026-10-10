@@ -114,7 +114,7 @@ impl Solver<'_> {
             special: true,
             private: false,
         };
-        match solver.member(solver.closed(object), key("call")) {
+        match solver.reach_member(solver.closed(object), None, key("call"), Access::Class) {
             Ok(Lookup::Found(found)) if found.scope == Scope::Class => {
                 let signature = match &found.kind {
                     FoundKind::Method(signatures) => solver.reified(signatures),
@@ -267,7 +267,7 @@ impl Solver<'_> {
                 head if self.is_unknown(&head) => return Ok(None),
                 _ => return Err(Residual::Unsupported("a type object of a structural type").into()),
             };
-            match self.object_member(class.clone(), key)? {
+            match self.object_member(class.clone(), key, Access::Class)? {
                 Lookup::Found(found) if found.scope == Scope::Class => {
                     return self.bound(&found.kind);
                 }
