@@ -278,17 +278,21 @@ pub def looked d @ Dict[{a: Int, b: Str}] k @ Sym i @ Index[{a: Int}] o @ Dict[{
   let _ = b
   #       ^: flow std.Str
   let _ = d[:c:]
-  # error: this call selects by `:c:`, which isn't one of the schema's keys
+  # error: expected `:a: | :b:`, found `:c:`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _ = d[:c:]
-  #    |           ^^^^^^
+  #    |             ^^^
+  #    |
+  #    = note: `:c:` does not fit `:a: | :b:`
   let _ = d[k]
-  # error: this call selects by `std.Sym`, which isn't one of the schema's keys
+  # error: expected `:a: | :b:`, found `std.Sym`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _ = d[k]
-  #    |           ^^^^
+  #    |             ^
+  #    |
+  #    = note: `std.Sym` does not fit `:a: | :b:`
   let j = i[:a:]
   let _ = j
   #       ^: flow std.Int
@@ -339,7 +343,7 @@ pub def promoted p @ Dict[{Int, Str}] v @ Dict[{Int, *Bool}] c @ Dict[{Int, 0: S
     #       ^: flow std.Int | std.Str
   let pk = p.keys()
   let _ = pk
-  #       ^~: flow std.UnpackIter[0 | 1]
+  #       ^~: flow std.UnpackIter[std.Int]
   let vk = v.keys()
   let _ = vk
   #       ^~: flow std.UnpackIter[std.Int]
@@ -378,11 +382,13 @@ do
   # LL |   let _ = r[5]
   #    |           ^^^^
   let _ = r[y]
-  # error: this call selects by `std.Sym`, which isn't one of the schema's keys
+  # error: expected `:a: | std.Int`, found `std.Sym`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _ = r[y]
-  #    |           ^^^^
+  #    |             ^
+  #    |
+  #    = note: `std.Sym` does not fit `:a: | std.Int`
   let _ = w[1]
   #   ^: flow std.Str
   let _ = d[k]
@@ -394,11 +400,13 @@ do
   # LL |   d[:a:] = "x"
   #    |            ^^^
   d[:c:] = 1
-  # error: this call selects by `:c:`, which isn't one of the schema's keys
+  # error: expected `:a: | :b:`, found `:c:`
   #   --> m.dol:LL:LL
   #    |
   # LL |   d[:c:] = 1
-  #    |   ^^^^^^^^^^
+  #    |     ^^^
+  #    |
+  #    = note: `:c:` does not fit `:a: | :b:`
   s[:c:] = 1
   p[0] = "x"
   # error: expected `std.Int`, found `"x"`

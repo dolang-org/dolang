@@ -11,7 +11,6 @@ import shlex term
     - Url
   std:
     - @Index
-    - @IndexItem
     - @Spread
     - @Unpack
 
@@ -180,7 +179,7 @@ pub class OsRelease: @Index[Str, Str] @Unpack[Str, Str, Rest: Unpack[Str, Str]] 
     self.#values = values
 
   # Reads a parsed `os-release` assignment by key.
-  pub def (index)[K] self key @ K -> IndexItem[{*(Str): Str}, K]
+  pub def (index) self key @ Str -> Str
     self.#values[key]
 
   # Iterates the parsed `os-release` assignments.

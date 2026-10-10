@@ -1,0 +1,37 @@
+# dolang: strict
+# An item projection of a rigid schema by a rigid key is below the projection
+# of the schema's bound by the key's bound, so reading by a rigid key gives
+# the join of the values the bound's keys select
+
+import std:
+  - @IndexItem
+  - @Keys
+
+pub class Typed[S @ {format: Str, count: Int}]
+  field values @ Record[...S]
+
+  def (init) self values @ Record[...S]
+    self.#values = values
+
+  pub def join[K @ Keys[S]] self name @ K -> (Str | Int)
+    self.#values[name]
+
+  pub def single[K @ Keys[S]] self name @ K -> Str
+    self.#values[name]
+  # error: `std.IndexItem[S, K]` does not fit the declared result `std.Str`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |     self.#values[name]
+  #    |     ^^^^^^^^^^^^^^^^^^
+
+  # The result's projection implies the key's bound
+  pub def get[K] self name @ K -> IndexItem[S, K]
+    let value = self.#values[name]
+    let _ = (value @ (Str | Int))
+    let _ = (value @ Str)
+    # error: `std.IndexItem[S, K]` does not fit the cast's type `std.Str`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     let _ = (value @ Str)
+    #    |              ^^^^^
+    value

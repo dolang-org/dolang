@@ -674,7 +674,7 @@ impl Solver<'_> {
             }
             Head::Infer(_) => return Err(Residual::Inference.into()),
             Head::Skolem(id) => {
-                let Some(bound) = self.skolems[id.0].bound.get() else {
+                let Some((bound, _)) = self.abstract_bound(Abstract::Skolem(id)) else {
                     return Err(Residual::Unsupported("an included skolem without a bound").into());
                 };
                 return self.include_rigid(term, bound, multiplicity, item, keep, shape, depth);
@@ -724,11 +724,10 @@ impl Solver<'_> {
             }
             Type::Rigid { .. } => {
                 self.rigid(view.ty)?;
-                let Some(bound) = self.rigid_bound(view.ty) else {
+                let Some((bound, _)) = self.abstract_bound(Abstract::Rigid(view.ty)) else {
                     return Err(Residual::Unsupported("an included rigid without a bound").into());
                 };
                 let rigid = self.closed(view.ty);
-                let bound = self.closed(bound);
                 self.include_rigid(rigid, bound, multiplicity, item, keep, shape, depth)
             }
             Type::Map { packs, pattern } if multiplicity == Multiplicity::Required => {
@@ -902,15 +901,17 @@ impl Solver<'_> {
     /// The bound of a rigid or skolem an opaque stands for
     fn opaque_bound(&self, rigid: Term) -> Result<Term, Issue> {
         let bound = match self.head(rigid)? {
-            Head::Skolem(id) => self.skolems[id.0].bound.get(),
+            Head::Skolem(id) => self.abstract_bound(Abstract::Skolem(id)),
             Head::Structural(view) if self.rigid(view.ty)?.is_some() => {
-                self.rigid_bound(view.ty).map(|bound| self.closed(bound))
+                self.abstract_bound(Abstract::Rigid(view.ty))
             }
             _ => {
                 return Err(Residual::Unsupported("a mapping over a mapping over a rigid").into());
             }
         };
-        bound.ok_or_else(|| Residual::Unsupported("an included rigid without a bound").into())
+        bound
+            .map(|(bound, _)| bound)
+            .ok_or_else(|| Residual::Unsupported("an included rigid without a bound").into())
     }
 
     /// Relate mappings of the same pattern pack by pack, at the pattern's

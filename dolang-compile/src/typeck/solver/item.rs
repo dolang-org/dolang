@@ -11,8 +11,11 @@
 //! fit. A key member the schema doesn't admit whole is unadmitted, as a literal
 //! index past the fixed positions is.
 //!
-//! A rigid key is known only by its bound, so it selects exactly only where
-//! every item its bound selects has the same value.
+//! A rigid or skolem key is known only by its bounds, including those its
+//! projections imply (see [`Database::implied_bounds`]), so it selects a value
+//! only where every item one of them selects has that value. Otherwise an
+//! `IndexItem` by it stays unevaluated, and is related by widening its key
+//! toward the bound.
 //!
 //! The meet needs no intersection types where it matters: of two values, one
 //! below the other gives the lower, and two literals or classes that can't share
@@ -43,6 +46,63 @@ impl Solver<'_> {
             })
             .collect::<Result<Vec<_>, Issue>>()?;
         Ok(Some(self.db.intern(Type::Union(members.into()))))
+    }
+
+    /// A union holding a skolem with its item projections evaluated, or `None`
+    /// if it can't be. A skolem key is known only by its bounds, so it selects
+    /// a value where every item one of its bounds selects has that value. What
+    /// remains must be closed.
+    pub(super) fn evaluate_skolem_items(&self, view: TypeView) -> Result<Option<TypeId>, Issue> {
+        let Type::Union(members) = self.db.ty(view.ty) else {
+            return Ok(None);
+        };
+        let mut replaced = Vec::with_capacity(members.len());
+        for &member in members.iter() {
+            let (Some(key), Some(schema)) = (member.key(), member.projected()) else {
+                replaced.push(member);
+                continue;
+            };
+            let Term::Skolem(id) = self.resolve(view.child(key))? else {
+                replaced.push(member);
+                continue;
+            };
+            let Ok(schema) = self.reify(view.child(schema)) else {
+                return Ok(None);
+            };
+            let Ok(value) = self.bounded_item(schema, Abstract::Skolem(id)) else {
+                return Ok(None);
+            };
+            // A closed value means the same in the view's environment
+            replaced.push(UnionMember::Type(value));
+        }
+        let replaced = self.db.intern(Type::Union(replaced.into()));
+        Ok(self.reify(view.child(replaced)).ok())
+    }
+
+    /// The value a rigid or skolem key selects from a schema: that of every item
+    /// one of its bounds selects, where they all have it. Otherwise, why the
+    /// first bound selects none.
+    fn bounded_item(&self, schema: TypeId, key: Abstract) -> Result<TypeId, Issue> {
+        let mut first = None;
+        for (bound, _) in self.abstract_bounds(key) {
+            match self.selected_by_bound(schema, bound) {
+                Ok(value) => return Ok(value),
+                Err(issue) => {
+                    first.get_or_insert(issue);
+                }
+            }
+        }
+        Err(first.unwrap_or_else(|| Residual::Unsupported("a key without a bound").into()))
+    }
+
+    /// The value every item of a schema a bound selects has
+    fn selected_by_bound(&self, schema: TypeId, bound: Term) -> Result<TypeId, Issue> {
+        let bound = self.reify(bound)?;
+        let joined = self.item(schema, bound, false)?;
+        if joined != self.item(schema, bound, true)? {
+            return Err(Residual::Unsupported("a bounded key selecting different values").into());
+        }
+        Ok(joined)
     }
 
     /// The join, or with `meet` the meet, of the values of a schema's items a key
@@ -97,19 +157,10 @@ impl Solver<'_> {
             let UnionMember::Type(member) = member else {
                 return Err(Residual::Unsupported("a key with projections").into());
             };
-            // A rigid key is known only by its bound. Where each item the bound
-            // selects has the same value, the rigid selects that value too.
+            // A rigid key is known only by its bounds. Where each item one of
+            // them selects has the same value, the rigid selects that value too.
             if self.rigid(member)?.is_some() {
-                let Some(bound) = self.rigid_bound(member) else {
-                    return Err(Residual::Unsupported("a rigid key without a bound").into());
-                };
-                let joined = self.item(schema, bound, false)?;
-                if joined != self.item(schema, bound, true)? {
-                    return Err(
-                        Residual::Unsupported("a rigid key selecting different values").into(),
-                    );
-                }
-                values.push(joined);
+                values.push(self.bounded_item(schema, Abstract::Rigid(member))?);
                 continue;
             }
             let member = self.db.regular(member);

@@ -171,9 +171,9 @@ impl Solver<'_> {
                 Type::Literal(literal) => literal.intrinsic(),
                 Type::Rigid { .. } => {
                     self.rigid(view.ty)?;
-                    match self.rigid_bound(view.ty) {
-                        Some(bound) => {
-                            term = self.closed(bound);
+                    match self.abstract_bound(Abstract::Rigid(view.ty)) {
+                        Some((bound, _)) => {
+                            term = bound;
                             continue;
                         }
                         None => return Ok(None),

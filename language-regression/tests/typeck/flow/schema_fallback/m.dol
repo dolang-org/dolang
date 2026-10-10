@@ -54,7 +54,8 @@ do
   # LL |   let _ = q.missing
   #    |           ^^^^^^^^^
   #    |
-  #    = note: `(get)`: this call selects by `:missing:`, which isn't one of the schema's keys
+  #    = note: `(get)`: expected `:count: | :format:`, found `:missing:`
+  #    = note: `:missing:` does not fit `:count: | :format:`
   let _ = t.missing
   # error: `typed.Typed[{format: std.Str}]` has no member `missing`
   #   --> m.dol:LL:LL
@@ -128,7 +129,8 @@ do
   # LL |   q.missing = 1
   #    |   ^^^^^^^^^^^^^
   #    |
-  #    = note: `(set)`: this call selects by `:missing:`, which isn't one of the schema's keys
+  #    = note: `(set)`: expected `:cb: | :count: | :items:`, found `:missing:`
+  #    = note: `:missing:` does not fit `:cb: | :count: | :items:`
 
 pub def unions
   u @ (Named[{a: Int}] | Named[{a: Str}])
@@ -143,7 +145,8 @@ do
   # LL |   let _ = v.a
   #    |           ^^^
   #    |
-  #    = note: `(get)`: this call selects by `:a:`, which isn't one of the schema's keys
+  #    = note: `(get)`: expected `:b:`, found `:a:`
+  #    = note: `:a:` does not fit `:b:`
   v.a = 1
   # error: `lib.Plain[{b: std.Str}]` in `lib.Named[{a: std.Int}] | lib.Plain[{b: std.Str}]` has no member `a`
   #   --> m.dol:LL:LL
@@ -151,4 +154,5 @@ do
   # LL |   v.a = 1
   #    |   ^^^^^^^
   #    |
-  #    = note: `(set)`: this call selects by `:a:`, which isn't one of the schema's keys
+  #    = note: `(set)`: expected `:b:`, found `:a:`
+  #    = note: `:a:` does not fit `:b:`

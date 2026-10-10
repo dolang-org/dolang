@@ -122,8 +122,9 @@ struct Flow<'a, 'u> {
     declared: Vec<Option<Function>>,
     /// The function of the running block
     current: Option<FuncId>,
-    /// The declarations whose rigids states may hold, which every solver assumes
-    scope: Vec<DeclId>,
+    /// The declarations whose rigids states may hold, which every solver assumes,
+    /// each with the rigids its group is checked under
+    scope: Vec<(DeclId, Vec<TypeId>)>,
     /// Each block's place in the queue: its reverse postorder index
     rank: Vec<u32>,
     /// Whether a block is the target of an edge that retreats in that order
@@ -166,9 +167,10 @@ impl<'a, 'u> Flow<'a, 'u> {
             if let FuncKind::Decl(decl) = func.kind {
                 let key = (decl, tables.primary_sig(decl));
                 for binder in tables.groups.get(&key).into_iter().flatten() {
-                    let owner = tables.sig_decls[&(binder.decl, binder.sig)];
-                    if !scope.contains(&owner) {
-                        scope.push(owner);
+                    let key = (binder.decl, binder.sig);
+                    let owner = tables.sig_decls[&key];
+                    if !scope.iter().any(|(decl, _)| *decl == owner) {
+                        scope.push((owner, tables.group_rigids(db, key)));
                     }
                 }
             }
@@ -322,8 +324,8 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// A solver that holds the region's rigids as its assumptions
     fn solver(&self) -> Solver<'a> {
         let mut solver = Solver::new(self.db);
-        for &decl in &self.scope {
-            solver.assume(decl);
+        for (decl, rigids) in &self.scope {
+            solver.assume_group(*decl, rigids.clone());
         }
         if !self.strict() {
             solver.gradual();

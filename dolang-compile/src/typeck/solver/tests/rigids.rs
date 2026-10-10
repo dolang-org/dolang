@@ -264,3 +264,93 @@ fn reach_walks_rigids_through_their_bounds() {
         Ok(Reach::Dynamic)
     ));
 }
+
+#[test]
+fn item_projections_imply_rigid_key_bounds() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let bound = items(&db, vec![keyed(Multiplicity::Repeated, str, int)]);
+    let s = db.intern(Type::Bound {
+        reference: BoundRef::new(0, 0),
+        kind: Kind::Schema,
+    });
+    let k = reference(&db, 0, 1);
+    let binders = || {
+        vec![
+            bounded(Kind::Schema, Binding::Positional, Some(bound)),
+            binder(Variance::Invariant),
+        ]
+    };
+    // f[S @ {*(Str): Int}, K] (K) -> IndexItem[S, K]
+    let body = function(&db, &[k], selecting(&db, false, s, k));
+    let f = generic(&mut db, binders(), body);
+    // g[S @ {*(Str): Int}, K] (K) -> Int
+    let body = function(&db, &[k], int);
+    let g = generic(&mut db, binders(), body);
+    db.seal();
+    // `K` is below `Keys[S]`, so below `Str`
+    let mut solver = Solver::new(&db);
+    let env = solver.rigid_environment(f);
+    solver.constrain(
+        solver.view(k, env),
+        solver.view(str, env),
+        Provenance::default(),
+    );
+    let outcome = solver.solve().remove(0);
+    assert_eq!(outcome.status, Status::Proven, "{outcome:?}");
+    assert!((solver.obligations.iter()).any(|o| {
+        o.active
+            .borrow()
+            .iter()
+            .any(|(_, step)| *step == Step::ImpliedBound)
+    }));
+    let outcome = under(&db, f, k, int);
+    assert_eq!(outcome.status, Status::Contradicted, "{outcome:?}");
+    // Without a projection by it, `K` is unbounded
+    let outcome = under(&db, g, k, str);
+    assert_eq!(outcome.status, Status::Contradicted, "{outcome:?}");
+}
+
+#[test]
+fn a_lifted_binder_bounds_as_the_enclosing_rigid() {
+    let mut db = Database::new();
+    let s = db.intern(Type::Bound {
+        reference: BoundRef::new(0, 0),
+        kind: Kind::Schema,
+    });
+    let keys = db.intern(Type::Union(vec![UnionMember::Keys(s)].into()));
+    let schema = || bounded(Kind::Schema, Binding::Positional, None);
+    let top = db.top();
+    // c[S] encloses f[S, K @ Keys[S]], lifted over `S`
+    let c = generic(&mut db, vec![schema()], top);
+    let f = generic(
+        &mut db,
+        vec![
+            schema(),
+            bounded(Kind::Type, Binding::Positional, Some(keys)),
+        ],
+        top,
+    );
+    db.seal();
+    let outer = db.rigids(c)[0];
+    let k = db.rigids(f)[1];
+    let expected = db.intern(Type::Union(vec![UnionMember::Keys(outer)].into()));
+    // Checked as its body is, `f`'s `S` is `c`'s, so `K` is below `Keys` of it
+    for grouped in [false, true] {
+        let mut solver = Solver::new(&db);
+        solver.assume(c);
+        match grouped {
+            true => solver.assume_group(f, vec![outer, k]),
+            false => solver.assume(f),
+        }
+        let (k, expected) = (solver.closed(k), solver.closed(expected));
+        solver.constrain(k, expected, Provenance::default());
+        let outcome = solver.solve().remove(0);
+        assert_eq!(
+            outcome.status == Status::Proven,
+            grouped,
+            "{grouped}: {outcome:?}"
+        );
+    }
+}

@@ -597,8 +597,6 @@ fn projections_fold_what_their_schemas_are_known_to_hold() {
             item(Multiplicity::Required, Element::Positional(three)),
         ],
     );
-    let keys_expected = union(&mut db, &[a, b, zero]);
-    assert_eq!(keys(&mut db, closed), keys_expected);
     let values_expected = union(&mut db, &[one, two, three]);
     assert_eq!(values(&mut db, closed), values_expected);
     // Without a designated `Tuple`, entries stay whole
@@ -607,13 +605,12 @@ fn projections_fold_what_their_schemas_are_known_to_hold() {
         db.ty(kept),
         Type::Union(members) if members[..] == [UnionMember::Entries(closed)]
     ));
-    // A position's key is its index, and an empty schema projects to nothing
+    // An empty schema projects to nothing
     let positional = schema(&mut db, &[three]);
-    assert_eq!(keys(&mut db, positional), zero);
     let empty = schema(&mut db, &[]);
     assert_eq!(values(&mut db, empty), bottom);
-    // A position that may be missing varies, so its key is `Int`, which stays a
-    // projection until `Int` is designated
+    // Positions are selected by `Int`, so their key is `Int`, which stays a
+    // projection until `Int` is designated, whether or not they vary
     let varying = items(
         &mut db,
         vec![
@@ -621,15 +618,20 @@ fn projections_fold_what_their_schemas_are_known_to_hold() {
             item(Multiplicity::Optional, Element::Positional(two)),
         ],
     );
-    let kept = keys(&mut db, varying);
-    assert!(matches!(
-        db.ty(kept),
-        Type::Union(members) if members[..] == [UnionMember::Keys(varying)]
-    ));
+    for schema in [varying, closed, positional] {
+        let kept = keys(&mut db, schema);
+        assert!(matches!(
+            db.ty(kept),
+            Type::Union(members) if members[..] == [UnionMember::Keys(schema)]
+        ));
+    }
     let (id, int, source) = declare(&mut db, DeclKind::Class, "Int");
     db.set_intrinsic(Intrinsic::Int, int);
     db.populate(id, definition(source, int));
     assert_eq!(keys(&mut db, varying), int);
+    assert_eq!(keys(&mut db, positional), int);
+    let keys_expected = union(&mut db, &[a, b, int]);
+    assert_eq!(keys(&mut db, closed), keys_expected);
     // `{...}` has every key and value
     let open = items(
         &mut db,
@@ -659,8 +661,8 @@ fn projections_fold_what_their_schemas_are_known_to_hold() {
     assert_eq!(keys(&mut db, partial), expected);
     // Substituting the pack evaluates the rest
     let substituted = db.substitute(expected, &[positional]);
-    let a_zero = union(&mut db, &[a, zero]);
-    assert_eq!(substituted, a_zero);
+    let a_int = union(&mut db, &[a, int]);
+    assert_eq!(substituted, a_int);
     // Beside a position, its positions' indexes depend on it, so the whole
     // projection waits
     let after = items(
