@@ -108,6 +108,13 @@ impl Dump<'_, '_> {
                 }
             }
         }
+        if !func.escapes.is_empty() {
+            write!(out, ", escapes")?;
+            for &var in &func.escapes {
+                write!(out, " ")?;
+                self.var(out, var)?;
+            }
+        }
         let bottom: Vec<_> = (func.vars.iter())
             .filter(|&&var| self.ir.var(var).bottom)
             .collect();
@@ -196,6 +203,20 @@ impl Dump<'_, '_> {
             }
             Step::Dup => write!(out, "dup"),
             Step::Pop => write!(out, "pop"),
+            Step::Capture(funcs) => {
+                write!(out, "capture")?;
+                for &func in funcs {
+                    write!(out, " f{}(", func.index())?;
+                    for (index, &var) in self.ir.func(func).escapes.iter().enumerate() {
+                        if index > 0 {
+                            write!(out, " ")?;
+                        }
+                        self.var(out, var)?;
+                    }
+                    write!(out, ")")?;
+                }
+                Ok(())
+            }
             Step::Assume(assume) => {
                 write!(out, "assume ")?;
                 self.var(out, assume.var)?;

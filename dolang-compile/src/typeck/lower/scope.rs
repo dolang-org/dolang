@@ -295,15 +295,29 @@ impl<'u> Scope<'_, '_, 'u> {
         }
     }
 
+    /// Record a variable as captured, and as escaping through the function its
+    /// owner creates that this one is in
     pub(super) fn capture(&self, var: VarId) {
         let graph = self.graph();
-        if graph.var(var).owner == self.ctx.func {
+        let owner = graph.var(var).owner;
+        if owner == self.ctx.func {
             return;
         }
         graph.var_mut(var).interprocedural = true;
         let mut func = graph.func_mut(self.ctx.func);
         if !func.captures.contains(&var) {
             func.captures.push(var);
+        }
+        drop(func);
+        let mut outer = self.ctx.func;
+        while let Some(parent) = graph.func(outer).parent
+            && parent != owner
+        {
+            outer = parent;
+        }
+        let mut func = graph.func_mut(outer);
+        if !func.escapes.contains(&var) {
+            func.escapes.push(var);
         }
     }
 

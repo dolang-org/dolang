@@ -12,8 +12,15 @@ fn module(graph: &Graph) -> FuncId {
     graph.alloc_func(FuncKind::Module(UnitId::from_index(0)), None)
 }
 
+/// A function nested in `parent`, created at the start of its entry block
 fn closure(graph: &Graph, parent: FuncId) -> FuncId {
-    graph.alloc_func(FuncKind::Decl(DeclId::from_index(0)), Some(parent))
+    let func = graph.alloc_func(FuncKind::Decl(DeclId::from_index(0)), Some(parent));
+    let entry = graph.func(parent).entry;
+    graph
+        .block_mut(entry)
+        .steps
+        .insert(0, Step::Capture(vec![func]));
+    func
 }
 
 fn terminate(graph: &Graph, block: BlockId, terminal: Terminal) {
@@ -71,6 +78,7 @@ fn well_formed() {
     let (lambda_entry, lambda_exit) = {
         let mut func = graph.func_mut(lambda);
         func.captures.push(x);
+        func.escapes.push(x);
         (func.entry, func.exit)
     };
     graph.var_mut(x).interprocedural = true;
@@ -187,7 +195,7 @@ fn non_local() {
     );
 
     // `for x = xs` around `each items do break`
-    let func = graph.alloc_func(FuncKind::Decl(DeclId::from_index(1)), Some(top));
+    let func = closure(&graph, top);
     let (func_entry, func_exit) = {
         let func = graph.func(func);
         (func.entry, func.exit)
@@ -484,6 +492,69 @@ fn lambdas() {
             lambda: inner
         })
     );
+}
+
+#[test]
+fn captures() {
+    /// A module with a closure created `count` times, in the module's entry block
+    /// or else the closure's own
+    fn created(in_parent: bool, count: usize) -> Result<(), Invalid> {
+        let graph = Graph::new();
+        let top = returning(&graph);
+        let lambda = graph.alloc_func(FuncKind::Decl(DeclId::from_index(0)), Some(top));
+        let (entry, exit) = {
+            let func = graph.func(lambda);
+            (func.entry, func.exit)
+        };
+        terminate(&graph, entry, Terminal::Branch(exit));
+        let block = if in_parent {
+            graph.func(top).entry
+        } else {
+            entry
+        };
+        for _ in 0..count {
+            push(&graph, block, Step::Capture(vec![lambda]));
+        }
+        graph.freeze().validate()
+    }
+
+    assert_eq!(created(true, 1), Ok(()));
+    assert!(matches!(created(true, 0), Err(Invalid::Capture(_))));
+    assert!(matches!(created(true, 2), Err(Invalid::Capture(_))));
+    assert!(matches!(created(false, 1), Err(Invalid::Capture(_))));
+
+    /// A closure escaping a variable owned by the module or else the closure,
+    /// with the given origin, volatile or not
+    fn escaping(owner_is_parent: bool, origin: Origin, volatile: bool) -> Result<(), Invalid> {
+        let graph = Graph::new();
+        let top = returning(&graph);
+        let lambda = closure(&graph, top);
+        let owner = if owner_is_parent { top } else { lambda };
+        let var = graph.alloc_var(owner, origin, None);
+        graph.var_mut(var).volatile = volatile;
+        let (entry, exit) = {
+            let mut func = graph.func_mut(lambda);
+            func.escapes.push(var);
+            (func.entry, func.exit)
+        };
+        terminate(&graph, entry, Terminal::Branch(exit));
+        graph.freeze().validate()
+    }
+
+    let source = Origin::Source(Span::INVALID);
+    assert_eq!(escaping(true, source, false), Ok(()));
+    assert!(matches!(
+        escaping(false, source, false),
+        Err(Invalid::Escape { .. })
+    ));
+    assert!(matches!(
+        escaping(true, source, true),
+        Err(Invalid::Escape { .. })
+    ));
+    assert!(matches!(
+        escaping(true, Origin::Signature, false),
+        Err(Invalid::Escape { .. })
+    ));
 }
 
 #[test]

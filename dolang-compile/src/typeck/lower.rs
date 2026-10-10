@@ -153,8 +153,17 @@ impl<'t, 'u> Lower<'t, 'u> {
         }
     }
 
-    /// Fill in the guards' targets and freeze the graph
+    /// Fill in the guards' targets, keep in each function's escapes only the
+    /// variables joined where they escape, and freeze the graph. Whether a variable
+    /// is volatile is known only now.
     fn finish(self) -> Ir {
+        for id in self.graph.func_ids() {
+            let mut func = self.graph.func_mut(id);
+            func.escapes.retain(|&var| {
+                let var = self.graph.var(var);
+                !var.volatile && var.origin != Origin::Signature
+            });
+        }
         for (guard, targets) in self.guards.take() {
             let mut seen = HashSet::new();
             let targets: Vec<_> = targets.into_iter().filter(|&t| seen.insert(t)).collect();

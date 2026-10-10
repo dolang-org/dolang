@@ -16,12 +16,16 @@
 //! edge unreachable when nothing is left. A branch on a duplicated stack entry
 //! also narrows the entry it copied, which a short circuit leaves as its result.
 //!
-//! State shared between functions isn't flow-sensitive. An ivar's assignments, in
-//! any function, join into an accumulator, which every function but its owner
-//! reads it as. Its owner caches its type in its state, and narrows it there,
-//! unless it's volatile: assigned by another function, whose calls could change it
-//! at any time. A volatile variable's owner reads the accumulator too, and keeps
-//! only whether it may be unassigned; to narrow it, copy it to a local first. A
+//! State shared between functions isn't flow-sensitive. An ivar joins into an
+//! accumulator, which every function but its owner reads it as. Its owner caches
+//! its type in its state, and narrows it there, unless it's volatile: assigned by
+//! another function, whose calls could change it at any time. A volatile
+//! variable's owner reads the accumulator too, and keeps only whether it may be
+//! unassigned; to narrow it, copy it to a local first. Every assignment to a
+//! volatile variable joins its accumulator. Any other ivar joins what its owner
+//! holds when a function it escapes through is created, at a [`Step::Capture`],
+//! and each assignment on a path after one: no function that reads it can run
+//! before. A
 //! non-local return joins its value into its def's result the same way, as does a
 //! `do` block's signature: what the calls it's passed to give its parameters and
 //! channels, and its result. A block that reads a joined type depends on it, and
@@ -233,6 +237,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 .collect();
             let state = State {
                 vars,
+                escaped: vec![false; func.vars.len()],
                 stack: Vec::new(),
                 dup: false,
             };
@@ -530,8 +535,12 @@ impl<'a, 'u> Flow<'a, 'u> {
         let stack = (old.stack.iter().zip(&state.stack))
             .map(|(&old, &new)| self.lub(old, new))
             .collect();
+        let escaped = (old.escaped.iter().zip(&state.escaped))
+            .map(|(&old, &new)| old || new)
+            .collect();
         let joined = State {
             vars,
+            escaped,
             stack,
             dup: old.dup && state.dup,
         };
@@ -696,6 +705,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         };
         let state = State {
             vars: state.vars.clone(),
+            escaped: state.escaped.clone(),
             stack: vec![self.db.top()],
             dup: false,
         };
@@ -787,7 +797,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                         unassigned: fact.unassigned,
                     };
                 }
-                if data.interprocedural {
+                if self.publishes(at, state, *var) {
                     self.join(*var, ty);
                 }
             }
@@ -809,8 +819,41 @@ impl<'a, 'u> Flow<'a, 'u> {
                 state.stack.pop().expect("a value to discard");
             }
             Step::Assume(assume) => return self.assume(at, state, assume),
+            Step::Capture(funcs) => {
+                for &func in funcs {
+                    for &var in &self.ir.func(func).escapes {
+                        self.escape(state, var);
+                    }
+                }
+            }
         }
         true
+    }
+
+    /// A variable escapes through a function being created: what its owner holds
+    /// joins its accumulator, and every assignment after does too. A type that
+    /// doesn't fit its annotation, such as one with a default's sentinel, joins
+    /// with the annotation.
+    fn escape(&mut self, state: &mut State, var: VarId) {
+        let slot = self.slots[var.index()];
+        state.escaped[slot] = true;
+        let ty = state.vars[slot].ty;
+        let ty = match self.ir.var(var).annotation {
+            Some(annotation) if self.relate(ty, annotation).status == Status::Contradicted => {
+                self.lub(annotation, ty)
+            }
+            _ => ty,
+        };
+        self.join(var, ty);
+    }
+
+    /// Whether assigning a variable joins its accumulator: an ivar's assignment by
+    /// another function, or by its owner once it may have escaped or if it's
+    /// volatile
+    fn publishes(&self, at: At, state: &State, var: VarId) -> bool {
+        let data = self.ir.var(var);
+        data.interprocedural
+            && (data.volatile || data.owner != at.func || state.escaped[self.slots[var.index()]])
     }
 
     /// The type an assignment stores: a literal assigned to a declared local decays
@@ -871,7 +914,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 unassigned: false,
             };
         }
-        if data.interprocedural {
+        if self.publishes(at, state, var) {
             // A value that doesn't fit the annotation is reported where it's
             // written, and every read elsewhere sees the annotation instead
             let joined = match data.annotation {
@@ -1325,7 +1368,7 @@ fn throws(step: &Step) -> bool {
         Step::Let { pattern, value } => matches!(pattern, Pattern::Unpack(_)) || has_rule(value),
         Step::Assign { target, value } => !matches!(target, Target::Var(_)) || has_rule(value),
         Step::Default { value, .. } | Step::Eval(value) | Step::Push(value) => has_rule(value),
-        Step::Dup | Step::Pop | Step::Assume(_) => false,
+        Step::Dup | Step::Pop | Step::Assume(_) | Step::Capture(_) => false,
     }
 }
 

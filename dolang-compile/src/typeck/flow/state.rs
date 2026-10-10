@@ -18,6 +18,9 @@ pub(crate) struct Fact {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct State {
     pub(super) vars: Vec<Fact>,
+    /// By slot, whether some path has created a function its variable escapes
+    /// through, so that assigning it joins its accumulator
+    pub(super) escaped: Vec<bool>,
     pub(super) stack: Vec<TypeId>,
     /// Whether the top of the stack is a `Dup` of the slot below it, which a
     /// branch on it narrows too
