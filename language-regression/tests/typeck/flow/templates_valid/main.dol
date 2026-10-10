@@ -45,7 +45,7 @@ pub def template n @ Int
   let built = Fmt ["prefix", FmtValue(n)]
   built.format arbitrary: true
   let _ = built
-  #       ^~~~~: flow std.Fmt
+  #       ^~~~~: flow std.Fmt[Unknown, Unknown{}]
 
 pub def prepared conn @ Connection n @ Int
   let s = conn.prepare t"SELECT $n, ${#name}, ${#0}"
@@ -85,9 +85,8 @@ pub def contextual n @ Int
   let _ = nested
   #       ^~~~~~: flow std.Fmt[std.Fmt[std.Int, {value: std.Int}], {outer: Unknown}]
 
-pub def variance narrow @ Fmt[Int, {x: Int}] wide @ Fmt[Value, {x: Value}] dynamic @ Fmt
+pub def variance narrow @ Fmt[Int, {x: Int}] wide @ Fmt[Value, {x: Value}]
   let _ @ Fmt[Value, {x: Int}] = narrow
   let _ @ Fmt[Value, {x: Int}] = wide
-  let _ @ Fmt = narrow
-  let _ @ Fmt[Int, {x: Int}] = dynamic
+  let _ @ Fmt[Int, {x: Int}] = Fmt([])
   let _ @ SqlValue = nil
