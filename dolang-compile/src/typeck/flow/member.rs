@@ -10,7 +10,7 @@
 //!
 //! [`Solver::member`]: crate::typeck::solver::Solver::member
 
-use std::{cell::Cell, collections::VecDeque};
+use std::{cell::Cell, collections::VecDeque, slice};
 
 use super::{
     At, Flow, State,
@@ -696,7 +696,7 @@ impl Flow<'_, '_> {
     }
 
     /// Writing a member: a field's type must admit the value, and a setter or
-    /// `(set)` is called with it
+    /// `(set)` is called with it as its argument
     #[expect(clippy::too_many_arguments, reason = "a write's parts")]
     pub(super) fn set(
         &mut self,
@@ -705,7 +705,7 @@ impl Flow<'_, '_> {
         operands: &mut VecDeque<TypeId>,
         object: &Expr,
         member: Member,
-        value: &Expr,
+        value: &Item,
         span: Span,
     ) {
         let receiver = self.eval(at, state, operands, object);
@@ -718,6 +718,36 @@ impl Flow<'_, '_> {
         let resolved: Vec<_> = (alternatives.into_iter().flatten())
             .map(|ty| (ty, self.resolve(ty, member, span)))
             .collect();
+        let field = |resolved: &Resolved| matches!(resolved, Resolved::Field(_));
+        let accessor = |resolved: &Resolved| {
+            matches!(
+                resolved,
+                Resolved::Property {
+                    setter: Some(_),
+                    ..
+                } | Resolved::Fallback { set: Some(_), .. }
+            )
+        };
+        // Without a field, the value is an argument of each setter or `(set)`
+        if resolved.iter().any(|(_, resolved)| accessor(resolved))
+            && !resolved.iter().any(|(_, resolved)| field(resolved))
+        {
+            let targets = (resolved.into_iter())
+                .map(|(receiver, resolved)| {
+                    let receiver = (receiver, object.span);
+                    self.write_target(receiver, within, member, resolved, span)
+                        .unwrap_or_else(|| CallTarget::dynamic(&[]))
+                })
+                .collect();
+            let call = Call {
+                args: slice::from_ref(value),
+                expected: None,
+                span,
+                callee: None,
+            };
+            self.call_targets(at, state, operands, targets, call);
+            return;
+        }
         // The value is expected to be what every field takes, if they agree
         let mut fields = resolved.iter().map(|(_, resolved)| match resolved {
             Resolved::Field(ty) => Some(*ty),
@@ -727,6 +757,7 @@ impl Flow<'_, '_> {
             .next()
             .flatten()
             .filter(|&ty| fields.all(|other| other == Some(ty)));
+        let value = value.pos();
         let written = self.expect(at, state, operands, value, expected);
         let written = (written, value.span);
         for (receiver, resolved) in resolved {
@@ -737,8 +768,8 @@ impl Flow<'_, '_> {
         }
     }
 
-    /// Writing `written` to a resolved member of a receiver that isn't a union, or
-    /// of an alternative of the union `within`
+    /// Writing `written`, already evaluated, to a resolved member of a receiver
+    /// that isn't a union, or of an alternative of the union `within`
     #[expect(clippy::too_many_arguments, reason = "a write's parts")]
     fn written(
         &mut self,
@@ -752,44 +783,68 @@ impl Flow<'_, '_> {
         written: (TypeId, Span),
         span: Span,
     ) {
+        if let Resolved::Field(ty) = resolved {
+            self.store(at, written.0, ty, written.1);
+            return;
+        }
+        let Some(mut target) = self.write_target(receiver, within, member, resolved, span) else {
+            return;
+        };
+        target.receivers.push(written);
         let call = Call {
             args: &[],
             expected: None,
             span,
             callee: None,
         };
-        match resolved {
-            Resolved::Dynamic => {}
+        self.call_targets(at, state, operands, vec![target], call);
+    }
+
+    /// What writing a resolved member that isn't a field calls, passing the value
+    /// after its receivers: a setter, or `(set)` passed the member's name first.
+    /// `None` if the member is dynamic, or can't be written, which is reported.
+    fn write_target(
+        &mut self,
+        receiver: (TypeId, Span),
+        within: Option<TypeId>,
+        member: Member,
+        resolved: Resolved,
+        span: Span,
+    ) -> Option<CallTarget> {
+        let (signature, receivers, called) = match resolved {
+            Resolved::Dynamic => return None,
             Resolved::Missing | Resolved::Fallback { set: None, .. } => {
                 self.missing(receiver.0, within, member, span);
+                return None;
             }
-            Resolved::Field(ty) => self.store(at, written.0, ty, written.1),
-            Resolved::Method(..) => self.misuse(member, span, MemberUse::Method),
+            Resolved::Field(_) => unreachable!("a field is stored"),
+            Resolved::Method(..) => {
+                self.misuse(member, span, MemberUse::Method);
+                return None;
+            }
+            Resolved::Property { setter: None, .. } => {
+                self.misuse(member, span, MemberUse::Write);
+                return None;
+            }
             Resolved::Property {
                 setter: Some(setter),
                 passed,
                 ..
             } => {
-                let receivers = [receiver, written];
-                let receivers = &receivers[usize::from(!passed)..];
-                let call = Call {
-                    callee: Some(member),
-                    ..call
-                };
-                self.call_signature(at, state, operands, &setter, receivers, call);
-            }
-            Resolved::Property { setter: None, .. } => {
-                self.misuse(member, span, MemberUse::Write);
+                let receivers = if passed { vec![receiver] } else { vec![] };
+                (setter, receivers, member)
             }
             Resolved::Fallback { set: Some(set), .. } => {
-                let receivers = [receiver, (self.name_literal(member), span), written];
-                let call = Call {
-                    callee: Some(self.special("set")),
-                    ..call
-                };
-                self.call_signature(at, state, operands, &set, &receivers, call);
+                let name = (self.name_literal(member), span);
+                (set, vec![receiver, name], self.special("set"))
             }
-        }
+        };
+        Some(CallTarget {
+            signature,
+            receivers,
+            member: Some(called),
+            instance: None,
+        })
     }
 
     /// Indexing: `(index)` called with the index
@@ -804,57 +859,39 @@ impl Flow<'_, '_> {
         let ExprKind::Index { object, index } = &expr.kind else {
             unreachable!("an index")
         };
-        let index = index.pos();
         let receiver = self.eval(at, state, operands, object);
-        let key = self.eval(at, state, operands, index);
         let call = Call {
-            args: &[],
+            args: slice::from_ref(&**index),
             expected,
             span: expr.span,
             callee: None,
         };
         let member = self.special("index");
         let receiver = (receiver, object.span);
-        self.send(
-            at,
-            state,
-            operands,
-            receiver,
-            member,
-            &[(key, index.span)],
-            call,
-        )
+        self.send(at, state, operands, receiver, member, &[], call)
     }
 
-    /// Assigning at an index: `(assign)` called with the index and the value
+    /// Assigning at an index: `(assign)` called with `args`, the index and the
+    /// value
     pub(super) fn assign_index(
         &mut self,
         at: At,
         state: &mut State,
         operands: &mut VecDeque<TypeId>,
-        [object, index, value]: [&Expr; 3],
+        object: &Expr,
+        args: &[Item],
         span: Span,
     ) {
         let receiver = self.eval(at, state, operands, object);
-        let key = self.eval(at, state, operands, index);
-        let written = self.eval(at, state, operands, value);
         let call = Call {
-            args: &[],
+            args,
             expected: None,
             span,
             callee: None,
         };
         let member = self.special("assign");
-        let leading = [(key, index.span), (written, value.span)];
-        self.send(
-            at,
-            state,
-            operands,
-            (receiver, object.span),
-            member,
-            &leading,
-            call,
-        );
+        let receiver = (receiver, object.span);
+        self.send(at, state, operands, receiver, member, &[], call);
     }
 
     /// A unary operator: `!` is a `Bool`, and the others call the operand's

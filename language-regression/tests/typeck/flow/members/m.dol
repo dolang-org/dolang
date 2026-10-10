@@ -451,3 +451,116 @@ pub def dict_methods d @ Dict[{a: Int, ?b: Str}] k @ (:a: | :b:)
 pub def tuple_get t @ Tuple[Int, Str]
   let _ = t.get 0
   #   ^: flow nil | std.Int | std.Str
+
+# An assigned value is a setter's, `(set)`'s or `(assign)`'s argument, so it's
+# expected to be what the parameter takes, as a field's value is expected to be
+# the field's type
+pub class Holder
+  pub field cb @ ((Int) -> Str) = do |_x| ""
+  field saved @ ((Int) -> Str) = do |_x| ""
+
+  #[getter]
+  pub def cb2 self -> ((Int) -> Str)
+    self.#saved
+
+  #[setter]
+  pub def cb2 self f @ ((Int, <Value, >Value) -> Str)
+    self.#saved = f
+
+  #[getter]
+  pub def items self -> Array[(Int | Str)]
+    ...
+
+  #[setter]
+  pub def items self items @ Array[(Int | Str)]
+    ...
+
+pub class Other
+  #[getter]
+  pub def cb2 self -> ((Int) -> Str)
+    ...
+
+  #[setter]
+  pub def cb2 self f @ ((Int) -> Str)
+    ...
+
+pub class Hooks
+  pub def (get) self name @ Sym -> ((Int) -> Str)
+    ...
+
+  pub def (set) self name @ Sym f @ ((Int) -> Str)
+    ...
+
+pub def assigned
+  h @ Holder
+  u @ (Holder | Other)
+  k @ Hooks
+  d @ Dict[Str, ((Int) -> Str)]
+  a @ Array[((Int) -> Str)]
+do
+  h.cb = do |z| "$z"
+  h.cb = do |z| z
+  # error: expected `(std.Int) -> std.Str`, found `(std.Int) -> std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   h.cb = do |z| z
+  #    |          ^^^^^^^^
+  #    |
+  #    = note: `std.Int` does not fit `std.Str`
+  h.cb2 = do |z| "$z"
+  h.cb2 = do |z| z
+  # error: expected `(std.Int) -> std.Str`, found `(std.Int) -> std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   h.cb2 = do |z| z
+  #    |           ^^^^^^^^
+  #    |
+  #    = note: `std.Int` does not fit `std.Str`
+  u.cb2 = do |z| "$z"
+  u.cb2 = do |z| z
+  # error: expected `(std.Int) -> std.Str`, found `(std.Int) -> std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   u.cb2 = do |z| z
+  #    |           ^^^^^^^^
+  #    |
+  #    = note: `std.Int` does not fit `std.Str`
+  k.anything = do |z| "$z"
+  k.anything = do |z| z
+  # error: expected `(std.Int) -> std.Str`, found `(std.Int) -> std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   k.anything = do |z| z
+  #    |                ^^^^^^^^
+  #    |
+  #    = note: `std.Int` does not fit `std.Str`
+  d["k"] = do |z| "$z"
+  d["k"] = do |z| z
+  # error: expected `(std.Int) -> std.Str`, found `(std.Int) -> std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   d["k"] = do |z| z
+  #    |            ^^^^^^^^
+  #    |
+  #    = note: `std.Int` does not fit `std.Str`
+  a[0] = do |z| "$z"
+  a[0] = do |z| z
+  # error: expected `(std.Int) -> std.Str`, found `(std.Int) -> std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   a[0] = do |z| z
+  #    |          ^^^^^^^^
+  #    |
+  #    = note: `std.Int` does not fit `std.Str`
+
+  # A fresh array takes the element type it's expected to have
+  h.items = [1]
+  let items = [1]
+  h.items = items
+# error: expected `[std.Int | std.Str]`, found `[std.Int]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   h.items = items
+#    |             ^^^^^
+#    |
+#    = note: `std.Int` doesn't accept `std.Str`

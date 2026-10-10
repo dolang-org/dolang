@@ -752,18 +752,19 @@ impl<'a, 'u> Flow<'a, 'u> {
                         self.assign(at, state, var, ty, value.span);
                     }
                     Target::Field {
-                        ref object, member, ..
+                        ref object,
+                        member,
+                        value: ref item,
                     } => {
                         let span = object.span | value.span;
-                        self.set(at, state, &mut operands, object, member, value, span);
+                        self.set(at, state, &mut operands, object, member, item, span);
                     }
                     Target::Index {
                         ref object,
                         ref args,
                     } => {
-                        let parts = [object, args[0].pos(), value];
                         let span = object.span | value.span;
-                        self.assign_index(at, state, &mut operands, parts, span);
+                        self.assign_index(at, state, &mut operands, object, &args[..], span);
                     }
                     Target::Import {
                         ref module,
