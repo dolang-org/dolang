@@ -8,13 +8,13 @@ pub def narrow value @ (Int | Str)
     let _ = value
     #       ^~~~~: flow std.Str
 
-pub def generic value @ (Array[Int] | Str)
+pub def generic value @ (Array[Int] | nil)
   if let Array(xs) = value
     let _ = xs
     #       ^~: flow [std.Int]
   else
     let _ = value
-    #       ^~~~~: flow std.Str
+    #       ^~~~~: flow nil
 
 pub def nested value @ Tuple[Int | Str, Bool]
   let Int(n) b = value
@@ -23,13 +23,13 @@ pub def nested value @ Tuple[Int | Str, Bool]
   let _ = b
   #       ^: flow std.Bool
 
-pub def failed_unpack value @ (Array[Int] | Str)
+pub def failed_unpack value @ (Array[Int] | nil)
   if let Array((x)) = value
     let _ = x
     #       ^: flow std.Int
   else
     let _ = value
-    #       ^~~~~: flow [std.Int] | std.Str
+    #       ^~~~~: flow [std.Int] | nil
 
 pub def falsy value @ Bool
   if let Bool(b) = value
@@ -57,7 +57,7 @@ pub def parameter()
     let _ = x
     #       ^: flow std.Int
 
-pub def vertical value @ (Array[Int] | Str)
+pub def vertical value @ (Array[Int] | nil)
   if bind value
     Array $
       xs
@@ -66,7 +66,7 @@ pub def vertical value @ (Array[Int] | Str)
     #       ^~: flow [std.Int]
   else
     let _ = value
-    #       ^~~~~: flow std.Str
+    #       ^~~~~: flow nil
 
 pub def asserted value @ (Int | Str)
   let Int(n) = value

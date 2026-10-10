@@ -95,7 +95,7 @@ fn value(s: &Solver<'_>, ty: TypeId, negated: bool, target: TypeId) -> TypeId {
 fn generic_union_alias_preserves_narrowed_arguments() {
     let mut db = Database::new();
     let int = intrinsic(&mut db, "Int", Intrinsic::Int);
-    let str = intrinsic(&mut db, "Str", Intrinsic::Str);
+    let nil = intrinsic(&mut db, "Nil", Intrinsic::Nil);
     let wrapper = nominal(
         &mut db,
         "Wrapper",
@@ -103,7 +103,7 @@ fn generic_union_alias_preserves_narrowed_arguments() {
         vec![],
     );
     let wrapped = apply(&db, wrapper, &[reference(&db, 0, 0)]);
-    let body = union(&db, &[str, wrapped]);
+    let body = union(&db, &[nil, wrapped]);
     let body = quantified(&db, vec![binder(Variance::Covariant)], body);
     let segment = alias(&mut db, "Segment", body);
     let segment = apply(&db, segment, &[int]);
@@ -114,7 +114,7 @@ fn generic_union_alias_preserves_narrowed_arguments() {
         class(&s, segment, Relation::Upper, false, wrapper),
         expected
     );
-    assert_eq!(class(&s, segment, Relation::Upper, true, wrapper), str);
+    assert_eq!(class(&s, segment, Relation::Upper, true, wrapper), nil);
 }
 
 #[test]
@@ -134,11 +134,15 @@ fn upper_bounds_keep_reaching_members() {
     assert_eq!(upper(w.db.unknown()), w.sub);
     // Unproven reach becomes `C` too
     assert_eq!(upper(w.odd), w.sub);
-    // Literals of another class and intrinsics `C` isn't below are disjoint
+    // Literals of another class, and `Nil` and `Bool`, whose values are all
+    // literals, are disjoint
     assert_eq!(upper(w.int_lit(1)), bottom);
     assert_eq!(upper(w.nil_lit()), bottom);
-    assert_eq!(upper(w.int), bottom);
-    assert_eq!(upper(w.str), bottom);
+    assert_eq!(upper(w.nil), bottom);
+    assert_eq!(upper(w.bool), bottom);
+    // Another intrinsic's subclass may be a `C`
+    assert_eq!(upper(w.int), w.sub);
+    assert_eq!(upper(w.str), w.sub);
     // An intrinsic above `C` isn't disjoint from it
     assert_eq!(class(&s, w.int, Relation::Upper, false, w.my_int), w.my_int);
     assert_eq!(
@@ -148,9 +152,9 @@ fn upper_bounds_keep_reaching_members() {
 
     let mixed = union(&w.db, &[w.subsub, w.other, w.int, w.nil_lit()]);
     assert_eq!(upper(mixed), w.sub);
-    let mixed = union(&w.db, &[w.subsub, w.int, w.nil_lit()]);
+    let mixed = union(&w.db, &[w.subsub, w.nil, w.nil_lit()]);
     assert_eq!(upper(mixed), w.subsub);
-    assert_eq!(upper(union(&w.db, &[w.int, w.str])), bottom);
+    assert_eq!(upper(union(&w.db, &[w.nil, w.bool])), bottom);
 }
 
 #[test]

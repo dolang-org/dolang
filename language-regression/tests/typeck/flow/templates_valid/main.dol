@@ -17,7 +17,10 @@ pub def template n @ Int
   let _ = segments
   #       ^~~~~~~~: flow [std.FmtSegment[std.Int]]
   for part = segments
+    # A subclass of `Str` may also be a `FmtValue` of any argument
     if let FmtParam(_) = part
+      nil
+    else if let Str(_) = part
       nil
     else if let FmtValue(bound) = part
       let _ = bound
@@ -42,7 +45,7 @@ pub def template n @ Int
   let built = Fmt ["prefix", FmtValue(n)]
   built.format arbitrary: true
   let _ = built
-  #       ^~~~~: flow std.Fmt[]
+  #       ^~~~~: flow std.Fmt
 
 pub def prepared conn @ Connection n @ Int
   let s = conn.prepare t"SELECT $n, ${#name}, ${#0}"
