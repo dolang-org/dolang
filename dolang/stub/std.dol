@@ -1288,7 +1288,7 @@ pub class Bin: @Index[Range[Int], Bin]
   # endpoints count from the end. Negative steps reverse the slice.
   #
   # Indexes the value.
-  pub def (index)[K] self key@K -> IndexItem[{*(Range[Int]): Bin}, K]
+  pub def (index) self range@Range[Int] -> Bin
     ...
 
   #
@@ -4265,7 +4265,7 @@ pub class Str: @Index[Range[Int], Str]
   # boundaries. Omitted `start` means `0`, omitted `end` means the string length,
   # and negative endpoints count from the end.
   # Indexes the value.
-  pub def (index)[K] self key@K -> IndexItem[{*(Range[Int]): Str}, K]
+  pub def (index) self range@Range[Int] -> Str
     ...
 
   # Returns an iterator.
@@ -4566,11 +4566,11 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
   # to be the same length as the range it replaces. Both the range and the
   # assigned value's boundaries must land on UTF-8 code point boundaries.
   #
-  pub def (index)[K] self key@K -> IndexItem[{*(Range[Int]): Str}, K]
+  pub def (index) self range@Range[Int] -> Str
     ...
 
   # Assigns through an index.
-  pub def (assign)[K] self key@K value@AssignItem[{*(Range[Int]): Str}, K]
+  pub def (assign) self range@Range[Int] value@Str
     ...
 
   pub def (put) self value @ Value
