@@ -4,8 +4,13 @@ LSP server for Do using `tower-lsp-server` and `tokio`. Document state
 recompiles on every change to provide diagnostics and semantic tokens.
 
 Compilation runs on a dedicated worker thread, so handlers never block the
-event loop. Handlers send the worker each document's text, and answer requests
-from the latest stored `Document` without waiting for it. The worker keeps the
+event loop. Handlers send the worker each document's text. Each open or edit
+starts a revision, a shared future of its `Document`, which replaces the
+document's newest revision unless a newer one arrived first. A request awaits
+the newest revision, since its positions refer to the text the client last
+sent; ordering requests after edits is left to the client. If the worker passes
+over a revision, superseded or failing to compile it, the request answers from
+the last stored `Document`. The worker keeps the
 `Unit<'static>` it last compiled for each open document, reusing it when the
 text and settings are unchanged. It projects each unit into a `Document`
 holding the unit (whose source is the document's text), semantic tokens,

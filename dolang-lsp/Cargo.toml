@@ -24,6 +24,10 @@ version = "6.0.0"
 version = "0.11.8"
 
 
+[dependencies.futures]
+workspace = true
+
+
 [dependencies.log]
 version = "0.4.28"
 
@@ -58,10 +62,6 @@ features = ["derive"]
 workspace = true
 
 [build-dependencies.dolang-compile]
-workspace = true
-
-
-[dev-dependencies.futures]
 workspace = true
 
 

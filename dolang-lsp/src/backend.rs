@@ -9,6 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use futures::future::{FutureExt, Shared};
 use tokio::sync::{
     Mutex as AsyncMutex,
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
@@ -664,7 +665,13 @@ type Documents = Arc<Mutex<HashMap<Uri, Arc<Document>>>>;
 struct Epochs {
     last: u64,
     open: HashMap<Uri, u64>,
+    /// The newest revision of each open document
+    revisions: HashMap<Uri, (Stamp, Revision)>,
 }
+
+/// A document's projection of one revision of its text, once the worker has
+/// made it, or an error if the worker passed over the revision.
+type Revision = Shared<oneshot::Receiver<Arc<Document>>>;
 
 pub(crate) struct Backend {
     documents: Documents,
@@ -684,8 +691,9 @@ struct Job {
     stamp: Option<Stamp>,
     settings: Option<Arc<Settings>>,
     encoding: PositionEncodingKind,
-    /// Told once the projection is stored and its diagnostics published
-    done: Option<oneshot::Sender<()>>,
+    /// Given the projection once it is stored and its diagnostics published,
+    /// and dropped if the worker passes over the job
+    done: oneshot::Sender<Arc<Document>>,
 }
 
 enum Request {
@@ -699,7 +707,7 @@ enum Event {
         uri: Uri,
         document: Document,
         diagnostics: Vec<Diagnostic>,
-        done: Option<oneshot::Sender<()>>,
+        done: oneshot::Sender<Arc<Document>>,
     },
     /// A check of the document's projection with the given stamp, with its
     /// compile diagnostics
@@ -907,7 +915,7 @@ impl Worker {
 }
 
 /// Stores a projection unless the document already has a newer one.
-fn apply(documents: &Documents, uri: Uri, document: Document) -> bool {
+fn apply(documents: &Documents, uri: Uri, document: Arc<Document>) -> bool {
     let mut documents = documents.lock().expect("documents lock poisoned");
     if documents
         .get(&uri)
@@ -915,7 +923,7 @@ fn apply(documents: &Documents, uri: Uri, document: Document) -> bool {
     {
         return false;
     }
-    documents.insert(uri, Arc::new(document));
+    documents.insert(uri, document);
     true
 }
 
@@ -938,13 +946,12 @@ async fn publish(client: Client, documents: Documents, mut events: UnboundedRece
                 diagnostics,
                 done,
             } => {
+                let document = Arc::new(document);
                 let version = document.stamp.version;
-                if apply(&documents, uri.clone(), document) {
+                if apply(&documents, uri.clone(), document.clone()) {
                     client.publish_diagnostics(uri, diagnostics, version).await;
                 }
-                if let Some(done) = done {
-                    _ = done.send(());
-                }
+                _ = done.send(document);
             }
             Event::Checked {
                 uri,
@@ -1272,10 +1279,46 @@ impl Backend {
         }
     }
 
-    /// The latest projection of a document.
-    fn document(&self, uri: &Uri) -> Option<Arc<Document>> {
+    /// The projection of the newest revision of a document the client has
+    /// sent, once the worker has made it.
+    ///
+    /// A request's positions refer to the text the client last sent, so
+    /// answering from an older projection would misplace them.
+    async fn document(&self, uri: &Uri) -> Option<Arc<Document>> {
+        let revision = {
+            let epochs = self.epochs.lock().expect("epochs lock poisoned");
+            epochs
+                .revisions
+                .get(uri)
+                .map(|(_, revision)| revision.clone())
+        };
+        if let Some(revision) = revision
+            && let Ok(document) = revision.await
+        {
+            return Some(document);
+        }
+        // The worker passed over the revision, superseded or failing to
+        // compile it, so the last projection stored is the best there is
         let documents = self.documents.lock().expect("documents lock poisoned");
         documents.get(uri).cloned()
+    }
+
+    /// Makes a revision the newest of an open document unless a newer one has
+    /// arrived first, returning the sender to go with its job.
+    fn revise(&self, uri: &Uri, stamp: Stamp) -> oneshot::Sender<Arc<Document>> {
+        let (done, revision) = oneshot::channel();
+        let mut epochs = self.epochs.lock().expect("epochs lock poisoned");
+        if epochs.open.contains_key(uri)
+            && epochs
+                .revisions
+                .get(uri)
+                .is_none_or(|(newest, _)| *newest < stamp)
+        {
+            epochs
+                .revisions
+                .insert(uri.clone(), (stamp, revision.shared()));
+        }
+        done
     }
 
     /// The epoch a document was opened in, or 0 if it is not open.
@@ -1290,7 +1333,7 @@ impl Backend {
         uri: Uri,
         text: String,
         stamp: Option<Stamp>,
-        done: Option<oneshot::Sender<()>>,
+        done: oneshot::Sender<Arc<Document>>,
     ) {
         let Some(path) = uri_to_file_path(&uri).map(Cow::into_owned) else {
             return;
@@ -1739,7 +1782,8 @@ impl LanguageServer for Backend {
             epoch,
             version: Some(version),
         };
-        self.submit(uri, text, Some(stamp), None).await
+        let done = self.revise(&uri, stamp);
+        self.submit(uri, text, Some(stamp), done).await
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -1749,7 +1793,8 @@ impl LanguageServer for Backend {
             version: Some(params.text_document.version),
         };
         let text = params.content_changes.into_iter().next().unwrap().text;
-        self.submit(uri, text, Some(stamp), None).await
+        let done = self.revise(&uri, stamp);
+        self.submit(uri, text, Some(stamp), done).await
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
@@ -1761,7 +1806,7 @@ impl LanguageServer for Backend {
         }
         if let Some(text) = params.text {
             let (done, stored) = oneshot::channel();
-            self.submit(params.text_document.uri, text, None, Some(done))
+            self.submit(params.text_document.uri, text, None, done)
                 .await;
             // Refresh once the saved text's tokens are stored, or the worker
             // has passed over it
@@ -1774,7 +1819,7 @@ impl LanguageServer for Backend {
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
-        let Some(document) = self.document(&params.text_document.uri) else {
+        let Some(document) = self.document(&params.text_document.uri).await else {
             return Ok(None);
         };
         Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
@@ -1787,7 +1832,7 @@ impl LanguageServer for Backend {
         &self,
         params: CodeActionParams,
     ) -> Result<Option<Vec<CodeActionOrCommand>>> {
-        let Some(document) = self.document(&params.text_document.uri) else {
+        let Some(document) = self.document(&params.text_document.uri).await else {
             return Ok(None);
         };
 
@@ -1840,6 +1885,7 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri;
         let epoch = {
             let mut epochs = self.epochs.lock().expect("epochs lock poisoned");
+            epochs.revisions.remove(&uri);
             epochs.open.remove(&uri).unwrap_or(0)
         };
         // Through the worker, so the document is dropped after any projection
@@ -1863,7 +1909,9 @@ impl LanguageServer for Backend {
         &self,
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
-        let Some(document) = self.document(&params.text_document_position_params.text_document.uri)
+        let Some(document) = self
+            .document(&params.text_document_position_params.text_document.uri)
+            .await
         else {
             return Ok(None);
         };
@@ -1882,7 +1930,9 @@ impl LanguageServer for Backend {
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
-        let Some(document) = self.document(&params.text_document_position_params.text_document.uri)
+        let Some(document) = self
+            .document(&params.text_document_position_params.text_document.uri)
+            .await
         else {
             return Ok(None);
         };
@@ -1906,7 +1956,7 @@ impl LanguageServer for Backend {
         &self,
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
-        let Some(document) = self.document(&params.text_document.uri) else {
+        let Some(document) = self.document(&params.text_document.uri).await else {
             return Ok(None);
         };
         let symbols = document.symbols.clone();
@@ -1915,7 +1965,7 @@ impl LanguageServer for Backend {
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         let uri = &params.text_document_position.text_document.uri;
-        let Some(document) = self.document(uri) else {
+        let Some(document) = self.document(uri).await else {
             return Ok(None);
         };
         let Some(decl) = document.decl_at(&params.text_document_position.position) else {
@@ -1936,7 +1986,7 @@ impl LanguageServer for Backend {
         params: DocumentHighlightParams,
     ) -> Result<Option<Vec<DocumentHighlight>>> {
         let uri = &params.text_document_position_params.text_document.uri;
-        let Some(document) = self.document(uri) else {
+        let Some(document) = self.document(uri).await else {
             return Ok(None);
         };
         let Some(decl) = document.decl_at(&params.text_document_position_params.position) else {
@@ -3055,6 +3105,23 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn requests_after_an_edit_see_it() {
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///edit-tokens-test.dol".parse().unwrap();
+        harness.open(uri.clone(), "let a = 1\n", 1).await;
+
+        // Asked before the edit's projection has been published
+        harness
+            .change(uri.clone(), "# moved\nlet a = 1\necho $a\n", 2)
+            .await;
+        let tokens = semantic_tokens(&mut harness, uri.clone()).await;
+        assert_eq!(harness.next_publish().await.version, Some(2));
+        assert_eq!(tokens, semantic_tokens(&mut harness, uri.clone()).await);
+        token_at(&tokens, 2, 6);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn did_save_requests_semantic_token_refresh() {
         let mut harness = Harness::new();
         harness.initialize(vec![PositionEncodingKind::UTF16]).await;
@@ -3134,22 +3201,22 @@ mod tests {
         harness.open(uri.clone(), newer, 2).await;
 
         let backend = harness.service.inner();
-        let stored = backend.document(&uri).unwrap();
+        let stored = backend.document(&uri).await.unwrap();
         let stale = Stamp {
             version: Some(1),
             ..stored.stamp
         };
         let unit = Arc::new(compile_document(path, older.to_owned(), None));
         let (document, _) = project(&uri, stale, unit, &PositionEncodingKind::UTF16);
-        assert!(!apply(&backend.documents, uri.clone(), document));
-        let document = backend.document(&uri).unwrap();
+        assert!(!apply(&backend.documents, uri.clone(), Arc::new(document)));
+        let document = backend.document(&uri).await.unwrap();
         assert_eq!(document.unit.source(), newer);
         assert_eq!(document.tokens, stored.tokens);
 
         // Reopening starts a new epoch, which outranks every earlier version
         let reopened = harness.open(uri.clone(), older, 1).await;
         assert_eq!(reopened.version, Some(1));
-        let document = harness.service.inner().document(&uri).unwrap();
+        let document = harness.service.inner().document(&uri).await.unwrap();
         assert_eq!(document.unit.source(), older);
     }
 
@@ -3167,7 +3234,7 @@ mod tests {
             .await;
         assert_eq!(published.version, Some(3));
         harness.quiet().await;
-        let document = harness.service.inner().document(&uri).unwrap();
+        let document = harness.service.inner().document(&uri).await.unwrap();
         assert_eq!(document.unit.source(), "let c = 3\n");
     }
 
@@ -3281,7 +3348,7 @@ mod tests {
         harness.open(uri.clone(), "let a = 1\n", 2).await;
 
         let backend = harness.service.inner();
-        let stored = backend.document(&uri).unwrap().stamp;
+        let stored = backend.document(&uri).await.unwrap().stamp;
         let older = Stamp {
             version: Some(1),
             ..stored
