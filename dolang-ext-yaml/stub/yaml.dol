@@ -52,7 +52,7 @@ pub @let Encodable = $
 # #>   - decode
 # #> import test:
 # #>   - assert_eq
-# let doc = decode |
+# let Dict(doc) = decode |
 #   name: Alice
 #   enabled: true
 #   ports:

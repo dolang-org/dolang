@@ -313,7 +313,8 @@ assert_eq $seq.format() "hello    Alice!"
 
 # But the interpolated value is still there.
 assert_eq $seq.len 3
-assert_eq $seq[1].value $name
+let std.FmtValue(segment) = seq[1]
+assert_eq $segment.value $name
 ```
 
 Every interpolation is a [`FmtValue`](std.FmtValue), whether or not

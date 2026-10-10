@@ -3,9 +3,9 @@
 
 # Supertype for stateful digest handles.
 #
-# Subtype of [`Sink`](std.Sink). Putting a [`Str`](std.Str)
-# or [`Bin`](std.Bin) value updates the digest state with its bytes.
-pub class State
+# Putting a [`Str`](std.Str) or [`Bin`](std.Bin) value updates the digest
+# state with its bytes.
+pub class State: Sink[Str | Bin]
   # Returns the current digest bytes without consuming the handle.
   #
   # ## Returns

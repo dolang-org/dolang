@@ -1,12 +1,13 @@
 # title: Data Formats
 import base64 digest json toml yaml
 
-let data = json.decode r|
+let Dict(data) = json.decode r|
   {
     "name": "Do",
     "numbers": [1, 2, 3]
   }
-data["numbers"].push 4
+let Array(numbers) = data["numbers"]
+numbers.push 4
 
 let outputs = $
   toml: (toml.encode data)
