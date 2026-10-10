@@ -3,7 +3,7 @@ import { Decoration, EditorView, keymap, lineNumbers, type DecorationSet } from 
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { setDiagnostics } from '@codemirror/lint';
 import { AnsiUp } from 'ansi_up';
-import type { Diagnostic, PageCall, Reply, Request, TokenRange } from './protocol';
+import type { AnalysisReply, AnalysisRequest, Diagnostic, PageCall, RunReply, RunRequest, TokenRange } from './protocol';
 import { examples } from './examples';
 import { decodeSource, encodeSource } from './share';
 import './style.css';
@@ -33,16 +33,21 @@ const highlights = StateField.define<DecorationSet>({
 // How long a canceled run may take to unwind before its worker is replaced.
 const stopGraceMs = 1000;
 
+// A worker and its generation; replies from replaced workers are ignored.
+interface Slot { worker?: Worker; generation: number; ready: boolean }
+const analysis: Slot = { generation: 0, ready: false };
+const runner: Slot = { generation: 0, ready: false };
+
 let version = 0;
 let requestId = 0;
 let latestAnalysis = 0;
+let analysisVersion: number | undefined;
+// The source version whose analysis made the analysis worker fail.
+let failedAnalysis: number | undefined;
 let activeRun: number | undefined;
 let stopping = false;
 let stopTimer: ReturnType<typeof setTimeout> | undefined;
 let outputVersion: number | undefined;
-let worker: Worker;
-let generation = 0;
-let ready = false;
 let timer: ReturnType<typeof setTimeout>;
 let view: EditorView;
 // Output decoders for the active run. Both keep state across writes, which may
@@ -71,25 +76,28 @@ async function initialSource(): Promise<{ doc: string, label: string }> {
 }
 
 function controls() {
-  runButton.disabled = !ready || activeRun !== undefined;
+  runButton.disabled = !runner.ready || activeRun !== undefined;
   stopButton.disabled = activeRun === undefined || stopping;
 }
 function showSnapshot() {
   element('snapshot').textContent = outputVersion !== undefined && outputVersion !== version ? '(earlier source)' : '';
 }
-function post(message: Request) {
-  worker.postMessage(message);
+function postAnalysis(message: AnalysisRequest) {
+  analysis.worker?.postMessage(message);
 }
-function send(type: 'analyze' | 'run'): number {
-  const id = ++requestId;
-  post({ type, id, version, source: view.state.doc.toString() });
-  return id;
+function postRun(message: RunRequest) {
+  runner.worker?.postMessage(message);
+}
+function requestAnalysis() {
+  clearTimeout(timer);
+  if (!analysis.ready || version === failedAnalysis) return;
+  latestAnalysis = ++requestId;
+  analysisVersion = version;
+  postAnalysis({ type: 'analyze', id: latestAnalysis, version, source: view.state.doc.toString() });
 }
 function scheduleAnalysis() {
   clearTimeout(timer);
-  timer = setTimeout(() => {
-    if (ready && activeRun === undefined) latestAnalysis = send('analyze');
-  }, 200);
+  timer = setTimeout(requestAnalysis, 200);
 }
 function setError(message: string) {
   element('error').textContent = message;
@@ -129,82 +137,116 @@ function endStop() {
   clearTimeout(stopTimer);
   stopping = false;
 }
-function replaceWorker(message = 'Loading…') {
-  clearTimeout(timer);
-  endStop();
-  worker?.terminate();
-  const currentGeneration = ++generation;
-  ready = false;
-  activeRun = undefined;
-  status.textContent = message;
-  controls();
-  worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
-  worker.onmessage = (event: MessageEvent<Reply>) => {
-    if (currentGeneration !== generation) return;
+// Replaces `slot`'s worker with `worker`. `crash` handles a failure after the
+// worker is ready; a failure while loading stops the playground.
+function start<R extends AnalysisReply | RunReply>(slot: Slot, worker: Worker, handlers: {
+  ready: () => void;
+  crash: (message: string) => void;
+  reply: (reply: R) => void;
+}) {
+  slot.worker?.terminate();
+  const generation = ++slot.generation;
+  slot.ready = false;
+  slot.worker = worker;
+  const fail = (message: string) => {
+    if (slot.ready) handlers.crash(message);
+    else failLoad(message);
+  };
+  worker.onmessage = (event: MessageEvent<R>) => {
+    if (generation !== slot.generation) return;
     const reply = event.data;
     if (reply.type === 'ready') {
-      ready = true;
-      status.textContent = 'Ready';
-      controls();
-      scheduleAnalysis();
+      slot.ready = true;
+      handlers.ready();
     } else if (reply.type === 'failure') {
-      failWorker(reply.message);
-    } else if (reply.type === 'analysis') {
-      if (reply.version !== version || reply.id !== latestAnalysis || activeRun !== undefined) return;
-      view.dispatch({ effects: tokenEffect.of(reply.value.tokens) });
-      showDiagnostics(reply.value.diagnostics);
-    } else if (reply.type === 'call') {
-      try {
-        hostCall(reply.id, reply);
-        post({ type: 'return', callId: reply.callId });
-      } catch (error) {
-        post({ type: 'return', callId: reply.callId, error: String(error) });
-      }
-    } else if (reply.type === 'abortCall') {
-      // Page calls complete synchronously, so there is nothing to abort.
-    } else if (reply.id === activeRun) {
-      appendOutput(decoder.decode());
-      endStop();
-      activeRun = undefined;
-      outputVersion = reply.version;
-      setError(reply.value.error ?? '');
-      status.textContent = reply.value.canceled ? 'Stopped' : reply.value.error ? 'Failed' : 'Finished';
-      showSnapshot();
-      if (reply.version === version) showDiagnostics(reply.value.diagnostics);
-      controls();
-      scheduleAnalysis();
+      fail(reply.message);
+    } else {
+      handlers.reply(reply);
     }
   };
   worker.onerror = event => {
-    if (currentGeneration !== generation) return;
+    if (generation !== slot.generation) return;
     event.preventDefault();
-    failWorker(event.message);
+    fail(event.message);
   };
 }
-function failWorker(message: string) {
+function failLoad(message: string) {
   setError(message);
-  if (ready) {
-    replaceWorker('Restarting…');
-  } else {
-    worker.terminate();
-    generation++;
-    ready = false;
-    activeRun = undefined;
-    endStop();
-    status.textContent = 'Could not load playground. Reload to retry.';
-    controls();
+  clearTimeout(timer);
+  for (const slot of [analysis, runner]) {
+    slot.worker?.terminate();
+    slot.generation++;
+    slot.ready = false;
   }
+  activeRun = undefined;
+  endStop();
+  status.textContent = 'Could not load playground. Reload to retry.';
+  controls();
+}
+function startAnalysisWorker() {
+  start<AnalysisReply>(analysis, new Worker(new URL('./analysis-worker.ts', import.meta.url), { type: 'module' }), {
+    ready: requestAnalysis,
+    crash(message) {
+      setError(message);
+      // Wait for an edit rather than failing on the same source again.
+      failedAnalysis = analysisVersion;
+      startAnalysisWorker();
+    },
+    reply(reply) {
+      if (reply.type !== 'analysis' || reply.version !== version || reply.id !== latestAnalysis) return;
+      view.dispatch({ effects: tokenEffect.of(reply.value.tokens) });
+      showDiagnostics(reply.value.diagnostics);
+    },
+  });
+}
+function replaceRunWorker(message = 'Loading…') {
+  endStop();
+  activeRun = undefined;
+  status.textContent = message;
+  start<RunReply>(runner, new Worker(new URL('./run-worker.ts', import.meta.url), { type: 'module' }), {
+    ready() {
+      status.textContent = 'Ready';
+      controls();
+    },
+    crash(message) {
+      setError(message);
+      replaceRunWorker('Restarting…');
+    },
+    reply(reply) {
+      if (reply.type === 'call') {
+        try {
+          hostCall(reply.id, reply);
+          postRun({ type: 'return', callId: reply.callId });
+        } catch (error) {
+          postRun({ type: 'return', callId: reply.callId, error: String(error) });
+        }
+      } else if (reply.type === 'abortCall') {
+        // Page calls complete synchronously, so there is nothing to abort.
+      } else if (reply.type === 'result' && reply.id === activeRun) {
+        appendOutput(decoder.decode());
+        endStop();
+        activeRun = undefined;
+        outputVersion = reply.version;
+        setError(reply.value.error ?? '');
+        status.textContent = reply.value.canceled ? 'Stopped' : reply.value.error ? 'Failed' : 'Finished';
+        showSnapshot();
+        if (reply.version === version) showDiagnostics(reply.value.diagnostics);
+        controls();
+      }
+    },
+  });
+  controls();
 }
 function startRun() {
-  if (!ready || activeRun !== undefined) return;
-  clearTimeout(timer);
+  if (!runner.ready || activeRun !== undefined) return;
   element('output').textContent = '';
   decoder = new TextDecoder();
   ansi = newAnsi();
   setError('');
   outputVersion = version;
   showSnapshot();
-  activeRun = send('run');
+  activeRun = ++requestId;
+  postRun({ type: 'run', id: activeRun, version, source: view.state.doc.toString() });
   status.textContent = 'Running…';
   controls();
 }
@@ -212,13 +254,13 @@ runButton.onclick = startRun;
 stopButton.onclick = () => {
   if (activeRun === undefined || stopping) return;
   stopping = true;
-  post({ type: 'cancel', id: activeRun });
+  postRun({ type: 'cancel', id: activeRun });
   status.textContent = 'Stopping…';
   controls();
   // Code that never suspends cannot observe cancellation (#679).
   stopTimer = setTimeout(() => {
     setError('Stopped. The run did not respond to cancellation.');
-    replaceWorker('Restarting…');
+    replaceRunWorker('Restarting…');
   }, stopGraceMs);
 };
 shareButton.onclick = async () => {
@@ -267,6 +309,7 @@ async function init() {
   });
   select.value = label;
   shareButton.disabled = false;
-  replaceWorker();
+  startAnalysisWorker();
+  replaceRunWorker();
 }
 init();

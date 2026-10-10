@@ -20,14 +20,17 @@ export type PageMethod = 'write';
 export type HostArgs<M extends keyof Host> =
   Host[M] extends (...args: [...infer A, AbortSignal]) => unknown ? A : never;
 export type PageCall = { [M in PageMethod]: { method: M; args: HostArgs<M> } }[PageMethod];
-export type Request =
-  | { type: 'analyze' | 'run'; id: number; version: number; source: string }
+type Lifecycle = { type: 'ready' } | { type: 'failure'; message: string };
+export type AnalysisRequest = { type: 'analyze'; id: number; version: number; source: string };
+export type AnalysisReply =
+  | Lifecycle
+  | { type: 'analysis'; id: number; version: number; value: Analysis };
+export type RunRequest =
+  | { type: 'run'; id: number; version: number; source: string }
   | { type: 'cancel'; id: number }
   | { type: 'return'; callId: number; error?: string };
-export type Reply =
-  | { type: 'ready' }
-  | { type: 'failure'; message: string }
-  | { type: 'analysis'; id: number; version: number; value: Analysis }
+export type RunReply =
+  | Lifecycle
   | ({ type: 'call'; id: number; callId: number } & PageCall)
   | { type: 'abortCall'; callId: number }
   | { type: 'result'; id: number; version: number; value: RunResult };

@@ -136,6 +136,44 @@ test('Stop replaces a busy worker and runs the edited source', async ({ page }) 
   await expect(page.locator('#output')).toHaveText('recovered\n42\n');
 });
 
+test('editing during a run updates highlighting and diagnostics', async ({ page }) => {
+  await source(page, 'while true\n  nil');
+  await page.getByRole('button', { name: 'Run', exact: true }).click();
+  await expect(page.locator('#status')).toHaveText('Running…');
+  await source(page, 'echo 42\nmissing');
+  await expect(page.locator('.token-number')).toHaveText('42');
+  await expect(page.locator('#diagnostics')).not.toBeEmpty();
+  await expect(page.locator('#status')).toHaveText('Running…');
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect(page.locator('#status')).toHaveText('Ready');
+});
+
+test('replacing a stuck run worker keeps the analysis worker', async ({ page }) => {
+  await page.addInitScript(() => {
+    const Original = Worker;
+    const urls: string[] = [];
+    (window as unknown as { workerUrls: string[] }).workerUrls = urls;
+    window.Worker = class extends Original {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        urls.push(String(url));
+      }
+    };
+  });
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeEnabled();
+  await source(page, 'while true\n  nil');
+  await page.getByRole('button', { name: 'Run', exact: true }).click();
+  await expect(page.locator('#status')).toHaveText('Running…');
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect(page.locator('#status')).toHaveText('Ready');
+  const urls = await page.evaluate(() => (window as unknown as { workerUrls: string[] }).workerUrls);
+  expect(urls.filter(url => /analysis-worker/.test(url))).toHaveLength(1);
+  expect(urls.filter(url => /run-worker/.test(url))).toHaveLength(2);
+  await source(page, 'echo 7');
+  await expect(page.locator('.token-number')).toHaveText('7');
+});
+
 test('completed run keeps its source snapshot while latest analysis resumes', async ({ page }) => {
   await source(page, 'let x = 0\nwhile (x < 1000000)\n  x = (x + 1)\necho $x');
   await page.getByRole('button', { name: 'Run', exact: true }).click();

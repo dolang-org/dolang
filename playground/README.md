@@ -1,9 +1,10 @@
 # Do playground
 
-A static browser host for Do. The main thread owns CodeMirror; one module worker
-loads the Wasm adapter, analyzes source, and executes one fresh VM per run.
-Compiler byte offsets are converted to UTF-16 in Rust. Token classification is a
-local adaptation of the LSP mapping, without an additional grammar.
+A static browser host for Do. The main thread owns CodeMirror. Two module
+workers load the same Wasm adapter: one analyzes source, and the other executes
+one fresh VM per run. Compiler byte offsets are converted to UTF-16 in Rust.
+Token classification is a local adaptation of the LSP mapping, without an
+additional grammar.
 
 Included extensions: `base64`, `compile`, `digest`, `glob`, `http`, `json`,
 `load`, `rand`, `regex`, `term`, `time`, `toml`, `url`, `uuid`, `xml`, and
@@ -64,10 +65,13 @@ relative worker and Wasm URLs.
 
 ## Protocol
 
-Worker requests carry an ID, source version, and complete source. The UI ignores
-obsolete analysis and responses from replaced workers. Analysis pauses during
-execution. Loading failures are displayed and can be retried by reloading the
-page.
+`src/protocol.ts` declares requests and replies separately for each worker.
+`analyze` and `run` requests carry an ID, source version, and complete source.
+The page tracks readiness and generation per worker and ignores obsolete
+analysis and replies from replaced workers. Analysis continues during execution,
+and replacing the run worker leaves the analysis worker alone. If analysis makes
+its worker fail, the worker is replaced and analysis resumes at the next edit.
+Loading failures are displayed and can be retried by reloading the page.
 
 ### Host
 
@@ -79,7 +83,7 @@ methods may return a `Promise`, which the VM awaits. Each call also receives an
 example when the run is canceled. Exceptions and rejections become Do runtime
 errors.
 
-The worker's host is a table. Capabilities available in a worker are
+The run worker's host is a table. Capabilities available in a worker are
 implemented there directly; capabilities that need the page are forwarded as
 messages. `write` is forwarded, and the page decodes its bytes.
 
@@ -90,12 +94,12 @@ messages. `write` is forwarded, and the page decodes its bytes.
 | `abortCall` | worker → page | Reports that the VM abandoned `callId`                  |
 | `cancel`    | page → worker | Aborts the signal of run `id`                           |
 
-The worker handles `cancel` and `return` on arrival instead of queuing them
+The run worker handles `cancel` and `return` on arrival instead of queuing them
 behind pending requests.
 
 To add a capability, declare the method in both the extern block and the
 TypeScript interface in `host.rs`, bind it to a Do function in `configure`, and
-add an entry to the worker's host table. A forwarded method is also added to
+add an entry to the run worker's host table. A forwarded method is also added to
 `PageMethod` in `src/protocol.ts` and handled by `hostCall` in `src/main.ts`.
 
 ### Stopping
@@ -103,8 +107,8 @@ add an entry to the worker's host table. A forwarded method is also added to
 Stop sends `cancel`. The VM cancels the run's strand and waits for it to unwind,
 so `finally` blocks run and the result reports the `Canceled` error with its
 backtrace. Streamed output is kept. Code that never suspends cannot observe
-cancellation (#679), so Stop replaces the worker if the run has not finished
-after one second.
+cancellation (#679), so Stop replaces the run worker if the run has not
+finished after one second.
 
 Apart from the host object and signals, only owned strings and serializable
 records cross the Wasm boundary. VM values, errors, and GC roots remain inside
