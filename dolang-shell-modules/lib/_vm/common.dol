@@ -8,14 +8,19 @@ import fs:
 # module parses back is not translated.
 pub def cli
   program @ (Str | Path)
+  :stdout @ (Path | Str | Sinkable[Str]) = nil
   :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
   *args @ Value
   <Iter[Value]
   >Sink[Str]
 do -> nil
   env LC_ALL: C LANG: C do
-    # A local, since a test of what a block captures doesn't narrow it
+    # FIXME: it would be nice if this capture narrowing were permitted directly
+    let out = stdout
     let err = stderr
+    # A local, since a test of what a block captures doesn't narrow it
     run $program ...args
+      if (out != nil)
+        stdout: $out
       if (err != nil)
         stderr: $err
