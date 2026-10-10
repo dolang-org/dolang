@@ -34,16 +34,16 @@ fn push(graph: &Graph, block: BlockId, step: Step) {
 fn call(callee: Expr, args: Vec<Item>) -> Expr {
     expr(ExprKind::Call {
         callee: Box::new(callee),
-        args,
+        args: args.into(),
     })
 }
 
 /// Assign a function's result, as a return does before continuing to its exit
 fn result(graph: &Graph, func: FuncId, value: ExprKind) -> Step {
-    Step::Assign {
-        target: Target::Var(graph.func(func).result),
+    Step::Assign(Target::Var {
+        var: graph.func(func).result,
         value: expr(value),
-    }
+    })
 }
 
 /// A module whose entry block returns nil
@@ -166,7 +166,7 @@ fn non_local() {
         entry,
         Terminal::Guard {
             next: call_block,
-            targets: vec![returned],
+            targets: vec![returned].into(),
         },
     );
     push(&graph, returned, result(&graph, top, ExprKind::Never));
@@ -208,10 +208,10 @@ fn non_local() {
     push(
         &graph,
         func_entry,
-        Step::Assign {
-            target: Target::Var(iter),
+        Step::Assign(Target::Var {
+            var: iter,
             value: expr(ExprKind::Literal(Literal::Nil)),
-        },
+        }),
     );
     terminate(&graph, func_entry, Terminal::Branch(header));
     terminate(
@@ -219,7 +219,7 @@ fn non_local() {
         header,
         Terminal::Next {
             iter: Some(iter),
-            pattern: Pattern::Unpack(Vec::new()),
+            pattern: Pattern::Unpack(Default::default()),
             body,
             exit: loop_exit,
             span: Span::INVALID,
@@ -230,7 +230,7 @@ fn non_local() {
         body,
         Terminal::Guard {
             next: call_block,
-            targets: vec![loop_exit],
+            targets: vec![loop_exit].into(),
         },
     );
     let breaking = closure(&graph, func);
@@ -438,10 +438,10 @@ fn variables() {
     let entry = graph.func(top).entry;
     graph.block_mut(entry).steps.insert(
         0,
-        Step::Assign {
-            target: Target::Var(y),
+        Step::Assign(Target::Var {
+            var: y,
             value: expr(ExprKind::Literal(Literal::Nil)),
-        },
+        }),
     );
     assert_eq!(
         graph.freeze().validate(),
@@ -574,7 +574,7 @@ fn signatures() {
                 func.captures.push(var);
             }
             func.signature = Some(Signature {
-                params: vec![None; params],
+                params: vec![None; params].into(),
                 input: None,
                 output: None,
                 result: Some(var),
@@ -600,7 +600,7 @@ fn signatures() {
     let graph = Graph::new();
     let top = returning(&graph);
     graph.func_mut(top).signature = Some(Signature {
-        params: Vec::new(),
+        params: Default::default(),
         input: None,
         output: None,
         result: None,

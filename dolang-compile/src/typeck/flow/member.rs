@@ -21,7 +21,7 @@ use crate::{
     lex::Op,
     source::Span,
     typeck::{
-        cfg::{Expr, ExprKind, Member},
+        cfg::{Expr, ExprKind, Item, Member},
         elab::Designated,
         solver::{
             Constructor, FoundKind, Issue, Lookup, Residual, Signature, Signatures, bound_method,
@@ -804,6 +804,7 @@ impl Flow<'_, '_> {
         let ExprKind::Index { object, index } = &expr.kind else {
             unreachable!("an index")
         };
+        let index = index.pos();
         let receiver = self.eval(at, state, operands, object);
         let key = self.eval(at, state, operands, index);
         let call = Call {
@@ -868,6 +869,7 @@ impl Flow<'_, '_> {
         let ExprKind::Unary { op, operand } = &expr.kind else {
             unreachable!("a unary operator")
         };
+        let operand = operand.pos();
         let value = self.eval(at, state, operands, operand);
         if value == self.db.bottom() {
             return value;
@@ -911,7 +913,7 @@ impl Flow<'_, '_> {
             unreachable!("a binary operator")
         };
         let bottom = self.db.bottom();
-        let [left, right] = &**pair;
+        let [left, right] = pair.each_ref().map(Item::pos);
         let lhs = self.eval(at, state, operands, left);
         let rhs = self.eval(at, state, operands, right);
         if lhs == bottom || rhs == bottom {

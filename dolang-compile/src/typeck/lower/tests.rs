@@ -62,8 +62,8 @@ fn creation(ir: &Ir, func: FuncId) -> Option<(BlockId, usize)> {
             .iter()
             .position(|step| {
                 let value = match step {
+                    Step::Assign(target) => target.value(),
                     Step::Let { value, .. }
-                    | Step::Assign { value, .. }
                     | Step::Default { value, .. }
                     | Step::Eval(value)
                     | Step::Push(value) => value,

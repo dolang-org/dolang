@@ -736,29 +736,32 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let ty = self.expect(at, state, &mut operands, value, expected);
                 return self.bind(at, state, pattern, ty, value.span);
             }
-            Step::Assign { target, value } => {
+            Step::Assign(target) => {
+                let value = target.value();
                 let count = match target {
-                    Target::Var(_) | Target::Import { .. } => 0,
+                    Target::Var { .. } | Target::Import { .. } => 0,
                     Target::Field { object, .. } => holes(object),
-                    Target::Index { object, index, .. } => holes(object) + holes(index),
+                    Target::Index { object, args } => holes(object) + holes(args[0].pos()),
                 };
                 let mut operands = Self::operands(state, count + holes(value));
                 match *target {
-                    Target::Var(var) => {
+                    Target::Var { var, .. } => {
                         let expected =
                             (self.ir.var(var).annotation).or_else(|| self.result_annotation(var));
                         let ty = self.expect(at, state, &mut operands, value, expected);
                         self.assign(at, state, var, ty, value.span);
                     }
-                    Target::Field { ref object, member } => {
+                    Target::Field {
+                        ref object, member, ..
+                    } => {
                         let span = object.span | value.span;
                         self.set(at, state, &mut operands, object, member, value, span);
                     }
                     Target::Index {
                         ref object,
-                        ref index,
+                        ref args,
                     } => {
-                        let parts = [object, index, value];
+                        let parts = [object, args[0].pos(), value];
                         let span = object.span | value.span;
                         self.assign_index(at, state, &mut operands, parts, span);
                     }
@@ -766,6 +769,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                         ref module,
                         item,
                         span,
+                        ..
                     } => {
                         let expected = self.written_import(module, item, span);
                         let ty = self.expect(at, state, &mut operands, value, expected);
@@ -1366,7 +1370,7 @@ fn has_rule(expr: &Expr) -> bool {
 fn throws(step: &Step) -> bool {
     match step {
         Step::Let { pattern, value } => matches!(pattern, Pattern::Unpack(_)) || has_rule(value),
-        Step::Assign { target, value } => !matches!(target, Target::Var(_)) || has_rule(value),
+        Step::Assign(target) => !matches!(target, Target::Var { .. }) || has_rule(target.value()),
         Step::Default { value, .. } | Step::Eval(value) | Step::Push(value) => has_rule(value),
         Step::Dup | Step::Pop | Step::Assume(_) | Step::Capture(_) => false,
     }

@@ -1,5 +1,9 @@
 //! Expressions: owned trees, mirroring the AST.
 
+use std::slice;
+
+use dolang_util::alias;
+
 use super::{FuncId, Pattern, VarId};
 use crate::{
     lex::Op,
@@ -36,14 +40,14 @@ pub(crate) enum ExprKind {
     Float,
     Bin,
     /// A string built from parts, each of which may be any value
-    Concat(Vec<Expr>),
+    Concat(alias::Box<[Expr]>),
     /// A binary string built from parts, each of which must be binary
     BinConcat {
-        parts: Vec<Expr>,
+        parts: alias::Box<[Expr]>,
     },
     /// A `t"..."` sequence: a `Fmt` of literal text and interpolations, each a
     /// [`ExprKind::FmtValue`] or [`ExprKind::FmtParam`]
-    Fmt(Vec<Expr>),
+    Fmt(alias::Box<[Expr]>),
     /// An interpolation: a `FmtValue` binding a value to a specification. A string
     /// formats it in place.
     FmtValue {
@@ -72,37 +76,38 @@ pub(crate) enum ExprKind {
     Lambda(FuncId),
     Call {
         callee: Box<Expr>,
-        args: Vec<Item>,
+        args: alias::Box<[Item]>,
     },
     /// A method call, which looks the method up and calls it in one rule
     Invoke {
         receiver: Box<Expr>,
         member: Member,
-        args: Vec<Item>,
+        args: alias::Box<[Item]>,
     },
     Get {
         object: Box<Expr>,
         member: Member,
     },
+    /// Indexing: `(index)` passed the index
     Index {
         object: Box<Expr>,
-        index: Box<Expr>,
+        index: Box<Item>,
     },
     Unary {
         op: Op,
-        operand: Box<Expr>,
+        operand: Box<Item>,
     },
     /// Never `&&` or `||`, which are control flow
     Binary {
         op: Op,
-        operands: Box<[Expr; 2]>,
+        operands: Box<[Item; 2]>,
     },
     Range {
         bounds: Box<[Option<Expr>; 2]>,
     },
     Collection {
         kind: Collection,
-        items: Vec<Item>,
+        items: alias::Box<[Item]>,
     },
     /// A value popped from the operand stack. The operands of a step or terminal pop
     /// bottom-up, in evaluation order.
@@ -158,35 +163,52 @@ pub(crate) enum Item {
     /// A comprehension's loop: its items occur zero or more times. The iteratee and
     /// pattern are lowered to blocks before the item. `span` is its `for`'s.
     For {
-        items: Vec<Item>,
+        items: alias::Box<[Item]>,
         span: Span,
     },
     /// A comprehension's filter: `then`'s items occur, or `else_`'s. The condition is
     /// lowered to blocks before the item. `span` is its `if`'s.
     If {
-        then: Vec<Item>,
-        else_: Vec<Item>,
+        then: alias::Box<[Item]>,
+        else_: alias::Box<[Item]>,
         span: Span,
     },
 }
 
-/// What an assignment writes
+/// What an assignment writes, and the value it writes. A setter or `(set)` is
+/// passed the value, and `(assign)` the index and the value, as arguments.
 pub(crate) enum Target {
-    Var(VarId),
+    Var {
+        var: VarId,
+        value: Expr,
+    },
     Field {
         object: Expr,
         member: Member,
+        value: Box<Item>,
     },
     Index {
         object: Expr,
-        index: Expr,
+        args: Box<[Item; 2]>,
     },
     /// A module's member, through an import path to the module, spanning the path
     Import {
         module: ModuleRef,
         item: SymbolId,
         span: Span,
+        value: Expr,
     },
+}
+
+impl Target {
+    /// The value written
+    pub(crate) fn value(&self) -> &Expr {
+        match self {
+            Target::Var { value, .. } | Target::Import { value, .. } => value,
+            Target::Field { value, .. } => value.pos(),
+            Target::Index { args, .. } => args[1].pos(),
+        }
+    }
 }
 
 impl Expr {
@@ -214,10 +236,10 @@ impl Expr {
             ExprKind::Get { object, .. } => object.walk(visit),
             ExprKind::Index { object, index, .. } => {
                 object.walk(visit);
-                index.walk(visit);
+                Item::walk_all(slice::from_ref(index), visit);
             }
-            ExprKind::Unary { operand, .. } => operand.walk(visit),
-            ExprKind::Binary { operands, .. } => operands.iter().for_each(|expr| expr.walk(visit)),
+            ExprKind::Unary { operand, .. } => Item::walk_all(slice::from_ref(operand), visit),
+            ExprKind::Binary { operands, .. } => Item::walk_all(&operands[..], visit),
             ExprKind::Range { bounds, .. } => {
                 bounds.iter().flatten().for_each(|expr| expr.walk(visit))
             }
@@ -258,6 +280,14 @@ impl Expr {
 }
 
 impl Item {
+    /// An operand's expression. Lowering makes every operand positional.
+    pub(crate) fn pos(&self) -> &Expr {
+        match self {
+            Item::Pos(expr) => expr,
+            _ => unreachable!("a positional operand"),
+        }
+    }
+
     fn walk_all<'a>(items: &'a [Item], visit: &mut impl FnMut(&'a Expr)) {
         for item in items {
             match item {

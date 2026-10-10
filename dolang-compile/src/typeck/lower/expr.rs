@@ -84,7 +84,7 @@ impl<'u> Scope<'_, '_, 'u> {
             },
             ast::Expr::Unary { op, expr, .. } => ExprKind::Unary {
                 op: *op,
-                operand: Box::new(self.expr(expr)),
+                operand: Box::new(Item::Pos(self.expr(expr))),
             },
             ast::Expr::Logical { .. } => {
                 let hoist = mem::replace(&mut self.ctx.hoist, false);
@@ -95,8 +95,8 @@ impl<'u> Scope<'_, '_, 'u> {
                 return self.spill(expr(ExprKind::Operand, span));
             }
             ast::Expr::Binary { op, exprs, .. } => {
-                let left = self.expr(&exprs[0]);
-                let right = self.expr(&exprs[1]);
+                let left = Item::Pos(self.expr(&exprs[0]));
+                let right = Item::Pos(self.expr(&exprs[1]));
                 ExprKind::Binary {
                     op: *op,
                     operands: Box::new([left, right]),
@@ -123,7 +123,7 @@ impl<'u> Scope<'_, '_, 'u> {
             },
             ast::Expr::Index { exprs, .. } => {
                 let object = self.expr(&exprs[0]);
-                let index = self.expr(&exprs[1]);
+                let index = Item::Pos(self.expr(&exprs[1]));
                 ExprKind::Index {
                     object: Box::new(object),
                     index: Box::new(index),
@@ -190,7 +190,7 @@ impl<'u> Scope<'_, '_, 'u> {
         if !text.is_empty() {
             parts.push(expr(str_literal(&text), span));
         }
-        ExprKind::Concat(parts)
+        ExprKind::Concat(parts.into())
     }
 
     /// A `t"..."` sequence, in which an interpolation stating no specification is
@@ -213,7 +213,7 @@ impl<'u> Scope<'_, '_, 'u> {
         if !text.is_empty() {
             parts.push(expr(str_literal(&text), span));
         }
-        ExprKind::Fmt(parts)
+        ExprKind::Fmt(parts.into())
     }
 
     /// A binary string, folded to a constant when it has no interpolations
@@ -240,7 +240,9 @@ impl<'u> Scope<'_, '_, 'u> {
                 run = false;
             }
         }
-        ExprKind::BinConcat { parts }
+        ExprKind::BinConcat {
+            parts: parts.into(),
+        }
     }
 
     fn collection(
@@ -250,7 +252,7 @@ impl<'u> Scope<'_, '_, 'u> {
     ) -> ExprKind {
         ExprKind::Collection {
             kind,
-            items: items(self),
+            items: items(self).into(),
         }
     }
 
@@ -322,7 +324,7 @@ impl<'u> Scope<'_, '_, 'u> {
             let callee = expr(import, callee.span());
             return ExprKind::Call {
                 callee: Box::new(callee),
-                args: self.args(args),
+                args: self.args(args).into(),
             };
         }
         if let ast::Expr::Get { object, field, .. } = callee {
@@ -330,13 +332,13 @@ impl<'u> Scope<'_, '_, 'u> {
             return ExprKind::Invoke {
                 receiver: Box::new(receiver),
                 member: self.member(field),
-                args: self.args(args),
+                args: self.args(args).into(),
             };
         }
         let callee = self.expr(callee);
         ExprKind::Call {
             callee: Box::new(callee),
-            args: self.args(args),
+            args: self.args(args).into(),
         }
     }
 
@@ -469,7 +471,7 @@ impl<'u> Scope<'_, '_, 'u> {
         self.switch(exit);
         self.ctx.hoist = hoist;
         Item::For {
-            items,
+            items: items.into(),
             span: node.for_span,
         }
     }
@@ -515,7 +517,11 @@ impl<'u> Scope<'_, '_, 'u> {
             None => Vec::new(),
         };
         for (then, span) in arms.into_iter().zip(spans).rev() {
-            else_ = vec![Item::If { then, else_, span }];
+            else_ = vec![Item::If {
+                then: then.into(),
+                else_: else_.into(),
+                span,
+            }];
         }
         self.ctx.hoist = hoist;
         else_.pop().expect("an `if` has a first branch")

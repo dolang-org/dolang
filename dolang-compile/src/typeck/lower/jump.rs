@@ -157,10 +157,10 @@ impl Scope<'_, '_, '_> {
             };
             let target = route(self, ctx.finally.as_ref(), exit, None);
             let mut block_mut = graph.block_mut(block);
-            block_mut.steps.push(Step::Assign {
-                target: Target::Var(result),
+            block_mut.steps.push(Step::Assign(Target::Var {
+                var: result,
                 value: expr(ExprKind::Never, Span::INVALID),
-            });
+            }));
             block_mut.terminal = Terminal::Branch(target);
             block
         };
