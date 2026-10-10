@@ -1,7 +1,6 @@
-# An item projection of a rest binder's schema is the same as one of `{...Ts}`.
-# Against a protocol's `IndexItem` of another schema, the overload's projection
-# of the rigid schema goes to its bound with the method's own key binder in
-# scope.
+# An item projection of a rest binder's schema is below one of a wider schema.
+# The overloads establish a protocol's `IndexItem` of another schema, so the
+# implementations, whose results couldn't, aren't compared with it.
 
 import std:
   - @Index
@@ -9,16 +8,16 @@ import std:
   - @Union
 
 pub @class Positions[T]
-  pub def (index)[K] self key@K -> IndexItem[{*(Int): T}, K]
+  pub def (index)[K] self key@K -> IndexItem[{*T}, K]
 
 pub class Pack[*Ts]: @Index[Ts] @Positions[Union[...Ts]]
   @def (index)[K] self key@K -> IndexItem[Ts, K]
   @def (index) self range@Range[Int] -> Pack[...Union[...Ts]]
-  pub def (index) self key
+  pub def (index) self key -> Value
     ...
 
 pub class Spelled[*Ts]: @Index[Ts] @Positions[Union[...Ts]]
   @def (index)[K] self key@K -> IndexItem[{...Ts}, K]
   @def (index) self range@Range[Int] -> Spelled[...Union[...Ts]]
-  pub def (index) self key
+  pub def (index) self key -> Value
     ...

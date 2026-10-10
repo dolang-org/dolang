@@ -639,7 +639,7 @@ fn required_items_before_the_dynamic_schema_are_checked() {
 }
 
 #[test]
-fn positional_items_under_int_keys_are_not_yet_decided() {
+fn positional_items_are_not_int_keyed_items() {
     use Multiplicity::{Repeated as Rep, Required as Req};
     let mut db = Database::new();
     let int = int(&mut db);
@@ -650,14 +650,13 @@ fn positional_items_under_int_keys_are_not_yet_decided() {
     let a = db.intern(Type::Literal(Literal::Sym(db.intern_symbol("a"))));
     let named_by_int = items(&db, vec![keyed(Req, a, int), keyed(Rep, int, int)]);
     db.seal();
-    let int_keyed = Residual::Unsupported("a position that may be an Int-keyed item");
-    let outcome = check(&db, one, by_int);
-    assert!(residual(&outcome, int_keyed), "{outcome:?}");
-    let outcome = check(&db, one, named_by_int);
-    let int_keyed = Residual::Unsupported("positions that may be Int-keyed items");
-    assert!(residual(&outcome, int_keyed), "{outcome:?}");
+    // Schema subtyping doesn't promote positions; only item projections do
+    for expected in [by_int, named_by_int, by_sym] {
+        let outcome = check(&db, one, expected);
+        assert_eq!(outcome.status, Status::Contradicted, "{outcome:?}");
+    }
     assert!(contradiction(
-        &check(&db, one, by_sym),
+        &check(&db, one, by_int),
         Contradiction::Excess(0)
     ));
 }

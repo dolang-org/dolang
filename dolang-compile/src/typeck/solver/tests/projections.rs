@@ -380,6 +380,58 @@ fn item_projections_relate_before_they_can_be_evaluated() {
 }
 
 #[test]
+fn index_items_of_a_wider_schema_are_above() {
+    use Multiplicity::{Optional as Opt, Repeated as Rep, Required as Req};
+    let db = &mut Database::new();
+    let int = int(db);
+    let str = nominal(db, "Str", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Str, str);
+    let (a, b) = (sym(db, "a"), sym(db, "b"));
+    // `*S` and `K`, neither of whose bounds says enough
+    let decl = generic(
+        db,
+        vec![
+            bounded(Kind::Schema, Binding::Rest(Rest::Positional), None),
+            bounded(Kind::Type, Binding::Positional, None),
+        ],
+        db.top(),
+    );
+    let (s, k) = (schema_reference(db, 0), reference(db, 0, 1));
+    // `{*Union[...S]}`, which `S`'s positions fit, whether as `S` or `{...S}`
+    let unioned = projection(db, UnionMember::Expand, s);
+    let joined = items(db, vec![positional(Rep, unioned)]);
+    let spelled = items(db, vec![include(Req, s)]);
+    let only_a = items(db, vec![keyed(Req, a, int)]);
+    let maybe_b = items(db, vec![keyed(Req, a, int), keyed(Opt, b, str)]);
+    let [read_s, read_spelled, read_joined, read_a, read_b] =
+        [s, spelled, joined, only_a, maybe_b].map(|schema| selecting(db, false, schema, k));
+    let [write_a, write_b] = [only_a, maybe_b].map(|schema| selecting(db, true, schema, k));
+    db.seal();
+    // `IndexItem` is covariant in its schema
+    for (x, y) in [
+        (read_s, read_joined),
+        (read_spelled, read_joined),
+        (read_a, read_b),
+    ] {
+        let outcome = under(db, decl, x, y);
+        assert_eq!(
+            outcome.status,
+            Status::Proven,
+            "{x:?} <: {y:?}: {outcome:?}"
+        );
+    }
+    // A narrower schema isn't above, and `AssignItem` is invariant in its schema
+    for (x, y) in [(read_b, read_a), (write_a, write_b), (write_b, write_a)] {
+        let outcome = under(db, decl, x, y);
+        assert_ne!(
+            outcome.status,
+            Status::Proven,
+            "{x:?} <: {y:?}: {outcome:?}"
+        );
+    }
+}
+
+#[test]
 fn a_class_outside_scalar_members_is_outside_the_union() {
     let mut db = Database::new();
     let int = int(&mut db);

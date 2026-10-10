@@ -227,8 +227,9 @@ impl Solver<'_> {
 
     /// A union of projections on the left. A projection is of a rigid's schema,
     /// or can't be evaluated. The former is below the same projection of the
-    /// rigid's bound. An item projection is also below one of the same schema
-    /// whose key selects as much, or for `AssignItem`, as little.
+    /// rigid's bound. An item projection is also below one whose key selects as
+    /// much and whose schema is wider, or for `AssignItem`, one of the same
+    /// schema whose key selects as little.
     fn projections(&self, j: &Judgment) -> Result<ControlFlow<()>, Issue> {
         let Head::Structural(view) = &j.a else {
             return Ok(Continue(()));
@@ -772,8 +773,9 @@ impl Solver<'_> {
     }
 
     /// Whether an item projection on the left is below an item projection of the
-    /// same kind and schema on the right: `IndexItem` is monotone in its key,
-    /// and `AssignItem` antitone
+    /// same kind on the right, by its variances: `IndexItem` is monotone in its
+    /// schema and key, and `AssignItem` keeps its schema and is antitone in its
+    /// key
     fn congruent(&self, view: TypeView, member: UnionMember, b: &Head) -> Result<bool, Issue> {
         let (Some(key), Head::Structural(other_view)) = (member.key(), b) else {
             return Ok(false);
@@ -785,15 +787,23 @@ impl Solver<'_> {
             let Some(other_key) = other.key() else {
                 continue;
             };
-            if std::mem::discriminant(&member) != std::mem::discriminant(&other)
-                || !self.same(view.child(member.id()), other_view.child(other.id()))?
+            if std::mem::discriminant(&member) != std::mem::discriminant(&other) {
+                continue;
+            }
+            let (schema, other_schema) = (view.child(member.id()), other_view.child(other.id()));
+            if !self.same(schema, other_schema)?
+                && !(matches!(member, UnionMember::IndexItem(..))
+                    && self.probe(self.reify(schema)?, self.reify(other_schema)?)?
+                        == Status::Proven)
             {
                 continue;
             }
-            let (key, other_key) = (
-                self.reify(view.child(key))?,
-                self.reify(other_view.child(other_key))?,
-            );
+            // A key a skolem stands for has no closed form to probe with
+            let (key, other_key) = (view.child(key), other_view.child(other_key));
+            if self.same(key, other_key)? {
+                return Ok(true);
+            }
+            let (key, other_key) = (self.reify(key)?, self.reify(other_key)?);
             let (lower, upper) = match member {
                 UnionMember::IndexItem(..) => (key, other_key),
                 _ => (other_key, key),

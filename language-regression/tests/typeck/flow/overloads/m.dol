@@ -68,7 +68,7 @@ do
   # LL |   b[0] = "x"
   #    |   ^^^^^^^^^^
   #    |
-  #    = note: `@[K] (std.BinBuf, K, std.AssignItem[{*(std.Int): std.Int}, K]) -> nil`: expected `std.Int`, found `"x"`
+  #    = note: `@[K] (std.BinBuf, K, std.AssignItem[{*std.Int}, K]) -> nil`: expected `std.Int`, found `"x"`
   #    = note: `(std.BinBuf, std.Range[std.Int], std.Bin) -> nil`: expected `std.Bin`, found `"x"`; expected `std.Range[std.Int]`, found `0`
   let _ = f[0]
   #   ^: flow std.FmtSegment[std.Int]
