@@ -104,6 +104,24 @@ impl<T> FromIterator<T> for Box<[T]> {
     }
 }
 
+impl<'a, T> IntoIterator for &'a Box<[T]> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a mut Box<[T]> {
+    type Item = &'a mut T;
+    type IntoIter = std::slice::IterMut<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
+    }
+}
+
 impl From<String> for Box<str> {
     fn from(value: String) -> Self {
         let (ptr, len, cap) = value.into_raw_parts();

@@ -3939,7 +3939,53 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        if let Some((sym, entry)) = this.vtbl().entry_with_sym(method) {
+        // Instance methods take priority, called unbound on an explicit instance
+        let unbound = matches!(
+            this.inst_entry(method),
+            Some(Entry::Method(_) | Entry::Delegate(_, MemberKind::Method))
+        );
+        if unbound && let Some((sym, entry)) = this.inst_vtbl().entry_with_sym(method) {
+            let name = sym.as_str(strand);
+            Strand::async_for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed(name)),
+                async |strand| match entry {
+                    Entry::Method(handler) => {
+                        // Downcast the explicit self argument to the precise native
+                        // type (handling Do subclasses via native slots) and invoke
+                        // the handler directly.
+                        let ([inst], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
+                        let inst = inst
+                            .downcast_native(strand, unsafe {
+                                TypeHandle::<ObjectWrap<'v, T>>::new(this.vtbl().inst_vtbl.cast())
+                            })
+                            .ok_or_else(|| {
+                                Error::type_error(
+                                    strand,
+                                    format!("expected {}.{}", T::MODULE, T::NAME),
+                                )
+                            })?
+                            .into_raw()
+                            .cast();
+                        unsafe { handler.call(inst, None, strand, trailing, out).await }
+                    }
+                    Entry::Delegate(idx, MemberKind::Method) => {
+                        let ([instance], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
+                        if !instance.is_instance_of(strand, this.singleton(strand.vm())) {
+                            return Err(Error::type_error(strand, "invalid native object type"));
+                        }
+                        let supertype = &this.annex().supertypes[*idx];
+                        Delegated::new(supertype, &instance)
+                            .op_mcall(strand, method, trailing, out)
+                            .await
+                    }
+                    _ => unreachable!("an instance method"),
+                },
+            )
+            .await
+        } else if let Some((sym, entry)) = this.vtbl().entry_with_sym(method) {
             let name = sym.as_str(strand);
             Strand::async_for_native_frame(
                 strand,
@@ -3973,47 +4019,6 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
                 },
             )
             .await
-        } else if let Some((sym, entry)) = this.inst_vtbl().entry_with_sym(method) {
-            let name = sym.as_str(strand);
-            Strand::async_for_native_frame(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed(name)),
-                async |strand| match entry {
-                    Entry::Method(handler) => {
-                        // Unbound instance method: downcast the explicit self argument to
-                        // the precise native type (handling Do subclasses via native slots)
-                        // and invoke the handler directly.
-                        let ([inst], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
-                        let inst = inst
-                            .downcast_native(strand, unsafe {
-                                TypeHandle::<ObjectWrap<'v, T>>::new(this.vtbl().inst_vtbl.cast())
-                            })
-                            .ok_or_else(|| {
-                                Error::type_error(
-                                    strand,
-                                    format!("expected {}.{}", T::MODULE, T::NAME),
-                                )
-                            })?
-                            .into_raw()
-                            .cast();
-                        unsafe { handler.call(inst, None, strand, trailing, out).await }
-                    }
-                    Entry::Delegate(idx, MemberKind::Method) => {
-                        let ([instance], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
-                        if !instance.is_instance_of(strand, this.singleton(strand.vm())) {
-                            return Err(Error::type_error(strand, "invalid native object type"));
-                        }
-                        let supertype = &this.annex().supertypes[*idx];
-                        Delegated::new(supertype, &instance)
-                            .op_mcall(strand, method, trailing, out)
-                            .await
-                    }
-                    _ => Err(Error::field(strand, method)),
-                },
-            )
-            .await
         } else {
             // Fall through to type_mcall_fallback for protocol/special
             // methods (str, dbg, bool, hash, arithmetic, comparison, etc.).
@@ -4033,7 +4038,13 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
         field: Sym<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        // Check type-level entries first.
+        // Instance methods take priority, unbound
+        if let Some(Entry::Method(_) | Entry::Delegate(_, MemberKind::Method)) =
+            this.inst_entry(field)
+        {
+            BoundMethod::create(strand, &this, field, out);
+            return Ok(());
+        }
         if let Some(entry) = this.entry(field) {
             return match entry {
                 Entry::Getter(handler) | Entry::Property(handler, _) => Strand::for_native_frame(
@@ -4050,19 +4061,6 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
                     Ok(())
                 }
                 Entry::Setter(_) | Entry::Delegate(_, _) => Err(Error::field(strand, field)),
-            };
-        }
-        // Check instance-level entries (unbound methods/getters).
-        if let Some(entry) = this.inst_entry(field) {
-            return match entry {
-                Entry::Method(_)
-                | Entry::Getter(_)
-                | Entry::Property(_, _)
-                | Entry::Delegate(_, _) => {
-                    BoundMethod::create(strand, &this, field, out);
-                    Ok(())
-                }
-                Entry::Setter(_) => Err(Error::field(strand, field)),
             };
         }
         // Special/protocol methods are always callable.

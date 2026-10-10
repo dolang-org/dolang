@@ -72,7 +72,7 @@ mod validate;
 
 use std::cell::{Ref, RefCell, RefMut};
 
-use dolang_util::mono::MonoVec;
+use dolang_util::{alias, mono::MonoVec};
 
 pub(crate) use expr::{Collection, Expr, ExprKind, FmtSpec, Item, Member, Target};
 
@@ -141,7 +141,7 @@ pub(crate) struct Func {
 /// joins its result into `result`.
 pub(crate) struct Signature {
     /// By parameter item, in order
-    pub(crate) params: Vec<Option<VarId>>,
+    pub(crate) params: alias::Box<[Option<VarId>]>,
     pub(crate) input: Option<VarId>,
     pub(crate) output: Option<VarId>,
     pub(crate) result: Option<VarId>,
@@ -218,10 +218,7 @@ pub(crate) enum Step {
         pattern: Pattern,
         value: Expr,
     },
-    Assign {
-        target: Target,
-        value: Expr,
-    },
+    Assign(Target),
     /// Join a pattern item's default into its variable's state, since the item may
     /// have been present. It follows the step or edge that binds the pattern.
     Default {
@@ -264,7 +261,7 @@ pub(crate) enum Terminal {
     /// narrowing it there, or else to `otherwise`. The classes pop their operands,
     /// which lie above the exception.
     Catch {
-        clauses: Vec<(Expr, BlockId)>,
+        clauses: alias::Box<[(Expr, BlockId)]>,
         otherwise: BlockId,
     },
     /// Bind the next item to a pattern and continue to the body, or to the exit
@@ -293,7 +290,7 @@ pub(crate) enum Terminal {
     /// statement may take
     Guard {
         next: BlockId,
-        targets: Vec<BlockId>,
+        targets: alias::Box<[BlockId]>,
     },
     /// A non-local `break` or `continue`, which continues at the guard point
     Escape,
@@ -335,7 +332,7 @@ pub(crate) enum Against {
 
 pub(crate) enum Pattern {
     Bind(VarId),
-    Unpack(Vec<PatternItem>),
+    Unpack(alias::Box<[PatternItem]>),
 }
 
 pub(crate) struct PatternItem {
@@ -383,7 +380,7 @@ impl Graph {
             entry,
             exit,
             result,
-            params: Pattern::Unpack(Vec::new()),
+            params: Pattern::Unpack(alias::Box::default()),
             signature: None,
             vars: Vec::new(),
             captures: Vec::new(),

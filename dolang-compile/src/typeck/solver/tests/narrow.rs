@@ -345,6 +345,52 @@ fn generic_members_carry_arguments_down() {
 }
 
 #[test]
+fn covariant_schema_binders_take_their_bound() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    intrinsic(&mut db, "Sym", Intrinsic::Sym);
+    let schema_binder = |variance, binding, bound| Binder {
+        variance,
+        ..bounded(Kind::Schema, binding, bound)
+    };
+    let closed = schema(&db, &[int]);
+    let mut declare = |name, binder| nominal(&mut db, name, vec![binder], vec![]);
+    let bounded_class = declare(
+        "Bounded",
+        schema_binder(Variance::Covariant, Binding::Positional, Some(closed)),
+    );
+    let open_class = declare(
+        "Open",
+        schema_binder(Variance::Covariant, Binding::Positional, None),
+    );
+    let keyed_class = declare(
+        "Keyed",
+        schema_binder(Variance::Covariant, Binding::Rest(Rest::Keyed), None),
+    );
+    let contra_class = declare(
+        "Contra",
+        schema_binder(Variance::Contravariant, Binding::Positional, None),
+    );
+    let invariant_class = declare(
+        "Invariant",
+        schema_binder(Variance::Invariant, Binding::Positional, Some(closed)),
+    );
+    db.seal();
+    let s = Solver::new(&db);
+    let top = db.top();
+    let upper = |target| class(&s, top, Relation::Upper, false, target);
+
+    assert_eq!(upper(bounded_class), apply(&db, bounded_class, &[closed]));
+    let open = db.rest_shape(Rest::All);
+    assert_eq!(upper(open_class), apply(&db, open_class, &[open]));
+    let keyed = db.rest_shape(Rest::Keyed);
+    assert_eq!(upper(keyed_class), apply(&db, keyed_class, &[keyed]));
+    // There's no bottom schema, and an invariant binder has no sound argument
+    assert_eq!(upper(contra_class), top);
+    assert_eq!(upper(invariant_class), top);
+}
+
+#[test]
 fn packs_are_kept() {
     let mut w = World::new();
     w.db.seal();

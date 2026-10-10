@@ -169,23 +169,23 @@ impl Dump<'_, '_> {
                 write!(out, " = ")?;
                 self.expr(out, value)
             }
-            Step::Assign { target, value } => {
+            Step::Assign(target) => {
                 match target {
-                    Target::Var(var) => self.var(out, *var)?,
+                    Target::Var { var, .. } => self.var(out, *var)?,
                     Target::Field { object, member, .. } => {
                         self.expr(out, object)?;
                         self.member(out, member)?;
                     }
-                    Target::Index { object, index, .. } => {
+                    Target::Index { object, args } => {
                         self.expr(out, object)?;
                         write!(out, "[")?;
-                        self.expr(out, index)?;
+                        self.expr(out, args[0].pos())?;
                         write!(out, "]")?;
                     }
                     Target::Import { module, item, .. } => self.import(out, module, Some(*item))?,
                 }
                 write!(out, " = ")?;
-                self.expr(out, value)
+                self.expr(out, target.value())
             }
             Step::Default { var, value } => {
                 write!(out, "default ")?;
@@ -480,19 +480,19 @@ impl Dump<'_, '_> {
             ExprKind::Index { object, index, .. } => {
                 self.expr(out, object)?;
                 write!(out, "[")?;
-                self.expr(out, index)?;
+                self.expr(out, index.pos())?;
                 write!(out, "]")
             }
             ExprKind::Unary { op, operand, .. } => {
                 write!(out, "({op}")?;
-                self.expr(out, operand)?;
+                self.expr(out, operand.pos())?;
                 write!(out, ")")
             }
             ExprKind::Binary { op, operands, .. } => {
                 write!(out, "(")?;
-                self.expr(out, &operands[0])?;
+                self.expr(out, operands[0].pos())?;
                 write!(out, " {op} ")?;
-                self.expr(out, &operands[1])?;
+                self.expr(out, operands[1].pos())?;
                 write!(out, ")")
             }
             ExprKind::Range { bounds, .. } => {

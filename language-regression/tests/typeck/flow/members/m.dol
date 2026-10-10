@@ -5,6 +5,7 @@
 # `union_members`.
 
 import std:
+  - @AssignItem
   - @Index
 
 pub def drop x
@@ -451,3 +452,223 @@ pub def dict_methods d @ Dict[{a: Int, ?b: Str}] k @ (:a: | :b:)
 pub def tuple_get t @ Tuple[Int, Str]
   let _ = t.get 0
   #   ^: flow nil | std.Int | std.Str
+
+# An assigned value is a setter's, `(set)`'s or `(assign)`'s argument, so it's
+# expected to be what the parameter takes, as a field's value is expected to be
+# the field's type
+pub class Holder
+  pub field cb @ ((Int) -> Str) = do |_x| ""
+  field saved @ ((Int) -> Str) = do |_x| ""
+
+  #[getter]
+  pub def cb2 self -> ((Int) -> Str)
+    self.#saved
+
+  #[setter]
+  pub def cb2 self f @ ((Int, <Value, >Value) -> Str)
+    self.#saved = f
+
+  #[getter]
+  pub def items self -> Array[(Int | Str)]
+    ...
+
+  #[setter]
+  pub def items self items @ Array[(Int | Str)]
+    ...
+
+pub class Other
+  #[getter]
+  pub def cb2 self -> ((Int) -> Str)
+    ...
+
+  #[setter]
+  pub def cb2 self f @ ((Int) -> Str)
+    ...
+
+pub class Hooks
+  pub def (get) self name @ Sym -> ((Int) -> Str)
+    ...
+
+  pub def (set) self name @ Sym f @ ((Int) -> Str)
+    ...
+
+pub def assigned
+  h @ Holder
+  u @ (Holder | Other)
+  k @ Hooks
+  d @ Dict[Str, ((Int) -> Str)]
+  a @ Array[((Int) -> Str)]
+do
+  h.cb = do |z| "$z"
+  h.cb = do |z| z
+  # error: expected `(std.Int) -> std.Str`, found `(std.Int) -> std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   h.cb = do |z| z
+  #    |          ^^^^^^^^
+  #    |
+  #    = note: `std.Int` does not fit `std.Str`
+  h.cb2 = do |z| "$z"
+  h.cb2 = do |z| z
+  # error: expected `(std.Int) -> std.Str`, found `(std.Int) -> std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   h.cb2 = do |z| z
+  #    |           ^^^^^^^^
+  #    |
+  #    = note: `std.Int` does not fit `std.Str`
+  u.cb2 = do |z| "$z"
+  u.cb2 = do |z| z
+  # error: expected `(std.Int) -> std.Str`, found `(std.Int) -> std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   u.cb2 = do |z| z
+  #    |           ^^^^^^^^
+  #    |
+  #    = note: `std.Int` does not fit `std.Str`
+  k.anything = do |z| "$z"
+  k.anything = do |z| z
+  # error: expected `(std.Int) -> std.Str`, found `(std.Int) -> std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   k.anything = do |z| z
+  #    |                ^^^^^^^^
+  #    |
+  #    = note: `std.Int` does not fit `std.Str`
+  d["k"] = do |z| "$z"
+  d["k"] = do |z| z
+  # error: expected `(std.Int) -> std.Str`, found `(std.Int) -> std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   d["k"] = do |z| z
+  #    |            ^^^^^^^^
+  #    |
+  #    = note: `std.Int` does not fit `std.Str`
+  a[0] = do |z| "$z"
+  a[0] = do |z| z
+  # error: expected `(std.Int) -> std.Str`, found `(std.Int) -> std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   a[0] = do |z| z
+  #    |          ^^^^^^^^
+  #    |
+  #    = note: `std.Int` does not fit `std.Str`
+
+  # A fresh array takes the element type it's expected to have
+  h.items = [1]
+  let items = [1]
+  h.items = items
+# error: expected `[std.Int | std.Str]`, found `[std.Int]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   h.items = items
+#    |             ^^^^^
+#    |
+#    = note: `std.Int` doesn't accept `std.Str`
+
+pub class Slots[S @ {...}]
+  pub def put[K] self key@K value@AssignItem[S, K]
+    ...
+
+# A literal passed for an item's value is expected to be the item its key
+# selects, which a literal key selects exactly
+pub def assigned_items
+  d @ Dict[Str, Array[(Int | Str)]]
+  s @ Slots[{*(Str): Array[(Int | Str)]}]
+  r @ Dict[{a: Array[(Int | Str)], b: Int}]
+do
+  d["k"] = [1]
+  d.insert "k" [1]
+  s.put "k" [1]
+  r[:a:] = [1]
+  r.insert :a: [1]
+  d["k"] = [nil]
+# error: expected `[std.Int | std.Str]`, found `[std.Nil]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   d["k"] = [nil]
+#    |            ^^^^^
+#    |
+#    = note: `std.Nil` doesn't accept `std.Int | std.Str`
+#    = note: `std.Nil` does not fit `std.Int | std.Str`
+
+pub class Shadow: Func
+  pub def tag self -> Int
+    # warning: instance method `Shadow.tag` hides class member `Shadow.tag`, which is reachable only through `type(Shadow)`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def tag self -> Int
+    #    |           ^^^
+    ...
+
+  #[class]
+  pub def tag cls -> Str
+    ...
+
+  pub def mode self -> Int
+    # warning: instance method `Shadow.mode` hides class member `Shadow.mode`, which is reachable only through `type(Shadow)`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def mode self -> Int
+    #    |           ^^^^
+    ...
+
+  #[class]
+  pub field mode @ Str = "a"
+
+  pub field level @ Int = 0
+
+  #[class]
+  pub field level @ Str = "a"
+
+  pub def (call) self -> Int
+    ...
+
+  #[class]
+  pub def (call) _cls n @ Int -> Str
+    ...
+
+pub class Inherits: Shadow
+
+pub class Labelled
+  pub def label self -> Int
+    ...
+
+pub class Relabelled: Labelled
+  #[class]
+  pub def label cls -> Str
+    # warning: instance method `Labelled.label` hides class member `Relabelled.label`, which is reachable only through `type(Relabelled)`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def label cls -> Str
+    #    |           ^^^^^
+    ...
+
+# Through a class object, an instance method is found first, unbound. An
+# instance field isn't reached, and an assignment reaches only class members.
+pub def shadowed()
+  let t = Shadow.tag
+  let _ = t
+  #       ^: flow (m.Shadow) -> std.Int
+  let i = Inherits.tag
+  let _ = i
+  #       ^: flow (m.Shadow) -> std.Int
+  let r = Relabelled.label
+  let _ = r
+  #       ^: flow (m.Labelled) -> std.Int
+  let l = Shadow.level
+  let _ = l
+  #       ^: flow std.Str
+  Shadow.level = "b"
+  Shadow.mode = "b"
+  Shadow.mode = 1
+  # error: expected `std.Str`, found `1`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   Shadow.mode = 1
+  #    |                 ^
+
+  # Construction reaches only a class `(call)`
+  let s = Shadow 1
+  let _ = s
+  #       ^: flow std.Str

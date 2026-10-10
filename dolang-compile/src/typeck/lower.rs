@@ -166,7 +166,7 @@ impl<'t, 'u> Lower<'t, 'u> {
         }
         for (guard, targets) in self.guards.take() {
             let mut seen = HashSet::new();
-            let targets: Vec<_> = targets.into_iter().filter(|&t| seen.insert(t)).collect();
+            let targets = targets.into_iter().filter(|&t| seen.insert(t)).collect();
             if let Terminal::Guard { targets: slot, .. } = &mut self.graph.block_mut(guard).terminal
             {
                 *slot = targets;
@@ -313,10 +313,7 @@ impl<'u> Scope<'_, '_, 'u> {
     }
 
     fn assign(&self, var: VarId, value: Expr) {
-        self.emit(Step::Assign {
-            target: super::cfg::Target::Var(var),
-            value,
-        });
+        self.emit(Step::Assign(super::cfg::Target::Var { var, value }));
     }
 
     fn finish(&mut self, end: End) {

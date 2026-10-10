@@ -2,6 +2,8 @@
 
 use std::{mem, rc::Rc};
 
+use dolang_util::alias;
+
 use super::{
     Ctx, End, Job, Scope, expr,
     expr::is_path,
@@ -40,7 +42,7 @@ impl<'u> Scope<'_, '_, 'u> {
         let items = self.in_frame(&frame, |scope| {
             scope.pattern_items(&func.params, &mut nested)
         });
-        self.graph().func_mut(self.ctx.func).params = Pattern::Unpack(items);
+        self.graph().func_mut(self.ctx.func).params = Pattern::Unpack(items.into());
         self.nested_lets(nested, &frame);
         self.defaults(&func.params, &frame, false);
         let (result, exit) = {
@@ -96,10 +98,10 @@ impl<'u> Scope<'_, '_, 'u> {
         };
         if let Some(var) = signature.result {
             self.assigned(var);
-            graph.block_mut(exit).steps.push(Step::Assign {
-                target: Target::Var(var),
+            graph.block_mut(exit).steps.push(Step::Assign(Target::Var {
+                var,
                 value: expr(ExprKind::Copy(result), Span::INVALID),
-            });
+            }));
         }
         graph.func_mut(self.ctx.func).signature = Some(signature);
     }
@@ -128,7 +130,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 let next = self.block();
                 self.end(Terminal::Guard {
                     next,
-                    targets: Vec::new(),
+                    targets: alias::Box::default(),
                 });
                 let guard_block = self.bb;
                 self.lower
@@ -313,6 +315,10 @@ impl<'u> Scope<'_, '_, 'u> {
             let value = self.prim_value(&node.rhs);
             self.temporary(value)
         });
+        let value = |scope: &mut Self| match early {
+            Some(var) => expr(ExprKind::Copy(var), node.rhs.span()),
+            None => scope.prim_value(&node.rhs),
+        };
         let target = match &node.lhs {
             LValue::Ident(_) => unreachable!("assigned above"),
             LValue::Field { object, field, .. } => match self.import_path(object) {
@@ -321,29 +327,29 @@ impl<'u> Scope<'_, '_, 'u> {
                     module,
                     item: self.lower.symbol(self.text(*field)),
                     span: object.span() | *field,
+                    value: value(self),
                 },
                 _ => Target::Field {
                     object: self.expr(object),
                     member: self.member_key(*field, false, false),
+                    value: Box::new(Item::Pos(value(self))),
                 },
             },
             LValue::PrivateField { object, field, .. } => Target::Field {
                 object: self.expr(object),
                 member: self.member_key(*field, false, true),
+                value: Box::new(Item::Pos(value(self))),
             },
             LValue::Index { exprs, .. } => {
                 let object = self.expr(&exprs[0]);
+                let index = Item::Pos(self.expr(&exprs[1]));
                 Target::Index {
                     object,
-                    index: self.expr(&exprs[1]),
+                    args: Box::new([index, Item::Pos(value(self))]),
                 }
             }
         };
-        let value = match early {
-            Some(var) => expr(ExprKind::Copy(var), node.rhs.span()),
-            None => self.prim_value(&node.rhs),
-        };
-        self.emit(Step::Assign { target, value });
+        self.emit(Step::Assign(target));
         self.value_nil(dest, span);
     }
 
@@ -360,7 +366,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 Pattern::Bind(scope.binding(ident, ty.as_deref()))
             }
             ast::Pattern::Unpack(pat_items) => {
-                Pattern::Unpack(scope.pattern_items(pat_items, &mut nested))
+                Pattern::Unpack(scope.pattern_items(pat_items, &mut nested).into())
             }
             ast::Pattern::TypeTest(_) | ast::Pattern::Constant { .. } | ast::Pattern::Alt(_) => {
                 let var = scope.synthetic();
@@ -499,7 +505,10 @@ impl<'u> Scope<'_, '_, 'u> {
                     cond: expr(
                         ExprKind::Binary {
                             op: crate::lex::Op::EqEq,
-                            operands: Box::new([expr(ExprKind::Copy(var), span), comparison]),
+                            operands: Box::new([
+                                Item::Pos(expr(ExprKind::Copy(var), span)),
+                                Item::Pos(comparison),
+                            ]),
                         },
                         span,
                     ),
@@ -1170,7 +1179,7 @@ impl<'u> Scope<'_, '_, 'u> {
                     if !is_path(class) && !clauses.is_empty() {
                         let next = graph.alloc_block(func, part_handler, depth);
                         graph.block_mut(dispatch).terminal = Terminal::Catch {
-                            clauses: mem::take(&mut clauses),
+                            clauses: mem::take(&mut clauses).into(),
                             otherwise: next,
                         };
                         dispatch = next;
@@ -1190,7 +1199,10 @@ impl<'u> Scope<'_, '_, 'u> {
             }
         }
         let otherwise = otherwise.unwrap_or_else(rethrow);
-        graph.block_mut(dispatch).terminal = Terminal::Catch { clauses, otherwise };
+        graph.block_mut(dispatch).terminal = Terminal::Catch {
+            clauses: clauses.into(),
+            otherwise,
+        };
         self.switch(join);
     }
 
@@ -1224,10 +1236,10 @@ impl<'u> Scope<'_, '_, 'u> {
                 let items = self.in_frame(&frame, |scope| scope.pattern_items(params, &mut nested));
                 let args = ExprKind::Collection {
                     kind: Collection::Tuple,
-                    items: vec![Item::Pos(operand)],
+                    items: [Item::Pos(operand)].into_iter().collect(),
                 };
                 self.emit(Step::Let {
-                    pattern: Pattern::Unpack(items),
+                    pattern: Pattern::Unpack(items.into()),
                     value: expr(args, span),
                 });
                 self.nested_lets(nested, &frame);
@@ -1284,7 +1296,7 @@ impl<'u> Scope<'_, '_, 'u> {
             .fold(value, |value, (decorator, span)| {
                 let call = ExprKind::Call {
                     callee: Box::new(decorator),
-                    args: vec![Item::Pos(value)],
+                    args: [Item::Pos(value)].into_iter().collect(),
                 };
                 expr(call, span)
             })
@@ -1395,13 +1407,11 @@ impl<'u> Scope<'_, '_, 'u> {
             value,
         });
         for (member, value) in statics {
-            self.emit(Step::Assign {
-                target: Target::Field {
-                    object: expr(ExprKind::Copy(var), span),
-                    member,
-                },
-                value: expr(ExprKind::Copy(value), span),
-            });
+            self.emit(Step::Assign(Target::Field {
+                object: expr(ExprKind::Copy(var), span),
+                member,
+                value: Box::new(Item::Pos(expr(ExprKind::Copy(value), span))),
+            }));
         }
         if let Some(dest) = dest {
             self.assign(dest, expr(ExprKind::Copy(var), span));

@@ -50,6 +50,12 @@ class ShadowFlags: TestFlags
 let from_int = ShadowFlags.from_int
 assert_eq (from_int nil 4) "instance method"
 assert_eq (type(ShadowFlags).from_int ShadowFlags 4) $exec
+
+# Through a native type object too, an instance method wins over a type member,
+# both read and called.
+assert_eq (TestFlags.is_exec(exec)) true
+let is_exec = TestFlags.is_exec
+assert_eq (is_exec(r)) false
 let all = (rw | exec)
 assert_eq [...all] [:READ:, :WRITE:, :EXEC:]
 

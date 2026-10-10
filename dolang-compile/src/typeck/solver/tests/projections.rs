@@ -145,15 +145,6 @@ fn a_union_expansion_is_evaluated_once_substituted() {
     }
 }
 
-/// A union of one item projection
-fn selecting(db: &Database, meet: bool, schema: TypeId, key: TypeId) -> TypeId {
-    let member = match meet {
-        false => UnionMember::IndexItem(schema, key),
-        true => UnionMember::AssignItem(schema, key),
-    };
-    db.intern(Type::Union(vec![member].into()))
-}
-
 /// What an item projection evaluates to, or the issue evaluating it raises, for
 /// a gradual unit
 fn evaluated(db: &Database, projection: TypeId) -> Result<TypeId, Issue> {

@@ -18,7 +18,8 @@
 use std::collections::HashMap;
 
 use super::{
-    DeclNode, Designated, Diag, Nonconforming, Tables, Uncallable, UnitDiag, Unresolved, sig,
+    DeclNode, Designated, Diag, Hidden, Nonconforming, Tables, Uncallable, UnitDiag, Unresolved,
+    sig,
     surface::{Class, Member, MemberScope},
 };
 use crate::{
@@ -26,12 +27,12 @@ use crate::{
     source::Span,
     typeck::{
         solver::{
-            Inheritance, Issue, Provenance, Reach, Requirement, RequirementKind, Residual, Solver,
-            Status, Term,
+            Found, FoundKind, Inheritance, Issue, Lookup, Provenance, Reach, Requirement,
+            RequirementKind, Residual, Solver, Status, Term,
         },
         r#type::{
-            Argument, Database, DeclId, DeclKind, Intrinsic, Kind, MemberKey, Scope, Type, TypeId,
-            UnitId, UnitSpan,
+            Argument, Database, DeclId, DeclKind, Intrinsic, Kind, Member as Declared, MemberKey,
+            Scope, Type, TypeId, UnitId, UnitSpan,
         },
     },
 };
@@ -105,6 +106,9 @@ impl Check<'_, '_> {
         let instance = self.instance();
         self.callable(&solver, instance);
         let spans = self.member_spans();
+        if runtime {
+            self.hidden(&solver, instance, &spans);
+        }
         let mut pending = Vec::new();
         for super_ref in &self.class.supers {
             let span = super_ref.span();
@@ -211,6 +215,78 @@ impl Check<'_, '_> {
             let class = self.name(self.id).to_owned();
             self.diags
                 .push((self.unit, Diag::new(Uncallable { span, class })));
+        }
+    }
+
+    /// Warn of an instance method that hides a class or static member of the same
+    /// name from the class object, which reaches the method first. Each pair is
+    /// reported where the later of the two is declared: at an own method, or at
+    /// an own class member that an inherited method hides. Special methods are
+    /// exempt, as a class `(call)` is reached by calling the class.
+    fn hidden(
+        &mut self,
+        solver: &Solver<'_>,
+        instance: TypeId,
+        spans: &HashMap<(MemberKey, bool), Span>,
+    ) {
+        let db = self.db;
+        let receiver = solver.closed(instance);
+        // A private member is named by its class alone, so only the class's own
+        // members share its key
+        let own = |key: MemberKey, admits: &dyn Fn(&Declared) -> bool| {
+            db.declaration(self.id)
+                .members
+                .iter()
+                .find(|(found, member)| *found == key && admits(member))
+                .map(|(_, member)| (self.id, member.scope()))
+        };
+        let inherited = |key: MemberKey, scope: Scope| -> Option<Found> {
+            match solver.inherited_member(receiver, key, scope, true) {
+                Ok(Lookup::Found(found)) => Some(found),
+                _ => None,
+            }
+        };
+        let mut hidden = Vec::new();
+        for (key, member) in db.declaration(self.id).members.iter() {
+            if key.special {
+                continue;
+            }
+            if member.scope() == Scope::Instance {
+                if !matches!(member, Declared::Method { .. }) {
+                    continue;
+                }
+                let class_member = match key.private {
+                    true => own(*key, &|member| member.scope() != Scope::Instance),
+                    false => [Scope::Class, Scope::Static]
+                        .into_iter()
+                        .find_map(|scope| inherited(*key, scope))
+                        .map(|found| (found.class, found.scope)),
+                };
+                if let Some((owner, scope)) = class_member
+                    && let Some(&span) = spans.get(&(*key, true))
+                {
+                    hidden.push((span, *key, self.id, owner, scope));
+                }
+            } else if !key.private
+                && let Some(found) = inherited(*key, Scope::Instance)
+                && found.class != self.id
+                && matches!(found.kind, FoundKind::Method(_))
+                && let Some(&span) = spans.get(&(*key, false))
+            {
+                hidden.push((span, *key, found.class, self.id, member.scope()));
+            }
+        }
+        let class = self.name(self.id).to_owned();
+        for (span, key, method, owner, scope) in hidden {
+            let name = self.member(key);
+            let diag = Hidden {
+                span,
+                method: format!("{}.{name}", self.name(method)),
+                member: format!("{}.{name}", self.name(owner)),
+                scope,
+                class: class.clone(),
+            };
+            self.diags.push((self.unit, Diag::new(diag)));
         }
     }
 

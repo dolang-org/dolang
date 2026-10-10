@@ -122,14 +122,14 @@ impl Ir {
                         vars.extend(pattern.vars());
                         exprs.push(value);
                     }
-                    Step::Assign { target, value } => {
+                    Step::Assign(target) => {
                         match target {
-                            Target::Var(var) => vars.push(*var),
+                            Target::Var { var, .. } => vars.push(*var),
                             Target::Field { object, .. } => exprs.push(object),
-                            Target::Index { object, index, .. } => exprs.extend([object, index]),
+                            Target::Index { object, args } => exprs.extend([object, args[0].pos()]),
                             Target::Import { .. } => {}
                         }
-                        exprs.push(value);
+                        exprs.push(target.value());
                     }
                     Step::Default { var, value } => {
                         vars.push(*var);
@@ -348,15 +348,15 @@ impl Ir {
                     Step::Let { pattern, value } => {
                         pop(&mut depth, operands(value) + pattern_operands(pattern))
                     }
-                    Step::Assign { target, value } => {
-                        let target = match target {
-                            Target::Var(_) | Target::Import { .. } => 0,
+                    Step::Assign(target) => {
+                        let operands = match target {
+                            Target::Var { .. } | Target::Import { .. } => 0,
                             Target::Field { object, .. } => operands(object),
-                            Target::Index { object, index, .. } => {
-                                operands(object) + operands(index)
+                            Target::Index { object, args } => {
+                                operands(object) + operands(args[0].pos())
                             }
-                        };
-                        pop(&mut depth, target + operands(value));
+                        } + operands(target.value());
+                        pop(&mut depth, operands);
                     }
                     Step::Default { value, .. } | Step::Eval(value) => {
                         pop(&mut depth, operands(value))

@@ -203,6 +203,11 @@ mod detail {
                     this.create_flags(strand, TestFlags(value), out);
                     Ok(())
                 })
+                // Hidden by the instance method of the same name
+                .type_method("is_exec", async move |_this, strand, _args, out| {
+                    Output::set(strand, out, "type method");
+                    Ok(())
+                })
                 .type_get("type_property", |_this, strand, out| {
                     Output::set(strand, out, 42_i64);
                     Ok(())

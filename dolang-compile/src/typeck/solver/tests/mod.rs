@@ -39,6 +39,15 @@ fn reference(db: &Database, depth: usize, slot: usize) -> TypeId {
     })
 }
 
+/// A union of one item projection: `AssignItem` if `meet`, else `IndexItem`
+fn selecting(db: &Database, meet: bool, schema: TypeId, key: TypeId) -> TypeId {
+    let member = match meet {
+        false => UnionMember::IndexItem(schema, key),
+        true => UnionMember::AssignItem(schema, key),
+    };
+    db.intern(Type::Union(vec![member].into()))
+}
+
 fn binder(variance: Variance) -> Binder {
     Binder {
         kind: Kind::Type,

@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 
 use super::report::{Annotation, Report};
 use super::r#type::{
-    Database, DeclId, DeclKind, Intrinsic, Kind, TypeId, UnitId, UnitSpan, Variance,
+    Database, DeclId, DeclKind, Intrinsic, Kind, Scope, TypeId, UnitId, UnitSpan, Variance,
 };
 use super::typelib::wire;
 use crate::{
@@ -913,6 +913,42 @@ impl Report for Uncallable {
             w,
             "`{}` has a `(call)` but not `Func` as a supertype, so it isn't passed as a function",
             self.class
+        )
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+/// An instance method that a class object reaches before a class or static
+/// member of the same name, leaving that member reachable only through
+/// `type(C)`
+struct Hidden {
+    span: Span,
+    /// The instance method, qualified by its class
+    method: String,
+    /// The member it hides, qualified by its class
+    member: String,
+    scope: Scope,
+    /// The class whose object hides it
+    class: String,
+}
+
+impl Report for Hidden {
+    fn severity(&self) -> Severity {
+        Severity::Warning
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        let scope = match self.scope {
+            Scope::Static => "static",
+            Scope::Class | Scope::Instance => "class",
+        };
+        write!(
+            w,
+            "instance method `{}` hides {scope} member `{}`, which is reachable only through `type({})`",
+            self.method, self.member, self.class
         )
     }
 

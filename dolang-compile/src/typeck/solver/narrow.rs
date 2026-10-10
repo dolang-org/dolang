@@ -7,9 +7,9 @@
 //! gives the conservative outcome: a member is kept by a negative relation and
 //! becomes `C` by a positive one. A member becomes `C` applied to the member's
 //! own arguments where they carry down soundly. A gradual unit's solver gives
-//! the rest `Unknown`. A strict unit's gives a covariant binder its bound and a
-//! contravariant one bottom, and keeps the member where an invariant binder
-//! leaves no sound argument. An empty result is bottom, making the edge
+//! the rest `Unknown`. A strict unit's gives a covariant binder its bound, of
+//! either kind, and a contravariant type binder bottom, and keeps the member
+//! where another binder leaves no sound argument. An empty result is bottom, making the edge
 //! unreachable.
 //!
 //! Narrowing against `Func` keeps each function and each class that reaches
@@ -256,8 +256,8 @@ impl Solver<'_> {
     }
 
     /// `class` applied to `carried`'s argument for each binder that has one, and
-    /// for the rest a covariant binder's bound or a contravariant one's bottom;
-    /// `None` when a binder has neither
+    /// for the rest a [sound argument](Solver::sound_argument); `None` when a
+    /// binder has neither
     fn approximate(
         &self,
         class: DeclId,
@@ -282,24 +282,24 @@ impl Solver<'_> {
     }
 
     /// An argument every instance's own is below or above, as the binder varies,
-    /// written without `Unknown`. A bound that needs the other arguments isn't one.
+    /// written without `Unknown`: a covariant binder's bound, or without one `Value`
+    /// or the open schema, and a contravariant type binder's bottom. A bound that
+    /// needs the other arguments isn't one, and there's no bottom schema.
     fn sound_argument(&self, binder: &Binder, binders: &[Binder]) -> Option<TypeId> {
-        if binder.kind != Kind::Type {
-            return None;
-        }
-        match binder.variance {
-            Variance::Covariant => match binder.bound {
-                None => Some(self.db.top()),
-                Some(_) => {
-                    let unknowns: Vec<_> = (binders.iter())
-                        .map(|binder| self.db.unknown_of(binder.kind))
-                        .collect();
-                    let bound = self.db.binder_bound(binder, &unknowns)?;
-                    (!self.contains_unknown(bound)).then_some(bound)
-                }
-            },
-            Variance::Contravariant => Some(self.db.bottom()),
-            Variance::Invariant => None,
+        match (binder.variance, binder.kind) {
+            (Variance::Covariant, _) => {
+                let unknowns: Vec<_> = (binders.iter())
+                    .map(|binder| self.db.unknown_of(binder.kind))
+                    .collect();
+                let bound = match (self.db.binder_bound(binder, &unknowns), binder.kind) {
+                    (Some(bound), _) => bound,
+                    (None, Kind::Type) => return Some(self.db.top()),
+                    (None, Kind::Schema) => self.db.rest_shape(Rest::All),
+                };
+                (!self.contains_unknown(bound)).then_some(bound)
+            }
+            (Variance::Contravariant, Kind::Type) => Some(self.db.bottom()),
+            (Variance::Contravariant, Kind::Schema) | (Variance::Invariant, _) => None,
         }
     }
 
