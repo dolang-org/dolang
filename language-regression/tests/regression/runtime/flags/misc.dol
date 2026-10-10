@@ -56,6 +56,69 @@ assert_eq (type(ShadowFlags).from_int ShadowFlags 4) $exec
 assert_eq (TestFlags.is_exec(exec)) true
 let is_exec = TestFlags.is_exec
 assert_eq (is_exec(r)) false
+# Native metaclasses expose type methods without the instance namespace.
+assert_eq (type(TestFlags).is_exec TestFlags) "type method"
+assert_eq (type(TestFlags).is_exec DerivedFlags) "type method"
+assert_eq (type(TestFlags).is_exec FurtherDerivedFlags) "type method"
+assert_eq (type(DerivedFlags).is_exec DerivedFlags) "type method"
+assert_eq (type(FurtherDerivedFlags).is_exec FurtherDerivedFlags) "type method"
+let type_is_exec = type(TestFlags).is_exec
+assert_eq (type_is_exec TestFlags) "type method"
+assert_eq (type_is_exec FurtherDerivedFlags) "type method"
+assert_eq (type(TestFlags).from_int TestFlags 4) $exec
+assert_eq (type(TestFlags).from_int FurtherDerivedFlags 4) $exec
+
+assert (type(TestFlags) == type(TestFlags))
+assert (type(TestFlags) != type(type(makefoo())))
+assert (type(TestFlags) != Type)
+assert_eq (hash(type(TestFlags))) (hash(type(TestFlags)))
+assert (type TestFlags Type)
+assert (type(type(TestFlags), Type))
+assert_eq (type(type(TestFlags))) $Type
+assert_eq (type Type) $Type
+assert_eq (dbg(type(TestFlags))) "<type of regression2.TestFlags>"
+let metaclasses = {}
+metaclasses[type(TestFlags)] = 1
+metaclasses[type(TestFlags)] = 2
+assert_eq $metaclasses.len 1
+assert_eq $metaclasses[type(TestFlags)] 2
+
+let type_get = type(TestFlags).(get)
+let type_set = type(TestFlags).(set)
+assert_eq (type_get TestFlags :type_property:) 42
+assert_eq (type_get FurtherDerivedFlags :type_property:) 42
+assert_eq (type_get TestFlags :hidden_property:) 44
+assert_eq (type_get FurtherDerivedFlags :hidden_property:) 44
+let hidden_type_method = type_get $TestFlags :is_exec:
+assert_eq (hidden_type_method()) "type method"
+let inherited_type_method = type_get $FurtherDerivedFlags :is_exec:
+assert_eq (inherited_type_method()) "type method"
+assert_eq (TestFlags.hidden_property exec) "instance method"
+type_set $TestFlags :hidden_property: 7
+type_set $FurtherDerivedFlags :hidden_property: 8
+type_set $TestFlags :type_writeonly: 9
+assert_eq (type_get TestFlags :type_readonly:) 43
+assert_throws $std.RuntimeError do type_set $TestFlags :type_readonly: 1
+assert_throws $std.RuntimeError do type_get $TestFlags :type_writeonly:
+assert_throws $std.RuntimeError do type_get $TestFlags :missing:
+assert_throws $std.RuntimeError do type_set $TestFlags :missing: 1
+assert_throws $std.RuntimeError do type(TestFlags).hidden_property
+assert_throws $std.MissingPosError do type_is_exec()
+assert_throws $std.TypeError do type_is_exec $exec
+assert_throws $std.TypeError do type_is_exec $Array
+assert_throws $std.TypeError do type_get $exec :hidden_property:
+assert_throws $std.TypeError do type_set $Array :hidden_property: 1
+assert_throws $std.RuntimeError do type(TestFlags).missing TestFlags
+
+# Protocol defaults act on type objects, rather than native instances.
+assert_eq (type(TestFlags).(str) TestFlags) (str TestFlags)
+assert_eq (type(TestFlags).(dbg) TestFlags) (dbg TestFlags)
+assert_eq (type(TestFlags).(hash) TestFlags) (hash TestFlags)
+assert_eq (type(TestFlags).(eq) TestFlags TestFlags) true
+assert_eq (type(DerivedFlags).(get) DerivedFlags :hidden_property:) 44
+let class_proxy_method = type(DerivedFlags).(get) $FurtherDerivedFlags :is_exec:
+assert_eq (class_proxy_method()) "type method"
+type(DerivedFlags).(set) $DerivedFlags :hidden_property: 9
 let all = (rw | exec)
 assert_eq [...all] [:READ:, :WRITE:, :EXEC:]
 
