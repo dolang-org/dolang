@@ -371,12 +371,52 @@ fn item_projections_relate_before_they_can_be_evaluated() {
             "{x:?} <: {y:?}: {outcome:?}"
         );
     }
-    // Otherwise a rigid key selects too little to decide
+    // Otherwise a rigid key's projection is below that by its bound
     let outcome = under(db, decl, read_mixed, int_str);
-    assert_eq!(outcome.status, Status::Unresolved, "{outcome:?}");
+    assert_eq!(outcome.status, Status::Proven, "{outcome:?}");
+    let outcome = under(db, decl, read_mixed, int);
+    assert_eq!(outcome.status, Status::Contradicted, "{outcome:?}");
     // A key selecting more is not below one selecting less
     let outcome = under(db, decl, read_ab, read_a);
     assert_ne!(outcome.status, Status::Proven, "{outcome:?}");
+}
+
+#[test]
+fn index_items_widen_to_the_keys_of_a_rigid_schemas_bound() {
+    let db = &mut Database::new();
+    let int = int(db);
+    let str = nominal(db, "Str", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Str, str);
+    let (a, b) = (sym(db, "a"), sym(db, "b"));
+    let int_str = union(db, &[int, str]);
+    // `S @ {a: Int, b: Str}` and `K @ Keys[S]`
+    let bound = items(
+        db,
+        vec![
+            keyed(Multiplicity::Required, a, int),
+            keyed(Multiplicity::Required, b, str),
+        ],
+    );
+    let s = schema_reference(db, 0);
+    let keys = projection(db, UnionMember::Keys, s);
+    let decl = generic(
+        db,
+        vec![
+            bounded(Kind::Schema, Binding::Positional, Some(bound)),
+            bounded(Kind::Type, Binding::Positional, Some(keys)),
+        ],
+        db.top(),
+    );
+    let read = selecting(db, false, s, reference(db, 0, 1));
+    db.seal();
+    // `IndexItem[S, K]` widens to `IndexItem[B, K]`, then `IndexItem[B, Keys[S]]`,
+    // then `IndexItem[B, Keys[B]]`
+    let outcome = under(db, decl, read, int_str);
+    assert_eq!(outcome.status, Status::Proven, "{outcome:?}");
+    for narrower in [int, str] {
+        let outcome = under(db, decl, read, narrower);
+        assert_eq!(outcome.status, Status::Contradicted, "{outcome:?}");
+    }
 }
 
 #[test]

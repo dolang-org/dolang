@@ -446,3 +446,25 @@ fn closed_solvers_settle_their_own_variables() {
     let crossed = function(&db, &[int], str);
     assert_eq!(judge(crossed, true).0, Status::Contradicted);
 }
+
+#[test]
+fn instantiation_establishes_implied_bounds() {
+    let mut db = Database::new();
+    let int = nominal(&mut db, "Int", vec![], vec![]);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let s = items(&db, vec![keyed(Multiplicity::Repeated, str, int)]);
+    let k = reference(&db, 0, 0);
+    // get[K] key@K -> IndexItem[{*(Str): Int}, K]
+    let get = quantified(
+        &db,
+        vec![binder(Variance::Invariant)],
+        function(&db, &[k], selecting(&db, false, s, k)),
+    );
+    db.seal();
+    // Even where nothing evaluates the projection, a key outside `Keys[S]`
+    // is contradicted
+    for (key, status) in [(str, Status::Proven), (int, Status::Contradicted)] {
+        let (_, _, outcome) = solve_call(&db, get, &[key], Some(db.top()));
+        assert_eq!(outcome.status, status, "{key:?}: {outcome:?}");
+    }
+}

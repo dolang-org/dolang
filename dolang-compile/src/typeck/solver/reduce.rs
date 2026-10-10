@@ -181,36 +181,22 @@ impl Solver<'_> {
         Ok(Continue(()))
     }
 
-    /// A rigid or skolem is below whatever its bound is below. Without a bound,
-    /// a skolem is below only a union with a member that admits anything, since
-    /// it can't be a member's alternative; a rigid is left to such a union's
-    /// members.
+    /// A rigid or skolem is below whatever its bound is below. One with a
+    /// declared bound and bounds its item projections imply is below whatever
+    /// one of them is below. Without a bound, a skolem is below only a union
+    /// with a member that admits anything, since it can't be a member's
+    /// alternative; a rigid is left to such a union's members.
     fn bounded(&self, j: &Judgment) -> Result<ControlFlow<()>, Issue> {
-        let (bound, step) = match &j.a {
-            Head::Structural(view) => {
-                let Some(binder) = self.rigid(view.ty)? else {
-                    return Ok(Continue(()));
-                };
-                let step = match binder.binding {
-                    Binding::Implicit => Step::ImplicitBound,
-                    _ => Step::RigidBound,
-                };
-                (
-                    self.rigid_bound(view.ty).map(|bound| self.closed(bound)),
-                    step,
-                )
-            }
-            Head::Skolem(id) => {
-                let skolem = &self.skolems[id.0];
-                let step = match skolem.binding {
-                    Binding::Implicit => Step::ImplicitBound,
-                    _ => Step::SkolemBound,
-                };
-                (skolem.bound.get(), step)
-            }
+        let of = match &j.a {
+            Head::Structural(view) if self.rigid(view.ty)?.is_some() => Abstract::Rigid(view.ty),
+            Head::Skolem(id) => Abstract::Skolem(*id),
             _ => return Ok(Continue(())),
         };
-        if let Some(bound) = bound {
+        let mut bounds = self.abstract_bounds(of);
+        if bounds.len() > 1 {
+            return self.below_any_bound(&bounds, j.expected).map(Break);
+        }
+        if let Some((bound, step)) = bounds.pop() {
             self.derive(j.obligation, bound, j.expected, step);
             return Ok(Break(()));
         }
@@ -225,11 +211,32 @@ impl Solver<'_> {
         }
     }
 
+    /// Whether one of a rigid's or skolem's several bounds is below a type. Each
+    /// is probed, since which one is isn't known.
+    fn below_any_bound(&self, bounds: &[(Term, Step)], expected: Term) -> Result<(), Issue> {
+        let expected = self.reify(expected)?;
+        let mut unresolved = false;
+        for &(bound, _) in bounds {
+            match self.probe(self.reify(bound)?, expected)? {
+                Status::Proven => return Ok(()),
+                Status::Contradicted => {}
+                Status::Unresolved => unresolved = true,
+            }
+        }
+        match unresolved {
+            true => Err(Residual::Unsupported("a skolem with several bounds").into()),
+            false => Err(Issue::Contradiction(Contradiction::Rigid)),
+        }
+    }
+
     /// A union of projections on the left. A projection is of a rigid's schema,
     /// or can't be evaluated. The former is below the same projection of the
     /// rigid's bound. An item projection is also below one whose key selects as
     /// much and whose schema is wider, or for `AssignItem`, one of the same
-    /// schema whose key selects as little.
+    /// schema whose key selects as little. An `IndexItem` with a rigid in its
+    /// key is below the one with that key widened toward its bound (see
+    /// [`Self::widened_key`]), after its schema is widened; `AssignItem` is
+    /// antitone in its key, so its key isn't widened.
     fn projections(&self, j: &Judgment) -> Result<ControlFlow<()>, Issue> {
         let Head::Structural(view) = &j.a else {
             return Ok(Continue(()));
@@ -245,7 +252,7 @@ impl Solver<'_> {
                 _ if self.shares(*view, member, &j.b)? => continue,
                 _ if self.congruent(*view, member, &j.b)? => continue,
                 _ if self.rigid(member.id())?.is_some() => {
-                    let Some(bound) = self.rigid_bound(member.id()) else {
+                    let Some(&(bound, _)) = self.rigid_bounds(member.id()).first() else {
                         return Err(Residual::Unsupported(
                             "a projection of a rigid without a bound",
                         )
@@ -255,6 +262,15 @@ impl Solver<'_> {
                     let projected = self.db.intern(Type::Union(vec![member.with(bound)].into()));
                     (view.child(projected), Step::RigidBound)
                 }
+                UnionMember::IndexItem(schema, key) => match self.widened_key(key)? {
+                    Some((key, step)) => {
+                        let projected = (self.db).intern(Type::Union(
+                            vec![UnionMember::IndexItem(schema, key)].into(),
+                        ));
+                        (view.child(projected), step)
+                    }
+                    None => return Err(Residual::Unsupported("an unevaluated projection").into()),
+                },
                 _ => return Err(Residual::Unsupported("an unevaluated projection").into()),
             };
             derived.push((term, step));
@@ -263,6 +279,39 @@ impl Solver<'_> {
             self.derive(j.obligation, term, j.expected, step);
         }
         Ok(Break(()))
+    }
+
+    /// An item projection's key widened by one step: a rigid member to its
+    /// first bound, or the keys of a rigid schema to the keys of its first
+    /// bound, with the step that reduces the rigid
+    fn widened_key(&self, key: TypeId) -> Result<Option<(TypeId, Step)>, Issue> {
+        let members = match self.db.ty(key) {
+            Type::Union(members) => members.to_vec(),
+            _ => vec![UnionMember::Type(key)],
+        };
+        let mut widened = Vec::new();
+        let mut step = None;
+        for member in members {
+            let bound = match member {
+                UnionMember::Type(ty) | UnionMember::Keys(ty)
+                    if step.is_none() && self.rigid(ty)?.is_some() =>
+                {
+                    self.rigid_bounds(ty).first().cloned()
+                }
+                _ => None,
+            };
+            let Some((bound, reduced)) = bound else {
+                widened.push(member);
+                continue;
+            };
+            step = Some(reduced);
+            match (member, self.db.ty(bound)) {
+                (UnionMember::Type(_), Type::Union(members)) => widened.extend(members.iter()),
+                (UnionMember::Type(_), _) => widened.push(UnionMember::Type(bound)),
+                _ => widened.push(UnionMember::Keys(bound)),
+            }
+        }
+        Ok(step.map(|step| (self.db.intern(Type::Union(widened.into())), step)))
     }
 
     /// Only itself, bottom and the dynamic type are below a rigid or skolem
@@ -669,8 +718,10 @@ impl Solver<'_> {
                 return Ok(());
             }
             if lower && let Term::Skolem(skolem) = self.resolve(term)? {
-                let bound = (self.skolems[skolem.0].bound.get())
-                    .unwrap_or_else(|| self.closed(self.db.top()));
+                let bound = match self.abstract_bound(Abstract::Skolem(skolem)) {
+                    Some((bound, _)) => bound,
+                    None => self.closed(self.db.top()),
+                };
                 self.derive(source, bound, Term::Infer(id), Step::Promotion);
                 return Ok(());
             }
@@ -996,13 +1047,25 @@ impl Solver<'_> {
             .unwrap()
             .group
             .clone();
-        for (index, (binder, term)) in binders.iter().zip(group).enumerate() {
+        for (index, (binder, term)) in binders.iter().zip(&group).enumerate() {
             let bound = match (binder.bound, binder.binding) {
                 (Some(bound), _) => self.view(bound, environment),
                 (None, Binding::Rest(rest)) => self.closed(self.db.rest_shape(rest)),
                 (None, _) => continue,
             };
-            self.derive(obligation, term, bound, Step::InstantiationBound(index));
+            self.derive(obligation, *term, bound, Step::InstantiationBound(index));
+        }
+        // A rigid takes its implied bounds as facts, so each instantiation
+        // establishes them
+        for (slot, bound) in self.db.implied_bounds(view.ty) {
+            let index = usize::from(slot);
+            let bound = self.view(bound, environment);
+            self.derive(
+                obligation,
+                group[index],
+                bound,
+                Step::InstantiationBound(index),
+            );
         }
         Ok(environment)
     }
@@ -1032,6 +1095,7 @@ impl Solver<'_> {
                             kind: binder.kind,
                             binding: binder.binding,
                             bound: Cell::new(None),
+                            implied: MonoVec::new(),
                             scope,
                         });
                         Term::Skolem(id)
@@ -1048,6 +1112,14 @@ impl Solver<'_> {
                         unreachable!()
                     };
                     self.skolems[id.0].bound.set(bound);
+                }
+                for (slot, bound) in self.db.implied_bounds(view.ty) {
+                    let Term::Skolem(id) = group[usize::from(slot)] else {
+                        unreachable!()
+                    };
+                    self.skolems[id.0]
+                        .implied
+                        .push(self.view(bound, environment));
                 }
                 self.skolemizations
                     .borrow_mut()

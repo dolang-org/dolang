@@ -23,7 +23,6 @@ import
     - RuntimeError
     - @Fmt
     - @Index
-    - @IndexItem
     - @Spread
     - @Unpack
 
@@ -419,12 +418,12 @@ pub class Row: @Index[Int | Str, Value] @Unpack[{...}, Rest: RowRest]
   # echo $ str row[0]
   # echo $ str row["name"]
   # ```
-  pub def (index)[K]
+  pub def (index)
     self
     # Column position or
     # name.
-    key @ K
-  do -> IndexItem[{*(Int | Str): Value}, K]
+    key @ (Int | Str)
+  do -> Value
     ...
 
   # Destructures the row by position or by column name.

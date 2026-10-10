@@ -12,7 +12,9 @@
 //! without rechecking bounds or scanning declarations for free references.
 //!
 //! A declaration is checked by assuming it: its binders become rigids, whose bounds
-//! are the only binder bounds taken as facts. Any other declaration's rigid has
+//! are the only binder bounds taken as facts. Those include the bounds its item
+//! projections imply (see [`Database::implied_bounds`]), which instantiation
+//! establishes as it does declared ones. Any other declaration's rigid has
 //! escaped its check.
 
 use std::{
@@ -262,6 +264,9 @@ pub(crate) enum Step {
     Skolemization,
     /// A skolem reduced to its binder's bound
     SkolemBound,
+    /// A rigid or skolem reduced to a bound implied by an item projection
+    /// selecting by it
+    ImpliedBound,
     /// A skolem outside a variable's scope replaced by its bound, as the
     /// variable's lower bound
     Promotion,
@@ -406,6 +411,13 @@ struct Inference {
     scope: ScopeId,
 }
 
+/// A rigid or skolem, known only by its bounds
+#[derive(Clone, Copy)]
+enum Abstract {
+    Rigid(TypeId),
+    Skolem(SkolemId),
+}
+
 /// A binder of a quantified type on the right, held abstract while its body is
 /// related (see [`Solver::skolemization`])
 #[derive(Clone)]
@@ -415,6 +427,10 @@ struct Skolem {
     /// The binder's bound in the skolemization's environment, or a rest binder's
     /// shape. Set once the environment exists.
     bound: Cell<Option<Term>>,
+    /// The bounds the quantified body's item projections imply (see
+    /// [`Database::implied_bounds`]). Never declared, so they don't affect
+    /// variance.
+    implied: MonoVec<Term>,
     scope: ScopeId,
 }
 
@@ -516,13 +532,17 @@ pub(crate) struct Solver<'db> {
     exhausted: Cell<bool>,
     /// The declarations being checked, whose rigids' bounds are assumptions
     scope: HashSet<DeclId>,
+    /// The rigids an assumed declaration's group is checked under, where they
+    /// aren't its own: a binder lifted from an enclosing declaration is that
+    /// declaration's rigid (see [`Solver::assume_group`])
+    groups: HashMap<DeclId, Vec<TypeId>>,
     /// Whether the declarations being checked are of a gradual unit, whose body
     /// sees an omitted channel as `Unknown` rather than `Value`. Such a solver
     /// also makes up `Unknown` where a strict unit's takes a sound type or leaves
     /// the judgment unresolved: in widening, `meet` and narrowing.
     gradual: bool,
-    /// Each rigid's bound, once computed
-    rigid_bounds: RefCell<HashMap<TypeId, Option<TypeId>>>,
+    /// Each rigid's bounds, once computed
+    rigid_bounds: RefCell<HashMap<TypeId, Vec<(TypeId, Step)>>>,
     /// Whether the judgments own the root scope's variables, so solving settles
     /// them as it settles a skolem scope's
     closed: bool,
@@ -604,6 +624,7 @@ impl<'db> Solver<'db> {
             work: Cell::new(0),
             exhausted: Cell::new(false),
             scope: HashSet::new(),
+            groups: HashMap::new(),
             gradual: false,
             rigid_bounds: RefCell::new(HashMap::new()),
             closed: false,
@@ -706,6 +727,15 @@ impl<'db> Solver<'db> {
         self.generic_members.get_mut().clear();
     }
 
+    /// Assume `decl` with its group checked as `rigids`, as a body is: a binder
+    /// lifted from an enclosing declaration is that declaration's rigid, so its
+    /// own binders' bounds refer to the rigids its body sees
+    pub(crate) fn assume_group(&mut self, decl: DeclId, rigids: Vec<TypeId>) {
+        self.assume(decl);
+        self.groups.insert(decl, rigids);
+        self.rigid_bounds.get_mut().clear();
+    }
+
     /// Check the assumed declarations as a gradual unit's: an omitted channel's
     /// rigid is bounded by `Unknown`, so the body's use of it is dynamic
     pub(crate) fn gradual(&mut self) {
@@ -722,6 +752,7 @@ impl<'db> Solver<'db> {
     pub(super) fn side_query(&self, class: DeclId) -> Solver<'db> {
         let mut solver = Solver::new(self.db);
         solver.scope = self.scope.clone();
+        solver.groups = self.groups.clone();
         solver.gradual = self.gradual;
         solver.assume(class);
         #[cfg(feature = "debug")]
@@ -758,26 +789,68 @@ impl<'db> Solver<'db> {
         Ok(Some(&binders[usize::from(slot)]))
     }
 
-    /// A rigid's bound, with its declaration's rigids for its group. A rest binder
-    /// without one is bounded by its rest mode's shape, and an omitted channel by
+    /// A rigid's bounds, with the rigids its declaration's group is checked
+    /// under for its group (see [`Self::assume_group`]), each with the step
+    /// that reduces it to the bound: its binder's bound, then those the item
+    /// projections in its declaration's type imply. A rest binder without a
+    /// bound is bounded by its rest mode's shape, and an omitted channel by
     /// `Unknown` when checking a gradual unit.
-    fn rigid_bound(&self, ty: TypeId) -> Option<TypeId> {
-        if let Some(&bound) = self.rigid_bounds.borrow().get(&ty) {
-            return bound;
+    fn rigid_bounds(&self, ty: TypeId) -> Vec<(TypeId, Step)> {
+        if let Some(bounds) = self.rigid_bounds.borrow().get(&ty) {
+            return bounds.clone();
         }
         let Type::Rigid { decl, slot, .. } = *self.db.ty(ty) else {
             unreachable!()
         };
-        let Type::Quantified { binders, .. } = self.db.ty(self.db.declaration(decl).ty) else {
+        let quantified = self.db.declaration(decl).ty;
+        let Type::Quantified { binders, .. } = self.db.ty(quantified) else {
             unreachable!("a rigid of a declaration without binders")
         };
         let binder = &binders[usize::from(slot)];
-        let bound = match binder.binding {
-            Binding::Implicit if self.gradual && binder.bound.is_none() => Some(self.db.unknown()),
-            _ => self.db.binder_bound(binder, &self.db.rigids(decl)),
+        let rigids = (self.groups.get(&decl).cloned()).unwrap_or_else(|| self.db.rigids(decl));
+        let (declared, step) = match binder.binding {
+            Binding::Implicit if self.gradual && binder.bound.is_none() => {
+                (Some(self.db.unknown()), Step::ImplicitBound)
+            }
+            Binding::Implicit => (self.db.binder_bound(binder, &rigids), Step::ImplicitBound),
+            _ => (self.db.binder_bound(binder, &rigids), Step::RigidBound),
         };
-        self.rigid_bounds.borrow_mut().insert(ty, bound);
-        bound
+        let implied = (self.db.implied_bounds(quantified).into_iter())
+            .filter(|&(implied, _)| implied == slot)
+            .map(|(_, bound)| (self.db.substitute(bound, &rigids), Step::ImpliedBound));
+        let bounds: Vec<_> = declared
+            .map(|bound| (bound, step))
+            .into_iter()
+            .chain(implied)
+            .collect();
+        self.rigid_bounds.borrow_mut().insert(ty, bounds.clone());
+        bounds
+    }
+
+    /// A rigid's or skolem's bounds, each with the step that reduces it to the
+    /// bound: its binder's bound, then those its item projections imply
+    fn abstract_bounds(&self, of: Abstract) -> Vec<(Term, Step)> {
+        match of {
+            Abstract::Rigid(ty) => (self.rigid_bounds(ty).into_iter())
+                .map(|(bound, step)| (self.closed(bound), step))
+                .collect(),
+            Abstract::Skolem(id) => {
+                let skolem = &self.skolems[id.0];
+                let step = match skolem.binding {
+                    Binding::Implicit => Step::ImplicitBound,
+                    _ => Step::SkolemBound,
+                };
+                let declared = skolem.bound.get().map(|bound| (bound, step));
+                let implied = (skolem.implied.iter()).map(|&bound| (bound, Step::ImpliedBound));
+                declared.into_iter().chain(implied).collect()
+            }
+        }
+    }
+
+    /// The first of a rigid's or skolem's bounds, for a rule that reduces it to
+    /// just one
+    fn abstract_bound(&self, of: Abstract) -> Option<(Term, Step)> {
+        self.abstract_bounds(of).into_iter().next()
     }
 
     /// Walk a term to the target declaration, carrying substitutions. A rigid in
@@ -799,8 +872,8 @@ impl<'db> Solver<'db> {
             self.spend()?;
             match self.head(term)? {
                 Head::Infer(_) => return Err(Residual::Inference.into()),
-                Head::Skolem(id) => match self.skolems[id.0].bound.get() {
-                    Some(bound) => term = bound,
+                Head::Skolem(id) => match self.abstract_bound(Abstract::Skolem(id)) {
+                    Some((bound, _)) => term = bound,
                     None => return Ok(Reach::Unreached),
                 },
                 Head::Nominal(nominal) => {
@@ -815,8 +888,8 @@ impl<'db> Solver<'db> {
                     Type::Unknown(_) => return Ok(Reach::Dynamic),
                     Type::Rigid { .. } => {
                         self.rigid(view.ty)?;
-                        match self.rigid_bound(view.ty) {
-                            Some(bound) => term = self.closed(bound),
+                        match self.abstract_bound(Abstract::Rigid(view.ty)) {
+                            Some((bound, _)) => term = bound,
                             None => return Ok(Reach::Unreached),
                         }
                     }
@@ -1130,6 +1203,7 @@ impl<'db> Solver<'db> {
             },
         );
         nested.scope = self.scope.clone();
+        nested.groups = self.groups.clone();
         nested.gradual = self.gradual;
         #[cfg(feature = "debug")]
         {
@@ -2278,9 +2352,13 @@ impl<'db> Solver<'db> {
                 {
                     match self.reify(term) {
                         Ok(reified) => term = self.closed(reified),
-                        // A skolem's projection is never evaluated, so it relates
-                        // only as itself
-                        Err(Residual::Escape) => return Ok(Head::Structural(view)),
+                        // A skolem's projection is evaluated only as an item
+                        // projection by a skolem key; otherwise it relates only
+                        // as itself
+                        Err(Residual::Escape) => match self.evaluate_skolem_items(view)? {
+                            Some(evaluated) => term = self.closed(evaluated),
+                            None => return Ok(Head::Structural(view)),
+                        },
                         Err(residual) => return Err(residual.into()),
                     }
                 }

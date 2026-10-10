@@ -108,41 +108,42 @@ limits. Exposure cycles and references preventing scope removal remain
 recoverable, with operation-specific error types.
 
 Interning performs local shape/kind checks and structural union normalization,
-not subtype reasoning. Bottom is the empty union; top has an explicit node.
-Both are interned and cached when the database is created. Type interning and
+not subtype reasoning. Bottom is the empty union; top has an explicit node. Both
+are interned and cached when the database is created. Type interning and
 shifting accept shared database references; arena storage keeps borrowed types
 stable while the interning index uses interior mutability. Elaboration interns
 `std.Value` as top and `std.Never` as bottom, so a union absorbs a written
-`Never` as it does an empty union.
-An application of the `Union` intrinsic interns as a union expanding its
-schema, and an expanded schema of positional items contributes their types as
-members, so `Union[...Ts]` becomes an ordinary union once `Ts` is substituted.
-Other expansions remain symbolic until a consumer supplies their schema
-arguments. The projections `Keys`, `Values` and `Entries` intern as unions the
-same way, each a member projecting its schema. Once the schema is known,
-`Values` folds every item's value, whatever its multiplicity, projecting an
-included schema in turn. `Keys` and `Entries` fold the schema's keyed view, as a
-collection indexes it (`Database::promoted`): each position is keyed by its
-index, a literal `Int` while the positions before it are all required, and `Int`
-from the first that may be missing or repeated on. `Keys` takes each key, and
-`Entries` each `Tuple[key, value]`. An included schema not yet known stays a
-member beside what is known, unless positions, or keys that may be indexes, lie
-beside it: their indexes, or collisions, depend on it, so the whole projection
-waits. A key that may be a position's index conflicts with it: a non-negative
-`Int` literal a position may have, or a domain of `Int` alongside positions.
-A conflicting projection stays unevaluated, and a judgment exposing it is
-contradicted. The dynamic schema projects to `Unknown`. Without a designated
-`Tuple`, `Entries` stays whole, and so does a projection of a varying position
-without a designated `Int`. The item projections `IndexItem[S, K]` and
-`AssignItem[S, K]` intern as union members of a schema and a key, and only the
-dynamic schema reduces them there: selecting by a key takes the solver.
-`Database::normalize` gives a type the canonical form interning
+`Never` as it does an empty union. An application of the `Union` intrinsic
+interns as a union expanding its schema, and an expanded schema of positional
+items contributes their types as members, so `Union[...Ts]` becomes an ordinary
+union once `Ts` is substituted. Other expansions remain symbolic until a
+consumer supplies their schema arguments. The projections `Keys`, `Values` and
+`Entries` intern as unions the same way, each a member projecting its schema.
+Once the schema is known, `Values` folds every item's value, whatever its
+multiplicity, projecting an included schema in turn. `Keys` and `Entries` fold
+the schema's keyed view, as a collection indexes it (`Database::promoted`): each
+position is keyed by its index, a literal `Int` while the positions before it
+are all required, and `Int` from the first that may be missing or repeated on.
+`Keys` takes each keyed item's key, and `Int` for any positions, since an item
+projection selects every position by an `Int`; `Entries` takes each
+`Tuple[key, value]`. An included schema not yet known stays a member beside what
+is known, unless positions, or keys that may be indexes, lie beside it: their
+indexes, or collisions, depend on it, so the whole projection waits. A key that
+may be a position's index conflicts with it: a non-negative `Int` literal a
+position may have, or a domain of `Int` alongside positions. A conflicting
+projection stays unevaluated, and a judgment exposing it is contradicted. The
+dynamic schema projects to `Unknown`. Without a designated `Tuple`, `Entries`
+stays whole, and without a designated `Int`, so does `Keys` of a schema with
+positions and `Entries` of a varying position. The item projections
+`IndexItem[S, K]` and `AssignItem[S, K]` intern as union members of a schema and
+a key, and only the dynamic schema reduces them there: selecting by a key takes
+the solver. `Database::normalize` gives a type the canonical form interning
 would, for callers that need it before interning. Declaration wrappers are not
-normalized away.
-Exposure follows transparent head references and reports direct cycles, stopping
-at nominal declarations, quantifiers, applications, and other structural forms.
-Recursive graphs are representable; this does not establish recursive typing
-rules. Generic exposure returns the definition intact in its defining scope.
+normalized away. Exposure follows transparent head references and reports direct
+cycles, stopping at nominal declarations, quantifiers, applications, and other
+structural forms. Recursive graphs are representable; this does not establish
+recursive typing rules. Generic exposure returns the definition intact in its
+defining scope.
 
 Structural walking and rebuilding report quantifier boundaries and visit
 bounds/defaults along with all other children. Declaration references are
@@ -264,15 +265,20 @@ Wider item values raise both, but a wider schema may also admit more items: for
 `AssignItem` is pulled both ways. One left unevaluated is below an item
 projection of the same kind on the right by these variances: an `IndexItem`
 whose schema and key are proven wider, or an `AssignItem` of the same schema
-whose key is proven narrower. Schema subtyping never promotes positions to `Int`
-keys, but projecting after it keeps them aligned: a position in a value of the
-narrower schema fits the wider schema's position at the same index. A
-function's result that is an item projection is exposed where the function is
-related, so a call reports a key its schema doesn't admit even when nothing uses
-the result. Quantified types on the right are related through skolems (see
-[Skolems and scopes](#skolems-and-scopes)). Contextual identity and top/bottom
-rules can still settle some judgments involving otherwise unsupported forms:
-anything is below top and `Unknown`, even a type that can't be exposed.
+whose key is proven narrower. An unevaluated `IndexItem` is also below the one
+with a rigid in its key widened toward its bound, one step at a time after its
+schema: a rigid key to its bound, then `Keys[S]` of a rigid schema to `Keys` of
+its bound. So `IndexItem[S, K]` with `K @ Keys[S]` is below
+`IndexItem[B, Keys[B]]` for `S @ B`, the join of `B`'s values. `AssignItem` is
+antitone in its key, so its key isn't widened. Schema subtyping never promotes
+positions to `Int` keys, but projecting after it keeps them aligned: a position
+in a value of the narrower schema fits the wider schema's position at the same
+index. A function's result that is an item projection is exposed where the
+function is related, so a call reports a key its schema doesn't admit even when
+nothing uses the result. Quantified types on the right are related through
+skolems (see [Skolems and scopes](#skolems-and-scopes)). Contextual identity and
+top/bottom rules can still settle some judgments involving otherwise unsupported
+forms: anything is below top and `Unknown`, even a type that can't be exposed.
 
 ### Schemas
 
@@ -364,8 +370,12 @@ declaration and interprets its group as its rigids, so its type, supertypes and
 members viewed there are what is checked. Only assumed declarations' bounds are
 facts: a rigid's bound is its binder's bound with the declaration's rigids
 substituted, and a rest binder without one is bounded by its mode's shape,
-`{*Value}`, `{**Sym: Value}` or both. Exposure and instantiation never assume
-the bounds of anything else. Probes inherit the assumed declarations.
+`{*Value}`, `{**Sym: Value}` or both. Flow analysis assumes a declaration with
+the rigids its body is checked under instead (`assume_group`): a lifted binder
+is the enclosing declaration's rigid, so a method's own binder bounded by its
+class's schema is bounded by the schema the body's `self` has. Exposure and
+instantiation never assume the bounds of anything else. Probes inherit the
+assumed declarations.
 
 A rigid is a subtype of itself, top and `Unknown`, and bottom and `Unknown` are
 subtypes of it. Otherwise, an assumed rigid on the left reduces to its bound. An
@@ -411,7 +421,17 @@ under an environment of them. The body must hold for every choice of the
 binders, so it must hold for these. A skolem is solver-local and never enters a
 canonical type; reifying one is an escape. Its bound is the binder's bound read
 in the skolemization's environment, which carries F-bounds and outer
-substitutions, and a rest binder without one is bounded by its shape. Skolems
+substitutions, and a rest binder without one is bounded by its shape. A
+binder that selects items of a schema `S` in the body, as the key of
+`IndexItem[S, K]` or `AssignItem[S, K]` outside any nested quantifier, is also
+bounded by `Keys[S]`: a key outside them has no item, so the body promises
+nothing for it. The implied bound is never declared, so it leaves variance
+alone; it is why `(index) self key@Str -> Int` conforms to `(index)[K] self
+key@K -> IndexItem[{*(Str): Int}, K]`. A rigid has the bounds its
+declaration's type implies as well, which instantiation establishes beside the
+declared one. A rigid or skolem with several bounds is below whatever one of
+them is below, found by probing each; a rule that reduces it to one bound takes
+the declared one first. Skolems
 follow the rules of rigids: a skolem is below itself, top and `Unknown`, and
 bottom and `Unknown` are below it; on the left it reduces to its bound, labeled
 as a rigid's is, and otherwise it contradicts the judgment. One without a bound
@@ -449,7 +469,9 @@ quantifier on the right by contravariance. Residual forms are:
 - a projection whose schema or key holds a skolem, since projections are
   evaluated by reifying them. It stays unevaluated and relates only to an
   identical projection, a member of a union on the left proved by the same
-  member on the right.
+  member on the right. The exception is an item projection of a closed schema
+  by a skolem key, which selects as a rigid key does: the value every item one
+  of its bounds selects has, where there is one.
 
 ### Alternatives and trials
 
