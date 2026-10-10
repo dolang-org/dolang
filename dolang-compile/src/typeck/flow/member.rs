@@ -10,10 +10,10 @@
 //!
 //! [`Solver::member`]: crate::typeck::solver::Solver::member
 
-use std::{cell::Cell, collections::VecDeque, slice};
+use std::{cell::Cell, collections::VecDeque, iter, mem, slice};
 
 use super::{
-    At, Flow, State,
+    At, Flow, Results, State,
     problem::{MemberUse, Problem},
     rule::Call,
 };
@@ -23,6 +23,7 @@ use crate::{
     typeck::{
         cfg::{Expr, ExprKind, Item, Member},
         elab::Designated,
+        report::Report,
         solver::{
             Access, Constructor, FoundKind, Issue, Lookup, Residual, Signature, Signatures,
             bound_method,
@@ -142,7 +143,7 @@ impl Flow<'_, '_> {
                 instance: None,
             },
             Resolved::Missing => {
-                self.missing(ty, None, member, span);
+                self.missing(ty, None, member, span, Vec::new());
                 CallTarget::new(None)
             }
             Resolved::Dynamic => CallTarget::new(None),
@@ -302,9 +303,17 @@ impl Flow<'_, '_> {
         true
     }
 
-    /// Report a missing member, of an alternative of the union `within` if given.
-    /// The alternatives a use finds without it are reported together.
-    fn missing(&mut self, receiver: TypeId, within: Option<TypeId>, member: Member, span: Span) {
+    /// Report a missing member, of an alternative of the union `within` if given,
+    /// with the reasons a fallback refused its name. The alternatives a use finds
+    /// without it are reported together.
+    fn missing(
+        &mut self,
+        receiver: TypeId,
+        within: Option<TypeId>,
+        member: Member,
+        span: Span,
+        reasons: Vec<String>,
+    ) {
         if !self.observing() {
             return;
         }
@@ -313,21 +322,30 @@ impl Flow<'_, '_> {
         let name = self.member_name(member);
         if within.is_some()
             && let Some(results) = &mut self.results
-            && let Some(receivers) = results
-                .problems
-                .iter_mut()
-                .find_map(|problem| match problem {
-                    Problem::MissingMember {
-                        span: at,
-                        receivers,
-                        within: union,
-                        name: missing,
-                    } if (*at, &*union, &*missing) == (span, &within, &name) => Some(receivers),
-                    _ => None,
-                })
+            && let Some((receivers, refused)) =
+                results
+                    .problems
+                    .iter_mut()
+                    .find_map(|problem| match problem {
+                        Problem::MissingMember {
+                            span: at,
+                            receivers,
+                            within: union,
+                            name: missing,
+                            reasons,
+                        } if (*at, &*union, &*missing) == (span, &within, &name) => {
+                            Some((receivers, reasons))
+                        }
+                        _ => None,
+                    })
         {
             if let Err(at) = receivers.binary_search(&receiver) {
                 receivers.insert(at, receiver);
+            }
+            for reason in reasons {
+                if !refused.contains(&reason) {
+                    refused.push(reason);
+                }
             }
             return;
         }
@@ -336,6 +354,7 @@ impl Flow<'_, '_> {
             receivers: vec![receiver],
             within,
             name,
+            reasons,
         });
     }
 
@@ -358,6 +377,48 @@ impl Flow<'_, '_> {
     /// A member's name, as the `(get)` and `(set)` fallbacks are passed it
     fn name_literal(&self, member: Member) -> TypeId {
         self.db.intern(Type::Literal(Literal::Sym(member.key.name)))
+    }
+
+    /// Why a `(get)` fallback, or with `set` a `(set)` one, refuses a member's
+    /// name, as notes: what calling it with the name reports, on a copy of the
+    /// state, in either pass. A `(set)` is passed the dynamic type as its value,
+    /// so only the name is judged. Empty if it takes the name.
+    #[expect(clippy::too_many_arguments, reason = "a fallback call's parts")]
+    fn refusals(
+        &mut self,
+        at: At,
+        state: &State,
+        signature: &Signature,
+        receiver: (TypeId, Span),
+        member: Member,
+        set: bool,
+        span: Span,
+    ) -> Vec<String> {
+        let accessor = self.special(if set { "set" } else { "get" });
+        let mut leading = vec![receiver, (self.name_literal(member), span)];
+        if set {
+            leading.push((self.db.unknown(), span));
+        }
+        let call = Call {
+            args: &[],
+            expected: None,
+            span,
+            callee: Some(accessor),
+        };
+        let saved = self.results.replace(Results::default());
+        let mut operands = VecDeque::new();
+        let state = &mut state.clone();
+        self.call_signature(at, state, &mut operands, signature, &leading, call);
+        let probed = mem::replace(&mut self.results, saved).unwrap_or_default();
+        let accessor = self.member_name(accessor);
+        (probed.problems.iter())
+            .flat_map(|problem| {
+                let mut message = String::new();
+                problem.message(&mut message).expect("writing to a string");
+                let notes = problem.notes().into_iter().map(|(_, note)| note);
+                iter::once(format!("`{accessor}`: {message}")).chain(notes)
+            })
+            .collect()
     }
 
     /// A call through a method's signatures, passing `receivers` first
@@ -444,7 +505,7 @@ impl Flow<'_, '_> {
         match self.resolve(receiver, member, Access::Any, span) {
             Resolved::Dynamic => unknown,
             Resolved::Missing | Resolved::Fallback { get: None, .. } => {
-                self.missing(receiver, within, member, span);
+                self.missing(receiver, within, member, span, Vec::new());
                 unknown
             }
             Resolved::Field(ty) => ty,
@@ -475,6 +536,11 @@ impl Flow<'_, '_> {
                 unknown
             }
             Resolved::Fallback { get: Some(get), .. } => {
+                let reasons = self.refusals(at, state, &get, leading[0], member, false, span);
+                if !reasons.is_empty() {
+                    self.missing(receiver, within, member, span, reasons);
+                    return unknown;
+                }
                 let name = (self.name_literal(member), span);
                 let call = Call {
                     callee: Some(self.special("get")),
@@ -654,7 +720,7 @@ impl Flow<'_, '_> {
         match self.resolve(receiver.0, member, Access::Any, span) {
             Resolved::Dynamic => vec![CallTarget::dynamic(leading)],
             Resolved::Missing | Resolved::Fallback { get: None, .. } => {
-                self.missing(receiver.0, within, member, span);
+                self.missing(receiver.0, within, member, span, Vec::new());
                 vec![CallTarget::dynamic(leading)]
             }
             Resolved::Field(ty) => self.value_targets((ty, receiver.1), leading, span),
@@ -688,6 +754,11 @@ impl Flow<'_, '_> {
                 vec![CallTarget::dynamic(leading)]
             }
             Resolved::Fallback { get: Some(get), .. } => {
+                let reasons = self.refusals(at, state, &get, receiver, member, false, span);
+                if !reasons.is_empty() {
+                    self.missing(receiver.0, within, member, span, reasons);
+                    return vec![CallTarget::dynamic(leading)];
+                }
                 let name = (self.name_literal(member), span);
                 let got = Call {
                     callee: Some(self.special("get")),
@@ -739,7 +810,7 @@ impl Flow<'_, '_> {
             let targets = (resolved.into_iter())
                 .map(|(receiver, resolved)| {
                     let receiver = (receiver, object.span);
-                    self.write_target(receiver, within, member, resolved, span)
+                    self.write_target(at, state, receiver, within, member, resolved, span)
                         .unwrap_or_else(|| CallTarget::dynamic(&[]))
                 })
                 .collect();
@@ -791,7 +862,9 @@ impl Flow<'_, '_> {
             self.store(at, written.0, ty, written.1);
             return;
         }
-        let Some(mut target) = self.write_target(receiver, within, member, resolved, span) else {
+        let Some(mut target) =
+            self.write_target(at, state, receiver, within, member, resolved, span)
+        else {
             return;
         };
         target.receivers.push(written);
@@ -807,8 +880,11 @@ impl Flow<'_, '_> {
     /// What writing a resolved member that isn't a field calls, passing the value
     /// after its receivers: a setter, or `(set)` passed the member's name first.
     /// `None` if the member is dynamic, or can't be written, which is reported.
+    #[expect(clippy::too_many_arguments, reason = "a write's parts")]
     fn write_target(
         &mut self,
+        at: At,
+        state: &State,
         receiver: (TypeId, Span),
         within: Option<TypeId>,
         member: Member,
@@ -818,7 +894,7 @@ impl Flow<'_, '_> {
         let (signature, receivers, called) = match resolved {
             Resolved::Dynamic => return None,
             Resolved::Missing | Resolved::Fallback { set: None, .. } => {
-                self.missing(receiver.0, within, member, span);
+                self.missing(receiver.0, within, member, span, Vec::new());
                 return None;
             }
             Resolved::Field(_) => unreachable!("a field is stored"),
@@ -839,6 +915,11 @@ impl Flow<'_, '_> {
                 (setter, receivers, member)
             }
             Resolved::Fallback { set: Some(set), .. } => {
+                let reasons = self.refusals(at, state, &set, receiver, member, true, span);
+                if !reasons.is_empty() {
+                    self.missing(receiver.0, within, member, span, reasons);
+                    return None;
+                }
                 let name = (self.name_literal(member), span);
                 (set, vec![receiver, name], self.special("set"))
             }

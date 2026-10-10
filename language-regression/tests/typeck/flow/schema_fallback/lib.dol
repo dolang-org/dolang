@@ -1,0 +1,29 @@
+# A class whose fields come from a schema, read and written through generic
+# `(get)` and `(set)` overloads whose types project it
+
+import std:
+  - @AssignItem
+  - @IndexItem
+  - @Keys
+
+pub class Named[S @ {**Value}]
+  field values @ Record[...S]
+
+  def (init) self values @ Record[...S]
+    self.#values = values
+
+  @def (get)[K @ Keys[S]] self name @ K -> IndexItem[S, K]
+  def (get) self name
+    self.#values[name]
+
+  @def (set)[K @ Keys[S]] self name @ K value @ AssignItem[S, K]
+  def (set) _self _name _value
+    ...
+
+# The same, with single generic accessors whose key is unbounded
+pub class Plain[S @ {...}]
+  pub def (get)[K] self key @ K -> IndexItem[S, K]
+    ...
+
+  pub def (set)[K] self key @ K value @ AssignItem[S, K]
+    ...

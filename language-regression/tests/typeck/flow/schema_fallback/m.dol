@@ -1,0 +1,154 @@
+# Reading or writing a member a class doesn't declare calls its `(get)` or
+# `(set)` with the name as a symbol literal, choosing the generic overload with
+# that key, so a field's type is projected from the class's schema. A name the
+# fallback refuses is a missing member, with the fallback's reasons as notes.
+
+import lib:
+  - @Named
+  - @Plain
+import typed:
+  - @Typed
+
+pub def reads
+  p @ Named[{format: Str, count: Int, ?port: Int, cb: ((Int) -> Str), items: Array[Int]}]
+  q @ Plain[{format: Str, count: (Int | nil)}]
+  t @ Typed[{format: Str}]
+do
+  let _f = p.format
+  #   ^~: flow std.Str
+  let _c = q.count
+  #   ^~: flow nil | std.Int
+  let _o = p.port
+  #   ^~: flow std.Int
+  let _s = t.format
+  #   ^~: flow std.Str
+  let _n @ Int = p.format
+  # error: `std.Str` does not fit the annotation `std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _n @ Int = p.format
+  #    |                  ^^^^^^^^
+  let _m @ Int = q.format
+  # error: `std.Str` does not fit the annotation `std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _m @ Int = q.format
+  #    |                  ^^^^^^^^
+  let _r = p.cb 1
+  #   ^~: flow std.Str
+  let _l = p.items.len
+  #   ^~: flow std.Int
+  let _ = p.missing
+  # error: `lib.Named[{format: std.Str, count: std.Int, ?port: std.Int, cb: (std.Int) -> std.Str, items: [std.Int]}]` has no member `missing`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = p.missing
+  #    |           ^^^^^^^^^
+  #    |
+  #    = note: `(get)`: expected `:cb: | :count: | :format: | :items: | :port:`, found `:missing:`
+  #    = note: `:missing:` does not fit `:cb: | :count: | :format: | :items: | :port:`
+  let _ = q.missing
+  # error: `lib.Plain[{format: std.Str, count: nil | std.Int}]` has no member `missing`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = q.missing
+  #    |           ^^^^^^^^^
+  #    |
+  #    = note: `(get)`: this call selects by `:missing:`, which isn't one of the schema's keys
+  let _ = t.missing
+  # error: `typed.Typed[{format: std.Str}]` has no member `missing`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = t.missing
+  #    |           ^^^^^^^^^
+  #    |
+  #    = note: `(get)`: expected `:format:`, found `:missing:`
+  #    = note: `:missing:` does not fit `:format:`
+  let _ = p.missing 1
+  # error: `lib.Named[{format: std.Str, count: std.Int, ?port: std.Int, cb: (std.Int) -> std.Str, items: [std.Int]}]` has no member `missing`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = p.missing 1
+  #    |           ^^^^^^^^^^^
+  #    |
+  #    = note: `(get)`: expected `:cb: | :count: | :format: | :items: | :port:`, found `:missing:`
+  #    = note: `:missing:` does not fit `:cb: | :count: | :format: | :items: | :port:`
+
+pub def writes
+  p @ Named[{format: Str, count: Int, cb: ((Int) -> Str), items: Array[(Int | Str)]}]
+  q @ Plain[{count: Int, cb: ((Int) -> Str), items: Array[(Int | Str)]}]
+do
+  p.count = 1
+  p.count = "x"
+  # error: expected `std.Int`, found `"x"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   p.count = "x"
+  #    |             ^^^
+  q.count = 1
+  q.count = "x"
+  # error: expected `std.Int`, found `"x"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   q.count = "x"
+  #    |             ^^^
+  p.items = [1]
+  q.items = [1]
+  p.cb = do |z| "$z"
+  p.cb = do |z| z
+  # error: expected `(std.Int) -> std.Str`, found `(std.Int) -> std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   p.cb = do |z| z
+  #    |          ^^^^^^^^
+  #    |
+  #    = note: `std.Int` does not fit `std.Str`
+  q.cb = do |z| "$z"
+  q.cb = do |z| z
+  # error: expected `(std.Int) -> std.Str`, found `(std.Int) -> std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   q.cb = do |z| z
+  #    |          ^^^^^^^^
+  #    |
+  #    = note: `std.Int` does not fit `std.Str`
+  p.missing = 1
+  # error: `lib.Named[{format: std.Str, count: std.Int, cb: (std.Int) -> std.Str, items: [std.Int | std.Str]}]` has no member `missing`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   p.missing = 1
+  #    |   ^^^^^^^^^^^^^
+  #    |
+  #    = note: `(set)`: expected `:cb: | :count: | :format: | :items:`, found `:missing:`
+  #    = note: `:missing:` does not fit `:cb: | :count: | :format: | :items:`
+  q.missing = 1
+  # error: `lib.Plain[{count: std.Int, cb: (std.Int) -> std.Str, items: [std.Int | std.Str]}]` has no member `missing`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   q.missing = 1
+  #    |   ^^^^^^^^^^^^^
+  #    |
+  #    = note: `(set)`: this call selects by `:missing:`, which isn't one of the schema's keys
+
+pub def unions
+  u @ (Named[{a: Int}] | Named[{a: Str}])
+  v @ (Named[{a: Int}] | Plain[{b: Str}])
+do
+  let _a = u.a
+  #   ^~: flow std.Int | std.Str
+  let _ = v.a
+  # error: `lib.Plain[{b: std.Str}]` in `lib.Named[{a: std.Int}] | lib.Plain[{b: std.Str}]` has no member `a`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = v.a
+  #    |           ^^^
+  #    |
+  #    = note: `(get)`: this call selects by `:a:`, which isn't one of the schema's keys
+  v.a = 1
+  # error: `lib.Plain[{b: std.Str}]` in `lib.Named[{a: std.Int}] | lib.Plain[{b: std.Str}]` has no member `a`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   v.a = 1
+  #    |   ^^^^^^^
+  #    |
+  #    = note: `(set)`: this call selects by `:a:`, which isn't one of the schema's keys
