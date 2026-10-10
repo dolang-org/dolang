@@ -19,6 +19,12 @@
 //! exceptional edge discards the whole stack and enters its handler, an ordinary
 //! block, with the exception alone on it.
 //!
+//! Creating a function is preceded by a [`Step::Capture`] naming it, in the block
+//! that creates it. Each function lists in [`Func::escapes`] the variables of its
+//! parent that it or a function nested in it captures, and that only their owner
+//! assigns. Such a function can't run before the step, so the first value of each
+//! it can see is the one its owner holds there.
+//!
 //! A `do` block's unannotated parameters, omitted channels and omitted return type
 //! are its [`Signature`]: variables its parent owns and it captures, which start
 //! as bottom. The call it's passed to joins what it expects of them into the
@@ -123,6 +129,10 @@ pub(crate) struct Func {
     pub(crate) vars: Vec<VarId>,
     /// The variables of enclosing functions it reads or writes
     pub(crate) captures: Vec<VarId>,
+    /// The variables its parent owns that it or a function nested in it captures,
+    /// leaving out volatile variables and [`Signature`] variables, which are
+    /// joined as they're assigned
+    pub(crate) escapes: Vec<VarId>,
 }
 
 /// A `do` block's callable state: variables its parent owns and it captures,
@@ -168,8 +178,9 @@ pub(crate) struct Var {
     /// Closed: the binders of the group it's written in are the rigids its
     /// declaration's body is checked under
     pub(crate) annotation: Option<TypeId>,
-    /// An ivar: read or written by a function other than its owner. Every
-    /// assignment to it joins an accumulator, which other functions read.
+    /// An ivar: read or written by a function other than its owner, which reads
+    /// it as an accumulator. Its value when a function that captures it is
+    /// created, and every assignment after, joins the accumulator.
     pub(crate) interprocedural: bool,
     /// Assigned by a function other than its owner, so that its owner caches no
     /// type for it either and reads the accumulator too
@@ -225,6 +236,12 @@ pub(crate) enum Step {
     /// Discard the top of the stack: the left operand on a short circuit's long path
     Pop,
     Assume(Assume),
+    /// Functions the statement that follows creates, whose [`Func::escapes`] the
+    /// accumulators join from here on. It precedes the whole statement, as
+    /// nothing a step evaluates assigns or narrows a variable, and can't throw.
+    /// A lambda that's a comprehension's item is created in the item's block,
+    /// though it stays in the collection's tree.
+    Capture(Vec<FuncId>),
 }
 
 pub(crate) enum Terminal {
@@ -370,6 +387,7 @@ impl Graph {
             signature: None,
             vars: Vec::new(),
             captures: Vec::new(),
+            escapes: Vec::new(),
         }));
         let allocated = self.alloc_var(id, Origin::Result, None);
         debug_assert_eq!(allocated, result);
@@ -420,6 +438,11 @@ impl Graph {
 
     pub(crate) fn func_mut(&self, id: FuncId) -> RefMut<'_, Func> {
         self.funcs[id.index()].borrow_mut()
+    }
+
+    /// The functions allocated so far
+    pub(crate) fn func_ids(&self) -> impl Iterator<Item = FuncId> + use<> {
+        (0..self.funcs.len()).map(FuncId::from_index)
     }
 
     pub(crate) fn block_mut(&self, id: BlockId) -> RefMut<'_, Block> {

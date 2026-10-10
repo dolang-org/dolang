@@ -99,6 +99,86 @@ pub def cached v @ (Str | nil)
     #       ^: flow std.Str
   v = nil
 
+# A block sees what a variable it captures holds when the block is created, and
+# every value assigned to it after
+pub def narrowed v @ (Str | nil)
+  if !v
+    throw "none"
+  let read = do
+    let _ = v
+    #       ^: flow std.Str
+    nil
+  read()
+
+pub def narrowed_after v @ (Str | nil)
+  let read = do
+    let _ = v
+    #       ^: flow nil | std.Str
+    nil
+  if v
+    read()
+
+pub def looped()
+  let v = 1
+  while true
+    let read = do
+      let _ = v
+      #       ^: flow std.Int | std.Str
+      nil
+    read()
+    v = "a"
+
+pub def handled()
+  let v = 1
+  try
+    apply 1 do |_x|
+      let _ = v
+      #       ^: flow std.Int | std.Str
+      nil
+  catch _
+    v = "a"
+
+# A parameter's sentinel default is seen until it's narrowed away
+pub def sentinel v @ Str = nil
+  let read = do
+    let _ = v
+    #       ^: flow nil | std.Str
+    nil
+  if !v
+    v = "d"
+  read()
+
+pub def sentinel_after v @ Str = nil
+  if !v
+    v = "d"
+  let read = do
+    let _ = v
+    #       ^: flow std.Str
+    nil
+  read()
+
+# A def sees itself
+pub def recursive n @ Int
+  def count m @ Int -> Int
+    let r = count (m - 1)
+    let _ = r
+    #       ^: flow std.Int
+    r
+  count $n
+
+# A module's variables escape through its defs the same way
+let shared = nil
+shared = "a"
+let later = 1
+
+pub def reads()
+  let _ = shared
+  #       ^~~~~~: flow std.Str
+  let _ = later
+  #       ^~~~~: flow std.Int | std.Str
+
+later = "a"
+
 # A block's omitted channels are inferred like its parameters. Here the call
 # gives it the def's own, so it can call the callback its def is given.
 pub def around[R] block @ (() -> R) -> R

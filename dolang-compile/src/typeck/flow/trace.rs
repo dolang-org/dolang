@@ -40,20 +40,21 @@ impl Flow<'_, '_> {
         out
     }
 
-    /// A block's state: what each variable may hold, as a judgment shows it, then
-    /// the stack
+    /// A block's state: what each variable may hold, as a judgment shows it, marked
+    /// `^` once it may have escaped, then the stack
     pub(super) fn render_state(&self, block: BlockId, state: &State) -> String {
         let func = self.ir.func(self.ir.block(block).func);
         let bottom = self.db.bottom();
-        let mut parts: Vec<String> = (func.vars.iter().zip(&state.vars))
-            .filter(|(_, fact)| fact.ty != bottom || fact.unassigned)
-            .map(|(&var, fact)| {
+        let mut parts: Vec<String> = (func.vars.iter().zip(&state.vars).zip(&state.escaped))
+            .filter(|((_, fact), _)| fact.ty != bottom || fact.unassigned)
+            .map(|((&var, fact), &escaped)| {
                 let ty = match (fact.unassigned, fact.ty == bottom) {
                     (false, _) => self.show(fact.ty),
                     (true, true) => "unassigned".to_owned(),
                     (true, false) => format!("{} | unassigned", self.show(fact.ty)),
                 };
-                format!("{}: {ty}", self.var_name(var))
+                let mark = if escaped { "^" } else { "" };
+                format!("{}{mark}: {ty}", self.var_name(var))
             })
             .collect();
         if !state.stack.is_empty() {

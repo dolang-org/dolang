@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 
 use super::{
-    Against, BlockId, Expr, ExprKind, FuncId, FuncKind, Ir, Pattern, Step, Tag, Target, Terminal,
-    VarId,
+    Against, BlockId, Expr, ExprKind, FuncId, FuncKind, Ir, Origin, Pattern, Step, Tag, Target,
+    Terminal, VarId,
 };
 
 /// Why a graph is malformed
@@ -39,6 +39,12 @@ pub(crate) enum Invalid {
     Signature(FuncId),
     /// A closure instantiated other than directly in its parent
     Lambda { func: FuncId, lambda: FuncId },
+    /// A nested function that isn't named once, by `Capture` steps in its
+    /// parent's blocks
+    Capture(FuncId),
+    /// An escaping variable its function's parent doesn't own, or that's joined
+    /// as it's assigned
+    Escape { func: FuncId, var: VarId },
 }
 
 impl Ir {
@@ -57,6 +63,15 @@ impl Ir {
             if !matches!(self.block(func.exit).terminal, Terminal::Return) {
                 return Err(Invalid::Return(func.exit));
             }
+            for &var in &func.escapes {
+                let data = self.var(var);
+                if Some(data.owner) != func.parent
+                    || data.volatile
+                    || data.origin == Origin::Signature
+                {
+                    return Err(Invalid::Escape { func: id, var });
+                }
+            }
             if let Some(signature) = &func.signature {
                 let items = match &func.params {
                     Pattern::Unpack(items) => items.len(),
@@ -72,6 +87,25 @@ impl Ir {
                 if !valid {
                     return Err(Invalid::Signature(id));
                 }
+            }
+        }
+        let mut created = vec![0usize; self.funcs().count()];
+        for (_, block) in self.blocks() {
+            for step in &block.steps {
+                let Step::Capture(funcs) = step else {
+                    continue;
+                };
+                for &func in funcs {
+                    if self.func(func).parent != Some(block.func) {
+                        return Err(Invalid::Capture(func));
+                    }
+                    created[func.index()] += 1;
+                }
+            }
+        }
+        for (id, func) in self.funcs() {
+            if func.parent.is_some() && created[id.index()] != 1 {
+                return Err(Invalid::Capture(id));
             }
         }
         for (id, block) in self.blocks() {
@@ -102,7 +136,7 @@ impl Ir {
                         exprs.push(value);
                     }
                     Step::Eval(expr) | Step::Push(expr) => exprs.push(expr),
-                    Step::Dup | Step::Pop => {}
+                    Step::Dup | Step::Pop | Step::Capture(_) => {}
                     Step::Assume(assume) => {
                         vars.push(assume.var);
                         match &assume.against {
@@ -336,6 +370,7 @@ impl Ir {
                         depth += 1;
                     }
                     Step::Pop => pop(&mut depth, 1),
+                    Step::Capture(_) => {}
                     Step::Assume(assume) => match &assume.against {
                         Against::Class(expr) | Against::Value(expr) => {
                             assert_eq!(operands(expr), 0)

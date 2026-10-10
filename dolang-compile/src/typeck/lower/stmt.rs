@@ -1250,6 +1250,12 @@ impl<'u> Scope<'_, '_, 'u> {
     ) -> FuncId {
         let graph = self.graph();
         let id = graph.alloc_func(FuncKind::Decl(decl), Some(self.ctx.func));
+        let mut block = graph.block_mut(self.bb);
+        match block.steps.last_mut() {
+            Some(Step::Capture(funcs)) => funcs.push(id),
+            _ => block.steps.push(Step::Capture(vec![id])),
+        }
+        drop(block);
         let frame = self.lower.frame(
             id,
             Some(self.ctx.frame.clone()),

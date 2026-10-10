@@ -732,7 +732,12 @@ A block owns its steps and ends in a terminal. A step is a statement whose
 expressions stay trees. Expressions mirror the AST. Checking rules are calls,
 method invocations (lookup and call in one rule), member accesses, subscripts,
 operators and collection literals. `&&` and `||` are
-control flow, so a narrowing test's successors begin with `Assume` steps. A
+control flow, so a narrowing test's successors begin with `Assume` steps.
+Creating a function is preceded by a `Capture` step naming it, in the creating
+statement's block; for a comprehension item, the item block. `Func.escapes`
+lists the variables of its parent that it or a function nested in it captures,
+which `finish` filters to those only their owner assigns, other than signature
+variables. A
 pattern binds without its defaults; each default is a `Default` step after the
 binding step, or on the success edge of the terminal that binds it, which joins
 it into the variable. An optional sub-pattern marks its item optional in the
@@ -856,16 +861,26 @@ group's rigids (`Tables::group_rigids`, which also closes `Var.annotation`
 during lowering), a `do` block's from its signature variables.
 
 State shared between functions is flow-insensitive. An ivar, a variable that a
-function other than its owner reads or writes, has an accumulator: every
-assignment to it, in any function, joins into one type, which widens to its
-annotation if it has one. A non-local return joins its value into its def's
-result the same way. Its owner caches its type in its flow state, narrowing it
-there, unless it's volatile: assigned by another function, and so changed by any
-call that may run that function. A volatile variable's owner reads the
-accumulator too, and keeps only whether it may be unassigned. Only a cached type
-is narrowed; to narrow an accumulator, a program copies the variable to a local
+function other than its owner reads or writes, has an accumulator: one type,
+which widens to its annotation if it has one, and which every function but its
+owner reads it as. A non-local return joins its value into its def's result the
+same way. Its owner caches its type in its flow state, narrowing it there,
+unless it's volatile: assigned by another function, and so changed by any call
+that may run that function. A volatile variable's owner reads the accumulator
+too, and keeps only whether it may be unassigned. Only a cached type is
+narrowed; to narrow an accumulator, a program copies the variable to a local
 first. Reading an accumulator makes the block depend on it, and it is queued
 again when the type grows.
+
+Every assignment to a volatile variable joins its accumulator. Any other ivar
+is assigned only by its owner, and read elsewhere only by functions it escapes
+through, none of which can run before it's created. Its accumulator joins what
+the owner holds at each `Capture` of such a function, so a narrowing before the
+function is created reaches it, and then each assignment on a path after one:
+the flow state carries a may-have-escaped bit per variable, joined by `or`. A
+type that doesn't fit the annotation, as a sentinel default's, joins with the
+annotation; an assignment's value that doesn't fit is reported where it's
+written, and joins as the annotation.
 
 A `do` block's signature variables are joined the same way. Its exit joins its
 result into its result variable. A call it's an argument of types it: it enters
