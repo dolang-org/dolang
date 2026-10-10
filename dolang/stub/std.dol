@@ -2644,8 +2644,8 @@ pub class FmtValue[T]: Func
 # [`t"..."` string](../../language/strings.md#formatted-sequences).
 #
 # `V` is the union of the interpolated value types; `S` describes the required
-# hole bindings. A bare `Fmt` leaves both unknown. Templates are immutable:
-# `V` is covariant, and the binding schema `S` is contravariant.
+# hole bindings. Templates are immutable: `V` is covariant, and the binding
+# schema `S` is contravariant.
 # `S` admits positional items and integer or symbol keys.
 #
 # Every segment is a [`Str`](std.Str) of literal text, a

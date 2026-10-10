@@ -398,6 +398,10 @@ impl Renderer<'_> {
                 if lifted > 0 && shown == lifted && self.style != Style::Full {
                     return;
                 }
+                // Nor of only defaults
+                if shown == 0 {
+                    return;
+                }
                 out.push('[');
                 out.push_str(&shown_args.join(", "));
                 out.push(']');

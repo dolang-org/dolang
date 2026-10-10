@@ -102,7 +102,7 @@ pub def inferred n @ Int text @ Str
   #       ^~~~~~~: flow std.FmtSpec
   let built = Fmt ["text", value]
   let _ = built
-  #       ^~~~~: flow std.Fmt[]
+  #       ^~~~~: flow std.Fmt[Unknown, Unknown{}]
   built.format anything: true
 
 def typed template @ Fmt[Int, {Int, name: Str}] -> Fmt[Int, {Int, name: Str}]
@@ -200,7 +200,7 @@ pub def database conn @ Connection
 #    = note: `@[S] (sqlite.Connection, std.Fmt[sqlite.SqlValue, S]) -> sqlite.Statement[S]`: expected `std.Fmt[sqlite.SqlValue, {}]`, found `std.Fmt[[std.Int], {}]`
 #    = note: `@[S, R] (sqlite.Connection, std.Fmt[sqlite.SqlValue, S], (sqlite.Statement[S]) -> R) -> R`: this call is missing an argument
 
-pub def variance narrow @ Fmt[Int, {x: Int}] wide @ Fmt[Value, {x: Value}] bare @ Fmt
+pub def variance narrow @ Fmt[Int, {x: Int}] wide @ Fmt[Value, {x: Value}]
   let _ @ Fmt[Value, {x: Int}] = narrow
   let _ @ Fmt[Value, {x: Int}] = wide
   let _ @ Fmt[Int, {x: Str}] = narrow
@@ -215,5 +215,4 @@ pub def variance narrow @ Fmt[Int, {x: Int}] wide @ Fmt[Value, {x: Value}] bare 
   #    |
   # LL |   let _ @ Fmt[Int, {}] = narrow
   #    |                          ^^^^^^
-  let _ @ Fmt = narrow
-  let _ @ Fmt[Int, {x: Int}] = bare
+  let _ @ Fmt[Int, {x: Int}] = Fmt([])
