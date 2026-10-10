@@ -114,7 +114,7 @@ def ansi_style value @ (Str | nil) -> (term.Style | nil)
   for part = value.split(";")
     try
       codes.push (int part)
-    catch std.TypeError: _
+    catch std.ValueError: _
       return nil
     catch std.OverflowError: _
       return nil

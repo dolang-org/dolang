@@ -1,0 +1,13 @@
+for value = ["", "x", "+", "1x"]
+  assert_throws $std.ValueError do int $value
+  assert_throws $std.ValueError do float $value
+
+for value = [nil, [], {}]
+  assert_throws $std.TypeError do int $value
+  assert_throws $std.TypeError do float $value
+
+assert_throws $std.OverflowError do int "170141183460469231731687303715884105728"
+assert_throws $std.OverflowError do int "-170141183460469231731687303715884105729"
+
+assert_eq (int "42") 42
+assert_eq (float "3.5") 3.5

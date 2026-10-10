@@ -89,6 +89,13 @@ pub def dict[...Ts] ...pairs @ Ts -> Dict[Ts]
 #
 # Coerces or parses a value as a [`Float`](std.Float).
 #
+# ## Errors
+#
+# | Exception | Condition |
+# | --- | --- |
+# | [`ValueError`](std.ValueError) | The string is empty or malformed. |
+# | [`TypeError`](std.TypeError) | The value cannot be converted. |
+#
 pub def float value @ (Num | Str) -> Float
   ...
 
@@ -131,6 +138,14 @@ do -> Int
 
 #
 # Coerces or parses a value as an [`Int`](std.Int).
+#
+# ## Errors
+#
+# | Exception | Condition |
+# | --- | --- |
+# | [`ValueError`](std.ValueError) | The string is empty or malformed. |
+# | [`OverflowError`](std.OverflowError) | The integer string is out of range. |
+# | [`TypeError`](std.TypeError) | The value cannot be converted. |
 #
 pub def int value @ (Num | Str) -> Int
   ...
