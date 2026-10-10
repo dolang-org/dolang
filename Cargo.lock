@@ -1457,6 +1457,7 @@ dependencies = [
  "dolang-ext-uuid",
  "dolang-ext-xml",
  "dolang-ext-yaml",
+ "dolang-private-bundle",
  "futures",
  "getrandom 0.4.2",
  "js-sys",

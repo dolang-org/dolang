@@ -1,6 +1,7 @@
 mod analysis;
 mod asserts;
 mod host;
+mod typelibs;
 
 use dolang::{
     compile::Config,
@@ -426,5 +427,47 @@ check (time.Date.from_ymd(2024, 2, 29).rfc() == "2024-02-29") "Date.from_ymd"
         ).await;
         assert!(result.error.is_none(), "{:?}", result.error);
         assert_eq!(result.result.as_deref(), Some("[2, 4, 6]"));
+    }
+
+    /// The bundled typelibs are those of exactly the modules the VM provides,
+    /// and they check together.
+    #[wasm_bindgen_test]
+    async fn bundled_typelibs() {
+        use dolang::compile::{Severity, typeck};
+
+        let bundled: Vec<_> = typelibs::typelibs().collect();
+        let mut names: Vec<_> = bundled.iter().map(|(name, _)| *name).collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            [
+                "base64", "compile", "digest", "glob", "http", "json", "load", "math", "rand",
+                "regex", "std", "strand", "term", "test", "time", "toml", "url", "uuid", "xml",
+                "yaml",
+            ]
+        );
+        let typelibs: Vec<_> = bundled
+            .iter()
+            .map(|(name, bytes)| {
+                let typelib = typeck::Typelib::read(bytes).unwrap();
+                assert_eq!(typelib.module(), *name);
+                typelib
+            })
+            .collect();
+        let mut builder = typeck::Builder::new();
+        for typelib in &typelibs {
+            builder.typelib(typelib).unwrap();
+        }
+        let check = builder.check();
+        let errors: Vec<_> = check
+            .diagnostics()
+            .filter(|diag| diag.severity() == Severity::Error)
+            .map(|diag| diag.message().to_string())
+            .collect();
+        assert!(errors.is_empty(), "{errors:#?}");
+        for name in names {
+            let (result, _) = run_source(&format!("import {name}\nnil")).await;
+            assert!(result.error.is_none(), "{name}: {:?}", result.error);
+        }
     }
 }
