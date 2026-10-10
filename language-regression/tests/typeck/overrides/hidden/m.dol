@@ -1,0 +1,96 @@
+# An instance method hides a class or static member of the same name from the
+# class object, which reaches the method first, so the member is reachable only
+# through `type(C)`. Each pair is warned of where the later of the two is
+# declared.
+
+pub class Own
+  pub def tag _self -> Int
+    # warning: instance method `Own.tag` hides class member `Own.tag`, which is reachable only through `type(Own)`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def tag _self -> Int
+    #    |           ^^^
+    1
+
+  #[class]
+  pub def tag _cls -> Str
+    "own"
+
+pub class Base
+  #[class]
+  pub def make _cls -> Str
+    "base"
+
+  pub def label _self -> Int
+    1
+
+# Hides an inherited class member at its own method
+pub class Derived: Base
+  pub def make _self -> Int
+    # warning: instance method `Derived.make` hides class member `Base.make`, which is reachable only through `type(Derived)`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def make _self -> Int
+    #    |           ^^^^
+    1
+
+# An own class member hidden by an inherited method
+pub class Relabelled: Base
+  #[class]
+  pub def label _cls -> Str
+    # warning: instance method `Base.label` hides class member `Relabelled.label`, which is reachable only through `type(Relabelled)`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def label _cls -> Str
+    #    |           ^^^^^
+    "relabelled"
+
+pub class Statics
+  pub def count _self -> Int
+    # warning: instance method `Statics.count` hides static member `Statics.count`, which is reachable only through `type(Statics)`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def count _self -> Int
+    #    |           ^^^^^
+    1
+
+  #[static]
+  pub def count() -> Str
+    "static"
+
+# A class `(call)` is reached by calling the class
+pub class Factory: Func
+  pub def (call) _self -> Int
+    1
+
+  #[class]
+  pub def (call) _cls -> Str
+    "factory"
+
+# An instance field isn't reached through the class object
+pub class Fielded
+  pub field level @ Int = 0
+  #[class]
+  pub field level @ Str = "class"
+
+pub class Private
+  def secret _self -> Int
+    # warning: instance method `Private.secret` hides class member `Private.secret`, which is reachable only through `type(Private)`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   def secret _self -> Int
+    #    |       ^^^^^^
+    1
+
+  #[class]
+  def secret _cls -> Str
+    "private"
+
+  def hush _self -> Int
+    1
+
+# A private member is named by its class, so another class's doesn't clash
+pub class Hushed: Private
+  #[class]
+  def hush _cls -> Str
+    "hushed"

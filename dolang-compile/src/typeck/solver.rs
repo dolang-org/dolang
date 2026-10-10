@@ -2608,7 +2608,7 @@ use alternatives::Alternatives;
 pub(crate) use callable::{Constructor, Signature, bound_method};
 pub(crate) use conform::{Inheritance, Requirement, RequirementKind};
 pub(crate) use lattice::Widening;
-pub(crate) use member::{Access, FoundKind, Lookup, Signatures};
+pub(crate) use member::{Access, Found, FoundKind, Lookup, Signatures};
 pub(crate) use narrow::Target as NarrowTarget;
 pub(crate) use unpack::PatternShape;
 
