@@ -1310,19 +1310,6 @@ pub class Bin: @Index[Range[Int], Bin]
   do -> Bin
     ...
 
-  #
-  # Unpacks any value that can be converted to binary into an array of byte values.
-  #
-  #
-  # ## Example
-  #
-  # ```
-  # assert_eq (bin.unpack b"hello") [104, 101, 108, 108, 111]
-  # ```
-  #[class]
-  pub def unpack self value @ Value -> Array[Int]
-    ...
-
 
 #
 # Mutable byte buffer; the mutable counterpart to [`Bin`](std.Bin).

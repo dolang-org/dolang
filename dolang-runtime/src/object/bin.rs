@@ -791,7 +791,6 @@ impl<'v> Protocol<'v> for Class {
                 Method(sym::DBG_METHOD),
                 Method(sym::CALL_METHOD),
                 Method(sym::PACK),
-                Method(sym::UNPACK),
             ],
             members: members![
                 Method(sym::STR_METHOD),
@@ -824,7 +823,7 @@ impl<'v> Protocol<'v> for Class {
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
@@ -855,18 +854,6 @@ impl<'v> Protocol<'v> for Class {
                         Ok(())
                     })
                     .await
-            }
-            sym::UNPACK => {
-                let ([obj], []) = unpack!(strand, args, 1, 0)?;
-                let slice = obj
-                    .as_u8_slice_raw(strand)
-                    .ok_or_else(|| Error::type_error(strand, "not convertible to binary data"))?;
-                Output::set(strand, &mut out, Empty::Array);
-                let array = out.as_array(strand).unwrap();
-                for b in slice {
-                    array.push(strand, *b).unwrap();
-                }
-                Ok(())
             }
             _ => type_mcall_fallback(strand, &strand.singletons().bin, method, args, out).await,
         }
@@ -1454,7 +1441,7 @@ mod tests {
     }
 
     #[test]
-    fn bin_class_op_mcall_pack_unpack_and_dispatch_fallback() {
+    fn bin_class_op_mcall_pack_and_dispatch_fallback() {
         with_vm(async |strand, [mut items, mut out]| {
             let class = &strand.singletons().bin;
 
@@ -1467,9 +1454,16 @@ mod tests {
                 .unwrap();
             assert_eq!(out.to_string(strand).unwrap(), "Hi");
 
-            method!(strand, class, Sym::well_known(sym::UNPACK), &mut out, "Hi")
-                .await
-                .unwrap();
+            // An instance method is called unbound
+            method!(
+                strand,
+                class,
+                Sym::well_known(sym::UNPACK),
+                &mut out,
+                b"Hi".as_slice()
+            )
+            .await
+            .unwrap();
             let array = out.as_array(strand).unwrap();
             assert_eq!(array.len(strand).unwrap(), 2);
 
