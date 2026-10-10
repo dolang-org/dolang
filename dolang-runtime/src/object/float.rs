@@ -497,7 +497,7 @@ pub(crate) fn coerce<'v, 's>(
 ) -> Result<'v, 's, f64> {
     if let Some(str) = value.as_str_raw(strand) {
         str.parse::<f64>()
-            .map_err(|_| Error::type_error(strand, format!("float: not a valid float: {:?}", str)))
+            .map_err(|_| Error::value(strand, format!("float: not a valid float: {:?}", str)))
     } else {
         match value.to_prim(strand)? {
             Prim::Int(v) => Ok(v as f64),
@@ -1025,8 +1025,10 @@ mod tests {
             Output::set(strand, &mut slot, "3.5");
             assert_eq!(coerce(&slot, strand).unwrap(), 3.5);
 
-            Output::set(strand, &mut slot, "not a float");
-            assert_eq!(coerce(&slot, strand).unwrap_err().kind(), ErrorKind::Type);
+            for value in ["", "not a float"] {
+                Output::set(strand, &mut slot, value);
+                assert_eq!(coerce(&slot, strand).unwrap_err().kind(), ErrorKind::Value);
+            }
 
             Output::set(strand, &mut slot, 4_i64);
             assert_eq!(coerce(&slot, strand).unwrap(), 4.0);

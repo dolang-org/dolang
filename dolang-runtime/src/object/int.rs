@@ -683,7 +683,7 @@ pub(crate) fn coerce<'v, 's>(
             IntErrorKind::Zero => unreachable!(),
             IntErrorKind::PosOverflow | IntErrorKind::NegOverflow => Error::overflow(strand),
             IntErrorKind::Empty | IntErrorKind::InvalidDigit | _ => {
-                Error::type_error(strand, format!("int: not a valid integer: {:?}", str))
+                Error::value(strand, format!("int: not a valid integer: {:?}", str))
             }
         })
     } else {
