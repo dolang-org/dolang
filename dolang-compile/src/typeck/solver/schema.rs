@@ -499,14 +499,6 @@ impl Solver<'_> {
                 Element::Include(_) => true,
             };
             if !admitted {
-                if matches!(item.element, Element::Positional(_))
-                    && let Some((key, _)) = keyed
-                    && self.int_keyed(bv.child(key))?
-                {
-                    return Err(
-                        Residual::Unsupported("a position that may be an Int-keyed item").into(),
-                    );
-                }
                 return Err(Issue::Contradiction(Contradiction::Excess(index)));
             }
         }
@@ -1133,18 +1125,6 @@ impl Solver<'_> {
         let xs = segments(a);
         let ys = segments(b);
         assert_eq!(xs.len(), ys.len(), "positional opaques pair up");
-        if let ([x], [y]) = (&xs[..], &ys[..])
-            && !x.is_empty()
-            && y.is_empty()
-        {
-            for domain in &b.keyed {
-                if !self.literal(domain.key)? && self.int_keyed(domain.key)? {
-                    return Err(
-                        Residual::Unsupported("positions that may be Int-keyed items").into(),
-                    );
-                }
-            }
-        }
         let last = ys.len() - 1;
         for (index, (x, y)) in xs.iter().zip(&ys).enumerate() {
             // Counts are distributed over the whole lane, so only the final
@@ -1659,16 +1639,6 @@ impl Solver<'_> {
             self.head(key)?,
             Head::Structural(view) if matches!(self.db.ty(view.ty), Type::Literal(_))
         ))
-    }
-
-    /// Whether a key domain might admit `Int`. A positional item then might be one
-    /// of its keyed items, by a one-way rule that is not supported yet. Without
-    /// `Int`, positions are not keys.
-    fn int_keyed(&self, key: Term) -> Result<bool, Issue> {
-        let Some(int) = self.db.intrinsic(Intrinsic::Int) else {
-            return Ok(false);
-        };
-        Ok(self.probe(int, self.reify(key)?)? != Status::Contradicted)
     }
 
     fn nominal_head(&self, term: Term) -> Result<bool, Issue> {

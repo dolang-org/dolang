@@ -159,7 +159,7 @@ pub def decoded d @ Data
   # LL |   let _ = d["key"]
   #    |           ^^^^^^^^
   #    |
-  #    = note: `@[K] ([json.Data], K) -> std.IndexItem[{*(std.Int): json.Data}, K]`: this call selects by `"key"`, which isn't one of the schema's keys
+  #    = note: `@[K] ([json.Data], K) -> std.IndexItem[{*json.Data}, K]`: this call selects by `"key"`, which isn't one of the schema's keys
   #    = note: `([json.Data], std.Range[std.Int]) -> [json.Data]`: expected `std.Range[std.Int]`, found `"key"`
   # error: `nil`, `std.Bool`, `std.Float` and `std.Int` in `json.Data` have no member `(index)`
   #   --> m.dol:LL:LL

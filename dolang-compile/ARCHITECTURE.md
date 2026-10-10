@@ -262,8 +262,11 @@ Wider item values raise both, but a wider schema may also admit more items: for
 `{a: Int} <: {a: Int, ?b: Str}`, `AssignItem` with key `Sym` gives `Int` and
 `Never`. More items can only raise a join, so `IndexItem` stays covariant, while
 `AssignItem` is pulled both ways. One left unevaluated is below an item
-projection of the same kind and schema on the right whose key is proven wider
-for `IndexItem`, or narrower for `AssignItem`. A
+projection of the same kind on the right by these variances: an `IndexItem`
+whose schema and key are proven wider, or an `AssignItem` of the same schema
+whose key is proven narrower. Schema subtyping never promotes positions to `Int`
+keys, but projecting after it keeps them aligned: a position in a value of the
+narrower schema fits the wider schema's position at the same index. A
 function's result that is an item projection is exposed where the function is
 related, so a call reports a key its schema doesn't admit even when nothing uses
 the result. Quantified types on the right are related through skolems (see
