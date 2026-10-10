@@ -309,6 +309,33 @@ enum State {
     Issue(Issue),
 }
 
+/// What a walk of [`Solver::variances`] is for, which decides where it looks
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Walk {
+    /// What raising a term could raise: not a function's inputs, which whatever
+    /// supplies the function takes from its expected type, nor an item
+    /// projection's key, since a value can't choose the key that selects it
+    Raised,
+    /// What could decide a term's solution: not a function's inputs, but an item
+    /// projection's key, which selects its items
+    Deciding,
+    /// What a literal would lock in: a function's inputs too, and an item
+    /// projection's key
+    Locked,
+}
+
+impl Walk {
+    /// Whether a function's parameters and channels are walked, contravariantly
+    fn inputs(self) -> bool {
+        self == Self::Locked
+    }
+
+    /// Whether an item projection's key is walked, invariantly
+    fn keys(self) -> bool {
+        self != Self::Raised
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct Obligation {
     pub(crate) relation: Relation,
@@ -1206,7 +1233,9 @@ impl<'db> Solver<'db> {
     /// an output position of theirs, covariant or invariant, including through
     /// the upper bounds of a variable raised. A function's parameters and channels
     /// are inputs, which whatever supplies the function takes from its expected
-    /// type and never raises. A form the walk can't see into counts as an output.
+    /// type and never raises. An item projection's key selects its items, and
+    /// raising them doesn't choose another. A form the walk can't see into counts
+    /// as an output.
     pub(crate) fn raised(&self, terms: &[Term]) -> Result<HashSet<InferVarId>, Residual> {
         let mut raised = HashSet::new();
         let mut visit = |id: InferVarId, variance: Variance| {
@@ -1216,7 +1245,7 @@ impl<'db> Solver<'db> {
             self.bounds(id).upper().collect()
         };
         for &term in terms {
-            self.variances(term, Variance::Covariant, false, &mut visit, 0, 0)?;
+            self.variances(term, Variance::Covariant, Walk::Raised, &mut visit, 0, 0)?;
         }
         Ok(raised)
     }
@@ -1236,7 +1265,7 @@ impl<'db> Solver<'db> {
             bounds.lower().chain(bounds.upper()).collect()
         };
         for &term in terms {
-            self.variances(term, Variance::Covariant, false, &mut visit, 0, 0)?;
+            self.variances(term, Variance::Covariant, Walk::Deciding, &mut visit, 0, 0)?;
         }
         Ok(deciding)
     }
@@ -1264,20 +1293,20 @@ impl<'db> Solver<'db> {
             bounds.lower().chain(bounds.upper()).collect()
         };
         for &(term, variance) in roots {
-            self.variances(term, variance, true, &mut visit, 0, 0)?;
+            self.variances(term, variance, Walk::Locked, &mut visit, 0, 0)?;
         }
         Ok(locked)
     }
 
     /// Walk a term's unsolved variables with the variance of each position they
     /// occur at, composed from `variance`. `visit` gives the terms to walk next,
-    /// at the same variance. A function's parameters and channels are walked
-    /// contravariantly if `inputs`, and otherwise not at all.
+    /// at the same variance. What `purpose` is decides whether a function's
+    /// parameters and channels, and an item projection's key, are walked.
     fn variances(
         &self,
         term: Term,
         variance: Variance,
-        inputs: bool,
+        purpose: Walk,
         visit: &mut impl FnMut(InferVarId, Variance) -> Vec<Term>,
         local: u32,
         depth: usize,
@@ -1289,7 +1318,7 @@ impl<'db> Solver<'db> {
                     return Ok(());
                 }
                 for next in visit(id, variance) {
-                    self.variances(next, variance, inputs, visit, 0, depth + 1)?;
+                    self.variances(next, variance, purpose, visit, 0, depth + 1)?;
                 }
                 return Ok(());
             }
@@ -1298,7 +1327,7 @@ impl<'db> Solver<'db> {
         };
         let mut walk = |ty: TypeId, variance: Variance, groups: u32| {
             let child = view.child(ty);
-            self.variances(child, variance, inputs, visit, local + groups, depth + 1)
+            self.variances(child, variance, purpose, visit, local + groups, depth + 1)
         };
         match *self.db.ty(view.ty) {
             Type::Bound { reference, kind } => {
@@ -1311,7 +1340,7 @@ impl<'db> Solver<'db> {
                     reference.slot,
                     kind,
                 );
-                self.variances(value, variance, inputs, visit, 0, depth + 1)
+                self.variances(value, variance, purpose, visit, 0, depth + 1)
             }
             Type::Top
             | Type::Unknown(_)
@@ -1345,7 +1374,7 @@ impl<'db> Solver<'db> {
                 Ok(())
             }
             Type::Function(ref function) => {
-                if inputs {
+                if purpose.inputs() {
                     let flipped = variance.compose(Variance::Contravariant);
                     walk(function.params, flipped, 0)?;
                     for channel in [function.input, function.output].into_iter().flatten() {
@@ -1380,11 +1409,21 @@ impl<'db> Solver<'db> {
                 for member in members.iter() {
                     match *member {
                         UnionMember::Type(ty) => walk(ty, variance, 0)?,
-                        _ => {
-                            walk(member.id(), variance.compose(Variance::Invariant), 0)?;
-                            if let Some(key) = member.key() {
+                        // `IndexItem` joins the values its key selects, and
+                        // `AssignItem` meets them
+                        UnionMember::IndexItem(schema, key)
+                        | UnionMember::AssignItem(schema, key) => {
+                            let inner = match member {
+                                UnionMember::IndexItem(..) => Variance::Covariant,
+                                _ => Variance::Contravariant,
+                            };
+                            walk(schema, variance.compose(inner), 0)?;
+                            if purpose.keys() {
                                 walk(key, variance.compose(Variance::Invariant), 0)?;
                             }
+                        }
+                        _ => {
+                            walk(member.id(), variance.compose(Variance::Invariant), 0)?;
                         }
                     }
                 }

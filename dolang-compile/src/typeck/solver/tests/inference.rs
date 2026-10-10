@@ -494,6 +494,14 @@ fn explicit_exact_extreme_bounds_are_solutions_without_defaulting() {
     }
 }
 
+/// A reference to the first schema binder of the innermost group
+fn schema_reference(db: &Database) -> TypeId {
+    db.intern(Type::Bound {
+        reference: BoundRef::new(0, 0),
+        kind: Kind::Schema,
+    })
+}
+
 #[test]
 fn raised_variables_are_those_at_outputs() {
     let mut db = Database::new();
@@ -518,13 +526,27 @@ fn raised_variables_are_those_at_outputs() {
         (apply(&db, sink, &[apply(&db, sink, &[r])]), true),
         (apply(&db, sink, &[r]), false),
     ];
+    let schema_r = schema_reference(&db);
+    let closed = schema(&db, &[one]);
+    let projections = [
+        // A held value can't choose the key that selects it
+        (selecting(&db, false, closed, r), Kind::Type, false),
+        (selecting(&db, true, closed, r), Kind::Type, false),
+        // `IndexItem` joins the values it selects, and `AssignItem` meets them
+        (selecting(&db, false, schema_r, one), Kind::Schema, true),
+        (selecting(&db, true, schema_r, one), Kind::Schema, false),
+    ];
     let chained = apply(&db, source, &[r]);
     db.seal();
     let mut s = Solver::new(&db);
     let held = s.infer();
     let mut vars = Vec::new();
-    for &(ty, raised) in &cases {
-        let v = s.infer();
+    let cases = (cases
+        .into_iter()
+        .map(|(ty, raised)| (ty, Kind::Type, raised)))
+    .chain(projections);
+    for (ty, kind, raised) in cases {
+        let v = s.infer_kind(kind, Rest::All);
         let e = s.intern_environment(s.empty_environment(), vec![v]);
         s.constrain(held, s.view(ty, e), Provenance::default());
         vars.push((variable_id(v), raised));
@@ -566,13 +588,26 @@ fn locked_variables_are_those_a_literal_would_fix() {
         (function(&db, &[r], one), true),
         (function(&db, &[], r), false),
     ];
+    let schema_r = schema_reference(&db);
+    let closed = schema(&db, &[one]);
+    let projections = [
+        // A literal key would select fewer items
+        (selecting(&db, false, closed, r), Kind::Type, true),
+        (selecting(&db, true, closed, r), Kind::Type, true),
+        (selecting(&db, false, schema_r, one), Kind::Schema, false),
+        (selecting(&db, true, schema_r, one), Kind::Schema, true),
+    ];
     let boxed_r = apply(&db, boxed, &[r]);
     db.seal();
     let mut s = Solver::new(&db);
     let result = s.infer();
     let mut vars = Vec::new();
-    for &(ty, locked) in &cases {
-        let v = s.infer();
+    let cases = (cases
+        .into_iter()
+        .map(|(ty, locked)| (ty, Kind::Type, locked)))
+    .chain(projections);
+    for (ty, kind, locked) in cases {
+        let v = s.infer_kind(kind, Rest::All);
         let e = s.intern_environment(s.empty_environment(), vec![v]);
         s.constrain(s.view(ty, e), result, Provenance::default());
         vars.push((variable_id(v), locked));

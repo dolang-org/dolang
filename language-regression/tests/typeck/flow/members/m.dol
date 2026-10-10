@@ -5,6 +5,7 @@
 # `union_members`.
 
 import std:
+  - @AssignItem
   - @Index
 
 pub def drop x
@@ -564,6 +565,32 @@ do
 #    |             ^^^^^
 #    |
 #    = note: `std.Int` doesn't accept `std.Str`
+
+pub class Slots[S @ {...}]
+  pub def put[K] self key@K value@AssignItem[S, K]
+    ...
+
+# A literal passed for an item's value is expected to be the item its key
+# selects, which a literal key selects exactly
+pub def assigned_items
+  d @ Dict[Str, Array[(Int | Str)]]
+  s @ Slots[{*(Str): Array[(Int | Str)]}]
+  r @ Dict[{a: Array[(Int | Str)], b: Int}]
+do
+  d["k"] = [1]
+  d.insert "k" [1]
+  s.put "k" [1]
+  r[:a:] = [1]
+  r.insert :a: [1]
+  d["k"] = [nil]
+# error: expected `[std.Int | std.Str]`, found `[std.Nil]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   d["k"] = [nil]
+#    |            ^^^^^
+#    |
+#    = note: `std.Nil` doesn't accept `std.Int | std.Str`
+#    = note: `std.Nil` does not fit `std.Int | std.Str`
 
 pub class Shadow: Func
   pub def tag self -> Int
