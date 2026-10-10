@@ -25,7 +25,7 @@ pub @let IndexItem[S @ {...}, K] = ...
 #                             ^: variance covariant
 pub @let AssignItem[S @ {...}, K] = ...
 #        ^~~~~~~~~~: designated intrinsic AssignItem
-#                   ^: variance covariant
+#                   ^: variance invariant
 #                              ^: variance contravariant
 pub class Func
 #         ^~~~: designated intrinsic Func
