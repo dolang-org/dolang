@@ -1,0 +1,25 @@
+let Foo = type(makefoo())
+let meta = type(Foo)
+class Derived: Foo
+class FurtherDerived: Derived
+
+assert_eq (meta.dynamic_method Foo) "dynamic method"
+assert_eq (meta.dynamic_method FurtherDerived) "dynamic method"
+let dynamic_method = meta.dynamic_method
+assert_eq (dynamic_method Foo) "dynamic method"
+
+assert_eq (meta.(get) Foo :dynamic_property:) 0
+meta.(set) $Foo :dynamic_property: 123
+assert_eq (meta.(get) Foo :dynamic_property:) 123
+meta.(set) $FurtherDerived :dynamic_property: 456
+assert_eq (meta.(get) FurtherDerived :dynamic_property:) 456
+assert_eq (meta.(get) Foo :dynamic_property:) 456
+
+assert (type(Foo) == meta)
+assert (meta != type(TestFlags))
+assert (meta != type(Derived))
+assert_throws $std.TypeError do dynamic_method 1
+assert_throws $std.TypeError do dynamic_method $TestFlags
+assert_throws $std.RuntimeError do meta.unknown $Foo
+assert_throws $std.RuntimeError do meta.(get) $Foo :unknown:
+assert_throws $std.RuntimeError do meta.(set) $Foo :unknown: 1

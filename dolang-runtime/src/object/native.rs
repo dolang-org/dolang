@@ -3705,6 +3705,8 @@ impl<'v, 'a, T: Object<'v>> TypeBuilder<'v, 'a, T> {
             ty.type_vtbl,
             TypeObjectWrap(self.type_value, PhantomData),
             TypeAnnexInner {
+                proxy: result.vm.inner.types.register_type_handle(),
+                scope: result.vm.inner.types.register_type_handle(),
                 inner: self.type_annex,
                 supertypes: result.supertypes.into(),
                 nominal_supertypes: result.nominal_supertypes.into(),
@@ -3828,6 +3830,8 @@ pub(crate) struct TypeObjectWrap<'v, T: Object<'v>>(
 /// accessible directly via [`Type::annex`].  The `Type<'v,T>` itself can be
 /// reconstituted from the type object header via [`Type::from_type_header`].
 pub(crate) struct TypeAnnexInner<'v, T: Object<'v>> {
+    proxy: TypeHandle<'v, NativeTypeProxy<'v, T>>,
+    scope: TypeHandle<'v, NativeTypeScope<'v, T>>,
     pub(crate) inner: T::TypeAnnex,
     pub(crate) supertypes: alias::Box<[Value<'v>]>,
     pub(crate) nominal_supertypes: alias::Box<[Value<'v>]>,
@@ -3889,14 +3893,154 @@ impl<'v, 'a, T: Object<'v>> Recv<'v, 'a, TypeObjectWrap<'v, T>> {
     }
 }
 
+impl<'v, T: Object<'v>> TypeObjectWrap<'v, T> {
+    async fn type_mcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        method: Sym<'v, 'a>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        if let Some((sym, entry)) = this.vtbl().entry_with_sym(method) {
+            let name = sym.as_str(strand);
+            Strand::async_for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed(name)),
+                async |strand| match entry {
+                    Entry::Method(handler) => unsafe {
+                        handler
+                            .call(this.as_header(), this.delegator(), strand, args, out)
+                            .await
+                    },
+                    _ => Err(Error::field(strand, method)),
+                },
+            )
+            .await
+        } else if method.tag() == sym::CALL_METHOD {
+            Self::op_call(this, strand, args, out).await
+        } else if is_special_mcall(method.tag()) {
+            instance_mcall_fallback(strand, &this, method, args, out).await
+        } else {
+            Strand::async_for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Owned(method.as_str(strand).to_owned())),
+                async |strand| {
+                    T::type_method(this.ty(strand.vm()), strand, method, args, out).await
+                },
+            )
+            .await
+        }
+    }
+
+    fn type_get<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        if let Some(entry) = this.entry(field) {
+            return match entry {
+                Entry::Getter(handler) | Entry::Property(handler, _) => Strand::for_native_frame(
+                    strand,
+                    Cow::Borrowed(T::MODULE),
+                    Cow::Borrowed(T::NAME),
+                    Some(Cow::Borrowed("(get)")),
+                    |strand| unsafe {
+                        handler.call(this.as_header(), this.delegator(), strand, out)
+                    },
+                ),
+                Entry::Method(_) => {
+                    Self::bind_type_method(this, strand, field, out);
+                    Ok(())
+                }
+                Entry::Setter(_) | Entry::Delegate(_, _) => Err(Error::field(strand, field)),
+            };
+        }
+        // Special/protocol methods are always callable.
+        if is_special_mcall(field.tag()) {
+            Self::bind_type_method(this, strand, field, out);
+            Ok(())
+        } else {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(get)")),
+                |strand| T::type_get(this.ty(strand.vm()), strand, field, out),
+            )
+        }
+    }
+
+    fn type_set<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        value: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        if let Some(entry) = this.entry(field) {
+            match entry {
+                Entry::Setter(handler) | Entry::Property(_, handler) => Strand::for_native_frame(
+                    strand,
+                    Cow::Borrowed(T::MODULE),
+                    Cow::Borrowed(T::NAME),
+                    Some(Cow::Borrowed("(set)")),
+                    |strand| unsafe {
+                        handler.call(this.as_header(), this.delegator(), strand, value)
+                    },
+                ),
+                Entry::Getter(_) => Err(Error::immutable(strand)),
+                _ => Err(Error::field(strand, field)),
+            }
+        } else {
+            Strand::for_native_frame(
+                strand,
+                Cow::Borrowed(T::MODULE),
+                Cow::Borrowed(T::NAME),
+                Some(Cow::Borrowed("(set)")),
+                |strand| T::type_set(this.ty(strand.vm()), strand, field, value),
+            )
+        }
+    }
+
+    fn bind_type_method(
+        this: Recv<'v, '_, Self>,
+        strand: &mut Strand<'v, '_>,
+        field: Sym<'v, '_>,
+        out: Slot<'v, '_>,
+    ) {
+        let Some(receiver) = this.delegator() else {
+            BoundMethod::create(strand, &this, field, out);
+            return;
+        };
+        let scope = NativeTypeScope {
+            native: Value::from_object(this.to_strong()),
+            ty: this.ty(strand.vm()),
+            receiver: receiver.dup(),
+        };
+        strand.with_slots_sync(|strand, [mut namespace]| {
+            this.annex()
+                .scope
+                .create(strand, scope, Slot::reborrow(&mut namespace));
+            BoundMethod::create(strand, &namespace, field, out);
+        });
+    }
+}
+
 impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
     fn op_type<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
+        this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        // The type of a type object is the "type" singleton.
-        Output::set(strand, out, &strand.singletons().type_obj);
+        let proxy = NativeTypeProxy {
+            native: Value::from_object(this.to_strong()),
+            ty: this.ty(strand.vm()),
+        };
+        this.annex().proxy.create(strand, proxy, out);
     }
 
     fn op_debug<'a, 's>(
@@ -3939,6 +4083,10 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        // A Do class delegates its class namespace to this native type.
+        if this.delegator().is_some() {
+            return Self::type_mcall(this, strand, method, args, out).await;
+        }
         // Instance methods take priority, called unbound on an explicit instance
         let unbound = matches!(
             this.inst_entry(method),
@@ -3985,23 +4133,8 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
                 },
             )
             .await
-        } else if let Some((sym, entry)) = this.vtbl().entry_with_sym(method) {
-            let name = sym.as_str(strand);
-            Strand::async_for_native_frame(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed(name)),
-                async |strand| match entry {
-                    Entry::Method(handler) => unsafe {
-                        handler
-                            .call(this.as_header(), this.delegator(), strand, args, out)
-                            .await
-                    },
-                    _ => Err(Error::field(strand, method)),
-                },
-            )
-            .await
+        } else if this.entry(method).is_some() {
+            Self::type_mcall(this, strand, method, args, out).await
         } else if method.tag() == sym::INIT_METHOD {
             Strand::async_for_native_frame(
                 strand,
@@ -4039,43 +4172,18 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         // Instance methods take priority, unbound
-        if let Some(Entry::Method(_) | Entry::Delegate(_, MemberKind::Method)) =
-            this.inst_entry(field)
+        if this.delegator().is_none()
+            && let Some(Entry::Method(_) | Entry::Delegate(_, MemberKind::Method)) =
+                this.inst_entry(field)
         {
             BoundMethod::create(strand, &this, field, out);
             return Ok(());
         }
-        if let Some(entry) = this.entry(field) {
-            return match entry {
-                Entry::Getter(handler) | Entry::Property(handler, _) => Strand::for_native_frame(
-                    strand,
-                    Cow::Borrowed(T::MODULE),
-                    Cow::Borrowed(T::NAME),
-                    Some(Cow::Borrowed("(get)")),
-                    |strand| unsafe {
-                        handler.call(this.as_header(), this.delegator(), strand, out)
-                    },
-                ),
-                Entry::Method(_) => {
-                    BoundMethod::create(strand, &this, field, out);
-                    Ok(())
-                }
-                Entry::Setter(_) | Entry::Delegate(_, _) => Err(Error::field(strand, field)),
-            };
-        }
-        // Special/protocol methods are always callable.
-        if field.tag() == sym::INIT_METHOD || is_special_mcall(field.tag()) {
+        if field.tag() == sym::INIT_METHOD {
             BoundMethod::create(strand, &this, field, out);
-            Ok(())
-        } else {
-            Strand::for_native_frame(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(get)")),
-                |strand| T::type_get(this.ty(strand.vm()), strand, field, out),
-            )
+            return Ok(());
         }
+        Self::type_get(this, strand, field, out)
     }
 
     fn op_set<'a, 's>(
@@ -4084,29 +4192,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
         field: Sym<'v, 'a>,
         value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        if let Some(entry) = this.entry(field) {
-            match entry {
-                Entry::Setter(handler) | Entry::Property(_, handler) => Strand::for_native_frame(
-                    strand,
-                    Cow::Borrowed(T::MODULE),
-                    Cow::Borrowed(T::NAME),
-                    Some(Cow::Borrowed("(set)")),
-                    |strand| unsafe {
-                        handler.call(this.as_header(), this.delegator(), strand, value)
-                    },
-                ),
-                Entry::Getter(_) => Err(Error::immutable(strand)),
-                _ => Err(Error::field(strand, field)),
-            }
-        } else {
-            Strand::for_native_frame(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(set)")),
-                |strand| T::type_set(this.ty(strand.vm()), strand, field, value),
-            )
-        }
+        Self::type_set(this, strand, field, value)
     }
 
     fn op_index<'a, 's>(
@@ -4157,6 +4243,191 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
             .iter()
             .chain(annex.nominal_supertypes.iter())
             .any(|sup| sup.op_subtype(strand, supertype))
+    }
+}
+
+/// A native type's metaclass, exposing only its type-object namespace.
+struct NativeTypeProxy<'v, T: Object<'v>> {
+    native: Value<'v>,
+    ty: Type<'v, T>,
+}
+
+/// Keeps a saved bound method in the native type namespace, even if its
+/// receiver has an instance method with the same name.
+struct NativeTypeScope<'v, T: Object<'v>> {
+    native: Value<'v>,
+    ty: Type<'v, T>,
+    receiver: Value<'v>,
+}
+
+unsafe impl<'v, T: Object<'v>> Collect for NativeTypeScope<'v, T> {
+    const CYCLIC: bool = true;
+    const IMMUTABLE: bool = true;
+    type Annex = ();
+
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        self.native.accept(visit)?;
+        self.receiver.accept(visit)
+    }
+
+    fn clear(&mut self) {}
+}
+
+impl<'v, T: Object<'v>> Protocol<'v> for NativeTypeScope<'v, T> {
+    fn op_type<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) {
+        this.get().native.op_type(strand, out);
+    }
+
+    fn op_debug<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        this.get().native.op_debug(strand, w)
+    }
+
+    async fn op_mcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        method: Sym<'v, 'a>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let scope = this.get();
+        let native = Recv::new(scope.native.downcast_ref(scope.ty.type_vtbl).unwrap())
+            .with_delegator(&scope.receiver);
+        TypeObjectWrap::type_mcall(native, strand, method, args, out).await
+    }
+}
+
+impl<'v, T: Object<'v>> NativeTypeProxy<'v, T> {
+    fn native(&self) -> Recv<'v, '_, TypeObjectWrap<'v, T>> {
+        Recv::new(
+            self.native
+                .downcast_ref(self.ty.type_vtbl)
+                .expect("native type proxy wraps its registered singleton"),
+        )
+    }
+}
+
+unsafe impl<'v, T: Object<'v>> Collect for NativeTypeProxy<'v, T> {
+    const CYCLIC: bool = true;
+    const IMMUTABLE: bool = true;
+    type Annex = ();
+
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        self.native.accept(visit)
+    }
+
+    fn clear(&mut self) {}
+}
+
+impl<'v, T: Object<'v>> Protocol<'v> for NativeTypeProxy<'v, T> {
+    fn op_type<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) {
+        Output::set(strand, out, TypeObject::Type);
+    }
+
+    fn op_subtype<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        supertype: &Value<'v>,
+    ) -> bool {
+        supertype.eq(strand, &this).unwrap_or(false)
+            || [TypeObject::Type, TypeObject::Func, TypeObject::Value]
+                .into_iter()
+                .any(|ty| supertype.eq(strand, ty).unwrap_or(false))
+    }
+
+    fn op_eq<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, Value<'v>> {
+        let proxy_type = this.get().native().annex().proxy;
+        let same = other
+            .downcast_ref(proxy_type)
+            .is_some_and(|other| other.get().native.repr_eq(strand, &this.get().native));
+        Ok(Value::from_bool(same))
+    }
+
+    fn op_hash<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        hasher: &mut std::collections::hash_map::DefaultHasher,
+    ) -> Result<'v, 's, ()> {
+        this.get().native.op_hash(strand, hasher)
+    }
+
+    fn op_debug<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        crate::fmt!(strand, w, "<type of {}.{}>", T::MODULE, T::NAME)
+    }
+
+    fn op_get<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        match this.get().native().entry(field) {
+            Some(Entry::Method(_)) => (),
+            Some(_) => return Err(Error::field(strand, field)),
+            // Dynamic methods are resolved when the unbound callable is invoked.
+            None => (),
+        }
+        BoundMethod::create(strand, &this, field, out);
+        Ok(())
+    }
+
+    async fn op_mcall<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        method: Sym<'v, 'a>,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let ([receiver], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
+        let proxy = this.get();
+        if !receiver.is_instance_of(strand, TypeObject::Type)
+            || !receiver.op_subtype(strand, &proxy.native)
+        {
+            return Err(Error::type_error(strand, "invalid native type object"));
+        }
+        let native = proxy.native().with_delegator(&receiver);
+        if native.entry(method).is_some() {
+            return TypeObjectWrap::type_mcall(native, strand, method, trailing, out).await;
+        }
+        match method.tag() {
+            sym::GET_METHOD => {
+                let ([field], []) = unpack!(strand, trailing, 1, 0)?;
+                let field = field
+                    .as_sym(strand)
+                    .ok_or_else(|| Error::type_error(strand, "expected a symbol"))?;
+                TypeObjectWrap::type_get(native, strand, field, out)
+            }
+            sym::SET_METHOD => {
+                let ([field, value], []) = unpack!(strand, trailing, 2, 0)?;
+                let field = field
+                    .as_sym(strand)
+                    .ok_or_else(|| Error::type_error(strand, "expected a symbol"))?;
+                strand.with_slots_sync(|strand, [mut slot]| {
+                    Output::set(strand, Slot::reborrow(&mut slot), value);
+                    TypeObjectWrap::type_set(native, strand, field, slot)
+                })
+            }
+            _ => TypeObjectWrap::type_mcall(native, strand, method, trailing, out).await,
+        }
     }
 }
 
@@ -4522,6 +4793,69 @@ mod tests {
     ) {
         let ty = strand.vm().state::<FixtureState>().slot_ty;
         ty.create_with_annex(strand, SlotFixture { counter }, SlotAnnex { tag }, out);
+    }
+
+    #[test]
+    fn native_type_proxy_registered_accessor_overrides_default() {
+        with_builder(async |vm| {
+            let ty = vm
+                .build_type::<Fixture>((), ())
+                .type_method("(get)", async |_ty, strand, args, out| {
+                    let ([], []) = unpack!(strand, args, 0, 0)?;
+                    Output::set(strand, out, 123_i64);
+                    Ok(())
+                })
+                .build();
+            vm.enter_with_slots(async move |strand, [mut singleton, mut proxy, mut out]| {
+                Output::set(strand, Slot::reborrow(&mut singleton), ty);
+                singleton.op_type(strand, Slot::reborrow(&mut proxy));
+                method!(
+                    strand,
+                    &proxy,
+                    Sym::well_known(sym::GET_METHOD),
+                    &mut out,
+                    &singleton
+                )
+                .await
+                .unwrap();
+                assert_eq!(out.to_i64(strand).unwrap(), 123);
+            })
+            .await;
+        });
+    }
+
+    #[test]
+    fn native_type_proxy_saved_methods_survive_collection() {
+        with_fixture_vm(async |strand, [mut ty, mut proxy, mut saved, mut out]| {
+            let state = strand.vm().state::<FixtureState>();
+            Output::set(strand, Slot::reborrow(&mut ty), state.slot_ty);
+            ty.op_type(strand, Slot::reborrow(&mut proxy));
+            proxy
+                .op_get(strand, state.make_sym, Slot::reborrow(&mut saved))
+                .unwrap();
+            proxy.store(Value::NIL);
+            strand.vm().collect_full();
+            call!(strand, &saved, &mut out, &ty).await.unwrap();
+            assert!(state.slot_ty.cast(&out).is_some());
+
+            // A bound method read through the type namespace keeps that
+            // namespace alive after its temporary scope is collected.
+            ty.op_type(strand, Slot::reborrow(&mut proxy));
+            method!(
+                strand,
+                &proxy,
+                Sym::well_known(sym::GET_METHOD),
+                &mut saved,
+                &ty,
+                state.make_sym
+            )
+            .await
+            .unwrap();
+            proxy.store(Value::NIL);
+            strand.vm().collect_full();
+            call!(strand, &saved, &mut out).await.unwrap();
+            assert!(state.slot_ty.cast(&out).is_some());
+        });
     }
 
     // ── `Unpack`/`UnpackIter`/`UnpackItem` ─────────────────────────────────

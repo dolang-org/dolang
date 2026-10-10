@@ -993,6 +993,47 @@ impl<'v> Annex for ClassObjectAnnex<'v> {
     }
 }
 
+impl<'v> ClassObject<'v> {
+    fn type_get<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        field: Sym<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let me = this.annex();
+        match me.type_entry(field) {
+            Some(ClassTypeEntry::Method { .. }) => {
+                BoundMethod::create(strand, &this, field, out);
+                Ok(())
+            }
+            Some(ClassTypeEntry::Field { slot, .. }) => {
+                let slot = *slot;
+                let borrow = this.borrow(strand)?;
+                Output::set(strand, out, &borrow.type_fields[slot]);
+                Ok(())
+            }
+            Some(ClassTypeEntry::Property {
+                property:
+                    Property {
+                        getter: Some(getter),
+                        ..
+                    },
+                ..
+            }) => strand.sync(async |strand| {
+                method!(strand, getter, Sym::well_known(sym::GET), out, &this).await
+            }),
+            Some(ClassTypeEntry::Property { .. }) => Err(Error::field(strand, field)),
+            Some(ClassTypeEntry::Delegate(type_obj, _)) => {
+                strand.with_slots_sync(|strand, [mut delegator]| {
+                    Output::set(strand, Slot::reborrow(&mut delegator), &this);
+                    Delegated::new(type_obj, &delegator).op_get(strand, field, out)
+                })
+            }
+            None => Err(Error::field(strand, field)),
+        }
+    }
+}
+
 impl<'v> Protocol<'v> for ClassObject<'v> {
     fn op_type<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -1040,40 +1081,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
             }
             _ => (),
         }
-        match me.type_entry(field) {
-            Some(ClassTypeEntry::Method { .. }) => {
-                BoundMethod::create(strand, &this, field, out);
-                Ok(())
-            }
-            Some(ClassTypeEntry::Field { slot, .. }) => {
-                let slot = *slot;
-                let borrow = this.borrow(strand)?;
-                Output::set(strand, out, &borrow.type_fields[slot]);
-                Ok(())
-            }
-            Some(ClassTypeEntry::Property {
-                property:
-                    Property {
-                        getter: Some(getter),
-                        ..
-                    },
-                ..
-            }) => strand.sync(async |strand| {
-                method!(strand, getter, Sym::well_known(sym::GET), out, &this).await
-            }),
-            Some(ClassTypeEntry::Property { .. }) => Err(Error::field(strand, field)),
-            Some(ClassTypeEntry::Delegate(_, MemberKind::Method)) => {
-                BoundMethod::create(strand, &this, field, out);
-                Ok(())
-            }
-            Some(ClassTypeEntry::Delegate(type_obj, _)) => {
-                strand.with_slots_sync(|strand, [mut delegator]| {
-                    Output::set(strand, Slot::reborrow(&mut delegator), &this);
-                    Delegated::new(type_obj, &delegator).op_get(strand, field, out)
-                })
-            }
-            None => Err(Error::field(strand, field)),
-        }
+        Self::type_get(this, strand, field, out)
     }
 
     fn op_set<'a, 's>(
@@ -1615,6 +1623,31 @@ impl<'v> Protocol<'v> for ClassTypeProxy<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let class = this.get().class(strand.vm());
+        if matches!(method.tag(), sym::GET_METHOD | sym::SET_METHOD)
+            && matches!(class.type_entry(method),
+                Some(ClassTypeEntry::Delegate(supertype, MemberKind::Method))
+                    if supertype.repr_eq(strand, TypeObject::Type))
+        {
+            let ([receiver, field], [], trailing) = unpack!(strand, args, 2, 0, ...)?;
+            let class = receiver
+                .downcast_ref(strand.builtin_types().class_object)
+                .ok_or_else(|| Error::type_error(strand, "invalid class object type"))?;
+            if !receiver.op_subtype(strand, &this.get().class) {
+                return Err(Error::type_error(strand, "invalid class object type"));
+            }
+            let field = field
+                .as_sym(strand)
+                .ok_or_else(|| Error::type_error(strand, "expected a symbol"))?;
+            if method.tag() == sym::GET_METHOD {
+                let ([], []) = unpack!(strand, trailing, 0, 0)?;
+                return ClassObject::type_get(Recv::new(class), strand, field, out);
+            }
+            let ([value], []) = unpack!(strand, trailing, 1, 0)?;
+            return strand.with_slots_sync(|strand, [mut slot]| {
+                Output::set(strand, Slot::reborrow(&mut slot), value);
+                ClassObject::op_set(Recv::new(class), strand, field, slot)
+            });
+        }
         match class.type_entry(method) {
             Some(ClassTypeEntry::Method { value, .. }) => value.op_call(strand, args, out).await,
             Some(ClassTypeEntry::Delegate(supertype, MemberKind::Method)) => {

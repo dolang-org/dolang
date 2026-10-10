@@ -78,6 +78,17 @@ the type's constructor) and supports subtype checks for exception catching,
 etc. `Instance<'v, 'a, T>` and `Type<'v, T>` are the safe handle types for
 instances and singletons respectively.
 
+Calling `type` on a native singleton returns a metaclass proxy. Its methods are
+unbound and take the native type or a subtype's type object first. The proxy
+looks up only the type namespace, so it can reach a type method hidden by an
+instance method. Its `(get)` and `(set)` accessors likewise address type
+properties and dynamic type hooks. Equality and hashing identify the proxied
+singleton; the proxy's own type is `Type`.
+
+Do class proxies use the same native type dispatch for inherited members.
+Native handlers receive the registered base `Type<T>` handle even when the
+explicit receiver is a Do subclass.
+
 ### Layer 3: Do Class Registration (`object/class.rs`)
 
 The top layer handles classes defined in Do source code (the `class` keyword).

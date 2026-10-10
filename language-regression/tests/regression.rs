@@ -93,8 +93,50 @@ mod detail {
         const MODULE: &'v str = "regression2";
 
         type Annex = ();
-        type Type = ();
+        type Type = i64;
         type TypeAnnex = ();
+
+        async fn type_method<'a, 's>(
+            _this: runtime::Type<'v, Self>,
+            strand: &'a mut Strand<'v, 's>,
+            method: Sym<'v, 'a>,
+            args: Args<'v, 'a>,
+            out: Slot<'v, 'a>,
+        ) -> runtime::Result<'v, 's, ()> {
+            let ([], []) = unpack!(strand, args, 0, 0)?;
+            if method.as_str(strand) != "dynamic_method" {
+                return Err(Error::field(strand, method));
+            }
+            Output::set(strand, out, "dynamic method");
+            Ok(())
+        }
+
+        fn type_get<'a, 's>(
+            this: runtime::Type<'v, Self>,
+            strand: &'a mut Strand<'v, 's>,
+            field: Sym<'v, 'a>,
+            out: Slot<'v, 'a>,
+        ) -> runtime::Result<'v, 's, ()> {
+            if field.as_str(strand) != "dynamic_property" {
+                return Err(Error::field(strand, field));
+            }
+            let value = *this.borrow(strand)?;
+            Output::set(strand, out, value);
+            Ok(())
+        }
+
+        fn type_set<'a, 's>(
+            this: runtime::Type<'v, Self>,
+            strand: &'a mut Strand<'v, 's>,
+            field: Sym<'v, 'a>,
+            value: Slot<'v, 'a>,
+        ) -> runtime::Result<'v, 's, ()> {
+            if field.as_str(strand) != "dynamic_property" {
+                return Err(Error::field(strand, field));
+            }
+            *this.borrow_mut(strand)? = value.to_i64(strand)?;
+            Ok(())
+        }
 
         async fn call<'a, 's>(
             _this: Instance<'v, 'a, Self>,
@@ -221,6 +263,19 @@ mod detail {
                     Ok(())
                 })
                 .type_set("type_writeonly", |_this, strand, value| {
+                    value.to_i64(strand)?;
+                    Ok(())
+                })
+                .method("hidden_property", async move |_this, strand, args, out| {
+                    let ([], []) = unpack!(strand, args, 0, 0)?;
+                    Output::set(strand, out, "instance method");
+                    Ok(())
+                })
+                .type_get("hidden_property", |_this, strand, out| {
+                    Output::set(strand, out, 44_i64);
+                    Ok(())
+                })
+                .type_set("hidden_property", |_this, strand, value| {
                     value.to_i64(strand)?;
                     Ok(())
                 })
