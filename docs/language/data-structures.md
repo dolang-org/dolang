@@ -185,6 +185,57 @@ does not move it to the end.
 See the [Set API](std.Set) for methods such as `add`, `contains`,
 `union`, and `diff`.
 
+## Structs (`Struct`)
+
+Structs are mutable sequences of positional items and symbol-keyed items,
+like a record whose keys are fields. A struct has no methods of its own, so a
+name reads or writes the item it keys:
+
+```
+let s = struct host: localhost port: 22
+s.port = 2222
+s.user = "root"
+echo $s.host # localhost
+```
+
+Reading a name with no item raises [FieldError](std.FieldError). Assigning
+one replaces its item in place, or adds an item at the end. Calling a name
+calls its item. Indexing reads and writes items by symbol or position.
+
+The `struct` function builds a struct from its arguments, and `Struct` from one
+spreadable source, as `Record` does:
+
+```
+let s = Struct {host: "localhost", port: 22}
+```
+
+A key appears at most once, so building a struct with a repeated key raises
+[ValueError](std.ValueError). Iterating, spreading and unpacking work as for a
+record.
+
+Since every plain name is an item, operations take the struct as an argument
+to a class method instead:
+
+```
+let port = Struct.get $s :port: default: 22
+if (Struct.contains s :user:)
+  echo $s.user
+```
+
+The type `Struct[S]` takes a schema, which types each item. Reading or writing
+a name the schema doesn't admit is an error:
+
+```
+def connect target @ Struct[{host: Str, port: Int, ?user: Str}]
+  echo "$(target.host):$(target.port)"
+```
+
+`BaseStruct[S]` is the read-only view of a struct. A parameter that only reads
+takes a `BaseStruct`, which accepts structs with narrower items, as
+[`BaseDict`](std.BaseDict) does for dicts.
+
+See the [Struct API](std.Struct) for details.
+
 ## Tuples (`Tuple`)
 
 Tuples are immutable, ordered sequences of values.

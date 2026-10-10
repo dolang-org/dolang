@@ -67,6 +67,18 @@ def round_trip_mixed()
   assert_eq (type users) $Array
 
 #[test]
+def structs_as_objects()
+  assert_eq (encode $ struct name: "alice" port: 22) "{\"name\":\"alice\",\"port\":22}"
+  let parsed = decode $ encode $ struct inner: (struct a: 1)
+  assert_eq $parsed["inner"]["a"] 1
+
+  let cyclic = struct()
+  cyclic.self = cyclic
+  let err = assert_throws $RuntimeError do
+    encode $cyclic
+  assert ((str err).contains "cyclic reference to struct")
+
+#[test]
 def symbols_as_strings()
   let map_with_sym = {"key": :test:}
   let json_str = encode $map_with_sym

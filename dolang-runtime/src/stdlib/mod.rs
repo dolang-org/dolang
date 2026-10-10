@@ -2,7 +2,15 @@ use std::hash::{DefaultHasher, Hasher};
 
 use crate::{
     error::Error,
-    object::{array::Array, class, dict::Dict, float, int, record::Record, tuple},
+    object::{
+        array::Array,
+        class,
+        dict::Dict,
+        float, int,
+        record::{self, Record},
+        structure::Struct,
+        tuple,
+    },
     unpack,
     value::{Output, StrEmbryo, Value},
     vm::Builder,
@@ -39,6 +47,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     let range = bc.range.dup();
     let module = bc.module.dup();
     let record = bc.record.dup();
+    let structure = bc.structure.dup();
     let bin = bc.bin.dup();
     let binbuf = bc.binbuf.dup();
 
@@ -108,6 +117,9 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .value("static", member_scopes.statik)
         .value("Module", &module)
         .value("Record", &record)
+        .value("Struct", &structure)
+        // A type-only split of `Struct`; the same class at runtime
+        .value("BaseStruct", &structure)
         .value("Bin", &bin)
         .value("BinBuf", &binbuf)
         .value("FmtSpec", fmt.types.spec)
@@ -168,6 +180,15 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .function("record", async move |strand, args, out| {
             let record = Record::from_args(strand, args);
             strand.builtin_types().record.create(strand, record, out);
+            Ok(())
+        })
+        .function("struct", async move |strand, args, out| {
+            let items = record::args_items(strand, args);
+            let structure = Struct::new(strand, items)?;
+            strand
+                .builtin_types()
+                .structure
+                .create(strand, structure, out);
             Ok(())
         })
         .function("type", async move |strand, args, out| {

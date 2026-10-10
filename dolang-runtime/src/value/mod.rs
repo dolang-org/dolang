@@ -41,7 +41,8 @@ use crate::{
 use prim::Prim;
 use repr::{Decode, Repr};
 use view::{
-    Array, Bin, Dict, Fmt, FmtParam, FmtValue, ObjectView, Range, Record, Set, Str, Tuple, View,
+    Array, Bin, Dict, Fmt, FmtParam, FmtValue, ObjectView, Range, Record, Set, Str, Struct, Tuple,
+    View,
 };
 
 use self::fmt::{Format, Spec};
@@ -1863,6 +1864,10 @@ impl<'v> Value<'v> {
                 // Record
                 if let Some(record) = self.downcast_native(vm, bt.record) {
                     return View::Record(Record::from_borrow(record));
+                }
+                // Struct
+                if let Some(structure) = self.downcast_native(vm, bt.structure) {
+                    return View::Struct(Struct::from_borrow(structure));
                 }
                 // Tuple
                 if let Some(tuple) = self.downcast_native(vm, bt.tuple) {

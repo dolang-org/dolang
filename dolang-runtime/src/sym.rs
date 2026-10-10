@@ -149,6 +149,7 @@ well_known_symbols! {
     (StartsWith, "starts_with", STARTS_WITH),
     (Step, "step", STEP),
     (StrMethod, "(str)", STR_METHOD),
+    (Struct, "struct", STRUCT),
     (IsSubset, "is_subset", IS_SUBSET),
     (IsSuperset, "is_superset", IS_SUPERSET),
     (Source, "source", SOURCE),

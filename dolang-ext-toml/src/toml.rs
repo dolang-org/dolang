@@ -167,6 +167,36 @@ impl<'v, 's, 'a> Serialize for SerializeValue<'v, 's, 'a> {
                 ser.end()
             }
 
+            View::Struct(handle) => {
+                let id = handle.id();
+                let _guard = enter_seen(self.seen, id.addr(), || {
+                    ser::Error::custom("cyclic reference to struct")
+                })?;
+                let len = handle
+                    .len(strand)
+                    .map_err(|_| ser::Error::custom("concurrent access to struct"))?;
+                let mut ser = serializer.serialize_map(Some(len))?;
+                let mut pairs = handle.pairs();
+                strand.with_slots_sync(|strand, [mut key, mut value]| {
+                    while pairs
+                        .next(strand, &mut key, &mut value)
+                        .map_err(|_| ser::Error::custom("concurrent access to struct"))?
+                    {
+                        ser.serialize_key(&SerializeKey {
+                            strand: RefCell::new(strand),
+                            value: &key,
+                        })?;
+                        ser.serialize_value(&SerializeValue {
+                            strand: RefCell::new(strand),
+                            seen: self.seen,
+                            value: &value,
+                        })?;
+                    }
+                    Ok(())
+                })?;
+                ser.end()
+            }
+
             View::Tuple(handle) => {
                 let id = handle.id();
                 let _guard = enter_seen(self.seen, id.addr(), || {
@@ -426,7 +456,10 @@ fn looks_like_datetime<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -
 }
 
 fn is_document<'v>(value: &Value<'v>, vm: &dolang::runtime::vm::Vm<'v>) -> bool {
-    matches!(value.view(vm), View::Dict(_) | View::Record(_))
+    matches!(
+        value.view(vm),
+        View::Dict(_) | View::Record(_) | View::Struct(_)
+    )
 }
 
 fn parse<'v, 's>(

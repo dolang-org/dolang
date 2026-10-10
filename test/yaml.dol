@@ -76,6 +76,18 @@ def round_trip_structures()
   assert_eq $rt["meta"]["key"] "val"
 
 #[test]
+def structs_as_mappings()
+  assert_eq (encode $ struct name: "alice" port: 22) "name: alice\nport: 22"
+  let rt = decode $ encode $ struct inner: (struct a: 1)
+  assert_eq $rt["inner"]["a"] 1
+
+  let cyclic = struct()
+  cyclic.self = cyclic
+  let err = assert_throws $RuntimeError do
+    encode $cyclic
+  assert ((str err).contains "cyclic reference to struct")
+
+#[test]
 def serialize_error_cases()
   let overflow_err = assert_throws $RuntimeError do
     encode 9223372036854775808

@@ -26,6 +26,7 @@ pub(crate) mod set;
 pub(crate) mod str;
 pub(crate) mod strand;
 pub(crate) mod strbuf;
+pub(crate) mod structure;
 pub(crate) mod sym;
 pub(crate) mod table;
 pub(crate) mod tuple;
@@ -157,6 +158,8 @@ pub(crate) struct BuiltinTypes<'v> {
     pub(crate) record: TypeHandle<'v, record::Record<'v>>,
     pub(crate) record_class: TypeHandle<'v, record::Class>,
     pub(crate) record_iter: TypeHandle<'v, record::Iter<'v>>,
+    pub(crate) structure: TypeHandle<'v, structure::Struct<'v>>,
+    pub(crate) structure_class: TypeHandle<'v, structure::Class>,
     pub(crate) channel_recv: TypeHandle<'v, channel::Receiver<'v>>,
     pub(crate) channel_send: TypeHandle<'v, channel::Sender<'v>>,
     pub(crate) class_object: TypeHandle<'v, class::ClassObject<'v>>,
@@ -278,6 +281,8 @@ impl<'v> BuiltinTypes<'v> {
             record: types.register_type_handle(),
             record_class: types.register_type_handle(),
             record_iter: types.register_type_handle(),
+            structure: types.register_type_handle(),
+            structure_class: types.register_type_handle(),
             str_split: types.register_type_handle(),
             str_view: types.register_type_handle(),
             str_view_iter: types.register_type_handle(),
@@ -368,6 +373,7 @@ pub(crate) struct Singletons<'v> {
     pub(crate) dict: Value<'v>,
     pub(crate) set: Value<'v>,
     pub(crate) record: Value<'v>,
+    pub(crate) structure: Value<'v>,
     pub(crate) tuple: Value<'v>,
     pub(crate) bin: Value<'v>,
     pub(crate) binbuf: Value<'v>,
@@ -446,6 +452,7 @@ impl<'v> Singletons<'v> {
             dict: v!(builtin_types.dict_type, dict::Type),
             set: v!(builtin_types.set_type, set::Type),
             record: v!(builtin_types.record_class, record::Class),
+            structure: v!(builtin_types.structure_class, structure::Class),
             tuple: v!(builtin_types.tuple_type, tuple::Type),
             bin: v!(builtin_types.bin_class, bin::Class),
             binbuf: v!(builtin_types.binbuf_class, binbuf::Class),

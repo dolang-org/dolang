@@ -61,6 +61,19 @@ def round_trip_dicts_and_records()
   assert_eq $rt_rec["port"] 8080
 
 #[test]
+def round_trip_structs()
+  let s = struct enabled: true server: (struct port: 8080)
+  let rt = decode $ encode $s
+  assert_eq $rt["enabled"] true
+  assert_eq $rt["server"]["port"] 8080
+
+  let cyclic = struct()
+  cyclic.self = cyclic
+  let err = assert_throws $RuntimeError do
+    encode $cyclic
+  assert ((str err).contains "cyclic reference to struct")
+
+#[test]
 def symbol_keys_stringify()
   let sym_dict = {}
   sym_dict[:name:] = "alice"

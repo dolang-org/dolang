@@ -181,6 +181,24 @@ pub def str value @ Value -> Str
   ...
 
 #
+# Creates a [`Struct`](std.Struct) from positional and key arguments.
+#
+# ```
+# let s = struct host: localhost port: 22
+# assert_eq $s.port 22
+# ```
+#
+# ## Errors
+#
+# Raises [`ValueError`](std.ValueError) when a key is repeated.
+#
+pub def struct[...Ts]
+  # Positional and key item values.
+  ...items @ Ts
+do -> Struct[Ts]
+  ...
+
+#
 # Interns a string as a [`Sym`](std.Sym).
 #
 pub def sym
@@ -4574,6 +4592,132 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
     ...
 
   pub def (put) self value @ Value
+    ...
+
+
+#
+# A read-only view of a [`Struct`](std.Struct), covariant in its schema: a
+# `Struct[{a: Int}]` is a `BaseStruct[{a: (Int | Str)}]`. A parameter that only
+# reads a struct takes a `BaseStruct`, so it accepts structs with narrower items.
+#
+# `BaseStruct` is `Struct` at runtime, so only a struct is a `BaseStruct`.
+#
+pub class BaseStruct[S @ {...}]: @BaseIterable[Entries[S]] @Index[S] @Spread[S] @Unpack[S, Rest: Unpack[S]]
+  #
+  # Gets the value for a symbol or position, with an optional default.
+  #
+  # ```
+  # let s = struct name: Alice
+  # assert_eq (Struct.get s :name:) Alice
+  # assert_eq (Struct.get s :port: default: 22) 22
+  # ```
+  #
+  #[class]
+  pub def get[T @ {...}, K, D = nil]
+    self
+    target @ BaseStruct[T]
+    key @ K
+    :default @ D = nil
+    :else @ (() -> D) = nil
+  do -> (IndexItem[T, K] | D)
+    ...
+
+  #
+  # Tests whether a struct has an item for a symbol or position.
+  #
+  # ```
+  # let s = struct name: Alice
+  # assert (Struct.contains s :name:)
+  # assert (!Struct.contains(s, :port:))
+  # ```
+  #
+  #[class]
+  pub def contains self target @ BaseStruct[{...}] key @ (Int | Sym) -> Bool
+    ...
+
+  # Reads the item a name keys, as in `s.name`.
+  #
+  # ## Errors
+  #
+  # Raises [`FieldError`](std.FieldError) when no item has the key.
+  pub def (get)[K] self key@K -> IndexItem[S, K]
+    ...
+
+  # Returns the value at a position or key.
+  #
+  # ## Errors
+  #
+  # Raises [`IndexError`](std.IndexError) when no item has the key.
+  pub def (index)[K] self key@K -> IndexItem[S, K]
+    ...
+
+  # Iterates items as `[key, value]` pairs in order. A positional item's key is
+  # its position.
+  pub def (iter) self -> UnpackIter[Entries[S]]
+    ...
+
+  # Spreads the struct's items.
+  pub def (spread) self -> Spread[S]
+    ...
+
+  # Unpacks items by position and symbol, as a [`Record`](std.Record) does.
+  pub def (unpack) self -> Unpack[S, Rest: Unpack[S]]
+    ...
+
+
+#
+# A mutable sequence of positional and symbol-keyed items, whose plain names are
+# its keyed items. A struct has no methods of its own, so `s.name` reads the item
+# keyed `:name:` and `s.name = value` replaces or adds it. Calling `s.name args`
+# calls the item.
+#
+# ```
+# let s = struct host: localhost port: 22
+# s.port = 2222
+# assert_eq $s.port 2222
+# ```
+#
+# Each symbol key appears at most once. Positional items are read and replaced
+# through indexing, as in `s[0]`. Class methods such as
+# [`get`](std.BaseStruct.get) take the struct as their first argument, so they
+# can't collide with an item.
+#
+# The schema `S` types each item, so reading or writing a name the schema lacks
+# is an error.
+#
+pub class Struct[S @ {...}]: BaseStruct[S] @Assign[S]
+  #
+  # Builds a struct from one spreadable source of key-value pairs.
+  #
+  # ```
+  # let s = Struct {host: "localhost", port: 22}
+  # ```
+  #
+  # Integer keys counting up from `0` become positional items, as when
+  # spreading a dict.
+  #
+  # The lowercase [`struct`](std.struct) factory instead builds a struct from
+  # its arguments.
+  #
+  # ## Errors
+  #
+  # | Exception | Condition |
+  # | --------- | --------- |
+  # | [`TypeError`](std.TypeError) | Another key is not a symbol |
+  # | [`ValueError`](std.ValueError) | A symbol key is repeated |
+  pub def (init) self source @ Spread[S]
+    ...
+
+  # Replaces the item a name keys, or adds one, as in `s.name = value`.
+  pub def (set)[K] self key@K value@AssignItem[S, K]
+    ...
+
+  # Replaces the item at a position or key. A new symbol key adds an item.
+  #
+  # ## Errors
+  #
+  # Raises [`IndexError`](std.IndexError) for a position with no item.
+  pub def (assign)[K] self key@K value@AssignItem[S, K]
     ...
 
 

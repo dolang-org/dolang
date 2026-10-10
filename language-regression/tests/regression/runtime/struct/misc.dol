@@ -1,0 +1,84 @@
+import
+  std:
+    - FieldError
+    - IndexError
+    - TypeError
+    - ValueError
+
+assert (!(bool (struct())))
+assert (bool (struct(a: 1)))
+
+# Names read and write keyed items; a new name adds an item
+let s = struct host: "localhost" port: 22
+assert_eq $s.host localhost
+s.port = 2222
+assert_eq $s.port 2222
+s.user = "root"
+assert_eq [...s] [(:host:, "localhost"), (:port:, 2222), (:user:, "root")]
+
+# No plain name is a method, so an absent name is a missing field
+assert_throws $FieldError str: "no such field: len" do s.len
+assert_throws $FieldError do s.get
+assert_throws $FieldError do s.missing()
+
+# The members every value has still apply
+assert_eq (s.(get) :host:) localhost
+s.(set) :host: "example.com"
+assert_eq $s.host example.com
+
+# Calling a name calls its item
+let c = struct double: (do |x| x * 2)
+assert_eq (c.double 21) 42
+
+# Indexing takes a position or a symbol, and assigns in place
+let p = struct 1 2 a: 3
+assert_eq $p[1] 2
+assert_eq $p[:a:] 3
+p[0] = 9
+p[:a:] = 4
+p[:b:] = 5
+assert_eq [...p] [(0, 9), (1, 2), (:a:, 4), (:b:, 5)]
+assert_throws $IndexError do p[2]
+assert_throws $IndexError do p[:z:]
+assert_throws $IndexError do p[2] = 0
+assert_throws $TypeError do p["a"]
+assert_throws $TypeError do p["a"] = 0
+
+# Class methods take the struct first, so they can't collide with an item
+let g = struct 1 get: "item" contains: "item"
+assert_eq $g.get item
+assert_eq (Struct.get g :get:) item
+assert_eq (Struct.get g 0) 1
+assert_eq (Struct.get g 1) nil
+assert_eq (Struct.get g :z: default: 42) 42
+assert_eq (Struct.get g :z: else: do 43) 43
+assert (Struct.contains g :contains:)
+assert (Struct.contains g 0)
+assert (!(Struct.contains g :z:))
+assert (!(Struct.contains g 1))
+assert_throws $TypeError do Struct.get (record a: 1) :a:
+
+# Built from one spreadable source, with integer keys counting up from 0
+# positional, as for a record
+assert_eq (Struct {0: :a:, x: 1, 1: :b:}) (struct :a: x: 1 :b:)
+assert_eq (Struct (record 1 k: 2)) (struct 1 k: 2)
+assert_throws $TypeError str: "type error: struct keys must be symbols" do Struct {"s": 1}
+assert_throws $TypeError str: "type error: struct keys must be symbols" do Struct {5: :x:}
+
+# A key appears at most once
+assert_throws $ValueError str: "value error: duplicate struct key: a" do struct a: 1 a: 2
+assert_throws $ValueError str: "value error: duplicate struct key: a" do Struct (record a: 1 a: 2)
+
+# `BaseStruct` is the same class at runtime
+assert (type s Struct)
+assert (type s std.BaseStruct)
+assert_eq (type s) $Struct
+
+class MyStruct: Struct
+  def (init) self source
+    Struct.(init) $self $source
+
+let custom = MyStruct {name: "Alice"}
+assert_eq $custom[:name:] Alice
+assert_eq (Struct.get custom :name:) Alice
+assert (type custom MyStruct)
