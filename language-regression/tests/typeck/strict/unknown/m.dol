@@ -30,6 +30,30 @@ pub def narrowed v @ Value
     #       ^: flow m.Box
   nil
 
+# A covariant schema binder takes its bound too, so a dict narrows through its
+# read view. A member's own arguments carry down, and the join keeps the wider.
+pub def dicts
+  v @ Value
+  d @ (std.BaseDict[{a: Int}] | nil)
+  e @ (std.BaseDict[{a: Int}] | Array[Value])
+do
+  if type(v, std.BaseDict)
+    let _ = v
+    #       ^: flow std.BaseDict[{*Value, *(Value): Value}]
+  else
+    let _ = v
+    #       ^: flow Value
+  if type(v, Dict)
+    let _ = v
+    #       ^: flow Value
+  if type(d, std.BaseDict)
+    let _ = d
+    #       ^: flow std.BaseDict[{a: std.Int}]
+  if type(e, std.BaseDict)
+    let _ = e
+    #       ^: flow std.BaseDict[{*Value, *(Value): Value}]
+  nil
+
 # A `do` block's parameter that nothing gives a type is `Value`, as its channels
 # are. Calling the variable that holds it doesn't type it.
 pub def uncalled() -> Int
