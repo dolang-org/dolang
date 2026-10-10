@@ -3,7 +3,6 @@
 
 import std:
   - @Assign
-  - @AssignItem
   - @BaseDict
   - @Index
   - @IndexItem
@@ -203,7 +202,7 @@ pub class Node: @Index[{*(Str): Str, *(Node | Str)}] @Assign[Str, Str] @Spread[N
     ...
 
   # Sets an unnamespaced attribute, adding it if it is missing.
-  pub def (assign)[K] self key@K value@AssignItem[{*(Str): Str}, K]
+  pub def (assign) self key@Str value@Str
     ...
 
   # Iterates the children.

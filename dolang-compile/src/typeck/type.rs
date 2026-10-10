@@ -1577,11 +1577,12 @@ impl Database {
     /// way in turn, so a known item is reduced beside a pack. `Values` folds each
     /// item's value, ignoring its multiplicity, and projects an included schema
     /// the same way in turn. `Keys` and `Entries` fold the schema's keyed view
-    /// (see [`Self::promoted`]): `Keys` takes each key, and `Entries` each
+    /// (see [`Self::promoted`]): `Keys` takes each key, and `Int` for any
+    /// positions, since an `Int` selects them all; `Entries` takes each
     /// `Tuple[key, value]`. A schema not yet known keeps the projection, and the
     /// dynamic schema projects to the dynamic type. `Entries` stays whole without
-    /// a designated `Tuple`, and a projection with a varying position without a
-    /// designated `Int`.
+    /// a designated `Tuple`, `Keys` of a schema with positions without a
+    /// designated `Int`, and `Entries` with a varying position without one.
     pub(crate) fn project(&self, member: UnionMember) -> Projected {
         let Some(schema) = member.projected() else {
             return Projected::Pending;
@@ -1629,11 +1630,12 @@ impl Database {
         let mut members = Vec::new();
         match member {
             UnionMember::Keys(_) => {
-                match (promoted.varying.is_empty(), int) {
-                    (true, _) => members
-                        .extend((0..promoted.fixed.len()).map(|i| UnionMember::Type(index(i)))),
-                    (false, Some(int)) => members.push(UnionMember::Type(int)),
-                    (false, None) => return Projected::Pending,
+                // An `Int` selects every position, as an index does
+                if !promoted.fixed.is_empty() || !promoted.varying.is_empty() {
+                    let Some(int) = int else {
+                        return Projected::Pending;
+                    };
+                    members.push(UnionMember::Type(int));
                 }
                 members.extend(
                     promoted
@@ -2302,10 +2304,40 @@ impl Database {
     /// body selects by, by slot. Its variables keep the literals they're given,
     /// since a decayed key would select differently.
     pub(crate) fn item_keys(&self, quantified: TypeId) -> Vec<u16> {
+        let mut slots = Vec::new();
+        for (slot, _, _) in self.key_projections(quantified) {
+            if !slots.contains(&slot) {
+                slots.push(slot);
+            }
+        }
+        slots
+    }
+
+    /// The bounds item projections in a quantified type's body imply for its
+    /// group's binders, with the binder's slot: `Keys[S]` for each schema `S`
+    /// the body projects an item of by the binder, since a key outside them
+    /// selects nothing. Each is interpreted in the group's environment. Only
+    /// the body's own projections count: one under a nested quantifier may
+    /// select from a schema of that quantifier's binders.
+    pub(crate) fn implied_bounds(&self, quantified: TypeId) -> Vec<(u16, TypeId)> {
+        let mut bounds = Vec::new();
+        for (slot, schema, depth) in self.key_projections(quantified) {
+            let keys = self.intern(Type::Union(vec![UnionMember::Keys(schema)].into()));
+            if depth == 0 && !bounds.contains(&(slot, keys)) {
+                bounds.push((slot, keys));
+            }
+        }
+        bounds
+    }
+
+    /// Each item projection in a quantified type's body whose key is one of its
+    /// group's binders: the binder's slot, the schema, and the number of groups
+    /// the projection is under within the body
+    fn key_projections(&self, quantified: TypeId) -> Vec<(u16, TypeId, u32)> {
         let Type::Quantified { body, .. } = self.ty(quantified) else {
             return Vec::new();
         };
-        let mut slots = Vec::new();
+        let mut found = Vec::new();
         let mut pending = vec![(*body, 0u32)];
         let mut seen = HashSet::new();
         while let Some((ty, depth)) = pending.pop() {
@@ -2313,19 +2345,21 @@ impl Database {
                 continue;
             }
             if let Type::Union(members) = self.ty(ty) {
-                for key in members.iter().filter_map(|member| member.key()) {
+                for member in members.iter() {
+                    let (Some(key), Some(schema)) = (member.key(), member.projected()) else {
+                        continue;
+                    };
                     if let Type::Bound { reference, .. } = *self.ty(key)
                         && u32::from(reference.depth) == depth
-                        && !slots.contains(&reference.slot)
                     {
-                        slots.push(reference.slot);
+                        found.push((reference.slot, schema, depth));
                     }
                 }
             }
             self.ty(ty)
                 .visit_children(|child, groups| pending.push((child, depth + groups)));
         }
-        slots
+        found
     }
 
     /// Split the first `count` binders off a quantified type's group. The result is

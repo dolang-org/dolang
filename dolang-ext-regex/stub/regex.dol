@@ -27,7 +27,6 @@
 import std:
   - @Fmt
   - @Index
-  - @IndexItem
   - @UnpackIter
 
 # A compiled regular expression.
@@ -276,11 +275,11 @@ pub class Captures: @Index[Int | Str, Match | nil]
   # echo $caps["month"]  # => 03
   # echo $caps["day"]    # => 15
   # ```
-  pub def (index)[K]
+  pub def (index)
     self
     # Group index or name.
-    key @ K
-  do -> IndexItem[{*(Int | Str): Match | nil}, K]
+    key @ (Int | Str)
+  do -> (Match | nil)
     ...
 
 # A single matched span within a string.

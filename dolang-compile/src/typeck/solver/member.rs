@@ -290,8 +290,8 @@ impl Solver<'_> {
                     };
                 }
                 Head::Skolem(id) => {
-                    term = match self.skolems[id.0].bound.get() {
-                        Some(bound) => bound,
+                    term = match self.abstract_bound(Abstract::Skolem(id)) {
+                        Some((bound, _)) => bound,
                         // Unbounded, so below top
                         None => self.closed(self.db.top()),
                     };
@@ -322,8 +322,10 @@ impl Solver<'_> {
                 Type::Rigid { .. } => {
                     self.rigid(view.ty)?;
                     // An unbounded rigid is below top
-                    let bound = self.rigid_bound(view.ty).unwrap_or(self.db.top());
-                    term = self.closed(bound);
+                    term = match self.abstract_bound(Abstract::Rigid(view.ty)) {
+                        Some((bound, _)) => bound,
+                        None => self.closed(self.db.top()),
+                    };
                     continue;
                 }
                 Type::Function(_) => {

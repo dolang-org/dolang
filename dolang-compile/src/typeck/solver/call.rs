@@ -25,13 +25,8 @@ impl Solver<'_> {
         let view = match head {
             Head::Infer(_) => return Err(Residual::Inference.into()),
             Head::Skolem(id) => {
-                let skolem = &self.skolems[id.0];
-                let step = match skolem.binding {
-                    Binding::Implicit => Step::ImplicitBound,
-                    _ => Step::SkolemBound,
-                };
-                return match skolem.bound.get() {
-                    Some(bound) => through(bound, step),
+                return match self.abstract_bound(Abstract::Skolem(id)) {
+                    Some((bound, step)) => through(bound, step),
                     None => Err(Issue::Contradiction(Contradiction::Rigid)),
                 };
             }
@@ -47,13 +42,9 @@ impl Solver<'_> {
         if view.ty == self.db.top() {
             return Err(Issue::Contradiction(Contradiction::Outside));
         }
-        if let Some(binder) = self.rigid(view.ty)? {
-            let step = match binder.binding {
-                Binding::Implicit => Step::ImplicitBound,
-                _ => Step::RigidBound,
-            };
-            return match self.rigid_bound(view.ty) {
-                Some(bound) => through(self.closed(bound), step),
+        if self.rigid(view.ty)?.is_some() {
+            return match self.abstract_bound(Abstract::Rigid(view.ty)) {
+                Some((bound, step)) => through(bound, step),
                 None => Err(Issue::Contradiction(Contradiction::Rigid)),
             };
         }
@@ -104,7 +95,7 @@ impl Solver<'_> {
                     let (callee, step) = match member {
                         UnionMember::Type(ty) => (view.child(ty), Step::UnionMember(index)),
                         _ if self.rigid(member.id())?.is_some() => {
-                            let Some(bound) = self.rigid_bound(member.id()) else {
+                            let Some(&(bound, _)) = self.rigid_bounds(member.id()).first() else {
                                 return Err(Residual::Unsupported(
                                     "a projection of a rigid without a bound",
                                 )
