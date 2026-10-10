@@ -72,3 +72,16 @@ def os_release_defaults()
     assert_eq [...rel.confext_scope] [:SYSTEM:, :PORTABLE:]
     assert_eq $rel.support_end nil
     assert_eq $rel.ansi_color nil
+
+#[test]
+def os_release_invalid_ansi_color()
+  with_temp_dir do |dir|
+    let path = (dir / "os-release")
+    path.write |
+      PRETTY_NAME="Example OS"
+      ANSI_COLOR="1;x;31"
+      ANSI_COLOR_REVERSE="1;99999999999999999999999999999999999999999"
+    let rel = systemd.os_release path: $path
+    assert_eq $rel.ansi_color nil
+    assert_eq $rel.ansi_color_reverse nil
+    assert_eq (rel.display_name.encode()) "Example OS"

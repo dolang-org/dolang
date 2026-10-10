@@ -1,3 +1,4 @@
+# dolang: strict
 # Utilities for reading systemd/OS configuration files.
 
 import shlex term
@@ -11,6 +12,7 @@ import shlex term
   std:
     - @Index
     - @IndexItem
+    - @Spread
     - @Unpack
 
 let ESC = str b"\x1b"
@@ -49,9 +51,9 @@ let SGR_OPTIONS = $
   28: {hidden: :INHERIT:}
   29: {strikethrough: :INHERIT:}
 
-def read_keys path
+def read_keys path @ (Str | Path) -> Dict[Str, Str]
   open $path do |file|
-    let res = {}
+    let res @ Dict[Str, Str] = {}
     for line = file.chomp()
       # Ignore comments and empty lines
       if (line.starts_with "#" || !line.trim())
@@ -64,10 +66,10 @@ def read_keys path
         continue
     res
 
-def words value
-  (value || "").split(" ").map(Str.trim).filter do |x| x
+def words value @ Str -> Iter[Str]
+  value.split(" ").map(Str.trim).filter do |x| x
 
-def url_value value
+def url_value value @ (Str | nil) -> (Url | nil)
   if (value == nil)
     return nil
   try
@@ -75,7 +77,7 @@ def url_value value
   catch _
     nil
 
-def support_end value
+def support_end value @ (Str | nil) -> (Date | nil)
   if (value == nil)
     return nil
   try
@@ -83,40 +85,46 @@ def support_end value
   catch _
     nil
 
-def scopes value
+def scopes value @ Str -> Iter[ExtensionScope]
   words(value).map do |item| EXTENSION_SCOPES.get $item default: $item
 
-def sgr_color code :bright = false
+def sgr_color code @ Int :bright @ Bool = false -> Sym
   let names = [:BLACK:, :RED:, :GREEN:, :YELLOW:, :BLUE:, :MAGENTA:, :CYAN:, :WHITE:]
   let bright_names = [
     :BRIGHT_BLACK:, :BRIGHT_RED:, :BRIGHT_GREEN:, :BRIGHT_YELLOW:,
     :BRIGHT_BLUE:, :BRIGHT_MAGENTA:, :BRIGHT_CYAN:, :BRIGHT_WHITE:
   ]
-  if (code < 0 || code > 7)
-    return nil
   if bright
     bright_names[code]
   else
     names[code]
 
-def ansi_style value
+# Takes the next SGR parameter if it is a color component (0 through 255).
+def sgr_byte parts @ Iter[Int] -> (Int | nil)
+  let byte = parts.next default: nil
+  if (byte != nil && byte >= 0 && byte <= 255)
+    byte
+  else
+    nil
+
+def ansi_style value @ (Str | nil) -> (term.Style | nil)
   if (value == nil)
     return nil
 
-  let parts = value.split(";").map do |x|
+  let codes @ Array[Int] = []
+  for part = value.split(";")
     try
-      int $x
-    catch std.ValueError: _
+      codes.push (int part)
+    catch std.TypeError: _
+      return nil
+    catch std.OverflowError: _
       return nil
 
-  let args = {}
-  while true
-    let code = parts.next else: do break
-    if (code == nil)
-      continue
+  let parts = codes.iter()
+  let args @ Dict[Sym, Value] = {}
+  for code = parts
     if (code == 0)
-      args = {}
-      continue
+      args.clear()
     else if (code >= 30 && code <= 37)
       args[:fg:] = sgr_color(code - 30)
     else if (code >= 90 && code <= 97)
@@ -126,32 +134,25 @@ def ansi_style value
     else if (code >= 100 && code <= 107)
       args[:bg:] = sgr_color(code - 100, bright: true)
     else if (code == 38 || code == 48)
+      let key = (code == 38 && :fg: || :bg:)
       let mode = parts.next default: nil
       if (mode == 5)
-        let color = parts.next default: nil
-        if (color != nil && color >= 0 && color <= 255)
-          if (code == 38)
-            args[:fg:] = color
-          else
-            args[:bg:] = color
+        let color = sgr_byte $parts
+        if (color != nil)
+          args[key] = color
       else if (mode == 2)
-        let red = parts.next default: nil
-        let green = parts.next default: nil
-        let blue = parts.next default: nil
-        if (red != nil && green != nil && blue != nil &&
-            red >= 0 && red <= 255 && green >= 0 && green <= 255 &&
-            blue >= 0 && blue <= 255)
-          if (code == 38)
-            args[:fg:] = [red, green, blue]
-          else
-            args[:bg:] = [red, green, blue]
+        let red = sgr_byte $parts
+        let green = sgr_byte $parts
+        let blue = sgr_byte $parts
+        if (red != nil && green != nil && blue != nil)
+          args[key] = [red, green, blue]
     else
       let options = SGR_OPTIONS.get $code else: do return nil
       for key value = options
         args[key] = value
   term.Style ...args
 
-def fancy_value value
+def fancy_value value @ (Str | nil) -> (term.Text | nil)
   if (value == nil)
     return nil
   # FANCY_NAME specifies C-style escapes for terminal presentation.
@@ -173,9 +174,9 @@ pub @let PortableScope = (:SYSTEM: | :USER: | :ANY: | Str)
 # Named fields apply the defaults and conversions prescribed by the
 # os-release specification.
 pub class OsRelease: @Index[Str, Str] @Unpack[Str, Str, Rest: Unpack[Str, Str]] Iterable[Tuple[Str, Str]]
-  field values = nil
+  field values @ Dict[Str, Str]
 
-  def (init) self values
+  def (init) self values @ Dict[Str, Str]
     self.#values = values
 
   # Reads a parsed `os-release` assignment by key.
@@ -187,11 +188,11 @@ pub class OsRelease: @Index[Str, Str] @Unpack[Str, Str, Rest: Unpack[Str, Str]] 
     self.#values.iter()
 
   # Destructures the parsed `os-release` assignments.
-  pub def (unpack) self
+  pub def (unpack) self -> Unpack[Str, Str, Rest: Unpack[Str, Str]]
     self.#values
 
   # Spreads the parsed `os-release` assignments.
-  pub def (spread) self
+  pub def (spread) self -> Spread[Str, Str]
     self.#values
 
   # The operating system name, defaulting to `Linux`.
@@ -229,7 +230,7 @@ pub class OsRelease: @Index[Str, Str] @Unpack[Str, Str, Rest: Unpack[Str, Str]] 
   # An ordered set of compatible operating-system identifiers.
   #[getter]
   pub def id_like self -> Set[Str]
-    Set $ words $ self.#values.get "ID_LIKE" default: nil
+    Set $ words $ self.#values.get "ID_LIKE" default: ""
 
   # The release channel symbol, defaulting to `:STABLE:`.
   #[getter]
@@ -240,9 +241,7 @@ pub class OsRelease: @Index[Str, Str] @Unpack[Str, Str, Rest: Unpack[Str, Str]] 
   # The portable-service scope, defaulting to `:SYSTEM:`.
   #[getter]
   pub def portable_scope self -> PortableScope
-    let value = self.#values.get "PORTABLE_SCOPE" default: nil
-    if (value == nil)
-      return :SYSTEM:
+    let value = self.#values.get "PORTABLE_SCOPE" default: "system"
     PORTABLE_SCOPES.get $value default: $value
 
   # An ordered set of system-extension scopes.
@@ -258,7 +257,7 @@ pub class OsRelease: @Index[Str, Str] @Unpack[Str, Str, Rest: Unpack[Str, Str]] 
   # An ordered set of portable-service unit-name prefixes.
   #[getter]
   pub def portable_prefixes self -> Set[Str]
-    Set $ words $ self.#values.get "PORTABLE_PREFIXES" default: nil
+    Set $ words $ self.#values.get "PORTABLE_PREFIXES" default: ""
 
   # The support end date, in UTC, if valid and defined.
   #[getter]
