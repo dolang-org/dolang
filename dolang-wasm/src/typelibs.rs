@@ -9,10 +9,6 @@ static TEST: &[(&str, &[u8])] = dolang::typelibs!();
 /// [`run`](crate::run) applies, and the `test` shim. Extension discovery is
 /// unavailable on Wasm, so the extensions are listed here as they are where
 /// they are applied.
-#[cfg_attr(
-    not(all(test, target_family = "wasm")),
-    expect(dead_code, reason = "analysis does not type check yet")
-)]
 pub(crate) fn typelibs() -> impl Iterator<Item = (&'static str, &'static [u8])> {
     let extensions = [
         dolang_ext_base64::Base64Ext::TYPELIBS,

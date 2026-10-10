@@ -55,11 +55,13 @@ for (const path of ['/', '/repo/playground/']) {
     });
     const names = await page.locator('#example option').evaluateAll(options =>
       options.map(option => (option as HTMLOptionElement).value));
-    for (const name of names.filter(name => name !== 'Hello, Do' && name !== 'Blank')) {
+    for (const name of names.filter(name => name !== 'Blank')) {
       await page.locator('#example').selectOption(name);
+      await expect(page.locator('#diagnostics-section')).toHaveAttribute('data-checked');
+      await expect(page.locator('#diagnostics'), name).toBeEmpty();
+      if (name === 'Hello, Do') continue;
       await run(page);
       await expect(page.locator('#error')).toBeEmpty();
-      await expect(page.locator('#diagnostics')).toBeEmpty();
       await expect(page.locator('#output')).not.toBeEmpty();
     }
     expect(routed).toBeGreaterThan(0);
@@ -267,7 +269,61 @@ test('http requests run through fetch in Wasm', async ({ page, baseURL }) => {
 
 test('portable extensions and dynamic modules execute in Wasm', async ({ page }) => {
   await source(page, readFileSync(new URL('./extensions.dol', import.meta.url), 'utf8'));
+  await expect(page.locator('#diagnostics-section')).toHaveAttribute('data-checked');
+  await expect(page.locator('#diagnostics')).toBeEmpty();
   await run(page);
   await expect(page.locator('#error')).toBeEmpty();
   await expect(page.locator('#output')).toHaveText('extensions passed\n');
+});
+
+test('type errors are underlined and listed', async ({ page }) => {
+  await source(page, '# é 😀\nlet x @ Int = "a"\necho $x');
+  await expect(page.locator('#diagnostics-section')).toHaveAttribute('data-checked');
+  await expect(page.locator('#diagnostics')).toContainText('error · line 2:');
+  await expect(page.locator('.cm-lintRange-error')).toHaveCount(1);
+  await source(page, '# é 😀\nlet x @ Int = 1\necho $x');
+  await expect(page.locator('#diagnostics-section')).toHaveAttribute('data-checked');
+  await expect(page.locator('#diagnostics')).toBeEmpty();
+  await expect(page.locator('.cm-lintRange-error')).toHaveCount(0);
+});
+
+test('type checking waits for edits to settle', async ({ page }) => {
+  type Reply = { type: string; version: number; at: number };
+  await page.addInitScript(() => {
+    const Original = Worker;
+    const replies: Reply[] = [];
+    (window as unknown as { replies: Reply[] }).replies = replies;
+    window.Worker = class extends Original {
+      override set onmessage(handler: ((this: Worker, event: MessageEvent) => unknown) | null) {
+        super.onmessage = event => {
+          const { type, version } = event.data;
+          if (type === 'analysis' || type === 'checked') replies.push({ type, version, at: performance.now() });
+          handler?.call(this, event);
+        };
+      }
+    };
+  });
+  await page.reload();
+  await expect(page.locator('#diagnostics-section')).toHaveAttribute('data-checked');
+  for (const value of ['"first"', '"second"', '"third"']) {
+    // Long enough for each edit to be analyzed, shorter than the check delay
+    await source(page, `let x @ Int = ${value}\necho $x`);
+    await page.waitForTimeout(220);
+  }
+  await expect(page.locator('#diagnostics-section')).toHaveAttribute('data-checked');
+  await expect(page.locator('#diagnostics')).toContainText('"third"');
+  await expect(page.locator('#diagnostics')).not.toContainText('"first"');
+  await expect(page.locator('#diagnostics')).not.toContainText('"second"');
+  const replies = await page.evaluate(() => (window as unknown as { replies: Reply[] }).replies);
+  const analyses = replies.filter(reply => reply.type === 'analysis');
+  for (const [index, analysis] of analyses.entries()) {
+    const check = replies.find(reply => reply.type === 'checked' && reply.version === analysis.version);
+    // A check comes only once its source has been left alone for the delay...
+    if (check) expect(check.at - analysis.at).toBeGreaterThanOrEqual(250);
+    // ...so a source edited again well within it is never checked.
+    const next = analyses[index + 1];
+    if (next && next.at - analysis.at < 250) expect(check).toBeUndefined();
+  }
+  const checked = replies.filter(reply => reply.type === 'checked').length;
+  expect(checked).toBeLessThan(analyses.length);
 });

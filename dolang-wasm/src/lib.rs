@@ -20,7 +20,6 @@ struct RunResult {
     result: Option<String>,
     error: Option<String>,
     canceled: bool,
-    diagnostics: Vec<analysis::Diagnostic>,
 }
 
 fn config() -> Config<'static> {
@@ -76,7 +75,6 @@ async fn execute(source: String, host: Host, signal: AbortSignal) -> RunResult {
     let mut response = RunResult::default();
     let config = config();
     let unit = config.unit(Path::new("playground.dol"), source.as_str());
-    response.diagnostics = analysis::diagnostics(&unit, &source);
     let mut bytes = Vec::new();
     if let Err(error) = unit.emit(&mut bytes) {
         response.error = Some(error.to_string());
@@ -158,9 +156,18 @@ pub async fn run(source: String, host: Host, signal: AbortSignal) -> Result<JsVa
     serde_wasm_bindgen::to_value(&execute(source, host, signal).await).map_err(Into::into)
 }
 
+/// Highlights `source` and reports its compiler diagnostics, keeping its unit
+/// for [`check`].
 #[wasm_bindgen]
 pub fn analyze(source: &str) -> Result<JsValue, JsValue> {
     serde_wasm_bindgen::to_value(&analysis::analyze(source)).map_err(Into::into)
+}
+
+/// Type checks the source [`analyze`] took last, reporting the checker's
+/// diagnostics.
+#[wasm_bindgen]
+pub fn check() -> Result<JsValue, JsValue> {
+    serde_wasm_bindgen::to_value(&analysis::check()).map_err(Into::into)
 }
 
 #[cfg(all(test, target_family = "wasm"))]
@@ -304,7 +311,6 @@ term.console.write c b"d\n"
         assert!(!result.canceled);
         let (result, _) = run_source("let =").await;
         assert!(result.error.is_some());
-        assert!(!result.diagnostics.is_empty());
     }
 
     #[wasm_bindgen_test]

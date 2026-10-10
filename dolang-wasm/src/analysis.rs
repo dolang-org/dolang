@@ -1,7 +1,23 @@
-//! Playground-local adaptation of the LSP's semantic classification.
-use dolang::compile::{Context, Kind, NodeId, Severity, Span, Token, Unit};
+//! Playground-local adaptation of the LSP's semantic classification and type
+//! checking.
+use crate::typelibs::typelibs;
+use dolang::compile::{
+    Context, Diag, ErrorKind, Kind, NodeId, Severity, Span, Token, Unit, UnitId, typeck,
+};
 use serde::Serialize;
-use std::path::Path;
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    path::Path,
+};
+
+thread_local! {
+    /// The unit [`analyze`] compiled last, which [`check`] checks.
+    static ANALYZED: RefCell<Option<Unit<'static>>> = const { RefCell::new(None) };
+    /// The bundled typelibs, decoded as checks first need them.
+    static TYPELIBS: RefCell<HashMap<&'static str, typeck::Typelib<'static>>> =
+        RefCell::new(HashMap::new());
+}
 
 #[derive(Serialize)]
 pub(crate) struct TokenRange {
@@ -44,53 +60,152 @@ impl Offsets {
     }
 }
 
-pub(crate) fn diagnostics(unit: &Unit<'_>, source: &str) -> Vec<Diagnostic> {
-    let offsets = Offsets::new(source);
+/// Converts a diagnostic located in the source, appending it and its
+/// annotations to `out`.
+///
+/// `foreign` locates an annotation in another unit, which has no source here,
+/// returning `None` for one in the source itself.
+fn convert(
+    offsets: &Offsets,
+    diag: &Diag,
+    foreign: impl Fn(&dolang::compile::SourceSpan) -> Option<String>,
+    out: &mut Vec<Diagnostic>,
+) {
+    let (from, to) = offsets.range(&diag.span().span());
+    let mut message = diag.message().to_string();
+    for note in diag.notes() {
+        message.push_str(&format!("\n{}", note.message()));
+    }
+    out.push(Diagnostic {
+        from,
+        to,
+        severity: match diag.severity() {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+            _ => "info",
+        },
+        message,
+    });
+    for annotation in diag.annotations() {
+        let message = annotation.message().to_string();
+        if message.is_empty() {
+            continue;
+        }
+        let span = annotation.span();
+        // An annotation elsewhere is named in the message, on the
+        // diagnostic's own range
+        let (range, message) = match foreign(&span) {
+            Some(location) => ((from, to), format!("{location}: {message}")),
+            None => (offsets.range(&span.span()), message),
+        };
+        out.push(Diagnostic {
+            from: range.0,
+            to: range.1,
+            severity: "info",
+            message,
+        });
+    }
+}
+
+pub(crate) fn diagnostics(unit: &Unit<'_>) -> Vec<Diagnostic> {
+    let offsets = Offsets::new(unit.source());
     let mut result = Vec::new();
     for diag in unit.diagnostics() {
         assert!(
             diag.span().unit().is_none(),
             "playground diagnostics must be local"
         );
-        let (from, to) = offsets.range(&diag.span().span());
-        let mut message = diag.message().to_string();
-        for note in diag.notes() {
-            message.push_str(&format!("\n{}", note.message()));
-        }
-        result.push(Diagnostic {
-            from,
-            to,
-            severity: match diag.severity() {
-                Severity::Error => "error",
-                Severity::Warning => "warning",
-                _ => "info",
-            },
-            message,
-        });
-        for annotation in diag.annotations() {
-            assert!(
-                annotation.span().unit().is_none(),
-                "playground annotations must be local"
-            );
-            let message = annotation.message().to_string();
-            if !message.is_empty() {
-                let (from, to) = offsets.range(&annotation.span().span());
-                result.push(Diagnostic {
-                    from,
-                    to,
-                    severity: "info",
-                    message,
-                });
-            }
-        }
+        convert(&offsets, &diag, |_| None, &mut result);
     }
     result
 }
 
+/// The typelibs of the bundled modules a unit imports, directly or through
+/// other typelibs, each once. `std` is always among them, since the types of
+/// literals are declared there.
+fn imported_by<'t>(
+    cache: &'t mut HashMap<&'static str, typeck::Typelib<'static>>,
+    unit: &Unit<'_>,
+) -> Vec<&'t typeck::Typelib<'static>> {
+    let mut queue: Vec<String> = unit.imports().into_iter().map(str::to_owned).collect();
+    queue.push("std".to_owned());
+    let mut seen = HashSet::new();
+    while let Some(name) = queue.pop() {
+        if seen.contains(&name) {
+            continue;
+        }
+        if let Some((name, bytes)) = typelibs().find(|(module, _)| *module == name) {
+            let typelib = cache.entry(name).or_insert_with(|| {
+                typeck::Typelib::read(bytes).expect("bundled typelibs are readable")
+            });
+            queue.extend(typelib.imports().into_iter().map(str::to_owned));
+        }
+        seen.insert(name);
+    }
+    let mut found: Vec<_> = seen
+        .iter()
+        .filter_map(|name| cache.get(name.as_str()))
+        .collect();
+    found.sort_by_key(|typelib| typelib.module());
+    found
+}
+
+/// Type checks the unit [`analyze`] compiled last against the bundled typelibs
+/// it imports, returning the diagnostics located in it.
+///
+/// A unit that failed to compile can't be checked and has none.  An import that
+/// isn't bundled is unknown to the checker, which says nothing about it.
+pub(crate) fn check() -> Vec<Diagnostic> {
+    ANALYZED.with_borrow(|unit| {
+        let Some(unit) = unit else {
+            return Vec::new();
+        };
+        TYPELIBS.with_borrow_mut(|cache| {
+            let mut builder = typeck::Builder::new();
+            let id = match builder.unit(unit) {
+                Ok(id) => id,
+                Err(err) if matches!(err.kind(), ErrorKind::Fail) => return Vec::new(),
+                Err(err) => panic!("cannot check the playground's unit: {err}"),
+            };
+            for typelib in imported_by(cache, unit) {
+                builder
+                    .typelib(typelib)
+                    .expect("bundled typelibs check together");
+            }
+            let check = builder.check();
+            let offsets = Offsets::new(unit.source());
+            let mut result = Vec::new();
+            for diag in check.diagnostics() {
+                if diag.span().unit() == Some(id) {
+                    let foreign = |span: &dolang::compile::SourceSpan| foreign(&check, id, span);
+                    convert(&offsets, diag, foreign, &mut result);
+                }
+            }
+            result
+        })
+    })
+}
+
+/// Where a span in a unit other than `id` lies, as `path:line:column`.
+fn foreign(
+    check: &typeck::Check<'_>,
+    id: UnitId,
+    span: &dolang::compile::SourceSpan,
+) -> Option<String> {
+    let unit = span.unit().filter(|&unit| unit != id)?;
+    let start = span.span().start();
+    Some(format!(
+        "{}:{}:{}",
+        check.path(unit).display(),
+        start.line_number(),
+        start.column_number()
+    ))
+}
+
 pub(crate) fn analyze(source: &str) -> Analysis {
     let mut config = super::config();
-    config.recover(true).document(true);
-    let unit = config.unit(Path::new("playground.dol"), source);
+    config.recover(true).document(true).typecheck(true);
+    let unit = config.unit(Path::new("playground.dol"), source.to_owned());
     let offsets = Offsets::new(source);
     let mut tokens = Vec::new();
     unit.tokens(&mut |token, span: Span, node: Option<NodeId>, context| {
@@ -110,9 +225,11 @@ pub(crate) fn analyze(source: &str) -> Analysis {
         });
     });
     tokens.sort_by_key(|token| (token.from, token.to));
+    let diagnostics = diagnostics(&unit);
+    ANALYZED.set(Some(unit));
     Analysis {
         tokens,
-        diagnostics: diagnostics(&unit, source),
+        diagnostics,
     }
 }
 
@@ -286,6 +403,33 @@ pub mod tests {
             assert_eq!(result.tokens[0].from, 0);
             assert_eq!(result.tokens[0].to, source.encode_utf16().count());
         }
+    }
+
+    #[wasm_bindgen_test]
+    fn type_error_is_reported() {
+        let source = "# é 😀\nlet x @ Int = \"a\"\necho $x";
+        let result = analyze(source);
+        assert!(result.diagnostics.is_empty());
+        let checked = check();
+        let error = checked
+            .iter()
+            .find(|diag| diag.severity == "error")
+            .expect("a type error");
+        let byte = source.find("\"a\"").unwrap();
+        let from = source[..byte].encode_utf16().count();
+        assert!(
+            error.from <= from && from + 3 <= error.to,
+            "{}..{}: {}",
+            error.from,
+            error.to,
+            error.message
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn unbundled_imports_are_unknown() {
+        analyze("import fs\nimport json\nfs.read_text (json.encode 1)");
+        assert!(check().is_empty());
     }
 
     #[wasm_bindgen_test]
