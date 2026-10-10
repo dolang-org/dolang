@@ -13,7 +13,7 @@ pub mod value {
         Singleton, Slot, StrEmbryo, TypeObject, Value, fmt,
         view::{
             Array, Bin, Dict, DictPairs, Fmt, FmtParam, FmtValue, ObjectId, ObjectView, PinBin,
-            PinStr, Record, RecordPairs, Set, SetMembers, Str, Tuple, View,
+            PinStr, Record, RecordPairs, Set, SetMembers, Str, Struct, StructPairs, Tuple, View,
         },
     };
 }

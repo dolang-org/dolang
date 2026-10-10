@@ -132,6 +132,38 @@ impl<'v, 's, 'a> Serialize for SerializeValue<'v, 's, 'a> {
                 ser.end()
             }
 
+            View::Struct(handle) => {
+                let id = handle.id();
+                if !seen.insert(id.addr()) {
+                    return Err(ser::Error::custom("cyclic reference to struct"));
+                }
+                let len = handle
+                    .len(strand)
+                    .map_err(|_| ser::Error::custom("concurrent access to struct"))?;
+                let mut ser = serializer.serialize_map(Some(len))?;
+                let mut pairs = handle.pairs();
+                strand.with_slots_sync(|strand, [mut key, mut val]| {
+                    while pairs
+                        .next(strand, &mut key, &mut val)
+                        .map_err(|_| ser::Error::custom("concurrent access to struct"))?
+                    {
+                        ser.serialize_key(&SerializeValue {
+                            strand: RefCell::new(strand),
+                            seen: RefCell::new(seen),
+                            value: &key,
+                        })?;
+                        ser.serialize_value(&SerializeValue {
+                            strand: RefCell::new(strand),
+                            seen: RefCell::new(seen),
+                            value: &val,
+                        })?;
+                    }
+                    Ok(())
+                })?;
+                seen.remove(&id.addr());
+                ser.end()
+            }
+
             View::Tuple(handle) => {
                 let id = handle.id();
                 if !seen.insert(id.addr()) {

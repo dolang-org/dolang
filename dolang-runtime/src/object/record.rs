@@ -73,13 +73,7 @@ impl<'v> Record<'v> {
     }
 
     pub(crate) fn from_args(vm: &Vm<'v>, args: Args<'v, '_>) -> Self {
-        Self::new(
-            args.map(|arg| match arg {
-                Arg::Pos(mut value) => (None, value.take()),
-                Arg::Key(key, mut value) => (Some(vm.sym_obj(key)), value.take()),
-            })
-            .collect(),
-        )
+        Self::new(args_items(vm, args))
     }
 
     /// Builds a record of symbol-keyed entries, such as the leftovers for a `**name` rest.
@@ -97,25 +91,159 @@ impl<'v> Record<'v> {
     pub(crate) fn items(&self) -> &[ArgItem<'v>] {
         &self.items
     }
+}
 
-    /// The value for `key`: the positional item it numbers if it is an integer,
-    /// or the latest instance of it if it is a symbol
-    fn find(&self, strand: &mut Strand<'v, '_>, key: &Value<'v>) -> Option<&Value<'v>> {
-        if let Some(sym) = key.as_sym(strand) {
-            self.items
-                .iter()
-                .rev()
-                .find(|(k, _)| k.as_ref().is_some_and(|k| k.tag == sym.tag()))
-                .map(|(_, value)| value)
-        } else {
-            let index = usize::try_from(key.to_i64(strand).ok()?).ok()?;
-            self.items
-                .iter()
-                .filter(|(k, _)| k.is_none())
-                .nth(index)
-                .map(|(_, value)| value)
+/// The items of `args`, in order
+pub(crate) fn args_items<'v>(vm: &Vm<'v>, args: Args<'v, '_>) -> Vec<ArgItem<'v>> {
+    args.map(|arg| match arg {
+        Arg::Pos(mut value) => (None, value.take()),
+        Arg::Key(key, mut value) => (Some(vm.sym_obj(key)), value.take()),
+    })
+    .collect()
+}
+
+/// The index in `items` for `key`: the positional item it numbers if it is an
+/// integer, or the latest instance of it if it is a symbol
+pub(crate) fn find_index<'v>(
+    strand: &mut Strand<'v, '_>,
+    items: &[ArgItem<'v>],
+    key: &Value<'v>,
+) -> Option<usize> {
+    if let Some(sym) = key.as_sym(strand) {
+        items
+            .iter()
+            .rposition(|(k, _)| k.as_ref().is_some_and(|k| k.tag == sym.tag()))
+    } else {
+        let index = usize::try_from(key.to_i64(strand).ok()?).ok()?;
+        items
+            .iter()
+            .enumerate()
+            .filter(|(_, (k, _))| k.is_none())
+            .nth(index)
+            .map(|(i, _)| i)
+    }
+}
+
+/// The value in `items` for `key`, as [`find_index`] finds it
+pub(crate) fn find<'v, 'b>(
+    strand: &mut Strand<'v, '_>,
+    items: &'b [ArgItem<'v>],
+    key: &Value<'v>,
+) -> Option<&'b Value<'v>> {
+    find_index(strand, items, key).map(|index| &items[index].1)
+}
+
+/// Writes `items` as the inside of a record literal.
+pub(crate) fn debug_items<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    items: &[ArgItem<'v>],
+    w: &mut dyn Format<'v>,
+) -> Result<'v, 's, ()> {
+    crate::fmt!(strand, w, "(")?;
+    for (index, (key, value)) in items.iter().enumerate() {
+        if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
+            strand.check_trap()?;
+        }
+        if index > 0 {
+            crate::fmt!(strand, w, ", ")?;
+        }
+        if let Some(key) = key {
+            crate::fmt!(strand, w, "{}: ", key.name)?;
+        }
+        value.op_debug(strand, w)?;
+    }
+    // A lone positional item
+    if let [(None, _)] = items {
+        crate::fmt!(strand, w, ",")?;
+    }
+    crate::fmt!(strand, w, ")")
+}
+
+pub(crate) fn hash_items<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    items: &[ArgItem<'v>],
+    hasher: &mut DefaultHasher,
+) -> Result<'v, 's, ()> {
+    for (index, (key, value)) in items.iter().enumerate() {
+        if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
+            strand.check_trap()?;
+        }
+        key.as_ref().map(|key| key.tag).hash(hasher);
+        value.op_hash(strand, hasher)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn eq_items<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    left: &[ArgItem<'v>],
+    right: &[ArgItem<'v>],
+) -> Result<'v, 's, bool> {
+    if left.len() != right.len() {
+        return Ok(false);
+    }
+    for (index, ((lkey, lvalue), (rkey, rvalue))) in left.iter().zip(right.iter()).enumerate() {
+        if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
+            strand.check_trap()?;
+        }
+        // Positions line up when every key before them does
+        if lkey.as_ref().map(|key| key.tag) != rkey.as_ref().map(|key| key.tag)
+            || !lvalue.op_eq(strand, rvalue)?.to_bool(strand)?
+        {
+            return Ok(false);
         }
     }
+    Ok(true)
+}
+
+pub(crate) fn lt_items<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    left: &[ArgItem<'v>],
+    right: &[ArgItem<'v>],
+) -> Result<'v, 's, bool> {
+    let (mut lint, mut rint) = (0, 0);
+    for (index, ((lkey, lvalue), (rkey, rvalue))) in left.iter().zip(right.iter()).enumerate() {
+        if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
+            strand.check_trap()?;
+        }
+        let lk = key_value(strand, lkey, lint);
+        let rk = key_value(strand, rkey, rint);
+        lint += i64::from(lkey.is_none());
+        rint += i64::from(rkey.is_none());
+        if lk.op_lt(strand, &rk)?.to_bool(strand)? {
+            return Ok(true);
+        }
+        if lvalue.op_lt(strand, rvalue)?.to_bool(strand)? {
+            return Ok(true);
+        }
+    }
+    Ok(right.len() > left.len())
+}
+
+/// Spreads `items` into `sink`: as `(key, value)` pairs in a sequence,
+/// otherwise as positional and symbol-keyed items.
+pub(crate) fn spread_items<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    items: &[ArgItem<'v>],
+    context: SpreadContext,
+    sink: &mut dyn Spread<'v, 's>,
+) -> Result<'v, 's, ()> {
+    let mut int = 0;
+    for (key, value) in items {
+        let mut value = value.dup();
+        if context == SpreadContext::Sequence {
+            int += i64::from(key.is_none());
+            let key = key_value(strand, key, int - i64::from(key.is_none()));
+            let mut pair = Value::from_object(tuple::tuple(strand, [key, value]));
+            sink.positional(strand, Slot::new(&mut pair))?;
+        } else if let Some(key) = key {
+            let key = unsafe { Sym::from_obj(key) };
+            sink.symbol(strand, key, Slot::new(&mut value))?;
+        } else {
+            sink.positional(strand, Slot::new(&mut value))?;
+        }
+    }
+    Ok(())
 }
 
 /// Creates an empty record.
@@ -692,25 +820,7 @@ impl<'v> Protocol<'v> for Record<'v> {
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        let items = &borrow.items;
-        crate::fmt!(strand, w, "(")?;
-        for (index, (key, value)) in items.iter().enumerate() {
-            if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                strand.check_trap()?;
-            }
-            if index > 0 {
-                crate::fmt!(strand, w, ", ")?;
-            }
-            if let Some(key) = key {
-                crate::fmt!(strand, w, "{}: ", key.name)?;
-            }
-            value.op_debug(strand, w)?;
-        }
-        // A lone positional item
-        if let [(None, _)] = &items[..] {
-            crate::fmt!(strand, w, ",")?;
-        }
-        crate::fmt!(strand, w, ")")
+        debug_items(strand, &borrow.items, w)
     }
 
     fn op_bool<'a, 's>(
@@ -730,14 +840,7 @@ impl<'v> Protocol<'v> for Record<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         sym::RECORD.hash(hasher);
-        for (index, (key, value)) in borrow.items.iter().enumerate() {
-            if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                strand.check_trap()?;
-            }
-            key.as_ref().map(|key| key.tag).hash(hasher);
-            value.op_hash(strand, hasher)?;
-        }
-        Ok(())
+        hash_items(strand, &borrow.items, hasher)
     }
 
     fn op_eq<'a, 's>(
@@ -750,23 +853,11 @@ impl<'v> Protocol<'v> for Record<'v> {
         };
         let left = this.borrow(strand)?;
         let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-        if left.items.len() != right.items.len() {
-            return Ok(Value::FALSE);
-        }
-        for (index, ((lkey, lvalue), (rkey, rvalue))) in
-            left.items.iter().zip(right.items.iter()).enumerate()
-        {
-            if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                strand.check_trap()?;
-            }
-            // Positions line up when every key before them does
-            if lkey.as_ref().map(|key| key.tag) != rkey.as_ref().map(|key| key.tag)
-                || !lvalue.op_eq(strand, rvalue)?.to_bool(strand)?
-            {
-                return Ok(Value::FALSE);
-            }
-        }
-        Ok(Value::TRUE)
+        Ok(Value::from_bool(eq_items(
+            strand,
+            &left.items,
+            &right.items,
+        )?))
     }
 
     fn op_lt<'a, 's>(
@@ -779,25 +870,11 @@ impl<'v> Protocol<'v> for Record<'v> {
         };
         let left = this.borrow(strand)?;
         let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-        let (mut lint, mut rint) = (0, 0);
-        for (index, ((lkey, lvalue), (rkey, rvalue))) in
-            left.items.iter().zip(right.items.iter()).enumerate()
-        {
-            if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                strand.check_trap()?;
-            }
-            let lk = key_value(strand, lkey, lint);
-            let rk = key_value(strand, rkey, rint);
-            lint += i64::from(lkey.is_none());
-            rint += i64::from(rkey.is_none());
-            if lk.op_lt(strand, &rk)?.to_bool(strand)? {
-                return Ok(Value::TRUE);
-            }
-            if lvalue.op_lt(strand, rvalue)?.to_bool(strand)? {
-                return Ok(Value::TRUE);
-            }
-        }
-        Ok(Value::from_bool(right.items.len() > left.items.len()))
+        Ok(Value::from_bool(lt_items(
+            strand,
+            &left.items,
+            &right.items,
+        )?))
     }
 
     fn op_index<'a, 's>(
@@ -813,7 +890,7 @@ impl<'v> Protocol<'v> for Record<'v> {
             ));
         }
         let borrow = this.borrow(strand)?;
-        match borrow.find(strand, index) {
+        match find(strand, &borrow.items, index) {
             Some(value) => {
                 Output::set(strand, out, value);
                 Ok(())
@@ -868,7 +945,9 @@ impl<'v> Protocol<'v> for Record<'v> {
                 if default.is_some() && or_else.is_some() {
                     return Err(Error::unexpected_key(strand, else_key));
                 }
-                let found = this.borrow(strand)?.find(strand, &key).map(Value::dup);
+                let borrow = this.borrow(strand)?;
+                let found = find(strand, &borrow.items, &key).map(Value::dup);
+                drop(borrow);
                 if let Some(value) = found {
                     out.store(value);
                     Ok(())
@@ -994,22 +1073,7 @@ impl<'v> Protocol<'v> for Record<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        let mut int = 0;
-        for (key, value) in &borrow.items {
-            let mut value = value.dup();
-            if context == SpreadContext::Sequence {
-                int += i64::from(key.is_none());
-                let key = key_value(strand, key, int - i64::from(key.is_none()));
-                let mut pair = Value::from_object(tuple::tuple(strand, [key, value]));
-                sink.positional(strand, Slot::new(&mut pair))?;
-            } else if let Some(key) = key {
-                let key = unsafe { Sym::from_obj(key) };
-                sink.symbol(strand, key, Slot::new(&mut value))?;
-            } else {
-                sink.positional(strand, Slot::new(&mut value))?;
-            }
-        }
-        Ok(())
+        spread_items(strand, &borrow.items, context, sink)
     }
 
     async fn op_unpack<'a, 's>(
@@ -1029,6 +1093,8 @@ impl<'v> Protocol<'v> for Record<'v> {
 struct RecordPairs<'b, 'v> {
     int: i64,
     pack: &'b Value<'v>,
+    /// The collection named in errors
+    kind: &'static str,
 }
 
 impl<'v> RecordPairs<'_, 'v> {
@@ -1086,7 +1152,10 @@ impl<'v, 's> Spread<'v, 's> for RecordPairs<'_, 'v> {
         } else if key.to_i64(strand).ok() == Some(self.int) {
             self.positional(strand, value)
         } else {
-            Err(Error::type_error(strand, "record keys must be symbols"))
+            Err(Error::type_error(
+                strand,
+                format!("{} keys must be symbols", self.kind),
+            ))
         }
     }
 }
@@ -1222,35 +1291,49 @@ impl<'v> Protocol<'v> for Class {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([items], []) = unpack!(strand, args, 1, 0)?;
+        let ([source], []) = unpack!(strand, args, 1, 0)?;
+        let items = source_items(strand, &source, "record").await?;
         strand
-            .with_slots(async |strand, [mut pack]| {
-                // Spreading can run arbitrary code, so the items collect in a
-                // pack the GC can see
-                strand.builtin_types().arg_pack.create(
-                    strand,
-                    ArgPack::new(Vec::new()),
-                    Slot::reborrow(&mut pack),
-                );
-                let mut sink = RecordPairs {
-                    int: 0,
-                    pack: &pack,
-                };
-                items
-                    .op_spread(strand, SpreadContext::Pairs, &mut sink)
-                    .await?;
-                let items = pack
-                    .downcast_ref(strand.builtin_types().arg_pack)
-                    .expect("record source pack")
-                    .borrow_mut()
-                    .ok_or_else(|| Error::concurrency(strand))?
-                    .take();
-                strand
-                    .builtin_types()
-                    .record
-                    .create(strand, Record::new(items), out);
-                Ok(())
-            })
-            .await
+            .builtin_types()
+            .record
+            .create(strand, Record::new(items), out);
+        Ok(())
     }
+}
+
+/// Collects the items of `source` for `Record src`, naming the collection
+/// `kind` in errors.
+///
+/// The items are unrooted, so the caller must store them before anything can
+/// collect.
+pub(crate) async fn source_items<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    source: &Value<'v>,
+    kind: &'static str,
+) -> Result<'v, 's, Vec<ArgItem<'v>>> {
+    strand
+        .with_slots(async |strand, [mut pack]| {
+            // Spreading can run arbitrary code, so the items collect in a
+            // pack the GC can see
+            strand.builtin_types().arg_pack.create(
+                strand,
+                ArgPack::new(Vec::new()),
+                Slot::reborrow(&mut pack),
+            );
+            let mut sink = RecordPairs {
+                int: 0,
+                pack: &pack,
+                kind,
+            };
+            source
+                .op_spread(strand, SpreadContext::Pairs, &mut sink)
+                .await?;
+            Ok(pack
+                .downcast_ref(strand.builtin_types().arg_pack)
+                .expect("record source pack")
+                .borrow_mut()
+                .ok_or_else(|| Error::concurrency(strand))?
+                .take())
+        })
+        .await
 }

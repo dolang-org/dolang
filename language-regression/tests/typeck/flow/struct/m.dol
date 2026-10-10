@@ -1,0 +1,118 @@
+# A `Struct` has no plain-name members of its own, so a name reads or writes
+# the item it keys, typed by projecting the schema. `BaseStruct` is the
+# read-only half, which holds its items covariantly.
+
+import std:
+  - @BaseStruct
+
+pub def fields s @ Struct[{host: Str, port: Int, ?user: Str, cb: ((Int) -> Str)}]
+  let _ = s.host
+  #   ^: flow std.Str
+  let _ = s.user
+  #   ^: flow std.Str
+  let _ = s.cb 1
+  #   ^: flow std.Str
+  let _ = s[:port:]
+  #   ^: flow std.Int
+  s.port = 2
+  s[:host:] = "h"
+  s.port = "x"
+  # error: expected `std.Int`, found `"x"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   s.port = "x"
+  #    |            ^^^
+  let _ = s.missing
+  # error: `std.Struct[{host: std.Str, port: std.Int, ?user: std.Str, cb: (std.Int) -> std.Str}]` has no member `missing`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = s.missing
+  #    |           ^^^^^^^^^
+  #    |
+  #    = note: `(get)`: expected `:cb: | :host: | :port: | :user:`, found `:missing:`
+  #    = note: `:missing:` does not fit `:cb: | :host: | :port: | :user:`
+  s.missing = 1
+# error: `std.Struct[{host: std.Str, port: std.Int, ?user: std.Str, cb: (std.Int) -> std.Str}]` has no member `missing`
+#   --> m.dol:LL:LL
+#    |
+# LL |   s.missing = 1
+#    |   ^^^^^^^^^^^^^
+#    |
+#    = note: `(set)`: expected `:cb: | :host: | :port: | :user:`, found `:missing:`
+#    = note: `:missing:` does not fit `:cb: | :host: | :port: | :user:`
+
+pub def positional s @ Struct[{Int, name: Str}]
+  let _ = s[0]
+  #   ^: flow std.Int
+  s[0] = 1
+
+pub def reads _s @ BaseStruct[{a: (Int | Str)}]
+  ...
+
+pub def writes _s @ Struct[{a: (Int | Str)}]
+  ...
+
+pub def passed s @ Struct[{a: Int}]
+  reads $s
+  writes $s
+# error: expected `std.Struct[{a: std.Int | std.Str}]`, found `std.Struct[{a: std.Int}]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   writes $s
+#    |           ^
+#    |
+#    = note: `std.Int` doesn't accept `std.Str`
+#    = note: in `{a: std.Int}`
+
+pub def read b @ BaseStruct[{a: Int}]
+  let _ = b.a
+  #   ^: flow std.Int
+  b.a = 1
+  # error: `std.BaseStruct[{a: std.Int}]` has no member `a`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   b.a = 1
+  #    |   ^^^^^^^
+  b[:a:] = 1
+# error: `std.BaseStruct[{a: std.Int}]` has no member `(assign)`
+#   --> m.dol:LL:LL
+#    |
+# LL |   b[:a:] = 1
+#    |   ^^^^^^^^^^
+
+pub def class_methods s @ Struct[{a: Int, ?b: Str}]
+  let _ = Struct.get $s :a:
+  #   ^: flow nil | std.Int
+  let _ = Struct.get $s :b:
+  #   ^: flow nil | std.Str
+  let _ = Struct.get $s :b: default: 0
+  #   ^: flow std.Int | std.Str
+  let _ = Struct.contains $s :b:
+  #   ^: flow std.Bool
+
+pub def unpacking s @ Struct[{a: Int, b: Str}]
+  let :a ...rest = s
+  let _ = a
+  #       ^: flow std.Int
+  let _ = rest
+  #       ^~~~: flow std.Unpack[{b: std.Str}]
+  for k v = s
+    let _ = k
+    #       ^: flow :a: | :b:
+    let _ = v
+    #       ^: flow std.Int | std.Str
+
+# Without an expectation, a dict literal source decays as a dict literal does;
+# the factory keeps each item's type
+pub def construct()
+  let s = Struct {host: "h", port: 1}
+  let _ = s
+  #       ^: flow std.Struct[std.Sym, std.Int | std.Str]
+  let a @ Struct[{host: Str, port: Int}] = Struct {host: "h", port: 1}
+  let _ = a.port
+  #   ^: flow std.Int
+  let t = struct 1 name: "n"
+  let _ = t
+  #       ^: flow std.Struct[{std.Int, name: std.Str}]
+  let _ = t.name
+  #   ^: flow std.Str

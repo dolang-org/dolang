@@ -1,0 +1,20 @@
+# Debug output names the type, so a struct isn't mistaken for a record
+assert_eq (str (struct())) "Struct()"
+assert_eq (str (struct(1, 2, a: 3))) "Struct(1, 2, a: 3)"
+assert_eq (str (struct(a: "x"))) "Struct(a: \"x\")"
+
+# Equality compares items in order, and only with structs
+assert ((struct a: 1 b: 2) == (struct a: 1 b: 2))
+assert (!((struct a: 1 b: 2) == (struct b: 2 a: 1)))
+assert (!((struct a: 1) == (struct a: 2)))
+assert (!((struct a: 1) == (record a: 1)))
+
+# Ordering follows records
+assert ((struct 1) < (struct 1 2))
+assert ((struct 1) < (struct 2))
+assert (!((struct 1) < (struct 1)))
+assert_throws $std.TypeError do ((struct 1) < (record 1))
+
+# Equal structs hash equally, but not as the equal record does
+assert_eq (std.hash (struct a: 1)) (std.hash (struct a: 1))
+assert ((std.hash (struct a: 1)) != (std.hash (record a: 1)))

@@ -110,6 +110,24 @@ fn value_to_yaml<'v, 's>(
             seen.remove(&id.addr());
             Ok(Yaml::Mapping(map))
         }
+        View::Struct(handle) => {
+            let id = handle.id();
+            if !seen.insert(id.addr()) {
+                return Err(Error::type_error(strand, "cyclic reference to struct"));
+            }
+            let mut map = YamlMapping::new();
+            let mut pairs = handle.pairs();
+            strand.with_slots_sync(|strand, [mut key, mut val]| {
+                while pairs.next(strand, &mut key, &mut val)? {
+                    let yaml_key = value_to_yaml(strand, &key, seen)?;
+                    let yaml_val = value_to_yaml(strand, &val, seen)?;
+                    map.insert(yaml_key, yaml_val);
+                }
+                Ok(())
+            })?;
+            seen.remove(&id.addr());
+            Ok(Yaml::Mapping(map))
+        }
         View::Tuple(handle) => {
             let id = handle.id();
             if !seen.insert(id.addr()) {

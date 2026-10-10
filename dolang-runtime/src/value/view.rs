@@ -16,7 +16,9 @@ use crate::{
         dict::{self, Entry, EntryValue},
         native::Cast,
         protocol::{GcObjBorrow, Header},
-        range, record, set,
+        range,
+        record::{self, ArgItem},
+        set, structure,
     },
     stdlib::fmt as stdfmt,
     strand::{Access, Strand},
@@ -685,6 +687,39 @@ impl<'v, 'a> Record<'v, 'a> {
     }
 }
 
+/// Struct view
+pub struct Struct<'v, 'a>(GcObjBorrow<'v, 'a, structure::Struct<'v>>);
+
+impl<'v, 'a> Struct<'v, 'a> {
+    pub(crate) fn from_borrow(borrow: GcObjBorrow<'v, 'a, structure::Struct<'v>>) -> Self {
+        Self(borrow)
+    }
+
+    /// Return the opaque identity of this struct for cycle detection.
+    pub fn id(&self) -> ObjectId<'v, 'a> {
+        ObjectId(self.0.into_raw().cast(), PhantomData)
+    }
+
+    /// Total number of key-value pairs.
+    pub fn len<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, usize> {
+        let borrow = match self.0.borrow() {
+            Some(b) => b,
+            None => return Err(Error::concurrency(strand)),
+        };
+        Ok(borrow.items().len())
+    }
+
+    /// Return a stateful cursor over the key-value pairs in order. A positional
+    /// item's key is its position.
+    pub fn pairs(&self) -> StructPairs<'v, 'a> {
+        StructPairs {
+            borrow: self.0,
+            pos: 0,
+            int: 0,
+        }
+    }
+}
+
 /// Tuple view
 pub struct Tuple<'v, 'a>(pub(super) gc::Borrow<'v, 'a, Header, [Value<'v>]>);
 
@@ -855,6 +890,8 @@ pub enum View<'v, 'a> {
     Set(Set<'v, 'a>),
     /// Record
     Record(Record<'v, 'a>),
+    /// Struct
+    Struct(Struct<'v, 'a>),
     /// Tuple
     Tuple(Tuple<'v, 'a>),
     /// Formatted sequence
@@ -940,20 +977,71 @@ impl<'v, 'a> RecordPairs<'v, 'a> {
             Some(b) => b,
             None => return Err(Error::concurrency(strand)),
         };
-        let Some((item_key, item_value)) = borrow.items().get(self.pos) else {
-            return Ok(false);
-        };
-        self.pos += 1;
-        match item_key {
-            Some(item_key) => Output::set(strand, key, unsafe { Sym::from_obj(item_key) }),
-            None => {
-                Output::set(strand, key, self.int);
-                self.int += 1;
-            }
-        }
-        Output::set(strand, value, item_value);
-        Ok(true)
+        Ok(next_item_pair(
+            borrow.items(),
+            &mut self.pos,
+            &mut self.int,
+            strand,
+            key,
+            value,
+        ))
     }
+}
+
+/// Iterator over a [`Struct`].
+pub struct StructPairs<'v, 'a> {
+    borrow: GcObjBorrow<'v, 'a, structure::Struct<'v>>,
+    pos: usize,
+    int: i64,
+}
+
+impl<'v, 'a> StructPairs<'v, 'a> {
+    /// Get the next key/value pair.
+    /// Returns `false` when all pairs have been yielded.
+    pub fn next<'s>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        key: impl Output<'v>,
+        value: impl Output<'v>,
+    ) -> Result<'v, 's, bool> {
+        let borrow = match self.borrow.borrow() {
+            Some(b) => b,
+            None => return Err(Error::concurrency(strand)),
+        };
+        Ok(next_item_pair(
+            borrow.items(),
+            &mut self.pos,
+            &mut self.int,
+            strand,
+            key,
+            value,
+        ))
+    }
+}
+
+/// Outputs the key and value of the record or struct item at `pos`, if any,
+/// and advances past it. `int` counts the positional items so far.
+fn next_item_pair<'v>(
+    items: &[ArgItem<'v>],
+    pos: &mut usize,
+    int: &mut i64,
+    alloc: &mut impl Alloc<'v>,
+    key: impl Output<'v>,
+    value: impl Output<'v>,
+) -> bool {
+    let Some((item_key, item_value)) = items.get(*pos) else {
+        return false;
+    };
+    *pos += 1;
+    match item_key {
+        Some(item_key) => Output::set(alloc, key, unsafe { Sym::from_obj(item_key) }),
+        None => {
+            Output::set(alloc, key, *int);
+            *int += 1;
+        }
+    }
+    Output::set(alloc, value, item_value);
+    true
 }
 
 fn dict_next_pair<'v>(
