@@ -19,6 +19,11 @@ A `test` module provides the assertion functions of the shell's `test` module
 (`assert`, `assert_not`, `assert_eq`, `assert_ne`, `assert_throws`, and
 `assert_type`), so documentation examples that use them run unchanged.
 
+The adapter carries the typelibs of exactly these modules: std, `math`,
+`strand`, the extensions' stubs, and the `test` module's stub in
+`dolang-wasm/typelib/`. That directory is not named `stub/`, so the docs and
+the LSP don't pick it up as a second `test` module.
+
 The adapter installs the host console for `term`, so `echo`, `print`, and
 `term.console` write to the output panel. The console reports `can_style` as
 `true` and `is_tty` as `false`, and has no geometry. The page renders SGR

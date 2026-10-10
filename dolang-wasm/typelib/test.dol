@@ -1,0 +1,90 @@
+# dolang: strict
+# Assertions from the shell's `test` module, for examples run in the playground.
+
+# Asserts that `cond` is truthy.
+#
+# ## Errors
+#
+# [`RuntimeError`](std.RuntimeError) if the assertion fails.
+pub def assert
+  # Condition to test.
+  cond @ Value
+  # Message to add to the failure.
+  msg @ Str = nil
+do
+  ...
+
+# Asserts that `cond` is falsy.
+#
+# ## Errors
+#
+# [`RuntimeError`](std.RuntimeError) if the assertion fails.
+pub def assert_not
+  # Condition to test.
+  cond @ Value
+  # Message to add to the failure.
+  msg @ Str = nil
+do
+  ...
+
+# Asserts that `left == right`.
+#
+# ## Errors
+#
+# [`RuntimeError`](std.RuntimeError) if the assertion fails.
+pub def assert_eq
+  # Actual value.
+  left @ Value
+  # Expected value.
+  right @ Value
+  # Message to add to the failure.
+  msg @ Str = nil
+do
+  ...
+
+# Asserts that `left != right`.
+#
+# ## Errors
+#
+# [`RuntimeError`](std.RuntimeError) if the assertion fails.
+pub def assert_ne
+  # Actual value.
+  left @ Value
+  # Value it must differ from.
+  right @ Value
+  # Message to add to the failure.
+  msg @ Str = nil
+do
+  ...
+
+# Asserts that `block` raises an error of `type`, and returns the error.
+#
+# ## Errors
+#
+# [`RuntimeError`](std.RuntimeError) if the assertion fails.
+pub def assert_throws[E]
+  # Error type expected, or a supertype of it.
+  type @ Type[E]
+  # Expected string form of the error.
+  :str @ Str = nil
+  # Message to add to the failure.
+  :msg @ Str = nil
+  # Block to run.
+  block @ (() -> Value)
+do -> E
+  ...
+
+# Asserts that `value` is an instance of `expected` or a subtype of it.
+#
+# ## Errors
+#
+# [`RuntimeError`](std.RuntimeError) if the assertion fails.
+pub def assert_type[T]
+  # Expected type.
+  expected @ Type[T]
+  # Value to test.
+  value @ Value
+  # Message to add to the failure.
+  msg @ Str = nil
+do
+  ...
