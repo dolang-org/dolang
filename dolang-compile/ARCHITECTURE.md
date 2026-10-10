@@ -248,9 +248,22 @@ values, the bottom type for two literals or classes that can't share a value,
 and otherwise `Unknown`, which leaves the write unchecked. A key member the
 schema doesn't admit whole contradicts the projection, as a conflicting schema
 does. A rigid key selects only by its bound, so exactly only where each item the
-bound selects has the same value; otherwise the projection is residual. One left
-unevaluated is below an item projection of the same kind and schema on the right
-whose key is proven wider for `IndexItem`, or narrower for `AssignItem`. A
+bound selects has the same value; otherwise the projection is residual.
+
+The item projections vary with their arguments as follows:
+
+| Projection         | Schema    | Key           |
+| ------------------ | --------- | ------------- |
+| `IndexItem[S, K]`  | covariant | covariant     |
+| `AssignItem[S, K]` | invariant | contravariant |
+
+A wider key selects more items, which raises their join and lowers their meet.
+Wider item values raise both, but a wider schema may also admit more items: for
+`{a: Int} <: {a: Int, ?b: Str}`, `AssignItem` with key `Sym` gives `Int` and
+`Never`. More items can only raise a join, so `IndexItem` stays covariant, while
+`AssignItem` is pulled both ways. One left unevaluated is below an item
+projection of the same kind and schema on the right whose key is proven wider
+for `IndexItem`, or narrower for `AssignItem`. A
 function's result that is an item projection is exposed where the function is
 related, so a call reports a key its schema doesn't admit even when nothing uses
 the result. Quantified types on the right are related through skolems (see
@@ -611,7 +624,9 @@ couldn't widen them; the rest keep their precise join, which subsumption widens
 as needed. To help a caller choose, `raised` finds the variables that raising
 given terms could raise: those at a covariant or invariant position in them, or
 in a raised variable's upper bounds. A function's parameters and channels don't
-count, and a form it can't see into counts in full.
+count, nor does an item projection's key, since a value can't choose the key
+that selects it; a form it can't see into counts in full. Both walks take an
+item projection's schema, and `locked` its key, at the projection's variances.
 
 Joins, for defaults and for flow state, drop union members proven below another
 member. A member containing `Unknown` neither subsumes nor is subsumed, since
@@ -1179,7 +1194,10 @@ on anything but its `self`. A field whose type is an application of `Phantom`
 always counts, whatever its visibility, using its arguments covariantly as
 Rust's `PhantomData` does, so `Phantom[(T -> nil)]` marks a class contravariant.
 A transparent alias uses its body covariantly; `Union`, the projections and
-`Phantom` take their binders covariantly, and any other opaque alias uses none.
+`Phantom` take their binders covariantly, except that `AssignItem` takes its
+schema invariantly and its key contravariantly (see
+[Standalone subtype solver](#standalone-subtype-solver)), and any other opaque
+alias uses none.
 A bound of a binder's own group is a covariant position for it, since widening
 the binder widens the bound, which the other arguments then still meet. An outer
 binder used in the bound of a nested group is used contravariantly there.

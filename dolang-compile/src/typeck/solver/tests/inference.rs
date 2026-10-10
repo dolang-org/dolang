@@ -532,9 +532,10 @@ fn raised_variables_are_those_at_outputs() {
         // A held value can't choose the key that selects it
         (selecting(&db, false, closed, r), Kind::Type, false),
         (selecting(&db, true, closed, r), Kind::Type, false),
-        // `IndexItem` joins the values it selects, and `AssignItem` meets them
+        // `IndexItem` joins the values it selects, and `AssignItem` meets them,
+        // which wider values raise but more items lower
         (selecting(&db, false, schema_r, one), Kind::Schema, true),
-        (selecting(&db, true, schema_r, one), Kind::Schema, false),
+        (selecting(&db, true, schema_r, one), Kind::Schema, true),
     ];
     let chained = apply(&db, source, &[r]);
     db.seal();
@@ -591,8 +592,8 @@ fn locked_variables_are_those_a_literal_would_fix() {
     let schema_r = schema_reference(&db);
     let closed = schema(&db, &[one]);
     let projections = [
-        // A literal key would select fewer items
-        (selecting(&db, false, closed, r), Kind::Type, true),
+        // A wider key raises `IndexItem` and lowers `AssignItem`
+        (selecting(&db, false, closed, r), Kind::Type, false),
         (selecting(&db, true, closed, r), Kind::Type, true),
         (selecting(&db, false, schema_r, one), Kind::Schema, false),
         (selecting(&db, true, schema_r, one), Kind::Schema, true),

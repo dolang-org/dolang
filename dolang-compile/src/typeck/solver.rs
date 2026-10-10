@@ -330,7 +330,7 @@ impl Walk {
         self == Self::Locked
     }
 
-    /// Whether an item projection's key is walked, invariantly
+    /// Whether an item projection's key is walked, at its variance
     fn keys(self) -> bool {
         self != Self::Raised
     }
@@ -1409,17 +1409,21 @@ impl<'db> Solver<'db> {
                 for member in members.iter() {
                     match *member {
                         UnionMember::Type(ty) => walk(ty, variance, 0)?,
-                        // `IndexItem` joins the values its key selects, and
-                        // `AssignItem` meets them
+                        // `IndexItem` joins the values its key selects, which a
+                        // wider key raises. `AssignItem` meets them, which a
+                        // wider key lowers, and its schema is invariant: wider
+                        // values raise the meet, but more items lower it.
                         UnionMember::IndexItem(schema, key)
                         | UnionMember::AssignItem(schema, key) => {
-                            let inner = match member {
-                                UnionMember::IndexItem(..) => Variance::Covariant,
-                                _ => Variance::Contravariant,
+                            let (inner, by_key) = match member {
+                                UnionMember::IndexItem(..) => {
+                                    (Variance::Covariant, Variance::Covariant)
+                                }
+                                _ => (Variance::Invariant, Variance::Contravariant),
                             };
                             walk(schema, variance.compose(inner), 0)?;
                             if purpose.keys() {
-                                walk(key, variance.compose(Variance::Invariant), 0)?;
+                                walk(key, variance.compose(by_key), 0)?;
                             }
                         }
                         _ => {

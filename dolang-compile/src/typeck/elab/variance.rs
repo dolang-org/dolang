@@ -304,7 +304,9 @@ impl<'t> Collect<'t, '_> {
         }
 
         // Designated opaque aliases take their binders covariantly, but for
-        // `AssignItem`'s key: a wider key selects more items, whose meet is lower
+        // `AssignItem`: a wider key selects more items, whose meet is lower, and
+        // its schema is invariant, since wider values raise the meet but more
+        // items lower it
         let assign_item = Designated::Intrinsic(Intrinsic::AssignItem);
         if let Some(
             designated @ (Designated::Phantom
@@ -325,6 +327,7 @@ impl<'t> Collect<'t, '_> {
                     slot,
                 };
                 let used = match slot {
+                    0 if *designated == assign_item => Use::BOTH,
                     1 if *designated == assign_item => Use::CONTRA,
                     _ => Use::CO,
                 };

@@ -38,7 +38,7 @@ pub @let UnionOf[T] = Union[T]
 pub @let IndexOf[S @ {...}] = Index[S]
 #                ^: variance covariant
 pub @let AssignOf[S @ {...}] = Assign[S]
-#                 ^: variance contravariant
+#                 ^: variance invariant
 pub @let SpreadOf[S @ {...}] = Spread[S]
 #                 ^: variance covariant
 pub @let DictOf[S @ {...}] = Dict[S]
