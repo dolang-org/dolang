@@ -1822,18 +1822,17 @@ impl<'db> Solver<'db> {
         Ok(self.closed(candidate))
     }
 
-    /// Default a type variable without lower bounds to the meet of its upper
-    /// bounds, as the greatest type they show to fit them. A variable with a
-    /// lower bound, without upper bounds, or with an upper bound that isn't yet
-    /// solved is left unsolved, for its caller to default otherwise. Only a
-    /// caller that has given up waiting for lower bounds uses this: [`Self::default`]
+    /// Default a variable without lower bounds to the meet of its upper bounds,
+    /// as the greatest type they show to fit them: for an instantiated binder
+    /// nothing else bounds, its bound. A variable with a lower bound, without
+    /// upper bounds, or with an upper bound that isn't yet solved is left
+    /// unsolved, for its caller to default otherwise. A schema variable's upper
+    /// bounds must be ordered, since schemas have no general meet. Only a caller
+    /// that has given up waiting for lower bounds uses this: [`Self::default`]
     /// never invents a type from no lower bounds.
     pub(crate) fn default_upper(&mut self, id: InferVarId) -> Result<TypeId, Residual> {
         let bounds = &self.bounds[id.0];
-        if self.assignment(id).is_some()
-            || self.inference[id.0].kind != Kind::Type
-            || bounds.lower().next().is_some()
-        {
+        if self.assignment(id).is_some() || bounds.lower().next().is_some() {
             return Err(Residual::Inference);
         }
         let upper = bounds
@@ -1842,11 +1841,20 @@ impl<'db> Solver<'db> {
             .collect::<Result<Vec<_>, _>>()?;
         let mut upper = upper.into_iter();
         let first = upper.next().ok_or(Residual::Inference)?;
-        let candidate = upper.try_fold(first, |met, ty| {
-            self.meet(met, ty).map_err(|issue| match issue {
+        let candidate = upper.try_fold(first, |met, ty| match self.inference[id.0].kind {
+            Kind::Type => self.meet(met, ty).map_err(|issue| match issue {
                 Issue::Residual(residual) => residual,
                 Issue::Contradiction(_) => Residual::Unsupported("meeting upper bounds"),
-            })
+            }),
+            Kind::Schema => {
+                if met == ty || self.probe(met, ty)? == Status::Proven {
+                    Ok(met)
+                } else if self.probe(ty, met)? == Status::Proven {
+                    Ok(ty)
+                } else {
+                    Err(Residual::Unsupported("meeting unordered schema bounds"))
+                }
+            }
         })?;
         self.inference[id.0].defaulted.set(true);
         self.commit(id, self.closed(candidate));

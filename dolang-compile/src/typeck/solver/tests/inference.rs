@@ -141,6 +141,34 @@ fn bare_variables_default_to_the_meet_of_their_upper_bounds() {
 }
 
 #[test]
+fn bare_schema_variables_default_to_ordered_upper_bounds() {
+    let mut db = Database::new();
+    let a = nominal(&mut db, "A", vec![], vec![]);
+    let b = nominal(&mut db, "B", vec![], vec![]);
+    // {*A}, {A} below it, and the unrelated {*B}
+    let repeated = items(&db, vec![positional(Multiplicity::Repeated, a)]);
+    let single = items(&db, vec![positional(Multiplicity::Required, a)]);
+    let other = items(&db, vec![positional(Multiplicity::Repeated, b)]);
+    db.seal();
+    let mut s = Solver::new(&db);
+    let fresh = |s: &mut Solver<'_>, upper: &[TypeId]| {
+        let var = s.infer_kind(Kind::Schema, Rest::All);
+        for &ty in upper {
+            s.constrain(var, s.closed(ty), Provenance::default());
+        }
+        variable_id(var)
+    };
+    let bound = fresh(&mut s, &[repeated]);
+    let ordered = fresh(&mut s, &[repeated, single]);
+    let unordered = fresh(&mut s, &[repeated, other]);
+    s.solve();
+    assert_eq!(s.default_upper(bound), Ok(repeated));
+    assert_eq!(s.default_upper(ordered), Ok(single));
+    assert!(s.default_upper(unordered).is_err());
+    assert!(s.solve()[..3].iter().all(|r| r.status == Status::Proven));
+}
+
+#[test]
 fn multiple_upper_bounds_are_checked_separately() {
     let mut db = Database::new();
     let a = nominal(&mut db, "A", vec![], vec![]);
