@@ -54,8 +54,15 @@ pub def constructors
   f @ (Type[Empty] | (() -> Str))
   g @ (Type[Factory] | (Int -> Int))
 do
+  # A `Type[Empty]` may hold a subclass's object, so only a class-level `(call)`
+  # calls it
   let _ = f()
-  #   ^: flow m.Empty | std.Str
+  #   ^: flow Unknown
+  # error: `std.Type[m.Empty]` has no member `(call)`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = f()
+  #    |           ^^^
   let _ = g 1
   #   ^: flow std.Int | std.Str
 

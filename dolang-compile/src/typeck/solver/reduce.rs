@@ -533,12 +533,29 @@ impl Solver<'_> {
             return Err(Issue::Contradiction(Contradiction::Outside));
         }
         match (a, b) {
+            (Head::Meta(a), Head::Meta(b)) => self.metatypes(a, b, obligation),
+            (Head::Structural(view), Head::Meta(_)) => {
+                self.structural_below_class(view, expected, obligation)
+            }
+            // Only a class's own metatype is exactly its object
+            (_, Head::Meta(_)) => Err(Issue::Contradiction(Contradiction::Outside)),
+            // Only the exact object constructs, so it's called as its own
+            (Head::Meta(a), Head::Structural(view))
+                if self.db.literal(view.ty).is_none() && self.callee(view.ty) =>
+            {
+                self.callable(Head::Meta(a), actual, view, expected, obligation)
+            }
+            (Head::Meta(a), _) => {
+                let widened = self.metatype_reach(&a)?;
+                self.derive(obligation, widened, expected, Step::Metatype);
+                Ok(())
+            }
             (Head::Nominal(a), Head::Nominal(b)) => self.nominal(a, b, obligation),
             (Head::Nominal(nominal), Head::Structural(view)) => {
                 if let Some(literal) = self.db.literal(view.ty) {
                     self.class_below_literal(actual, literal)
                 } else if self.callee(view.ty) {
-                    self.callable(nominal, actual, view, expected, obligation)
+                    self.callable(Head::Nominal(nominal), actual, view, expected, obligation)
                 } else {
                     Err(Residual::Unsupported("these kinds of type").into())
                 }
@@ -647,12 +664,11 @@ impl Solver<'_> {
         expected: Term,
         obligation: ObligationId,
     ) -> Result<(), Issue> {
-        // A generic class's object, `[S] Type[C[S]]`, is its class applied
-        // to unknown arguments, as a type test narrows to: written alone,
-        // the class says nothing of them, so they aren't inferred
+        // A generic class's object, `[S] <type C[S]>`, is its class's
+        // metatype applied to unknown arguments, as a type test narrows to:
+        // written alone, the class says nothing of them, so they aren't inferred
         if let Type::Quantified { binders, body } = self.db.ty(view.ty)
-            && let Type::Apply { base, .. } = self.db.ty(*body)
-            && Some(*base) == self.db.intrinsic(Intrinsic::Type)
+            && self.db.meta_of(*body).is_some()
         {
             let unknowns: Vec<TypeId> = (binders.iter())
                 .map(|binder| self.db.unknown_of(binder.kind))
@@ -914,6 +930,27 @@ impl Solver<'_> {
                     self.derive(obligation, b, a, step(true));
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// Relate two metatypes, given their classes applied to their arguments: only
+    /// a class's own relates, invariant in every argument
+    fn metatypes(
+        &self,
+        actual: Nominal,
+        expected: Nominal,
+        obligation: ObligationId,
+    ) -> Result<(), Issue> {
+        if actual.declaration != expected.declaration {
+            return Err(Issue::Contradiction(Contradiction::UnrelatedNominals));
+        }
+        assert_eq!(actual.arguments.len(), expected.arguments.len());
+        let arguments = actual.arguments.into_iter().zip(expected.arguments);
+        for (index, (a, b)) in arguments.enumerate() {
+            let step = |reversed| Step::Argument { index, reversed };
+            self.derive(obligation, a, b, step(false));
+            self.derive(obligation, b, a, step(true));
         }
         Ok(())
     }

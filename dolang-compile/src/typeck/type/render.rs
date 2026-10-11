@@ -284,6 +284,10 @@ impl Renderer<'_> {
                 };
             }
             Type::Decl(id) => out.push_str(&self.names.declaration(*id)),
+            // A metatype can't be written, so it's spelled as no type is
+            Type::Meta(id) => {
+                let _ = write!(out, "<type {}>", self.names.declaration(*id));
+            }
             Type::Rigid { decl, slot, .. } => self.rigid(*decl, *slot, out),
             Type::Bound { reference, .. } => match naming.name(*reference) {
                 Some(name) => out.push_str(name),
@@ -291,7 +295,19 @@ impl Renderer<'_> {
                     let _ = write!(out, "#{}.{}", reference.depth, reference.slot);
                 }
             },
-            Type::Apply { base, args, .. } => {
+            Type::Apply { base, args, kind } => {
+                // A metatype's application is spelled around its class's
+                if let &Type::Meta(id) = db.ty(*base) {
+                    let class = db.intern(Type::Apply {
+                        base: db.intern(Type::Decl(id)),
+                        args: args.clone(),
+                        kind: *kind,
+                    });
+                    out.push_str("<type ");
+                    self.render_into(class, naming, out);
+                    out.push('>');
+                    return;
+                }
                 if let Type::Decl(id) = db.ty(*base)
                     && self.collection(*id, args, naming, out)
                 {

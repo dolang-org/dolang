@@ -119,10 +119,15 @@ fn a_class_object_is_called_through_init() {
     let top = db.top();
     let init = point.function(&mut db, vec![], &[int], top);
     point.method(special(&db, "init"), init, Scope::Instance);
+    let point_id = point.id;
     let point = point.finish(&mut db, vec![]);
     // `Empty` without one
-    let empty = Class::new(&mut db, "Empty", vec![]).finish(&mut db, vec![]);
-    let [point_object, empty_object] = [point, empty].map(|c| apply(&db, class, &[c]));
+    let empty = Class::new(&mut db, "Empty", vec![]);
+    let empty_id = empty.id;
+    let empty = empty.finish(&mut db, vec![]);
+    let [point_object, empty_object] = [point_id, empty_id].map(|c| db.meta(c, vec![]));
+    // A `Type[Point]` may hold a subclass's object, whose `(init)` differs
+    let point_type = apply(&db, class, &[point]);
     let constructs = function(&db, &[int], point);
     let wrong = function(&db, &[str], point);
     let nullary = function(&db, &[], empty);
@@ -130,6 +135,11 @@ fn a_class_object_is_called_through_init() {
     assert_eq!(check(&db, point_object, constructs).status, Status::Proven);
     assert!(unfit(&check(&db, point_object, wrong)));
     assert_eq!(check(&db, empty_object, nullary).status, Status::Proven);
+    let outcome = check(&db, point_type, constructs);
+    assert!(
+        contradiction(&outcome, Contradiction::Outside),
+        "{outcome:?}"
+    );
 }
 
 #[test]
@@ -145,20 +155,24 @@ fn a_class_level_call_takes_precedence() {
     let top = db.top();
     let init = factory.function(&mut db, vec![], &[str], top);
     factory.method(special(&db, "init"), init, Scope::Instance);
+    let factory_id = factory.id;
     let factory = factory.finish(&mut db, vec![]);
-    let object = apply(&db, class, &[factory]);
+    let object = db.meta(factory_id, vec![]);
+    // A `Type[C]` is called through its class-level `(call)` too
+    let factory_type = apply(&db, class, &[factory]);
     let calls = function(&db, &[int], str);
     let constructs = function(&db, &[str], factory);
     db.seal();
     assert_eq!(check(&db, object, calls).status, Status::Proven);
     assert!(unfit(&check(&db, object, constructs)));
+    assert_eq!(check(&db, factory_type, calls).status, Status::Proven);
 }
 
 #[test]
 fn a_generic_class_object_infers_its_arguments() {
     let mut db = Database::new();
     let int = int(&mut db);
-    let class = class_type(&mut db);
+    class_type(&mut db);
     bare_func(&mut db);
     // `Box[T]` with `(init) self x @ T`
     let mut boxed = Class::new(&mut db, "Box", vec![binder(Variance::Invariant)]);
@@ -168,11 +182,11 @@ fn a_generic_class_object_infers_its_arguments() {
     boxed.method(special(&db, "init"), init, Scope::Instance);
     let boxed_id = boxed.id;
     let boxed = boxed.finish(&mut db, vec![]);
-    // `[T] Type[Box[T]]`, as flow gives a generic class's object
+    // `[T] <type Box[T]>`, as flow gives a generic class's object
     let object = quantified(
         &db,
         vec![binder(Variance::Invariant)],
-        apply(&db, class, &[apply(&db, boxed, &[t])]),
+        db.meta(boxed_id, vec![Argument::Positional(t)]),
     );
     let box_int = apply(&db, boxed, &[int]);
     let constructs = function(&db, &[int], box_int);

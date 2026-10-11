@@ -151,8 +151,10 @@ impl Solver<'_> {
         let mut term = self.closed(ty);
         for depth in 0.. {
             self.depth(depth)?;
-            let view = match self.head(term)? {
+            // A metatype's ancestors are `Type[C]`'s
+            let view = match self.widened_head(term)? {
                 Head::Nominal(nominal) => return Ok(Some(nominal)),
+                Head::Meta(_) => unreachable!("a metatype is widened"),
                 Head::Infer(_) | Head::Skolem(_) => return Ok(None),
                 Head::Structural(view) => view,
             };

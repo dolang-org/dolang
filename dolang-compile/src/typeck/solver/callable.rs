@@ -100,14 +100,13 @@ impl Solver<'_> {
             }
         };
         let instance = db.substitute(instance, &db.rigids(class));
-        let Some(class_type) = db.intrinsic(Intrinsic::Type) else {
+        if db.intrinsic(Intrinsic::Type).is_none() {
             return Constructor::Dynamic;
-        };
-        let object = db.intern(Type::Apply {
-            base: class_type,
-            args: vec![Argument::Positional(instance)].into(),
-            kind: Kind::Type,
-        });
+        }
+        let rigids = (db.rigids(class).into_iter())
+            .map(Argument::Positional)
+            .collect();
+        let object = db.meta(class, rigids);
         let solver = self.side_query(class);
         let key = |name| MemberKey {
             name: db.intern_symbol(name),
@@ -220,11 +219,11 @@ impl Solver<'_> {
         }
     }
 
-    /// Relate a nominal value to a function type, `expected` or quantified as
-    /// `view` is, through the signatures it's called with
+    /// Relate a nominal value or a metatype to a function type, `expected` or
+    /// quantified as `view` is, through the signatures it's called with
     pub(super) fn callable(
         &self,
-        nominal: Nominal,
+        callee: Head,
         actual: Term,
         view: TypeView,
         expected: Term,
@@ -233,7 +232,7 @@ impl Solver<'_> {
         if let Type::Quantified { binders, body } = self.db.ty(view.ty) {
             return self.skolemization(view, binders, *body, actual, obligation);
         }
-        let Some(signatures) = self.call_signatures(nominal)? else {
+        let Some(signatures) = self.call_signatures(callee)? else {
             return Ok(());
         };
         let signatures = match signatures.overloads.is_empty() {
@@ -249,13 +248,13 @@ impl Solver<'_> {
         )
     }
 
-    /// The signatures a nominal value is called with as a function, without
-    /// their receivers. `None` if they're dynamic.
-    pub(super) fn call_signatures(&self, nominal: Nominal) -> Result<Option<Signatures>, Issue> {
-        let key = MemberKey {
-            name: self.db.intern_symbol("call"),
-            special: true,
-            private: false,
+    /// The signatures a nominal value, or a class's metatype, is called with as
+    /// a function, without their receivers. `None` if they're dynamic.
+    pub(super) fn call_signatures(&self, callee: Head) -> Result<Option<Signatures>, Issue> {
+        let nominal = match callee {
+            Head::Meta(class) => return self.object_signatures(class, true),
+            Head::Nominal(nominal) => nominal,
+            _ => unreachable!("a callee that isn't nominal"),
         };
         if self.is_intrinsic(nominal.declaration, Intrinsic::Type) {
             let [class] = nominal.arguments[..] else {
@@ -267,32 +266,9 @@ impl Solver<'_> {
                 head if self.is_unknown(&head) => return Ok(None),
                 _ => return Err(Residual::Unsupported("a type object of a structural type").into()),
             };
-            match self.object_member(class.clone(), key, Access::Class)? {
-                Lookup::Found(found) if found.scope == Scope::Class => {
-                    return self.bound(&found.kind);
-                }
-                Lookup::Found(_) | Lookup::Missing => {}
-                Lookup::Dynamic | Lookup::Fallback { .. } => return Ok(None),
-            }
-            let signatures = match self.constructor(class.declaration) {
-                Constructor::Init(Some(signatures)) => signatures,
-                Constructor::Init(None) => {
-                    return Err(Residual::Unsupported("an `(init)` without a receiver").into());
-                }
-                Constructor::Call(_) | Constructor::Dynamic => return Ok(None),
-            };
-            // Applied to the class's arguments, as a method is
-            let count = match self.db.ty(self.db.declaration(class.declaration).ty) {
-                Type::Quantified { binders, .. } => binders.len(),
-                _ => 0,
-            };
-            let applied = |ty| self.view(self.db.split(ty, count), class.environment);
-            return Ok(Some(Signatures {
-                overloads: signatures.overloads.into_iter().map(applied).collect(),
-                implementation: signatures.implementation.map(applied),
-                function: signatures.function,
-            }));
+            return self.object_signatures(class, false);
         }
+        let key = self.call_key();
         let func = (self.db.intrinsic(Intrinsic::Func))
             .ok_or(Residual::MissingIntrinsic(Intrinsic::Func))?;
         let &Type::Decl(func) = self.db.ty(func) else {
@@ -309,6 +285,50 @@ impl Solver<'_> {
             Lookup::Found(found) => self.bound(&found.kind),
             Lookup::Missing => Err(Residual::Unsupported("a `Func` without `(call)`").into()),
             Lookup::Dynamic | Lookup::Fallback { .. } => Ok(None),
+        }
+    }
+
+    /// The signatures a class object is called with: its class-level `(call)`,
+    /// and otherwise, only for the `exact` object, its class's own, instantiation
+    /// through `(init)`. A `Type[C]` may hold a subclass's object, whose `(init)`
+    /// needn't conform, so without a `(call)` it isn't callable.
+    fn object_signatures(&self, class: Nominal, exact: bool) -> Result<Option<Signatures>, Issue> {
+        match self.object_member(class.clone(), exact, self.call_key(), Access::Class)? {
+            Lookup::Found(found) if found.scope == Scope::Class => {
+                return self.bound(&found.kind);
+            }
+            Lookup::Found(_) | Lookup::Missing => {}
+            Lookup::Dynamic | Lookup::Fallback { .. } => return Ok(None),
+        }
+        if !exact {
+            return Err(Issue::Contradiction(Contradiction::Outside));
+        }
+        let signatures = match self.constructor(class.declaration) {
+            Constructor::Init(Some(signatures)) => signatures,
+            Constructor::Init(None) => {
+                return Err(Residual::Unsupported("an `(init)` without a receiver").into());
+            }
+            Constructor::Call(_) | Constructor::Dynamic => return Ok(None),
+        };
+        // Applied to the class's arguments, as a method is
+        let count = match self.db.ty(self.db.declaration(class.declaration).ty) {
+            Type::Quantified { binders, .. } => binders.len(),
+            _ => 0,
+        };
+        let applied = |ty| self.view(self.db.split(ty, count), class.environment);
+        Ok(Some(Signatures {
+            overloads: signatures.overloads.into_iter().map(applied).collect(),
+            implementation: signatures.implementation.map(applied),
+            function: signatures.function,
+        }))
+    }
+
+    /// `(call)`'s key
+    fn call_key(&self) -> MemberKey {
+        MemberKey {
+            name: self.db.intern_symbol("call"),
+            special: true,
+            private: false,
         }
     }
 

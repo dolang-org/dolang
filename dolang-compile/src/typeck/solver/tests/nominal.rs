@@ -337,3 +337,52 @@ fn omitted_generic_defaults_are_not_arity_errors() {
     assert!(has(&result, Residual::GenericArguments.into()));
     assert_eq!(check(&db, supplied, supplied).status, Status::Proven);
 }
+
+#[test]
+fn metatypes_reach_class_objects_and_relate_only_to_their_own() {
+    let mut db = Database::new();
+    let ty = nominal(&mut db, "Type", vec![binder(Variance::Covariant)], vec![]);
+    db.set_intrinsic(Intrinsic::Type, ty);
+    let base = nominal(&mut db, "Base", vec![], vec![]);
+    let sub = nominal(&mut db, "Sub", vec![], vec![base]);
+    let boxed = nominal(&mut db, "Box", vec![binder(Variance::Covariant)], vec![]);
+    let meta = |class, args: &[TypeId]| {
+        let &Type::Decl(decl) = db.ty(class) else {
+            unreachable!("a class")
+        };
+        db.meta(
+            decl,
+            args.iter().copied().map(Argument::Positional).collect(),
+        )
+    };
+    let base_meta = meta(base, &[]);
+    let sub_meta = meta(sub, &[]);
+    let box_base = meta(boxed, &[base]);
+    let box_sub = meta(boxed, &[sub]);
+    let base_object = apply(&db, ty, &[base]);
+    let box_base_object = apply(&db, ty, &[apply(&db, boxed, &[base])]);
+    db.seal();
+    // A metatype reaches its class's object, and so its supertypes' objects
+    for (actual, expected) in [
+        (base_meta, base_meta),
+        (base_meta, base_object),
+        (sub_meta, base_object),
+        (box_sub, box_base_object),
+    ] {
+        assert_eq!(check(&db, actual, expected).status, Status::Proven);
+    }
+    // No other class's metatype or class object is exactly the class's object,
+    // and a metatype is invariant in its arguments
+    for (actual, expected) in [
+        (sub_meta, base_meta),
+        (base_object, base_meta),
+        (box_sub, box_base),
+        (box_base, box_sub),
+    ] {
+        assert_eq!(check(&db, actual, expected).status, Status::Contradicted);
+    }
+    // Different metatypes' least common supertype is what they reach in common
+    let s = Solver::new(&db);
+    let joined = s.lub(sub_meta, base_meta);
+    assert_eq!(s.common_supertype(joined), Some(base_object));
+}

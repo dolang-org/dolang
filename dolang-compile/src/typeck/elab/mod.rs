@@ -323,6 +323,9 @@ pub(crate) enum Slot {
     Unknown,
     /// An omitted receiver annotation: the class applied to its own binders
     SelfType,
+    /// An omitted class method receiver annotation: `Type` of the class applied to
+    /// its own binders
+    ObjectType,
     /// A strict unit's omitted return type
     Nil,
 }
@@ -361,8 +364,9 @@ pub(crate) enum Ambient {
 pub(crate) struct Sig {
     /// Each parameter's type, by its index in the signature's parameters
     pub(crate) params: Vec<ParamTy>,
-    /// Whether the first parameter is an instance method's receiver
-    pub(crate) receiver: bool,
+    /// The scope of the method whose receiver the first parameter is, if any:
+    /// an instance or class method's
+    pub(crate) receiver: Option<Scope>,
     pub(crate) input: Ambient,
     pub(crate) output: Ambient,
     pub(crate) ret: Slot,

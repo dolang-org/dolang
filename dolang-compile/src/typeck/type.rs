@@ -352,6 +352,10 @@ pub(crate) enum Type {
     /// regular twin does.
     Fresh(Literal),
     Decl(DeclId),
+    /// A class's canonical metatype: the exact type of its object, which reaches
+    /// `Type[C]`. It's applied to the class's arguments as the class is, and is
+    /// invariant in them. Never written; a class's name has it.
+    Meta(DeclId),
     Bound {
         reference: BoundRef,
         kind: Kind,
@@ -410,6 +414,7 @@ impl Type {
             | Self::Literal(_)
             | Self::Fresh(_)
             | Self::Decl(_)
+            | Self::Meta(_)
             | Self::Bound { .. }
             | Self::Rigid { .. } => {}
             Self::Apply { base, args, .. } => {
@@ -551,6 +556,7 @@ impl Type {
             | Self::Literal(_)
             | Self::Fresh(_)
             | Self::Decl(_)
+            | Self::Meta(_)
             | Self::Bound { .. }
             | Self::Rigid { .. } => {}
             Self::Apply { base, args, .. } => {
@@ -1166,6 +1172,54 @@ impl Database {
             ty = *body;
         }
         matches!(self.ty(ty), Type::Function(_)).then_some(base)
+    }
+
+    /// A class's metatype applied to `args`, as the class is
+    pub(crate) fn meta(&self, class: DeclId, args: Vec<Argument>) -> TypeId {
+        let base = self.intern(Type::Meta(class));
+        match args.is_empty() {
+            true => base,
+            false => self.intern(Type::Apply {
+                base,
+                args: args.into(),
+                kind: Kind::Type,
+            }),
+        }
+    }
+
+    /// The class whose metatype a type is, with its arguments
+    pub(crate) fn meta_of(&self, ty: TypeId) -> Option<(DeclId, &[Argument])> {
+        match self.ty(ty) {
+            &Type::Meta(class) => Some((class, &[])),
+            Type::Apply { base, args, .. } => match *self.ty(*base) {
+                Type::Meta(class) => Some((class, &args[..])),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// What a metatype reaches: `Type[C[A]]` for `Meta(C)[A]`, with the same
+    /// arguments, so it's interpreted where the metatype is. `None` if it isn't a
+    /// metatype, or `Type` isn't known.
+    pub(crate) fn widen_meta(&self, ty: TypeId) -> Option<TypeId> {
+        let (class, args) = self.meta_of(ty)?;
+        let args = args.to_vec();
+        let class_type = self.intrinsic(Intrinsic::Type)?;
+        let base = self.intern(Type::Decl(class));
+        let instance = match args.is_empty() {
+            true => base,
+            false => self.intern(Type::Apply {
+                base,
+                args: args.into(),
+                kind: Kind::Type,
+            }),
+        };
+        Some(self.intern(Type::Apply {
+            base: class_type,
+            args: vec![Argument::Positional(instance)].into(),
+            kind: Kind::Type,
+        }))
     }
 
     /// Associate a stub type once, before sealing. Missing associations are allowed.
@@ -1883,7 +1937,7 @@ impl Database {
             | Type::Literal(_)
             | Type::Fresh(_)
             | Type::Bound { .. } => {}
-            Type::Decl(id) | Type::Rigid { decl: id, .. } => {
+            Type::Decl(id) | Type::Meta(id) | Type::Rigid { decl: id, .. } => {
                 self.try_declaration(*id);
             }
             Type::Apply { base, args, .. } => {

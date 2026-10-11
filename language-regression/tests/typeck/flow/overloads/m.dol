@@ -234,8 +234,8 @@ pub def constructed()
 # LL |   Maker true
 #    |   ^^^^^^^^^^
 #    |
-#    = note: `(Unknown, std.Int) -> std.Int`: expected `std.Int`, found `true`
-#    = note: `(Unknown, std.Str) -> std.Str`: expected `std.Str`, found `true`
+#    = note: `(std.Type[m.Maker], std.Int) -> std.Int`: expected `std.Int`, found `true`
+#    = note: `(std.Type[m.Maker], std.Str) -> std.Str`: expected `std.Str`, found `true`
 
 # A protocol's overloads are chosen among as a class's are
 pub def sequenced s @ Seq[Int]

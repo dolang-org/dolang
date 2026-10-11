@@ -109,7 +109,7 @@ impl Flow<'_, '_> {
         if self.callable(ty) || ty == self.db.bottom() {
             return CallTarget::new(Some(ty));
         }
-        if let Some(class) = self.class_of(ty) {
+        if let Some((class, exact)) = self.class_of(ty) {
             let generic = matches!(self.db.ty(ty), Type::Quantified { .. });
             return match self.solver().constructor(class) {
                 Constructor::Call(Some(signature)) if !generic => CallTarget {
@@ -117,6 +117,12 @@ impl Flow<'_, '_> {
                     member: Some(self.special("call")),
                     ..CallTarget::new(Some(signature))
                 },
+                // A `Type[C]` may hold a subclass's object, whose `(init)` needn't
+                // conform, so only its class-level `(call)` is called
+                Constructor::Init(_) if !exact => {
+                    self.missing(ty, None, self.special("call"), span, Vec::new());
+                    CallTarget::new(None)
+                }
                 Constructor::Init(Some(signature)) if signature.callee(self.db).is_some() => {
                     CallTarget {
                         signature,

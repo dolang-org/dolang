@@ -1300,7 +1300,7 @@ impl<'t, 'u> Populate<'t, 'u> {
             }
             DeclNode::Closure(closure) => {
                 let func = &closure.sig;
-                let params = sig::params(tables, decl.unit, func, false);
+                let params = sig::params(tables, decl.unit, func, None);
                 let params = self.params(id, group, func, &params);
                 let [input, output, result] =
                     [func.input, func.output, func.ret].map(|written| match written {
@@ -1327,34 +1327,53 @@ impl<'t, 'u> Populate<'t, 'u> {
             Slot::Annot(ty) => self.intern(group, self.tables.site_ty(ty), Kind::Type, 0),
             Slot::Unknown => self.db.unknown(),
             Slot::Nil => self.db.intern(Type::Literal(Literal::Nil)),
-            // The class, applied to its own binders, which lead a method's group
-            Slot::SelfType => {
-                let (class, _) = self.tables.decls[id.index()]
-                    .outer
-                    .expect("a method is in a class");
-                if group.broken || self.broken.contains(&(class, 0)) {
-                    return self.db.unknown();
+            Slot::SelfType => self
+                .own_instance(id, group)
+                .unwrap_or_else(|| self.db.unknown()),
+            // Without `std`, there is no `Type` to apply
+            Slot::ObjectType => {
+                let instance = self.own_instance(id, group);
+                match (instance, self.db.intrinsic(Intrinsic::Type)) {
+                    (Some(instance), Some(base)) if instance != self.db.top() => {
+                        self.db.intern(Type::Apply {
+                            base,
+                            args: vec![Argument::Positional(instance)].into(),
+                            kind: Kind::Type,
+                        })
+                    }
+                    _ => self.db.unknown(),
                 }
-                // Every value is a `Value`'s receiver
-                if self.tables.designated.get(&class) == Some(&Designated::Value) {
-                    return self.db.top();
-                }
-                let count = self.groups[&(class, 0)].len();
-                let base = self.db.intern(Type::Decl(class));
-                if count == 0 {
-                    return base;
-                }
-                let args: Vec<_> = group.binders[..count]
-                    .iter()
-                    .map(|&binder| Argument::Positional(self.binder(group, binder)))
-                    .collect();
-                self.db.intern(Type::Apply {
-                    base,
-                    args: args.into(),
-                    kind: Kind::Type,
-                })
             }
         }
+    }
+
+    /// A method's class, applied to its own binders, which lead the method's group;
+    /// `None` if either is broken
+    fn own_instance(&self, id: DeclId, group: Group<'_>) -> Option<TypeId> {
+        let (class, _) = self.tables.decls[id.index()]
+            .outer
+            .expect("a method is in a class");
+        if group.broken || self.broken.contains(&(class, 0)) {
+            return None;
+        }
+        // Every value is a `Value`'s receiver
+        if self.tables.designated.get(&class) == Some(&Designated::Value) {
+            return Some(self.db.top());
+        }
+        let count = self.groups[&(class, 0)].len();
+        let base = self.db.intern(Type::Decl(class));
+        if count == 0 {
+            return Some(base);
+        }
+        let args: Vec<_> = group.binders[..count]
+            .iter()
+            .map(|&binder| Argument::Positional(self.binder(group, binder)))
+            .collect();
+        Some(self.db.intern(Type::Apply {
+            base,
+            args: args.into(),
+            kind: Kind::Type,
+        }))
     }
 
     /// The parameter schema of a def, method or closure

@@ -679,7 +679,7 @@ impl Solver<'_> {
                 };
                 return self.include_rigid(term, bound, multiplicity, item, keep, shape, depth);
             }
-            Head::Nominal(_) => {
+            Head::Nominal(_) | Head::Meta(_) => {
                 return Err(Residual::Unsupported("a class included in a schema").into());
             }
         };
@@ -1643,7 +1643,7 @@ impl Solver<'_> {
     }
 
     fn nominal_head(&self, term: Term) -> Result<bool, Issue> {
-        Ok(matches!(self.head(term)?, Head::Nominal(_)))
+        Ok(matches!(self.head(term)?, Head::Nominal(_) | Head::Meta(_)))
     }
 
     /// Whether a key domain admits a literal key, decided without adding bounds

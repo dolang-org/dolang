@@ -37,7 +37,7 @@ use crate::{
     source::Span,
     typeck::{
         elab::Fill,
-        r#type::{DeclId, DeclKind, Intrinsic, UnitId, UnitSpan, Variance},
+        r#type::{DeclId, DeclKind, Intrinsic, Scope, UnitId, UnitSpan, Variance},
     },
 };
 
@@ -343,7 +343,14 @@ impl<'t> Collect<'t, '_> {
         let tables = self.tables;
         let completed = &tables.sigs[&(decl, sig)];
         for (index, param) in completed.params.iter().enumerate() {
-            if index == 0 && completed.receiver {
+            // A receiver doesn't count, but a class method's annotated first
+            // parameter does
+            let receiver = matches!(
+                (completed.receiver, param),
+                (Some(Scope::Instance), _)
+                    | (Some(Scope::Class), ParamTy::Single(Slot::ObjectType))
+            );
+            if index == 0 && receiver {
                 continue;
             }
             match param {

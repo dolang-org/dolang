@@ -1,0 +1,115 @@
+# dolang: strict
+# A class's name is exactly its object, typed by its metatype `<type C>`, which
+# fits `Type[C]`. A `Type[C]` may hold a subclass's object, so only the metatype
+# constructs through `(init)` or reaches static members; a `Type[C]` is called
+# only through a class-level `(call)`.
+
+pub class Shape
+  #[static]
+  pub field registry @ Int = 0
+
+  def (init) _self _name @ Str
+    nil
+
+  #[class]
+  pub def unit _cls -> Int
+    1
+
+  # A class method's receiver is `Type` of its class, which may be a subclass's
+  #[class]
+  pub def named cls -> Str
+    let _ = cls
+    #       ^~~: flow std.Type[m.Shape]
+    cls.unit()
+    "shape"
+
+pub class Circle: Shape
+  def (init) _self _radius @ Int
+    nil
+
+  # Its receiver is `Type[Circle]`, which overrides `Type[Shape]`'s
+  #[class]
+  pub def named _cls -> Str
+    "circle"
+
+pub class Made
+  #[class]
+  pub def (call) _cls n @ Int -> Str
+    "$n"
+
+pub class Box[T]
+  pub field item @ T = nil
+
+  def (init) self item @ T
+    self.item = item
+
+  #[class]
+  pub def tag cls -> Int
+    let _ = cls
+    #       ^~~: flow std.Type[m.Box[m.Box.#0]]
+    1
+
+pub def names()
+  let _ = Shape
+  #       ^~~~~: flow <type m.Shape>
+  let _ = Box
+  #       ^~~: flow @[T1] <type m.Box[T1]>
+  # A metatype doesn't decay where it's stored
+  let a = [Shape]
+  let _ = a
+  #       ^: flow [<type m.Shape>]
+  let b = Box 1
+  let _ = b
+  #       ^: flow m.Box[std.Int]
+  nil
+
+pub def made cls @ Type[Shape] -> Int
+  let u = cls.unit()
+  let _ = u
+  #       ^: flow std.Int
+  let _ = cls.registry
+  # error: `std.Type[m.Shape]` has no member `registry`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = cls.registry
+  #    |           ^^^^^^^^^^^^
+  cls "a"
+  # error: `std.Type[m.Shape]` has no member `(call)`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   cls "a"
+  #    |   ^^^^^^^
+  Shape.registry
+
+pub def passed()
+  made $Shape
+  made $Circle
+  let s = Shape "a"
+  let _ = s
+  #       ^: flow m.Shape
+  Circle 1
+  let n = Circle.named()
+  let _ = n
+  #       ^: flow std.Str
+  let t = Box.tag()
+  let _ = t
+  #       ^: flow std.Int
+  nil
+
+pub def called cls @ Type[Made] -> Str
+  cls 1
+
+pub def stored()
+  let makers @ Dict[Sym, ((Str) -> Shape)] = {shape: Shape}
+  let _ = makers
+  nil
+
+pub def unstored cls @ Type[Shape]
+  let maker @ ((Str) -> Shape) = cls
+  # error: `std.Type[m.Shape]` does not fit the annotation `(std.Str) -> m.Shape`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let maker @ ((Str) -> Shape) = cls
+  #    |                                  ^^^
+  let _ = maker
+  nil

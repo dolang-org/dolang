@@ -16,7 +16,7 @@
 use super::{BadReceiver, DeclNode, Diag, ParamTy, Slot, SpecializedReceiver, Tables, UnitDiag};
 use crate::typeck::{
     solver::{Reach, Solver},
-    r#type::{Binder, Database, DeclId, Element, Type, TypeId},
+    r#type::{Binder, Database, DeclId, Element, Scope, Type, TypeId},
 };
 
 /// Specialize every method with an annotated receiver.
@@ -30,8 +30,10 @@ pub(crate) fn specialize(db: &mut Database, tables: &Tables<'_>, diags: &mut Vec
         let (class_id, _) = decl.outer.expect("a method is declared in a class");
         for (sig, written) in methods.iter().enumerate() {
             let completed = &tables.sigs[&(id, sig)];
-            let Some(&ParamTy::Single(Slot::Annot(annot))) =
-                completed.params.first().filter(|_| completed.receiver)
+            let Some(&ParamTy::Single(Slot::Annot(annot))) = completed
+                .params
+                .first()
+                .filter(|_| completed.receiver == Some(Scope::Instance))
             else {
                 continue;
             };

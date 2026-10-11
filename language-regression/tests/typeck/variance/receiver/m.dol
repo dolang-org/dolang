@@ -1,5 +1,5 @@
-# An instance method's receiver does not count, annotated or not. A class method's
-# first parameter does.
+# An instance method's receiver does not count, annotated or not, nor does a class
+# method's unannotated one. A class method's annotated first parameter does.
 
 pub class Box[T]
   #           ^: variance covariant
@@ -10,6 +10,10 @@ pub class Box[T]
 
   @def narrow _self @ Box[Int] -> Int
   pub def narrow _self -> Int
+    0
+
+  #[class]
+  pub def empty _cls -> Int
     0
 
 pub class Made[T]
