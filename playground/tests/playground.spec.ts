@@ -1,9 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { test, expect, type Page } from '@playwright/test';
+import type { EditorView } from '@codemirror/view';
 
+// Replaces the source as one CodeMirror transaction. Input through the DOM
+// selection races CodeMirror's focus handling, which can collapse the selection
+// so the text is inserted at the old cursor instead.
 async function source(page: Page, value: string) {
-  const editor = page.getByRole('textbox', { name: 'Do source' });
-  await editor.fill(value);
+  const view = await page.waitForFunction(() =>
+    (window as { playground?: { view: EditorView } }).playground?.view as EditorView);
+  await view.evaluate((view, value) =>
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } }), value);
 }
 async function run(page: Page) {
   await page.getByRole('button', { name: 'Run', exact: true }).click();
