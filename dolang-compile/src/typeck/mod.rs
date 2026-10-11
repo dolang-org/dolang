@@ -190,6 +190,9 @@ impl<'u, 's> Builder<'u, 's> {
     /// Add a module to check by its typelib. The same typelib may be added to any
     /// number of checks.
     ///
+    /// Its classes' conformance to their supertypes is not checked; that was
+    /// done with its source.
+    ///
     /// Diagnostics may locate spans of the module, by line and column; it has no
     /// source to show.
     ///
@@ -403,10 +406,16 @@ fn check_unit(
     let db = r#type::Database::fork(shared);
     let mut wellformed = Vec::new();
     let wellformed_unresolved = elab::wellformed(&db, tables, bounds, unit, &mut wellformed);
+    let source = tables.units[unit.index()].source;
+    // A typelib's overrides were checked with its source, and a nonconforming
+    // member only misleads checks against it
     let mut overrides = Vec::new();
-    let overrides_unresolved = elab::overrides(&db, tables, unit, &mut overrides);
+    let overrides_unresolved = match source {
+        Some(_) => elab::overrides(&db, tables, unit, &mut overrides),
+        None => Vec::new(),
+    };
     // A unit's bodies are checked only from its source
-    let cfg = tables.units[unit.index()].source.map(|_| {
+    let cfg = source.map(|_| {
         let ir = lower::lower(tables, &db, unit);
         debug_assert_eq!(ir.validate(), Ok(()), "lowering builds a valid graph");
         #[cfg(debug_assertions)]
