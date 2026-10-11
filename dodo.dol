@@ -87,10 +87,11 @@ class Spec
     self.channel = channel
     self.#extra = extra
     self.#debug = args.debug
+    let artifact_profile = (self.profile == "bench" && "release" || self.profile)
     self.target_dir = if variant
-      (Path("target") / self.tuple / variant / self.profile)
+      (Path("target") / self.tuple / variant / artifact_profile)
     else
-      (Path("target") / self.tuple / self.profile)
+      (Path("target") / self.tuple / artifact_profile)
 
   pub def bin self name
     let exe = self.target.get :exe:
@@ -436,7 +437,7 @@ return $
       help: "arguments to `cargo bench`"
       collect: true
     do |args|
-      let spec = Spec $args profile: dist
+      let spec = Spec $args profile: bench
       spec.cargo bench ...args.args
 
   "gen-system-error-codes":

@@ -473,3 +473,9 @@ panic = "abort"
 [profile.opt]
 inherits = "dev"
 opt-level = 1
+
+
+[profile.bench]
+inherits = "dist"
+debug = true
+strip = false

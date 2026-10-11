@@ -81,17 +81,71 @@ fn process(out: &mut dyn Write, dir: &Path, parent_skip_miri: bool) {
 /// deeper file overrides a shallower one key by key. Cases with `skip: miri` are
 /// skipped under Miri.
 pub fn generate_case_tests(out: &mut dyn Write, dir: &Path, skip: &[&str]) {
-    println!("cargo::rerun-if-changed={}", dir.display());
-    for entry in sorted_entries(dir) {
-        let name = entry.file_name().unwrap().display().to_string();
-        if entry.is_dir() && !skip.contains(&name.as_str()) {
-            process_case(out, &entry, test_setting(dir, "skip"));
+    generate_cases(out, dir, skip, false);
+}
+
+/// Generate `BENCH_CASES`, a table of case paths and selected benchmark modes.
+/// `bench: true` selects `source`; `false` selects ordinary tests. Otherwise the
+/// value is a whitespace-separated list of `source`, `typelib`, and `compile`.
+/// A child's selection replaces its parent's selection.
+pub fn generate_case_benches(out: &mut dyn Write, dir: &Path, skip: &[&str]) {
+    writeln!(out, "const BENCH_CASES: &[(&str, &[&str])] = &[").unwrap();
+    generate_cases(out, dir, skip, true);
+    writeln!(out, "];").unwrap();
+}
+
+#[derive(Clone, Default)]
+struct CaseSettings {
+    skip: Option<String>,
+    bench: Vec<String>,
+}
+
+impl CaseSettings {
+    fn read(mut self, dir: &Path) -> Self {
+        self.skip = test_setting(dir, "skip").or(self.skip);
+        if let Some(value) = test_setting(dir, "bench") {
+            self.bench = bench_modes(&value)
+                .unwrap_or_else(|error| panic!("{}: {error}", dir.join(".test").display()));
+        }
+        self
+    }
+}
+
+fn bench_modes(value: &str) -> Result<Vec<String>, String> {
+    match value {
+        "false" => Ok(Vec::new()),
+        "true" => Ok(vec!["source".into()]),
+        _ => {
+            let mut modes = Vec::new();
+            for mode in value.split_whitespace() {
+                if !matches!(mode, "source" | "typelib" | "compile") {
+                    return Err(format!("unknown benchmark mode `{mode}`"));
+                }
+                if !modes.iter().any(|m| m == mode) {
+                    modes.push(mode.to_owned());
+                }
+            }
+            if modes.is_empty() {
+                return Err("expected a benchmark mode, `true`, or `false`".into());
+            }
+            Ok(modes)
         }
     }
 }
 
-fn process_case(out: &mut dyn Write, dir: &Path, skip: Option<String>) {
-    let skip = test_setting(dir, "skip").or(skip);
+fn generate_cases(out: &mut dyn Write, dir: &Path, skip: &[&str], benches: bool) {
+    println!("cargo::rerun-if-changed={}", dir.display());
+    let settings = CaseSettings::default().read(dir);
+    for entry in sorted_entries(dir) {
+        let name = entry.file_name().unwrap().display().to_string();
+        if entry.is_dir() && !skip.contains(&name.as_str()) {
+            process_case(out, &entry, settings.clone(), benches);
+        }
+    }
+}
+
+fn process_case(out: &mut dyn Write, dir: &Path, settings: CaseSettings, benches: bool) {
+    let settings = settings.read(dir);
     let name = munge(dir.file_name().unwrap().display().to_string());
     let entries = sorted_entries(dir);
     if entries
@@ -99,21 +153,34 @@ fn process_case(out: &mut dyn Write, dir: &Path, skip: Option<String>) {
         .any(|path| path.extension() == Some("dol".as_ref()))
     {
         let path_str = dir.display().to_string().replace('\\', "/");
-        if skip.as_deref() == Some("miri") {
-            writeln!(out, "#[cfg_attr(miri, ignore)]").unwrap();
+        if benches {
+            if !settings.bench.is_empty() {
+                if settings.skip.as_deref() == Some("miri") {
+                    writeln!(out, "#[cfg(not(miri))]").unwrap();
+                }
+                writeln!(out, "({path_str:?}, &{:?}),", settings.bench).unwrap();
+            }
+        } else if settings.bench.is_empty() {
+            if settings.skip.as_deref() == Some("miri") {
+                writeln!(out, "#[cfg_attr(miri, ignore)]").unwrap();
+            }
+            writeln!(out, "#[test]").unwrap();
+            writeln!(out, "fn r#{name}() {{").unwrap();
+            writeln!(out, "    run(std::path::Path::new({path_str:?}));").unwrap();
+            writeln!(out, "}}").unwrap();
         }
-        writeln!(out, "#[test]").unwrap();
-        writeln!(out, "fn r#{name}() {{").unwrap();
-        writeln!(out, "    run(std::path::Path::new(\"{path_str}\"));").unwrap();
-        writeln!(out, "}}").unwrap();
     } else {
-        writeln!(out, "mod r#{name} {{").unwrap();
-        writeln!(out, "#[allow(unused_imports)]").unwrap();
-        writeln!(out, "use super::run;").unwrap();
-        for entry in entries.iter().filter(|path| path.is_dir()) {
-            process_case(out, entry, skip.clone());
+        if !benches {
+            writeln!(out, "mod r#{name} {{").unwrap();
+            writeln!(out, "#[allow(unused_imports)]").unwrap();
+            writeln!(out, "use super::run;").unwrap();
         }
-        writeln!(out, "}}").unwrap();
+        for entry in entries.iter().filter(|path| path.is_dir()) {
+            process_case(out, entry, settings.clone(), benches);
+        }
+        if !benches {
+            writeln!(out, "}}").unwrap();
+        }
     }
 }
 

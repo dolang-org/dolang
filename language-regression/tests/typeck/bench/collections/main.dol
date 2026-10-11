@@ -1,0 +1,16 @@
+import items:
+  - Box
+  - first
+  - pair
+
+let values @ Array[Int] = [1, 2, 3, 4, 5]
+let box = Box(first(values))
+let value @ Int = box.get()
+let _doubles @ Tuple[Int, Int] = pair(value)
+let names @ Dict[Str, Int] = {"one": 1, "two": 2}
+#           ^~~~: ref std.Dict
+#                ^~~: ref std.Str
+#                     ^~~: ref std.Int
+let sum @ Int = 0
+for _name value = names
+  sum = (sum + value)

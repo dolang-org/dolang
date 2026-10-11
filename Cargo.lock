@@ -2321,11 +2321,13 @@ dependencies = [
 name = "language-regression"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "dolang",
  "dolang-private-build",
  "dolang-private-test",
  "dolang-runtime",
  "futures",
+ "mimalloc",
 ]
 
 [[package]]

@@ -13,4 +13,6 @@ fn main() {
 
     let mut f = File::create(out_dir.join("generated_typeck_tests.rs")).unwrap();
     dolang_private_build::generate_case_tests(&mut f, Path::new("tests/typeck"), &["stub"]);
+    let mut f = File::create(out_dir.join("generated_typeck_benches.rs")).unwrap();
+    dolang_private_build::generate_case_benches(&mut f, Path::new("tests/typeck"), &["stub"]);
 }

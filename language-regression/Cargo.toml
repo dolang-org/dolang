@@ -9,6 +9,10 @@ rust-version.workspace = true
 publish = false
 
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(asan)"] }
+
+
 [lib]
 test = false
 doctest = false
@@ -32,3 +36,16 @@ workspace = true
 
 [build-dependencies.dolang-private-build]
 workspace = true
+
+
+[dev-dependencies.criterion]
+workspace = true
+
+
+[dev-dependencies.mimalloc]
+workspace = true
+
+
+[[bench]]
+name = "typeck"
+harness = false
