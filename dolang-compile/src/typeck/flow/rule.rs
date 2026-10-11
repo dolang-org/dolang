@@ -2260,7 +2260,6 @@ impl<'a> Flow<'a, '_> {
             return unknown;
         };
         let spread = self.designated(Designated::Spread);
-        let int = self.intrinsic(Intrinsic::Int);
         let array_expected = expected_array.map(|(ty, _)| ty).or(expected);
         let result = match (kind, expected_dict) {
             (Collection::Array, _) => self.conclude(at, expr.span, array_expected, |rule| {
@@ -2307,48 +2306,74 @@ impl<'a> Flow<'a, '_> {
                     vec![rule.closed(ty)]
                 })
             }
-            (Collection::Dict, None) => self.conclude(at, expr.span, expected, |rule| {
-                let keys = rule.solver.infer();
-                let entries = rule.solver.infer();
-                let entry = |rule: &mut Rule<'_, 'a>, key: TypeId, value: Term| {
-                    rule.constrain(rule.closed(key), keys, Check::Quiet);
-                    rule.constrain(value, entries, Check::Quiet);
-                };
-                // A key written in a dict literal is a term, which decays as its value would
-                let symbol = |name| rule.db.intern(Type::Fresh(Literal::Sym(name)));
+            // Positional items stay positional, as they were written: only an
+            // explicit key is a key. A lane is present where an item can fill it,
+            // and an empty dict has the keyed lane.
+            (Collection::Dict, None) => {
+                let (mut has_positional, mut has_keyed) = (false, false);
                 for placed in &values.values {
-                    match placed.value {
-                        Value::Pos(ty, _) => entry(rule, int, rule.closed(ty)),
-                        Value::Key(name, ty, _) => entry(rule, symbol(name), rule.closed(ty)),
-                        Value::Pair(key_type, ty) => entry(rule, key_type, rule.closed(ty)),
-                        Value::Lambda(key, ref lambda, _) => {
-                            let term = rule.lambda(lambda);
-                            entry(rule, key.map_or(int, symbol), term);
+                    let (positional, keyed) = match placed.value {
+                        Value::Pos(..) | Value::Lambda(None, ..) => (true, false),
+                        Value::Key(..) | Value::Pair(..) | Value::Lambda(Some(_), ..) => {
+                            (false, true)
                         }
-                        Value::Spread(ty, span) => {
-                            let schema = rule.term(|holes| {
-                                let key = holes.hole(keys, Kind::Type);
-                                let value = holes.hole(entries, Kind::Type);
-                                holes.schema(vec![item(
-                                    Multiplicity::Repeated,
-                                    Element::Keyed { key, value },
-                                )])
-                            });
-                            spread_into(rule, spread, ty, schema, span);
-                        }
+                        Value::Spread(ty, _) => self.spread_lanes(spread, ty),
                         Value::Held(..) => unreachable!("only a call holds arguments back"),
-                    }
+                    };
+                    has_positional |= positional;
+                    has_keyed |= keyed;
                 }
-                vec![rule.term(|holes| {
-                    let key = holes.hole(keys, Kind::Type);
-                    let value = holes.hole(entries, Kind::Type);
-                    let schema = holes.schema(vec![item(
-                        Multiplicity::Repeated,
-                        Element::Keyed { key, value },
-                    )]);
-                    holes.apply(class, vec![schema])
-                })]
-            }),
+                has_keyed |= !has_positional;
+                self.conclude(at, expr.span, expected, |rule| {
+                    let positional = rule.solver.infer();
+                    let keys = rule.solver.infer();
+                    let entries = rule.solver.infer();
+                    let entry = |rule: &mut Rule<'_, 'a>, key: TypeId, value: Term| {
+                        rule.constrain(rule.closed(key), keys, Check::Quiet);
+                        rule.constrain(value, entries, Check::Quiet);
+                    };
+                    let lanes = |holes: &mut Holes<'_>, has_positional: bool, has_keyed: bool| {
+                        let mut items = Vec::new();
+                        if has_positional {
+                            let element = holes.hole(positional, Kind::Type);
+                            items.push(item(Multiplicity::Repeated, Element::Positional(element)));
+                        }
+                        if has_keyed {
+                            let key = holes.hole(keys, Kind::Type);
+                            let value = holes.hole(entries, Kind::Type);
+                            items.push(item(Multiplicity::Repeated, Element::Keyed { key, value }));
+                        }
+                        holes.schema(items)
+                    };
+                    // A key written in a dict literal is a term, which decays as its value would
+                    let symbol = |name| rule.db.intern(Type::Fresh(Literal::Sym(name)));
+                    for placed in &values.values {
+                        match placed.value {
+                            Value::Pos(ty, _) => {
+                                rule.constrain(rule.closed(ty), positional, Check::Quiet)
+                            }
+                            Value::Key(name, ty, _) => entry(rule, symbol(name), rule.closed(ty)),
+                            Value::Pair(key_type, ty) => entry(rule, key_type, rule.closed(ty)),
+                            Value::Lambda(key, ref lambda, _) => {
+                                let term = rule.lambda(lambda);
+                                match key {
+                                    Some(key) => entry(rule, symbol(key), term),
+                                    None => rule.constrain(term, positional, Check::Quiet),
+                                }
+                            }
+                            Value::Spread(ty, span) => {
+                                let schema = rule.term(|holes| lanes(holes, true, true));
+                                spread_into(rule, spread, ty, schema, span);
+                            }
+                            Value::Held(..) => unreachable!("only a call holds arguments back"),
+                        }
+                    }
+                    vec![rule.term(|holes| {
+                        let schema = lanes(holes, has_positional, has_keyed);
+                        holes.apply(class, vec![schema])
+                    })]
+                })
+            }
             (Collection::Tuple | Collection::Record, _) => {
                 let lanes = match kind {
                     Collection::Tuple => Rest::Positional,
@@ -2402,6 +2427,51 @@ impl<'a> Flow<'a, '_> {
             }
         };
         result[0]
+    }
+
+    /// Which lanes of a dict a spread of `ty` can fill, positional then keyed:
+    /// those of the schema it spreads, or both where that isn't known
+    fn spread_lanes(&self, spread: Option<DeclId>, ty: TypeId) -> (bool, bool) {
+        let Some(spread) = spread else {
+            return (true, true);
+        };
+        let mut solver = self.solver();
+        let schema = solver.infer_kind(Kind::Schema, Rest::All);
+        let mut holes = Holes {
+            db: self.db,
+            group: Vec::new(),
+        };
+        let hole = holes.hole(schema, Kind::Schema);
+        let target = holes.apply(spread, vec![hole]);
+        let environment = solver.environment(solver.empty_environment(), holes.group);
+        let target = solver.view(target, environment);
+        solver.constrain(solver.closed(ty), target, Provenance::default());
+        default_where(&mut solver, |_| true, None);
+        match solver.reify(schema) {
+            Ok(schema) => self.schema_lanes(schema),
+            Err(_) => (true, true),
+        }
+    }
+
+    /// Which lanes a schema has items in, positional then keyed; both where it
+    /// isn't known
+    fn schema_lanes(&self, schema: TypeId) -> (bool, bool) {
+        let Type::Schema(items) = self.db.ty(schema) else {
+            return (true, true);
+        };
+        let (mut positional, mut keyed) = (false, false);
+        for item in items.iter() {
+            match item.element {
+                Element::Positional(_) => positional = true,
+                Element::Keyed { .. } => keyed = true,
+                Element::Include(inner) => {
+                    let (inner_positional, inner_keyed) = self.schema_lanes(inner);
+                    positional |= inner_positional;
+                    keyed |= inner_keyed;
+                }
+            }
+        }
+        (positional, keyed)
     }
 
     /// What a fresh collection of `class` can be to be `expected`, one candidate for
