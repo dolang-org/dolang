@@ -550,8 +550,11 @@ pub(crate) struct Solver<'db> {
     closed: bool,
     /// The judgments that need one of their alternatives to hold, by obligation
     alternatives: RefCell<FxHashMap<ObligationId, Alternatives<'db>>>,
-    /// How each class's object is called, once found
-    constructors: RefCell<FxHashMap<DeclId, Constructor>>,
+    /// How each class's object is called, once found: its exact object, or a
+    /// `Type` of the class
+    constructors: RefCell<FxHashMap<(DeclId, bool), Constructor>>,
+    /// Each class's default construction, once found
+    default_constructions: RefCell<FxHashMap<DeclId, Option<Option<Signature>>>>,
     /// Each member of a generic class's object, once found
     generic_members: RefCell<FxHashMap<GenericMember, Result<Lookup, Issue>>>,
     /// Counts changes to bounds and assignments, so trials rerun only after
@@ -632,6 +635,7 @@ impl<'db> Solver<'db> {
             closed: false,
             alternatives: RefCell::new(FxHashMap::default()),
             constructors: RefCell::new(FxHashMap::default()),
+            default_constructions: RefCell::new(FxHashMap::default()),
             generic_members: RefCell::new(FxHashMap::default()),
             generation: Cell::new(0),
             trial_depth: 0,
@@ -726,6 +730,7 @@ impl<'db> Solver<'db> {
     pub(crate) fn assume(&mut self, decl: DeclId) {
         self.scope.insert(decl);
         self.constructors.get_mut().clear();
+        self.default_constructions.get_mut().clear();
         self.generic_members.get_mut().clear();
     }
 

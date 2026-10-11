@@ -185,6 +185,13 @@ the ordinary unbound-method idiom — a class is an instance of `Type`, so this
 invokes `Type`'s implementation rather than the receiver's override, exactly as
 `Animal.(init) $self $name` calls a parent constructor.
 
+The type checker accepts `Type.(call)` only with a class's own name, such as
+`Shape`, as its first argument: a value of type `Type[Shape]` may hold a
+subclass, whose `(init)` takes other arguments. A class with a `(call)` may be
+passed only inside its own body, so the factory can't be bypassed elsewhere.
+A class-level `(call)` that ends in `Type.(call)` therefore names its own class
+rather than its receiver, and each subclass that builds itself overrides it.
+
 ### Unbound Class Methods
 
 `Class.method` binds the class, so `Counter.bump()` always passes `Counter`.

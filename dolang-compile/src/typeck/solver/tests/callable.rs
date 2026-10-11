@@ -169,6 +169,38 @@ fn a_class_level_call_takes_precedence() {
 }
 
 #[test]
+fn a_static_call_replaces_construction_for_the_exact_object() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let class = class_type(&mut db);
+    bare_func(&mut db);
+    // `Shape` with `#[static] (call) kind @ Str -> Shape` and `(init) self n @ Int`
+    let mut shape = Class::new(&mut db, "Shape", vec![]);
+    let shape_id = shape.id;
+    let instance = db.intern(Type::Decl(shape_id));
+    let call = shape.static_function(&mut db, vec![], &[str], instance);
+    shape.method(special(&db, "call"), call, Scope::Static);
+    let top = db.top();
+    let init = shape.function(&mut db, vec![], &[int], top);
+    shape.method(special(&db, "init"), init, Scope::Instance);
+    let shape = shape.finish(&mut db, vec![]);
+    let object = db.meta(shape_id, vec![]);
+    let shape_type = apply(&db, class, &[shape]);
+    let calls = function(&db, &[str], shape);
+    let constructs = function(&db, &[int], shape);
+    db.seal();
+    assert_eq!(check(&db, object, calls).status, Status::Proven);
+    assert!(unfit(&check(&db, object, constructs)));
+    // A subclass's object, which a `Type[Shape]` may hold, doesn't inherit it
+    let outcome = check(&db, shape_type, calls);
+    assert!(
+        contradiction(&outcome, Contradiction::Outside),
+        "{outcome:?}"
+    );
+}
+
+#[test]
 fn a_generic_class_object_infers_its_arguments() {
     let mut db = Database::new();
     let int = int(&mut db);

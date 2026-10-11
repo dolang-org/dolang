@@ -1,0 +1,141 @@
+# dolang: strict
+# A class's own object is called through its static `(call)`, which subclasses
+# don't inherit, as through a class-level one. A `Type[C]` may hold a subclass's
+# object, so only a class-level `(call)` calls it. `Type.(call)` instantiates a
+# class's own object, bypassing its `(call)` only inside the class.
+
+pub class Shape
+  pub field kind @ Str = ""
+
+  def (init) self kind @ Str
+    self.kind = kind
+
+  #[static]
+  pub def (call) kind @ Str -> Shape
+    Type.(call) $Shape $kind
+
+  # A block inside the class may bypass the factory too
+  #[static]
+  pub def maker() -> (Str -> Shape)
+    do |kind @ Str| Type.(call) $Shape $kind
+
+pub class Circle: Shape
+
+pub class Box[T]
+  pub field item @ T
+
+  def (init) self item @ T
+    self.item = item
+
+pub class Base
+  #[class]
+  pub def (call) _cls n @ Int -> Int
+    n
+
+pub class Derived: Base
+  #[static]
+  pub def (call) _name @ Str -> Str
+    ...
+
+# A class-level `(call)` names its class, so each subclass overrides it
+pub class Node
+  def (init) _self _n @ Int
+    nil
+
+  #[class]
+  pub def (call) _cls n @ Int -> Node
+    Type.(call) $Node $n
+
+pub class Leaf: Node
+  #[class]
+  pub def (call) cls n @ Int -> Leaf
+    let _ = Type.(call) $cls $n
+    # error: `Type.(call)` needs a class's own object, but `std.Type[m.Leaf]` may hold a subclass's
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     let _ = Type.(call) $cls $n
+    #    |                          ^^^
+    Type.(call) $Leaf $n
+
+pub def calls
+  shape @ Type[Shape]
+  derived @ Type[Derived]
+do
+  let _ = Shape "round"
+  #   ^: flow m.Shape
+  # Statics aren't inherited, so `Circle` is constructed through `(init)`
+  let _ = Circle "arc"
+  #   ^: flow m.Circle
+  # The exact object's static `(call)` replaces its inherited class-level one
+  let _ = Derived "d"
+  #   ^: flow std.Str
+  let _ = derived 1
+  #   ^: flow std.Int
+  let _ = Leaf 1
+  #   ^: flow m.Leaf
+  let _ = shape "x"
+  # error: `std.Type[m.Shape]` has no member `(call)`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = shape "x"
+  #    |           ^^^^^^^^^
+  Shape 1
+  # error: expected `std.Str`, found `1`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   Shape 1
+  #    |         ^
+  let _ = Circle 1
+# error: expected `std.Str`, found `1`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ = Circle 1
+#    |                  ^
+
+pub def constructions
+  shape @ Type[Shape]
+do
+  let _ = Type.(call) $Circle "arc"
+  #   ^: flow m.Circle
+  let _ = Type.(call) $Box 1
+  #   ^: flow m.Box[std.Int]
+  let _ = Type.(call) $Shape "round"
+  # error: `Type.(call)` bypasses `m.Shape`'s `(call)`, which only `m.Shape` itself may do
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = Type.(call) $Shape "round"
+  #    |                        ^^^^^
+  let _ = Type.(call) $shape "round"
+  # error: `Type.(call)` needs a class's own object, but `std.Type[m.Shape]` may hold a subclass's
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = Type.(call) $shape "round"
+  #    |                        ^^^^^
+  let _ = Type.(call) $Circle 1
+  # error: expected `std.Str`, found `1`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = Type.(call) $Circle 1
+  #    |                               ^
+  let _ = Type.(call) 1 2
+  # error: `1` is not a class object
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = Type.(call) 1 2
+  #    |                       ^
+  let _ = Type.(call)()
+# error: `@[T1] <type std.Type[T1]>` has no member `(call)`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ = Type.(call)()
+#    |           ^^^^^^^^^^^^^
+
+pub def relations()
+  # Relations see the static `(call)` too
+  let _f @ (Str -> Shape) = Shape
+  let _g @ (Int -> Shape) = Shape
+# error: `<type m.Shape>` does not fit the annotation `(std.Int) -> m.Shape`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _g @ (Int -> Shape) = Shape
+#    |                             ^^^^^

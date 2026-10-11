@@ -1,7 +1,8 @@
 //! Callables: values called through a member rather than being functions.
 //!
-//! A class object is called through its class-level `(call)` if it has one, and
-//! otherwise by instantiation, which runs `(init)` and gives the instance. Any
+//! A class object is called through its class-level `(call)` if it has one, a
+//! class's own object through its static `(call)` too, and otherwise by
+//! instantiation, which runs `(init)` and gives the instance. Any
 //! other instance is called through its `(call)`. Flow checks such calls with
 //! these signatures, and the solver relates such values to function types with
 //! them.
@@ -51,10 +52,13 @@ impl Signature {
 /// How a class object is called (see [`Solver::constructor`])
 #[derive(Clone, Debug)]
 pub(crate) enum Constructor {
-    /// Its class-level `(call)`, which is passed the class object first, as
-    /// [`Signature::callee`] says it's called. `None` if a signature doesn't
-    /// reify.
-    Call(Option<TypeId>),
+    /// Its `(call)`, as [`Signature::callee`] says it's called: a class-level
+    /// one, `bound` to the class object passed first, or the exact object's
+    /// static one. `None` if a signature doesn't reify.
+    Call {
+        callee: Option<TypeId>,
+        bound: bool,
+    },
     /// Instantiation, running `(init)`: functions from `(init)`'s arguments to
     /// the instance, quantified over the class's binders followed by
     /// `(init)`'s own. `None` if a signature doesn't take a receiver.
@@ -63,74 +67,114 @@ pub(crate) enum Constructor {
 }
 
 impl Solver<'_> {
-    /// How a class object is called. `(init)` is looked up on the class applied to
-    /// its rigids, and the constructor's type abstracts them again.
-    pub(crate) fn constructor(&self, class: DeclId) -> Constructor {
-        if let Some(constructor) = self.constructors.borrow().get(&class) {
+    /// How a class object is called: the class's `exact` object, or a `Type` of
+    /// the class, which only a class-level `(call)` calls. Members are looked up
+    /// on the class applied to its rigids, and the constructor's type abstracts
+    /// them again.
+    pub(crate) fn constructor(&self, class: DeclId, exact: bool) -> Constructor {
+        if let Some(constructor) = self.constructors.borrow().get(&(class, exact)) {
             return constructor.clone();
         }
-        let constructor = self.construct(class);
-        (self.constructors.borrow_mut()).insert(class, constructor.clone());
+        let constructor = self.construct(class, exact);
+        (self.constructors.borrow_mut()).insert((class, exact), constructor.clone());
         constructor
     }
 
-    fn construct(&self, class: DeclId) -> Constructor {
+    fn construct(&self, class: DeclId, exact: bool) -> Constructor {
         let db = self.db;
-        let binders: Vec<Binder> = match db.ty(db.declaration(class).ty) {
-            Type::Quantified { binders, .. } => binders.to_vec(),
-            _ => Vec::new(),
-        };
-        let base = db.intern(Type::Decl(class));
-        let instance = match binders.is_empty() {
-            true => base,
-            false => {
-                let args = (binders.iter().enumerate())
-                    .map(|(slot, binder)| {
-                        Argument::Positional(db.intern(Type::Bound {
-                            reference: BoundRef::new(0, slot),
-                            kind: binder.kind,
-                        }))
-                    })
-                    .collect();
-                db.intern(Type::Apply {
-                    base,
-                    args,
-                    kind: Kind::Type,
-                })
-            }
-        };
-        let instance = db.substitute(instance, &db.rigids(class));
-        if db.intrinsic(Intrinsic::Type).is_none() {
-            return Constructor::Dynamic;
-        }
         let rigids = (db.rigids(class).into_iter())
             .map(Argument::Positional)
             .collect();
         let object = db.meta(class, rigids);
-        let solver = self.side_query(class);
-        let key = |name| MemberKey {
-            name: db.intern_symbol(name),
-            special: true,
-            private: false,
+        let object = match exact {
+            true => object,
+            false => match db.widen_meta(object) {
+                Some(object) => object,
+                None => return Constructor::Dynamic,
+            },
         };
-        match solver.reach_member(solver.closed(object), None, key("call"), Access::Class) {
-            Ok(Lookup::Found(found)) if found.scope == Scope::Class => {
+        let solver = self.side_query(class);
+        match solver.reach_member(solver.closed(object), None, self.call_key(), Access::Class) {
+            Ok(Lookup::Found(found)) if found.scope != Scope::Instance => {
                 let signature = match &found.kind {
                     FoundKind::Method(signatures) => solver.reified(signatures),
                     _ => None,
                 };
-                return Constructor::Call(signature.and_then(|signature| signature.callee(db)));
+                return Constructor::Call {
+                    callee: signature.and_then(|signature| signature.callee(db)),
+                    bound: found.scope == Scope::Class,
+                };
             }
             Ok(Lookup::Found(_) | Lookup::Missing) => {}
             Ok(Lookup::Dynamic | Lookup::Fallback { .. }) | Err(_) => return Constructor::Dynamic,
         }
+        match self.default_construction(class) {
+            Some(signature) => Constructor::Init(signature),
+            None => Constructor::Dynamic,
+        }
+    }
+
+    /// A class `C[Bs]` applied to references to its own binders, as its
+    /// declaration's group interprets them
+    fn instance(&self, class: DeclId) -> TypeId {
+        let db = self.db;
+        let binders: &[Binder] = match db.ty(db.declaration(class).ty) {
+            Type::Quantified { binders, .. } => binders,
+            _ => &[],
+        };
+        let base = db.intern(Type::Decl(class));
+        if binders.is_empty() {
+            return base;
+        }
+        let args = (binders.iter().enumerate())
+            .map(|(slot, binder)| {
+                Argument::Positional(db.intern(Type::Bound {
+                    reference: BoundRef::new(0, slot),
+                    kind: binder.kind,
+                }))
+            })
+            .collect();
+        db.intern(Type::Apply {
+            base,
+            args,
+            kind: Kind::Type,
+        })
+    }
+
+    /// A class's default construction, which runs `(init)` whatever `(call)`
+    /// the class has: `Type.(call)`'s, and a class object's without a `(call)`.
+    /// `None` if it's dynamic, and `Some(None)` if a signature doesn't reify or
+    /// take a receiver.
+    pub(crate) fn default_construction(&self, class: DeclId) -> Option<Option<Signature>> {
+        if let Some(construction) = self.default_constructions.borrow().get(&class) {
+            return construction.clone();
+        }
+        let construction = self.construct_default(class);
+        (self.default_constructions.borrow_mut()).insert(class, construction.clone());
+        construction
+    }
+
+    fn construct_default(&self, class: DeclId) -> Option<Option<Signature>> {
+        let db = self.db;
+        db.intrinsic(Intrinsic::Type)?;
+        let binders: &[Binder] = match db.ty(db.declaration(class).ty) {
+            Type::Quantified { binders, .. } => binders,
+            _ => &[],
+        };
+        let instance = db.substitute(self.instance(class), &db.rigids(class));
+        let solver = self.side_query(class);
+        let key = MemberKey {
+            name: db.intern_symbol("init"),
+            special: true,
+            private: false,
+        };
         // A function quantified over the class's binders, with its rigids
         // abstracted
-        let abstracted = |ty| Some(db.merge_groups(&binders, db.abstract_rigids(ty, class).ok()?));
-        let signatures = match solver.member(solver.closed(instance), key("init")) {
+        let abstracted = |ty| Some(db.merge_groups(binders, db.abstract_rigids(ty, class).ok()?));
+        let signatures = match solver.member(solver.closed(instance), key) {
             Ok(Lookup::Found(found)) => match found.kind {
                 FoundKind::Method(signatures) => signatures,
-                _ => return Constructor::Init(None),
+                _ => return Some(None),
             },
             Ok(Lookup::Missing) => {
                 let constructor = db.intern(Type::Function(Function {
@@ -140,15 +184,13 @@ impl Solver<'_> {
                     input: Some(db.top()),
                     output: Some(db.top()),
                 }));
-                return Constructor::Init(abstracted(constructor).map(|constructor| Signature {
+                return Some(abstracted(constructor).map(|constructor| Signature {
                     overloads: Vec::new(),
                     implementation: Some(constructor),
                     function: None,
                 }));
             }
-            Ok(Lookup::Dynamic | Lookup::Fallback { .. }) | Err(_) => {
-                return Constructor::Dynamic;
-            }
+            Ok(Lookup::Dynamic | Lookup::Fallback { .. }) | Err(_) => return None,
         };
         // `(init)`'s signature taking the arguments a class object is called
         // with, and giving the instance
@@ -181,7 +223,7 @@ impl Solver<'_> {
             Some(signature) => constructor(signature).map(Some),
             None => Some(None),
         };
-        Constructor::Init(
+        Some(
             overloads
                 .zip(implementation)
                 .map(|(overloads, implementation)| Signature {
@@ -289,13 +331,17 @@ impl Solver<'_> {
     }
 
     /// The signatures a class object is called with: its class-level `(call)`,
-    /// and otherwise, only for the `exact` object, its class's own, instantiation
-    /// through `(init)`. A `Type[C]` may hold a subclass's object, whose `(init)`
-    /// needn't conform, so without a `(call)` it isn't callable.
+    /// and otherwise, only for the `exact` object, its class's own static
+    /// `(call)` or instantiation through `(init)`. A `Type[C]` may hold a
+    /// subclass's object, which inherits no static and whose `(init)` needn't
+    /// conform, so without a class-level `(call)` it isn't callable.
     fn object_signatures(&self, class: Nominal, exact: bool) -> Result<Option<Signatures>, Issue> {
         match self.object_member(class.clone(), exact, self.call_key(), Access::Class)? {
             Lookup::Found(found) if found.scope == Scope::Class => {
                 return self.bound(&found.kind);
+            }
+            Lookup::Found(found) if found.scope == Scope::Static => {
+                return self.unbound(&found.kind);
             }
             Lookup::Found(_) | Lookup::Missing => {}
             Lookup::Dynamic | Lookup::Fallback { .. } => return Ok(None),
@@ -303,12 +349,12 @@ impl Solver<'_> {
         if !exact {
             return Err(Issue::Contradiction(Contradiction::Outside));
         }
-        let signatures = match self.constructor(class.declaration) {
-            Constructor::Init(Some(signatures)) => signatures,
-            Constructor::Init(None) => {
+        let signatures = match self.default_construction(class.declaration) {
+            Some(Some(signatures)) => signatures,
+            Some(None) => {
                 return Err(Residual::Unsupported("an `(init)` without a receiver").into());
             }
-            Constructor::Call(_) | Constructor::Dynamic => return Ok(None),
+            None => return Ok(None),
         };
         // Applied to the class's arguments, as a method is
         let count = match self.db.ty(self.db.declaration(class.declaration).ty) {
@@ -329,6 +375,18 @@ impl Solver<'_> {
             name: self.db.intern_symbol("call"),
             special: true,
             private: false,
+        }
+    }
+
+    /// A static method's signatures, which take no receiver. `None` if they're
+    /// dynamic.
+    fn unbound(&self, kind: &FoundKind) -> Result<Option<Signatures>, Issue> {
+        match kind {
+            FoundKind::Method(signatures) => Ok(Some(signatures.clone())),
+            FoundKind::Unknown => Ok(None),
+            FoundKind::Field(_) | FoundKind::Property { .. } => {
+                Err(Residual::Unsupported("a `(call)` that isn't a method").into())
+            }
         }
     }
 

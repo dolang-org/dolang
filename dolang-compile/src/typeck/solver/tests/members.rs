@@ -65,6 +65,17 @@ impl Class {
         self.function_on(db, receiver, own, params, result)
     }
 
+    /// [`Self::function`] taking no receiver, as a static method does
+    pub(super) fn static_function(
+        &self,
+        db: &mut Database,
+        own: Vec<Binder>,
+        params: &[TypeId],
+        result: TypeId,
+    ) -> DeclId {
+        self.function_with(db, None, own, params, result)
+    }
+
     /// [`Self::function`] taking `receiver` first, as a class method takes its
     /// class's object
     fn function_on(
@@ -75,9 +86,19 @@ impl Class {
         params: &[TypeId],
         result: TypeId,
     ) -> DeclId {
+        self.function_with(db, Some(receiver), own, params, result)
+    }
+
+    fn function_with(
+        &self,
+        db: &mut Database,
+        receiver: Option<TypeId>,
+        own: Vec<Binder>,
+        params: &[TypeId],
+        result: TypeId,
+    ) -> DeclId {
         let (id, _, source) = reserve(db, DeclKind::Function, "method");
-        let params: Vec<_> = [receiver]
-            .into_iter()
+        let params: Vec<_> = (receiver.into_iter())
             .chain(params.iter().copied())
             .collect();
         let binders = self.binders.iter().cloned().chain(own).collect();

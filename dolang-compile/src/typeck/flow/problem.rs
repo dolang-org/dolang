@@ -93,6 +93,10 @@ pub(crate) enum Problem {
         name: String,
         misuse: MemberUse,
     },
+    /// `Type.(call)` passed a class with its own `(call)`, outside the class
+    BypassedFactory { span: Span, class: String },
+    /// `Type.(call)` passed a `Type[C]`, which may hold a subclass's object
+    InexactConstruction { span: Span, found: Shown },
     /// An item a checked module doesn't export
     MissingExport {
         span: Span,
@@ -129,6 +133,8 @@ pub(crate) enum Misfit {
     Int,
     Spreadable,
     Unpackable,
+    /// The class object `Type.(call)` constructs
+    Class,
 }
 
 impl Report for Problem {
@@ -151,6 +157,8 @@ impl Report for Problem {
             | Problem::Default { span, .. }
             | Problem::MissingMember { span, .. }
             | Problem::MemberUse { span, .. }
+            | Problem::BypassedFactory { span, .. }
+            | Problem::InexactConstruction { span, .. }
             | Problem::MissingExport { span, .. }
             | Problem::Unassigned { span, .. } => span,
         }
@@ -228,6 +236,7 @@ impl Report for Problem {
                     Misfit::Int => "an `Int`",
                     Misfit::Spreadable => "spreadable",
                     Misfit::Unpackable => "unpackable",
+                    Misfit::Class => "a class object",
                 };
                 write!(w, "{found} is not {required}")
             }
@@ -283,6 +292,14 @@ impl Report for Problem {
                 MemberUse::Method => write!(w, "`{name}` is a method, which can't be assigned"),
                 MemberUse::Module => write!(w, "`{name}` is a module, which can't be assigned"),
             },
+            Problem::BypassedFactory { class, .. } => write!(
+                w,
+                "`Type.(call)` bypasses `{class}`'s `(call)`, which only `{class}` itself may do"
+            ),
+            Problem::InexactConstruction { found, .. } => write!(
+                w,
+                "`Type.(call)` needs a class's own object, but {found} may hold a subclass's"
+            ),
             Problem::MissingExport { module, item, .. } => {
                 write!(w, "module `{module}` has no export `{item}`")
             }
