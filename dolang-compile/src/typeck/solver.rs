@@ -573,6 +573,9 @@ pub(crate) struct Solver<'db> {
     /// What trials judge in place of a term, as a `do` block whose result
     /// mustn't choose an alternative (see [`Solver::blind`])
     blinded: FxHashMap<Term, Term>,
+    /// The judgments the probes this solver is nested in are proving, so
+    /// probing one again is recognized as a cycle (see [`Self::probe`])
+    probing: Vec<(TypeId, TypeId)>,
     /// How traces render a type (see [`Solver::named`])
     #[cfg(feature = "debug")]
     names: Option<(&'db dyn super::r#type::Names, super::r#type::Style)>,
@@ -642,6 +645,7 @@ impl<'db> Solver<'db> {
             owned: None,
             trials_from: 0,
             blinded: FxHashMap::default(),
+            probing: Vec::new(),
             #[cfg(feature = "debug")]
             names: None,
             #[cfg(feature = "debug")]
@@ -1229,7 +1233,21 @@ impl<'db> Solver<'db> {
 
     /// Closed proof queries cannot create inference bounds or leak alternative edges.
     fn probe(&self, actual: TypeId, expected: TypeId) -> Result<Status, Residual> {
+        Ok(self.probe_cycle(actual, expected)?.0)
+    }
+
+    /// [`Self::probe`], and whether an unresolved result rests on a cycle: a
+    /// probe of a judgment an enclosing probe is proving, or a nested
+    /// [`Residual::Recursive`]. Without inductive rules (#746), a cycle is left
+    /// unresolved rather than unfolded until the work budget runs out.
+    fn probe_cycle(&self, actual: TypeId, expected: TypeId) -> Result<(Status, bool), Residual> {
+        if self.probing.contains(&(actual, expected)) {
+            trace!(self, "probe revisits an enclosing judgment");
+            return Ok((Status::Unresolved, true));
+        }
         let mut proof = self.nested()?;
+        proof.probing.clone_from(&self.probing);
+        proof.probing.push((actual, expected));
         proof.constrain(
             proof.closed(actual),
             proof.closed(expected),
@@ -1245,7 +1263,12 @@ impl<'db> Solver<'db> {
         {
             return Err(Residual::Limit);
         }
-        Ok(result.status)
+        let cycle = result.status == Status::Unresolved
+            && result
+                .diagnostics
+                .iter()
+                .any(|d| d.issue == Residual::Recursive.into());
+        Ok((result.status, cycle))
     }
 
     /// Follow exact candidate dependencies, without unfolding declaration bodies.
