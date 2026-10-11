@@ -2065,9 +2065,13 @@ impl<'a> Flow<'a, '_> {
                         out.push(placed(Value::Pair(key_type, ty)));
                     }
                 }
+                // What's spread is what the value's `(spread)` gives
                 Item::Spread(value) => {
                     gathering.exact = false;
-                    let ty = self.eval(at, state, operands, value);
+                    let mut ty = self.eval(at, state, operands, value);
+                    if self.designated(Designated::Spread).is_some() {
+                        ty = self.send_special(at, state, ty, "spread", value.span);
+                    }
                     if produced(values, ty) {
                         out.push(placed(Value::Spread(ty, value.span)));
                     }
@@ -2840,8 +2844,9 @@ impl<'a> Flow<'a, '_> {
         )
     }
 
-    /// The types a pattern's items unpack from a value, which must be an
-    /// `Unpack[S]`, diagnosed at `span`; `None` if the pattern can't match it.
+    /// The types a pattern's items unpack from a value, diagnosed at `span`;
+    /// `None` if the pattern can't match it. What its `(unpack)` gives must be
+    /// an `Unpack[S]`.
     /// The pattern is walked against `S` (see [`Solver::unpack_pattern`]), giving
     /// a rest `Unpack[tail]`. Where `S` can't be found, every item is optional and
     /// the pattern admits any others, giving a const key or a rest `Unknown`.
@@ -2860,6 +2865,11 @@ impl<'a> Flow<'a, '_> {
         let Some(unpack) = self.designated(Designated::Unpack) else {
             return Some(vec![unknown; items.len()]);
         };
+        // What's unpacked is what the value's `(unpack)` gives
+        let value = self.send_special(at, state, value, "unpack", span);
+        if value == self.db.bottom() {
+            return Some(vec![value; items.len()]);
+        }
         let check = Check::Fits(span, Misfit::Unpackable);
         let mut pattern = PatternShape {
             positional: Vec::new(),

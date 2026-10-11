@@ -1949,7 +1949,7 @@ pub class BaseDict[S @ {...}]: @Index[S] @Spread[S] @Unpack[S, Rest: Unpack[S]] 
   # ```
   # let :name age: years = {name: "Alice", age: 30}
   # ```
-  pub def (unpack) self -> Unpack[S, Rest: Unpack[S]]
+  pub def (unpack) self -> BaseDict[S]
     ...
 
 
@@ -3619,7 +3619,7 @@ pub class Record[...Ts]: Iterable[Entries[Ts]] @Index[Ts] @Spread[Ts] @Unpack[Ts
     ...
 
   # Unpacks record items by position and symbol.
-  pub def (unpack) self -> Unpack[Ts, Rest: Unpack[Ts]]
+  pub def (unpack) self -> Record[...Ts]
     ...
 
   # Returns the value at a position or key.
@@ -4701,7 +4701,7 @@ pub class BaseStruct[S @ {...}]: @BaseIterable[Entries[S]] @Index[S] @Spread[S] 
     ...
 
   # Unpacks items by position and symbol, as a [`Record`](std.Record) does.
-  pub def (unpack) self -> Unpack[S, Rest: Unpack[S]]
+  pub def (unpack) self -> BaseStruct[S]
     ...
 
 
@@ -4951,7 +4951,7 @@ pub class Tuple[*Ts]: @Spread[Ts] @Unpack[Ts, Rest: Unpack[Ts]] Iterable[Union[.
   # for k v = {name: "Alice", age: 30}
   #   echo "$k = $v"
   # ```
-  pub def (unpack) self -> Unpack[Ts, Rest: Unpack[Ts]]
+  pub def (unpack) self -> Tuple[...Ts]
     ...
 
   # Spreads the items.

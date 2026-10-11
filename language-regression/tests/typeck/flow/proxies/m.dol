@@ -1,0 +1,89 @@
+# Spreading and destructuring send `(spread)` and `(unpack)` and walk what they
+# return, as the runtime spreads or unpacks the proxy in place of the value.
+
+import std:
+  - @Unpack
+
+# Without a declared protocol, a value unpacks as its proxy
+pub class Point
+  def (unpack) _self -> Dict[{x: Int, y: Str}]
+    ...
+
+pub def point p @ Point
+  let :x :y = p
+  let _ = x
+  #       ^: flow std.Int
+  let _ = y
+  #       ^: flow std.Str
+
+# A proxy narrower than the declared ancestor gives its own schema
+pub class Narrow: @Unpack[{x: Int | Str}]
+  # error: `Narrow` does not provide `(spread)`, which `Spread` requires
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub class Narrow: @Unpack[{x: Int | Str}]
+  #    |                    ^^^^^^
+  def (unpack) _self -> Dict[{x: Int}]
+    ...
+
+pub def narrow n @ Narrow
+  let :x = n
+  let _ = x
+  #       ^: flow std.Int
+
+# A rest is the one the proxy's `Unpack` gives
+pub class Triple
+  def (unpack) _self -> Tuple[Int, Str, Bool]
+    ...
+
+pub def triple t @ Triple
+  let a ...r = t
+  let _ = a
+  #       ^: flow std.Int
+  let _ = r
+  #       ^: flow std.Unpack[{std.Str, std.Bool}]
+
+# Without a declared protocol, a value spreads as its proxy
+pub class Options
+  def (spread) _self -> Dict[{verbose: Bool}]
+    ...
+
+pub class Items
+  def (spread) _self -> Array[Int]
+    ...
+
+def show :verbose @ Bool = false
+  verbose
+
+pub def spreads o @ Options i @ Items
+  show ...o
+  let d = {...o}
+  let _ = d
+  #       ^: flow std.Dict[:verbose:, std.Bool]
+  let xs = [...i]
+  let _ = xs
+  #       ^~: flow [std.Int]
+  let mixed = {...i}
+  let _ = mixed
+  #       ^~~~~: flow std.Dict[std.Int]
+
+# A value without the method isn't spreadable or unpackable
+pub def misfits v @ (Int | (Int, Str))
+  let _ _ = 1
+  # error: `1` is not unpackable
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ _ = 1
+  #    |             ^
+  let _ = [...1]
+  # error: `1` is not spreadable
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = [...1]
+  #    |               ^
+  let _ _ = v
+# error: `(std.Int, std.Str) | std.Int` is not unpackable
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ _ = v
+#    |             ^

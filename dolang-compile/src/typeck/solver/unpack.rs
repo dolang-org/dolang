@@ -1,5 +1,5 @@
 //! Typing destructuring patterns by the schema `S` of the `Unpack[S]` a value
-//! reaches.
+//! reaches: the proxy the destructured value's `(unpack)` returns.
 //!
 //! The pattern is matched against `S` as the runtime binds it. Positional items
 //! are distributed by count: with `k` items, the first `k` slots are filled in
@@ -20,7 +20,8 @@
 //! with the solution. A rest that this doesn't give, or that isn't within
 //! `Rest`'s bound for the tail, is `Rest`'s default for the tail, which only
 //! spreads. Without binders to solve again, as for a value of an `Unpack` type
-//! itself, `Rest` carries over only where `S` is its own tail.
+//! itself, `Rest` carries over only where `S` is its own tail. So a class whose
+//! `Rest` depends on `S` has its `(unpack)` return its own type, not `Unpack`.
 
 use std::collections::BTreeSet;
 
