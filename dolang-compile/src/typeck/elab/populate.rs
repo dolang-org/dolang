@@ -759,6 +759,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                 match (tables.designated.get(&decl), args) {
                     (Some(Designated::Value), None) => return self.db.top(),
                     (Some(Designated::Never), None) => return self.db.bottom(),
+                    (Some(Designated::Unknown), None) => return self.db.unknown(),
                     _ => {}
                 }
                 // Bare `Func` in a type is any function

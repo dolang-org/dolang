@@ -335,6 +335,7 @@ pub(super) fn designation(tables: &Tables<'_>, decl: DeclId) -> Option<(Designat
         ("strand", "PipeReceiver") => (Designated::PipeReceiver, DeclKind::OpaqueAlias),
         ("std", "Value") => (Designated::Value, DeclKind::Class),
         ("std", "Never") => (Designated::Never, DeclKind::Alias),
+        ("std", "Unknown") => (Designated::Unknown, DeclKind::OpaqueAlias),
         ("std", "Phantom") => (Designated::Phantom, DeclKind::OpaqueAlias),
         ("std", "Union") => (
             Designated::Intrinsic(Intrinsic::Union),

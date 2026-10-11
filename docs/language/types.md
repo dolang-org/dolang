@@ -78,6 +78,15 @@ types rather than unknown ones:
       put done
     ```
 
+To leave one declaration unchecked in a strict file, annotate it with
+[`std.Unknown`](std.Unknown), the unknown type, rather than omitting the
+annotation:
+
+```
+def (get) self name @ Str -> std.Unknown
+  self.#values[name]
+```
+
 `# dolang: nostrict` turns strict checking off. Strictness belongs to the file,
 so strict and non-strict modules can import each other; `--strict` is unrelated
 and only makes warnings fail the check.
@@ -887,6 +896,7 @@ The standard module provides aliases for computing types from packs and schemas:
 | ------------------------------ | --------------------------------------------------------------- |
 | [`Union`](std.Union)           | Forms a union from type arguments, including expanded packs     |
 | [`Never`](std.Never)           | Describes no values; a result for a function that never returns |
+| [`Unknown`](std.Unknown)       | Leaves a declaration unchecked                                  |
 | [`Keys`](std.Keys)             | Collects a schema's key types                                   |
 | [`Values`](std.Values)         | Collects a schema's value types                                 |
 | [`Entries`](std.Entries)       | Keeps each schema key paired with its value type                |

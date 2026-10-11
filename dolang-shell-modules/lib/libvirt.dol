@@ -785,8 +785,8 @@ def copy_chunks total input output indicator
       let chunk = input.read $CHUNK_SIZE :offset
       strand.put [offset, chunk]
     do strand.pool $PARALLEL $strand.input() do |item|
-      # Pipeline stages pass `Value`s; the first stage puts these pairs
-      let offset chunk = (item !@ (Int, Bin))
+      # Pipeline stages are unchecked; the first stage puts these pairs
+      let offset chunk = (item @ (Int, Bin))
       output.write $chunk :offset
       indicator.delta $chunk.len
 
@@ -2541,7 +2541,7 @@ def write_bundle path members info domain_xml
             do while let chunk = file.read $BUNDLE_CHUNK
               strand.put $chunk
             do for chunk
-              let bytes = (chunk !@ Bin)
+              let bytes = (chunk @ Bin)
               strand.fork
                 do entry.write $bytes
                 do state.update $bytes
@@ -2756,7 +2756,7 @@ def extract_member bundle member dest
         do while let chunk = file.read $BUNDLE_CHUNK
           strand.put $chunk
         do for chunk
-          let bytes = (chunk !@ Bin)
+          let bytes = (chunk @ Bin)
           strand.fork
             do out.write $bytes
             do state.update $bytes

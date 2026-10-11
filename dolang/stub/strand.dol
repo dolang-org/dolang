@@ -428,9 +428,9 @@ pub def output[O] >O -> O
   # override strand-local input for the first stage
   :input @ Iterable[Value] = nil
   # pipeline stages
-  ...stages @ ((<Iter[Value], >Sink[Value]) -> Value)
+  ...stages @ ((<Iter[std.Unknown], >Sink[std.Unknown]) -> Value)
   # final stage
-  final @ ((<Iter[Value]) -> R)
+  final @ ((<Iter[std.Unknown]) -> R)
 do -> R
 
 # Connects pipeline stages and runs them concurrently, writing the last stage's
@@ -441,9 +441,9 @@ do -> R
   # override strand-local output for the last stage
   :output @ Sinkable[O]
   # pipeline stages
-  ...stages @ ((<Iter[Value], >Sink[Value]) -> Value)
+  ...stages @ ((<Iter[std.Unknown], >Sink[std.Unknown]) -> Value)
   # final stage
-  final @ ((<Iter[Value], >Sink[O]) -> R)
+  final @ ((<Iter[std.Unknown], >Sink[O]) -> R)
 do -> R
 
 pub def pipeline ...args @ Value -> Value

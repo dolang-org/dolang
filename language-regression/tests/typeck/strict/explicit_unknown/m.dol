@@ -1,0 +1,44 @@
+# dolang: strict
+# A written `Unknown` is an annotation, so a strict unit may leave a declaration
+# unchecked with it. It is the dynamic type, not top: any use of it checks.
+
+import std:
+  - @Unknown
+
+def takes_int n @ Int -> Int
+  n
+
+pub def dynamic x @ std.Unknown -> Int
+  #     ^~~~~~~: sig (x: std.Unknown, <#0, >#1) -> Int
+  let _ = x
+  #       ^: flow Unknown
+  let _ = x.anything
+  takes_int $x
+  (x * 2)
+
+pub def bare y @ Unknown -> Unknown
+  #     ^~~~: sig (y: Unknown, <#0, >#1) -> Unknown
+  y
+
+pub def caller() -> Str
+  let r = bare 1
+  let _ = r
+  #       ^: flow Unknown
+  r
+
+# `Value` is top: it admits every value, but a use needs narrowing
+pub def top v @ Value -> std.Num
+  (v * 2)
+# error: expected `std.Num`, found `Value`
+#   --> m.dol:LL:LL
+#    |
+# LL |   (v * 2)
+#    |    ^
+
+# `Unknown` is a type, not a schema
+pub let d @ Dict[{...Unknown}] = {}
+# error: expected a schema, found a type
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let d @ Dict[{...Unknown}] = {}
+#    |                      ^^^^^^^
