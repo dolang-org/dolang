@@ -2,7 +2,12 @@ use std::cell::{Ref, RefCell, RefMut};
 
 use rustc_hash::FxHashSet;
 
-use super::{ast::Var, constant, sig, source::Span, sym};
+use super::{
+    ast::{Var, VarFlags},
+    constant, sig,
+    source::Span,
+    sym,
+};
 use dolang_util::mono::MonoVec;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -179,7 +184,10 @@ impl Graph {
     ) -> ScopeId {
         let id = ScopeId(self.scopes.len());
         let mut borrow = self.func_mut(func);
-        let caps: usize = vars.iter().map(|l| l.captured as usize).sum();
+        let caps: usize = vars
+            .iter()
+            .map(|l| l.flags.contains(VarFlags::CAPTURED) as usize)
+            .sum();
         let locals = vars.iter().map(|v| v.is_emitted() as usize).sum::<usize>() - caps;
         let local_offset = if is_func {
             borrow.locals = locals;

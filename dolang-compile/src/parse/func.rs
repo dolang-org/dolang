@@ -4,8 +4,8 @@ use super::{
 };
 use crate::{
     ast::{
-        Binders, Block, Decorator, Def, Expr, Function, Ident, Implicits, Method, PatItem,
-        PrimStmt, RetType, SpecialMethod, Stmt,
+        Binders, Block, Decorator, Def, Expr, Function, Ident, Implicits, MemberScope, Method,
+        PatItem, PrimStmt, RetType, SpecialMethod, Stmt,
     },
     lex::{self, Keyword, Op, Token, TokenInfo},
     source::Span,
@@ -323,6 +323,7 @@ impl Parser<'_> {
             type_only: protocol || at_span.is_some(),
             name_span,
             special,
+            scope: MemberScope::Instance,
             node: None,
             private_sym: None,
             binders,

@@ -33,30 +33,41 @@ pub enum Context {
     Call,
 }
 
+bitflags::bitflags! {
+    /// What elaboration has learned about a binding
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub(crate) struct VarFlags: u8 {
+        /// Captured by a closure
+        const CAPTURED = 1 << 0;
+        /// Exported from its module
+        const EXPORTED = 1 << 1;
+        /// Read somewhere
+        const USED = 1 << 2;
+        /// The binding's initializing statement has run. Clear only for
+        /// bindings pre-registered by a block's forward-reference pre-pass
+        /// (`def`/`class`) before their statement is actually elaborated. A
+        /// non-capturing use (one that does not cross a function/lambda scope
+        /// boundary on its way to the binding) while this is clear observes an
+        /// uninitialized local at runtime, so it is a hard error rather than
+        /// silently emitted.
+        const INITIALIZED = 1 << 3;
+        /// Still being bound by a pattern; unavailable as a runtime class test
+        const PATTERN_PENDING = 1 << 4;
+        /// Named by a type. Set only when documenting, and never read by
+        /// lowering.
+        const TYPE_USED = 1 << 5;
+        /// Bound by a `class` statement, so it cannot be reassigned
+        const CLASS = 1 << 6;
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Var {
     // Symbol for identifier (and export key)
     pub(crate) sym: sym::Id,
-    // Captured by closure?
-    pub(crate) captured: bool,
-    // Exported from module?
-    pub(crate) exported: bool,
-    // Used?
-    pub(crate) used: bool,
-    // Has the binding's initializing statement run yet? `false` only for
-    // bindings pre-registered by a block's forward-reference pre-pass
-    // (`def`/`class`) before their statement is actually elaborated. A
-    // non-capturing use (one that does not cross a function/lambda scope
-    // boundary on its way to the binding) while this is `false` observes
-    // an uninitialized local at runtime, so it is a hard error rather than
-    // silently emitted.
-    pub(crate) initialized: bool,
-    // Still being bound by a pattern; unavailable as a runtime class test.
-    pub(crate) pattern_pending: bool,
+    pub(crate) flags: VarFlags,
     // Compile-time provenance of the binding.
     pub(crate) origin: Origin,
-    // Named by a type. Set only when documenting, and never read by lowering.
-    pub(crate) type_used: bool,
     // Filled only by document indexing; references use (index, depth) to find it.
     pub(crate) node: Option<doc::Id>,
 }
@@ -88,7 +99,7 @@ impl Origin {
 
 impl Var {
     pub(crate) fn is_emitted(&self) -> bool {
-        !self.is_prelude() || self.used || self.exported
+        !self.is_prelude() || self.flags.intersects(VarFlags::USED | VarFlags::EXPORTED)
     }
     pub(crate) fn is_prelude(&self) -> bool {
         matches!(
@@ -2487,6 +2498,8 @@ pub(crate) struct Method {
     pub(crate) type_only: bool,
     pub(crate) name_span: Span,
     pub(crate) special: Option<SpecialMethod>,
+    /// Set by elaboration from the `class` and `static` decorators
+    pub(crate) scope: MemberScope,
     pub(crate) node: Option<doc::Id>,
     pub(crate) private_sym: Option<sym::Id>,
     pub(crate) binders: Option<Box<Binders>>,

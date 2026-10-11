@@ -184,13 +184,21 @@ impl Solver<'_> {
             Receiver::Missing => return Ok(Lookup::Missing),
             Receiver::Dynamic => return Ok(Lookup::Dynamic),
         };
+        // A static member belongs to its class alone, so a type object reaches
+        // only its own
+        let named = nominal.declaration;
         let Some(nominal) = self.ancestor(nominal, class, &mut FxHashSet::default(), 0)? else {
             return Ok(Lookup::Missing);
         };
         let member = |instance: bool| {
             self.members(&nominal)
                 .find(|(found, member)| {
-                    *found == key && (member.scope() == Scope::Instance) == instance
+                    *found == key
+                        && match member.scope() {
+                            Scope::Instance => instance,
+                            Scope::Class => !instance,
+                            Scope::Static => !instance && nominal.declaration == named,
+                        }
                 })
                 .map(|(_, member)| member)
         };

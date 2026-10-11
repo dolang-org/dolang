@@ -165,8 +165,8 @@ pub(crate) struct BuiltinTypes<'v> {
     pub(crate) class_object: TypeHandle<'v, class::ClassObject<'v>>,
     pub(crate) class_type_proxy: TypeHandle<'v, class::ClassTypeProxy<'v>>,
     pub(crate) class_instance: TypeHandle<'v, class::ClassInstance<'v>>,
-    pub(crate) getter: TypeHandle<'v, class::Getter>,
-    pub(crate) setter: TypeHandle<'v, class::Setter>,
+    pub(crate) accessor: TypeHandle<'v, class::Accessor<'v>>,
+    pub(crate) accessor_type: TypeHandle<'v, class::AccessorType>,
     pub(crate) tuple: TypeHandle<'v, [Value<'v>]>,
     pub(crate) tuple_iter: TypeHandle<'v, tuple::Iter<'v>>,
     pub(crate) tuple_pairs: TypeHandle<'v, tuple::Pairs<'v>>,
@@ -249,8 +249,8 @@ impl<'v> BuiltinTypes<'v> {
             class_object: types.register_type_handle(),
             class_type_proxy: types.register_type_handle(),
             class_instance: types.register_type_handle(),
-            getter: types.register_type_handle(),
-            setter: types.register_type_handle(),
+            accessor: types.register_type_handle(),
+            accessor_type: types.register_type_handle(),
             dict_iter: types.register_type_handle(),
             dict_keys: types.register_type_handle(),
             dict_values: types.register_type_handle(),
@@ -433,8 +433,14 @@ impl<'v> Singletons<'v> {
             iterable: v!(builtin_types.iterable, iter::Iterable),
             num: v!(builtin_types.num_type, num::Num),
             sinkable: v!(builtin_types.sinkable, iter::Sinkable),
-            getter: v!(builtin_types.getter, class::Getter),
-            setter: v!(builtin_types.setter, class::Setter),
+            getter: v!(
+                builtin_types.accessor_type,
+                class::AccessorType(class::AccessorKind::Getter)
+            ),
+            setter: v!(
+                builtin_types.accessor_type,
+                class::AccessorType(class::AccessorKind::Setter)
+            ),
             input_iter: v!(builtin_types.input_iter, iter::Iter),
             output_iter: v!(builtin_types.output_iter, iter::Sink),
             null: v!(builtin_types.null, iter::Null),

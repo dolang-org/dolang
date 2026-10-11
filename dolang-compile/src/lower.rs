@@ -12,7 +12,7 @@ use crate::{
         FormatAlign, FormatKind, FormatSign, FormatSpec, Function, GetVariant, Guard, Ident, If,
         Import, ImportElement, ImportItem, Key, LValue, Let, Match, MemberScope, Method, NlGuard,
         Pair, PatBind, PatDefault, PatIdent, PatItem, Pattern, PrimStmt, Res, Return, Root, Single,
-        Stmt, Try, While, visit::Node,
+        Stmt, Try, VarFlags, While, visit::Node,
     },
     cfg::{self, BlockRefMut, Inst, InstInfo, Term, TermInfo},
     constant::{self, ConstantExt},
@@ -321,13 +321,13 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             .enumerate()
         {
             if index == j {
-                return if local.captured {
+                return if local.flags.contains(VarFlags::CAPTURED) {
                     Var::Upvar(caps, up)
                 } else {
                     Var::Local(i.strict_sub(caps).strict_add(scope.local_offset))
                 };
             }
-            caps += local.captured as usize
+            caps += local.flags.contains(VarFlags::CAPTURED) as usize
         }
         unreachable!()
     }
@@ -2776,8 +2776,9 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             && matches!(self.params.mode, Mode::Module { .. } | Mode::Repl)
             && scope.has_upvars()
         {
-            let module = sig::Pack::new(block.vars.iter().filter(|v| v.captured).map(|v| {
-                if v.exported {
+            let captured = (block.vars.iter()).filter(|v| v.flags.contains(VarFlags::CAPTURED));
+            let module = sig::Pack::new(captured.map(|v| {
+                if v.flags.contains(VarFlags::EXPORTED) {
                     sig::Arg::Key(v.sym)
                 } else {
                     sig::Arg::Value

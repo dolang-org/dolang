@@ -12,6 +12,10 @@ rust-version.workspace = true
 workspace = true
 features = ["macros"]
 
+[dependencies.bitflags]
+workspace = true
+
+
 [dependencies.dolang-util]
 workspace = true
 

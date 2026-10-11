@@ -2,6 +2,7 @@ use std::{
     cell::OnceCell,
     collections::{HashMap, VecDeque, hash_map::Entry},
     hash::DefaultHasher,
+    marker::PhantomData,
     mem,
     ops::ControlFlow,
 };
@@ -17,14 +18,13 @@ use crate::{
     call,
     error::{Error, ErrorKind, Result},
     gc::{Annex, Collect, arena::Visit},
-    method,
     object::{
         BoundMethod,
         field_iter::FieldIter,
         native,
         protocol::{
-            Delegated, Dispatch, Inspect, MemberKind, Recv, Spread, SpreadContext,
-            instance_mcall_fallback, is_special_mcall, members,
+            Delegated, Dispatch, MemberKind, Recv, Spread, SpreadContext, instance_mcall_fallback,
+            is_special_mcall,
         },
         sym::SymObj,
         tuple,
@@ -300,40 +300,39 @@ pub(crate) async fn create<'v, 's>(
                 // `#[class]` / `#[static]` wrap the member; unwrap before deciding
                 // what kind of member it is, so the scope composes with `#[getter]`.
                 let scope = unwrap_member_scope(strand, &mut value)?;
+                // An accessor may wrap any callable, such as an object with `(call)`
+                let accessor = unwrap_accessor(strand, &mut value);
+                if accessor.is_none() && !is_function(strand, &value) {
+                    return Err(Error::type_error(
+                        strand,
+                        "class_create: method value must be a function",
+                    ));
+                }
                 if scope != MemberScope::Instance {
                     reject_disallowed_type_member(strand, sym)?;
-                    let entry = if value.is_instance_of(strand, &strand.singletons().getter) {
-                        ClassTypeEntry::Property {
+                    let inherited = scope == MemberScope::Class;
+                    let entry = match accessor {
+                        Some(AccessorKind::Getter) => ClassTypeEntry::Property {
                             property: Property {
                                 getter: Some(value),
                                 setter: None,
                             },
-                            inherited: scope == MemberScope::Class,
-                        }
-                    } else if value.is_instance_of(strand, &strand.singletons().setter) {
-                        ClassTypeEntry::Property {
+                            inherited,
+                        },
+                        Some(AccessorKind::Setter) => ClassTypeEntry::Property {
                             property: Property {
                                 getter: None,
                                 setter: Some(value),
                             },
-                            inherited: scope == MemberScope::Class,
-                        }
-                    } else if is_function(strand, &value) {
-                        ClassTypeEntry::Method {
-                            value,
-                            inherited: scope == MemberScope::Class,
-                        }
-                    } else {
-                        return Err(Error::type_error(
-                            strand,
-                            "class_create: method value must be a function, Getter, or Setter",
-                        ));
+                            inherited,
+                        },
+                        None => ClassTypeEntry::Method { value, inherited },
                     };
                     insert_type_member(strand, &mut local_type_entries, sym, entry)?;
                     continue;
                 }
 
-                if value.is_instance_of(strand, &strand.singletons().getter) {
+                if accessor == Some(AccessorKind::Getter) {
                     match local_entries.entry(sym) {
                         Entry::Vacant(entry) => {
                             entry.insert(ClassEntry::Property(Property {
@@ -359,7 +358,7 @@ pub(crate) async fn create<'v, 's>(
                     continue;
                 }
 
-                if value.is_instance_of(strand, &strand.singletons().setter) {
+                if accessor == Some(AccessorKind::Setter) {
                     match local_entries.entry(sym) {
                         Entry::Vacant(entry) => {
                             entry.insert(ClassEntry::Property(Property {
@@ -383,13 +382,6 @@ pub(crate) async fn create<'v, 's>(
                         },
                     }
                     continue;
-                }
-
-                if !is_function(strand, &value) {
-                    return Err(Error::type_error(
-                        strand,
-                        "class_create: method value must be a function, Getter, or Setter",
-                    ));
                 }
 
                 match local_entries.entry(sym) {
@@ -612,9 +604,83 @@ pub(crate) async fn create<'v, 's>(
     Ok(())
 }
 
-pub(crate) struct Getter;
+/// Which half of a property an [`Accessor`] supplies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AccessorKind {
+    Getter,
+    Setter,
+}
 
-unsafe impl Collect for Getter {
+impl AccessorKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Getter => "getter",
+            Self::Setter => "setter",
+        }
+    }
+}
+
+/// Marker made by the prelude `getter` / `setter` types from a function.
+///
+/// [`create`] stores the function it holds as one half of a property and drops
+/// the marker, so a property's accessors are called directly.
+pub(crate) struct Accessor<'v> {
+    kind: AccessorKind,
+    phantom: PhantomData<Value<'v>>,
+}
+
+/// The function an [`Accessor`] wraps.
+pub(crate) struct AccessorAnnex<'v>(Value<'v>);
+
+impl<'v> Annex for AccessorAnnex<'v> {
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        self.0.accept(visit)
+    }
+
+    fn clear(&self) {
+        // GC cannot safely clear annexes with outstanding immutable references
+    }
+}
+
+unsafe impl<'v> Collect for Accessor<'v> {
+    const CYCLIC: bool = true;
+    const IMMUTABLE: bool = true;
+    type Annex = AccessorAnnex<'v>;
+
+    fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
+        ControlFlow::Continue(())
+    }
+
+    fn clear(&mut self) {}
+}
+
+impl<'v> Protocol<'v> for Accessor<'v> {
+    fn op_type<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) {
+        let singletons = strand.singletons();
+        let ty = match this.get().kind {
+            AccessorKind::Getter => &singletons.getter,
+            AccessorKind::Setter => &singletons.setter,
+        };
+        Output::set(strand, out, ty)
+    }
+
+    fn op_debug<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        crate::fmt!(strand, w, "<{}>", this.get().kind.name())
+    }
+}
+
+/// The `getter` and `setter` types, which make an [`Accessor`] when called.
+pub(crate) struct AccessorType(pub(crate) AccessorKind);
+
+unsafe impl Collect for AccessorType {
     const CYCLIC: bool = false;
     const IMMUTABLE: bool = true;
     type Annex = ();
@@ -626,7 +692,7 @@ unsafe impl Collect for Getter {
     fn clear(&mut self) {}
 }
 
-impl<'v> Protocol<'v> for Getter {
+impl<'v> Protocol<'v> for AccessorType {
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -635,69 +701,52 @@ impl<'v> Protocol<'v> for Getter {
         Output::set(strand, out, &strand.singletons().type_obj)
     }
 
+    fn op_subtype<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        supertype: &Value<'v>,
+    ) -> bool {
+        supertype.eq(strand, &this).unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
+    }
+
     fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
+        this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type Getter>")
+        crate::fmt!(strand, w, "<type std.{}>", this.get().0.name())
     }
 
-    fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
-        Some(Inspect {
-            is_abstract: true,
-            members: members![Method(sym::GET)],
-            type_members: members![
-                Method(sym::VERBATIM_METHOD),
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
-            ],
-        })
-    }
-}
-
-pub(crate) struct Setter;
-
-unsafe impl Collect for Setter {
-    const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
-
-    fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
-        ControlFlow::Continue(())
-    }
-
-    fn clear(&mut self) {}
-}
-
-impl<'v> Protocol<'v> for Setter {
-    fn op_type<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
+    async fn op_call<'a, 's>(
+        this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
+        args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
-    ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type Setter>")
+        let kind = this.get().0;
+        let ([mut func], []) = unpack!(strand, args, 1, 0)?;
+        let accessor = Accessor {
+            kind,
+            phantom: PhantomData,
+        };
+        strand.builtin_types().accessor.create_with_annex(
+            strand,
+            accessor,
+            AccessorAnnex(func.take()),
+            out,
+        );
+        Ok(())
     }
+}
 
-    fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
-        Some(Inspect {
-            is_abstract: true,
-            members: members![Method(sym::SET)],
-            type_members: members![
-                Method(sym::VERBATIM_METHOD),
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
-            ],
-        })
-    }
+/// If `value` is an [`Accessor`], replace it with the function it wraps and
+/// return which half of a property it supplies.
+fn unwrap_accessor<'v>(strand: &Strand<'v, '_>, value: &mut Value<'v>) -> Option<AccessorKind> {
+    let accessor = value.downcast_ref(strand.builtin_types().accessor)?;
+    let kind = accessor.get().kind;
+    *value = accessor.annex().0.dup();
+    Some(kind)
 }
 
 /// Marker wrapper produced by the prelude `class` decorator.
@@ -790,7 +839,7 @@ pub(crate) enum ClassEntry<'v> {
     Field(usize),
     /// A Do function value (method).
     Method(Value<'v>),
-    /// A getter/setter pair whose `get`/`set` methods mediate instance access.
+    /// A getter/setter pair of functions, called with the instance.
     Property(Property<'v>),
     /// Native delegation: index into instance `natives`.
     Delegate(usize, MemberKind),
@@ -803,7 +852,9 @@ pub(crate) enum ClassEntry<'v> {
 ///
 /// `inherited` distinguishes `class` members, which subclasses pick up, from
 /// `static` members, which they do not. A static therefore shadows an inherited
-/// class member of the same name without propagating any further.
+/// class member of the same name without propagating any further. A class
+/// method or property is called with the class it was reached through; a static
+/// one is called without a receiver.
 pub(crate) enum ClassTypeEntry<'v> {
     /// Class-level field: index into `type_fields` / `type_field_defaults`.
     Field { slot: usize, inherited: bool },
@@ -1002,6 +1053,14 @@ impl<'v> ClassObject<'v> {
     ) -> Result<'v, 's, ()> {
         let me = this.annex();
         match me.type_entry(field) {
+            // A static method takes no receiver, so it is its own value.
+            Some(ClassTypeEntry::Method {
+                value,
+                inherited: false,
+            }) => {
+                Output::set(strand, out, value);
+                Ok(())
+            }
             Some(ClassTypeEntry::Method { .. }) => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
@@ -1018,9 +1077,13 @@ impl<'v> ClassObject<'v> {
                         getter: Some(getter),
                         ..
                     },
-                ..
+                inherited,
             }) => strand.sync(async |strand| {
-                method!(strand, getter, Sym::well_known(sym::GET), out, &this).await
+                if *inherited {
+                    call!(strand, getter, out, &this).await
+                } else {
+                    call!(strand, getter, out).await
+                }
             }),
             Some(ClassTypeEntry::Property { .. }) => Err(Error::field(strand, field)),
             Some(ClassTypeEntry::Delegate(type_obj, _)) => {
@@ -1104,18 +1167,14 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                         setter: Some(setter),
                         ..
                     },
-                ..
+                inherited,
             }) => strand.with_slots_sync(|strand, [mut discard]| {
                 strand.sync(async |strand| {
-                    method!(
-                        strand,
-                        setter,
-                        Sym::well_known(sym::SET),
-                        &mut discard,
-                        &this,
-                        value
-                    )
-                    .await
+                    if *inherited {
+                        call!(strand, setter, &mut discard, &this, value).await
+                    } else {
+                        call!(strand, setter, &mut discard, value).await
+                    }
                 })
             }),
             Some(ClassTypeEntry::Delegate(type_obj, _)) => {
@@ -1182,9 +1241,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                     Some(ClassEntry::Property(Property {
                         getter: Some(getter),
                         ..
-                    })) => strand.sync(async |strand| {
-                        method!(strand, getter, Sym::well_known(sym::GET), out, obj).await
-                    }),
+                    })) => strand.sync(async |strand| call!(strand, getter, out, obj).await),
                     Some(ClassEntry::Method(_) | ClassEntry::Abstract(_, _)) => {
                         BoundMethod::create(strand, obj, field, out);
                         Ok(())
@@ -1255,17 +1312,8 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                         setter: Some(setter),
                         ..
                     })) => strand.with_slots_sync(move |strand, [mut tmp]| {
-                        strand.sync(async |strand| {
-                            method!(
-                                strand,
-                                setter,
-                                Sym::well_known(sym::SET),
-                                &mut tmp,
-                                obj,
-                                &value
-                            )
-                            .await
-                        })
+                        strand
+                            .sync(async |strand| call!(strand, setter, &mut tmp, obj, &value).await)
                     }),
                     Some(
                         ClassEntry::Method(_)
@@ -1345,17 +1393,20 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                     // A class method receives the class it was reached through as
                     // its first argument. Inherited entries are copied into the
                     // subclass's own table, so `this` is already the derived class.
+                    // A static method gets only its own arguments.
                     Some(ClassTypeEntry::Method { .. }) => {
                         let this = this.clone();
                         return strand
                             .with_slots(async move |strand, [mut func]| {
-                                let Some(ClassTypeEntry::Method { value, .. }) =
+                                let Some(ClassTypeEntry::Method { value, inherited }) =
                                     this.annex().type_entry(method)
                                 else {
                                     unreachable!("checked above")
                                 };
                                 Output::set(strand, Slot::reborrow(&mut func), value);
-                                args.prepend_self(Value::from_object(this.to_strong()));
+                                if *inherited {
+                                    args.prepend_self(Value::from_object(this.to_strong()));
+                                }
                                 func.op_call(strand, args, out).await
                             })
                             .await;
@@ -1405,13 +1456,15 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
             let this = this.clone();
             return strand
                 .with_slots(async move |strand, [mut func]| {
-                    let Some(ClassTypeEntry::Method { value, .. }) =
+                    let Some(ClassTypeEntry::Method { value, inherited }) =
                         this.annex().type_entry(call_sym)
                     else {
                         unreachable!("checked above")
                     };
                     Output::set(strand, Slot::reborrow(&mut func), value);
-                    args.prepend_self(Value::from_object(this.to_strong()));
+                    if *inherited {
+                        args.prepend_self(Value::from_object(this.to_strong()));
+                    }
                     func.op_call(strand, args, out).await
                 })
                 .await;
@@ -1761,9 +1814,7 @@ fn read_class_entry<'v, 'a, 's>(
         ClassEntry::Property(Property {
             getter: Some(getter),
             ..
-        }) => strand.sync(async |strand| {
-            method!(strand, getter, Sym::well_known(sym::GET), out, &this).await
-        }),
+        }) => strand.sync(async |strand| call!(strand, getter, out, &this).await),
         ClassEntry::Delegate(slot, MemberKind::Getter | MemberKind::Property) => {
             let native = this.annex().natives[*slot]
                 .get()
@@ -2299,9 +2350,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             Some(ClassEntry::Property(Property {
                 getter: Some(getter),
                 ..
-            })) => strand.sync(async |strand| {
-                method!(strand, getter, Sym::well_known(sym::GET), out, &this).await
-            }),
+            })) => strand.sync(async |strand| call!(strand, getter, out, &this).await),
             Some(ClassEntry::Method(_) | ClassEntry::Abstract(_, _)) => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
@@ -2350,17 +2399,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 setter: Some(setter),
                 ..
             })) => strand.with_slots_sync(move |strand, [mut tmp]| {
-                strand.sync(async |strand| {
-                    method!(
-                        strand,
-                        setter,
-                        Sym::well_known(sym::SET),
-                        &mut tmp,
-                        &this,
-                        &value
-                    )
-                    .await
-                })
+                strand.sync(async |strand| call!(strand, setter, &mut tmp, &this, &value).await)
             }),
             Some(ClassEntry::Delegate(slot, _)) => {
                 let native = annex.natives[*slot]
@@ -2416,14 +2455,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             })) => {
                 return strand
                     .with_slots(async move |strand, [mut callable]| {
-                        method!(
-                            strand,
-                            getter,
-                            Sym::well_known(sym::GET),
-                            &mut callable,
-                            &this
-                        )
-                        .await?;
+                        call!(strand, getter, &mut callable, &this).await?;
                         callable.op_call(strand, args, out).await
                     })
                     .await;

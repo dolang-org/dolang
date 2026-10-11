@@ -6,7 +6,7 @@ use std::{ptr, rc::Rc};
 use super::{Ctx, Lower, Scope};
 use crate::{
     Mode, PreludeImport,
-    ast::{self, Class, Def, Function, Ident, ImportElement, Method, Res, Stmt},
+    ast::{self, Class, Def, Function, Ident, ImportElement, Method, Res, Stmt, VarFlags},
     typeck::{
         cfg::{FuncId, Origin, VarId},
         r#type::TypeId,
@@ -130,7 +130,7 @@ impl<'u> Lower<'_, 'u> {
                         _ => Origin::Synthetic,
                     };
                     let id = self.graph.alloc_var(func, origin, None);
-                    if module && var.exported {
+                    if module && var.flags.contains(VarFlags::EXPORTED) {
                         let mut data = self.graph.var_mut(id);
                         data.exported = true;
                         data.interprocedural = true;

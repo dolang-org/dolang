@@ -680,3 +680,42 @@ pub def shadowed()
   let s = Shadow 1
   let _ = s
   #       ^: flow std.Str
+
+# A static member takes no receiver: its class reaches its private members by
+# name, and a static property's accessors are called without one
+pub class Tally
+  #[static]
+  field total @ Int = 0
+
+  #[static]
+  pub def add by @ Int -> Int
+    let t = Tally.#total
+    let _ = t
+    #       ^: flow std.Int
+    Tally.#total = (t + by)
+    Tally.#total
+
+  #[static]
+  #[getter]
+  pub def current() -> Int
+    Tally.#total
+
+  #[static]
+  #[setter]
+  pub def current value @ Int
+    Tally.#total = value
+
+pub def tallied()
+  let n = Tally.add 1
+  let _ = n
+  #       ^: flow std.Int
+  let c = Tally.current
+  let _ = c
+  #       ^: flow std.Int
+  Tally.current = 2
+  Tally.current = "a"
+# error: expected `std.Int`, found `"a"`
+#   --> m.dol:LL:LL
+#    |
+# LL |   Tally.current = "a"
+#    |                   ^^^

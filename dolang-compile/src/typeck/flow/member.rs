@@ -230,7 +230,8 @@ impl Flow<'_, '_> {
                 FoundKind::Property { getter, setter } => Resolved::Property {
                     getter: signatures(getter),
                     setter: signatures(setter),
-                    passed: !found.bound,
+                    // A static property's accessors take no receiver
+                    passed: !found.bound && found.scope != Scope::Static,
                 },
                 FoundKind::Unknown => Resolved::Dynamic,
             },

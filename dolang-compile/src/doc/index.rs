@@ -343,7 +343,7 @@ impl Index<'_> {
         // An import the code never reads is not emitted, but a type may still name it
         if !scope.binding(*res).is_some_and(|var| {
             let var = var.get();
-            var.is_emitted() || var.type_used
+            var.is_emitted() || var.flags.contains(VarFlags::TYPE_USED)
         }) {
             return;
         }
@@ -1198,7 +1198,8 @@ impl Index<'_> {
                     }
                     self.decorators(id, &mut method.decorators);
                     let group = self.binders(scope, Some(id), method.binders.as_deref_mut());
-                    self.function(&group, &mut method.func, Some(id), true, true);
+                    let receiver = method.scope != MemberScope::Static;
+                    self.function(&group, &mut method.func, Some(id), true, receiver);
                 }
                 ClassMember::Field(field) => {
                     // Every name in a `field x y` shares the declaration, so

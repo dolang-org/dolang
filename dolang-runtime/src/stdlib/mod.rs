@@ -18,11 +18,9 @@ use crate::{
 
 pub(crate) mod fmt;
 mod math;
-mod property;
 mod strand;
 
 pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
-    let property_types = property::register(builder);
     let fmt = fmt::register(builder);
     let member_scopes = class::register_member_scopes(builder);
     let member_scopes = builder.register_state(member_scopes);
@@ -56,8 +54,8 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     let sink_type = bc.output_iter.dup();
     let iterable_type = bc.iterable.dup();
     let sinkable_type = bc.sinkable.dup();
-    let getter_type = bc.getter.dup();
-    let setter_type = bc.setter.dup();
+    let getter = bc.getter.dup();
+    let setter = bc.setter.dup();
     let null = bc.null.dup();
     let null_type = bc.null_type.dup();
     let error_sink_stop = bc.error_sink_stop.dup();
@@ -111,8 +109,8 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .value("Tuple", &tuple)
         .value("Func", &func)
         .value("Range", &range)
-        .value("getter", property_types.getter)
-        .value("setter", property_types.setter)
+        .value("getter", &getter)
+        .value("setter", &setter)
         .value("class", member_scopes.class)
         .value("static", member_scopes.statik)
         .value("Module", &module)
@@ -129,8 +127,6 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         // Iterator protocol types
         .value("Iterable", &iterable_type)
         .value("Sinkable", &sinkable_type)
-        .value("Getter", &getter_type)
-        .value("Setter", &setter_type)
         .value("Iter", &iter_type)
         .value("Sink", &sink_type)
         .value("Null", &null_type)

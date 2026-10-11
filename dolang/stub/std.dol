@@ -100,7 +100,7 @@ pub def float value @ (Num | Str) -> Float
   ...
 
 #
-# Builds a getter object from a function.
+# Makes a field getter from a function of the object read.
 #
 #
 # ## Example
@@ -114,10 +114,20 @@ pub def float value @ (Num | Str) -> Float
 #     obj.#port
 # ```
 #
-pub def getter[T, R]
-  # Function used for field reads.
+@def getter[T, R]
+  # Function called for field reads.
   func @ ((T, <Value, >Value) -> R)
 do -> Getter[T, R]
+
+# Makes a static field getter from a function with no parameters.
+@def getter[R]
+  # Function called for field reads.
+  func @ ((<Value, >Value) -> R)
+do -> StaticGetter[R]
+
+# Makes a field getter from a function, marking it for a class body to store
+# as a computed field.
+pub def getter func @ Func -> (Getter[Value, Value] | StaticGetter[Value])
   ...
 
 #
@@ -171,7 +181,8 @@ do -> Record[...Ts]
   ...
 
 #
-# Builds a setter object from a function.
+# Makes a field setter from a function of the object assigned and its new
+# value.
 #
 #
 # ## Example
@@ -183,10 +194,20 @@ do -> Record[...Ts]
 #     obj.#_port = value
 # ```
 #
-pub def setter[T, V]
-  # Function used for field writes.
+@def setter[T, V]
+  # Function called for field writes.
   func @ ((T, V, <Value, >Value) -> nil)
 do -> Setter[T, V]
+
+# Makes a static field setter from a function of only the new value.
+@def setter[V]
+  # Function called for field writes.
+  func @ ((V, <Value, >Value) -> nil)
+do -> StaticSetter[V]
+
+# Makes a field setter from a function, marking it for a class body to store
+# as a computed field.
+pub def setter func @ Func -> (Setter[Value, Value] | StaticSetter[Value])
   ...
 
 #
@@ -2896,24 +2917,14 @@ pub class Module: @Spread[Tuple[Sym, Value]]
     ...
 
 #
-# Abstract type for class-field getter objects.
+# What [`getter`](std.getter) makes from a function of the object read.
 #
-# For a computed field `obj.name`:
+# A class member holding one is a computed field: reading `obj.name` calls the
+# function with `obj`. A decorator that wraps a getter's function returns this
+# type by calling `getter` itself.
 #
-# - reading `obj.name` calls `getter.get(obj)`
-# - calling `obj.name(...)` first calls `getter.get(obj)`, then calls the result
-#
-pub class Getter[T, R]
-  #
-  #
-  # Returns the field value for `obj`.
-  #
-  pub def get
-    self
-    # instance being accessed
-    obj @ T
-  do -> R
-    ...
+pub @class Getter[T, R]
+  field func @Phantom[(T -> R)]
 
 
 #
@@ -3784,25 +3795,15 @@ pub class Set[T]: Iterable[T] @Spread[T]
 
 
 #
-# Abstract type for class-field setter objects.
+# What [`setter`](std.setter) makes from a function of the object assigned and
+# its new value.
 #
-# For a computed field assignment `obj.name = value`:
+# A class member holding one is a computed field: `obj.name = value` calls the
+# function with `obj` and `value`. A decorator that wraps a setter's function
+# returns this type by calling `setter` itself.
 #
-# - writing `obj.name = value` calls `setter.set(obj, value)`
-#
-pub class Setter[T, V]
-  #
-  #
-  # Updates the field value for `obj`.
-  #
-  pub def set
-    self
-    # instance being assigned
-    obj @ T
-    # new field value
-    value @ V
-  do
-    ...
+pub @class Setter[T, V]
+  field func @Phantom[((T, V) -> nil)]
 
 
 #
@@ -3840,13 +3841,30 @@ pub class StateError: RuntimeError
 
 
 #
+# What [`getter`](std.getter) makes from a function with no parameters, the
+# getter of a static computed field.
+#
+pub @class StaticGetter[R]
+  field func @Phantom[(() -> R)]
+
+
+#
+# What [`setter`](std.setter) makes from a function of only the new value, the
+# setter of a static computed field.
+#
+pub @class StaticSetter[V]
+  field func @Phantom[(V -> nil)]
+
+
+#
 # Decorator placing a class member in the type-object namespace without making it
 # inheritable.
 #
-# Applies to a `def` or a `field` inside a class body. Because a static is not
-# inherited, it shadows an inherited class member of the same name without
-# propagating that shadowing to subclasses — which is what makes a static
-# `(call)` usable as a factory that cannot recurse into itself:
+# Applies to a `def` or a `field` inside a class body. A static method takes no
+# receiver; it names its class to reach it. Because a static is not inherited,
+# it shadows an inherited class member of the same name without propagating that
+# shadowing to subclasses — which is what makes a static `(call)` usable as a
+# factory that cannot recurse into itself:
 #
 # ```
 # class Shape
@@ -3856,8 +3874,8 @@ pub class StateError: RuntimeError
 #     self.kind = kind
 #
 #   #[static]
-#   pub def (call) cls kind
-#     Type.(call) $cls $kind
+#   pub def (call) kind
+#     Type.(call) $Shape $kind
 #
 # class Circle: Shape
 #
