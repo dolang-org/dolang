@@ -325,10 +325,6 @@ const _: () = {
     sync::<elab::Bounds<'_>>();
 };
 
-/// The stack each checking thread gets, as much as a main thread's, since lowering,
-/// flow analysis and the solver recurse
-const STACK_SIZE: usize = 8 * 1024 * 1024;
-
 /// Check every unit with [`check_unit`], on up to `threads` threads, giving their
 /// outputs by [`UnitId`]
 fn check_units(
@@ -370,14 +366,7 @@ fn check_units(
     };
     let mut slots: Vec<Option<UnitOutput>> = (0..count).map(|_| None).collect();
     thread::scope(|scope| {
-        let workers: Vec<_> = (1..threads)
-            .map(|_| {
-                thread::Builder::new()
-                    .stack_size(STACK_SIZE)
-                    .spawn_scoped(scope, work)
-                    .expect("failed to spawn a checking thread")
-            })
-            .collect();
+        let workers: Vec<_> = (1..threads).map(|_| scope.spawn(work)).collect();
         let mut done = work();
         for worker in workers {
             // Keep a worker's own panic, which the scope would otherwise replace
