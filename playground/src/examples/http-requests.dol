@@ -14,20 +14,24 @@ let NUM_WORKERS = 2
 # Parallel fetch pipeline
 pipeline
   # Fetch first NUM_POSTS posts and feed them into pipeline
-  do from $ http.get $POSTS do |res| res.json()[..NUM_POSTS]
+  do from $ http.get $POSTS do |res|
+    let Array(posts) = res.json()
+    posts[..NUM_POSTS]
   # Process posts with worker pool
   do pool $NUM_WORKERS do |post|
     # Feed first NUM_COMMENTS per post into pipeline
     from $ http.get
       (COMMENTS.with_query postId: post["id"])
-      do |res| res.json()[..NUM_COMMENTS]
+      do |res|
+        let Array(comments) = res.json()
+        comments[..NUM_COMMENTS]
   # Print name and body of each comment
   do for "name": name "body": body ...
     echo "comment: $name"
     echo "  $(body.replace "\n" "\n  ")"
 
 # POST example
-let post = http.post (API / "posts")
+let Dict(post) = http.post (API / "posts")
   json:
     title: Hello from Do
     body: Sent from the playground

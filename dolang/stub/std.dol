@@ -1815,17 +1815,16 @@ pub class BaseDict[S @ {...}]: @Index[S] @Spread[S] @Unpack[S, Rest: Unpack[S]] 
   # #> import test:
   # #>   - assert
   # let d = {a: 1, b: 2}
-  # d.insert "multi" "first"
-  # d.insert "multi" "second"
+  # d.insert :a: 3
   #
   # # Key-only check. A bareword key is a `Sym`, so `"a"` would not match it.
   # assert (d.contains :a:)
   # assert (!d.contains :z:)
   #
   # # Key + value check (multi-map aware)
-  # assert (d.contains "multi" "first")
-  # assert (d.contains "multi" "second")
-  # assert (!d.contains "multi" "third")
+  # assert (d.contains :a: 1)
+  # assert (d.contains :a: 3)
+  # assert (!d.contains :a: 2)
   # ```
   #
   pub def contains
@@ -2640,6 +2639,41 @@ pub class FmtValue[T]: Func
   pub def value self -> T
     ...
 
+  # As [`FmtSpec.fill`](std.FmtSpec.fill).
+  #[getter]
+  pub def fill self -> (FmtFill | nil)
+    ...
+
+  # As [`FmtSpec.align`](std.FmtSpec.align).
+  #[getter]
+  pub def align self -> (FmtAlign | nil)
+    ...
+
+  # As [`FmtSpec.sign`](std.FmtSpec.sign).
+  #[getter]
+  pub def sign self -> (FmtSign | nil)
+    ...
+
+  # As [`FmtSpec.width`](std.FmtSpec.width).
+  #[getter]
+  pub def width self -> (Int | nil)
+    ...
+
+  # As [`FmtSpec.precision`](std.FmtSpec.precision).
+  #[getter]
+  pub def precision self -> (Int | nil)
+    ...
+
+  # As [`FmtSpec.alt`](std.FmtSpec.alt).
+  #[getter]
+  pub def alt self -> Bool
+    ...
+
+  # As [`FmtSpec.kind`](std.FmtSpec.kind).
+  #[getter]
+  pub def kind self -> (FmtKind | nil)
+    ...
+
   #
   # The text the value was written as, or nil. Formatted interpolation records
   # the whole interpolation including its sigil and delimiters, so a consumer can
@@ -2762,8 +2796,9 @@ pub class FmtValue[T]: Func
 # assert_eq $seq.format() "user:     root"
 #
 # # The interpolated value is still there to be inspected.
-# assert_eq $seq[1].value $user
-# assert_eq $seq[1].width 8
+# let std.FmtValue(segment) = seq[1]
+# assert_eq $segment.value $user
+# assert_eq $segment.width 8
 # ```
 pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[FmtSegment[V]] @Spread[FmtSegment[V]] @Unpack[FmtSegment[V], Rest: UnpackIter[FmtSegment[V]]]
   field schema @ Phantom[((...S) -> nil)]
@@ -3448,7 +3483,7 @@ pub class Range[T @ Num]: Iterable[T] @Spread[T]
   #
   # Open-ended forms keep the missing endpoint as `nil` internally.
   #
-  pub def (init) self start@T = nil end@T = nil step@T = nil
+  pub def (init) self start@(T|nil) = nil end@(T|nil) = nil step@(T|nil) = nil
     ...
 
   #

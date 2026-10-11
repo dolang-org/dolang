@@ -22,7 +22,9 @@ A `test` module provides the assertion functions of the shell's `test` module
 The adapter carries the typelibs of exactly these modules: std, `math`,
 `strand`, the extensions' stubs, and the `test` module's stub in
 `dolang-wasm/typelib/`. That directory is not named `stub/`, so the docs and
-the LSP don't pick it up as a second `test` module.
+the LSP don't pick it up as a second `test` module. Analysis type checks the
+source against the typelibs of the modules it imports, as the LSP does; an
+import of any other module is unknown to the checker.
 
 The adapter installs the host console for `term`, so `echo`, `print`, and
 `term.console` write to the output panel. The console reports `can_style` as
@@ -72,6 +74,10 @@ relative worker and Wasm URLs.
 
 `src/protocol.ts` declares requests and replies separately for each worker.
 `analyze` and `run` requests carry an ID, source version, and complete source.
+The analysis worker replies to `analyze` with tokens and compiler diagnostics
+at once, then with `checked` type diagnostics once the source has gone 300 ms
+without another request, as the LSP delays its checks. A newer request cancels
+a pending check, and an unchanged source reuses its last check.
 The page tracks readiness and generation per worker and ignores obsolete
 analysis and replies from replaced workers. Analysis continues during execution,
 and replacing the run worker leaves the analysis worker alone. If analysis makes

@@ -42,6 +42,8 @@ let version = 0;
 let requestId = 0;
 let latestAnalysis = 0;
 let analysisVersion: number | undefined;
+// The compiler diagnostics of the latest analysis, which its type diagnostics join.
+let compileDiagnostics: Diagnostic[] = [];
 // The source version whose analysis made the analysis worker fail.
 let failedAnalysis: number | undefined;
 let activeRun: number | undefined;
@@ -193,9 +195,16 @@ function startAnalysisWorker() {
       startAnalysisWorker();
     },
     reply(reply) {
-      if (reply.type !== 'analysis' || reply.version !== version || reply.id !== latestAnalysis) return;
-      view.dispatch({ effects: tokenEffect.of(reply.value.tokens) });
-      showDiagnostics(reply.value.diagnostics);
+      if (reply.type !== 'analysis' && reply.type !== 'checked') return;
+      if (reply.version !== version || reply.id !== latestAnalysis) return;
+      if (reply.type === 'analysis') {
+        view.dispatch({ effects: tokenEffect.of(reply.value.tokens) });
+        compileDiagnostics = reply.value.diagnostics;
+        showDiagnostics(compileDiagnostics);
+      } else {
+        showDiagnostics([...compileDiagnostics, ...reply.diagnostics]);
+        element('diagnostics-section').dataset.checked = '';
+      }
     },
   });
 }
@@ -230,7 +239,6 @@ function replaceRunWorker(message = 'Loading…') {
         setError(reply.value.error ?? '');
         status.textContent = reply.value.canceled ? 'Stopped' : reply.value.error ? 'Failed' : 'Finished';
         showSnapshot();
-        if (reply.version === version) showDiagnostics(reply.value.diagnostics);
         controls();
       }
     },
@@ -300,6 +308,7 @@ async function init() {
             version++;
             element('diagnostics').replaceChildren();
             element('diagnostics-section').hidden = true;
+            delete element('diagnostics-section').dataset.checked;
             showSnapshot();
             scheduleAnalysis();
           }

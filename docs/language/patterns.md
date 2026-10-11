@@ -90,7 +90,7 @@ import json
 let payload = json.decode r|
   {"name": "Alice", "age": 30}
 
-let "name": name "age": age = payload
+let Dict("name": name "age": age) = payload
 assert_eq $name "Alice"
 assert_eq $age 30
 ```

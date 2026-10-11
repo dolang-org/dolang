@@ -55,13 +55,14 @@ pub @let Encodable = $
 # assert_eq (decode "42") 42
 # assert_eq (decode "[1, 2, 3]") [1, 2, 3]
 #
-# let doc = decode |
+# let Dict(doc) = decode |
 #   title = "Example"
 #   [server]
 #   port = 8080
 #
 # assert_eq $doc["title"] "Example"
-# assert_eq $doc["server"]["port"] 8080
+# let Dict(server) = doc["server"]
+# assert_eq $server["port"] 8080
 # ```
 pub def decode
   # TOML input to parse.

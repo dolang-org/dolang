@@ -12,7 +12,6 @@ export interface RunResult {
   result?: string;
   error?: string;
   canceled: boolean;
-  diagnostics: Diagnostic[];
 }
 /** Host methods the worker forwards to the page. */
 export type PageMethod = 'write';
@@ -24,7 +23,8 @@ type Lifecycle = { type: 'ready' } | { type: 'failure'; message: string };
 export type AnalysisRequest = { type: 'analyze'; id: number; version: number; source: string };
 export type AnalysisReply =
   | Lifecycle
-  | { type: 'analysis'; id: number; version: number; value: Analysis };
+  | { type: 'analysis'; id: number; version: number; value: Analysis }
+  | { type: 'checked'; id: number; version: number; diagnostics: Diagnostic[] };
 export type RunRequest =
   | { type: 'run'; id: number; version: number; source: string }
   | { type: 'cancel'; id: number }

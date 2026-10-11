@@ -1,7 +1,7 @@
 use std::fmt::{self};
 
 use super::{BlockId, FuncId, Graph, Inst, InstInfo, ScopeId, Term, TermInfo};
-use crate::{Compiler, sym};
+use crate::{Compiler, ast, sym};
 
 #[cfg(feature = "debug")]
 use super::Block;
@@ -30,7 +30,7 @@ impl Inst {
             let var = scope
                 .vars
                 .iter()
-                .filter(|v| v.is_emitted() && !v.captured)
+                .filter(|v| v.is_emitted() && !v.flags.contains(ast::VarFlags::CAPTURED))
                 .nth(idx - scope.local_offset)
                 .unwrap();
             if var.sym == sym::Id::INVALID {
@@ -58,7 +58,12 @@ impl Inst {
             drop(scope);
             self.resolve_upvar(compiler, graph, parent, idx, depth)
         } else if depth == 0 {
-            let var = scope.vars.iter().filter(|v| v.captured).nth(idx).unwrap();
+            let var = scope
+                .vars
+                .iter()
+                .filter(|v| v.flags.contains(ast::VarFlags::CAPTURED))
+                .nth(idx)
+                .unwrap();
             if var.sym == sym::Id::INVALID {
                 "<synthetic>"
             } else {
@@ -337,7 +342,7 @@ impl super::Func {
                     &compiler.bintab[compiler.symtab[local.sym]]
                 };
                 label.push_str(name);
-                if local.captured {
+                if local.flags.contains(ast::VarFlags::CAPTURED) {
                     label.push('🠇');
                 }
                 label.push_str("\\l");
