@@ -1,11 +1,11 @@
 use std::{
     cell::Cell,
-    collections::HashMap,
     fmt::{self, Write},
     iter, result,
 };
 
 use dolang_util::{intern::BinTable, mono::MonoVec};
+use rustc_hash::FxHashMap;
 
 use crate::{
     Mode, PreludeImport,
@@ -159,13 +159,13 @@ impl Annotate for AltNameMismatch {
 #[derive(Default)]
 struct AltFrame {
     /// What the first alternative binds, and where
-    first: HashMap<sym::Id, (usize, Span)>,
+    first: FxHashMap<sym::Id, (usize, Span)>,
     /// The first alternative, once elaborated
     first_span: Span,
     /// The alternative being elaborated
     current: usize,
     /// What the current alternative has bound, and where, if it isn't the first
-    seen: HashMap<sym::Id, Span>,
+    seen: FxHashMap<sym::Id, Span>,
 }
 
 /// A `def`/`class` name was used before its own statement was elaborated,
@@ -952,11 +952,11 @@ enum Scope<'s> {
         /// Only the variables marked by the current pattern, for linear cleanup.
         pattern_pending: Vec<usize>,
         parent: &'s Scope<'s>,
-        index: HashMap<sym::Id, usize>,
+        index: FxHashMap<sym::Id, usize>,
     },
     Class {
         parent: &'s Scope<'s>,
-        class_private: HashMap<String, sym::Id>,
+        class_private: FxHashMap<String, sym::Id>,
     },
 }
 
@@ -1065,7 +1065,7 @@ impl<'s> Scope<'s> {
             vars: MonoVec::new(),
             pattern_pending: Vec::new(),
             parent: self,
-            index: HashMap::new(),
+            index: FxHashMap::default(),
         }
     }
 
@@ -1084,7 +1084,7 @@ impl<'s> Scope<'s> {
             vars: MonoVec::new(),
             pattern_pending: Vec::new(),
             parent: self,
-            index: HashMap::new(),
+            index: FxHashMap::default(),
         }
     }
 
@@ -1102,7 +1102,7 @@ impl<'s> Scope<'s> {
             vars: MonoVec::new(),
             pattern_pending: Vec::new(),
             parent: self,
-            index: HashMap::new(),
+            index: FxHashMap::default(),
         }
     }
 
@@ -1124,14 +1124,14 @@ impl<'s> Scope<'s> {
             vars: MonoVec::new(),
             pattern_pending: Vec::new(),
             parent: self,
-            index: HashMap::new(),
+            index: FxHashMap::default(),
         }
     }
 
     fn class(&'s self) -> Self {
         Self::Class {
             parent: self,
-            class_private: HashMap::new(),
+            class_private: FxHashMap::default(),
         }
     }
 
@@ -1343,7 +1343,7 @@ impl<'s> Scope<'s> {
             vars: MonoVec::new(),
             pattern_pending: Vec::new(),
             parent: self,
-            index: HashMap::new(),
+            index: FxHashMap::default(),
         }
     }
 
@@ -1480,14 +1480,14 @@ impl<'s> Scope<'s> {
 
     /// The names visible in this scope, to restore after elaborating an
     /// alternative
-    fn names(&self) -> HashMap<sym::Id, usize> {
+    fn names(&self) -> FxHashMap<sym::Id, usize> {
         match self {
             Self::Nested { index, .. } => index.clone(),
             _ => unreachable!("pattern bindings have a lexical destination scope"),
         }
     }
 
-    fn restore_names(&mut self, names: HashMap<sym::Id, usize>) {
+    fn restore_names(&mut self, names: FxHashMap<sym::Id, usize>) {
         match self {
             Self::Nested { index, .. } => *index = names,
             _ => unreachable!("pattern bindings have a lexical destination scope"),

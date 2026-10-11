@@ -1,0 +1,14 @@
+pub class Box[T]
+  pub field value @ T
+
+  def (init) self value @ T
+    self.value = value
+
+  pub def get self -> T
+    self.value
+
+pub def first[T] values @ Array[T] -> T
+  values[0]
+
+pub def pair[T] value @ T -> Tuple[T, T]
+  (value, value)

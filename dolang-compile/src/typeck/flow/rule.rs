@@ -16,7 +16,9 @@
 //! run: its results are bottom. An item of a comprehension is the exception, since
 //! bottom only says that it occurs zero times.
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
+
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
     At, Flow, State,
@@ -2948,7 +2950,7 @@ fn causes(
             Issue::Residual(_) => None,
         })
         .collect();
-    let mut members: HashMap<Vec<ObligationId>, usize> = HashMap::new();
+    let mut members: FxHashMap<Vec<ObligationId>, usize> = FxHashMap::default();
     for (path, _) in &contradictions {
         if let Some(union) = member(path) {
             *members.entry(union).or_default() += 1;
@@ -3193,7 +3195,7 @@ fn call_constraint(
 fn expectation(solver: &Solver<'_>, held: Term) -> Option<TypeId> {
     let mut found = None;
     let mut pending = vec![held];
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     while let Some(term) = pending.pop() {
         let Term::Infer(id) = term else {
             unreachable!("a variable stands for a held argument")

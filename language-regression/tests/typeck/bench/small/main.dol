@@ -1,0 +1,6 @@
+let values @ Array[Int] = [1, 2, 3]
+#            ^~~~~: ref std.Array
+#                  ^~~: ref std.Int
+let total @ Int = 0
+for value = values
+  total = (total + value)

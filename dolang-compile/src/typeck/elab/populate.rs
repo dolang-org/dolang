@@ -13,9 +13,11 @@
 //! structural invariant. Nothing here validates the database.
 
 use std::{
-    collections::{HashMap, HashSet, hash_map::Entry as MapEntry},
+    collections::hash_map::Entry as MapEntry,
     fmt::{self, Write},
 };
+
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
     Ambient, BinderRef, DeclNode, Designated, Diag, Head, ParamTy, Referent, RestSlot, Role, Slot,
@@ -47,7 +49,7 @@ const MAX_TYPE_DEPTH: usize = 256;
 
 /// Lift and intern every declaration into `db`, which is left ready to seal.
 pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
-    let mut sig_decls = HashMap::new();
+    let mut sig_decls = FxHashMap::default();
     let mut overloads = Vec::new();
     for index in 0..tables.decls.len() {
         let id = DeclId::from_index(index);
@@ -80,8 +82,8 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
         db.set_overloads(id, all);
     }
 
-    let mut groups = HashMap::new();
-    let mut broken = HashSet::new();
+    let mut groups = FxHashMap::default();
+    let mut broken = FxHashSet::default();
     for index in 0..tables.decls.len() {
         let id = DeclId::from_index(index);
         for sig in 0..tables.sig_count(id) {
@@ -128,14 +130,14 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
         groups: &groups,
         broken: &broken,
         diags: Vec::new(),
-        reported: HashSet::new(),
-        defaults: HashMap::new(),
+        reported: FxHashSet::default(),
+        defaults: FxHashMap::default(),
         expanding: Vec::new(),
-        expr_types: HashMap::new(),
+        expr_types: FxHashMap::default(),
         pattern: None,
         supertype: false,
     };
-    let mut site_types = HashMap::new();
+    let mut site_types = FxHashMap::default();
     for site in &tables.sites {
         let scope = populate.scope(site.group(), site.unit);
         let ty = match site.role {
@@ -210,17 +212,17 @@ struct Group<'g> {
 struct Populate<'t, 'u> {
     tables: &'t Tables<'u>,
     db: &'t Database,
-    groups: &'t HashMap<(DeclId, usize), Vec<BinderRef>>,
-    broken: &'t HashSet<(DeclId, usize)>,
+    groups: &'t FxHashMap<(DeclId, usize), Vec<BinderRef>>,
+    broken: &'t FxHashSet<(DeclId, usize)>,
     diags: Vec<UnitDiag>,
     /// The spans already diagnosed, since a type may be interned more than once
-    reported: HashSet<(UnitId, Span)>,
+    reported: FxHashSet<(UnitId, Span)>,
     /// Each binder default, interned in its declaration's group, or `None` while it is
-    defaults: HashMap<BinderRef, Option<TypeId>>,
+    defaults: FxHashMap<BinderRef, Option<TypeId>>,
     /// The written channels being interned in place of a function type's own
     expanding: Vec<(DeclId, usize, usize)>,
     /// Each written application and function type, by span
-    expr_types: HashMap<UnitSpan, TypeId>,
+    expr_types: FxHashMap<UnitSpan, TypeId>,
     /// Within a rest binding's `@...` pattern, the packs it names so far. The
     /// pattern is interpreted in a group of its own, one item of each pack.
     pattern: Option<Vec<TypeId>>,
@@ -1188,7 +1190,7 @@ impl<'t, 'u> Populate<'t, 'u> {
     fn decl(
         &mut self,
         id: DeclId,
-        sig_decls: &HashMap<(DeclId, usize), DeclId>,
+        sig_decls: &FxHashMap<(DeclId, usize), DeclId>,
         out: &mut Vec<(DeclId, Declaration)>,
     ) {
         let tables = self.tables;
@@ -1435,7 +1437,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         let unit = group.unit;
         // A function's overload signatures share the scope, visibility and form of
         // its implementation
-        let mut methods = HashMap::new();
+        let mut methods = FxHashMap::default();
         for (index, decl) in tables.decls.iter().enumerate() {
             if decl.outer == Some((id, 0))
                 && let DeclNode::Methods(ref found) = decl.node
@@ -1448,7 +1450,7 @@ impl<'t, 'u> Populate<'t, 'u> {
             }
         }
         // Instance members and type-object members are separate namespaces
-        let mut index = HashMap::new();
+        let mut index = FxHashMap::default();
         let mut members = Vec::new();
         for member in &class.members {
             match *member {

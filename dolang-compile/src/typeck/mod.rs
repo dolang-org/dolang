@@ -12,7 +12,6 @@ pub(crate) mod r#type;
 pub(crate) mod typelib;
 
 use std::{
-    collections::HashSet,
     num::NonZeroUsize,
     panic,
     path::Path,
@@ -22,6 +21,8 @@ use std::{
     },
     thread,
 };
+
+use rustc_hash::FxHashSet;
 
 use crate::{
     Error, ErrorInfo, Mode, Unit, UnitId,
@@ -119,7 +120,7 @@ enum Input<'u, 's> {
 /// are meaningful only for the [`Check`] this builder produces.
 pub struct Builder<'u, 's> {
     units: Vec<Input<'u, 's>>,
-    modules: HashSet<&'u str>,
+    modules: FxHashSet<&'u str>,
     /// The types `strand.PipeSender` and `strand.PipeReceiver` stand for, by module
     /// and item
     pipes: [(&'u str, &'u str); 2],
@@ -137,7 +138,7 @@ impl<'u, 's> Builder<'u, 's> {
     pub fn new() -> Self {
         Self {
             units: Vec::new(),
-            modules: HashSet::new(),
+            modules: FxHashSet::default(),
             pipes: [("strand", "Sender"), ("strand", "Receiver")],
             threads: None,
         }
@@ -189,6 +190,9 @@ impl<'u, 's> Builder<'u, 's> {
 
     /// Add a module to check by its typelib. The same typelib may be added to any
     /// number of checks.
+    ///
+    /// Its classes' conformance to their supertypes is not checked; that was
+    /// done with its source.
     ///
     /// Diagnostics may locate spans of the module, by line and column; it has no
     /// source to show.
@@ -321,10 +325,6 @@ const _: () = {
     sync::<elab::Bounds<'_>>();
 };
 
-/// The stack each checking thread gets, as much as a main thread's, since lowering,
-/// flow analysis and the solver recurse
-const STACK_SIZE: usize = 8 * 1024 * 1024;
-
 /// Check every unit with [`check_unit`], on up to `threads` threads, giving their
 /// outputs by [`UnitId`]
 fn check_units(
@@ -366,14 +366,7 @@ fn check_units(
     };
     let mut slots: Vec<Option<UnitOutput>> = (0..count).map(|_| None).collect();
     thread::scope(|scope| {
-        let workers: Vec<_> = (1..threads)
-            .map(|_| {
-                thread::Builder::new()
-                    .stack_size(STACK_SIZE)
-                    .spawn_scoped(scope, work)
-                    .expect("failed to spawn a checking thread")
-            })
-            .collect();
+        let workers: Vec<_> = (1..threads).map(|_| scope.spawn(work)).collect();
         let mut done = work();
         for worker in workers {
             // Keep a worker's own panic, which the scope would otherwise replace
@@ -403,10 +396,16 @@ fn check_unit(
     let db = r#type::Database::fork(shared);
     let mut wellformed = Vec::new();
     let wellformed_unresolved = elab::wellformed(&db, tables, bounds, unit, &mut wellformed);
+    let source = tables.units[unit.index()].source;
+    // A typelib's overrides were checked with its source, and a nonconforming
+    // member only misleads checks against it
     let mut overrides = Vec::new();
-    let overrides_unresolved = elab::overrides(&db, tables, unit, &mut overrides);
+    let overrides_unresolved = match source {
+        Some(_) => elab::overrides(&db, tables, unit, &mut overrides),
+        None => Vec::new(),
+    };
     // A unit's bodies are checked only from its source
-    let cfg = tables.units[unit.index()].source.map(|_| {
+    let cfg = source.map(|_| {
         let ir = lower::lower(tables, &db, unit);
         debug_assert_eq!(ir.validate(), Ok(()), "lowering builds a valid graph");
         #[cfg(debug_assertions)]

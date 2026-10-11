@@ -861,6 +861,7 @@ dependencies = [
  "dot-writer",
  "phf",
  "postcard",
+ "rustc-hash",
  "serde",
 ]
 
@@ -1250,6 +1251,9 @@ dependencies = [
 [[package]]
 name = "dolang-private-util"
 version = "0.1.1"
+dependencies = [
+ "rustc-hash",
+]
 
 [[package]]
 name = "dolang-rpc"
@@ -2321,11 +2325,13 @@ dependencies = [
 name = "language-regression"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "dolang",
  "dolang-private-build",
  "dolang-private-test",
  "dolang-runtime",
  "futures",
+ "mimalloc",
 ]
 
 [[package]]

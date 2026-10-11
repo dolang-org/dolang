@@ -54,7 +54,7 @@ fn generic_callees_are_instantiated_once_per_use() {
     // Two results and one binder variable for each call
     assert_eq!(s.bounds.len(), 4);
     assert_eq!(s.instantiations.borrow().len(), 2);
-    let mut binders = HashSet::new();
+    let mut binders = FxHashSet::default();
     for (result, arg) in results.into_iter().zip([int, str]) {
         let lower: Vec<_> = s.bounds(variable_id(result)).lower().collect();
         assert!(lower.iter().any(|&term| s.reify(term) == Ok(arg)));

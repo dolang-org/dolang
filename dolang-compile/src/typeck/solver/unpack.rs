@@ -231,7 +231,7 @@ impl Solver<'_> {
             };
             (start, source)
         } else {
-            match self.unpack_edge(start, unpack, &mut HashSet::new(), 0)? {
+            match self.unpack_edge(start, unpack, &mut FxHashSet::default(), 0)? {
                 Some(found) => found,
                 None => return Ok(None),
             }
@@ -245,7 +245,7 @@ impl Solver<'_> {
     /// Flatten a known unpack schema into atoms for walking a pattern.
     fn schema_atoms(&self, schema: Term) -> Result<Option<Atoms>, Issue> {
         let mut shape = Shape::default();
-        let keep = HashSet::new();
+        let keep = FxHashSet::default();
         self.include(
             schema,
             Multiplicity::Required,
@@ -263,7 +263,7 @@ impl Solver<'_> {
         &self,
         current: Nominal,
         unpack: DeclId,
-        path: &mut HashSet<DeclId>,
+        path: &mut FxHashSet<DeclId>,
         depth: usize,
     ) -> Result<Option<(Nominal, Source)>, Issue> {
         self.depth(depth)?;

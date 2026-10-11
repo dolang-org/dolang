@@ -7,7 +7,7 @@
 //! chains and cycles across units need no ordering. A kind no declaration
 //! determines is a type.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use super::{
     Ambient, BinderRef, Designated, Head, KindMismatch, KindOf, NotAType, NotGeneric,
@@ -98,8 +98,8 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
         ambient: None,
         packs: None,
         diags,
-        func_ambients: HashMap::new(),
-        braces: HashMap::new(),
+        func_ambients: FxHashMap::default(),
+        braces: FxHashMap::default(),
     };
     for site in &check.tables.sites {
         check.site(site);
@@ -142,7 +142,7 @@ enum Term {
 
 #[derive(Default)]
 struct Infer {
-    vars: HashMap<Var, usize>,
+    vars: FxHashMap<Var, usize>,
     parent: Vec<usize>,
     values: Vec<Value>,
 }
@@ -254,8 +254,8 @@ struct Check<'a, 't, 'u> {
     /// Within a rest binding's `@...` pattern, the packs it names so far
     packs: Option<usize>,
     diags: &'a mut Vec<UnitDiag>,
-    func_ambients: HashMap<UnitSpan, [Ambient; 2]>,
-    braces: HashMap<UnitSpan, Designated>,
+    func_ambients: FxHashMap<UnitSpan, [Ambient; 2]>,
+    braces: FxHashMap<UnitSpan, Designated>,
 }
 
 impl<'t> Check<'_, 't, '_> {

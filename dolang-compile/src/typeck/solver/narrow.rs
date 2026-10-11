@@ -188,7 +188,7 @@ impl Solver<'_> {
 
     /// Whether a class reaches `target`, or `None` when that can't be proven
     fn reaches(&self, nominal: &Nominal, target: DeclId) -> Option<bool> {
-        self.ancestor(nominal.clone(), target, &mut HashSet::new(), 0)
+        self.ancestor(nominal.clone(), target, &mut FxHashSet::default(), 0)
             .ok()
             .map(|found| found.is_some())
     }
@@ -228,7 +228,7 @@ impl Solver<'_> {
             environment,
         };
         let result = nested
-            .ancestor(start, decl, &mut HashSet::new(), 0)
+            .ancestor(start, decl, &mut FxHashSet::default(), 0)
             .and_then(|found| {
                 found
                     .map(|found| {

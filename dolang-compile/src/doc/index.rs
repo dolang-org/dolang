@@ -1,11 +1,9 @@
 //! Annotate the elaborated tree without changing its semantic resolutions.
 
-use std::{
-    cell::{Cell, OnceCell},
-    collections::HashMap,
-};
+use std::cell::{Cell, OnceCell};
 
 use dolang_util::alias;
+use rustc_hash::FxHashMap;
 
 use super::{Id, Kind, Node, Table, comment::Blocks};
 use crate::{
@@ -656,7 +654,7 @@ impl Index<'_> {
     fn block(&mut self, scope: &Scope<'_>, stmts: &mut [Stmt]) {
         let file = self.file;
         // Whether each implementation is `pub`, by name, which its overloads follow
-        let impls: HashMap<&str, bool> = stmts
+        let impls: FxHashMap<&str, bool> = stmts
             .iter()
             .filter_map(|stmt| match stmt {
                 Stmt::Def(def) if !def.is_type_only() => {
@@ -681,7 +679,7 @@ impl Index<'_> {
         }
     }
 
-    fn predeclare(&mut self, scope: &Scope<'_>, stmt: &mut Stmt, impls: &HashMap<&str, bool>) {
+    fn predeclare(&mut self, scope: &Scope<'_>, stmt: &mut Stmt, impls: &FxHashMap<&str, bool>) {
         match stmt {
             Stmt::NlGuard(guard) => self.predeclare(scope, &mut guard.body, impls),
             Stmt::Def(def) if def.is_type_only() => {
@@ -1151,7 +1149,7 @@ impl Index<'_> {
         }
         // Whether each implementation is `pub`, by name, which its overloads
         // follow. A protocol's own member is its overloads' implementation.
-        let impls: HashMap<&str, bool> = class
+        let impls: FxHashMap<&str, bool> = class
             .body
             .members
             .iter()

@@ -56,7 +56,7 @@ fn inference_chains_conflicts_duplicates_and_insertion_order() {
             s.obligations
                 .iter()
                 .map(|o| o.relation)
-                .collect::<HashSet<_>>()
+                .collect::<FxHashSet<_>>()
                 .len(),
             s.obligations.len(),
         );
@@ -87,12 +87,12 @@ fn multiple_bounds_and_variable_cycles_stabilize() {
     let Term::Infer(a) = a else { unreachable!() };
     let Term::Infer(b) = b else { unreachable!() };
     assert_eq!(
-        s.bounds(a).lower().collect::<HashSet<_>>(),
-        HashSet::from([s.closed(one), s.closed(two), Term::Infer(b)])
+        s.bounds(a).lower().collect::<FxHashSet<_>>(),
+        FxHashSet::from_iter([s.closed(one), s.closed(two), Term::Infer(b)])
     );
     assert_eq!(
-        s.bounds(b).lower().collect::<HashSet<_>>(),
-        HashSet::from([s.closed(one), s.closed(two), Term::Infer(a)])
+        s.bounds(b).lower().collect::<FxHashSet<_>>(),
+        FxHashSet::from_iter([s.closed(one), s.closed(two), Term::Infer(a)])
     );
     assert!(!s.exhausted.get());
 }

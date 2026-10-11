@@ -10,7 +10,9 @@
 //! own binders, is what it is lifted over, outermost declaration first and in slot
 //! order.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
+
+use rustc_hash::FxHashMap;
 
 use super::{
     Ambient, BinderRef, DeclNode, Referent, Role, Tables, sig,
@@ -28,7 +30,7 @@ pub(crate) fn captures(tables: &mut Tables<'_>) {
         tables: &*tables,
         binders: vec![BTreeSet::new(); count],
         deps: vec![Vec::new(); count],
-        bounds: HashMap::new(),
+        bounds: FxHashMap::default(),
         expanding: Vec::new(),
     };
     for site in &tables.sites {
@@ -138,7 +140,7 @@ struct Needs<'t, 'u> {
     /// The declarations whose needs each declaration or bound shares
     deps: Vec<Vec<DeclId>>,
     /// Each bounded binder's entry in `binders` and `deps`
-    bounds: HashMap<BinderRef, usize>,
+    bounds: FxHashMap<BinderRef, usize>,
     /// The written channels being walked in place of a function type's own
     expanding: Vec<(DeclId, usize, usize)>,
 }

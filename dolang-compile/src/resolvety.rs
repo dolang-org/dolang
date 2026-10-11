@@ -8,12 +8,12 @@
 
 use std::{
     cell::Cell,
-    collections::HashSet,
     fmt::{self, Write},
     iter,
 };
 
 use dolang_util::intern::BinTable;
+use rustc_hash::FxHashSet;
 
 use crate::{
     ast::{
@@ -638,7 +638,7 @@ impl Check<'_> {
     /// Report a type-only def that no def of the same name among its block's
     /// statements implements.
     fn overloads<T: Element>(&self, elems: &[T]) {
-        let impls: HashSet<&str> = elems
+        let impls: FxHashSet<&str> = elems
             .iter()
             .filter_map(Element::def)
             .filter(|def| !def.is_type_only())
@@ -861,7 +861,7 @@ impl Check<'_> {
                 self.ty(&inner, ty);
             }
         }
-        let impls: HashSet<(bool, &str)> = class
+        let impls: FxHashSet<(bool, &str)> = class
             .body
             .members
             .iter()
@@ -875,7 +875,7 @@ impl Check<'_> {
             .collect();
         // Methods of one name merge only through their decorators, as a getter and
         // a setter do. A plain method's decorators only say its namespace.
-        let mut plain = HashSet::new();
+        let mut plain = FxHashSet::default();
         for member in &class.body.members {
             let ClassMember::Method(method) = member else {
                 continue;

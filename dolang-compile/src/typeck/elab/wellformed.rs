@@ -17,7 +17,7 @@
 //! happens. A declaration's own signature and binder defaults are checked as
 //! declared. Recursion among transparent aliases must be contractive and regular.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
     BadRecursion, BoundViolation, DeclNode, Designated, Diag, Fill, Head, ParameterKeys, Referent,
@@ -43,7 +43,7 @@ pub(crate) struct Unresolved {
 }
 
 /// The bound written on each binder, by its span, for diagnostics that quote one
-pub(crate) type Bounds<'t> = HashMap<UnitSpan, &'t TypeExpr>;
+pub(crate) type Bounds<'t> = FxHashMap<UnitSpan, &'t TypeExpr>;
 
 pub(crate) fn bounds<'t>(tables: &'t Tables<'_>) -> Bounds<'t> {
     (tables.sites.iter())
@@ -426,7 +426,7 @@ impl Check<'_, '_> {
             .map(|(&id, _)| id)
             .collect();
         aliases.sort_by_key(|id| id.index());
-        let mut edges: HashMap<DeclId, Vec<DeclId>> = HashMap::new();
+        let mut edges: FxHashMap<DeclId, Vec<DeclId>> = FxHashMap::default();
         for &id in &aliases {
             let decl = &self.tables.decls[id.index()];
             let targets = edges.entry(id).or_default();
@@ -450,7 +450,7 @@ impl Check<'_, '_> {
             if !cyclic {
                 continue;
             }
-            let members: HashSet<DeclId> = component.iter().copied().collect();
+            let members: FxHashSet<DeclId> = component.iter().copied().collect();
             let mut found = Vec::new();
             for &id in &component {
                 let decl = &self.tables.decls[id.index()];
@@ -460,13 +460,13 @@ impl Check<'_, '_> {
             }
             // A cycle needs one guard, so an unguarded reference is only wrong on a
             // cycle of unguarded references
-            let mut bare: HashMap<DeclId, Vec<DeclId>> = HashMap::new();
+            let mut bare: FxHashMap<DeclId, Vec<DeclId>> = FxHashMap::default();
             for reference in found.iter().filter(|reference| !reference.guarded) {
                 bare.entry(reference.alias)
                     .or_default()
                     .push(reference.target);
             }
-            let mut unguarded = HashMap::new();
+            let mut unguarded = FxHashMap::default();
             for bare_component in components(&component, &bare) {
                 for &id in &bare_component {
                     unguarded.insert(id, bare_component.clone());
@@ -501,7 +501,7 @@ impl Check<'_, '_> {
         &self,
         unit: UnitId,
         alias: DeclId,
-        members: &HashSet<DeclId>,
+        members: &FxHashSet<DeclId>,
         ty: &TypeExpr,
         guarded: bool,
         found: &mut Vec<Recursive>,
@@ -587,7 +587,7 @@ impl Check<'_, '_> {
         &self,
         unit: UnitId,
         alias: DeclId,
-        members: &HashSet<DeclId>,
+        members: &FxHashSet<DeclId>,
         head: &Name,
         span: Span,
         app: Option<&TypeExpr>,
@@ -687,13 +687,13 @@ fn alias_body<'t>(tables: &'t Tables<'_>, node: &DeclNode) -> Option<&'t TypeExp
 }
 
 /// The strongly connected components of a graph, by Tarjan's algorithm
-fn components(nodes: &[DeclId], edges: &HashMap<DeclId, Vec<DeclId>>) -> Vec<Vec<DeclId>> {
+fn components(nodes: &[DeclId], edges: &FxHashMap<DeclId, Vec<DeclId>>) -> Vec<Vec<DeclId>> {
     struct Tarjan<'a> {
-        edges: &'a HashMap<DeclId, Vec<DeclId>>,
-        index: HashMap<DeclId, usize>,
-        low: HashMap<DeclId, usize>,
+        edges: &'a FxHashMap<DeclId, Vec<DeclId>>,
+        index: FxHashMap<DeclId, usize>,
+        low: FxHashMap<DeclId, usize>,
         stack: Vec<DeclId>,
-        on_stack: HashSet<DeclId>,
+        on_stack: FxHashSet<DeclId>,
         components: Vec<Vec<DeclId>>,
     }
 
@@ -730,10 +730,10 @@ fn components(nodes: &[DeclId], edges: &HashMap<DeclId, Vec<DeclId>>) -> Vec<Vec
 
     let mut tarjan = Tarjan {
         edges,
-        index: HashMap::new(),
-        low: HashMap::new(),
+        index: FxHashMap::default(),
+        low: FxHashMap::default(),
         stack: Vec::new(),
-        on_stack: HashSet::new(),
+        on_stack: FxHashSet::default(),
         components: Vec::new(),
     };
     for &node in nodes {

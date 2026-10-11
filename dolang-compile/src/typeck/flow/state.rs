@@ -1,6 +1,6 @@
 //! Flow state: what each variable holds at a point, and the operand stack.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::typeck::{cfg::Tag, r#type::TypeId};
 
@@ -40,14 +40,14 @@ impl CtxId {
 /// The interned tag stacks
 pub(super) struct Contexts {
     stacks: Vec<Vec<Tag>>,
-    ids: HashMap<Vec<Tag>, CtxId>,
+    ids: FxHashMap<Vec<Tag>, CtxId>,
 }
 
 impl Contexts {
     pub(super) fn new() -> Self {
         let mut contexts = Self {
             stacks: Vec::new(),
-            ids: HashMap::new(),
+            ids: FxHashMap::default(),
         };
         let root = contexts.intern(Vec::new());
         debug_assert_eq!(root, CtxId::ROOT);

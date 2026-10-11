@@ -115,7 +115,7 @@ impl Solver<'_> {
         let mut candidates = Vec::new();
         self.preorder(
             starts.first()?.clone(),
-            &mut HashSet::new(),
+            &mut FxHashSet::default(),
             0,
             &mut |visited| {
                 if let Visited::Nominal(nominal) = visited
@@ -137,7 +137,7 @@ impl Solver<'_> {
             shared.iter().all(|&(other, _)| {
                 other == decl
                     || !matches!(
-                        self.ancestor(self.bare(other), decl, &mut HashSet::new(), 0),
+                        self.ancestor(self.bare(other), decl, &mut FxHashSet::default(), 0),
                         Ok(Some(_))
                     )
             })
@@ -219,7 +219,7 @@ impl Solver<'_> {
         let mut arguments: Vec<Vec<TypeId>> = vec![Vec::new(); binders.len()];
         for start in starts {
             let found = self
-                .ancestor(start.clone(), decl, &mut HashSet::new(), 0)
+                .ancestor(start.clone(), decl, &mut FxHashSet::default(), 0)
                 .ok()??;
             for (slot, term) in found.arguments.into_iter().enumerate() {
                 arguments[slot].push(self.reify(term).ok()?);

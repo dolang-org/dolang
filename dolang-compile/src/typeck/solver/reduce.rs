@@ -706,7 +706,7 @@ impl Solver<'_> {
         source: ObligationId,
     ) -> Result<(), Residual> {
         let scope = self.inference[id.0].scope;
-        let mut leaves = HashSet::new();
+        let mut leaves = FxHashSet::default();
         self.solved_leaves(term, &mut leaves)?;
         let escaped = leaves.iter().any(|leaf| {
             matches!(*leaf, Term::Skolem(skolem)
@@ -736,7 +736,7 @@ impl Solver<'_> {
         } else {
             (&bounds.upper, &bounds.lower)
         };
-        let sources = same.get_or_insert_with(&term, |term| (*term, MonoHashSet::new()));
+        let sources = same.get_or_insert_with(&term, |term| (*term, MonoHashSet::default()));
         // A new source for an existing term still needs diagnostic edges, even
         // though the resulting subtype obligations may already be interned.
         if sources.try_insert(source).is_err() {
@@ -884,7 +884,8 @@ impl Solver<'_> {
         expected: Nominal,
         obligation: ObligationId,
     ) -> Result<(), Issue> {
-        let Some(actual) = self.ancestor(actual, expected.declaration, &mut HashSet::new(), 0)?
+        let Some(actual) =
+            self.ancestor(actual, expected.declaration, &mut FxHashSet::default(), 0)?
         else {
             return Err(Issue::Contradiction(Contradiction::UnrelatedNominals));
         };

@@ -408,6 +408,10 @@ version = "0.10"
 version = "1.11"
 
 
+[workspace.dependencies.rustc-hash]
+version = "2.1"
+
+
 [workspace.dependencies.serde]
 version = "1.0.228"
 
@@ -473,3 +477,9 @@ panic = "abort"
 [profile.opt]
 inherits = "dev"
 opt-level = 1
+
+
+[profile.bench]
+inherits = "dist"
+debug = true
+strip = false

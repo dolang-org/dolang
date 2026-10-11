@@ -1,0 +1,3 @@
+bench: source typelib compile
+repo-stubs: std
+validated: true

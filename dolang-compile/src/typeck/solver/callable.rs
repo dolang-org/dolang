@@ -300,7 +300,7 @@ impl Solver<'_> {
         };
         // Only a class reaching `Func` is a function, as narrowing by `Func` takes it
         if self
-            .ancestor(nominal.clone(), func, &mut HashSet::new(), 0)?
+            .ancestor(nominal.clone(), func, &mut FxHashSet::default(), 0)?
             .is_none()
         {
             return Err(Issue::Contradiction(Contradiction::UnrelatedNominals));

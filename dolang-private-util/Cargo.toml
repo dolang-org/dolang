@@ -8,6 +8,10 @@ repository.workspace = true
 rust-version.workspace = true
 
 
+[dependencies.rustc-hash]
+workspace = true
+
+
 [features]
 default = []
 debug = []

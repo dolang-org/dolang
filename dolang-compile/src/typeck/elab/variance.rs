@@ -24,7 +24,9 @@
 //! depend on the order of declarations or units. A binder with no use, including
 //! one used only through itself, is invariant, and so is a use through it.
 
-use std::{collections::HashMap, hash::Hash};
+use std::hash::Hash;
+
+use rustc_hash::FxHashMap;
 
 use super::{
     Ambient, BinderRef, DeclNode, Designated, Head, ParamTy, Referent, RestSlot, Slot, Tables, sig,
@@ -134,8 +136,8 @@ enum Source<K> {
 /// Solve for the least use of each key. A key of `own` still unused is then
 /// invariant, as is a path through any unused key, so every change in the second
 /// round makes a key invariant and the solution is unique.
-fn solve<K: Copy + Eq + Hash>(constraints: &[(K, Source<K>)], own: &[K]) -> HashMap<K, Use> {
-    let mut dependents: HashMap<K, Vec<usize>> = HashMap::new();
+fn solve<K: Copy + Eq + Hash>(constraints: &[(K, Source<K>)], own: &[K]) -> FxHashMap<K, Use> {
+    let mut dependents: FxHashMap<K, Vec<usize>> = FxHashMap::default();
     for (index, (_, source)) in constraints.iter().enumerate() {
         match source {
             Source::Path(_, keys) => {
@@ -147,8 +149,8 @@ fn solve<K: Copy + Eq + Hash>(constraints: &[(K, Source<K>)], own: &[K]) -> Hash
         }
     }
 
-    let mut uses: HashMap<K, Use> = HashMap::new();
-    let run = |uses: &mut HashMap<K, Use>, mut pending: Vec<usize>, unused_invariant: bool| {
+    let mut uses: FxHashMap<K, Use> = FxHashMap::default();
+    let run = |uses: &mut FxHashMap<K, Use>, mut pending: Vec<usize>, unused_invariant: bool| {
         while let Some(index) = pending.pop() {
             let (target, source) = &constraints[index];
             let read = |key: &K| {

@@ -184,7 +184,7 @@ impl Solver<'_> {
             Receiver::Missing => return Ok(Lookup::Missing),
             Receiver::Dynamic => return Ok(Lookup::Dynamic),
         };
-        let Some(nominal) = self.ancestor(nominal, class, &mut HashSet::new(), 0)? else {
+        let Some(nominal) = self.ancestor(nominal, class, &mut FxHashSet::default(), 0)? else {
             return Ok(Lookup::Missing);
         };
         let member = |instance: bool| {
@@ -244,7 +244,7 @@ impl Solver<'_> {
             }
         };
         let mut lineage = Vec::new();
-        self.preorder(nominal, &mut HashSet::new(), 0, &mut |visited| {
+        self.preorder(nominal, &mut FxHashSet::default(), 0, &mut |visited| {
             if let Visited::Nominal(nominal) = visited
                 && !lineage.contains(&nominal.declaration)
             {
@@ -595,15 +595,23 @@ impl Solver<'_> {
         admits: impl Fn(DeclId, &Member) -> bool,
     ) -> Result<Lookup, Issue> {
         let class = nominal.declaration;
-        let found = self.mro(nominal, runtime, &mut HashSet::new(), 0, &mut |visited| {
-            Ok(match visited {
-                Visited::Nominal(nominal) => self
-                    .members(nominal)
-                    .find(|&(found, member)| found == key && admits(nominal.declaration, member))
-                    .map(|(_, member)| Lookup::Found(self.found(nominal, member))),
-                Visited::Structural => Some(Lookup::Dynamic),
-            })
-        })?;
+        let found = self.mro(
+            nominal,
+            runtime,
+            &mut FxHashSet::default(),
+            0,
+            &mut |visited| {
+                Ok(match visited {
+                    Visited::Nominal(nominal) => self
+                        .members(nominal)
+                        .find(|&(found, member)| {
+                            found == key && admits(nominal.declaration, member)
+                        })
+                        .map(|(_, member)| Lookup::Found(self.found(nominal, member))),
+                    Visited::Structural => Some(Lookup::Dynamic),
+                })
+            },
+        )?;
         if let Some(found) = found {
             return Ok(found);
         }

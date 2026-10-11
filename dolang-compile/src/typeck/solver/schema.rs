@@ -227,14 +227,14 @@ impl Solver<'_> {
             return Err(Residual::Unsupported("a mapping over a pack being inferred").into());
         }
         // Every actual rigid without a counterpart stands for its bound
-        let paired: HashSet<Term> = pairs
+        let paired: FxHashSet<Term> = pairs
             .iter()
             .filter_map(|&(i, _)| match a.opaque[i].opacity {
                 Opacity::Rigid(ty) => Some(ty),
                 _ => None,
             })
             .collect();
-        let paired_variables: HashSet<InferVarId> = pairs
+        let paired_variables: FxHashSet<InferVarId> = pairs
             .iter()
             .filter_map(|&(i, _)| match a.opaque[i].opacity {
                 Opacity::Infer(id) => Some(id),
@@ -249,7 +249,7 @@ impl Solver<'_> {
             self.flatten(av, xs, None, Some(&paired), &mut a, 0)?;
         }
         // Nothing but itself is known to be admitted by an expected rigid
-        let b_paired: HashSet<usize> = pairs.iter().map(|&(_, j)| j).collect();
+        let b_paired: FxHashSet<usize> = pairs.iter().map(|&(_, j)| j).collect();
         if b.opaque
             .iter()
             .enumerate()
@@ -569,7 +569,7 @@ impl Solver<'_> {
                         continue;
                     }
                     let mut shape = Shape::default();
-                    let keep = HashSet::new();
+                    let keep = FxHashSet::default();
                     self.include(term, item.multiplicity, index, Some(&keep), &mut shape, 0)?;
                     for slot in &shape.positional {
                         match (*slot, positional) {
@@ -614,7 +614,7 @@ impl Solver<'_> {
         view: TypeView,
         items: &[SchemaItem],
         item: Option<usize>,
-        keep: Option<&HashSet<Term>>,
+        keep: Option<&FxHashSet<Term>>,
         shape: &mut Shape,
         depth: usize,
     ) -> Result<(), Issue> {
@@ -656,7 +656,7 @@ impl Solver<'_> {
         term: Term,
         multiplicity: Multiplicity,
         item: usize,
-        keep: Option<&HashSet<Term>>,
+        keep: Option<&FxHashSet<Term>>,
         shape: &mut Shape,
         depth: usize,
     ) -> Result<(), Issue> {
@@ -751,7 +751,7 @@ impl Solver<'_> {
         packs: &[TypeId],
         pattern: TypeId,
         item: usize,
-        keep: Option<&HashSet<Term>>,
+        keep: Option<&FxHashSet<Term>>,
         shape: &mut Shape,
         depth: usize,
     ) -> Result<(), Issue> {
@@ -976,7 +976,7 @@ impl Solver<'_> {
         bound: Term,
         multiplicity: Multiplicity,
         item: usize,
-        keep: Option<&HashSet<Term>>,
+        keep: Option<&FxHashSet<Term>>,
         shape: &mut Shape,
         depth: usize,
     ) -> Result<(), Issue> {
@@ -1021,7 +1021,7 @@ impl Solver<'_> {
     /// opaque indices, actual first.
     fn pair(&self, a: &Shape, b: &Shape) -> Result<Vec<(usize, usize)>, Issue> {
         let mut pairs = Vec::new();
-        let mut used = HashSet::new();
+        let mut used = FxHashSet::default();
         for (i, x) in a.opaque.iter().enumerate() {
             if x.opacity == Opacity::Unknown {
                 continue;
@@ -1236,7 +1236,7 @@ impl Solver<'_> {
             Relation::Subtype { fill, .. } => fill,
             Relation::Call(_) => Fill::Arguments,
         };
-        let mut decided = HashMap::new();
+        let mut decided = FxHashMap::default();
         let mut pairs = BTreeSet::new();
         let mut digits = vec![0; xs.len()];
         loop {
@@ -1348,7 +1348,7 @@ impl Solver<'_> {
     /// where it lands
     fn filled(
         &self,
-        decided: &mut HashMap<(usize, usize), Status>,
+        decided: &mut FxHashMap<(usize, usize), Status>,
         xs: &[Atom],
         counts: &[usize],
         ys: &[Atom],
@@ -1392,7 +1392,7 @@ impl Solver<'_> {
     /// adding bounds; unresolved while either involves a variable
     fn decide(
         &self,
-        decided: &mut HashMap<(usize, usize), Status>,
+        decided: &mut FxHashMap<(usize, usize), Status>,
         xs: &[Atom],
         ys: &[Atom],
         i: usize,

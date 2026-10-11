@@ -1,5 +1,3 @@
-#![deny(warnings)]
-
 //! Token stream tests driven by annotations written into fixture source.
 //!
 //! A fixture is an ordinary `.dol` file that compiles.  Expectations are

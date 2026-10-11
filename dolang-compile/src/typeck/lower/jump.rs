@@ -1,7 +1,9 @@
 //! Jumps: routes through `finally` bodies, and `break`, `continue` and `return`,
 //! local or out of a `do` block.
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
+
+use rustc_hash::FxHashMap;
 
 use super::{Ctx, Scope, expr};
 use crate::{
@@ -22,7 +24,7 @@ pub(super) struct Finally {
     pub(super) handler: Option<BlockId>,
     /// For each target reached from inside, the block that enters the `finally` on
     /// the way to it
-    routes: RefCell<HashMap<BlockId, BlockId>>,
+    routes: RefCell<FxHashMap<BlockId, BlockId>>,
 }
 
 impl Finally {
@@ -39,7 +41,7 @@ impl Finally {
             func,
             depth,
             handler,
-            routes: RefCell::new(HashMap::new()),
+            routes: RefCell::new(FxHashMap::default()),
         }
     }
 }

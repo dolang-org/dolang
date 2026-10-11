@@ -1,7 +1,6 @@
-use std::{
-    cell::{Ref, RefCell, RefMut},
-    collections::HashSet,
-};
+use std::cell::{Ref, RefCell, RefMut};
+
+use rustc_hash::FxHashSet;
 
 use super::{ast::Var, constant, sig, source::Span, sym};
 use dolang_util::mono::MonoVec;
@@ -109,7 +108,7 @@ pub(crate) struct Term(pub(crate) TermInfo, pub(crate) Span);
 pub(crate) struct Block {
     pub(crate) insts: Vec<Inst>,
     pub(crate) term: Term,
-    pub(crate) inbound: HashSet<BlockId>,
+    pub(crate) inbound: FxHashSet<BlockId>,
     pub(crate) scope: ScopeId,
     pub(crate) func: FuncId,
 }

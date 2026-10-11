@@ -1,5 +1,3 @@
-#![deny(warnings)]
-
 //! Type-checking tests over sets of units.
 //!
 //! Each case is a directory: `main.dol` is a script, and any other `x.y.dol` is
@@ -35,6 +33,7 @@
 //! | `prelude` | `default` for the default prelude, `none` for an empty one | `default` |
 //! | `pipes` | The types `strand`'s pipe placeholders stand for, sender then receiver, each `module.Item` | `strand.Sender strand.Receiver` |
 //! | `validated` | `true` or `false`: whether every well-formedness check must pass | not asserted |
+//! | `bench` | `false`, `true` (source), or a list of `source`, `typelib`, `compile` | `false` |
 //! | `skip` | `miri` to skip under Miri | none |
 
 use std::{
@@ -124,6 +123,7 @@ impl Settings {
                     })
                 }
                 "skip" if value == "miri" => {}
+                "bench" => {} // Validated by the case generator.
                 key => panic!("{}: unknown setting `{key}: {value}`", path.display()),
             }
         }
@@ -131,15 +131,15 @@ impl Settings {
 }
 
 /// A file to compile as one unit
-struct Source {
-    path: PathBuf,
+pub struct Source {
+    pub path: PathBuf,
     /// The name diagnostics render it by
-    file: String,
+    pub file: String,
     content: Vec<u8>,
     /// The module name, or `None` for the script
-    module: Option<String>,
+    pub module: Option<String>,
     /// Whether the file belongs to the case, rather than being a stub it selected
-    case: bool,
+    pub case: bool,
 }
 
 impl Source {
@@ -154,7 +154,7 @@ impl Source {
         }
     }
 
-    fn text(&self) -> &str {
+    pub fn text(&self) -> &str {
         std::str::from_utf8(&self.content)
             .unwrap_or_else(|e| panic!("{}: not UTF-8: {e}", self.path.display()))
     }
@@ -230,31 +230,66 @@ fn repo_stub(name: &str) -> (PathBuf, String) {
     }
 }
 
-fn run(case: &Path) {
-    let settings = Settings::load(case);
-    let sources = sources(case, &settings);
+/// Loaded inputs shared by correctness tests and benchmarks.
+pub struct Case {
+    path: PathBuf,
+    settings: Settings,
+    pub sources: Vec<Source>,
+}
 
-    let units: Vec<_> = sources
-        .iter()
-        .map(|source| {
-            let mut config = Config::new();
-            config.typecheck(true);
-            if settings.prelude_none {
-                config.prelude().clear();
-            }
-            if let Some(name) = &source.module {
-                config.mode(Mode::Module {
-                    name: name.as_str().into(),
-                });
-            }
-            config.unit(&source.path, source.text())
-        })
-        .collect();
-
-    let mut checker = typeck::Builder::new();
-    if let Some([(sender_module, sender), (receiver_module, receiver)]) = &settings.pipes {
-        checker.pipes((sender_module, sender), (receiver_module, receiver));
+impl Case {
+    pub fn load(path: &Path) -> Self {
+        let settings = Settings::load(path);
+        let sources = sources(path, &settings);
+        Self {
+            path: path.to_owned(),
+            settings,
+            sources,
+        }
     }
+
+    pub fn config<'a>(&self, source: &'a Source, document: bool) -> Config<'a> {
+        let mut config = Config::new();
+        config.typecheck(true).document(document).recover(document);
+        if self.settings.prelude_none {
+            config.prelude().clear();
+        }
+        if let Some(name) = &source.module {
+            config.mode(Mode::Module {
+                name: name.as_str().into(),
+            });
+        }
+        config
+    }
+
+    pub fn compile(&self) -> Vec<dolang::compile::Unit<'_>> {
+        self.sources
+            .iter()
+            .map(|source| self.config(source, false).unit(&source.path, source.text()))
+            .collect()
+    }
+
+    pub fn builder(&self) -> typeck::Builder<'_, '_> {
+        let mut builder = typeck::Builder::new();
+        if let Some([(sender_module, sender), (receiver_module, receiver)]) = &self.settings.pipes {
+            builder.pipes((sender_module, sender), (receiver_module, receiver));
+        }
+        builder
+    }
+}
+
+pub fn run(case: &Path) {
+    let case = Case::load(case);
+    validate(&case);
+}
+
+/// Validate prepared inputs without changing benchmark timing boundaries.
+pub fn validate(case: &Case) {
+    let settings = &case.settings;
+    let sources = &case.sources;
+    let units = case.compile();
+
+    let mut checker = case.builder();
     // The source each checked unit came from
     let mut checked: HashMap<UnitId, usize> = HashMap::new();
     let mut ids: Vec<Option<UnitId>> = Vec::new();
@@ -328,10 +363,10 @@ fn run(case: &Path) {
         }
         judge(source, ids[index], &check, &mut failures);
     }
-    from_typelibs(&sources, &units, &settings, &check, &ids, &mut failures);
+    from_typelibs(sources, &units, settings, &check, &ids, &mut failures);
 
     if !failures.is_empty() {
-        panic!("{}:{failures}", case.display());
+        panic!("{}:{failures}", case.path.display());
     }
 }
 
