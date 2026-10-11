@@ -307,6 +307,8 @@ async function init() {
       ],
     }),
   });
+  // Lets tests edit through CodeMirror; DOM selection races its focus handling.
+  (window as { playground?: { view: EditorView } }).playground = { view };
   select.value = label;
   shareButton.disabled = false;
   startAnalysisWorker();
