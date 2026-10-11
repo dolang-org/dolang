@@ -1,3 +1,5 @@
+use rustc_hash::FxHashMap;
+
 use super::{Source, Use, solve};
 
 fn path(u: Use, keys: &[u32]) -> Source<u32> {
@@ -94,7 +96,7 @@ fn order_independent() {
         // Keys 0..4 are binders of their own declarations; the rest are captured
         let own: Vec<u32> = (0..KEYS / 2).collect();
         let expected = solve(&constraints, &own);
-        let normalize = |solved: &std::collections::HashMap<u32, Use>| {
+        let normalize = |solved: &FxHashMap<u32, Use>| {
             (0..KEYS)
                 .map(|key| solved.get(&key).copied().unwrap_or_default())
                 .collect::<Vec<_>>()

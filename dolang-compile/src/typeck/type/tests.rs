@@ -141,7 +141,7 @@ fn literals_are_exact_values_not_builtin_types() {
         .iter()
         .map(|v| intern(&mut db, Type::Literal(v.clone())))
         .collect();
-    assert_eq!(types.iter().collect::<HashSet<_>>().len(), values.len());
+    assert_eq!(types.iter().collect::<FxHashSet<_>>().len(), values.len());
     for (literal, ty) in values.into_iter().zip(types) {
         assert_eq!(intern(&mut db, Type::Literal(literal)), ty);
     }
@@ -401,13 +401,13 @@ fn generic_definitions_remain_quantified_and_metadata_is_parallel() {
     assert_eq!(db.shift(poly, 0, 3).unwrap(), poly);
     let rank_two = function(&mut db, &[poly], a);
     let outer = quantify(&mut db, vec![binder(Kind::Type)], rank_two);
-    let mut occurrences = HashSet::new();
+    let mut occurrences = FxHashSet::default();
     db.walk(outer, |id, depth| {
         if id == a {
             occurrences.insert(depth);
         }
     });
-    assert_eq!(occurrences, HashSet::from([1, 2]));
+    assert_eq!(occurrences, FxHashSet::from_iter([1, 2]));
 }
 
 #[test]
@@ -960,7 +960,7 @@ fn schema_order_multiplicity_and_argument_modes_are_structural() {
     let b = intern(&mut db, Type::Literal(Literal::Int(2)));
     let ab = schema(&mut db, &[a, b]);
     assert_ne!(ab, schema(&mut db, &[b, a]));
-    let mut forms = HashSet::new();
+    let mut forms = FxHashSet::default();
     for multiplicity in [
         Multiplicity::Required,
         Multiplicity::Optional,
@@ -986,7 +986,7 @@ fn schema_order_multiplicity_and_argument_modes_are_structural() {
     assert_eq!(forms.len(), 9);
     let (_, record, __source) = declare(&mut db, DeclKind::Class, "Record");
     let key = db.intern_symbol("item");
-    let mut apps = HashSet::new();
+    let mut apps = FxHashSet::default();
     for arg in [
         Argument::Positional(ab),
         Argument::Keyword(key, ab),
@@ -1034,12 +1034,12 @@ fn binder_semantics_participate_in_identity() {
             ..base.clone()
         },
     ];
-    let mut distinct = HashSet::from([plain]);
+    let mut distinct = FxHashSet::from_iter([plain]);
     for b in variations {
         distinct.insert(quantify(&mut db, vec![b], top));
     }
     assert_eq!(distinct.len(), 6);
-    let mut rest_types = HashSet::new();
+    let mut rest_types = FxHashSet::default();
     for rest in [Rest::All, Rest::Positional, Rest::Keyed] {
         for bound in [None, Some(empty)] {
             rest_types.insert(quantify(
@@ -1182,7 +1182,7 @@ fn shifting_respects_groups_slots_and_cutoffs() {
     let root = quantify(&mut db, vec![b], f);
     let shifted = db.shift(root, 0, 2).unwrap();
     let expected_outer = reference(&mut db, 3, 3, Kind::Type);
-    let mut nodes = HashSet::new();
+    let mut nodes = FxHashSet::default();
     db.walk(shifted, |id, _| {
         nodes.insert(id);
     });
@@ -1212,7 +1212,7 @@ fn scope_sensitive_memoization_distinguishes_shared_occurrences() {
     let mixed = function(&mut db, &[quantified, same], same);
     let shifted = db.shift(mixed, 0, 1).unwrap();
     let free_shifted = reference(&mut db, 1, 0, Kind::Type);
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     db.walk(shifted, |id, depth| {
         seen.insert((id, depth));
     });
@@ -1318,7 +1318,7 @@ fn all_structural_edges_are_walked_and_rebuilt() {
         ],
         f,
     );
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     db.walk(q, |id, depth| {
         seen.insert((id, depth));
     });
@@ -1326,7 +1326,7 @@ fn all_structural_edges_are_walked_and_rebuilt() {
         assert!(seen.contains(&(leaf, 1)));
     }
     let shifted = db.shift(q, 0, 1).unwrap();
-    let mut after = HashSet::new();
+    let mut after = FxHashSet::default();
     db.walk(shifted, |id, depth| {
         after.insert((id, depth));
     });
@@ -1852,7 +1852,7 @@ fn a_mapping_is_its_own_group() {
     let pattern = function(&mut db, &[local, outer], top);
     let pack = reference(&mut db, 0, 1, Kind::Schema);
     let mapped = map(&mut db, &[pack], pattern);
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     db.walk(mapped, |id, depth| {
         seen.insert((id, depth));
     });

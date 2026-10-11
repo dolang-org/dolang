@@ -18,13 +18,10 @@ mod stmt;
 #[cfg(test)]
 mod tests;
 
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use jump::{Finally, Loop};
+use rustc_hash::{FxHashMap, FxHashSet};
 use scope::{DeclKey, Frame};
 
 use super::{
@@ -66,22 +63,22 @@ struct Lower<'t, 'u> {
     unit: UnitId,
     graph: Graph,
     queue: RefCell<Vec<Work<'u>>>,
-    decls: HashMap<DeclKey, DeclId>,
+    decls: FxHashMap<DeclKey, DeclId>,
     /// The checked modules, by name
-    modules: HashMap<&'u str, UnitId>,
+    modules: FxHashMap<&'u str, UnitId>,
     /// The targets each guard block's phantom edges reach, found as closures are
     /// lowered after the statement they're created in
-    guards: RefCell<HashMap<BlockId, Vec<BlockId>>>,
+    guards: RefCell<FxHashMap<BlockId, Vec<BlockId>>>,
     /// Each guard's phantom return: a block that assigns the result `Never` and
     /// continues to the exit
-    returns: RefCell<HashMap<BlockId, BlockId>>,
+    returns: RefCell<FxHashMap<BlockId, BlockId>>,
     /// The binder group each type written in the unit is interpreted in, by its span
-    site_groups: HashMap<Span, Option<(DeclId, usize)>>,
+    site_groups: FxHashMap<Span, Option<(DeclId, usize)>>,
 }
 
 impl<'t, 'u> Lower<'t, 'u> {
     fn new(tables: &'t Tables<'u>, db: &'t Database, unit: UnitId) -> Self {
-        let mut decls = HashMap::new();
+        let mut decls = FxHashMap::default();
         for (index, decl) in tables.decls.iter().enumerate() {
             if decl.unit != unit {
                 continue;
@@ -120,8 +117,8 @@ impl<'t, 'u> Lower<'t, 'u> {
             queue: RefCell::new(Vec::new()),
             decls,
             modules,
-            guards: RefCell::new(HashMap::new()),
-            returns: RefCell::new(HashMap::new()),
+            guards: RefCell::new(FxHashMap::default()),
+            returns: RefCell::new(FxHashMap::default()),
             site_groups: (tables.sites.iter())
                 .filter(|site| site.unit == unit)
                 .map(|site| (site.ty.span(), site.group()))
@@ -165,7 +162,7 @@ impl<'t, 'u> Lower<'t, 'u> {
             });
         }
         for (guard, targets) in self.guards.take() {
-            let mut seen = HashSet::new();
+            let mut seen = FxHashSet::default();
             let targets = targets.into_iter().filter(|&t| seen.insert(t)).collect();
             if let Terminal::Guard { targets: slot, .. } = &mut self.graph.block_mut(guard).terminal
             {

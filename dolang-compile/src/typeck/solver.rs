@@ -17,15 +17,13 @@
 //! establishes as it does declared ones. Any other declaration's rigid has
 //! escaped its check.
 
-use std::{
-    cell::{Cell, RefCell},
-    collections::{HashMap, HashSet},
-};
+use std::cell::{Cell, RefCell};
 
 use dolang_util::{
     intern,
     mono::{MonoHashMap, MonoHashSet, MonoVec},
 };
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 
 use crate::typeck::r#type::UnitSpan;
 
@@ -386,7 +384,7 @@ struct Root {
 /// remain reachable from every contributing constraint's diagnostic root.
 /// Both terms and their source sets grow monotonically, independently of the
 /// variable's committed assignment.
-type BoundSet = MonoHashMap<Term, MonoHashSet<ObligationId>>;
+type BoundSet = MonoHashMap<Term, MonoHashSet<ObligationId, FxBuildHasher>, FxBuildHasher>;
 
 /// Solver-local resolution and wake-up state, independent of accumulated bounds.
 #[derive(Clone)]
@@ -404,8 +402,8 @@ struct Inference {
     /// The default of the binder it instantiates, which it takes when nothing
     /// bounds it from below
     fallback: Cell<Option<Term>>,
-    support: MonoHashSet<ObligationId>,
-    subscribers: MonoHashSet<ObligationId>,
+    support: MonoHashSet<ObligationId, FxBuildHasher>,
+    subscribers: MonoHashSet<ObligationId, FxBuildHasher>,
     dirty: Cell<bool>,
     /// The scope it was created in, which bounds the skolems it may take
     scope: ScopeId,
@@ -515,43 +513,43 @@ pub(crate) struct Solver<'db> {
     inference: MonoVec<Inference>,
     /// The environment each quantifier instantiation created, by the obligation
     /// that instantiated it, so reprocessing reuses its variables
-    instantiations: RefCell<HashMap<ObligationId, EnvironmentId>>,
+    instantiations: RefCell<FxHashMap<ObligationId, EnvironmentId>>,
     /// The environment of skolems each skolemization created, by the obligation
     /// that skolemized, so reprocessing reuses its skolems
-    skolemizations: RefCell<HashMap<ObligationId, EnvironmentId>>,
+    skolemizations: RefCell<FxHashMap<ObligationId, EnvironmentId>>,
     skolems: MonoVec<Skolem>,
     scopes: MonoVec<Scope>,
     // Intern only the relation; processing state and diagnostic edges do not
     // participate in identity and can grow while existing nodes are borrowed.
     obligations: MonoVec<Obligation>,
-    obligation_index: MonoHashMap<Relation, ObligationId>,
+    obligation_index: MonoHashMap<Relation, ObligationId, FxBuildHasher>,
     queue: MonoVec<ObligationId>,
     roots: Vec<Root>,
     limits: Limits,
     work: Cell<usize>,
     exhausted: Cell<bool>,
     /// The declarations being checked, whose rigids' bounds are assumptions
-    scope: HashSet<DeclId>,
+    scope: FxHashSet<DeclId>,
     /// The rigids an assumed declaration's group is checked under, where they
     /// aren't its own: a binder lifted from an enclosing declaration is that
     /// declaration's rigid (see [`Solver::assume_group`])
-    groups: HashMap<DeclId, Vec<TypeId>>,
+    groups: FxHashMap<DeclId, Vec<TypeId>>,
     /// Whether the declarations being checked are of a gradual unit, whose body
     /// sees an omitted channel as `Unknown` rather than `Value`. Such a solver
     /// also makes up `Unknown` where a strict unit's takes a sound type or leaves
     /// the judgment unresolved: in widening, `meet` and narrowing.
     gradual: bool,
     /// Each rigid's bounds, once computed
-    rigid_bounds: RefCell<HashMap<TypeId, Vec<(TypeId, Step)>>>,
+    rigid_bounds: RefCell<FxHashMap<TypeId, Vec<(TypeId, Step)>>>,
     /// Whether the judgments own the root scope's variables, so solving settles
     /// them as it settles a skolem scope's
     closed: bool,
     /// The judgments that need one of their alternatives to hold, by obligation
-    alternatives: RefCell<HashMap<ObligationId, Alternatives<'db>>>,
+    alternatives: RefCell<FxHashMap<ObligationId, Alternatives<'db>>>,
     /// How each class's object is called, once found
-    constructors: RefCell<HashMap<DeclId, Constructor>>,
+    constructors: RefCell<FxHashMap<DeclId, Constructor>>,
     /// Each member of a generic class's object, once found
-    generic_members: RefCell<HashMap<GenericMember, Result<Lookup, Issue>>>,
+    generic_members: RefCell<FxHashMap<GenericMember, Result<Lookup, Issue>>>,
     /// Counts changes to bounds and assignments, so trials rerun only after
     /// what they saw has grown
     generation: Cell<usize>,
@@ -567,7 +565,7 @@ pub(crate) struct Solver<'db> {
     owned: Option<usize>,
     /// What trials judge in place of a term, as a `do` block whose result
     /// mustn't choose an alternative (see [`Solver::blind`])
-    blinded: HashMap<Term, Term>,
+    blinded: FxHashMap<Term, Term>,
     /// How traces render a type (see [`Solver::named`])
     #[cfg(feature = "debug")]
     names: Option<(&'db dyn super::r#type::Names, super::r#type::Style)>,
@@ -612,30 +610,30 @@ impl<'db> Solver<'db> {
             environments,
             bounds: MonoVec::new(),
             inference: MonoVec::new(),
-            instantiations: RefCell::new(HashMap::new()),
-            skolemizations: RefCell::new(HashMap::new()),
+            instantiations: RefCell::new(FxHashMap::default()),
+            skolemizations: RefCell::new(FxHashMap::default()),
             skolems: MonoVec::new(),
             scopes,
             obligations: MonoVec::new(),
-            obligation_index: MonoHashMap::new(),
+            obligation_index: MonoHashMap::default(),
             queue: MonoVec::new(),
             roots: Vec::new(),
             limits,
             work: Cell::new(0),
             exhausted: Cell::new(false),
-            scope: HashSet::new(),
-            groups: HashMap::new(),
+            scope: FxHashSet::default(),
+            groups: FxHashMap::default(),
             gradual: false,
-            rigid_bounds: RefCell::new(HashMap::new()),
+            rigid_bounds: RefCell::new(FxHashMap::default()),
             closed: false,
-            alternatives: RefCell::new(HashMap::new()),
-            constructors: RefCell::new(HashMap::new()),
-            generic_members: RefCell::new(HashMap::new()),
+            alternatives: RefCell::new(FxHashMap::default()),
+            constructors: RefCell::new(FxHashMap::default()),
+            generic_members: RefCell::new(FxHashMap::default()),
             generation: Cell::new(0),
             trial_depth: 0,
             owned: None,
             trials_from: 0,
-            blinded: HashMap::new(),
+            blinded: FxHashMap::default(),
             #[cfg(feature = "debug")]
             names: None,
             #[cfg(feature = "debug")]
@@ -878,7 +876,13 @@ impl<'db> Solver<'db> {
                 },
                 Head::Nominal(nominal) => {
                     return Ok(
-                        match self.ancestor_in(nominal, target, runtime, &mut HashSet::new(), 0)? {
+                        match self.ancestor_in(
+                            nominal,
+                            target,
+                            runtime,
+                            &mut FxHashSet::default(),
+                            0,
+                        )? {
                             Some(found) => Reach::Reached(found.arguments),
                             None => Reach::Unreached,
                         },
@@ -985,8 +989,8 @@ impl<'db> Solver<'db> {
             defaulted: Cell::new(false),
             exact: Cell::new(false),
             fallback: Cell::new(None),
-            support: MonoHashSet::new(),
-            subscribers: MonoHashSet::new(),
+            support: MonoHashSet::default(),
+            subscribers: MonoHashSet::default(),
             dirty: Cell::new(false),
             scope,
         });
@@ -1005,7 +1009,7 @@ impl<'db> Solver<'db> {
     /// relating them creates belongs. Scopes that meet are nested, since a
     /// variable never takes a skolem from outside its own.
     fn scope(&self, terms: &[Term]) -> Result<ScopeId, Residual> {
-        let mut leaves = HashSet::new();
+        let mut leaves = FxHashSet::default();
         for &term in terms {
             self.leaves(term, 0, 0, &mut leaves)?;
         }
@@ -1123,7 +1127,7 @@ impl<'db> Solver<'db> {
         term: Term,
         local: u32,
         depth: usize,
-        found: &mut HashSet<Term>,
+        found: &mut FxHashSet<Term>,
     ) -> Result<(), Residual> {
         self.depth(depth)?;
         self.spend()?;
@@ -1156,7 +1160,7 @@ impl<'db> Solver<'db> {
     }
 
     fn subscribe(&self, obligation: ObligationId) -> Result<(), Residual> {
-        let mut leaves = HashSet::new();
+        let mut leaves = FxHashSet::default();
         match self.obligation(obligation).relation {
             Relation::Subtype {
                 actual, expected, ..
@@ -1242,7 +1246,7 @@ impl<'db> Solver<'db> {
         term: Term,
         local: u32,
         nested: bool,
-        visiting: &mut HashSet<InferVarId>,
+        visiting: &mut FxHashSet<InferVarId>,
         depth: usize,
     ) -> Result<bool, Residual> {
         self.depth(depth)?;
@@ -1310,8 +1314,8 @@ impl<'db> Solver<'db> {
     /// type and never raises. An item projection's key selects its items, and
     /// raising them doesn't choose another. A form the walk can't see into counts
     /// as an output.
-    pub(crate) fn raised(&self, terms: &[Term]) -> Result<HashSet<InferVarId>, Residual> {
-        let mut raised = HashSet::new();
+    pub(crate) fn raised(&self, terms: &[Term]) -> Result<FxHashSet<InferVarId>, Residual> {
+        let mut raised = FxHashSet::default();
         let mut visit = |id: InferVarId, variance: Variance| {
             if variance == Variance::Contravariant || !raised.insert(id) {
                 return Vec::new();
@@ -1329,8 +1333,8 @@ impl<'db> Solver<'db> {
     /// variable reached, whose default is chosen from them. A function's
     /// parameters and channels are inputs, which the terms' solutions don't
     /// depend on.
-    pub(crate) fn deciding(&self, terms: &[Term]) -> Result<HashSet<InferVarId>, Residual> {
-        let mut deciding = HashSet::new();
+    pub(crate) fn deciding(&self, terms: &[Term]) -> Result<FxHashSet<InferVarId>, Residual> {
+        let mut deciding = FxHashSet::default();
         let mut visit = |id: InferVarId, _: Variance| {
             if !deciding.insert(id) {
                 return Vec::new();
@@ -1353,9 +1357,9 @@ impl<'db> Solver<'db> {
     pub(crate) fn locked(
         &self,
         roots: &[(Term, Variance)],
-    ) -> Result<HashSet<InferVarId>, Residual> {
-        let mut locked = HashSet::new();
-        let mut seen = HashSet::new();
+    ) -> Result<FxHashSet<InferVarId>, Residual> {
+        let mut locked = FxHashSet::default();
+        let mut seen = FxHashSet::default();
         let mut visit = |id: InferVarId, variance: Variance| {
             if !seen.insert((id, variance)) {
                 return Vec::new();
@@ -1540,7 +1544,7 @@ impl<'db> Solver<'db> {
         for lower in bounds.lower() {
             for upper in bounds.upper() {
                 if self.same(lower, upper)?
-                    && self.occurs(id, lower, 0, false, &mut HashSet::new(), 0)?
+                    && self.occurs(id, lower, 0, false, &mut FxHashSet::default(), 0)?
                 {
                     for (_, sources) in bounds.lower.iter().chain(bounds.upper.iter()) {
                         for &source in sources.iter() {
@@ -1622,21 +1626,21 @@ impl<'db> Solver<'db> {
                 return Ok(None);
             }
         }
-        let mut leaves = HashSet::new();
+        let mut leaves = FxHashSet::default();
         self.solved_leaves(candidate, &mut leaves)?;
         Ok((!leaves.iter().any(|leaf| matches!(leaf, Term::Infer(_)))).then_some(candidate))
     }
 
     /// Whether a term holds a skolem, through assignments
     fn skolemic(&self, term: Term) -> Result<bool, Residual> {
-        let mut leaves = HashSet::new();
+        let mut leaves = FxHashSet::default();
         self.solved_leaves(term, &mut leaves)?;
         Ok(leaves.iter().any(|leaf| matches!(leaf, Term::Skolem(_))))
     }
 
     /// The skolems and unsolved variables a term holds, through assignments
-    fn solved_leaves(&self, term: Term, found: &mut HashSet<Term>) -> Result<(), Residual> {
-        let mut leaves = HashSet::new();
+    fn solved_leaves(&self, term: Term, found: &mut FxHashSet<Term>) -> Result<(), Residual> {
+        let mut leaves = FxHashSet::default();
         self.leaves(term, 0, 0, &mut leaves)?;
         for leaf in leaves {
             match leaf {
@@ -1655,7 +1659,7 @@ impl<'db> Solver<'db> {
     /// unsolved variable, so substitution cycles cannot be introduced.
     fn commit(&self, id: InferVarId, candidate: Term) {
         debug_assert!({
-            let mut leaves = HashSet::new();
+            let mut leaves = FxHashSet::default();
             let scope = self.inference[id.0].scope;
             self.solved_leaves(candidate, &mut leaves).is_err()
                 || leaves.iter().all(|leaf| match *leaf {
@@ -2254,7 +2258,7 @@ impl<'db> Solver<'db> {
     /// acyclic; well-formedness checking rejects cycles before solving, so
     /// exposing the same declaration or application twice panics.
     fn head(&self, mut term: Term) -> Result<Head, Issue> {
-        let mut exposed = HashSet::new();
+        let mut exposed = FxHashSet::default();
         for depth in 0.. {
             self.depth(depth)?;
             term = self.resolve(term)?;
@@ -2306,7 +2310,7 @@ impl<'db> Solver<'db> {
                     assert!(exposed.insert(term), "transparent declaration cycle");
                     // Scoped to this application: applications with different
                     // arguments can legitimately expose the same constructor.
-                    let mut constructors = HashSet::new();
+                    let mut constructors = FxHashSet::default();
                     let mut base = view.child(base);
                     let (nominal, constructor) = loop {
                         self.spend()?;
@@ -2384,7 +2388,7 @@ impl<'db> Solver<'db> {
         &self,
         current: Nominal,
         target: DeclId,
-        path: &mut HashSet<DeclId>,
+        path: &mut FxHashSet<DeclId>,
         depth: usize,
     ) -> Result<Option<Nominal>, Issue> {
         self.ancestor_in(current, target, false, path, depth)
@@ -2397,7 +2401,7 @@ impl<'db> Solver<'db> {
         current: Nominal,
         target: DeclId,
         runtime: bool,
-        path: &mut HashSet<DeclId>,
+        path: &mut FxHashSet<DeclId>,
         depth: usize,
     ) -> Result<Option<Nominal>, Issue> {
         self.mro(
@@ -2424,7 +2428,7 @@ impl<'db> Solver<'db> {
     fn preorder<T>(
         &self,
         current: Nominal,
-        path: &mut HashSet<DeclId>,
+        path: &mut FxHashSet<DeclId>,
         depth: usize,
         visit: &mut impl FnMut(Visited<'_>) -> Result<Option<T>, Issue>,
     ) -> Result<Option<T>, Issue> {
@@ -2437,7 +2441,7 @@ impl<'db> Solver<'db> {
         &self,
         current: Nominal,
         runtime: bool,
-        path: &mut HashSet<DeclId>,
+        path: &mut FxHashSet<DeclId>,
         depth: usize,
         visit: &mut impl FnMut(Visited<'_>) -> Result<Option<T>, Issue>,
     ) -> Result<Option<T>, Issue> {
@@ -2604,8 +2608,8 @@ impl<'db> Solver<'db> {
         let mut diagnostics = vec![];
         // Iterative DFS keeps reporting safe even when the obligation graph is deep.
         let mut stack = vec![(root, false)];
-        let mut active = HashSet::new();
-        let mut visited = HashSet::new();
+        let mut active = FxHashSet::default();
+        let mut visited = FxHashSet::default();
         let mut path = vec![];
         while let Some((id, exit)) = stack.pop() {
             if exit {
@@ -2654,7 +2658,7 @@ impl<'db> Solver<'db> {
         // reaches it.
         for assignments in [false, true] {
             let mut history = vec![(root, vec![root])];
-            let mut seen = HashSet::new();
+            let mut seen = FxHashSet::default();
             while let Some((id, path)) = history.pop() {
                 if !seen.insert(id) {
                     continue;

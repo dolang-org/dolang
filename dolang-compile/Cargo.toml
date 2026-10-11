@@ -25,6 +25,10 @@ workspace = true
 features = ["use-std"]
 
 
+[dependencies.rustc-hash]
+workspace = true
+
+
 [dependencies.serde]
 workspace = true
 features = ["derive"]

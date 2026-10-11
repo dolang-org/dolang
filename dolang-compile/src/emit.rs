@@ -1,7 +1,6 @@
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
-    collections::{HashMap, HashSet},
     io::{self, Write},
     mem,
 };
@@ -10,6 +9,7 @@ use bytecode::Inst as BcInst;
 #[cfg(feature = "debug")]
 use dolang_util::debug_eprintln;
 use dolang_util::{alias::Box, intern::BinTable};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use dolang_bytecode::{
     self as bytecode, Certificate, InstEncoder, Phase, file,
@@ -49,7 +49,7 @@ fn checked_signed_diff(left: usize, right: usize) -> Option<isize> {
 struct FuncEmitter<'a, 'b> {
     emitter: &'b mut Emitter<'a>,
     order: Box<[BlockId]>,
-    map: HashMap<BlockId, usize>,
+    map: FxHashMap<BlockId, usize>,
     blocks: Box<[Block]>,
     func: &'b Func,
 }
@@ -58,7 +58,7 @@ impl<'a, 'b> FuncEmitter<'a, 'b> {
     fn topological_sort_rec(
         emitter: &Emitter<'a>,
         id: BlockId,
-        seen: &mut HashSet<BlockId>,
+        seen: &mut FxHashSet<BlockId>,
         out: &mut Vec<BlockId>,
     ) {
         let block = emitter.graph.block(id);
@@ -109,7 +109,7 @@ impl<'a, 'b> FuncEmitter<'a, 'b> {
 
     fn topological_sort(emitter: &Emitter<'a>, func: &Func) -> Box<[BlockId]> {
         let mut out = Vec::new();
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         let enter = func.enter;
         out.push(enter);
         // Nothing branches to the entry block today, but leaving it out of `seen` would

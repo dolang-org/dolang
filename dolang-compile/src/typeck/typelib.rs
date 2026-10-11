@@ -8,8 +8,9 @@
 //! The format is postcard, after a header naming the format and its version. Every
 //! ID is local to the typelib, which is linked as any harvest is.
 
-use std::{collections::HashMap, fmt, path::Path};
+use std::{fmt, path::Path};
 
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -156,7 +157,7 @@ pub(crate) fn read(bytes: &[u8]) -> Result<Harvest<'_>, Invalid> {
     if !rest.is_empty() {
         return Err(Invalid::Malformed("trailing bytes"));
     }
-    let mut exports = HashMap::new();
+    let mut exports = FxHashMap::default();
     for export in content.exports {
         if exports
             .insert(export.name, (export.span, export.target))
@@ -165,7 +166,7 @@ pub(crate) fn read(bytes: &[u8]) -> Result<Harvest<'_>, Invalid> {
             return Err(Invalid::Malformed("an export is repeated"));
         }
     }
-    let mut values = HashMap::new();
+    let mut values = FxHashMap::default();
     for value in content.values {
         if values.insert(value.span, value.annot).is_some() {
             return Err(Invalid::Malformed("an exported variable is repeated"));
@@ -342,7 +343,7 @@ fn validate(harvest: &mut Harvest<'_>) -> Result<(), &'static str> {
     }
 
     // A binder is named only within its declaration
-    let mut scopes = HashMap::new();
+    let mut scopes = FxHashMap::default();
     for site in sites {
         site.ty.names(&mut |head, _| {
             scopes.insert(head.span, site.group());

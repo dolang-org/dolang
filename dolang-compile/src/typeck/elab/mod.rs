@@ -18,11 +18,11 @@ mod variance;
 mod wellformed;
 
 use std::{
-    collections::HashMap,
     fmt::{self, Write},
     path::Path,
 };
 
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 use super::report::{Annotation, Report};
@@ -63,62 +63,62 @@ pub(crate) struct Tables<'u> {
     pub(crate) decls: Vec<Decl<'u>>,
     /// What each type name refers to, keyed by its head. Imports and renames are
     /// chased away; aliases are not, so `Pair[Int]` refers to the `Pair` alias.
-    pub(crate) referents: HashMap<UnitSpan, Referent>,
+    pub(crate) referents: FxHashMap<UnitSpan, Referent>,
     /// The underlying head of each transparent alias
-    pub(crate) aliases: HashMap<DeclId, Head>,
+    pub(crate) aliases: FxHashMap<DeclId, Head>,
     /// Each unit's exports by name, with the name each is bound by. Empty for a unit
     /// that is not a module.
-    pub(crate) exports: Vec<HashMap<&'u str, (Span, Target<'u>)>>,
+    pub(crate) exports: Vec<FxHashMap<&'u str, (Span, Target<'u>)>>,
     /// Each exported variable, by its name, with the site of its annotation if it
     /// has one
-    pub(crate) values: HashMap<UnitSpan, Option<SiteId>>,
+    pub(crate) values: FxHashMap<UnitSpan, Option<SiteId>>,
     /// Every type expression written in a declaration or annotation, outermost only,
     /// by [`SiteId`]
     pub(crate) sites: Vec<Site>,
     /// The kind of each binder, including the implicit binders of omitted ambient
     /// channels
-    pub(crate) binder_kinds: HashMap<BinderRef, KindOf>,
+    pub(crate) binder_kinds: FxHashMap<BinderRef, KindOf>,
     /// The kind of each alias
-    pub(crate) alias_kinds: HashMap<DeclId, KindOf>,
+    pub(crate) alias_kinds: FxHashMap<DeclId, KindOf>,
     /// The completed signature of each def or method, by declaration and signature
-    pub(crate) sigs: HashMap<(DeclId, usize), Sig>,
+    pub(crate) sigs: FxHashMap<(DeclId, usize), Sig>,
     /// The type of each field, by its class and the span of its name
-    pub(crate) fields: HashMap<(DeclId, Span), Slot>,
+    pub(crate) fields: FxHashMap<(DeclId, Span), Slot>,
     /// The ambient channels of each function type written without them, by its
     /// `->`, and of each use of `Func` in a type that doesn't give them, by its
     /// span
-    pub(crate) func_ambients: HashMap<UnitSpan, [Ambient; 2]>,
+    pub(crate) func_ambients: FxHashMap<UnitSpan, [Ambient; 2]>,
     /// The class each schema written where a type is required stands for, by its
     /// span: `std.Dict` of the schema, or `std.Tuple` of its items
-    pub(crate) braces: HashMap<UnitSpan, Designated>,
+    pub(crate) braces: FxHashMap<UnitSpan, Designated>,
     /// The declarations of `std` and `strand` the checker treats specially
-    pub(crate) designated: HashMap<DeclId, Designated>,
+    pub(crate) designated: FxHashMap<DeclId, Designated>,
     /// What each of `strand`'s pipe placeholders nominates, by name, resolved where
     /// the placeholder is exported
-    pub(crate) nominees: HashMap<&'static str, Referent>,
+    pub(crate) nominees: FxHashMap<&'static str, Referent>,
     /// The type each designated pipe placeholder stands for, or `None` for a
     /// nominee that isn't checked or can't stand for it
-    pub(crate) pipes: HashMap<DeclId, Option<DeclId>>,
+    pub(crate) pipes: FxHashMap<DeclId, Option<DeclId>>,
     /// The variance of each binder, including the implicit binders of omitted ambient
     /// channels
-    pub(crate) variance: HashMap<BinderRef, Variance>,
+    pub(crate) variance: FxHashMap<BinderRef, Variance>,
     /// The variance of each binder of an enclosing declaration that a nested one uses.
     /// A binder it does not use is absent, and invariant if it is captured anyway.
-    pub(crate) captured: HashMap<(DeclId, BinderRef), Variance>,
+    pub(crate) captured: FxHashMap<(DeclId, BinderRef), Variance>,
     /// The binders of enclosing declarations each declaration is lifted over, which
     /// lead its binder group, outermost first
-    pub(crate) lifted: HashMap<DeclId, Vec<BinderRef>>,
+    pub(crate) lifted: FxHashMap<DeclId, Vec<BinderRef>>,
     /// The database declaration of each def or method signature. A function's own
     /// ID holds its implementation, or its first signature when it has none.
-    pub(crate) sig_decls: HashMap<(DeclId, usize), DeclId>,
+    pub(crate) sig_decls: FxHashMap<(DeclId, usize), DeclId>,
     /// The binder group of each declaration signature: the binders it is lifted
     /// over, its written binders, then its implicit binders
-    pub(crate) groups: HashMap<(DeclId, usize), Vec<BinderRef>>,
+    pub(crate) groups: FxHashMap<(DeclId, usize), Vec<BinderRef>>,
     /// Each type expression written in source, interned in its group, by its span
-    pub(crate) site_types: HashMap<UnitSpan, TypeId>,
+    pub(crate) site_types: FxHashMap<UnitSpan, TypeId>,
     /// Each application, collection form and function type written in source,
     /// nested or not, interned in its group, by its span
-    pub(crate) expr_types: HashMap<UnitSpan, TypeId>,
+    pub(crate) expr_types: FxHashMap<UnitSpan, TypeId>,
 }
 
 impl<'u> Tables<'u> {

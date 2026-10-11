@@ -11,6 +11,8 @@ use std::{
     slice,
 };
 
+use rustc_hash::FxBuildHasher;
+
 use crate::{
     frozen::{Freeze, Frozen},
     mono::{MonoHashMap, MonoVec},
@@ -87,14 +89,14 @@ impl<Tag> Id<Tag> {
 
 #[derive(Clone)]
 pub struct Table<T, Tag> {
-    map: MonoHashMap<T, ()>,
+    map: MonoHashMap<T, (), FxBuildHasher>,
     phantom: PhantomData<Tag>,
 }
 
 impl<T, Tag> Table<T, Tag> {
     pub fn new() -> Self {
         Table {
-            map: MonoHashMap::new(),
+            map: MonoHashMap::default(),
             phantom: PhantomData,
         }
     }
@@ -154,7 +156,7 @@ impl<T, Tag> Table<T, Tag> {
 }
 
 pub struct Iter<'a, T, Tag> {
-    map: &'a MonoHashMap<T, ()>,
+    map: &'a MonoHashMap<T, (), FxBuildHasher>,
     index: usize,
     phantom: PhantomData<Tag>,
 }
@@ -189,7 +191,7 @@ impl<T, Tag> Default for Table<T, Tag> {
 unsafe impl<T: Sync, Tag> Freeze for Table<T, Tag> {}
 
 impl<T, Tag> Frozen<Table<T, Tag>> {
-    fn map(&self) -> &Frozen<MonoHashMap<T, ()>> {
+    fn map(&self) -> &Frozen<MonoHashMap<T, (), FxBuildHasher>> {
         unsafe { self.part(|table| &table.map) }
     }
 
@@ -318,7 +320,7 @@ const MIN_SEGMENT: usize = 4096;
 pub struct BinTable {
     segments: MonoVec<Segment>,
     // Maps each byte string to its logical start offset.
-    index: MonoHashMap<Blob, usize>,
+    index: MonoHashMap<Blob, usize, FxBuildHasher>,
     len: Cell<usize>,
 }
 
@@ -326,7 +328,7 @@ impl BinTable {
     pub fn new() -> Self {
         BinTable {
             segments: MonoVec::new(),
-            index: MonoHashMap::new(),
+            index: MonoHashMap::default(),
             len: Cell::new(0),
         }
     }

@@ -66,11 +66,12 @@ mod tests;
 #[cfg(feature = "debug")]
 mod trace;
 
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 
 pub(crate) use eval::{class_object, function_value};
 use problem::MemberUse;
 pub(crate) use problem::Problem;
+use rustc_hash::{FxHashMap, FxHashSet};
 pub(crate) use state::Fact;
 use state::{Contexts, CtxId, State};
 
@@ -93,7 +94,7 @@ use crate::{RestKind, source::Span};
 pub(crate) struct Results {
     /// What each variable reference read and each binding bound, joined over every
     /// context, by span
-    pub(crate) facts: HashMap<Span, Fact>,
+    pub(crate) facts: FxHashMap<Span, Fact>,
     /// What the reporting pass diagnosed, each once
     pub(crate) problems: Vec<Problem>,
     /// The checks it couldn't decide, each once
@@ -132,23 +133,23 @@ struct Flow<'a, 'u> {
     /// Each variable's index among its owner's
     slots: Vec<usize>,
     /// Each checked module's unit, by name
-    modules: HashMap<&'u str, UnitId>,
+    modules: FxHashMap<&'u str, UnitId>,
     contexts: Contexts,
-    states: HashMap<(BlockId, CtxId), State>,
+    states: FxHashMap<(BlockId, CtxId), State>,
     queue: BTreeSet<(u32, BlockId, CtxId)>,
     /// Take the queue's last entry rather than its first, to show that the result
     /// doesn't depend on the order
     reversed: bool,
-    widenings: HashMap<(BlockId, CtxId, VarId), Widening>,
+    widenings: FxHashMap<(BlockId, CtxId, VarId), Widening>,
     /// The accumulator of each ivar, and of each result a non-local
     /// return gives a value
-    joined: HashMap<VarId, (TypeId, Widening)>,
+    joined: FxHashMap<VarId, (TypeId, Widening)>,
     /// The blocks that read each joined type
-    readers: HashMap<VarId, BTreeSet<(BlockId, CtxId)>>,
+    readers: FxHashMap<VarId, BTreeSet<(BlockId, CtxId)>>,
     /// The blocks whose latest run left a rule undecided
-    unsettled: HashSet<(BlockId, CtxId)>,
+    unsettled: FxHashSet<(BlockId, CtxId)>,
     /// The blocks whose next run defaults the rules it leaves undecided
-    marked: HashSet<(BlockId, CtxId)>,
+    marked: FxHashSet<(BlockId, CtxId)>,
     /// Whether the running block defaults the rules it leaves undecided
     defaulting: bool,
     /// Filled by the final pass, which leaves states alone
@@ -203,14 +204,14 @@ impl<'a, 'u> Flow<'a, 'u> {
             slots,
             modules,
             contexts: Contexts::new(),
-            states: HashMap::new(),
+            states: FxHashMap::default(),
             queue: BTreeSet::new(),
             reversed,
-            widenings: HashMap::new(),
-            joined: HashMap::new(),
-            readers: HashMap::new(),
-            unsettled: HashSet::new(),
-            marked: HashSet::new(),
+            widenings: FxHashMap::default(),
+            joined: FxHashMap::default(),
+            readers: FxHashMap::default(),
+            unsettled: FxHashSet::default(),
+            marked: FxHashSet::default(),
             defaulting: false,
             results: None,
         }
@@ -259,7 +260,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             }
             // Upstream first: in each function, its earliest block with an undecided
             // rule. A later rule in that block runs after its inputs.
-            let mut earliest: HashMap<FuncId, u32> = HashMap::new();
+            let mut earliest: FxHashMap<FuncId, u32> = FxHashMap::default();
             for &(block, _) in &self.unsettled {
                 let rank = self.rank[block.index()];
                 let entry = earliest.entry(self.ir.block(block).func).or_insert(rank);

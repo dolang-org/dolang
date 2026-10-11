@@ -5,11 +5,9 @@
 //! lexical scopes, so a name's [`TypeRes`] nominates its target directly. Names that
 //! go through an import are fixed up once every unit's exports are known.
 
-use std::{
-    collections::{HashMap, hash_map::Entry as MapEntry},
-    iter,
-};
+use std::{collections::hash_map::Entry as MapEntry, iter};
 
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -50,10 +48,10 @@ pub(crate) struct Harvest<'u> {
     pub(crate) pending: Vec<Pending<'u>>,
     /// The unit's exports by name, with the name each is bound by. Empty for a unit
     /// that is not a module.
-    pub(crate) exports: HashMap<&'u str, (Span, Target<'u>)>,
+    pub(crate) exports: FxHashMap<&'u str, (Span, Target<'u>)>,
     /// Each exported variable, by the span of its name, with its annotation if it
     /// has one
-    pub(crate) values: HashMap<Span, Option<SiteId>>,
+    pub(crate) values: FxHashMap<Span, Option<SiteId>>,
 }
 
 /// Collect the surface of a unit, and resolve its type names as far as it can.
@@ -69,16 +67,16 @@ pub(crate) fn harvest<'u>(unit: &'u Unit<'u>) -> Harvest<'u> {
         pending: &mut pending,
         sites: &mut sites,
         strings: Vec::new(),
-        interned: HashMap::new(),
+        interned: FxHashMap::default(),
         owner: None,
         sig: None,
-        declared: HashMap::new(),
+        declared: FxHashMap::default(),
     };
     let root = &unit.ast.0;
     walk.function(None, root);
     let (exports, values) = match unit.mode {
         Mode::Module { .. } => walk.exports(&root.body.stmts),
-        Mode::Script | Mode::Repl => (HashMap::new(), HashMap::new()),
+        Mode::Script | Mode::Repl => (FxHashMap::default(), FxHashMap::default()),
     };
     let strings = walk.strings;
     Harvest {
@@ -116,8 +114,8 @@ pub(crate) fn link<'u>(
     let mut harvests: Vec<_> = harvests.into_iter().map(Some).collect();
     let mut units: Vec<Option<UnitInfo<'u>>> = (0..count).map(|_| None).collect();
     let mut strings = vec![Vec::new(); count];
-    let mut exports = vec![HashMap::new(); count];
-    let mut values = HashMap::new();
+    let mut exports = vec![FxHashMap::default(); count];
+    let mut values = FxHashMap::default();
     let mut decls = Vec::new();
     let mut pending = Vec::new();
     let mut sites = Vec::new();
@@ -156,17 +154,17 @@ pub(crate) fn link<'u>(
             .filter_map(|(index, unit)| Some((unit.module?, UnitId::from_index(index))))
             .collect(),
         exports: &exports,
-        memo: HashMap::new(),
+        memo: FxHashMap::default(),
         stack: Vec::new(),
         diags: Vec::new(),
     };
-    let referents: HashMap<_, _> = pending
+    let referents: FxHashMap<_, _> = pending
         .into_iter()
         .map(|pending| (pending.head, fixup.pending(&pending)))
         .collect();
     // Each nominee is resolved as if its placeholder imported it. A placeholder
     // that isn't an opaque alias is diagnosed when designated.
-    let mut nominees = HashMap::new();
+    let mut nominees = FxHashMap::default();
     if let Some(&strand) = fixup.modules.get("strand") {
         for (placeholder, (module, item)) in PIPES.into_iter().zip(pipes) {
             if let Some(&(span, Target::Local(Referent::Decl(decl)))) =
@@ -185,7 +183,7 @@ pub(crate) fn link<'u>(
         decls: &decls,
         sites: &sites,
         referents: &referents,
-        heads: HashMap::new(),
+        heads: FxHashMap::default(),
         diags: &mut diags,
     };
     // Every alias is followed in declaration order, so which one a cycle is reported
@@ -210,22 +208,22 @@ pub(crate) fn link<'u>(
         exports,
         values,
         sites,
-        binder_kinds: HashMap::new(),
-        alias_kinds: HashMap::new(),
-        sigs: HashMap::new(),
-        fields: HashMap::new(),
-        func_ambients: HashMap::new(),
-        braces: HashMap::new(),
-        designated: HashMap::new(),
+        binder_kinds: FxHashMap::default(),
+        alias_kinds: FxHashMap::default(),
+        sigs: FxHashMap::default(),
+        fields: FxHashMap::default(),
+        func_ambients: FxHashMap::default(),
+        braces: FxHashMap::default(),
+        designated: FxHashMap::default(),
         nominees,
-        pipes: HashMap::new(),
-        variance: HashMap::new(),
-        captured: HashMap::new(),
-        lifted: HashMap::new(),
-        sig_decls: HashMap::new(),
-        groups: HashMap::new(),
-        site_types: HashMap::new(),
-        expr_types: HashMap::new(),
+        pipes: FxHashMap::default(),
+        variance: FxHashMap::default(),
+        captured: FxHashMap::default(),
+        lifted: FxHashMap::default(),
+        sig_decls: FxHashMap::default(),
+        groups: FxHashMap::default(),
+        site_types: FxHashMap::default(),
+        expr_types: FxHashMap::default(),
     };
     (tables, diags)
 }
@@ -349,7 +347,7 @@ struct BlockDecls<'u> {
     entries: Vec<Entry<'u>>,
     types: Vec<(Span, Entry<'u>)>,
     /// The function each name's defs share
-    defs: HashMap<&'u str, DeclId>,
+    defs: FxHashMap<&'u str, DeclId>,
 }
 
 impl<'u> BlockDecls<'u> {
@@ -394,7 +392,7 @@ struct Walk<'c, 'u> {
     /// The unit's string table
     strings: Vec<&'u str>,
     /// Each string of the unit's string table, by its text
-    interned: HashMap<&'u str, StrId>,
+    interned: FxHashMap<&'u str, StrId>,
     /// The declaration being walked, and which of its signatures, which encloses any
     /// found within it
     owner: Option<(DeclId, usize)>,
@@ -403,7 +401,7 @@ struct Walk<'c, 'u> {
     sig: Option<(DeclId, usize)>,
     /// The declarations of the unit's blocks, by the span of the name each declares,
     /// with the signature each def is among its function's
-    declared: HashMap<Span, (DeclId, usize)>,
+    declared: FxHashMap<Span, (DeclId, usize)>,
 }
 
 impl<'u> Walk<'_, 'u> {
@@ -598,7 +596,7 @@ impl<'u> Walk<'_, 'u> {
                 })
                 .collect(),
             types: Vec::new(),
-            defs: HashMap::new(),
+            defs: FxHashMap::default(),
         };
         // Only the root scope has no outer frame, and the prelude binds into it
         if outer.is_none() {
@@ -1220,7 +1218,7 @@ impl<'u> Walk<'_, 'u> {
         // implementation, as a def's are. Each other implementation of the name is a
         // function of its own, as a getter and a setter are.
         let file = self.file;
-        let mut grouped: HashMap<_, Vec<&'u Method>> = HashMap::new();
+        let mut grouped: FxHashMap<_, Vec<&'u Method>> = FxHashMap::default();
         let mut names = Vec::new();
         for member in &class.body.members {
             let ClassMember::Method(method) = member else {
@@ -1235,7 +1233,7 @@ impl<'u> Walk<'_, 'u> {
                 })
                 .push(method);
         }
-        let mut sigs = HashMap::new();
+        let mut sigs = FxHashMap::default();
         for key in names {
             let methods = &grouped[&key];
             let first = methods.iter().position(|method| method.at_span.is_none());
@@ -1509,16 +1507,16 @@ impl<'u> Walk<'_, 'u> {
         &self,
         stmts: &'u [Stmt],
     ) -> (
-        HashMap<&'u str, (Span, Target<'u>)>,
-        HashMap<Span, Option<SiteId>>,
+        FxHashMap<&'u str, (Span, Target<'u>)>,
+        FxHashMap<Span, Option<SiteId>>,
     ) {
-        let mut exports = HashMap::new();
-        let mut annots = HashMap::new();
+        let mut exports = FxHashMap::default();
+        let mut annots = FxHashMap::default();
         for stmt in stmts {
             self.export(stmt, &mut exports, &mut annots);
         }
         // The root block's annotations, by the span of the type each writes
-        let sites: HashMap<Span, SiteId> = (self.sites.iter().enumerate())
+        let sites: FxHashMap<Span, SiteId> = (self.sites.iter().enumerate())
             .filter(|(_, site)| site.owner.is_none() && site.role == Role::Type)
             .map(|(index, site)| (site.ty.span(), SiteId::from_index(index)))
             .collect();
@@ -1540,8 +1538,8 @@ impl<'u> Walk<'_, 'u> {
     fn export(
         &self,
         stmt: &'u Stmt,
-        exports: &mut HashMap<&'u str, (Span, Target<'u>)>,
-        annots: &mut HashMap<Span, Span>,
+        exports: &mut FxHashMap<&'u str, (Span, Target<'u>)>,
+        annots: &mut FxHashMap<Span, Span>,
     ) {
         let file = self.file;
         let mut add = |span: Span, target| {
@@ -1638,9 +1636,9 @@ fn pattern_names(pattern: &Pattern, f: &mut impl FnMut(&Ident, Option<&Annot>)) 
 /// Resolution of names that go through an import, once every unit is collected
 struct Fixup<'a, 'u> {
     units: &'a [UnitInfo<'u>],
-    modules: HashMap<&'u str, UnitId>,
-    exports: &'a [HashMap<&'u str, (Span, Target<'u>)>],
-    memo: HashMap<(UnitId, &'u str), Referent>,
+    modules: FxHashMap<&'u str, UnitId>,
+    exports: &'a [FxHashMap<&'u str, (Span, Target<'u>)>],
+    memo: FxHashMap<(UnitId, &'u str), Referent>,
     /// The exports being resolved, outermost first
     stack: Vec<(UnitId, &'u str)>,
     diags: Vec<UnitDiag>,
@@ -1736,9 +1734,9 @@ impl<'u> Fixup<'_, 'u> {
 struct Aliases<'a, 'u> {
     decls: &'a [Decl<'u>],
     sites: &'a [Site],
-    referents: &'a HashMap<UnitSpan, Referent>,
+    referents: &'a FxHashMap<UnitSpan, Referent>,
     /// Each alias's head, or `None` while its chain is being followed
-    heads: HashMap<DeclId, Option<Head>>,
+    heads: FxHashMap<DeclId, Option<Head>>,
     diags: &'a mut Vec<UnitDiag>,
 }
 

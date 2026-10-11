@@ -12,7 +12,6 @@ pub(crate) mod r#type;
 pub(crate) mod typelib;
 
 use std::{
-    collections::HashSet,
     num::NonZeroUsize,
     panic,
     path::Path,
@@ -22,6 +21,8 @@ use std::{
     },
     thread,
 };
+
+use rustc_hash::FxHashSet;
 
 use crate::{
     Error, ErrorInfo, Mode, Unit, UnitId,
@@ -119,7 +120,7 @@ enum Input<'u, 's> {
 /// are meaningful only for the [`Check`] this builder produces.
 pub struct Builder<'u, 's> {
     units: Vec<Input<'u, 's>>,
-    modules: HashSet<&'u str>,
+    modules: FxHashSet<&'u str>,
     /// The types `strand.PipeSender` and `strand.PipeReceiver` stand for, by module
     /// and item
     pipes: [(&'u str, &'u str); 2],
@@ -137,7 +138,7 @@ impl<'u, 's> Builder<'u, 's> {
     pub fn new() -> Self {
         Self {
             units: Vec::new(),
-            modules: HashSet::new(),
+            modules: FxHashSet::default(),
             pipes: [("strand", "Sender"), ("strand", "Receiver")],
             threads: None,
         }

@@ -31,12 +31,12 @@
 
 use std::{
     cell::{Cell, RefCell},
-    collections::{HashMap, HashSet},
     num::NonZeroU32,
     sync::Arc,
 };
 
 use dolang_util::{alias, frozen::Frozen, intern};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::source::Span;
 
@@ -915,7 +915,7 @@ impl Intrinsics {
 struct Local {
     declarations: Declarations,
     /// Each function's signatures, when it has more than one
-    overloads: HashMap<DeclId, alias::Box<[DeclId]>>,
+    overloads: FxHashMap<DeclId, alias::Box<[DeclId]>>,
     intrinsics: Intrinsics,
     pending_kinds: RefCell<Vec<(TypeId, Kind)>>,
 }
@@ -925,7 +925,7 @@ pub(crate) struct Shared {
     types: Frozen<intern::Table<Type, TypeTag>>,
     symbols: Frozen<intern::Table<String, SymbolTag>>,
     declarations: alias::Box<[Declaration]>,
-    overloads: HashMap<DeclId, alias::Box<[DeclId]>>,
+    overloads: FxHashMap<DeclId, alias::Box<[DeclId]>>,
     intrinsics: Intrinsics,
     fixed: Fixed,
     unsupported: u32,
@@ -977,7 +977,7 @@ impl Default for Database {
             },
             phase: Phase::Local(Local {
                 declarations: Declarations::Building(Vec::new()),
-                overloads: HashMap::new(),
+                overloads: FxHashMap::default(),
                 intrinsics: Intrinsics::default(),
                 pending_kinds: RefCell::new(Vec::new()),
             }),
@@ -1995,7 +1995,7 @@ impl Database {
     #[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
     pub(crate) fn expose(&self, mut ty: TypeId) -> Result<Exposure, ExposureCycle> {
         let mut declarations = Vec::new();
-        let mut visited = HashSet::new();
+        let mut visited = FxHashSet::default();
         while let Some(next) = self.deref_one(ty) {
             let Type::Decl(id) = *self.ty(ty) else {
                 unreachable!()
@@ -2012,7 +2012,7 @@ impl Database {
     /// Visit each `(node, enclosing-group count)` once, without exposing declarations.
     pub(crate) fn walk(&self, root: TypeId, mut visit: impl FnMut(TypeId, u32)) {
         let mut pending = vec![(root, 0u32)];
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         while let Some((id, depth)) = pending.pop() {
             if !seen.insert((id, depth)) {
                 continue;
@@ -2036,7 +2036,7 @@ impl Database {
         cutoff: u16,
         amount: i32,
     ) -> Result<TypeId, RemovedBinder> {
-        self.shift_inner(root, u32::from(cutoff), amount, &mut HashMap::new())
+        self.shift_inner(root, u32::from(cutoff), amount, &mut FxHashMap::default())
     }
 
     fn shift_inner(
@@ -2044,7 +2044,7 @@ impl Database {
         id: TypeId,
         cutoff: u32,
         amount: i32,
-        memo: &mut HashMap<(TypeId, u32), TypeId>,
+        memo: &mut FxHashMap<(TypeId, u32), TypeId>,
     ) -> Result<TypeId, RemovedBinder> {
         if let Some(result) = memo.get(&(id, cutoff)) {
             return Ok(*result);
@@ -2086,7 +2086,7 @@ impl Database {
     /// declaration's binder bounds, defaults and body are, with `args`. The result
     /// is interpreted where `args` are.
     pub(crate) fn substitute(&self, root: TypeId, args: &[TypeId]) -> TypeId {
-        self.substitute_inner(root, 0, args, false, &mut HashMap::new())
+        self.substitute_inner(root, 0, args, false, &mut FxHashMap::default())
     }
 
     /// Replace the references to the innermost group of an open type, as a
@@ -2094,7 +2094,7 @@ impl Database {
     /// result is interpreted where `items` are: the groups outside the replaced one
     /// are one nearer.
     pub(crate) fn instantiate(&self, root: TypeId, items: &[TypeId]) -> TypeId {
-        self.substitute_inner(root, 0, items, true, &mut HashMap::new())
+        self.substitute_inner(root, 0, items, true, &mut FxHashMap::default())
     }
 
     /// The variance of `root`, as a mapping's pattern is, in slot `slot` of its
@@ -2196,7 +2196,7 @@ impl Database {
         cutoff: u32,
         args: &[TypeId],
         open: bool,
-        memo: &mut HashMap<(TypeId, u32), TypeId>,
+        memo: &mut FxHashMap<(TypeId, u32), TypeId>,
     ) -> TypeId {
         if let Some(result) = memo.get(&(id, cutoff)) {
             return *result;
@@ -2248,10 +2248,10 @@ impl Database {
     /// keys, the keys item projections select by, and binder bounds and defaults,
     /// since decaying them would change what they mean.
     pub(crate) fn decay(&self, root: TypeId) -> TypeId {
-        self.decay_inner(root, &mut HashMap::new())
+        self.decay_inner(root, &mut FxHashMap::default())
     }
 
-    fn decay_inner(&self, id: TypeId, memo: &mut HashMap<TypeId, TypeId>) -> TypeId {
+    fn decay_inner(&self, id: TypeId, memo: &mut FxHashMap<TypeId, TypeId>) -> TypeId {
         if let Some(result) = memo.get(&id) {
             return *result;
         }
@@ -2339,7 +2339,7 @@ impl Database {
         };
         let mut found = Vec::new();
         let mut pending = vec![(*body, 0u32)];
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         while let Some((ty, depth)) = pending.pop() {
             if !seen.insert((ty, depth)) {
                 continue;
@@ -2424,7 +2424,7 @@ impl Database {
         // The inner group's bounds, defaults and body see it at depth 0 and the
         // outer group at depth 1
         let count = outer.len();
-        let mut memo = HashMap::new();
+        let mut memo = FxHashMap::default();
         let mut merge = |ty| self.merge_inner(ty, 0, count, &mut memo);
         let inner: Vec<_> = binders
             .iter()
@@ -2446,7 +2446,7 @@ impl Database {
         id: TypeId,
         cutoff: u32,
         count: usize,
-        memo: &mut HashMap<(TypeId, u32), TypeId>,
+        memo: &mut FxHashMap<(TypeId, u32), TypeId>,
     ) -> TypeId {
         if let Some(result) = memo.get(&(id, cutoff)) {
             return *result;
@@ -2559,7 +2559,7 @@ impl Database {
     /// Replace `decl`'s rigids with references to its group, undoing [`Self::substitute`]
     /// with [`Self::rigids`]. Another declaration's rigid has escaped its check.
     pub(crate) fn abstract_rigids(&self, root: TypeId, decl: DeclId) -> Result<TypeId, Escape> {
-        self.abstract_inner(root, 0, decl, &mut HashMap::new())
+        self.abstract_inner(root, 0, decl, &mut FxHashMap::default())
     }
 
     fn abstract_inner(
@@ -2567,7 +2567,7 @@ impl Database {
         id: TypeId,
         cutoff: u32,
         decl: DeclId,
-        memo: &mut HashMap<(TypeId, u32), TypeId>,
+        memo: &mut FxHashMap<(TypeId, u32), TypeId>,
     ) -> Result<TypeId, Escape> {
         if let Some(result) = memo.get(&(id, cutoff)) {
             return Ok(*result);

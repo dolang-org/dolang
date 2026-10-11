@@ -2,7 +2,7 @@
 //! analysis, which knows each block's tag stack.
 
 #[cfg(any(test, debug_assertions))]
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use super::{
     Against, BlockId, Expr, ExprKind, FuncId, FuncKind, Ir, Origin, Pattern, Step, Tag, Target,
@@ -313,7 +313,7 @@ impl Ir {
     pub(crate) fn check_stack_depths(&self) {
         let ir = self;
         struct Walk {
-            depths: HashMap<BlockId, usize>,
+            depths: FxHashMap<BlockId, usize>,
             work: Vec<BlockId>,
         }
         impl Walk {
@@ -325,7 +325,7 @@ impl Ir {
             }
         }
         let mut walk = Walk {
-            depths: HashMap::new(),
+            depths: FxHashMap::default(),
             work: Vec::new(),
         };
         for (_, func) in ir.funcs() {

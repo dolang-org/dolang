@@ -2,7 +2,7 @@
 //! visited in place: to move a harvest to where it is linked, to cut one down to its
 //! surface for a typelib, and to check one read from a typelib.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use super::{
     BinderRef, Decl, DeclNode, Harvest, ModuleRef, Referent, Role, Site, Target, local,
@@ -59,7 +59,7 @@ impl Harvest<'_> {
             strs: vec![false; self.strings.len()],
         };
         // The type names whose resolutions the surface reads, by head
-        let mut heads = HashSet::new();
+        let mut heads = FxHashSet::default();
         for (decl, _) in self.decls.iter_mut().zip(&decls).filter(|(_, keep)| **keep) {
             decl.visit(&mut used);
             match &decl.node {

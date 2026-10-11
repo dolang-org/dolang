@@ -15,7 +15,7 @@
 //! doesn't exhaust one budget for all of them. A check the solver can't decide is
 //! returned as unresolved.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use super::{
     DeclNode, Designated, Diag, Hidden, Nonconforming, Tables, Uncallable, UnitDiag, Unresolved,
@@ -227,7 +227,7 @@ impl Check<'_, '_> {
         &mut self,
         solver: &Solver<'_>,
         instance: TypeId,
-        spans: &HashMap<(MemberKey, bool), Span>,
+        spans: &FxHashMap<(MemberKey, bool), Span>,
     ) {
         let db = self.db;
         let receiver = solver.closed(instance);
@@ -297,7 +297,7 @@ impl Check<'_, '_> {
         solver: &Solver<'_>,
         instance: TypeId,
         runtime: bool,
-        spans: &HashMap<(MemberKey, bool), Span>,
+        spans: &FxHashMap<(MemberKey, bool), Span>,
         pending: &mut Vec<Pending>,
     ) {
         let db = self.db;
@@ -323,7 +323,7 @@ impl Check<'_, '_> {
     fn requirement(
         &mut self,
         pending: &mut Vec<Pending>,
-        spans: &HashMap<(MemberKey, bool), Span>,
+        spans: &FxHashMap<(MemberKey, bool), Span>,
         supertype: Span,
         requirement: Requirement,
     ) {
@@ -420,9 +420,9 @@ impl Check<'_, '_> {
 
     /// Where each member the class declares is named, by its name and whether it
     /// is an instance member
-    fn member_spans(&self) -> HashMap<(MemberKey, bool), Span> {
+    fn member_spans(&self) -> FxHashMap<(MemberKey, bool), Span> {
         let (db, tables, unit) = (self.db, self.tables, self.unit);
-        let mut spans = HashMap::new();
+        let mut spans = FxHashMap::default();
         for member in &self.class.members {
             match *member {
                 Member::Field(ref field) => {

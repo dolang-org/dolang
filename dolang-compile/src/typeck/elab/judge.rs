@@ -3,7 +3,9 @@
 //! A judgment names what the checker concluded at a span in terms a fixture can
 //! write down: qualified names rather than IDs.
 
-use std::{borrow::Cow, collections::HashMap, fmt::Write};
+use std::{borrow::Cow, fmt::Write};
+
+use rustc_hash::FxHashMap;
 
 use super::{
     Ambient, BinderRef, DeclNode, Designated, Head, KindOf, ModuleRef, ParamTy, Referent, RestSlot,
@@ -118,7 +120,7 @@ impl Tables<'_> {
                 judgments.push(("variance", written.name.span, variance(value).to_owned()));
             }
         }
-        let mut captured: HashMap<DeclId, Vec<(BinderRef, Variance)>> = HashMap::new();
+        let mut captured: FxHashMap<DeclId, Vec<(BinderRef, Variance)>> = FxHashMap::default();
         for (&(id, binder), &value) in &self.captured {
             if self.decls[id.index()].unit == unit {
                 captured.entry(id).or_default().push((binder, value));
