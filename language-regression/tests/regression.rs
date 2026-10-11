@@ -1,5 +1,3 @@
-#![deny(warnings)]
-
 mod detail {
     use dolang::runtime::object::fmt;
 

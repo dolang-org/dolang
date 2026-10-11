@@ -5,8 +5,8 @@ use std::{cell::OnceCell, hint::black_box, path::Path};
 use criterion::{Criterion, criterion_group, criterion_main};
 use dolang::compile::{Config, ErrorKind, Severity, typeck};
 
-#[path = "../tests/common/typeck.rs"]
-#[allow(dead_code, reason = "the regression tests' entry point")]
+#[path = "../tests/typeck.rs"]
+#[allow(dead_code, reason = "the harness also holds the regression tests")]
 mod harness;
 
 use harness::{Case, validate};
