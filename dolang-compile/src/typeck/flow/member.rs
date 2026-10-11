@@ -419,7 +419,8 @@ impl Flow<'_, '_> {
 
     /// Report a missing member, of an alternative of the union `within` if given,
     /// with the reasons a fallback refused its name. The alternatives a use finds
-    /// without it are reported together.
+    /// without it are reported together. Without `(spread)` or `(unpack)`, the
+    /// value isn't spreadable or unpackable.
     fn missing(
         &mut self,
         receiver: TypeId,
@@ -429,6 +430,22 @@ impl Flow<'_, '_> {
         reasons: Vec<String>,
     ) {
         if !self.observing() {
+            return;
+        }
+        let misfit = match member.key {
+            key if key == self.special("spread").key => Some(Misfit::Spreadable),
+            key if key == self.special("unpack").key => Some(Misfit::Unpackable),
+            _ => None,
+        };
+        if let Some(misfit) = misfit {
+            let problem = Problem::Misfit {
+                span,
+                found: self.subject(within.unwrap_or(receiver)),
+                misfit,
+            };
+            if !(self.results.iter()).any(|results| results.problems.contains(&problem)) {
+                self.problem(problem);
+            }
             return;
         }
         let receiver = self.subject(receiver);
@@ -731,7 +748,7 @@ impl Flow<'_, '_> {
     }
 
     /// Call a receiver's special member with no arguments
-    fn send_special(
+    pub(super) fn send_special(
         &mut self,
         at: At,
         state: &mut State,

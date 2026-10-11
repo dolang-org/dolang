@@ -75,16 +75,12 @@ pub def asserted value @ (Int | Str)
   let _ = value
   #       ^~~~~: flow std.Int
 
-# A method return annotation alone does not declare an unpack schema.
+# A pattern unpacks what `(unpack)` returns, without a declared `Unpack`.
 pub class MethodOnly
   def (unpack) _self -> std.Unpack[Int]
     ...
 
-pub def missing_edge value @ MethodOnly
+pub def method_only value @ MethodOnly
   let MethodOnly((x)) = value
-  # error: `m.MethodOnly` is not unpackable
-  #   --> m.dol:LL:LL
-  #    |
-  # LL |   let MethodOnly((x)) = value
-  #    |       ^^^^^^^^^^^^^^^
   let _ = x
+  #       ^: flow std.Int

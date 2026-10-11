@@ -48,9 +48,10 @@ impl Solver<'_> {
             a,
             b,
         };
-        let rules: [Rule<'_>; 10] = [
+        let rules: [Rule<'_>; 11] = [
             Self::identical,
             Self::judgeable,
+            Self::inclusion,
             Self::variables,
             Self::listed,
             Self::pack,
@@ -134,6 +135,45 @@ impl Solver<'_> {
             }
         }
         Ok(Continue(()))
+    }
+
+    /// A schema that's only a required inclusion of a rigid or skolem relates to
+    /// a rigid or skolem as what it includes, so that `{...Ts}` is `Ts`. Other
+    /// inclusions keep their schema, which a call's arguments fill differently.
+    fn inclusion(&self, j: &Judgment) -> Result<ControlFlow<()>, Issue> {
+        let abstract_ = |head: &Head| -> Result<bool, Issue> {
+            Ok(match head {
+                Head::Skolem(_) => true,
+                Head::Structural(view) => self.rigid(view.ty)?.is_some(),
+                _ => false,
+            })
+        };
+        let included = |head: &Head| -> Result<Option<Term>, Issue> {
+            let Head::Structural(view) = head else {
+                return Ok(None);
+            };
+            let Type::Schema(items) = self.db.ty(view.ty) else {
+                return Ok(None);
+            };
+            let [
+                SchemaItem {
+                    multiplicity: Multiplicity::Required,
+                    element: Element::Include(inner),
+                },
+            ] = &items[..]
+            else {
+                return Ok(None);
+            };
+            let inner = view.child(*inner);
+            Ok(abstract_(&self.head(inner)?)?.then_some(inner))
+        };
+        let (actual, expected) = match (included(&j.a)?, included(&j.b)?) {
+            (Some(a), None) if abstract_(&j.b)? => (a, j.expected),
+            (None, Some(b)) if abstract_(&j.a)? => (j.actual, b),
+            _ => return Ok(Continue(())),
+        };
+        self.derive(j.obligation, actual, expected, Step::Item(0));
+        Ok(Break(()))
     }
 
     /// An inference variable on either side takes the other as a bound, and the
