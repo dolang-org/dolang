@@ -222,6 +222,7 @@ impl Tables<'_> {
             Slot::Annot(ty) => text(ty),
             Slot::Unknown => "Unknown".to_owned(),
             Slot::SelfType => "Self".to_owned(),
+            Slot::ObjectType => "Type[Self]".to_owned(),
             Slot::Nil => "nil".to_owned(),
         };
         let mut out = String::from("(");

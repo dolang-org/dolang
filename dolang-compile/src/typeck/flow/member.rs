@@ -14,21 +14,21 @@ use std::{cell::Cell, collections::VecDeque, iter, mem, slice};
 
 use super::{
     At, Flow, Results, State,
-    problem::{MemberUse, Problem},
+    problem::{MemberUse, Misfit, Problem},
     rule::Call,
 };
 use crate::{
     lex::Op,
     source::Span,
     typeck::{
-        cfg::{Expr, ExprKind, Item, Member},
+        cfg::{Expr, ExprKind, FuncKind, Item, Member},
         elab::Designated,
         report::Report,
         solver::{
             Access, Constructor, FoundKind, Issue, Lookup, Residual, Signature, Signatures,
             bound_method,
         },
-        r#type::{Intrinsic, Literal, MemberKey, Scope, Type, TypeId, UnionMember},
+        r#type::{DeclId, Intrinsic, Literal, MemberKey, Scope, Type, TypeId, UnionMember},
     },
 };
 
@@ -109,25 +109,24 @@ impl Flow<'_, '_> {
         if self.callable(ty) || ty == self.db.bottom() {
             return CallTarget::new(Some(ty));
         }
-        if let Some(class) = self.class_of(ty) {
+        if let Some((class, exact)) = self.class_of(ty) {
             let generic = matches!(self.db.ty(ty), Type::Quantified { .. });
-            return match self.solver().constructor(class) {
-                Constructor::Call(Some(signature)) if !generic => CallTarget {
-                    receivers: vec![callee],
+            return match self.solver().constructor(class, exact) {
+                Constructor::Call {
+                    callee: Some(signature),
+                    bound,
+                } if !generic => CallTarget {
+                    receivers: if bound { vec![callee] } else { Vec::new() },
                     member: Some(self.special("call")),
                     ..CallTarget::new(Some(signature))
                 },
-                Constructor::Init(Some(signature)) if signature.callee(self.db).is_some() => {
-                    CallTarget {
-                        signature,
-                        member: Some(self.special("init")),
-                        ..CallTarget::new(None)
-                    }
+                // A `Type[C]` may hold a subclass's object, whose `(init)` needn't
+                // conform, so only its class-level `(call)` is called
+                Constructor::Init(_) if !exact => {
+                    self.missing(ty, None, self.special("call"), span, Vec::new());
+                    CallTarget::new(None)
                 }
-                Constructor::Init(_) if !generic => CallTarget {
-                    instance: Some(self.db.intern(Type::Decl(class))),
-                    ..CallTarget::new(None)
-                },
+                Constructor::Init(signature) => self.init_target(class, signature, generic, span),
                 _ => {
                     self.gap(span, "a constructor the checker can't type");
                     CallTarget::new(None)
@@ -152,6 +151,120 @@ impl Flow<'_, '_> {
                 CallTarget::new(None)
             }
         }
+    }
+
+    /// How instantiating `class` reaches a signature: through its `(init)`'s, or
+    /// with unchecked arguments when it doesn't reify
+    fn init_target(
+        &mut self,
+        class: DeclId,
+        signature: Option<Signature>,
+        generic: bool,
+        span: Span,
+    ) -> CallTarget {
+        match signature {
+            Some(signature) if signature.callee(self.db).is_some() => CallTarget {
+                signature,
+                member: Some(self.special("init")),
+                ..CallTarget::new(None)
+            },
+            _ if !generic => CallTarget {
+                instance: Some(self.db.intern(Type::Decl(class))),
+                ..CallTarget::new(None)
+            },
+            _ => {
+                self.gap(span, "a constructor the checker can't type");
+                CallTarget::new(None)
+            }
+        }
+    }
+
+    /// A call of `Type.(call)`, which instantiates the class object it's passed
+    /// first, with the rest of its arguments, whatever `(call)` the class has. It
+    /// needs the class's own object, since a subclass's `(init)` needn't conform,
+    /// and may bypass a class's `(call)` only inside the class.
+    fn construct_with(
+        &mut self,
+        at: At,
+        state: &mut State,
+        operands: &mut VecDeque<TypeId>,
+        first: &Expr,
+        call: Call<'_>,
+    ) -> TypeId {
+        let object = self.eval(at, state, operands, first);
+        let call = Call {
+            args: &call.args[1..],
+            ..call
+        };
+        let (bottom, unknown) = (self.db.bottom(), self.db.unknown());
+        if object == bottom || matches!(self.db.ty(object), Type::Unknown(_)) {
+            let callee = if object == bottom { bottom } else { unknown };
+            return self.call_with(at, state, operands, callee, &[], call);
+        }
+        let target = match self.class_of(object) {
+            Some((class, true)) => {
+                if matches!(
+                    self.solver().constructor(class, true),
+                    Constructor::Call { .. }
+                ) && !self.within(class)
+                    && self.observing()
+                {
+                    let class = self.shown(self.db.intern(Type::Decl(class)));
+                    self.problem(Problem::BypassedFactory {
+                        span: first.span,
+                        class,
+                    });
+                }
+                let generic = matches!(self.db.ty(object), Type::Quantified { .. });
+                match self.solver().default_construction(class) {
+                    Some(signature) => self.init_target(class, signature, generic, first.span),
+                    None => CallTarget::new(None),
+                }
+            }
+            Some((_, false)) => {
+                if self.observing() {
+                    let found = self.subject(object);
+                    self.problem(Problem::InexactConstruction {
+                        span: first.span,
+                        found,
+                    });
+                }
+                CallTarget::new(None)
+            }
+            None => {
+                if self.observing() {
+                    let found = self.subject(object);
+                    self.problem(Problem::Misfit {
+                        span: first.span,
+                        found,
+                        misfit: Misfit::Class,
+                    });
+                }
+                CallTarget::new(None)
+            }
+        };
+        self.call_targets(at, state, operands, vec![target], call)
+    }
+
+    /// Whether the running block is inside `class`'s body
+    fn within(&self, class: DeclId) -> bool {
+        let mut func = self.current;
+        while let Some(id) = func {
+            let data = self.ir.func(id);
+            if let FuncKind::Decl(decl) = data.kind {
+                let mut at = Some(decl);
+                while let Some(decl) = at {
+                    if decl == class {
+                        return true;
+                    }
+                    at = self.tables.decls[decl.index()]
+                        .outer
+                        .map(|(outer, _)| outer);
+                }
+            }
+            func = data.parent;
+        }
+        false
     }
 
     /// A special member's key
@@ -230,7 +343,8 @@ impl Flow<'_, '_> {
                 FoundKind::Property { getter, setter } => Resolved::Property {
                     getter: signatures(getter),
                     setter: signatures(setter),
-                    passed: !found.bound,
+                    // A static property's accessors take no receiver
+                    passed: !found.bound && found.scope != Scope::Static,
                 },
                 FoundKind::Unknown => Resolved::Dynamic,
             },
@@ -576,6 +690,13 @@ impl Flow<'_, '_> {
             span: expr.span,
             callee: None,
         };
+        if member.key == self.special("call").key
+            && let Some((class, true)) = self.class_of(receiver)
+            && self.db.intrinsic(Intrinsic::Type) == Some(self.db.intern(Type::Decl(class)))
+            && let [Item::Pos(first), ..] = &args[..]
+        {
+            return self.construct_with(at, state, operands, first, call);
+        }
         self.send(
             at,
             state,
@@ -1170,10 +1291,9 @@ impl Flow<'_, '_> {
             span: expr.span,
             callee: None,
         };
-        match self.solver().constructor(class) {
-            Constructor::Init(Some(signature))
-                if let Some(constructor) = signature.callee(self.db) =>
-            {
+        // The VM builds a range literal itself, without calling `Range`
+        match self.solver().default_construction(class) {
+            Some(Some(signature)) if let Some(constructor) = signature.callee(self.db) => {
                 self.call_with(at, state, operands, constructor, &bounds, call)
             }
             _ => self.gap(expr.span, "a range without a constructor"),

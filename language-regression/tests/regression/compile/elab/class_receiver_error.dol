@@ -200,17 +200,6 @@ pub class More
   # LL |     cls = other
   #    |     ^^^
 
-  #[static]
-  pub def replace cls other
-    cls = other
-  # error: method receiver bindings cannot be reassigned
-  #   --> class_receiver_error.dol:LL:LL
-  #    |
-  # LL |   pub def replace cls other
-  #    |                   --- method receiver declared here
-  # LL |     cls = other
-  #    |     ^^^
-
   pub def computed self
     let _ = (do self)().#value
   # error: private members require the enclosing class's receiver
@@ -261,3 +250,73 @@ pub class More
     # LL |         More.(init) $self
     #    |               ^^^^
     Nested()
+
+# A static member has no receiver, so its first parameter is an ordinary
+# binding. Only the class's own binding grants private access in its place.
+pub class Statics
+  #[static]
+  field total = 0
+
+  #[static]
+  pub def replace other
+    other = nil
+    let alias = Statics
+    let _ = alias.#total
+    # error: private members require the enclosing class's receiver
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |     let _ = alias.#total
+    #    |             ^^^^^
+    Statics = other
+  # error: class bindings cannot be reassigned
+  #   --> class_receiver_error.dol:LL:LL
+  #    |
+  # LL | pub class Statics
+  #    |           ------- class declared here
+  # ...
+  # LL |     Statics = other
+  #    |     ^^^^^^^
+
+  def (init) self
+    Statics.(init)(Statics)
+    # error: the first argument to `(init)` must be the constructor's receiver
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |   def (init) self
+    #    |              ---- method receiver declared here
+    # LL |     Statics.(init)(Statics)
+    #    |                    ^^^^^^^
+    let _ = self
+
+  pub def nest _self
+    # A nested class's members name its own class, not the outer one
+    class Inner
+      #[static]
+      field total = 0
+
+      #[static]
+      pub def peek()
+        Statics.#total
+    # error: private members require the enclosing class's receiver
+    #   --> class_receiver_error.dol:LL:LL
+    #    |
+    # LL |         Statics.#total
+    #    |         ^^^^^^^
+    Inner
+
+def identity cls
+  cls
+
+#[identity]
+pub class Decorated
+  #[static]
+  field total = 0
+
+  #[static]
+  pub def peek()
+    Decorated.#total
+# error: private members require the enclosing class's receiver
+#   --> class_receiver_error.dol:LL:LL
+#    |
+# LL |     Decorated.#total
+#    |     ^^^^^^^^^

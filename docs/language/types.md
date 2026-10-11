@@ -138,6 +138,33 @@ do not determine a class's variance.
 value. A field annotated `Phantom[T]` contributes a covariant use even when
 private; `Phantom[(T -> nil)]` contributes a contravariant use.
 
+### Class Objects
+
+A class's name is exactly its class object. The checker shows its type as
+`<type Shape>`, which no annotation can write. It fits `Type[Shape]`, the type
+of the class object of `Shape` or of any subclass:
+
+```
+class Shape
+  #[class]
+  pub def unit _cls -> Int
+    1
+
+class Circle: Shape
+
+def measure cls @ Type[Shape] -> Int
+  cls.unit()
+
+measure $Shape
+measure $Circle
+```
+
+Since a `Type[Shape]` may hold a subclass's object, only the class's name
+constructs through `(init)`, including where a function is expected, and
+reaches static members, which subclasses don't inherit. A `Type[Shape]` is
+called only through a `#[class]` `(call)`. A class method's unannotated first
+parameter is `Type` of its class.
+
 ## Annotation
 
 `@` after a binding (parameter, let, etc.) and before any default value

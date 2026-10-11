@@ -65,6 +65,17 @@ impl Class {
         self.function_on(db, receiver, own, params, result)
     }
 
+    /// [`Self::function`] taking no receiver, as a static method does
+    pub(super) fn static_function(
+        &self,
+        db: &mut Database,
+        own: Vec<Binder>,
+        params: &[TypeId],
+        result: TypeId,
+    ) -> DeclId {
+        self.function_with(db, None, own, params, result)
+    }
+
     /// [`Self::function`] taking `receiver` first, as a class method takes its
     /// class's object
     fn function_on(
@@ -75,9 +86,19 @@ impl Class {
         params: &[TypeId],
         result: TypeId,
     ) -> DeclId {
+        self.function_with(db, Some(receiver), own, params, result)
+    }
+
+    fn function_with(
+        &self,
+        db: &mut Database,
+        receiver: Option<TypeId>,
+        own: Vec<Binder>,
+        params: &[TypeId],
+        result: TypeId,
+    ) -> DeclId {
         let (id, _, source) = reserve(db, DeclKind::Function, "method");
-        let params: Vec<_> = [receiver]
-            .into_iter()
+        let params: Vec<_> = (receiver.into_iter())
             .chain(params.iter().copied())
             .collect();
         let binders = self.binders.iter().cloned().chain(own).collect();
@@ -309,25 +330,39 @@ fn class_objects_have_class_and_static_members_and_unbound_methods() {
     let mut base = Class::new(&mut db, "Base", vec![]);
     base.field(key(&db, "count"), int, Scope::Class);
     base.field(key(&db, "made"), int, Scope::Static);
+    base.field(private(&db, "secret"), int, Scope::Static);
     base.field(key(&db, "size"), int, Scope::Instance);
     let run = base.function(&mut db, vec![], &[], int);
     base.method(key(&db, "run"), run, Scope::Instance);
+    let base_id = base.id;
     let base = base.finish(&mut db, vec![]);
-    let sub = Class::new(&mut db, "Sub", vec![]).finish(&mut db, vec![base]);
+    let sub = Class::new(&mut db, "Sub", vec![]);
+    let sub_id = sub.id;
+    let sub = sub.finish(&mut db, vec![base]);
     db.seal();
 
     let s = Solver::new(&db);
     let object = |class| s.closed(apply(&db, ty, &[class]));
+    let meta = |class| s.closed(db.meta(class, vec![]));
     assert_eq!(
         found(s.member(object(sub), key(&db, "count"))).scope,
         Scope::Class
     );
     // A static member isn't inherited
-    assert!(missing(s.member(object(sub), key(&db, "made"))));
+    assert!(missing(s.member(meta(sub_id), key(&db, "made"))));
     assert_eq!(
-        found(s.member(object(base), key(&db, "made"))).scope,
+        found(s.member(meta(base_id), key(&db, "made"))).scope,
         Scope::Static
     );
+    // and is reached only through the class's own metatype, since a `Type[Base]`
+    // may hold `Sub`'s object
+    assert!(missing(s.member(object(base), key(&db, "made"))));
+    let secret = private(&db, "secret");
+    assert_eq!(
+        found(s.private_member(meta(base_id), base_id, secret)).scope,
+        Scope::Static
+    );
+    assert!(missing(s.private_member(object(base), base_id, secret)));
     // An instance method is reached unbound, but an instance field is not
     let run = found(s.member(object(sub), key(&db, "run")));
     assert!(matches!(run.kind, FoundKind::Method(_)));
@@ -377,15 +412,20 @@ fn generic_class_objects_have_members_quantified_over_its_binders() {
     let boxed = boxed.finish(&mut db, vec![]);
     // class Sub[T]: Box[Array[T]]
     let sub = Class::new(&mut db, "Sub", vec![class.clone()]);
-    let sub_t = sub.receiver(&db);
     let box_array_t = apply(&db, boxed, &[apply(&db, array, &[t])]);
-    sub.finish(&mut db, vec![box_array_t]);
+    let sub = sub.finish(&mut db, vec![box_array_t]);
     db.seal();
 
     // The class objects, as flow gives them
-    let object = |instance| quantified(&db, vec![class.clone()], apply(&db, ty, &[instance]));
-    let box_object = object(box_t);
-    let sub_object = object(sub_t);
+    let object = |class_ty| {
+        let &Type::Decl(decl) = db.ty(class_ty) else {
+            unreachable!("a class")
+        };
+        let meta = db.meta(decl, vec![Argument::Positional(t)]);
+        quantified(&db, vec![class.clone()], meta)
+    };
+    let box_object = object(boxed);
+    let sub_object = object(sub);
     let mut s = Solver::new(&db);
     let signature = |s: &Solver<'_>, found: Found| {
         let FoundKind::Method(signatures) = found.kind else {

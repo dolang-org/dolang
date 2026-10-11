@@ -10,8 +10,8 @@ use crate::typeck::{
     elab::{Designated, ModuleRef, Referent, Tables, Target},
     solver::Status,
     r#type::{
-        Argument, Binding, BoundRef, Database, DeclId, DeclKind, Intrinsic, Kind, SymbolId, Type,
-        TypeId, UnitId, UnitSpan,
+        Argument, Binding, BoundRef, Database, DeclId, DeclKind, Intrinsic, SymbolId, Type, TypeId,
+        UnitId, UnitSpan,
     },
 };
 
@@ -206,15 +206,21 @@ impl Flow<'_, '_> {
         }
     }
 
-    /// The class `C` a class object's type `Type[C]` gives
-    pub(super) fn class_of(&self, mut ty: TypeId) -> Option<DeclId> {
+    /// The class `C` a class object's type gives, `Type[C]` or `C`'s metatype,
+    /// and whether it's exactly `C`'s object: whether it's the metatype
+    pub(super) fn class_of(&self, mut ty: TypeId) -> Option<(DeclId, bool)> {
         if let Type::Quantified { body, .. } = self.db.ty(ty) {
             ty = *body;
+        }
+        if let Some((class, _)) = self.db.meta_of(ty) {
+            return Some((class, true));
         }
         let class_type = self.db.intrinsic(Intrinsic::Type)?;
         match self.db.ty(ty) {
             Type::Apply { base, args, .. } if *base == class_type => match &args[..] {
-                [Argument::Positional(instance)] => self.class_of_instance(*instance),
+                [Argument::Positional(instance)] => self
+                    .class_of_instance(*instance)
+                    .map(|class| (class, false)),
                 _ => None,
             },
             _ => None,
@@ -343,26 +349,19 @@ pub(crate) fn function_value(db: &Database, tables: &Tables<'_>, decl: DeclId) -
     }
 }
 
-/// The value of a class object: `Type[C]`, with a generic class's binders
-/// hoisted, so that `Array` is `forall T. Type[Array[T]]`
+/// The value of a class object: its metatype, which reaches `Type[C]`, with a
+/// generic class's binders hoisted, so that `Array` is `[T] <type Array[T]>`.
+/// Without `Type`, it's dynamic.
 pub(crate) fn class_object(db: &Database, decl: DeclId) -> TypeId {
-    let Some(class_type) = db.intrinsic(Intrinsic::Type) else {
+    if db.intrinsic(Intrinsic::Type).is_none() {
         return db.unknown();
-    };
+    }
     let ty = db.declaration(decl).ty;
-    let base = db.intern(Type::Decl(decl));
-    let apply = |arg| {
-        db.intern(Type::Apply {
-            base: class_type,
-            args: vec![Argument::Positional(arg)].into(),
-            kind: Kind::Type,
-        })
-    };
     let Type::Quantified { binders, .. } = db.ty(ty) else {
-        return apply(base);
+        return db.meta(decl, Vec::new());
     };
     if binders.is_empty() {
-        return apply(base);
+        return db.meta(decl, Vec::new());
     }
     // An application gives a keyword binder's argument in its slot, as a
     // positional binder's
@@ -380,13 +379,8 @@ pub(crate) fn class_object(db: &Database, decl: DeclId) -> TypeId {
             }))
         })
         .collect();
-    let instance = db.intern(Type::Apply {
-        base,
-        args,
-        kind: Kind::Type,
-    });
     db.intern(Type::Quantified {
         binders: binders.clone(),
-        body: apply(instance),
+        body: db.meta(decl, args),
     })
 }

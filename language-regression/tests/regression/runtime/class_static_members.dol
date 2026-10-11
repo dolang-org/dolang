@@ -13,6 +13,10 @@ class Counter
   #[static]
   pub field tag = "counter"
 
+  #[static]
+  pub def describe()
+    "$(Counter.tag) at $(Counter.count)"
+
   #[class]
   pub def bump cls
     cls.count = (cls.count + 1)
@@ -49,6 +53,8 @@ assert_eq $thunk_runs.len 3
 # `static` is not inherited.
 assert_eq $Counter.tag "counter"
 assert_throws $std.RuntimeError do Derived.tag
+assert_eq $Counter.describe() "counter at 2"
+assert_throws $std.RuntimeError do Derived.describe()
 
 # Class members do not leak into the instance namespace, and vice versa.
 let c = Counter()

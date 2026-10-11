@@ -30,7 +30,10 @@ impl Solver<'_> {
                     None => Err(Issue::Contradiction(Contradiction::Rigid)),
                 };
             }
-            Head::Nominal(nominal) => return self.call_nominal(obligation, call, nominal),
+            // A metatype constructs, as only the class's own object does
+            head @ (Head::Nominal(_) | Head::Meta(_)) => {
+                return self.call_nominal(obligation, call, head);
+            }
             Head::Structural(view) => view,
         };
         if let Type::Unsupported { .. } = self.db.ty(view.ty) {
@@ -172,15 +175,15 @@ impl Solver<'_> {
         }
     }
 
-    /// Call a nominal value through the signatures it's called with, chosen by
-    /// trials when it has several
+    /// Call a nominal value or a metatype through the signatures it's called
+    /// with, chosen by trials when it has several
     fn call_nominal(
         &self,
         obligation: ObligationId,
         call: Call,
-        nominal: Nominal,
+        callee: Head,
     ) -> Result<(), Issue> {
-        let Some(signatures) = self.call_signatures(nominal)? else {
+        let Some(signatures) = self.call_signatures(callee)? else {
             return Ok(());
         };
         let signatures = match signatures.overloads.is_empty() {

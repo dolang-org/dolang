@@ -78,9 +78,13 @@ pub(crate) struct Signatures {
 /// Where a receiver's members are looked up
 enum Receiver {
     Instance(Nominal),
-    /// A class object, with its class
-    Object(Nominal),
-    /// A generic class's object, `[S] Type[C[S]]`, with its class
+    /// A class object, with its class, and whether it's exactly the class's own:
+    /// its metatype, rather than a `Type[C]` that may hold a subclass's
+    Object {
+        class: Nominal,
+        exact: bool,
+    },
+    /// A generic class's object, `[S] <type C[S]>`, with its class
     Generic(DeclId),
     Missing,
     Dynamic,
@@ -121,7 +125,7 @@ impl Solver<'_> {
         }
         match self.receiver(receiver)? {
             Receiver::Instance(nominal) => self.instance_member(nominal, key),
-            Receiver::Object(nominal) => self.object_member(nominal, key, access),
+            Receiver::Object { class, exact } => self.object_member(class, exact, key, access),
             Receiver::Generic(class) => self.generic_member(class, None, key, access),
             Receiver::Missing => Ok(Lookup::Missing),
             Receiver::Dynamic => Ok(Lookup::Dynamic),
@@ -175,22 +179,30 @@ impl Solver<'_> {
         access: Access,
     ) -> Result<Lookup, Issue> {
         assert!(key.private, "an ordinary member is looked up by name");
-        let (nominal, object) = match self.receiver(receiver)? {
-            Receiver::Instance(nominal) => (nominal, false),
-            Receiver::Object(nominal) => (nominal, true),
+        let (nominal, object, exact) = match self.receiver(receiver)? {
+            Receiver::Instance(nominal) => (nominal, false, false),
+            Receiver::Object { class, exact } => (class, true, exact),
             Receiver::Generic(generic) => {
                 return self.generic_member(generic, Some(class), key, access);
             }
             Receiver::Missing => return Ok(Lookup::Missing),
             Receiver::Dynamic => return Ok(Lookup::Dynamic),
         };
+        // A static member belongs to its class alone, so only the class's own
+        // metatype reaches it
+        let named = nominal.declaration;
         let Some(nominal) = self.ancestor(nominal, class, &mut FxHashSet::default(), 0)? else {
             return Ok(Lookup::Missing);
         };
         let member = |instance: bool| {
             self.members(&nominal)
                 .find(|(found, member)| {
-                    *found == key && (member.scope() == Scope::Instance) == instance
+                    *found == key
+                        && match member.scope() {
+                            Scope::Instance => instance,
+                            Scope::Class => !instance,
+                            Scope::Static => !instance && exact && nominal.declaration == named,
+                        }
                 })
                 .map(|(_, member)| member)
         };
@@ -222,7 +234,7 @@ impl Solver<'_> {
     ) -> Result<Lookup, Issue> {
         let nominal = match self.receiver(instance)? {
             Receiver::Instance(nominal) => nominal,
-            Receiver::Object(_) | Receiver::Generic(_) => {
+            Receiver::Object { .. } | Receiver::Generic(_) => {
                 return Err(Residual::Unsupported("the members a type object inherits").into());
             }
             Receiver::Missing => return Ok(Lookup::Missing),
@@ -239,7 +251,10 @@ impl Solver<'_> {
     pub(crate) fn lineage(&self, instance: Term) -> Result<Vec<DeclId>, Issue> {
         let nominal = match self.receiver(instance)? {
             Receiver::Instance(nominal) => nominal,
-            Receiver::Object(_) | Receiver::Generic(_) | Receiver::Missing | Receiver::Dynamic => {
+            Receiver::Object { .. }
+            | Receiver::Generic(_)
+            | Receiver::Missing
+            | Receiver::Dynamic => {
                 return Ok(Vec::new());
             }
         };
@@ -264,6 +279,7 @@ impl Solver<'_> {
             self.spend()?;
             let view = match self.head(term)? {
                 Head::Infer(_) => return Err(Residual::Inference.into()),
+                Head::Meta(class) => return Ok(Receiver::Object { class, exact: true }),
                 Head::Nominal(nominal) => {
                     if !self.is_intrinsic(nominal.declaration, Intrinsic::Type) {
                         return Ok(Receiver::Instance(nominal));
@@ -278,7 +294,13 @@ impl Solver<'_> {
                         Head::Skolem(_) => {
                             Err(Residual::Unsupported("a type object of a skolem").into())
                         }
-                        Head::Nominal(class) => Ok(Receiver::Object(class)),
+                        Head::Meta(_) => {
+                            Err(Residual::Unsupported("a type object of a metatype").into())
+                        }
+                        Head::Nominal(class) => Ok(Receiver::Object {
+                            class,
+                            exact: false,
+                        }),
                         Head::Structural(view)
                             if matches!(self.db.ty(view.ty), Type::Unknown(_)) =>
                         {
@@ -353,26 +375,13 @@ impl Solver<'_> {
     }
 
     /// The class whose object a type is, if it's a generic class's object as flow
-    /// gives it: `[S] Type[C[S]]`, quantified over `C`'s own binders and applying
-    /// `C` to them in order
+    /// gives it: `[S] <type C[S]>`, quantified over `C`'s own binders and applying
+    /// `C`'s metatype to them in order
     fn generic_object(&self, ty: TypeId) -> Option<DeclId> {
         let Type::Quantified { binders, body } = self.db.ty(ty) else {
             return None;
         };
-        let Type::Apply { base, args, .. } = self.db.ty(*body) else {
-            return None;
-        };
-        let (true, [Argument::Positional(instance)]) =
-            (Some(*base) == self.db.intrinsic(Intrinsic::Type), &args[..])
-        else {
-            return None;
-        };
-        let Type::Apply { base, args, .. } = self.db.ty(*instance) else {
-            return None;
-        };
-        let &Type::Decl(class) = self.db.ty(*base) else {
-            return None;
-        };
+        let (class, args) = self.db.meta_of(*body)?;
         let declaration = self.db.declaration(class);
         let Type::Quantified { binders: own, .. } = self.db.ty(declaration.ty) else {
             return None;
@@ -417,24 +426,13 @@ impl Solver<'_> {
         access: Access,
     ) -> Result<Lookup, Issue> {
         let db = self.db;
-        let class_type =
-            (db.intrinsic(Intrinsic::Type)).ok_or(Residual::MissingIntrinsic(Intrinsic::Type))?;
         let Type::Quantified { binders, .. } = db.ty(db.declaration(class).ty) else {
             unreachable!("a generic class without binders")
         };
         let args = (db.rigids(class).into_iter())
             .map(Argument::Positional)
             .collect();
-        let instance = db.intern(Type::Apply {
-            base: db.intern(Type::Decl(class)),
-            args,
-            kind: Kind::Type,
-        });
-        let object = db.intern(Type::Apply {
-            base: class_type,
-            args: vec![Argument::Positional(instance)].into(),
-            kind: Kind::Type,
-        });
+        let object = db.meta(class, args);
         let solver = self.side_query(class);
         let receiver = solver.closed(object);
         let found = solver.reach_member(receiver, private, key, access)?;
@@ -546,10 +544,12 @@ impl Solver<'_> {
 
     /// A member of `nominal`'s class object. As at runtime, a read or call
     /// reaches an instance method first, unbound, and then a class member. An
-    /// instance field or property isn't reached and hides nothing.
+    /// instance field or property isn't reached and hides nothing. A static
+    /// member is reached only through the `exact` object, the class's own.
     pub(super) fn object_member(
         &self,
         nominal: Nominal,
+        exact: bool,
         key: MemberKey,
         access: Access,
     ) -> Result<Lookup, Issue> {
@@ -571,7 +571,7 @@ impl Solver<'_> {
         self.search(nominal, key, |owner, member| match member.scope() {
             Scope::Instance => false,
             Scope::Class => true,
-            Scope::Static => owner == class,
+            Scope::Static => exact && owner == class,
         })
     }
 

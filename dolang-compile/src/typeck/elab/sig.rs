@@ -4,9 +4,10 @@
 //!
 //! An omitted annotation on a def is dynamic, whatever the def's visibility. An
 //! omitted ambient channel is an unbounded implicit binder of the signature,
-//! following its written binders, in either mode. A method's unannotated receiver
-//! is its class applied to the class's own binders; an annotated one specializes
-//! an overload, and is checked, once the database is sealed.
+//! following its written binders, in either mode. An instance method's
+//! unannotated receiver is its class applied to the class's own binders, and a
+//! class method's is `Type` of that; an annotated instance method receiver
+//! specializes an overload, and is checked, once the database is sealed.
 //!
 //! A strict unit must annotate its parameters, fields and exported variables
 //! instead. Its omitted
@@ -124,8 +125,11 @@ fn complete(tables: &Tables<'_>, decl: DeclId, sig: usize) -> Sig {
     let unit = tables.decls[decl.index()].unit;
     let func = function(tables, decl, sig);
     let receiver = match &tables.decls[decl.index()].node {
-        DeclNode::Methods(methods) => method_scope(tables, unit, &methods[sig]) == Scope::Instance,
-        _ => false,
+        DeclNode::Methods(methods) => match method_scope(tables, unit, &methods[sig]) {
+            Scope::Static => None,
+            scope => Some(scope),
+        },
+        _ => None,
     };
     let omitted = match is_strict(tables, decl) {
         false => Slot::Unknown,
@@ -202,20 +206,24 @@ fn missing_values(tables: &Tables<'_>, diags: &mut Vec<UnitDiag>) {
 }
 
 /// The parameters of a def, method or closure, each with the type it has, or the
-/// default for an omitted annotation. An instance method's `receiver` is its class
-/// unless annotated otherwise.
+/// default for an omitted annotation. The receiver of a method of scope `receiver`
+/// is its class, or for a class method `Type` of it, unless annotated otherwise.
 pub(crate) fn params(
     tables: &Tables<'_>,
     unit: UnitId,
     func: &Signature,
-    receiver: bool,
+    receiver: Option<Scope>,
 ) -> Vec<ParamTy> {
+    let own = match receiver {
+        Some(Scope::Class) => Slot::ObjectType,
+        _ => Slot::SelfType,
+    };
     func.params
         .iter()
         .enumerate()
         .map(|(index, param)| match param.kind {
-            ParamKind::Pos if index == 0 && receiver => {
-                ParamTy::Single(param.annot.map_or(Slot::SelfType, Slot::Annot))
+            ParamKind::Pos if index == 0 && receiver.is_some() => {
+                ParamTy::Single(param.annot.map_or(own, Slot::Annot))
             }
             ParamKind::Pos | ParamKind::Key { .. } | ParamKind::ConstKey { .. } => {
                 ParamTy::Single(param.annot.map_or(Slot::Unknown, Slot::Annot))

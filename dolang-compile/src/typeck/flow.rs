@@ -1103,7 +1103,8 @@ impl<'a, 'u> Flow<'a, 'u> {
                 if ty == bottom {
                     return false;
                 }
-                self.class_of(ty).map(NarrowTarget::Class)
+                self.class_of(ty)
+                    .map(|(class, _)| NarrowTarget::Class(class))
             }
             Against::Value(value) => {
                 let ty = self.eval(at, state, &mut none, value);
@@ -1227,7 +1228,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let mut rest = *state.stack.last().expect("the exception");
                 for (class, clause) in clauses {
                     let ty = self.eval(at, &mut state, &mut operands, class);
-                    let caught = match self.class_of(ty) {
+                    let caught = match self.class_of(ty).map(|(class, _)| class) {
                         Some(class) => {
                             let target = NarrowTarget::Class(class);
                             let upper = super::cfg::Relation::Upper;

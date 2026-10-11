@@ -276,6 +276,8 @@ pub(crate) enum Step {
     Overload(usize),
     /// An overloaded function related as its implementation
     Implementation,
+    /// A metatype related as the `Type[C]` it reaches
+    Metatype,
 }
 
 impl Step {
@@ -500,6 +502,8 @@ enum Head {
     Skolem(SkolemId),
     Structural(TypeView),
     Nominal(Nominal),
+    /// A class's metatype, with the class applied to its arguments
+    Meta(Nominal),
 }
 
 /// All solver IDs are local to this solver, just as type IDs are database-local.
@@ -546,8 +550,11 @@ pub(crate) struct Solver<'db> {
     closed: bool,
     /// The judgments that need one of their alternatives to hold, by obligation
     alternatives: RefCell<FxHashMap<ObligationId, Alternatives<'db>>>,
-    /// How each class's object is called, once found
-    constructors: RefCell<FxHashMap<DeclId, Constructor>>,
+    /// How each class's object is called, once found: its exact object, or a
+    /// `Type` of the class
+    constructors: RefCell<FxHashMap<(DeclId, bool), Constructor>>,
+    /// Each class's default construction, once found
+    default_constructions: RefCell<FxHashMap<DeclId, Option<Option<Signature>>>>,
     /// Each member of a generic class's object, once found
     generic_members: RefCell<FxHashMap<GenericMember, Result<Lookup, Issue>>>,
     /// Counts changes to bounds and assignments, so trials rerun only after
@@ -628,6 +635,7 @@ impl<'db> Solver<'db> {
             closed: false,
             alternatives: RefCell::new(FxHashMap::default()),
             constructors: RefCell::new(FxHashMap::default()),
+            default_constructions: RefCell::new(FxHashMap::default()),
             generic_members: RefCell::new(FxHashMap::default()),
             generation: Cell::new(0),
             trial_depth: 0,
@@ -722,6 +730,7 @@ impl<'db> Solver<'db> {
     pub(crate) fn assume(&mut self, decl: DeclId) {
         self.scope.insert(decl);
         self.constructors.get_mut().clear();
+        self.default_constructions.get_mut().clear();
         self.generic_members.get_mut().clear();
     }
 
@@ -868,7 +877,8 @@ impl<'db> Solver<'db> {
         for depth in 0.. {
             self.depth(depth)?;
             self.spend()?;
-            match self.head(term)? {
+            match self.widened_head(term)? {
+                Head::Meta(_) => unreachable!("a metatype is widened"),
                 Head::Infer(_) => return Err(Residual::Inference.into()),
                 Head::Skolem(id) => match self.abstract_bound(Abstract::Skolem(id)) {
                     Some((bound, _)) => term = bound,
@@ -1426,7 +1436,9 @@ impl<'db> Solver<'db> {
             | Type::Literal(_)
             | Type::Fresh(_)
             | Type::Decl(_)
+            | Type::Meta(_)
             | Type::Rigid { .. } => Ok(()),
+            // A metatype's arguments are invariant, as any whose binders aren't known
             Type::Apply { base, ref args, .. } => {
                 let binders = match *self.db.ty(base) {
                     Type::Decl(id) if self.db.declaration(id).source.kind.nominal() => {
@@ -2306,32 +2318,47 @@ impl<'db> Solver<'db> {
                     );
                     term = self.closed(decl.ty);
                 }
+                Type::Meta(id) => {
+                    if matches!(
+                        self.db.ty(self.db.declaration(id).ty),
+                        Type::Quantified { .. }
+                    ) {
+                        return Err(Residual::GenericArguments.into());
+                    }
+                    return Ok(Head::Meta(Nominal {
+                        declaration: id,
+                        arguments: vec![],
+                        environment: EnvironmentId(0),
+                    }));
+                }
                 Type::Apply { base, ref args, .. } => {
                     assert!(exposed.insert(term), "transparent declaration cycle");
                     // Scoped to this application: applications with different
                     // arguments can legitimately expose the same constructor.
                     let mut constructors = FxHashSet::default();
                     let mut base = view.child(base);
-                    let (nominal, constructor) = loop {
+                    let (nominal, meta, constructor) = loop {
                         self.spend()?;
                         base = self.resolve(base)?;
                         let Term::View(base_view) = base else {
                             return Err(Residual::GenericArguments.into());
                         };
-                        if let Type::Decl(id) = *self.db.ty(base_view.ty) {
-                            let decl = self.db.declaration(id);
-                            let constructor = TypeView {
-                                ty: decl.ty,
-                                environment: EnvironmentId(0),
-                            };
-                            if decl.source.kind.nominal() {
-                                break (Some(id), constructor);
-                            }
-                            assert!(constructors.insert(id), "transparent declaration cycle");
-                            base = Term::View(constructor);
-                        } else {
-                            break (None, base_view);
+                        // A metatype is applied as its class is
+                        let (id, meta) = match *self.db.ty(base_view.ty) {
+                            Type::Decl(id) => (id, false),
+                            Type::Meta(id) => (id, true),
+                            _ => break (None, false, base_view),
+                        };
+                        let decl = self.db.declaration(id);
+                        let constructor = TypeView {
+                            ty: decl.ty,
+                            environment: EnvironmentId(0),
+                        };
+                        if meta || decl.source.kind.nominal() {
+                            break (Some(id), meta, constructor);
                         }
+                        assert!(constructors.insert(id), "transparent declaration cycle");
+                        base = Term::View(constructor);
                     };
                     let Type::Quantified { binders, body } = self.db.ty(constructor.ty) else {
                         panic!("generic argument arity mismatch");
@@ -2339,11 +2366,15 @@ impl<'db> Solver<'db> {
                     let (arguments, environment) =
                         self.instantiate(binders, args, view, constructor.environment)?;
                     if let Some(declaration) = nominal {
-                        return Ok(Head::Nominal(Nominal {
+                        let nominal = Nominal {
                             declaration,
                             arguments,
                             environment,
-                        }));
+                        };
+                        return Ok(match meta {
+                            true => Head::Meta(nominal),
+                            false => Head::Nominal(nominal),
+                        });
                     }
                     term = self.view(*body, environment);
                 }
@@ -2379,6 +2410,39 @@ impl<'db> Solver<'db> {
             }
         }
         unreachable!()
+    }
+
+    /// A term's head, with a metatype's widened to `Type[C[A]]`'s, as it
+    /// relates to anything but a metatype
+    fn widened_head(&self, term: Term) -> Result<Head, Issue> {
+        let head = self.head(term)?;
+        self.widened(head)
+    }
+
+    /// What a metatype's head reaches: `Type[C[A]]`'s. Any other is itself.
+    fn widened(&self, head: Head) -> Result<Head, Issue> {
+        match head {
+            Head::Meta(nominal) => self.head(self.metatype_reach(&nominal)?),
+            head => Ok(head),
+        }
+    }
+
+    /// What a metatype reaches, `Type[C[A]]`, given its class applied to its
+    /// arguments
+    fn metatype_reach(&self, nominal: &Nominal) -> Result<Term, Issue> {
+        // The class's arguments are the environment's, in order
+        let args = (nominal.arguments.iter().enumerate())
+            .map(|(slot, &argument)| {
+                Argument::Positional(self.db.intern(Type::Bound {
+                    reference: BoundRef::new(0, slot),
+                    kind: self.kind(argument),
+                }))
+            })
+            .collect();
+        let meta = self.db.meta(nominal.declaration, args);
+        let widened =
+            (self.db.widen_meta(meta)).ok_or(Residual::MissingIntrinsic(Intrinsic::Type))?;
+        Ok(self.view(widened, nominal.environment))
     }
 
     /// Walk supertypes in MRO order, carrying substitutions through each edge.

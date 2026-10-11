@@ -195,7 +195,8 @@ impl Solver<'_> {
             }
             if !whole {
                 let view = self.closed(member);
-                if self.db.literal(member).is_some() || matches!(self.head(view)?, Head::Nominal(_))
+                if self.db.literal(member).is_some()
+                    || matches!(self.head(view)?, Head::Nominal(_) | Head::Meta(_))
                 {
                     return Err(Issue::Contradiction(Contradiction::Unadmitted(member)));
                 }
@@ -249,7 +250,8 @@ impl Solver<'_> {
         if self.db.literal(ty).is_some() {
             return Ok(true);
         }
-        Ok(match self.head(self.closed(ty))? {
+        // A metatype's values are `Type`'s
+        Ok(match self.widened_head(self.closed(ty))? {
             Head::Nominal(nominal) => {
                 self.db.declaration(nominal.declaration).source.kind == DeclKind::Class
             }

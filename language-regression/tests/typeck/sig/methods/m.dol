@@ -19,7 +19,7 @@ pub class Box[T]
 
   #[class]
   pub def make cls x
-    #     ^~~~: sig (cls: Unknown, x: Unknown, <#0, >#1) -> Unknown
+    #     ^~~~: sig (cls: Type[Self], x: Unknown, <#0, >#1) -> Unknown
     cls(x)
 
 pub @class Shape

@@ -92,8 +92,8 @@ assert_eq $cfg.port 9000
 ```
 
 See [Decorators](./decorators.md) for decorator syntax and evaluation order, and
-[`getter`](std.Getter) / [`setter`](std.Setter) for the
-descriptor helpers.
+[`getter`](std.getter) / [`setter`](std.setter) for the
+decorators themselves.
 
 ## Class and Static Members
 
@@ -115,7 +115,19 @@ assert_eq $Counter.bump() 1
 ```
 
 A class method receives the class it was reached through as its first
-parameter, the way an instance method receives `self`.
+parameter, the way an instance method receives `self`. A static member takes
+only its own arguments, and names its class to reach it:
+
+```
+class Session
+  #[static]
+  field opened = 0
+
+  #[static]
+  pub def open()
+    Session.#opened = (Session.#opened + 1)
+    Session()
+```
 
 ### Inheritance
 
@@ -158,9 +170,9 @@ class Shape
     self.kind = kind
 
   #[static]
-  pub def (call) cls kind
+  pub def (call) kind
     echo "building $kind"
-    Type.(call) $cls $kind
+    Type.(call) $Shape $kind
 
 class Circle: Shape
 
@@ -173,6 +185,13 @@ the ordinary unbound-method idiom — a class is an instance of `Type`, so this
 invokes `Type`'s implementation rather than the receiver's override, exactly as
 `Animal.(init) $self $name` calls a parent constructor.
 
+The type checker accepts `Type.(call)` only with a class's own name, such as
+`Shape`, as its first argument: a value of type `Type[Shape]` may hold a
+subclass, whose `(init)` takes other arguments. A class with a `(call)` may be
+passed only inside its own body, so the factory can't be bypassed elsewhere.
+A class-level `(call)` that ends in `Type.(call)` therefore names its own class
+rather than its receiver, and each subclass that builds itself overrides it.
+
 ### Unbound Class Methods
 
 `Class.method` binds the class, so `Counter.bump()` always passes `Counter`.
@@ -183,6 +202,9 @@ another:
 ```
 assert_eq (type(Counter).bump(Derived)) 2
 ```
+
+A static member has no receiver to rebind, so `type(C).name` and `C.name` are
+the same function.
 
 Reading or calling `C.name` finds an instance method first, unbound, before a
 class or static member of the same name, which is then reachable only through
@@ -234,12 +256,15 @@ pub class Point
 
 ## Private Fields
 
-Private access requires the method's first parameter as the receiver. Its name
-need not be `self`; class and static methods use their type-object parameter.
-Receiver bindings cannot be reassigned, but their fields can be written.
-Aliases and other objects cannot be used with `.#`, even inside the same class.
-Nested functions may access private members through the captured receiver;
-a nested class has its own receiver and private namespace.
+Private access requires the method's first parameter as the receiver, or the
+class's own name anywhere inside the class. The receiver's name need not be
+`self`; class methods use their type-object parameter, and static methods,
+which have none, use the class's name. Receiver and class bindings cannot be
+reassigned, but their fields can be written. Aliases and other objects cannot
+be used with `.#`, even inside the same class. Nested functions may access
+private members through the captured receiver; a nested class has its own
+receiver and private namespace. A decorated class's name grants no private
+access, since the decorator may replace the class.
 
 Fields declared without `pub` are private. Within the class, private fields are
 accessed using the `.#field` syntax:

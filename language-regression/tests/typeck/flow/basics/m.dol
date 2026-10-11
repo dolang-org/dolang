@@ -145,11 +145,11 @@ pub let id = do |a| a
 #                ^: flow Unknown
 
 pub let i = Int
-#       ^: flow std.Type[std.Int]
+#       ^: flow <type std.Int>
 class P
   pub field q = 1
 pub let p = P
-#       ^: flow std.Type[m.P]
+#       ^: flow <type m.P>
 
 pub def partial c @ Bool
   let y = if c

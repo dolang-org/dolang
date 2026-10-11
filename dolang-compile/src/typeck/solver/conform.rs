@@ -9,8 +9,8 @@
 //! field by a getter and a setter as well as a field. An overload below a
 //! required signature satisfies it in place of the implementation, as overloads
 //! are unchecked assertions narrowing it. The supertype's signature
-//! takes the conforming declaration's own type as its receiver, since only calls
-//! on its instances matter.
+//! takes the conforming declaration's own type as its receiver, or `Type` of it
+//! for a class method, since only calls on its instances or its object matter.
 //!
 //! Every requirement is a set of ordinary subtype judgments for the caller to
 //! constrain, so no verdict is cached here.
@@ -45,6 +45,16 @@ pub(crate) enum RequirementKind {
         required: &'static str,
     },
     Undecided(Issue),
+}
+
+/// How to narrow a required signature's receiver: to instances of the class of
+/// the closed `instance`, which found the member through its supertype `through`,
+/// inside `Type` for a class method's (`object`)
+#[derive(Clone, Copy)]
+struct Narrowing {
+    instance: TypeId,
+    through: Term,
+    object: bool,
 }
 
 /// How a class inherits a class that a supertype names
@@ -104,9 +114,12 @@ impl Solver<'_> {
                     continue;
                 }
             };
-            // A class-scope member's receiver is a class object, and stays as
-            // written
-            let receiver = (scope == Scope::Instance).then_some((instance, supertype));
+            // A class method's receiver is `Type` of an instance, narrowed inside
+            let receiver = Some(Narrowing {
+                instance,
+                through: supertype,
+                object: scope == Scope::Class,
+            });
             let kind = match &provided {
                 Some(provided) => self
                     .requirement(provided, &required, receiver)
@@ -130,14 +143,13 @@ impl Solver<'_> {
     }
 
     /// Compare a provided member with a required one of the same name. With
-    /// `receiver`, an instance type and the supertype the required member was
-    /// found through, the required signatures' receivers are narrowed to the
-    /// instance type's class.
+    /// `receiver`, the required signatures' receivers are narrowed to the instance
+    /// type's class.
     fn requirement(
         &self,
         provided: &Found,
         required: &Found,
-        receiver: Option<(TypeId, Term)>,
+        receiver: Option<Narrowing>,
     ) -> Result<RequirementKind, Issue> {
         // The required signature, called on the conforming declaration's instances
         let expected = |signatures: &Signatures| match signatures.implementation {
@@ -223,7 +235,7 @@ impl Solver<'_> {
     fn rewrite(
         &self,
         signature: Term,
-        receiver: Option<(TypeId, Term)>,
+        receiver: Option<Narrowing>,
         value: Option<TypeId>,
         result: Option<TypeId>,
     ) -> Result<Term, Issue> {
@@ -245,11 +257,11 @@ impl Solver<'_> {
                 Element::Positional(ty) => Some(ty),
                 _ => None,
             });
-            if let Some((instance, through)) = receiver {
+            if let Some(receiver) = receiver {
                 let Some(ty) = positions.next() else {
                     return Err(Residual::Unsupported("a method without a receiver").into());
                 };
-                if let Some(narrowed) = self.narrowed(*ty, instance, through)? {
+                if let Some(narrowed) = self.narrowed_receiver(*ty, receiver)? {
                     *ty = narrowed;
                 }
             } else if value.is_some() {
@@ -273,6 +285,39 @@ impl Solver<'_> {
             Some(binders) => self.db.intern(Type::Quantified { binders, body }),
             None => body,
         }))
+    }
+
+    /// A receiver narrowed as [`Self::narrowed`] does, inside `Type` for a class
+    /// method's. `None` leaves it as written.
+    fn narrowed_receiver(
+        &self,
+        receiver: TypeId,
+        narrowing: Narrowing,
+    ) -> Result<Option<TypeId>, Issue> {
+        let Narrowing {
+            instance,
+            through,
+            object,
+        } = narrowing;
+        if !object {
+            return self.narrowed(receiver, instance, through);
+        }
+        let class_type = self.db.intrinsic(Intrinsic::Type);
+        let inner = match self.db.ty(receiver) {
+            Type::Apply { base, args, .. } if Some(*base) == class_type => match &args[..] {
+                &[Argument::Positional(inner)] => inner,
+                _ => return Ok(None),
+            },
+            _ => return Ok(None),
+        };
+        let Some(narrowed) = self.narrowed(inner, instance, through)? else {
+            return Ok(None);
+        };
+        Ok(Some(self.db.intern(Type::Apply {
+            base: class_type.expect("the receiver applies `Type`"),
+            args: vec![Argument::Positional(narrowed)].into(),
+            kind: Kind::Type,
+        })))
     }
 
     /// A receiver `C[a…]`, written in a signature's scope, narrowed to instances

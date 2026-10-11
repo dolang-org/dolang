@@ -1,11 +1,8 @@
-# A module's def and class are declared with their values' types, which importers
-# read, so reassigning one is checked against it
+# A module's def is declared with its value's type, which importers read, so
+# reassigning one is checked against it. A class's binding cannot be reassigned.
 
 pub def twice x @ Int -> Int
   (x * 2)
-
-pub class Box
-  pub field n @ Int = 0
 
 twice = (do |x @ Int| -> Int x)
 twice = (do |x @ Str| -> Str x)
@@ -26,13 +23,6 @@ twice = nil
 #    |
 # LL | twice = nil
 #    |         ^^^
-Box = Box
-Box = 1
-# error: `1` does not fit the annotation `std.Type[own.Box]`
-#   --> own.dol:LL:LL
-#    |
-# LL | Box = 1
-#    |       ^
 
 pub def rebind()
   twice = (do |x @ Str| -> Str x)

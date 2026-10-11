@@ -112,10 +112,11 @@ an adapted version.
 Method decorators receive the method function and return the value to install in
 the class under that name.
 
-A decorator can convert a method into a computed field setter or getter by
-replacing the method with a subtype of [`Getter`](std.Getter) or
-[`Setter`](std.Setter). The builtin `getter` and `setter` decorators
-in the prelude do this in a straightforward manner.
+The prelude's `getter` and `setter` decorators make a method a computed field's
+getter or setter. Each wraps a callable, which the class calls on each read or
+write of the field. Another decorator makes a computed field by returning
+`getter` or `setter` applied to a callable of its own, typed as a
+[`Getter`](std.Getter) or [`Setter`](std.Setter).
 
 ```
 class Config
@@ -142,8 +143,8 @@ class Registry
   pub field entries = []
 
   #[static]
-  pub def create cls
-    cls()
+  pub def create()
+    Registry()
 ```
 
 On a `field` these are pure scope annotations resolved at compile time, so they

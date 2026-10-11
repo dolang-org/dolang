@@ -20,7 +20,7 @@ use crate::{
         AliasBody, Annot, Arg, Arm, ArrayElem, Binders, Block, Class, ClassMember, Decorator, Def,
         DictElem, Expr, ExprBody, FieldInit, For, Function, Ident, If, ImportElement, LValue,
         Origin, PatBind, PatIdent, PatItem, Pattern, PrimStmt, Res, Root, Stmt, TypeArg, TypeDecl,
-        TypeEntry, TypeExpr, TypeRes, Var, implicit_tys_mut, visit::Node,
+        TypeEntry, TypeExpr, TypeRes, Var, VarFlags, implicit_tys_mut, visit::Node,
     },
     diag::Severity,
     source::{Diagnose, Diags, File, Span},
@@ -544,7 +544,7 @@ impl Check<'_> {
                         continue;
                     }
                     cell.update(|mut var| {
-                        var.type_used = true;
+                        var.flags.insert(VarFlags::TYPE_USED);
                         var
                     });
                     return Some((

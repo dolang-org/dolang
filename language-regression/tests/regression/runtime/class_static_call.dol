@@ -11,10 +11,10 @@ class Shape
     self.kind = kind
 
   #[static]
-  pub def (call) cls kind
+  pub def (call) kind
     calls.push $kind
     # `Type.(call)` reaches the default instantiation the override replaced.
-    Type.(call) $cls $kind
+    Type.(call) $Shape $kind
 
 class Circle: Shape
 
@@ -28,11 +28,12 @@ let c = Circle "arc"
 assert_eq $c.kind "arc"
 assert_eq $calls.len 1
 
-# Reached through the class object, a class member binds the class as `cls`, so
-# retargeting the factory at a subtype needs the unbound form off the proxy.
-let c2 = type(Shape).(call) $Circle "wedge"
-assert_eq $c2.kind "wedge"
-assert (type c2 Circle)
+# A static member takes no receiver, so read off the class it is the plain
+# function.
+let make = Shape.(call)
+let s2 = make "square"
+assert_eq $s2.kind "square"
+assert (type s2 Shape)
 assert_eq $calls.len 2
 
 # `Type.(call)` on a class with no override is plain instantiation.
@@ -60,3 +61,9 @@ class Sub: Inherited
 
 assert_eq $(Inherited "a").kind "wrapped-a"
 assert_eq $(Sub "b").kind "wrapped-b"
+
+# Reached through the class object, a class member binds the class as `cls`, so
+# retargeting it at a subtype needs the unbound form off the proxy.
+let c2 = type(Inherited).(call) $Sub "c"
+assert_eq $c2.kind "wrapped-c"
+assert (type c2 Sub)

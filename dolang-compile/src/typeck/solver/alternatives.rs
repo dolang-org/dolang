@@ -227,7 +227,7 @@ impl<'db> Solver<'db> {
         members: &[UnionMember],
     ) -> Result<Issue, Issue> {
         let residual = Residual::Unsupported("a type that may be inside a union member").into();
-        let fixed = match self.head(actual) {
+        let fixed = match self.widened_head(actual) {
             Ok(Head::Structural(view)) => match self.db.ty(view.ty) {
                 _ if view.ty == self.db.top() => true,
                 Type::Literal(_)
@@ -254,7 +254,11 @@ impl<'db> Solver<'db> {
                 continue;
             }
             match self.head(view.child(ty)) {
-                Ok(Head::Nominal(nominal)) if !nominal.arguments.is_empty() => return Ok(residual),
+                Ok(Head::Nominal(nominal) | Head::Meta(nominal))
+                    if !nominal.arguments.is_empty() =>
+                {
+                    return Ok(residual);
+                }
                 Ok(Head::Infer(_)) | Err(Issue::Residual(_)) => return Ok(residual),
                 Ok(_) => {}
                 Err(issue) => return Err(issue),

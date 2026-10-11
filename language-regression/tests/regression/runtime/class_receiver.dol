@@ -56,13 +56,40 @@ class Counter
     let bound = cls.#bump
     bound()
 
+  # A static member has no receiver, so it reaches its class's private members
+  # through the class's own name.
   #[static]
-  pub def add cls
-    cls.#total = (cls.#total + 1)
-    cls.#total
+  pub def add()
+    Counter.#total = (Counter.#total + 1)
+    Counter.#total
+
+  #[static]
+  pub def deferred()
+    do Counter.#total
+
+  #[static]
+  #[getter]
+  pub def current()
+    Counter.#total
+
+  #[static]
+  #[setter]
+  pub def current value
+    Counter.#total = value
+
+  # So does any other member
+  pub def peek _self
+    Counter.#total
 
 class Derived: Counter
 assert_eq $Counter.next() 1
 assert_eq $Derived.next() 1
 assert_eq $Counter.next() 2
 assert_eq $Counter.add() 1
+assert_eq $Counter().peek() 1
+let deferred = Counter.deferred()
+assert_eq $Counter.add() 2
+assert_eq $deferred() 2
+assert_eq $Counter.current 2
+Counter.current = 10
+assert_eq $Counter.add() 11

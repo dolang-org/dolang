@@ -14,7 +14,7 @@ use crate::{
         Expand, Expr, ExprBody, For, Function, GetVariant, Ident, If, Import, ImportElement,
         ImportItem, Key, LValue, Let, Match, Method, NlGuard, NlInfo, Origin, Pair, PatBind,
         PatIdent, PatItem, Pattern, PrimStmt, Res, Return, Root, SideEffect, Single, Stmt, Try,
-        Var, While, visit::Node,
+        Var, VarFlags, While, visit::Node,
     },
     diag::{AnnotationKind, Severity},
     source::{Annotate, Diagnose, Diags, File, Patch, Span},
@@ -825,6 +825,45 @@ impl Annotate for ImportAssign {
     }
 }
 
+/// An assignment to a class's own binding, which names the class when its
+/// methods access private members through it
+#[derive(Clone)]
+struct ClassAssign {
+    span: Span,
+    class: Option<Span>,
+}
+
+impl Diagnose for ClassAssign {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        w.write_str("class bindings cannot be reassigned")
+    }
+    fn span(&self) -> Span {
+        self.span
+    }
+    fn annotations(&self) -> Box<dyn Iterator<Item = Box<dyn Annotate>>> {
+        Box::new(
+            self.class
+                .map(|_| Box::new(self.clone()) as Box<dyn Annotate>)
+                .into_iter(),
+        )
+    }
+}
+
+impl Annotate for ClassAssign {
+    fn kind(&self) -> AnnotationKind {
+        AnnotationKind::Context
+    }
+    fn span(&self) -> Span {
+        self.class.unwrap()
+    }
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        w.write_str("class declared here")
+    }
+}
+
 fn ungroup(mut expr: &Expr) -> &Expr {
     while let Expr::Group { expr: inner, .. } = expr {
         expr = inner;
@@ -956,6 +995,8 @@ enum Scope<'s> {
     },
     Class {
         parent: &'s Scope<'s>,
+        /// The name of the class's own binding, when it holds the class
+        binding: Option<Span>,
         class_private: FxHashMap<String, sym::Id>,
     },
 }
@@ -982,6 +1023,18 @@ impl<'s> Scope<'s> {
         }
     }
 
+    /// The nearest class's own binding. A nested class shadows its outer class,
+    /// as it has its own private namespace.
+    fn class_binding(&self) -> Option<Span> {
+        match self {
+            Self::Base => None,
+            Self::Class { binding, .. } => *binding,
+            Self::Nested { parent, .. } => parent.class_binding(),
+        }
+    }
+
+    /// Whether `expr` may access private members: the method's receiver, or,
+    /// outside a constructor's receiver rule, the enclosing class's own binding.
     fn is_receiver(&self, expr: &Expr, init: bool) -> bool {
         let Expr::Ident(ident) = ungroup(expr) else {
             return false;
@@ -989,12 +1042,18 @@ impl<'s> Scope<'s> {
         let Some(res) = ident.res else {
             return false;
         };
-        matches!(self.origin(res), Origin::SelfParam(span) if Some(span) == self.receiver(init))
+        let var = self.var(res);
+        match var.origin {
+            Origin::SelfParam(span) => Some(span) == self.receiver(init),
+            Origin::Source(span) => {
+                !init && var.flags.contains(VarFlags::CLASS) && Some(span) == self.class_binding()
+            }
+            _ => false,
+        }
     }
 
     fn should_warn_unused(&self, resolver: &Elaborater, var: &Var) -> Option<Span> {
-        if var.used
-            || var.exported
+        if var.flags.intersects(VarFlags::USED | VarFlags::EXPORTED)
             || (matches!(resolver.mode, Mode::Repl) && self.is_top_level())
             || self.is_class()
         {
@@ -1128,9 +1187,10 @@ impl<'s> Scope<'s> {
         }
     }
 
-    fn class(&'s self) -> Self {
+    fn class(&'s self, binding: Option<Span>) -> Self {
         Self::Class {
             parent: self,
+            binding,
             class_private: FxHashMap::default(),
         }
     }
@@ -1317,7 +1377,7 @@ impl<'s> Scope<'s> {
                     cell.update(|(mut var, e)| {
                         // Not necessary to update epoch; being marked captured is idempotent
                         if e > epoch {
-                            var.captured = true;
+                            var.flags.insert(VarFlags::CAPTURED);
                         }
                         (var, e)
                     })
@@ -1407,16 +1467,14 @@ impl<'s> Scope<'s> {
             Self::Class { .. } => unreachable!("class scope is not lexical"),
             Self::Nested { vars, index, .. } => {
                 let i = vars.len();
+                let mut flags = VarFlags::empty();
+                flags.set(VarFlags::EXPORTED, exported);
+                flags.set(VarFlags::INITIALIZED, initialized);
                 vars.push(Cell::new((
                     Var {
                         sym,
-                        captured: false,
-                        exported,
-                        used: false,
-                        initialized,
+                        flags,
                         origin,
-                        pattern_pending: false,
-                        type_used: false,
                         node: None,
                     },
                     epoch,
@@ -1436,13 +1494,8 @@ impl<'s> Scope<'s> {
                 vars.push(Cell::new((
                     Var {
                         sym: sym::Id::INVALID,
-                        captured: false,
-                        exported: false,
-                        used: true,
-                        initialized: true,
+                        flags: VarFlags::USED | VarFlags::INITIALIZED,
                         origin: Origin::Synthetic,
-                        pattern_pending: false,
-                        type_used: false,
                         node: None,
                     },
                     epoch,
@@ -1462,7 +1515,7 @@ impl<'s> Scope<'s> {
             unreachable!("pattern bindings have a lexical destination scope")
         };
         vars[index].update(|(mut var, epoch)| {
-            var.pattern_pending = true;
+            var.flags.insert(VarFlags::PATTERN_PENDING);
             (var, epoch)
         });
         pattern_pending.push(index);
@@ -1475,7 +1528,9 @@ impl<'s> Scope<'s> {
             return None;
         };
         let var = vars[*index.get(&sym)?].get().0;
-        var.pattern_pending.then(|| var.origin.name()).flatten()
+        (var.flags.contains(VarFlags::PATTERN_PENDING))
+            .then(|| var.origin.name())
+            .flatten()
     }
 
     /// The names visible in this scope, to restore after elaborating an
@@ -1515,7 +1570,7 @@ impl<'s> Scope<'s> {
         };
         for index in pattern_pending.drain(..) {
             vars[index].update(|(mut var, epoch)| {
-                var.pattern_pending = false;
+                var.flags.remove(VarFlags::PATTERN_PENDING);
                 (var, epoch)
             });
         }
@@ -1528,7 +1583,9 @@ impl<'s> Scope<'s> {
             Self::Nested { vars, parent, .. } => {
                 if res.depth == 0 {
                     let var = vars[res.index].get().0;
-                    var.pattern_pending.then(|| var.origin.name()).flatten()
+                    (var.flags.contains(VarFlags::PATTERN_PENDING))
+                        .then(|| var.origin.name())
+                        .flatten()
                 } else {
                     parent.pending_pattern_binding(Res {
                         depth: res.depth - 1,
@@ -1547,7 +1604,21 @@ impl<'s> Scope<'s> {
             Self::Class { .. } => unreachable!("class scope is not lexical"),
             Self::Nested { vars, .. } => {
                 vars[index].update(|(mut var, _)| {
-                    var.initialized = true;
+                    var.flags.insert(VarFlags::INITIALIZED);
+                    (var, epoch)
+                });
+            }
+        }
+    }
+
+    /// Mark a binding as a class's own, which cannot be reassigned
+    fn mark_class(&self, index: usize) {
+        match self {
+            Self::Base => panic!("Can't mark vars in base scope"),
+            Self::Class { .. } => unreachable!("class scope is not lexical"),
+            Self::Nested { vars, .. } => {
+                vars[index].update(|(mut var, epoch)| {
+                    var.flags.insert(VarFlags::CLASS);
                     (var, epoch)
                 });
             }
@@ -1560,7 +1631,7 @@ impl<'s> Scope<'s> {
             Self::Class { .. } => unreachable!("class scope has no locals"),
             Self::Nested { vars, .. } => {
                 vars[index].update(|(mut var, _)| {
-                    var.used = true;
+                    var.flags.insert(VarFlags::USED);
                     (var, epoch)
                 });
             }
@@ -1573,7 +1644,7 @@ impl<'s> Scope<'s> {
             Self::Class { .. } => unreachable!("class scope is not lexical"),
             Self::Nested { vars, .. } => {
                 vars[index].update(|(mut var, _)| {
-                    var.exported = true;
+                    var.flags.insert(VarFlags::EXPORTED);
                     (var, epoch)
                 });
             }
@@ -1614,15 +1685,15 @@ impl<'s> Scope<'s> {
             } => {
                 if let Some(&index) = index.get(&id) {
                     let (found, _) = vars[index].get();
-                    if !capture && !found.initialized {
+                    if !capture && !found.flags.contains(VarFlags::INITIALIZED) {
                         return Err(ResolveError::UseBeforeInit(found.origin));
                     }
                     vars[index].update(|(var, _)| {
                         let mut var = var;
                         if capture {
-                            var.captured = true;
+                            var.flags.insert(VarFlags::CAPTURED);
                         }
-                        var.used = true;
+                        var.flags.insert(VarFlags::USED);
                         if let Some(origin) = promote {
                             var.origin = origin;
                         }
@@ -1650,14 +1721,18 @@ impl<'s> Scope<'s> {
     }
 
     fn origin(&self, res: Res) -> Origin {
+        self.var(res).origin
+    }
+
+    fn var(&self, res: Res) -> Var {
         match self {
             Self::Base => unreachable!(),
-            Self::Class { parent, .. } => parent.origin(res),
+            Self::Class { parent, .. } => parent.var(res),
             Self::Nested { vars, parent, .. } => {
                 if res.depth == 0 {
-                    vars[res.index].get().0.origin
+                    vars[res.index].get().0
                 } else {
-                    parent.origin(Res {
+                    parent.var(Res {
                         depth: res.depth - 1,
                         ..res
                     })
@@ -1672,7 +1747,7 @@ impl<'s> Scope<'s> {
             Scope::Class { parent, .. } => parent.is_read(index, depth),
             Scope::Nested { vars, parent, .. } => {
                 if depth == 0 {
-                    vars[index].get().0.used
+                    vars[index].get().0.flags.contains(VarFlags::USED)
                 } else {
                     parent.is_read(index, depth - 1)
                 }
@@ -2172,7 +2247,15 @@ impl<'a> Elaborater<'a> {
             LValue::Ident(id) => {
                 self.visit_ident(scope, id)?;
                 if let Some(res) = id.res {
-                    match scope.origin(res) {
+                    let var = scope.var(res);
+                    if var.flags.contains(VarFlags::CLASS) {
+                        self.diags.push(ClassAssign {
+                            span: id.span,
+                            class: var.origin.name(),
+                        });
+                        self.fail = true;
+                    }
+                    match var.origin {
                         Origin::SelfParam(receiver) => {
                             self.diags.push(ReceiverAccess {
                                 span: id.span,
@@ -3060,6 +3143,7 @@ impl<'a> Elaborater<'a> {
             .id(&self.bintab.id_str(self.file.str(node.ident.span)));
         let origin = Origin::Source(node.ident.span);
         let index = scope.insert(sym, origin, self.epoch, true);
+        scope.mark_class(index);
         node.ident.res = Some(Res {
             index,
             depth: 0,
@@ -3082,7 +3166,7 @@ impl<'a> Elaborater<'a> {
             self.visit_expr(scope, &mut decorator.expr, false)?;
         }
         if def.is_type_only() {
-            return self.visit_signature(scope, &mut def.func);
+            return self.visit_signature(scope, &mut def.func, false);
         }
         if !def.decorators.is_empty() {
             let res = def
@@ -3093,7 +3177,7 @@ impl<'a> Elaborater<'a> {
             scope.mark_local_used(res.index, self.epoch);
         }
         if def.func.stub_span.is_some() {
-            return self.visit_signature(scope, &mut def.func);
+            return self.visit_signature(scope, &mut def.func, false);
         }
         self.visit_function(scope, &mut def.func, None)
     }
@@ -3108,24 +3192,32 @@ impl<'a> Elaborater<'a> {
         for decorator in &mut def.decorators {
             self.visit_expr(scope, &mut decorator.expr, false)?;
         }
+        for decorator in &def.decorators {
+            if let Some(member_scope) = self.member_scope(scope, decorator) {
+                def.scope = member_scope;
+            }
+        }
+        // A static method has no receiver, so it is elaborated as a plain function
+        let is_static = def.scope == ast::MemberScope::Static;
         if def.type_only || def.func.stub_span.is_some() {
-            return self.visit_signature(scope, &mut def.func);
+            return self.visit_signature(scope, &mut def.func, !is_static);
         }
         self.visit_function_context(
             scope,
             &mut def.func,
             None,
-            Some(matches!(def.special, Some(ast::SpecialMethod::Init))),
+            (!is_static).then_some(matches!(def.special, Some(ast::SpecialMethod::Init))),
         )
     }
 
-    /// Resolve a field decorator to a member-scope annotation.
+    /// Resolve a decorator to a member-scope annotation.
     ///
     /// Fields have no runtime decorator semantics, so `class` and `static` are
     /// consumed here instead. Requiring the canonical prelude binding — rather
     /// than any expression that happens to be spelled `class` — keeps the door
-    /// open for giving field decorators real semantics later.
-    fn field_member_scope(
+    /// open for giving field decorators real semantics later. A method keeps
+    /// its decorators, but a static one is elaborated without a receiver.
+    fn member_scope(
         &mut self,
         scope: &Scope<'_>,
         decorator: &ast::Decorator,
@@ -3161,7 +3253,7 @@ impl<'a> Elaborater<'a> {
             // between a decorator and the declaration it applies to, and the field
             // is what the diagnostic is really about.
             let span = node.field_span;
-            match self.field_member_scope(scope, decorator) {
+            match self.member_scope(scope, decorator) {
                 Some(scope) if node.scope == ast::MemberScope::Instance => node.scope = scope,
                 Some(_) => self.diags.push(DuplicateMemberScope(span)),
                 None => self.diags.push(UnsupportedFieldDecorator(span)),
@@ -3233,6 +3325,7 @@ impl<'a> Elaborater<'a> {
                     let exported = node.pub_span.is_some();
                     let origin = Origin::Source(node.ident.span);
                     let index = scope.insert_pending(sym, origin, self.epoch, exported);
+                    scope.mark_class(index);
                     node.ident.res = Some(Res {
                         index,
                         depth: 0,
@@ -3313,7 +3406,7 @@ impl<'a> Elaborater<'a> {
 
         if class.is_protocol() {
             // A protocol binds no variable; its members are only signatures
-            let mut class_scope = scope.class();
+            let mut class_scope = scope.class(None);
             return self.visit_class_body(&mut class_scope, &mut class.body);
         }
 
@@ -3331,9 +3424,12 @@ impl<'a> Elaborater<'a> {
             scope.mark_local_used(res.index, self.epoch);
         }
 
-        // Visit the class body in a new class scope
+        // Visit the class body in a new class scope. A decorator's result
+        // need not be the class, so a decorated class's binding grants no
+        // private access.
         {
-            let mut class_scope = scope.class();
+            let binding = class.decorators.is_empty().then_some(class.ident.span);
+            let mut class_scope = scope.class(binding);
 
             self.visit_class_body(&mut class_scope, &mut class.body)?;
         }
@@ -3443,8 +3539,12 @@ impl<'a> Elaborater<'a> {
 
     /// Elaborate the signature of a type-only declaration, which has no body. Its
     /// parameters are bound as a function's would be, but nothing can read them.
-    fn visit_signature(&mut self, scope: &mut Scope<'_>, node: &mut Function) -> Result<()> {
-        let is_class_method = scope.is_class();
+    fn visit_signature(
+        &mut self,
+        scope: &mut Scope<'_>,
+        node: &mut Function,
+        is_class_method: bool,
+    ) -> Result<()> {
         let mut scope = scope.function(true);
         self.visit_params(&mut scope, &mut node.params, is_class_method)?;
         scope.finish_quiet(&mut node.body.vars);
@@ -3654,11 +3754,11 @@ impl<'a> Elaborater<'a> {
             for var in root.0.body.vars.iter_mut() {
                 // In REPL mode, export *all* top-level bindings that aren't prelude imports
                 if self.mode == Mode::Repl && !var.is_prelude() && !var.is_synthetic() {
-                    var.exported = true;
+                    var.flags.insert(VarFlags::EXPORTED);
                 }
 
-                if var.exported {
-                    var.captured = true;
+                if var.flags.contains(VarFlags::EXPORTED) {
+                    var.flags.insert(VarFlags::CAPTURED);
                 }
             }
         }
