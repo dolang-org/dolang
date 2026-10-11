@@ -10,6 +10,13 @@ pub @let Union[...Ts] = ...
 # its result.
 pub @let Never = Union[]
 
+# The unchecked type. Unlike [`Value`](std.Value), which admits every value but
+# allows few operations without narrowing, `Unknown` is consistent with every
+# type in both directions, so the checker accepts any use of it. A
+# [strict](../../language/types.md#strict-checking) file may write it to leave
+# one declaration unchecked.
+pub @let Unknown = ...
+
 # The union of a schema's keys, as a collection indexes it: positional items
 # are indexed by `Int`. `Keys[{a: Int, b: Str}]` is `(:a: | :b:)`,
 # `Keys[{**Int}]` is `Sym`, and `Keys[{Int, Str}]` and `Keys[{*Int}]` are `Int`.
