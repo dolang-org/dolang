@@ -1,13 +1,21 @@
 //! What solvers nested in one another share (#900)
 
-use std::cell::{Cell, RefCell};
+use std::{
+    cell::{Cell, RefCell, RefMut},
+    hash::Hash,
+    iter,
+};
 
-use dolang_util::mono::{MonoHashSet, MonoVec};
+use dolang_util::{
+    intern,
+    mono::{MonoHashMap, MonoHashSet, MonoVec},
+};
+use rustc_hash::FxHashMap;
 
 use super::{
-    Bounds, Dependency, Environment, EnvironmentId, InferVarId, ObligationId, ObligationLayer,
-    Relation, Residual, Scope, ScopeId, Skolem, SkolemId, Solver, State, Step, Term, Variable,
-    VariableLayer, VariableState,
+    Alternatives, Bases, Bounds, Dependency, Environment, EnvironmentId, InferVarId, ObligationId,
+    ObligationLayer, Relation, Residual, Scope, ScopeId, Skolem, SkolemId, Solver, State, Step,
+    Term, Variable, VariableLayer, VariableState,
 };
 
 /// A work budget, shared by a solver and the solvers nested in it. Each unit of
@@ -70,16 +78,119 @@ impl Default for Gas {
     }
 }
 
-/// An entry's index among a table's own, given where they begin
-fn own(base: usize, id: usize) -> usize {
-    id.checked_sub(base)
-        .expect("an entry of the solver this one is nested in")
+/// The solver a solver is nested in, and how. Only the accessors here reach
+/// it, and nothing changes it while it's a parent.
+pub(super) struct Parent<'a> {
+    solver: &'a Solver<'a>,
+    nesting: Nesting,
+}
+
+impl Drop for Parent<'_> {
+    fn drop(&mut self) {
+        self.solver.child.set(false);
+    }
+}
+
+/// How a solver is nested in its parent
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Nesting {
+    /// A trial of an alternative (see [`Solver::trial`])
+    Trial,
+    /// A solver its caller constrains (see [`Solver::fork`])
+    Fork,
+}
+
+impl<'db> Solver<'db> {
+    /// A solver nested in this one, whose work is charged to `gas`. It sees
+    /// everything this one does and records what it changes itself, so nothing
+    /// solved on it reaches this one, which can't change while it's live. It
+    /// processes what this one has queued, as this one would.
+    pub(super) fn child<'a>(&'a self, nesting: Nesting, gas: &'a Gas) -> Solver<'a> {
+        assert!(
+            !self.child.replace(true),
+            "a solver nested in one that already has a live one"
+        );
+        let queue = MonoVec::new();
+        for &id in self.queue.iter() {
+            queue.push(id);
+        }
+        Solver {
+            db: self.db,
+            bases: Bases {
+                variables: self.variable_count(),
+                obligations: self.obligation_count(),
+                environments: self.environment_count(),
+                skolems: self.skolem_count(),
+                scopes: self.scope_count(),
+            },
+            environments: intern::Table::new(),
+            variables: MonoVec::new(),
+            layers: MonoVec::new(),
+            overlays: MonoHashMap::default(),
+            dirty: RefCell::new(self.dirty.borrow().clone()),
+            instantiations: RefCell::default(),
+            skolemizations: RefCell::default(),
+            skolems: MonoVec::new(),
+            scopes: MonoVec::new(),
+            relations: MonoVec::new(),
+            obligations: MonoVec::new(),
+            obligation_overlays: MonoHashMap::default(),
+            obligation_index: MonoHashMap::default(),
+            queue,
+            roots: Vec::new(),
+            gas,
+            depth: self.depth,
+            scope: self.scope.clone(),
+            groups: self.groups.clone(),
+            gradual: self.gradual,
+            rigid_bounds: RefCell::default(),
+            closed: self.closed,
+            alternatives: RefCell::default(),
+            constructors: RefCell::default(),
+            default_constructions: RefCell::default(),
+            generic_members: RefCell::default(),
+            inherits: true,
+            generation: Cell::new(self.generation.get()),
+            trials_from: self.trials_from,
+            owned: self.owned,
+            blinded: FxHashMap::default(),
+            probing: self.probing.clone(),
+            parent: Some(Parent {
+                solver: self,
+                nesting,
+            }),
+            child: Cell::new(false),
+            #[cfg(feature = "debug")]
+            names: self.names,
+            #[cfg(feature = "debug")]
+            indent: self.indent + 1,
+        }
+    }
+
+    /// The solver this one is nested in, if any
+    fn parent(&self) -> Option<&'db Solver<'db>> {
+        self.parent.as_ref().map(|parent| parent.solver)
+    }
+
+    /// The solver this one is nested in, which holds the entries below its bases
+    fn outer(&self) -> &'db Solver<'db> {
+        self.parent()
+            .expect("an entry of a solver this one isn't nested in")
+    }
+
+    /// How many trials it's nested in
+    pub(super) fn trial_depth(&self) -> usize {
+        iter::successors(self.parent.as_ref(), |parent| parent.solver.parent.as_ref())
+            .filter(|parent| parent.nesting == Nesting::Trial)
+            .count()
+    }
 }
 
 /// The tables, as the solver sees them through the layers of the solvers it's
 /// nested in. Each layer records what its solver adds: entries it creates,
 /// changes to the state of others, and additions to the sets that only grow.
-impl Solver<'_> {
+/// An entry below a table's base is its parent's.
+impl<'db> Solver<'db> {
     /// Assert that no solver nested in this one is live, before changing it
     pub(super) fn writable(&self) {
         assert!(
@@ -95,7 +206,10 @@ impl Solver<'_> {
 
     /// What a variable is
     pub(super) fn variable(&self, id: InferVarId) -> &Variable {
-        &self.variables[own(self.bases.variables, id.0)]
+        match id.0.checked_sub(self.bases.variables) {
+            Some(index) => &self.variables[index],
+            None => self.outer().variable(id),
+        }
     }
 
     /// A new variable
@@ -108,25 +222,44 @@ impl Solver<'_> {
         id
     }
 
-    /// The layer holding a variable's resolution as this solver sees it
-    fn layer(&self, id: InferVarId) -> &VariableLayer {
-        &self.layers[own(self.bases.variables, id.0)]
-    }
-
-    /// The layer this solver records changes to a variable in
+    /// The layer this solver records changes to a variable in, starting from
+    /// its parent's resolution of it
     fn layer_mut(&self, id: InferVarId) -> &VariableLayer {
         self.writable();
-        self.layer(id)
+        match id.0.checked_sub(self.bases.variables) {
+            Some(index) => &self.layers[index],
+            None => self.overlays.get_or_insert_with(&id.0, |&index| {
+                let layer = VariableLayer {
+                    state: self.outer().state(id).clone(),
+                    ..VariableLayer::default()
+                };
+                (index, layer)
+            }),
+        }
     }
 
     /// Visit each layer that records a variable, outermost first
     fn variable_layers(&self, id: InferVarId, visit: &mut impl FnMut(&VariableLayer)) {
-        visit(self.layer(id));
+        match id.0.checked_sub(self.bases.variables) {
+            Some(index) => visit(&self.layers[index]),
+            None => {
+                self.outer().variable_layers(id, visit);
+                if let Some(layer) = self.overlays.get(&id.0) {
+                    visit(layer);
+                }
+            }
+        }
     }
 
     /// A variable's resolution
     pub(super) fn state(&self, id: InferVarId) -> &VariableState {
-        &self.layer(id).state
+        match id.0.checked_sub(self.bases.variables) {
+            Some(index) => &self.layers[index].state,
+            None => match self.overlays.get(&id.0) {
+                Some(layer) => &layer.state,
+                None => self.outer().state(id),
+            },
+        }
     }
 
     /// A variable's resolution, to change
@@ -261,12 +394,15 @@ impl Solver<'_> {
 
     /// The relation an obligation judges
     pub(crate) fn relation(&self, id: ObligationId) -> Relation {
-        self.relations[own(self.bases.obligations, id.0)]
+        match id.0.checked_sub(self.bases.obligations) {
+            Some(index) => self.relations[index],
+            None => self.outer().relation(id),
+        }
     }
 
     /// The obligation judging a relation, if it's interned
     pub(super) fn interned(&self, relation: &Relation) -> Option<ObligationId> {
-        self.obligation_index.get(relation).copied()
+        (self.obligation_index.get(relation).copied()).or_else(|| self.parent()?.interned(relation))
     }
 
     /// Intern a new obligation
@@ -286,18 +422,47 @@ impl Solver<'_> {
 
     /// The layer holding an obligation's processing as this solver sees it
     pub(super) fn progress(&self, id: ObligationId) -> &ObligationLayer {
-        &self.obligations[own(self.bases.obligations, id.0)]
+        match id.0.checked_sub(self.bases.obligations) {
+            Some(index) => &self.obligations[index],
+            None => match self.obligation_overlays.get(&id.0) {
+                Some(layer) => layer,
+                None => self.outer().progress(id),
+            },
+        }
     }
 
-    /// The layer this solver records an obligation's processing in
+    /// The layer this solver records an obligation's processing in, starting
+    /// from its parent's
     pub(super) fn progress_mut(&self, id: ObligationId) -> &ObligationLayer {
         self.writable();
-        self.progress(id)
+        match id.0.checked_sub(self.bases.obligations) {
+            Some(index) => &self.obligations[index],
+            None => self
+                .obligation_overlays
+                .get_or_insert_with(&id.0, |&index| {
+                    let outer = self.outer().progress(id);
+                    let layer = ObligationLayer {
+                        state: outer.state.clone(),
+                        queued: outer.queued.clone(),
+                        active: outer.active.clone(),
+                        dependencies: MonoVec::new(),
+                    };
+                    (index, layer)
+                }),
+        }
     }
 
     /// Visit each layer that records an obligation, outermost first
     fn obligation_layers(&self, id: ObligationId, visit: &mut impl FnMut(&ObligationLayer)) {
-        visit(self.progress(id));
+        match id.0.checked_sub(self.bases.obligations) {
+            Some(index) => visit(&self.obligations[index]),
+            None => {
+                self.outer().obligation_layers(id, visit);
+                if let Some(layer) = self.obligation_overlays.get(&id.0) {
+                    visit(layer);
+                }
+            }
+        }
     }
 
     /// The edges from an obligation to those derived from it, in the order
@@ -324,22 +489,42 @@ impl Solver<'_> {
         }
     }
 
+    /// How many environments it sees
+    fn environment_count(&self) -> usize {
+        self.bases.environments + self.environments.len()
+    }
+
     /// Whether an environment exists
     pub(super) fn has_environment(&self, id: EnvironmentId) -> bool {
-        id.0 < self.bases.environments + self.environments.len()
+        id.0 < self.environment_count()
     }
 
     /// A substitution frame
     pub(super) fn frame(&self, id: EnvironmentId) -> &Environment {
-        (self
-            .environments
-            .get_by_index(own(self.bases.environments, id.0)))
-        .expect("an environment of this solver")
+        match id.0.checked_sub(self.bases.environments) {
+            Some(index) => {
+                (self.environments.get_by_index(index)).expect("an environment of this solver")
+            }
+            None => self.outer().frame(id),
+        }
+    }
+
+    /// A substitution frame's ID, if it's interned
+    fn find_frame(&self, environment: &Environment) -> Option<EnvironmentId> {
+        (self.environments.get(environment))
+            .map(|id| EnvironmentId(self.bases.environments + id.index()))
+            .or_else(|| self.parent()?.find_frame(environment))
     }
 
     /// Intern a substitution frame
     pub(super) fn intern_frame(&self, environment: Environment) -> EnvironmentId {
         self.writable();
+        if let Some(id) = self
+            .parent()
+            .and_then(|parent| parent.find_frame(&environment))
+        {
+            return id;
+        }
         EnvironmentId(self.bases.environments + self.environments.id_owned(environment).index())
     }
 
@@ -349,7 +534,10 @@ impl Solver<'_> {
     }
 
     pub(super) fn skolem(&self, id: SkolemId) -> &Skolem {
-        &self.skolems[own(self.bases.skolems, id.0)]
+        match id.0.checked_sub(self.bases.skolems) {
+            Some(index) => &self.skolems[index],
+            None => self.outer().skolem(id),
+        }
     }
 
     pub(super) fn push_skolem(&self, skolem: Skolem) -> SkolemId {
@@ -359,21 +547,30 @@ impl Solver<'_> {
         id
     }
 
+    /// How many skolemization scopes it sees
+    fn scope_count(&self) -> usize {
+        self.bases.scopes + self.scopes.len()
+    }
+
     /// A skolemization's extent
     pub(super) fn extent(&self, id: ScopeId) -> &Scope {
-        &self.scopes[own(self.bases.scopes, id.0)]
+        match id.0.checked_sub(self.bases.scopes) {
+            Some(index) => &self.scopes[index],
+            None => self.outer().extent(id),
+        }
     }
 
     pub(super) fn push_scope(&self, scope: Scope) -> ScopeId {
         self.writable();
-        let id = ScopeId(self.bases.scopes + self.scopes.len());
+        let id = ScopeId(self.scope_count());
         self.scopes.push(scope);
         id
     }
 
     /// The environment an obligation's instantiation created, if it has one
     pub(super) fn instantiation_of(&self, obligation: ObligationId) -> Option<EnvironmentId> {
-        self.instantiations.borrow().get(&obligation).copied()
+        (self.instantiations.borrow().get(&obligation).copied())
+            .or_else(|| self.parent()?.instantiation_of(obligation))
     }
 
     pub(super) fn record_instantiation(
@@ -390,7 +587,8 @@ impl Solver<'_> {
     /// The environment of skolems an obligation's skolemization created, if it
     /// has one
     pub(super) fn skolemization_of(&self, obligation: ObligationId) -> Option<EnvironmentId> {
-        self.skolemizations.borrow().get(&obligation).copied()
+        (self.skolemizations.borrow().get(&obligation).copied())
+            .or_else(|| self.parent()?.skolemization_of(obligation))
     }
 
     pub(super) fn record_skolemization(
@@ -402,5 +600,82 @@ impl Solver<'_> {
         self.skolemizations
             .borrow_mut()
             .insert(obligation, environment);
+    }
+
+    /// What one of the caches of what the solver's assumptions imply holds for
+    /// `key`. A solver nested in another makes its assumptions until it makes
+    /// its own, and sees its caches until then.
+    pub(super) fn cached<K: Hash + Eq, V: Clone>(
+        &self,
+        cache: for<'s> fn(&'s Solver<'db>) -> &'s RefCell<FxHashMap<K, V>>,
+        key: &K,
+    ) -> Option<V> {
+        if let Some(value) = cache(self).borrow().get(key) {
+            return Some(value.clone());
+        }
+        if !self.inherits {
+            return None;
+        }
+        self.parent()?.cached(cache, key)
+    }
+
+    /// Read the record of a judgment's alternatives, if it has one
+    pub(super) fn alternative_record<R>(
+        &self,
+        obligation: ObligationId,
+        read: impl FnOnce(&Alternatives) -> R,
+    ) -> Option<R> {
+        if let Some(record) = self.alternatives.borrow().get(&obligation) {
+            return Some(read(record));
+        }
+        self.parent()?.alternative_record(obligation, read)
+    }
+
+    /// Whether a judgment has alternatives
+    pub(super) fn has_alternatives(&self, obligation: ObligationId) -> bool {
+        self.alternative_record(obligation, |_| ()).is_some()
+    }
+
+    pub(super) fn add_alternatives(&self, obligation: ObligationId, record: Alternatives) {
+        self.writable();
+        self.alternatives.borrow_mut().insert(obligation, record);
+    }
+
+    /// The record of a judgment's alternatives, to change, starting from its
+    /// parent's
+    pub(super) fn alternative_record_mut(
+        &self,
+        obligation: ObligationId,
+    ) -> RefMut<'_, Alternatives> {
+        self.writable();
+        RefMut::map(self.alternatives.borrow_mut(), |records| {
+            records.entry(obligation).or_insert_with(|| {
+                (self
+                    .outer()
+                    .alternative_record(obligation, Alternatives::clone))
+                .expect("a judgment with alternatives")
+            })
+        })
+    }
+
+    /// The judgments from `from` on that have alternatives
+    pub(super) fn alternative_ids(&self, from: usize) -> Vec<ObligationId> {
+        let records = self.alternatives.borrow();
+        let mut ids: Vec<ObligationId> = (records.keys().copied())
+            .filter(|id| id.0 >= from)
+            .collect();
+        if from < self.bases.obligations
+            && let Some(parent) = self.parent()
+        {
+            ids.extend(
+                (parent.alternative_ids(from).into_iter()).filter(|id| !records.contains_key(id)),
+            );
+        }
+        ids
+    }
+
+    /// What trials judge in place of `term`, if anything (see [`Solver::blind`])
+    pub(super) fn blinded(&self, term: Term) -> Option<Term> {
+        (self.blinded.get(&term).copied()).or_else(|| self.parent()?.blinded(term))
     }
 }

@@ -385,7 +385,7 @@ impl Solver<'_> {
             .collect();
         // A judgment that once had a member to infer through stays with
         // trials, which judge a `do` block without its result
-        let tried = self.alternatives.borrow().contains_key(&j.obligation);
+        let tried = self.has_alternatives(j.obligation);
         // An overloaded function's members are chosen among, as a call's are
         let overloaded = matches!(&j.a, Head::Structural(view)
             if matches!(self.db.ty(view.ty), Type::Overloaded { .. }));

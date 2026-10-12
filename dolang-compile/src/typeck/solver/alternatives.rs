@@ -3,9 +3,9 @@
 //! or a callable or overloaded function on the left or called, with several
 //! signatures, one of which must fit.
 //!
-//! Alternatives are judged by trials, each on a fork of the solver: a trial adds
-//! the alternative's own judgment and solves, so nothing it finds reaches the
-//! solver it was forked from. A trial whose judgment is contradicted rejects its
+//! Alternatives are judged by trials, each on a fork: a solver nested in the
+//! one judging. A trial adds the alternative's own judgment and solves, so
+//! nothing it finds reaches the solver it was forked from. A trial whose judgment is contradicted rejects its
 //! alternative; any other leaves it possible. One alternative left possible is
 //! chosen, and the judgment derives it. A rejection holds under every later state,
 //! since bounds only grow, so a choice doesn't depend on the order judgments are
@@ -77,7 +77,7 @@ impl<'db> Solver<'db> {
 
     /// What trials judge in place of `term`: its twin, if it has one
     pub(crate) fn twin(&self, term: Term) -> Term {
-        self.blinded.get(&term).copied().unwrap_or(term)
+        self.blinded(term).unwrap_or(term)
     }
 
     /// Relate `actual` to the alternative trials chose among `terms`, labeled by
@@ -166,16 +166,17 @@ impl<'db> Solver<'db> {
     /// What trials found of each alternative of a judgment none of whose
     /// alternatives is possible
     pub(crate) fn rejections(&self, obligation: ObligationId) -> alias::Box<[Rejection]> {
-        (self.alternatives.borrow().get(&obligation))
-            .map_or_else(Default::default, |record| record.rejections.clone())
+        (self.alternative_record(obligation, |record| record.rejections.clone()))
+            .unwrap_or_default()
     }
 
     /// The alternatives left possible of a judgment that's ambiguous
     pub(crate) fn possible(&self, obligation: ObligationId) -> Vec<usize> {
-        match self.alternatives.borrow().get(&obligation) {
-            Some(record) if record.verdict == Verdict::Ambiguous => record.possible.clone(),
-            _ => Vec::new(),
-        }
+        (self.alternative_record(obligation, |record| {
+            (record.verdict == Verdict::Ambiguous).then(|| record.possible.clone())
+        }))
+        .flatten()
+        .unwrap_or_default()
     }
 
     /// Derive the alternative judgment trials chose, labeled by `step`
@@ -187,23 +188,26 @@ impl<'db> Solver<'db> {
         step: fn(usize) -> Step,
         none: Issue,
     ) -> Result<(), Issue> {
-        let verdict = {
-            let mut records = self.alternatives.borrow_mut();
-            let record = records.entry(obligation).or_insert_with(|| Alternatives {
-                judgments,
-                selections,
-                none,
-                tried: None,
-                verdict: Verdict::Untried,
-                possible: Vec::new(),
-                rejections: Default::default(),
-            });
-            match record.verdict {
-                Verdict::Chosen(index) => Ok((index, record.judgments[index])),
-                Verdict::Untried => Err(Residual::Inference.into()),
-                Verdict::Ambiguous => Err(Residual::Ambiguous.into()),
-                Verdict::Failed(issue) => Err(issue),
-            }
+        let verdict = self.alternative_record(obligation, |record| match record.verdict {
+            Verdict::Chosen(index) => Ok((index, record.judgments[index])),
+            Verdict::Untried => Err(Residual::Inference.into()),
+            Verdict::Ambiguous => Err(Residual::Ambiguous.into()),
+            Verdict::Failed(issue) => Err(issue),
+        });
+        let Some(verdict) = verdict else {
+            self.add_alternatives(
+                obligation,
+                Alternatives {
+                    judgments,
+                    selections,
+                    none,
+                    tried: None,
+                    verdict: Verdict::Untried,
+                    possible: Vec::new(),
+                    rejections: Default::default(),
+                },
+            );
+            return Err(Residual::Inference.into());
         };
         let (index, judgment) = verdict?;
         self.derive_relation(obligation, judgment, step(index));
@@ -269,17 +273,17 @@ impl<'db> Solver<'db> {
     /// current generation, in creation order, stopping at the first choice. Each
     /// judgment whose verdict changes is reduced again. Whether any did.
     pub(super) fn try_alternatives(&self) -> bool {
-        if self.trial_depth >= TRIAL_DEPTH {
+        if self.trial_depth() >= TRIAL_DEPTH {
             return false;
         }
         let generation = self.generation.get();
-        let mut pending: Vec<ObligationId> = (self.alternatives.borrow().iter())
-            .filter(|(id, record)| {
-                id.0 >= self.trials_from
-                    && matches!(record.verdict, Verdict::Untried | Verdict::Ambiguous)
-                    && record.tried != Some(generation)
+        let mut pending: Vec<ObligationId> = (self.alternative_ids(self.trials_from).into_iter())
+            .filter(|&id| {
+                self.alternative_record(id, |record| {
+                    matches!(record.verdict, Verdict::Untried | Verdict::Ambiguous)
+                        && record.tried != Some(generation)
+                }) == Some(true)
             })
-            .map(|(&id, _)| id)
             .collect();
         pending.sort_by_key(|id| id.0);
         let mut changed = false;
@@ -289,8 +293,7 @@ impl<'db> Solver<'db> {
                 Err(_) if self.gas.is_exhausted() => return changed,
                 Err(residual) => (Verdict::Failed(residual.into()), Vec::new(), Vec::new()),
             };
-            let mut records = self.alternatives.borrow_mut();
-            let record = records.get_mut(&id).expect("a judged obligation");
+            let mut record = self.alternative_record_mut(id);
             record.tried = Some(generation);
             record.possible = possible;
             record.rejections = rejections.into();
@@ -311,15 +314,15 @@ impl<'db> Solver<'db> {
     /// verdict, the alternatives left possible, and what trials found of every
     /// alternative, if they rejected each.
     fn judge(&self, id: ObligationId) -> Result<(Verdict, Vec<usize>, Vec<Rejection>), Residual> {
-        let (judgments, selections, none) = {
-            let records = self.alternatives.borrow();
-            let record = &records[&id];
-            (
-                record.judgments.clone(),
-                record.selections.clone(),
-                record.none,
-            )
-        };
+        let (judgments, selections, none) = self
+            .alternative_record(id, |record| {
+                (
+                    record.judgments.clone(),
+                    record.selections.clone(),
+                    record.none,
+                )
+            })
+            .expect("a judgment with alternatives");
         let mut possible = Vec::new();
         let mut rejections = Vec::new();
         for (index, &judgment) in judgments.iter().enumerate() {
@@ -334,7 +337,7 @@ impl<'db> Solver<'db> {
                         fill,
                     } => {
                         let resolved = self.resolve(actual)?;
-                        let actual = self.blinded.get(&resolved).copied().unwrap_or(actual);
+                        let actual = self.blinded(resolved).unwrap_or(actual);
                         Relation::Subtype {
                             actual,
                             expected,
@@ -365,8 +368,8 @@ impl<'db> Solver<'db> {
         })
     }
 
-    /// Solve `relation` on a fork of this solver, whose work is charged to this
-    /// one. Returns the judgment's status, whether the fork's bounds and
+    /// Solve `relation` on a solver nested in this one, whose work is charged to
+    /// this one. Returns the judgment's status, whether the fork's bounds and
     /// assignments stayed as they were, the fork, and the judgment's outcome
     /// there. If `owned`, the fork settles the variables it creates. A fork that
     /// exhausts the budget exhausts this solver too, since they share it.
@@ -374,18 +377,13 @@ impl<'db> Solver<'db> {
         &self,
         relation: Relation,
         owned: bool,
-    ) -> Result<(Status, bool, Solver<'db>, Outcome), Residual> {
+    ) -> Result<(Status, bool, Solver<'_>, Outcome), Residual> {
         self.spend()?;
         trace!(self, "trial {}", self.render_relation(relation));
-        let mut fork = self.clone();
-        fork.trial_depth += 1;
+        let mut fork = self.child(Nesting::Trial, self.gas);
         fork.trials_from = fork.obligation_count();
         if owned {
             fork.owned = Some(fork.variable_count());
-        }
-        #[cfg(feature = "debug")]
-        {
-            fork.indent += 1;
         }
         let generation = fork.generation.get();
         let obligation = fork.enqueue(relation);

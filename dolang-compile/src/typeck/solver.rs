@@ -343,7 +343,6 @@ impl Walk {
 
 /// What a solver records of an obligation's processing. The relation is the
 /// obligation's identity, kept apart.
-#[derive(Clone)]
 struct ObligationLayer {
     state: Cell<State>,
     queued: Cell<bool>,
@@ -391,7 +390,7 @@ pub(crate) struct Outcome {
     pub(crate) diagnostics: Vec<Diagnostic>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct Root {
     obligation: ObligationId,
     #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
@@ -406,7 +405,6 @@ struct Root {
 type BoundSet = MonoHashMap<Term, MonoHashSet<ObligationId, FxBuildHasher>, FxBuildHasher>;
 
 /// What an inference variable is, fixed when it's created
-#[derive(Clone)]
 struct Variable {
     kind: Kind,
     /// For a schema variable, the lanes its items can occupy
@@ -432,7 +430,7 @@ struct VariableState {
 
 /// What a solver records of a variable: its resolution, and what it adds to
 /// the sets that only grow
-#[derive(Clone, Default)]
+#[derive(Default)]
 struct VariableLayer {
     state: VariableState,
     bounds: BoundSets,
@@ -449,7 +447,6 @@ enum Abstract {
 
 /// A binder of a quantified type on the right, held abstract while its body is
 /// related (see [`Solver::skolemization`])
-#[derive(Clone)]
 struct Skolem {
     kind: Kind,
     binding: Binding,
@@ -465,7 +462,6 @@ struct Skolem {
 
 /// A skolemization's extent: its skolems are visible to variables of this scope
 /// and the scopes inside it. The root scope has no skolems.
-#[derive(Clone)]
 struct Scope {
     parent: ScopeId,
     depth: usize,
@@ -473,7 +469,7 @@ struct Scope {
 
 /// Accumulated constraints on one inference variable `V`, as one solver
 /// records them
-#[derive(Default, Clone)]
+#[derive(Default)]
 struct BoundSets {
     /// Each key `L` imposes `L <: V`.
     lower: BoundSet,
@@ -548,10 +544,10 @@ enum Head {
     Meta(Nominal),
 }
 
-/// All solver IDs are local to this solver, just as type IDs are database-local.
-/// A clone is a fork: a trial on it can't affect the original (see
+/// All solver IDs are local to this solver and those nested in it, just as type
+/// IDs are database-local. A solver nested in another sees its parent's tables
+/// and records its own changes, so nothing solved on it reaches the parent (see
 /// [`Solver::trial`]).
-#[derive(Clone)]
 pub(crate) struct Solver<'db> {
     db: &'db Database,
     /// Where each table's own entries begin. Every table is reached through
@@ -560,6 +556,8 @@ pub(crate) struct Solver<'db> {
     environments: intern::Table<Environment, EnvironmentId>,
     variables: MonoVec<Variable>,
     layers: MonoVec<VariableLayer>,
+    /// What it records of its parent's variables, by ID
+    overlays: MonoHashMap<usize, VariableLayer, FxBuildHasher>,
     /// The variables whose bounds may have changed since solving last tried
     /// to assign them, by ID
     dirty: RefCell<Vec<bool>>,
@@ -575,6 +573,8 @@ pub(crate) struct Solver<'db> {
     // participate in identity and can grow while existing nodes are borrowed.
     relations: MonoVec<Relation>,
     obligations: MonoVec<ObligationLayer>,
+    /// What it records of its parent's obligations' processing, by ID
+    obligation_overlays: MonoHashMap<usize, ObligationLayer, FxBuildHasher>,
     obligation_index: MonoHashMap<Relation, ObligationId, FxBuildHasher>,
     queue: MonoVec<ObligationId>,
     roots: Vec<Root>,
@@ -607,12 +607,12 @@ pub(crate) struct Solver<'db> {
     default_constructions: RefCell<FxHashMap<DeclId, Option<Option<Signature>>>>,
     /// Each member of a generic class's object, once found
     generic_members: RefCell<FxHashMap<GenericMember, Result<Lookup, Issue>>>,
+    /// Whether it makes the assumptions its parent does, so their caches
+    /// hold for it too
+    inherits: bool,
     /// Counts changes to bounds and assignments, so trials rerun only after
     /// what they saw has grown
     generation: Cell<usize>,
-    /// How many trials this solver is nested in. A solver nested too deeply
-    /// leaves its own alternatives untried.
-    trial_depth: usize,
     /// The first obligation whose alternatives a trial's fork judges: the
     /// judgments it was forked with are its parent's to judge
     trials_from: usize,
@@ -626,8 +626,10 @@ pub(crate) struct Solver<'db> {
     /// The judgments the probes this solver is nested in are proving, so
     /// probing one again is recognized as a cycle (see [`Self::probe`])
     probing: Vec<(TypeId, TypeId)>,
+    /// The solver this one is nested in, if any (#900)
+    parent: Option<Parent<'db>>,
     /// Whether a solver nested in this one is live, which nothing may change
-    /// this one under (#900)
+    /// this one under
     child: Cell<bool>,
     /// How traces render a type (see [`Solver::named`])
     #[cfg(feature = "debug")]
@@ -682,6 +684,7 @@ impl<'db> Solver<'db> {
             environments,
             variables: MonoVec::new(),
             layers: MonoVec::new(),
+            overlays: MonoHashMap::default(),
             dirty: RefCell::new(Vec::new()),
             instantiations: RefCell::new(FxHashMap::default()),
             skolemizations: RefCell::new(FxHashMap::default()),
@@ -689,6 +692,7 @@ impl<'db> Solver<'db> {
             scopes,
             relations: MonoVec::new(),
             obligations: MonoVec::new(),
+            obligation_overlays: MonoHashMap::default(),
             obligation_index: MonoHashMap::default(),
             queue: MonoVec::new(),
             roots: Vec::new(),
@@ -703,12 +707,13 @@ impl<'db> Solver<'db> {
             constructors: RefCell::new(FxHashMap::default()),
             default_constructions: RefCell::new(FxHashMap::default()),
             generic_members: RefCell::new(FxHashMap::default()),
+            inherits: true,
             generation: Cell::new(0),
-            trial_depth: 0,
             owned: None,
             trials_from: 0,
             blinded: FxHashMap::default(),
             probing: Vec::new(),
+            parent: None,
             child: Cell::new(false),
             #[cfg(feature = "debug")]
             names: None,
@@ -792,6 +797,7 @@ impl<'db> Solver<'db> {
     /// declaration have escaped their own check.
     pub(crate) fn assume(&mut self, decl: DeclId) {
         self.scope.insert(decl);
+        self.inherits = false;
         self.constructors.get_mut().clear();
         self.default_constructions.get_mut().clear();
         self.generic_members.get_mut().clear();
@@ -810,6 +816,7 @@ impl<'db> Solver<'db> {
     /// rigid is bounded by `Unknown`, so the body's use of it is dynamic
     pub(crate) fn gradual(&mut self) {
         self.gradual = true;
+        self.inherits = false;
         self.rigid_bounds.get_mut().clear();
     }
 
@@ -818,15 +825,10 @@ impl<'db> Solver<'db> {
         self.gradual
     }
 
-    /// A copy of this solver whose work is charged to `gas`. Nothing solved on it
-    /// reaches this one.
-    pub(crate) fn fork<'g>(&self, gas: &'g Gas) -> Solver<'g>
-    where
-        'db: 'g,
-    {
-        let mut fork: Solver<'g> = self.clone();
-        fork.gas = gas;
-        fork
+    /// A solver nested in this one, whose work is charged to `gas`. Nothing
+    /// solved on it reaches this one.
+    pub(crate) fn fork<'a>(&'a self, gas: &'a Gas) -> Solver<'a> {
+        self.child(Nesting::Fork, gas)
     }
 
     /// A solver for a side query about `class`, its rigids assumed, spending
@@ -878,8 +880,8 @@ impl<'db> Solver<'db> {
     /// bound is bounded by its rest mode's shape, and an omitted channel by
     /// `Unknown` when checking a gradual unit.
     fn rigid_bounds(&self, ty: TypeId) -> Vec<(TypeId, Step)> {
-        if let Some(bounds) = self.rigid_bounds.borrow().get(&ty) {
-            return bounds.clone();
+        if let Some(bounds) = self.cached(|solver| &solver.rigid_bounds, &ty) {
+            return bounds;
         }
         let Type::Rigid { decl, slot, .. } = *self.db.ty(ty) else {
             unreachable!()
@@ -2886,6 +2888,7 @@ pub(crate) use lattice::Widening;
 pub(crate) use member::{Access, Found, FoundKind, Lookup, Signatures};
 pub(crate) use narrow::Target as NarrowTarget;
 pub(crate) use nest::Gas;
+use nest::{Nesting, Parent};
 pub(crate) use unpack::PatternShape;
 
 #[cfg(test)]

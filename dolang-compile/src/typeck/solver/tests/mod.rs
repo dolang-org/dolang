@@ -14,6 +14,7 @@ mod instantiation;
 mod lattice;
 mod members;
 mod narrow;
+mod nesting;
 mod nominal;
 mod overloads;
 mod projections;

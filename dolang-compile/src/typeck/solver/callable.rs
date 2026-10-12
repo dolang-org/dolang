@@ -72,8 +72,8 @@ impl Solver<'_> {
     /// on the class applied to its rigids, and the constructor's type abstracts
     /// them again.
     pub(crate) fn constructor(&self, class: DeclId, exact: bool) -> Constructor {
-        if let Some(constructor) = self.constructors.borrow().get(&(class, exact)) {
-            return constructor.clone();
+        if let Some(constructor) = self.cached(|solver| &solver.constructors, &(class, exact)) {
+            return constructor;
         }
         let constructor = self.construct(class, exact);
         (self.constructors.borrow_mut()).insert((class, exact), constructor.clone());
@@ -146,8 +146,8 @@ impl Solver<'_> {
     /// `None` if it's dynamic, and `Some(None)` if a signature doesn't reify or
     /// take a receiver.
     pub(crate) fn default_construction(&self, class: DeclId) -> Option<Option<Signature>> {
-        if let Some(construction) = self.default_constructions.borrow().get(&class) {
-            return construction.clone();
+        if let Some(construction) = self.cached(|solver| &solver.default_constructions, &class) {
+            return construction;
         }
         let construction = self.construct_default(class);
         (self.default_constructions.borrow_mut()).insert(class, construction.clone());
