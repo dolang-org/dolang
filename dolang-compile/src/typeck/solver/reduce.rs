@@ -510,6 +510,7 @@ impl Solver<'_> {
         view: TypeView,
         members: &[UnionMember],
     ) -> Result<(), Issue> {
+        // Literals of these never cover the class
         let infinite = [Intrinsic::Int, Intrinsic::Str, Intrinsic::Sym]
             .into_iter()
             .any(|intrinsic| self.db.intrinsic(intrinsic) == Some(actual));
@@ -537,17 +538,19 @@ impl Solver<'_> {
             cycle |= recursive;
             match status {
                 Status::Proven => return Ok(()),
-                // Keep generic alternatives conservative: a failed argument
-                // comparison need not exclude every value of the actual class
-                // (notably recursive data unions).
+                // Keep generic members conservative: the actual class's values
+                // may fit several applications of a generic class together
+                // without fitting any one. A member whose class the actual
+                // class doesn't reach is kept so too, for now (#901), unless the
+                // actual class is final.
                 Status::Contradicted => {
-                    if !infinite
-                        && !function
+                    if !function
                         && !top
                         && self.db.literal(actual).is_none()
                         && self
                             .start(expected)?
                             .is_some_and(|nominal| !nominal.arguments.is_empty())
+                        && !self.final_outside(actual, expected)
                     {
                         outside = false;
                     }

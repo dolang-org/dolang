@@ -320,3 +320,21 @@ pub class Decorated
 #    |
 # LL |     Decorated.#total
 #    |     ^^^^^^^^^
+
+# Only the prelude's `final` is known to return the class it is given
+def final cls
+  cls
+
+#[final]
+pub class Shadowed
+  #[static]
+  field total = 0
+
+  #[static]
+  pub def peek()
+    Shadowed.#total
+# error: private members require the enclosing class's receiver
+#   --> class_receiver_error.dol:LL:LL
+#    |
+# LL |     Shadowed.#total
+#    |     ^^^^^^^^

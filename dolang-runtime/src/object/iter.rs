@@ -548,6 +548,7 @@ impl<'v> Protocol<'v> for Iterable {
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: true,
+            is_final: false,
             members: iterable_members(),
             type_members: members![
                 Method(sym::VERBATIM_METHOD),
@@ -625,6 +626,7 @@ impl<'v> Protocol<'v> for Sinkable {
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: true,
+            is_final: false,
             members: sinkable_members(),
             type_members: members![
                 Method(sym::VERBATIM_METHOD),
@@ -1488,6 +1490,7 @@ impl<'v> Protocol<'v> for Iter {
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: true,
+            is_final: false,
             members: iter_members(),
             type_members: members![
                 Method(sym::VERBATIM_METHOD),
@@ -1653,6 +1656,7 @@ impl<'v> Protocol<'v> for Sink {
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: true,
+            is_final: false,
             members: sink_members(),
             type_members: members![
                 Method(sym::VERBATIM_METHOD),

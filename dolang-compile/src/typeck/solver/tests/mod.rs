@@ -107,6 +107,7 @@ fn reserve(db: &mut Database, kind: DeclKind, name: &str) -> (DeclId, TypeId, De
             unit: db.allocate_unit(),
             span: (0u32..1).into(),
         },
+        is_final: false,
     };
     (id, ty, source)
 }

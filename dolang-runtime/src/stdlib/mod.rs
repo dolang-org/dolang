@@ -113,6 +113,12 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .value("setter", &setter)
         .value("class", member_scopes.class)
         .value("static", member_scopes.statik)
+        .function("final", async move |strand, args, out| {
+            let ([class], []) = unpack!(strand, args, 1, 0)?;
+            class::make_final(strand, &class)?;
+            Output::set(strand, out, class);
+            Ok(())
+        })
         .value("Module", &module)
         .value("Record", &record)
         .value("Struct", &structure)

@@ -759,6 +759,9 @@ pub(crate) struct DeclSource {
     pub(crate) result_kind: Kind,
     pub(crate) name: Option<SymbolId>,
     pub(crate) span: UnitSpan,
+    /// Whether it is a class the runtime forbids subclassing, so that it has
+    /// no subclasses besides those it is declared with
+    pub(crate) is_final: bool,
 }
 
 /// A nominal declaration's supertype

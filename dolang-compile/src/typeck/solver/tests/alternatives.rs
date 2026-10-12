@@ -180,6 +180,28 @@ fn rejecting_every_member_contradicts_a_literal_but_not_a_class() {
     assert!(lower(&s, t).is_empty());
 }
 
+#[test]
+fn rejecting_every_member_contradicts_a_final_class() {
+    let mut db = Database::new();
+    let (id, a, mut source) = reserve(&mut db, DeclKind::Class, "A");
+    source.is_final = true;
+    populate(&mut db, id, source, a, vec![]);
+    let b = nominal(&mut db, "B", vec![], vec![]);
+    let boxed = nominal(&mut db, "Box", vec![binder(Variance::Covariant)], vec![]);
+    let boxed_var = apply(&db, boxed, &[var(&db)]);
+    let classes = union(&db, &[b, boxed_var]);
+    db.seal();
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
+    let t = s.infer();
+    let e = s.environment(s.empty_environment(), vec![t]);
+    s.constrain(s.closed(a), s.view(classes, e), Provenance::default());
+    let outcomes = s.solve();
+    // No `A` is a `Box`, as no class inherits from `A`
+    assert!(contradiction(&outcomes[0], Contradiction::Outside));
+    assert!(lower(&s, t).is_empty());
+}
+
 /// Exhausting the budget inside a trial is never a proof
 #[test]
 fn exhaustion_in_a_trial_is_residual() {

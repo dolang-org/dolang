@@ -450,6 +450,7 @@ pub(crate) struct Class {
     pub(crate) binders: Vec<Binder>,
     pub(crate) supers: Vec<Super>,
     pub(crate) members: Vec<Member>,
+    pub(crate) decorators: Vec<Decorator>,
 }
 
 /// A transparent or opaque alias

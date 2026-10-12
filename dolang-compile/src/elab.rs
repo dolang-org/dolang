@@ -3239,6 +3239,21 @@ impl<'a> Elaborater<'a> {
         }
     }
 
+    /// Whether a decorator is the canonical prelude `final`, which returns the
+    /// class it is given.
+    fn is_final_decorator(&self, scope: &Scope<'_>, decorator: &ast::Decorator) -> bool {
+        let ast::Expr::Ident(ident) = &decorator.expr else {
+            return false;
+        };
+        let Some(res) = ident.res else {
+            return false;
+        };
+        let Origin::PreludeItem { module, item } = scope.origin(res) else {
+            return false;
+        };
+        &self.bintab[module] == "std" && &self.bintab[item] == "final"
+    }
+
     fn visit_field_decorators(
         &mut self,
         scope: &mut Scope<'_>,
@@ -3426,9 +3441,14 @@ impl<'a> Elaborater<'a> {
 
         // Visit the class body in a new class scope. A decorator's result
         // need not be the class, so a decorated class's binding grants no
-        // private access.
+        // private access, unless every decorator is `final`, which returns
+        // its argument.
         {
-            let binding = class.decorators.is_empty().then_some(class.ident.span);
+            let binding = class
+                .decorators
+                .iter()
+                .all(|decorator| self.is_final_decorator(scope, decorator))
+                .then_some(class.ident.span);
             let mut class_scope = scope.class(binding);
 
             self.visit_class_body(&mut class_scope, &mut class.body)?;

@@ -64,6 +64,11 @@ impl Harvest<'_> {
             decl.visit(&mut used);
             match &decl.node {
                 DeclNode::Class(class) => {
+                    for decorator in &class.decorators {
+                        if let Decorator::Ident(name) = decorator {
+                            heads.insert(name.span);
+                        }
+                    }
                     for supertype in &class.supers {
                         heads.insert(supertype.head.span);
                         for arg in &supertype.args {
@@ -293,10 +298,16 @@ impl Visit for DeclNode {
                 binders,
                 supers,
                 members,
+                decorators,
             }) => {
                 binders.visit(ids);
                 supers.visit(ids);
                 members.visit(ids);
+                for decorator in decorators {
+                    if let Decorator::Ident(name) = decorator {
+                        name.visit(ids);
+                    }
+                }
             }
             DeclNode::Alias(alias) => {
                 alias.binders.visit(ids);

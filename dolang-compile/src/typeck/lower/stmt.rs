@@ -1391,13 +1391,22 @@ impl<'u> Scope<'_, '_, 'u> {
             }
         }
         let value = expr(ExprKind::Class(decl), span);
-        let value = self.decorate(&class.decorators, value);
+        // `final` returns the class it is given, so the binding keeps the class
+        // object's type; the applications are still checked
+        let is_final = self.lower.db.declaration(decl).source.is_final;
+        let value = if is_final {
+            let decorated = self.decorate(&class.decorators, expr(ExprKind::Class(decl), span));
+            self.emit(Step::Eval(decorated));
+            value
+        } else {
+            self.decorate(&class.decorators, value)
+        };
         let Some(var) = self.var(&class.ident) else {
             self.emit(Step::Eval(value));
             self.value_nil(dest, span);
             return;
         };
-        if class.decorators.is_empty()
+        if (class.decorators.is_empty() || is_final)
             && let Some(ty) = self.declared(decl, || class_object(self.lower.db, decl))
         {
             self.graph().var_mut(var).annotation = Some(ty);

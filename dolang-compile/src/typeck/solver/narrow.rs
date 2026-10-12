@@ -194,13 +194,10 @@ impl Solver<'_> {
     }
 
     /// Whether a class that doesn't reach `class` provably has no instance of it:
-    /// its values are all literals, as `Nil`'s and `Bool`'s are, and `class`
-    /// doesn't reach it either. Another class may have a subclass that is also a
-    /// `class`.
+    /// it is final, as `Nil`, `Bool` and `Sym` are, and `class` doesn't reach it
+    /// either. Another class may have a subclass that is also a `class`.
     fn disjoint(&self, nominal: &Nominal, class: DeclId) -> bool {
-        [Intrinsic::Nil, Intrinsic::Bool]
-            .into_iter()
-            .any(|intrinsic| self.intrinsic_decl(intrinsic) == Some(nominal.declaration))
+        self.db.declaration(nominal.declaration).source.is_final
             && matches!(self.descent(class, nominal.declaration), Ok(None))
     }
 

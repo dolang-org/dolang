@@ -1,0 +1,60 @@
+# A final class refuses subclasses, and `#[final]` refuses a class that already
+# has one. `Nil`, `Bool` and `Sym` are final, which keeps their values canonical.
+
+let message = "type error: cannot inherit from final type <type std.Nil>"
+assert_throws $std.TypeError str: $message do
+  class _MyNil: std.Nil
+assert_throws $std.TypeError do
+  class _MyBool: Bool
+assert_throws $std.TypeError do
+  class _MySym: Sym
+# Listing a final type after an open one fails too
+assert_throws $std.TypeError do
+  class _MixedBool: Int Bool
+
+# A final class's binding is the class, so its methods reach its private
+# static fields through it
+#[final]
+class Leaf
+  #[static]
+  field count = 0
+  pub field value = 0
+
+  def (init) self value
+    self.value = value
+
+  pub def bump self
+    Leaf.#count = (Leaf.#count + 1)
+    self.value
+
+  #[static]
+  pub def count()
+    Leaf.#count
+
+let leaf = Leaf 3
+assert_eq $leaf.bump() 3
+assert_eq $Leaf.count() 1
+assert_throws $std.TypeError do
+  class _Sub: Leaf
+
+# Making a class final returns it, and doing so twice is harmless
+class Twice
+assert_eq (final (final Twice)) $Twice
+assert_throws $std.TypeError do
+  class _SubTwice: Twice
+
+# A class that already has a subclass can't become final, even after a failed
+# attempt
+class Base
+class Child: Base
+assert_throws $std.StateError do final $Base
+assert_throws $std.StateError do final $Base
+class Grandchild: Child
+
+# A class marks only its direct supertypes as inherited from
+final $Grandchild
+assert_throws $std.StateError do final $Child
+
+# Only a class written in Do can be made final
+assert_throws $std.TypeError do final $Int
+assert_throws $std.TypeError do final 1

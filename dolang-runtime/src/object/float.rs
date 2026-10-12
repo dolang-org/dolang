@@ -590,6 +590,7 @@ impl<'v> Protocol<'v> for Float {
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: false,
+            is_final: false,
             type_members: members![
                 Method(sym::VERBATIM_METHOD),
                 Method(sym::STR_METHOD),

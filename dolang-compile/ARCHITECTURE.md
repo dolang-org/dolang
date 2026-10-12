@@ -219,37 +219,42 @@ A function type is a subtype of another when its parameter list includes the
 other's (see [Schemas](#schemas)), its result is a subtype of the other's, and
 its ambient channels are supertypes of the other's. Channels are implicit
 arguments, so both are contravariant; since `Sink` is contravariant in its
-element type, a function that writes `Int`s can be given a `Sink[Num]`. A
-def's omitted channel is an unbounded implicit binder, which a use instantiates
-as it does any other. Union-left
-judgments require every member. A closed union-right judgment accepts a member
-proved by an isolated, closed subtype query, which cannot add inference bounds
-or diagnostic edges to the calling solver; one with a term still to infer
-chooses a member by trials (see
+element type, a function that writes `Int`s can be given a `Sink[Num]`. A def's
+omitted channel is an unbounded implicit binder, which a use instantiates as it
+does any other. Union-left judgments require every member. A closed union-right
+judgment accepts a member proved by an isolated, closed subtype query, which
+cannot add inference bounds or diagnostic edges to the calling solver; one with
+a term still to infer chooses a member by trials (see
 [Alternatives and trials](#alternatives-and-trials)). Expanded union packs and
 alternatives that cannot be proved remain residual. The exception is a literal,
 a function, or a concrete class on the left: when every member refutes it, it
-contradicts the union. A protocol may be covered by several members, and a
-generic member's rejected arguments needn't exclude every value of a class, so
-neither refutes one; a literal's or function's class is fixed, so it is refuted
-outright. `Int`, `Str` and `Sym` have infinitely many literals, which a class's
-literals, finitely many, can't cover. A function relates to a literal through
-`Func`. A projection is exposed by reifying it once its schema's environment is
-substituted, which waits on the schema's variables. One of a rigid's schema that
-is left on the left reduces to the same projection of the rigid's bound. An item
-projection is evaluated once its schema and key are closed, by exposing or
-reifying it (`solver/item.rs`). The key selects items of the schema's keyed
-view: each member of the key goes to the literal item it is, or else to the
-literal items inside it and the domains that own it, as an actual keyed item
-goes to an expected schema's domains. `Int` selects every fixed position too,
-since an index out of range is a runtime error, as an array's is; a literal
-index past them is unadmitted. `IndexItem` joins the selected values.
-`AssignItem` meets them without intersection types: the lower of two ordered
-values, the bottom type for two literals or classes that can't share a value,
-and otherwise `Unknown`, which leaves the write unchecked. A key member the
-schema doesn't admit whole contradicts the projection, as a conflicting schema
-does. A rigid key selects only by its bound, so exactly only where each item the
-bound selects has the same value; otherwise the projection is residual.
+contradicts the union. A class has values outside every class it doesn't reach,
+its own instances or those of a subclass inheriting only it, so such a member
+refutes it even though a subclass of both may share their values. A protocol may
+be covered by several members' classes, so nothing refutes one. A value may fit
+several applications of a generic class together without fitting any one, as
+every `Tuple[Int | Str]` is a `Tuple[Int]` or a `Tuple[Str]`, so a generic
+member's rejected arguments leave a class residual. So, for now, does a generic
+member whose class the class doesn't reach, unless the class is final (#901). A
+literal's or function's class is fixed, so it is refuted outright. `Int`, `Str`
+and `Sym` have infinitely many literals, which a class's literals, finitely
+many, can't cover. A function relates to a literal through `Func`. A projection
+is exposed by reifying it once its schema's environment is substituted, which
+waits on the schema's variables. One of a rigid's schema that is left on the
+left reduces to the same projection of the rigid's bound. An item projection is
+evaluated once its schema and key are closed, by exposing or reifying it
+(`solver/item.rs`). The key selects items of the schema's keyed view: each
+member of the key goes to the literal item it is, or else to the literal items
+inside it and the domains that own it, as an actual keyed item goes to an
+expected schema's domains. `Int` selects every fixed position too, since an
+index out of range is a runtime error, as an array's is; a literal index past
+them is unadmitted. `IndexItem` joins the selected values. `AssignItem` meets
+them without intersection types: the lower of two ordered values, the bottom
+type for two literals or classes that can't share a value, and otherwise
+`Unknown`, which leaves the write unchecked. A key member the schema doesn't
+admit whole contradicts the projection, as a conflicting schema does. A rigid
+key selects only by its bound, so exactly only where each item the bound selects
+has the same value; otherwise the projection is residual.
 
 The item projections vary with their arguments as follows:
 
@@ -664,6 +669,8 @@ combined by variance, then to `Unknown`. Sharing only `Value` widens to
 
 Narrowing a flow type by an `Assume` works member by member against a class `C`
 or a literal, and stays above each member's true intersection with the target. A
+class member is disjoint from `C` only if it is final and neither class reaches
+the other: any other class may have a subclass that is also a `C`. A
 member that `type x C` can't prove disjoint or already reaching `C` becomes `C`,
 with the member's arguments where they carry down by variance and `Unknown`
 otherwise. A reach that can't be proven keeps a member under a negative relation
@@ -741,11 +748,11 @@ a function type must narrow as one. A class object `Type[C]` is called through
 `C`'s class-level `(call)`, or else through its `(init)` with `C`'s binders
 merged into the constructor's, so a generic class's arguments are inferred. The
 signatures are judged as alternatives on the left (see
-[Alternatives and trials](#alternatives-and-trials)). Classes are open, so
-nothing here is refuted: a subclass may reach `Func`, or override `(call)` with
-wider parameters and a narrower result. A class that doesn't reach `Func`, or
-none of whose signatures fits, is residual, and a contradiction of a chosen
-signature (labeled `Step::Callable`) is softened to the same residual.
+[Alternatives and trials](#alternatives-and-trials)). A class that doesn't
+reach `Func`, or none of whose signatures fits, isn't below the function type,
+since some of its values are of the class itself. That a subclass may reach
+`Func`, or override `(call)` with wider parameters and a narrower result,
+matters only to narrowing.
 
 ## Typing CFG
 

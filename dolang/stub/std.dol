@@ -94,6 +94,28 @@ pub def dict[...Ts] ...pairs @ Ts -> Dict[Ts]
   ...
 
 #
+# Decorator forbidding subclasses of a class.
+#
+# A class that inherits from a final class fails to be created. The type checker
+# takes a final class's values to be outside every class that isn't one of its
+# supertypes.
+#
+# ```
+# #[final]
+# class Point
+#   pub field x y = 0
+# ```
+#
+# ## Errors
+#
+# | Exception | Condition |
+# | --- | --- |
+# | [`TypeError`](std.TypeError) | `cls` isn't a class written in Do. |
+# | [`StateError`](std.StateError) | A class already inherits from `cls`. |
+pub def final[T] cls @ Type[T] -> Type[T]
+  ...
+
+#
 # Coerces or parses a value as a [`Float`](std.Float).
 #
 # ## Errors
@@ -1682,6 +1704,7 @@ pub class BinBuf: @Index[Int] @Assign[Int] Sink[Value]
 #
 # Boolean values: `true` and `false`.
 #
+#[final]
 pub class Bool
   # Accepts an existing boolean.
   pub def (init) self
@@ -3425,6 +3448,7 @@ pub class MissingPosError: RuntimeError
 #
 # `Nil` is not constructible directly.
 #
+#[final]
 pub class Nil
 
 #
@@ -4832,6 +4856,7 @@ pub class Struct[S @ {...}]: BaseStruct[S] @Assign[S]
 # let d = {}
 # d[:status:] = "active"
 # ```
+#[final]
 pub class Sym
   # Symbols are compared by identity.
   #

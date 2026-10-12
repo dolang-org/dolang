@@ -17,7 +17,7 @@
 use super::{
     Ambient, BadNominee, BinderRef, DeclNode, Designated, Diag, KindOf, MisdeclaredIntrinsic,
     MissingAnnotation, PIPES, ParamTy, Referent, RestSlot, Sig, Slot, Tables, UnitDiag,
-    surface::{BinderKind, Decorator, Member, Method, ParamKind, Signature},
+    surface::{BinderKind, Class, Decorator, Member, Method, ParamKind, Signature},
 };
 use crate::typeck::r#type::{DeclId, DeclKind, Intrinsic, Kind, Scope, UnitId, UnitSpan};
 
@@ -273,19 +273,12 @@ pub(crate) enum Form {
 pub(crate) fn method_form(tables: &Tables<'_>, unit: UnitId, method: &Method) -> Form {
     let mut form = Form::Plain;
     for decorator in &method.decorators {
-        let designated = match decorator {
-            Decorator::Ident(name) => match tables.name(unit, *name) {
-                "class" | "static" => continue,
-                _ => match tables.referents.get(&UnitSpan {
-                    unit,
-                    span: name.span,
-                }) {
-                    Some(Referent::Decl(decl)) => tables.designated.get(decl).copied(),
-                    _ => None,
-                },
-            },
-            Decorator::Other => None,
-        };
+        if let Decorator::Ident(name) = decorator
+            && let "class" | "static" = tables.name(unit, *name)
+        {
+            continue;
+        }
+        let designated = decorator_designation(tables, unit, decorator);
         form = match (form, designated) {
             (Form::Plain, Some(Designated::Getter)) => Form::Getter,
             (Form::Plain, Some(Designated::Setter)) => Form::Setter,
@@ -293,6 +286,34 @@ pub(crate) fn method_form(tables: &Tables<'_>, unit: UnitId, method: &Method) ->
         };
     }
     form
+}
+
+/// The designation of the declaration a decorator names, if any
+fn decorator_designation(
+    tables: &Tables<'_>,
+    unit: UnitId,
+    decorator: &Decorator,
+) -> Option<Designated> {
+    let Decorator::Ident(name) = decorator else {
+        return None;
+    };
+    match tables.referents.get(&UnitSpan {
+        unit,
+        span: name.span,
+    }) {
+        Some(Referent::Decl(decl)) => tables.designated.get(decl).copied(),
+        _ => None,
+    }
+}
+
+/// Whether a class's decorators are all std's `final`, which returns the class
+/// it is given after forbidding subclasses of it. Without decorators, a class
+/// is not final.
+pub(crate) fn decorated_final(tables: &Tables<'_>, unit: UnitId, class: &Class) -> bool {
+    !class.decorators.is_empty()
+        && (class.decorators.iter()).all(|decorator| {
+            decorator_designation(tables, unit, decorator) == Some(Designated::Final)
+        })
 }
 
 /// Designate a top-level declaration of `std` or `strand` that the checker treats
@@ -382,6 +403,7 @@ pub(super) fn designation(tables: &Tables<'_>, decl: DeclId) -> Option<(Designat
         ("std", "Unpack") => (Designated::Unpack, DeclKind::Protocol),
         ("std", "getter") => (Designated::Getter, DeclKind::Function),
         ("std", "setter") => (Designated::Setter, DeclKind::Function),
+        ("std", "final") => (Designated::Final, DeclKind::Function),
         _ => return None,
     })
 }

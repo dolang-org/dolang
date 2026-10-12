@@ -215,13 +215,15 @@ impl<'db> Solver<'db> {
     }
 
     /// What a union on the right is when trials reject every member: a
-    /// contradiction for a literal, a concrete class or a function, which are
-    /// outside a union none of whose members admits them. A protocol may be
-    /// covered by several members' classes, and a generic member's rejected
-    /// arguments needn't exclude every value of a class, so they leave it residual,
-    /// as do members that are projections. A literal's or function's class is
-    /// fixed, so its rejections are final, and so are top's, which no member
-    /// but top covers.
+    /// contradiction for a literal, a concrete class or a function, which have
+    /// values outside a union none of whose members admits them. A protocol may
+    /// be covered by several members' classes, so it is left residual. A class's
+    /// values may fit several applications of a generic class together without
+    /// fitting any one, so a generic member leaves it residual too, unless the
+    /// class is final and doesn't reach the member's (whether reaching matters
+    /// otherwise is #901), as do members that are projections. A literal's or
+    /// function's class is fixed, so its rejections are final, and so are top's,
+    /// which no member but top covers.
     pub(super) fn refuted(
         &self,
         actual: Term,
@@ -229,6 +231,7 @@ impl<'db> Solver<'db> {
         members: &[UnionMember],
     ) -> Result<Issue, Issue> {
         let residual = Residual::Unsupported("a type that may be inside a union member").into();
+        let mut class = None;
         let fixed = match self.widened_head(actual) {
             Ok(Head::Structural(view)) => match self.db.ty(view.ty) {
                 _ if view.ty == self.db.top() => true,
@@ -242,6 +245,7 @@ impl<'db> Solver<'db> {
                 if self.db.declaration(nominal.declaration).source.kind != DeclKind::Class {
                     return Ok(residual);
                 }
+                class = Some(nominal);
                 false
             }
             Ok(_) => return Ok(residual),
@@ -256,9 +260,14 @@ impl<'db> Solver<'db> {
                 continue;
             }
             match self.head(view.child(ty)) {
-                Ok(Head::Nominal(nominal) | Head::Meta(nominal))
-                    if !nominal.arguments.is_empty() =>
-                {
+                Ok(Head::Nominal(nominal)) if !nominal.arguments.is_empty() => {
+                    let excluded = (class.clone())
+                        .is_some_and(|class| self.final_excludes(class, nominal.declaration));
+                    if !excluded {
+                        return Ok(residual);
+                    }
+                }
+                Ok(Head::Meta(nominal)) if !nominal.arguments.is_empty() => {
                     return Ok(residual);
                 }
                 Ok(Head::Infer(_)) | Err(Issue::Residual(_)) => return Ok(residual),

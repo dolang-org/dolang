@@ -43,9 +43,3 @@ raises do (result != result)
 raises do assert_eq $result $result
 raises do ([result] == [result])
 
-# Native delegates preserve ordinary true/false results.
-class NativeBool: Bool
-  def (init) self value
-    Bool.(init) $self $value
-assert (bool (NativeBool true))
-assert_not (bool (NativeBool false))

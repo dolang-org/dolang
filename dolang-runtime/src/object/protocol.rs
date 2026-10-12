@@ -24,6 +24,8 @@ use crate::{
 
 pub(crate) struct Inspect<'v, 'a> {
     pub(crate) is_abstract: bool,
+    /// Whether the type refuses subclasses
+    pub(crate) is_final: bool,
     pub(crate) members: &'a [Member<'v, 'a>],
     pub(crate) type_members: &'a [Member<'v, 'a>],
 }

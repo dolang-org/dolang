@@ -1,5 +1,19 @@
 use super::*;
 
+fn union(db: &Database, members: &[TypeId]) -> TypeId {
+    db.intern(Type::Union(
+        members.iter().copied().map(UnionMember::Type).collect(),
+    ))
+}
+
+/// A class the runtime forbids subclassing
+fn final_class(db: &mut Database, name: &str, supers: Vec<TypeId>) -> TypeId {
+    let (id, ty, mut source) = reserve(db, DeclKind::Class, name);
+    source.is_final = true;
+    populate(db, id, source, ty, supers);
+    ty
+}
+
 #[test]
 fn transparent_chains_and_nominal_transitivity() {
     let mut db = Database::new();
@@ -377,4 +391,25 @@ fn metatypes_reach_class_objects_and_relate_only_to_their_own() {
     let s = Solver::new(&db, &gas);
     let joined = s.lub(sub_meta, base_meta);
     assert_eq!(s.common_supertype(joined), Some(base_object));
+}
+
+#[test]
+fn final_classes_are_outside_generic_members_they_do_not_reach() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let boxed = nominal(&mut db, "Box", vec![binder(Variance::Invariant)], vec![]);
+    let leaf = final_class(&mut db, "Leaf", vec![]);
+    let open = nominal(&mut db, "Open", vec![], vec![]);
+    let box_str = apply(&db, boxed, &[str]);
+    let sealed = final_class(&mut db, "Sealed", vec![box_str]);
+    let members = union(&db, &[int, apply(&db, boxed, &[int])]);
+    db.seal();
+    let outcome = check(&db, leaf, members);
+    assert_eq!(outcome.status, Status::Contradicted);
+    assert!(has(&outcome, Issue::Contradiction(Contradiction::Outside)));
+    // A subclass of `Open` may also be a `Box[Int]`
+    assert_eq!(check(&db, open, members).status, Status::Unresolved);
+    // A final class reaching the member's class is rejected only by arguments
+    assert_eq!(check(&db, sealed, members).status, Status::Unresolved);
 }

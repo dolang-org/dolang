@@ -215,9 +215,10 @@ impl Solver<'_> {
     }
 
     /// The meet of two closed types, where it needs no intersection: the lower
-    /// of two that are ordered, the bottom type for two literals or classes that
-    /// can't share a value, and otherwise the dynamic type, or unresolved for a
-    /// strict unit's solver
+    /// of two that are ordered, the bottom type for two literals or classes
+    /// neither below the other, and otherwise the dynamic type, or unresolved for
+    /// a strict unit's solver. Two such classes may share values through a
+    /// subclass of both, so their bottom meet is wrong (#1106).
     pub(super) fn meet(&self, a: TypeId, b: TypeId) -> Result<TypeId, Issue> {
         if a == b {
             return Ok(a);
@@ -243,9 +244,10 @@ impl Solver<'_> {
         }
     }
 
-    /// Whether a type is a literal or an instance of a class. The runtime gives a
-    /// class one supertype, so two classes neither below the other share no
-    /// value.
+    /// Whether a type is a literal or an instance of a class. A class has values
+    /// outside every class it doesn't reach, its own instances or those of a
+    /// subclass inheriting only it, so it isn't below one. That doesn't make the
+    /// two disjoint: a subclass of both is in each.
     pub(super) fn class_like(&self, ty: TypeId) -> Result<bool, Issue> {
         if self.db.literal(ty).is_some() {
             return Ok(true);
@@ -257,5 +259,27 @@ impl Solver<'_> {
             }
             _ => false,
         })
+    }
+
+    /// Whether `actual` is an instance of a final class that doesn't reach
+    /// `expected`'s class. Unknown when either has no class.
+    pub(super) fn final_outside(&self, actual: TypeId, expected: TypeId) -> bool {
+        let (Ok(Some(actual)), Ok(Some(expected))) = (self.start(actual), self.start(expected))
+        else {
+            return false;
+        };
+        self.final_excludes(actual, expected.declaration)
+    }
+
+    /// Whether `actual`'s class is final and doesn't reach `class`. A final class
+    /// has no subclasses but those declared with it, so none of its values is
+    /// also an instance of another class, however that class is applied. Unknown
+    /// when the ancestor search can't finish.
+    pub(super) fn final_excludes(&self, actual: Nominal, class: DeclId) -> bool {
+        self.db.declaration(actual.declaration).source.is_final
+            && matches!(
+                self.ancestor(actual, class, &mut FxHashSet::default(), 0),
+                Ok(None)
+            )
     }
 }

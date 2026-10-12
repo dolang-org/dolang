@@ -24,6 +24,15 @@ fn intrinsic(db: &mut Database, name: &str, intrinsic: Intrinsic) -> TypeId {
     ty
 }
 
+/// An intrinsic the runtime forbids subclassing, as `Nil` and `Bool` are
+fn final_intrinsic(db: &mut Database, name: &str, intrinsic: Intrinsic) -> TypeId {
+    let (id, ty, mut source) = reserve(db, DeclKind::Class, name);
+    source.is_final = true;
+    populate(db, id, source, ty, vec![]);
+    db.set_intrinsic(intrinsic, ty);
+    ty
+}
+
 /// A world of classes and literals
 struct World {
     db: Database,
@@ -44,8 +53,8 @@ struct World {
 impl World {
     fn new() -> Self {
         let mut db = Database::new();
-        let nil = intrinsic(&mut db, "Nil", Intrinsic::Nil);
-        let bool = intrinsic(&mut db, "Bool", Intrinsic::Bool);
+        let nil = final_intrinsic(&mut db, "Nil", Intrinsic::Nil);
+        let bool = final_intrinsic(&mut db, "Bool", Intrinsic::Bool);
         let int = intrinsic(&mut db, "Int", Intrinsic::Int);
         let str = intrinsic(&mut db, "Str", Intrinsic::Str);
         let base = nominal(&mut db, "Base", vec![], vec![]);
@@ -95,7 +104,7 @@ fn value(s: &Solver<'_>, ty: TypeId, negated: bool, target: TypeId) -> TypeId {
 fn generic_union_alias_preserves_narrowed_arguments() {
     let mut db = Database::new();
     let int = intrinsic(&mut db, "Int", Intrinsic::Int);
-    let nil = intrinsic(&mut db, "Nil", Intrinsic::Nil);
+    let nil = final_intrinsic(&mut db, "Nil", Intrinsic::Nil);
     let wrapper = nominal(
         &mut db,
         "Wrapper",
@@ -136,8 +145,7 @@ fn upper_bounds_keep_reaching_members() {
     assert_eq!(upper(w.db.unknown()), w.sub);
     // Unproven reach becomes `C` too
     assert_eq!(upper(w.odd), w.sub);
-    // Literals of another class, and `Nil` and `Bool`, whose values are all
-    // literals, are disjoint
+    // Literals of another class, and the final `Nil` and `Bool`, are disjoint
     assert_eq!(upper(w.int_lit(1)), bottom);
     assert_eq!(upper(w.nil_lit()), bottom);
     assert_eq!(upper(w.nil), bottom);
