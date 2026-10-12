@@ -1,0 +1,26 @@
+# Classes and protocols at the root remain valid, including generic methods
+# and functions that refer to a class declared later.
+@class Readable[T]
+  pub def read self -> T
+
+def make value
+  Box $value
+
+#[final]
+class Box[T]: @Readable[T]
+  pub field value @ T = nil
+
+  def (init) self value @ T
+    self.value = value
+
+  pub def read self -> T
+    self.value
+
+  pub def reader self
+    do self.read()
+
+let box = make 42
+assert_eq $box.read() 42
+let reader = box.reader()
+assert_eq $reader() 42
+assert (type box Box)

@@ -24,15 +24,10 @@ pub def outer[A, B] _a @ A _b @ B
   #    ^~~~~: decl A | nil
   @let Neither = Num
   #    ^~~~~~~: quantifier none
-  class Local
-    #   ^~~~~: quantifier ^B covariant
-    pub def get _self -> B
-      #     ^~~: quantifier ^B covariant, in contravariant, out contravariant
-      ...
-  class Via
-    #   ^~~: quantifier ^B invariant
-    pub field local @ Local = nil
-    #                 ^~~~~: type m.outer.Local[^B]
+  @let Local = (nil -> B)
+  #    ^~~~~: quantifier ^B covariant
+  @let Via = Array[Local]
+  #    ^~~: quantifier ^B invariant
   def uses_alias x @ OnlyA
     # ^~~~~~~~~~: quantifier ^A contravariant, in contravariant, out contravariant
     #                ^~~~~: type m.outer.OnlyA[^A]
@@ -45,7 +40,7 @@ pub def outer[A, B] _a @ A _b @ B
   let f = do |x @ A| x
   #               ^: type A
   let _n @ Neither = nil
-  (uses_alias, body_only, Via, Local, f)
+  (uses_alias, body_only, f)
 
 pub class Bounded[T, U @ Box[T, Num]]
   pub field u @ U = nil
@@ -54,7 +49,9 @@ pub class Bounded[T, U @ Box[T, Num]]
     self.u
 
 pub def bounded[T, U @ Box[T, Num]] _u @ U
-  class Inner
-    #   ^~~~~: quantifier ^T invariant, ^U @ m.Box[T, m.Num] invariant
-    pub field u @ U = nil
-  Inner
+  @let Inner = U
+  #    ^~~~~: quantifier ^T invariant, ^U @ m.Box[T, m.Num] covariant
+  def inner _u @ Inner -> U
+    # ^~~~~: quantifier ^T invariant, ^U @ m.Box[T, m.Num] invariant, in contravariant, out contravariant
+    _u
+  inner

@@ -1,0 +1,9 @@
+if false
+  nil
+else
+  @class _Inner
+# error: `class` and `@class` declarations are only allowed at module top level
+#   --> protocol_else.dol:LL:LL
+#    |
+# LL |   @class _Inner
+#    |    ^^^^^

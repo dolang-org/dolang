@@ -1,0 +1,8 @@
+class _DuplicateGetter
+  #[getter]
+  pub def value _obj
+    1
+
+  #[getter]
+  pub def value _obj
+    2

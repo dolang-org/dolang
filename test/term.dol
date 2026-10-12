@@ -15,6 +15,92 @@ import shell term strand
 
 let ESC = str b"\x1b"
 
+class Recorder: term.Console
+  pub field lines
+
+  def (init) self
+    term.Console.(init) $self
+    self.lines = []
+
+  pub def write self *data
+    let pieces = [...data]
+    self.lines.push $pieces
+    let written = 0
+    for piece = pieces
+      written = (written + piece.len)
+    written
+
+  pub def flush _self
+    nil
+
+class MyGeometry: term.Geometry
+  pub field rows
+  pub field cols
+
+  def (init) self rows cols
+    term.Geometry.(init) $self
+    self.rows = rows
+    self.cols = cols
+
+class Fancy: term.Console
+  pub field lines
+  pub field can_style = true
+
+  def (init) self
+    term.Console.(init) $self
+    self.lines = []
+
+  pub def write self *data
+    let line = ""
+    for piece = data
+      line = "$line$piece"
+    self.lines.push $line
+    line.len
+
+  pub def flush _self
+    nil
+
+  pub def geometry _self
+    MyGeometry 24 80
+
+class Crlf: term.Console
+  pub field lines
+  pub field line_ending = "\r\n"
+
+  def (init) self
+    term.Console.(init) $self
+    self.lines = []
+
+  pub def write self *data
+    let line = ""
+    for piece = data
+      line = "$line$piece"
+    self.lines.push $line
+    line.len
+
+  pub def flush _self
+    nil
+
+class Shifty: term.Console
+  pub field lines
+  pub field line_ending = "\n"
+
+  def (init) self
+    term.Console.(init) $self
+    self.lines = []
+
+  pub def write self *data
+    self.lines.push [...data]
+    nil
+
+  pub def flush _self
+    nil
+
+class Bad: term.Console
+  pub field line_ending = 42
+
+  def (init) self
+    term.Console.(init) $self
 
 #[test]
 def console_geometry()
@@ -603,24 +689,6 @@ def progress_lines_use_context_capture()
 #[test]
 def do_subclass_console()
   # The interface is a real type, so Do code can implement a console.
-  class Recorder: term.Console
-    pub field lines
-
-    def (init) self
-      term.Console.(init) $self
-      self.lines = []
-
-    pub def write self *data
-      let pieces = [...data]
-      self.lines.push $pieces
-      let written = 0
-      for piece = pieces
-        written = (written + piece.len)
-      written
-
-    pub def flush _self
-      nil
-
   let recorder = Recorder()
   term.capture $recorder do
     echo terminated
@@ -639,36 +707,6 @@ def do_subclass_console()
 #[test]
 def do_console_declares_capabilities()
   # A Do field shadows the base's getter, and a Do method its `geometry()`.
-  class MyGeometry: term.Geometry
-    pub field rows
-    pub field cols
-
-    def (init) self rows cols
-      term.Geometry.(init) $self
-      self.rows = rows
-      self.cols = cols
-
-  class Fancy: term.Console
-    pub field lines
-    pub field can_style = true
-
-    def (init) self
-      term.Console.(init) $self
-      self.lines = []
-
-    pub def write self *data
-      let line = ""
-      for piece = data
-        line = "$line$piece"
-      self.lines.push $line
-      line.len
-
-    pub def flush _self
-      nil
-
-    pub def geometry _self
-      MyGeometry 24 80
-
   let fancy = Fancy()
   term.capture $fancy do echo (term.text "warn" fg: :YELLOW:)
   assert_eq $fancy.lines ["$ESC[33mwarn$ESC[0m\n"]
@@ -683,24 +721,6 @@ def do_console_chooses_its_terminator()
   # The console owns the terminator policy but does not apply it: `echo` reads
   # `line_ending` off the installed console, so a subclass that declares its
   # own gets it, still in a single write.
-  class Crlf: term.Console
-    pub field lines
-    pub field line_ending = "\r\n"
-
-    def (init) self
-      term.Console.(init) $self
-      self.lines = []
-
-    pub def write self *data
-      let line = ""
-      for piece = data
-        line = "$line$piece"
-      self.lines.push $line
-      line.len
-
-    pub def flush _self
-      nil
-
   let crlf = Crlf()
   term.capture $crlf do
     echo terminated
@@ -710,33 +730,12 @@ def do_console_chooses_its_terminator()
 #[test]
 def capture_reads_line_ending_once()
   # `line_ending` is read when the console is installed, not on every `echo`.
-  class Shifty: term.Console
-    pub field lines
-    pub field line_ending = "\n"
-
-    def (init) self
-      term.Console.(init) $self
-      self.lines = []
-
-    pub def write self *data
-      self.lines.push [...data]
-      nil
-
-    pub def flush _self
-      nil
-
   let shifty = Shifty()
   term.capture $shifty do
     echo one
     shifty.line_ending = "\r\n"
     echo two
   assert_eq $shifty.lines [["one", "\n"], ["two", "\n"]]
-
-  class Bad: term.Console
-    pub field line_ending = 42
-
-    def (init) self
-      term.Console.(init) $self
 
   assert_throws $TypeError do term.capture (Bad()) do nil
 

@@ -1,14 +1,15 @@
 //! Captures: the binders of enclosing declarations that each declaration is lifted
 //! over.
 //!
-//! A declaration needs the outer binders it names anywhere, in its signature,
-//! members or body. It also needs what each type declaration it names needs, since a
-//! reference passes those as leading arguments, and what each declaration nested in
-//! it needs, since they are in scope there. A method needs all of its class's
-//! binders. A lifted binder keeps its bound, so a declaration also needs what the
-//! bound of each binder it needs names. The least solution, less the declaration's
-//! own binders, is what it is lifted over, outermost declaration first and in slot
-//! order.
+//! Functions, closures and aliases need the outer binders they name anywhere in
+//! their signatures or bodies. Classes and protocols are top-level declarations
+//! and capture no outer binders. A declaration also needs what each alias it names
+//! needs, since a reference passes those as leading arguments, and what each
+//! declaration nested in it needs, since they are in scope there. A method needs
+//! all of its class's binders. A lifted binder keeps its bound, so a declaration
+//! also needs what the bound of each binder it needs names. The least solution,
+//! less the declaration's own binders, is what it is lifted over, outermost
+//! declaration first and in slot order.
 
 use std::collections::BTreeSet;
 
@@ -48,14 +49,6 @@ pub(crate) fn captures(tables: &mut Tables<'_>) {
     for index in 0..count {
         let id = DeclId::from_index(index);
         let decl = &tables.decls[index];
-        if let DeclNode::Class(class) = &decl.node {
-            for super_ref in &class.supers {
-                needs.name(index, decl.unit, super_ref.head.span);
-                for arg in &super_ref.args {
-                    needs.ty(index, decl.unit, arg.ty());
-                }
-            }
-        }
         if let Some((outer, _)) = decl.outer {
             needs.deps[outer.index()].push(id);
             // A method is lifted over its class's whole group
@@ -110,6 +103,13 @@ pub(crate) fn captures(tables: &mut Tables<'_>) {
     for (index, set) in binders.into_iter().take(count).enumerate() {
         let id = DeclId::from_index(index);
         let lifted: Vec<_> = set.into_iter().filter(|binder| binder.decl != id).collect();
+        if matches!(tables.decls[index].node, DeclNode::Class(_)) {
+            debug_assert!(tables.decls[index].outer.is_none());
+            debug_assert!(
+                lifted.is_empty(),
+                "a top-level class captures outer binders"
+            );
+        }
         debug_assert!(
             lifted
                 .iter()
@@ -155,7 +155,7 @@ impl Needs<'_, '_> {
             Some(&Referent::Decl(named))
                 if matches!(
                     tables.decls[named.index()].kind,
-                    DeclKind::Class | DeclKind::Protocol | DeclKind::Alias | DeclKind::OpaqueAlias
+                    DeclKind::Alias | DeclKind::OpaqueAlias
                 ) =>
             {
                 self.deps[node].push(named);

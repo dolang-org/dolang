@@ -51,7 +51,6 @@ class _SpacedFields
 
 def outer()
   let _inner @_Inner = nil
-  class _Inner
   nil
 assert_eq $outer() nil
 
@@ -109,3 +108,5 @@ def _nesting()
   let f = (do |x @_Either| -> _pkg.two.Other x)
   f(nil)
 assert_eq $_nesting() nil
+
+class _Inner

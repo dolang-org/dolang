@@ -1,0 +1,18 @@
+#[final]
+pub class Leaf
+  #[static]
+  field count = 0
+  pub field value = 0
+
+  def (init) self value
+    self.value = value
+
+  pub def bump self
+    Leaf.#count = (Leaf.#count + 1)
+    self.value
+
+  #[static]
+  pub def count()
+    Leaf.#count
+
+pub class Twice

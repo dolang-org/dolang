@@ -1,0 +1,7 @@
+def _f()
+  pub @class Inner
+# error: `class` and `@class` declarations are only allowed at module top level
+#   --> protocol_exported.dol:LL:LL
+#    |
+# LL |   pub @class Inner
+#    |        ^^^^^

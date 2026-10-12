@@ -232,6 +232,18 @@ impl Parser<'_> {
         let at_span = self.parse_decl_marker(scope, true)?;
 
         match self.peek()? {
+            Some(token!(Keyword(Class), span)) => {
+                // Consume the whole rejected declaration for member-level recovery.
+                self.parse_class(scope, pub_span, decorators, at_span)?;
+                Err(self.syntax_error(
+                    scope,
+                    Some(Token {
+                        info: Keyword(Class),
+                        span,
+                    }),
+                    crate::diag::CLASS_TOP_LEVEL,
+                ))
+            }
             Some(token!(Keyword(Field))) => Ok(ClassMember::Field(
                 self.parse_field(scope, pub_span, decorators, protocol)?,
             )),

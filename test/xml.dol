@@ -16,6 +16,22 @@ import
     - verify
     - Node
 
+class MyNode: Node
+  def (init) self tag
+    Node.(init) $self $tag
+
+class Element: Node
+  def (init) self tag ...items
+    Node.(init) $self $tag ...items
+
+class MyAttr: Attr
+  def (init) self name value
+    Attr.(init) $self $name $value
+
+class NativeNode: Node
+  def (init) self tag
+    Node.(init) $self $tag
+
 #[test]
 def parse_basic_elements()
   let el = decode "<foo/>"
@@ -197,10 +213,6 @@ def node_type_and_subclassing()
 
   let el = decode "<foo/>"
   assert (type el Node)
-
-  class MyNode: Node
-    def (init) self tag
-      Node.(init) $self $tag
 
   let node = MyNode foo
   assert_eq $node.tag foo
@@ -427,10 +439,6 @@ def construct_rejects_invalid_arguments()
 
 #[test]
 def construct_variadically_through_subclass()
-  class Element: Node
-    def (init) self tag ...items
-      Node.(init) $self $tag ...items
-
   let el = Element "root" (Attr "id" "1") (Node "child")
   assert_eq (type el) $Element
   assert_eq $el.attr("id") "1"
@@ -438,17 +446,9 @@ def construct_variadically_through_subclass()
 
 #[test]
 def do_subclasses_are_accepted_as_native_values()
-  class MyAttr: Attr
-    def (init) self name value
-      Attr.(init) $self $name $value
-
-  class MyNode: Node
-    def (init) self tag
-      Node.(init) $self $tag
-
   # A Do subclass of a native type is a class instance holding the native in a
   # slot; casts look through it, so it serializes like the base type.
-  let el = MyNode "root"
+  let el = NativeNode "root"
   assert (type el Node)
   verify $el
   assert_eq $encode(el) "<root></root>"
@@ -458,14 +458,14 @@ def do_subclasses_are_accepted_as_native_values()
   assert_eq $encode(with_attr) r#"<root id="1"></root>"#
 
   let with_child = Node "root"
-  with_child.push (MyNode "child")
+  with_child.push (NativeNode "child")
   assert_eq $encode(with_child) "<root><child></child></root>"
 
   # Nested both ways, and through the variadic constructor.
-  let tree = MyNode "outer"
-  tree.push (Node "inner" (MyNode "leaf"))
+  let tree = NativeNode "outer"
+  tree.push (Node "inner" (NativeNode "leaf"))
   assert_eq $encode(tree) "<outer><inner><leaf></leaf></inner></outer>"
-  assert_eq $encode(Node "wrap" (MyNode "sub")) "<wrap><sub></sub></wrap>"
+  assert_eq $encode(Node "wrap" (NativeNode "sub")) "<wrap><sub></sub></wrap>"
 
   let parsed = decode $encode(tree)
   assert_eq $parsed.tag "outer"
@@ -474,6 +474,6 @@ def do_subclasses_are_accepted_as_native_values()
   # A cast that looks through to the native delegate still refers to the whole
   # object, so values recovered from a tree keep their subclass identity.
   let nodes = [...tree.traverse()]
-  assert_eq (type nodes[0]) $MyNode
-  assert_eq (type nodes[2]) $MyNode
+  assert_eq (type nodes[0]) $NativeNode
+  assert_eq (type nodes[2]) $NativeNode
   assert_eq (type with_attr.attrs[0]) $MyAttr

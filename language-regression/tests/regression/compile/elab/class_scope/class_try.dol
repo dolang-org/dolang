@@ -1,0 +1,9 @@
+try
+  class _Inner
+# error: `class` and `@class` declarations are only allowed at module top level
+#   --> class_try.dol:LL:LL
+#    |
+# LL |   class _Inner
+#    |   ^^^^^
+catch _
+  nil

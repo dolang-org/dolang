@@ -53,9 +53,9 @@ let _value = nil
 
 let _outer = nil
 def _inner()
-  @class _outer
+  @let _outer = Int
 # warning: type name shadows a value of the same name
 #   --> type_only.dol:LL:LL
 #    |
-# LL |   @class _outer
-#    |          ^^^^^^
+# LL |   @let _outer = Int
+#    |        ^^^^^^

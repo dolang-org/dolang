@@ -175,7 +175,9 @@ switches to its replacement's environment; structural quantifiers protect their
 local references. This permits open arguments and nested quantifiers without
 putting inference IDs into canonical types or eagerly rebuilding types.
 
-Elaboration lambda-lifts captured binders of nested declarations, so declaration
+Classes and protocols may only be declared at module top level and capture no
+outer binders. Elaboration lambda-lifts captured binders of nested functions,
+closures and aliases; methods take their class's whole binder group. Declaration
 definitions and supertypes are closed outside their own generic group. Exposure
 resets to the declaration's empty defining environment; generic instantiation
 extends it with the supplied arguments. The solver does not scan declarations

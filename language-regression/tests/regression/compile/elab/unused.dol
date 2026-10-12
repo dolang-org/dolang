@@ -44,7 +44,7 @@ pub def outer()
   def decorated_local()
     nil
 
-  #[keep]
-  class DecoratedLocal
-
   nil
+
+#[keep]
+class DecoratedLocal
