@@ -3,45 +3,31 @@
 
 let message = "type error: cannot inherit from final type <type std.Nil>"
 assert_throws $std.TypeError str: $message do
-  class _MyNil: std.Nil
+  import class_final_mynil: _
 assert_throws $std.TypeError do
-  class _MyBool: Bool
+  import class_final_mybool: _
 assert_throws $std.TypeError do
-  class _MySym: Sym
+  import class_final_mysym: _
 # Listing a final type after an open one fails too
 assert_throws $std.TypeError do
-  class _MixedBool: Int Bool
+  import class_final_mixedbool: _
 
 # A final class's binding is the class, so its methods reach its private
 # static fields through it
-#[final]
-class Leaf
-  #[static]
-  field count = 0
-  pub field value = 0
-
-  def (init) self value
-    self.value = value
-
-  pub def bump self
-    Leaf.#count = (Leaf.#count + 1)
-    self.value
-
-  #[static]
-  pub def count()
-    Leaf.#count
+import class_final_bases:
+  - Leaf
+  - Twice
 
 let leaf = Leaf 3
 assert_eq $leaf.bump() 3
 assert_eq $Leaf.count() 1
 assert_throws $std.TypeError do
-  class _Sub: Leaf
+  import class_final_sub: _
 
 # Making a class final returns it, and doing so twice is harmless
-class Twice
 assert_eq (final (final Twice)) $Twice
 assert_throws $std.TypeError do
-  class _SubTwice: Twice
+  import class_final_subtwice: _
 
 # A class that already has a subclass can't become final, even after a failed
 # attempt

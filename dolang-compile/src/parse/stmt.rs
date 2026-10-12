@@ -549,12 +549,8 @@ impl Parser<'_> {
         }
         let span = self.advance();
         match self.peek()? {
-            Some(token!(TokenInfo::Keyword(Keyword::Def))) => {}
-            Some(
-                token!(TokenInfo::Keyword(
-                    Keyword::Let | Keyword::Class | Keyword::Import
-                )),
-            ) if !method => {}
+            Some(token!(TokenInfo::Keyword(Keyword::Def | Keyword::Class))) => {}
+            Some(token!(TokenInfo::Keyword(Keyword::Let | Keyword::Import))) if !method => {}
             other => {
                 return Err(self.syntax_error(
                     scope,

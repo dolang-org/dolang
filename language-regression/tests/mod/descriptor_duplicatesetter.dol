@@ -1,0 +1,8 @@
+class _DuplicateSetter
+  #[setter]
+  pub def value _obj _value
+    nil
+
+  #[setter]
+  pub def value _obj _value
+    nil

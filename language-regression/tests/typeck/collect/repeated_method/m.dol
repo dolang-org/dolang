@@ -1,0 +1,30 @@
+pub class Counter
+  field count = 0
+
+  #[getter]
+  pub def value self
+    self.#count
+
+  #[setter]
+  pub def value self value
+    self.#count = value
+
+  pub def reset self
+    # warning: instance method `Counter.reset` hides class member `Counter.reset`, which is reachable only through `type(Counter)`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def reset self
+    #    |           ^^^^^
+    self.#count = 0
+
+  #[class]
+  pub def reset _cls
+    nil
+
+  pub def reset self
+    # error: method is already declared; declare overloads with `@def`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def reset self
+    #    |           ^^^^^
+    self.#count = 1

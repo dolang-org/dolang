@@ -35,8 +35,7 @@ pub @let Pair[T @ Int = Int] = Tuple[T, T]
 @def double x@Str -> Str
 pub def double x
   let twice = do |y| y + y
-  class Local
-    field z @ Int = 0
+  @let Local = Int
   twice $x
 
 pub def first[T] items @ Array[T] :key @ Str = \"a\" *rest @ Int -> T

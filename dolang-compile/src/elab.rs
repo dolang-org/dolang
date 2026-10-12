@@ -23,6 +23,22 @@ use crate::{
 
 struct Unbound(Span);
 
+struct NestedClass(Span);
+
+impl Diagnose for NestedClass {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        w.write_str(crate::diag::CLASS_TOP_LEVEL)
+    }
+
+    fn span(&self) -> Span {
+        self.0
+    }
+}
+
 impl Diagnose for Unbound {
     fn severity(&self) -> Severity {
         Severity::Error
@@ -1023,8 +1039,7 @@ impl<'s> Scope<'s> {
         }
     }
 
-    /// The nearest class's own binding. A nested class shadows its outer class,
-    /// as it has its own private namespace.
+    /// The enclosing class's own binding.
     fn class_binding(&self) -> Option<Span> {
         match self {
             Self::Base => None,
@@ -3137,20 +3152,6 @@ impl<'a> Elaborater<'a> {
         };
     }
 
-    fn insert_class_class(&mut self, scope: &mut Scope<'_>, node: &mut Class) {
-        let sym = self
-            .symtab
-            .id(&self.bintab.id_str(self.file.str(node.ident.span)));
-        let origin = Origin::Source(node.ident.span);
-        let index = scope.insert(sym, origin, self.epoch, true);
-        scope.mark_class(index);
-        node.ident.res = Some(Res {
-            index,
-            depth: 0,
-            node: None,
-        });
-    }
-
     fn visit_def(&mut self, scope: &mut Scope<'_>, def: &mut Def) -> Result<()> {
         // Check pub validity
         if let Some(span) = def.pub_span {
@@ -3399,13 +3400,10 @@ impl<'a> Elaborater<'a> {
     }
 
     fn visit_class(&mut self, scope: &mut Scope<'_>, class: &mut Class) -> Result<()> {
-        // Check pub validity
-        if let Some(span) = class.pub_span
-            && !scope.is_top_level()
-            && !scope.is_class()
-        {
-            self.diags.push(InappropriatePub(span));
+        if !scope.is_top_level() {
+            self.diags.push(NestedClass(class.class_span));
             self.fail = true;
+            return Err(Error);
         }
 
         for decorator in &mut class.decorators {
@@ -3423,10 +3421,6 @@ impl<'a> Elaborater<'a> {
             // A protocol binds no variable; its members are only signatures
             let mut class_scope = scope.class(None);
             return self.visit_class_body(&mut class_scope, &mut class.body);
-        }
-
-        if scope.is_class() {
-            self.insert_class_class(scope, class);
         }
 
         assert!(

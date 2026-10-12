@@ -80,20 +80,6 @@ pub class Box
     # ...
     # LL |       let _ = self.#value
     #    |               ^^^^
-    class Inner
-      field value = 0
-      pub def read inner
-        let _ = inner.#value
-        self.#value
-    # error: private members require the enclosing class's receiver
-    #   --> class_receiver_error.dol:LL:LL
-    #    |
-    # LL |       pub def read inner
-    #    |                    ----- method receiver declared here
-    # LL |         let _ = inner.#value
-    # LL |         self.#value
-    #    |         ^^^^
-    Inner()
 
   def (init) self other
     Box.(init) $other
@@ -235,21 +221,6 @@ pub class More
     # ...
     # LL |     More.(init)((do self)())
     #    |                 ^^^^^^^^^^^
-    class Nested
-      field value = self.#value
-      # error: private members require the enclosing class's receiver
-      #   --> class_receiver_error.dol:LL:LL
-      #    |
-      # LL |       field value = self.#value
-      #    |                     ^^^^
-      pub def reset _obj
-        More.(init) $self
-    # error: `(init)` calls are only allowed in a constructor body
-    #   --> class_receiver_error.dol:LL:LL
-    #    |
-    # LL |         More.(init) $self
-    #    |               ^^^^
-    Nested()
 
 # A static member has no receiver, so its first parameter is an ordinary
 # binding. Only the class's own binding grants private access in its place.
@@ -288,21 +259,6 @@ pub class Statics
     #    |                    ^^^^^^^
     let _ = self
 
-  pub def nest _self
-    # A nested class's members name its own class, not the outer one
-    class Inner
-      #[static]
-      field total = 0
-
-      #[static]
-      pub def peek()
-        Statics.#total
-    # error: private members require the enclosing class's receiver
-    #   --> class_receiver_error.dol:LL:LL
-    #    |
-    # LL |         Statics.#total
-    #    |         ^^^^^^^
-    Inner
 
 def identity cls
   cls

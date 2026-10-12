@@ -49,6 +49,10 @@ import sys sys.freebsd sys.linux sys.macos sys.unix sys.windows
     - UnexpectedEofError
     - OutOfMemoryError
 
+class LibraryError: Error
+  def (init) self message code
+    Error.(init) $self $message code: $code
+
 #[test]
 def sys_reports_basic_information()
   let os = sys.os_info()
@@ -150,10 +154,6 @@ def system_errors_are_constructible_and_subclassable()
     let error = error_type "synthetic portable error"
     assert_type $error_type $error
     assert_type $Error $error
-
-  class LibraryError: Error
-    def (init) self message code
-      Error.(init) $self $message code: $code
 
   let custom = LibraryError "library failed" $sys.windows.WinError.ERROR_ACCESS_DENIED
   assert_type $LibraryError $custom

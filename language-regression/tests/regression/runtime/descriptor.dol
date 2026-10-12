@@ -85,14 +85,7 @@ assert_eq (Doubled().value) 8
 
 let duplicate_setter = false
 try
-  class _DuplicateSetter
-    #[setter]
-    pub def value _obj _value
-      nil
-
-    #[setter]
-    pub def value _obj _value
-      nil
+  import descriptor_duplicatesetter: _
 catch err
   assert_eq (str err) "class_create: duplicate class member `value`"
   duplicate_setter = true

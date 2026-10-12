@@ -1,0 +1,9 @@
+def _f()
+  #[missing]
+  class Inner: Missing
+    # error: `class` and `@class` declarations are only allowed at module top level
+    #   --> class_decorated.dol:LL:LL
+    #    |
+    # LL |   class Inner: Missing
+    #    |   ^^^^^
+    pub field value = missing

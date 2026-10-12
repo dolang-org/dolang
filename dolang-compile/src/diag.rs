@@ -2,6 +2,9 @@ use std::fmt::Display;
 
 use crate::UnitId;
 
+pub(crate) const CLASS_TOP_LEVEL: &str =
+    "`class` and `@class` declarations are only allowed at module top level";
+
 /// Diagnostic severity
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]

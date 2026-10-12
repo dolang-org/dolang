@@ -55,7 +55,7 @@ def _param_hidden x @_Hidden
   #    |
   # LL | def _param_hidden x @_Hidden
   #    |                      ^^^^^^^
-  class _Hidden
+  @let _Hidden = Int
   x
 
 import import_fixture:

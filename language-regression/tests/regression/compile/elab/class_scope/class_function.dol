@@ -1,0 +1,7 @@
+def _f()
+  class _Inner
+# error: `class` and `@class` declarations are only allowed at module top level
+#   --> class_function.dol:LL:LL
+#    |
+# LL |   class _Inner
+#    |   ^^^^^

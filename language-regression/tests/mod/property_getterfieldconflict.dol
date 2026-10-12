@@ -1,0 +1,6 @@
+class _GetterFieldConflict
+  #[getter]
+  pub def value _obj
+    1
+
+  pub field value = 2

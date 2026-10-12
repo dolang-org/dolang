@@ -54,14 +54,7 @@ assert $failed
 
 let duplicate_getter = false
 try
-  class _DuplicateGetter
-    #[getter]
-    pub def value _obj
-      1
-
-    #[getter]
-    pub def value _obj
-      2
+  import property_duplicategetter: _
 catch err
   assert_eq (str err) "class_create: duplicate class member `value`"
   duplicate_getter = true
@@ -69,12 +62,7 @@ assert $duplicate_getter
 
 let getter_field_conflict = false
 try
-  class _GetterFieldConflict
-    #[getter]
-    pub def value _obj
-      1
-
-    pub field value = 2
+  import property_getterfieldconflict: _
 catch err
   assert_eq (str err) "class_create: duplicate class member `value`"
   getter_field_conflict = true

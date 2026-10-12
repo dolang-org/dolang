@@ -6,6 +6,10 @@ and arithmetic operators.
 
 ## Defining a Class
 
+`class` and type-only `@class` declarations are allowed only at module top
+level, including the top level of a script. They cannot appear inside functions,
+control-flow blocks, or class bodies.
+
 A class is defined with the `class` keyword, followed by a name and an
 indented body containing field declarations and method definitions:
 
@@ -262,10 +266,10 @@ class's own name anywhere inside the class. The receiver's name need not be
 which have none, use the class's name. Receiver and class bindings cannot be
 reassigned, but their fields can be written. Aliases and other objects cannot
 be used with `.#`, even inside the same class. Nested functions may access
-private members through the captured receiver; a nested class has its own
-receiver and private namespace. A decorated class's name grants no private
-access, since the decorator may replace the class, unless every decorator is
-the prelude's [`final`](#final-classes), which returns the class it is given.
+private members through the captured receiver. A decorated class's name grants
+no private access, since the decorator may replace the class, unless every
+decorator is the prelude's [`final`](#final-classes), which returns the class
+it is given.
 
 Fields declared without `pub` are private. Within the class, private fields are
 accessed using the `.#field` syntax:

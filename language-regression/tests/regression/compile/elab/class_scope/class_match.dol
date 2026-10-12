@@ -1,0 +1,8 @@
+match nil
+  _ do
+    class _Inner
+# error: `class` and `@class` declarations are only allowed at module top level
+#   --> class_match.dol:LL:LL
+#    |
+# LL |     class _Inner
+#    |     ^^^^^

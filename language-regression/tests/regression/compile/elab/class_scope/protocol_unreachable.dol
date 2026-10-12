@@ -1,0 +1,8 @@
+def _f()
+  return nil
+  @class _Inner
+# error: `class` and `@class` declarations are only allowed at module top level
+#   --> protocol_unreachable.dol:LL:LL
+#    |
+# LL |   @class _Inner
+#    |    ^^^^^
