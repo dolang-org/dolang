@@ -518,6 +518,7 @@ impl Solver<'_> {
         // No members but top and the dynamic type cover top
         let top = actual == self.db.top();
         let mut outside = function || top || self.class_like(actual)?;
+        let mut cycle = false;
         for member in members.iter() {
             let UnionMember::Type(ty) = *member else {
                 outside = false;
@@ -530,7 +531,9 @@ impl Solver<'_> {
             if infinite && self.db.literal(expected).is_some() {
                 continue;
             }
-            match self.probe(actual, expected)? {
+            let (status, recursive) = self.probe_cycle(actual, expected)?;
+            cycle |= recursive;
+            match status {
                 Status::Proven => return Ok(()),
                 // Keep generic alternatives conservative: a failed argument
                 // comparison need not exclude every value of the actual class
@@ -550,9 +553,12 @@ impl Solver<'_> {
                 Status::Unresolved => outside = false,
             }
         }
-        Err(match outside {
-            true => Issue::Contradiction(Contradiction::Outside),
-            false => Residual::Unsupported("a type that may be inside a union member").into(),
+        Err(match (outside, cycle) {
+            (true, _) => Issue::Contradiction(Contradiction::Outside),
+            (false, true) => Residual::Recursive.into(),
+            (false, false) => {
+                Residual::Unsupported("a type that may be inside a union member").into()
+            }
         })
     }
 
