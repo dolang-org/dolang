@@ -13,6 +13,12 @@ let PRELUDE_ITEMS = Set $
   - getter
   - class
   - static
+  - final
+  - mixable
+
+# The class decorators the type checker designates, which are part of a
+# class's contract and so are recorded on its entity
+let CLASS_DECORATORS = ["final", "mixable"]
 
 # One endpoint of a source span.
 def pos_json pos
@@ -348,13 +354,6 @@ def decorated own target
   own.any do |child|
     (type(child, compile.Decorator) && child.target == target)
 
-# The prelude bindings whose presence as a decorator means something here.
-def prelude_items unit
-  $
-    for id node = unit.nodes()
-      if (type node compile.PreludeItem && node.module == "std" && PRELUDE_ITEMS.contains node.item)
-        $node.item: $id
-
 # One comment line, with its terminator, indentation and marker removed.
 def doc_line line
   line.trim()[1..].without_prefix " "
@@ -363,7 +362,7 @@ def doc_line line
 # already-built [`Index`](#Index) rather than re-walking `unit.nodes()`.
 class Document
   field src module all index root
-  field getter class_target static_target
+  field getter class_target static_target class_decorators
   field members entities
 
   def (init) self src module all index
@@ -375,10 +374,11 @@ class Document
   # The whole cooked-documentation projection, in the shape the handler and
   # the LSP doc index consume.
   pub def result self unit path
-    let decorators = prelude_items $unit
+    let decorators = self.#prelude_items(unit)
     self.#getter = decorators.get "getter" default: nil
     self.#class_target = decorators.get "class" default: nil
     self.#static_target = decorators.get "static" default: nil
+    self.#class_decorators = [...CLASS_DECORATORS.filter(do |name| decorators.contains name).map(do |name| [name, decorators[name]])]
     self.#members = {}
     self.#entities = []
     let root = unit.root
@@ -406,6 +406,21 @@ class Document
     for id node = nodes
       if let handler = dispatch.get (type node) default: nil
         handler(id, node)
+
+  # The std bindings whose presence as a decorator means something here: the
+  # prelude's, or in std itself, its own top-level declarations.
+  def prelude_items self unit
+    let own = (self.#module == "std")
+    let root = unit.root.id
+    let items = {}
+    for id node = unit.nodes()
+      let name = if (type node compile.PreludeItem && node.module == "std")
+        node.item
+      else if (own && node.parent == root && (type(node, compile.Function) || type(node, compile.Bind)))
+        self.#text(node.name)
+      if PRELUDE_ITEMS.contains(name)
+        items[name] = id
+    items
 
   def text self span
     self.#src[span.start.byte_offset..span.end.byte_offset]
@@ -605,6 +620,8 @@ class Document
       return
     let list = []
     let binders = self.#binders(id)
+    let own = self.#own(id)
+    let decorators = [...self.#class_decorators.filter(do |entry| decorated(own, entry[1])).map(do |entry| entry[0])]
     self.#members[id] = list
     self.#entities.push $
       kind: "class"
@@ -612,6 +629,8 @@ class Document
       pub: $node.is_pub
       if node.type_only
         protocol: true
+      if (decorators.len > 0)
+        decorators: $decorators
       span: (span_json(node.name))
       doc: (self.#doc_of(node))
       if (binders.len > 0)

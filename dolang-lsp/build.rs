@@ -42,6 +42,9 @@ struct Entity {
     doc: Option<String>,
     #[serde(default)]
     binders: Vec<BinderJson>,
+    /// A class's `final` and `mixable` decorators
+    #[serde(default)]
+    decorators: Vec<String>,
     #[serde(default)]
     params: Vec<ParamJson>,
     #[serde(default)]
@@ -336,6 +339,7 @@ struct Row {
     kind: &'static str,
     doc: String,
     binders: Vec<String>,
+    decorators: Vec<String>,
     params: Vec<ParamJson>,
     type_: Option<String>,
 }
@@ -396,6 +400,7 @@ fn add_module(rows: &mut Vec<Row>, modules: &HashMap<String, ModuleJson>, module
         kind: "module",
         doc: hover_doc(module.doc.as_deref()),
         binders: Vec::new(),
+        decorators: Vec::new(),
         params: Vec::new(),
         type_: None,
     });
@@ -491,6 +496,7 @@ fn add_entity(rows: &mut Vec<Row>, module: &str, prefix: &str, entity: &Entity) 
         },
         doc: hover_doc(entity.doc.as_deref()),
         binders: entity.binders.iter().map(BinderJson::render).collect(),
+        decorators: entity.decorators.clone(),
         params: entity.params.clone(),
         type_: entity
             .returns
@@ -510,8 +516,8 @@ fn render(rows: &[Row]) -> String {
     for row in rows {
         write!(
             out,
-            "    DocEntry {{ module: {:?}, item: {:?}, kind: {:?}, doc: {:?}, binders: &{:?}, type_: {:?}, params: &[",
-            row.module, row.item, row.kind, row.doc, row.binders, row.type_,
+            "    DocEntry {{ module: {:?}, item: {:?}, kind: {:?}, doc: {:?}, binders: &{:?}, decorators: &{:?}, type_: {:?}, params: &[",
+            row.module, row.item, row.kind, row.doc, row.binders, row.decorators, row.type_,
         )
         .expect("writing to a String cannot fail");
         for param in &row.params {

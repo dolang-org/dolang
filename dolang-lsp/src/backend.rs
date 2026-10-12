@@ -340,8 +340,26 @@ fn declaration_label(content: &str, unit: &Unit<'_>, id: NodeId) -> Option<Strin
                 .filter_map(|child| child.span())
                 .map(|span| span_text(content, &span))
                 .collect::<Vec<_>>();
+            // Only the decorators the type checker designates say anything
+            // about the class, and only when they are the prelude's
+            let decorators: String = children
+                .iter()
+                .filter_map(|child| match unit.node(*child)?.kind() {
+                    Kind::Decorator {
+                        target: Some(target),
+                    } => match unit.node(target)?.kind() {
+                        Kind::PreludeItem {
+                            module: "std",
+                            item: item @ ("final" | "mixable"),
+                            ..
+                        } => Some(format!("#[{item}] ")),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect();
             format!(
-                "{}{}class {name}{}",
+                "{decorators}{}{}class {name}{}",
                 if is_pub { "pub " } else { "" },
                 if type_only { "@" } else { "" },
                 if supers.is_empty() {
@@ -2451,6 +2469,9 @@ mod tests {
             "let widget = Widget\n",
             "echo $widget.get()\n",
             "echo $ build 1\n",
+            "\n",
+            "#[final]\n",
+            "pub class Leaf\n",
         );
         harness.open(uri.clone(), source, 1).await;
 
@@ -2465,6 +2486,12 @@ mod tests {
         assert_eq!(
             class_hover.contents,
             markdown("```dolang\nclass Widget[T]\n```\n\nA widget.")
+        );
+
+        let final_hover = hover_at(&mut harness, uri.clone(), 25, 11).await.unwrap();
+        assert_eq!(
+            final_hover.contents,
+            markdown("```dolang\n#[final] pub class Leaf\n```")
         );
 
         let field_hover = hover_at(&mut harness, uri.clone(), 4, 13).await.unwrap();

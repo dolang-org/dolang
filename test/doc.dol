@@ -14,10 +14,10 @@ let FIXTURE = (Path "dolang-shell/tests/doc")
 #
 # The source is named bare so the output records the file name rather than
 # where the checkout happens to live.
-def describe_in dir file ...flags
+def describe_in dir file :module = "fixture" ...flags
   let buf = BinBuf()
   cd $dir do
-    run $shell.exe -m compile extract --doc --module fixture ...flags $file stdout: $buf mode: :CHUNK:
+    run $shell.exe -m compile extract --doc --module $module ...flags $file stdout: $buf mode: :CHUNK:
   Str $buf.freeze()
 
 # Describe the fixture.
@@ -29,10 +29,10 @@ def extract ...flags
   json.decode $ describe ...flags
 
 # The extractor output for a source of a test's own, decoded.
-def extract_source source ...flags
+def extract_source source :module = "fixture" ...flags
   with_temp_dir do |dir|
     (dir / "sample.dol").write $source
-    json.decode $ describe_in $dir sample.dol ...flags
+    json.decode $ describe_in $dir sample.dol :module ...flags
 
 # The fixture's source text.
 def fixture_source()
@@ -218,6 +218,47 @@ def class_members()
   assert (!shift.contains("self_type"))
   # Private members are left out
   assert_eq [...point["members"].filter(do |m| m["name"] == "helper")] []
+
+# A class records the prelude's `final` and `mixable` decorators, and no others.
+#[test]
+def final_and_mixable_are_recorded()
+  let out = extract_source |-
+    #[final]
+    #[mixable]
+    pub class Both
+    #[mixable]
+    pub class Named
+    def tag cls
+      cls
+    #[tag]
+    pub class Tagged
+  assert_eq (entity(out, "Both")["decorators"]) ["final", "mixable"]
+  assert_eq (entity(out, "Named")["decorators"]) ["mixable"]
+  assert (!entity(out, "Tagged").contains("decorators"))
+  # A local binding spelled `final` is not the prelude's
+  let shadowed = extract_source |-
+    def final cls
+      cls
+    #[final]
+    pub class Leaf
+  assert (!entity(shadowed, "Leaf").contains("decorators"))
+
+# In std itself, the designated decorators are std's own declarations.
+#[test]
+def std_designates_its_own_decorators()
+  let out = extract_source module: std |-
+    pub def final cls
+      cls
+    pub def getter func
+      func
+    #[final]
+    pub class Leaf
+      #[getter]
+      pub def size self
+        0
+  let leaf = entity $out Leaf
+  assert_eq $leaf["decorators"] ["final"]
+  assert_eq (member(leaf, "size")["kind"]) field
 
 # A method's annotated `self` gives its self type.
 #[test]
