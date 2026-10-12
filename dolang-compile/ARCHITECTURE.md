@@ -249,9 +249,12 @@ inside it and the domains that own it, as an actual keyed item goes to an
 expected schema's domains. `Int` selects every fixed position too, since an
 index out of range is a runtime error, as an array's is; a literal index past
 them is unadmitted. `IndexItem` joins the selected values. `AssignItem` meets
-them without intersection types: the lower of two ordered values, the bottom
-type for two literals or classes that can't share a value, and otherwise
-`Unknown`, which leaves the write unchecked. A key member the schema doesn't
+them: a value below a closed `AssignItem` that selects several values is
+related to each. Evaluated, as where it isn't the expected side, the meet needs
+no intersection types: the lower of two ordered values, the bottom type for a
+literal outside the other or a final class that doesn't reach the other, and
+otherwise `Unknown`, unresolved in a strict unit. Two other classes share the
+values of a subclass of both. A key member the schema doesn't
 admit whole contradicts the projection, as a conflicting schema does. A rigid
 key selects only by its bound, so exactly only where each item the bound selects
 has the same value; otherwise the projection is residual.

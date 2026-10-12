@@ -41,9 +41,8 @@ pub @let IndexItem[S @ {...}, K] = ...
 
 # The meet of the values of the items of `S` that a key selects, which a write at
 # a key of type `K` must fit. `AssignItem[{a: Int, b: Str}, :a:]` is `Int`, and
-# `AssignItem[{a: Int, b: Str}, (:a: | :b:)]` is `Never`, since no value fits
-# both. A meet that would take an intersection is unchecked. A key `S` doesn't
-# admit is an error.
+# a value fits `AssignItem[{a: Int, b: Str}, (:a: | :b:)]` if it fits both `Int`
+# and `Str`. A key `S` doesn't admit is an error.
 pub @let AssignItem[S @ {...}, K] = ...
 
 # The singleton [`Null`](std.Null) value.

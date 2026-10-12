@@ -202,8 +202,9 @@ fn a_key_selects_items_positions_by_their_indexes() {
         (false, fixed, fresh_zero, Ok(str)),
         (false, fixed, ab, Ok(int_str)),
         (true, fixed, a, Ok(int)),
-        // Nothing is both an `Int` and a `Str`
-        (true, fixed, ab, Ok(db.bottom())),
+        // A subclass of both `Int` and `Str` is in each, which takes an
+        // intersection
+        (true, fixed, ab, Ok(db.unknown())),
         (false, fixed, c, Err(Contradiction::Unadmitted(c))),
         (false, fixed, five, Err(Contradiction::Unadmitted(five))),
         // An `Int` may be any fixed position, but no keyed item
@@ -237,6 +238,8 @@ fn item_projections_meet_without_intersections() {
         populate(db, id, source, ty, vec![]);
         ty
     });
+    let [c, d] = ["C", "D"].map(|name| nominal(db, name, vec![], vec![]));
+    let sealed = final_class(db, "Sealed", vec![]);
     let (a, b) = (sym(db, "a"), sym(db, "b"));
     let (one, two) = (literal(db, 1), literal(db, 2));
     let ab = union(db, &[a, b]);
@@ -253,23 +256,51 @@ fn item_projections_meet_without_intersections() {
     let ordered = schema(db, int, one_two);
     let literals = schema(db, one, two);
     let protocols = schema(db, p, q);
+    let classes = schema(db, c, d);
+    let disjoint = schema(db, sealed, d);
     db.seal();
     for (schema, expected) in [
         (ordered, one_two),
         (literals, db.bottom()),
         // Protocols may share a value, which takes an intersection
         (protocols, db.unknown()),
+        // So may classes, through a subclass of both
+        (classes, db.unknown()),
+        // Unless one is final and doesn't reach the other
+        (disjoint, db.bottom()),
     ] {
         let projection = selecting(db, true, schema, ab);
         assert_eq!(evaluated(db, projection), Ok(expected), "{schema:?}");
     }
     // A strict unit's solver leaves that intersection unresolved
-    let projection = selecting(db, true, protocols, ab);
-    let strict = Solver::new(db, &Gas::default()).evaluate_items(projection);
-    assert!(
-        matches!(strict, Err(Issue::Residual(Residual::Unsupported(_)))),
-        "{strict:?}"
+    for schema in [protocols, classes] {
+        let projection = selecting(db, true, schema, ab);
+        let strict = Solver::new(db, &Gas::default()).evaluate_items(projection);
+        assert!(
+            matches!(strict, Err(Issue::Residual(Residual::Unsupported(_)))),
+            "{strict:?}"
+        );
+    }
+}
+
+#[test]
+fn writes_fit_each_item_their_key_selects() {
+    let db = &mut Database::new();
+    let [c, d] = ["C", "D"].map(|name| nominal(db, name, vec![], vec![]));
+    let both = nominal(db, "Both", vec![], vec![c, d]);
+    let (a, b) = (sym(db, "a"), sym(db, "b"));
+    let schema = items(
+        db,
+        vec![
+            keyed(Multiplicity::Required, a, c),
+            keyed(Multiplicity::Required, b, d),
+        ],
     );
+    let projection = selecting(db, true, schema, union(db, &[a, b]));
+    db.seal();
+    assert_eq!(check(db, both, projection).status, Status::Proven);
+    let outcome = check(db, c, projection);
+    assert_eq!(outcome.status, Status::Contradicted, "{outcome:?}");
 }
 
 #[test]

@@ -159,6 +159,14 @@ fn nominal(db: &mut Database, name: &str, binders: Vec<Binder>, supers: Vec<Type
     ty
 }
 
+/// A class the runtime forbids subclassing
+fn final_class(db: &mut Database, name: &str, supers: Vec<TypeId>) -> TypeId {
+    let (id, ty, mut source) = reserve(db, DeclKind::Class, name);
+    source.is_final = true;
+    populate(db, id, source, ty, supers);
+    ty
+}
+
 fn alias(db: &mut Database, name: &str, ty: TypeId) -> TypeId {
     let (id, result, source) = reserve(db, DeclKind::Alias, name);
     populate(db, id, source, ty, vec![]);

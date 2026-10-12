@@ -115,6 +115,33 @@ fn new_constraints_after_quiescence_propagate() {
 }
 
 #[test]
+fn unrelated_classes_meet_only_through_an_intersection() {
+    let mut db = Database::new();
+    let a = nominal(&mut db, "A", vec![], vec![]);
+    let b = nominal(&mut db, "B", vec![], vec![]);
+    db.seal();
+    for gradual in [true, false] {
+        let gas = Gas::default();
+        let mut s = Solver::new(&db, &gas);
+        if gradual {
+            s.gradual();
+        }
+        let Term::Infer(id) = s.infer() else {
+            unreachable!()
+        };
+        s.constrain(Term::Infer(id), s.closed(a), Provenance::default());
+        s.constrain(Term::Infer(id), s.closed(b), Provenance::default());
+        s.solve();
+        // A subclass of both is in each, so their meet isn't `Never`
+        let met = s.default_upper(id);
+        match gradual {
+            true => assert_eq!(met, Ok(db.unknown())),
+            false => assert!(met.is_err(), "{met:?}"),
+        }
+    }
+}
+
+#[test]
 fn bare_variables_default_to_the_meet_of_their_upper_bounds() {
     let mut db = Database::new();
     let a = nominal(&mut db, "A", vec![], vec![]);

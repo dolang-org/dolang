@@ -416,7 +416,7 @@ do
   #    |          ^^^
   p[1] = "x"
   d[k] = "x"
-  # error: expected `Never`, found `"x"`
+  # error: expected `std.Int`, found `"x"`
   #   --> m.dol:LL:LL
   #    |
   # LL |   d[k] = "x"

@@ -254,6 +254,8 @@ pub(crate) enum Step {
     Item(usize),
     /// A schema item's key
     Key(usize),
+    /// An item an `AssignItem`'s key selects, by its index among them
+    Selected(usize),
     /// A quantified type's body under fresh variables for its binders
     Instantiation,
     /// A fresh variable below its binder's bound
