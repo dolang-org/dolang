@@ -112,7 +112,8 @@ pub(crate) enum Kind {
     },
 
     // Imports.  Prelude imports have no source text, so they carry their
-    // resolved identity as strings rather than spans.
+    // resolved identity as strings rather than spans, boxed so that they do not
+    // set the size of every node.
     ImportModule {
         module: Span,
         name: Span,
@@ -126,15 +127,8 @@ pub(crate) enum Kind {
         is_pub: bool,
         type_only: bool,
     },
-    PreludeModule {
-        module: alias::Box<str>,
-        name: alias::Box<str>,
-    },
-    PreludeItem {
-        module: alias::Box<str>,
-        item: alias::Box<str>,
-        name: alias::Box<str>,
-    },
+    PreludeModule(alias::Box<PreludeModule>),
+    PreludeItem(alias::Box<PreludeItem>),
 
     // Structure
     Lambda,
@@ -167,62 +161,81 @@ pub(crate) enum Kind {
     },
 
     // Types
-    /// A type in an annotation, return type or superclass list, describing its parent,
-    /// or with `type_only` a supertype the class does not inherit from at runtime
+    /// A type in an annotation, return type, alias body or superclass list, describing
+    /// its parent, or with `type_only` a supertype the class does not inherit from at
+    /// runtime
     Type {
-        expr: TypeExpr,
+        expr: Id,
         type_only: bool,
     },
     Binder {
         name: Span,
         kind: BinderKind,
-        bound: Option<TypeExpr>,
-        default: Option<TypeExpr>,
+        bound: Option<Id>,
+        default: Option<Id>,
     },
-}
 
-/// A type as written, with the names in it resolved to nodes
-#[derive(Debug)]
-pub(crate) struct TypeExpr {
-    /// The type, including any parentheses around it
-    pub(crate) span: Span,
-    pub(crate) kind: TypeKind,
-}
-
-/// The form of a type. Parentheses that only group are not a form of their own.
-#[derive(Debug)]
-pub(crate) enum TypeKind {
-    Name {
+    // Type forms. Each is a child of whatever refers to it, and its span includes any
+    // parentheses that only group it.
+    NameType {
         head: Span,
         target: Option<Id>,
     },
-    Const(TypeConst),
-    App {
-        base: alias::Box<TypeExpr>,
-        args: alias::Box<[TypeArg]>,
+    ConstType(TypeConst),
+    AppType {
+        base: Id,
+        /// [`Kind::TypeArg`] nodes, in written order
+        args: alias::Box<[Id]>,
     },
-    Schema {
-        params: alias::Box<[TypeParam]>,
+    /// An argument in the `[]` of an application, without its trailing `,`
+    TypeArg {
+        kind: TypeArgKind,
+        ty: Id,
+    },
+    SchemaType {
+        /// [`Kind::TypeItem`] nodes, in written order
+        items: alias::Box<[Id]>,
     },
     /// A tuple or record type, such as `(Int, Str)`
-    Parens {
-        params: alias::Box<[TypeParam]>,
+    ParensType {
+        items: alias::Box<[Id]>,
     },
     /// An array type, such as `[Int]`
-    Array {
-        elem: alias::Box<TypeExpr>,
+    ArrayType {
+        elem: Id,
     },
-    Union {
-        members: alias::Box<[TypeExpr]>,
+    UnionType {
+        members: alias::Box<[Id]>,
     },
-    Func {
-        params: alias::Box<[TypeParam]>,
+    FuncType {
+        items: alias::Box<[Id]>,
         /// The `<` implicit parameter, giving the ambient input
-        input: Option<alias::Box<TypeExpr>>,
+        input: Option<Id>,
         /// The `>` implicit parameter, giving the ambient output
-        output: Option<alias::Box<TypeExpr>>,
-        ret: alias::Box<TypeExpr>,
+        output: Option<Id>,
+        ret: Id,
     },
+    /// An item of a schema, tuple, record or function type's parameters, without its
+    /// trailing `,`
+    TypeItem {
+        quant: Option<TypeQuant>,
+        /// Absent only for a bare `*` or `**`
+        kind: Option<TypeItemKind>,
+        ty: Option<Id>,
+    },
+}
+
+#[derive(Debug)]
+pub(crate) struct PreludeModule {
+    pub(crate) module: alias::Box<str>,
+    pub(crate) name: alias::Box<str>,
+}
+
+#[derive(Debug)]
+pub(crate) struct PreludeItem {
+    pub(crate) module: alias::Box<str>,
+    pub(crate) item: alias::Box<str>,
+    pub(crate) name: alias::Box<str>,
 }
 
 #[derive(Debug)]
@@ -234,15 +247,6 @@ pub(crate) enum TypeConst {
     Nil,
 }
 
-/// A type argument in the `[]` of an application
-#[derive(Debug)]
-pub(crate) struct TypeArg {
-    /// The argument without its trailing `,`
-    pub(crate) span: Span,
-    pub(crate) kind: TypeArgKind,
-    pub(crate) ty: TypeExpr,
-}
-
 #[derive(Debug)]
 pub(crate) enum TypeArgKind {
     Pos,
@@ -250,25 +254,14 @@ pub(crate) enum TypeArgKind {
     Expand,
 }
 
-/// An item a schema or a function type's parameters declare
 #[derive(Debug)]
-pub(crate) struct TypeParam {
-    /// The item without its trailing `,`
-    pub(crate) span: Span,
-    pub(crate) quant: Option<TypeQuant>,
-    /// Absent only for a bare `*` or `**`
-    pub(crate) kind: Option<TypeParamKind>,
-    pub(crate) ty: Option<TypeExpr>,
-}
-
-#[derive(Debug)]
-pub(crate) enum TypeParamKind {
+pub(crate) enum TypeItemKind {
     Pos,
     Key {
         /// The key as written, quotes and parentheses and all
         key: Span,
         /// The type giving the key, absent for a bareword symbol
-        key_ty: Option<TypeExpr>,
+        key_ty: Option<Id>,
     },
     Include,
     Open,
@@ -279,9 +272,7 @@ impl Kind {
     ///
     /// This is what go-to-definition jumps to and what an outline selects.  A
     /// node that declares nothing has none, and neither does a prelude binding,
-    /// which is declared by configuration rather than by any text.  Whether a
-    /// node has one also decides whether a declaration doc comment may attach
-    /// to it. The root documentation block is assigned separately.
+    /// which is declared by configuration rather than by any text.
     pub(crate) fn definition(&self) -> Option<Span> {
         match self {
             Kind::Class { name, .. }
@@ -299,8 +290,8 @@ impl Kind {
             | Kind::Binder { name, .. } => Some(*name),
             Kind::RestParam { name, .. } => *name,
             Kind::Root
-            | Kind::PreludeModule { .. }
-            | Kind::PreludeItem { .. }
+            | Kind::PreludeModule(_)
+            | Kind::PreludeItem(_)
             | Kind::Lambda
             | Kind::If
             | Kind::Else
@@ -317,7 +308,17 @@ impl Kind {
             | Kind::Continue { .. }
             | Kind::Return { .. }
             | Kind::ImplicitParam { .. }
-            | Kind::Type { .. } => None,
+            | Kind::Type { .. }
+            | Kind::NameType { .. }
+            | Kind::ConstType(_)
+            | Kind::AppType { .. }
+            | Kind::TypeArg { .. }
+            | Kind::SchemaType { .. }
+            | Kind::ParensType { .. }
+            | Kind::ArrayType { .. }
+            | Kind::UnionType { .. }
+            | Kind::FuncType { .. }
+            | Kind::TypeItem { .. } => None,
         }
     }
 }
@@ -327,6 +328,10 @@ impl Kind {
 pub(crate) struct Node {
     /// The node this one is lexically inside, if any
     pub(crate) parent: Option<Id>,
+    /// The first of this node's children, linked by [`Table::link`]
+    pub(crate) first_child: Option<Id>,
+    /// The next child of this node's parent, linked by [`Table::link`]
+    pub(crate) next_sibling: Option<Id>,
     pub(crate) kind: Kind,
     /// The whole construct, from its first decorator to the end of its body. A
     /// prelude binding has no source text, and so has none.
@@ -344,6 +349,8 @@ impl Node {
     ) -> Self {
         Self {
             parent,
+            first_child: None,
+            next_sibling: None,
             kind,
             span,
             doc,
@@ -371,6 +378,31 @@ impl Table {
     pub(crate) fn len(&self) -> usize {
         self.nodes.len()
     }
+
+    /// Drop the nodes from `len` on. Only valid before [`Table::link`], and only while
+    /// nothing refers to the dropped nodes.
+    pub(crate) fn truncate(&mut self, len: usize) {
+        self.nodes.truncate(len);
+    }
+
+    /// Link every node into its parent's list of children.
+    ///
+    /// This runs once, after indexing, so nothing is linked while nodes may still be
+    /// abandoned. Walking in reverse and prepending leaves each list in push order.
+    pub(crate) fn link(&mut self) {
+        for index in (0..self.nodes.len()).rev() {
+            let id = Id::from_index(index);
+            if let Some(parent) = self.nodes[index].parent {
+                self.nodes[index].next_sibling = self[parent].first_child;
+                self[parent].first_child = Some(id);
+            }
+        }
+    }
+
+    /// The children of `node`, as linked by [`Table::link`].
+    pub(crate) fn children(&self, node: &Node) -> impl Iterator<Item = Id> + '_ {
+        std::iter::successors(node.first_child, |child| self[*child].next_sibling)
+    }
 }
 
 impl Default for Table {
@@ -390,5 +422,25 @@ impl Index<Id> for Table {
 impl IndexMut<Id> for Table {
     fn index_mut(&mut self, id: Id) -> &mut Node {
         &mut self.nodes[id.index()]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn link_chains_children_in_push_order() {
+        let mut table = Table::new();
+        let root = table.push(Node::new(None, Kind::Root, None, None));
+        let a = table.push(Node::new(Some(root), Kind::Root, None, None));
+        let a1 = table.push(Node::new(Some(a), Kind::Root, None, None));
+        let b = table.push(Node::new(Some(root), Kind::Root, None, None));
+        let a2 = table.push(Node::new(Some(a), Kind::Root, None, None));
+        table.link();
+        assert_eq!(table.children(&table[root]).collect::<Vec<_>>(), [a, b]);
+        assert_eq!(table.children(&table[a]).collect::<Vec<_>>(), [a1, a2]);
+        assert_eq!(table.children(&table[b]).count(), 0);
+        assert_eq!(table.children(&table[a1]).count(), 0);
     }
 }

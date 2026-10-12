@@ -1,6 +1,6 @@
 use std::{
     cell::Cell,
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fmt::Write as _,
     hash::{Hash, Hasher},
     marker::PhantomData,
@@ -40,13 +40,10 @@ pub(crate) struct Types<'v> {
     rest_binder: Type<'v, NodeObject<RestBinderTag>>,
     rest_param: Type<'v, NodeObject<RestParamTag>>,
     implicit_param: Type<'v, NodeObject<ImplicitParamTag>>,
+    type_expr: Type<'v, NodeObject<TypeExprTag>>,
+    type_arg: Type<'v, NodeObject<TypeArgTag>>,
+    type_item: Type<'v, NodeObject<TypeItemTag>>,
     concrete_nodes: ConcreteNodeTypes<'v>,
-    type_expr: Type<'v, TypeExprObject<TypeExprTag>>,
-    type_kinds: TypeExprTypes<'v>,
-    type_arg: Type<'v, TypeExprObject<TypeArgTag>>,
-    arg_kinds: TypeArgTypes<'v>,
-    type_param: Type<'v, TypeExprObject<TypeParamTag>>,
-    param_kinds: TypeParamTypes<'v>,
     diagnostic: Type<'v, Diagnostic>,
     span: Type<'v, Span>,
     source_span: Type<'v, SourceSpan>,
@@ -139,6 +136,22 @@ pub(crate) struct ConcreteNodeTypes<'v> {
     mixed_rest_binder: Type<'v, NodeObject<MixedRestBinderTag>>,
     pos_rest_binder: Type<'v, NodeObject<PosRestBinderTag>>,
     key_rest_binder: Type<'v, NodeObject<KeyRestBinderTag>>,
+    name_type: Type<'v, NodeObject<NameTypeTag>>,
+    const_type: Type<'v, NodeObject<ConstTypeTag>>,
+    app_type: Type<'v, NodeObject<AppTypeTag>>,
+    schema_type: Type<'v, NodeObject<SchemaTypeTag>>,
+    parens_type: Type<'v, NodeObject<ParensTypeTag>>,
+    array_type: Type<'v, NodeObject<ArrayTypeTag>>,
+    union_type: Type<'v, NodeObject<UnionTypeTag>>,
+    func_type: Type<'v, NodeObject<FuncTypeTag>>,
+    pos_type_arg: Type<'v, NodeObject<PosTypeArgTag>>,
+    key_type_arg: Type<'v, NodeObject<KeyTypeArgTag>>,
+    expand_type_arg: Type<'v, NodeObject<ExpandTypeArgTag>>,
+    pos_type_item: Type<'v, NodeObject<PosTypeItemTag>>,
+    key_type_item: Type<'v, NodeObject<KeyTypeItemTag>>,
+    include_type_item: Type<'v, NodeObject<IncludeTypeItemTag>>,
+    open_type_item: Type<'v, NodeObject<OpenTypeItemTag>>,
+    any_type_item: Type<'v, NodeObject<AnyTypeItemTag>>,
 }
 
 pub struct Tag;
@@ -194,17 +207,9 @@ impl<'v> Global<'v> {
                     .build()
             };
         }
-        let type_expr = builder.register_type();
-        let type_arg = builder.register_type();
-        let type_param = builder.register_type();
-        macro_rules! type_subtype {
-            ($tag:ty, $base:expr) => {
-                builder
-                    .build_type::<TypeExprObject<$tag>>((), ())
-                    .nominal_supertype($base)
-                    .build()
-            };
-        }
+        let type_expr = subtype!(TypeExprTag, node);
+        let type_arg = subtype!(TypeArgTag, node);
+        let type_item = subtype!(TypeItemTag, node);
         Self {
             types: Types {
                 unit: builder.register_type(),
@@ -223,6 +228,9 @@ impl<'v> Global<'v> {
                 rest_binder,
                 rest_param,
                 implicit_param,
+                type_expr,
+                type_arg,
+                type_item,
                 concrete_nodes: ConcreteNodeTypes {
                     root: subtype!(RootTag, node),
                     class: subtype!(ClassTag, declaration),
@@ -265,31 +273,22 @@ impl<'v> Global<'v> {
                     mixed_rest_binder: subtype!(MixedRestBinderTag, rest_binder),
                     pos_rest_binder: subtype!(PosRestBinderTag, rest_binder),
                     key_rest_binder: subtype!(KeyRestBinderTag, rest_binder),
-                },
-                type_expr,
-                type_kinds: TypeExprTypes {
-                    name: type_subtype!(NameTypeTag, type_expr),
-                    constant: type_subtype!(ConstTypeTag, type_expr),
-                    app: type_subtype!(AppTypeTag, type_expr),
-                    schema: type_subtype!(SchemaTypeTag, type_expr),
-                    parens: type_subtype!(ParensTypeTag, type_expr),
-                    array: type_subtype!(ArrayTypeTag, type_expr),
-                    union: type_subtype!(UnionTypeTag, type_expr),
-                    func: type_subtype!(FuncTypeTag, type_expr),
-                },
-                type_arg,
-                arg_kinds: TypeArgTypes {
-                    pos: type_subtype!(PosTypeArgTag, type_arg),
-                    key: type_subtype!(KeyTypeArgTag, type_arg),
-                    expand: type_subtype!(ExpandTypeArgTag, type_arg),
-                },
-                type_param,
-                param_kinds: TypeParamTypes {
-                    pos: type_subtype!(PosTypeParamTag, type_param),
-                    key: type_subtype!(KeyTypeParamTag, type_param),
-                    include: type_subtype!(IncludeTypeParamTag, type_param),
-                    open: type_subtype!(OpenTypeParamTag, type_param),
-                    any: type_subtype!(AnyTypeParamTag, type_param),
+                    name_type: subtype!(NameTypeTag, type_expr),
+                    const_type: subtype!(ConstTypeTag, type_expr),
+                    app_type: subtype!(AppTypeTag, type_expr),
+                    schema_type: subtype!(SchemaTypeTag, type_expr),
+                    parens_type: subtype!(ParensTypeTag, type_expr),
+                    array_type: subtype!(ArrayTypeTag, type_expr),
+                    union_type: subtype!(UnionTypeTag, type_expr),
+                    func_type: subtype!(FuncTypeTag, type_expr),
+                    pos_type_arg: subtype!(PosTypeArgTag, type_arg),
+                    key_type_arg: subtype!(KeyTypeArgTag, type_arg),
+                    expand_type_arg: subtype!(ExpandTypeArgTag, type_arg),
+                    pos_type_item: subtype!(PosTypeItemTag, type_item),
+                    key_type_item: subtype!(KeyTypeItemTag, type_item),
+                    include_type_item: subtype!(IncludeTypeItemTag, type_item),
+                    open_type_item: subtype!(OpenTypeItemTag, type_item),
+                    any_type_item: subtype!(AnyTypeItemTag, type_item),
                 },
                 diagnostic: builder.register_type(),
                 span: builder.register_type(),
@@ -357,8 +356,6 @@ pub(crate) struct UnitObject<'v> {
     _backing: PinStr<'v, 'static>,
     path: Box<Path>,
     identity: u64,
-    /// Where each `Type` node's expression sits in the `UNIT_TYPES` array, once converted
-    type_index: Option<HashMap<compile::NodeId, usize>>,
 }
 
 /// A module's typelib, decoded
@@ -455,6 +452,8 @@ pub(crate) trait NodeMarker {
     const NAME: &'static str;
 }
 pub(crate) struct NodeObject<T: NodeMarker> {
+    /// The identity of the owning unit, as [`NodeIdAnnex::unit`]
+    unit: u64,
     id: compile::NodeId,
     marker: PhantomData<T>,
 }
@@ -481,7 +480,14 @@ node_tags! {
     ContinueTag=>"Continue", ReturnTag=>"Return", TypeTag=>"Type", BinderTag=>"Binder",
     PosBinderTag=>"PosBinder", KeyBinderTag=>"KeyBinder", RestBinderTag=>"RestBinder",
     MixedRestBinderTag=>"MixedRestBinder", PosRestBinderTag=>"PosRestBinder",
-    KeyRestBinderTag=>"KeyRestBinder"
+    KeyRestBinderTag=>"KeyRestBinder", TypeExprTag=>"TypeExpr", NameTypeTag=>"NameType",
+    ConstTypeTag=>"ConstType", AppTypeTag=>"AppType", SchemaTypeTag=>"SchemaType",
+    ParensTypeTag=>"ParensType", ArrayTypeTag=>"ArrayType", UnionTypeTag=>"UnionType",
+    FuncTypeTag=>"FuncType", TypeArgTag=>"TypeArg", PosTypeArgTag=>"PosTypeArg",
+    KeyTypeArgTag=>"KeyTypeArg", ExpandTypeArgTag=>"ExpandTypeArg", TypeItemTag=>"TypeItem",
+    PosTypeItemTag=>"PosTypeItem", KeyTypeItemTag=>"KeyTypeItem",
+    IncludeTypeItemTag=>"IncludeTypeItem", OpenTypeItemTag=>"OpenTypeItem",
+    AnyTypeItemTag=>"AnyTypeItem"
 }
 pub(crate) struct Diagnostic;
 pub(crate) struct Span;
@@ -491,83 +497,8 @@ pub(crate) struct Annotation;
 pub(crate) struct Note;
 pub(crate) struct Patch;
 
-pub(crate) trait TypeMarker {
-    const NAME: &'static str;
-}
-
-/// A form a type takes, or an item within a type
-pub(crate) struct TypeExprObject<T: TypeMarker> {
-    marker: PhantomData<T>,
-}
-
-macro_rules! type_tags {
-    ($($tag:ident => $name:literal),* $(,)?) => {$ (
-        pub(crate) struct $tag;
-        impl TypeMarker for $tag { const NAME: &'static str = $name; }
-    )* };
-}
-type_tags! {
-    TypeExprTag=>"TypeExpr", NameTypeTag=>"NameType", ConstTypeTag=>"ConstType",
-    AppTypeTag=>"AppType", SchemaTypeTag=>"SchemaType", ParensTypeTag=>"ParensType",
-    ArrayTypeTag=>"ArrayType", UnionTypeTag=>"UnionType",
-    FuncTypeTag=>"FuncType", TypeArgTag=>"TypeArg", PosTypeArgTag=>"PosTypeArg",
-    KeyTypeArgTag=>"KeyTypeArg", ExpandTypeArgTag=>"ExpandTypeArg",
-    TypeParamTag=>"TypeParam", PosTypeParamTag=>"PosTypeParam",
-    KeyTypeParamTag=>"KeyTypeParam", IncludeTypeParamTag=>"IncludeTypeParam",
-    OpenTypeParamTag=>"OpenTypeParam", AnyTypeParamTag=>"AnyTypeParam"
-}
-
-pub(crate) struct TypeExprTypes<'v> {
-    name: Type<'v, TypeExprObject<NameTypeTag>>,
-    constant: Type<'v, TypeExprObject<ConstTypeTag>>,
-    app: Type<'v, TypeExprObject<AppTypeTag>>,
-    schema: Type<'v, TypeExprObject<SchemaTypeTag>>,
-    parens: Type<'v, TypeExprObject<ParensTypeTag>>,
-    array: Type<'v, TypeExprObject<ArrayTypeTag>>,
-    union: Type<'v, TypeExprObject<UnionTypeTag>>,
-    func: Type<'v, TypeExprObject<FuncTypeTag>>,
-}
-
-pub(crate) struct TypeArgTypes<'v> {
-    pos: Type<'v, TypeExprObject<PosTypeArgTag>>,
-    key: Type<'v, TypeExprObject<KeyTypeArgTag>>,
-    expand: Type<'v, TypeExprObject<ExpandTypeArgTag>>,
-}
-
-pub(crate) struct TypeParamTypes<'v> {
-    pos: Type<'v, TypeExprObject<PosTypeParamTag>>,
-    key: Type<'v, TypeExprObject<KeyTypeParamTag>>,
-    include: Type<'v, TypeExprObject<IncludeTypeParamTag>>,
-    open: Type<'v, TypeExprObject<OpenTypeParamTag>>,
-    any: Type<'v, TypeExprObject<AnyTypeParamTag>>,
-}
-
-pub(crate) struct TypeAnnex<'v> {
-    global: State<'v, Global<'v>>,
-    span: SpanData,
-    detail: TypeDetail,
-}
-
-/// What a type object carries besides its span and the objects in its slots
-enum TypeDetail {
-    None,
-    Name {
-        head: SpanData,
-        target: Option<NodeIdAnnex>,
-    },
-    /// A type argument's name, if it is a keyword argument
-    Arg {
-        name: Option<SpanData>,
-    },
-    Param {
-        quant: Option<compile::TypeQuant>,
-        key: Option<SpanData>,
-    },
-}
-
 const OWNER: usize = 0;
 const UNIT_SOURCE: usize = 0;
-const UNIT_TYPES: usize = 1;
 
 const DIAG_ANNOTATIONS: usize = 0;
 const DIAG_NOTES: usize = 1;
@@ -1184,7 +1115,7 @@ fn apply_prelude_value<'v, 's>(
 impl<'v> Object<'v> for UnitObject<'v> {
     const NAME: &'v str = "Unit";
     const MODULE: &'v str = "compile";
-    const SLOTS: usize = 2;
+    const SLOTS: usize = 1;
     type Annex = ();
     type Type = ();
     type TypeAnnex = ();
@@ -1221,6 +1152,20 @@ impl<'v> Object<'v> for UnitObject<'v> {
                         this,
                     );
                 });
+                Ok(())
+            })
+            .get("root", |this, strand, mut out| {
+                let root = {
+                    let borrow = this.borrow(strand)?;
+                    let Some(unit) = borrow.unit.as_ref() else {
+                        return Err(Error::state_error(strand, "unit was emitted"));
+                    };
+                    unit.root()
+                };
+                match root {
+                    Some(id) => create_node(strand, this, id, &mut out)?,
+                    None => Output::set(strand, out, Nil),
+                }
                 Ok(())
             })
             .method("node", async move |this, strand, args, mut out| {
@@ -1652,12 +1597,14 @@ fn create_typed_node<'v, T: NodeMarker + 'static>(
     strand: &mut Strand<'v, '_>,
     ty: Type<'v, NodeObject<T>>,
     owner: Instance<'v, '_, UnitObject<'v>>,
+    unit: u64,
     id: compile::NodeId,
     out: &mut Slot<'v, '_>,
 ) {
     ty.create(
         strand,
         NodeObject {
+            unit,
             id,
             marker: PhantomData,
         },
@@ -1720,10 +1667,26 @@ fn create_node<'v, 's>(
         MixedRestBinder,
         PosRestBinder,
         KeyRestBinder,
+        NameType,
+        ConstType,
+        AppType,
+        SchemaType,
+        ParensType,
+        ArrayType,
+        UnionType,
+        FuncType,
+        PosTypeArg,
+        KeyTypeArg,
+        ExpandTypeArg,
+        PosTypeItem,
+        KeyTypeItem,
+        IncludeTypeItem,
+        OpenTypeItem,
+        AnyTypeItem,
     }
-    let kind = {
+    let (kind, unit) = {
         let b = owner.borrow(strand)?;
-        match b
+        let kind = match b
             .unit
             .as_ref()
             .ok_or_else(|| Error::state_error(strand, "unit was emitted"))?
@@ -1781,14 +1744,37 @@ fn create_node<'v, 's>(
                 compile::BinderKind::Rest(compile::RestKind::Key) => Which::KeyRestBinder,
                 _ => return Err(Error::not_supported(strand)),
             },
+            compile::Kind::NameType { .. } => Which::NameType,
+            compile::Kind::ConstType(_) => Which::ConstType,
+            compile::Kind::AppType { .. } => Which::AppType,
+            compile::Kind::SchemaType { .. } => Which::SchemaType,
+            compile::Kind::ParensType { .. } => Which::ParensType,
+            compile::Kind::ArrayType { .. } => Which::ArrayType,
+            compile::Kind::UnionType { .. } => Which::UnionType,
+            compile::Kind::FuncType { .. } => Which::FuncType,
+            compile::Kind::TypeArg { kind, .. } => match kind {
+                compile::TypeArgKind::Pos => Which::PosTypeArg,
+                compile::TypeArgKind::Key { .. } => Which::KeyTypeArg,
+                compile::TypeArgKind::Expand => Which::ExpandTypeArg,
+                _ => return Err(Error::not_supported(strand)),
+            },
+            compile::Kind::TypeItem { kind, .. } => match kind {
+                None => Which::AnyTypeItem,
+                Some(compile::TypeItemKind::Pos) => Which::PosTypeItem,
+                Some(compile::TypeItemKind::Key { .. }) => Which::KeyTypeItem,
+                Some(compile::TypeItemKind::Include) => Which::IncludeTypeItem,
+                Some(compile::TypeItemKind::Open) => Which::OpenTypeItem,
+                _ => return Err(Error::not_supported(strand)),
+            },
             _ => unreachable!(),
-        }
+        };
+        (kind, b.identity)
     };
     let t = &strand.state::<Global<'v>>().types.concrete_nodes;
     macro_rules! make {
         ($ty:expr,$tag:ty) => {{
             let ty = $ty;
-            create_typed_node::<$tag>(strand, ty, owner, id, out)
+            create_typed_node::<$tag>(strand, ty, owner, unit, id, out)
         }};
     }
     match kind {
@@ -1833,6 +1819,22 @@ fn create_node<'v, 's>(
         Which::MixedRestBinder => make!(t.mixed_rest_binder, MixedRestBinderTag),
         Which::PosRestBinder => make!(t.pos_rest_binder, PosRestBinderTag),
         Which::KeyRestBinder => make!(t.key_rest_binder, KeyRestBinderTag),
+        Which::NameType => make!(t.name_type, NameTypeTag),
+        Which::ConstType => make!(t.const_type, ConstTypeTag),
+        Which::AppType => make!(t.app_type, AppTypeTag),
+        Which::SchemaType => make!(t.schema_type, SchemaTypeTag),
+        Which::ParensType => make!(t.parens_type, ParensTypeTag),
+        Which::ArrayType => make!(t.array_type, ArrayTypeTag),
+        Which::UnionType => make!(t.union_type, UnionTypeTag),
+        Which::FuncType => make!(t.func_type, FuncTypeTag),
+        Which::PosTypeArg => make!(t.pos_type_arg, PosTypeArgTag),
+        Which::KeyTypeArg => make!(t.key_type_arg, KeyTypeArgTag),
+        Which::ExpandTypeArg => make!(t.expand_type_arg, ExpandTypeArgTag),
+        Which::PosTypeItem => make!(t.pos_type_item, PosTypeItemTag),
+        Which::KeyTypeItem => make!(t.key_type_item, KeyTypeItemTag),
+        Which::IncludeTypeItem => make!(t.include_type_item, IncludeTypeItemTag),
+        Which::OpenTypeItem => make!(t.open_type_item, OpenTypeItemTag),
+        Which::AnyTypeItem => make!(t.any_type_item, AnyTypeItemTag),
     }
     Ok(())
 }
@@ -1844,7 +1846,47 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
     type Annex = ();
     type Type = ();
     type TypeAnnex = ();
+    fn eq<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        other: &Value<'v>,
+    ) -> Result<'v, 's, bool> {
+        // A unit projects a node to one class, so a node of another class is
+        // another node.
+        let Some(other) = this.ty(strand.vm()).cast(other) else {
+            return Ok(false);
+        };
+        let this = this.borrow(strand)?;
+        let key = (this.unit, this.id);
+        let other_key = other.enter_sync(strand, |strand, other| {
+            other.borrow(strand).map(|other| (other.unit, other.id))
+        })?;
+        Ok(key == other_key)
+    }
+
+    fn hash<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        h: &mut impl Hasher,
+    ) -> Result<'v, 's, ()> {
+        let this = this.borrow(strand)?;
+        (this.unit, this.id).hash(h);
+        Ok(())
+    }
+
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder = builder.get("id", |this, strand, mut out| {
+            let (unit, id) = {
+                let b = this.borrow(strand)?;
+                (b.unit, b.id)
+            };
+            create_node_id(strand, unit, id, &mut out);
+            Ok(())
+        });
+        builder = builder.get("children", |this, strand, out| {
+            let ids: Vec<_> = with_node(this, strand, |n, _| n.children().collect())?;
+            project_nodes(this, strand, ids, out)
+        });
         builder = builder.get("parent", |this, strand, mut out| {
             let (id, unit) = with_node(this, strand, |n, u| (n.parent(), u))?;
             if let Some(id) = id {
@@ -1983,22 +2025,266 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                 Ok(())
             });
         }
+        // A getter projecting the node a field of the kind refers to, or `nil`
+        macro_rules! node_field {
+            ($pat:pat => $id:expr) => {
+                |this, strand, out| {
+                    let id = with_node(this, strand, |n, _| match n.kind() {
+                        $pat => $id,
+                        _ => unreachable!(),
+                    })?;
+                    project_nodes(this, strand, id, out)
+                }
+            };
+        }
+        // A getter projecting the nodes a field of the kind lists, as an array
+        macro_rules! node_list {
+            ($pat:pat => $ids:expr) => {
+                |this, strand, out| {
+                    let ids: Vec<_> = with_node(this, strand, |n, _| match n.kind() {
+                        $pat => $ids.collect(),
+                        _ => unreachable!(),
+                    })?;
+                    project_nodes(this, strand, ids, out)
+                }
+            };
+        }
         if T::NAME == "Type" {
-            builder = builder.get("expr", |this, strand, out| project_expr(this, strand, out));
+            builder = builder.get(
+                "expr",
+                node_field!(compile::Kind::Type { expr, .. } => Some(expr)),
+            );
         }
         if matches!(
             T::NAME,
             "PosBinder" | "KeyBinder" | "MixedRestBinder" | "PosRestBinder" | "KeyRestBinder"
         ) {
             builder = builder
-                .get("bound", |this, strand, out| {
-                    project_binder_type(this, strand, true, out)
-                })
-                .get("default", |this, strand, out| {
-                    project_binder_type(this, strand, false, out)
-                });
+                .get(
+                    "bound",
+                    node_field!(compile::Kind::Binder { bound, .. } => bound),
+                )
+                .get(
+                    "default",
+                    node_field!(compile::Kind::Binder { default, .. } => default),
+                );
         }
-        builder
+        if matches!(T::NAME, "PosTypeArg" | "KeyTypeArg" | "ExpandTypeArg") {
+            builder = builder.get(
+                "ty",
+                node_field!(compile::Kind::TypeArg { ty, .. } => Some(ty)),
+            );
+        }
+        if matches!(
+            T::NAME,
+            "PosTypeItem" | "KeyTypeItem" | "IncludeTypeItem" | "OpenTypeItem" | "AnyTypeItem"
+        ) {
+            builder = builder.get("quant", |this, strand, out| {
+                let quant = with_node(this, strand, |n, _| match n.kind() {
+                    compile::Kind::TypeItem { quant, .. } => quant,
+                    _ => unreachable!(),
+                })?;
+                let syms = &strand.state::<Global<'v>>().syms;
+                match quant {
+                    Some(compile::TypeQuant::Opt) => Output::set(strand, out, syms.quant_opt),
+                    Some(compile::TypeQuant::Star) => Output::set(strand, out, syms.quant_star),
+                    Some(compile::TypeQuant::StarStar) => {
+                        Output::set(strand, out, syms.quant_star_star)
+                    }
+                    _ => Output::set(strand, out, Nil),
+                }
+                Ok(())
+            });
+        }
+        if matches!(T::NAME, "PosTypeItem" | "KeyTypeItem" | "IncludeTypeItem") {
+            builder = builder.get("ty", node_field!(compile::Kind::TypeItem { ty, .. } => ty));
+        }
+        match T::NAME {
+            "NameType" => builder
+                .get("head", |this, strand, out| {
+                    let head = with_node(this, strand, |n, _| match n.kind() {
+                        compile::Kind::NameType { head, .. } => span_data(head),
+                        _ => unreachable!(),
+                    })?;
+                    create_span(strand.state(), strand, head, out);
+                    Ok(())
+                })
+                .get("target", |this, strand, mut out| {
+                    let (target, unit) = with_node(this, strand, |n, unit| match n.kind() {
+                        compile::Kind::NameType { target, .. } => (target, unit),
+                        _ => unreachable!(),
+                    })?;
+                    match target {
+                        Some(target) => create_node_id(strand, unit, target, &mut out),
+                        None => Output::set(strand, out, Nil),
+                    }
+                    Ok(())
+                }),
+            "ConstType" => builder.get("value", |this, strand, out| {
+                enum Value {
+                    Sym(String),
+                    Str(String),
+                    Int(i128),
+                    Bool(bool),
+                    Nil,
+                }
+                let value = with_node(this, strand, |n, _| match n.kind() {
+                    compile::Kind::ConstType(value) => Some(match value {
+                        compile::TypeConst::Sym(name) => Value::Sym(name.to_owned()),
+                        compile::TypeConst::Str(value) => Value::Str(value.to_owned()),
+                        compile::TypeConst::Int(value) => Value::Int(value),
+                        compile::TypeConst::Bool(value) => Value::Bool(value),
+                        compile::TypeConst::Nil => Value::Nil,
+                        _ => return None,
+                    }),
+                    _ => unreachable!(),
+                })?;
+                match value.ok_or_else(|| Error::not_supported(strand))? {
+                    Value::Sym(name) => Output::set(strand, out, AsSym::new(&name)),
+                    Value::Str(value) => Output::set(strand, out, value.as_str()),
+                    Value::Int(value) => {
+                        let value =
+                            i64::try_from(value).map_err(|_| Error::not_supported(strand))?;
+                        Output::set(strand, out, value)
+                    }
+                    Value::Bool(value) => Output::set(strand, out, value),
+                    Value::Nil => Output::set(strand, out, Nil),
+                }
+                Ok(())
+            }),
+            "AppType" => builder
+                .get(
+                    "base",
+                    node_field!(compile::Kind::AppType { base, .. } => Some(base)),
+                )
+                .get(
+                    "args",
+                    node_list!(compile::Kind::AppType { args, .. } => args),
+                ),
+            "SchemaType" => builder.get(
+                "items",
+                node_list!(compile::Kind::SchemaType { items } => items),
+            ),
+            "ParensType" => builder.get(
+                "items",
+                node_list!(compile::Kind::ParensType { items } => items),
+            ),
+            "ArrayType" => builder.get(
+                "elem",
+                node_field!(compile::Kind::ArrayType { elem } => Some(elem)),
+            ),
+            "UnionType" => builder.get(
+                "members",
+                node_list!(compile::Kind::UnionType { members } => members),
+            ),
+            "FuncType" => builder
+                .get(
+                    "items",
+                    node_list!(compile::Kind::FuncType { items, .. } => items),
+                )
+                .get(
+                    "input",
+                    node_field!(compile::Kind::FuncType { input, .. } => input),
+                )
+                .get(
+                    "output",
+                    node_field!(compile::Kind::FuncType { output, .. } => output),
+                )
+                .get(
+                    "ret",
+                    node_field!(compile::Kind::FuncType { ret, .. } => Some(ret)),
+                ),
+            "KeyTypeArg" => builder.get("name", |this, strand, out| {
+                let name = with_node(this, strand, |n, _| match n.kind() {
+                    compile::Kind::TypeArg {
+                        kind: compile::TypeArgKind::Key { name },
+                        ..
+                    } => span_data(name),
+                    _ => unreachable!(),
+                })?;
+                create_span(strand.state(), strand, name, out);
+                Ok(())
+            }),
+            "KeyTypeItem" => builder
+                .get("key", |this, strand, out| {
+                    let key = with_node(this, strand, |n, _| match n.kind() {
+                        compile::Kind::TypeItem {
+                            kind: Some(compile::TypeItemKind::Key { key, .. }),
+                            ..
+                        } => span_data(key),
+                        _ => unreachable!(),
+                    })?;
+                    create_span(strand.state(), strand, key, out);
+                    Ok(())
+                })
+                .get(
+                    "key_ty",
+                    node_field!(compile::Kind::TypeItem {
+                        kind: Some(compile::TypeItemKind::Key { key_ty, .. }),
+                        ..
+                    } => key_ty),
+                ),
+            _ => builder,
+        }
+    }
+}
+
+/// Project nodes of `this`'s unit: one node or `nil` from an `Option`, or an array
+/// from a `Vec`.
+fn project_nodes<'v, 's, T: NodeMarker + 'static>(
+    this: Instance<'v, '_, NodeObject<T>>,
+    strand: &mut Strand<'v, 's>,
+    ids: impl ProjectNodes,
+    mut out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    let b = this.borrow(strand)?;
+    with_unit(strand, Ref::slot::<OWNER>(&b), |strand, owner| {
+        ids.project(strand, owner, &mut out)
+    })
+}
+
+trait ProjectNodes {
+    fn project<'v, 's>(
+        self,
+        strand: &mut Strand<'v, 's>,
+        owner: Instance<'v, '_, UnitObject<'v>>,
+        out: &mut Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
+}
+
+impl ProjectNodes for Option<compile::NodeId> {
+    fn project<'v, 's>(
+        self,
+        strand: &mut Strand<'v, 's>,
+        owner: Instance<'v, '_, UnitObject<'v>>,
+        out: &mut Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        match self {
+            Some(id) => create_node(strand, owner, id, out),
+            None => {
+                Output::set(strand, out, Nil);
+                Ok(())
+            }
+        }
+    }
+}
+
+impl ProjectNodes for Vec<compile::NodeId> {
+    fn project<'v, 's>(
+        self,
+        strand: &mut Strand<'v, 's>,
+        owner: Instance<'v, '_, UnitObject<'v>>,
+        out: &mut Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        Output::set(strand, &mut *out, Empty::Array);
+        strand.with_slots_sync(|strand, [mut item]| {
+            let array = out.as_array(strand).unwrap();
+            for id in self {
+                create_node(strand, owner, id, &mut item)?;
+                array.push(strand, &mut item)?;
+            }
+            Ok(())
+        })
     }
 }
 
@@ -2178,471 +2464,6 @@ fn project_type_only<'v, 's, T: NodeMarker + 'static>(
     })?;
     Output::set(strand, out, v);
     Ok(())
-}
-
-fn project_expr<'v, 's, T: NodeMarker + 'static>(
-    this: Instance<'v, '_, NodeObject<T>>,
-    strand: &mut Strand<'v, 's>,
-    mut out: Slot<'v, '_>,
-) -> Result<'v, 's, ()> {
-    let borrow = this.borrow(strand)?;
-    let id = borrow.id;
-    with_unit(strand, Ref::slot::<OWNER>(&borrow), |strand, owner| {
-        ensure_types(strand, owner)?;
-        let unit = owner.borrow(strand)?;
-        let Some(index) = unit
-            .type_index
-            .as_ref()
-            .and_then(|index| index.get(&id))
-            .copied()
-        else {
-            return Err(Error::state_error(strand, "unit was emitted"));
-        };
-        let types = Ref::slot::<UNIT_TYPES>(&unit).as_array(strand).unwrap();
-        types.get(strand, index, &mut out)?;
-        Ok(())
-    })
-}
-
-fn project_binder_type<'v, 's, T: NodeMarker + 'static>(
-    this: Instance<'v, '_, NodeObject<T>>,
-    strand: &mut Strand<'v, 's>,
-    bound: bool,
-    mut out: Slot<'v, '_>,
-) -> Result<'v, 's, ()> {
-    let borrow = this.borrow(strand)?;
-    let id = borrow.id;
-    with_unit(strand, Ref::slot::<OWNER>(&borrow), |strand, owner| {
-        let unit = owner.borrow(strand)?;
-        let document = unit
-            .unit
-            .as_ref()
-            .ok_or_else(|| Error::state_error(strand, "unit was emitted"))?;
-        let node = document.node(id).unwrap();
-        let compile::Kind::Binder {
-            bound: binder_bound,
-            default,
-            ..
-        } = node.kind()
-        else {
-            unreachable!()
-        };
-        let ty = if bound { binder_bound } else { default };
-        if let Some(ty) = ty {
-            create_type_expr(strand.state(), strand, unit.identity, ty, &mut out)
-        } else {
-            Output::set(strand, out, Nil);
-            Ok(())
-        }
-    })
-}
-
-/// Convert every type in the unit to objects when the first is asked for, so each is
-/// converted once however it is reached.
-fn ensure_types<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    owner: Instance<'v, '_, UnitObject<'v>>,
-) -> Result<'v, 's, ()> {
-    if owner.borrow(strand)?.type_index.is_some() {
-        return Ok(());
-    }
-    let global = strand.state::<Global<'v>>();
-    strand.with_slots_sync(|strand, [mut types, mut item]| {
-        let mut index = HashMap::new();
-        Output::set(strand, &mut types, Empty::Array);
-        {
-            let array = types.as_array(strand).unwrap();
-            let borrow = owner.borrow(strand)?;
-            let Some(unit) = borrow.unit.as_ref() else {
-                return Err(Error::state_error(strand, "unit was emitted"));
-            };
-            for (id, node) in unit.nodes() {
-                if let compile::Kind::Type { expr, .. } = node.kind() {
-                    create_type_expr(global, strand, borrow.identity, expr, &mut item)?;
-                    index.insert(id, array.len(strand)?);
-                    array.push(strand, &mut item)?;
-                }
-            }
-        }
-        let mut borrow = owner.borrow_mut(strand)?;
-        borrow.type_index = Some(index);
-        Output::set(strand, Mut::slot_mut::<UNIT_TYPES>(&mut borrow), &*types);
-        Ok(())
-    })
-}
-
-fn create_type_expr<'v, 's>(
-    global: State<'v, Global<'v>>,
-    strand: &mut Strand<'v, 's>,
-    unit: u64,
-    expr: compile::TypeExpr<'_>,
-    out: &mut Slot<'v, '_>,
-) -> Result<'v, 's, ()> {
-    enum Which {
-        Name,
-        Const,
-        App,
-        Schema,
-        Parens,
-        Array,
-        Union,
-        Func,
-    }
-    let span = span_data(expr.span());
-    strand.with_slots_sync(|strand, [mut first, mut second, mut third, mut fourth]| {
-        let (which, detail) = match expr.kind() {
-            compile::TypeKind::Name { head, target } => (
-                Which::Name,
-                TypeDetail::Name {
-                    head: span_data(head),
-                    target: target.map(|id| NodeIdAnnex { unit, id }),
-                },
-            ),
-            compile::TypeKind::Const(value) => {
-                match value {
-                    compile::TypeConst::Sym(name) => {
-                        Output::set(strand, &mut first, AsSym::new(name))
-                    }
-                    compile::TypeConst::Str(value) => Output::set(strand, &mut first, value),
-                    compile::TypeConst::Int(value) => {
-                        let value =
-                            i64::try_from(value).map_err(|_| Error::not_supported(strand))?;
-                        Output::set(strand, &mut first, value)
-                    }
-                    compile::TypeConst::Bool(value) => Output::set(strand, &mut first, value),
-                    compile::TypeConst::Nil => Output::set(strand, &mut first, Nil),
-                    _ => return Err(Error::not_supported(strand)),
-                }
-                (Which::Const, TypeDetail::None)
-            }
-            compile::TypeKind::App { base, args } => {
-                create_type_expr(global, strand, unit, base, &mut first)?;
-                create_type_args(global, strand, unit, args, &mut second)?;
-                (Which::App, TypeDetail::None)
-            }
-            compile::TypeKind::Schema { params } => {
-                create_type_params(global, strand, unit, params, &mut first)?;
-                (Which::Schema, TypeDetail::None)
-            }
-            compile::TypeKind::Parens { params } => {
-                create_type_params(global, strand, unit, params, &mut first)?;
-                (Which::Parens, TypeDetail::None)
-            }
-            compile::TypeKind::Array { elem } => {
-                create_type_expr(global, strand, unit, elem, &mut first)?;
-                (Which::Array, TypeDetail::None)
-            }
-            compile::TypeKind::Union { members } => {
-                Output::set(strand, &mut first, Empty::Array);
-                let array = first.as_array(strand).unwrap();
-                for member in members {
-                    strand.with_slots_sync(|strand, [mut item]| {
-                        create_type_expr(global, strand, unit, member, &mut item)?;
-                        array.push(strand, &mut item)
-                    })?;
-                }
-                (Which::Union, TypeDetail::None)
-            }
-            compile::TypeKind::Func {
-                params,
-                input,
-                output,
-                ret,
-            } => {
-                create_type_params(global, strand, unit, params, &mut first)?;
-                create_type_expr(global, strand, unit, ret, &mut second)?;
-                if let Some(input) = input {
-                    create_type_expr(global, strand, unit, input, &mut third)?;
-                }
-                if let Some(output) = output {
-                    create_type_expr(global, strand, unit, output, &mut fourth)?;
-                }
-                (Which::Func, TypeDetail::None)
-            }
-            _ => return Err(Error::not_supported(strand)),
-        };
-        let annex = TypeAnnex {
-            global,
-            span,
-            detail,
-        };
-        let t = &global.types.type_kinds;
-        macro_rules! make {
-            ($ty:expr) => {{
-                let ty = $ty;
-                ty.create_with_annex(
-                    strand,
-                    TypeExprObject {
-                        marker: PhantomData,
-                    },
-                    annex,
-                    &mut *out,
-                );
-                ty.cast(out).unwrap().enter_sync(strand, |strand, object| {
-                    let mut borrow = object.borrow_mut_unwrap();
-                    Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &*first);
-                    Output::set(strand, Mut::slot_mut::<1>(&mut borrow), &*second);
-                    Output::set(strand, Mut::slot_mut::<2>(&mut borrow), &*third);
-                    Output::set(strand, Mut::slot_mut::<3>(&mut borrow), &*fourth);
-                });
-            }};
-        }
-        match which {
-            Which::Name => make!(t.name),
-            Which::Const => make!(t.constant),
-            Which::App => make!(t.app),
-            Which::Schema => make!(t.schema),
-            Which::Parens => make!(t.parens),
-            Which::Array => make!(t.array),
-            Which::Union => make!(t.union),
-            Which::Func => make!(t.func),
-        }
-        Ok(())
-    })
-}
-
-fn create_type_args<'v, 's>(
-    global: State<'v, Global<'v>>,
-    strand: &mut Strand<'v, 's>,
-    unit: u64,
-    args: compile::TypeArgs<'_>,
-    out: &mut Slot<'v, '_>,
-) -> Result<'v, 's, ()> {
-    Output::set(strand, &mut *out, Empty::Array);
-    let array = out.as_array(strand).unwrap();
-    for arg in args {
-        strand.with_slots_sync(|strand, [mut item, mut ty]| {
-            create_type_expr(global, strand, unit, arg.ty(), &mut ty)?;
-            let annex = |name| TypeAnnex {
-                global,
-                span: span_data(arg.span()),
-                detail: TypeDetail::Arg { name },
-            };
-            macro_rules! make {
-                ($ty:expr, $name:expr) => {{
-                    let t = $ty;
-                    t.create_with_annex(
-                        strand,
-                        TypeExprObject {
-                            marker: PhantomData,
-                        },
-                        annex($name),
-                        &mut item,
-                    );
-                    t.cast(&item).unwrap().enter_sync(strand, |strand, object| {
-                        Output::set(
-                            strand,
-                            Mut::slot_mut::<0>(&mut object.borrow_mut_unwrap()),
-                            &*ty,
-                        );
-                    });
-                }};
-            }
-            let t = &global.types.arg_kinds;
-            match arg.kind() {
-                compile::TypeArgKind::Pos => make!(t.pos, None),
-                compile::TypeArgKind::Key { name } => make!(t.key, Some(span_data(name))),
-                compile::TypeArgKind::Expand => make!(t.expand, None),
-                _ => return Err(Error::not_supported(strand)),
-            }
-            array.push(strand, &mut item)
-        })?;
-    }
-    Ok(())
-}
-
-fn create_type_params<'v, 's>(
-    global: State<'v, Global<'v>>,
-    strand: &mut Strand<'v, 's>,
-    unit: u64,
-    params: compile::TypeParams<'_>,
-    out: &mut Slot<'v, '_>,
-) -> Result<'v, 's, ()> {
-    Output::set(strand, &mut *out, Empty::Array);
-    let array = out.as_array(strand).unwrap();
-    for param in params {
-        strand.with_slots_sync(|strand, [mut item, mut ty, mut key_ty]| {
-            if let Some(param_ty) = param.ty() {
-                create_type_expr(global, strand, unit, param_ty, &mut ty)?;
-            }
-            let annex = |key| TypeAnnex {
-                global,
-                span: span_data(param.span()),
-                detail: TypeDetail::Param {
-                    quant: param.quant(),
-                    key,
-                },
-            };
-            macro_rules! make {
-                ($ty:expr, $key:expr) => {{
-                    let t = $ty;
-                    t.create_with_annex(
-                        strand,
-                        TypeExprObject {
-                            marker: PhantomData,
-                        },
-                        annex($key),
-                        &mut item,
-                    );
-                    t.cast(&item).unwrap().enter_sync(strand, |strand, object| {
-                        Output::set(
-                            strand,
-                            Mut::slot_mut::<0>(&mut object.borrow_mut_unwrap()),
-                            &*ty,
-                        );
-                    });
-                }};
-            }
-            let t = &global.types.param_kinds;
-            match param.kind() {
-                None => make!(t.any, None),
-                Some(compile::TypeParamKind::Pos) => make!(t.pos, None),
-                Some(compile::TypeParamKind::Key {
-                    key,
-                    key_ty: key_expr,
-                }) => {
-                    if let Some(key_expr) = key_expr {
-                        create_type_expr(global, strand, unit, key_expr, &mut key_ty)?;
-                    }
-                    make!(t.key, Some(span_data(key)));
-                    t.key
-                        .cast(&item)
-                        .unwrap()
-                        .enter_sync(strand, |strand, object| {
-                            Output::set(
-                                strand,
-                                Mut::slot_mut::<1>(&mut object.borrow_mut_unwrap()),
-                                &*key_ty,
-                            );
-                        });
-                }
-                Some(compile::TypeParamKind::Include) => make!(t.include, None),
-                Some(compile::TypeParamKind::Open) => {
-                    t.open.create_with_annex(
-                        strand,
-                        TypeExprObject {
-                            marker: PhantomData,
-                        },
-                        annex(None),
-                        &mut item,
-                    );
-                }
-                _ => return Err(Error::not_supported(strand)),
-            }
-            array.push(strand, &mut item)
-        })?;
-    }
-    Ok(())
-}
-
-impl<'v, T: TypeMarker + 'static> Object<'v> for TypeExprObject<T> {
-    const NAME: &'v str = T::NAME;
-    const MODULE: &'v str = "compile";
-    // A function type uses all four: parameters, return type and the two
-    // implicits. Every other form leaves the later ones nil.
-    const SLOTS: usize = 4;
-    type Annex = TypeAnnex<'v>;
-    type Type = ();
-    type TypeAnnex = ();
-
-    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        macro_rules! slot {
-            ($index:literal) => {
-                |this, strand, out| {
-                    let borrow = this.borrow(strand)?;
-                    Output::set(strand, out, Ref::slot::<$index>(&borrow));
-                    Ok(())
-                }
-            };
-        }
-        builder = builder.get("span", |this, strand, out| {
-            create_span(this.annex().global, strand, this.annex().span.clone(), out);
-            Ok(())
-        });
-        if matches!(
-            T::NAME,
-            "PosTypeParam" | "KeyTypeParam" | "IncludeTypeParam" | "OpenTypeParam" | "AnyTypeParam"
-        ) {
-            builder = builder.get("quant", |this, strand, out| {
-                let TypeDetail::Param { quant, .. } = &this.annex().detail else {
-                    unreachable!()
-                };
-                let global = this.annex().global;
-                match quant {
-                    Some(compile::TypeQuant::Opt) => {
-                        Output::set(strand, out, global.syms.quant_opt)
-                    }
-                    Some(compile::TypeQuant::Star) => {
-                        Output::set(strand, out, global.syms.quant_star)
-                    }
-                    Some(compile::TypeQuant::StarStar) => {
-                        Output::set(strand, out, global.syms.quant_star_star)
-                    }
-                    _ => Output::set(strand, out, Nil),
-                }
-                Ok(())
-            });
-        }
-        if matches!(
-            T::NAME,
-            "PosTypeArg"
-                | "KeyTypeArg"
-                | "ExpandTypeArg"
-                | "PosTypeParam"
-                | "KeyTypeParam"
-                | "IncludeTypeParam"
-        ) {
-            builder = builder.get("ty", slot!(0));
-        }
-        if T::NAME == "KeyTypeParam" {
-            builder = builder.get("key_ty", slot!(1));
-        }
-        match T::NAME {
-            "NameType" => builder
-                .get("head", |this, strand, out| {
-                    let TypeDetail::Name { head, .. } = &this.annex().detail else {
-                        unreachable!()
-                    };
-                    create_span(this.annex().global, strand, head.clone(), out);
-                    Ok(())
-                })
-                .get("target", |this, strand, mut out| {
-                    match &this.annex().detail {
-                        TypeDetail::Name {
-                            target: Some(target),
-                            ..
-                        } => create_node_id(strand, target.unit, target.id, &mut out),
-                        _ => Output::set(strand, out, Nil),
-                    }
-                    Ok(())
-                }),
-            "ConstType" => builder.get("value", slot!(0)),
-            "AppType" => builder.get("base", slot!(0)).get("args", slot!(1)),
-            "SchemaType" | "ParensType" => builder.get("params", slot!(0)),
-            "ArrayType" => builder.get("elem", slot!(0)),
-            "UnionType" => builder.get("members", slot!(0)),
-            "FuncType" => builder
-                .get("params", slot!(0))
-                .get("ret", slot!(1))
-                .get("input", slot!(2))
-                .get("output", slot!(3)),
-            "KeyTypeArg" => builder.get("name", |this, strand, out| {
-                let TypeDetail::Arg { name: Some(name) } = &this.annex().detail else {
-                    unreachable!()
-                };
-                create_span(this.annex().global, strand, name.clone(), out);
-                Ok(())
-            }),
-            "KeyTypeParam" => builder.get("key", |this, strand, out| {
-                let TypeDetail::Param { key: Some(key), .. } = &this.annex().detail else {
-                    unreachable!()
-                };
-                create_span(this.annex().global, strand, key.clone(), out);
-                Ok(())
-            }),
-            _ => builder,
-        }
-    }
 }
 
 impl<'v> Object<'v> for Diagnostic {
@@ -3105,24 +2926,27 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .value("PosRestBinder", global.types.concrete_nodes.pos_rest_binder)
         .value("KeyRestBinder", global.types.concrete_nodes.key_rest_binder)
         .value("TypeExpr", global.types.type_expr)
-        .value("NameType", global.types.type_kinds.name)
-        .value("ConstType", global.types.type_kinds.constant)
-        .value("AppType", global.types.type_kinds.app)
-        .value("SchemaType", global.types.type_kinds.schema)
-        .value("ParensType", global.types.type_kinds.parens)
-        .value("ArrayType", global.types.type_kinds.array)
-        .value("UnionType", global.types.type_kinds.union)
-        .value("FuncType", global.types.type_kinds.func)
+        .value("NameType", global.types.concrete_nodes.name_type)
+        .value("ConstType", global.types.concrete_nodes.const_type)
+        .value("AppType", global.types.concrete_nodes.app_type)
+        .value("SchemaType", global.types.concrete_nodes.schema_type)
+        .value("ParensType", global.types.concrete_nodes.parens_type)
+        .value("ArrayType", global.types.concrete_nodes.array_type)
+        .value("UnionType", global.types.concrete_nodes.union_type)
+        .value("FuncType", global.types.concrete_nodes.func_type)
         .value("TypeArg", global.types.type_arg)
-        .value("PosTypeArg", global.types.arg_kinds.pos)
-        .value("KeyTypeArg", global.types.arg_kinds.key)
-        .value("ExpandTypeArg", global.types.arg_kinds.expand)
-        .value("TypeParam", global.types.type_param)
-        .value("PosTypeParam", global.types.param_kinds.pos)
-        .value("KeyTypeParam", global.types.param_kinds.key)
-        .value("IncludeTypeParam", global.types.param_kinds.include)
-        .value("OpenTypeParam", global.types.param_kinds.open)
-        .value("AnyTypeParam", global.types.param_kinds.any)
+        .value("PosTypeArg", global.types.concrete_nodes.pos_type_arg)
+        .value("KeyTypeArg", global.types.concrete_nodes.key_type_arg)
+        .value("ExpandTypeArg", global.types.concrete_nodes.expand_type_arg)
+        .value("TypeItem", global.types.type_item)
+        .value("PosTypeItem", global.types.concrete_nodes.pos_type_item)
+        .value("KeyTypeItem", global.types.concrete_nodes.key_type_item)
+        .value(
+            "IncludeTypeItem",
+            global.types.concrete_nodes.include_type_item,
+        )
+        .value("OpenTypeItem", global.types.concrete_nodes.open_type_item)
+        .value("AnyTypeItem", global.types.concrete_nodes.any_type_item)
         .value("Diagnostic", global.types.diagnostic)
         .value("Span", global.types.span)
         .value("SourceSpan", global.types.source_span)
@@ -3226,7 +3050,6 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                     _backing: backing,
                     path,
                     identity,
-                    type_index: None,
                 },
                 &mut out,
             );

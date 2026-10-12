@@ -10,7 +10,7 @@ use crate::{
     ImplicitKind, PreludeImport,
     ast::{visit::Node as AstNode, *},
     doc,
-    source::{File, Span},
+    source::{File, Offset, Span},
 };
 
 pub(crate) fn index(
@@ -51,11 +51,11 @@ pub(crate) fn index(
                     index.prelude(
                         &scope,
                         &mut item.res,
-                        Kind::PreludeItem {
+                        Kind::PreludeItem(alias::Box::new(doc::PreludeItem {
                             module: module.as_str().into(),
                             item: item.item.as_str().into(),
                             name: item.bind.as_str().into(),
-                        },
+                        })),
                     );
                 }
             }
@@ -68,15 +68,16 @@ pub(crate) fn index(
                 index.prelude(
                     &scope,
                     res,
-                    Kind::PreludeModule {
+                    Kind::PreludeModule(alias::Box::new(doc::PreludeModule {
                         module: module.as_str().into(),
                         name: bind.as_str().into(),
-                    },
+                    })),
                 );
             }
         }
     }
     index.block(&scope, &mut root.0.body.stmts);
+    index.table.link();
     index.table
 }
 
@@ -306,17 +307,25 @@ impl Index<'_> {
         (kind, span)
     }
 
+    /// Push a node in `scope`. A declaration claims the comment block above it as
+    /// a whole — decorators included, since they are written between the comment
+    /// and the keyword.
     fn push(&mut self, scope: &Scope<'_>, kind: Kind, span: Span) -> Id {
-        self.push_to(scope.parent, kind, span)
+        let anchor = kind.definition().is_some().then_some(span.start);
+        self.push_to(scope.parent, kind, span, anchor)
     }
 
-    fn push_to(&mut self, parent: Option<Id>, kind: Kind, span: Span) -> Id {
-        // Apart from the root, only a declaration can be documented, and the
-        // block sits above the construct as a whole — decorators included,
-        // since they are written between the comment and the keyword.
-        let doc = kind
-            .definition()
-            .and_then(|_| self.blocks.attached(self.file, span.start));
+    /// Push a node, documented by the comment block directly above `anchor`, if
+    /// any. Nested nodes can start together, so only one of them may give an
+    /// anchor there.
+    fn push_to(
+        &mut self,
+        parent: Option<Id>,
+        kind: Kind,
+        span: Span,
+        anchor: Option<Offset>,
+    ) -> Id {
+        let doc = anchor.and_then(|anchor| self.blocks.attached(self.file, anchor));
         self.table.push(Node::new(parent, kind, Some(span), doc))
     }
 
@@ -379,16 +388,17 @@ impl Index<'_> {
 
     /// Record a resolved type as describing `parent`, unless it could not be read.
     fn type_node(&mut self, parent: Id, ty: &TypeExpr) {
-        if let Some(expr) = self.type_expr(ty) {
-            self.push_to(
-                Some(parent),
+        self.abandoning(|this| {
+            let id = this.begin_type(parent, ty.span());
+            let expr = this.type_expr(id, ty)?;
+            Some(this.finish_type(
+                id,
                 Kind::Type {
                     expr,
                     type_only: false,
                 },
-                ty.span(),
-            );
-        }
+            ))
+        });
     }
 
     /// Record a resolved superclass as a type describing `class`, unless it could not
@@ -396,47 +406,84 @@ impl Index<'_> {
     fn super_node(&mut self, class: Id, super_ref: &ClassSuper) {
         let head = super_ref.ident.span;
         let name = super_ref.fields.last().map_or(head, |field| head | *field);
-        let mut expr = doc::TypeExpr {
-            span: name,
-            kind: doc::TypeKind::Name {
-                head,
-                target: super_ref
-                    .ident
-                    .res
-                    .and_then(|res| res.node)
-                    .or_else(|| super_ref.res.and_then(|res| res.node)),
-            },
+        let span = super_ref
+            .bracket_span
+            .map_or(name, |bracket_span| name | bracket_span);
+        let name_kind = Kind::NameType {
+            head,
+            target: super_ref
+                .ident
+                .res
+                .and_then(|res| res.node)
+                .or_else(|| super_ref.res.and_then(|res| res.node)),
         };
-        if let Some(bracket_span) = super_ref.bracket_span {
-            let Some(args) = self.type_args(&super_ref.args) else {
-                return;
+        self.abandoning(|this| {
+            let id = this.begin_type(class, span);
+            let expr = if super_ref.bracket_span.is_some() {
+                let app = this.begin_type(id, span);
+                let base = this.push_to(Some(app), name_kind, name, None);
+                let args = this.type_args(app, &super_ref.args)?;
+                this.finish_type(app, Kind::AppType { base, args })
+            } else {
+                this.push_to(Some(id), name_kind, name, None)
             };
-            expr = doc::TypeExpr {
-                span: name | bracket_span,
-                kind: doc::TypeKind::App {
-                    base: alias::Box::new(expr),
-                    args,
+            Some(this.finish_type(
+                id,
+                Kind::Type {
+                    expr,
+                    type_only: super_ref.type_only,
                 },
-            };
-        }
-        let span = expr.span;
-        self.push_to(
-            Some(class),
-            Kind::Type {
-                expr,
-                type_only: super_ref.type_only,
-            },
-            span,
-        );
+            ))
+        });
     }
 
-    fn type_expr(&self, ty: &TypeExpr) -> Option<doc::TypeExpr> {
+    /// Run a conversion of a type into nodes, and if it fails, drop whatever nodes it
+    /// pushed. Nothing is linked yet, so that is a plain truncation.
+    fn abandoning(&mut self, convert: impl FnOnce(&mut Self) -> Option<Id>) -> Option<Id> {
+        let len = self.table.len();
+        let id = convert(self);
+        if id.is_none() {
+            self.table.truncate(len);
+        }
+        id
+    }
+
+    /// Push a type node whose kind [`Index::finish_type`] gives once its parts, which
+    /// are its children, are converted.
+    fn begin_type(&mut self, parent: Id, span: Span) -> Id {
+        self.push_to(
+            Some(parent),
+            Kind::ConstType(doc::TypeConst::Nil),
+            span,
+            None,
+        )
+    }
+
+    fn finish_type(&mut self, id: Id, kind: Kind) -> Id {
+        self.table[id].kind = kind;
+        id
+    }
+
+    /// Convert a resolved type into nodes under `parent`, giving the node of its form,
+    /// or `None` if it could not be read. A caller abandons what a failure pushed.
+    fn type_expr(&mut self, parent: Id, ty: &TypeExpr) -> Option<Id> {
+        let id = match ty {
+            // Parentheses that only group are not a form of their own, but the form
+            // covers them
+            TypeExpr::Group { ty: inner, .. } => {
+                let id = self.type_expr(parent, inner)?;
+                self.table[id].span = Some(ty.span());
+                return Some(id);
+            }
+            TypeExpr::Error => return None,
+            _ => self.begin_type(parent, ty.span()),
+        };
         let kind = match ty {
-            TypeExpr::Name { head, res, .. } => doc::TypeKind::Name {
+            TypeExpr::Name { head, res, .. } => Kind::NameType {
                 head: *head,
                 target: res.and_then(|res| res.node),
             },
-            TypeExpr::Const { expr } => doc::TypeKind::Const(match expr.fold(self.file)? {
+            TypeExpr::Const { expr } => Kind::ConstType(match expr.fold(self.file)? {
                 Const::Sym(span) => doc::TypeConst::Sym(self.file.str(span).into()),
                 Const::Str(value) => doc::TypeConst::Str(value.into()),
                 Const::Int(value) => doc::TypeConst::Int(value),
@@ -444,24 +491,23 @@ impl Index<'_> {
                 Const::Nil => doc::TypeConst::Nil,
                 Const::Bin(_) | Const::F64(_) | Const::Error => return None,
             }),
-            TypeExpr::App { base, args, .. } => doc::TypeKind::App {
-                base: alias::Box::new(self.type_expr(base)?),
-                args: self.type_args(args)?,
+            TypeExpr::App { base, args, .. } => Kind::AppType {
+                base: self.type_expr(id, base)?,
+                args: self.type_args(id, args)?,
             },
-            TypeExpr::Schema { params, .. } => doc::TypeKind::Schema {
-                params: self.type_params(params)?,
+            TypeExpr::Schema { params, .. } => Kind::SchemaType {
+                items: self.type_items(id, params)?,
             },
-            TypeExpr::Parens { params, .. } => doc::TypeKind::Parens {
-                params: self.type_params(params)?,
+            TypeExpr::Parens { params, .. } => Kind::ParensType {
+                items: self.type_items(id, params)?,
             },
-            TypeExpr::Array { elem, .. } => doc::TypeKind::Array {
-                elem: alias::Box::new(self.type_expr(elem)?),
+            TypeExpr::Array { elem, .. } => Kind::ArrayType {
+                elem: self.type_expr(id, elem)?,
             },
-            TypeExpr::Group { ty: inner, .. } => self.type_expr(inner)?.kind,
-            TypeExpr::Union { members, .. } => doc::TypeKind::Union {
+            TypeExpr::Union { members, .. } => Kind::UnionType {
                 members: members
                     .iter()
-                    .map(|member| self.type_expr(member))
+                    .map(|member| self.type_expr(id, member))
                     .collect::<Option<_>>()?,
             },
             TypeExpr::Func {
@@ -470,21 +516,18 @@ impl Index<'_> {
                 output,
                 ret,
                 ..
-            } => doc::TypeKind::Func {
-                params: self.type_params(params)?,
-                input: self.implicit_type(input)?,
-                output: self.implicit_type(output)?,
-                ret: alias::Box::new(self.type_expr(ret)?),
+            } => Kind::FuncType {
+                items: self.type_items(id, params)?,
+                input: self.implicit_type(id, input)?,
+                output: self.implicit_type(id, output)?,
+                ret: self.type_expr(id, ret)?,
             },
-            TypeExpr::Error => return None,
+            TypeExpr::Group { .. } | TypeExpr::Error => unreachable!(),
         };
-        Some(doc::TypeExpr {
-            span: ty.span(),
-            kind,
-        })
+        Some(self.finish_type(id, kind))
     }
 
-    fn type_args(&self, args: &[TypeArg]) -> Option<alias::Box<[doc::TypeArg]>> {
+    fn type_args(&mut self, parent: Id, args: &[TypeArg]) -> Option<alias::Box<[Id]>> {
         args.iter()
             .map(|arg| {
                 let (kind, ty, start) = match &arg.kind {
@@ -497,11 +540,9 @@ impl Index<'_> {
                     }
                 };
                 let span = start.map_or(ty.span(), |start| start | ty.span());
-                Some(doc::TypeArg {
-                    span,
-                    kind,
-                    ty: self.type_expr(ty)?,
-                })
+                let id = self.begin_type(parent, span);
+                let ty = self.type_expr(id, ty)?;
+                Some(self.finish_type(id, Kind::TypeArg { kind, ty }))
             })
             .collect()
     }
@@ -509,39 +550,34 @@ impl Index<'_> {
     /// Convert an implicit parameter's type. The outer `None` means the type
     /// could not be read, the inner that the implicit is absent.
     fn implicit_type(
-        &self,
+        &mut self,
+        parent: Id,
         implicit: &Option<Box<Implicit>>,
-    ) -> Option<Option<alias::Box<doc::TypeExpr>>> {
+    ) -> Option<Option<Id>> {
         match implicit {
-            Some(implicit) => Some(Some(alias::Box::new(self.type_expr(&implicit.ty)?))),
+            Some(implicit) => Some(Some(self.type_expr(parent, &implicit.ty)?)),
             None => Some(None),
         }
     }
 
-    fn type_params(&self, params: &[TypeParam]) -> Option<alias::Box<[doc::TypeParam]>> {
+    fn type_items(&mut self, parent: Id, params: &[TypeParam]) -> Option<alias::Box<[Id]>> {
         params
             .iter()
             .map(|param| {
-                let (kind, ty, start) = match &param.kind {
-                    Some(TypeParamKind::Pos(ty)) => (Some(doc::TypeParamKind::Pos), Some(ty), None),
+                let (key, ty, start) = match &param.kind {
+                    Some(TypeParamKind::Pos(ty)) => (None, Some(ty), None),
                     Some(TypeParamKind::Key { key, ty, .. }) => {
-                        let (key, key_ty) = match key {
-                            TypeKey::Sym(span) => (*span, None),
-                            TypeKey::Type(key_ty) => (key_ty.span(), Some(self.type_expr(key_ty)?)),
+                        let span = match key {
+                            TypeKey::Sym(span) => *span,
+                            TypeKey::Type(key_ty) => key_ty.span(),
                         };
-                        (
-                            Some(doc::TypeParamKind::Key { key, key_ty }),
-                            Some(ty),
-                            Some(key),
-                        )
+                        (Some(key), Some(ty), Some(span))
                     }
-                    Some(TypeParamKind::Include { ellipsis_span, ty }) => (
-                        Some(doc::TypeParamKind::Include),
-                        Some(ty),
-                        Some(*ellipsis_span),
-                    ),
+                    Some(TypeParamKind::Include { ellipsis_span, ty }) => {
+                        (None, Some(ty), Some(*ellipsis_span))
+                    }
                     Some(TypeParamKind::Open { ellipsis_span }) => {
-                        (Some(doc::TypeParamKind::Open), None, Some(*ellipsis_span))
+                        (None, None, Some(*ellipsis_span))
                     }
                     None => (None, None, None),
                 };
@@ -550,20 +586,37 @@ impl Index<'_> {
                     .flatten()
                     .chain(ty.map(|ty| ty.span()))
                     .reduce(|acc, span| acc | span)
-                    .expect("a type parameter has a source span");
-                Some(doc::TypeParam {
-                    span,
-                    quant: param.quant.as_ref().map(|quant| match quant {
-                        TypeQuant::Opt(_) => crate::TypeQuant::Opt,
-                        TypeQuant::Star(_) => crate::TypeQuant::Star,
-                        TypeQuant::StarStar(_) => crate::TypeQuant::StarStar,
+                    .expect("a type item has a source span");
+                let id = self.begin_type(parent, span);
+                let kind = match &param.kind {
+                    Some(TypeParamKind::Pos(_)) => Some(doc::TypeItemKind::Pos),
+                    Some(TypeParamKind::Key { .. }) => Some(doc::TypeItemKind::Key {
+                        key: start.expect("a key has a span"),
+                        key_ty: match key {
+                            Some(TypeKey::Type(key_ty)) => Some(self.type_expr(id, key_ty)?),
+                            _ => None,
+                        },
                     }),
-                    kind,
-                    ty: match ty {
-                        Some(ty) => Some(self.type_expr(ty)?),
-                        None => None,
+                    Some(TypeParamKind::Include { .. }) => Some(doc::TypeItemKind::Include),
+                    Some(TypeParamKind::Open { .. }) => Some(doc::TypeItemKind::Open),
+                    None => None,
+                };
+                let ty = match ty {
+                    Some(ty) => Some(self.type_expr(id, ty)?),
+                    None => None,
+                };
+                Some(self.finish_type(
+                    id,
+                    Kind::TypeItem {
+                        quant: param.quant.as_ref().map(|quant| match quant {
+                            TypeQuant::Opt(_) => crate::TypeQuant::Opt,
+                            TypeQuant::Star(_) => crate::TypeQuant::Star,
+                            TypeQuant::StarStar(_) => crate::TypeQuant::StarStar,
+                        }),
+                        kind,
+                        ty,
                     },
-                })
+                ))
             })
             .collect()
     }
@@ -608,6 +661,7 @@ impl Index<'_> {
                         default: None,
                     },
                     span,
+                    Some(span.start),
                 );
                 binder.node = Some(id);
                 id
@@ -632,11 +686,11 @@ impl Index<'_> {
             let bound = binder
                 .bound
                 .as_ref()
-                .and_then(|bound| self.type_expr(&bound.ty));
+                .and_then(|bound| self.abandoning(|this| this.type_expr(id, &bound.ty)));
             let default = binder
                 .default
                 .as_ref()
-                .and_then(|default| self.type_expr(&default.ty));
+                .and_then(|default| self.abandoning(|this| this.type_expr(id, &default.ty)));
             let Kind::Binder {
                 bound: node_bound,
                 default: node_default,

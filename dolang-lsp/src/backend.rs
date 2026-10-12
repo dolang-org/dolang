@@ -21,7 +21,8 @@ use tower_lsp_server::{
 };
 
 use dolang_compile::{
-    Config as CompileConfig, Context, ErrorKind, Kind, NodeId, Token, Unit, UnitId, diag, typeck,
+    Config as CompileConfig, Context, ErrorKind, Kind, Node, NodeId, Token, Unit, UnitId, diag,
+    typeck,
 };
 
 use crate::{doc_index, typelib_index};
@@ -263,15 +264,22 @@ fn parameter_label(content: &str, unit: &Unit<'_>, id: NodeId) -> Option<String>
     node.span().map(|span| one_line_source(content, &span))
 }
 
-/// The source text of the type describing a node, if it has one.
-fn type_label(
-    content: &str,
-    unit: &Unit<'_>,
-    id: NodeId,
-    children: &HashMap<NodeId, Vec<NodeId>>,
-) -> Option<String> {
+/// A node's children in source order.
+fn children_in_order(unit: &Unit<'_>, node: &Node<'_>) -> Vec<NodeId> {
+    let mut children: Vec<NodeId> = node.children().collect();
+    // A prelude binding, having no span, sorts first
+    children.sort_by_key(|id| {
+        unit.node(*id)
+            .expect("child node remains in its unit")
+            .span()
+            .map(|span| span.start().byte_offset())
+    });
     children
-        .get(&id)?
+}
+
+/// The source text of the type describing a node, if it has one, given its children.
+fn type_label(content: &str, unit: &Unit<'_>, children: &[NodeId]) -> Option<String> {
+    children
         .iter()
         .filter_map(|child| unit.node(*child))
         .find(|child| matches!(child.kind(), Kind::Type { .. }))
@@ -280,21 +288,15 @@ fn type_label(
 }
 
 /// A declaration's signature, including any type it is annotated with.
-fn declaration_label(
-    content: &str,
-    unit: &Unit<'_>,
-    id: NodeId,
-    children: &HashMap<NodeId, Vec<NodeId>>,
-) -> Option<String> {
+fn declaration_label(content: &str, unit: &Unit<'_>, id: NodeId) -> Option<String> {
     let node = unit.node(id)?;
     let kind = node.kind();
+    let children = children_in_order(unit, &node);
     let mut name = node
         .definition()
         .map(|span| span_text(content, &span).to_owned())?;
     let binders = children
-        .get(&id)
-        .into_iter()
-        .flatten()
+        .iter()
         .filter_map(|child| unit.node(*child))
         .filter(|child| matches!(child.kind(), Kind::Binder { .. }))
         .filter_map(|child| child.span())
@@ -309,7 +311,7 @@ fn declaration_label(
     let ty = if matches!(kind, Kind::Class { .. }) {
         None
     } else {
-        type_label(content, unit, id, children)
+        type_label(content, unit, &children)
     };
     let returns = || {
         ty.as_deref()
@@ -323,9 +325,7 @@ fn declaration_label(
     };
     let params = || {
         children
-            .get(&id)
-            .into_iter()
-            .flatten()
+            .iter()
             .filter_map(|child| parameter_label(content, unit, *child))
             .collect::<Vec<_>>()
     };
@@ -334,9 +334,7 @@ fn declaration_label(
             is_pub, type_only, ..
         } => {
             let supers = children
-                .get(&id)
-                .into_iter()
-                .flatten()
+                .iter()
                 .filter_map(|child| unit.node(*child))
                 .filter(|child| matches!(child.kind(), Kind::Type { .. }))
                 .filter_map(|child| child.span())
@@ -453,28 +451,12 @@ fn render_external_hover(entry: &doc_index::DocEntry) -> String {
 
 /// Pre-render local hover text while the compiler unit and its spans live.
 fn build_hovers(unit: &Unit<'_>, content: &str) -> HashMap<NodeId, String> {
-    let mut children: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
-    for (id, node) in unit.nodes() {
-        if let Some(parent) = node.parent() {
-            children.entry(parent).or_default().push(id);
-        }
-    }
-    for ids in children.values_mut() {
-        // A prelude binding, having no span, sorts first
-        ids.sort_by_key(|id| {
-            unit.node(*id)
-                .expect("child node remains in its unit")
-                .span()
-                .map(|span| span.start().byte_offset())
-        });
-    }
-
     unit.nodes()
         .filter_map(|(id, node)| {
             if let Some(markdown) = external_hover(node.kind(), content) {
                 return Some((id, markdown));
             }
-            let label = declaration_label(content, unit, id, &children)?;
+            let label = declaration_label(content, unit, id)?;
             let doc = node.doc().map(|span| normalize_doc(content, &span));
             Some((
                 id,

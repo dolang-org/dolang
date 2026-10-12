@@ -79,6 +79,12 @@ pub class Unit
   pub def nodes self -> Iter[Tuple[NodeId, Node]]
     ...
 
+  # The [`Root`](compile.Root) node, or `nil` unless the unit was compiled with
+  # `document: true`.
+  #[getter]
+  pub def root self -> (Root | nil)
+    ...
+
   # Returns the modules the unit imports, by statement or through the prelude
   # bindings it uses, each once, in order.
   #
@@ -201,12 +207,22 @@ pub class NodeId
 # Supertype of every document node.
 #
 # Nodes form a tree rooted at [`Root`](compile.Root), reached through
-# [`Unit.nodes`](compile.Unit.nodes). The four intermediate supertypes --
-# [`Declaration`](compile.Declaration), [`Param`](compile.Param),
-# [`Block`](compile.Block), and [`Reference`](compile.Reference) -- group the
-# concrete kinds by what they carry, so a consumer can match on the level it
-# cares about.
+# [`Unit.root`](compile.Unit.root) or [`Unit.nodes`](compile.Unit.nodes). The
+# four intermediate supertypes -- [`Declaration`](compile.Declaration),
+# [`Param`](compile.Param), [`Block`](compile.Block), and
+# [`Reference`](compile.Reference) -- group the concrete kinds by what they
+# carry, so a consumer can match on the level it cares about.
+#
+# A node is a view of its unit, so reaching the same node twice may give two
+# objects. Nodes compare and hash by unit and ID, as a
+# [`NodeId`](compile.NodeId) does.
 pub class Node
+  # The nodes whose parent is this one, in no particular order. Sort them by
+  # [`span`](compile.Node.span) for source order.
+  #[getter]
+  pub def children self -> Array[Node]
+    ...
+
   # The span of the comment block documenting the node, or `nil` where none
   # attaches.
   #
@@ -215,6 +231,11 @@ pub class Node
   # that has to know it in advance gains nothing.
   #[getter]
   pub def doc self -> (Span | nil)
+    ...
+
+  # The node's ID.
+  #[getter]
+  pub def id self -> NodeId
     ...
 
   # The ID of the enclosing node, or `nil` for
@@ -511,14 +532,14 @@ pub class Continue: Reference
 # A `return`. Its `target` is the function returned from.
 pub class Return: Reference
 
-# A type in an annotation, return type, or superclass list.
+# A type in an annotation, return type, alias body, or superclass list.
 #
 # Its parent is what it describes: the parameter, binding, or field it
-# annotates, the function, method, or lambda whose return type it is, or the
-# class it is a superclass of. A declaration naming several fields yields one
-# type per field.
+# annotates, the function, method, or lambda whose return type it is, the alias
+# it defines, or the class it is a superclass of. A declaration naming several
+# fields yields one type per field.
 pub class Type: Node
-  # The type expression.
+  # The type's form, a child of this node.
   #[getter]
   pub def expr self -> TypeExpr
     ...
@@ -532,12 +553,14 @@ pub class Type: Node
 # Supertype of binders: names standing for types within the function, method,
 # or class that is their parent.
 pub class Binder: Declaration
-  # The binder's bound, or `nil` when it has none.
+  # The form of the binder's bound, a child of the binder, or `nil` when it
+  # has none.
   #[getter]
   pub def bound self -> (TypeExpr | nil)
     ...
 
-  # The binder's default, or `nil` when it has none.
+  # The form of the binder's default, a child of the binder, or `nil` when it
+  # has none.
   #[getter]
   pub def default self -> (TypeExpr | nil)
     ...
@@ -562,14 +585,12 @@ pub class KeyRestBinder: RestBinder
 
 # Supertype of the forms a type takes.
 #
-# Parentheses that only group a type are not a form of their own. A unit
-# converts all of its types the first time one is asked for, so the same type
-# always yields the same objects.
-pub class TypeExpr
-  # The span of the type as written, including any parentheses around it.
-  #[getter]
-  pub def span self -> Span
-    ...
+# A form is a child of whatever refers to it: a [`Type`](compile.Type), a
+# [`Binder`](compile.Binder), or an enclosing form. Its span includes any
+# parentheses around it, since parentheses that only group a type are not a
+# form of their own. Type forms, arguments, and items declare nothing and
+# carry no doc.
+pub class TypeExpr: Node
 
 # A possibly dotted name, such as `Str` or `time.Duration`.
 pub class NameType: TypeExpr
@@ -593,7 +614,7 @@ pub class ConstType: TypeExpr
 
 # Type arguments applied to a type, such as `Array[Int]`.
 pub class AppType: TypeExpr
-  # The type arguments.
+  # The type arguments, in the order written.
   #[getter]
   pub def args self -> Array[TypeArg]
     ...
@@ -605,16 +626,16 @@ pub class AppType: TypeExpr
 
 # A schema, such as `{name: Str, ?port: Int}`.
 pub class SchemaType: TypeExpr
-  # The parameters.
+  # The items, in the order written.
   #[getter]
-  pub def params self -> Array[TypeParam]
+  pub def items self -> Array[TypeItem]
     ...
 
 # A tuple or record type, such as `(Int, Str)` or `(name: Str)`.
 pub class ParensType: TypeExpr
-  # The items.
+  # The items, in the order written.
   #[getter]
-  pub def params self -> Array[TypeParam]
+  pub def items self -> Array[TypeItem]
     ...
 
 # An array type, such as `[Int]`.
@@ -633,9 +654,9 @@ pub class UnionType: TypeExpr
 
 # A function type, such as `(Int, ?Int) -> Int`.
 pub class FuncType: TypeExpr
-  # The parameters.
+  # The items of the parameter list, in the order written.
   #[getter]
-  pub def params self -> Array[TypeParam]
+  pub def items self -> Array[TypeItem]
     ...
 
   # The return type.
@@ -654,12 +675,8 @@ pub class FuncType: TypeExpr
     ...
 
 # Supertype of the type arguments in the `[]` of an
-# [`AppType`](compile.AppType).
-pub class TypeArg
-  # The span of the argument, without a trailing `,`.
-  #[getter]
-  pub def span self -> Span
-    ...
+# [`AppType`](compile.AppType). Its span leaves out a trailing `,`.
+pub class TypeArg: Node
 
 # A positional argument, such as `T`.
 pub class PosTypeArg: TypeArg
@@ -686,9 +703,10 @@ pub class ExpandTypeArg: TypeArg
   pub def ty self -> TypeExpr
     ...
 
-# Supertype of the parameters of a [`SchemaType`](compile.SchemaType) or
-# [`FuncType`](compile.FuncType).
-pub class TypeParam
+# Supertype of the items of a [`SchemaType`](compile.SchemaType),
+# [`ParensType`](compile.ParensType), or [`FuncType`](compile.FuncType). Its
+# span leaves out a trailing `,`.
+pub class TypeItem: Node
   # How many of the element the item admits, or `nil` for exactly one.
   #
   # | Value         | Sigil | Admits            |
@@ -700,21 +718,16 @@ pub class TypeParam
   pub def quant self -> (Sym | nil)
     ...
 
-  # The span of the parameter, without a trailing `,`.
-  #[getter]
-  pub def span self -> Span
-    ...
-
-# A positional parameter, such as `T`.
-pub class PosTypeParam: TypeParam
-  # The parameter's type.
+# A positional item, such as `T`.
+pub class PosTypeItem: TypeItem
+  # The item's type.
   #[getter]
   pub def ty self -> TypeExpr
     ...
 
-# A keyed parameter, such as `name: T` or `(K): T`.
-pub class KeyTypeParam: TypeParam
-  # The parameter's type.
+# A keyed item, such as `name: T` or `(K): T`.
+pub class KeyTypeItem: TypeItem
+  # The item's type.
   #[getter]
   pub def ty self -> TypeExpr
     ...
@@ -729,18 +742,18 @@ pub class KeyTypeParam: TypeParam
     ...
 
 # An inclusion of a schema's items, such as `...S`.
-pub class IncludeTypeParam: TypeParam
+pub class IncludeTypeItem: TypeItem
   # The schema included.
   #[getter]
   pub def ty self -> TypeExpr
     ...
 
 # An unrestricted item, written `...`.
-pub class OpenTypeParam: TypeParam
+pub class OpenTypeItem: TypeItem
 
 # A quantifier standing alone, such as `*` or `**`, admitting any item of its
 # kind.
-pub class AnyTypeParam: TypeParam
+pub class AnyTypeItem: TypeItem
 
 # The kind of a [`Token`](compile.Token).
 #

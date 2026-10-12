@@ -370,6 +370,48 @@ def declarations_parent_to_the_construct_that_encloses_them()
     assert_ne $pair[1].parent $point[0]
 
 #[test]
+def children_are_the_nodes_naming_their_parent()
+  let source = |-
+    class Point
+      pub field x = 0
+
+      pub def move self dx
+        if (dx > 0)
+          let moved = (self.x + dx)
+  let unit = compile.compile "children.dol" $source document: true
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
+  assert_type $compile.Root $unit.root
+  assert_eq $unit.root.id $nodes[0][0]
+  for id node = nodes
+    assert_eq $node.id $id
+    let child_ids = [...node.children.map(do |child| child.id)]
+    let expected = [...nodes.filter(do |pair| pair[1].parent == id).map(do |pair| pair[0])]
+    assert_eq $child_ids.len $expected.len
+    for child_id = expected
+      assert (child_ids.contains child_id)
+
+#[test]
+def nodes_compare_by_unit_and_id()
+  let source = |-
+    def f a b
+      a
+  let unit = compile.compile "equality.dol" $source document: true
+  let other = compile.compile "equality.dol" $source document: true
+  let f = unit.root.children.find(do |child| type(child, compile.Function))
+  let again = unit.node $f.id
+  assert_eq $f $again
+  assert_eq (hash f) (hash again)
+  let seen = {}
+  seen[f] = true
+  assert (seen.contains again)
+  let a b = f.children
+  assert_ne $a $b
+  assert_ne $f $f.id
+  let f2 = other.root.children.find(do |child| type(child, compile.Function))
+  assert_ne $f $f2
+
+#[test]
 def doc_comments_attach_only_to_the_declaration_directly_below_them()
   let source = |-
     #!/usr/bin/env dolang
@@ -702,23 +744,23 @@ def types_describe_what_they_annotate()
   assert_eq [...members.map(do |m| m.value)] [:a:, "b", 1, true, nil]
 
   let schema = (named_node source nodes compile.Bind "schema")
-  let schema_params = (types_of(nodes, schema[0])[0][1].expr.params)
-  assert_eq [...schema_params.map(do |p| type p)] $
-    - $compile.KeyTypeParam
-    - $compile.KeyTypeParam
-    - $compile.PosTypeParam
-  assert_eq [...schema_params.map(do |p| type(p, compile.TypeParam))] [true, true, true]
-  assert_eq [...schema_params.map(do |p| p.quant)] [nil, :OPT:, :STAR:]
-  assert_eq (span_text(source, schema_params[0].key)) "name"
-  assert_eq (span_text(source, schema_params[1].span)) "?port: Int"
-  assert_type $compile.AppType $schema_params[2].ty
+  let schema_items = (types_of(nodes, schema[0])[0][1].expr.items)
+  assert_eq [...schema_items.map(do |p| type p)] $
+    - $compile.KeyTypeItem
+    - $compile.KeyTypeItem
+    - $compile.PosTypeItem
+  assert_eq [...schema_items.map(do |p| type(p, compile.TypeItem))] [true, true, true]
+  assert_eq [...schema_items.map(do |p| p.quant)] [nil, :OPT:, :STAR:]
+  assert_eq (span_text(source, schema_items[0].key)) "name"
+  assert_eq (span_text(source, schema_items[1].span)) "?port: Int"
+  assert_type $compile.AppType $schema_items[2].ty
 
   let func = (named_node source nodes compile.Bind "func")
   let func_type = (types_of(nodes, func[0])[0][1].expr)
   assert_type $compile.FuncType $func_type
-  let params = func_type.params
-  assert_eq [...params.map(do |a| type a)] [compile.PosTypeParam, compile.PosTypeParam]
-  assert_eq [...params.map(do |a| a.quant)] [nil, :OPT:]
+  let items = func_type.items
+  assert_eq [...items.map(do |a| type a)] [compile.PosTypeItem, compile.PosTypeItem]
+  assert_eq [...items.map(do |a| a.quant)] [nil, :OPT:]
   assert_type $compile.NameType $func_type.ret
 
 #[test]
@@ -766,8 +808,8 @@ def superclasses_are_types_of_their_class()
   let arg = app.args[0]
   assert_type $compile.ExpandTypeArg $arg
   assert_eq (span_text(source, arg.span)) "...{*(K): Int}"
-  let entries = arg.ty.params[0]
-  assert_type $compile.KeyTypeParam $entries
+  let entries = arg.ty.items[0]
+  assert_type $compile.KeyTypeItem $entries
   assert_eq $entries.quant :STAR:
   assert_eq $entries.key_ty.target $binder[0]
 
@@ -792,21 +834,21 @@ def type_followups_are_exposed()
   assert_eq (span_text(source, binder[1].default.span)) "Sym"
   let schema = (types_of(nodes, alias[0])[0][1].expr.args[0].ty)
   assert_type $compile.SchemaType $schema
-  assert_eq [...schema.params.map(do |param| type param)] $
-    - $compile.OpenTypeParam
-    - $compile.KeyTypeParam
-    - $compile.KeyTypeParam
-    - $compile.KeyTypeParam
-    - $compile.KeyTypeParam
-  assert_eq [...schema.params.map(do |param| param.quant)] [nil, :STAR:, :STAR:, nil, nil]
-  assert_eq (span_text(source, schema.params[0].span)) "..."
-  assert_eq (span_text(source, schema.params[1].key_ty.span)) "(K)"
-  assert_eq (span_text(source, schema.params[2].key_ty.span)) "(Tuple[Int, Int])"
+  assert_eq [...schema.items.map(do |param| type param)] $
+    - $compile.OpenTypeItem
+    - $compile.KeyTypeItem
+    - $compile.KeyTypeItem
+    - $compile.KeyTypeItem
+    - $compile.KeyTypeItem
+  assert_eq [...schema.items.map(do |param| param.quant)] [nil, :STAR:, :STAR:, nil, nil]
+  assert_eq (span_text(source, schema.items[0].span)) "..."
+  assert_eq (span_text(source, schema.items[1].key_ty.span)) "(K)"
+  assert_eq (span_text(source, schema.items[2].key_ty.span)) "(Tuple[Int, Int])"
   # A key other than a bareword is a type, and a name in it resolves
-  assert_eq (span_text(source, schema.params[3].key)) "(K)"
-  assert_eq $schema.params[3].key_ty.target $binder[0]
-  assert_type $compile.ConstType $schema.params[4].key_ty
-  assert_eq $schema.params[4].key_ty.value "k"
+  assert_eq (span_text(source, schema.items[3].key)) "(K)"
+  assert_eq $schema.items[3].key_ty.target $binder[0]
+  assert_type $compile.ConstType $schema.items[4].key_ty
+  assert_eq $schema.items[4].key_ty.value "k"
   # A binder's bound may name a later binder
   let later = (named_node source nodes compile.Alias "Later")
   let later_binders = [...nodes.filter(do |pair| (type(pair[1], compile.Binder) && (pair[1].parent == later[0])))]
@@ -817,7 +859,7 @@ def type_followups_are_exposed()
   assert_eq $binder[1].bound.target (prelude_item "Str")
   assert_eq $binder[1].default.target (prelude_item "Sym")
   assert_eq (types_of(nodes, alias[0])[0][1].expr.base.target) (prelude_item "Dict")
-  assert_eq $schema.params[1].key_ty.target $binder[0]
+  assert_eq $schema.items[1].key_ty.target $binder[0]
   # Type-only declarations have no runtime imports or bindings to emit.
   unit.emit()
 
@@ -832,9 +874,9 @@ def parenthesized_types_are_exposed()
   let pair = (types_of(nodes, (named_node source nodes compile.Alias "Pair")[0])[0][1].expr)
   assert_type $compile.ParensType $pair
   assert_eq (span_text(source, pair.span)) "(Int, name: Str)"
-  assert_eq [...pair.params.map(do |param| type param)] $
-    - $compile.PosTypeParam
-    - $compile.KeyTypeParam
+  assert_eq [...pair.items.map(do |param| type param)] $
+    - $compile.PosTypeItem
+    - $compile.KeyTypeItem
   # A lone item without a quantifier or a trailing comma only groups
   let grouped = (types_of(nodes, (named_node source nodes compile.Alias "Grouped")[0])[0][1].expr)
   assert_type $compile.NameType $grouped
@@ -1007,14 +1049,14 @@ def rest_kinds_are_exposed()
 
   # And a rest item's
   let schema = (named_node source nodes compile.Bind "schema")
-  let schema_params = (types_of(nodes, schema[0])[0][1].expr.params)
-  assert_eq [...schema_params.map(do |p| type p)] $
-    - $compile.PosTypeParam
-    - $compile.PosTypeParam
-    - $compile.IncludeTypeParam
-  assert_eq [...schema_params.map(do |p| p.quant)] [:STAR:, :STAR_STAR:, :STAR:]
-  assert $schema_params.all(do |p| type(p, compile.TypeParam))
-  assert_eq (span_text(source, schema_params[1].span)) "**Str"
+  let schema_items = (types_of(nodes, schema[0])[0][1].expr.items)
+  assert_eq [...schema_items.map(do |p| type p)] $
+    - $compile.PosTypeItem
+    - $compile.PosTypeItem
+    - $compile.IncludeTypeItem
+  assert_eq [...schema_items.map(do |p| p.quant)] [:STAR:, :STAR_STAR:, :STAR:]
+  assert $schema_items.all(do |p| type(p, compile.TypeItem))
+  assert_eq (span_text(source, schema_items[1].span)) "**Str"
   unit.emit()
 
 #[test]
@@ -1046,12 +1088,73 @@ def implicit_params_are_exposed()
   let func = (named_node source nodes compile.Bind "func")
   let func_type = (types_of(nodes, func[0])[0][1].expr)
   assert_type $compile.FuncType $func_type
-  assert_eq [...func_type.params.map(do |p| type p)] [compile.PosTypeParam]
+  assert_eq [...func_type.items.map(do |p| type p)] [compile.PosTypeItem]
   assert_type $compile.AppType $func_type.input
   assert_type $compile.AppType $func_type.output
   assert_eq (span_text source func_type.input.span) "Iter[Int]"
 
   unit.emit()
+
+#[test]
+def type_forms_are_nodes_of_what_refers_to_them()
+  let source = r|-
+    def pick[T @ (Int | Str)] value @{name: T, ?port: Int} -> ((Int, <Iter[Int]) -> T)
+      nil
+    @let Settings = $
+      # The name.
+      name: Str
+  let unit = compile.compile "forms.dol" $source document: true
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
+  let pick = (named_node source nodes compile.Function "pick")
+
+  # A binder's bound is a child of the binder, and a union's members of the
+  # union. A form covers the parentheses grouping it.
+  let binder = nodes.find(do |pair| (type(pair[1], compile.Binder) && (pair[1].parent == pick[0])))
+  let bound = binder[1].bound
+  assert_type $compile.UnionType $bound
+  assert_eq $bound.parent $binder[0]
+  assert_eq (span_text source bound.span) "(Int | Str)"
+  for member = bound.members
+    assert_eq $member.parent $bound.id
+
+  # An annotation's form is the child of its type, and a schema's items and
+  # their types are children of what lists them
+  let value = (named_node source nodes compile.PositionalParam "value")
+  let ty = (types_of(nodes, value[0])[0][1])
+  let schema = ty.expr
+  assert_eq $schema.parent $ty.id
+  assert_eq $ty.children [schema]
+  for item = schema.items
+    assert_eq $item.parent $schema.id
+    assert_eq $item.ty.parent $item.id
+
+  # So are a function type's items, implicits, and return type
+  let func = (types_of(nodes, pick[0])[0][1].expr)
+  assert_type $compile.FuncType $func
+  assert_eq $func.items.len 1
+  for part = [...func.items, func.input, func.ret]
+    assert_eq $part.parent $func.id
+  assert_type $compile.TypeItem $func.items[0]
+
+  # Type nodes carry no doc, even under a comment
+  let settings = (named_node source nodes compile.Alias "Settings")
+  let item = (types_of(nodes, settings[0])[0][1].expr.items[0])
+  assert_eq (span_text source item.span) "name: Str"
+  for pair = nodes
+    let node = pair[1]
+    if (type(node, compile.Type) || type(node, compile.TypeExpr) || type(node, compile.TypeItem))
+      assert_eq $node.doc nil
+
+#[test]
+def an_unreadable_type_leaves_no_nodes()
+  let source = "let x @ (Int | 1.5) = nil\n"
+  let unit = compile.compile "unreadable.dol" $source document: true recover: true
+  let nodes = [...unit.nodes()]
+  let x = (named_node source nodes compile.Bind "x")
+  assert_eq $x[1].children []
+  let forms = nodes.filter(do |pair| (type(pair[1], compile.Type) || type(pair[1], compile.TypeExpr)))
+  assert_eq ([...forms].len) 0
 
 # A module and a script importing it, prepared for checking.
 def checked_units main_source
