@@ -156,21 +156,50 @@ fn a_closed_child_doesnt_see_its_parents_variables() {
     child.assignment(a);
 }
 
+fn probe(actual: TypeId, expected: TypeId, premise: Option<bool>) -> Nesting {
+    Nesting::Probe {
+        actual,
+        expected,
+        premise,
+    }
+}
+
 #[test]
-fn probes_revisit_those_they_are_nested_in_short_of_a_side_query() {
+fn probes_revisit_those_they_are_nested_in() {
     let mut db = Database::new();
-    let (one, two) = (literal(&db, 1), literal(&db, 2));
+    let (one, two, three) = (literal(&db, 1), literal(&db, 2), literal(&db, 3));
     db.seal();
     let gas = Gas::default();
     let s = Solver::new(&db, &gas);
-    let probe = s.nested(Nesting::Probe(one, two)).unwrap();
-    let fork = probe.fork(&gas);
-    assert!(fork.probing(one, two));
-    assert!(!fork.probing(two, one));
+    let outer = s.nested(probe(one, two, Some(false))).unwrap();
+    let fork = outer.fork(&gas);
+    assert_eq!(fork.revisit(one, two, Some(true)), Revisit::Assumed);
+    assert_eq!(fork.revisit(two, one, Some(true)), Revisit::Fresh);
     let side = fork.nested(Nesting::Side).unwrap();
-    assert!(!side.probing(one, two));
-    let inner = side.nested(Nesting::Probe(two, one)).unwrap();
+    let inner = side.nested(probe(two, three, Some(true))).unwrap();
     let trial = inner.child(Nesting::Trial, &gas);
-    assert!(trial.probing(two, one));
-    assert!(!trial.probing(one, two));
+    assert_eq!(trial.revisit(two, three, Some(true)), Revisit::Assumed);
+    assert_eq!(trial.revisit(three, two, Some(true)), Revisit::Fresh);
+    // A side query's answers are queries'
+    assert_eq!(trial.revisit(one, two, Some(true)), Revisit::Cycle);
+}
+
+#[test]
+fn probes_assume_only_past_a_guard_through_premises() {
+    let mut db = Database::new();
+    let (one, two, three) = (literal(&db, 1), literal(&db, 2), literal(&db, 3));
+    db.seal();
+    let gas = Gas::default();
+    let s = Solver::new(&db, &gas);
+    let outer = s.nested(probe(one, two, Some(false))).unwrap();
+    assert_eq!(outer.revisit(one, two, Some(false)), Revisit::Cycle);
+    assert_eq!(outer.revisit(one, two, None), Revisit::Cycle);
+    {
+        let guarded = outer.nested(probe(two, three, Some(true))).unwrap();
+        assert_eq!(guarded.revisit(one, two, Some(false)), Revisit::Assumed);
+        assert_eq!(guarded.revisit(two, three, Some(false)), Revisit::Cycle);
+    }
+    let query = outer.nested(probe(two, three, None)).unwrap();
+    assert_eq!(query.revisit(one, two, Some(true)), Revisit::Cycle);
+    assert_eq!(query.revisit(two, three, Some(true)), Revisit::Assumed);
 }

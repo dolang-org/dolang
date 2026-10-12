@@ -571,13 +571,14 @@ pub(crate) struct Solver<'db> {
     skolemizations: RefCell<FxHashMap<ObligationId, EnvironmentId>>,
     skolems: MonoVec<Skolem>,
     scopes: MonoVec<Scope>,
-    // Intern only the relation; processing state and diagnostic edges do not
-    // participate in identity and can grow while existing nodes are borrowed.
-    relations: MonoVec<Relation>,
+    // Intern only the relation and its guard bit; processing state and
+    // diagnostic edges do not participate in identity and can grow while
+    // existing nodes are borrowed.
+    relations: MonoVec<(Relation, bool)>,
     obligations: MonoVec<ObligationLayer>,
     /// What it records of its parent's obligations' processing, by ID
     obligation_overlays: MonoHashMap<usize, ObligationLayer, FxBuildHasher>,
-    obligation_index: MonoHashMap<Relation, ObligationId, FxBuildHasher>,
+    obligation_index: MonoHashMap<(Relation, bool), ObligationId, FxBuildHasher>,
     queue: MonoVec<ObligationId>,
     roots: Vec<Root>,
     /// The work budget, shared with the solvers nested in this one
@@ -612,6 +613,9 @@ pub(crate) struct Solver<'db> {
     /// Whether it makes the assumptions its parent does, so their caches
     /// hold for it too
     inherits: bool,
+    /// Whether it's nested in a probe, so its obligations' guard bits count
+    /// (see [`Solver::guarded`])
+    tracks: bool,
     /// Counts changes to bounds and assignments, so trials rerun only after
     /// what they saw has grown
     generation: Cell<usize>,
@@ -708,6 +712,7 @@ impl<'db> Solver<'db> {
             default_constructions: RefCell::new(FxHashMap::default()),
             generic_members: RefCell::new(FxHashMap::default()),
             inherits: true,
+            tracks: false,
             generation: Cell::new(0),
             owned: None,
             trials_from: 0,
@@ -1257,21 +1262,40 @@ impl<'db> Solver<'db> {
         Ok(nested)
     }
 
-    /// Closed proof queries cannot create inference bounds or leak alternative edges.
+    /// Closed proof queries cannot create inference bounds or leak alternative
+    /// edges. The answer is a query's (see [`Nesting::Probe`]).
     fn probe(&self, actual: TypeId, expected: TypeId) -> Result<Status, Residual> {
-        Ok(self.probe_cycle(actual, expected)?.0)
+        Ok(self.probe_cycle(actual, expected, None)?.0)
     }
 
-    /// [`Self::probe`], and whether an unresolved result rests on a cycle: a
-    /// probe of a judgment an enclosing probe is proving, or a nested
-    /// [`Residual::Recursive`]. Without inductive rules (#746), a cycle is left
-    /// unresolved rather than unfolded until the work budget runs out.
-    fn probe_cycle(&self, actual: TypeId, expected: TypeId) -> Result<(Status, bool), Residual> {
-        if self.probing(actual, expected) {
-            trace!(self, "probe revisits an enclosing judgment");
-            return Ok((Status::Unresolved, true));
+    /// [`Self::probe`], as a premise of `from` if given, and whether an
+    /// unresolved result rests on a cycle: a probe of a judgment an enclosing
+    /// probe is proving that it may not assume (see [`Self::revisit`]), or a
+    /// nested [`Residual::Recursive`]. Such a cycle is left unresolved rather
+    /// than unfolded until the work budget runs out.
+    fn probe_cycle(
+        &self,
+        actual: TypeId,
+        expected: TypeId,
+        from: Option<ObligationId>,
+    ) -> Result<(Status, bool), Residual> {
+        let premise = from.map(|obligation| self.guarded(obligation));
+        match self.revisit(actual, expected, premise) {
+            Revisit::Fresh => {}
+            Revisit::Cycle => {
+                trace!(self, "probe revisits an enclosing judgment");
+                return Ok((Status::Unresolved, true));
+            }
+            Revisit::Assumed => {
+                trace!(self, "probe assumes an enclosing judgment");
+                return Ok((Status::Proven, false));
+            }
         }
-        let mut proof = self.nested(Nesting::Probe(actual, expected))?;
+        let mut proof = self.nested(Nesting::Probe {
+            actual,
+            expected,
+            premise,
+        })?;
         proof.constrain(
             proof.closed(actual),
             proof.closed(expected),
@@ -2047,11 +2071,12 @@ impl<'db> Solver<'db> {
             self.render(actual),
             self.render(expected)
         );
-        let obligation = self.enqueue(Relation::Subtype {
+        let relation = Relation::Subtype {
             actual,
             expected,
             fill: Fill::Arguments,
-        });
+        };
+        let obligation = self.enqueue(relation, false);
         self.root(obligation, provenance)
     }
 
@@ -2074,7 +2099,7 @@ impl<'db> Solver<'db> {
             self.roots.len(),
             self.render_relation(Relation::Call(call))
         );
-        let obligation = self.enqueue(Relation::Call(call));
+        let obligation = self.enqueue(Relation::Call(call), false);
         self.root(obligation, provenance)
     }
 
@@ -2087,12 +2112,14 @@ impl<'db> Solver<'db> {
         id
     }
 
-    /// Intern a relation and queue it only on first insertion.
-    fn enqueue(&self, relation: Relation) -> ObligationId {
-        if let Some(id) = self.interned(&relation) {
+    /// Intern a relation, reached guarded or not, and queue it only on first
+    /// insertion.
+    fn enqueue(&self, relation: Relation, guarded: bool) -> ObligationId {
+        let key = (relation, guarded);
+        if let Some(id) = self.interned(&key) {
             return id;
         }
-        let id = self.push_obligation(relation);
+        let id = self.push_obligation(key);
         self.schedule(id);
         id
     }
@@ -2135,13 +2162,36 @@ impl<'db> Solver<'db> {
 
     /// Add a child obligation and a labeled dependency from its parent
     fn derive_relation(&self, parent: ObligationId, relation: Relation, step: Step) {
-        let child = self.enqueue(relation);
+        // Recursion through variables is the occurs check's, so a step through
+        // one starts unguarded
+        let guarded = self.tracks
+            && !matches!(step, Step::BoundPropagation | Step::Assignment)
+            && (self.guarded(parent) || self.guards(&step, self.relation(parent), relation));
+        let child = self.enqueue(relation, guarded);
         if step != Step::BoundPropagation && step != Step::Assignment {
             (self.progress_mut(parent).active)
                 .borrow_mut()
                 .push((child, step.clone()));
         }
         self.link(parent, child, step);
+    }
+
+    /// Whether `step` from `parent` to `child` takes a value apart, as a
+    /// recursive alias must on each cycle (see `elab::wellformed`): a class's
+    /// type argument, a function type's part, or a schema item's type or key,
+    /// but not an included schema, whose items are the schema's own
+    fn guards(&self, step: &Step, parent: Relation, child: Relation) -> bool {
+        match step {
+            Step::Argument { .. } => true,
+            Step::Parameters | Step::Return | Step::Input | Step::Output => {
+                matches!(parent, Relation::Subtype { .. })
+            }
+            Step::Item(_) | Step::Key(_) => match child {
+                Relation::Subtype { actual, .. } => self.kind(actual) == Kind::Type,
+                Relation::Call(_) => false,
+            },
+            _ => false,
+        }
     }
 
     fn link(&self, parent: ObligationId, child: ObligationId, step: Step) {
@@ -2739,28 +2789,60 @@ impl<'db> Solver<'db> {
         false
     }
 
+    /// Whether a cycle of premises proves its judgments coinductively: the
+    /// obligations on it in order, each reached by the step before it from the
+    /// one before, and the last back to the first by `back`. A closed judgment
+    /// is assumed while it's proven, so one revisited past a guarded step (see
+    /// [`Self::guards`]) holds. Recursion through variables is the occurs
+    /// check's.
+    fn coinductive(
+        &self,
+        cycle: &[ObligationId],
+        steps: &[Option<Step>],
+        back: Option<&Step>,
+    ) -> bool {
+        let closed = |id| match self.relation(id) {
+            Relation::Subtype {
+                actual, expected, ..
+            } => self.reify(actual).is_ok() && self.reify(expected).is_ok(),
+            Relation::Call(_) => false,
+        };
+        let edges = (cycle.iter().zip(cycle.iter().skip(1).chain(cycle.first())))
+            .zip(steps.iter().map(Option::as_ref).chain([back]));
+        cycle.iter().all(|&id| closed(id))
+            && edges.into_iter().any(|((&from, &to), step)| {
+                step.is_some_and(|step| self.guards(step, self.relation(from), self.relation(to)))
+            })
+    }
+
     /// Trace a root through its dependencies to collect issues and determine its status.
     fn outcome(&self, constraint: ConstraintId) -> Outcome {
         let root = self.roots[constraint.0].obligation;
         let mut diagnostics = vec![];
-        // Iterative DFS keeps reporting safe even when the obligation graph is deep.
-        let mut stack = vec![(root, false)];
+        // Iterative DFS keeps reporting safe even when the obligation graph is
+        // deep. Each entry carries the step that reached it.
+        let mut stack = vec![(root, false, None)];
         let mut active = FxHashSet::default();
         let mut visited = FxHashSet::default();
         let mut path = vec![];
-        while let Some((id, exit)) = stack.pop() {
+        let mut steps = vec![];
+        while let Some((id, exit, step)) = stack.pop() {
             if exit {
                 active.remove(&id);
                 path.pop();
+                steps.pop();
                 continue;
             }
             if active.contains(&id) {
-                let mut cycle = path.clone();
-                cycle.push(id);
-                diagnostics.push(Diagnostic {
-                    issue: Residual::Recursive.into(),
-                    path: cycle,
-                });
+                let start = path.iter().rposition(|&on| on == id).unwrap();
+                if !self.coinductive(&path[start..], &steps[start + 1..], step.as_ref()) {
+                    let mut cycle = path.clone();
+                    cycle.push(id);
+                    diagnostics.push(Diagnostic {
+                        issue: Residual::Recursive.into(),
+                        path: cycle,
+                    });
+                }
                 continue;
             }
             if !visited.insert(id) {
@@ -2768,6 +2850,7 @@ impl<'db> Solver<'db> {
             }
             active.insert(id);
             path.push(id);
+            steps.push(step);
             match self.progress(id).state.get() {
                 State::Pending => diagnostics.push(Diagnostic {
                     issue: Residual::Limit.into(),
@@ -2779,12 +2862,12 @@ impl<'db> Solver<'db> {
                 }),
                 State::Reduced => {}
             }
-            stack.push((id, true));
+            stack.push((id, true, None));
             let premises = self.progress(id).active.borrow();
             for dependency in (self.dependencies(id).into_iter())
                 .filter(|d| premises.contains(&(d.obligation, d.step.clone())))
             {
-                stack.push((dependency.obligation, false));
+                stack.push((dependency.obligation, false, Some(dependency.step)));
             }
         }
         // Historical edges explain contradictions, but are not current proof
@@ -2871,7 +2954,7 @@ pub(crate) use lattice::Widening;
 pub(crate) use member::{Access, Found, FoundKind, Lookup, Signatures};
 pub(crate) use narrow::Target as NarrowTarget;
 pub(crate) use nest::Gas;
-use nest::{Nesting, Parent};
+use nest::{Nesting, Parent, Revisit};
 pub(crate) use unpack::PatternShape;
 
 #[cfg(test)]

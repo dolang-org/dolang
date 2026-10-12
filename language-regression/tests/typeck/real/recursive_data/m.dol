@@ -1,0 +1,31 @@
+# Recursive data aliases relate coinductively: each member of one is below a
+# member of the other, assuming the pair being related.
+
+import json toml yaml
+  std:
+    - @BaseArray
+
+pub @let A = (nil | Int | Array[A])
+pub @let B = (nil | Int | BaseArray[B])
+
+pub def encode
+  data @ json.Data
+  dict @ Dict[Str, json.Data]
+  config @ toml.Data
+  document @ yaml.Data
+do
+  json.encode $data
+  json.encode $dict
+  yaml.encode $data
+  toml.encode $config
+  yaml.encode $document
+
+pub def decoded()
+  let Dict(data) = json.decode "{}"
+  json.encode $data
+  let _ @ json.Encodable = json.decode "[]"
+  let _ @ toml.Encodable = toml.decode "[]"
+  let _ @ yaml.Encodable = yaml.decode "[]"
+
+pub def views a @ A
+  let _ @ B = a

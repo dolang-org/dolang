@@ -1,0 +1,30 @@
+# Recursive aliases that don't relate are not proven to, though the rule
+# assumes the pair being related.
+
+pub class Num
+pub class Int: Num
+
+pub class Node[A, B]
+  pub def first _self -> A
+    ...
+  pub def second _self -> B
+    ...
+
+pub @let List[T] = (nil | Node[T, List[T]])
+pub @let Cells = [{id: Int, children: Cells}]
+pub @let Grid = [{id: Num, children: Grid}]
+
+# An `Array`'s items are invariant
+pub def cells c @ Cells
+  let _ @ Grid = c
+# error: `m.Cells` does not fit the annotation `m.Grid`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ @ Grid = c
+#    |                  ^
+
+# Members of a union aren't excluded by a generic class's arguments, so this
+# is left undecided rather than contradicted
+pub def wrong xs @ List[Num]
+  let _ @ List[Int] = xs
+  #                   ^~: wf undecided Unsupported("a type that may be inside a union member")

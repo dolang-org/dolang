@@ -18,6 +18,7 @@ mod nesting;
 mod nominal;
 mod overloads;
 mod projections;
+mod recursion;
 mod rigids;
 mod schemas;
 mod skolems;

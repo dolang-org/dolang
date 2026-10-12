@@ -393,7 +393,7 @@ impl Solver<'_> {
             !tried && !overloaded && alternatives.iter().all(|&term| self.reify(term).is_ok())
         });
         match closed {
-            Some(actual) => self.closed_member(actual, *view, members)?,
+            Some(actual) => self.closed_member(j.obligation, actual, *view, members)?,
             None => {
                 let refuted = self.refuted(j.actual, *view, members)?;
                 let step = Step::UnionMember;
@@ -494,8 +494,9 @@ impl Solver<'_> {
         Ok(self.view(ty, function.environment))
     }
 
-    /// Whether a closed type is below a member of a closed union. Testing
-    /// closed alternatives must never add bounds to this solver.
+    /// Whether a closed type is below a member of a closed union, as premises
+    /// of `obligation`. Testing closed alternatives must never add bounds to
+    /// this solver.
     ///
     /// A literal, concrete class or top is outside a union if every member
     /// excludes it. For a class with infinitely many literals, a finite
@@ -504,6 +505,7 @@ impl Solver<'_> {
     /// enough to refute their inclusion.
     fn closed_member(
         &self,
+        obligation: ObligationId,
         actual: TypeId,
         view: TypeView,
         members: &[UnionMember],
@@ -531,7 +533,7 @@ impl Solver<'_> {
             if infinite && self.db.literal(expected).is_some() {
                 continue;
             }
-            let (status, recursive) = self.probe_cycle(actual, expected)?;
+            let (status, recursive) = self.probe_cycle(actual, expected, Some(obligation))?;
             cycle |= recursive;
             match status {
                 Status::Proven => return Ok(()),

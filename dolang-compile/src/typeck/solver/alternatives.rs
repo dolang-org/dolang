@@ -386,7 +386,9 @@ impl<'db> Solver<'db> {
             fork.owned = Some(fork.variable_count());
         }
         let generation = fork.generation.get();
-        let obligation = fork.enqueue(relation);
+        // Alternatives choose through variables, whose recursion is the occurs
+        // check's, so a trial starts unguarded
+        let obligation = fork.enqueue(relation, false);
         let constraint = ConstraintId(fork.roots.len());
         fork.roots.push(Root {
             obligation,
