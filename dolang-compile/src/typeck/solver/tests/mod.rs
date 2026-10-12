@@ -108,6 +108,7 @@ fn reserve(db: &mut Database, kind: DeclKind, name: &str) -> (DeclId, TypeId, De
             span: (0u32..1).into(),
         },
         is_final: false,
+        is_mixable: false,
     };
     (id, ty, source)
 }
@@ -152,8 +153,10 @@ fn inherited(supertypes: Vec<TypeId>) -> alias::Box<[Supertype]> {
         .into()
 }
 
+/// A mixable class, so that unrelated ones may share a subclass
 fn nominal(db: &mut Database, name: &str, binders: Vec<Binder>, supers: Vec<TypeId>) -> TypeId {
-    let (id, ty, source) = reserve(db, DeclKind::Class, name);
+    let (id, ty, mut source) = reserve(db, DeclKind::Class, name);
+    source.is_mixable = true;
     let body = quantified(db, binders, ty);
     populate(db, id, source, body, supers);
     ty

@@ -1,0 +1,67 @@
+# A class can't inherit from two disjoint classes neither of which reaches the
+# other. Every class is disjoint unless mixable, and a mixable class takes the
+# place of its nearest disjoint ancestor, so diamonds through mixable classes
+# are fine.
+
+pub class Shape
+pub class Raster
+pub class Square: Shape
+pub class Circle: Shape
+
+#[mixable]
+pub class Tagged: Shape
+#[mixable]
+pub class Named: Shape
+
+# Two mixable subclasses of one class
+pub class Label: Tagged Named
+
+# A class and a subclass of it
+pub class Fit: Square Shape
+
+# A disjoint class and a mixable one below an ancestor of it
+pub class Plate: Square Tagged
+
+# Two disjoint subclasses of one class
+pub class Blob: Square Circle
+# error: `Blob` inherits from unrelated disjoint classes `Square` and `Circle`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Blob: Square Circle
+#    |           ^^^^
+
+pub class Tile: Square Raster
+# error: `Tile` inherits from unrelated disjoint classes `Square` and `Raster`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Tile: Square Raster
+#    |           ^^^^
+
+# A mixable class without supertypes has `Value`'s place
+#[mixable]
+pub class Mark
+pub class Badge: Raster Mark
+
+pub class Stamp: Tagged Raster
+# error: `Stamp` inherits from unrelated disjoint classes `Shape` and `Raster`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Stamp: Tagged Raster
+#    |           ^^^^^
+
+# Incoherent supertypes are reported where they're declared, not again below
+#[mixable]
+pub class Odd: Square Raster
+# error: `Odd` inherits from unrelated disjoint classes `Square` and `Raster`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Odd: Square Raster
+#    |           ^^^
+pub class Below: Odd
+
+# Only runtime supertypes count, and protocols have no place
+pub @class Drawable
+pub @class Storable
+pub @class Both: Drawable Storable
+pub class Canvas: @Drawable @Storable
+pub class Sprite: Square @Drawable

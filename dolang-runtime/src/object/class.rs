@@ -851,6 +851,24 @@ pub(crate) fn make_final<'v, 's>(
     Ok(())
 }
 
+/// Let a class be combined with unrelated classes, as `#[mixable]` does. The
+/// type checker relies on the mark; the runtime doesn't enforce it yet.
+pub(crate) fn make_mixable<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    class: &Value<'v>,
+) -> Result<'v, 's, ()> {
+    let Some(class) = class.downcast_ref(strand.builtin_types().class_object) else {
+        return Err(Error::type_error(strand, "mixable: expected a class"));
+    };
+    if class.annex().inherited.get() {
+        return Err(Error::state_error(
+            strand,
+            "mixable: a class already inherits from this one",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn register_member_scopes<'v>(builder: &mut Builder<'v>) -> MemberScopeTypes<'v> {
     MemberScopeTypes {
         class: builder.register_type(),

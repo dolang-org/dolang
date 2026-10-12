@@ -1391,10 +1391,11 @@ impl<'u> Scope<'_, '_, 'u> {
             }
         }
         let value = expr(ExprKind::Class(decl), span);
-        // `final` returns the class it is given, so the binding keeps the class
-        // object's type; the applications are still checked
-        let is_final = self.lower.db.declaration(decl).source.is_final;
-        let value = if is_final {
+        // `final` and `mixable` return the class they are given, so the binding
+        // keeps the class object's type; the applications are still checked
+        let source = &self.lower.db.declaration(decl).source;
+        let marked = source.is_final || source.is_mixable;
+        let value = if marked {
             let decorated = self.decorate(&class.decorators, expr(ExprKind::Class(decl), span));
             self.emit(Step::Eval(decorated));
             value
@@ -1406,7 +1407,7 @@ impl<'u> Scope<'_, '_, 'u> {
             self.value_nil(dest, span);
             return;
         };
-        if (class.decorators.is_empty() || is_final)
+        if (class.decorators.is_empty() || marked)
             && let Some(ty) = self.declared(decl, || class_object(self.lower.db, decl))
         {
             self.graph().var_mut(var).annotation = Some(ty);

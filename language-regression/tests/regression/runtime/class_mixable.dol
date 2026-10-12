@@ -1,0 +1,37 @@
+# A mixable class may be combined with unrelated classes. `#[mixable]` returns
+# the class it is given, so the binding still grants private access, and it
+# refuses a class that already has a subclass.
+
+#[mixable]
+class Named
+  #[static]
+  field count = 0
+
+  pub def bump _self
+    Named.#count = (Named.#count + 1)
+    Named.#count
+
+class Shape
+class Square: Shape Named
+class Icon: Named
+
+let square = Square()
+assert (type square Shape)
+assert (type square Named)
+assert_eq $square.bump() 1
+
+# Marking a class twice, or as final too, is harmless
+assert_eq (mixable (mixable Icon)) $Icon
+#[final]
+#[mixable]
+class Leaf
+assert_eq (mixable(Leaf)) $Leaf
+
+# A class that already has a subclass can't become mixable
+class Base
+class _Child: Base
+assert_throws $std.StateError do mixable $Base
+
+# Only a class written in Do can be made mixable
+assert_throws $std.TypeError do mixable $Int
+assert_throws $std.TypeError do mixable 1

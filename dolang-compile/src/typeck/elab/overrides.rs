@@ -18,8 +18,8 @@
 use rustc_hash::FxHashMap;
 
 use super::{
-    DeclNode, Designated, Diag, Hidden, Nonconforming, Tables, Uncallable, UnitDiag, Unresolved,
-    sig,
+    DeclNode, Designated, Diag, Hidden, IncoherentClasses, Nonconforming, Tables, Uncallable,
+    UnitDiag, Unresolved, sig,
     surface::{Class, Member, MemberScope},
 };
 use crate::{
@@ -32,7 +32,7 @@ use crate::{
         },
         r#type::{
             Argument, Database, DeclId, DeclKind, Intrinsic, Kind, Member as Declared, MemberKey,
-            Scope, Type, TypeId, UnitId, UnitSpan,
+            NoAncestor, Scope, Type, TypeId, UnitId, UnitSpan,
         },
     },
 };
@@ -105,6 +105,7 @@ impl Check<'_, '_> {
         let environment = solver.rigid_environment(self.id);
         solver.close();
         let instance = self.instance();
+        self.coherent();
         self.callable(&solver, instance);
         let spans = self.member_spans();
         if runtime {
@@ -193,6 +194,26 @@ impl Check<'_, '_> {
                 });
             }
         }
+    }
+
+    /// Report a class inheriting from two unrelated disjoint classes, which
+    /// leaves it no place among them
+    fn coherent(&mut self) {
+        let Err(NoAncestor::Incoherent(first, second)) = self.db.supertypes_ancestor(self.id)
+        else {
+            return;
+        };
+        let Some(span) = self.tables.decls[self.id.index()].name_span() else {
+            return;
+        };
+        let name = |decl: Option<DeclId>| decl.map_or("Value", |decl| self.name(decl)).to_owned();
+        let diag = IncoherentClasses {
+            span,
+            class: self.name(self.id).to_owned(),
+            first: name(first),
+            second: name(second),
+        };
+        self.diags.push((self.unit, Diag::new(diag)));
     }
 
     /// Warn of an instance `(call)` in a class that doesn't reach `Func`, since

@@ -1,7 +1,9 @@
-# Two classes neither reaches share the values of a subclass of both, unless
-# one is final. What a write through a key must fit is each item it selects.
+# Two mixable classes neither reaches share the values of a subclass of both,
+# unless one is final. What a write through a key must fit is each item it selects.
 
+#[mixable]
 pub class A
+#[mixable]
 pub class B
 pub class C: A B
 

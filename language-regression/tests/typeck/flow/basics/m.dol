@@ -92,11 +92,11 @@ pub def generic v @ (nil | Array[Str])
     let _ = v
     #       ^: flow nil
 
-# A subclass of `Int` may also be an array, with arguments of its own
-pub def generic_subclassable v @ (Int | Array[Str])
+# No class is both an `Int` and an array
+pub def generic_disjoint v @ (Int | Array[Str])
   if (type(v, Array))
     let _ = v
-    #       ^: flow [Unknown] | [std.Str]
+    #       ^: flow [std.Str]
   else
     let _ = v
     #       ^: flow std.Int

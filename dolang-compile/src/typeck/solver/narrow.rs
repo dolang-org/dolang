@@ -195,17 +195,16 @@ impl Solver<'_> {
 
     /// Whether a class that doesn't reach `class` provably has no instance of it:
     /// it is final, as `Nil`, `Bool` and `Sym` are, and `class` doesn't reach it
-    /// either. Another class may have a subclass that is also a `class`.
+    /// either, or their nearest disjoint ancestors are unrelated. Another class
+    /// may have a subclass that is also a `class`.
     fn disjoint(&self, nominal: &Nominal, class: DeclId) -> bool {
-        self.db.declaration(nominal.declaration).source.is_final
-            && matches!(self.descent(class, nominal.declaration), Ok(None))
+        let final_apart = self.db.declaration(nominal.declaration).source.is_final
+            && matches!(self.descent(class, nominal.declaration), Ok(None));
+        final_apart || self.db.disjoint_apart(nominal.declaration, class)
     }
 
     fn intrinsic_decl(&self, intrinsic: Intrinsic) -> Option<DeclId> {
-        match self.db.ty(self.db.intrinsic(intrinsic)?) {
-            &Type::Decl(decl) => Some(decl),
-            _ => None,
-        }
+        self.db.intrinsic_decl(intrinsic)
     }
 
     /// `class` applied to its own rigids, walked to `decl`: the arguments `decl`

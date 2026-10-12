@@ -1,0 +1,93 @@
+# Classes whose nearest disjoint ancestors are unrelated have no instance in
+# common, even when neither is final: a class test drops them, and they meet in
+# `Never`. A mixable class may share a subclass with any class below its
+# nearest disjoint ancestor.
+
+pub class Shape
+pub class Raster
+pub class Square: Shape
+#[mixable]
+pub class Circle: Shape
+
+pub class Grid[T]: Raster
+  pub field cells @ Array[T]
+
+#[mixable]
+pub class Mesh[T]: Shape
+  pub field cells @ Array[T]
+
+#[mixable]
+pub class Layer[T]: Raster
+  pub field cells @ Array[T]
+
+# A `Square` isn't a `Grid` of any kind
+pub def tested s @ (Square | Grid[Int])
+  if let Grid(g) = s
+    let _ = g
+    #       ^: flow m.Grid[std.Int]
+
+# A subclass of `Square` may be a `Mesh` of anything
+pub def siblings s @ (Square | Mesh[Int])
+  if let Mesh(m) = s
+    let _ = m
+    #       ^: flow m.Mesh[Unknown] | m.Mesh[std.Int]
+
+# A mixable class below `Raster` can't be a `Square`
+pub def mixed s @ (Square | Layer[Int])
+  if let Layer(l) = s
+    let _ = l
+    #       ^: flow m.Layer[std.Int]
+
+# Sibling disjoint classes
+pub class Wedge[T]: Shape
+  pub field cells @ Array[T]
+
+pub def cousins s @ (Square | Wedge[Int])
+  if let Wedge(w) = s
+    let _ = w
+    #       ^: flow m.Wedge[std.Int]
+
+# Protocols are never disjoint
+pub @class Drawable
+pub @class Storable
+pub class Pen: @Drawable
+pub class Disk: @Storable
+
+def both[T] f @ ((T) -> nil) g @ ((T) -> nil) -> ((T) -> nil)
+  do |x @ T| -> nil
+    f $x
+    g $x
+
+def takes_square _s @ Square -> nil
+  nil
+
+def takes_circle _c @ Circle -> nil
+  nil
+
+def takes_grid _g @ Grid[Int] -> nil
+  nil
+
+def takes_drawable _d @ Drawable -> nil
+  nil
+
+def takes_storable _s @ Storable -> nil
+  nil
+
+pub class Round: Square Circle
+
+pub def shared()
+  let run = (both takes_square takes_circle)
+  run $Round()
+
+pub def apart_meet()
+  let run = (both takes_square takes_grid)
+  run $Square()
+# error: expected `Never`, found `m.Square`
+#   --> m.dol:LL:LL
+#    |
+# LL |   run $Square()
+#    |        ^^^^^^^^
+
+pub def protocol_meet()
+  let run = (both takes_drawable takes_storable)
+  run $Pen()

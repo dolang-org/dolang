@@ -254,7 +254,8 @@ impl Solver<'_> {
     /// of two that are ordered, and otherwise the dynamic type, or unresolved for
     /// a strict unit's solver. Two classes neither below the other share the
     /// values of a subclass of both, so they meet in the bottom type only when
-    /// one is a literal, or final and doesn't reach the other.
+    /// one is a literal, or final and doesn't reach the other, or when their
+    /// nearest disjoint ancestors are unrelated.
     pub(super) fn meet(&self, a: TypeId, b: TypeId) -> Result<TypeId, Issue> {
         if a == b {
             return Ok(a);
@@ -269,12 +270,13 @@ impl Solver<'_> {
         }
         let disjoint = below == Status::Contradicted
             && above == Status::Contradicted
-            && self.class_like(a)?
-            && self.class_like(b)?
-            && (self.db.literal(a).is_some()
-                || self.db.literal(b).is_some()
-                || self.final_outside(a, b)
-                || self.final_outside(b, a));
+            && (self.class_like(a)?
+                && self.class_like(b)?
+                && (self.db.literal(a).is_some()
+                    || self.db.literal(b).is_some()
+                    || self.final_outside(a, b)
+                    || self.final_outside(b, a))
+                || self.disjoint_apart(a, b));
         match (disjoint, self.gradual) {
             (true, _) => Ok(self.db.bottom()),
             (false, true) => Ok(self.db.unknown()),
@@ -299,6 +301,15 @@ impl Solver<'_> {
             }
             _ => false,
         })
+    }
+
+    /// Whether two types' classes have unrelated nearest disjoint ancestors.
+    /// Unknown when either has none.
+    fn disjoint_apart(&self, a: TypeId, b: TypeId) -> bool {
+        let (Ok(Some(a)), Ok(Some(b))) = (self.start(a), self.start(b)) else {
+            return false;
+        };
+        self.db.disjoint_apart(a.declaration, b.declaration)
     }
 
     /// Whether `actual` is an instance of a final class that doesn't reach

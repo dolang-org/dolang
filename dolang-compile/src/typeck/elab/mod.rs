@@ -389,6 +389,8 @@ pub(crate) enum Designated {
     Setter,
     /// `std.final`, which forbids subclassing a class
     Final,
+    /// `std.mixable`, which lets a class be combined with unrelated classes
+    Mixable,
     /// `std.Fmt`, the value of a `t"..."` sequence
     Fmt,
     /// `std.FmtValue`, an interpolation binding a value to a specification
@@ -897,6 +899,33 @@ impl Report for Nonconforming {
 
     fn message(&self, w: &mut dyn Write) -> fmt::Result {
         w.write_str(&self.message)
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+/// A class inheriting from two disjoint classes neither of which reaches the
+/// other
+struct IncoherentClasses {
+    span: Span,
+    class: String,
+    first: String,
+    second: String,
+}
+
+impl Report for IncoherentClasses {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "`{}` inherits from unrelated disjoint classes `{}` and `{}`",
+            self.class, self.first, self.second
+        )
     }
 
     fn span(&self) -> Span {

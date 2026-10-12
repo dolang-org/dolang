@@ -174,4 +174,4 @@ pub def decoded d @ Data
   if (type(d, Dict))
     let v = d["key"]
     let _ = v
-    #       ^: flow Unknown
+    #       ^: flow json.Data
