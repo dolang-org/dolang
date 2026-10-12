@@ -125,3 +125,7 @@ assert_eq (Bin.chomp b"a\n") b"a"
 # The scalar method and the combinator agree item for item.
 let items = ["a\n", "b\r\n", "c"]
 assert_eq [...items.iter().chomp()] [...items.iter().map(do |s| s.chomp())]
+
+# A bad terminator is rejected where `crimp` is called, not when it is drained.
+assert_throws $std.RuntimeError str: "type error: iter.crimp: terminator must be `Str` or `Bin`" do
+  [1].iter().crimp 1

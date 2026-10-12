@@ -24,6 +24,16 @@ assert_eq "${"x":?}" "\"x\""
 assert_eq "${:x::1}" "x"
 assert_eq "${:x::!}" ":x:"
 
+# Zero fill goes after the sign and radix prefix.
+let negative = -42
+assert_eq "${negative:#08x}" "-0x0002a"
+
+# Alternate debug lays collections out one item per line.
+assert_eq "${[1, "two"]:#?}" "[\n  1,\n  \"two\",\n]"
+assert_eq "${{key: 3}:#?}" "{\n  key: 3,\n}"
+
+assert_throws $std.RuntimeError str: "type error: unsupported integer format option" do "${1:.2d}"
+
 # Fill and alignment, including Unicode, escapes, and alignment glyphs as fill.
 assert_eq "${"x":界^9s}" "界界界界x界界界界"
 assert_eq "${"x":\"<3s}" "x\"\""
