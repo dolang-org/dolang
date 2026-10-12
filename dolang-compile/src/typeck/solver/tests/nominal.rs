@@ -147,7 +147,7 @@ fn unused_supertype_bounds_do_not_create_obligations() {
     s.constrain(s.closed(child), s.closed(target), Provenance::default());
     assert_eq!(s.solve()[0].status, Status::Proven);
     // Searching the earlier, well-formed Other[1] branch must not generate 1 <: 1.
-    assert_eq!(s.obligations.len(), 1);
+    assert_eq!(s.obligation_count(), 1);
 }
 
 #[test]

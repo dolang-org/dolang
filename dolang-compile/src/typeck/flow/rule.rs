@@ -882,7 +882,7 @@ impl<'a> Flow<'a, '_> {
                     _ => self.undecided(span, super::residual(outcome)),
                 },
                 Status::Contradicted => {
-                    let relation = solver.obligation(root(outcome)).relation;
+                    let relation = solver.relation(root(outcome));
                     // The callee, or the value that doesn't fit
                     let actual = solver.reify(relation.checked()).ok();
                     let problems: Vec<Problem> = match check {
@@ -1021,7 +1021,7 @@ impl<'a> Flow<'a, '_> {
         if possible.is_empty() {
             return None;
         }
-        let Relation::Call(call) = solver.obligation(overloaded).relation else {
+        let Relation::Call(call) = solver.relation(overloaded) else {
             return Some(None);
         };
         // What chooses: the arguments' twin and the ambient channels
@@ -1062,7 +1062,7 @@ impl<'a> Flow<'a, '_> {
         index: usize,
         ty: TypeId,
     ) -> String {
-        let callee = solver.obligation(overloaded).relation.checked();
+        let callee = solver.relation(overloaded).checked();
         let function = match solver.reify(callee).map(|ty| self.db.ty(ty)) {
             Ok(&Type::Overloaded { function, .. }) => function,
             Ok(&Type::Decl(decl)) => Some(decl),

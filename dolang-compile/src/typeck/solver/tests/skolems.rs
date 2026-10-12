@@ -2,7 +2,9 @@ use super::*;
 
 /// Whether any obligation's current premises include `step`
 fn uses(s: &Solver<'_>, step: &Step) -> bool {
-    (s.obligations.iter()).any(|o| o.active.borrow().iter().any(|(_, found)| found == step))
+    (0..s.obligation_count()).any(|id| {
+        (s.progress(ObligationId(id)).active.borrow().iter()).any(|(_, found)| found == step)
+    })
 }
 
 #[test]
@@ -183,10 +185,10 @@ fn quantified_actuals_are_instantiated_inside_the_skolems_scope() {
     s.constrain(s.closed(actual), s.closed(expected), Provenance::default());
     let outcome = s.solve().remove(0);
     assert!(contradiction(&outcome, Contradiction::UnrelatedNominals));
-    assert_eq!((s.skolems.len(), s.inference.len()), (1, 1));
-    let scope = s.skolems[0].scope;
+    assert_eq!((s.skolem_count(), s.variable_count()), (1, 1));
+    let scope = s.skolem(SkolemId(0)).scope;
     assert_ne!(scope, ScopeId(0));
-    assert_eq!(s.inference[0].scope, scope);
+    assert_eq!(s.variable(InferVarId(0)).scope, scope);
     // `A` takes `T` from below
     let lower: Vec<_> = (s.bounds(InferVarId(0)).lower())
         .map(|term| s.resolve(term).unwrap())
@@ -217,7 +219,7 @@ fn skolemizing_is_repeatable() {
     s.constrain(v, s.closed(int), Provenance::default());
     s.constrain(s.closed(int), v, Provenance::default());
     assert!(s.solve().iter().all(|o| o.status == Status::Proven));
-    assert_eq!(s.skolems.len(), 2);
+    assert_eq!(s.skolem_count(), 2);
     assert_eq!(s.skolemizations.borrow().len(), 1);
 }
 
@@ -298,8 +300,8 @@ fn quantified_types_subsume_through_instantiation() {
         s.constrain(s.closed(actual), s.closed(expected), Provenance::default());
         assert_eq!(s.solve()[0].status, Status::Proven, "{expected:?}");
         // `A` took `T`, which has no canonical form
-        if let Some(variable) = s.inference.iter().next() {
-            assert!(variable.assignment.get().is_some());
+        if s.variable_count() > 0 {
+            assert!(s.assignment(InferVarId(0)).is_some());
             assert_eq!(s.solution(InferVarId(0)), None);
             assert_eq!(s.reify(Term::Infer(InferVarId(0))), Err(Residual::Escape));
         }
@@ -401,8 +403,8 @@ fn nested_quantifiers_nest_their_scopes() {
     let mut s = Solver::new(&db, &gas);
     s.constrain(s.closed(actual), s.closed(expected), Provenance::default());
     assert_eq!(s.solve()[0].status, Status::Proven);
-    let depths: Vec<_> = (0..s.skolems.len())
-        .map(|i| s.scopes[s.skolems[i].scope.0].depth)
+    let depths: Vec<_> = (0..s.skolem_count())
+        .map(|i| s.extent(s.skolem(SkolemId(i)).scope).depth)
         .collect();
     assert_eq!(depths, [1, 2]);
     let outcome = check(&db, actual, wrong);
@@ -503,7 +505,7 @@ fn variables_below_quantified_types_are_residual() {
         Residual::Unsupported("a variable below a quantified type").into()
     ));
     assert!(s.bounds(variable_id(v)).upper().next().is_none());
-    assert!(s.skolems.is_empty());
+    assert_eq!(s.skolem_count(), 0);
 }
 
 /// `{*(K): V, ...}`

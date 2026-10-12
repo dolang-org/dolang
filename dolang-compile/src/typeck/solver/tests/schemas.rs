@@ -231,7 +231,7 @@ fn rest_shape_inclusions_of_rigids_and_unknown() {
         Provenance::default(),
     );
     assert_eq!(solver.solve()[0].status, Status::Proven);
-    let root = solver.obligation(solver.roots[0].obligation);
+    let root = solver.progress(solver.roots[0].obligation);
     let (child, _) = root
         .active
         .borrow()
@@ -239,7 +239,7 @@ fn rest_shape_inclusions_of_rigids_and_unknown() {
         .find(|(_, step)| *step == Step::Item(0))
         .cloned()
         .expect("the inclusion is derived");
-    let child = solver.obligation(child);
+    let child = solver.progress(child);
     assert!(
         child
             .active

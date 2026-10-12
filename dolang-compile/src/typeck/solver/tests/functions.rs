@@ -130,7 +130,7 @@ fn omitted_channels_are_used_through_their_default_bounds() {
         let env = s.rigid_environment(f);
         s.constrain(s.view(a, env), s.view(b, env), Provenance::default());
         let status = s.solve()[0].status;
-        let root = s.obligation(s.roots[0].obligation);
+        let root = s.progress(s.roots[0].obligation);
         let implicit = root
             .active
             .borrow()

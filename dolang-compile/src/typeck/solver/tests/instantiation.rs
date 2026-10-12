@@ -54,7 +54,7 @@ fn generic_callees_are_instantiated_once_per_use() {
     }
     assert!(s.solve().iter().all(|o| o.status == Status::Unresolved));
     // Two results and one binder variable for each call
-    assert_eq!(s.bounds.len(), 4);
+    assert_eq!(s.variable_count(), 4);
     assert_eq!(s.instantiations.borrow().len(), 2);
     let mut binders = FxHashSet::default();
     for (result, arg) in results.into_iter().zip([int, str]) {
@@ -103,10 +103,10 @@ fn invariant_arguments_force_instantiated_binders() {
     let gas = Gas::default();
     let (mut s, result, outcome) = solve_call(&db, &gas, first, &[ints], None);
     assert_eq!(outcome.status, Status::Unresolved);
-    let variables = s.bounds.len();
+    let variables = s.variable_count();
     s.constrain(result, s.closed(int), Provenance::default());
     assert!(s.solve().iter().all(|o| o.status == Status::Proven));
-    assert_eq!(s.bounds.len(), variables);
+    assert_eq!(s.variable_count(), variables);
     assert_eq!(s.instantiations.borrow().len(), 1);
     assert_eq!(s.reify(result), Ok(int));
 }
@@ -397,9 +397,9 @@ fn pack_binders_take_the_remaining_arguments() {
     let named_rest = items(&db, vec![keyed(Req, b_key, str)]);
     db.seal();
     let lower_schema = |s: &Solver<'_>| {
-        let variable = (0..s.bounds.len())
+        let variable = (0..s.variable_count())
             .map(InferVarId)
-            .find(|&id| s.inference[id.0].kind == Kind::Schema)
+            .find(|&id| s.variable(id).kind == Kind::Schema)
             .unwrap();
         let lower: Vec<_> = s.bounds(variable).lower().collect();
         lower

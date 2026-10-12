@@ -25,7 +25,7 @@ impl Solver<'_> {
     /// [`Break`] or failing, or leave it to the next with [`Continue`]. Past
     /// [`Self::variables`], neither head is an inference variable.
     pub(super) fn reduce(&self, obligation: ObligationId) -> Result<(), Issue> {
-        let (actual, expected) = match self.obligations[obligation.0].relation {
+        let (actual, expected) = match self.relation(obligation) {
             Relation::Subtype {
                 actual, expected, ..
             } => (actual, expected),
@@ -211,7 +211,7 @@ impl Solver<'_> {
     /// A positional pack's items are each below a union that expands it
     fn pack(&self, j: &Judgment) -> Result<ControlFlow<()>, Issue> {
         let binding = match &j.a {
-            Head::Skolem(id) => Some(self.skolems[id.0].binding),
+            Head::Skolem(id) => Some(self.skolem(*id).binding),
             Head::Structural(view) => self.rigid(view.ty)?.map(|binder| binder.binding),
             _ => None,
         };
@@ -767,12 +767,12 @@ impl Solver<'_> {
         lower: bool,
         source: ObligationId,
     ) -> Result<(), Residual> {
-        let scope = self.inference[id.0].scope;
+        let scope = self.variable(id).scope;
         let mut leaves = FxHashSet::default();
         self.solved_leaves(term, &mut leaves)?;
         let escaped = leaves.iter().any(|leaf| {
             matches!(*leaf, Term::Skolem(skolem)
-                if !self.visible(scope, self.skolems[skolem.0].scope))
+                if !self.visible(scope, self.skolem(skolem).scope))
         });
         if escaped {
             // A solution is related to the skolem directly
@@ -792,21 +792,15 @@ impl Solver<'_> {
         if !lower && self.quantified(term)? {
             return Err(Residual::Unsupported("a variable below a quantified type"));
         }
-        let bounds = &self.bounds[id.0];
-        let (same, opposite) = if lower {
-            (&bounds.lower, &bounds.upper)
-        } else {
-            (&bounds.upper, &bounds.lower)
-        };
-        let sources = same.get_or_insert_with(&term, |term| (*term, MonoHashSet::default()));
         // A new source for an existing term still needs diagnostic edges, even
         // though the resulting subtype obligations may already be interned.
-        if sources.try_insert(source).is_err() {
+        if !self.insert_bound(id, lower, term, source) {
             return Ok(());
         }
-        self.inference[id.0].dirty.set(true);
+        let sources = self.term_sources(id, lower, term);
+        self.dirty(id);
         self.generation.set(self.generation.get() + 1);
-        for (&other, other_sources) in opposite.iter() {
+        for (other, other_sources) in self.bound_sources(id, !lower) {
             self.spend()?;
             // L <: V <: U requires L <: U. L or U may itself be an inference
             // variable, so ordinary reduction also propagates variable chains.
@@ -1093,7 +1087,7 @@ impl Solver<'_> {
         others: &[Term],
         obligation: ObligationId,
     ) -> Result<EnvironmentId, Issue> {
-        let known = self.instantiations.borrow().get(&obligation).copied();
+        let known = self.instantiation_of(obligation);
         let environment = match known {
             Some(environment) => environment,
             None => {
@@ -1109,28 +1103,21 @@ impl Solver<'_> {
                     .collect();
                 for slot in self.db.item_keys(view.ty) {
                     if let Some(&Term::Infer(id)) = group.get(usize::from(slot)) {
-                        self.inference[id.0].exact.set(true);
+                        self.state_mut(id).exact.set(true);
                     }
                 }
                 let environment = self.intern_environment(view.environment, group.clone());
                 for (binder, term) in binders.iter().zip(&group) {
                     if let (Some(default), &Term::Infer(id)) = (binder.default, term) {
                         let default = self.view(default, environment);
-                        self.inference[id.0].fallback.set(Some(default));
+                        self.state_mut(id).fallback.set(Some(default));
                     }
                 }
-                self.instantiations
-                    .borrow_mut()
-                    .insert(obligation, environment);
+                self.record_instantiation(obligation, environment);
                 environment
             }
         };
-        let group = self
-            .environments
-            .get_by_index(environment.0)
-            .unwrap()
-            .group
-            .clone();
+        let group = self.frame(environment).group.clone();
         for (index, (binder, term)) in binders.iter().zip(&group).enumerate() {
             let bound = match (binder.bound, binder.binding) {
                 (Some(bound), _) => self.view(bound, environment),
@@ -1167,22 +1154,20 @@ impl Solver<'_> {
         actual: Term,
         obligation: ObligationId,
     ) -> Result<(), Issue> {
-        let known = self.skolemizations.borrow().get(&obligation).copied();
+        let known = self.skolemization_of(obligation);
         let environment = match known {
             Some(environment) => environment,
             None => {
                 let scope = self.enter(self.scope(&[actual, Term::View(view)])?);
                 let group: Vec<Term> = (binders.iter())
                     .map(|binder| {
-                        let id = SkolemId(self.skolems.len());
-                        self.skolems.push(Skolem {
+                        Term::Skolem(self.push_skolem(Skolem {
                             kind: binder.kind,
                             binding: binder.binding,
                             bound: Cell::new(None),
                             implied: MonoVec::new(),
                             scope,
-                        });
-                        Term::Skolem(id)
+                        }))
                     })
                     .collect();
                 let environment = self.intern_environment(view.environment, group.clone());
@@ -1195,19 +1180,15 @@ impl Solver<'_> {
                     let &Term::Skolem(id) = term else {
                         unreachable!()
                     };
-                    self.skolems[id.0].bound.set(bound);
+                    self.skolem(id).bound.set(bound);
                 }
                 for (slot, bound) in self.db.implied_bounds(view.ty) {
                     let Term::Skolem(id) = group[usize::from(slot)] else {
                         unreachable!()
                     };
-                    self.skolems[id.0]
-                        .implied
-                        .push(self.view(bound, environment));
+                    self.skolem(id).implied.push(self.view(bound, environment));
                 }
-                self.skolemizations
-                    .borrow_mut()
-                    .insert(obligation, environment);
+                self.record_skolemization(obligation, environment);
                 environment
             }
         };

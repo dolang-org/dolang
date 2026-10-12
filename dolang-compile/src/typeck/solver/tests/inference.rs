@@ -55,12 +55,11 @@ fn inference_chains_conflicts_duplicates_and_insertion_order() {
         let results = s.solve();
         assert!(results.iter().all(|r| r.status == Status::Contradicted));
         assert_eq!(
-            s.obligations
-                .iter()
-                .map(|o| o.relation)
+            (0..s.obligation_count())
+                .map(|id| s.relation(ObligationId(id)))
                 .collect::<FxHashSet<_>>()
                 .len(),
-            s.obligations.len(),
+            s.obligation_count(),
         );
     }
 }
@@ -339,11 +338,9 @@ fn resolution_contradictions_retain_all_roots_and_assignment_paths() {
     s.constrain(s.view(open, env), s.closed(expected), Provenance::default());
     let outcomes = s.solve();
     assert!(outcomes.iter().all(|o| o.status == Status::Contradicted));
-    assert!(
-        s.obligations
-            .iter()
-            .any(|o| o.dependencies.iter().any(|d| d.step == Step::Assignment))
-    );
+    assert!((0..s.obligation_count()).any(|id| {
+        (s.dependencies(ObligationId(id)).iter()).any(|d| d.step == Step::Assignment)
+    }));
     assert!(outcomes.iter().all(|o| {
         o.diagnostics
             .iter()

@@ -267,18 +267,15 @@ fn shared_reductions_preserve_each_root_and_dependency() {
             .find(|d| matches!(d.issue, Issue::Contradiction(_)))
             .unwrap();
         assert_eq!(diagnostic.path.len(), 2);
-        let leaf = s.obligation(*diagnostic.path.last().unwrap());
-        assert_eq!(leaf.relation.sides(), Some((s.closed(a), s.closed(b))));
-        let parent = s.obligation(diagnostic.path[0]);
+        let leaf = s.relation(*diagnostic.path.last().unwrap());
+        assert_eq!(leaf.sides(), Some((s.closed(a), s.closed(b))));
         assert!(
-            parent
-                .dependencies
-                .iter()
+            (s.dependencies(diagnostic.path[0]).iter())
                 .any(|edge| edge.obligation == diagnostic.path[1] && edge.step == Step::Return)
         );
     }
     // The root, its parameter lists and its results
-    assert_eq!(s.obligations.len(), 3);
+    assert_eq!(s.obligation_count(), 3);
 }
 
 #[test]
@@ -362,8 +359,8 @@ fn shared_insertion_preserves_borrowed_solver_state() {
     };
     let bounds = s.bounds(id);
     let environment = s.intern_environment(s.empty_environment(), vec![variable]);
-    let frame = s.environments.get_by_index(environment.0).unwrap();
-    let obligation = s.obligation(s.roots[root.0].obligation);
+    let frame = s.frame(environment);
+    let obligation = s.relation(s.roots[root.0].obligation);
     for next in variables {
         s.intern_environment(environment, vec![next]);
         s.derive(
@@ -378,7 +375,7 @@ fn shared_insertion_preserves_borrowed_solver_state() {
         environment,
         s.intern_environment(s.empty_environment(), vec![variable])
     );
-    assert_eq!(obligation.relation.checked(), s.closed(one));
+    assert_eq!(obligation.checked(), s.closed(one));
     assert_eq!(bounds.lower().count(), 0);
     assert!(
         solver

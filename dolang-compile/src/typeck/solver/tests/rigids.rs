@@ -172,7 +172,7 @@ fn bound_reductions_are_labeled() {
             Provenance::default(),
         );
         assert_eq!(s.solve()[0].status, Status::Proven);
-        let root = s.obligation(s.roots[0].obligation);
+        let root = s.progress(s.roots[0].obligation);
         assert!(root.active.borrow().iter().any(|(_, found)| *found == step));
     }
 }
@@ -304,8 +304,8 @@ fn item_projections_imply_rigid_key_bounds() {
     );
     let outcome = solver.solve().remove(0);
     assert_eq!(outcome.status, Status::Proven, "{outcome:?}");
-    assert!((solver.obligations.iter()).any(|o| {
-        o.active
+    assert!((0..solver.obligation_count()).any(|id| {
+        (solver.progress(ObligationId(id)).active)
             .borrow()
             .iter()
             .any(|(_, step)| *step == Step::ImpliedBound)

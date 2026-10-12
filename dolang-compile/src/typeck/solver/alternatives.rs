@@ -152,7 +152,7 @@ impl<'db> Solver<'db> {
     /// An alternative's judgment, `actual <: expected`, reading schemas as its
     /// parent's does
     fn alternative(&self, obligation: ObligationId, actual: Term, expected: Term) -> Relation {
-        let fill = match self.obligations[obligation.0].relation {
+        let fill = match self.relation(obligation) {
             Relation::Subtype { fill, .. } => fill,
             Relation::Call(_) => Fill::Arguments,
         };
@@ -347,7 +347,7 @@ impl<'db> Solver<'db> {
             match status {
                 Status::Contradicted => {
                     let root = fork.roots[outcome.constraint.0].obligation;
-                    let overload = fork.reify(fork.obligation(root).relation.checked());
+                    let overload = fork.reify(fork.relation(root).checked());
                     rejections.push(Rejection {
                         index,
                         overload: overload.ok(),
@@ -379,9 +379,9 @@ impl<'db> Solver<'db> {
         trace!(self, "trial {}", self.render_relation(relation));
         let mut fork = self.clone();
         fork.trial_depth += 1;
-        fork.trials_from = fork.obligations.len();
+        fork.trials_from = fork.obligation_count();
         if owned {
-            fork.owned = Some(fork.inference.len());
+            fork.owned = Some(fork.variable_count());
         }
         #[cfg(feature = "debug")]
         {
