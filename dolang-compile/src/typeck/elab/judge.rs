@@ -161,6 +161,7 @@ impl Tables<'_> {
                     Designated::Phantom => "phantom".to_owned(),
                     Designated::Getter => "getter".to_owned(),
                     Designated::Setter => "setter".to_owned(),
+                    Designated::Final => "final".to_owned(),
                     Designated::Fmt => "fmt".to_owned(),
                     Designated::FmtValue => "fmt value".to_owned(),
                     Designated::FmtParam => "fmt param".to_owned(),

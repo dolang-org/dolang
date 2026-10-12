@@ -26,7 +26,7 @@ use crate::source::Span;
 mod tests;
 
 const MAGIC: [u8; 8] = *b"\xffdotypel";
-const VERSION: [u8; 3] = [0, 0, 4];
+const VERSION: [u8; 3] = [0, 0, 5];
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 struct Header {
@@ -353,6 +353,12 @@ fn validate(harvest: &mut Harvest<'_>) -> Result<(), &'static str> {
         let group = Some((DeclId::from_index(index), 0));
         match &decl.node {
             DeclNode::Class(class) => {
+                // A decorator is named where the class is declared
+                for decorator in &class.decorators {
+                    if let Decorator::Ident(name) = decorator {
+                        scopes.insert(name.span, decl.outer);
+                    }
+                }
                 for supertype in &class.supers {
                     scopes.insert(supertype.head.span, group);
                     for arg in &supertype.args {

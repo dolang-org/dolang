@@ -1,5 +1,5 @@
 use std::{
-    cell::OnceCell,
+    cell::{Cell, OnceCell},
     collections::{HashMap, VecDeque, hash_map::Entry},
     hash::DefaultHasher,
     marker::PhantomData,
@@ -403,6 +403,31 @@ pub(crate) async fn create<'v, 's>(
         }
     }
 
+    // A final type has no subclasses, which the type checker relies on. Supers are
+    // marked inherited before any field default runs, so a default can't make one
+    // final while this class is still being created; a creation that fails later
+    // leaves the mark, which only forbids `#[final]`.
+    for sup in &supers {
+        let is_final = match sup.downcast_ref(strand.builtin_types().class_object) {
+            Some(cls) => cls.annex().is_final.get(),
+            None => sup
+                .op_inspect(strand)
+                .is_some_and(|inspect| inspect.is_final),
+        };
+        if is_final {
+            let name = sup.to_debug(strand)?;
+            return Err(Error::type_error(
+                strand,
+                format!("cannot inherit from final type {name}"),
+            ));
+        }
+    }
+    for sup in &supers {
+        if let Some(cls) = sup.downcast_ref(strand.builtin_types().class_object) {
+            cls.annex().inherited.set(true);
+        }
+    }
+
     // Build native_supers and entries in a single left-to-right MRO pass.
     // native_supers: non-abstract native type objects; index == ClassInstance native slot.
     // Abstract entries store the type-object value directly (no separate list needed).
@@ -590,6 +615,8 @@ pub(crate) async fn create<'v, 's>(
         field_defaults: field_defaults.into(),
         type_field_defaults: type_field_defaults.into(),
         native_supers: native_supers.into(),
+        is_final: Cell::new(false),
+        inherited: Cell::new(false),
     };
 
     strand.vm().builtin_types().class_object.create_with_annex(
@@ -805,6 +832,25 @@ impl<'v> Stateful<'v> for MemberScopeTypes<'v> {
     type Tag = MemberScopeTag;
 }
 
+/// Forbid inheriting from a class, as `#[final]` does
+pub(crate) fn make_final<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    class: &Value<'v>,
+) -> Result<'v, 's, ()> {
+    let Some(class) = class.downcast_ref(strand.builtin_types().class_object) else {
+        return Err(Error::type_error(strand, "final: expected a class"));
+    };
+    let annex = class.annex();
+    if annex.inherited.get() {
+        return Err(Error::state_error(
+            strand,
+            "final: a class already inherits from this one",
+        ));
+    }
+    annex.is_final.set(true);
+    Ok(())
+}
+
 pub(crate) fn register_member_scopes<'v>(builder: &mut Builder<'v>) -> MemberScopeTypes<'v> {
     MemberScopeTypes {
         class: builder.register_type(),
@@ -905,7 +951,8 @@ impl<'v> ClassTypeEntry<'v> {
     }
 }
 
-/// The immutable half of a class object: everything fixed at class creation.
+/// The immutable half of a class object: everything fixed at class creation,
+/// and the two flags that rule out each other later.
 ///
 /// Living in the annex keeps member lookup and dispatch free of the runtime
 /// borrow check; only class-level field storage needs one.
@@ -930,6 +977,10 @@ pub(crate) struct ClassObjectAnnex<'v> {
     // Non-abstract native supers, in transitive collection order (left-to-right).
     // Index in this slice == slot index in ClassInstance::native_slots.
     pub(crate) native_supers: alias::Box<[Value<'v>]>,
+    // Set by `#[final]`; no class may then inherit from this one.
+    pub(crate) is_final: Cell<bool>,
+    // Set once a class inherits from this one; `#[final]` then fails.
+    pub(crate) inherited: Cell<bool>,
 }
 
 /// The mutable half of a class object: storage for class-level fields.

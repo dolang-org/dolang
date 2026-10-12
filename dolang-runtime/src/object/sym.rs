@@ -13,9 +13,10 @@ use crate::{
     sym::Tag,
     unpack,
     value::{Output, Slot, Value},
+    vm::Vm,
 };
 
-use super::protocol::{Protocol, Recv};
+use super::protocol::{Inspect, Protocol, Recv};
 
 pub(crate) struct SymObj {
     pub(crate) tag: Tag,
@@ -133,6 +134,17 @@ impl<'v> Protocol<'v> for Type {
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         crate::fmt!(strand, w, "<type std.Sym>")
+    }
+
+    // Final, so no class inherits these members. The lists stay empty until
+    // inspection serves something besides inheritance.
+    fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
+        Some(Inspect {
+            is_abstract: false,
+            is_final: true,
+            members: &[],
+            type_members: &[],
+        })
     }
 
     async fn op_call<'a, 's>(

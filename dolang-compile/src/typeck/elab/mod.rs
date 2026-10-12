@@ -387,6 +387,8 @@ pub(crate) enum Designated {
     Getter,
     /// `std.setter`, which makes a method a computed field's setter
     Setter,
+    /// `std.final`, which forbids subclassing a class
+    Final,
     /// `std.Fmt`, the value of a `t"..."` sequence
     Fmt,
     /// `std.FmtValue`, an interpolation binding a value to a specification

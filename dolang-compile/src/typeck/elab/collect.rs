@@ -667,6 +667,7 @@ impl<'u> Walk<'_, 'u> {
                     binders: Vec::new(),
                     supers: Vec::new(),
                     members: Vec::new(),
+                    decorators: Vec::new(),
                 });
                 let id = self.allocate(kind, Some(class.ident.span), node, DeclAst::Class(class));
                 self.declared.insert(class.ident.span, (id, 0));
@@ -1173,8 +1174,20 @@ impl<'u> Walk<'_, 'u> {
     }
 
     fn class(&mut self, frame: &Frame<'_, 'u>, class: &'u Class) {
+        let mut decorators = Vec::new();
         for decorator in &class.decorators {
             self.expr(frame, &decorator.expr);
+            // Only std's `final` is recognized so far
+            if let Expr::Ident(ident) = &decorator.expr
+                && let Some(res) = ident.res
+                && let Some(entry) = frame.value_entry(res)
+            {
+                self.refer(ident.span, entry, &[]);
+            }
+            decorators.push(match &decorator.expr {
+                Expr::Ident(ident) => surface::Decorator::Ident(self.name(ident.span)),
+                _ => surface::Decorator::Other,
+            });
         }
         let id = self.declared(class.ident.span);
         let outer = self.sig.take();
@@ -1327,6 +1340,7 @@ impl<'u> Walk<'_, 'u> {
             binders,
             supers,
             members,
+            decorators,
         });
         self.owner = owner;
         self.sig = outer;

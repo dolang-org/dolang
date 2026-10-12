@@ -1,0 +1,60 @@
+# A final class has no subclasses but those it is declared with, so its values
+# are outside a generic member of a union whose class it doesn't reach.
+
+import std:
+  - @BaseArray
+
+#[final]
+pub class Leaf
+  #[static]
+  field count = 0
+
+  # A final class's binding is the class, so it reaches its private members
+  pub def bump _self
+    Leaf.#count = (Leaf.#count + 1)
+
+pub class Open
+
+pub def bools b @ Bool
+  let _ = (b @ (Int | BaseArray[Int]))
+  # error: `std.Bool` does not fit the cast's type `std.BaseArray[std.Int] | std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+# LL |   let _ = (b @ (Int | BaseArray[Int]))
+#    |            ^
+
+pub def syms s @ Sym
+  let _ = (s @ (Int | BaseArray[Int]))
+  # error: `std.Sym` does not fit the cast's type `std.BaseArray[std.Int] | std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+# LL |   let _ = (s @ (Int | BaseArray[Int]))
+#    |            ^
+
+pub def leaves l @ Leaf
+  let _ = (l @ (Int | BaseArray[Int]))
+  # error: `m.Leaf` does not fit the cast's type `std.BaseArray[std.Int] | std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+# LL |   let _ = (l @ (Int | BaseArray[Int]))
+#    |            ^
+
+# A subclass of `Open` may also be a `BaseArray[Int]`
+pub def opens o @ Open
+  let _ = (o @ (Int | BaseArray[Int]))
+
+# `Int` isn't final either
+pub def ints i @ Int
+  let _ = (i @ (Str | BaseArray[Int]))
+
+# A final member is dropped by a test for a class it doesn't reach
+pub def narrowed value @ (Sym | Array[Int])
+  if let Array(xs) = value
+    let _ = xs
+    #       ^~: flow [std.Int]
+
+# A subclass of `Open` may be an `Array`
+pub def kept value @ (Open | Array[Int])
+  if let Array(xs) = value
+    let _ = xs
+    #       ^~: flow [Unknown] | [std.Int]

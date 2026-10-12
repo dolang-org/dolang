@@ -107,6 +107,9 @@ pub class Job
 This is useful for registries, metadata attachment, or replacing the class with
 an adapted version.
 
+The prelude's `final` decorator returns the class after forbidding subclasses
+of it. See [Final Classes](./classes.md#final-classes).
+
 ## Method Decorators
 
 Method decorators receive the method function and return the value to install in

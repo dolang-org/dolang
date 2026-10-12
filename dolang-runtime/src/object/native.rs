@@ -714,6 +714,10 @@ pub trait Object<'v>: Sized + 'v {
     const NAME: &'v str;
     /// Number of [`Value`] slots available.  Access these with [`Ref::slot`] and [`Mut::slot`].
     const SLOTS: usize = 0;
+    /// Whether a Do class may not inherit from the type. A final type's stub should
+    /// mark its class `#[final]`, which lets the type checker treat it as disjoint
+    /// from classes outside its supertypes.
+    const FINAL: bool = false;
     /// Immutable annex.  An object's annex can be accessed via [`Instance::annex`] without a
     /// runtime borrow check.
     type Annex: 'v;
@@ -4054,6 +4058,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
     fn op_inspect<'a>(this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: false,
+            is_final: T::FINAL,
             members: &this.vtbl().members,
             type_members: &this.vtbl().type_members,
         })

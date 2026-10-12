@@ -264,7 +264,8 @@ reassigned, but their fields can be written. Aliases and other objects cannot
 be used with `.#`, even inside the same class. Nested functions may access
 private members through the captured receiver; a nested class has its own
 receiver and private namespace. A decorated class's name grants no private
-access, since the decorator may replace the class.
+access, since the decorator may replace the class, unless every decorator is
+the prelude's [`final`](#final-classes), which returns the class it is given.
 
 Fields declared without `pub` are private. Within the class, private fields are
 accessed using the `.#field` syntax:
@@ -479,6 +480,26 @@ class Quiet: Str
   pub def (dbg) self
     "<Quiet $(Str.(dbg) self)>"
 ```
+
+### Final Classes
+
+The prelude's [`final`](std.final) decorator forbids subclasses of a class.
+Creating a class that inherits from a final class raises a
+[`TypeError`](std.TypeError), as does inheriting from `Nil`, `Bool`, or `Sym`,
+which are final:
+
+```
+#[final]
+class Point
+  pub field x y = 0
+
+class Point3: Point   # TypeError: cannot inherit from final type
+```
+
+`final` raises a [`StateError`](std.StateError) for a class that already has a
+subclass. Since a final class has no subclasses, the type checker treats its
+values as outside every class it doesn't inherit from (see
+[Unions](./types.md#unions)).
 
 ## Type Inspection
 

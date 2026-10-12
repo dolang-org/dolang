@@ -60,6 +60,7 @@ impl<'v> Protocol<'v> for Value {
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: true,
+            is_final: false,
             members: value_members(),
             type_members: members![],
         })
@@ -109,6 +110,7 @@ impl<'v> Protocol<'v> for Type {
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: true,
+            is_final: false,
             members: value_members(),
             type_members: members![],
         })
@@ -263,6 +265,7 @@ impl<'v> Protocol<'v> for Bool {
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: false,
+            is_final: true,
             type_members: members![
                 Method(sym::VERBATIM_METHOD),
                 Method(sym::STR_METHOD),
@@ -297,8 +300,7 @@ impl<'v> Protocol<'v> for Bool {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match field.tag() {
-            sym::INIT_METHOD
-            | sym::STR_METHOD
+            sym::STR_METHOD
             | sym::DBG_METHOD
             | sym::FMT_METHOD
             | sym::EQ_METHOD
@@ -328,21 +330,8 @@ impl<'v> Protocol<'v> for Bool {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        match method.tag() {
-            sym::INIT_METHOD => {
-                let ([self_val, value], []) = unpack!(strand, args, 2, 0)?;
-                let value = value
-                    .as_bool(strand)
-                    .ok_or_else(|| Error::type_error(strand, "Bool: expected Bool"))?;
-                let native = DoValue::from_bool(value);
-                self_val.op_fill(strand, &strand.singletons().bool, native)?;
-                Ok(())
-            }
-            _ => {
-                let vm = strand.vm();
-                type_mcall_fallback(strand, &vm.singletons().bool, method, args, out).await
-            }
-        }
+        let vm = strand.vm();
+        type_mcall_fallback(strand, &vm.singletons().bool, method, args, out).await
     }
 }
 
@@ -388,6 +377,17 @@ impl<'v> Protocol<'v> for NilType {
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         crate::fmt!(strand, w, "<type std.Nil>")
+    }
+
+    // Final, so no class inherits these members. The lists stay empty until
+    // inspection serves something besides inheritance.
+    fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
+        Some(Inspect {
+            is_abstract: false,
+            is_final: true,
+            members: &[],
+            type_members: &[],
+        })
     }
 }
 
