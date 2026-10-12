@@ -15,7 +15,7 @@ use rustc_hash::FxHashMap;
 use super::{
     Alternatives, Bases, Bounds, Dependency, Environment, EnvironmentId, InferVarId, ObligationId,
     ObligationLayer, Relation, Residual, Scope, ScopeId, Skolem, SkolemId, Solver, State, Step,
-    Term, Variable, VariableLayer, VariableState,
+    Term, TypeId, Variable, VariableLayer, VariableState,
 };
 
 /// A work budget, shared by a solver and the solvers nested in it. Each unit of
@@ -91,28 +91,44 @@ impl Drop for Parent<'_> {
     }
 }
 
-/// How a solver is nested in its parent
+/// How a solver is nested in its parent. An open solver sees all its parent's
+/// state; a closed one, only its environments and the caches of what its
+/// assumptions imply, so it solves from nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Nesting {
-    /// A trial of an alternative (see [`Solver::trial`])
+    /// An open trial of an alternative (see [`Solver::trial`])
     Trial,
-    /// A solver its caller constrains (see [`Solver::fork`])
+    /// An open solver its caller constrains (see [`Solver::fork`])
     Fork,
+    /// A closed proof of `actual <: expected` (see [`Solver::probe`])
+    Probe(TypeId, TypeId),
+    /// A closed solver for a side query, whose probes don't revisit those it's
+    /// nested in
+    Side,
+}
+
+impl Nesting {
+    fn is_open(self) -> bool {
+        matches!(self, Self::Trial | Self::Fork)
+    }
 }
 
 impl<'db> Solver<'db> {
-    /// A solver nested in this one, whose work is charged to `gas`. It sees
-    /// everything this one does and records what it changes itself, so nothing
-    /// solved on it reaches this one, which can't change while it's live. It
-    /// processes what this one has queued, as this one would.
+    /// A solver nested in this one, whose work is charged to `gas`. It records
+    /// what it changes itself, so nothing solved on it reaches this one, which
+    /// can't change while it's live. An open one processes what this one has
+    /// queued, as this one would.
     pub(super) fn child<'a>(&'a self, nesting: Nesting, gas: &'a Gas) -> Solver<'a> {
         assert!(
             !self.child.replace(true),
             "a solver nested in one that already has a live one"
         );
+        let open = nesting.is_open();
         let queue = MonoVec::new();
-        for &id in self.queue.iter() {
-            queue.push(id);
+        if open {
+            for &id in self.queue.iter() {
+                queue.push(id);
+            }
         }
         Solver {
             db: self.db,
@@ -127,7 +143,14 @@ impl<'db> Solver<'db> {
             variables: MonoVec::new(),
             layers: MonoVec::new(),
             overlays: MonoHashMap::default(),
-            dirty: RefCell::new(self.dirty.borrow().clone()),
+            first_variable: match open {
+                true => self.first_variable,
+                false => self.variable_count(),
+            },
+            dirty: RefCell::new(match open {
+                true => self.dirty.borrow().clone(),
+                false => Vec::new(),
+            }),
             instantiations: RefCell::default(),
             skolemizations: RefCell::default(),
             skolems: MonoVec::new(),
@@ -144,17 +167,19 @@ impl<'db> Solver<'db> {
             groups: self.groups.clone(),
             gradual: self.gradual,
             rigid_bounds: RefCell::default(),
-            closed: self.closed,
+            closed: open && self.closed,
             alternatives: RefCell::default(),
             constructors: RefCell::default(),
             default_constructions: RefCell::default(),
             generic_members: RefCell::default(),
             inherits: true,
             generation: Cell::new(self.generation.get()),
-            trials_from: self.trials_from,
-            owned: self.owned,
+            trials_from: match open {
+                true => self.trials_from,
+                false => self.obligation_count(),
+            },
+            owned: self.owned.filter(|_| open),
             blinded: FxHashMap::default(),
-            probing: self.probing.clone(),
             parent: Some(Parent {
                 solver: self,
                 nesting,
@@ -172,10 +197,32 @@ impl<'db> Solver<'db> {
         self.parent.as_ref().map(|parent| parent.solver)
     }
 
-    /// The solver this one is nested in, which holds the entries below its bases
+    /// The solver this one is nested in, if it's open
+    fn open_parent(&self) -> Option<&'db Solver<'db>> {
+        (self.parent.as_ref())
+            .filter(|parent| parent.nesting.is_open())
+            .map(|parent| parent.solver)
+    }
+
+    /// The solver this one is nested in, which holds the entries below its
+    /// bases. Only an open solver sees those other than environments.
     fn outer(&self) -> &'db Solver<'db> {
         self.parent()
             .expect("an entry of a solver this one isn't nested in")
+    }
+
+    /// [`Self::outer`], for an entry only an open solver sees
+    fn enclosing(&self) -> &'db Solver<'db> {
+        self.open_parent()
+            .expect("an entry a closed solver doesn't see")
+    }
+
+    /// Whether a probe of `actual <: expected` would revisit one it's nested
+    /// in, short of a side query
+    pub(super) fn probing(&self, actual: TypeId, expected: TypeId) -> bool {
+        iter::successors(self.parent.as_ref(), |parent| parent.solver.parent.as_ref())
+            .take_while(|parent| parent.nesting != Nesting::Side)
+            .any(|parent| parent.nesting == Nesting::Probe(actual, expected))
     }
 
     /// How many trials it's nested in
@@ -204,11 +251,16 @@ impl<'db> Solver<'db> {
         self.bases.variables + self.variables.len()
     }
 
+    /// The variables it sees: a closed solver's are its own
+    pub(super) fn variable_ids(&self) -> impl Iterator<Item = InferVarId> + use<> {
+        (self.first_variable..self.variable_count()).map(InferVarId)
+    }
+
     /// What a variable is
     pub(super) fn variable(&self, id: InferVarId) -> &Variable {
         match id.0.checked_sub(self.bases.variables) {
             Some(index) => &self.variables[index],
-            None => self.outer().variable(id),
+            None => self.enclosing().variable(id),
         }
     }
 
@@ -230,7 +282,7 @@ impl<'db> Solver<'db> {
             Some(index) => &self.layers[index],
             None => self.overlays.get_or_insert_with(&id.0, |&index| {
                 let layer = VariableLayer {
-                    state: self.outer().state(id).clone(),
+                    state: self.enclosing().state(id).clone(),
                     ..VariableLayer::default()
                 };
                 (index, layer)
@@ -243,7 +295,7 @@ impl<'db> Solver<'db> {
         match id.0.checked_sub(self.bases.variables) {
             Some(index) => visit(&self.layers[index]),
             None => {
-                self.outer().variable_layers(id, visit);
+                self.enclosing().variable_layers(id, visit);
                 if let Some(layer) = self.overlays.get(&id.0) {
                     visit(layer);
                 }
@@ -257,7 +309,7 @@ impl<'db> Solver<'db> {
             Some(index) => &self.layers[index].state,
             None => match self.overlays.get(&id.0) {
                 Some(layer) => &layer.state,
-                None => self.outer().state(id),
+                None => self.enclosing().state(id),
             },
         }
     }
@@ -269,12 +321,12 @@ impl<'db> Solver<'db> {
 
     /// Mark a variable's bounds as possibly changed
     pub(super) fn dirty(&self, id: InferVarId) {
-        self.dirty.borrow_mut()[id.0] = true;
+        self.dirty.borrow_mut()[id.0 - self.first_variable] = true;
     }
 
     /// Clear a variable's mark, returning whether it was marked
     pub(super) fn clean(&self, id: InferVarId) -> bool {
-        std::mem::take(&mut self.dirty.borrow_mut()[id.0])
+        std::mem::take(&mut self.dirty.borrow_mut()[id.0 - self.first_variable])
     }
 
     pub(crate) fn bounds(&self, id: InferVarId) -> Bounds {
@@ -396,13 +448,14 @@ impl<'db> Solver<'db> {
     pub(crate) fn relation(&self, id: ObligationId) -> Relation {
         match id.0.checked_sub(self.bases.obligations) {
             Some(index) => self.relations[index],
-            None => self.outer().relation(id),
+            None => self.enclosing().relation(id),
         }
     }
 
     /// The obligation judging a relation, if it's interned
     pub(super) fn interned(&self, relation: &Relation) -> Option<ObligationId> {
-        (self.obligation_index.get(relation).copied()).or_else(|| self.parent()?.interned(relation))
+        (self.obligation_index.get(relation).copied())
+            .or_else(|| self.open_parent()?.interned(relation))
     }
 
     /// Intern a new obligation
@@ -426,7 +479,7 @@ impl<'db> Solver<'db> {
             Some(index) => &self.obligations[index],
             None => match self.obligation_overlays.get(&id.0) {
                 Some(layer) => layer,
-                None => self.outer().progress(id),
+                None => self.enclosing().progress(id),
             },
         }
     }
@@ -440,7 +493,7 @@ impl<'db> Solver<'db> {
             None => self
                 .obligation_overlays
                 .get_or_insert_with(&id.0, |&index| {
-                    let outer = self.outer().progress(id);
+                    let outer = self.enclosing().progress(id);
                     let layer = ObligationLayer {
                         state: outer.state.clone(),
                         queued: outer.queued.clone(),
@@ -457,7 +510,7 @@ impl<'db> Solver<'db> {
         match id.0.checked_sub(self.bases.obligations) {
             Some(index) => visit(&self.obligations[index]),
             None => {
-                self.outer().obligation_layers(id, visit);
+                self.enclosing().obligation_layers(id, visit);
                 if let Some(layer) = self.obligation_overlays.get(&id.0) {
                     visit(layer);
                 }
@@ -536,7 +589,7 @@ impl<'db> Solver<'db> {
     pub(super) fn skolem(&self, id: SkolemId) -> &Skolem {
         match id.0.checked_sub(self.bases.skolems) {
             Some(index) => &self.skolems[index],
-            None => self.outer().skolem(id),
+            None => self.enclosing().skolem(id),
         }
     }
 
@@ -552,7 +605,8 @@ impl<'db> Solver<'db> {
         self.bases.scopes + self.scopes.len()
     }
 
-    /// A skolemization's extent
+    /// A skolemization's extent. A closed solver sees its parent's, which
+    /// include the root scope.
     pub(super) fn extent(&self, id: ScopeId) -> &Scope {
         match id.0.checked_sub(self.bases.scopes) {
             Some(index) => &self.scopes[index],
@@ -570,7 +624,7 @@ impl<'db> Solver<'db> {
     /// The environment an obligation's instantiation created, if it has one
     pub(super) fn instantiation_of(&self, obligation: ObligationId) -> Option<EnvironmentId> {
         (self.instantiations.borrow().get(&obligation).copied())
-            .or_else(|| self.parent()?.instantiation_of(obligation))
+            .or_else(|| self.open_parent()?.instantiation_of(obligation))
     }
 
     pub(super) fn record_instantiation(
@@ -588,7 +642,7 @@ impl<'db> Solver<'db> {
     /// has one
     pub(super) fn skolemization_of(&self, obligation: ObligationId) -> Option<EnvironmentId> {
         (self.skolemizations.borrow().get(&obligation).copied())
-            .or_else(|| self.parent()?.skolemization_of(obligation))
+            .or_else(|| self.open_parent()?.skolemization_of(obligation))
     }
 
     pub(super) fn record_skolemization(
@@ -628,7 +682,7 @@ impl<'db> Solver<'db> {
         if let Some(record) = self.alternatives.borrow().get(&obligation) {
             return Some(read(record));
         }
-        self.parent()?.alternative_record(obligation, read)
+        self.open_parent()?.alternative_record(obligation, read)
     }
 
     /// Whether a judgment has alternatives
@@ -651,7 +705,7 @@ impl<'db> Solver<'db> {
         RefMut::map(self.alternatives.borrow_mut(), |records| {
             records.entry(obligation).or_insert_with(|| {
                 (self
-                    .outer()
+                    .enclosing()
                     .alternative_record(obligation, Alternatives::clone))
                 .expect("a judgment with alternatives")
             })
@@ -665,7 +719,7 @@ impl<'db> Solver<'db> {
             .filter(|id| id.0 >= from)
             .collect();
         if from < self.bases.obligations
-            && let Some(parent) = self.parent()
+            && let Some(parent) = self.open_parent()
         {
             ids.extend(
                 (parent.alternative_ids(from).into_iter()).filter(|id| !records.contains_key(id)),
@@ -676,6 +730,6 @@ impl<'db> Solver<'db> {
 
     /// What trials judge in place of `term`, if anything (see [`Solver::blind`])
     pub(super) fn blinded(&self, term: Term) -> Option<Term> {
-        (self.blinded.get(&term).copied()).or_else(|| self.parent()?.blinded(term))
+        (self.blinded.get(&term).copied()).or_else(|| self.open_parent()?.blinded(term))
     }
 }

@@ -214,7 +214,7 @@ impl Solver<'_> {
     /// `class` applied to its own rigids, walked to `decl`: the arguments `decl`
     /// has there, or `None` when `class` doesn't reach it
     fn descent(&self, class: DeclId, decl: DeclId) -> Result<Option<Vec<TypeId>>, Issue> {
-        let mut nested = self.nested()?;
+        let mut nested = self.nested(Nesting::Side)?;
         let environment = nested.rigid_environment(class);
         let arguments = self
             .db

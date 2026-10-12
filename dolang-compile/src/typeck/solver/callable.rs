@@ -93,21 +93,26 @@ impl Solver<'_> {
                 None => return Constructor::Dynamic,
             },
         };
-        let solver = self.side_query(class);
-        match solver.reach_member(solver.closed(object), None, self.call_key(), Access::Class) {
-            Ok(Lookup::Found(found)) if found.scope != Scope::Instance => {
-                let signature = match &found.kind {
-                    FoundKind::Method(signatures) => solver.reified(signatures),
-                    _ => None,
-                };
-                return Constructor::Call {
-                    callee: signature.and_then(|signature| signature.callee(db)),
-                    bound: found.scope == Scope::Class,
-                };
+        {
+            let solver = self.side_query(class);
+            match solver.reach_member(solver.closed(object), None, self.call_key(), Access::Class) {
+                Ok(Lookup::Found(found)) if found.scope != Scope::Instance => {
+                    let signature = match &found.kind {
+                        FoundKind::Method(signatures) => solver.reified(signatures),
+                        _ => None,
+                    };
+                    return Constructor::Call {
+                        callee: signature.and_then(|signature| signature.callee(db)),
+                        bound: found.scope == Scope::Class,
+                    };
+                }
+                Ok(Lookup::Found(_) | Lookup::Missing) => {}
+                Ok(Lookup::Dynamic | Lookup::Fallback { .. }) | Err(_) => {
+                    return Constructor::Dynamic;
+                }
             }
-            Ok(Lookup::Found(_) | Lookup::Missing) => {}
-            Ok(Lookup::Dynamic | Lookup::Fallback { .. }) | Err(_) => return Constructor::Dynamic,
         }
+        // Its side query is over, so another can start
         match self.default_construction(class) {
             Some(signature) => Constructor::Init(signature),
             None => Constructor::Dynamic,

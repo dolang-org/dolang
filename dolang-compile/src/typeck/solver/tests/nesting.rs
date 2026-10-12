@@ -122,3 +122,55 @@ fn a_parent_is_unchanged_while_its_child_is_live() {
     let _child = s.fork(&gas);
     s.fresh(Kind::Type, Rest::All, ScopeId(0));
 }
+
+#[test]
+fn a_closed_child_sees_only_its_parents_environments() {
+    let mut db = Database::new();
+    let one = literal(&db, 1);
+    db.seal();
+    let gas = Gas::default();
+    let (mut s, a, _) = parent(&db, &gas);
+    let known = s.environment(s.empty_environment(), vec![Term::Infer(a)]);
+    let mut child = s.nested(Nesting::Side).unwrap();
+    assert!(child.has_environment(known));
+    assert_eq!(child.variable_ids().count(), 0);
+    let fresh = child.infer();
+    assert_eq!(
+        child.variable_ids().collect::<Vec<_>>(),
+        [variable_id(fresh)]
+    );
+    // It solves from nothing, with its own obligations
+    let id = child.constrain(child.closed(one), child.closed(one), Provenance::default());
+    assert_eq!(child.roots[id.0].obligation.0, s.obligation_count());
+    assert_eq!(child.solve()[id.0].status, Status::Proven);
+}
+
+#[test]
+#[should_panic(expected = "an entry a closed solver doesn't see")]
+fn a_closed_child_doesnt_see_its_parents_variables() {
+    let mut db = Database::new();
+    db.seal();
+    let gas = Gas::default();
+    let (s, a, _) = parent(&db, &gas);
+    let child = s.nested(Nesting::Side).unwrap();
+    child.assignment(a);
+}
+
+#[test]
+fn probes_revisit_those_they_are_nested_in_short_of_a_side_query() {
+    let mut db = Database::new();
+    let (one, two) = (literal(&db, 1), literal(&db, 2));
+    db.seal();
+    let gas = Gas::default();
+    let s = Solver::new(&db, &gas);
+    let probe = s.nested(Nesting::Probe(one, two)).unwrap();
+    let fork = probe.fork(&gas);
+    assert!(fork.probing(one, two));
+    assert!(!fork.probing(two, one));
+    let side = fork.nested(Nesting::Side).unwrap();
+    assert!(!side.probing(one, two));
+    let inner = side.nested(Nesting::Probe(two, one)).unwrap();
+    let trial = inner.child(Nesting::Trial, &gas);
+    assert!(trial.probing(two, one));
+    assert!(!trial.probing(one, two));
+}

@@ -558,8 +558,10 @@ pub(crate) struct Solver<'db> {
     layers: MonoVec<VariableLayer>,
     /// What it records of its parent's variables, by ID
     overlays: MonoHashMap<usize, VariableLayer, FxBuildHasher>,
+    /// The first variable it sees: a closed solver sees only its own
+    first_variable: usize,
     /// The variables whose bounds may have changed since solving last tried
-    /// to assign them, by ID
+    /// to assign them, by ID from the first it sees
     dirty: RefCell<Vec<bool>>,
     /// The environment each quantifier instantiation created, by the obligation
     /// that instantiated it, so reprocessing reuses its variables
@@ -623,9 +625,6 @@ pub(crate) struct Solver<'db> {
     /// What trials judge in place of a term, as a `do` block whose result
     /// mustn't choose an alternative (see [`Solver::blind`])
     blinded: FxHashMap<Term, Term>,
-    /// The judgments the probes this solver is nested in are proving, so
-    /// probing one again is recognized as a cycle (see [`Self::probe`])
-    probing: Vec<(TypeId, TypeId)>,
     /// The solver this one is nested in, if any (#900)
     parent: Option<Parent<'db>>,
     /// Whether a solver nested in this one is live, which nothing may change
@@ -685,6 +684,7 @@ impl<'db> Solver<'db> {
             variables: MonoVec::new(),
             layers: MonoVec::new(),
             overlays: MonoHashMap::default(),
+            first_variable: 0,
             dirty: RefCell::new(Vec::new()),
             instantiations: RefCell::new(FxHashMap::default()),
             skolemizations: RefCell::new(FxHashMap::default()),
@@ -712,7 +712,6 @@ impl<'db> Solver<'db> {
             owned: None,
             trials_from: 0,
             blinded: FxHashMap::default(),
-            probing: Vec::new(),
             parent: None,
             child: Cell::new(false),
             #[cfg(feature = "debug")]
@@ -831,18 +830,12 @@ impl<'db> Solver<'db> {
         self.child(Nesting::Fork, gas)
     }
 
-    /// A solver for a side query about `class`, its rigids assumed, spending
-    /// this one's budget
-    pub(super) fn side_query(&self, class: DeclId) -> Solver<'db> {
-        let mut solver = Solver::new(self.db, self.gas);
-        solver.scope = self.scope.clone();
-        solver.groups = self.groups.clone();
-        solver.gradual = self.gradual;
+    /// A closed solver for a side query about `class`, its rigids assumed,
+    /// spending this one's budget
+    pub(super) fn side_query(&self, class: DeclId) -> Solver<'_> {
+        let mut solver = self.child(Nesting::Side, self.gas);
+        solver.depth = DEPTH;
         solver.assume(class);
-        #[cfg(feature = "debug")]
-        {
-            solver.names = self.names;
-        }
         solver
     }
 
@@ -1111,8 +1104,7 @@ impl<'db> Solver<'db> {
     }
 
     pub(crate) fn unresolved(&self) -> impl Iterator<Item = InferVarId> + '_ {
-        (0..self.variable_count())
-            .map(InferVarId)
+        self.variable_ids()
             .filter(|&id| self.assignment(id).is_none())
     }
 
@@ -1254,21 +1246,14 @@ impl<'db> Solver<'db> {
         }
     }
 
-    /// A solver for a side query, with this one's scope, spending its budget
-    fn nested(&self) -> Result<Self, Residual> {
+    /// A closed solver nested in this one, with its scope, spending its budget
+    fn nested(&self, nesting: Nesting) -> Result<Solver<'_>, Residual> {
         self.spend()?;
         if self.depth <= 1 {
             return Err(Residual::Limit);
         }
-        let mut nested = Self::with_depth(self.db, self.gas, self.depth - 1);
-        nested.scope = self.scope.clone();
-        nested.groups = self.groups.clone();
-        nested.gradual = self.gradual;
-        #[cfg(feature = "debug")]
-        {
-            nested.names = self.names;
-            nested.indent = self.indent + 1;
-        }
+        let mut nested = self.child(nesting, self.gas);
+        nested.depth = self.depth - 1;
         Ok(nested)
     }
 
@@ -1282,13 +1267,11 @@ impl<'db> Solver<'db> {
     /// [`Residual::Recursive`]. Without inductive rules (#746), a cycle is left
     /// unresolved rather than unfolded until the work budget runs out.
     fn probe_cycle(&self, actual: TypeId, expected: TypeId) -> Result<(Status, bool), Residual> {
-        if self.probing.contains(&(actual, expected)) {
+        if self.probing(actual, expected) {
             trace!(self, "probe revisits an enclosing judgment");
             return Ok((Status::Unresolved, true));
         }
-        let mut proof = self.nested()?;
-        proof.probing.clone_from(&self.probing);
-        proof.probing.push((actual, expected));
+        let mut proof = self.nested(Nesting::Probe(actual, expected))?;
         proof.constrain(
             proof.closed(actual),
             proof.closed(expected),
@@ -1769,7 +1752,7 @@ impl<'db> Solver<'db> {
             self.schedule(obligation);
         }
         // A bound may contain the assigned variable deeply in a contextual view.
-        for other in (0..self.variable_count()).map(InferVarId) {
+        for other in self.variable_ids() {
             if self.assignment(other).is_none() {
                 self.dirty(other);
             }
@@ -2700,7 +2683,7 @@ impl<'db> Solver<'db> {
                     break;
                 }
                 let mut assigned = false;
-                for id in (0..self.variable_count()).map(InferVarId) {
+                for id in self.variable_ids() {
                     if self.clean(id) && self.assignment(id).is_none() {
                         match self.try_assign(id) {
                             Ok(changed) => assigned |= changed,
@@ -2731,8 +2714,8 @@ impl<'db> Solver<'db> {
     /// earlier one forces. Without one, a variable nothing is below takes bottom,
     /// the least choice. Whether one was committed.
     fn settle(&self) -> bool {
-        let mut pending: Vec<InferVarId> = (0..self.variable_count())
-            .map(InferVarId)
+        let mut pending: Vec<InferVarId> = self
+            .variable_ids()
             .filter(|&id| {
                 (self.closed
                     || self.variable(id).scope != ScopeId(0)

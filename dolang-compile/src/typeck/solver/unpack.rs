@@ -340,14 +340,22 @@ impl Solver<'_> {
             Type::Quantified { binders, .. } => binders,
             _ => &[],
         };
-        let mut nested = self.nested()?;
-        let mut group = Vec::new();
-        for (slot, binder) in binders.iter().enumerate() {
+        // Reified before the nested solver, which this one can't probe under
+        let mut kept = Vec::new();
+        for slot in 0..binders.len() {
             let lifted = (declaration.binders.get(slot))
                 .is_some_and(|source| source.origin == BinderOrigin::Lifted);
-            group.push(match (lifted, owner.arguments.get(slot)) {
-                (true, Some(&argument)) => nested.closed(self.reify(argument)?),
-                _ => {
+            kept.push(match (lifted, owner.arguments.get(slot)) {
+                (true, Some(&argument)) => Some(self.reify(argument)?),
+                _ => None,
+            });
+        }
+        let mut nested = self.nested(Nesting::Side)?;
+        let mut group = Vec::new();
+        for (binder, kept) in binders.iter().zip(kept) {
+            group.push(match kept {
+                Some(argument) => nested.closed(argument),
+                None => {
                     let lanes = match binder.binding {
                         Binding::Rest(lanes) => lanes,
                         _ => Rest::All,
