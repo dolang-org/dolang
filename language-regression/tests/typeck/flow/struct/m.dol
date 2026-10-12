@@ -4,6 +4,7 @@
 
 import std:
   - @BaseStruct
+  - @Spread
 
 pub def fields s @ Struct[{host: Str, port: Int, ?user: Str, cb: ((Int) -> Str)}]
   let _ = s.host
@@ -116,3 +117,36 @@ pub def construct()
   #       ^: flow std.Struct[{std.Int, name: std.Str}]
   let _ = t.name
   #   ^: flow std.Str
+
+# A subclass's names fall back to `Struct`'s `(get)` and `(set)`, including
+# through a Do class in between
+pub class Partial: Struct[{payload: Str, total: (Int | nil)}]
+  def (init) self source @ Spread[{payload: Str, total: (Int | nil)}]
+    Struct.(init) $self $source
+
+pub class Tracked: Partial
+  pub def done self -> Bool
+    (self.total != nil)
+
+pub def subclass p @ Partial t @ Tracked
+  let _ = p.total
+  #   ^: flow nil | std.Int
+  p.payload = "x"
+  let _ = t.payload
+  #   ^: flow std.Str
+  t.total = 1
+  t.total = "x"
+  # error: expected `nil | std.Int`, found `"x"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   t.total = "x"
+  #    |             ^^^
+  let _ = t.missing
+# error: `m.Tracked` has no member `missing`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ = t.missing
+#    |           ^^^^^^^^^
+#    |
+#    = note: `(get)`: expected `:payload: | :total:`, found `:missing:`
+#    = note: `:missing:` does not fit `:payload: | :total:`

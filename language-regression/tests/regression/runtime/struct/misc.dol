@@ -82,3 +82,39 @@ let custom = MyStruct {name: "Alice"}
 assert_eq $custom[:name:] Alice
 assert_eq (Struct.get custom :name:) Alice
 assert (type custom MyStruct)
+
+# A subclass reaches items by name through `Struct`'s `(get)` and `(set)`,
+# including through a Do class in between
+custom.name = "Bob"
+assert_eq $custom.name Bob
+custom.age = 30
+assert_eq [...custom] [(:name:, "Bob"), (:age:, 30)]
+assert_throws $FieldError str: "no such field: missing" do custom.missing
+
+class Named: MyStruct
+  pub def greeting self
+    "hi $(self.name)"
+
+let named = Named {name: "Carol"}
+assert_eq $named.name Carol
+assert_eq $named.greeting() "hi Carol"
+named.name = "Dan"
+assert_eq $named[:name:] Dan
+assert_eq (Named.(get) named :name:) Dan
+Named.(set) $named :name: "Eve"
+assert_eq $named.name Eve
+
+# The first `(get)` or `(set)` in MRO order handles the access
+class Upper: MyStruct
+  def (get) self key
+    Struct.(get)(self, key).upper()
+
+  def (set) self key value
+    Struct.(set) $self $key "set:$value"
+
+class Lower: Upper
+
+let upper = Lower {name: "frank"}
+assert_eq $upper.name FRANK
+upper.name = "x"
+assert_eq $upper[:name:] set:x
