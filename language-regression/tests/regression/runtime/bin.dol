@@ -115,3 +115,9 @@ assert_throws $std.RuntimeError str: "type error: invalid pattern: not binary da
 # character means nothing byte by byte, so it is rejected outright.
 assert_throws $std.RuntimeError str: "type error: invalid pattern: not binary data" do
   b"foobar".trim "x"
+# Only ranges index a `Bin`; a single position is not an index.
+assert_throws $std.RuntimeError str: "index out of range or invalid" do b"foobar"[1]
+assert_throws $std.RuntimeError str: "type error: len is a field, not a method" do b"foobar".len()
+
+# `Bin.pack` builds a `Bin` from byte values.
+assert_eq (Bin.pack [72, 105]) b"Hi"

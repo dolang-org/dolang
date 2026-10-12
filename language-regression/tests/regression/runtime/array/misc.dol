@@ -44,6 +44,7 @@ assert_eq (foo.pop default: "default") default
 assert_eq (foo.pop else: do "default") default
 assert_throws $std.RuntimeError str: "index out of range or invalid" do foo.pop 0
 assert_throws $std.RuntimeError str: "index out of range or invalid" do foo[-1]
+assert_throws $std.RuntimeError str: "index out of range or invalid" do [1, 2, 3, 4, 5, 6][5..2]
 assert_eq (foo.get 0) nil
 assert_eq (foo.get -1) nil
 assert_eq (foo.get 2) nil

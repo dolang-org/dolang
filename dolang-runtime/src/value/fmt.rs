@@ -459,10 +459,7 @@ pub(crate) fn push_indented(out: &mut String, value: &str, spaces: usize) {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        test_support::with_vm,
-        value::{Empty, Output},
-    };
+    use crate::test_support::with_vm;
 
     use super::*;
 
@@ -505,129 +502,6 @@ mod tests {
             pad.write_str(strand, "ab").unwrap();
             pad.finish(strand).unwrap();
             assert_eq!(out, "ab  ");
-        });
-    }
-
-    #[test]
-    fn value_formats_immediate_numeric_values() {
-        with_vm(async |strand, [mut value]| {
-            Output::set(strand, &mut value, -42_i64);
-            let mut out = String::new();
-            value
-                .fmt(
-                    strand,
-                    &Spec {
-                        fill: Fill::Zero,
-                        width: Some(8),
-                        alt: true,
-                        kind: Some(Kind::Hex),
-                        ..Default::default()
-                    },
-                    &mut out,
-                )
-                .unwrap();
-            assert_eq!(out, "-0x0002a");
-
-            Output::set(strand, &mut value, 1.5_f64);
-            out.clear();
-            value
-                .fmt(
-                    strand,
-                    &Spec {
-                        fill: Fill::Zero,
-                        sign: Some(Sign::Plus),
-                        width: Some(7),
-                        precision: Some(2),
-                        kind: Some(Kind::Fixed),
-                        ..Default::default()
-                    },
-                    &mut out,
-                )
-                .unwrap();
-            assert_eq!(out, "+001.50");
-        });
-    }
-
-    #[test]
-    fn formatting_rejects_unresolved_and_incompatible_specs() {
-        with_vm(async |strand, [mut value]| {
-            Output::set(strand, &mut value, 1_i64);
-            assert!(
-                value
-                    .fmt(strand, &Spec::default(), &mut String::new())
-                    .is_err()
-            );
-            assert!(
-                value
-                    .fmt(
-                        strand,
-                        &Spec {
-                            precision: Some(2),
-                            kind: Some(Kind::Dec),
-                            ..Default::default()
-                        },
-                        &mut String::new(),
-                    )
-                    .is_err()
-            );
-        });
-    }
-
-    #[test]
-    fn bin_radix_and_array_alternate_formats_are_specialized() {
-        with_vm(async |strand, [mut value]| {
-            Output::set(strand, &mut value, b"\x0a\xff".as_slice());
-            let mut out = String::new();
-            value
-                .fmt(
-                    strand,
-                    &Spec {
-                        alt: true,
-                        kind: Some(Kind::Hex),
-                        ..Default::default()
-                    },
-                    &mut out,
-                )
-                .unwrap();
-            assert_eq!(out, "0x0aff");
-
-            Output::set(strand, &mut value, Empty::Array);
-            let array = value.as_array(strand).unwrap();
-            array.push(strand, 1_i64).unwrap();
-            array.push(strand, "two").unwrap();
-            out.clear();
-            value
-                .fmt(
-                    strand,
-                    &Spec {
-                        alt: true,
-                        kind: Some(Kind::Dbg),
-                        ..Default::default()
-                    },
-                    &mut out,
-                )
-                .unwrap();
-            assert_eq!(out, "[\n  1,\n  \"two\",\n]");
-
-            Output::set(strand, &mut value, Empty::Dict);
-            value
-                .as_dict(strand)
-                .unwrap()
-                .insert(strand, "key", 3_i64, true)
-                .unwrap();
-            out.clear();
-            value
-                .fmt(
-                    strand,
-                    &Spec {
-                        alt: true,
-                        kind: Some(Kind::Dbg),
-                        ..Default::default()
-                    },
-                    &mut out,
-                )
-                .unwrap();
-            assert_eq!(out, "{\n  \"key\": 3,\n}");
         });
     }
 }

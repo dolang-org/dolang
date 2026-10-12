@@ -171,3 +171,8 @@ assert_eq $items [1, 2]
 assert_throws $std.RuntimeError str: "unexpected positional item: 0" do {}.copy 1
 
 assert_throws $std.RuntimeError str: "type error: Str.len is a field, not a method" do "foo".len()
+assert_throws $std.RuntimeError str: "type error: dict.len is a field, not a method" do {a: 1}.len()
+
+# Unrelated types are unequal, but not ordered.
+assert (!({a: 1} == 1))
+assert_throws $std.RuntimeError str: "type error: no overload available" do ({a: 1} < 1)
