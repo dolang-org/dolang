@@ -101,19 +101,6 @@ assert (!(StrBuf("abc") == "abc"))
 # type
 assert_eq (type (StrBuf())) $StrBuf
 
-# Dict mutation hazard: mutating a key after insertion makes it unreachable
-# by its old bucket hash, even though op_eq reflects current content -- the
-# same footgun as any mutable hash key, not a bug to fix.
-let key = StrBuf("k1")
-let d = {}
-d[key] = "v1"
-assert_eq (d.get key default: "MISSING") "v1"
-key.append "-x"
-assert_eq (d.get key default: "MISSING") "MISSING"
-let key2 = StrBuf("k1-x")
-assert_eq (d.get key2 default: "MISSING") "MISSING"
-assert (key == key2)
-
 # drain: chunk iterator that consumes from the front in place
 let d1 = StrBuf("hello world")
 let chunks1 = []

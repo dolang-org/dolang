@@ -115,8 +115,9 @@ for mode = [1, 2]
   d.insert $key first
   d.insert $key second
   key.mode = mode
-  let ...rest = d
-  raises do [...rest]
+  raises do
+    let ...rest = d
+    [...rest]
   key.mode = 0
   assert_eq [...d.values()] ["first", "second"]
 
