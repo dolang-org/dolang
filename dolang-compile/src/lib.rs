@@ -289,6 +289,7 @@ fn internal_node_id(id: NodeId) -> doc::Id {
 #[derive(Copy, Clone)]
 pub struct Node<'a> {
     file: &'a File<'a>,
+    table: &'a doc::Table,
     node: &'a doc::Node,
 }
 
@@ -299,6 +300,13 @@ impl<'a> Node<'a> {
     /// a method's parent is its class, and a parameter's is its function.
     pub fn parent(&self) -> Option<NodeId> {
         self.node.parent.map(public_node_id)
+    }
+
+    /// The nodes whose [`parent`](Node::parent) is this one.
+    ///
+    /// The order is unspecified; order siblings by [`Node::span`].
+    pub fn children(&self) -> impl Iterator<Item = NodeId> + 'a {
+        self.table.children(self.node).map(public_node_id)
     }
 
     /// The extent of the whole construct, or `None` for a prelude binding, which
@@ -433,10 +441,15 @@ impl<'a> Node<'a> {
                 is_pub: *is_pub,
                 type_only: *type_only,
             },
-            doc::Kind::PreludeModule { module, name } => Kind::PreludeModule { module, name },
-            doc::Kind::PreludeItem { module, item, name } => {
-                Kind::PreludeItem { module, item, name }
-            }
+            doc::Kind::PreludeModule(prelude) => Kind::PreludeModule {
+                module: &prelude.module,
+                name: &prelude.name,
+            },
+            doc::Kind::PreludeItem(prelude) => Kind::PreludeItem {
+                module: &prelude.module,
+                item: &prelude.item,
+                name: &prelude.name,
+            },
             doc::Kind::Lambda => Kind::Lambda,
             doc::Kind::If => Kind::If,
             doc::Kind::Else => Kind::Else,
@@ -461,10 +474,7 @@ impl<'a> Node<'a> {
                 target: target.map(public_node_id),
             },
             doc::Kind::Type { expr, type_only } => Kind::Type {
-                expr: TypeExpr {
-                    file: self.file,
-                    expr,
-                },
+                expr: public_node_id(*expr),
                 type_only: *type_only,
             },
             doc::Kind::Binder {
@@ -475,14 +485,67 @@ impl<'a> Node<'a> {
             } => Kind::Binder {
                 name: span(name),
                 kind: *kind,
-                bound: bound.as_ref().map(|expr| TypeExpr {
-                    file: self.file,
-                    expr,
+                bound: bound.map(public_node_id),
+                default: default.map(public_node_id),
+            },
+            doc::Kind::NameType { head, target } => Kind::NameType {
+                head: span(head),
+                target: target.map(public_node_id),
+            },
+            doc::Kind::ConstType(value) => Kind::ConstType(match value {
+                doc::TypeConst::Sym(name) => TypeConst::Sym(name),
+                doc::TypeConst::Str(value) => TypeConst::Str(value),
+                doc::TypeConst::Int(value) => TypeConst::Int(*value),
+                doc::TypeConst::Bool(value) => TypeConst::Bool(*value),
+                doc::TypeConst::Nil => TypeConst::Nil,
+            }),
+            doc::Kind::AppType { base, args } => Kind::AppType {
+                base: public_node_id(*base),
+                args: NodeIds(args.iter()),
+            },
+            doc::Kind::TypeArg { kind, ty } => Kind::TypeArg {
+                kind: match kind {
+                    doc::TypeArgKind::Pos => TypeArgKind::Pos,
+                    doc::TypeArgKind::Key { name } => TypeArgKind::Key { name: span(name) },
+                    doc::TypeArgKind::Expand => TypeArgKind::Expand,
+                },
+                ty: public_node_id(*ty),
+            },
+            doc::Kind::SchemaType { items } => Kind::SchemaType {
+                items: NodeIds(items.iter()),
+            },
+            doc::Kind::ParensType { items } => Kind::ParensType {
+                items: NodeIds(items.iter()),
+            },
+            doc::Kind::ArrayType { elem } => Kind::ArrayType {
+                elem: public_node_id(*elem),
+            },
+            doc::Kind::UnionType { members } => Kind::UnionType {
+                members: NodeIds(members.iter()),
+            },
+            doc::Kind::FuncType {
+                items,
+                input,
+                output,
+                ret,
+            } => Kind::FuncType {
+                items: NodeIds(items.iter()),
+                input: input.map(public_node_id),
+                output: output.map(public_node_id),
+                ret: public_node_id(*ret),
+            },
+            doc::Kind::TypeItem { quant, kind, ty } => Kind::TypeItem {
+                quant: *quant,
+                kind: kind.as_ref().map(|kind| match kind {
+                    doc::TypeItemKind::Pos => TypeItemKind::Pos,
+                    doc::TypeItemKind::Key { key, key_ty } => TypeItemKind::Key {
+                        key: span(key),
+                        key_ty: key_ty.map(public_node_id),
+                    },
+                    doc::TypeItemKind::Include => TypeItemKind::Include,
+                    doc::TypeItemKind::Open => TypeItemKind::Open,
                 }),
-                default: default.as_ref().map(|expr| TypeExpr {
-                    file: self.file,
-                    expr,
-                }),
+                ty: ty.map(public_node_id),
             },
         }
     }
@@ -677,15 +740,15 @@ pub enum Kind<'a> {
         /// The function returned from
         target: Option<NodeId>,
     },
-    /// A type in an annotation, return type or superclass list.
+    /// A type in an annotation, return type, alias body or superclass list.
     ///
     /// Its parent is what it describes: the parameter, binding or field it
-    /// annotates, the function, method or lambda whose return type it is, or the
-    /// class it is a superclass of. A declaration naming several fields yields one
-    /// type per field.
+    /// annotates, the function, method or lambda whose return type it is, the
+    /// alias it defines, or the class it is a superclass of. A declaration naming
+    /// several fields yields one type per field.
     Type {
-        /// The type as written
-        expr: TypeExpr<'a>,
+        /// The type's form, which is a child of this node
+        expr: NodeId,
         /// Whether the type is a supertype written with `@`, which the class does not
         /// inherit from at runtime
         type_only: bool,
@@ -697,10 +760,80 @@ pub enum Kind<'a> {
         name: diag::Span,
         /// How the binder takes a type argument
         kind: BinderKind,
-        /// The declared upper bound
-        bound: Option<TypeExpr<'a>>,
-        /// The default type argument
-        default: Option<TypeExpr<'a>>,
+        /// The declared upper bound's form, a child of this node
+        bound: Option<NodeId>,
+        /// The default type argument's form, a child of this node
+        default: Option<NodeId>,
+    },
+    /// A possibly dotted name as a type, e.g. `Str` or `time.Duration`.
+    ///
+    /// This and the other type forms are children of whatever refers to them: a
+    /// [`Kind::Type`], a [`Kind::Binder`] or an enclosing form. A form's span
+    /// includes any parentheses that only group it, which are not a form of their
+    /// own.
+    NameType {
+        /// The first name, which is the one resolved
+        head: diag::Span,
+        /// The node the first name refers to, where the compiler could resolve it
+        target: Option<NodeId>,
+    },
+    /// A constant type
+    ConstType(TypeConst<'a>),
+    /// Type arguments applied to a type, e.g. `Array[Int]`
+    AppType {
+        /// The type the arguments apply to
+        base: NodeId,
+        /// The [`Kind::TypeArg`] nodes, in the order written
+        args: NodeIds<'a>,
+    },
+    /// An argument in the `[]` of an application, without a trailing `,`
+    TypeArg {
+        /// How the argument is given
+        kind: TypeArgKind,
+        /// The argument's type
+        ty: NodeId,
+    },
+    /// A schema, e.g. `{name: Str, ?port: Int}`
+    SchemaType {
+        /// The [`Kind::TypeItem`] nodes, in the order written
+        items: NodeIds<'a>,
+    },
+    /// A tuple or record type, e.g. `(Int, Str)` or `(name: Str)`
+    ParensType {
+        /// The [`Kind::TypeItem`] nodes, in the order written
+        items: NodeIds<'a>,
+    },
+    /// An array type, e.g. `[Int]`
+    ArrayType {
+        /// The element type
+        elem: NodeId,
+    },
+    /// A union, e.g. `(Str | Path)`
+    UnionType {
+        /// The members, in the order written
+        members: NodeIds<'a>,
+    },
+    /// A function type, e.g. `(Int, ?Int) -> Int`
+    FuncType {
+        /// The [`Kind::TypeItem`] nodes of the parameters, in the order written
+        items: NodeIds<'a>,
+        /// The `<` implicit parameter, giving the ambient input
+        input: Option<NodeId>,
+        /// The `>` implicit parameter, giving the ambient output
+        output: Option<NodeId>,
+        /// The return type
+        ret: NodeId,
+    },
+    /// An item of a schema, a tuple or record type, or a function type's
+    /// parameters, without a trailing `,`
+    TypeItem {
+        /// How many of the element the item admits, or `None` for exactly one
+        quant: Option<TypeQuant>,
+        /// The element the quantifier applies to, or `None` for a bare `*` or `**`
+        kind: Option<TypeItemKind>,
+        /// The item's type, absent for [`TypeItemKind::Open`] and for a bare
+        /// quantifier
+        ty: Option<NodeId>,
     },
 }
 
@@ -750,127 +883,6 @@ pub enum ImplicitKind {
     Out,
 }
 
-/// A type as written, with the names in it resolved
-#[derive(Copy, Clone)]
-pub struct TypeExpr<'a> {
-    file: &'a File<'a>,
-    expr: &'a doc::TypeExpr,
-}
-
-impl<'a> TypeExpr<'a> {
-    /// The type as written, including any parentheses around it
-    pub fn span(&self) -> diag::Span {
-        convert_span(self.file, self.expr.span)
-    }
-
-    /// The form the type takes
-    pub fn kind(&self) -> TypeKind<'a> {
-        let file = self.file;
-        let params = |params: &'a [doc::TypeParam]| TypeParams {
-            file,
-            params: params.iter(),
-        };
-        match &self.expr.kind {
-            doc::TypeKind::Name { head, target } => TypeKind::Name {
-                head: convert_span(file, *head),
-                target: target.map(public_node_id),
-            },
-            doc::TypeKind::Const(value) => TypeKind::Const(match value {
-                doc::TypeConst::Sym(name) => TypeConst::Sym(name),
-                doc::TypeConst::Str(value) => TypeConst::Str(value),
-                doc::TypeConst::Int(value) => TypeConst::Int(*value),
-                doc::TypeConst::Bool(value) => TypeConst::Bool(*value),
-                doc::TypeConst::Nil => TypeConst::Nil,
-            }),
-            doc::TypeKind::App { base, args } => TypeKind::App {
-                base: TypeExpr { file, expr: base },
-                args: TypeArgs {
-                    file,
-                    args: args.iter(),
-                },
-            },
-            doc::TypeKind::Schema { params: items } => TypeKind::Schema {
-                params: params(items),
-            },
-            doc::TypeKind::Parens { params: items } => TypeKind::Parens {
-                params: params(items),
-            },
-            doc::TypeKind::Array { elem } => TypeKind::Array {
-                elem: TypeExpr { file, expr: elem },
-            },
-            doc::TypeKind::Union { members } => TypeKind::Union {
-                members: TypeExprs {
-                    file,
-                    exprs: members.iter(),
-                },
-            },
-            doc::TypeKind::Func {
-                params: items,
-                input,
-                output,
-                ret,
-            } => TypeKind::Func {
-                params: params(items),
-                input: input.as_ref().map(|ty| TypeExpr { file, expr: ty }),
-                output: output.as_ref().map(|ty| TypeExpr { file, expr: ty }),
-                ret: TypeExpr { file, expr: ret },
-            },
-        }
-    }
-}
-
-/// The form of a [`TypeExpr`]
-#[non_exhaustive]
-pub enum TypeKind<'a> {
-    /// A possibly dotted name, e.g. `Str` or `time.Duration`
-    Name {
-        /// The first name, which is the one resolved
-        head: diag::Span,
-        /// The node the first name refers to, where the compiler could resolve it
-        target: Option<NodeId>,
-    },
-    /// A constant
-    Const(TypeConst<'a>),
-    /// Type arguments applied to a type, e.g. `Array[Int]`
-    App {
-        /// The type the arguments apply to
-        base: TypeExpr<'a>,
-        /// The arguments
-        args: TypeArgs<'a>,
-    },
-    /// A schema, e.g. `{name: Str, ?port: Int}`
-    Schema {
-        /// The parameters
-        params: TypeParams<'a>,
-    },
-    /// A tuple or record type, e.g. `(Int, Str)` or `(name: Str)`
-    Parens {
-        /// The items
-        params: TypeParams<'a>,
-    },
-    /// An array type, e.g. `[Int]`
-    Array {
-        /// The element type
-        elem: TypeExpr<'a>,
-    },
-    /// A union, e.g. `(Str | Path)`
-    Union {
-        /// The members, in the order written
-        members: TypeExprs<'a>,
-    },
-    /// A function type, e.g. `(Int, ?Int) -> Int`
-    Func {
-        /// The parameters
-        params: TypeParams<'a>,
-        /// The `<` implicit parameter, giving the ambient input
-        input: Option<TypeExpr<'a>>,
-        /// The `>` implicit parameter, giving the ambient output
-        output: Option<TypeExpr<'a>>,
-        /// The return type
-        ret: TypeExpr<'a>,
-    },
-}
-
 /// A constant type
 #[non_exhaustive]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -887,40 +899,7 @@ pub enum TypeConst<'a> {
     Nil,
 }
 
-/// A type argument in the `[]` of an application
-#[derive(Copy, Clone)]
-pub struct TypeArg<'a> {
-    file: &'a File<'a>,
-    arg: &'a doc::TypeArg,
-}
-
-impl<'a> TypeArg<'a> {
-    /// The argument as written, without a trailing `,`
-    pub fn span(&self) -> diag::Span {
-        convert_span(self.file, self.arg.span)
-    }
-
-    /// How the argument is given
-    pub fn kind(&self) -> TypeArgKind {
-        match &self.arg.kind {
-            doc::TypeArgKind::Pos => TypeArgKind::Pos,
-            doc::TypeArgKind::Key { name } => TypeArgKind::Key {
-                name: convert_span(self.file, *name),
-            },
-            doc::TypeArgKind::Expand => TypeArgKind::Expand,
-        }
-    }
-
-    /// The argument's type
-    pub fn ty(&self) -> TypeExpr<'a> {
-        TypeExpr {
-            file: self.file,
-            expr: &self.arg.ty,
-        }
-    }
-}
-
-/// How a [`TypeArg`] is given
+/// How a [`Kind::TypeArg`] is given
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 pub enum TypeArgKind {
@@ -935,77 +914,10 @@ pub enum TypeArgKind {
     Expand,
 }
 
-/// Iterator over the arguments of an application
-#[derive(Clone)]
-pub struct TypeArgs<'a> {
-    file: &'a File<'a>,
-    args: slice::Iter<'a, doc::TypeArg>,
-}
-
-impl<'a> Iterator for TypeArgs<'a> {
-    type Item = TypeArg<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.args.next().map(|arg| TypeArg {
-            file: self.file,
-            arg,
-        })
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.args.size_hint()
-    }
-}
-
-impl ExactSizeIterator for TypeArgs<'_> {}
-
-/// An item a schema or a function type's parameters declare
-#[derive(Copy, Clone)]
-pub struct TypeParam<'a> {
-    file: &'a File<'a>,
-    param: &'a doc::TypeParam,
-}
-
-impl<'a> TypeParam<'a> {
-    /// The item as written, without a trailing `,`
-    pub fn span(&self) -> diag::Span {
-        convert_span(self.file, self.param.span)
-    }
-
-    /// How many of the element the item admits, or `None` for exactly one
-    pub fn quant(&self) -> Option<TypeQuant> {
-        self.param.quant
-    }
-
-    /// The element the quantifier applies to, or `None` for a bare `*` or `**`
-    pub fn kind(&self) -> Option<TypeParamKind<'a>> {
-        Some(match self.param.kind.as_ref()? {
-            doc::TypeParamKind::Pos => TypeParamKind::Pos,
-            doc::TypeParamKind::Key { key, key_ty } => TypeParamKind::Key {
-                key: convert_span(self.file, *key),
-                key_ty: key_ty.as_ref().map(|expr| TypeExpr {
-                    file: self.file,
-                    expr,
-                }),
-            },
-            doc::TypeParamKind::Include => TypeParamKind::Include,
-            doc::TypeParamKind::Open => TypeParamKind::Open,
-        })
-    }
-
-    /// The item's type, absent for [`TypeParamKind::Open`] and for a bare quantifier
-    pub fn ty(&self) -> Option<TypeExpr<'a>> {
-        self.param.ty.as_ref().map(|expr| TypeExpr {
-            file: self.file,
-            expr,
-        })
-    }
-}
-
-/// How a [`TypeParam`] is given
+/// How a [`Kind::TypeItem`] is given
 #[non_exhaustive]
-#[derive(Clone)]
-pub enum TypeParamKind<'a> {
+#[derive(Clone, Debug)]
+pub enum TypeItemKind {
     /// `T`
     Pos,
     /// `key: T`
@@ -1013,8 +925,8 @@ pub enum TypeParamKind<'a> {
         /// The key as written: a bareword for a symbol, or a type such as a quoted string
         /// or a parenthesized name
         key: diag::Span,
-        /// The type giving the key, or `None` for a bareword symbol
-        key_ty: Option<TypeExpr<'a>>,
+        /// The form of the type giving the key, or `None` for a bareword symbol
+        key_ty: Option<NodeId>,
     },
     /// `...S`, including a schema's items
     Include,
@@ -1022,68 +934,23 @@ pub enum TypeParamKind<'a> {
     Open,
 }
 
-impl fmt::Debug for TypeParamKind<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Pos => f.write_str("Pos"),
-            Self::Key { key, key_ty } => f
-                .debug_struct("Key")
-                .field("key", key)
-                .field("key_ty", &key_ty.as_ref().map(|_| ..))
-                .finish(),
-            Self::Include => f.write_str("Include"),
-            Self::Open => f.write_str("Open"),
-        }
-    }
-}
-
-/// Iterator over the parameters of a schema or function type
+/// Iterator over a list of nodes a [`Kind`] refers to, in the order written
 #[derive(Clone)]
-pub struct TypeParams<'a> {
-    file: &'a File<'a>,
-    params: slice::Iter<'a, doc::TypeParam>,
-}
+pub struct NodeIds<'a>(slice::Iter<'a, doc::Id>);
 
-impl<'a> Iterator for TypeParams<'a> {
-    type Item = TypeParam<'a>;
+impl Iterator for NodeIds<'_> {
+    type Item = NodeId;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.params.next().map(|param| TypeParam {
-            file: self.file,
-            param,
-        })
+        self.0.next().copied().map(public_node_id)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.params.size_hint()
+        self.0.size_hint()
     }
 }
 
-impl ExactSizeIterator for TypeParams<'_> {}
-
-/// Iterator over the members of a union
-#[derive(Clone)]
-pub struct TypeExprs<'a> {
-    file: &'a File<'a>,
-    exprs: slice::Iter<'a, doc::TypeExpr>,
-}
-
-impl<'a> Iterator for TypeExprs<'a> {
-    type Item = TypeExpr<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.exprs.next().map(|expr| TypeExpr {
-            file: self.file,
-            expr,
-        })
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.exprs.size_hint()
-    }
-}
-
-impl ExactSizeIterator for TypeExprs<'_> {}
+impl ExactSizeIterator for NodeIds<'_> {}
 
 impl VisitAdapter<'_, '_> {
     fn emit_token(
@@ -1559,6 +1426,13 @@ impl Unit<'_> {
         })
     }
 
+    /// The [`Kind::Root`] node, which every other node descends from.
+    ///
+    /// Requires [`Config::document`]; without it, there is none.
+    pub fn root(&self) -> Option<NodeId> {
+        self.next_id(None)
+    }
+
     /// Return the next surfaced node identity after `id`, or the first when absent.
     #[doc(hidden)]
     pub fn next_id(&self, id: Option<NodeId>) -> Option<NodeId> {
@@ -1575,16 +1449,16 @@ impl Unit<'_> {
         let Some(table) = &self.document else {
             return Vec::new();
         };
-        let mut modules: Vec<&str> =
-            (0..table.len())
-                .filter_map(|index| match &table[doc::Id::from_index(index)].kind {
-                    doc::Kind::ImportModule { module, .. }
-                    | doc::Kind::ImportItem { module, .. } => Some(self.file.str(*module)),
-                    doc::Kind::PreludeModule { module, .. }
-                    | doc::Kind::PreludeItem { module, .. } => Some(&**module),
-                    _ => None,
-                })
-                .collect();
+        let mut modules: Vec<&str> = (0..table.len())
+            .filter_map(|index| match &table[doc::Id::from_index(index)].kind {
+                doc::Kind::ImportModule { module, .. } | doc::Kind::ImportItem { module, .. } => {
+                    Some(self.file.str(*module))
+                }
+                doc::Kind::PreludeModule(prelude) => Some(&*prelude.module),
+                doc::Kind::PreludeItem(prelude) => Some(&*prelude.module),
+                _ => None,
+            })
+            .collect();
         modules.sort_unstable();
         modules.dedup();
         modules
@@ -1602,6 +1476,7 @@ impl Unit<'_> {
         let node = &table[id];
         Some(Node {
             file: &self.file,
+            table,
             node,
         })
     }

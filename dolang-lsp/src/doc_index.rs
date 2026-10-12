@@ -33,6 +33,8 @@ pub(crate) struct DocEntry {
     pub(crate) doc: &'static str,
     /// Type binders as declared, with any `:` or `...` sigil, bound, and default.
     pub(crate) binders: &'static [&'static str],
+    /// A class's `final` and `mixable` decorators, by name
+    pub(crate) decorators: &'static [&'static str],
     pub(crate) params: &'static [Param],
     /// The annotated type, as written: a function or method's return type, or a
     /// field's type
@@ -53,6 +55,7 @@ pub(crate) static ENTRIES: &[DocEntry] = &[DocEntry {
     kind: "function",
     doc: "Writes to standard output.",
     binders: &[],
+    decorators: &[],
     params: &[Param {
         name: "...args",
         optional: false,
@@ -98,7 +101,14 @@ pub(crate) fn signature(entry: &DocEntry) -> String {
     let annot = |ty: Option<&str>| ty.map(|ty| format!(" @{ty}")).unwrap_or_default();
     match entry.kind {
         "module" => format!("module {}", entry.module),
-        "class" => format!("class {name}"),
+        "class" => {
+            let decorators: String = entry
+                .decorators
+                .iter()
+                .map(|decorator| format!("#[{decorator}] "))
+                .collect();
+            format!("{decorators}class {name}")
+        }
         "field" => format!("field {short_name}{}", annot(entry.type_)),
         "value" => format!("let {short_name}"),
         _ => {
@@ -149,6 +159,7 @@ mod tests {
             kind: "function",
             doc: "",
             binders: &["T", ":K", "...R"],
+            decorators: &[],
             params: &[
                 Param {
                     name: "point",
@@ -173,6 +184,7 @@ mod tests {
             kind: "field",
             doc: "",
             binders: &[],
+            decorators: &[],
             params: &[],
             type_: Some("Int"),
         };
@@ -184,9 +196,18 @@ mod tests {
             kind: "class",
             doc: "",
             binders: &["T"],
+            decorators: &[],
             params: &[],
             type_: None,
         };
         assert_eq!(signature(&class), "class Box[T]");
+
+        let decorated = DocEntry {
+            item: "Sym",
+            binders: &[],
+            decorators: &["final", "mixable"],
+            ..class
+        };
+        assert_eq!(signature(&decorated), "#[final] #[mixable] class Sym");
     }
 }

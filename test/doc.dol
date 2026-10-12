@@ -1,40 +1,478 @@
-import json shell
+import json shell std
   fs:
     - Path
+    - with_temp_dir
   test:
     - assert
     - assert_eq
     - test
 
-# The fixture and its golden, relative to the workspace root the suite runs in.
+# The fixture, relative to the workspace root the suite runs in.
 let FIXTURE = (Path "dolang-shell/tests/doc")
 
-# Describe the fixture, from the directory holding it.
+# Describe a source file, from the directory holding it.
 #
-# The source is named bare so the output records `fixture.dol` rather than where
-# the checkout happens to live.
-def describe ...flags
+# The source is named bare so the output records the file name rather than
+# where the checkout happens to live.
+def describe_in dir file :module = "fixture" ...flags
   let buf = BinBuf()
-  cd $FIXTURE do
-    run $shell.exe -m compile extract --doc --module fixture ...flags fixture.dol stdout: $buf mode: :CHUNK:
+  cd $dir do
+    run $shell.exe -m compile extract --doc --module $module ...flags $file stdout: $buf mode: :CHUNK:
   Str $buf.freeze()
 
-# The whole extractor output for a source file (raw nodes/tokens/diagnostics
-# plus the cooked documentation projection under "doc"), held against a
-# golden. Tokens are asked for so the golden covers them too.
-#
-# The "doc" part is consumed by the mkdocstrings handler and its templates,
-# so a change there is a change to the rendered site; set
-# `DOLANG_TEST_UPDATE=1` to rewrite the golden once the new shape is what was
-# intended.
+# Describe the fixture.
+def describe ...flags
+  describe_in $FIXTURE fixture.dol ...flags
+
+# The extractor output for the fixture, decoded.
+def extract ...flags
+  json.decode $ describe ...flags
+
+# The extractor output for a source of a test's own, decoded.
+def extract_source source :module = "fixture" ...flags
+  with_temp_dir do |dir|
+    (dir / "sample.dol").write $source
+    json.decode $ describe_in $dir sample.dol :module ...flags
+
+# The fixture's source text.
+def fixture_source()
+  (FIXTURE / "fixture.dol").read()
+
+# The entities with a name, in the order reported.
+def entities out name
+  [...out["doc"]["entities"].filter(do |entity| entity["name"] == name)]
+
+# The one entity with a name.
+def entity out name
+  let found = entities $out $name
+  assert_eq $found.len 1
+  found[0]
+
+# The one member of a class entity with a name.
+def member owner name
+  let found = [...owner["members"].filter(do |m| m["name"] == name)]
+  assert_eq $found.len 1
+  found[0]
+
+# A type tree without the `nodes` indices its names refer to, which depend on
+# how the whole source is indexed. Tests that care about a target resolve it
+# against `nodes` instead.
+def untargeted tree
+  if type(tree, std.Dict)
+    let result = {}
+    for k v = tree
+      if (k != "target")
+        result[k] = untargeted(v)
+    result
+  else if type(tree, std.Array)
+    [...tree.map(untargeted)]
+  else
+    tree
+
+# A name type.
+def name_type name
+  {"kind": "name", "name": name}
+
+# A name type for an item imported from `std`.
+def std_type name
+  {"kind": "name", "name": name, "module": "std", "item": name}
+
+# A positional type argument.
+def pos_arg ty
+  {"kind": "pos", "type": ty}
+
+# The `nodes` entry a type tree's name refers to.
+def target_of out tree
+  out["nodes"][tree["target"]]
+
+# The source text a raw span covers.
+def span_text source span
+  source[span["start"]["byte_offset"]..span["end"]["byte_offset"]]
+
+# The module documentation is the comment block on the first line.
 #[test]
-def documents_a_source_file()
-  let golden = (FIXTURE / "fixture.json")
-  let actual = describe "--tokens"
-  if (env.get("DOLANG_TEST_UPDATE") != nil)
-    golden.write $actual
-    return
-  assert_eq $actual $golden.read()
+def module_doc_is_the_leading_block()
+  let doc = extract()["doc"]
+  assert_eq $doc["source"] fixture.dol
+  assert_eq $doc["module"] fixture
+  assert_eq $doc["doc"] |-
+    Fixture module documentation.
+
+    ## Overview
+
+    See [`Point`](#fixture--Point).
+
+# A function gives a row for each parameter, saying how it is passed and
+# whether it may be omitted.
+#[test]
+def functions_list_their_parameters()
+  let greet = entity $extract() greet
+  assert_eq $greet["kind"] function
+  assert_eq $greet["pub"] true
+  assert_eq $greet["doc"] "A greeting.\n\nSpans several lines."
+  assert (!greet.contains("returns"))
+  assert_eq $greet["params"] $
+    - {"kind": "pos", "name": "name", "optional": false, "doc": nil}
+    - {"kind": "key", "name": "greeting", "optional": true, "doc": nil}
+    - {"kind": "mixed_rest", "name": "rest", "optional": false, "doc": nil}
+
+# Vertically declared parameters carry their own documentation.
+#[test]
+def vertical_parameters_are_documented()
+  let build = entity $extract() build
+  assert_eq [...build["params"].map(do |p| p["doc"])] $
+    - Where the parts come from.
+    - Whether to fetch them first.
+    - Everything else, passed along.
+  assert_eq [...build["params"].map(do |p| p["optional"])] [false, true, false]
+
+# Annotations give parameter and return types.
+#[test]
+def parameters_and_returns_are_typed()
+  let place = entity $extract() place
+  let params = place["params"]
+  assert_eq (untargeted params[0]["type"]) (name_type "Point")
+  assert_eq (untargeted params[1]["type"]) $
+    "kind": union
+    "members": [name_type("Int"), {"kind": "const", "text": "nil"}]
+  assert_eq (untargeted place["returns"]) $
+    "kind": app
+    "base": {"kind": "name", "name": "std.Dict", "module": "std"}
+    "args": [pos_arg(name_type("Str")), pos_arg(std_type("Record"))]
+
+# A rest parameter whose annotation expands a pack says so, and an expansion
+# argument is marked as one.
+#[test]
+def rest_annotations_and_expansions()
+  let out = extract()
+  let mapped = entity $out mapped
+  assert_eq $mapped["binders"] [{"kind": "mixed_rest", "name": "Rs"}]
+  let rest = mapped["params"][0]
+  assert_eq $rest["kind"] mixed_rest
+  assert_eq $rest["type_spread"] true
+  assert_eq (untargeted rest["type"]) {"kind": "func", "params": [], "ret": name_type("Rs")}
+  assert_eq (untargeted mapped["returns"]) $
+    "kind": app
+    "base": (name_type "Tuple")
+    "args": [{"kind": "expand", "type": name_type("Rs")}]
+  # A parameter whose annotation doesn't expand has no marker
+  assert (!(entity(out, "place")["params"][0].contains("type_spread")))
+
+# Binders give their kind, and a bound or default as a type tree.
+#[test]
+def binders_give_bounds_and_defaults()
+  let point = entity $extract() Point
+  let binders = point["binders"]
+  assert_eq [...binders.map(do |b| b["kind"])] ["pos", "key", "mixed_rest"]
+  assert_eq [...binders.map(do |b| b["name"])] ["T", "K", "R"]
+  assert_eq (untargeted binders[0]["bound"]) $
+    "kind": union
+    "members": [name_type("Int"), name_type("Str")]
+  assert_eq (untargeted binders[0]["default"]) (name_type "Int")
+  assert (!binders[1].contains("bound"))
+  assert (!binders[1].contains("default"))
+  let label = member $point label
+  assert_eq (untargeted label["binders"]) $
+    - {"kind": "pos", "name": "S", "bound": name_type("Str")}
+
+# A class lists its supertypes, marking the type-only ones; a protocol is
+# marked as such.
+#[test]
+def classes_list_supertypes()
+  let out = extract()
+  assert_eq (untargeted(entity(out, "Point")["supers"])) [std_type("Record")]
+  # A supertype named through a module path has no item
+  assert_eq (untargeted(entity(out, "Tagged")["supers"])) $
+    - {"kind": "name", "name": "std.Record", "module": "std"}
+  let plot = entity $out Plot
+  assert (!plot.contains("protocol"))
+  assert_eq (untargeted plot["supers"]) $
+    - (name_type "Point")
+    - {"kind": "name", "name": "Shaped", "type_only": true}
+  let shaped = entity $out Shaped
+  assert_eq $shaped["protocol"] true
+  assert_eq $shaped["supers"] []
+
+# Members report whether they belong to instances, the class, or neither, and a
+# getter is a field.
+#[test]
+def class_members()
+  let point = entity $extract() Point
+  let x = member $point x
+  assert_eq $x["kind"] field
+  assert_eq $x["scope"] instance
+  assert_eq $x["doc"] "The horizontal coordinate."
+  assert_eq (untargeted x["type"]) (name_type "Int")
+  assert_eq (member(point, "count")["scope"]) class
+  assert_eq (member(point, "origin")["scope"]) static
+  let horizontal = member $point horizontal
+  assert_eq $horizontal["kind"] field
+  assert_eq (untargeted horizontal["type"]) (name_type "Int")
+  assert (!horizontal.contains("params"))
+  let init = member $point "(init)"
+  assert_eq $init["kind"] method
+  assert_eq $init["special"] true
+  assert_eq $init["params"] [{"kind": "pos", "name": "x", "optional": false, "doc": nil}]
+  let shift = member $point shift
+  assert_eq $shift["special"] false
+  assert (!shift.contains("self_type"))
+  # Private members are left out
+  assert_eq [...point["members"].filter(do |m| m["name"] == "helper")] []
+
+# A class records the prelude's `final` and `mixable` decorators, and no others.
+#[test]
+def final_and_mixable_are_recorded()
+  let out = extract_source |-
+    #[final]
+    #[mixable]
+    pub class Both
+    #[mixable]
+    pub class Named
+    def tag cls
+      cls
+    #[tag]
+    pub class Tagged
+  assert_eq (entity(out, "Both")["decorators"]) ["final", "mixable"]
+  assert_eq (entity(out, "Named")["decorators"]) ["mixable"]
+  assert (!entity(out, "Tagged").contains("decorators"))
+  # A local binding spelled `final` is not the prelude's
+  let shadowed = extract_source |-
+    def final cls
+      cls
+    #[final]
+    pub class Leaf
+  assert (!entity(shadowed, "Leaf").contains("decorators"))
+
+# In std itself, the designated decorators are std's own declarations.
+#[test]
+def std_designates_its_own_decorators()
+  let out = extract_source module: std |-
+    pub def final cls
+      cls
+    pub def getter func
+      func
+    #[final]
+    pub class Leaf
+      #[getter]
+      pub def size self
+        0
+  let leaf = entity $out Leaf
+  assert_eq $leaf["decorators"] ["final"]
+  assert_eq (member(leaf, "size")["kind"]) field
+
+# A method's annotated `self` gives its self type.
+#[test]
+def annotated_self_gives_a_self_type()
+  let label = member $entity(extract(), "Point") label
+  assert_eq (untargeted label["self_type"]) $
+    "kind": app
+    "base": (name_type "Point")
+    "args": [pos_arg(name_type("S"))]
+  assert_eq $label["params"] []
+  assert_eq (untargeted label["returns"]) (name_type "S")
+
+# Overload signatures are type-only entries alongside their implementation.
+#[test]
+def overloads_are_type_only()
+  let out = extract()
+  let grows = entities $out grow
+  assert_eq [...grows.map(do |g| g.get("type_only", default: false))] [true, true, false]
+  assert_eq [...grows.map(do |g| g["doc"])] ["Grow a number.", "Grow a string.", nil]
+  assert_eq (untargeted grows[1]["returns"]) (name_type "Str")
+  let area = [...entity(out, "Shaped")["members"].map(do |m| m["type_only"])]
+  assert_eq $area [true, true, true]
+
+# Values, aliases, and imports are entities of their own.
+#[test]
+def values_aliases_and_imports()
+  let out = extract()
+  let value = entity $out default_name
+  assert_eq $value["kind"] value
+  assert_eq $value["doc"] "The module's default name."
+  let opaque = entity $out Opaque
+  assert_eq $opaque["kind"] alias
+  assert_eq $opaque["opaque"] true
+  assert (!opaque.contains("type"))
+  let label = entity $out Label
+  assert (!label.contains("opaque"))
+  assert_eq (untargeted label["type"]) (name_type "Str")
+  let seq = entity $out Seq
+  assert_eq $seq["kind"] import_item
+  assert_eq $seq["type_only"] true
+  assert_eq $seq["module"] std
+  assert_eq $seq["item"] Iterable
+
+# A name's target is the node it refers to, whether declared in the source,
+# imported, or bound by the prelude.
+#[test]
+def type_names_resolve_to_nodes()
+  let out = extract()
+  let source = fixture_source()
+  let place = entity $out place
+  let point = target_of $out $place["params"][0]["type"]
+  assert_eq $point["kind"] Class
+  assert_eq (span_text source point["name"]) Point
+  let returns = place["returns"]
+  assert_eq (target_of(out, returns["base"])["kind"]) ImportModule
+  assert_eq (target_of(out, returns["args"][1]["type"])["kind"]) ImportItem
+  let int = target_of $out $place["params"][1]["type"]["members"][0]
+  assert_eq $int["kind"] PreludeItem
+  assert_eq $int["name"] Int
+  # A binder's name refers to the binder
+  let binder = target_of $out $entity(out, "first")["returns"]
+  assert_eq $binder["kind"] PosBinder
+  assert_eq (span_text source binder["name"]) T
+
+# Function-type and schema items give their quantifier and key; constants give
+# their text without grouping parentheses.
+#[test]
+def function_schema_and_constant_types()
+  let params = entity(extract(), "first")["params"]
+  assert_eq (untargeted params[1]["type"]) $
+    "kind": func
+    "params":
+      - {"kind": "pos", "quant": nil, "type": name_type("Int")}
+      - {"kind": "pos", "quant": "opt", "type": name_type("Str")}
+    "ret": (name_type "T")
+  let options = untargeted $params[2]["type"]
+  assert_eq $options["base"] (name_type "Dict")
+  assert_eq $options["args"].len 1
+  assert_eq $options["args"][0]["kind"] pos
+  assert_eq $options["args"][0]["type"] $
+    "kind": schema
+    "params":
+      - {"kind": "key", "quant": nil, "key": "name", "type": name_type("Str")}
+      - {"kind": "key", "quant": "opt", "key": "port", "type": name_type("Int")}
+      - (
+        {"kind": "key", "quant": "star", "key": "(Str)", "key_type": name_type("Str"), "type": name_type("Str")}
+      )
+  assert_eq (untargeted params[3]["type"]) $
+    "kind": union
+    "members":
+      - {"kind": "const", "text": ":fast:"}
+      - {"kind": "const", "text": "\"slow\""}
+      - {"kind": "const", "text": "1"}
+      - {"kind": "const", "text": "true"}
+
+# Implicit parameters are rows of their own; a function type gives its
+# implicits as `input` and `output`.
+#[test]
+def implicit_parameters()
+  let out = extract()
+  let iter_int = $
+    "kind": app
+    "base": {"kind": "name", "name": "std.Iter", "module": "std"}
+    "args": [pos_arg(name_type("Int"))]
+  let sink_str = $
+    "kind": app
+    "base": {"kind": "name", "name": "std.Sink", "module": "std"}
+    "args": [pos_arg(name_type("Str"))]
+  let transform = entity $out transform
+  let params = untargeted $transform["params"]
+  assert_eq [...params.map(do |p| p["kind"])] ["pos", "input", "output"]
+  assert_eq $params[0]["doc"] "How many to take."
+  assert (!params[1].contains("name"))
+  assert_eq $params[1]["optional"] false
+  assert_eq $params[1]["type"] $iter_int
+  assert_eq $params[2]["type"] $sink_str
+  assert_eq (untargeted transform["returns"]) {"kind": "const", "text": "nil"}
+  let func = entity(out, "with_channels")["params"][0]["type"]
+  assert_eq (untargeted func) $
+    "kind": func
+    "params": [{"kind": "pos", "quant": nil, "type": name_type("Int")}]
+    "input": $iter_int
+    "output": $sink_str
+    "ret": (name_type "Int")
+
+# The type forms the fixture doesn't use.
+#[test]
+def remaining_type_forms()
+  let out = extract_source |-
+    @let Base = {a: Int}
+    pub @let Pair = (Int, name: Str)
+    pub @let Ints = [Int]
+    pub @let Keyed = Record[x: Int]
+    pub @let Wide = {...Base, ...}
+    pub @let Loose = {*, **}
+  let type_of = do |name| untargeted(entity(out, name)["type"])
+  assert_eq (type_of("Pair")) $
+    "kind": parens
+    "params":
+      - {"kind": "pos", "quant": nil, "type": name_type("Int")}
+      - {"kind": "key", "quant": nil, "key": "name", "type": name_type("Str")}
+  assert_eq (type_of("Ints")) {"kind": "array", "elem": name_type("Int")}
+  assert_eq (type_of("Keyed")) $
+    "kind": app
+    "base": (name_type "Record")
+    "args": [{"kind": "key", "name": "x", "type": name_type("Int")}]
+  assert_eq (type_of("Wide")) $
+    "kind": schema
+    "params":
+      - {"kind": "include", "quant": nil, "type": name_type("Base")}
+      - {"kind": "open", "quant": nil}
+  assert_eq (type_of("Loose")) $
+    "kind": schema
+    "params": [{"kind": "any", "quant": "star"}, {"kind": "any", "quant": "star_star"}]
+
+# Schema items and union members give the docs of the comments above them,
+# and only when they have one.
+#[test]
+def schema_items_and_union_members_are_documented()
+  let out = extract_source r|-
+    pub @let Options = $
+      # Remote user.
+      ?user: Str
+      # Spans
+      # lines.
+      - Int
+      mode: $
+        # Fast.
+        | :fast:
+        | :slow:
+  let mode = $
+    "kind": union
+    "members":
+      - {"kind": "const", "text": ":fast:", "doc": "Fast."}
+      - {"kind": "const", "text": ":slow:"}
+  assert_eq (untargeted(entity(out, "Options")["type"])) $
+    "kind": schema
+    "params":
+      - {"kind": "key", "quant": "opt", "key": "user", "type": name_type("Str"), "doc": "Remote user."}
+      - {"kind": "pos", "quant": nil, "type": name_type("Int"), "doc": "Spans\nlines."}
+      - {"kind": "key", "quant": nil, "key": "mode", "type": mode}
+
+# The raw dump describes every node, with node references as indices into
+# `nodes`.
+#[test]
+def raw_nodes_reference_each_other_by_index()
+  let out = extract()
+  let source = fixture_source()
+  let nodes = out["nodes"]
+  assert_eq $nodes[0]["kind"] Root
+  assert_eq $nodes[0]["parent"] nil
+  let greet = nodes.find do |node|
+    (node["kind"] == "Function" && span_text(source, node["name"]) == "greet")
+  assert_eq $greet["parent"] 0
+  assert_eq $greet["is_pub"] true
+  assert_eq (span_text source greet["doc"]) |-
+    # A greeting.
+    #
+    # Spans several lines.
+  for diag = out["diagnostics"]
+    assert (diag.contains("severity") && diag.contains("message") && diag.contains("span"))
+
+# A token naming a declaration refers to its node.
+#[test]
+def tokens_refer_to_nodes()
+  let out = extract "--tokens"
+  let source = fixture_source()
+  # `Point` in the signature of `place`
+  let at = ([...source.split("@Point :limit")][0].len + 1)
+  let token = out["tokens"].find do |token|
+    (token["span"]["start"]["byte_offset"] == at)
+  let target = out["nodes"][token["ref"]]
+  assert_eq $target["kind"] Class
+  assert_eq (span_text source target["name"]) Point
 
 # The names of the entities the fixture exports, in the order reported.
 def names ...flags

@@ -13,6 +13,12 @@ let PRELUDE_ITEMS = Set $
   - getter
   - class
   - static
+  - final
+  - mixable
+
+# The class decorators the type checker designates, which are part of a
+# class's contract and so are recorded on its entity
+let CLASS_DECORATORS = ["final", "mixable"]
 
 # One endpoint of a source span.
 def pos_json pos
@@ -87,9 +93,6 @@ let KIND_NAMES = $
   $compile.MixedRestBinder: "MixedRestBinder"
   $compile.PosRestBinder: "PosRestBinder"
   $compile.KeyRestBinder: "KeyRestBinder"
-
-# Type expression kind name, matching the `compile` class names.
-let TYPE_KIND_NAMES = $
   $compile.NameType: "NameType"
   $compile.ConstType: "ConstType"
   $compile.AppType: "AppType"
@@ -98,20 +101,14 @@ let TYPE_KIND_NAMES = $
   $compile.ArrayType: "ArrayType"
   $compile.UnionType: "UnionType"
   $compile.FuncType: "FuncType"
-
-# Type argument kind name, matching the `compile` class names.
-let TYPE_ARG_KIND_NAMES = $
   $compile.PosTypeArg: "PosTypeArg"
   $compile.KeyTypeArg: "KeyTypeArg"
   $compile.ExpandTypeArg: "ExpandTypeArg"
-
-# Type parameter kind name, matching the `compile` class names.
-let TYPE_PARAM_KIND_NAMES = $
-  $compile.PosTypeParam: "PosTypeParam"
-  $compile.KeyTypeParam: "KeyTypeParam"
-  $compile.IncludeTypeParam: "IncludeTypeParam"
-  $compile.OpenTypeParam: "OpenTypeParam"
-  $compile.AnyTypeParam: "AnyTypeParam"
+  $compile.PosTypeItem: "PosTypeItem"
+  $compile.KeyTypeItem: "KeyTypeItem"
+  $compile.IncludeTypeItem: "IncludeTypeItem"
+  $compile.OpenTypeItem: "OpenTypeItem"
+  $compile.AnyTypeItem: "AnyTypeItem"
 
 # How a type argument is given, as the documentation projection names it.
 let ARG_KINDS = $
@@ -119,13 +116,13 @@ let ARG_KINDS = $
   $compile.KeyTypeArg: key
   $compile.ExpandTypeArg: expand
 
-# How a type parameter is declared, as the documentation projection names it.
-let PARAM_KINDS = $
-  $compile.PosTypeParam: pos
-  $compile.KeyTypeParam: key
-  $compile.IncludeTypeParam: include
-  $compile.OpenTypeParam: open
-  $compile.AnyTypeParam: any
+# How a type item is declared, as the documentation projection names it.
+let ITEM_KINDS = $
+  $compile.PosTypeItem: pos
+  $compile.KeyTypeItem: key
+  $compile.IncludeTypeItem: include
+  $compile.OpenTypeItem: open
+  $compile.AnyTypeItem: any
 
 # How many of its element an item admits, as the documentation projection names
 # it.
@@ -163,60 +160,6 @@ def const_type value
   else
     "Int"
 
-# A type expression, with the node each name refers to as a `nodes` index.
-def type_expr_json id_to_index expr
-  $
-    kind: (TYPE_KIND_NAMES.get (type expr))
-    span: (span_json expr.span)
-    if type(expr, compile.NameType)
-      head: (span_json expr.head)
-      target: (node_ref id_to_index expr.target)
-    if type(expr, compile.ConstType)
-      type: (const_type expr.value)
-      value: $expr.value
-    if type(expr, compile.AppType)
-      base: (type_expr_json id_to_index expr.base)
-    if type(expr, compile.AppType)
-      args: [...expr.args.map do |arg| (type_arg_json id_to_index arg)]
-    if (
-      type(expr, compile.SchemaType) ||
-      type(expr, compile.ParensType) ||
-      type(expr, compile.FuncType)
-    )
-      params: [...expr.params.map do |param| (type_param_json id_to_index param)]
-    if type(expr, compile.ArrayType)
-      elem: (type_expr_json id_to_index expr.elem)
-    if type(expr, compile.UnionType)
-      members: [...expr.members.map do |member| (type_expr_json id_to_index member)]
-    if (type(expr, compile.FuncType) && expr.input != nil)
-      input: (type_expr_json id_to_index expr.input)
-    if (type(expr, compile.FuncType) && expr.output != nil)
-      output: (type_expr_json id_to_index expr.output)
-    if type(expr, compile.FuncType)
-      ret: (type_expr_json id_to_index expr.ret)
-
-# A type argument in the `[]` of an application.
-def type_arg_json id_to_index arg
-  $
-    kind: (TYPE_ARG_KIND_NAMES.get (type arg))
-    span: (span_json arg.span)
-    if type(arg, compile.KeyTypeArg)
-      name: (span_json arg.name)
-    type: (type_expr_json id_to_index arg.ty)
-
-# A parameter of a schema or function type.
-def type_param_json id_to_index param
-  $
-    kind: (TYPE_PARAM_KIND_NAMES.get (type param))
-    span: (span_json param.span)
-    quant: (QUANTS.get param.quant)
-    if type(param, compile.KeyTypeParam)
-      key: (span_json param.key)
-    if (type(param, compile.KeyTypeParam) && param.key_ty != nil)
-      key_type: (type_expr_json id_to_index param.key_ty)
-    if (!type(param, compile.OpenTypeParam) && !type(param, compile.AnyTypeParam))
-      type: (type_expr_json id_to_index param.ty)
-
 # Where a node starts, for ordering. A prelude node has no span, and comes first.
 def start_offset node
   if (node.span == nil)
@@ -231,16 +174,29 @@ def node_ref id_to_index id
   else
     id_to_index.get $id default: nil
 
-# One `nodes` entry. Fields a node's concrete kind doesn't expose (see the
-# conditional getter registration in `NodeObject::build`, dolang-ext-compile)
-# are absent from unpacking, so each is bound with a `nil` default here rather
-# than tracked separately per kind.
-def node_default_json id_to_index value
-  if type(value, compile.TypeExpr)
-    type_expr_json $id_to_index $value
+# A node as its `nodes` index, or `nil`.
+def node_index id_to_index node
+  if (node == nil)
+    nil
+  else
+    node_ref $id_to_index $node.id
+
+# Nodes as their `nodes` indices.
+def node_indices id_to_index nodes
+  [...nodes.map do |node| (node_index id_to_index node)]
+
+# A field holding a span, or a node as its `nodes` index.
+def field_json id_to_index value
+  if type(value, compile.Node)
+    node_index $id_to_index $value
   else
     span_json $value
 
+# One `nodes` entry. Fields a node's concrete kind doesn't expose (see the
+# conditional getter registration in `NodeObject::build`, dolang-ext-compile)
+# are absent from unpacking, so each is bound with a `nil` default here rather
+# than tracked separately per kind. A field holding a node gives its `nodes`
+# index.
 def node_json id_to_index node
   bind node
     :name = nil
@@ -254,6 +210,17 @@ def node_json id_to_index node
     :type_only = nil
     :type_ellipsis = nil
     :expr = nil
+    :head = nil
+    :base = nil
+    :args = nil
+    :items = nil
+    :elem = nil
+    :members = nil
+    :input = nil
+    :output = nil
+    :ret = nil
+    :ty = nil
+    :key_ty = nil
     ...
   $
     kind: (KIND_NAMES.get (type node))
@@ -265,9 +232,9 @@ def node_json id_to_index node
     if (is_pub != nil)
       is_pub: $is_pub
     if (default != nil)
-      default: (node_default_json id_to_index default)
+      default: (field_json id_to_index default)
     if (bound != nil)
-      bound: (type_expr_json id_to_index bound)
+      bound: (field_json id_to_index bound)
     if (key != nil)
       key: (span_json(key))
     if (module != nil)
@@ -281,7 +248,34 @@ def node_json id_to_index node
     if (type_only != nil)
       type_only: $type_only
     if (expr != nil)
-      expr: (type_expr_json id_to_index expr)
+      expr: (node_index id_to_index expr)
+    if (head != nil)
+      head: (span_json head)
+    if type(node, compile.ConstType)
+      type: (const_type node.value)
+      value: $node.value
+    if (base != nil)
+      base: (node_index id_to_index base)
+    if (args != nil)
+      args: (node_indices id_to_index args)
+    if type(node, compile.TypeItem)
+      quant: (QUANTS.get node.quant)
+    if (items != nil)
+      items: (node_indices id_to_index items)
+    if (elem != nil)
+      elem: (node_index id_to_index elem)
+    if (members != nil)
+      members: (node_indices id_to_index members)
+    if (input != nil)
+      input: (node_index id_to_index input)
+    if (output != nil)
+      output: (node_index id_to_index output)
+    if (ret != nil)
+      ret: (node_index id_to_index ret)
+    if (ty != nil)
+      ty: (node_index id_to_index ty)
+    if (key_ty != nil)
+      key_ty: (node_index id_to_index key_ty)
 
 # One `tokens` entry.
 def token_json id_to_index token
@@ -324,30 +318,22 @@ def diagnostic_json diag
     notes: [...diag.notes.map(note_json)]
     patches: [...diag.patches.map(patch_json)]
 
-# Walks `unit.nodes()` once, building the `nodes` JSON array alongside the
-# NodeId -> array-index map (used to resolve `parent`/`target` node
-# references and `tokens[].ref`) and a parent -> children map, both reused by
-# the `--doc` cooked projection so it never re-walks the tree.
+# Walks `unit.nodes()`, building the `nodes` JSON array alongside the
+# NodeId -> array-index map (used to resolve node references and
+# `tokens[].ref`), reused by the `--doc` cooked projection. Every index is
+# assigned before any entry is built, since a node may refer to a later one.
 class Index
-  field id_to_index nodes_json children by_id
+  field id_to_index nodes_json by_id
 
   def (init) self unit
     self.#id_to_index = {}
-    self.#nodes_json = []
-    self.#children = {}
     self.#by_id = {}
+    let nodes = []
     for id node = unit.nodes()
-      self.#id_to_index[id] = self.#nodes_json.len
+      self.#id_to_index[id] = nodes.len
       self.#by_id[id] = node
-      self.#nodes_json.push (node_json self.#id_to_index node)
-      let parent = node.parent
-      if (parent != nil)
-        if !(self.#children.contains parent)
-          self.#children[parent] = []
-        self.#children[parent].push $id
-    let by_id = self.#by_id
-    for group = self.#children.values()
-      group.sort key: (do |child| start_offset(by_id[child]))
+      nodes.push $node
+    self.#nodes_json = [...nodes.map do |node| (node_json self.#id_to_index node)]
 
   pub def nodes_json self
     self.#nodes_json
@@ -361,33 +347,12 @@ class Index
       return nil
     self.#by_id.get $id default: nil
 
-  # The root [`compile.Root`](compile.Root) node ID.
-  pub def root self
-    let id _node = self.#by_id.find do |pair| type $pair[1] $compile.Root
-    id
-
-  # The IDs of the nodes belonging to one declaration, in source order.
-  pub def own_ids self id
-    self.#children.get $id default: []
-
-  # The nodes belonging to one declaration, in source order.
-  pub def own self id
-    let by_id = self.#by_id
-    [...self.own_ids(id).map(do |child| by_id[child])]
-
 # Whether one of a declaration's own nodes is a decorator resolving to `target`.
 def decorated own target
   if (target == nil)
     return false
   own.any do |child|
     (type(child, compile.Decorator) && child.target == target)
-
-# The prelude bindings whose presence as a decorator means something here.
-def prelude_items unit
-  $
-    for id node = unit.nodes()
-      if (type node compile.PreludeItem && node.module == "std" && PRELUDE_ITEMS.contains node.item)
-        $node.item: $id
 
 # One comment line, with its terminator, indentation and marker removed.
 def doc_line line
@@ -396,8 +361,8 @@ def doc_line line
 # The documented declarations of one source file, described from an
 # already-built [`Index`](#Index) rather than re-walking `unit.nodes()`.
 class Document
-  field src module all index
-  field getter class_target static_target
+  field src module all index root
+  field getter class_target static_target class_decorators
   field members entities
 
   def (init) self src module all index
@@ -409,17 +374,20 @@ class Document
   # The whole cooked-documentation projection, in the shape the handler and
   # the LSP doc index consume.
   pub def result self unit path
-    let decorators = prelude_items $unit
+    let decorators = self.#prelude_items(unit)
     self.#getter = decorators.get "getter" default: nil
     self.#class_target = decorators.get "class" default: nil
     self.#static_target = decorators.get "static" default: nil
+    self.#class_decorators = [...CLASS_DECORATORS.filter(do |name| decorators.contains name).map(do |name| [name, decorators[name]])]
     self.#members = {}
     self.#entities = []
+    let root = unit.root
+    self.#root = root.id
     self.#walk $unit
     $
       source: $path
       module: $self.#module
-      doc: (self.#doc_of(unit.node(self.#index.root())))
+      doc: (self.#doc_of(root))
       entities: $self.#entities
 
   def walk self unit
@@ -439,6 +407,21 @@ class Document
       if let handler = dispatch.get (type node) default: nil
         handler(id, node)
 
+  # The std bindings whose presence as a decorator means something here: the
+  # prelude's, or in std itself, its own top-level declarations.
+  def prelude_items self unit
+    let own = (self.#module == "std")
+    let root = unit.root.id
+    let items = {}
+    for id node = unit.nodes()
+      let name = if (type node compile.PreludeItem && node.module == "std")
+        node.item
+      else if (own && node.parent == root && (type(node, compile.Function) || type(node, compile.Bind)))
+        self.#text(node.name)
+      if PRELUDE_ITEMS.contains(name)
+        items[name] = id
+    items
+
   def text self span
     self.#src[span.start.byte_offset..span.end.byte_offset]
 
@@ -447,8 +430,11 @@ class Document
       return nil
     ("\n".join $ self.#text(node.doc).split("\n").map(doc_line)).trim()
 
+  # The nodes belonging to one declaration, in source order.
   def own self id
-    self.#index.own $id
+    let children = self.#index.node(id).children
+    children.sort key: $start_offset
+    children
 
   def included self is_pub
     (is_pub || self.#all)
@@ -466,8 +452,7 @@ class Document
   # it is an anonymous rest.
   def params self id
     let result = []
-    for child_id = self.#index.own_ids(id)
-      let child = self.#index.node $child_id
+    for child = self.#own(id)
       if !type(child, compile.Param)
         continue
       let name = if type(child, compile.KeyParam)
@@ -475,7 +460,7 @@ class Document
       else
         child.name
       let implicit = type(child, compile.ImplicitParam)
-      let ty = self.#type_of $child_id
+      let ty = self.#type_of $child.id
       let param = $
         kind: (DECL_KINDS.get (type child))
         if (name != nil)
@@ -507,9 +492,9 @@ class Document
 
   # The annotation on a method's `self`, as a tree, or `nil`.
   def self_type self id
-    for child_id = self.#index.own_ids(id)
-      if type(self.#index.node(child_id), compile.SelfParam)
-        return self.#type_of $child_id
+    for child = self.#own(id)
+      if type(child, compile.SelfParam)
+        return self.#type_of $child.id
     nil
 
   # The type describing a node, as a tree, or `nil`.
@@ -536,11 +521,11 @@ class Document
     else if type(expr, compile.SchemaType)
       $
         kind: "schema"
-        params: (self.#type_params(expr.params))
+        params: (self.#type_items(expr.items))
     else if type(expr, compile.ParensType)
       $
         kind: "parens"
-        params: (self.#type_params(expr.params))
+        params: (self.#type_items(expr.items))
     else if type(expr, compile.ArrayType)
       $
         kind: "array"
@@ -548,14 +533,17 @@ class Document
     else if type(expr, compile.UnionType)
       let members = []
       for member = expr.members
-        members.push $self.#type_tree(member)
+        let tree = self.#type_tree $member
+        if (member.doc != nil)
+          tree[:doc:] = self.#doc_of(member)
+        members.push $tree
       $
         kind: "union"
         members: $members
     else
       $
         kind: "func"
-        params: (self.#type_params(expr.params))
+        params: (self.#type_items(expr.items))
         if (expr.input != nil)
           input: (self.#type_tree(expr.input))
         if (expr.output != nil)
@@ -593,18 +581,22 @@ class Document
         type: (self.#type_tree(arg.ty))
     result
 
-  def type_params self params
+  # A list of type items, which the projection calls parameters. An item, like
+  # a union member, gives its doc only when it has one.
+  def type_items self items
     let result = []
-    for param = params
+    for item = items
       result.push $
-        kind: (PARAM_KINDS.get (type param))
-        quant: (QUANTS.get param.quant)
-        if type(param, compile.KeyTypeParam)
-          key: (self.#text(param.key))
-        if (type(param, compile.KeyTypeParam) && param.key_ty != nil)
-          key_type: (self.#type_tree(param.key_ty))
-        if (!type(param, compile.OpenTypeParam) && !type(param, compile.AnyTypeParam))
-          type: (self.#type_tree(param.ty))
+        kind: (ITEM_KINDS.get (type item))
+        quant: (QUANTS.get item.quant)
+        if type(item, compile.KeyTypeItem)
+          key: (self.#text(item.key))
+        if (type(item, compile.KeyTypeItem) && item.key_ty != nil)
+          key_type: (self.#type_tree(item.key_ty))
+        if (!type(item, compile.OpenTypeItem) && !type(item, compile.AnyTypeItem))
+          type: (self.#type_tree(item.ty))
+        if (item.doc != nil)
+          doc: (self.#doc_of(item))
     result
 
   # A class's supertypes, in source order, as type trees. A type-only one is
@@ -628,6 +620,8 @@ class Document
       return
     let list = []
     let binders = self.#binders(id)
+    let own = self.#own(id)
+    let decorators = [...self.#class_decorators.filter(do |entry| decorated(own, entry[1])).map(do |entry| entry[0])]
     self.#members[id] = list
     self.#entities.push $
       kind: "class"
@@ -635,6 +629,8 @@ class Document
       pub: $node.is_pub
       if node.type_only
         protocol: true
+      if (decorators.len > 0)
+        decorators: $decorators
       span: (span_json(node.name))
       doc: (self.#doc_of(node))
       if (binders.len > 0)
@@ -662,7 +658,7 @@ class Document
         returns: $returns
 
   def value_entry self _id node
-    if (node.parent != self.#index.root() || !self.#included(node.is_pub))
+    if (node.parent != self.#root || !self.#included(node.is_pub))
       return
     self.#entities.push $
       kind: "value"
@@ -672,7 +668,7 @@ class Document
       doc: (self.#doc_of(node))
 
   def alias_entry self id node
-    if (node.parent != self.#index.root() || !self.#included(node.is_pub))
+    if (node.parent != self.#root || !self.#included(node.is_pub))
       return
     let binders = self.#binders(id)
     self.#entities.push $
