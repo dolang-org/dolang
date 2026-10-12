@@ -119,6 +119,12 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             Output::set(strand, out, class);
             Ok(())
         })
+        .function("mixable", async move |strand, args, out| {
+            let ([class], []) = unpack!(strand, args, 1, 0)?;
+            class::make_mixable(strand, &class)?;
+            Output::set(strand, out, class);
+            Ok(())
+        })
         .value("Module", &module)
         .value("Record", &record)
         .value("Struct", &structure)

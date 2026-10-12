@@ -4,6 +4,7 @@
 
 import std
 
+#[mixable]
 pub class Box
   pub field side @ Int = 0
 
@@ -35,7 +36,7 @@ pub def narrowed v @ Value
 pub def dicts
   v @ Value
   d @ (std.BaseDict[{a: Int}] | nil)
-  e @ (std.BaseDict[{a: Int}] | Array[Value])
+  e @ (std.BaseDict[{a: Int}] | Box)
 do
   if type(v, std.BaseDict)
     let _ = v

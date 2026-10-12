@@ -553,6 +553,34 @@ A protocol may name a runtime class as a supertype, but claiming the protocol
 doesn't inherit it: a class claiming the protocol must inherit that class
 itself.
 
+### Disjoint Classes
+
+Every class is disjoint unless it is decorated with the prelude's
+[`mixable`](std.mixable), and `Value` is disjoint. A class can't inherit from
+two disjoint classes neither of which inherits from the other; the type checker
+reports one that does. A mixable class takes the place of its nearest disjoint
+superclass, so subclasses of unrelated classes may share it:
+
+```
+#[mixable]
+class Named
+  pub field name = nil
+
+class Shape
+class Image
+class Square: Shape Named
+class Icon: Image Named
+
+class Tile: Square Image   # error: unrelated disjoint classes `Square` and `Image`
+```
+
+A diamond is allowed when every class in its middle is mixable. Classes whose
+nearest disjoint superclasses are unrelated have no instances in common, so a
+type test for one drops the other. `Iterable`, `Iter`, `Sinkable`, `Sink`,
+`Func`, and the error kinds below [`RuntimeError`](std.RuntimeError) are
+mixable. Only runtime supertypes count, and protocols are never disjoint. The
+runtime doesn't enforce the rule.
+
 ## Type Syntax
 
 An annotation or return type is a compact type expression which admits only
@@ -638,7 +666,7 @@ class inherits from more than one generic member's class, such as
 a generic class together without fitting any one of them: every
 `Tuple[Int | Str]` is a `Tuple[Int]` or a `Tuple[Str]`. A type test drops a
 [final](./classes.md#final-classes) member that doesn't inherit from the tested
-class.
+class, and a member [disjoint](./types.md#disjoint-classes) from it.
 
 ### Collections
 

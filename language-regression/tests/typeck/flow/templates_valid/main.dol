@@ -2,7 +2,7 @@ import std:
   - Fmt
   - FmtValue
   - @Seq
-  - FmtParam
+  - @FmtParam
 import sqlite:
   - @Connection
   - @Statement
@@ -17,12 +17,8 @@ pub def template n @ Int
   let _ = segments
   #       ^~~~~~~~: flow [std.FmtSegment[std.Int]]
   for part = segments
-    # A subclass of `Str` may also be a `FmtValue` of any argument
-    if let FmtParam(_) = part
-      nil
-    else if let Str(_) = part
-      nil
-    else if let FmtValue(bound) = part
+    # Segment classes are disjoint bases, so a test drops the others
+    if let FmtValue(bound) = part
       let _ = bound
       #       ^~~~~: flow std.FmtValue[std.Int]
       let _ = bound.value

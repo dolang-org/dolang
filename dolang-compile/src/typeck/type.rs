@@ -762,6 +762,10 @@ pub(crate) struct DeclSource {
     /// Whether it is a class the runtime forbids subclassing, so that it has
     /// no subclasses besides those it is declared with
     pub(crate) is_final: bool,
+    /// Whether it is a class that may be combined with unrelated classes, so
+    /// that it takes the position of its nearest disjoint ancestor (see
+    /// [`Database::disjoint_ancestor`])
+    pub(crate) is_mixable: bool,
 }
 
 /// A nominal declaration's supertype
@@ -2661,8 +2665,10 @@ impl Database {
     }
 }
 
+mod disjoint;
 mod render;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use disjoint::NoAncestor;
 pub(crate) use render::{Collection, Names, Shown, Style};

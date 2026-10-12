@@ -1,0 +1,112 @@
+# The builtin scalar and collection classes are disjoint, so a class test drops
+# the other members of a union of them. The iteration classes, `Func` and the
+# error kinds below `RuntimeError` are mixable.
+
+import std:
+  - IterStop
+  - Num
+  - RuntimeError
+  - ValueError
+  - FmtValue
+  - FmtParam
+  - StrBuf
+import json:
+  - @Data
+import url:
+  - Url
+import fs:
+  - File
+  - Path
+import security.windows:
+  - Sid
+import uuid:
+  - Uuid
+
+pub def decoded d @ Data
+  if let Dict(o) = d
+    let _ = o
+    #       ^: flow std.Dict[std.Str, json.Data]
+  else if let Array(a) = d
+    let _ = a
+    #       ^: flow [json.Data]
+  else if let Int(n) = d
+    let _ = n
+    #       ^: flow std.Int
+  else if let Num(n) = d
+    let _ = n
+    #       ^: flow std.Float
+
+pub def text v @ (Str | Bin | Tuple[Int, Int] | Range[Int])
+  if let Bin(b) = v
+    let _ = b
+    #       ^: flow std.Bin
+  else if let Tuple(t) = v
+    let _ = t
+    #       ^: flow (std.Int, std.Int)
+  else
+    let _ = v
+    #       ^: flow std.Range[std.Int] | std.Str
+
+pub def segment s @ (Str | FmtValue[Int] | FmtParam)
+  if let FmtParam(p) = s
+    let _ = p
+    #       ^: flow std.FmtParam
+  else if let FmtValue(v) = s
+    let _ = v
+    #       ^: flow std.FmtValue[std.Int]
+
+pub def buffers v @ (Str | StrBuf | BinBuf)
+  if let StrBuf(b) = v
+    let _ = b
+    #       ^: flow std.StrBuf
+
+pub def collections v @ (Set[Int] | Array[Int] | Dict[Str, Int])
+  if let Set(s) = v
+    let _ = s
+    #       ^: flow std.Set[std.Int]
+
+pub def locations v @ (Str | Path | Url)
+  if let Path(p) = v
+    let _ = p
+    #       ^: flow fs.Path
+  else if let Url(u) = v
+    let _ = u
+    #       ^: flow url.Url
+
+pub def handles v @ (Str | Path | File)
+  if let File(f) = v
+    let _ = f
+    #       ^: flow fs.File
+
+pub def streams v @ (Str | Iter[Int])
+  if let Iter(i) = v
+    let _ = i
+    #       ^: flow std.Iter[Unknown] | std.Iter[std.Int]
+
+pub def principals v @ (Str | Int | Sid | Uuid)
+  if let Sid(s) = v
+    let _ = s
+    #       ^: flow security.windows.Sid
+  else if let Uuid(u) = v
+    let _ = u
+    #       ^: flow uuid.Uuid
+
+# A class can't be two builtins at once, but may refine one
+pub class Both: Int Str
+# error: `Both` inherits from unrelated disjoint classes `Int` and `Str`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Both: Int Str
+#    |           ^^^^
+pub class Wide: Int Num
+pub class Quantity: Float
+
+# A module's error may also be one of the error kinds, but not a stop signal
+pub class Error: RuntimeError
+pub class Invalid: Error ValueError
+pub class Stopped: IterStop ValueError
+# error: `Stopped` inherits from unrelated disjoint classes `IterStop` and `RuntimeError`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Stopped: IterStop ValueError
+#    |           ^^^^^^^

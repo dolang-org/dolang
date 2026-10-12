@@ -4,10 +4,12 @@
 pub class Num
 pub class Int: Num
 
+#[mixable]
 pub class Left
   pub def id _self -> Int
     ...
 
+#[mixable]
 pub class Right
   pub def id _self -> Num
     ...

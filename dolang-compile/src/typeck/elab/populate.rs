@@ -1178,6 +1178,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                     span: sig_span(tables, key.0, key.1),
                 },
                 is_final: false,
+                is_mixable: false,
             },
             ty: self.db.intern(Type::Quantified {
                 binders: binders.into(),
@@ -1202,7 +1203,10 @@ impl<'t, 'u> Populate<'t, 'u> {
             DeclNode::Class(class) => {
                 let body = self.db.intern(Type::Decl(id));
                 let mut declaration = self.declaration((id, 0), decl.kind, Kind::Type, body);
-                declaration.source.is_final = sig::decorated_final(tables, decl.unit, class);
+                declaration.source.is_final =
+                    sig::decorated(tables, decl.unit, class, Designated::Final);
+                declaration.source.is_mixable =
+                    sig::decorated(tables, decl.unit, class, Designated::Mixable);
                 let mut supertypes = Vec::new();
                 for super_ref in &class.supers {
                     let head = super_ref.head.span;

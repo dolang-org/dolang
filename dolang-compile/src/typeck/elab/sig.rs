@@ -306,14 +306,21 @@ fn decorator_designation(
     }
 }
 
-/// Whether a class's decorators are all std's `final`, which returns the class
-/// it is given after forbidding subclasses of it. Without decorators, a class
-/// is not final.
-pub(crate) fn decorated_final(tables: &Tables<'_>, unit: UnitId, class: &Class) -> bool {
-    !class.decorators.is_empty()
-        && (class.decorators.iter()).all(|decorator| {
-            decorator_designation(tables, unit, decorator) == Some(Designated::Final)
-        })
+/// Whether a class's decorators are all std's `final` and `mixable`, each of
+/// which returns the class it is given after marking it, and `mark` is one of
+/// them. Without decorators, a class has no mark.
+pub(crate) fn decorated(
+    tables: &Tables<'_>,
+    unit: UnitId,
+    class: &Class,
+    mark: Designated,
+) -> bool {
+    let designations = (class.decorators.iter())
+        .map(|decorator| decorator_designation(tables, unit, decorator))
+        .collect::<Vec<_>>();
+    designations.contains(&Some(mark))
+        && (designations.iter())
+            .all(|designation| matches!(designation, Some(Designated::Final | Designated::Mixable)))
 }
 
 /// Designate a top-level declaration of `std` or `strand` that the checker treats
@@ -404,6 +411,7 @@ pub(super) fn designation(tables: &Tables<'_>, decl: DeclId) -> Option<(Designat
         ("std", "getter") => (Designated::Getter, DeclKind::Function),
         ("std", "setter") => (Designated::Setter, DeclKind::Function),
         ("std", "final") => (Designated::Final, DeclKind::Function),
+        ("std", "mixable") => (Designated::Mixable, DeclKind::Function),
         _ => return None,
     })
 }

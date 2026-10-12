@@ -15,6 +15,7 @@ pub class Leaf
   pub def bump _self
     Leaf.#count = (Leaf.#count + 1)
 
+#[mixable]
 pub class Open
 
 pub def bools b @ Bool

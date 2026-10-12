@@ -162,6 +162,7 @@ impl Tables<'_> {
                     Designated::Getter => "getter".to_owned(),
                     Designated::Setter => "setter".to_owned(),
                     Designated::Final => "final".to_owned(),
+                    Designated::Mixable => "mixable".to_owned(),
                     Designated::Fmt => "fmt".to_owned(),
                     Designated::FmtValue => "fmt value".to_owned(),
                     Designated::FmtParam => "fmt param".to_owned(),

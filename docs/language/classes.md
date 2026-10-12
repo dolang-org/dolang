@@ -268,8 +268,9 @@ reassigned, but their fields can be written. Aliases and other objects cannot
 be used with `.#`, even inside the same class. Nested functions may access
 private members through the captured receiver. A decorated class's name grants
 no private access, since the decorator may replace the class, unless every
-decorator is the prelude's [`final`](#final-classes), which returns the class
-it is given.
+decorator is the prelude's [`final`](#final-classes) or
+[`mixable`](./types.md#disjoint-classes), which return the class they are
+given.
 
 Fields declared without `pub` are private. Within the class, private fields are
 accessed using the `.#field` syntax:

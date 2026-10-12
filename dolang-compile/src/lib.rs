@@ -60,8 +60,8 @@ use ast::Res;
 const STD_PRELUDE: &[&str] = &[
     "Array", "Bin", "BinBuf", "Bool", "Dict", "Float", "Func", "Int", "Iter", "Iterable", "Range",
     "Record", "Set", "Sink", "Sinkable", "Str", "StrBuf", "Struct", "Sym", "Tuple", "Type",
-    "Value", "array", "bool", "class", "dbg", "dict", "final", "float", "getter", "int", "record",
-    "setter", "static", "str", "struct", "sym", "tuple", "type",
+    "Value", "array", "bool", "class", "dbg", "dict", "final", "float", "getter", "int", "mixable",
+    "record", "setter", "static", "str", "struct", "sym", "tuple", "type",
 ];
 
 #[derive(Debug)]

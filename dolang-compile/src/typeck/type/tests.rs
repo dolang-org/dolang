@@ -85,6 +85,7 @@ fn source(db: &mut Database, kind: DeclKind, name: &str) -> DeclSource {
             span: (0u32..10).into(),
         },
         is_final: false,
+        is_mixable: false,
     }
 }
 
@@ -270,6 +271,7 @@ fn symbols_are_interned_independently_of_units() {
                 span: (2u32..7).into(),
             },
             is_final: false,
+            is_mixable: false,
         };
         db.populate(decl, definition(decl_source.clone(), ty));
         types.push((decl, ty));
