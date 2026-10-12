@@ -15,7 +15,7 @@
 
 use super::{BadReceiver, DeclNode, Diag, ParamTy, Slot, SpecializedReceiver, Tables, UnitDiag};
 use crate::typeck::{
-    solver::{Reach, Solver},
+    solver::{Gas, Reach, Solver},
     r#type::{Binder, Database, DeclId, Element, Scope, Type, TypeId},
 };
 
@@ -114,7 +114,8 @@ enum Walk {
 }
 
 fn walk(db: &Database, method: DeclId, receiver: TypeId, class: DeclId) -> Walk {
-    let mut solver = Solver::new(db);
+    let gas = Gas::default();
+    let mut solver = Solver::new(db, &gas);
     let environment = solver.rigid_environment(method);
     match solver.reach(solver.view(receiver, environment), class) {
         Ok(Reach::Reached(args)) => args

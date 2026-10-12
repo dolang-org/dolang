@@ -341,15 +341,15 @@ impl Walk {
     }
 }
 
-#[derive(Clone)]
-pub(crate) struct Obligation {
-    pub(crate) relation: Relation,
-    pub(crate) dependencies: MonoVec<Dependency>,
+/// What a solver records of an obligation's processing. The relation is the
+/// obligation's identity, kept apart.
+struct ObligationLayer {
     state: Cell<State>,
     queued: Cell<bool>,
     // Child obligation IDs and labeled steps used as current proof premises.
     // Replaced on reprocessing; `dependencies` retains historical edges for diagnostics.
     active: RefCell<Vec<(ObligationId, Step)>>,
+    dependencies: MonoVec<Dependency>,
 }
 
 #[derive(Clone, Debug)]
@@ -390,7 +390,7 @@ pub(crate) struct Outcome {
     pub(crate) diagnostics: Vec<Diagnostic>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct Root {
     obligation: ObligationId,
     #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
@@ -404,12 +404,18 @@ struct Root {
 /// variable's committed assignment.
 type BoundSet = MonoHashMap<Term, MonoHashSet<ObligationId, FxBuildHasher>, FxBuildHasher>;
 
-/// Solver-local resolution and wake-up state, independent of accumulated bounds.
-#[derive(Clone)]
-struct Inference {
+/// What an inference variable is, fixed when it's created
+struct Variable {
     kind: Kind,
     /// For a schema variable, the lanes its items can occupy
     lanes: Rest,
+    /// The scope it was created in, which bounds the skolems it may take
+    scope: ScopeId,
+}
+
+/// A variable's resolution, independent of accumulated bounds
+#[derive(Clone, Default)]
+struct VariableState {
     /// The solution: a closed type, or a term holding skolems of the scopes it
     /// sees. Either way it holds no unsolved variable, so assignments can't cycle.
     assignment: Cell<Option<Term>>,
@@ -420,11 +426,16 @@ struct Inference {
     /// The default of the binder it instantiates, which it takes when nothing
     /// bounds it from below
     fallback: Cell<Option<Term>>,
+}
+
+/// What a solver records of a variable: its resolution, and what it adds to
+/// the sets that only grow
+#[derive(Default)]
+struct VariableLayer {
+    state: VariableState,
+    bounds: BoundSets,
     support: MonoHashSet<ObligationId, FxBuildHasher>,
     subscribers: MonoHashSet<ObligationId, FxBuildHasher>,
-    dirty: Cell<bool>,
-    /// The scope it was created in, which bounds the skolems it may take
-    scope: ScopeId,
 }
 
 /// A rigid or skolem, known only by its bounds
@@ -436,7 +447,6 @@ enum Abstract {
 
 /// A binder of a quantified type on the right, held abstract while its body is
 /// related (see [`Solver::skolemization`])
-#[derive(Clone)]
 struct Skolem {
     kind: Kind,
     binding: Binding,
@@ -452,45 +462,57 @@ struct Skolem {
 
 /// A skolemization's extent: its skolems are visible to variables of this scope
 /// and the scopes inside it. The root scope has no skolems.
-#[derive(Clone)]
 struct Scope {
     parent: ScopeId,
     depth: usize,
 }
 
-/// Accumulated constraints on one inference variable `V`.
-#[derive(Default, Clone)]
-pub(crate) struct Bounds {
+/// Accumulated constraints on one inference variable `V`, as one solver
+/// records them
+#[derive(Default)]
+struct BoundSets {
     /// Each key `L` imposes `L <: V`.
     lower: BoundSet,
     /// Each key `U` imposes `V <: U`.
     upper: BoundSet,
 }
 
+impl BoundSets {
+    fn side(&self, lower: bool) -> &BoundSet {
+        if lower { &self.lower } else { &self.upper }
+    }
+}
+
+/// A variable's bounds, in the order they were first imposed
+#[derive(Default)]
+pub(crate) struct Bounds {
+    lower: Vec<Term>,
+    upper: Vec<Term>,
+}
+
 impl Bounds {
     pub(crate) fn lower(&self) -> impl Iterator<Item = Term> + '_ {
-        self.lower.iter().map(|(term, _)| *term)
+        self.lower.iter().copied()
     }
 
     pub(crate) fn upper(&self) -> impl Iterator<Item = Term> + '_ {
-        self.upper.iter().map(|(term, _)| *term)
+        self.upper.iter().copied()
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Limits {
-    pub(crate) work: usize,
-    pub(crate) depth: usize,
+/// Where each table's own entries begin: the IDs below are the parent's
+/// (#900). A solver that isn't nested owns them all.
+#[derive(Clone, Copy, Default)]
+struct Bases {
+    variables: usize,
+    obligations: usize,
+    environments: usize,
+    skolems: usize,
+    scopes: usize,
 }
 
-impl Default for Limits {
-    fn default() -> Self {
-        Self {
-            work: 100_000,
-            depth: 256,
-        }
-    }
-}
+/// How deeply a solver's traversals may recurse, unless a caller says otherwise
+const DEPTH: usize = 256;
 
 /// A nominal declaration with interpreted arguments and the environment used
 /// to expose its declared supertypes. Declaration identity remains opaque.
@@ -522,15 +544,25 @@ enum Head {
     Meta(Nominal),
 }
 
-/// All solver IDs are local to this solver, just as type IDs are database-local.
-/// A clone is a fork: a trial on it can't affect the original (see
+/// All solver IDs are local to this solver and those nested in it, just as type
+/// IDs are database-local. A solver nested in another sees its parent's tables
+/// and records its own changes, so nothing solved on it reaches the parent (see
 /// [`Solver::trial`]).
-#[derive(Clone)]
 pub(crate) struct Solver<'db> {
     db: &'db Database,
+    /// Where each table's own entries begin. Every table is reached through
+    /// accessors that account for it.
+    bases: Bases,
     environments: intern::Table<Environment, EnvironmentId>,
-    bounds: MonoVec<Bounds>,
-    inference: MonoVec<Inference>,
+    variables: MonoVec<Variable>,
+    layers: MonoVec<VariableLayer>,
+    /// What it records of its parent's variables, by ID
+    overlays: MonoHashMap<usize, VariableLayer, FxBuildHasher>,
+    /// The first variable it sees: a closed solver sees only its own
+    first_variable: usize,
+    /// The variables whose bounds may have changed since solving last tried
+    /// to assign them, by ID from the first it sees
+    dirty: RefCell<Vec<bool>>,
     /// The environment each quantifier instantiation created, by the obligation
     /// that instantiated it, so reprocessing reuses its variables
     instantiations: RefCell<FxHashMap<ObligationId, EnvironmentId>>,
@@ -541,13 +573,17 @@ pub(crate) struct Solver<'db> {
     scopes: MonoVec<Scope>,
     // Intern only the relation; processing state and diagnostic edges do not
     // participate in identity and can grow while existing nodes are borrowed.
-    obligations: MonoVec<Obligation>,
+    relations: MonoVec<Relation>,
+    obligations: MonoVec<ObligationLayer>,
+    /// What it records of its parent's obligations' processing, by ID
+    obligation_overlays: MonoHashMap<usize, ObligationLayer, FxBuildHasher>,
     obligation_index: MonoHashMap<Relation, ObligationId, FxBuildHasher>,
     queue: MonoVec<ObligationId>,
     roots: Vec<Root>,
-    limits: Limits,
-    work: Cell<usize>,
-    exhausted: Cell<bool>,
+    /// The work budget, shared with the solvers nested in this one
+    gas: &'db Gas,
+    /// How deeply traversals may recurse
+    depth: usize,
     /// The declarations being checked, whose rigids' bounds are assumptions
     scope: FxHashSet<DeclId>,
     /// The rigids an assumed declaration's group is checked under, where they
@@ -573,12 +609,12 @@ pub(crate) struct Solver<'db> {
     default_constructions: RefCell<FxHashMap<DeclId, Option<Option<Signature>>>>,
     /// Each member of a generic class's object, once found
     generic_members: RefCell<FxHashMap<GenericMember, Result<Lookup, Issue>>>,
+    /// Whether it makes the assumptions its parent does, so their caches
+    /// hold for it too
+    inherits: bool,
     /// Counts changes to bounds and assignments, so trials rerun only after
     /// what they saw has grown
     generation: Cell<usize>,
-    /// How many trials this solver is nested in. A solver nested too deeply
-    /// leaves its own alternatives untried.
-    trial_depth: usize,
     /// The first obligation whose alternatives a trial's fork judges: the
     /// judgments it was forked with are its parent's to judge
     trials_from: usize,
@@ -589,9 +625,11 @@ pub(crate) struct Solver<'db> {
     /// What trials judge in place of a term, as a `do` block whose result
     /// mustn't choose an alternative (see [`Solver::blind`])
     blinded: FxHashMap<Term, Term>,
-    /// The judgments the probes this solver is nested in are proving, so
-    /// probing one again is recognized as a cycle (see [`Self::probe`])
-    probing: Vec<(TypeId, TypeId)>,
+    /// The solver this one is nested in, if any (#900)
+    parent: Option<Parent<'db>>,
+    /// Whether a solver nested in this one is live, which nothing may change
+    /// this one under
+    child: Cell<bool>,
     /// How traces render a type (see [`Solver::named`])
     #[cfg(feature = "debug")]
     names: Option<(&'db dyn super::r#type::Names, super::r#type::Style)>,
@@ -621,11 +659,13 @@ macro_rules! trace {
 }
 
 impl<'db> Solver<'db> {
-    pub(crate) fn new(db: &'db Database) -> Self {
-        Self::with_limits(db, Limits::default())
+    /// A solver whose work is charged to `gas`
+    pub(crate) fn new(db: &'db Database, gas: &'db Gas) -> Self {
+        Self::with_depth(db, gas, DEPTH)
     }
 
-    pub(crate) fn with_limits(db: &'db Database, limits: Limits) -> Self {
+    /// [`Self::new`], with traversals recursing at most `depth` deep
+    pub(crate) fn with_depth(db: &'db Database, gas: &'db Gas, depth: usize) -> Self {
         assert!(db.is_sealed(), "solver requires a sealed database");
         let environments = intern::Table::new();
         environments.id_owned(Environment {
@@ -639,20 +679,25 @@ impl<'db> Solver<'db> {
         });
         Self {
             db,
+            bases: Bases::default(),
             environments,
-            bounds: MonoVec::new(),
-            inference: MonoVec::new(),
+            variables: MonoVec::new(),
+            layers: MonoVec::new(),
+            overlays: MonoHashMap::default(),
+            first_variable: 0,
+            dirty: RefCell::new(Vec::new()),
             instantiations: RefCell::new(FxHashMap::default()),
             skolemizations: RefCell::new(FxHashMap::default()),
             skolems: MonoVec::new(),
             scopes,
+            relations: MonoVec::new(),
             obligations: MonoVec::new(),
+            obligation_overlays: MonoHashMap::default(),
             obligation_index: MonoHashMap::default(),
             queue: MonoVec::new(),
             roots: Vec::new(),
-            limits,
-            work: Cell::new(0),
-            exhausted: Cell::new(false),
+            gas,
+            depth,
             scope: FxHashSet::default(),
             groups: FxHashMap::default(),
             gradual: false,
@@ -662,12 +707,13 @@ impl<'db> Solver<'db> {
             constructors: RefCell::new(FxHashMap::default()),
             default_constructions: RefCell::new(FxHashMap::default()),
             generic_members: RefCell::new(FxHashMap::default()),
+            inherits: true,
             generation: Cell::new(0),
-            trial_depth: 0,
             owned: None,
             trials_from: 0,
             blinded: FxHashMap::default(),
-            probing: Vec::new(),
+            parent: None,
+            child: Cell::new(false),
             #[cfg(feature = "debug")]
             names: None,
             #[cfg(feature = "debug")]
@@ -702,16 +748,11 @@ impl<'db> Solver<'db> {
                     return format!("{view:?}");
                 };
                 // Rendering mustn't spend the work it limits
-                let (work, exhausted) = (self.work.get(), self.exhausted.get());
-                let reified = self.reify(term);
-                self.work.set(work);
-                self.exhausted.set(exhausted);
+                let reified = self.gas.refunded(|| self.reify(term));
                 if let Ok(ty) = reified {
                     return self.db.render(ty, names, style);
                 }
-                let group = (self.environments.get_by_index(view.environment.0))
-                    .map(|environment| environment.group.clone())
-                    .unwrap_or_default();
+                let group = self.frame(view.environment).group.clone();
                 let group: Vec<String> = group.into_iter().map(|term| self.render(term)).collect();
                 let ty = self.db.render(view.ty, names, style);
                 format!("{ty} with [{}]", group.join(", "))
@@ -755,6 +796,7 @@ impl<'db> Solver<'db> {
     /// declaration have escaped their own check.
     pub(crate) fn assume(&mut self, decl: DeclId) {
         self.scope.insert(decl);
+        self.inherits = false;
         self.constructors.get_mut().clear();
         self.default_constructions.get_mut().clear();
         self.generic_members.get_mut().clear();
@@ -773,6 +815,7 @@ impl<'db> Solver<'db> {
     /// rigid is bounded by `Unknown`, so the body's use of it is dynamic
     pub(crate) fn gradual(&mut self) {
         self.gradual = true;
+        self.inherits = false;
         self.rigid_bounds.get_mut().clear();
     }
 
@@ -781,17 +824,18 @@ impl<'db> Solver<'db> {
         self.gradual
     }
 
-    /// A solver for a side query about `class`, its rigids assumed
-    pub(super) fn side_query(&self, class: DeclId) -> Solver<'db> {
-        let mut solver = Solver::new(self.db);
-        solver.scope = self.scope.clone();
-        solver.groups = self.groups.clone();
-        solver.gradual = self.gradual;
+    /// A solver nested in this one, whose work is charged to `gas`. Nothing
+    /// solved on it reaches this one.
+    pub(crate) fn fork<'a>(&'a self, gas: &'a Gas) -> Solver<'a> {
+        self.child(Nesting::Fork, gas)
+    }
+
+    /// A closed solver for a side query about `class`, its rigids assumed,
+    /// spending this one's budget
+    pub(super) fn side_query(&self, class: DeclId) -> Solver<'_> {
+        let mut solver = self.child(Nesting::Side, self.gas);
+        solver.depth = DEPTH;
         solver.assume(class);
-        #[cfg(feature = "debug")]
-        {
-            solver.names = self.names;
-        }
         solver
     }
 
@@ -829,8 +873,8 @@ impl<'db> Solver<'db> {
     /// bound is bounded by its rest mode's shape, and an omitted channel by
     /// `Unknown` when checking a gradual unit.
     fn rigid_bounds(&self, ty: TypeId) -> Vec<(TypeId, Step)> {
-        if let Some(bounds) = self.rigid_bounds.borrow().get(&ty) {
-            return bounds.clone();
+        if let Some(bounds) = self.cached(|solver| &solver.rigid_bounds, &ty) {
+            return bounds;
         }
         let Type::Rigid { decl, slot, .. } = *self.db.ty(ty) else {
             unreachable!()
@@ -868,7 +912,7 @@ impl<'db> Solver<'db> {
                 .map(|(bound, step)| (self.closed(bound), step))
                 .collect(),
             Abstract::Skolem(id) => {
-                let skolem = &self.skolems[id.0];
+                let skolem = self.skolem(id);
                 let step = match skolem.binding {
                     Binding::Implicit => Step::ImplicitBound,
                     _ => Step::SkolemBound,
@@ -950,23 +994,19 @@ impl<'db> Solver<'db> {
 
     /// Intern a substitution frame; an empty group introduces no binder depth.
     fn intern_environment(&self, parent: EnvironmentId, group: Vec<Term>) -> EnvironmentId {
-        assert!(self.environments.get_by_index(parent.0).is_some());
+        assert!(self.has_environment(parent));
         for &term in &group {
             self.kind(term);
         }
         if group.is_empty() {
             return parent;
         }
-        EnvironmentId(
-            self.environments
-                .id_owned(Environment { parent, group })
-                .index(),
-        )
+        self.intern_frame(Environment { parent, group })
     }
 
     pub(crate) fn view(&self, ty: TypeId, environment: EnvironmentId) -> Term {
         self.db.ty(ty);
-        assert!(self.environments.get_by_index(environment.0).is_some());
+        assert!(self.has_environment(environment));
         Term::View(TypeView { ty, environment })
     }
 
@@ -1016,29 +1056,13 @@ impl<'db> Solver<'db> {
     }
 
     fn fresh(&self, kind: Kind, lanes: Rest, scope: ScopeId) -> Term {
-        let id = InferVarId(self.bounds.len());
-        self.bounds.push(Bounds::default());
-        self.inference.push(Inference {
-            kind,
-            lanes,
-            assignment: Cell::new(None),
-            defaulted: Cell::new(false),
-            exact: Cell::new(false),
-            fallback: Cell::new(None),
-            support: MonoHashSet::default(),
-            subscribers: MonoHashSet::default(),
-            dirty: Cell::new(false),
-            scope,
-        });
-        Term::Infer(id)
+        Term::Infer(self.push_variable(Variable { kind, lanes, scope }))
     }
 
     /// A new scope inside `parent`
     fn enter(&self, parent: ScopeId) -> ScopeId {
-        let id = ScopeId(self.scopes.len());
-        let depth = self.scopes[parent.0].depth + 1;
-        self.scopes.push(Scope { parent, depth });
-        id
+        let depth = self.extent(parent).depth + 1;
+        self.push_scope(Scope { parent, depth })
     }
 
     /// The innermost scope of the variables and skolems in `terms`, where what
@@ -1050,19 +1074,19 @@ impl<'db> Solver<'db> {
             self.leaves(term, 0, 0, &mut leaves)?;
         }
         let scope = |leaf: &Term| match *leaf {
-            Term::Infer(id) => self.inference[id.0].scope,
-            Term::Skolem(id) => self.skolems[id.0].scope,
+            Term::Infer(id) => self.variable(id).scope,
+            Term::Skolem(id) => self.skolem(id).scope,
             Term::View(_) => unreachable!("a view is not a leaf"),
         };
         Ok((leaves.iter().map(scope))
-            .max_by_key(|scope| self.scopes[scope.0].depth)
+            .max_by_key(|&scope| self.extent(scope).depth)
             .unwrap_or(ScopeId(0)))
     }
 
     /// A committed, fully resolved solution. Bounds remain available independently.
     #[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
     pub(crate) fn solution(&self, id: InferVarId) -> Option<TypeId> {
-        match self.inference[id.0].assignment.get()? {
+        match self.assignment(id)? {
             Term::View(view) if view.environment == self.empty_environment() => Some(view.ty),
             _ => None,
         }
@@ -1070,23 +1094,18 @@ impl<'db> Solver<'db> {
 
     /// A variable's committed solution as a term, which may hold skolems
     fn assignment(&self, id: InferVarId) -> Option<Term> {
-        self.inference[id.0].assignment.get()
+        self.state(id).assignment.get()
     }
 
     /// Obligations that supported the commitment, retained for diagnostic inspection.
     #[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
-    pub(crate) fn solution_sources(
-        &self,
-        id: InferVarId,
-    ) -> impl Iterator<Item = ObligationId> + '_ {
-        self.inference[id.0].support.iter().copied()
+    pub(crate) fn solution_sources(&self, id: InferVarId) -> impl Iterator<Item = ObligationId> {
+        self.support(id).into_iter()
     }
 
     pub(crate) fn unresolved(&self) -> impl Iterator<Item = InferVarId> + '_ {
-        self.inference
-            .iter()
-            .enumerate()
-            .filter_map(|(i, b)| b.assignment.get().is_none().then_some(InferVarId(i)))
+        self.variable_ids()
+            .filter(|&id| self.assignment(id).is_none())
     }
 
     /// A closed type with any transparent declaration it's an application of
@@ -1197,7 +1216,7 @@ impl<'db> Solver<'db> {
 
     fn subscribe(&self, obligation: ObligationId) -> Result<(), Residual> {
         let mut leaves = FxHashSet::default();
-        match self.obligation(obligation).relation {
+        match self.relation(obligation) {
             Relation::Subtype {
                 actual, expected, ..
             } => {
@@ -1211,10 +1230,9 @@ impl<'db> Solver<'db> {
             let Term::Infer(variable) = leaf else {
                 continue;
             };
-            let bounds = &self.inference[variable.0];
-            let _ = bounds.subscribers.try_insert(obligation);
-            if bounds.assignment.get().is_some() {
-                for &source in bounds.support.iter() {
+            self.add_subscriber(variable, obligation);
+            if self.assignment(variable).is_some() {
+                for source in self.support(variable) {
                     self.link(source, obligation, Step::Assignment);
                 }
             }
@@ -1223,33 +1241,19 @@ impl<'db> Solver<'db> {
     }
 
     fn schedule(&self, id: ObligationId) {
-        if !self.obligation(id).queued.replace(true) {
+        if !self.progress_mut(id).queued.replace(true) {
             self.queue.push(id);
         }
     }
 
-    /// A solver for a side query, with this one's scope and remaining budget. The
-    /// caller adds its work back.
-    fn nested(&self) -> Result<Self, Residual> {
+    /// A closed solver nested in this one, with its scope, spending its budget
+    fn nested(&self, nesting: Nesting) -> Result<Solver<'_>, Residual> {
         self.spend()?;
-        if self.limits.depth <= 1 {
+        if self.depth <= 1 {
             return Err(Residual::Limit);
         }
-        let mut nested = Self::with_limits(
-            self.db,
-            Limits {
-                work: self.limits.work.saturating_sub(self.work.get()),
-                depth: self.limits.depth - 1,
-            },
-        );
-        nested.scope = self.scope.clone();
-        nested.groups = self.groups.clone();
-        nested.gradual = self.gradual;
-        #[cfg(feature = "debug")]
-        {
-            nested.names = self.names;
-            nested.indent = self.indent + 1;
-        }
+        let mut nested = self.child(nesting, self.gas);
+        nested.depth = self.depth - 1;
         Ok(nested)
     }
 
@@ -1263,21 +1267,18 @@ impl<'db> Solver<'db> {
     /// [`Residual::Recursive`]. Without inductive rules (#746), a cycle is left
     /// unresolved rather than unfolded until the work budget runs out.
     fn probe_cycle(&self, actual: TypeId, expected: TypeId) -> Result<(Status, bool), Residual> {
-        if self.probing.contains(&(actual, expected)) {
+        if self.probing(actual, expected) {
             trace!(self, "probe revisits an enclosing judgment");
             return Ok((Status::Unresolved, true));
         }
-        let mut proof = self.nested()?;
-        proof.probing.clone_from(&self.probing);
-        proof.probing.push((actual, expected));
+        let mut proof = self.nested(Nesting::Probe(actual, expected))?;
         proof.constrain(
             proof.closed(actual),
             proof.closed(expected),
             Provenance::default(),
         );
         let result = proof.solve().remove(0);
-        self.work.set(self.work.get() + proof.work.get());
-        if proof.exhausted.get()
+        if self.gas.is_exhausted()
             || result
                 .diagnostics
                 .iter()
@@ -1596,16 +1597,17 @@ impl<'db> Solver<'db> {
     }
 
     fn try_assign(&self, id: InferVarId) -> Result<bool, Residual> {
-        let bounds = &self.bounds[id.0];
-        let inference = &self.inference[id.0];
+        let bounds = self.bounds(id);
         for lower in bounds.lower() {
             for upper in bounds.upper() {
                 if self.same(lower, upper)?
                     && self.occurs(id, lower, 0, false, &mut FxHashSet::default(), 0)?
                 {
-                    for (_, sources) in bounds.lower.iter().chain(bounds.upper.iter()) {
-                        for &source in sources.iter() {
-                            let state = &self.obligation(source).state;
+                    for (_, sources) in (self.bound_sources(id, true).into_iter())
+                        .chain(self.bound_sources(id, false))
+                    {
+                        for source in sources {
+                            let state = &self.progress_mut(source).state;
                             if matches!(
                                 state.get(),
                                 State::Issue(Issue::Residual(Residual::Inference))
@@ -1639,7 +1641,7 @@ impl<'db> Solver<'db> {
         let mut lower = Vec::new();
         let mut upper = Vec::new();
         for (set, values) in [(&bounds.lower, &mut lower), (&bounds.upper, &mut upper)] {
-            for (&term, _) in set.iter() {
+            for &term in set {
                 match self.reify(term) {
                     Ok(ty) => values.push(ty),
                     Err(Residual::Inference) => {}
@@ -1653,7 +1655,7 @@ impl<'db> Solver<'db> {
         if lower.is_empty() || upper.is_empty() {
             return Ok(false);
         }
-        let Some(candidate) = self.join(inference.kind, &lower) else {
+        let Some(candidate) = self.join(self.variable(id).kind, &lower) else {
             return Ok(false);
         };
         let mut forced = false;
@@ -1674,7 +1676,8 @@ impl<'db> Solver<'db> {
     /// term every lower bound is, if it holds no unsolved variable. Skolems
     /// aren't joined, since a join would need their canonical forms.
     fn open_candidate(&self, id: InferVarId) -> Result<Option<Term>, Residual> {
-        let mut lower = self.bounds[id.0].lower();
+        let bounds = self.bounds(id);
+        let mut lower = bounds.lower();
         let Some(candidate) = lower.next() else {
             return Ok(None);
         };
@@ -1717,40 +1720,41 @@ impl<'db> Solver<'db> {
     fn commit(&self, id: InferVarId, candidate: Term) {
         debug_assert!({
             let mut leaves = FxHashSet::default();
-            let scope = self.inference[id.0].scope;
+            let scope = self.variable(id).scope;
             self.solved_leaves(candidate, &mut leaves).is_err()
                 || leaves.iter().all(|leaf| match *leaf {
-                    Term::Skolem(skolem) => self.visible(scope, self.skolems[skolem.0].scope),
+                    Term::Skolem(skolem) => self.visible(scope, self.skolem(skolem).scope),
                     _ => true,
                 })
         });
-        let bounds = &self.bounds[id.0];
-        let inference = &self.inference[id.0];
-        for (_, sources) in bounds.lower.iter().chain(bounds.upper.iter()) {
-            for &source in sources.iter() {
-                let _ = inference.support.try_insert(source);
+        for (_, sources) in
+            (self.bound_sources(id, true).into_iter()).chain(self.bound_sources(id, false))
+        {
+            for source in sources {
+                self.add_support(id, source);
             }
         }
-        inference.assignment.set(Some(candidate));
+        let state = self.state_mut(id);
+        state.assignment.set(Some(candidate));
         trace!(
             self,
             "?{} := {}{}",
             id.0,
             self.render(candidate),
-            if inference.defaulted.get() {
+            if state.defaulted.get() {
                 " (default)"
             } else {
                 ""
             }
         );
         self.generation.set(self.generation.get() + 1);
-        for &obligation in inference.subscribers.iter() {
+        for obligation in self.subscribers(id) {
             self.schedule(obligation);
         }
         // A bound may contain the assigned variable deeply in a contextual view.
-        for other in self.inference.iter() {
-            if other.assignment.get().is_none() {
-                other.dirty.set(true);
+        for other in self.variable_ids() {
+            if self.assignment(other).is_none() {
+                self.dirty(other);
             }
         }
     }
@@ -1802,7 +1806,7 @@ impl<'db> Solver<'db> {
         if let Some(term) = self.assignment(id) {
             return Ok(term);
         }
-        let bounds = &self.bounds[id.0];
+        let bounds = self.bounds(id);
         if bounds
             .lower()
             .map(|term| self.skolemic(term))
@@ -1812,7 +1816,7 @@ impl<'db> Solver<'db> {
             let candidate = self
                 .open_candidate(id)?
                 .ok_or(Residual::Unsupported("joining a variable's lower bounds"))?;
-            self.inference[id.0].defaulted.set(true);
+            self.state_mut(id).defaulted.set(true);
             self.commit(id, candidate);
             return Ok(candidate);
         }
@@ -1820,7 +1824,7 @@ impl<'db> Solver<'db> {
             .lower()
             .map(|term| self.reify(term))
             .collect::<Result<Vec<_>, _>>()?;
-        let kind = self.inference[id.0].kind;
+        let kind = self.variable(id).kind;
         if lower.is_empty() {
             if kind != Kind::Schema {
                 return Err(Residual::Inference);
@@ -1830,7 +1834,7 @@ impl<'db> Solver<'db> {
                 .map(|term| self.reify(term))
                 .collect::<Result<Vec<_>, _>>()?;
             let candidate = self.upper_schema(&upper)?;
-            self.inference[id.0].defaulted.set(true);
+            self.state_mut(id).defaulted.set(true);
             self.commit(id, self.closed(candidate));
             return Ok(self.closed(candidate));
         }
@@ -1850,7 +1854,7 @@ impl<'db> Solver<'db> {
                 }
                 self.below_upper(id, decayed)
             };
-            let decay = decay && !self.inference[id.0].exact.get();
+            let decay = decay && !self.state(id).exact.get();
             if decay && decayed != precise && admitted().unwrap_or(false) {
                 decayed
             } else {
@@ -1862,7 +1866,7 @@ impl<'db> Solver<'db> {
                 "a default above a variable's upper bounds",
             ));
         }
-        self.inference[id.0].defaulted.set(true);
+        self.state_mut(id).defaulted.set(true);
         self.commit(id, self.closed(candidate));
         Ok(self.closed(candidate))
     }
@@ -1876,7 +1880,7 @@ impl<'db> Solver<'db> {
     /// that has given up waiting for lower bounds uses this: [`Self::default`]
     /// never invents a type from no lower bounds.
     pub(crate) fn default_upper(&mut self, id: InferVarId) -> Result<TypeId, Residual> {
-        let bounds = &self.bounds[id.0];
+        let bounds = self.bounds(id);
         if self.assignment(id).is_some() || bounds.lower().next().is_some() {
             return Err(Residual::Inference);
         }
@@ -1886,7 +1890,7 @@ impl<'db> Solver<'db> {
             .collect::<Result<Vec<_>, _>>()?;
         let mut upper = upper.into_iter();
         let first = upper.next().ok_or(Residual::Inference)?;
-        let candidate = upper.try_fold(first, |met, ty| match self.inference[id.0].kind {
+        let candidate = upper.try_fold(first, |met, ty| match self.variable(id).kind {
             Kind::Type => self.meet(met, ty).map_err(|issue| match issue {
                 Issue::Residual(residual) => residual,
                 Issue::Contradiction(_) => Residual::Unsupported("meeting upper bounds"),
@@ -1901,7 +1905,7 @@ impl<'db> Solver<'db> {
                 }
             }
         })?;
-        self.inference[id.0].defaulted.set(true);
+        self.state_mut(id).defaulted.set(true);
         self.commit(id, self.closed(candidate));
         #[cfg(feature = "debug")]
         trace!(self, "?{} defaulted from its upper bounds", id.0);
@@ -1911,7 +1915,7 @@ impl<'db> Solver<'db> {
     /// Whether a candidate can be shown to satisfy each of a variable's solved
     /// upper bounds
     fn below_upper(&self, id: InferVarId, candidate: TypeId) -> Result<bool, Residual> {
-        for upper in self.bounds[id.0].upper() {
+        for upper in self.bounds(id).upper() {
             // An upper bound holding a skolem is checked by the obligations
             // pairing it with the lower bounds
             let upper = match self.reify(upper) {
@@ -1929,17 +1933,17 @@ impl<'db> Solver<'db> {
     /// Whether a variable's solution was chosen by [`Self::default`], not forced
     #[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
     pub(crate) fn defaulted(&self, id: InferVarId) -> bool {
-        self.inference[id.0].defaulted.get()
+        self.state(id).defaulted.get()
     }
 
     /// A variable's kind
     pub(crate) fn variable_kind(&self, id: InferVarId) -> Kind {
-        self.inference[id.0].kind
+        self.variable(id).kind
     }
 
     /// The default of the binder a variable instantiates, if it has one
     pub(crate) fn fallback(&self, id: InferVarId) -> Option<Term> {
-        self.inference[id.0].fallback.get()
+        self.state(id).fallback.get()
     }
 
     /// The least candidate above nonempty lower bounds: their join, or for a
@@ -1951,23 +1955,15 @@ impl<'db> Solver<'db> {
         }
     }
 
-    pub(crate) fn bounds(&self, id: InferVarId) -> &Bounds {
-        &self.bounds[id.0]
-    }
-
-    pub(crate) fn obligation(&self, id: ObligationId) -> &Obligation {
-        &self.obligations[id.0]
-    }
-
     /// A contradicted outcome's contradictions, each with its path from the root
     /// resolved as diagnostics read it. Members of a union that don't fit are the
     /// union's misfit when there are several, which is all the union's relation
     /// says.
     pub(crate) fn explain(&self, outcome: &Outcome) -> alias::Box<[Contradicted]> {
         let step = |parent: ObligationId, child: ObligationId| {
-            (self.obligation(parent).dependencies.iter())
+            (self.dependencies(parent).into_iter())
                 .find(|dependency| dependency.obligation == child)
-                .map(|dependency| dependency.step.clone())
+                .map(|dependency| dependency.step)
         };
         let member = |path: &[ObligationId]| match path {
             &[.., parent, child] => matches!(step(parent, child), Some(Step::UnionMember(_)))
@@ -2006,11 +2002,9 @@ impl<'db> Solver<'db> {
                         step: index
                             .checked_sub(1)
                             .and_then(|parent| step(path[parent], obligation)),
-                        sides: (self.obligation(obligation).relation.sides()).map(
-                            |(actual, expected)| {
-                                (self.reify(actual).ok(), self.reify(expected).ok())
-                            },
-                        ),
+                        sides: (self.relation(obligation).sides()).map(|(actual, expected)| {
+                            (self.reify(actual).ok(), self.reify(expected).ok())
+                        }),
                     })
                     .collect(),
             })
@@ -2025,10 +2019,10 @@ impl<'db> Solver<'db> {
     /// Check the term IDs and return their kind
     fn kind(&self, term: Term) -> Kind {
         match term {
-            Term::Infer(id) => self.inference[id.0].kind,
-            Term::Skolem(id) => self.skolems[id.0].kind,
+            Term::Infer(id) => self.variable(id).kind,
+            Term::Skolem(id) => self.skolem(id).kind,
             Term::View(view) => {
-                assert!(self.environments.get_by_index(view.environment.0).is_some());
+                assert!(self.has_environment(view.environment));
                 self.db.kind(view.ty)
             }
         }
@@ -2095,19 +2089,11 @@ impl<'db> Solver<'db> {
 
     /// Intern a relation and queue it only on first insertion.
     fn enqueue(&self, relation: Relation) -> ObligationId {
-        if let Some(&id) = self.obligation_index.get(&relation) {
+        if let Some(id) = self.interned(&relation) {
             return id;
         }
-        let id = ObligationId(self.obligations.len());
-        self.obligations.push(Obligation {
-            relation,
-            dependencies: MonoVec::new(),
-            state: Cell::new(State::Pending),
-            queued: Cell::new(true),
-            active: RefCell::new(Vec::new()),
-        });
-        self.obligation_index.try_insert(relation, id).unwrap();
-        self.queue.push(id);
+        let id = self.push_obligation(relation);
+        self.schedule(id);
         id
     }
 
@@ -2121,7 +2107,7 @@ impl<'db> Solver<'db> {
         // A type argument's schema is the items a value holds, and functions
         // relate parameter lists. Bounds settle with the actual side filling
         // freely, the stricter reading.
-        let fill = match (&step, self.obligations[parent.0].relation) {
+        let fill = match (&step, self.relation(parent)) {
             (Step::Argument { .. }, _) => Fill::Contents,
             (Step::Parameters, _) => Fill::Parameters,
             (Step::Arguments | Step::BoundPropagation | Step::Assignment, _) => Fill::Arguments,
@@ -2151,8 +2137,7 @@ impl<'db> Solver<'db> {
     fn derive_relation(&self, parent: ObligationId, relation: Relation, step: Step) {
         let child = self.enqueue(relation);
         if step != Step::BoundPropagation && step != Step::Assignment {
-            self.obligations[parent.0]
-                .active
+            (self.progress_mut(parent).active)
                 .borrow_mut()
                 .push((child, step.clone()));
         }
@@ -2160,31 +2145,17 @@ impl<'db> Solver<'db> {
     }
 
     fn link(&self, parent: ObligationId, child: ObligationId, step: Step) {
-        let dependencies = &self.obligations[parent.0].dependencies;
-        if !dependencies
-            .iter()
-            .any(|d| d.obligation == child && d.step == step)
-        {
-            dependencies.push(Dependency {
-                obligation: child,
-                step,
-            });
-        }
+        self.add_dependency(parent, child, step);
     }
 
-    /// Charge the solver-wide work budget, permanently marking exhaustion on failure.
+    /// Charge the work budget, permanently marking exhaustion on failure.
     fn spend(&self) -> Result<(), Residual> {
-        if self.work.get() >= self.limits.work {
-            self.exhausted.set(true);
-            return Err(Residual::Limit);
-        }
-        self.work.set(self.work.get() + 1);
-        Ok(())
+        self.gas.spend()
     }
 
     /// Reject a traversal that reaches the configured recursion limit.
     fn depth(&self, depth: usize) -> Result<(), Residual> {
-        if depth >= self.limits.depth {
+        if depth >= self.depth {
             Err(Residual::Limit)
         } else {
             Ok(())
@@ -2195,14 +2166,10 @@ impl<'db> Solver<'db> {
     fn lookup(&self, mut environment: EnvironmentId, depth: u16, slot: u16, kind: Kind) -> Term {
         for _ in 0..depth {
             assert_ne!(environment.0, 0, "unbound reference");
-            environment = self
-                .environments
-                .get_by_index(environment.0)
-                .unwrap()
-                .parent;
+            environment = self.frame(environment).parent;
         }
         assert_ne!(environment.0, 0, "unbound reference");
-        let value = self.environments.get_by_index(environment.0).unwrap().group[usize::from(slot)];
+        let value = self.frame(environment).group[usize::from(slot)];
         assert_eq!(self.kind(value), kind, "substitution kind mismatch");
         value
     }
@@ -2656,7 +2623,7 @@ impl<'db> Solver<'db> {
             if scope == ScopeId(0) {
                 return false;
             }
-            scope = self.scopes[scope.0].parent;
+            scope = self.extent(scope).parent;
         }
     }
 
@@ -2692,10 +2659,10 @@ impl<'db> Solver<'db> {
     fn quiesce(&mut self) {
         loop {
             loop {
-                while !self.exhausted.get() && !self.queue.is_empty() {
+                while !self.gas.is_exhausted() && !self.queue.is_empty() {
                     let mut batch = std::mem::take(&mut self.queue);
                     for id in batch.drain() {
-                        let node = &self.obligations[id.0];
+                        let node = self.progress_mut(id);
                         node.queued.set(false);
                         node.active.borrow_mut().clear();
                         let result = self
@@ -2707,23 +2674,21 @@ impl<'db> Solver<'db> {
                             Ok(()) => State::Reduced,
                             Err(issue) => State::Issue(issue),
                         });
-                        if self.exhausted.get() {
+                        if self.gas.is_exhausted() {
                             break;
                         }
                     }
                 }
-                if self.exhausted.get() {
+                if self.gas.is_exhausted() {
                     break;
                 }
                 let mut assigned = false;
-                for index in 0..self.bounds.len() {
-                    if self.inference[index].dirty.replace(false)
-                        && self.inference[index].assignment.get().is_none()
-                    {
-                        match self.try_assign(InferVarId(index)) {
+                for id in self.variable_ids() {
+                    if self.clean(id) && self.assignment(id).is_none() {
+                        match self.try_assign(id) {
                             Ok(changed) => assigned |= changed,
                             Err(Residual::Limit) => {
-                                self.exhausted.set(true);
+                                self.gas.exhaust();
                                 break;
                             }
                             Err(_) => {}
@@ -2734,7 +2699,7 @@ impl<'db> Solver<'db> {
                     break;
                 }
             }
-            if self.exhausted.get() {
+            if self.gas.is_exhausted() {
                 break;
             }
             if !self.try_alternatives() && !self.settle() {
@@ -2749,27 +2714,24 @@ impl<'db> Solver<'db> {
     /// earlier one forces. Without one, a variable nothing is below takes bottom,
     /// the least choice. Whether one was committed.
     fn settle(&self) -> bool {
-        let mut pending: Vec<InferVarId> = (0..self.inference.len())
-            .map(InferVarId)
+        let mut pending: Vec<InferVarId> = self
+            .variable_ids()
             .filter(|&id| {
-                let inference = &self.inference[id.0];
                 (self.closed
-                    || inference.scope != ScopeId(0)
+                    || self.variable(id).scope != ScopeId(0)
                     || self.owned.is_some_and(|owned| id.0 >= owned))
-                    && inference.assignment.get().is_none()
+                    && self.assignment(id).is_none()
             })
             .collect();
-        pending
-            .sort_by_key(|id| std::cmp::Reverse(self.scopes[self.inference[id.0].scope.0].depth));
+        pending.sort_by_key(|&id| std::cmp::Reverse(self.extent(self.variable(id).scope).depth));
         for &id in &pending {
             if self.default_term(id, false).is_ok() {
                 return true;
             }
         }
         for &id in &pending {
-            let inference = &self.inference[id.0];
-            if inference.kind == Kind::Type && self.bounds[id.0].lower().next().is_none() {
-                inference.defaulted.set(true);
+            if self.variable(id).kind == Kind::Type && self.bounds(id).lower().next().is_none() {
+                self.state_mut(id).defaulted.set(true);
                 self.commit(id, self.closed(self.db.bottom()));
                 return true;
             }
@@ -2806,7 +2768,7 @@ impl<'db> Solver<'db> {
             }
             active.insert(id);
             path.push(id);
-            match self.obligations[id.0].state.get() {
+            match self.progress(id).state.get() {
                 State::Pending => diagnostics.push(Diagnostic {
                     issue: Residual::Limit.into(),
                     path: path.clone(),
@@ -2818,12 +2780,10 @@ impl<'db> Solver<'db> {
                 State::Reduced => {}
             }
             stack.push((id, true));
-            for dependency in self.obligations[id.0].dependencies.iter().filter(|d| {
-                self.obligations[id.0]
-                    .active
-                    .borrow()
-                    .contains(&(d.obligation, d.step.clone()))
-            }) {
+            let premises = self.progress(id).active.borrow();
+            for dependency in (self.dependencies(id).into_iter())
+                .filter(|d| premises.contains(&(d.obligation, d.step.clone())))
+            {
                 stack.push((dependency.obligation, false));
             }
         }
@@ -2838,8 +2798,7 @@ impl<'db> Solver<'db> {
                 if !seen.insert(id) {
                     continue;
                 }
-                if let State::Issue(issue @ Issue::Contradiction(_)) =
-                    self.obligations[id.0].state.get()
+                if let State::Issue(issue @ Issue::Contradiction(_)) = self.progress(id).state.get()
                     && !diagnostics
                         .iter()
                         .any(|d| d.path.last() == Some(&id) && d.issue == issue)
@@ -2849,7 +2808,7 @@ impl<'db> Solver<'db> {
                         path: path.clone(),
                     });
                 }
-                for dependency in self.obligations[id.0].dependencies.iter() {
+                for dependency in self.dependencies(id) {
                     if !assignments && dependency.step == Step::Assignment {
                         continue;
                     }
@@ -2859,7 +2818,7 @@ impl<'db> Solver<'db> {
                 }
             }
         }
-        if self.exhausted.get() {
+        if self.gas.is_exhausted() {
             diagnostics.push(Diagnostic {
                 issue: Residual::Limit.into(),
                 path: vec![root],
@@ -2900,6 +2859,7 @@ mod item;
 mod lattice;
 mod member;
 mod narrow;
+mod nest;
 mod reduce;
 mod schema;
 mod unpack;
@@ -2910,6 +2870,8 @@ pub(crate) use conform::{Inheritance, Requirement, RequirementKind};
 pub(crate) use lattice::Widening;
 pub(crate) use member::{Access, Found, FoundKind, Lookup, Signatures};
 pub(crate) use narrow::Target as NarrowTarget;
+pub(crate) use nest::Gas;
+use nest::{Nesting, Parent};
 pub(crate) use unpack::PatternShape;
 
 #[cfg(test)]

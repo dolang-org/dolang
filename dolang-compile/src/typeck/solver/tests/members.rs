@@ -224,7 +224,9 @@ fn members_are_found_in_mro_order_with_their_class_arguments() {
     let over = over.finish(&mut db, vec![base_int]);
     db.seal();
 
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+
+    let mut s = Solver::new(&db, &gas);
     let value = found(s.member(s.closed(sub), key(&db, "value")));
     assert!(value.public);
     let FoundKind::Field(ty) = value.kind else {
@@ -292,7 +294,9 @@ fn private_members_are_their_class_own() {
     let other = nominal(&mut db, "Other", vec![], vec![]);
     db.seal();
 
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+
+    let mut s = Solver::new(&db, &gas);
     let port = found(s.member(s.closed(sub), key(&db, "port")));
     let FoundKind::Property {
         getter: Some(getter),
@@ -341,7 +345,9 @@ fn class_objects_have_class_and_static_members_and_unbound_methods() {
     let sub = sub.finish(&mut db, vec![base]);
     db.seal();
 
-    let s = Solver::new(&db);
+    let gas = Gas::default();
+
+    let s = Solver::new(&db, &gas);
     let object = |class| s.closed(apply(&db, ty, &[class]));
     let meta = |class| s.closed(db.meta(class, vec![]));
     assert_eq!(
@@ -426,7 +432,8 @@ fn generic_class_objects_have_members_quantified_over_its_binders() {
     };
     let box_object = object(boxed);
     let sub_object = object(sub);
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let signature = |s: &Solver<'_>, found: Found| {
         let FoundKind::Method(signatures) = found.kind else {
             panic!("a method")
@@ -489,7 +496,8 @@ fn generic_class_objects_have_members_quantified_over_its_binders() {
             _ => panic!("a field"),
         };
     assert_eq!(field(&s, "count"), int);
-    let mut gradual = Solver::new(&db);
+    let gas = Gas::default();
+    let mut gradual = Solver::new(&db, &gas);
     gradual.gradual();
     assert_eq!(field(&gradual, "zero"), db.unknown());
     let zero = s.member(s.closed(box_object), key(&db, "zero"));
@@ -542,7 +550,9 @@ fn a_missing_member_falls_back_to_get_and_set() {
     let dynamic = dynamic.finish(&mut db, vec![]);
     db.seal();
 
-    let s = Solver::new(&db);
+    let gas = Gas::default();
+
+    let s = Solver::new(&db, &gas);
     assert!(matches!(
         s.member(s.closed(dynamic), key(&db, "real")),
         Ok(Lookup::Found(_))
@@ -586,7 +596,9 @@ fn receivers_are_walked_to_a_class_or_left_undecided() {
     );
     db.seal();
 
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+
+    let mut s = Solver::new(&db, &gas);
     let area = key(&db, "area");
     let environment = s.rigid_environment(f);
     let rigid = s.view(t, environment);
@@ -639,7 +651,9 @@ fn every_signature_of_an_overloaded_method_is_applied() {
     let show = function(&db, &[int], str);
     db.seal();
 
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+
+    let mut s = Solver::new(&db, &gas);
     let pick = found(s.member(s.closed(box_int), key(&db, "pick")));
     let FoundKind::Method(signatures) = pick.kind else {
         panic!("a method")
@@ -703,7 +717,9 @@ fn only_runtime_supertypes_provide_implementations() {
         Class::new(&mut db, "Real", vec![]).finish_with(&mut db, vec![inherit(base), claim(proto)]);
     db.seal();
 
-    let s = Solver::new(&db);
+    let gas = Gas::default();
+
+    let s = Solver::new(&db, &gas);
     let lookup = |class, name, scope, runtime| {
         s.inherited_member(s.closed(class), key(&db, name), scope, runtime)
     };

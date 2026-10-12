@@ -105,7 +105,8 @@ fn unknown_bounds_never_force_assignments() {
     let array = nominal(&mut db, "Array", vec![binder(Variance::Invariant)], vec![]);
     let dynamic_array = apply(&db, array, &[unknown]);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
 
     // Only dynamic bounds
     let a = s.infer();

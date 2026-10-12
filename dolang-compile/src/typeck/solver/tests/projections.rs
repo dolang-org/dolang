@@ -37,7 +37,8 @@ fn projections_wait_for_their_schema() {
     let keys = projection(db, UnionMember::Keys, schema_reference(db, 0));
     db.seal();
     for (key, status) in [(a, Status::Proven), (c, Status::Contradicted)] {
-        let mut s = Solver::new(db);
+        let gas = Gas::default();
+        let mut s = Solver::new(db, &gas);
         let u = s.infer_kind(Kind::Schema, Rest::All);
         let env = s.environment(s.empty_environment(), vec![u]);
         s.constrain(s.closed(key), s.view(keys, env), Provenance::default());
@@ -134,7 +135,8 @@ fn a_union_expansion_is_evaluated_once_substituted() {
     let one_two = union(db, &[one, two]);
     db.seal();
     for (expected, status) in [(one_two, Status::Proven), (three, Status::Contradicted)] {
-        let mut s = Solver::new(db);
+        let gas = Gas::default();
+        let mut s = Solver::new(db, &gas);
         let env = s.environment(s.empty_environment(), vec![s.closed(pack)]);
         s.constrain(
             s.view(expanded, env),
@@ -148,7 +150,8 @@ fn a_union_expansion_is_evaluated_once_substituted() {
 /// What an item projection evaluates to, or the issue evaluating it raises, for
 /// a gradual unit
 fn evaluated(db: &Database, projection: TypeId) -> Result<TypeId, Issue> {
-    let mut s = Solver::new(db);
+    let gas = Gas::default();
+    let mut s = Solver::new(db, &gas);
     s.gradual();
     Ok(s.evaluate_items(projection)?.expect("an item projection"))
 }
@@ -262,7 +265,7 @@ fn item_projections_meet_without_intersections() {
     }
     // A strict unit's solver leaves that intersection unresolved
     let projection = selecting(db, true, protocols, ab);
-    let strict = Solver::new(db).evaluate_items(projection);
+    let strict = Solver::new(db, &Gas::default()).evaluate_items(projection);
     assert!(
         matches!(strict, Err(Issue::Residual(Residual::Unsupported(_)))),
         "{strict:?}"
@@ -289,7 +292,8 @@ fn item_projections_wait_for_their_key_and_report_on_exposure() {
     let conflicted = selecting(db, false, colliding, zero);
     db.seal();
     for (given, status) in [(a, Status::Proven), (c, Status::Contradicted)] {
-        let mut s = Solver::new(db);
+        let gas = Gas::default();
+        let mut s = Solver::new(db, &gas);
         let k = s.infer();
         let env = s.environment(s.empty_environment(), vec![k]);
         let bottom = s.closed(db.bottom());

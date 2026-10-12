@@ -410,8 +410,8 @@ impl Solver<'_> {
         access: Access,
     ) -> Result<Lookup, Issue> {
         let cached = (class, private, key, access);
-        if let Some(lookup) = self.generic_members.borrow().get(&cached) {
-            return lookup.clone();
+        if let Some(lookup) = self.cached(|solver| &solver.generic_members, &cached) {
+            return lookup;
         }
         let lookup = self.lift_member(class, private, key, access);
         (self.generic_members.borrow_mut()).insert(cached, lookup.clone());

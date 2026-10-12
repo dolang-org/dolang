@@ -16,7 +16,8 @@ fn inheritance_with_an_inference_argument_produces_bounds() {
     let actual = apply(&db, child, &[r]);
     let expected = apply(&db, parent, &[one]);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let variable = s.infer();
     let Term::Infer(id) = variable else {
         unreachable!()
@@ -36,7 +37,8 @@ fn inference_chains_conflicts_duplicates_and_insertion_order() {
         let one = literal(&db, 1);
         let two = literal(&db, 2);
         db.seal();
-        let mut s = Solver::new(&db);
+        let gas = Gas::default();
+        let mut s = Solver::new(&db, &gas);
         let a = s.infer();
         let b = s.infer();
         let c = s.infer();
@@ -53,12 +55,11 @@ fn inference_chains_conflicts_duplicates_and_insertion_order() {
         let results = s.solve();
         assert!(results.iter().all(|r| r.status == Status::Contradicted));
         assert_eq!(
-            s.obligations
-                .iter()
-                .map(|o| o.relation)
+            (0..s.obligation_count())
+                .map(|id| s.relation(ObligationId(id)))
                 .collect::<FxHashSet<_>>()
                 .len(),
-            s.obligations.len(),
+            s.obligation_count(),
         );
     }
 }
@@ -69,7 +70,8 @@ fn multiple_bounds_and_variable_cycles_stabilize() {
     let one = literal(&db, 1);
     let two = literal(&db, 2);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let a = s.infer();
     let b = s.infer();
     for (a, b) in [
@@ -94,7 +96,7 @@ fn multiple_bounds_and_variable_cycles_stabilize() {
         s.bounds(b).lower().collect::<FxHashSet<_>>(),
         FxHashSet::from_iter([s.closed(one), s.closed(two), Term::Infer(a)])
     );
-    assert!(!s.exhausted.get());
+    assert!(!s.gas.is_exhausted());
 }
 
 #[test]
@@ -103,7 +105,8 @@ fn new_constraints_after_quiescence_propagate() {
     let one = literal(&db, 1);
     let two = literal(&db, 2);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let a = s.infer();
     s.constrain(s.closed(one), a, Provenance::default());
     assert_eq!(s.solve()[0].status, Status::Unresolved);
@@ -117,7 +120,8 @@ fn bare_variables_default_to_the_meet_of_their_upper_bounds() {
     let a = nominal(&mut db, "A", vec![], vec![]);
     let b = nominal(&mut db, "B", vec![], vec![a]);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let id = |term| match term {
         Term::Infer(id) => id,
         _ => unreachable!(),
@@ -150,7 +154,8 @@ fn bare_schema_variables_default_to_ordered_upper_bounds() {
     let single = items(&db, vec![positional(Multiplicity::Required, a)]);
     let other = items(&db, vec![positional(Multiplicity::Repeated, b)]);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let fresh = |s: &mut Solver<'_>, upper: &[TypeId]| {
         let var = s.infer_kind(Kind::Schema, Rest::All);
         for &ty in upper {
@@ -176,7 +181,8 @@ fn multiple_upper_bounds_are_checked_separately() {
     let c = nominal(&mut db, "C", vec![], vec![a, b]);
     let d = nominal(&mut db, "D", vec![], vec![]);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let variable = s.infer();
     s.constrain(s.closed(c), variable, Provenance::default());
     s.constrain(variable, s.closed(a), Provenance::default());
@@ -206,13 +212,14 @@ fn recursive_inference_bounds_are_not_solutions() {
     );
     let recursive = apply(&db, constructor, &[r]);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let variable = s.infer();
     let env = s.intern_environment(s.empty_environment(), vec![variable]);
     s.constrain(variable, s.view(recursive, env), Provenance::default());
     s.constrain(s.view(recursive, env), variable, Provenance::default());
     assert!(s.solve().iter().all(|r| r.status == Status::Unresolved));
-    assert!(!s.exhausted.get());
+    assert!(!s.gas.is_exhausted());
 }
 
 #[test]
@@ -221,7 +228,8 @@ fn exact_assignments_propagate_in_both_orders_and_through_cycles() {
         let mut db = Database::new();
         let int = nominal(&mut db, "Int", vec![], vec![]);
         db.seal();
-        let mut s = Solver::new(&db);
+        let gas = Gas::default();
+        let mut s = Solver::new(&db, &gas);
         let a = s.infer();
         let b = s.infer();
         let c = s.infer();
@@ -255,7 +263,8 @@ fn forced_union_checks_all_uppers_and_preserves_one_sided_bounds() {
         vec![UnionMember::Type(one), UnionMember::Type(two)].into(),
     ));
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let v = s.infer();
     let unused = s.infer();
     s.constrain(s.closed(one), v, Provenance::default());
@@ -268,9 +277,9 @@ fn forced_union_checks_all_uppers_and_preserves_one_sided_bounds() {
     s.constrain(v, s.closed(union), Provenance::default());
     assert!(s.solve().iter().all(|o| o.status == Status::Proven));
     assert_eq!(s.solution(variable_id(v)), Some(union));
-    let work = s.work.get();
+    let work = s.gas.used();
     s.solve();
-    assert_eq!(s.work.get(), work);
+    assert_eq!(s.gas.used(), work);
     s.constrain(v, s.closed(one), Provenance::default());
     assert!(s.solve().iter().all(|o| o.status == Status::Contradicted));
     assert_eq!(s.solution(variable_id(v)), Some(union));
@@ -297,7 +306,8 @@ fn assignments_wake_nested_applications_functions_and_channels() {
         output: Some(closed_array),
     }));
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let v = s.infer();
     let env = s.environment(s.empty_environment(), vec![v]);
     s.constrain(s.view(open, env), s.closed(closed), Provenance::default());
@@ -318,7 +328,8 @@ fn resolution_contradictions_retain_all_roots_and_assignment_paths() {
     let open = function(&db, &[], r);
     let expected = function(&db, &[], one);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let v = s.infer();
     let env = s.environment(s.empty_environment(), vec![v]);
     s.constrain(s.closed(union), v, Provenance::default());
@@ -327,11 +338,9 @@ fn resolution_contradictions_retain_all_roots_and_assignment_paths() {
     s.constrain(s.view(open, env), s.closed(expected), Provenance::default());
     let outcomes = s.solve();
     assert!(outcomes.iter().all(|o| o.status == Status::Contradicted));
-    assert!(
-        s.obligations
-            .iter()
-            .any(|o| o.dependencies.iter().any(|d| d.step == Step::Assignment))
-    );
+    assert!((0..s.obligation_count()).any(|id| {
+        (s.dependencies(ObligationId(id)).iter()).any(|d| d.step == Step::Assignment)
+    }));
     assert!(outcomes.iter().all(|o| {
         o.diagnostics
             .iter()
@@ -356,7 +365,8 @@ fn reification_keeps_replacement_scopes_and_local_binders() {
         function(&db, &[local], one),
     );
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let v = s.infer();
     let inner = s.environment(s.empty_environment(), vec![v]);
     let outer = s.environment(s.empty_environment(), vec![s.view(local, inner)]);
@@ -372,7 +382,8 @@ fn upper_only_and_unanchored_variable_cycles_stay_unsolved() {
     let mut db = Database::new();
     let one = literal(&db, 1);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let a = s.infer();
     let b = s.infer();
     let c = s.infer();
@@ -381,9 +392,9 @@ fn upper_only_and_unanchored_variable_cycles_stay_unsolved() {
     }
     assert!(s.solve().iter().all(|o| o.status == Status::Unresolved));
     assert_eq!(s.unresolved().count(), 3);
-    let work = s.work.get();
+    let work = s.gas.used();
     s.solve();
-    assert_eq!(s.work.get(), work);
+    assert_eq!(s.gas.used(), work);
 }
 
 #[test]
@@ -394,7 +405,8 @@ fn direct_and_indirect_recursive_candidates_are_explicit_residuals() {
         let array = nominal(&mut db, "Array", vec![binder(Variance::Invariant)], vec![]);
         let open = apply(&db, array, &[r]);
         db.seal();
-        let mut s = Solver::new(&db);
+        let gas = Gas::default();
+        let mut s = Solver::new(&db, &gas);
         let a = s.infer();
         let b = if indirect { s.infer() } else { a };
         let env = s.environment(s.empty_environment(), vec![b]);
@@ -411,7 +423,7 @@ fn direct_and_indirect_recursive_candidates_are_explicit_residuals() {
         assert!(outcomes.iter().any(|o| has(o, Residual::Recursive.into())));
         assert_eq!(s.solution(variable_id(a)), None);
         assert_eq!(s.solution(variable_id(b)), None);
-        assert!(!s.exhausted.get());
+        assert!(!s.gas.is_exhausted());
     }
 }
 
@@ -429,7 +441,8 @@ fn unsupported_upper_bounds_block_commitment_without_becoming_proofs() {
     ));
     db.seal();
     for upper in [expanded, alternatives] {
-        let mut s = Solver::new(&db);
+        let gas = Gas::default();
+        let mut s = Solver::new(&db, &gas);
         let v = s.infer();
         for (a, b) in [(s.closed(one), v), (v, s.closed(one)), (v, s.closed(upper))] {
             s.constrain(a, b, Provenance::default());
@@ -448,7 +461,8 @@ fn bounds_keep_context_and_sources_after_assignment_and_duplicate_roots() {
     let open = apply(&db, array, &[r]);
     let closed = apply(&db, array, &[one]);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let a = s.infer();
     let b = s.infer();
     let env = s.environment(s.empty_environment(), vec![a]);
@@ -464,10 +478,10 @@ fn bounds_keep_context_and_sources_after_assignment_and_duplicate_roots() {
             .any(|term| term == contextual)
     );
     assert_eq!(s.reify(contextual), Ok(closed));
-    let work = s.work.get();
+    let work = s.gas.used();
     s.constrain(contextual, b, Provenance::default());
     assert!(s.solve().iter().all(|o| o.status == Status::Proven));
-    assert_eq!(s.work.get(), work);
+    assert_eq!(s.gas.used(), work);
     s.constrain(b, s.closed(db.top()), Provenance::default());
     s.solve();
     assert!(
@@ -494,7 +508,8 @@ fn reification_preserves_binder_bounds_defaults_and_declaration_recursion() {
     let recursive = function(&db, &[], wrapper);
     populate(&mut db, decl, source, recursive, vec![]);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let env = s.environment(s.empty_environment(), vec![s.closed(one)]);
     assert_eq!(s.reify(s.view(open, env)), Ok(closed));
     assert_eq!(s.reify(s.closed(wrapper)), Ok(wrapper));
@@ -510,7 +525,8 @@ fn explicit_exact_extreme_bounds_are_solutions_without_defaulting() {
     let mut db = Database::new();
     db.seal();
     for ty in [db.top(), db.bottom()] {
-        let mut s = Solver::new(&db);
+        let gas = Gas::default();
+        let mut s = Solver::new(&db, &gas);
         let v = s.infer();
         let unused = s.infer();
         s.constrain(s.closed(ty), v, Provenance::default());
@@ -567,7 +583,8 @@ fn raised_variables_are_those_at_outputs() {
     ];
     let chained = apply(&db, source, &[r]);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let held = s.infer();
     let mut vars = Vec::new();
     let cases = (cases
@@ -628,7 +645,8 @@ fn locked_variables_are_those_a_literal_would_fix() {
     ];
     let boxed_r = apply(&db, boxed, &[r]);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let result = s.infer();
     let mut vars = Vec::new();
     let cases = (cases
@@ -706,7 +724,8 @@ fn schema_upper_bounds_keep_shape_and_constrain_values() {
     );
     db.seal();
     for upper in [[shape, bound], [bound, shape]] {
-        let mut solver = Solver::new(&db);
+        let gas = Gas::default();
+        let mut solver = Solver::new(&db, &gas);
         let variable = solver.infer_kind(Kind::Schema, Rest::All);
         for ty in upper {
             solver.constrain(variable, solver.closed(ty), Provenance::default());
@@ -738,7 +757,8 @@ fn schema_upper_bounds_do_not_invent_opaque_or_incompatible_shapes() {
     );
     db.seal();
     for upper in [shapes.to_vec(), vec![repeated], vec![db.unknown_schema()]] {
-        let mut solver = Solver::new(&db);
+        let gas = Gas::default();
+        let mut solver = Solver::new(&db, &gas);
         let variable = solver.infer_kind(Kind::Schema, Rest::All);
         for ty in upper {
             solver.constrain(variable, solver.closed(ty), Provenance::default());

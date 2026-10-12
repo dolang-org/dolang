@@ -221,7 +221,9 @@ fn rest_shape_inclusions_of_rigids_and_unknown() {
     assert_eq!(check(&db, of_unknown, ints).status, Status::Proven);
     assert_eq!(check(&db, one, db.unknown_schema()).status, Status::Proven);
 
-    let mut solver = Solver::new(&db);
+    let gas = Gas::default();
+
+    let mut solver = Solver::new(&db, &gas);
     let env = solver.rigid_environment(f);
     solver.constrain(
         solver.view(of_s, env),
@@ -229,7 +231,7 @@ fn rest_shape_inclusions_of_rigids_and_unknown() {
         Provenance::default(),
     );
     assert_eq!(solver.solve()[0].status, Status::Proven);
-    let root = solver.obligation(solver.roots[0].obligation);
+    let root = solver.progress(solver.roots[0].obligation);
     let (child, _) = root
         .active
         .borrow()
@@ -237,7 +239,7 @@ fn rest_shape_inclusions_of_rigids_and_unknown() {
         .find(|(_, step)| *step == Step::Item(0))
         .cloned()
         .expect("the inclusion is derived");
-    let child = solver.obligation(child);
+    let child = solver.progress(child);
     assert!(
         child
             .active
@@ -468,7 +470,8 @@ fn domains_own_what_they_admit_narrowest_first() {
     );
 
     // An unsolved key waits for its solution
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let (key, value) = (s.infer(), s.infer());
     let e = s.intern_environment(s.empty_environment(), vec![key, value]);
     s.constrain(s.closed(a_b), s.view(variable, e), Provenance::default());

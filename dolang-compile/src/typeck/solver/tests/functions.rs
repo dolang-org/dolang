@@ -2,7 +2,8 @@ use super::*;
 
 /// Check a call of `callee` with `args`, expecting a result below `result`
 fn call(db: &Database, callee: TypeId, args: &[CallArgument], result: TypeId) -> Outcome {
-    let mut s = Solver::new(db);
+    let gas = Gas::default();
+    let mut s = Solver::new(db, &gas);
     let (callee, result) = (s.closed(callee), s.closed(result));
     constrain_call(&mut s, callee, args, result, None);
     s.solve().remove(0)
@@ -124,11 +125,12 @@ fn omitted_channels_are_used_through_their_default_bounds() {
     );
     db.seal();
     let relate = |a, b| {
-        let mut s = Solver::new(&db);
+        let gas = Gas::default();
+        let mut s = Solver::new(&db, &gas);
         let env = s.rigid_environment(f);
         s.constrain(s.view(a, env), s.view(b, env), Provenance::default());
         let status = s.solve()[0].status;
-        let root = s.obligation(s.roots[0].obligation);
+        let root = s.progress(s.roots[0].obligation);
         let implicit = root
             .active
             .borrow()
@@ -183,7 +185,8 @@ fn calls_bind_arguments_as_the_runtime_does() {
     let nil_value = db.intern(Type::Literal(Literal::Nil));
     let int_type = int;
     db.seal();
-    let s = Solver::new(&db);
+    let gas = Gas::default();
+    let s = Solver::new(&db, &gas);
     let [int, str, nil_value] = [int, str, nil_value].map(|ty| s.closed(ty));
     use CallArgument::{Keyword, Positional, Spread};
     for args in [
@@ -282,7 +285,8 @@ fn a_call_result_variable_is_bounded_by_the_callee_result() {
     let str = nominal(&mut db, "Str", vec![], vec![]);
     let f = function(&db, &[int], str);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let result = s.infer();
     let args = [CallArgument::Positional(s.closed(int))];
     let f = s.closed(f);
@@ -367,7 +371,8 @@ fn parameter_lists_fill_by_count() {
     ));
 
     // Arguments fill freely, so a lone `Str` may land on the `Int`
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let (spread, callee, result) = (s.closed(spread), s.closed(optional), s.infer());
     constrain_call(
         &mut s,

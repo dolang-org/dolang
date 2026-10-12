@@ -214,7 +214,7 @@ impl Solver<'_> {
     /// `class` applied to its own rigids, walked to `decl`: the arguments `decl`
     /// has there, or `None` when `class` doesn't reach it
     fn descent(&self, class: DeclId, decl: DeclId) -> Result<Option<Vec<TypeId>>, Issue> {
-        let mut nested = self.nested()?;
+        let mut nested = self.nested(Nesting::Side)?;
         let environment = nested.rigid_environment(class);
         let arguments = self
             .db
@@ -227,7 +227,7 @@ impl Solver<'_> {
             arguments,
             environment,
         };
-        let result = nested
+        nested
             .ancestor(start, decl, &mut FxHashSet::default(), 0)
             .and_then(|found| {
                 found
@@ -240,9 +240,7 @@ impl Solver<'_> {
                     })
                     .transpose()
                     .map_err(Issue::from)
-            });
-        self.work.set(self.work.get() + nested.work.get());
-        result
+            })
     }
 
     /// `class` as a whole, for a member `kept` whose class says nothing of it.

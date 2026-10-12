@@ -2,7 +2,9 @@ use super::*;
 
 /// Whether any obligation's current premises include `step`
 fn uses(s: &Solver<'_>, step: &Step) -> bool {
-    (s.obligations.iter()).any(|o| o.active.borrow().iter().any(|(_, found)| found == step))
+    (0..s.obligation_count()).any(|id| {
+        (s.progress(ObligationId(id)).active.borrow().iter()).any(|(_, found)| found == step)
+    })
 }
 
 #[test]
@@ -111,7 +113,8 @@ fn skolem_bound_reductions_are_labeled() {
         (Binding::Implicit, Step::ImplicitBound),
     ] {
         let expected = quantified(&db, vec![bounded(Kind::Type, binding, Some(iter))], body);
-        let mut s = Solver::new(&db);
+        let gas = Gas::default();
+        let mut s = Solver::new(&db, &gas);
         let actual = function(&db, &[iter], int);
         s.constrain(s.closed(actual), s.closed(expected), Provenance::default());
         assert_eq!(s.solve()[0].status, Status::Proven);
@@ -177,14 +180,15 @@ fn quantified_actuals_are_instantiated_inside_the_skolems_scope() {
         function(&db, &[t], int),
     );
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     s.constrain(s.closed(actual), s.closed(expected), Provenance::default());
     let outcome = s.solve().remove(0);
     assert!(contradiction(&outcome, Contradiction::UnrelatedNominals));
-    assert_eq!((s.skolems.len(), s.inference.len()), (1, 1));
-    let scope = s.skolems[0].scope;
+    assert_eq!((s.skolem_count(), s.variable_count()), (1, 1));
+    let scope = s.skolem(SkolemId(0)).scope;
     assert_ne!(scope, ScopeId(0));
-    assert_eq!(s.inference[0].scope, scope);
+    assert_eq!(s.variable(InferVarId(0)).scope, scope);
     // `A` takes `T` from below
     let lower: Vec<_> = (s.bounds(InferVarId(0)).lower())
         .map(|term| s.resolve(term).unwrap())
@@ -205,7 +209,8 @@ fn skolemizing_is_repeatable() {
     );
     let top = db.top();
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let v = s.infer();
     // (Value) -> ?v, reprocessed once `?v` is solved
     let actual = function_term(&s, &[s.closed(top)], v);
@@ -214,7 +219,7 @@ fn skolemizing_is_repeatable() {
     s.constrain(v, s.closed(int), Provenance::default());
     s.constrain(s.closed(int), v, Provenance::default());
     assert!(s.solve().iter().all(|o| o.status == Status::Proven));
-    assert_eq!(s.skolems.len(), 2);
+    assert_eq!(s.skolem_count(), 2);
     assert_eq!(s.skolemizations.borrow().len(), 1);
 }
 
@@ -229,7 +234,8 @@ fn skolems_never_leave_their_judgment() {
         function(&db, &[t], int),
     );
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     s.constrain(
         s.closed(function(&db, &[db.top()], int)),
         s.closed(expected),
@@ -289,12 +295,13 @@ fn quantified_types_subsume_through_instantiation() {
     db.seal();
     let actual = identity(&db, Variance::Invariant);
     for expected in [widened, identity(&db, Variance::Covariant), actual] {
-        let mut s = Solver::new(&db);
+        let gas = Gas::default();
+        let mut s = Solver::new(&db, &gas);
         s.constrain(s.closed(actual), s.closed(expected), Provenance::default());
         assert_eq!(s.solve()[0].status, Status::Proven, "{expected:?}");
         // `A` took `T`, which has no canonical form
-        if let Some(variable) = s.inference.iter().next() {
-            assert!(variable.assignment.get().is_some());
+        if s.variable_count() > 0 {
+            assert!(s.assignment(InferVarId(0)).is_some());
             assert_eq!(s.solution(InferVarId(0)), None);
             assert_eq!(s.reify(Term::Infer(InferVarId(0))), Err(Residual::Escape));
         }
@@ -392,11 +399,12 @@ fn nested_quantifiers_nest_their_scopes() {
         ),
     );
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     s.constrain(s.closed(actual), s.closed(expected), Provenance::default());
     assert_eq!(s.solve()[0].status, Status::Proven);
-    let depths: Vec<_> = (0..s.skolems.len())
-        .map(|i| s.scopes[s.skolems[i].scope.0].depth)
+    let depths: Vec<_> = (0..s.skolem_count())
+        .map(|i| s.extent(s.skolem(SkolemId(i)).scope).depth)
         .collect();
     assert_eq!(depths, [1, 2]);
     let outcome = check(&db, actual, wrong);
@@ -441,7 +449,8 @@ fn escaping_skolems_are_promoted_to_their_bounds() {
         function(&db, &[t], int),
     );
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let v = s.infer();
     // (?v) -> Int: `?v` is outside `T`'s scope, so it takes `T`'s bound
     let actual = function_term(&s, &[v], s.closed(int));
@@ -460,7 +469,8 @@ fn escaping_skolems_are_promoted_to_their_bounds() {
 fn skolems_never_escape_through_variables() {
     let mut db = Database::new();
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let v = s.infer();
     // (?v) -> ?v <: [T] (T) -> T: `?v` would have to be `T`
     let actual = function_term(&s, &[v], v);
@@ -484,7 +494,8 @@ fn skolems_never_escape_through_variables() {
 fn variables_below_quantified_types_are_residual() {
     let mut db = Database::new();
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let v = s.infer();
     let expected = identity(&db, Variance::Invariant);
     s.constrain(v, s.closed(expected), Provenance::default());
@@ -494,7 +505,7 @@ fn variables_below_quantified_types_are_residual() {
         Residual::Unsupported("a variable below a quantified type").into()
     ));
     assert!(s.bounds(variable_id(v)).upper().next().is_none());
-    assert!(s.skolems.is_empty());
+    assert_eq!(s.skolem_count(), 0);
 }
 
 /// `{*(K): V, ...}`
@@ -535,7 +546,8 @@ fn item_projections_imply_key_bounds() {
         (function(&db, &[range], bin), read),
         (function(&db, &[range, bin], nil), write),
     ] {
-        let mut s = Solver::new(&db);
+        let gas = Gas::default();
+        let mut s = Solver::new(&db, &gas);
         s.constrain(s.closed(actual), s.closed(expected), Provenance::default());
         let outcome = s.solve().remove(0);
         assert_eq!(outcome.status, Status::Proven, "{outcome:?}");

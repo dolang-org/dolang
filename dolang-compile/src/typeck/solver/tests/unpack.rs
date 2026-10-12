@@ -113,12 +113,12 @@ impl World {
     }
 
     fn union(&mut self, types: &[TypeId]) -> TypeId {
-        Solver::new(self.sealed()).lub(types[0], types[1])
+        Solver::new(self.sealed(), &Gas::default()).lub(types[0], types[1])
     }
 
     fn walk(&mut self, ty: TypeId, pattern: &PatternShape) -> Option<Unpacked> {
         let unpack = self.unpack_decl();
-        Solver::new(self.sealed()).unpack_pattern(ty, unpack, pattern)
+        Solver::new(self.sealed(), &Gas::default()).unpack_pattern(ty, unpack, pattern)
     }
 }
 

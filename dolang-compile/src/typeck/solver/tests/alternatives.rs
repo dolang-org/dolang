@@ -22,7 +22,8 @@ fn a_rejected_member_leaves_the_one_to_infer_through() {
     let b = nominal(&mut db, "B", vec![], vec![]);
     let expected = union(&db, &[b, var(&db)]);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let t = s.infer();
     let e = s.environment(s.empty_environment(), vec![t]);
     s.constrain(s.closed(a), s.view(expected, e), Provenance::default());
@@ -39,7 +40,8 @@ fn several_possible_members_are_ambiguous_and_leak_nothing() {
     let a = nominal(&mut db, "A", vec![], vec![]);
     let expected = union(&db, &[reference(&db, 0, 0), reference(&db, 0, 1)]);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let (t, u) = (s.infer(), s.infer());
     let e = s.environment(s.empty_environment(), vec![t, u]);
     s.constrain(s.closed(a), s.view(expected, e), Provenance::default());
@@ -61,7 +63,8 @@ fn a_member_proven_without_bounds_is_chosen_beside_possible_ones() {
     let child = nominal(&mut db, "Child", vec![], vec![parent]);
     let expected = union(&db, &[parent, var(&db)]);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let t = s.infer();
     let e = s.environment(s.empty_environment(), vec![t]);
     s.constrain(s.closed(child), s.view(expected, e), Provenance::default());
@@ -83,7 +86,8 @@ fn growing_bounds_settle_an_ambiguity_in_any_order() {
         let boxed_b = apply(&db, boxed, &[b]);
         let expected = union(&db, &[boxed_a, boxed_b]);
         db.seal();
-        let mut s = Solver::new(&db);
+        let gas = Gas::default();
+        let mut s = Solver::new(&db, &gas);
         let x = s.infer();
         let e = s.environment(s.empty_environment(), vec![x]);
         if !later {
@@ -115,7 +119,8 @@ fn a_union_inside_a_chosen_member_is_judged_in_turn() {
     let boxed_inner = apply(&db, boxed, &[inner]);
     let expected = union(&db, &[boxed_inner, c]);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let t = s.infer();
     let e = s.environment(s.empty_environment(), vec![t]);
     s.constrain(s.closed(actual), s.view(expected, e), Provenance::default());
@@ -138,7 +143,8 @@ fn a_function_infers_through_the_function_member() {
     let callback = function(&db, &[b], a);
     let expected = union(&db, &[callback, c]);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let p = s.infer();
     let e = s.environment(s.empty_environment(), vec![p]);
     s.constrain(s.view(actual, e), s.closed(expected), Provenance::default());
@@ -161,7 +167,8 @@ fn rejecting_every_member_contradicts_a_literal_but_not_a_class() {
     let literals = union(&db, &[two, boxed_var]);
     let classes = union(&db, &[b, boxed_var]);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let t = s.infer();
     let e = s.environment(s.empty_environment(), vec![t]);
     s.constrain(s.closed(one), s.view(literals, e), Provenance::default());
@@ -183,7 +190,8 @@ fn exhaustion_in_a_trial_is_residual() {
     db.seal();
     let mut exhausted = false;
     for work in 0..200 {
-        let mut s = Solver::with_limits(&db, Limits { work, depth: 256 });
+        let gas = Gas::new(work);
+        let mut s = Solver::new(&db, &gas);
         let t = s.infer();
         let e = s.environment(s.empty_environment(), vec![t]);
         s.constrain(s.closed(a), s.view(expected, e), Provenance::default());
@@ -220,13 +228,8 @@ fn recursive_unions_are_a_cheap_residual() {
     let body = union(&db, &[int, apply(&db, base, &[b])]);
     populate(&mut db, bid, bsrc, body, vec![]);
     db.seal();
-    let mut s = Solver::with_limits(
-        &db,
-        Limits {
-            work: 5_000,
-            depth: 256,
-        },
-    );
+    let gas = Gas::new(5_000);
+    let mut s = Solver::new(&db, &gas);
     s.constrain(s.closed(a), s.closed(b), Provenance::default());
     let outcome = s.solve().remove(0);
     assert_eq!(outcome.status, Status::Unresolved);

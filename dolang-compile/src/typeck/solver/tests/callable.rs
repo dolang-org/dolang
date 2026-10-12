@@ -91,7 +91,9 @@ fn a_generic_call_is_instantiated() {
     let identity = identity.finish(&mut db, vec![func]);
     db.seal();
 
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+
+    let mut s = Solver::new(&db, &gas);
     let r = s.infer();
     let (args, identity) = (
         [CallArgument::Positional(s.closed(int))],
@@ -225,7 +227,9 @@ fn a_generic_class_object_infers_its_arguments() {
     db.seal();
     assert_eq!(check(&db, object, constructs).status, Status::Proven);
 
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+
+    let mut s = Solver::new(&db, &gas);
     let r = s.infer();
     let (args, object) = ([CallArgument::Positional(s.closed(int))], s.closed(object));
     constrain_call(&mut s, object, &args, r, None);
@@ -262,7 +266,8 @@ fn trials_choose_among_overloaded_calls() {
     assert!(unfit(&check(&db, pick, int_str)));
 
     // Both fit a function of variables
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let (x, r) = (s.infer(), s.infer());
     let pick = s.closed(pick);
     constrain_call(&mut s, pick, &[CallArgument::Positional(x)], r, None);
@@ -298,7 +303,8 @@ fn a_chosen_signature_is_held_to_its_parameters() {
     db.seal();
 
     // The signature is chosen before its parameter is known
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let (x, r) = (s.infer(), s.infer());
     let adder = s.closed(adder);
     constrain_call(&mut s, adder, &[CallArgument::Positional(x)], r, None);

@@ -667,7 +667,7 @@ impl Solver<'_> {
                 shape.positional.push(Slot::Opaque(shape.opaque.len()));
                 shape.opaque.push(Opaque {
                     opacity: Opacity::Infer(id),
-                    lanes: self.inference[id.0].lanes,
+                    lanes: self.variable(id).lanes,
                     item,
                 });
                 return Ok(());
@@ -1232,7 +1232,7 @@ impl Solver<'_> {
             }
             false
         };
-        let fill = match self.obligations[obligation.0].relation {
+        let fill = match self.relation(obligation) {
             Relation::Subtype { fill, .. } => fill,
             Relation::Call(_) => Fill::Arguments,
         };
