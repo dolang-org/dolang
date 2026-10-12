@@ -109,6 +109,15 @@ impl<T, Tag> Table<T, Tag> {
         Id::new(self.map.get_or_insert_index_with(k, |k| (k.to_owned(), ())))
     }
 
+    /// Returns the `Id` of a value already interned, without interning it.
+    pub fn get<Q>(&self, k: &Q) -> Option<Id<Tag>>
+    where
+        T: Hash + Eq + Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        self.map.get_index_of(k).map(Id::new)
+    }
+
     /// Like [`id`](Self::id), but takes an owned value, which is dropped if an
     /// equal one is already interned.
     pub fn id_owned(&self, k: T) -> Id<Tag>
