@@ -1,0 +1,59 @@
+import std:
+  - hash
+  - Set
+  - Fmt
+  - FmtValue
+  - FmtParam
+
+# Equal independently constructed values must work as keys, including when
+# their hashes incorporate hashes computed for another container.
+def check_key x y
+  assert_eq $x $y
+  assert_eq (hash x) (hash y)
+  assert_eq (hash x) (hash x)
+  assert_eq (Value.(hash) x) (hash x)
+  let d = {}
+  d[x] = "found"
+  assert_eq $d[y] "found"
+  let copied = d.copy()
+  assert_eq $copied[y] "found"
+  assert (Set([x]).contains y)
+
+let a = {items: [1, 2], members: Set(["a", "b"])}
+let b = {items: [1, 2], members: Set(["b", "a"])}
+check_key $a $b
+check_key (Set([a, [3, 4]])) (Set([[3, 4], b]))
+check_key [a, Set([1, 2])] [b, Set([2, 1])]
+check_key (FmtParam :name: width: 8) (FmtParam :name: width: 8)
+check_key (FmtValue a source: "value") (FmtValue b source: "value")
+check_key (Fmt ["value=", (FmtValue a)]) (Fmt ["value=", (FmtValue b)])
+
+# Set operations reuse source hashes for both probing and result insertion.
+def check_set actual expected
+  assert_eq $actual $expected
+  assert_eq (hash actual) (hash expected)
+  for value = expected
+    assert (actual.contains value)
+
+let left = Set [a, [3, 4]]
+let right = Set [[5, 6], b]
+check_set $left.copy() (Set([b, [3, 4]]))
+check_set (left.union right) (Set([b, [3, 4], [5, 6]]))
+check_set (left.intersect right) (Set([b]))
+check_set (left.diff right) (Set([[3, 4]]))
+check_set (left.sym_diff right) (Set([[3, 4], [5, 6]]))
+
+# A user-defined hash may call std.hash recursively with composite fields.
+class Key
+  pub field value
+
+  def (init) self value
+    self.value = value
+
+  def (hash) self
+    hash $self.value
+
+  def (eq) self other
+    (self.value == other.value)
+
+check_key (Key a) (Key b)

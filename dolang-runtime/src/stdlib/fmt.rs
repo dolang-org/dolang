@@ -1,4 +1,4 @@
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{Hash, Hasher};
 
 use crate::{
     arg::{Arg, Args},
@@ -372,7 +372,7 @@ impl<'v> Object<'v> for FmtValue {
         this.annex().spec.hash(hasher);
         let borrow = this.borrow(strand)?;
         for value in [Ref::slot::<0>(&borrow), Ref::slot::<1>(&borrow)] {
-            let mut value_hasher = DefaultHasher::new();
+            let mut value_hasher = strand.vm().hasher();
             value.op_hash(strand, &mut value_hasher)?;
             hasher.write_u64(value_hasher.finish());
         }
@@ -485,7 +485,7 @@ impl<'v> Object<'v> for FmtParam {
         this.annex().spec.hash(hasher);
         let borrow = this.borrow(strand)?;
         for value in [Ref::slot::<0>(&borrow), Ref::slot::<1>(&borrow)] {
-            let mut value_hasher = DefaultHasher::new();
+            let mut value_hasher = strand.vm().hasher();
             value.op_hash(strand, &mut value_hasher)?;
             hasher.write_u64(value_hasher.finish());
         }
@@ -756,7 +756,7 @@ impl<'v> Object<'v> for Fmt {
     ) -> Result<'v, 's, ()> {
         hasher.write_usize(Segments.len(this, strand));
         each_segment(this, strand, |strand, segment| {
-            let mut segment_hasher = DefaultHasher::new();
+            let mut segment_hasher = strand.vm().hasher();
             segment.op_hash(strand, &mut segment_hasher)?;
             hasher.write_u64(segment_hasher.finish());
             Ok(())

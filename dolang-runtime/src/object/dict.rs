@@ -1,6 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
-    hash::{DefaultHasher, Hash, Hasher},
+    hash::{Hash, Hasher},
     mem,
     ops::ControlFlow,
 };
@@ -137,7 +137,7 @@ impl<'v> Dict<'v> {
         index: &Value<'v>,
         instance: Option<i64>,
     ) -> Result<'v, 's, Option<&Value<'v>>> {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = strand.vm().hasher();
         index.op_hash(strand, &mut hasher)?;
         let hash = hasher.finish();
         Ok(self.find(strand, hash, index)?.and_then(|pair| unsafe {
@@ -334,7 +334,7 @@ impl<'v> Dict<'v> {
         strand: &mut Strand<'v, 's>,
         key: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = strand.vm().hasher();
         key.op_hash(strand, &mut hasher)?;
         let hash = hasher.finish();
         let Some(bucket) = self.find(strand, hash, key)? else {
@@ -403,7 +403,7 @@ impl<'v> Dict<'v> {
                 Some(Arg::Pos(key)) => key,
                 Some(Arg::Key(sym, mut value)) if sym.tag() == sym::INT => {
                     let key = Value::from_i64(strand, index);
-                    let mut hasher = DefaultHasher::new();
+                    let mut hasher = strand.vm().hasher();
                     key.op_hash(strand, &mut hasher).unwrap();
                     let hv = hasher.finish();
                     sink.dict.insert(
@@ -430,7 +430,7 @@ impl<'v> Dict<'v> {
                 Some(Arg::Key(sym, _)) => return Err(Error::unexpected_key(strand, sym)),
                 None => return Err(Error::missing_positional(strand, counter)),
             };
-            let mut hasher = DefaultHasher::new();
+            let mut hasher = strand.vm().hasher();
             key.op_hash(strand, &mut hasher)?;
             let hv = hasher.finish();
             sink.dict
@@ -459,7 +459,7 @@ impl<'b, 'v, 's> Spread<'v, 's> for DictPairs<'b, 'v> {
         mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let key = Value::from_i64(strand, self.int);
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = strand.vm().hasher();
         key.op_hash(strand, &mut hasher).unwrap();
         let hv = hasher.finish();
         self.dict.insert(strand, key, value.take(), hv, false)?;
@@ -477,7 +477,7 @@ impl<'b, 'v, 's> Spread<'v, 's> for DictPairs<'b, 'v> {
         mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let key = Value::from_object(strand.sym_obj(key));
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = strand.vm().hasher();
         key.op_hash(strand, &mut hasher).unwrap();
         let hv = hasher.finish();
         self.dict.insert(strand, key, value.take(), hv, false)?;
@@ -490,7 +490,7 @@ impl<'b, 'v, 's> Spread<'v, 's> for DictPairs<'b, 'v> {
         mut key: Slot<'v, '_>,
         mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = strand.vm().hasher();
         key.op_hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         self.dict
@@ -1846,7 +1846,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
         index: &Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = strand.vm().hasher();
         index.op_hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let dict = this.borrow(strand)?;
@@ -1865,7 +1865,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
         mut key: Slot<'v, 'a>,
         mut value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = strand.vm().hasher();
         key.op_hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let mut borrow = this.borrow_mut(strand)?;
@@ -1934,7 +1934,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 let epoch = this.borrow(strand)?.epoch;
                 let dict = this.to_strong();
                 let value = if let Some(key) = key {
-                    let mut hasher = DefaultHasher::new();
+                    let mut hasher = strand.vm().hasher();
                     key.op_hash(strand, &mut hasher)?;
                     let hv = hasher.finish();
                     let bucket = this.borrow(strand)?.find(strand, hv, &key)?;
@@ -2249,7 +2249,7 @@ impl<'v> Dict<'v> {
                 UnpackKeyKind::Const(value) => value.dup(),
             };
 
-            let mut hasher = DefaultHasher::new();
+            let mut hasher = strand.vm().hasher();
 
             key_value.op_hash(strand, &mut hasher)?;
 
@@ -2359,7 +2359,7 @@ impl<'v> Dict<'v> {
         mut key: Slot<'v, 'a>,
         mut value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = strand.vm().hasher();
         key.op_hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let mut dict = this.borrow_mut(strand)?;
@@ -2407,7 +2407,7 @@ impl<'v> Dict<'v> {
         or_else: Option<Slot<'v, 'a>>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = strand.vm().hasher();
         key.op_hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let else_key = Sym::well_known(sym::ELSE);
@@ -2498,7 +2498,7 @@ impl<'v> Dict<'v> {
         value: Option<Slot<'v, 'a>>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = strand.vm().hasher();
         key.op_hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let dict = this.borrow(strand)?;
@@ -2547,7 +2547,7 @@ impl<'v> Dict<'v> {
     ) -> Result<'v, 's, ()> {
         let dict = this.borrow(strand)?;
         let count = if let Some(key) = key {
-            let mut hasher = DefaultHasher::new();
+            let mut hasher = strand.vm().hasher();
             key.op_hash(strand, &mut hasher)?;
             let hv = hasher.finish();
             dict.find(strand, hv, &key)?
@@ -2747,7 +2747,7 @@ mod tests {
         for &(k, v) in pairs {
             let key = Value::from_i64(strand, k);
             let value = Value::from_i64(strand, v);
-            let mut hasher = DefaultHasher::new();
+            let mut hasher = strand.vm().hasher();
             key.op_hash(strand, &mut hasher).unwrap();
             let hv = hasher.finish();
             dict.insert(strand, key, value, hv, false).unwrap();
@@ -2969,7 +2969,7 @@ mod tests {
                 .enter_sync(strand, |strand, recv| {
                     let key = Value::from_i64(strand, 5);
                     let val = Value::from_i64(strand, 6);
-                    let mut hasher = DefaultHasher::new();
+                    let mut hasher = strand.vm().hasher();
                     key.op_hash(strand, &mut hasher).unwrap();
                     let hv = hasher.finish();
                     recv.borrow_mut(strand)

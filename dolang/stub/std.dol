@@ -146,6 +146,9 @@ pub def getter func @ Func -> (Getter[Value, Value] | StaticGetter[Value])
 #   hash $self.x $self.y $self.z
 # ```
 #
+# Hash codes are stable for unchanged values within a VM, but may differ
+# between VM instances. Do not persist them as stable identifiers.
+#
 #
 pub def hash
   # Values to hash.

@@ -284,7 +284,7 @@ impl<'a, 'v, 's> Spread<'v, 's> for SetSpread<'a, 'v> {
         strand: &mut Strand<'v, 's>,
         mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = strand.vm().hasher();
         value.op_hash(strand, &mut hasher)?;
         let hash = hasher.finish();
         self.0.insert(strand, value.take(), hash)?;
@@ -301,7 +301,7 @@ impl<'a, 'v, 's> Spread<'v, 's> for SetSpread<'a, 'v> {
             strand,
             [Value::from_object(strand.sym_obj(key)), value.take()],
         ));
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = strand.vm().hasher();
         pair.op_hash(strand, &mut hasher)?;
         let hash = hasher.finish();
         self.0.insert(strand, pair, hash)?;
@@ -315,7 +315,7 @@ impl<'a, 'v, 's> Spread<'v, 's> for SetSpread<'a, 'v> {
         mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let pair = Value::from_object(tuple::tuple(strand, [key.take(), value.take()]));
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = strand.vm().hasher();
         pair.op_hash(strand, &mut hasher)?;
         let hash = hasher.finish();
         self.0.insert(strand, pair, hash)?;
@@ -476,7 +476,7 @@ impl<'v> Protocol<'v> for Set<'v> {
         let mut digests = Vec::with_capacity(borrow.len());
         unsafe {
             for bucket in borrow.inner.iter() {
-                let mut elem_hasher = DefaultHasher::new();
+                let mut elem_hasher = strand.vm().hasher();
                 bucket.as_ref().value.op_hash(strand, &mut elem_hasher)?;
                 digests.push(elem_hasher.finish());
             }
@@ -558,7 +558,7 @@ impl<'v> Protocol<'v> for Set<'v> {
         match method.tag() {
             sym::ADD => {
                 let ([mut value], []) = unpack!(strand, args, 1, 0)?;
-                let mut hasher = DefaultHasher::new();
+                let mut hasher = strand.vm().hasher();
                 value.op_hash(strand, &mut hasher)?;
                 let hash = hasher.finish();
                 let mut borrow = this.borrow_mut(strand)?;
@@ -567,7 +567,7 @@ impl<'v> Protocol<'v> for Set<'v> {
             }
             sym::DELETE => {
                 let ([value], []) = unpack!(strand, args, 1, 0)?;
-                let mut hasher = DefaultHasher::new();
+                let mut hasher = strand.vm().hasher();
                 value.op_hash(strand, &mut hasher)?;
                 let hash = hasher.finish();
                 let deleted = {
@@ -595,7 +595,7 @@ impl<'v> Protocol<'v> for Set<'v> {
             }
             sym::CONTAINS => {
                 let ([value], []) = unpack!(strand, args, 1, 0)?;
-                let mut hasher = DefaultHasher::new();
+                let mut hasher = strand.vm().hasher();
                 value.op_hash(strand, &mut hasher)?;
                 let hash = hasher.finish();
                 let contains = this.borrow(strand)?.contains(strand, &value, hash)?;

@@ -4,6 +4,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, hash_map::Entry},
     future::Future,
+    hash::{BuildHasher, DefaultHasher, RandomState},
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut, Range},
@@ -225,6 +226,7 @@ type ChannelFactory<'v> = dyn for<'s> Fn(&mut Strand<'v, 's>, Slot<'v, '_>, Slot
 /// - [`Register`]
 /// - [`Strand`]
 pub struct Vm<'v> {
+    hash_state: RandomState,
     pub(crate) import_cache: RefCell<HashMap<String, ImportCacheEntry<'v>>>,
     pub(crate) native_modules: RefCell<HashMap<&'v str, Value<'v>>>,
     pub(crate) importers: MonoVec<Value<'v>>,
@@ -283,6 +285,12 @@ impl<'v> Drop for Vm<'v> {
 }
 
 impl<'v> Vm<'v> {
+    /// Build a value hasher with the VM's shared seed.
+    #[inline]
+    pub(crate) fn hasher(&self) -> DefaultHasher {
+        self.hash_state.build_hasher()
+    }
+
     #[doc(hidden)]
     // For internal use only. Extensions may need to invalidate importer-provided
     // modules when their backing provider is unregistered.
@@ -1005,6 +1013,7 @@ impl Builder<'static> {
         let builtin_classes = Singletons::new(&arena, &builtin_types);
 
         let vm = Vm {
+            hash_state: RandomState::new(),
             arena,
             builtin_types,
             singletons: builtin_classes,
@@ -1439,10 +1448,50 @@ impl Bytecode {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, rc::Rc};
+    use std::{cell::Cell, hash::Hasher, rc::Rc};
 
     use super::*;
     use crate::test_support::with_builder;
+
+    #[test]
+    fn value_hashers_share_vm_seed() {
+        with_builder(async |builder| {
+            let vm = builder.as_ref();
+            let mut seeded = Vec::new();
+            let mut unseeded = Vec::new();
+            for value in 0..16 {
+                let mut first = vm.hasher();
+                let mut second = vm.hasher();
+                let mut expected = vm.hash_state.build_hasher();
+                let mut zero = DefaultHasher::new();
+                for hasher in [&mut first, &mut second, &mut expected, &mut zero] {
+                    hasher.write_u64(value);
+                }
+                assert_eq!(first.finish(), second.finish());
+                assert_eq!(first.finish(), expected.finish());
+                seeded.push(first.finish());
+                unseeded.push(zero.finish());
+            }
+            assert_ne!(seeded, unseeded);
+        });
+    }
+
+    #[test]
+    fn value_hash_seed_is_vm_scoped() {
+        fn hashes() -> Vec<u64> {
+            with_builder(async |builder| {
+                (0..16)
+                    .map(|value| {
+                        let mut hasher = builder.hasher();
+                        hasher.write_u64(value);
+                        hasher.finish()
+                    })
+                    .collect()
+            })
+        }
+
+        assert_ne!(hashes(), hashes());
+    }
 
     struct TagA;
     struct TagB;
