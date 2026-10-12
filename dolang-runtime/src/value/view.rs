@@ -1,6 +1,6 @@
 use std::{
     fmt::{self, Display, Formatter},
-    hash::{DefaultHasher, Hash, Hasher},
+    hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
     num::NonZero,
@@ -534,7 +534,7 @@ impl<'v, 'a> Dict<'v, 'a> {
     ) -> Result<'v, 's, ()> {
         let key = Value::from_input(strand, key);
         let value = Value::from_input(strand, value);
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = strand.vm().hasher();
         key.op_hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let mut borrow = match self.0.borrow_mut() {
@@ -597,7 +597,7 @@ impl<'v, 'a> Set<'v, 'a> {
         value: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
         let value = Value::from_input(strand, value);
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = strand.vm().hasher();
         value.op_hash(strand, &mut hasher)?;
         let hash = hasher.finish();
         let borrow = match self.0.borrow() {
@@ -616,7 +616,7 @@ impl<'v, 'a> Set<'v, 'a> {
     ) -> Result<'v, 's, bool> {
         // Build the value and hash it before taking the exclusive borrow.
         let value = Value::from_input(strand, value);
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = strand.vm().hasher();
         value.op_hash(strand, &mut hasher)?;
         let hash = hasher.finish();
         let mut borrow = match self.0.borrow_mut() {
@@ -633,7 +633,7 @@ impl<'v, 'a> Set<'v, 'a> {
         value: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
         let value = Value::from_input(strand, value);
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = strand.vm().hasher();
         value.op_hash(strand, &mut hasher)?;
         let hash = hasher.finish();
         let mut borrow = match self.0.borrow_mut() {

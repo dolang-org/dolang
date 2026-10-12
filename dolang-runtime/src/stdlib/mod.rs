@@ -1,4 +1,4 @@
-use std::hash::{DefaultHasher, Hasher};
+use std::hash::Hasher;
 
 use crate::{
     error::Error,
@@ -251,7 +251,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         })
         .function("hash", async move |strand, args, out| {
             let ([], [], values) = unpack!(strand, args, 0, 0, *)?;
-            let mut hasher = DefaultHasher::new();
+            let mut hasher = strand.vm().hasher();
             for (i, slot) in values.enumerate() {
                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                     strand.check_trap()?;

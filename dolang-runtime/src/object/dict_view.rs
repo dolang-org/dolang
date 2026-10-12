@@ -1,9 +1,6 @@
 //! Lazy dictionary-like projections over native objects.
 
-use std::{
-    hash::{DefaultHasher, Hasher},
-    ops::ControlFlow,
-};
+use std::{hash::Hasher, ops::ControlFlow};
 
 use crate::value::fmt::Format;
 
@@ -453,7 +450,7 @@ fn snapshot_dict<'v, 's>(
 ) -> Result<'v, 's, Value<'v>> {
     let mut snapshot = dict::Dict::new();
     for (key, value) in pairs {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = strand.vm().hasher();
         key.op_hash(strand, &mut hasher)?;
         let hash = hasher.finish();
         snapshot.insert(strand, key, value, hash, false)?;

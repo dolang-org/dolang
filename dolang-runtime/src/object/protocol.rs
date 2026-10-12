@@ -2497,7 +2497,7 @@ async fn special_mcall<'v, 'a, 's>(
             Output::set(strand, out, b);
         }
         sym::HASH_METHOD => {
-            let mut hasher = DefaultHasher::new();
+            let mut hasher = strand.vm().hasher();
             dispatch!(op_hash, &mut hasher)?;
             Output::set(strand, out, hasher.finish());
         }

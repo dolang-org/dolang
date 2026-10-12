@@ -10,6 +10,12 @@ preventing mixing objects from different VM instances. It manages a
 garbage collector, global symbol table, type registry, loaded programs,
 etc.
 
+Each VM owns a randomly seeded `RandomState` for value hashing. Hashers copy
+its state, so they do not borrow the VM. All value hashing uses this state:
+dicts and sets reuse cached hashes across containers, and composite values
+incorporate element hashes. The VM brand prevents mixing these hashes with
+values from another VM.
+
 Registration goes through `Register`, a handle lent out only as
 `&mut Register` from a context that may allocate. `Builder` and
 `TypeBuilder` dereference to it. Strand-local keys, importers, traps, and lazy
