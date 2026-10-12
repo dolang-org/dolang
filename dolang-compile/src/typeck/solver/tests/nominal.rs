@@ -6,14 +6,6 @@ fn union(db: &Database, members: &[TypeId]) -> TypeId {
     ))
 }
 
-/// A class the runtime forbids subclassing
-fn final_class(db: &mut Database, name: &str, supers: Vec<TypeId>) -> TypeId {
-    let (id, ty, mut source) = reserve(db, DeclKind::Class, name);
-    source.is_final = true;
-    populate(db, id, source, ty, supers);
-    ty
-}
-
 #[test]
 fn transparent_chains_and_nominal_transitivity() {
     let mut db = Database::new();

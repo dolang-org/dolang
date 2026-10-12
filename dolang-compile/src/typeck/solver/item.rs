@@ -17,10 +17,11 @@
 //! `IndexItem` by it stays unevaluated, and is related by widening its key
 //! toward the bound.
 //!
-//! The meet needs no intersection types where it matters: of two values, one
-//! below the other gives the lower, and two literals or classes that can't share
-//! a value give the bottom type. Any other meet is the dynamic type, leaving the
-//! write unchecked.
+//! A write relates to each value its key selects, so it needs no meet of them.
+//! Elsewhere the meet is taken without intersection types: of two values, one
+//! below the other gives the lower, and two that can't share a value give the
+//! bottom type. Any other meet is the dynamic type, or unresolved for a strict
+//! unit's solver.
 
 use super::*;
 
@@ -112,8 +113,51 @@ impl Solver<'_> {
     }
 
     fn item(&self, schema: TypeId, key: TypeId, meet: bool) -> Result<TypeId, Issue> {
+        let values = self.selected(schema, key)?;
+        if !meet {
+            let members = values.into_iter().map(UnionMember::Type).collect();
+            return Ok(self.db.intern(Type::Union(members)));
+        }
+        let mut met = self.db.top();
+        for value in values {
+            met = self.meet(met, value)?;
+        }
+        Ok(met)
+    }
+
+    /// The values of a closed `AssignItem` a term is, where its key selects
+    /// more than one. A write must fit each, which needs no meet of them.
+    pub(super) fn assigned(&self, term: Term) -> Result<Option<Vec<TypeId>>, Issue> {
+        let Term::View(view) = self.resolve(term)? else {
+            return Ok(None);
+        };
+        let Type::Union(members) = self.db.ty(view.ty) else {
+            return Ok(None);
+        };
+        let &[UnionMember::AssignItem(schema, key)] = &members[..] else {
+            return Ok(None);
+        };
+        let (Ok(schema), Ok(key)) = (self.reify(view.child(schema)), self.reify(view.child(key)))
+        else {
+            return Ok(None);
+        };
+        // Anything else relates as the meet does
+        let Ok(selected) = self.selected(schema, key) else {
+            return Ok(None);
+        };
+        let mut values = Vec::new();
+        for value in selected {
+            if !values.contains(&value) {
+                values.push(value);
+            }
+        }
+        Ok((values.len() > 1).then_some(values))
+    }
+
+    /// The values of a schema's items a key selects
+    fn selected(&self, schema: TypeId, key: TypeId) -> Result<Vec<TypeId>, Issue> {
         if let Type::Unknown(_) = self.db.ty(schema) {
-            return Ok(self.db.unknown());
+            return Ok(vec![self.db.unknown()]);
         }
         let promoted = match self.db.promoted(schema) {
             Promotion::Promoted(promoted) => promoted,
@@ -125,7 +169,7 @@ impl Solver<'_> {
         // An included schema not yet known may hold any item
         if let Some(&opaque) = promoted.opaque.first() {
             return match self.db.ty(opaque) {
-                Type::Unknown(_) => Ok(self.db.unknown()),
+                Type::Unknown(_) => Ok(vec![self.db.unknown()]),
                 _ => Err(Residual::Unsupported("a schema including a schema not yet known").into()),
             };
         }
@@ -203,22 +247,14 @@ impl Solver<'_> {
                 return Err(Residual::Unsupported("a key the schema may or may not admit").into());
             }
         }
-        if !meet {
-            let members = values.into_iter().map(UnionMember::Type).collect();
-            return Ok(self.db.intern(Type::Union(members)));
-        }
-        let mut met = self.db.top();
-        for value in values {
-            met = self.meet(met, value)?;
-        }
-        Ok(met)
+        Ok(values)
     }
 
     /// The meet of two closed types, where it needs no intersection: the lower
-    /// of two that are ordered, the bottom type for two literals or classes
-    /// neither below the other, and otherwise the dynamic type, or unresolved for
-    /// a strict unit's solver. Two such classes may share values through a
-    /// subclass of both, so their bottom meet is wrong (#1106).
+    /// of two that are ordered, and otherwise the dynamic type, or unresolved for
+    /// a strict unit's solver. Two classes neither below the other share the
+    /// values of a subclass of both, so they meet in the bottom type only when
+    /// one is a literal, or final and doesn't reach the other.
     pub(super) fn meet(&self, a: TypeId, b: TypeId) -> Result<TypeId, Issue> {
         if a == b {
             return Ok(a);
@@ -234,7 +270,11 @@ impl Solver<'_> {
         let disjoint = below == Status::Contradicted
             && above == Status::Contradicted
             && self.class_like(a)?
-            && self.class_like(b)?;
+            && self.class_like(b)?
+            && (self.db.literal(a).is_some()
+                || self.db.literal(b).is_some()
+                || self.final_outside(a, b)
+                || self.final_outside(b, a));
         match (disjoint, self.gradual) {
             (true, _) => Ok(self.db.bottom()),
             (false, true) => Ok(self.db.unknown()),

@@ -1,0 +1,42 @@
+# Two classes neither reaches share the values of a subclass of both, unless
+# one is final. What a write through a key must fit is each item it selects.
+
+pub class A
+pub class B
+pub class C: A B
+
+def both[T] f @ ((T) -> nil) g @ ((T) -> nil) -> ((T) -> nil)
+  do |x @ T| -> nil
+    f $x
+    g $x
+
+def takes_a _a @ A -> nil
+  nil
+
+def takes_b _b @ B -> nil
+  nil
+
+def takes_bool _b @ Bool -> nil
+  nil
+
+pub def shared()
+  let run = (both takes_a takes_b)
+  run $C()
+
+pub def final_meet()
+  let run = (both takes_a takes_bool)
+  run $C()
+# error: expected `Never`, found `m.C`
+#   --> m.dol:LL:LL
+#    |
+# LL |   run $C()
+#    |        ^^^
+
+pub def writes d @ Dict[{a: A, b: B}] k @ (:a: | :b:)
+  d[k] = C()
+  d[k] = A()
+# error: expected `m.B`, found `m.A`
+#   --> m.dol:LL:LL
+#    |
+# LL |   d[k] = A()
+#    |          ^^^

@@ -183,9 +183,7 @@ fn rejecting_every_member_contradicts_a_literal_but_not_a_class() {
 #[test]
 fn rejecting_every_member_contradicts_a_final_class() {
     let mut db = Database::new();
-    let (id, a, mut source) = reserve(&mut db, DeclKind::Class, "A");
-    source.is_final = true;
-    populate(&mut db, id, source, a, vec![]);
+    let a = final_class(&mut db, "A", vec![]);
     let b = nominal(&mut db, "B", vec![], vec![]);
     let boxed = nominal(&mut db, "Box", vec![binder(Variance::Covariant)], vec![]);
     let boxed_var = apply(&db, boxed, &[var(&db)]);

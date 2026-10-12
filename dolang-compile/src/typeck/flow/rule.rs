@@ -1108,13 +1108,19 @@ impl<'a> Flow<'a, '_> {
                 let Some(&arg) = args.get(index) else {
                     return fallback;
                 };
-                let Some((Some(found), expected)) = path[arguments + 2].sides else {
+                // A write through a key selecting several items shows the item
+                // the argument doesn't fit
+                let root = match steps.get(arguments + 2) {
+                    Some(Derivation::Selected(_)) => arguments + 3,
+                    _ => arguments + 2,
+                };
+                let Some((Some(found), expected)) = path[root].sides else {
                     return fallback;
                 };
                 // A parameter whose type is left unsolved shows the bound of it
                 // that the argument doesn't fit
-                let expected = expected.or_else(|| match steps.get(arguments + 2) {
-                    Some(Derivation::BoundPropagation) => path[arguments + 3].sides?.1,
+                let expected = expected.or_else(|| match steps.get(root) {
+                    Some(Derivation::BoundPropagation) => path[root + 1].sides?.1,
                     _ => None,
                 });
                 let (found, expected) = match expected {
@@ -1126,7 +1132,7 @@ impl<'a> Flow<'a, '_> {
                 };
                 // What fails may lie deeper than the argument's own relation, as
                 // in a binder's bound its type solves
-                let causes = (self.cause(path, &steps, arguments + 2, contradiction))
+                let causes = (self.cause(path, &steps, root, contradiction))
                     .into_iter()
                     .collect();
                 Problem::Argument {

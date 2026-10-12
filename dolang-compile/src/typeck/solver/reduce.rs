@@ -32,6 +32,20 @@ impl Solver<'_> {
             Relation::Call(call) => return self.call(obligation, call),
         };
         self.record_bounds(obligation, actual, expected)?;
+        // What a write must fit is each item its key selects
+        if actual != expected
+            && let Some(values) = self.assigned(expected)?
+        {
+            for (index, value) in values.into_iter().enumerate() {
+                self.derive(
+                    obligation,
+                    actual,
+                    self.closed(value),
+                    Step::Selected(index),
+                );
+            }
+            return Ok(());
+        }
         // Anything is below top and the dynamic type, even what can't be exposed
         let b = self.head(expected)?;
         if self.is_unknown(&b)
