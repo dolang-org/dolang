@@ -1100,9 +1100,6 @@ def type_forms_are_nodes_of_what_refers_to_them()
   let source = r|-
     def pick[T @ (Int | Str)] value @{name: T, ?port: Int} -> ((Int, <Iter[Int]) -> T)
       nil
-    @let Settings = $
-      # The name.
-      name: Str
   let unit = compile.compile "forms.dol" $source document: true
   assert_no_errors $unit
   let nodes = [...unit.nodes()]
@@ -1137,14 +1134,48 @@ def type_forms_are_nodes_of_what_refers_to_them()
     assert_eq $part.parent $func.id
   assert_type $compile.TypeItem $func.items[0]
 
-  # Type nodes carry no doc, even under a comment
+#[test]
+def schema_items_and_union_members_carry_the_comment_above_them()
+  let source = r|-
+    # The module.
+
+    # Settings.
+    @let Settings = $
+      # The name.
+      name: Str
+      # A flag.
+      - Bool
+      # The mode.
+      mode: $
+        # Fast.
+        | :fast:
+        | :slow:
+      # A callback.
+      callback: (
+        # Ignored.
+        Int -> Int)
+      # One line.
+      pair: (Int | Str)
+  let unit = compile.compile "docs.dol" $source document: true
+  assert_no_errors $unit
+  let nodes = [...unit.nodes()]
   let settings = (named_node source nodes compile.Alias "Settings")
-  let item = (types_of(nodes, settings[0])[0][1].expr.items[0])
-  assert_eq (span_text source item.span) "name: Str"
-  for pair = nodes
-    let node = pair[1]
-    if (type(node, compile.Type) || type(node, compile.TypeExpr) || type(node, compile.TypeItem))
-      assert_eq $node.doc nil
+  let documented = [...nodes.filter(do |pair|
+    (pair[1].doc != nil && (type(pair[1], compile.TypeExpr) || type(pair[1], compile.TypeItem))))]
+  documented.sort key: do |pair| pair[1].span.start.byte_offset
+  let docs = [...documented.map(do |pair|
+    [span_text(source, pair[1].span), span_text(source, pair[1].doc)])]
+  # An item's span takes in its dash. The type node does not take the alias's
+  # doc, nor a lone unparenthesized parameter its function type's, and a
+  # member without a comment above its bar has none.
+  assert_eq $docs $
+    - ["name: Str", "# The name."]
+    - ["- Bool", "# A flag."]
+    - ["mode: \$\n    # Fast.\n    | :fast:\n    | :slow:", "# The mode."]
+    - [":fast:", "# Fast."]
+    - ["callback: (\n    # Ignored.\n    Int -> Int)", "# A callback."]
+    - ["pair: (Int | Str)", "# One line."]
+  assert_eq (span_text(source, settings[1].doc)) "# Settings."
 
 #[test]
 def an_unreadable_type_leaves_no_nodes()

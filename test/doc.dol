@@ -373,6 +373,33 @@ def remaining_type_forms()
     "kind": schema
     "params": [{"kind": "any", "quant": "star"}, {"kind": "any", "quant": "star_star"}]
 
+# Schema items and union members give the docs of the comments above them,
+# and only when they have one.
+#[test]
+def schema_items_and_union_members_are_documented()
+  let out = extract_source r|-
+    pub @let Options = $
+      # Remote user.
+      ?user: Str
+      # Spans
+      # lines.
+      - Int
+      mode: $
+        # Fast.
+        | :fast:
+        | :slow:
+  let mode = $
+    "kind": union
+    "members":
+      - {"kind": "const", "text": ":fast:", "doc": "Fast."}
+      - {"kind": "const", "text": ":slow:"}
+  assert_eq (untargeted(entity(out, "Options")["type"])) $
+    "kind": schema
+    "params":
+      - {"kind": "key", "quant": "opt", "key": "user", "type": name_type("Str"), "doc": "Remote user."}
+      - {"kind": "pos", "quant": nil, "type": name_type("Int"), "doc": "Spans\nlines."}
+      - {"kind": "key", "quant": nil, "key": "mode", "type": mode}
+
 # The raw dump describes every node, with node references as indices into
 # `nodes`.
 #[test]

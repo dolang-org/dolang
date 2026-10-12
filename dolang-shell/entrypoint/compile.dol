@@ -518,7 +518,10 @@ class Document
     else if type(expr, compile.UnionType)
       let members = []
       for member = expr.members
-        members.push $self.#type_tree(member)
+        let tree = self.#type_tree $member
+        if (member.doc != nil)
+          tree[:doc:] = self.#doc_of(member)
+        members.push $tree
       $
         kind: "union"
         members: $members
@@ -563,7 +566,8 @@ class Document
         type: (self.#type_tree(arg.ty))
     result
 
-  # A list of type items, which the projection calls parameters.
+  # A list of type items, which the projection calls parameters. An item, like
+  # a union member, gives its doc only when it has one.
   def type_items self items
     let result = []
     for item = items
@@ -576,6 +580,8 @@ class Document
           key_type: (self.#type_tree(item.key_ty))
         if (!type(item, compile.OpenTypeItem) && !type(item, compile.AnyTypeItem))
           type: (self.#type_tree(item.ty))
+        if (item.doc != nil)
+          doc: (self.#doc_of(item))
     result
 
   # A class's supertypes, in source order, as type trees. A type-only one is

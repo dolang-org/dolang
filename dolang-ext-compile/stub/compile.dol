@@ -588,8 +588,9 @@ pub class KeyRestBinder: RestBinder
 # A form is a child of whatever refers to it: a [`Type`](compile.Type), a
 # [`Binder`](compile.Binder), or an enclosing form. Its span includes any
 # parentheses around it, since parentheses that only group a type are not a
-# form of their own. Type forms, arguments, and items declare nothing and
-# carry no doc.
+# form of their own. Type forms, arguments, and items declare nothing. Only a
+# union member written after a `|` carries a doc, from the comment block above
+# that `|`.
 pub class TypeExpr: Node
 
 # A possibly dotted name, such as `Str` or `time.Duration`.
@@ -705,7 +706,9 @@ pub class ExpandTypeArg: TypeArg
 
 # Supertype of the items of a [`SchemaType`](compile.SchemaType),
 # [`ParensType`](compile.ParensType), or [`FuncType`](compile.FuncType). Its
-# span leaves out a trailing `,`.
+# span includes a leading `-` and leaves out a trailing `,`. An item carries
+# the doc of the comment block directly above it, except the lone parameter of
+# a function type written without parentheses.
 pub class TypeItem: Node
   # How many of the element the item admits, or `nil` for exactly one.
   #

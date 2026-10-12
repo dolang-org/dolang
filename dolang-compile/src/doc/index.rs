@@ -389,7 +389,7 @@ impl Index<'_> {
     /// Record a resolved type as describing `parent`, unless it could not be read.
     fn type_node(&mut self, parent: Id, ty: &TypeExpr) {
         self.abandoning(|this| {
-            let id = this.begin_type(parent, ty.span());
+            let id = this.begin_type(parent, ty.span(), None);
             let expr = this.type_expr(id, ty)?;
             Some(this.finish_type(
                 id,
@@ -418,9 +418,9 @@ impl Index<'_> {
                 .or_else(|| super_ref.res.and_then(|res| res.node)),
         };
         self.abandoning(|this| {
-            let id = this.begin_type(class, span);
+            let id = this.begin_type(class, span, None);
             let expr = if super_ref.bracket_span.is_some() {
-                let app = this.begin_type(id, span);
+                let app = this.begin_type(id, span, None);
                 let base = this.push_to(Some(app), name_kind, name, None);
                 let args = this.type_args(app, &super_ref.args)?;
                 this.finish_type(app, Kind::AppType { base, args })
@@ -449,13 +449,14 @@ impl Index<'_> {
     }
 
     /// Push a type node whose kind [`Index::finish_type`] gives once its parts, which
-    /// are its children, are converted.
-    fn begin_type(&mut self, parent: Id, span: Span) -> Id {
+    /// are its children, are converted. Only a schema item or union member written
+    /// on its own line is documented, so only those give an `anchor`.
+    fn begin_type(&mut self, parent: Id, span: Span, anchor: Option<Offset>) -> Id {
         self.push_to(
             Some(parent),
             Kind::ConstType(doc::TypeConst::Nil),
             span,
-            None,
+            anchor,
         )
     }
 
@@ -467,16 +468,21 @@ impl Index<'_> {
     /// Convert a resolved type into nodes under `parent`, giving the node of its form,
     /// or `None` if it could not be read. A caller abandons what a failure pushed.
     fn type_expr(&mut self, parent: Id, ty: &TypeExpr) -> Option<Id> {
+        self.type_expr_at(parent, ty, None)
+    }
+
+    /// Like [`Index::type_expr`], documenting the form by the block above `anchor`.
+    fn type_expr_at(&mut self, parent: Id, ty: &TypeExpr, anchor: Option<Offset>) -> Option<Id> {
         let id = match ty {
             // Parentheses that only group are not a form of their own, but the form
             // covers them
             TypeExpr::Group { ty: inner, .. } => {
-                let id = self.type_expr(parent, inner)?;
+                let id = self.type_expr_at(parent, inner, anchor)?;
                 self.table[id].span = Some(ty.span());
                 return Some(id);
             }
             TypeExpr::Error => return None,
-            _ => self.begin_type(parent, ty.span()),
+            _ => self.begin_type(parent, ty.span(), anchor),
         };
         let kind = match ty {
             TypeExpr::Name { head, res, .. } => Kind::NameType {
@@ -496,28 +502,39 @@ impl Index<'_> {
                 args: self.type_args(id, args)?,
             },
             TypeExpr::Schema { params, .. } => Kind::SchemaType {
-                items: self.type_items(id, params)?,
+                items: self.type_items(id, params, true)?,
             },
             TypeExpr::Parens { params, .. } => Kind::ParensType {
-                items: self.type_items(id, params)?,
+                items: self.type_items(id, params, true)?,
             },
             TypeExpr::Array { elem, .. } => Kind::ArrayType {
                 elem: self.type_expr(id, elem)?,
             },
-            TypeExpr::Union { members, .. } => Kind::UnionType {
-                members: members
-                    .iter()
-                    .map(|member| self.type_expr(id, member))
-                    .collect::<Option<_>>()?,
-            },
+            TypeExpr::Union { members, bars, .. } => {
+                // A member is documented above its bar. Without a leading bar, the
+                // first member has none, and starts where the union does.
+                let unbarred = members.len() - bars.len();
+                Kind::UnionType {
+                    members: members
+                        .iter()
+                        .enumerate()
+                        .map(|(index, member)| {
+                            let bar = index.checked_sub(unbarred).map(|index| bars[index]);
+                            self.type_expr_at(id, member, bar.map(|bar| bar.start))
+                        })
+                        .collect::<Option<_>>()?,
+                }
+            }
             TypeExpr::Func {
                 params,
                 input,
                 output,
                 ret,
+                paren_span,
                 ..
             } => Kind::FuncType {
-                items: self.type_items(id, params)?,
+                // An unparenthesized parameter starts where the function type does
+                items: self.type_items(id, params, paren_span.is_some())?,
                 input: self.implicit_type(id, input)?,
                 output: self.implicit_type(id, output)?,
                 ret: self.type_expr(id, ret)?,
@@ -540,7 +557,7 @@ impl Index<'_> {
                     }
                 };
                 let span = start.map_or(ty.span(), |start| start | ty.span());
-                let id = self.begin_type(parent, span);
+                let id = self.begin_type(parent, span, None);
                 let ty = self.type_expr(id, ty)?;
                 Some(self.finish_type(id, Kind::TypeArg { kind, ty }))
             })
@@ -560,7 +577,13 @@ impl Index<'_> {
         }
     }
 
-    fn type_items(&mut self, parent: Id, params: &[TypeParam]) -> Option<alias::Box<[Id]>> {
+    /// Convert schema items, each documented by the block above it if `documented`.
+    fn type_items(
+        &mut self,
+        parent: Id,
+        params: &[TypeParam],
+        documented: bool,
+    ) -> Option<alias::Box<[Id]>> {
         params
             .iter()
             .map(|param| {
@@ -581,13 +604,17 @@ impl Index<'_> {
                     }
                     None => (None, None, None),
                 };
-                let span = [param.quant.as_ref().map(|quant| quant.span()), start]
-                    .into_iter()
-                    .flatten()
-                    .chain(ty.map(|ty| ty.span()))
-                    .reduce(|acc, span| acc | span)
-                    .expect("a type item has a source span");
-                let id = self.begin_type(parent, span);
+                let span = [
+                    param.dash_span,
+                    param.quant.as_ref().map(|quant| quant.span()),
+                    start,
+                ]
+                .into_iter()
+                .flatten()
+                .chain(ty.map(|ty| ty.span()))
+                .reduce(|acc, span| acc | span)
+                .expect("a type item has a source span");
+                let id = self.begin_type(parent, span, documented.then_some(span.start));
                 let kind = match &param.kind {
                     Some(TypeParamKind::Pos(_)) => Some(doc::TypeItemKind::Pos),
                     Some(TypeParamKind::Key { .. }) => Some(doc::TypeItemKind::Key {

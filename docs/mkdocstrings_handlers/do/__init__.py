@@ -557,11 +557,44 @@ def _has_schema_application(ty: dict) -> bool:
     return False
 
 
+def _has_docs(ty: dict) -> bool:
+    """Whether a schema item or union member within the type is documented.
+
+    Its doc can only be shown as a comment above it, so it needs a line of its own.
+    """
+    kind = ty.get("kind")
+    if kind == "union":
+        return any("doc" in member or _has_docs(member) for member in ty["members"])
+    if kind in ("schema", "parens", "func"):
+        return any(
+            "doc" in param or _has_docs(param.get("type") or {})
+            for param in ty["params"]
+        )
+    if kind == "app":
+        return any(_has_docs(arg["type"]) for arg in ty["args"])
+    if kind == "array":
+        return _has_docs(ty["elem"])
+    return False
+
+
+def _doc_lines(doc: str | None, indent: int, plain: bool) -> list[str]:
+    """A schema item's or union member's doc, as the comment written above it."""
+    if not doc:
+        return []
+    start = " " * indent
+    return [
+        start + ("# " + (line if plain else html.escape(line)) if line else "#")
+        for line in doc.split("\n")
+    ]
+
+
 def _alias_layout(ty: dict, scope: _TypeScope, column: int) -> bool:
     schema = _layout_schema(ty)
     union = ty.get("kind") == "union" and bool(ty["members"])
     if not schema and not union:
         return False
+    if _has_docs(ty):
+        return True
     if column + len(_render_type(ty, scope, _BINDS_COMPACT, plain=True)) > ALIAS_LINE_LENGTH:
         return True
     if union:
@@ -593,6 +626,7 @@ def _alias_type_lines(
     if ty.get("kind") == "union":
         lines = [prefix + "$"]
         for member in ty["members"]:
+            lines.extend(_doc_lines(member.get("doc"), indent + 2, plain))
             lines.extend(_alias_type_lines(
                 member, scope, " " * (indent + 2) + "| ", indent + 4, plain=plain,
             ))
@@ -609,6 +643,7 @@ def _alias_type_lines(
     for param in schema["params"]:
         item_indent = indent + 2
         start = " " * item_indent
+        lines.extend(_doc_lines(param.get("doc"), item_indent, plain))
         quant = _QUANTS.get(param.get("quant"), "")
         kind = param.get("kind")
         if kind in ("open", "any"):
@@ -626,6 +661,7 @@ def _alias_type_lines(
             if value.get("kind") == "union" and _alias_layout(value, scope, column(start) + 1):
                 lines.append(start)
                 for member in value["members"]:
+                    lines.extend(_doc_lines(member.get("doc"), item_indent + 2, plain))
                     lines.extend(_alias_type_lines(
                         member, scope, " " * (item_indent + 2) + "| ",
                         item_indent + 4, plain=plain,
@@ -640,6 +676,10 @@ def _alias_type_lines(
             item_indent += 2
             if value.get("kind") == "union" and _alias_layout(value, scope, column(start)):
                 for index, member in enumerate(value["members"]):
+                    # A comment above the dash documents the item, so the first
+                    # member, which shares its line, has no doc of its own
+                    if index:
+                        lines.extend(_doc_lines(member.get("doc"), item_indent, plain))
                     branch = start + "| " if index == 0 else " " * item_indent + "| "
                     baseline = item_indent + (len(quant) if index == 0 else 0) + 2
                     lines.extend(_alias_type_lines(
