@@ -20,7 +20,7 @@
 use std::cell::{Cell, RefCell};
 
 use dolang_util::{
-    intern,
+    alias, intern,
     mono::{MonoHashMap, MonoHashSet, MonoVec},
 };
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
@@ -209,7 +209,7 @@ pub(crate) enum Contradiction {
     /// multiplicity or form
     MappedPacks,
     /// No overload of an overloaded function, or no signature of a callable, fits
-    /// the function type it's related to (see [`Solver::rejections`])
+    /// the function type it's related to (see [`Solver::rejections`] for why)
     NoOverload,
 }
 
@@ -359,6 +359,23 @@ pub(crate) struct Diagnostic {
     pub(crate) path: Vec<ObligationId>,
 }
 
+/// A contradiction and the derivation path to it, resolved where it was found
+#[derive(Clone, Debug)]
+pub(crate) struct Contradicted {
+    pub(crate) contradiction: Contradiction,
+    pub(crate) path: alias::Box<[Node]>,
+}
+
+/// An obligation on a contradiction's path, as diagnostics read it
+#[derive(Clone, Debug)]
+pub(crate) struct Node {
+    /// How this node derives from the previous one: `None` at the root, or where
+    /// no dependency edge was recorded
+    pub(crate) step: Option<Step>,
+    /// A subtype's sides, each `None` where it doesn't reify; `None` for a call
+    pub(crate) sides: Option<(Option<TypeId>, Option<TypeId>)>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Status {
     Proven,
@@ -368,7 +385,6 @@ pub(crate) enum Status {
 
 #[derive(Clone, Debug)]
 pub(crate) struct Outcome {
-    #[cfg_attr(not(test), expect(dead_code, reason = "read by tests"))]
     pub(crate) constraint: ConstraintId,
     pub(crate) status: Status,
     pub(crate) diagnostics: Vec<Diagnostic>,
@@ -549,7 +565,7 @@ pub(crate) struct Solver<'db> {
     /// them as it settles a skolem scope's
     closed: bool,
     /// The judgments that need one of their alternatives to hold, by obligation
-    alternatives: RefCell<FxHashMap<ObligationId, Alternatives<'db>>>,
+    alternatives: RefCell<FxHashMap<ObligationId, Alternatives>>,
     /// How each class's object is called, once found: its exact object, or a
     /// `Type` of the class
     constructors: RefCell<FxHashMap<(DeclId, bool), Constructor>>,
@@ -583,6 +599,12 @@ pub(crate) struct Solver<'db> {
     /// its traces
     #[cfg(feature = "debug")]
     indent: usize,
+}
+
+/// `Solver` is covariant in its database lifetime, which nested solvers that
+/// borrow their parent rely on (#900)
+fn _covariant<'a, 'b: 'a>(solver: Solver<'b>) -> Solver<'a> {
+    solver
 }
 
 /// Trace under `typeck.solver`, indented by how deeply the solver is nested
@@ -1935,6 +1957,64 @@ impl<'db> Solver<'db> {
 
     pub(crate) fn obligation(&self, id: ObligationId) -> &Obligation {
         &self.obligations[id.0]
+    }
+
+    /// A contradicted outcome's contradictions, each with its path from the root
+    /// resolved as diagnostics read it. Members of a union that don't fit are the
+    /// union's misfit when there are several, which is all the union's relation
+    /// says.
+    pub(crate) fn explain(&self, outcome: &Outcome) -> alias::Box<[Contradicted]> {
+        let step = |parent: ObligationId, child: ObligationId| {
+            (self.obligation(parent).dependencies.iter())
+                .find(|dependency| dependency.obligation == child)
+                .map(|dependency| dependency.step.clone())
+        };
+        let member = |path: &[ObligationId]| match path {
+            &[.., parent, child] => matches!(step(parent, child), Some(Step::UnionMember(_)))
+                .then(|| path[..path.len() - 1].to_vec()),
+            _ => None,
+        };
+        let contradictions: Vec<_> = (outcome.diagnostics.iter())
+            .filter_map(|diagnostic| match diagnostic.issue {
+                Issue::Contradiction(contradiction) => {
+                    Some((diagnostic.path.clone(), contradiction))
+                }
+                Issue::Residual(_) => None,
+            })
+            .collect();
+        let mut members: FxHashMap<Vec<ObligationId>, usize> = FxHashMap::default();
+        for (path, _) in &contradictions {
+            if let Some(union) = member(path) {
+                *members.entry(union).or_default() += 1;
+            }
+        }
+        let mut causes = Vec::new();
+        for (path, contradiction) in contradictions {
+            let cause = match member(&path) {
+                Some(union) if members[&union] > 1 => (union, Contradiction::Outside),
+                _ => (path, contradiction),
+            };
+            if !causes.contains(&cause) {
+                causes.push(cause);
+            }
+        }
+        (causes.into_iter())
+            .map(|(path, contradiction)| Contradicted {
+                contradiction,
+                path: (path.iter().enumerate())
+                    .map(|(index, &obligation)| Node {
+                        step: index
+                            .checked_sub(1)
+                            .and_then(|parent| step(path[parent], obligation)),
+                        sides: (self.obligation(obligation).relation.sides()).map(
+                            |(actual, expected)| {
+                                (self.reify(actual).ok(), self.reify(expected).ok())
+                            },
+                        ),
+                    })
+                    .collect(),
+            })
+            .collect()
     }
 
     #[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]

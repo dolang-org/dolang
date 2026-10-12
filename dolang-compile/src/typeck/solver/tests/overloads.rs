@@ -25,7 +25,8 @@ fn no_overload_fitting_contradicts_and_keeps_each_rejection() {
     let a = nominal(&mut db, "A", vec![], vec![]);
     let b = nominal(&mut db, "B", vec![], vec![]);
     let c = nominal(&mut db, "C", vec![], vec![]);
-    let set = overloaded(&db, &[function(&db, &[a], a), function(&db, &[b], b)], None);
+    let overloads = [function(&db, &[a], a), function(&db, &[b], b)];
+    let set = overloaded(&db, &overloads, None);
     let call = function(&db, &[c], reference(&db, 0, 0));
     db.seal();
     let mut s = Solver::new(&db);
@@ -37,8 +38,19 @@ fn no_overload_fitting_contradicts_and_keeps_each_rejection() {
     let root = outcome.diagnostics[0].path[0];
     let rejections = s.rejections(root);
     assert_eq!(rejections.len(), 2);
-    for rejection in &rejections {
-        assert_eq!(rejection.outcome.status, Status::Contradicted);
+    // Each keeps the overload it tried and why: `C` isn't its parameter's class
+    for (rejection, (overload, parameter)) in rejections
+        .iter()
+        .zip([(overloads[0], a), (overloads[1], b)])
+    {
+        assert_eq!(rejection.overload, Some(overload));
+        let [cause] = &rejection.contradictions[..] else {
+            panic!("one contradiction: {:?}", rejection.contradictions);
+        };
+        assert_eq!(cause.contradiction, Contradiction::UnrelatedNominals);
+        let leaf = cause.path.last().expect("a path");
+        assert_eq!(leaf.sides, Some((Some(c), Some(parameter))));
+        assert!(cause.path[1..].iter().all(|node| node.step.is_some()));
     }
     assert!(lower(&s, r).is_empty());
 }

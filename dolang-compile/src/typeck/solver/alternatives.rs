@@ -14,14 +14,12 @@
 //!
 //! A judgment may be tried against a selection in place of what it relates to,
 //! as a call's overloads are tried against what its arguments alone say: its
-//! choice is then related to the whole. When every alternative is rejected, the
-//! trials that rejected them are kept, to say why (see [`Solver::rejections`]).
+//! choice is then related to the whole. When every alternative is rejected,
+//! what each trial found is kept, to say why (see [`Solver::rejections`]).
 //!
 //! Trials run when solving is quiescent, before any scope is settled, so a fork
 //! never holds a judgment half processed. They judge one obligation at a time, in
 //! creation order, and solving resumes after each choice.
-
-use std::rc::Rc;
 
 use super::*;
 
@@ -40,19 +38,19 @@ enum Verdict {
     Failed(Issue),
 }
 
-/// A trial that rejected an alternative, in order: the fork it solved, and the
-/// outcome there of the alternative's judgment
+/// What a trial that rejected an alternative found, resolved on its fork
 #[derive(Clone)]
-pub(crate) struct Rejection<'db> {
+pub(crate) struct Rejection {
     /// The alternative's index
     pub(crate) index: usize,
-    pub(crate) solver: Rc<Solver<'db>>,
-    pub(crate) outcome: Outcome,
+    /// The alternative's checked side, as its trial solved it
+    pub(crate) overload: Option<TypeId>,
+    pub(crate) contradictions: alias::Box<[Contradicted]>,
 }
 
 /// A judgment that needs one of its alternatives to hold
 #[derive(Clone)]
-pub(super) struct Alternatives<'db> {
+pub(super) struct Alternatives {
     /// Each alternative's own judgment
     judgments: Vec<Relation>,
     /// What trials judge in place of each alternative's judgment, if anything
@@ -64,8 +62,8 @@ pub(super) struct Alternatives<'db> {
     verdict: Verdict,
     /// The alternatives left possible, while several are
     possible: Vec<usize>,
-    /// The trials that rejected every alternative, once they have
-    rejections: Vec<Rejection<'db>>,
+    /// What trials found of every alternative, once they rejected each
+    rejections: alias::Box<[Rejection]>,
 }
 
 impl<'db> Solver<'db> {
@@ -165,11 +163,11 @@ impl<'db> Solver<'db> {
         }
     }
 
-    /// The trials that rejected each alternative of a judgment none of whose
+    /// What trials found of each alternative of a judgment none of whose
     /// alternatives is possible
-    pub(crate) fn rejections(&self, obligation: ObligationId) -> Vec<Rejection<'db>> {
+    pub(crate) fn rejections(&self, obligation: ObligationId) -> alias::Box<[Rejection]> {
         (self.alternatives.borrow().get(&obligation))
-            .map_or_else(Vec::new, |record| record.rejections.clone())
+            .map_or_else(Default::default, |record| record.rejections.clone())
     }
 
     /// The alternatives left possible of a judgment that's ambiguous
@@ -198,7 +196,7 @@ impl<'db> Solver<'db> {
                 tried: None,
                 verdict: Verdict::Untried,
                 possible: Vec::new(),
-                rejections: Vec::new(),
+                rejections: Default::default(),
             });
             match record.verdict {
                 Verdict::Chosen(index) => Ok((index, record.judgments[index])),
@@ -295,7 +293,7 @@ impl<'db> Solver<'db> {
             let record = records.get_mut(&id).expect("a judged obligation");
             record.tried = Some(generation);
             record.possible = possible;
-            record.rejections = rejections;
+            record.rejections = rejections.into();
             if record.verdict != verdict {
                 record.verdict = verdict;
                 changed = true;
@@ -310,12 +308,9 @@ impl<'db> Solver<'db> {
 
     /// Try each of a judgment's alternatives. One proven without adding a bound
     /// holds outright and is chosen even beside other possible ones. Returns the
-    /// verdict, the alternatives left possible, and the trials that rejected
-    /// every alternative, if they did.
-    fn judge(
-        &self,
-        id: ObligationId,
-    ) -> Result<(Verdict, Vec<usize>, Vec<Rejection<'db>>), Residual> {
+    /// verdict, the alternatives left possible, and what trials found of every
+    /// alternative, if they rejected each.
+    fn judge(&self, id: ObligationId) -> Result<(Verdict, Vec<usize>, Vec<Rejection>), Residual> {
         let (judgments, selections, none) = {
             let records = self.alternatives.borrow();
             let record = &records[&id];
@@ -350,11 +345,15 @@ impl<'db> Solver<'db> {
                 };
             let (status, free, fork, outcome) = self.trial(relation, owned)?;
             match status {
-                Status::Contradicted => rejections.push(Rejection {
-                    index,
-                    solver: Rc::new(fork),
-                    outcome,
-                }),
+                Status::Contradicted => {
+                    let root = fork.roots[outcome.constraint.0].obligation;
+                    let overload = fork.reify(fork.obligation(root).relation.checked());
+                    rejections.push(Rejection {
+                        index,
+                        overload: overload.ok(),
+                        contradictions: fork.explain(&outcome),
+                    })
+                }
                 Status::Proven if free => return Ok((Verdict::Chosen(index), vec![], vec![])),
                 _ => possible.push(index),
             }

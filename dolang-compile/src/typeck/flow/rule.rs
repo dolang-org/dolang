@@ -18,7 +18,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 
 use super::{
     At, Flow, State,
@@ -35,8 +35,8 @@ use crate::{
         },
         elab::Designated,
         solver::{
-            Call as SolverCall, CallArgument, Contradiction, Diagnostic, InferVarId, Issue,
-            ObligationId, Outcome, PatternShape, Provenance, Relation, Residual, Solver, Status,
+            Call as SolverCall, CallArgument, Contradiction, InferVarId, Issue, Node, ObligationId,
+            Outcome, PatternShape, Provenance, Relation, Residual, Solver, Status,
             Step as Derivation, Term,
         },
         r#type::{
@@ -886,10 +886,11 @@ impl<'a> Flow<'a, '_> {
                         // its parts that doesn't fit
                         Check::Call { span, args, callee } => {
                             let mut problems = Vec::new();
-                            for (path, contradiction) in causes(solver, &outcome.diagnostics) {
-                                if let (Contradiction::NoOverload, &[overloaded]) =
-                                    (contradiction, &path[..])
+                            for cause in solver.explain(outcome).iter() {
+                                if let (Contradiction::NoOverload, [_]) =
+                                    (cause.contradiction, &cause.path[..])
                                 {
+                                    let overloaded = root(outcome);
                                     let notes = self.rejections(solver, *span, args, overloaded);
                                     merge(
                                         &mut problems,
@@ -902,11 +903,10 @@ impl<'a> Flow<'a, '_> {
                                     continue;
                                 }
                                 let problem = self.call_problem(
-                                    solver,
                                     *span,
                                     args,
-                                    &path,
-                                    contradiction,
+                                    &cause.path,
+                                    cause.contradiction,
                                     &actual.map(|callee| self.shown(callee)),
                                 );
                                 merge(&mut problems, problem);
@@ -921,10 +921,10 @@ impl<'a> Flow<'a, '_> {
                         }],
                         &Check::Expected(span) => {
                             let mut notes = Vec::new();
-                            for (path, contradiction) in causes(solver, &outcome.diagnostics) {
-                                let steps = steps(solver, &path);
+                            for cause in solver.explain(outcome).iter() {
+                                let steps = steps(&cause.path);
                                 if let Some(note) =
-                                    self.cause(solver, &path, &steps, 0, contradiction)
+                                    self.cause(&cause.path, &steps, 0, cause.contradiction)
                                     && !notes.contains(&note)
                                 {
                                     notes.push(note);
@@ -972,15 +972,13 @@ impl<'a> Flow<'a, '_> {
         overloaded: ObligationId,
     ) -> Vec<String> {
         let mut notes = Vec::new();
-        for rejection in solver.rejections(overloaded) {
-            let trial = &*rejection.solver;
-            let outcome = &rejection.outcome;
-            let overload = trial.obligation(root(outcome)).relation.checked();
-            let overload = (trial.reify(overload).ok())
+        for rejection in solver.rejections(overloaded).iter() {
+            let overload = (rejection.overload)
                 .map(|ty| self.overload(solver, overloaded, rejection.index, ty));
             let mut problems = Vec::new();
-            for (path, contradiction) in causes(trial, &outcome.diagnostics) {
-                let problem = self.call_problem(trial, span, args, &path, contradiction, &overload);
+            for cause in &rejection.contradictions {
+                let problem =
+                    self.call_problem(span, args, &cause.path, cause.contradiction, &overload);
                 merge(&mut problems, problem);
             }
             let mut reasons = Vec::new();
@@ -1076,14 +1074,13 @@ impl<'a> Flow<'a, '_> {
     /// derivations to it
     fn call_problem(
         &self,
-        solver: &Solver<'_>,
         span: Span,
         args: &[Span],
-        path: &[ObligationId],
+        path: &[Node],
         contradiction: Contradiction,
         callee: &Option<String>,
     ) -> Problem {
-        let steps = steps(solver, path);
+        let steps = steps(path);
         match contradiction {
             Contradiction::Conflict => return Problem::Conflict(span),
             Contradiction::Unadmitted(key) => {
@@ -1107,26 +1104,15 @@ impl<'a> Flow<'a, '_> {
                 let Some(&arg) = args.get(index) else {
                     return fallback;
                 };
-                let sides = |index: usize| solver.obligation(path[index]).relation.sides();
-                let Some((actual, expected)) = sides(arguments + 2) else {
-                    return fallback;
-                };
-                let Some(found) = solver.reify(actual).ok() else {
+                let Some((Some(found), expected)) = path[arguments + 2].sides else {
                     return fallback;
                 };
                 // A parameter whose type is left unsolved shows the bound of it
                 // that the argument doesn't fit
-                let expected =
-                    solver
-                        .reify(expected)
-                        .ok()
-                        .or_else(|| match steps.get(arguments + 2) {
-                            Some(Derivation::BoundPropagation) => {
-                                let (_, bound) = sides(arguments + 3)?;
-                                solver.reify(bound).ok()
-                            }
-                            _ => None,
-                        });
+                let expected = expected.or_else(|| match steps.get(arguments + 2) {
+                    Some(Derivation::BoundPropagation) => path[arguments + 3].sides?.1,
+                    _ => None,
+                });
                 let (found, expected) = match expected {
                     Some(expected) => {
                         let (found, expected) = self.pair(found, expected);
@@ -1136,7 +1122,7 @@ impl<'a> Flow<'a, '_> {
                 };
                 // What fails may lie deeper than the argument's own relation, as
                 // in a binder's bound its type solves
-                let causes = (self.cause(solver, path, &steps, arguments + 2, contradiction))
+                let causes = (self.cause(path, &steps, arguments + 2, contradiction))
                     .into_iter()
                     .collect();
                 Problem::Argument {
@@ -1165,8 +1151,7 @@ impl<'a> Flow<'a, '_> {
     /// shown relation itself needs a note only to name an item.
     fn cause(
         &self,
-        solver: &Solver<'_>,
-        path: &[ObligationId],
+        path: &[Node],
         steps: &[Derivation],
         start: usize,
         contradiction: Contradiction,
@@ -1184,22 +1169,22 @@ impl<'a> Flow<'a, '_> {
             .collect();
         let reversed = |index: usize| index > start && reversed[index - start - 1];
         // Below a check's root, only subtypes are derived
-        let sides = |index: usize| solver.obligation(path[index]).relation.sides();
+        let sides = |index: usize| path[index].sides;
         let found_side = |index: usize| {
             let (actual, expected) = sides(index)?;
-            Some(match reversed(index) {
+            match reversed(index) {
                 false => actual,
                 true => expected,
-            })
+            }
         };
         let (leaf_actual, leaf_expected) = sides(end - 1)?;
-        let (actual, expected) = self.pair(
-            solver.reify(leaf_actual).ok()?,
-            solver.reify(leaf_expected).ok()?,
-        );
+        let (actual, expected) = self.pair(leaf_actual?, leaf_expected?);
         let note = match (contradiction, reversed(end - 1)) {
             (Contradiction::Missing(item), flipped) => {
-                match (self.schema_item(solver, leaf_expected, item), flipped) {
+                match (
+                    leaf_expected.and_then(|schema| self.schema_item(schema, item)),
+                    flipped,
+                ) {
                     (Some(item), false) => format!("{actual} may be missing {item}"),
                     (Some(item), true) => {
                         format!("{expected} requires {item}, which {actual} may be missing")
@@ -1207,17 +1192,19 @@ impl<'a> Flow<'a, '_> {
                     (None, _) => format!("{actual} may be missing an item of {expected}"),
                 }
             }
-            (Contradiction::Excess(item), _) => match self.schema_item(solver, leaf_actual, item) {
-                Some(item) => format!("{expected} doesn't admit {item}"),
-                None => format!("{expected} doesn't admit every item of {actual}"),
-            },
+            (Contradiction::Excess(item), _) => {
+                match leaf_actual.and_then(|schema| self.schema_item(schema, item)) {
+                    Some(item) => format!("{expected} doesn't admit {item}"),
+                    None => format!("{expected} doesn't admit every item of {actual}"),
+                }
+            }
             _ if end == start + 1 => return None,
             (_, false) => format!("{actual} does not fit {expected}"),
             (_, true) => format!("{expected} doesn't accept {actual}"),
         };
         let mut notes = vec![note];
-        let shown = found_side(start).and_then(|term| self.render_term(solver, term));
-        let mut last = found_side(end - 1).and_then(|term| self.render_term(solver, term));
+        let shown = found_side(start).map(|ty| self.shown(ty));
+        let mut last = found_side(end - 1).map(|ty| self.shown(ty));
         for index in (start + 1..end - 1).rev() {
             // Only steps into a type's parts are where a reader can look
             if !matches!(
@@ -1234,8 +1221,7 @@ impl<'a> Flow<'a, '_> {
             ) {
                 continue;
             }
-            let Some(around) = found_side(index).and_then(|term| self.render_term(solver, term))
-            else {
+            let Some(around) = found_side(index).map(|ty| self.shown(ty)) else {
                 continue;
             };
             if Some(&around) == last.as_ref() || Some(&around) == shown.as_ref() {
@@ -1249,9 +1235,8 @@ impl<'a> Flow<'a, '_> {
 
     /// A schema's top-level item as a diagnostic names it: quoted without the
     /// schema's braces, and called positional if it is
-    fn schema_item(&self, solver: &Solver<'_>, schema: Term, index: usize) -> Option<String> {
-        let ty = solver.reify(schema).ok()?;
-        let Type::Schema(items) = self.db.ty(ty) else {
+    fn schema_item(&self, schema: TypeId, index: usize) -> Option<String> {
+        let Type::Schema(items) = self.db.ty(schema) else {
             return None;
         };
         let item = items.get(index)?;
@@ -1262,11 +1247,6 @@ impl<'a> Flow<'a, '_> {
             true => format!("positional `{inner}`"),
             false => format!("`{inner}`"),
         })
-    }
-
-    /// A term's type as a diagnostic shows it, if it's solved
-    fn render_term(&self, solver: &Solver<'_>, term: Term) -> Option<String> {
-        Some(self.shown(solver.reify(term).ok()?))
     }
 
     /// A call: its callee's type below the function type its arguments call it as.
@@ -2997,56 +2977,11 @@ fn spread_into(
     );
 }
 
-/// The obligation of a contradicted constraint: the root of its diagnostics' paths
-/// The derivation steps along a path of obligations
-fn steps(solver: &Solver<'_>, path: &[ObligationId]) -> Vec<Derivation> {
-    (path.windows(2))
-        .filter_map(|pair| {
-            (solver.obligation(pair[0]).dependencies.iter())
-                .find(|dependency| dependency.obligation == pair[1])
-                .map(|dependency| dependency.step.clone())
-        })
+/// The derivation steps along a path, leaving out any not recorded
+fn steps(path: &[Node]) -> Vec<Derivation> {
+    (path.iter().skip(1))
+        .filter_map(|node| node.step.clone())
         .collect()
-}
-
-/// A contradicted check's contradictions, each with its path from the root.
-/// Members of a union that don't fit are the union's misfit when there are
-/// several, which is all the union's relation says.
-fn causes(
-    solver: &Solver<'_>,
-    diagnostics: &[Diagnostic],
-) -> Vec<(Vec<ObligationId>, Contradiction)> {
-    let member = |path: &[ObligationId]| match path {
-        [.., parent, child] => matches!(
-            steps(solver, &[*parent, *child])[..],
-            [Derivation::UnionMember(_)]
-        )
-        .then(|| path[..path.len() - 1].to_vec()),
-        _ => None,
-    };
-    let contradictions: Vec<_> = (diagnostics.iter())
-        .filter_map(|diagnostic| match diagnostic.issue {
-            Issue::Contradiction(contradiction) => Some((diagnostic.path.clone(), contradiction)),
-            Issue::Residual(_) => None,
-        })
-        .collect();
-    let mut members: FxHashMap<Vec<ObligationId>, usize> = FxHashMap::default();
-    for (path, _) in &contradictions {
-        if let Some(union) = member(path) {
-            *members.entry(union).or_default() += 1;
-        }
-    }
-    let mut causes = Vec::new();
-    for (path, contradiction) in contradictions {
-        let cause = match member(&path) {
-            Some(union) if members[&union] > 1 => (union, Contradiction::Outside),
-            _ => (path, contradiction),
-        };
-        if !causes.contains(&cause) {
-            causes.push(cause);
-        }
-    }
-    causes
 }
 
 /// Add a problem to a call's, as a note on the one already reported for its
@@ -3066,6 +3001,7 @@ fn merge(problems: &mut Vec<Problem>, problem: Problem) {
     }
 }
 
+/// The obligation of a contradicted constraint: the root of its diagnostics' paths
 fn root(outcome: &Outcome) -> ObligationId {
     outcome
         .diagnostics
