@@ -1,0 +1,57 @@
+# A native constructor fills the inherited slot without a forwarding method.
+class P: Struct
+  pub field ready = true
+
+class Q: P
+
+for ty = [P, Q]
+  let p = ty {x: 1}
+  assert_eq $p[:x:] 1
+  assert_eq $p.ready true
+  assert (type p Struct)
+
+class Forward: Q
+  def (init) self source
+    Q.(init) $self $source
+assert_eq (Forward({x: 3})[:x:]) 3
+
+# Other built-in native representations advertise their constructors too.
+class Numbers: Array
+assert_eq [...Numbers([1, 2])] [1, 2]
+class Number: Int
+assert_eq (Number(42) + 1) 43
+
+# Zero-argument native constructors are inherited too.
+class Timeout: std.TimedOutError
+assert_eq (str (Timeout())) "strand timed out"
+
+# Do constructors retain positional and keyword arguments across inheritance.
+class Base
+  pub field value = nil
+  def (init) self value :scale = 1
+    self.value = (value * scale)
+
+class Child: Base
+class Grandchild: Child
+assert_eq (Grandchild(7, scale: 3).value) 21
+
+# The first constructor in the existing left-to-right MRO wins.
+class Other: Base
+  def (init) self value :scale = 1
+    self.value = (value + scale)
+
+class Left: Child Other
+class Right: Other Child
+assert_eq (Left(7, scale: 3).value) 21
+assert_eq (Right(7, scale: 3).value) 10
+
+# A local constructor still overrides the inherited one.
+class Override: Child
+  def (init) self
+    self.value = 42
+assert_eq (Override().value) 42
+
+# A parent without a constructor does not hide a later native constructor.
+class Empty
+class Mixed: Empty Struct
+assert_eq (Mixed({x: 2})[:x:]) 2

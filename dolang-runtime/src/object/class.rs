@@ -1031,11 +1031,6 @@ impl<'v> ClassObjectAnnex<'v> {
         })
     }
 
-    /// Look up the (init) method.
-    pub(crate) fn init(&self) -> Option<&Value<'v>> {
-        self.method(Sym::well_known(sym::INIT_METHOD))
-    }
-
     /// Look up an entry by well-known symbol tag.
     pub(crate) fn entry_by_tag(&self, tag: sym::Tag) -> Option<&ClassEntry<'v>> {
         self.entry(Sym::well_known(tag))
@@ -1438,9 +1433,13 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                     _ => None,
                 };
                 if let Some((supertype, native)) = inherited {
-                    let ([instance], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
+                    let ([instance], [], mut trailing) = unpack!(strand, args, 1, 0, ...)?;
                     if !instance.is_instance_of(strand, &this) {
                         return Err(Error::type_error(strand, "invalid class object type"));
+                    }
+                    if method.tag() == sym::INIT_METHOD {
+                        trailing.prepend_self(instance.dup());
+                        return supertype.op_mcall(strand, method, trailing, out).await;
                     }
                     let receiver = if native {
                         // The instance may be of a subclass, whose native slots differ.
@@ -1583,11 +1582,27 @@ pub(crate) async fn instantiate<'v, 'a, 's>(
                 },
             )));
 
-            if let Some(func) = me.init() {
-                args.prepend_self(inst.dup());
-                func.op_call(strand, args, tmp).await?;
-            } else {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+            let init = Sym::well_known(sym::INIT_METHOD);
+            match me.entry(init) {
+                Some(ClassEntry::Method(func)) => {
+                    args.prepend_self(inst.dup());
+                    func.op_call(strand, args, tmp).await?;
+                }
+                Some(ClassEntry::Delegate(slot, MemberKind::Method)) => {
+                    // Call the native type's constructor before its instance slot
+                    // exists; `(init)` fills that slot on the derived instance.
+                    args.prepend_self(inst.dup());
+                    me.native_supers[*slot]
+                        .op_mcall(strand, init, args, tmp)
+                        .await?;
+                }
+                Some(ClassEntry::Abstract(type_obj, MemberKind::Method)) => {
+                    args.prepend_self(inst.dup());
+                    type_obj.op_mcall(strand, init, args, tmp).await?;
+                }
+                _ => {
+                    let ([], []) = unpack!(strand, args, 0, 0)?;
+                }
             }
 
             // Verify all native slots are initialized

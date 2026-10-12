@@ -601,6 +601,7 @@ impl<'v> Protocol<'v> for Float {
                 Getter(sym::NAN_CONST),
             ],
             members: members![
+                Method(sym::INIT_METHOD),
                 Method(sym::STR_METHOD),
                 Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
