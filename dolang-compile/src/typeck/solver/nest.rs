@@ -100,11 +100,28 @@ pub(super) enum Nesting {
     Trial,
     /// An open solver its caller constrains (see [`Solver::fork`])
     Fork,
-    /// A closed proof of `actual <: expected` (see [`Solver::probe`])
-    Probe(TypeId, TypeId),
-    /// A closed solver for a side query, whose probes don't revisit those it's
-    /// nested in
+    /// A closed proof of `actual <: expected` (see [`Solver::probe`]). It's
+    /// a premise of a judgment if `premise` is the judgment's guard bit (see
+    /// [`Solver::guarded`]), or else a query whose answer steers a choice.
+    Probe {
+        actual: TypeId,
+        expected: TypeId,
+        premise: Option<bool>,
+    },
+    /// A closed solver for a side query, whose answers are queries'
     Side,
+}
+
+/// What a probe would be of a judgment a probe it's nested in is proving (see
+/// [`Solver::revisit`])
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Revisit {
+    /// It revisits none
+    Fresh,
+    /// It revisits one it may not assume
+    Cycle,
+    /// It revisits one it may assume
+    Assumed,
 }
 
 impl Nesting {
@@ -180,6 +197,7 @@ impl<'db> Solver<'db> {
             },
             owned: self.owned.filter(|_| open),
             blinded: FxHashMap::default(),
+            tracks: self.tracks || matches!(nesting, Nesting::Probe { .. }),
             parent: Some(Parent {
                 solver: self,
                 nesting,
@@ -218,11 +236,44 @@ impl<'db> Solver<'db> {
     }
 
     /// Whether a probe of `actual <: expected` would revisit one it's nested
-    /// in, short of a side query
-    pub(super) fn probing(&self, actual: TypeId, expected: TypeId) -> bool {
-        iter::successors(self.parent.as_ref(), |parent| parent.solver.parent.as_ref())
-            .take_while(|parent| parent.nesting != Nesting::Side)
-            .any(|parent| parent.nesting == Nesting::Probe(actual, expected))
+    /// in, and if so, whether it may assume what that one proves. `from` is the
+    /// guard bit of the judgment it would be a premise of, if it would be one.
+    ///
+    /// The revisit is assumed only if a guarded step lies between the two
+    /// (coinduction: #761's contractive aliases make this sound, and its
+    /// regular ones keep the judgments a probe meets finite), and only if
+    /// each probe between them is a premise. A query's answer may steer
+    /// choices, which an assumption must not, and nothing proven under an
+    /// assumption is cached outside the probe that makes it, since a solver
+    /// writes only its own caches and goes with its probe.
+    pub(super) fn revisit(&self, actual: TypeId, expected: TypeId, from: Option<bool>) -> Revisit {
+        let mut guarded = from.unwrap_or(false);
+        let mut premise = from.is_some();
+        let links = iter::successors(self.parent.as_ref(), |parent| parent.solver.parent.as_ref());
+        for link in links {
+            match link.nesting {
+                Nesting::Probe {
+                    actual: a,
+                    expected: b,
+                    premise: link_premise,
+                } => {
+                    if (a, b) == (actual, expected) {
+                        return match guarded && premise {
+                            true => Revisit::Assumed,
+                            false => Revisit::Cycle,
+                        };
+                    }
+                    match link_premise {
+                        Some(bit) => guarded |= bit,
+                        None => premise = false,
+                    }
+                }
+                Nesting::Side => premise = false,
+                // An open solver's judgments are guarded from its parent's root
+                Nesting::Trial | Nesting::Fork => {}
+            }
+        }
+        Revisit::Fresh
     }
 
     /// How many trials it's nested in
@@ -446,30 +497,41 @@ impl<'db> Solver<'db> {
 
     /// The relation an obligation judges
     pub(crate) fn relation(&self, id: ObligationId) -> Relation {
+        self.judged(id).0
+    }
+
+    /// Whether an obligation was reached through a guarded step (see
+    /// [`Solver::guards`]) since the root of the probe it's in. Outside a
+    /// probe, none is.
+    pub(super) fn guarded(&self, id: ObligationId) -> bool {
+        self.judged(id).1
+    }
+
+    fn judged(&self, id: ObligationId) -> (Relation, bool) {
         match id.0.checked_sub(self.bases.obligations) {
             Some(index) => self.relations[index],
-            None => self.enclosing().relation(id),
+            None => self.enclosing().judged(id),
         }
     }
 
-    /// The obligation judging a relation, if it's interned
-    pub(super) fn interned(&self, relation: &Relation) -> Option<ObligationId> {
-        (self.obligation_index.get(relation).copied())
-            .or_else(|| self.open_parent()?.interned(relation))
+    /// The obligation judging a relation, reached guarded or not, if it's
+    /// interned
+    pub(super) fn interned(&self, key: &(Relation, bool)) -> Option<ObligationId> {
+        (self.obligation_index.get(key).copied()).or_else(|| self.open_parent()?.interned(key))
     }
 
     /// Intern a new obligation
-    pub(super) fn push_obligation(&self, relation: Relation) -> ObligationId {
+    pub(super) fn push_obligation(&self, key: (Relation, bool)) -> ObligationId {
         self.writable();
         let id = ObligationId(self.obligation_count());
-        self.relations.push(relation);
+        self.relations.push(key);
         self.obligations.push(ObligationLayer {
             state: Cell::new(State::Pending),
             queued: Cell::new(false),
             active: RefCell::new(Vec::new()),
             dependencies: MonoVec::new(),
         });
-        self.obligation_index.try_insert(relation, id).unwrap();
+        self.obligation_index.try_insert(key, id).unwrap();
         id
     }
 

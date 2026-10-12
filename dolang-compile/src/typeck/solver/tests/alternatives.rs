@@ -206,33 +206,3 @@ fn exhaustion_in_a_trial_is_residual() {
     }
     assert!(exhausted);
 }
-
-#[test]
-fn recursive_unions_are_a_cheap_residual() {
-    // A = Int | Box[A] and B = Int | Base[B], where Box[T]: Base[T]. Proving
-    // Box[A] <: Base[B] needs A <: B, which probes Box[A] <: Base[B] again.
-    let mut db = Database::new();
-    let int = nominal(&mut db, "Int", vec![], vec![]);
-    let base = nominal(&mut db, "Base", vec![binder(Variance::Covariant)], vec![]);
-    let supertype = apply(&db, base, &[reference(&db, 0, 0)]);
-    let boxed = nominal(
-        &mut db,
-        "Box",
-        vec![binder(Variance::Covariant)],
-        vec![supertype],
-    );
-    let (aid, a, asrc) = reserve(&mut db, DeclKind::Alias, "A");
-    let body = union(&db, &[int, apply(&db, boxed, &[a])]);
-    populate(&mut db, aid, asrc, body, vec![]);
-    let (bid, b, bsrc) = reserve(&mut db, DeclKind::Alias, "B");
-    let body = union(&db, &[int, apply(&db, base, &[b])]);
-    populate(&mut db, bid, bsrc, body, vec![]);
-    db.seal();
-    let gas = Gas::new(5_000);
-    let mut s = Solver::new(&db, &gas);
-    s.constrain(s.closed(a), s.closed(b), Provenance::default());
-    let outcome = s.solve().remove(0);
-    assert_eq!(outcome.status, Status::Unresolved);
-    assert!(has(&outcome, Residual::Recursive.into()));
-    assert!(!has(&outcome, Residual::Limit.into()));
-}

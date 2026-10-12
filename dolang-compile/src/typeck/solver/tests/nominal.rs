@@ -151,19 +151,6 @@ fn unused_supertype_bounds_do_not_create_obligations() {
 }
 
 #[test]
-fn structural_recursion_does_not_prove_constraints() {
-    let mut db = Database::new();
-    let (rid, r, rsrc) = reserve(&mut db, DeclKind::Alias, "Recursive");
-    let body = function(&db, &[], r);
-    populate(&mut db, rid, rsrc, body, vec![]);
-    let (sid, s, ssrc) = reserve(&mut db, DeclKind::Alias, "OtherRecursive");
-    let body = function(&db, &[], s);
-    populate(&mut db, sid, ssrc, body, vec![]);
-    db.seal();
-    assert!(has(&check(&db, r, s), Residual::Recursive.into()));
-}
-
-#[test]
 #[should_panic(expected = "transparent declaration cycle")]
 fn alias_cycles_panic() {
     let mut db = Database::new();

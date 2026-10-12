@@ -360,6 +360,15 @@ A recursive generic alias must pass its binders unchanged within the cycle.
 For example, `@let Tree[T] = (T | Array[Tree[T]])` is allowed, but replacing
 `Tree[T]` there with `Tree[Array[T]]` is not.
 
+Recursive types fit each other when their structures do. While the checker
+compares `A` with `B`, it assumes that `A` fits `B` wherever the comparison
+meets the same pair again. So `List[Int]` fits `List[Num]` for
+`@let List[T] = (nil | (T, List[T]))` when `Int` fits `Num`, and two aliases
+with the same structure fit each other. A comparison that would hold only
+because a type has no values, as for `@let Endless = (Endless, Int)`, is not
+proven. Neither is a comparison where which member of a union fits depends
+on which member fits elsewhere.
+
 ### Vertical Layout
 
 `$` followed by an indented body defines an alias or schema in vertical layout.

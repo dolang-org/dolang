@@ -1,0 +1,39 @@
+# Recursive aliases relate when their unfoldings do, assuming the pair being
+# related: through class arguments, function types and schema items, and
+# across units.
+
+import forest:
+  - @Forest
+import std:
+  - @BaseArray
+
+pub class Num
+pub class Int: Num
+
+pub class Node[A, B]
+  pub def first _self -> A
+    ...
+  pub def second _self -> B
+    ...
+
+pub @let Tree[T] = Node[T, Forest[T]]
+pub @let Grove[T] = Node[T, (nil | Node[Grove[T], Grove[T]])]
+pub @let List[T] = (nil | Node[T, List[T]])
+pub @let Seq[T] = (nil | Node[T, Seq[T]])
+pub @let Handler = (Handler -> nil)
+pub @let Callback = (Callback -> nil)
+pub @let Rows = BaseArray[(id: Int, children: Rows)]
+pub @let Table = BaseArray[(id: Num, children: Table)]
+
+pub def lists xs @ List[Int]
+  let _ @ List[Num] = xs
+  let _ @ Seq[Num] = xs
+
+pub def trees t @ Tree[Int]
+  let _ @ Grove[Num] = t
+
+pub def callbacks h @ Handler
+  let _ @ Callback = h
+
+pub def rows r @ Rows
+  let _ @ Table = r
