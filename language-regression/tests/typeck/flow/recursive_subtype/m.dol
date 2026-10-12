@@ -17,7 +17,8 @@ pub class Node[A, B]
     ...
 
 pub @let Tree[T] = Node[T, Forest[T]]
-pub @let Grove[T] = Node[T, (nil | Node[Grove[T], Grove[T]])]
+pub @let Grove[T] = Node[T, Wood[T]]
+pub @let Wood[T] = (nil | Node[Grove[T], Wood[T]])
 pub @let List[T] = (nil | Node[T, List[T]])
 pub @let Seq[T] = (nil | Node[T, Seq[T]])
 pub @let Handler = (Handler -> nil)

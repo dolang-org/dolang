@@ -498,8 +498,8 @@ class Point3: Point   # TypeError: cannot inherit from final type
 
 `final` raises a [`StateError`](std.StateError) for a class that already has a
 subclass. Since a final class has no subclasses, the type checker treats its
-values as outside every class it doesn't inherit from (see
-[Unions](./types.md#unions)).
+values as outside every class it doesn't inherit from, so a type test for such
+a class drops it (see [Unions](./types.md#unions)).
 
 ## Type Inspection
 

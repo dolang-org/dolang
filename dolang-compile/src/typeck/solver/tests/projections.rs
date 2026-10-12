@@ -525,7 +525,7 @@ fn a_class_outside_scalar_members_is_outside_the_union() {
 }
 
 #[test]
-fn generic_union_alternatives_remain_conservative() {
+fn a_sole_reached_generic_alternative_refutes() {
     let mut db = Database::new();
     let int = int(&mut db);
     let str = nominal(&mut db, "Str", vec![], vec![]);
@@ -535,5 +535,5 @@ fn generic_union_alternatives_remain_conservative() {
     let alternative = apply(&db, array, &[str]);
     let expected = union(&db, &[int, alternative]);
     db.seal();
-    assert_eq!(check(&db, actual, expected).status, Status::Unresolved);
+    assert_eq!(check(&db, actual, expected).status, Status::Contradicted);
 }

@@ -632,14 +632,13 @@ let target @ (
 ```
 
 A value fits a union when it fits one of the members. A mismatch with every
-member is an error, except that the check is left undecided when a member is a
-generic class, such as `BaseArray[Int]`. A value may fit several applications
-of a generic class together without fitting any one of them: every
-`Tuple[Int | Str]` is a `Tuple[Int]` or a `Tuple[Str]`. A value of a
-[final class](./classes.md#final-classes) is outside every class it doesn't
-inherit from, so such a member still rejects it, as `BaseArray[Int]` rejects
-`Bool` and `Sym` values. A type test likewise drops a final member that doesn't
-inherit from the tested class.
+member is an error, except that the check is left undecided when the value's
+class inherits from more than one generic member's class, such as
+`BaseArray[Int]` and `BaseArray[Str]`. A value may fit several applications of
+a generic class together without fitting any one of them: every
+`Tuple[Int | Str]` is a `Tuple[Int]` or a `Tuple[Str]`. A type test drops a
+[final](./classes.md#final-classes) member that doesn't inherit from the tested
+class.
 
 ### Collections
 

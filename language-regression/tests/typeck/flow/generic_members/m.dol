@@ -1,0 +1,59 @@
+# A class rejected by every member of a union is outside it when it reaches at
+# most one generic member's class. Its own instances, or those of a subclass
+# inheriting only it, are outside the members it doesn't reach, and no other
+# member collects what the one it reaches rejects. Only several reached members
+# could split its values between them.
+
+import std:
+  - @BaseArray
+  - @BaseDict
+
+pub @let Encodable = $
+  | Bool
+  | Int
+  | Str
+  | BaseArray[Encodable]
+  | Tuple[...Encodable]
+  | BaseDict[Str, Encodable]
+
+pub @let Data = (nil | Int | Str | Array[Data] | Dict[Str, Data])
+
+pub def encode _value @ Encodable
+  nil
+
+# `Dict` reaches only `BaseDict`, which rejects `Data`'s `nil`
+pub def dicts data @ Dict[Str, Data]
+  encode $data
+# error: expected `m.Encodable`, found `std.Dict[std.Str, m.Data]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   encode $data
+#    |           ^^^^
+
+pub def arrays xs @ Array[nil]
+  encode $xs
+# error: expected `m.Encodable`, found `[nil]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   encode $xs
+#    |           ^^
+
+pub def tuples t @ (Str, nil)
+  encode $t
+# error: expected `m.Encodable`, found `(std.Str, nil)`
+#   --> m.dol:LL:LL
+#    |
+# LL |   encode $t
+#    |           ^
+
+pub def fits data @ Dict[Str, Int]
+  encode $data
+
+pub class Box[T]
+  pub def get _self -> T
+    ...
+
+# Every `Box[Int | Str]` may be a `Box[Int]` or a `Box[Str]`
+pub def split b @ Box[Int | Str]
+  let _ @ (Box[Int] | Box[Str]) = b
+  #                               ^: wf undecided Unsupported("a type that may be inside a union member")

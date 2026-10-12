@@ -187,7 +187,7 @@ impl Solver<'_> {
     }
 
     /// Whether a class reaches `target`, or `None` when that can't be proven
-    fn reaches(&self, nominal: &Nominal, target: DeclId) -> Option<bool> {
+    pub(super) fn reaches(&self, nominal: &Nominal, target: DeclId) -> Option<bool> {
         self.ancestor(nominal.clone(), target, &mut FxHashSet::default(), 0)
             .ok()
             .map(|found| found.is_some())

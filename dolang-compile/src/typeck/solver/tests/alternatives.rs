@@ -155,13 +155,14 @@ fn a_function_infers_through_the_function_member() {
 }
 
 #[test]
-fn rejecting_every_member_contradicts_a_literal_but_not_a_class() {
+fn rejecting_every_member_contradicts_a_literal_or_class() {
     let mut db = Database::new();
     int(&mut db);
     let one = literal(&db, 1);
     let two = literal(&db, 2);
     let a = nominal(&mut db, "A", vec![], vec![]);
     let b = nominal(&mut db, "B", vec![], vec![]);
+    let leaf = final_class(&mut db, "Leaf", vec![]);
     let boxed = nominal(&mut db, "Box", vec![binder(Variance::Covariant)], vec![]);
     let boxed_var = apply(&db, boxed, &[var(&db)]);
     let literals = union(&db, &[two, boxed_var]);
@@ -173,31 +174,40 @@ fn rejecting_every_member_contradicts_a_literal_but_not_a_class() {
     let e = s.environment(s.empty_environment(), vec![t]);
     s.constrain(s.closed(one), s.view(literals, e), Provenance::default());
     s.constrain(s.closed(a), s.view(classes, e), Provenance::default());
+    s.constrain(s.closed(leaf), s.view(classes, e), Provenance::default());
     let outcomes = s.solve();
     assert!(contradiction(&outcomes[0], Contradiction::Outside));
-    // A generic member's rejected arguments needn't exclude every `A`
-    assert_eq!(outcomes[1].status, Status::Unresolved);
+    // An `A` of its own, or of a subclass inheriting only it, is no `Box`
+    assert!(contradiction(&outcomes[1], Contradiction::Outside));
+    assert!(contradiction(&outcomes[2], Contradiction::Outside));
     assert!(lower(&s, t).is_empty());
 }
 
 #[test]
-fn rejecting_every_member_contradicts_a_final_class() {
+fn rejecting_a_sole_reached_member_contradicts_a_class() {
     let mut db = Database::new();
-    let a = final_class(&mut db, "A", vec![]);
-    let b = nominal(&mut db, "B", vec![], vec![]);
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
     let boxed = nominal(&mut db, "Box", vec![binder(Variance::Covariant)], vec![]);
+    let either = union(&db, &[int, str]);
+    let mixed = apply(&db, boxed, &[either]);
+    let sole = nominal(&mut db, "Sole", vec![], vec![mixed]);
     let boxed_var = apply(&db, boxed, &[var(&db)]);
-    let classes = union(&db, &[b, boxed_var]);
+    let one = union(&db, &[int, boxed_var]);
+    let boxes = union(&db, &[apply(&db, boxed, &[int]), boxed_var]);
     db.seal();
     let gas = Gas::default();
     let mut s = Solver::new(&db, &gas);
     let t = s.infer();
     let e = s.environment(s.empty_environment(), vec![t]);
-    s.constrain(s.closed(a), s.view(classes, e), Provenance::default());
+    s.constrain(t, s.closed(str), Provenance::default());
+    s.constrain(s.closed(sole), s.view(one, e), Provenance::default());
+    s.constrain(s.closed(mixed), s.view(boxes, e), Provenance::default());
     let outcomes = s.solve();
-    // No `A` is a `Box`, as no class inherits from `A`
-    assert!(contradiction(&outcomes[0], Contradiction::Outside));
-    assert!(lower(&s, t).is_empty());
+    // No other member collects the `Sole`s that aren't `Box[Str]`s
+    assert!(contradiction(&outcomes[1], Contradiction::Outside));
+    // A `Box[Int | Str]` may be split between two `Box` members
+    assert_eq!(outcomes[2].status, Status::Unresolved);
 }
 
 /// Exhausting the budget inside a trial is never a proof

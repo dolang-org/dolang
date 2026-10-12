@@ -302,24 +302,16 @@ impl Solver<'_> {
     }
 
     /// Whether `actual` is an instance of a final class that doesn't reach
-    /// `expected`'s class. Unknown when either has no class.
+    /// `expected`'s class. A final class has no subclasses but those declared
+    /// with it, so none of its values is also an instance of another class,
+    /// however that class is applied. Unknown when either has no class, or the
+    /// ancestor search can't finish.
     pub(super) fn final_outside(&self, actual: TypeId, expected: TypeId) -> bool {
         let (Ok(Some(actual)), Ok(Some(expected))) = (self.start(actual), self.start(expected))
         else {
             return false;
         };
-        self.final_excludes(actual, expected.declaration)
-    }
-
-    /// Whether `actual`'s class is final and doesn't reach `class`. A final class
-    /// has no subclasses but those declared with it, so none of its values is
-    /// also an instance of another class, however that class is applied. Unknown
-    /// when the ancestor search can't finish.
-    pub(super) fn final_excludes(&self, actual: Nominal, class: DeclId) -> bool {
         self.db.declaration(actual.declaration).source.is_final
-            && matches!(
-                self.ancestor(actual, class, &mut FxHashSet::default(), 0),
-                Ok(None)
-            )
+            && self.reaches(&actual, expected.declaration) == Some(false)
     }
 }

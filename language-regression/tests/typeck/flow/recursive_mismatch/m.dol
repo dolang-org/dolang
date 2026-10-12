@@ -23,8 +23,11 @@ pub def cells c @ Cells
 # LL |   let _ @ Grid = c
 #    |                  ^
 
-# Members of a union aren't excluded by a generic class's arguments, so this
-# is left undecided rather than contradicted
+# A `Node[Num, ...]` reaches only the `Node` member, whose argument rejects it
 pub def wrong xs @ List[Num]
   let _ @ List[Int] = xs
-  #                   ^~: wf undecided Unsupported("a type that may be inside a union member")
+# error: `m.List[m.Num]` does not fit the annotation `m.List[m.Int]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ @ List[Int] = xs
+#    |                       ^^
