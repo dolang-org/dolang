@@ -27,7 +27,7 @@ use crate::{
     source::Span,
     typeck::{
         solver::{
-            Found, FoundKind, Inheritance, Issue, Lookup, Provenance, Reach, Requirement,
+            Found, FoundKind, Gas, Inheritance, Issue, Lookup, Provenance, Reach, Requirement,
             RequirementKind, Residual, Solver, Status, Term,
         },
         r#type::{
@@ -96,7 +96,8 @@ impl Check<'_, '_> {
         }
         let db = self.db;
         let runtime = db.declaration(self.id).source.kind == DeclKind::Class;
-        let mut solver = Solver::new(db);
+        let gas = Gas::default();
+        let mut solver = Solver::new(db, &gas);
         #[cfg(feature = "debug")]
         {
             solver.named(self.tables, crate::typeck::r#type::Style::Full);
@@ -157,7 +158,10 @@ impl Check<'_, '_> {
             self.value(&solver, instance, runtime, &spans, &mut pending);
         }
         for check in pending {
-            let mut fork = solver.clone();
+            // Each check has a budget of its own, so a class with many members
+            // doesn't exhaust one
+            let gas = Gas::default();
+            let mut fork = solver.fork(&gas);
             for (actual, expected) in check.pairs {
                 fork.constrain(actual, expected, Provenance::default());
             }

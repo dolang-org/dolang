@@ -17,7 +17,8 @@ fn joins_drop_subsumed_members() {
     let array = nominal(&mut db, "Array", vec![binder(Variance::Invariant)], vec![]);
     let one = literal(&db, 1);
     db.seal();
-    let s = Solver::new(&db);
+    let gas = Gas::default();
+    let s = Solver::new(&db, &gas);
 
     assert_eq!(s.lub(one, int), int);
     assert_eq!(s.lub(int, one), int);
@@ -104,7 +105,8 @@ fn common_supertypes_are_the_least_shared_ancestor() {
     let one = literal(&db, 1);
     let text = db.intern(Type::Literal(Literal::Str("a".into())));
     db.seal();
-    let s = Solver::new(&db);
+    let gas = Gas::default();
+    let s = Solver::new(&db, &gas);
     let common = |types: &[TypeId]| s.common_supertype(union(&db, types));
 
     assert_eq!(common(&[a, b]), Some(base));
@@ -151,7 +153,8 @@ fn widening_goes_to_a_common_supertype_then_unknown_or_value() {
     );
     let one = literal(&db, 1);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     s.gradual();
 
     // `x = [x]` in a loop, from an array: every member is an `Iter`
@@ -183,7 +186,8 @@ fn widening_goes_to_a_common_supertype_then_unknown_or_value() {
     assert_eq!(state, db.unknown());
 
     // A strict unit's solver widens to `Value` instead
-    let strict = Solver::new(&db);
+    let gas = Gas::default();
+    let strict = Solver::new(&db, &gas);
     let mut widening = Widening::default();
     let mut state = apply(&db, array, &[nil]);
     for _ in 0..=2 * WIDENING_LIMIT {
@@ -231,7 +235,8 @@ fn a_fresh_literal_relates_as_its_regular_twin() {
         Contradiction::Outside
     ));
     // A join keeps the regular twin, whatever the order
-    let s = Solver::new(&db);
+    let gas = Gas::default();
+    let s = Solver::new(&db, &gas);
     assert_eq!(s.lub(fresh_one, one), one);
     assert_eq!(s.lub(one, fresh_one), one);
     assert_eq!(s.lub(fresh_one, fresh_one), fresh_one);

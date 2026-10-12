@@ -477,20 +477,8 @@ impl Bounds {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Limits {
-    pub(crate) work: usize,
-    pub(crate) depth: usize,
-}
-
-impl Default for Limits {
-    fn default() -> Self {
-        Self {
-            work: 100_000,
-            depth: 256,
-        }
-    }
-}
+/// How deeply a solver's traversals may recurse, unless a caller says otherwise
+const DEPTH: usize = 256;
 
 /// A nominal declaration with interpreted arguments and the environment used
 /// to expose its declared supertypes. Declaration identity remains opaque.
@@ -545,9 +533,10 @@ pub(crate) struct Solver<'db> {
     obligation_index: MonoHashMap<Relation, ObligationId, FxBuildHasher>,
     queue: MonoVec<ObligationId>,
     roots: Vec<Root>,
-    limits: Limits,
-    work: Cell<usize>,
-    exhausted: Cell<bool>,
+    /// The work budget, shared with the solvers nested in this one
+    gas: &'db Gas,
+    /// How deeply traversals may recurse
+    depth: usize,
     /// The declarations being checked, whose rigids' bounds are assumptions
     scope: FxHashSet<DeclId>,
     /// The rigids an assumed declaration's group is checked under, where they
@@ -621,11 +610,13 @@ macro_rules! trace {
 }
 
 impl<'db> Solver<'db> {
-    pub(crate) fn new(db: &'db Database) -> Self {
-        Self::with_limits(db, Limits::default())
+    /// A solver whose work is charged to `gas`
+    pub(crate) fn new(db: &'db Database, gas: &'db Gas) -> Self {
+        Self::with_depth(db, gas, DEPTH)
     }
 
-    pub(crate) fn with_limits(db: &'db Database, limits: Limits) -> Self {
+    /// [`Self::new`], with traversals recursing at most `depth` deep
+    pub(crate) fn with_depth(db: &'db Database, gas: &'db Gas, depth: usize) -> Self {
         assert!(db.is_sealed(), "solver requires a sealed database");
         let environments = intern::Table::new();
         environments.id_owned(Environment {
@@ -650,9 +641,8 @@ impl<'db> Solver<'db> {
             obligation_index: MonoHashMap::default(),
             queue: MonoVec::new(),
             roots: Vec::new(),
-            limits,
-            work: Cell::new(0),
-            exhausted: Cell::new(false),
+            gas,
+            depth,
             scope: FxHashSet::default(),
             groups: FxHashMap::default(),
             gradual: false,
@@ -702,10 +692,7 @@ impl<'db> Solver<'db> {
                     return format!("{view:?}");
                 };
                 // Rendering mustn't spend the work it limits
-                let (work, exhausted) = (self.work.get(), self.exhausted.get());
-                let reified = self.reify(term);
-                self.work.set(work);
-                self.exhausted.set(exhausted);
+                let reified = self.gas.refunded(|| self.reify(term));
                 if let Ok(ty) = reified {
                     return self.db.render(ty, names, style);
                 }
@@ -781,9 +768,21 @@ impl<'db> Solver<'db> {
         self.gradual
     }
 
-    /// A solver for a side query about `class`, its rigids assumed
+    /// A copy of this solver whose work is charged to `gas`. Nothing solved on it
+    /// reaches this one.
+    pub(crate) fn fork<'g>(&self, gas: &'g Gas) -> Solver<'g>
+    where
+        'db: 'g,
+    {
+        let mut fork: Solver<'g> = self.clone();
+        fork.gas = gas;
+        fork
+    }
+
+    /// A solver for a side query about `class`, its rigids assumed, spending
+    /// this one's budget
     pub(super) fn side_query(&self, class: DeclId) -> Solver<'db> {
-        let mut solver = Solver::new(self.db);
+        let mut solver = Solver::new(self.db, self.gas);
         solver.scope = self.scope.clone();
         solver.groups = self.groups.clone();
         solver.gradual = self.gradual;
@@ -1228,20 +1227,13 @@ impl<'db> Solver<'db> {
         }
     }
 
-    /// A solver for a side query, with this one's scope and remaining budget. The
-    /// caller adds its work back.
+    /// A solver for a side query, with this one's scope, spending its budget
     fn nested(&self) -> Result<Self, Residual> {
         self.spend()?;
-        if self.limits.depth <= 1 {
+        if self.depth <= 1 {
             return Err(Residual::Limit);
         }
-        let mut nested = Self::with_limits(
-            self.db,
-            Limits {
-                work: self.limits.work.saturating_sub(self.work.get()),
-                depth: self.limits.depth - 1,
-            },
-        );
+        let mut nested = Self::with_depth(self.db, self.gas, self.depth - 1);
         nested.scope = self.scope.clone();
         nested.groups = self.groups.clone();
         nested.gradual = self.gradual;
@@ -1276,8 +1268,7 @@ impl<'db> Solver<'db> {
             Provenance::default(),
         );
         let result = proof.solve().remove(0);
-        self.work.set(self.work.get() + proof.work.get());
-        if proof.exhausted.get()
+        if self.gas.is_exhausted()
             || result
                 .diagnostics
                 .iter()
@@ -2172,19 +2163,14 @@ impl<'db> Solver<'db> {
         }
     }
 
-    /// Charge the solver-wide work budget, permanently marking exhaustion on failure.
+    /// Charge the work budget, permanently marking exhaustion on failure.
     fn spend(&self) -> Result<(), Residual> {
-        if self.work.get() >= self.limits.work {
-            self.exhausted.set(true);
-            return Err(Residual::Limit);
-        }
-        self.work.set(self.work.get() + 1);
-        Ok(())
+        self.gas.spend()
     }
 
     /// Reject a traversal that reaches the configured recursion limit.
     fn depth(&self, depth: usize) -> Result<(), Residual> {
-        if depth >= self.limits.depth {
+        if depth >= self.depth {
             Err(Residual::Limit)
         } else {
             Ok(())
@@ -2692,7 +2678,7 @@ impl<'db> Solver<'db> {
     fn quiesce(&mut self) {
         loop {
             loop {
-                while !self.exhausted.get() && !self.queue.is_empty() {
+                while !self.gas.is_exhausted() && !self.queue.is_empty() {
                     let mut batch = std::mem::take(&mut self.queue);
                     for id in batch.drain() {
                         let node = &self.obligations[id.0];
@@ -2707,12 +2693,12 @@ impl<'db> Solver<'db> {
                             Ok(()) => State::Reduced,
                             Err(issue) => State::Issue(issue),
                         });
-                        if self.exhausted.get() {
+                        if self.gas.is_exhausted() {
                             break;
                         }
                     }
                 }
-                if self.exhausted.get() {
+                if self.gas.is_exhausted() {
                     break;
                 }
                 let mut assigned = false;
@@ -2723,7 +2709,7 @@ impl<'db> Solver<'db> {
                         match self.try_assign(InferVarId(index)) {
                             Ok(changed) => assigned |= changed,
                             Err(Residual::Limit) => {
-                                self.exhausted.set(true);
+                                self.gas.exhaust();
                                 break;
                             }
                             Err(_) => {}
@@ -2734,7 +2720,7 @@ impl<'db> Solver<'db> {
                     break;
                 }
             }
-            if self.exhausted.get() {
+            if self.gas.is_exhausted() {
                 break;
             }
             if !self.try_alternatives() && !self.settle() {
@@ -2859,7 +2845,7 @@ impl<'db> Solver<'db> {
                 }
             }
         }
-        if self.exhausted.get() {
+        if self.gas.is_exhausted() {
             diagnostics.push(Diagnostic {
                 issue: Residual::Limit.into(),
                 path: vec![root],
@@ -2900,6 +2886,7 @@ mod item;
 mod lattice;
 mod member;
 mod narrow;
+mod nest;
 mod reduce;
 mod schema;
 mod unpack;
@@ -2910,6 +2897,7 @@ pub(crate) use conform::{Inheritance, Requirement, RequirementKind};
 pub(crate) use lattice::Widening;
 pub(crate) use member::{Access, Found, FoundKind, Lookup, Signatures};
 pub(crate) use narrow::Target as NarrowTarget;
+pub(crate) use nest::Gas;
 pub(crate) use unpack::PatternShape;
 
 #[cfg(test)]

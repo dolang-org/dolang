@@ -163,7 +163,8 @@ fn alias(db: &mut Database, name: &str, ty: TypeId) -> TypeId {
 }
 
 fn check(db: &Database, a: TypeId, b: TypeId) -> Outcome {
-    let mut solver = Solver::new(db);
+    let gas = Gas::default();
+    let mut solver = Solver::new(db, &gas);
     solver.constrain(solver.closed(a), solver.closed(b), Provenance::default());
     solver.solve().remove(0)
 }
@@ -199,7 +200,8 @@ fn bounded(kind: Kind, binding: Binding, bound: Option<TypeId>) -> Binder {
 
 /// Relate two types interpreted in `decl`'s group, while checking `decl`
 fn under(db: &Database, decl: DeclId, a: TypeId, b: TypeId) -> Outcome {
-    let mut s = Solver::new(db);
+    let gas = Gas::default();
+    let mut s = Solver::new(db, &gas);
     let env = s.rigid_environment(decl);
     s.constrain(s.view(a, env), s.view(b, env), Provenance::default());
     s.solve().remove(0)

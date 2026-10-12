@@ -81,7 +81,7 @@ use super::{
         PatternItem, PatternKey, Step, Tag, Target, Terminal, VarId,
     },
     elab::{Designated, Tables},
-    solver::{NarrowTarget, Outcome, Provenance, Residual, Solver, Status, Widening},
+    solver::{Gas, NarrowTarget, Outcome, Provenance, Residual, Solver, Status, Widening},
     r#type::{
         Argument, Database, DeclId, Element, Function, Intrinsic, Kind, Literal, Multiplicity,
         SchemaItem, Type, TypeId, UnitId,
@@ -322,9 +322,13 @@ impl<'a, 'u> Flow<'a, 'u> {
         self.db.unknown()
     }
 
-    /// A solver that holds the region's rigids as its assumptions
-    fn solver(&self) -> Solver<'a> {
-        let mut solver = Solver::new(self.db);
+    /// A solver that holds the region's rigids as its assumptions, its work
+    /// charged to `gas`
+    fn solver<'g>(&self, gas: &'g Gas) -> Solver<'g>
+    where
+        'a: 'g,
+    {
+        let mut solver = Solver::new(self.db, gas);
         for (decl, rigids) in &self.scope {
             solver.assume_group(*decl, rigids.clone());
         }
@@ -345,13 +349,14 @@ impl<'a, 'u> Flow<'a, 'u> {
         } else if a == bottom {
             b
         } else {
-            self.solver().lub(a, b)
+            self.solver(&Gas::default()).lub(a, b)
         }
     }
 
     /// Relate two closed types
     fn relate(&self, actual: TypeId, expected: TypeId) -> Outcome {
-        let mut solver = self.solver();
+        let gas = Gas::default();
+        let mut solver = self.solver(&gas);
         solver.constrain(
             solver.closed(actual),
             solver.closed(expected),
@@ -567,7 +572,8 @@ impl<'a, 'u> Flow<'a, 'u> {
         old: TypeId,
         new: TypeId,
     ) -> TypeId {
-        let solver = self.solver();
+        let gas = Gas::default();
+        let solver = self.solver(&gas);
         let joined = solver.lub(old, new);
         let widening = self.widenings.entry((block, ctx, var)).or_default();
         let widened = widening.join(&solver, old, new);
@@ -594,7 +600,8 @@ impl<'a, 'u> Flow<'a, 'u> {
         if self.observing() {
             return;
         }
-        let solver = self.solver();
+        let gas = Gas::default();
+        let solver = self.solver(&gas);
         let bottom = self.db.bottom();
         let annotation = self.ir.var(var).annotation;
         let (old, widening) = self
@@ -1131,8 +1138,9 @@ impl<'a, 'u> Flow<'a, 'u> {
         if fact.ty == bottom {
             return true;
         }
+        let gas = Gas::default();
         let narrowed = self
-            .solver()
+            .solver(&gas)
             .narrow(fact.ty, assume.relation, assume.negated, target);
         trace!(
             "assume {}{} {:?} {}: {} to {}{}",
@@ -1158,7 +1166,8 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// A type narrowed to its truthy values: without `nil` and `false`, the only
     /// values always falsy
     fn truthy(&self, ty: TypeId) -> TypeId {
-        let solver = self.solver();
+        let gas = Gas::default();
+        let solver = self.solver(&gas);
         [Literal::Nil, Literal::Bool(false)]
             .into_iter()
             .fold(ty, |ty, literal| {
@@ -1216,7 +1225,8 @@ impl<'a, 'u> Flow<'a, 'u> {
                 if clauses.iter().any(|(class, _)| has_rule(class)) {
                     self.raise(at.ctx, data.handler, &state);
                 }
-                let solver = self.solver();
+                let gas = Gas::default();
+                let solver = self.solver(&gas);
                 // A clause whose class isn't known, or a catch-all, binds a
                 // dynamic exception outside a strict unit
                 let strict = self.strict();

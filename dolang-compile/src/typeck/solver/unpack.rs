@@ -357,42 +357,38 @@ impl Solver<'_> {
             });
         }
         let environment = nested.environment(nested.empty_environment(), group.clone());
-        let result = (|| {
-            let Head::Nominal(found) = nested.head(nested.view(supertype, environment))? else {
-                return Ok(None);
-            };
-            let [schema, rest] = found.arguments[..] else {
-                return Ok(None);
-            };
-            nested.constrain(nested.closed(tail), schema, Provenance::default());
-            for (binder, &term) in binders.iter().zip(&group) {
-                if let (Some(bound), Term::Infer(_)) = (binder.bound, term) {
-                    let bound = nested.view(bound, environment);
-                    nested.constrain(term, bound, Provenance::default());
-                }
+        let Head::Nominal(found) = nested.head(nested.view(supertype, environment))? else {
+            return Ok(None);
+        };
+        let [schema, rest] = found.arguments[..] else {
+            return Ok(None);
+        };
+        nested.constrain(nested.closed(tail), schema, Provenance::default());
+        for (binder, &term) in binders.iter().zip(&group) {
+            if let (Some(bound), Term::Infer(_)) = (binder.bound, term) {
+                let bound = nested.view(bound, environment);
+                nested.constrain(term, bound, Provenance::default());
             }
-            let mut outcomes = nested.solve();
-            // Literals in the tail stay as they are, so that the rest fits its bound
-            loop {
-                let unsolved: Vec<_> = nested.unresolved().collect();
-                let progress = (unsolved.into_iter())
-                    .filter(|&id| nested.default_with(id, false).is_ok())
-                    .count();
-                if progress == 0 {
-                    break;
-                }
-                outcomes = nested.solve();
+        }
+        let mut outcomes = nested.solve();
+        // Literals in the tail stay as they are, so that the rest fits its bound
+        loop {
+            let unsolved: Vec<_> = nested.unresolved().collect();
+            let progress = (unsolved.into_iter())
+                .filter(|&id| nested.default_with(id, false).is_ok())
+                .count();
+            if progress == 0 {
+                break;
             }
-            if outcomes
-                .iter()
-                .any(|outcome| outcome.status != Status::Proven)
-            {
-                return Ok(None);
-            }
-            Ok(nested.reify(rest).ok().map(|rest| self.splice(rest)))
-        })();
-        self.work.set(self.work.get() + nested.work.get());
-        result
+            outcomes = nested.solve();
+        }
+        if outcomes
+            .iter()
+            .any(|outcome| outcome.status != Status::Proven)
+        {
+            return Ok(None);
+        }
+        Ok(nested.reify(rest).ok().map(|rest| self.splice(rest)))
     }
 
     /// A solved rest with each required inclusion of a schema spliced in, through

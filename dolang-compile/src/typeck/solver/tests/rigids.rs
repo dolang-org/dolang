@@ -163,7 +163,8 @@ fn bound_reductions_are_labeled() {
     );
     db.seal();
     for (binder, step) in [(t, Step::RigidBound), (input, Step::ImplicitBound)] {
-        let mut s = Solver::new(&db);
+        let gas = Gas::default();
+        let mut s = Solver::new(&db, &gas);
         let env = s.rigid_environment(f);
         s.constrain(
             s.view(binder, env),
@@ -183,7 +184,8 @@ fn rigids_in_scope_can_be_assigned() {
     let f = generic(&mut db, vec![binder(Variance::Invariant)], t);
     db.seal();
     let rigid = db.rigids(f)[0];
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let env = s.rigid_environment(f);
     let v = s.infer();
     s.constrain(s.view(t, env), v, Provenance::default());
@@ -205,7 +207,8 @@ fn rigids_out_of_scope_have_escaped() {
     );
     db.seal();
     let foreign = db.rigids(g)[0];
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     s.rigid_environment(f);
     for (a, b, status) in [
         (foreign, foreign, Status::Proven),
@@ -244,7 +247,8 @@ fn reach_walks_rigids_through_their_bounds() {
     let Type::Decl(base_decl) = *db.ty(base) else {
         unreachable!()
     };
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let env = s.rigid_environment(f);
     let Ok(Reach::Reached(args)) = s.reach(s.view(t, env), base_decl) else {
         panic!("a bounded rigid reaches its bound's ancestor");
@@ -290,7 +294,8 @@ fn item_projections_imply_rigid_key_bounds() {
     let g = generic(&mut db, binders(), body);
     db.seal();
     // `K` is below `Keys[S]`, so below `Str`
-    let mut solver = Solver::new(&db);
+    let gas = Gas::default();
+    let mut solver = Solver::new(&db, &gas);
     let env = solver.rigid_environment(f);
     solver.constrain(
         solver.view(k, env),
@@ -338,7 +343,8 @@ fn a_lifted_binder_bounds_as_the_enclosing_rigid() {
     let expected = db.intern(Type::Union(vec![UnionMember::Keys(outer)].into()));
     // Checked as its body is, `f`'s `S` is `c`'s, so `K` is below `Keys` of it
     for grouped in [false, true] {
-        let mut solver = Solver::new(&db);
+        let gas = Gas::default();
+        let mut solver = Solver::new(&db, &gas);
         solver.assume(c);
         match grouped {
             true => solver.assume_group(f, vec![outer, k]),

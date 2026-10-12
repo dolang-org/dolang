@@ -18,6 +18,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
+use dolang_util::mono::MonoVec;
 use rustc_hash::FxHashSet;
 
 use super::{
@@ -35,8 +36,8 @@ use crate::{
         },
         elab::Designated,
         solver::{
-            Call as SolverCall, CallArgument, Contradiction, InferVarId, Issue, Node, ObligationId,
-            Outcome, PatternShape, Provenance, Relation, Residual, Solver, Status,
+            Call as SolverCall, CallArgument, Contradiction, Gas, InferVarId, Issue, Node,
+            ObligationId, Outcome, PatternShape, Provenance, Relation, Residual, Solver, Status,
             Step as Derivation, Term,
         },
         r#type::{
@@ -740,10 +741,13 @@ impl<'a> Flow<'a, '_> {
         at: At,
         span: Span,
         expected: Option<TypeId>,
-        build: impl Fn(&mut Rule<'_, 'a>) -> Vec<Term>,
+        build: impl Fn(&mut Rule<'_, '_>) -> Vec<Term>,
     ) -> Vec<TypeId> {
+        // Each run has a budget of its own
+        let gases = MonoVec::new();
         let run = |seed: bool, default: bool| {
-            let mut solver = self.solver();
+            gases.push(Gas::default());
+            let mut solver = self.solver(&gases[gases.len() - 1]);
             let mut rule = Rule {
                 solver: &mut solver,
                 db: self.db,
@@ -1427,7 +1431,7 @@ impl<'a> Flow<'a, '_> {
                 self.show(callee),
                 self.show(given)
             );
-            result = self.solver().lub(result, given);
+            result = self.solver(&Gas::default()).lub(result, given);
         }
         result
     }
@@ -1525,12 +1529,13 @@ impl<'a> Flow<'a, '_> {
         expected: Option<TypeId>,
         span: Span,
     ) -> Vec<Option<TypeId>> {
-        let attempt = |seed| self.presolve(callee, values, input, output, seed, span);
+        let attempt = |gas, seed| self.presolve(gas, callee, values, input, output, seed, span);
         let mut expectations = vec![None; values.held.len()];
-        let (mut solver, mut held, contradicted) = attempt(expected);
+        let (seeded, unseeded) = (Gas::default(), Gas::default());
+        let (mut solver, mut held, contradicted) = attempt(&seeded, expected);
         if contradicted {
             let contradicted;
-            (solver, held, contradicted) = attempt(None);
+            (solver, held, contradicted) = attempt(&unseeded, None);
             if contradicted {
                 return expectations;
             }
@@ -1602,8 +1607,9 @@ impl<'a> Flow<'a, '_> {
         {
             let mut chosen: Vec<Vec<TypeId>> = vec![Vec::new(); arrays.len()];
             for &overload in &overloads {
+                let gas = Gas::default();
                 let (mut solver, held, contradicted) =
-                    self.presolve(overload, values, input, output, None, span);
+                    self.presolve(&gas, overload, values, input, output, None, span);
                 if contradicted {
                     continue;
                 }
@@ -1636,17 +1642,22 @@ impl<'a> Flow<'a, '_> {
     /// and `expected`, if given, as an upper bound on its result. Returns the
     /// solver, each held argument's variable by its index into [`Values::held`],
     /// and whether anything was contradicted.
-    fn presolve(
+    #[expect(clippy::too_many_arguments, reason = "a call's parts")]
+    fn presolve<'g>(
         &self,
+        gas: &'g Gas,
         callee: TypeId,
         values: &Values<'_>,
         input: Option<TypeId>,
         output: Option<TypeId>,
         expected: Option<TypeId>,
         span: Span,
-    ) -> (Solver<'a>, Vec<(usize, Term)>, bool) {
+    ) -> (Solver<'g>, Vec<(usize, Term)>, bool)
+    where
+        'a: 'g,
+    {
         let spread = self.designated(Designated::Spread);
-        let mut solver = self.solver();
+        let mut solver = self.solver(gas);
         let mut rule = Rule {
             solver: &mut solver,
             db: self.db,
@@ -1686,8 +1697,9 @@ impl<'a> Flow<'a, '_> {
         let survivors = |keys_only: bool| -> Vec<(TypeId, TypeId)> {
             (candidates.iter().copied())
                 .filter(|&(_, schema)| {
+                    let gas = Gas::default();
                     let (_, _, contradicted) =
-                        self.presolve_schema(values, schema, span, true, keys_only);
+                        self.presolve_schema(&gas, values, schema, span, true, keys_only);
                     !contradicted
                 })
                 .take(2)
@@ -1717,16 +1729,20 @@ impl<'a> Flow<'a, '_> {
     /// variable for each item held back, as [`Flow::presolve`] solves a call.
     /// With `choosing`, what's left unsolved is defaulted, and with `keys_only`,
     /// each item's value is a fresh variable, so only its key can contradict.
-    fn presolve_schema(
+    fn presolve_schema<'g>(
         &self,
+        gas: &'g Gas,
         values: &Values<'_>,
         schema: TypeId,
         span: Span,
         choosing: bool,
         keys_only: bool,
-    ) -> (Solver<'a>, Vec<(usize, Term)>, bool) {
+    ) -> (Solver<'g>, Vec<(usize, Term)>, bool)
+    where
+        'a: 'g,
+    {
         let spread = self.designated(Designated::Spread);
-        let mut solver = self.solver();
+        let mut solver = self.solver(gas);
         let mut rule = Rule {
             solver: &mut solver,
             db: self.db,
@@ -2217,8 +2233,9 @@ impl<'a> Flow<'a, '_> {
         if !values.held.is_empty() {
             let expectations = match expected_dict {
                 Some((_, schema)) if !values.never => {
+                    let gas = Gas::default();
                     let (solver, held, _) =
-                        self.presolve_schema(&values, schema, expr.span, false, false);
+                        self.presolve_schema(&gas, &values, schema, expr.span, false, false);
                     let mut expectations = vec![None; values.held.len()];
                     for (index, term) in held {
                         expectations[index] = expectation(&solver, term);
@@ -2312,7 +2329,7 @@ impl<'a> Flow<'a, '_> {
                     let positional = rule.solver.infer();
                     let keys = rule.solver.infer();
                     let entries = rule.solver.infer();
-                    let entry = |rule: &mut Rule<'_, 'a>, key: TypeId, value: Term| {
+                    let entry = |rule: &mut Rule<'_, '_>, key: TypeId, value: Term| {
                         rule.constrain(rule.closed(key), keys, Check::Quiet);
                         rule.constrain(value, entries, Check::Quiet);
                     };
@@ -2419,7 +2436,8 @@ impl<'a> Flow<'a, '_> {
         let Some(spread) = spread else {
             return (true, true);
         };
-        let mut solver = self.solver();
+        let gas = Gas::default();
+        let mut solver = self.solver(&gas);
         let schema = solver.infer_kind(Kind::Schema, Rest::All);
         let mut holes = Holes {
             db: self.db,
@@ -2472,7 +2490,8 @@ impl<'a> Flow<'a, '_> {
             if let Type::Unknown(_) = self.db.ty(expected) {
                 return None;
             }
-            let mut solver = self.solver();
+            let gas = Gas::default();
+            let mut solver = self.solver(&gas);
             let argument = solver.infer_kind(kind, Rest::All);
             let mut holes = Holes {
                 db: self.db,
@@ -2527,7 +2546,8 @@ impl<'a> Flow<'a, '_> {
     /// that is a member of it, seen through aliases: the application, and its
     /// argument
     fn applied(&self, class: DeclId, expected: TypeId) -> Option<(TypeId, TypeId)> {
-        let solver = self.solver();
+        let gas = Gas::default();
+        let solver = self.solver(&gas);
         let applied = |ty: TypeId| match solver.exposed_nominal(ty)? {
             (decl, arguments) if decl == class => match arguments[..] {
                 [arg] => Some((ty, arg)),
@@ -2726,7 +2746,10 @@ impl<'a> Flow<'a, '_> {
                 Element::Positional(value) | Element::Keyed { value, .. } => value,
                 Element::Include(_) => unreachable!("not an item"),
             };
-            let value = self.solver().schema_item(expected, key).unwrap_or(value);
+            let value = self
+                .solver(&Gas::default())
+                .schema_item(expected, key)
+                .unwrap_or(value);
             let element = match source.element {
                 Element::Positional(_) => Element::Positional(value),
                 _ => Element::Keyed { key, value },
@@ -2812,7 +2835,7 @@ impl<'a> Flow<'a, '_> {
                     .designated(Designated::FmtValue)
                     .and_then(|class| self.applied(class, ty).map(|(_, value)| value))
                     .unwrap_or(self.db.unknown());
-                values = self.solver().lub(values, value);
+                values = self.solver(&Gas::default()).lub(values, value);
             }
         }
         if never {
@@ -2871,7 +2894,10 @@ impl<'a> Flow<'a, '_> {
                 PatternKey::Rest(kind) => pattern.rests.push(kind),
             }
         }
-        if let Some(unpacked) = self.solver().unpack_pattern(value, unpack, &pattern) {
+        if let Some(unpacked) = self
+            .solver(&Gas::default())
+            .unpack_pattern(value, unpack, &pattern)
+        {
             self.conclude(at, span, None, |rule| {
                 let target = rule.term(|holes| {
                     let unknown = holes.db.unknown();

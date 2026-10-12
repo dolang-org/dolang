@@ -10,11 +10,12 @@ fn schema_reference(db: &Database, slot: usize) -> TypeId {
 /// Constrain a call of `callee` and solve, returning the solver
 fn solve_call<'db>(
     db: &'db Database,
+    gas: &'db Gas,
     callee: TypeId,
     args: &[TypeId],
     result: Option<TypeId>,
 ) -> (Solver<'db>, Term, Outcome) {
-    let mut s = Solver::new(db);
+    let mut s = Solver::new(db, gas);
     let result = match result {
         Some(ty) => s.closed(ty),
         None => s.infer(),
@@ -42,7 +43,8 @@ fn generic_callees_are_instantiated_once_per_use() {
         function(&db, &[t], t),
     );
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let mut results = Vec::new();
     for arg in [int, str] {
         let result = s.infer();
@@ -87,15 +89,19 @@ fn invariant_arguments_force_instantiated_binders() {
     );
     let ints = apply(&db, array, &[int]);
     db.seal();
-    let (_, _, outcome) = solve_call(&db, first, &[ints], Some(int));
+    let gas = Gas::default();
+    let (_, _, outcome) = solve_call(&db, &gas, first, &[ints], Some(int));
     assert_eq!(outcome.status, Status::Proven);
-    let (_, _, outcome) = solve_call(&db, first, &[ints], Some(str));
+    let gas = Gas::default();
+    let (_, _, outcome) = solve_call(&db, &gas, first, &[ints], Some(str));
     assert!(contradiction(&outcome, Contradiction::UnrelatedNominals));
-    let (_, _, outcome) = solve_call(&db, first, &[int], Some(int));
+    let gas = Gas::default();
+    let (_, _, outcome) = solve_call(&db, &gas, first, &[int], Some(int));
     assert!(contradiction(&outcome, Contradiction::UnrelatedNominals));
 
     // Reprocessing the call reuses its variables
-    let (mut s, result, outcome) = solve_call(&db, first, &[ints], None);
+    let gas = Gas::default();
+    let (mut s, result, outcome) = solve_call(&db, &gas, first, &[ints], None);
     assert_eq!(outcome.status, Status::Unresolved);
     let variables = s.bounds.len();
     s.constrain(result, s.closed(int), Provenance::default());
@@ -144,7 +150,8 @@ fn instantiated_binders_are_below_their_bounds() {
         (f_bounded, ord, Status::Proven),
         (f_bounded, int, Status::Contradicted),
     ] {
-        let (_, _, outcome) = solve_call(&db, callee, &[arg], Some(db.top()));
+        let gas = Gas::default();
+        let (_, _, outcome) = solve_call(&db, &gas, callee, &[arg], Some(db.top()));
         assert_eq!(outcome.status, status, "{callee:?} {arg:?}");
     }
 }
@@ -170,7 +177,8 @@ fn ambient_binders_are_bounded_by_the_callers_channels() {
         body,
     );
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let result = s.infer();
     let (f, input) = (s.closed(f), s.closed(iter_int));
     constrain_call(&mut s, f, &[], result, Some(input));
@@ -200,7 +208,8 @@ fn defaults_are_the_join_of_solved_lower_bounds() {
     db.seal();
 
     // A monomorphic call's result
-    let (mut s, result, outcome) = solve_call(&db, f, &[int], None);
+    let gas = Gas::default();
+    let (mut s, result, outcome) = solve_call(&db, &gas, f, &[int], None);
     assert_eq!(outcome.status, Status::Unresolved);
     let result = variable_id(result);
     assert_eq!(s.default(result), Ok(str));
@@ -208,7 +217,8 @@ fn defaults_are_the_join_of_solved_lower_bounds() {
     assert_eq!(s.solve()[0].status, Status::Proven);
 
     // A generic call's binder defaults first, decaying its literal
-    let (mut s, result, _) = solve_call(&db, id, &[one], None);
+    let gas = Gas::default();
+    let (mut s, result, _) = solve_call(&db, &gas, id, &[one], None);
     assert_eq!(s.default(variable_id(result)), Err(Residual::Inference));
     assert!(
         default_all(&mut s)
@@ -218,7 +228,8 @@ fn defaults_are_the_join_of_solved_lower_bounds() {
     assert_eq!(s.reify(result), Ok(int));
 
     // Several lower bounds join, and `Unknown` makes the join dynamic
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let [joined, dynamic, empty, conflicted] = [(); 4].map(|()| s.infer());
     for (variable, lower) in [
         (joined, int),
@@ -283,7 +294,8 @@ fn defaults_decay_literals() {
 
     // Each kind of fresh literal decays to its class
     for (literal, class) in kinds {
-        let mut s = Solver::new(&db);
+        let gas = Gas::default();
+        let mut s = Solver::new(&db, &gas);
         let variable = s.infer();
         s.constrain(s.closed(literal), variable, Provenance::default());
         s.solve();
@@ -291,7 +303,8 @@ fn defaults_decay_literals() {
     }
 
     // Literals decay where the default fixes an invariant argument
-    let (mut s, result, _) = solve_call(&db, pair, &[one, two], None);
+    let gas = Gas::default();
+    let (mut s, result, _) = solve_call(&db, &gas, pair, &[one, two], None);
     assert!(
         default_all(&mut s)
             .iter()
@@ -299,7 +312,9 @@ fn defaults_decay_literals() {
     );
     assert_eq!(s.reify(result), Ok(apply(&db, array, &[int])));
 
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+
+    let mut s = Solver::new(&db, &gas);
     let [required, existing, mixed, written] = [(); 4].map(|()| s.infer());
     for (variable, lower) in [
         (required, one),
@@ -321,7 +336,8 @@ fn defaults_decay_literals() {
     assert_eq!(s.default(variable_id(written)), Ok(exact));
 
     // A default that wouldn't lock the literal in keeps it
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let variable = s.infer();
     s.constrain(s.closed(one), variable, Provenance::default());
     s.solve();
@@ -333,7 +349,8 @@ fn literals_without_a_class_are_kept() {
     let mut db = Database::new();
     let one = literal(&db, 1);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let variable = s.infer();
     s.constrain(s.closed(one), variable, Provenance::default());
     s.solve();
@@ -390,7 +407,8 @@ fn pack_binders_take_the_remaining_arguments() {
             .map(|term| s.reify(term))
             .collect::<Vec<_>>()
     };
-    let (mut s, _, outcome) = solve_call(&db, pack, &[int, str, int], Some(db.top()));
+    let gas = Gas::default();
+    let (mut s, _, outcome) = solve_call(&db, &gas, pack, &[int, str, int], Some(db.top()));
     assert_eq!(outcome.status, Status::Unresolved);
     assert_eq!(lower_schema(&s), vec![Ok(rest)]);
     assert!(
@@ -398,12 +416,16 @@ fn pack_binders_take_the_remaining_arguments() {
             .iter()
             .all(|o| o.status == Status::Proven)
     );
-    let (_, _, outcome) = solve_call(&db, pack, &[], Some(db.top()));
+    let gas = Gas::default();
+    let (_, _, outcome) = solve_call(&db, &gas, pack, &[], Some(db.top()));
     assert!(contradiction(&outcome, Contradiction::Missing(0)));
-    let (_, _, outcome) = solve_call(&db, pack, &[str], Some(db.top()));
+    let gas = Gas::default();
+    let (_, _, outcome) = solve_call(&db, &gas, pack, &[str], Some(db.top()));
     assert!(contradiction(&outcome, Contradiction::UnrelatedNominals));
 
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+
+    let mut s = Solver::new(&db, &gas);
     let [int_term, str_term] = [int, str].map(|ty| s.closed(ty));
     let a_name = db.intern_symbol("a");
     let args = [
@@ -430,7 +452,8 @@ fn closed_solvers_settle_their_own_variables() {
     );
     db.seal();
     let judge = |expected: TypeId, close: bool| {
-        let mut s = Solver::new(&db);
+        let gas = Gas::default();
+        let mut s = Solver::new(&db, &gas);
         if close {
             s.close();
         }
@@ -464,7 +487,8 @@ fn instantiation_establishes_implied_bounds() {
     // Even where nothing evaluates the projection, a key outside `Keys[S]`
     // is contradicted
     for (key, status) in [(str, Status::Proven), (int, Status::Contradicted)] {
-        let (_, _, outcome) = solve_call(&db, get, &[key], Some(db.top()));
+        let gas = Gas::default();
+        let (_, _, outcome) = solve_call(&db, &gas, get, &[key], Some(db.top()));
         assert_eq!(outcome.status, status, "{key:?}: {outcome:?}");
     }
 }

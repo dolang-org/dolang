@@ -109,7 +109,8 @@ fn generic_union_alias_preserves_narrowed_arguments() {
     let segment = apply(&db, segment, &[int]);
     let expected = apply(&db, wrapper, &[int]);
     db.seal();
-    let s = Solver::new(&db);
+    let gas = Gas::default();
+    let s = Solver::new(&db, &gas);
     assert_eq!(
         class(&s, segment, Relation::Upper, false, wrapper),
         expected
@@ -121,7 +122,8 @@ fn generic_union_alias_preserves_narrowed_arguments() {
 fn upper_bounds_keep_reaching_members() {
     let mut w = World::new();
     w.db.seal();
-    let s = Solver::new(&w.db);
+    let gas = Gas::default();
+    let s = Solver::new(&w.db, &gas);
     let bottom = w.db.bottom();
     let upper = |ty| class(&s, ty, Relation::Upper, false, w.sub);
 
@@ -161,7 +163,8 @@ fn upper_bounds_keep_reaching_members() {
 fn negated_upper_bounds_drop_reaching_members() {
     let mut w = World::new();
     w.db.seal();
-    let s = Solver::new(&w.db);
+    let gas = Gas::default();
+    let s = Solver::new(&w.db, &gas);
     let bottom = w.db.bottom();
     let not = |ty, target| class(&s, ty, Relation::Upper, true, target);
 
@@ -184,7 +187,8 @@ fn negated_upper_bounds_drop_reaching_members() {
 fn exact_bounds_keep_only_the_class() {
     let mut w = World::new();
     w.db.seal();
-    let s = Solver::new(&w.db);
+    let gas = Gas::default();
+    let s = Solver::new(&w.db, &gas);
     let bottom = w.db.bottom();
     let exact = |ty, target| class(&s, ty, Relation::Exact, false, target);
 
@@ -212,7 +216,8 @@ fn exact_bounds_keep_only_the_class() {
 fn negated_exact_bounds_drop_only_singletons() {
     let mut w = World::new();
     w.db.seal();
-    let s = Solver::new(&w.db);
+    let gas = Gas::default();
+    let s = Solver::new(&w.db, &gas);
     let not = |ty, target| class(&s, ty, Relation::Exact, true, target);
 
     // A class may have subclasses
@@ -227,7 +232,8 @@ fn negated_exact_bounds_drop_only_singletons() {
 fn literal_comparisons_strip_other_literals() {
     let mut w = World::new();
     w.db.seal();
-    let s = Solver::new(&w.db);
+    let gas = Gas::default();
+    let s = Solver::new(&w.db, &gas);
     let bottom = w.db.bottom();
     let one = w.int_lit(1);
     let two = w.int_lit(2);
@@ -262,7 +268,8 @@ fn literal_comparisons_strip_other_literals() {
 fn truthiness_narrows_nil_and_bool() {
     let mut w = World::new();
     w.db.seal();
-    let s = Solver::new(&w.db);
+    let gas = Gas::default();
+    let s = Solver::new(&w.db, &gas);
     let truthy = |ty| {
         let ty = value(&s, ty, true, w.nil_lit());
         value(&s, ty, true, w.bool_lit(false))
@@ -307,7 +314,8 @@ fn generic_members_carry_arguments_down() {
     );
     let other = nominal(&mut db, "Other", vec![], vec![]);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     s.gradual();
     let unknown = db.unknown();
     let upper = |ty, target| class(&s, ty, Relation::Upper, false, target);
@@ -333,7 +341,8 @@ fn generic_members_carry_arguments_down() {
 
     // A strict unit's solver gives an uncarried covariant binder its bound, and
     // keeps a member it can't narrow without an invariant binder's argument
-    let strict = Solver::new(&db);
+    let gas = Gas::default();
+    let strict = Solver::new(&db, &gas);
     let upper = |ty, target| class(&strict, ty, Relation::Upper, false, target);
     let array_value = apply(&db, array, &[db.top()]);
     assert_eq!(upper(seq_int, array), array_int);
@@ -376,7 +385,8 @@ fn covariant_schema_binders_take_their_bound() {
         schema_binder(Variance::Invariant, Binding::Positional, Some(closed)),
     );
     db.seal();
-    let s = Solver::new(&db);
+    let gas = Gas::default();
+    let s = Solver::new(&db, &gas);
     let top = db.top();
     let upper = |target| class(&s, top, Relation::Upper, false, target);
 
@@ -394,7 +404,8 @@ fn covariant_schema_binders_take_their_bound() {
 fn packs_are_kept() {
     let mut w = World::new();
     w.db.seal();
-    let s = Solver::new(&w.db);
+    let gas = Gas::default();
+    let s = Solver::new(&w.db, &gas);
     let pack = w.db.intern(Type::Union(
         vec![
             UnionMember::Type(w.sub),
@@ -416,7 +427,8 @@ fn packs_are_kept() {
 fn narrowing_is_sound() {
     let mut w = World::new();
     w.db.seal();
-    let s = Solver::new(&w.db);
+    let gas = Gas::default();
+    let s = Solver::new(&w.db, &gas);
     let db = &w.db;
     let literals = [
         w.int_lit(1),

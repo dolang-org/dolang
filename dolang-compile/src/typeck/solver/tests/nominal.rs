@@ -72,7 +72,8 @@ fn generic_inheritance_composes_open_substitutions() {
     let actual = apply(&db, child, &[r]);
     let expected = apply(&db, parent, &[apply(&db, container, &[value])]);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let e = s.environment(s.empty_environment(), vec![s.closed(value)]);
     s.constrain(s.view(actual, e), s.closed(expected), Provenance::default());
     assert_eq!(s.solve()[0].status, Status::Proven);
@@ -92,7 +93,8 @@ fn generic_alias_instantiation_preserves_open_arguments() {
     let actual = apply(&db, a, &[r]);
     let expected = function(&db, &[value], value);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let e = s.environment(s.empty_environment(), vec![s.closed(value)]);
     s.constrain(s.view(actual, e), s.closed(expected), Provenance::default());
     assert_eq!(s.solve()[0].status, Status::Proven);
@@ -140,7 +142,8 @@ fn unused_supertype_bounds_do_not_create_obligations() {
     let target = nominal(&mut db, "Target", vec![], vec![]);
     let child = nominal(&mut db, "Child", vec![], vec![other_one, target]);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     s.constrain(s.closed(child), s.closed(target), Provenance::default());
     assert_eq!(s.solve()[0].status, Status::Proven);
     // Searching the earlier, well-formed Other[1] branch must not generate 1 <: 1.
@@ -302,7 +305,8 @@ fn mro_commits_to_an_inference_path_without_combining_alternatives() {
     let actual = apply(&db, child, &[r]);
     let expected = apply(&db, parent, &[one]);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let variable = s.infer();
     let env = s.intern_environment(s.empty_environment(), vec![variable]);
     s.constrain(
@@ -382,7 +386,8 @@ fn metatypes_reach_class_objects_and_relate_only_to_their_own() {
         assert_eq!(check(&db, actual, expected).status, Status::Contradicted);
     }
     // Different metatypes' least common supertype is what they reach in common
-    let s = Solver::new(&db);
+    let gas = Gas::default();
+    let s = Solver::new(&db, &gas);
     let joined = s.lub(sub_meta, base_meta);
     assert_eq!(s.common_supertype(joined), Some(base_object));
 }

@@ -28,7 +28,7 @@ use crate::{
     source::Span,
     typeck::{
         report::Report,
-        solver::{Issue, Provenance, Residual, Solver, Status},
+        solver::{Gas, Issue, Provenance, Residual, Solver, Status},
         r#type::{
             Argument, Binder, Binding, BoundRef, Database, DeclId, Rest, Type, TypeId, UnitId,
             UnitSpan,
@@ -136,7 +136,8 @@ impl Check<'_, '_> {
     /// Relate two types interpreted in `scope`'s group, holding its binders rigid,
     /// with a solver of its own
     fn relate(&self, scope: Option<DeclId>, actual: TypeId, expected: TypeId) -> Verdict {
-        let mut solver = Solver::new(self.db);
+        let gas = Gas::default();
+        let mut solver = Solver::new(self.db, &gas);
         #[cfg(feature = "debug")]
         {
             solver.named(self.tables, crate::typeck::r#type::Style::Full);

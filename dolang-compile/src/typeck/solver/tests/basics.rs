@@ -4,7 +4,7 @@ use super::*;
 fn solver_requires_sealing() {
     assert!(
         std::panic::catch_unwind(|| {
-            Solver::new(&Database::new());
+            Solver::new(&Database::new(), &Gas::default());
         })
         .is_err()
     );
@@ -21,7 +21,8 @@ fn identity_top_bottom_and_literal_difference() {
     assert_eq!(check(&db, db.bottom(), a).status, Status::Proven);
     assert_eq!(check(&db, a, b).status, Status::Contradicted);
     // The canonical database can still grow while borrowed by a solver.
-    let solver = Solver::new(&db);
+    let gas = Gas::default();
+    let solver = Solver::new(&db, &gas);
     let c = literal(&db, 3);
     assert_eq!(solver.kind(solver.closed(c)), Kind::Type);
 }
@@ -66,7 +67,8 @@ fn open_identity_uses_environments() {
     let two = literal(&db, 2);
     let f = function(&db, &[r], r);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let e1 = s.environment(s.empty_environment(), vec![s.closed(one)]);
     let e2 = s.environment(s.empty_environment(), vec![s.closed(two)]);
     assert_eq!(
@@ -94,7 +96,8 @@ fn replacements_keep_their_own_context_under_quantifiers() {
         function(&db, &[local], one),
     );
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let captured = s.environment(s.empty_environment(), vec![s.closed(one)]);
     let replacement = s.view(local, captured);
     let caller = s.environment(s.empty_environment(), vec![replacement]);
@@ -117,7 +120,8 @@ fn closed_quantifiers_ignore_unused_environments() {
         function(&db, &[local], local),
     );
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let e = s.environment(s.empty_environment(), vec![s.closed(db.top())]);
     assert!(s.same(s.view(poly, e), s.closed(poly)).unwrap());
 }
@@ -209,24 +213,14 @@ fn limits_are_residual_not_proof_or_contradiction() {
     let mut db = Database::new();
     let one = literal(&db, 1);
     db.seal();
-    let mut s = Solver::with_limits(
-        &db,
-        Limits {
-            work: 0,
-            depth: 256,
-        },
-    );
+    let gas = Gas::new(0);
+    let mut s = Solver::new(&db, &gas);
     s.constrain(s.closed(one), s.closed(one), Provenance::default());
     let result = s.solve().remove(0);
     assert_eq!(result.status, Status::Unresolved);
     assert!(has(&result, Residual::Limit.into()));
-    let mut s = Solver::with_limits(
-        &db,
-        Limits {
-            work: 100,
-            depth: 0,
-        },
-    );
+    let gas = Gas::new(100);
+    let mut s = Solver::with_depth(&db, &gas, 0);
     s.constrain(s.closed(one), s.closed(one), Provenance::default());
     assert!(has(&s.solve()[0], Residual::Limit.into()));
 }
@@ -247,7 +241,8 @@ fn shared_reductions_preserve_each_root_and_dependency() {
     let span_a = db.declaration(aid).source.span;
     let span_b = db.declaration(bid).source.span;
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     for _ in 0..2 {
         s.constrain(
             s.closed(function(&db, &[], a)),
@@ -291,14 +286,15 @@ fn repeated_solve_without_new_constraints_does_no_work() {
     let mut db = Database::new();
     let one = literal(&db, 1);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let variable = s.infer();
     s.constrain(s.closed(one), variable, Provenance::default());
     s.constrain(variable, s.closed(one), Provenance::default());
     assert!(s.solve().iter().all(|r| r.status == Status::Proven));
-    let work = s.work.get();
+    let work = s.gas.used();
     assert!(s.solve().iter().all(|r| r.status == Status::Proven));
-    assert_eq!(s.work.get(), work);
+    assert_eq!(s.gas.used(), work);
 }
 
 #[test]
@@ -326,7 +322,8 @@ fn generic_instantiation_does_not_capture_nested_quantifier_references() {
     );
     let expected = function(&db, &[expected_inner], one);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let env = s.environment(s.empty_environment(), vec![s.closed(one)]);
     s.constrain(
         s.view(instantiated, env),
@@ -342,7 +339,8 @@ fn substitution_kind_misuse_panics() {
     let r = reference(&db, 0, 0);
     let empty_schema = schema(&db, &[]);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let env = s.environment(s.empty_environment(), vec![s.closed(empty_schema)]);
     s.constrain(s.view(r, env), s.closed(db.top()), Provenance::default());
     assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| s.solve())).is_err());
@@ -353,7 +351,8 @@ fn shared_insertion_preserves_borrowed_solver_state() {
     let mut db = Database::new();
     let one = literal(&db, 1);
     db.seal();
-    let mut solver = Solver::new(&db);
+    let gas = Gas::default();
+    let mut solver = Solver::new(&db, &gas);
     let variable = solver.infer();
     let variables: Vec<_> = (0..256).map(|_| solver.infer()).collect();
     let root = solver.constrain(solver.closed(one), variable, Provenance::default());

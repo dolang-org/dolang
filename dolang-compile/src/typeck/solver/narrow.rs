@@ -227,7 +227,7 @@ impl Solver<'_> {
             arguments,
             environment,
         };
-        let result = nested
+        nested
             .ancestor(start, decl, &mut FxHashSet::default(), 0)
             .and_then(|found| {
                 found
@@ -240,9 +240,7 @@ impl Solver<'_> {
                     })
                     .transpose()
                     .map_err(Issue::from)
-            });
-        self.work.set(self.work.get() + nested.work.get());
-        result
+            })
     }
 
     /// `class` as a whole, for a member `kept` whose class says nothing of it.

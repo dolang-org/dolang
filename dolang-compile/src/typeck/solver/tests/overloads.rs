@@ -29,7 +29,8 @@ fn no_overload_fitting_contradicts_and_keeps_each_rejection() {
     let set = overloaded(&db, &overloads, None);
     let call = function(&db, &[c], reference(&db, 0, 0));
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let r = s.infer();
     let e = s.environment(s.empty_environment(), vec![r]);
     s.constrain(s.closed(set), s.view(call, e), Provenance::default());
@@ -66,7 +67,8 @@ fn only_the_arguments_choose_an_overload() {
     let set = overloaded(&db, &[function(&db, &[a], c), function(&db, &[b], b)], None);
     let call = function(&db, &[a], b);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     s.constrain(s.closed(set), s.closed(call), Provenance::default());
     let outcome = s.solve().remove(0);
     assert!(contradiction(&outcome, Contradiction::UnrelatedNominals));
@@ -85,7 +87,8 @@ fn a_rejected_overload_leaves_no_bounds() {
     let (x, r) = vars(&db);
     let call = function(&db, &[x], r);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let (x, r) = (s.infer(), s.infer());
     let e = s.environment(s.empty_environment(), vec![x, r]);
     s.constrain(s.closed(a), x, Provenance::default());
@@ -109,7 +112,8 @@ fn an_ambiguity_waits_for_later_bounds() {
     let (x, r) = vars(&db);
     let call = function(&db, &[x], r);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let (x, r) = (s.infer(), s.infer());
     let e = s.environment(s.empty_environment(), vec![x, r]);
     let root = s.constrain(s.closed(set), s.view(call, e), Provenance::default());
@@ -133,7 +137,8 @@ fn elsewhere_an_overloaded_function_is_its_implementation() {
     let set = overloaded(&db, &[fa, fb], Some(a));
     let unimplemented = overloaded(&db, &[fa, fb], None);
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let outcomes = [
         s.constrain(s.closed(set), s.closed(a), Provenance::default()),
         s.constrain(s.closed(set), s.closed(b), Provenance::default()),

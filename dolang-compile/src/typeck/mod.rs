@@ -550,10 +550,11 @@ impl Check<'_> {
     /// judge the sealed database without panicking. The outcomes are discarded.
     #[doc(hidden)]
     pub fn smoke(&self) {
-        use solver::{Provenance, Solver};
+        use solver::{Gas, Provenance, Solver};
 
         let db = &r#type::Database::fork(&self.shared);
-        let mut solver = Solver::new(db);
+        let gas = Gas::default();
+        let mut solver = Solver::new(db, &gas);
         let relate = |solver: &mut Solver<'_>, ty, kinds: &[r#type::Kind]| {
             let group = kinds
                 .iter()
@@ -597,7 +598,7 @@ impl Check<'_> {
     /// Look up every member a class or its direct supertypes declare, through the
     /// receiver of one of its instance methods under that method's rigids.
     fn smoke_members(&self) {
-        use solver::Solver;
+        use solver::{Gas, Solver};
         use r#type::{Element, Member, Scope, Type};
 
         let db = &r#type::Database::fork(&self.shared);
@@ -651,7 +652,8 @@ impl Check<'_> {
             let Some((method, receiver)) = receiver else {
                 continue;
             };
-            let mut solver = Solver::new(db);
+            let gas = Gas::default();
+            let mut solver = Solver::new(db, &gas);
             let environment = solver.rigid_environment(method);
             let receiver = solver.view(receiver, environment);
             for key in keys {

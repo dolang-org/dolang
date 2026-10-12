@@ -111,7 +111,8 @@ fn skolem_bound_reductions_are_labeled() {
         (Binding::Implicit, Step::ImplicitBound),
     ] {
         let expected = quantified(&db, vec![bounded(Kind::Type, binding, Some(iter))], body);
-        let mut s = Solver::new(&db);
+        let gas = Gas::default();
+        let mut s = Solver::new(&db, &gas);
         let actual = function(&db, &[iter], int);
         s.constrain(s.closed(actual), s.closed(expected), Provenance::default());
         assert_eq!(s.solve()[0].status, Status::Proven);
@@ -177,7 +178,8 @@ fn quantified_actuals_are_instantiated_inside_the_skolems_scope() {
         function(&db, &[t], int),
     );
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     s.constrain(s.closed(actual), s.closed(expected), Provenance::default());
     let outcome = s.solve().remove(0);
     assert!(contradiction(&outcome, Contradiction::UnrelatedNominals));
@@ -205,7 +207,8 @@ fn skolemizing_is_repeatable() {
     );
     let top = db.top();
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let v = s.infer();
     // (Value) -> ?v, reprocessed once `?v` is solved
     let actual = function_term(&s, &[s.closed(top)], v);
@@ -229,7 +232,8 @@ fn skolems_never_leave_their_judgment() {
         function(&db, &[t], int),
     );
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     s.constrain(
         s.closed(function(&db, &[db.top()], int)),
         s.closed(expected),
@@ -289,7 +293,8 @@ fn quantified_types_subsume_through_instantiation() {
     db.seal();
     let actual = identity(&db, Variance::Invariant);
     for expected in [widened, identity(&db, Variance::Covariant), actual] {
-        let mut s = Solver::new(&db);
+        let gas = Gas::default();
+        let mut s = Solver::new(&db, &gas);
         s.constrain(s.closed(actual), s.closed(expected), Provenance::default());
         assert_eq!(s.solve()[0].status, Status::Proven, "{expected:?}");
         // `A` took `T`, which has no canonical form
@@ -392,7 +397,8 @@ fn nested_quantifiers_nest_their_scopes() {
         ),
     );
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     s.constrain(s.closed(actual), s.closed(expected), Provenance::default());
     assert_eq!(s.solve()[0].status, Status::Proven);
     let depths: Vec<_> = (0..s.skolems.len())
@@ -441,7 +447,8 @@ fn escaping_skolems_are_promoted_to_their_bounds() {
         function(&db, &[t], int),
     );
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let v = s.infer();
     // (?v) -> Int: `?v` is outside `T`'s scope, so it takes `T`'s bound
     let actual = function_term(&s, &[v], s.closed(int));
@@ -460,7 +467,8 @@ fn escaping_skolems_are_promoted_to_their_bounds() {
 fn skolems_never_escape_through_variables() {
     let mut db = Database::new();
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let v = s.infer();
     // (?v) -> ?v <: [T] (T) -> T: `?v` would have to be `T`
     let actual = function_term(&s, &[v], v);
@@ -484,7 +492,8 @@ fn skolems_never_escape_through_variables() {
 fn variables_below_quantified_types_are_residual() {
     let mut db = Database::new();
     db.seal();
-    let mut s = Solver::new(&db);
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
     let v = s.infer();
     let expected = identity(&db, Variance::Invariant);
     s.constrain(v, s.closed(expected), Provenance::default());
@@ -535,7 +544,8 @@ fn item_projections_imply_key_bounds() {
         (function(&db, &[range], bin), read),
         (function(&db, &[range, bin], nil), write),
     ] {
-        let mut s = Solver::new(&db);
+        let gas = Gas::default();
+        let mut s = Solver::new(&db, &gas);
         s.constrain(s.closed(actual), s.closed(expected), Provenance::default());
         let outcome = s.solve().remove(0);
         assert_eq!(outcome.status, Status::Proven, "{outcome:?}");

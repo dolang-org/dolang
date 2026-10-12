@@ -25,7 +25,7 @@ use crate::{
         elab::Designated,
         report::Report,
         solver::{
-            Access, Constructor, FoundKind, Issue, Lookup, Residual, Signature, Signatures,
+            Access, Constructor, FoundKind, Gas, Issue, Lookup, Residual, Signature, Signatures,
             bound_method,
         },
         r#type::{DeclId, Intrinsic, Literal, MemberKey, Scope, Type, TypeId, UnionMember},
@@ -111,7 +111,7 @@ impl Flow<'_, '_> {
         }
         if let Some((class, exact)) = self.class_of(ty) {
             let generic = matches!(self.db.ty(ty), Type::Quantified { .. });
-            return match self.solver().constructor(class, exact) {
+            return match self.solver(&Gas::default()).constructor(class, exact) {
                 Constructor::Call {
                     callee: Some(signature),
                     bound,
@@ -204,7 +204,7 @@ impl Flow<'_, '_> {
         let target = match self.class_of(object) {
             Some((class, true)) => {
                 if matches!(
-                    self.solver().constructor(class, true),
+                    self.solver(&Gas::default()).constructor(class, true),
                     Constructor::Call { .. }
                 ) && !self.within(class)
                     && self.observing()
@@ -216,7 +216,7 @@ impl Flow<'_, '_> {
                     });
                 }
                 let generic = matches!(self.db.ty(object), Type::Quantified { .. });
-                match self.solver().default_construction(class) {
+                match self.solver(&Gas::default()).default_construction(class) {
                     Some(signature) => self.init_target(class, signature, generic, first.span),
                     None => CallTarget::new(None),
                 }
@@ -291,7 +291,8 @@ impl Flow<'_, '_> {
         if matches!(self.db.ty(receiver), Type::Unknown(_)) {
             return Resolved::Dynamic;
         }
-        let solver = self.solver();
+        let gas = Gas::default();
+        let solver = self.solver(&gas);
         let term = solver.closed(receiver);
         let lookup = solver.reach_member(term, member.class, member.key, access);
         let lookup = match lookup {
@@ -391,7 +392,7 @@ impl Flow<'_, '_> {
         const DEPTH: usize = 16;
         let ty = match self.db.ty(ty) {
             Type::Decl(_) | Type::Apply { .. } if depth < DEPTH => {
-                match self.solver().exposed(ty) {
+                match self.solver(&Gas::default()).exposed(ty) {
                     Some(exposed) => exposed,
                     None => return false,
                 }
@@ -611,7 +612,7 @@ impl Flow<'_, '_> {
                 }
                 None => self.db.unknown(),
             };
-            result = self.solver().lub(result, given);
+            result = self.solver(&Gas::default()).lub(result, given);
         }
         result
     }
@@ -1309,7 +1310,7 @@ impl Flow<'_, '_> {
             callee: None,
         };
         // The VM builds a range literal itself, without calling `Range`
-        match self.solver().default_construction(class) {
+        match self.solver(&Gas::default()).default_construction(class) {
             Some(Some(signature)) if let Some(constructor) = signature.callee(self.db) => {
                 self.call_with(at, state, operands, constructor, &bounds, call)
             }

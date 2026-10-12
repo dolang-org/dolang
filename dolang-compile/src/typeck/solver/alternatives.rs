@@ -286,7 +286,7 @@ impl<'db> Solver<'db> {
         for id in pending {
             let (verdict, possible, rejections) = match self.judge(id) {
                 Ok(judged) => judged,
-                Err(_) if self.exhausted.get() => return changed,
+                Err(_) if self.gas.is_exhausted() => return changed,
                 Err(residual) => (Verdict::Failed(residual.into()), Vec::new(), Vec::new()),
             };
             let mut records = self.alternatives.borrow_mut();
@@ -395,9 +395,7 @@ impl<'db> Solver<'db> {
             provenance: Provenance::default(),
         });
         fork.quiesce();
-        self.work.set(fork.work.get());
-        if fork.exhausted.get() {
-            self.exhausted.set(true);
+        if self.gas.is_exhausted() {
             return Err(Residual::Limit);
         }
         let outcome = fork.outcome(constraint);
