@@ -4,29 +4,31 @@
 import std:
   - @BaseArray
   - @BaseDict
+  - @BaseStruct
 
 # A value decoded from YAML. A mapping key may be any YAML value.
-pub @let Data = $
+pub @let DecodeValue = $
   | nil
   | Bool
   | Int
   | Float
   | Str
-  | Array[Data]
-  | Dict[Data, Data]
+  | Array[DecodeValue]
+  | Dict[DecodeValue, DecodeValue]
 
 # A value that encodes as YAML.
-pub @let Encodable = $
+pub @let EncodeValue = $
   | nil
   | Bool
   | Int
   | Float
   | Str
   | Sym
-  | BaseArray[Encodable]
-  | Tuple[...Encodable]
-  | Record[...{*Encodable, **Encodable}]
-  | BaseDict[Encodable, Encodable]
+  | BaseArray[EncodeValue]
+  | Tuple[...EncodeValue]
+  | Record[...{*EncodeValue, **EncodeValue}]
+  | BaseStruct[{*EncodeValue, **EncodeValue}]
+  | BaseDict[EncodeValue, EncodeValue]
 
 # Parses a YAML string into a Do value.
 #
@@ -65,7 +67,7 @@ pub @let Encodable = $
 pub def decode
   # YAML document to parse.
   yaml @ Str
-do -> Data
+do -> DecodeValue
   ...
 
 # Serializes a Do value to a YAML string.
@@ -81,6 +83,7 @@ do -> Data
 # | `Array`  | sequence   |
 # | `Tuple`  | sequence   |
 # | `Dict`   | mapping    |
+# | `Struct` | mapping    |
 # | `Record` | mapping    |
 #
 # ## Errors
@@ -96,6 +99,6 @@ do -> Data
 # ```
 pub def encode
   # The value to serialize.
-  value @ Encodable
+  value @ EncodeValue
 do -> Str
   ...

@@ -1,8 +1,8 @@
 # dolang: strict
 import
   json:
-    - @Data: JsonData
-    - @Encodable: JsonEncodable
+    - @DecodeValue: JsonDecodeValue
+    - @EncodeValue: JsonEncodeValue
   std:
     - @BaseDict
     - RuntimeError
@@ -128,7 +128,7 @@ pub class Status: Error
   # The saved body excerpt, parsed as JSON.
   #
   # Available when the extension is built with its `json` feature.
-  pub def json self -> JsonData
+  pub def json self -> JsonDecodeValue
     ...
 
 # One item of a Server-Sent Events stream.
@@ -236,7 +236,7 @@ pub class Response
   # let data = response.json()
   # echo $data["users"][0]["name"]
   # ```
-  pub def json self -> JsonData
+  pub def json self -> JsonDecodeValue
     ...
 
   # Streams the body as raw byte chunks, so a large response need not be held
@@ -328,7 +328,7 @@ pub @let RequestOptions = $
 pub @let BodyOptions = $
   ...RequestOptions
   ?body: (Str | Bin | Iterable[Value])
-  ?json: JsonEncodable
+  ?json: JsonEncodeValue
   ?lines: Iterable[Value]
   ?multipart: Iterable[Dict[{name: Str, ...}]]
 

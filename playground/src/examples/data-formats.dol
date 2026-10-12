@@ -13,7 +13,7 @@ let outputs = $
   yaml: (yaml.encode data)
   json: (json.encode data)
   # Assert to the type checker that this doesn't contain `nil`, unsupported by TOML
-  toml: (toml.encode $ (data !@ toml.Encodable))
+  toml: (toml.encode $ (data !@ toml.EncodeValue))
 
 for format text = outputs
   echo -- "$format" --

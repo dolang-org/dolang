@@ -9,6 +9,12 @@
 # | `:URL:`      | URL-safe alphabet, using `-` and `_` (section 5)          |
 # | `:AUTO:`     | Decoding only; detect the alphabet from the input         |
 
+# A value accepted by [`encode`](base64.encode).
+pub @let EncodeValue = (Str | Bin)
+
+# A value returned by [`decode`](base64.decode).
+pub @let DecodeValue = Bin
+
 # Decodes base64 text and returns the raw bytes.
 #
 # By default both alphabets and any amount of padding are accepted. Specifying
@@ -45,7 +51,7 @@ pub def decode
   # none — are accepted. `pad: true` requires canonical padding; `pad: false`
   # requires that padding be absent.
   :pad @ Bool = nil
-do -> Bin
+do -> DecodeValue
   ...
 
 # Encodes a string or binary value as base64 text.
@@ -73,7 +79,7 @@ do -> Bin
 # ```
 pub def encode
   # Data to encode.
-  data @ (Str | Bin)
+  data @ EncodeValue
   # Alphabet; default `:STANDARD:`.
   :alphabet @ (:STANDARD: | :URL:) = nil
   # Whether to emit padding; default depends on `alphabet:`.

@@ -1,0 +1,48 @@
+import json toml yaml
+
+# Encoders accept covariant struct views, subclasses, and nested structs.
+pub class Config: Struct[{x: Int}]
+
+pub def structs
+  value @ Struct[{x: Int}]
+  child @ Config
+  nested @ Struct[{inner: Struct[{x: Int}]}]
+  mixed @ Struct[{Int, x: Str}]
+do
+  json.encode $value
+  yaml.encode $value
+  toml.encode $value
+  json.encode $child
+  yaml.encode $child
+  toml.encode $child
+  json.encode $nested
+  yaml.encode $nested
+  toml.encode $nested
+  json.encode $mixed
+  yaml.encode $mixed
+  toml.encode $mixed
+# error: expected `toml.EncodeValue`, found `std.Struct[{std.Int, x: std.Str}]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   toml.encode $mixed
+#    |                ^^^^^
+
+pub def unsupported value @ Struct[{x: Bin}]
+  json.encode $value
+  # error: expected `json.EncodeValue`, found `std.Struct[{x: std.Bin}]`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   json.encode $value
+  #    |                ^^^^^
+  yaml.encode $value
+  # error: expected `yaml.EncodeValue`, found `std.Struct[{x: std.Bin}]`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   yaml.encode $value
+  #    |                ^^^^^
+  toml.encode $value
+  # error: expected `toml.EncodeValue`, found `std.Struct[{x: std.Bin}]`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   toml.encode $value
+  #    |                ^^^^^

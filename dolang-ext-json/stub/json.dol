@@ -4,30 +4,32 @@
 import std:
   - @BaseArray
   - @BaseDict
+  - @BaseStruct
 
 # A value decoded from JSON.
-pub @let Data = $
+pub @let DecodeValue = $
   | nil
   | Bool
   | Int
   | Float
   | Str
-  | Array[Data]
-  | Dict[Str, Data]
+  | Array[DecodeValue]
+  | Dict[Str, DecodeValue]
 
 # A value that encodes as JSON. An object key may also be a number or boolean,
 # which is written as its string form.
-pub @let Encodable = $
+pub @let EncodeValue = $
   | nil
   | Bool
   | Int
   | Float
   | Str
   | Sym
-  | BaseArray[Encodable]
-  | Tuple[...Encodable]
-  | Record[...{*Encodable, **Encodable}]
-  | BaseDict[Str | Sym | Int | Float | Bool, Encodable]
+  | BaseArray[EncodeValue]
+  | Tuple[...EncodeValue]
+  | Record[...{*EncodeValue, **EncodeValue}]
+  | BaseStruct[{*EncodeValue, **EncodeValue}]
+  | BaseDict[Str | Sym | Int | Float | Bool, EncodeValue]
 
 # Deserializes a JSON string to a Do value.
 #
@@ -65,7 +67,7 @@ pub @let Encodable = $
 pub def decode
   # JSON string to parse.
   json @ Str
-do -> Data
+do -> DecodeValue
   ...
 
 # Serializes a Do value to a JSON string.
@@ -81,6 +83,7 @@ do -> Data
 # | `Array`  | array                |
 # | `Tuple`  | array                |
 # | `Dict`   | object               |
+# | `Struct` | object               |
 # | `Record` | object               |
 #
 # Object keys are written in the order the dict holds them.
@@ -95,7 +98,7 @@ do -> Data
 # ```
 pub def encode
   # The value to serialize.
-  value @ Encodable
+  value @ EncodeValue
   # Spaces per level; one line when omitted.
   :indent @ Int = nil
 do -> Str

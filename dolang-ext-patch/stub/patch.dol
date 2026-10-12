@@ -7,6 +7,12 @@ import std:
 import fs:
   - @Path
 
+# A value accepted by [`encode`](patch.encode).
+pub @let EncodeValue = (Patch | Iterable[Patch])
+
+# A value returned by [`decode`](patch.decode).
+pub @let DecodeValue = PatchIter
+
 # Raised when a patch does not apply cleanly.
 #
 # [`Patch.apply`](patch.Patch.apply) throws `ApplyError` when the patch cannot
@@ -145,7 +151,7 @@ pub class PatchIter: Iter[Patch]
 pub def decode
   # Unified or git-style patch.
   input @ (Str | Bin)
-do -> PatchIter
+do -> DecodeValue
   ...
 
 # Builds a text patch from two versions of the same content.
@@ -197,6 +203,6 @@ do -> Patch
 # ```
 pub def encode
   # One patch or an iterable of patches.
-  value @ (Patch | Iterable[Patch])
+  value @ EncodeValue
 do -> (Str | Bin)
   ...

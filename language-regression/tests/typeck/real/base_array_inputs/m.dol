@@ -52,6 +52,6 @@ pub def not_array()
 
 pub def decoded()
   let data = json.decode "[]"
-  let _ @ json.Encodable = data
-  let _ @ yaml.Encodable = yaml.decode "[]"
-  let _ @ toml.Encodable = toml.decode "[]"
+  let _ @ json.EncodeValue = data
+  let _ @ yaml.EncodeValue = yaml.decode "[]"
+  let _ @ toml.EncodeValue = toml.decode "[]"

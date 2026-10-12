@@ -19,14 +19,14 @@ pub def cloud_config
   public_key @ Str
   packages @ [Str]
   boot @ Iterable[Iterable[Value]]
-  write_files @ [yaml.Encodable]
+  write_files @ [yaml.EncodeValue]
 do -> Str
   let run = ["set -e"]
   for entry = boot
     run.push (shlex.join entry)
   run.push "touch $(shlex.quote READY_PATH)"
 
-  let user_config @ {**yaml.Encodable} = $
+  let user_config @ {**yaml.EncodeValue} = $
     name: $user
     groups:
       - wheel
