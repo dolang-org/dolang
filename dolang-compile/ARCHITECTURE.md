@@ -233,31 +233,32 @@ its own instances or those of a subclass inheriting only it, so such a member
 refutes it even though a subclass of both may share their values. A protocol may
 be covered by several members' classes, so nothing refutes one. A value may fit
 several applications of a generic class together without fitting any one, as
-every `Tuple[Int | Str]` is a `Tuple[Int]` or a `Tuple[Str]`, so a generic
-member's rejected arguments leave a class residual. So, for now, does a generic
-member whose class the class doesn't reach, unless the class is final (#901). A
-literal's or function's class is fixed, so it is refuted outright. `Int`, `Str`
-and `Sym` have infinitely many literals, which a class's literals, finitely
-many, can't cover. A function relates to a literal through `Func`. A projection
-is exposed by reifying it once its schema's environment is substituted, which
-waits on the schema's variables. One of a rigid's schema that is left on the
-left reduces to the same projection of the rigid's bound. An item projection is
-evaluated once its schema and key are closed, by exposing or reifying it
-(`solver/item.rs`). The key selects items of the schema's keyed view: each
-member of the key goes to the literal item it is, or else to the literal items
-inside it and the domains that own it, as an actual keyed item goes to an
-expected schema's domains. `Int` selects every fixed position too, since an
-index out of range is a runtime error, as an array's is; a literal index past
-them is unadmitted. `IndexItem` joins the selected values. `AssignItem` meets
-them: a value below a closed `AssignItem` that selects several values is
-related to each. Evaluated, as where it isn't the expected side, the meet needs
-no intersection types: the lower of two ordered values, the bottom type for a
-literal outside the other or a final class that doesn't reach the other, and
-otherwise `Unknown`, unresolved in a strict unit. Two other classes share the
-values of a subclass of both. A key member the schema doesn't
-admit whole contradicts the projection, as a conflicting schema does. A rigid
-key selects only by its bound, so exactly only where each item the bound selects
-has the same value; otherwise the projection is residual.
+every `Tuple[Int | Str]` is a `Tuple[Int]` or a `Tuple[Str]`, so a class
+reaching the classes of several rejecting generic members is left residual. A
+generic member whose class it doesn't reach refutes it as a non-generic one
+does. With only one such member reached, no other member collects the values its
+arguments reject, so that rejection is final. A literal's or function's class is
+fixed, so it is refuted outright. `Int`, `Str` and `Sym` have infinitely many
+literals, which a class's literals, finitely many, can't cover. A function
+relates to a literal through `Func`. A projection is exposed by reifying it once
+its schema's environment is substituted, which waits on the schema's variables.
+One of a rigid's schema that is left on the left reduces to the same projection
+of the rigid's bound. An item projection is evaluated once its schema and key
+are closed, by exposing or reifying it (`solver/item.rs`). The key selects items
+of the schema's keyed view: each member of the key goes to the literal item it
+is, or else to the literal items inside it and the domains that own it, as an
+actual keyed item goes to an expected schema's domains. `Int` selects every
+fixed position too, since an index out of range is a runtime error, as an
+array's is; a literal index past them is unadmitted. `IndexItem` joins the
+selected values. `AssignItem` meets them: a value below a closed `AssignItem`
+that selects several values is related to each. Evaluated, as where it isn't the
+expected side, the meet needs no intersection types: the lower of two ordered
+values, the bottom type for a literal outside the other or a final class that
+doesn't reach the other, and otherwise `Unknown`, unresolved in a strict unit.
+Two other classes share the values of a subclass of both. A key member the
+schema doesn't admit whole contradicts the projection, as a conflicting schema
+does. A rigid key selects only by its bound, so exactly only where each item the
+bound selects has the same value; otherwise the projection is residual.
 
 The item projections vary with their arguments as follows:
 

@@ -1,5 +1,7 @@
-# A final class has no subclasses but those it is declared with, so its values
-# are outside a generic member of a union whose class it doesn't reach.
+# A class is outside a generic member of a union whose class it doesn't reach:
+# its own instances, or those of a subclass inheriting only it, are. A final
+# class has no subclasses but those it is declared with, so a test for a class
+# it doesn't reach drops it.
 
 import std:
   - @BaseArray
@@ -39,13 +41,24 @@ pub def leaves l @ Leaf
 # LL |   let _ = (l @ (Int | BaseArray[Int]))
 #    |            ^
 
-# A subclass of `Open` may also be a `BaseArray[Int]`
+# A subclass of `Open` may also be a `BaseArray[Int]`, but an `Open` of its
+# own isn't
 pub def opens o @ Open
   let _ = (o @ (Int | BaseArray[Int]))
+# error: `m.Open` does not fit the cast's type `std.BaseArray[std.Int] | std.Int`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ = (o @ (Int | BaseArray[Int]))
+#    |            ^
 
-# `Int` isn't final either
+# Nor does `Int` need to be final
 pub def ints i @ Int
   let _ = (i @ (Str | BaseArray[Int]))
+# error: `std.Int` does not fit the cast's type `std.BaseArray[std.Int] | std.Str`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ = (i @ (Str | BaseArray[Int]))
+#    |            ^
 
 # A final member is dropped by a test for a class it doesn't reach
 pub def narrowed value @ (Sym | Array[Int])

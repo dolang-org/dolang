@@ -386,22 +386,49 @@ fn metatypes_reach_class_objects_and_relate_only_to_their_own() {
 }
 
 #[test]
-fn final_classes_are_outside_generic_members_they_do_not_reach() {
+fn unreached_generic_members_refute_any_class() {
     let mut db = Database::new();
     let int = int(&mut db);
     let str = nominal(&mut db, "Str", vec![], vec![]);
     let boxed = nominal(&mut db, "Box", vec![binder(Variance::Invariant)], vec![]);
     let leaf = final_class(&mut db, "Leaf", vec![]);
     let open = nominal(&mut db, "Open", vec![], vec![]);
-    let box_str = apply(&db, boxed, &[str]);
-    let sealed = final_class(&mut db, "Sealed", vec![box_str]);
     let members = union(&db, &[int, apply(&db, boxed, &[int])]);
     db.seal();
-    let outcome = check(&db, leaf, members);
+    // An `Open` of its own, or of a subclass inheriting only it, is no `Box`
+    for class in [leaf, open, str] {
+        let outcome = check(&db, class, members);
+        assert_eq!(outcome.status, Status::Contradicted);
+        assert!(has(&outcome, Issue::Contradiction(Contradiction::Outside)));
+    }
+}
+
+#[test]
+fn reached_generic_members_refute_only_alone() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let covariant = || binder(Variance::Covariant);
+    let boxed = nominal(&mut db, "Box", vec![covariant()], vec![]);
+    let g = nominal(&mut db, "G", vec![covariant()], vec![]);
+    let h = nominal(&mut db, "H", vec![covariant()], vec![]);
+    let either = union(&db, &[int, str]);
+    let box_str = apply(&db, boxed, &[str]);
+    let open = nominal(&mut db, "Open", vec![], vec![box_str]);
+    let supers = vec![apply(&db, g, &[either]), apply(&db, h, &[either])];
+    let both = nominal(&mut db, "Both", vec![], supers);
+    let box_int = apply(&db, boxed, &[int]);
+    let one = union(&db, &[int, box_int]);
+    let boxes = union(&db, &[box_int, box_str]);
+    let split = union(&db, &[apply(&db, g, &[int]), apply(&db, h, &[str])]);
+    db.seal();
+    // No other member collects the `Open`s that aren't `Box[Int]`s
+    let outcome = check(&db, open, one);
     assert_eq!(outcome.status, Status::Contradicted);
     assert!(has(&outcome, Issue::Contradiction(Contradiction::Outside)));
-    // A subclass of `Open` may also be a `Box[Int]`
-    assert_eq!(check(&db, open, members).status, Status::Unresolved);
-    // A final class reaching the member's class is rejected only by arguments
-    assert_eq!(check(&db, sealed, members).status, Status::Unresolved);
+    // Every `Box[Int | Str]` may be a `Box[Int]` or a `Box[Str]`
+    let mixed = apply(&db, boxed, &[either]);
+    assert_eq!(check(&db, mixed, boxes).status, Status::Unresolved);
+    // A `Both` may be a `G[Int]` or an `H[Str]`
+    assert_eq!(check(&db, both, split).status, Status::Unresolved);
 }

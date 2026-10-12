@@ -10,9 +10,10 @@ let Array(numbers) = data["numbers"]
 numbers.push 4
 
 let outputs = $
-  toml: (toml.encode data)
   yaml: (yaml.encode data)
   json: (json.encode data)
+  # Assert to the type checker that this doesn't contain `nil`, unsupported by TOML
+  toml: (toml.encode $ (data !@ toml.Encodable))
 
 for format text = outputs
   echo -- "$format" --

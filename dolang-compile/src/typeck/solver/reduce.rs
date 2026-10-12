@@ -512,11 +512,12 @@ impl Solver<'_> {
     /// of `obligation`. Testing closed alternatives must never add bounds to
     /// this solver.
     ///
-    /// A literal, concrete class or top is outside a union if every member
-    /// excludes it. For a class with infinitely many literals, a finite
-    /// set of literals cannot cover it either. Protocols may be covered
-    /// by several implementations, so unrelated alternatives are not
-    /// enough to refute their inclusion.
+    /// A literal, class or top is outside a union if every member excludes it.
+    /// For a class with infinitely many literals, a finite set of literals
+    /// cannot cover it either. A class reaching several generic members may be
+    /// covered by them together. Protocols may be covered by several
+    /// implementations, so unrelated alternatives are not enough to refute
+    /// their inclusion.
     fn closed_member(
         &self,
         obligation: ObligationId,
@@ -535,6 +536,13 @@ impl Solver<'_> {
         // No members but top and the dynamic type cover top
         let top = actual == self.db.top();
         let mut outside = function || top || self.class_like(actual)?;
+        // A literal's, function's or top's rejections are final
+        let fixed = function || top || self.db.literal(actual).is_some();
+        let class = match fixed {
+            true => None,
+            false => self.start(actual).ok().flatten(),
+        };
+        let mut reached = 0;
         let mut cycle = false;
         for member in members.iter() {
             let UnionMember::Type(ty) = *member else {
@@ -552,27 +560,30 @@ impl Solver<'_> {
             cycle |= recursive;
             match status {
                 Status::Proven => return Ok(()),
-                // Keep generic members conservative: the actual class's values
-                // may fit several applications of a generic class together
-                // without fitting any one. A member whose class the actual
-                // class doesn't reach is kept so too, for now (#901), unless the
-                // actual class is final.
+                // A generic member whose class the actual class doesn't
+                // reach rejects it, as a non-generic member does: its own
+                // instances, or a subclass inheriting only it, are outside.
+                // Where it does reach, the actual class's values may fit
+                // several applications together without fitting any one, so
+                // its rejection is final only at the sole member it reaches.
                 Status::Contradicted => {
-                    if !function
-                        && !top
-                        && self.db.literal(actual).is_none()
-                        && self
-                            .start(expected)?
-                            .is_some_and(|nominal| !nominal.arguments.is_empty())
-                        && !self.final_outside(actual, expected)
+                    if !fixed
+                        && let Some(member) = self.start(expected)?
+                        && !member.arguments.is_empty()
                     {
-                        outside = false;
+                        match (class.as_ref())
+                            .and_then(|class| self.reaches(class, member.declaration))
+                        {
+                            Some(false) => {}
+                            Some(true) => reached += 1,
+                            None => outside = false,
+                        }
                     }
                 }
                 Status::Unresolved => outside = false,
             }
         }
-        Err(match (outside, cycle) {
+        Err(match (outside && reached < 2, cycle) {
             (true, _) => Issue::Contradiction(Contradiction::Outside),
             (false, true) => Residual::Recursive.into(),
             (false, false) => {

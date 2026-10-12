@@ -215,15 +215,16 @@ impl<'db> Solver<'db> {
     }
 
     /// What a union on the right is when trials reject every member: a
-    /// contradiction for a literal, a concrete class or a function, which have
-    /// values outside a union none of whose members admits them. A protocol may
-    /// be covered by several members' classes, so it is left residual. A class's
-    /// values may fit several applications of a generic class together without
-    /// fitting any one, so a generic member leaves it residual too, unless the
-    /// class is final and doesn't reach the member's (whether reaching matters
-    /// otherwise is #901), as do members that are projections. A literal's or
-    /// function's class is fixed, so its rejections are final, and so are top's,
-    /// which no member but top covers.
+    /// contradiction for a literal, a class or a function, which have values
+    /// outside a union none of whose members admits them. A protocol may be
+    /// covered by several members' classes, so it is left residual. So is a
+    /// class reaching several generic members, whose values may fit their
+    /// applications together without fitting any one, and anything beside a
+    /// member that is a projection. A class has values outside a member it
+    /// doesn't reach, and one reaching a sole generic member has none another
+    /// member collects. A
+    /// literal's or function's class is fixed, so its rejections are final, and
+    /// so are top's, which no member but top covers.
     pub(super) fn refuted(
         &self,
         actual: Term,
@@ -252,6 +253,7 @@ impl<'db> Solver<'db> {
             Err(Issue::Residual(_)) => return Ok(residual),
             Err(issue) => return Err(issue),
         };
+        let mut reached = 0;
         for member in members {
             let UnionMember::Type(ty) = *member else {
                 return Ok(residual);
@@ -261,9 +263,14 @@ impl<'db> Solver<'db> {
             }
             match self.head(view.child(ty)) {
                 Ok(Head::Nominal(nominal)) if !nominal.arguments.is_empty() => {
-                    let excluded = (class.clone())
-                        .is_some_and(|class| self.final_excludes(class, nominal.declaration));
-                    if !excluded {
+                    match (class.as_ref())
+                        .and_then(|class| self.reaches(class, nominal.declaration))
+                    {
+                        Some(false) => {}
+                        Some(true) => reached += 1,
+                        None => return Ok(residual),
+                    }
+                    if reached > 1 {
                         return Ok(residual);
                     }
                 }
