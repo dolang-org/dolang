@@ -1214,6 +1214,7 @@ impl<'v> Protocol<'v> for Class {
                 Method(sym::CALL_METHOD),
             ],
             members: members![
+                Method(sym::INIT_METHOD),
                 Method(sym::STR_METHOD),
                 Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
