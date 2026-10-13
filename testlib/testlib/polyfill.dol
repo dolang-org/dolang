@@ -18,3 +18,7 @@ else
   cat = run[:cat:]
   echo = run[:echo:]
   grep = run[:grep:]
+
+# Unix socket relay; --silent keeps a connection open without sending a handshake.
+pub def unix_connect ...args
+  run (exe.parent / "dolang-private-polyfill") unix-connect ...args

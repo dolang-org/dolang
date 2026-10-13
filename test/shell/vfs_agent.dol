@@ -1,0 +1,343 @@
+import _vfs base64 fs proc shell sys time strand
+  security.unix: unix_security
+  security.windows: windows_security
+  shell:
+    - Vfs
+  testlib.polyfill:
+    - unix_connect
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+    - ignore
+    - parametrize
+    - test
+
+let agent = _vfs.bin()
+let windows = (sys.os_info().family == :WINDOWS:)
+
+# Query the real helper's startup snapshot, without changing the host context.
+def snapshot args = []
+  let vfs = Vfs do run $agent ...args --stdio
+  try
+    return vfs.with do
+      (env: {...env}, cwd: cd().canonical(), exe: shell.vfs_exe(), os: sys.os_info(), cpu: sys.cpu_info())
+  finally
+    time.timeout 10 do vfs.stop()
+
+def rejects args text
+  let diagnostics = []
+  assert_throws $proc.Error do
+    run $agent ...args --stdio stdout: $std.null stderr: $diagnostics
+  assert ("".join(diagnostics).contains(text))
+
+#[test]
+def initial_snapshot()
+  let current_os = sys.os_info()
+  let current_cpu = sys.cpu_info()
+  let got = snapshot()
+  assert (got[:env:].len > 0)
+  assert_eq $got[:cwd:] $cd().canonical()
+  assert_eq $got[:exe:] $(fs.Path agent).canonical()
+  assert_eq $got[:os:].os $current_os.os
+  assert_eq $got[:os:].family $current_os.family
+  assert_eq $got[:cpu:].arch $current_cpu.arch
+  let vfs = Vfs do run $agent --stdio
+  try
+    if windows
+      let expected = windows_security.token_info()
+      vfs.with do
+        let got = windows_security.token_info()
+        assert_eq (str got.user_sid) (str expected.user_sid)
+        assert_eq $got.is_elevated $expected.is_elevated
+    else
+      let expected = unix_security.id()
+      vfs.with do
+        let got = unix_security.id()
+        assert_eq $got.uid $expected.uid
+        assert_eq $got.euid $expected.euid
+        assert_eq $got.gid $expected.gid
+        assert_eq $got.egid $expected.egid
+        assert_eq $got.groups $expected.groups
+  finally
+    time.timeout 10 do vfs.stop()
+
+#[test]
+#[parametrize encoded: [false, true]]
+def startup_options :encoded
+  fs.with_temp_dir do |dir|
+    let cwd = (dir / "a dir with spaces and 'quotes'")
+    cwd.create_dir()
+    let value = r#"a "quoted" $dollar %percent\ back\slash"#
+    let args = ["--set", "VFS_REMOVE=gone", "--unset", "VFS_REMOVE"]
+    if encoded
+      args.push ...["--set-base64", base64.encode("VFS_VALUE=$value"), "--cd-base64", base64.encode(str(cwd))]
+    else
+      args.push ...["--set", "VFS_VALUE=$value", "--cd", cwd]
+    env VFS_VALUE: inherited do
+      let got = snapshot $args
+      assert_eq $got[:env:]["VFS_VALUE"] $value
+      assert_eq $got[:env:].get("VFS_REMOVE") nil
+      assert_eq $got[:cwd:] $cwd.canonical()
+
+#[test]
+#[parametrize option: ["--set-base64", "--cd-base64", "--login-env-base64"]]
+def invalid_base64 :option
+  rejects [option, "not base64!"] $option
+
+#[test]
+def key_stdin_refused_with_stdio()
+  let message = if windows
+    "--key-stdin is only supported on Unix"
+  else
+    "--key-stdin cannot be combined with --stdio"
+  rejects ["--key-stdin"] $message
+
+# READY synchronizes the daemon with its clients. The wrapper records the PID
+# before exec, allowing cleanup and signal checks without process-name searches.
+def listening dir block :stale = false
+  dir.update_metadata mode: 0o700
+  let socket = (dir / "socket")
+  let pidfile = (dir / "pid")
+  if stale
+    socket.write "stale socket"
+  strand.pipeline
+    do run sh -c r#"echo $$ > "$1"; shift; exec "$@""# sh $pidfile $agent --listen $socket
+    do
+      assert_eq $strand.next().trim() READY
+      let process = proc.open (int(pidfile.read().trim()))
+      try
+        block $socket $process
+      finally
+        if socket.exists()
+          process.signal :TERM:
+
+#[test]
+#[parametrize signal: [:INT:, :TERM:]]
+def listener_signal_cleanup :signal
+  if windows
+    ignore "requires Unix sockets and signals"
+  fs.with_temp_dir do |dir|
+    listening $dir do |socket process|
+      let vfs = Vfs.unix_socket $socket
+      try
+        vfs.with do assert (({...env}.len > 0))
+        process.signal $signal
+      finally
+        # The signal closes existing sessions before stop can receive a reply.
+        try
+          time.timeout 10 do vfs.stop()
+        catch sys.Error: _
+          nil
+    assert_eq $(dir / "socket").exists() false
+
+#[test]
+#[parametrize stale: [false, true]]
+def listener_multiple_clients_and_shutdown :stale
+  if windows
+    ignore "requires Unix sockets"
+  fs.with_temp_dir do |dir|
+    listening $dir :stale do |socket _process|
+      let clients = []
+      try
+        # Also exercise the polyfill as a bidirectional socket relay.
+        clients.push (Vfs do unix_connect socket)
+        for _ = (0..5)
+          clients.push (Vfs.unix_socket socket)
+        let workers = $
+          for client = clients
+            - do client.with do run :true:
+        strand.fork ...workers
+      finally
+        for client = clients
+          time.timeout 10 do client.stop()
+    assert_eq $(dir / "socket").exists() false
+    assert_throws $sys.Error do Vfs.unix_socket (dir / "socket")
+
+#[test]
+def authenticated_accept()
+  if windows
+    ignore "requires Unix sockets"
+  fs.with_temp_dir do |dir|
+    dir.update_metadata mode: 0o700
+    let socket = (dir / "socket")
+    let key = "a-sufficiently-long-test-key"
+    strand.pipeline
+      do
+        strand.put (std.Bin.pack([key.len]))
+        strand.put $key
+      do run $agent --key-stdin --accept $socket mode: :CHUNK:
+      do
+        assert_eq $strand.next().trim() READY
+        assert_throws $sys.PermissionDeniedError do
+          Vfs.unix_socket $socket key: "an-entirely-different-key"
+        assert $socket.exists()
+        # A silent peer must not consume the single authenticated session.
+        strand.pipeline
+          do unix_connect $socket --silent
+          do
+            assert_eq $strand.next().trim() READY
+            let client = Vfs.unix_socket $socket :key
+            try
+              time.timeout 10 do
+                while socket.exists()
+                  time.sleep 0.01
+            finally
+              time.timeout 10 do client.stop()
+    assert_eq $socket.exists() false
+
+# Ordinary shell export exercises the real emitter, including non-UTF-8 bytes
+# which the VFS snapshot must omit. The leaked descriptor exercises completion
+# at the terminator rather than EOF and process-group cleanup.
+def login_script dir
+  let script = (dir / "login-shell")
+  script.write r|
+    #!/bin/sh
+    echo 'profile noise on stdout'
+    echo 'profile noise on stderr' >&2
+    FROM_PROFILE=hello; export FROM_PROFILE
+    EMPTY=''; export EMPTY
+    EQUALS='a=b=c'; export EQUALS
+    WEIRD=$(printf 'a\377b'); export WEIRD
+    sleep 30 &
+    echo $! > "$0.daemon"
+    exec /bin/sh "$@"
+  script.update_metadata mode: 0o755
+  script
+
+#[test]
+def login_environment_import_and_cleanup()
+  if windows
+    ignore "requires Unix login shells"
+  fs.with_temp_dir do |dir|
+    let script = login_script $dir
+    env FROM_PROFILE: nil WEIRD: nil EMPTY: nil EQUALS: nil do
+      let control = snapshot()
+      assert_eq $control[:env:].get("FROM_PROFILE") nil
+      let got = time.timeout 10 do snapshot ["--login-env=$script"]
+      assert_eq $got[:env:]["FROM_PROFILE"] hello
+      assert_eq $got[:env:]["EMPTY"] ""
+      assert_eq $got[:env:]["EQUALS"] "a=b=c"
+      assert_eq $got[:env:].get("WEIRD") nil
+      # Snapshot strings omit non-UTF-8 values, but spawned processes must
+      # still inherit the original bytes from the imported environment.
+      let vfs = Vfs do run $agent "--login-env=$script" --stdio
+      try
+        let bytes = []
+        vfs.with do run sh -c r#"printf %s "$WEIRD""# stdout: $bytes mode: :CHUNK:
+        assert_eq (b"".join bytes) b"a\xffb"
+      finally
+        time.timeout 10 do vfs.stop()
+      let pid = (fs.Path "$script.daemon").read().trim()
+      time.timeout 10 do
+        while true
+          try
+            run sh -c "kill -0 $pid" stderr: $std.null
+          catch proc.Error: _
+            break
+          time.sleep 0.02
+      let overridden = snapshot ["--login-env=$script", "--set", "FROM_PROFILE=override"]
+      assert_eq $overridden[:env:]["FROM_PROFILE"] override
+
+#[test]
+def login_environment_failure()
+  if windows
+    ignore "requires Unix login shells"
+  fs.with_temp_dir do |dir|
+    let script = (dir / "broken-shell")
+    script.write "#!/bin/sh\necho 'profile is broken' >&2\nexit 1\n"
+    script.update_metadata mode: 0o755
+    rejects ["--login-env=$script"] "profile is broken"
+    rejects ["--login-env=$script"] "--login-env"
+
+#[test]
+def windows_login_environment()
+  if !windows
+    ignore "requires Windows login environment"
+  env TEMP: nil USERPROFILE: nil do
+    let control = snapshot()
+    let got = snapshot ["--login-env"]
+    assert_eq $control[:env:].get("TEMP") nil
+    assert_eq $control[:env:].get("USERPROFILE") nil
+    assert (got[:env:]["TEMP"].len > 0)
+    assert (got[:env:]["USERPROFILE"].len > 0)
+    assert_eq $got[:env:].get("PATH") $control[:env:].get("PATH")
+    for name = ["SystemRoot", "COMPUTERNAME"]
+      assert_eq $got[:env:].get(name) $control[:env:].get(name)
+    assert_eq $got[:cwd:] $control[:cwd:]
+
+# Inject a snapshot through the real import path, split across writes, with
+# malformed records, arbitrary bytes, and trailing data after completion.
+#[test]
+#[parametrize empty: [false, true]]
+def login_snapshot_framing :empty
+  if windows
+    ignore "requires Unix login probe"
+  fs.with_temp_dir do |dir|
+    let script = (dir / "snapshot-shell")
+    let body = if empty
+      "printf '\\000' >&3\n"
+    else
+      str r|
+        printf 'A=b=c\000EMPTY=\000NOSEP\000=value\000BAD\377=x\000PWD=/wrong\000OLDPWD=/wrong\000SHLVL=999\000_=wrong\000' >&3
+        i=0; while [ $i -lt 3000 ]; do printf 'FILL_%s=x\000' $i >&3; i=$((i+1)); done
+        sleep 0.05
+        printf '\000LEAKED=1\000' >&3
+    script.write "#!/bin/sh\n$body"
+    script.update_metadata mode: 0o755
+    env A: nil EMPTY: nil LEAKED: nil do
+      let control = snapshot()
+      let got = time.timeout 10 do snapshot ["--login-env=$script"]
+      for name = ["PWD", "OLDPWD", "SHLVL", "_"]
+        assert_eq $got[:env:].get(name) $control[:env:].get(name)
+      assert_eq $got[:env:].get("LEAKED") nil
+      if empty
+        assert_eq $got[:env:].get("A") nil
+      else
+        assert_eq $got[:env:]["A"] "b=c"
+      if !empty
+        assert_eq $got[:env:]["EMPTY"] ""
+        assert_eq $got[:env:]["FILL_2999"] x
+
+#[test]
+def login_probe_quotes_executable_path()
+  if windows
+    ignore "requires Unix login probe"
+  fs.with_temp_dir do |dir|
+    let copy = (dir / "it's here")
+    copy.create_dir()
+    let helper = (copy / "dolang-vfs")
+    fs.copy $agent $helper
+    helper.update_metadata mode: 0o755
+    let script = login_script $dir
+    let vfs = time.timeout 10 do Vfs do run $helper "--login-env=$script" --stdio
+    try
+      vfs.with do assert_eq $env["FROM_PROFILE"] hello
+    finally
+      time.timeout 10 do vfs.stop()
+
+# A script's interpreter may replace argv[0], and real shells can consult
+# system profiles. Use a native stand-in to observe the probe's invocation.
+#[test]
+def probe_marks_shell_as_login_shell()
+  if windows
+    ignore "requires Unix login probe"
+  fs.with_temp_dir do |dir|
+    let standin = (dir / "login-shell")
+    fs.copy (shell.exe.parent / "dolang-private-polyfill") $standin
+    standin.update_metadata mode: 0o755
+    assert_throws $proc.Error do
+      run $standin -c "exit 0" stderr: $std.null
+    env DO_LOGIN_ARG0: nil do
+      let got = snapshot ["--login-env=$standin"]
+      assert_eq $got[:env:]["DO_LOGIN_ARG0"] "-login-shell"
+
+#[test]
+def truncated_login_snapshot()
+  if windows
+    ignore "requires Unix login probe"
+  fs.with_temp_dir do |dir|
+    let script = (dir / "truncated-shell")
+    script.write "#!/bin/sh\nprintf 'A=1\\000' >&3\n"
+    script.update_metadata mode: 0o755
+    rejects ["--login-env=$script"] "--login-env"

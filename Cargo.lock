@@ -1360,7 +1360,6 @@ dependencies = [
  "dolang-vfs-winnet",
  "dolang-vfs-winreg",
  "dolang-vfs-winscm",
- "futures",
  "libc",
  "mimalloc",
  "nix",

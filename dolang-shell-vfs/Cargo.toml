@@ -81,23 +81,6 @@ features = [
 ]
 
 
-[dev-dependencies.tokio]
-workspace = true
-features = [
-  "fs",
-  "io-util",
-  "macros",
-  "net",
-  "process",
-  "rt-multi-thread",
-  "sync",
-  "time",
-]
-
-
-[target.'cfg(unix)'.dev-dependencies.futures]
-workspace = true
-
-
-[target.'cfg(unix)'.dev-dependencies.libc]
-workspace = true
+[lib]
+test = false
+doctest = false
