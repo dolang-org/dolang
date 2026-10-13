@@ -1,0 +1,9 @@
+@class Base
+@class Bad:
+  - @Base
+# error: a protocol's supertypes are already type-only
+#   --> class_vertical_protocol_at.dol:LL:LL
+#    |
+# LL |   - @Base
+#    |     ^
+do

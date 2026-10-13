@@ -1,0 +1,8 @@
+# error: got <eof>, expected: do
+#   --> class_vertical_missing_do.dol:LL:LL
+#    |
+# LL |   Base
+#    |      ^
+
+class Bad:
+  Base

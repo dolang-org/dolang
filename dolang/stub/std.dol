@@ -1856,7 +1856,11 @@ pub class CyclicImportError: RuntimeError
 #
 # `BaseDict` is `Dict` at runtime, so only a dict is a `BaseDict`.
 #
-pub class BaseDict[S @ {...}]: @Index[S] @Spread[S] @Unpack[S, Rest: Unpack[S]] Iterable[Entries[S]]
+pub class BaseDict[S @ {...}]:
+  @Index[S] @Spread[S]
+  @Unpack[S, Rest: Unpack[S]]
+  Iterable[Entries[S]]
+do
   #
   # Returns the number of key-value pairs (counting each value in a multi-map
   # separately).
@@ -4943,7 +4947,13 @@ pub class TimedOutError: RuntimeError
 # object is in the prelude, so `Tuple(iterable)` is available without an
 # explicit import.
 #
-pub class Tuple[*Ts]: @Spread[Ts] @Unpack[Ts, Rest: Unpack[Ts]] Iterable[Union[...Ts]] @Index[Ts] @Seq[Union[...Ts]]
+pub class Tuple[*Ts]:
+  - @Spread[Ts]
+  - @Unpack[Ts, Rest: Unpack[Ts]]
+  - Iterable[Union[...Ts]]
+  - @Index[Ts]
+  - @Seq[Union[...Ts]]
+do
   #
   #
   # Builds a tuple from an iterable.

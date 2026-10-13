@@ -1,0 +1,8 @@
+class Bad:
+  Base - Other
+# error: dash supertype items must start a line
+#   --> class_vertical_dash_midline.dol:LL:LL
+#    |
+# LL |   Base - Other
+#    |        ^
+do

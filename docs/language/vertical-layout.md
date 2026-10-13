@@ -229,3 +229,11 @@ rests support repeated spreading without advancing their source.
 
 Note that a dictionary is only produced if at least one static key exists in
 addition to any spreads; otherwise, an array results.
+
+## Class Supertypes
+
+An empty colon after a class header introduces a vertical supertype list.
+Supertypes may be bin-packed or placed one per dash line, and the styles may
+be mixed. A dedented `do` ends the list; the class body follows it. There are
+no keyed supertype items. Protocols use the same layout. See
+[Vertical Supertypes](classes.md#vertical-supertypes).

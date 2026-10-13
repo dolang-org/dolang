@@ -1,0 +1,7 @@
+# error: got <eof>, expected: <indent>
+#   --> class_vertical_empty.dol:LL:LL
+#    |
+# LL | class Bad:
+#    |          ^
+
+class Bad:

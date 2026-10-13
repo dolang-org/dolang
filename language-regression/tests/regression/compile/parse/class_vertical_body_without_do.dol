@@ -1,0 +1,8 @@
+class Bad:
+  Base
+  pub field x = 1
+# error: expected superclass name
+#   --> class_vertical_body_without_do.dol:LL:LL
+#    |
+# LL |   pub field x = 1
+#    |               ^

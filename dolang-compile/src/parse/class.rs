@@ -338,10 +338,28 @@ impl Parser<'_> {
                     Some(token!(TokenInfo::ArgSep)) => {
                         self.advance();
                     }
-                    _ => super_refs.push(self.parse_class_super(scope, protocol)?),
+                    _ => super_refs.push(self.parse_class_super(scope, protocol, false)?),
                 }
             }
         }
+
+        let do_span = if colon_span.is_some() && super_refs.is_empty() {
+            while let Some(token!(TokenInfo::StmtSep)) = self.peek()? {
+                self.advance();
+            }
+            self.expect(scope, &[ExpectKind::Indent])?;
+            self.parse_class_supers_vertical(scope, protocol, &mut super_refs)?;
+            while let Some(token!(TokenInfo::StmtSep)) = self.peek()? {
+                self.advance();
+            }
+            let span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Do)])?;
+            if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
+                self.advance();
+            }
+            Some(span)
+        } else {
+            None
+        };
 
         let body = match self.peek()? {
             // A class without a body may end the block it is in
@@ -371,13 +389,101 @@ impl Parser<'_> {
             binders,
             colon_span,
             super_refs,
+            do_span,
             body,
             pub_span,
             node: None,
         })
     }
 
-    fn parse_class_super(&mut self, scope: &mut Scope, protocol: bool) -> Result<ClassSuper> {
+    /// Parse the supertype list through its closing dedent.
+    fn parse_class_supers_vertical(
+        &mut self,
+        scope: &mut Scope,
+        protocol: bool,
+        supers: &mut Vec<ClassSuper>,
+    ) -> Result<()> {
+        let mut line_start = true;
+        let mut dashed = false;
+        loop {
+            match self.peek()? {
+                Some(token!(TokenInfo::ArgSep)) => {
+                    self.advance();
+                }
+                Some(token!(TokenInfo::StmtSep)) => {
+                    self.advance();
+                    line_start = true;
+                    dashed = false;
+                }
+                token @ Some(token!(TokenInfo::Dedent)) => {
+                    if supers.is_empty() {
+                        return Err(self.syntax_error(
+                            scope,
+                            token,
+                            "expected at least one supertype",
+                        ));
+                    }
+                    self.advance();
+                    return Ok(());
+                }
+                token @ Some(token!(TokenInfo::Indent)) => {
+                    return Err(self.syntax_error(
+                        scope,
+                        token,
+                        "unexpected indent in supertype list",
+                    ));
+                }
+                token @ None => {
+                    return Err(self.syntax_error(
+                        scope,
+                        token,
+                        "expected `do` after supertype list",
+                    ));
+                }
+                token @ Some(token!(TokenInfo::Op(Op::Minus))) => {
+                    if !line_start {
+                        return Err(self.syntax_error(
+                            scope,
+                            token,
+                            "dash supertype items must start a line",
+                        ));
+                    }
+                    let minus_span = self.advance();
+                    self.expect(scope, &[ExpectKind::ArgSep])?;
+                    let mut super_ref = self.parse_class_super(scope, protocol, true)?;
+                    super_ref.minus_span = Some(minus_span);
+                    supers.push(super_ref);
+                    line_start = false;
+                    dashed = true;
+                }
+                token if dashed => {
+                    return Err(self.syntax_error(
+                        scope,
+                        token,
+                        "dash supertype items must be alone on a line",
+                    ));
+                }
+                token @ Some(token!(TokenInfo::Key | TokenInfo::Colon)) => {
+                    return Err(self.syntax_error(
+                        scope,
+                        token,
+                        "supertype lists have no keyed items",
+                    ));
+                }
+                _ => {
+                    supers.push(self.parse_class_super(scope, protocol, true)?);
+                    line_start = false;
+                }
+            }
+        }
+    }
+
+    fn parse_class_super(
+        &mut self,
+        scope: &mut Scope,
+        protocol: bool,
+        vertical: bool,
+    ) -> Result<ClassSuper> {
         let at_span = match self.peek()? {
             Some(token!(TokenInfo::At)) => {
                 let span = self.advance();
@@ -389,6 +495,10 @@ impl Parser<'_> {
             }
             _ => None,
         };
+        if vertical && matches!(self.peek()?, Some(token!(TokenInfo::Key))) {
+            let token = self.next()?;
+            return Err(self.syntax_error(scope, token, "supertype lists have no keyed items"));
+        }
         let ident = match decay_ident!(self.next()?) {
             Some(token!(TokenInfo::Ident, span)) => Ident::new(span),
             other => return Err(self.syntax_error(scope, other, "expected superclass name")),
@@ -417,6 +527,7 @@ impl Parser<'_> {
             _ => (vec![], None),
         };
         Ok(ClassSuper {
+            minus_span: None,
             at_span,
             type_only: protocol || at_span.is_some(),
             ident,

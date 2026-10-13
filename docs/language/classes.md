@@ -401,6 +401,25 @@ class LocalTool: tools.build.Tool
 A superclass written with `@` exists only in types, and the class does not
 inherit from it. See [Protocols](types.md#protocols).
 
+### Vertical Supertypes
+
+Leave the colon's line empty to list supertypes on indented lines. A dedented
+`do` ends the list and introduces the class body:
+
+```
+class Derived[T]:
+  Base[T] @Readable[T]
+  - @Writable[T]
+do
+  pub field value @ T = nil
+```
+
+Undashed lines may contain several supertypes. A dash line contains exactly
+one; both styles may appear in the same list. The list must contain at least
+one supertype and has no keyed items. Protocols (`@class`) use the same layout,
+with all supertypes implicitly type-only. A declaration without members may
+end at `do`.
+
 ### Member Resolution Order
 
 - Earlier superclasses in the list win when the same member is defined multiple

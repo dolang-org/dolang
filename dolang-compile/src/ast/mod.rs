@@ -2647,6 +2647,8 @@ pub(crate) struct Class {
     pub(crate) colon_span: Option<Span>,
     // Superclass references (empty = no superclasses)
     pub(crate) super_refs: Vec<ClassSuper>,
+    /// The `do` ending a vertical supertype list.
+    pub(crate) do_span: Option<Span>,
     pub(crate) body: ClassBody,
     pub(crate) pub_span: Option<Span>,
     /// The document node of a protocol, which has no variable to carry it
@@ -2687,6 +2689,9 @@ impl Node for Class {
         for super_ref in &self.super_refs {
             visit.node(super_ref)?;
         }
+        if let Some(span) = self.do_span {
+            visit.token(Token::Keyword, span, None)?;
+        }
         visit.node(&self.body)
     }
 
@@ -2696,6 +2701,8 @@ impl Node for Class {
 }
 
 pub(crate) struct ClassSuper {
+    /// The dash introducing a vertical supertype item.
+    pub(crate) minus_span: Option<Span>,
     /// The `@` of a supertype that exists only in types
     pub(crate) at_span: Option<Span>,
     /// Whether the supertype exists only in types, marked with `@` or in a protocol
@@ -2712,6 +2719,9 @@ pub(crate) struct ClassSuper {
 
 impl Node for ClassSuper {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
+        if let Some(span) = self.minus_span {
+            visit.token(Token::Operator, span, None)?;
+        }
         if let Some(span) = self.at_span {
             visit.token(Token::Annotation, span, None)?;
         }

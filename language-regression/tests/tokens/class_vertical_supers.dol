@@ -1,0 +1,17 @@
+@class Parent[T]
+
+pub class Child[T]:
+#                 ^: delim
+  #: operator
+  - @Parent[T]
+  # ^: annotation
+  #  ^~~~~~: type_token
+  #        ^: delim
+  #         ^: type_token
+  #          ^: delim
+#~: keyword
+do
+
+@class Protocol[T]:
+  Parent[T]
+do

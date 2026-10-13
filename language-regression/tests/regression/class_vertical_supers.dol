@@ -1,0 +1,62 @@
+class Base
+  pub field value = 7
+  pub def who _self
+    "base"
+
+class Other
+  pub def who _self
+    "other"
+
+class TypeOnly
+  pub def who _self
+    "type-only"
+
+@class Marker
+
+class Packed:
+  # First parent wins.
+  @TypeOnly Base Other
+  @Marker
+do
+  pub def twice self
+    (self.value * 2)
+
+class Dashed: # header comment
+
+  # Leading comment.
+  - Base
+  - @Marker
+do
+
+class Mixed:
+# Comment before the list.
+  Base @Marker
+
+  # Switch styles freely.
+  - Other
+# Comment before the terminator.
+do # end of supertype list
+
+assert_eq $(Packed().twice()) 14
+assert_eq $(Packed().who()) "base"
+assert_eq $(Dashed().value) 7
+assert_eq $(Mixed().who()) "base"
+assert (type(Packed(), Base))
+assert (!type(Packed(), TypeOnly))
+assert (type(Dashed(), Base))
+
+import class_final_bases: bases
+
+class Dotted:
+  - bases.Twice
+do
+
+assert (type(Dotted(), bases.Twice))
+
+class Following
+assert_eq (type(Following())) $Following
+
+# A bodyless declaration may also end at EOF.
+pub class End:
+  Following
+do

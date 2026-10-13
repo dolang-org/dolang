@@ -1,0 +1,43 @@
+pub class Num
+pub class Other
+pub class Base[T]
+  pub field value @ T = nil
+
+pub @class Read[T]
+  pub def get self -> T
+
+pub @class Write[T]
+  pub def set self value @ T -> nil
+
+pub @class Both[T]:
+  Read[T]
+  - Write[
+      T
+    ]
+do
+
+pub class Good[T]:
+  Base[T] @Both[T]
+do
+  pub def get self -> T
+    self.value
+  pub def set self value @ T -> nil
+    self.value = value
+    nil
+
+pub def read x @ Read[Num] -> Num
+  x.get()
+
+pub def check x @ Good[Num] -> Num
+  read $x
+
+pub class Bad:
+  - @Read[Num]
+do
+  pub def get _self -> Other
+    # error: `get` does not match `Read.get`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def get _self -> Other
+    #    |           ^^^
+    ...
