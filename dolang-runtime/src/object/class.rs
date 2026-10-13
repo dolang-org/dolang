@@ -2575,16 +2575,30 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             return instance_mcall_fallback(strand, &this, method, args, out).await;
         }
 
-        if let Some(v) = class.method(Sym::well_known(sym::GET_METHOD)) {
-            return strand
-                .with_slots(async move |strand, [mut callable]| {
-                    call!(strand, v, &mut callable, &this, method).await?;
-                    callable.op_call(strand, args, out).await
-                })
-                .await;
+        match class.entry_by_tag(sym::GET_METHOD) {
+            Some(ClassEntry::Method(v)) => {
+                strand
+                    .with_slots(async move |strand, [mut callable]| {
+                        call!(strand, v, &mut callable, &this, method).await?;
+                        callable.op_call(strand, args, out).await
+                    })
+                    .await
+            }
+            Some(ClassEntry::Delegate(slot, _)) => {
+                let native = this.annex().natives[*slot]
+                    .get()
+                    .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
+                strand
+                    .with_slots(async move |strand, [mut delegator]| {
+                        Output::set(strand, Slot::reborrow(&mut delegator), &this);
+                        Delegated::new(native, &delegator)
+                            .op_mcall(strand, method, args, out)
+                            .await
+                    })
+                    .await
+            }
+            _ => Err(Error::field(strand, method)),
         }
-
-        Err(Error::field(strand, method))
     }
 
     async fn op_call<'a, 's>(
