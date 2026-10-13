@@ -857,6 +857,7 @@ name = "dolang-compile"
 version = "0.1.1"
 dependencies = [
  "bitflags",
+ "bitvec",
  "dolang-bytecode",
  "dolang-private-util",
  "dot-writer",

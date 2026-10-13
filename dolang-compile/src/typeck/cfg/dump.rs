@@ -5,7 +5,7 @@ use std::fmt::{self, Write};
 
 use super::{
     Against, BlockId, Collection, Expr, ExprKind, FmtSpec, FuncId, FuncKind, Ir, Item, Member,
-    Origin, Pattern, PatternKey, Relation, Step, Tag, Target, Terminal, VarId,
+    Origin, Pattern, PatternKey, Relation, Step, Tag, Target, Terminal, VarFlags, VarId,
 };
 use crate::{
     source::Span,
@@ -103,7 +103,7 @@ impl Dump<'_, '_> {
             for &var in &func.captures {
                 write!(out, " ")?;
                 self.var(out, var)?;
-                if self.ir.var(var).volatile {
+                if self.ir.var(var).flags.contains(VarFlags::VOLATILE) {
                     write!(out, "!")?;
                 }
             }
@@ -116,7 +116,7 @@ impl Dump<'_, '_> {
             }
         }
         let bottom: Vec<_> = (func.vars.iter())
-            .filter(|&&var| self.ir.var(var).bottom)
+            .filter(|&&var| self.ir.var(var).flags.contains(VarFlags::BOTTOM))
             .collect();
         if !bottom.is_empty() {
             write!(out, ", bottom")?;
@@ -214,6 +214,14 @@ impl Dump<'_, '_> {
                         self.var(out, var)?;
                     }
                     write!(out, ")")?;
+                }
+                Ok(())
+            }
+            Step::Cache(vars) => {
+                write!(out, "cache")?;
+                for &var in vars {
+                    write!(out, " ")?;
+                    self.var(out, var)?;
                 }
                 Ok(())
             }

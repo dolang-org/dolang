@@ -4,7 +4,7 @@ use crate::{
     Config,
     typeck::{
         Builder,
-        cfg::{BlockId, ExprKind, FuncId, Ir, Step, Terminal},
+        cfg::{BlockId, ExprKind, FuncId, Ir, Origin, Step, Terminal, VarFlags},
     },
 };
 
@@ -216,9 +216,81 @@ let outer = do
                 .unwrap();
             let outer = ir.func(outer);
             assert_eq!(outer.escapes.len(), 1);
-            assert!(!ir.var(outer.escapes[0]).volatile);
+            assert!(!ir.var(outer.escapes[0]).flags.contains(VarFlags::VOLATILE));
             assert!(inner.escapes.is_empty());
             assert!(inner.captures.contains(&outer.escapes[0]));
         },
     );
+}
+
+/// A function caches the variables it captures, at its entry, unless another
+/// function assigns them
+#[test]
+fn cached() {
+    lower_with(
+        "
+let v = 1
+let w = 1
+let outer = do
+  let inner = do
+    w = v
+  inner
+",
+        |ir| {
+            let cached = |func: FuncId| match ir.block(ir.func(func).entry).steps.first() {
+                Some(Step::Cache(vars)) => vars.clone(),
+                _ => Vec::new(),
+            };
+            let outer = (ir.funcs())
+                .find(|(_, func)| func.parent.is_some_and(|p| ir.func(p).parent.is_none()))
+                .map(|(id, _)| id)
+                .unwrap();
+            let inner = (ir.funcs())
+                .find(|(_, func)| func.parent == Some(outer))
+                .map(|(id, _)| id)
+                .unwrap();
+            assert!(cached(outer).is_empty());
+            assert_eq!(cached(inner), ir.func(outer).escapes);
+        },
+    );
+}
+
+/// Only a `def`'s or `class`'s variable is hoisted
+#[test]
+fn hoisted() {
+    let source = "
+def f()
+  1
+class C
+  pub field y = 1
+let v = 1
+for i = [1]
+  let w = i
+";
+    lower_with(source, |ir| {
+        let (_, top) = (ir.funcs())
+            .find(|(_, func)| func.parent.is_none())
+            .unwrap();
+        let mut hoisted: Vec<_> = (top.vars.iter())
+            .filter_map(|&var| {
+                let var = ir.var(var);
+                let Origin::Source(span) = var.origin else {
+                    return None;
+                };
+                let name = &source[span.start as usize..span.end as usize];
+                Some((name, var.flags.contains(VarFlags::HOISTED)))
+            })
+            .collect();
+        hoisted.sort();
+        assert_eq!(
+            hoisted,
+            [
+                ("C", true),
+                ("f", true),
+                ("i", false),
+                ("v", false),
+                ("w", false)
+            ]
+        );
+    });
 }

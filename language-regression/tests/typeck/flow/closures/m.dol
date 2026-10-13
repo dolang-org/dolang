@@ -157,7 +157,71 @@ pub def sentinel_after v @ Str = nil
     nil
   read()
 
-# A def sees itself
+# Each iteration's binding is a new variable, so a block sees only what the
+# variable holds when the block is created
+pub def fresh items @ Array[Str | nil]
+  for i = items
+    let item = i
+    if !item
+      continue
+    let read = do
+      let _ = item
+      #       ^~~~: flow std.Str
+      nil
+    read()
+
+# A block narrows a variable it captures, as long as its owner doesn't assign it
+# once it escapes
+pub def tested v @ (Str | nil)
+  let read = do
+    if v
+      let _ = v
+      #       ^: flow std.Str
+    nil
+  read()
+
+pub def tested_nested v @ (Str | nil)
+  let read = do
+    let inner = do
+      if v
+        let _ = v
+        #       ^: flow std.Str
+      nil
+    inner()
+  read()
+
+pub def tested_loop items @ Array[Str | nil]
+  for item = items
+    let read = do
+      if item
+        let _ = item
+        #       ^~~~: flow std.Str
+      nil
+    read()
+
+# Once its owner assigns it after it escapes, even a value of a type it already
+# holds, a test doesn't narrow it
+pub def thawed v @ (Str | nil)
+  let read = do
+    if v
+      let _ = v
+      #       ^: flow nil | std.Str
+    nil
+  read()
+  v = "b"
+
+pub def thawed_volatile()
+  let v = nil
+  let set = do v = "a"
+  let read = do
+    if v
+      let _ = v
+      #       ^: flow std.Nil | std.Str
+    nil
+  set()
+  read()
+
+# A def sees itself, and the defs after it
 pub def recursive n @ Int
   def count m @ Int -> Int
     let r = count (m - 1)
@@ -165,6 +229,16 @@ pub def recursive n @ Int
     #       ^: flow std.Int
     r
   count $n
+
+pub def recursive_pair n @ Int
+  def even m @ Int -> Bool
+    let r = odd (m - 1)
+    let _ = r
+    #       ^: flow std.Bool
+    r
+  def odd m @ Int -> Bool
+    (m == 0 || even (m - 1))
+  even $n
 
 # A module's variables escape through its defs the same way
 let shared = nil

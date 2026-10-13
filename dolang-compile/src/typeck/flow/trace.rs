@@ -1,6 +1,9 @@
 //! Rendering for the `typeck.flow` trace
 
-use super::{Flow, State, state::CtxId};
+use super::{
+    Flow, State,
+    state::{CtxId, May},
+};
 use crate::typeck::{
     cfg::{BlockId, FuncKind, Tag, VarId},
     r#type::TypeId,
@@ -41,19 +44,25 @@ impl Flow<'_, '_> {
     }
 
     /// A block's state: what each variable may hold, as a judgment shows it, marked
-    /// `^` once it may have escaped, then the stack
+    /// `^` once it may have escaped and `~` once a cached capture thaws, then the
+    /// stack
     pub(super) fn render_state(&self, block: BlockId, state: &State) -> String {
-        let func = self.ir.func(self.ir.block(block).func);
+        let func = self.ir.block(block).func;
         let bottom = self.db.bottom();
-        let mut parts: Vec<String> = (func.vars.iter().zip(&state.vars).zip(&state.escaped))
-            .filter(|((_, fact), _)| fact.ty != bottom || fact.unassigned)
-            .map(|((&var, fact), &escaped)| {
+        let mut parts: Vec<String> = (self.funcs[func.index()].vars.iter().zip(&state.vars))
+            .map(|(&var, slot)| (var, slot.fact(), slot.may))
+            .filter(|(_, fact, _)| fact.ty != bottom || fact.unassigned)
+            .map(|(var, fact, may)| {
                 let ty = match (fact.unassigned, fact.ty == bottom) {
                     (false, _) => self.show(fact.ty),
                     (true, true) => "unassigned".to_owned(),
                     (true, false) => format!("{} | unassigned", self.show(fact.ty)),
                 };
-                let mark = if escaped { "^" } else { "" };
+                let mark = match (may.contains(May::ESCAPED), may.contains(May::THAWED)) {
+                    (true, _) => "^",
+                    (false, true) => "~",
+                    (false, false) => "",
+                };
                 format!("{}{mark}: {ty}", self.var_name(var))
             })
             .collect();

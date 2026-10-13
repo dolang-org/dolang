@@ -23,7 +23,9 @@
 //! that creates it. Each function lists in [`Func::escapes`] the variables of its
 //! parent that it or a function nested in it captures, and that only their owner
 //! assigns. Such a function can't run before the step, so the first value of each
-//! it can see is the one its owner holds there.
+//! it can see is the one its owner holds there. A function that captures such a
+//! variable loads it at its entry, a [`Step::Cache`], and reads and narrows that
+//! copy for as long as its owner doesn't assign it after it escapes.
 //!
 //! A `do` block's unannotated parameters, omitted channels and omitted return type
 //! are its [`Signature`]: variables its parent owns and it captures, which start
@@ -178,20 +180,33 @@ pub(crate) struct Var {
     /// Closed: the binders of the group it's written in are the rigids its
     /// declaration's body is checked under
     pub(crate) annotation: Option<TypeId>,
-    /// An ivar: read or written by a function other than its owner, which reads
-    /// it as an accumulator. Its value when a function that captures it is
-    /// created, and every assignment after, joins the accumulator.
-    pub(crate) interprocedural: bool,
-    /// Assigned by a function other than its owner, so that its owner caches no
-    /// type for it either and reads the accumulator too
-    pub(crate) volatile: bool,
-    /// Starts as bottom rather than unassigned: a comprehension's bindings and item
-    /// values, which are assigned only on the paths its structure accounts for
-    pub(crate) bottom: bool,
-    /// Exported from a module, so an importer may assign it anything that fits
-    /// its annotation, or anything at all without one. Such a variable is also
-    /// interprocedural and volatile.
-    pub(crate) exported: bool,
+    pub(crate) flags: VarFlags,
+}
+
+bitflags::bitflags! {
+    /// What lowering learned about a [`Var`]
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub(crate) struct VarFlags: u8 {
+        /// An ivar: read or written by a function other than its owner, which
+        /// reads it as an accumulator. Its value when a function that captures it
+        /// is created, and every assignment after, joins the accumulator.
+        const INTERPROCEDURAL = 1 << 0;
+        /// Assigned by a function other than its owner, so that its owner caches
+        /// no type for it either and reads the accumulator too
+        const VOLATILE = 1 << 1;
+        /// Starts as bottom rather than unassigned: a comprehension's bindings and
+        /// item values, which are assigned only on the paths its structure
+        /// accounts for
+        const BOTTOM = 1 << 2;
+        /// Exported from a module, so an importer may assign it anything that fits
+        /// its annotation, or anything at all without one. Such a variable is also
+        /// interprocedural and volatile.
+        const EXPORTED = 1 << 3;
+        /// Bound by a `def` or `class`, whose name is in scope before its binding
+        /// runs, so a function may capture it first. Its binding isn't a fresh
+        /// cell.
+        const HOISTED = 1 << 4;
+    }
 }
 
 pub(crate) struct Block {
@@ -239,6 +254,12 @@ pub(crate) enum Step {
     /// A lambda that's a comprehension's item is created in the item's block,
     /// though it stays in the collection's tree.
     Capture(Vec<FuncId>),
+    /// Load captures from their accumulators into the function's own state, where
+    /// it narrows them, until their owner assigns one after it escapes. It's the
+    /// first step of a function's entry block, which nothing branches to, and
+    /// names the captures that only their owner assigns, other than
+    /// [`Signature`] and result variables.
+    Cache(Vec<VarId>),
 }
 
 pub(crate) enum Terminal {
@@ -420,10 +441,7 @@ impl Graph {
             owner,
             origin,
             annotation,
-            interprocedural: false,
-            volatile: false,
-            bottom: false,
-            exported: false,
+            flags: VarFlags::empty(),
         }));
         self.func_mut(owner).vars.push(id);
         id
@@ -490,11 +508,6 @@ impl Ir {
 
     pub(crate) fn blocks(&self) -> impl Iterator<Item = (BlockId, &Block)> {
         (self.blocks.iter().enumerate()).map(|(index, block)| (BlockId::from_index(index), block))
-    }
-
-    /// How many variables were allocated
-    pub(crate) fn var_count(&self) -> usize {
-        self.vars.len()
     }
 }
 

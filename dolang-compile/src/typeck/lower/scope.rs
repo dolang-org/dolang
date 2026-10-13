@@ -8,7 +8,7 @@ use crate::{
     Mode, PreludeImport,
     ast::{self, Class, Def, Function, Ident, ImportElement, Method, Res, Stmt, VarFlags},
     typeck::{
-        cfg::{FuncId, Origin, VarId},
+        cfg::{FuncId, Origin, VarFlags as CfgFlags, VarId},
         r#type::TypeId,
         r#type::UnitSpan,
     },
@@ -132,9 +132,8 @@ impl<'u> Lower<'_, 'u> {
                     let id = self.graph.alloc_var(func, origin, None);
                     if module && var.flags.contains(VarFlags::EXPORTED) {
                         let mut data = self.graph.var_mut(id);
-                        data.exported = true;
-                        data.interprocedural = true;
-                        data.volatile = true;
+                        data.flags |=
+                            CfgFlags::EXPORTED | CfgFlags::INTERPROCEDURAL | CfgFlags::VOLATILE;
                     }
                     Entry::Var(id)
                 })
@@ -303,7 +302,7 @@ impl<'u> Scope<'_, '_, 'u> {
         if owner == self.ctx.func {
             return;
         }
-        graph.var_mut(var).interprocedural = true;
+        graph.var_mut(var).flags.insert(CfgFlags::INTERPROCEDURAL);
         let mut func = graph.func_mut(self.ctx.func);
         if !func.captures.contains(&var) {
             func.captures.push(var);
@@ -326,7 +325,7 @@ impl<'u> Scope<'_, '_, 'u> {
     pub(super) fn assigned(&self, var: VarId) {
         let graph = self.graph();
         if graph.var(var).owner != self.ctx.func {
-            graph.var_mut(var).volatile = true;
+            graph.var_mut(var).flags.insert(CfgFlags::VOLATILE);
         }
     }
 
