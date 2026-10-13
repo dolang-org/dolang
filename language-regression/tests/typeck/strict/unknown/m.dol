@@ -81,11 +81,8 @@ pub def overloaded o @ Over
   #       ^~~~~~: wf undecided Unsupported("an overloaded method as a value")
   nil
 
-# A boundless range takes its element type from what's expected of it, and
-# without an expectation, nothing determines it
+# A boundless range takes its element type from what's expected of it
 pub def ranges() -> Range[Int]
-  let _ = (..)
-  #        ^~: wf undecided Inference
   (..)
 
 # No call gives a `do` block's rest its items, so any are admitted

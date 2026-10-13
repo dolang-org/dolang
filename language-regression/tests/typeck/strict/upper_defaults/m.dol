@@ -1,0 +1,31 @@
+# dolang: strict
+# A binder with only upper bounds takes their meet, even where it decides the
+# call's result
+
+import std:
+  - @BaseArray
+
+def single[U @ (Str | Bin)] _sink @ Sinkable[U] -> Sink[U]
+  ...
+
+# The argument bounds `U` from above, below its declared bound
+pub def sinks lines @ Array[Str]
+  let s1 = single $lines
+  let _ = s1
+  #       ^~: flow std.Sink[std.Str]
+  let s2 = lines.prechomp()
+  let _ = s2
+  #       ^~: flow std.Sink[std.Str]
+  let s3 = (lines @ Sinkable[Str]).prechomp()
+  let _ = s3
+  #       ^~: flow std.Sink[std.Str]
+  nil
+
+# An overloaded `(assign)` gives a range the one parameter a fresh range can be
+pub def ranges items @ Array[Int] replacement @ BaseArray[Int]
+  items[..] = (1, 2)
+  items[..] = replacement
+  items[1..] = (3,)
+  let _ = items[1..3]
+  #   ^: flow [std.Int]
+  nil

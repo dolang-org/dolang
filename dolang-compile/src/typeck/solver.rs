@@ -323,9 +323,6 @@ enum Walk {
     /// supplies the function takes from its expected type, nor an item
     /// projection's key, since a value can't choose the key that selects it
     Raised,
-    /// What could decide a term's solution: not a function's inputs, but an item
-    /// projection's key, which selects its items
-    Deciding,
     /// What a literal would lock in: a function's inputs too, and an item
     /// projection's key
     Locked,
@@ -1408,26 +1405,6 @@ impl<'db> Solver<'db> {
             self.variances(term, Variance::Covariant, Walk::Raised, &mut visit, 0, 0)?;
         }
         Ok(raised)
-    }
-
-    /// The unsolved variables whose solutions could decide the given terms':
-    /// those at an output position of theirs, including through the bounds of a
-    /// variable reached, whose default is chosen from them. A function's
-    /// parameters and channels are inputs, which the terms' solutions don't
-    /// depend on.
-    pub(crate) fn deciding(&self, terms: &[Term]) -> Result<FxHashSet<InferVarId>, Residual> {
-        let mut deciding = FxHashSet::default();
-        let mut visit = |id: InferVarId, _: Variance| {
-            if !deciding.insert(id) {
-                return Vec::new();
-            }
-            let bounds = self.bounds(id);
-            bounds.lower().chain(bounds.upper()).collect()
-        };
-        for &term in terms {
-            self.variances(term, Variance::Covariant, Walk::Deciding, &mut visit, 0, 0)?;
-        }
-        Ok(deciding)
     }
 
     /// The unsolved variables a default would lock in by choosing a literal: those
