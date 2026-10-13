@@ -38,6 +38,17 @@ let expires = DateTime.from_unix
   nanos: (now_nanos - now_nanos % 1000000000 + 365 * 86400 * 1000000000)
 let account_policy_resource = strand.Resource 1
 
+# All transports share the machine's account policy. Keep user creation and
+# password changes outside the policy mutation test's temporary changes.
+#[fixture]
+def serialized_accounts block ...rest
+  account_policy_resource.with do block(...rest)
+
+# Guarantee all four character categories without randomly including words
+# from the account's name or full name, which Windows complexity checks reject.
+def scratch_password()
+  "Aa!$(rand.string 16 alphabet: "0123456789")z"
+
 #[fixture]
 def scratch_user block ...rest
   if (sys.os_info().family != :WINDOWS:)
@@ -48,7 +59,7 @@ def scratch_user block ...rest
   # NetAPI user names are limited to 20 characters. A random suffix keeps
   # concurrent test variants from sharing an account.
   let name = "do-test-$(rand.string 10)"
-  let password = "Do!$(rand.string 16)9"
+  let password = scratch_password()
   let user = try
     winnet.create_user $name
       password: $password
@@ -391,11 +402,12 @@ def local_share_delete()
 
 #[test]
 #[vfs]
+#[serialized_accounts]
 #[scratch_user]
 def local_user_lifecycle :user
   let initial = user.info()
   let name = initial.name
-  let replacement_password = "Do!$(rand.string 16)8"
+  let replacement_password = scratch_password()
 
   assert_type $winnet.User $user
   assert_type $Sid $user.sid
@@ -478,7 +490,7 @@ def local_user_lifecycle :user
   # Earlier attributes remain applied when the final rename conflicts.
   let conflict_name = "do-hit-$(rand.string 10)"
   let conflict = winnet.create_user $conflict_name
-    password: "Do!$(rand.string 16)7"
+    password: $scratch_password()
   try
     assert_throws $AlreadyExistsError do
       user.update full_name: "Applied before conflict" name: $conflict_name
@@ -500,6 +512,7 @@ def local_user_lifecycle :user
 
 #[test]
 #[vfs]
+#[serialized_accounts]
 def local_user_delete()
   # Creates the account it deletes, for the same reason as `local_share_delete`.
   if (sys.os_info().family != :WINDOWS:)
@@ -508,7 +521,7 @@ def local_user_delete()
     ignore "Wine does not implement NetUserGetInfo level 4 or NetUserSetInfo"
   let name = "do-test-$(rand.string 10)"
   let user = try
-    winnet.create_user $name password: "Do!$(rand.string 16)9"
+    winnet.create_user $name password: $scratch_password()
   catch PermissionDeniedError: _
     skip "requires permission to manage local users"
   user.delete()
@@ -517,6 +530,7 @@ def local_user_delete()
 
 #[test]
 #[vfs]
+#[serialized_accounts]
 #[scratch_user]
 def local_user_account_rights :user
   let right = "SeServiceLogonRight"
@@ -534,6 +548,7 @@ def local_user_account_rights :user
 
 #[test]
 #[vfs]
+#[serialized_accounts]
 def local_account_policy()
   if (sys.os_info().family != :WINDOWS:)
     ignore "requires Windows account policy"
@@ -587,6 +602,7 @@ def scratch_group block ...rest
 
 #[test]
 #[vfs]
+#[serialized_accounts]
 #[scratch_user]
 #[scratch_group]
 def local_group_lifecycle :user :group
