@@ -536,8 +536,8 @@ pub @class Env: std.Index[Str, Str] std.Assign[Str, Str | nil] std.Spread[Str, S
   # Calls `body` with the variables given as keyword arguments in place,
   # restoring them when it returns.
   #
-  # A `nil` value unsets a variable, and `:INHERIT:` captures the variable's
-  # current value in the calling strand.
+  # A `nil` value unsets a variable, and any other value is converted to a string
+  # as written, so `env N: 0x5` sets `N` to `0x5`.
   #
   # ## Example
   #
@@ -553,7 +553,7 @@ pub @class Env: std.Index[Str, Str] std.Assign[Str, Str | nil] std.Spread[Str, S
     # The block to call.
     body @ (() -> R)
     # Overrides by variable name.
-    ...vars @ (Str | :INHERIT: | nil)
+    ...vars @ Value
   do -> R
 
   # Calls a block with variables overridden in place, restoring them when it
