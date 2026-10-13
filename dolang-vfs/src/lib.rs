@@ -9,6 +9,10 @@
 //! belongs to the target VFS rather than necessarily to the host running this
 //! code, which lets a Unix host describe Windows paths and vice versa.
 
+#[cfg(test)]
+#[path = "../tests/support/temp.rs"]
+mod test_temp;
+
 use dolang_winterop::security::{SecDesc, Sid};
 use extension::VfsExtension;
 use std::collections::HashMap;

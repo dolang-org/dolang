@@ -5,6 +5,7 @@ use std::{
 
 use bytes::{Bytes, BytesMut};
 
+use crate::temp::tempdir;
 #[cfg(target_os = "linux")]
 use dolang_vfs::file::XattrNamespace;
 use dolang_vfs::{
@@ -19,7 +20,6 @@ use dolang_vfs::{
 };
 #[cfg(windows)]
 use dolang_winterop::security::SecInfo;
-use tempfile::tempdir;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use crate::support;

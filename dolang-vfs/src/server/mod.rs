@@ -2434,10 +2434,12 @@ mod tests {
             .unwrap()
             .bind::<VfsProtocol>();
 
-        let temp = tempfile::NamedTempFile::new().unwrap();
+        let temp = crate::test_temp::tempdir().unwrap();
+        let file_path = temp.path().join("file");
+        std::fs::write(&file_path, []).unwrap();
         let response = client
             .call(request(RequestKind::Open(OpenRequest {
-                path: path::PathBuf::from_native(temp.path().to_path_buf())
+                path: path::PathBuf::from_native(file_path)
                     .unwrap()
                     .to_path()
                     .into(),

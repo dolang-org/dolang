@@ -2,6 +2,7 @@
 use std::collections::HashMap;
 use std::{io, path::Path};
 
+use crate::temp::tempdir;
 #[cfg(any(windows, target_os = "linux"))]
 use dolang_vfs::metadata::AttrFlags;
 #[cfg(any(unix, windows))]
@@ -14,7 +15,6 @@ use dolang_vfs::{
 };
 #[cfg(windows)]
 use dolang_winterop::security::SecInfo;
-use tempfile::tempdir;
 
 fn typed(path: &Path) -> dolang_vfs::path::Path<'_> {
     dolang_vfs::path::Path::new(path.to_str().unwrap(), dolang_vfs::path::Kind::native())
