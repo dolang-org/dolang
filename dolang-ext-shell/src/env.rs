@@ -230,7 +230,7 @@ impl<'v> Object<'v> for Env<'v> {
                             if slot.is_nil() {
                                 None
                             } else {
-                                Some(slot.to_string(strand)?)
+                                Some(slot.to_verbatim(strand)?)
                             },
                         );
                     }
