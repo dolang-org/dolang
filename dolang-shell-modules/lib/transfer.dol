@@ -138,55 +138,55 @@ def digest_spec spec @ Str -> DigestSpec
     throw std.ValueError "digest: invalid $algorithm hex value"
   DigestSpec {:algorithm, :expected, :constructor}
 
-def digest_state path @ Path constructor @ (() -> digest.State) -> digest.State
+def digest_state path@Path constructor@(() -> digest.State) -> digest.State
   let state = constructor()
   path.open rb do |file|
     for chunk = file
       state.update $chunk
   state
 
-def file_digest path @ Path constructor @ (() -> digest.State) -> Str
+def file_digest path@Path constructor@(() -> digest.State) -> Str
   "${digest_state(path, constructor).digest():x}"
 
-def read_metadata path @ Path identity @ Str -> (Partial | Complete | nil)
+def read_metadata path@Path identity@Str -> (Partial | Complete | nil)
   if !path.exists()
     return nil
   let data = try
     json.decode(path.read())
   catch _
     return nil
+  if !(type data Dict)
+    return nil
   # An absent `state` means complete, so metadata written before resumable
   # downloads existed still reads as a usable payload. Fields that are only
   # informational may be missing from hand-planted or older entries.
   match data
-    | Dict $
-        "version": 1
-        "url": Str(url)
-        ?"final_url": (Str(final_url = nil) | std.Nil(final_url))
-        "payload": Str(payload)
-        "state": "partial"
-        ?"etag": (Str(etag = nil) | std.Nil(etag))
-        ?"last_modified": (Str(last_modified = nil) | std.Nil(last_modified))
-        ?"total": (Int(total = nil) | std.Nil(total))
-        ?"fetched_at": (Str(fetched_at = nil) | std.Nil(fetched_at))
-        ...
+    | "version": 1
+      "url": Str(url)
+      ?"final_url": (Str(final_url = nil) | std.Nil(final_url))
+      "payload": Str(payload)
+      "state": "partial"
+      ?"etag": (Str(etag = nil) | std.Nil(etag))
+      ?"last_modified": (Str(last_modified = nil) | std.Nil(last_modified))
+      ?"total": (Int(total = nil) | std.Nil(total))
+      ?"fetched_at": (Str(fetched_at = nil) | std.Nil(fetched_at))
+      ...
     if (url == identity)
       Partial $
         version: 1
         state: "partial"
         :url :final_url :payload :etag :last_modified :total :fetched_at
-    | Dict $
-        "version": 1
-        "url": Str(url)
-        ?"final_url": (Str(final_url = nil) | std.Nil(final_url))
-        "payload": Str(payload)
-        ?"etag": (Str(etag = nil) | std.Nil(etag))
-        ?"last_modified": (Str(last_modified = nil) | std.Nil(last_modified))
-        "size": Int(size)
-        ?"fetched_at": (Str(fetched_at = nil) | std.Nil(fetched_at))
-        ?"checked_at": (Str(checked_at = nil) | std.Nil(checked_at))
-        ?"verified": Dict(raw_verified @ Dict[Str, json.DecodeValue] = {})
-        ...
+    | "version": 1
+      "url": Str(url)
+      ?"final_url": (Str(final_url = nil) | std.Nil(final_url))
+      "payload": Str(payload)
+      ?"etag": (Str(etag = nil) | std.Nil(etag))
+      ?"last_modified": (Str(last_modified = nil) | std.Nil(last_modified))
+      "size": Int(size)
+      ?"fetched_at": (Str(fetched_at = nil) | std.Nil(fetched_at))
+      ?"checked_at": (Str(checked_at = nil) | std.Nil(checked_at))
+      ?"verified": Dict(raw_verified @ Dict[Str, json.DecodeValue] = {})
+      ...
     if (url == identity)
       Complete $
         version: 1
@@ -197,16 +197,15 @@ def read_metadata path @ Path identity @ Str -> (Partial | Complete | nil)
             if (type value Str)
               $algorithm: $value
 
-def write_metadata path @ Path metadata @ (Partial | Complete) -> nil
+def write_metadata path@Path metadata@(Partial | Complete) -> nil
   let tmp = path.add_ext tmp
   try
     tmp.write $ json.encode(metadata)
     tmp.rename $path
   finally
     tmp.remove ignore: true
-  nil
 
-def intact_payload payload @ Path metadata @ Complete -> Bool
+def intact_payload payload@Path metadata@Complete -> Bool
   if !payload.exists()
     return false
   try
@@ -248,7 +247,7 @@ def conditional_headers metadata @ Complete -> Dict[Str, Str | DateTime]
     if modified
       "if-modified-since": $ DateTime.parse_rfc $modified
 
-def range_headers metadata @ Partial offset @ Int -> Dict[Str, Str | DateTime]
+def range_headers metadata@Partial offset@Int -> Dict[Str, Str | DateTime]
   let etag = metadata.etag
   let modified = metadata.last_modified
   $
@@ -281,7 +280,7 @@ def header_text value @ (Str | DateTime | nil) -> (Str | nil)
   else
     value
 
-def partial_metadata identity @ Str response @ http.Response payload @ Str total @ (Int | nil) -> Partial
+def partial_metadata identity@Str response@http.Response payload@Str total@(Int | nil) -> Partial
   let headers = response.headers
   return Partial $
     version: 1
@@ -464,7 +463,7 @@ class Cache
         else
           throw std.ValueError "server refused an unconditional request for $identity"
 
-  pub def get self url @ Url digest @ (Str | nil) -> Path
+  pub def get self url@Url digest@(Str | nil) -> Path
     url = (normalized_url url)
     let identity entry = (self.#entry url)
     let payload_name = (safe_leaf url.name)
@@ -540,7 +539,7 @@ do -> Path
     (fs.cache_dir app: (normalize_app app) / "transfer")
   (Cache root).get(location, digest)
 
-def put_path source @ Path destination @ Path -> nil
+def put_path source@Path destination@Path -> nil
   let parent = destination.parent
   if (parent != nil)
     parent.create_dir all: true
@@ -551,7 +550,7 @@ def put_path source @ Path destination @ Path -> nil
   finally
     tmp.remove ignore: true
 
-def put_url source @ Path destination @ Url headers @ (std.BaseDict[Str | Sym, Str] | nil) -> nil
+def put_url source@Path destination@Url headers@(std.BaseDict[Str | Sym, Str] | nil) -> nil
   let total = source.metadata().size
   let message = (destination.name || str destination)
   progress.show :message :total icon: ⬆️ units: :BYTES: do |indicator|
@@ -648,10 +647,10 @@ def sniff_format path @ Path -> UnpackFormat
   else
     :TAR:
 
-def input_format path @ Path format @ (UnpackFormat | nil) -> UnpackFormat
+def input_format path@Path format@(UnpackFormat | nil) -> UnpackFormat
   (parse_input_format format || input_format_from_name path.name || sniff_format path)
 
-def output_format destination @ (Url | Path) format @ (ArchiveFormat | nil) -> ArchiveFormat
+def output_format destination@(Url | Path) format@(ArchiveFormat | nil) -> ArchiveFormat
   let selected = (parse_archive_format format || archive_format_from_name destination.name)
   if (selected == nil)
     throw std.ValueError "can't infer archive format from destination"
@@ -665,7 +664,7 @@ def compression_for format @ ArchiveFormat -> (:NONE: | :GZIP: | :ZSTD:)
   else
     :NONE:
 
-def safe_components path @ (Str | Path) label @ Str -> Seq[Str]
+def safe_components path@(Str | Path) label@Str -> Seq[Str]
   let relative = UnixPath $path
   if relative.is_absolute
     throw std.ValueError "$label must be relative: $relative"
@@ -675,7 +674,7 @@ def safe_components path @ (Str | Path) label @ Str -> Seq[Str]
     throw std.ValueError "unsafe $label: $relative"
   parts
 
-def archive_name path @ Path source @ Path prefix @ Seq[Str] -> Path
+def archive_name path@Path source@Path prefix@Seq[Str] -> Path
   let relative = if (path == source)
     let name = path.name
     if (name == nil)
@@ -696,7 +695,7 @@ def archive_name path @ Path source @ Path prefix @ Seq[Str] -> Path
 
 # Looks up the name of a file's owner or group, given as `Metadata.owner` or
 # `Metadata.group` reports it.
-def account_name id @ (Int | Sid) kind @ (:USER: | :GROUP:) -> (Str | nil)
+def account_name id@(Int | Sid) kind@(:USER: | :GROUP:) -> (Str | nil)
   try
     if (type id Int)
       if (kind == :USER:)
@@ -895,7 +894,7 @@ do -> nil
     finally
       tmp.remove ignore: true
 
-def link_path path @ (Str | Path) label @ Str -> UnixPath
+def link_path path@(Str | Path) label@Str -> UnixPath
   let link = UnixPath $path
   if link.is_absolute
     throw std.ValueError "$label must be relative: $link"
@@ -903,7 +902,7 @@ def link_path path @ (Str | Path) label @ Str -> UnixPath
     throw std.ValueError "unsafe $label: $link"
   link
 
-def packed_link name @ Path target @ Path prefix @ Seq[Str] source @ Path -> UnixPath
+def packed_link name@Path target@Path prefix@Seq[Str] source@Path -> UnixPath
   let link = (link_path target "symlink target")
   let name_parts = name.components[prefix.len..]
   let resolved_parts = (resolve_link name_parts link).components
@@ -935,7 +934,7 @@ class ArchiveEntry: Struct[EntryFields]
 # `resolved_link` once every output is known.
 class Placed: Struct[PlacedFields]
 
-def strip_count entries @ Array[ArchiveEntry] strip @ (Int | :ROOT:) -> Int
+def strip_count entries@Array[ArchiveEntry] strip@(Int | :ROOT:) -> Int
   if (strip == :ROOT:)
     if (entries.len == 0)
       throw std.ValueError "strip: :ROOT: requires a non-empty archive"
@@ -952,7 +951,7 @@ def record_path parts @ Seq[Str] -> Str
   let path = UnixPath.join ...parts
   str $path
 
-def resolve_link output_parts @ Seq[Str] target @ UnixPath -> Path
+def resolve_link output_parts@Seq[Str] target@UnixPath -> Path
   let output = UnixPath.join ...output_parts
   let parent = output.parent
   if (parent == nil)
@@ -1014,10 +1013,10 @@ do -> (Array[Placed], Dict[Str, Placed])
 
   (placed, outputs)
 
-def output_path root @ Path item @ Placed -> Path
+def output_path root@Path item@Placed -> Path
   (root / item.output)
 
-def create_directories root @ Path placed @ Array[Placed] -> nil
+def create_directories root@Path placed@Array[Placed] -> nil
   for item = placed
     let destination = (output_path root item)
     if (item.kind == :DIR:)
@@ -1027,7 +1026,7 @@ def create_directories root @ Path placed @ Array[Placed] -> nil
       if (parent != nil)
         parent.create_dir all: true
 
-def apply_metadata path @ Path item @ Placed -> nil
+def apply_metadata path@Path item@Placed -> nil
   if !path.exists()
     throw std.ValueError "archive entry was not extracted: $item.output"
   let modified = item.mtime
@@ -1059,7 +1058,7 @@ do -> nil
       else
         fs.symlink_file $link $destination
 
-def finish_metadata root @ Path placed @ Array[Placed] -> nil
+def finish_metadata root@Path placed@Array[Placed] -> nil
   for item = placed
     if (item.kind == :FILE:)
       apply_metadata (output_path root item) $item
@@ -1067,7 +1066,7 @@ def finish_metadata root @ Path placed @ Array[Placed] -> nil
     if (item.kind == :DIR:)
       apply_metadata (output_path root item) $item
 
-def prepare_extraction root @ Path placed @ Array[Placed] -> Int
+def prepare_extraction root@Path placed@Array[Placed] -> Int
   create_directories $root $placed
   let total = 0
   for item = placed
