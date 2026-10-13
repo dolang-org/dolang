@@ -13,7 +13,9 @@ use std::{
 fn main() -> ExitCode {
     let mut args = std::env::args_os().skip(1);
     let Some(mode) = args.next() else {
-        eprintln!("dolang-private-polyfill: expected a subcommand (cat, echo, grep, sleep)");
+        eprintln!(
+            "dolang-private-polyfill: expected a subcommand (cat, echo, grep, sleep, unix-connect)"
+        );
         return ExitCode::FAILURE;
     };
     let args: Vec<_> = args.collect();
@@ -23,6 +25,8 @@ fn main() -> ExitCode {
         Some("echo") => echo(&args).map(|()| true),
         Some("grep") => grep(&args),
         Some("sleep") => sleep(&args).map(|()| true),
+        Some("unix-connect") => unix_connect(&args).map(|()| true),
+        Some("-c") => login_shell(&args).map(|()| true),
         _ => {
             eprintln!("dolang-private-polyfill: unknown subcommand {mode:?}");
             return ExitCode::FAILURE;
@@ -136,4 +140,87 @@ fn grep_reader(
         }
     }
     Ok(matched)
+}
+
+/// Byte-exact Unix socket relay. `--silent` announces readiness and only drains
+/// the socket, for tests of peers that connect without starting a handshake.
+#[cfg(unix)]
+fn unix_connect(args: &[OsString]) -> io::Result<()> {
+    use std::os::unix::net::UnixStream;
+    let path = args.first().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "unix-connect: expected socket path",
+        )
+    })?;
+    let mut socket = UnixStream::connect(path)?;
+    if args.get(1).is_some_and(|arg| arg == "--silent") {
+        println!("READY");
+        io::stdout().flush()?;
+        io::copy(&mut socket, &mut io::sink())?;
+    } else {
+        let mut writer = socket.try_clone()?;
+        // Stdin may remain open after the peer closes. Drive socket output on
+        // the main thread so EOF ends the relay without waiting on stdin.
+        let (send, receive) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = io::copy(&mut io::stdin(), &mut writer)
+                .and_then(|_| writer.shutdown(std::net::Shutdown::Write));
+            if result.is_err() {
+                let _ = writer.shutdown(std::net::Shutdown::Both);
+            }
+            let _ = send.send(result);
+        });
+        let mut output = io::stdout().lock();
+        let mut buffer = [0u8; 8192];
+        loop {
+            let count = socket.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            output.write_all(&buffer[..count])?;
+            // Binary protocols may never emit a newline to flush stdout.
+            output.flush()?;
+        }
+        if let Ok(result) = receive.try_recv() {
+            result?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn unix_connect(_args: &[OsString]) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "unix-connect requires Unix",
+    ))
+}
+
+/// Stand in for a login shell when the probe executes this binary as `-name -c
+/// command`. Check the actual argv[0], then preserve the snapshot descriptor
+/// while replacing this process with a shell that executes the command.
+#[cfg(unix)]
+fn login_shell(args: &[OsString]) -> io::Result<()> {
+    use std::os::unix::{ffi::OsStrExt, process::CommandExt};
+    let arg0 = std::env::args_os().next().unwrap_or_default();
+    if !arg0.as_bytes().starts_with(b"-") || args.len() != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "login shell: expected login-prefixed argv[0] and one command",
+        ));
+    }
+    Err(std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg(&args[0])
+        .env("DO_LOGIN_ARG0", arg0)
+        .exec())
+}
+
+#[cfg(not(unix))]
+fn login_shell(_args: &[OsString]) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "login shell stand-in requires Unix",
+    ))
 }
