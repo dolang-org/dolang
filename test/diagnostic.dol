@@ -76,6 +76,8 @@ def error_bad_type()
 #[test]
 def backtrace_source_is_relative_highlighted_and_unique()
   fs.with_temp_dir do |dir|
+    # Match the physical cwd the child reports, including macOS temp aliases.
+    let dir = dir.canonical()
     let path = (dir / "backtrace.dol")
     path.write r|
       import _shell strand shell
