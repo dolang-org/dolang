@@ -268,7 +268,6 @@ def with_build_env spec block
     do block()
 
 def typecheck spec rest :all = false
-  with_build_env $spec do spec.cargo build --bin dolang
   let dirs = ["dolang-shell-modules/lib", ...glob("*/stub")]
   let sources = $
     if all
@@ -276,7 +275,7 @@ def typecheck spec rest :all = false
         ...(Path(dir).glob "**/*.dol")
   if (all && sources.len == 0)
     throw "no bundled library sources found"
-  dodo.show $spec.bin("dolang") -m compile check
+  with_build_env $spec do spec.cargo run --bin dolang -- -m compile check
     if all
       --strict --no-bundled
     for dir = dirs

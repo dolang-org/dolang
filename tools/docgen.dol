@@ -250,7 +250,7 @@ pub def extract_doc_json spec out_dir
   let workers = sys.cpu_info().logical_count
   strand.pool $workers $collect_doc_jobs() do |job|
     let :name :path = job
-    run (spec.bin "dolang") -m compile extract --doc --strict --module $name $path stdout: (out_dir / "$name.json")
+    spec.cargo run --bin dolang -- -m compile extract --doc --strict --module $name $path stdout: (out_dir / "$name.json")
 
 # Regenerates every bundled library's typelib for the LSP build. Keep private
 # modules too: public declarations may refer to them.
@@ -267,7 +267,7 @@ pub def extract_typelibs spec out_dir
   let workers = sys.cpu_info().logical_count
   strand.pool $workers $jobs do |job|
     let :name :path = job
-    run (spec.bin "dolang") -m compile typelib --module $name --output (out_dir / "$name.dolt") $path
+    spec.cargo run --bin dolang -- -m compile typelib --module $name --output (out_dir / "$name.dolt") $path
 
 # Extracts the JSON cache and regenerates the docs/api page tree from it.
 #
