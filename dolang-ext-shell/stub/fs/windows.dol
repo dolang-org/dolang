@@ -55,7 +55,7 @@ pub class Path: fs.Path
   pub def (init)
     self
     # Path value.
-    path @ (Str | Path)
+    path @ (Str | fs.Path)
   do
     ...
 

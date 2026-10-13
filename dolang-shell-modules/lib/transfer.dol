@@ -1,3 +1,4 @@
+# dolang: strict
 # Downloads, uploads, packs, and safely extracts artifacts.
 #
 # A URL source is resolved through `get` wherever one is accepted, so its cache
@@ -9,16 +10,17 @@ import _vfs digest fs http json proc progress shell std sys tar zip
   fs:
     - Path
     - with_temp_dir
+  fs.unix:
+    Path: UnixPath
+    - @Mode
   regex:
     - Regex
+  std:
+    - @Seq
   time:
     - DateTime
   url:
     - Url
-
-import fs.unix: unix_fs
-import fs.unix:
-  - @Mode
 
 # An archive format [`pack`](transfer.pack) writes.
 #
@@ -40,64 +42,90 @@ pub @let ArchiveFormat = (:TAR: | :TAR_GZIP: | :TAR_ZSTD: | :ZIP:)
 # | `:XZ:`   | Raw XZ stream        |
 pub @let UnpackFormat = (ArchiveFormat | :GZIP: | :ZSTD: | :XZ:)
 import security.unix: security_unix
+import security.windows:
+  - @Sid
 
-let DIGESTS = $
+let DIGESTS @ Dict[Str, (() -> digest.State)] = $
   "blake3": $digest.Blake3
   "md5": $digest.Md5
   "sha1": $digest.Sha1
   "sha256": $digest.Sha256
   "sha512": $digest.Sha512
 
-let HEX_DIGEST = Regex r"^[0-9a-f]+$"
+let HEX_DIGEST @ Regex = Regex r"^[0-9a-f]+$"
 
-let CONTENT_RANGE = Regex r"^bytes (\d+)-(\d+)/(\d+|\*)$"
+let CONTENT_RANGE @ Regex = Regex r"^bytes (\d+)-(\d+)/(\d+|\*)$"
 
-def parse_location value
-  if (type value Url || type value Path)
-    value
-  else if (type value Str)
+# A parsed `digest:` argument.
+class DigestSpec: Struct[{algorithm: Str, expected: Str, constructor: (() -> digest.State)}]
+
+# Fields common to both kinds of cache metadata.
+@let Metadata = $
+  version: 1
+  url: Str
+  final_url: (Str | nil)
+  payload: Str
+  etag: (Str | nil)
+  last_modified: (Str | nil)
+  fetched_at: (Str | nil)
+
+# Cache metadata written before the first byte of a download lands, so an
+# interrupted download can be resumed.
+class Partial: Struct[{...Metadata, state: "partial", total: (Int | nil)}]
+
+@let CompleteFields = $
+  ...Metadata
+  size: Int
+  checked_at: (Str | nil)
+  verified: Dict[Str, Str]
+
+# Cache metadata for a complete payload.
+class Complete: Struct[CompleteFields]
+
+def parse_location value @ (Str | Url | Path) -> (Url | Path)
+  if (type value Str)
     if (value.starts_with "http://" || value.starts_with "https://")
       Url $value
     else
       Path $value
+  else if (type value Url || type value Path)
+    value
   else
     throw std.TypeError "expected `Str`, `Url`, or `Path`"
 
-def require_http url
+def require_http url @ Url -> Url
   if !(url.scheme == "http" || url.scheme == "https")
     throw std.ValueError "unsupported URL scheme: $url.scheme"
   url
 
-def default_app()
+def default_app() -> Str
   let program = shell.program
-  if (program == nil)
-    throw std.ValueError "app: required when shell.program is unavailable"
   let app = if (type program Path)
     (program.stem || program.name)
+  else if (type program Str)
+    program
   else
-    str $program
+    throw std.ValueError "app: required when shell.program is unavailable"
   if (app == nil || app == "")
     throw std.ValueError "can't infer cache app from shell.program"
   app
 
-def normalize_app app
-  app = str (app || default_app())
-  app = app.replace("/", "_").replace("\\", "_")
-  if (app == "" || app == "." || app == "..")
+def normalize_app app @ (Str | nil) -> Str
+  let name = (app || default_app())
+  name = name.replace("/", "_").replace("\\", "_")
+  if (name == "" || name == "." || name == "..")
     throw std.ValueError "cache app name must not be empty"
-  app
+  name
 
-def normalized_url value
-  require_http(Url value).with_fragment nil
+def normalized_url url @ Url -> Url
+  require_http(url).with_fragment nil
 
-def safe_leaf name
+def safe_leaf name @ (Str | nil) -> Str
   if (name == nil || name == "" || name == "." || name == "..")
     return "data"
   name.replace("/", "_").replace("\\", "_")
 
-def digest_spec spec
-  if !(type spec Str)
-    throw std.TypeError "digest: expected `algorithm:hex` string"
+def digest_spec spec @ Str -> DigestSpec
   let parts = [...spec.lower().split ":" limit: 1]
   if (parts.len != 2)
     throw std.ValueError "digest: expected `algorithm:hex`"
@@ -108,56 +136,86 @@ def digest_spec spec
   if (expected.len != expected_len ||
       !HEX_DIGEST.match(expected))
     throw std.ValueError "digest: invalid $algorithm hex value"
-  record :algorithm :expected :constructor
+  DigestSpec {:algorithm, :expected, :constructor}
 
-def digest_state path constructor
+def digest_state path @ Path constructor @ (() -> digest.State) -> digest.State
   let state = constructor()
   path.open rb do |file|
     for chunk = file
       state.update $chunk
   state
 
-def file_digest path constructor
+def file_digest path @ Path constructor @ (() -> digest.State) -> Str
   "${digest_state(path, constructor).digest():x}"
 
-def read_metadata path identity
+def read_metadata path @ Path identity @ Str -> (Partial | Complete | nil)
   if !path.exists()
     return nil
-  try
-    let metadata = json.decode(path.read())
-    if !(type metadata Dict)
-      nil
-    else if (metadata.get("version") != 1 || metadata.get("url") != identity)
-      nil
-    else
-      metadata
+  let data = try
+    json.decode(path.read())
   catch _
-    nil
+    return nil
+  # An absent `state` means complete, so metadata written before resumable
+  # downloads existed still reads as a usable payload. Fields that are only
+  # informational may be missing from hand-planted or older entries.
+  match data
+    | Dict $
+        "version": 1
+        "url": Str(url)
+        ?"final_url": (Str(final_url = nil) | std.Nil(final_url))
+        "payload": Str(payload)
+        "state": "partial"
+        ?"etag": (Str(etag = nil) | std.Nil(etag))
+        ?"last_modified": (Str(last_modified = nil) | std.Nil(last_modified))
+        ?"total": (Int(total = nil) | std.Nil(total))
+        ?"fetched_at": (Str(fetched_at = nil) | std.Nil(fetched_at))
+        ...
+    if (url == identity)
+      Partial $
+        version: 1
+        state: "partial"
+        :url :final_url :payload :etag :last_modified :total :fetched_at
+    | Dict $
+        "version": 1
+        "url": Str(url)
+        ?"final_url": (Str(final_url = nil) | std.Nil(final_url))
+        "payload": Str(payload)
+        ?"etag": (Str(etag = nil) | std.Nil(etag))
+        ?"last_modified": (Str(last_modified = nil) | std.Nil(last_modified))
+        "size": Int(size)
+        ?"fetched_at": (Str(fetched_at = nil) | std.Nil(fetched_at))
+        ?"checked_at": (Str(checked_at = nil) | std.Nil(checked_at))
+        ?"verified": Dict(raw_verified @ Dict[Str, json.DecodeValue] = {})
+        ...
+    if (url == identity)
+      Complete $
+        version: 1
+        :url :final_url :payload :etag :last_modified :size :fetched_at
+        :checked_at
+        verified:
+          for algorithm value = raw_verified
+            if (type value Str)
+              $algorithm: $value
 
-def write_metadata path metadata
+def write_metadata path @ Path metadata @ (Partial | Complete) -> nil
   let tmp = path.add_ext tmp
   try
     tmp.write $ json.encode(metadata)
     tmp.rename $path
   finally
     tmp.remove ignore: true
+  nil
 
-def metadata_payload entry metadata fallback
-  let name = (metadata && metadata.get("payload"))
-  (entry / (name || fallback))
-
-def intact_payload payload metadata
-  # An absent `state` means complete, so metadata written before resumable
-  # downloads existed still reads as a usable payload.
-  if (metadata == nil || metadata.get("state") != nil || !payload.exists())
+def intact_payload payload @ Path metadata @ Complete -> Bool
+  if !payload.exists()
     return false
   try
-    (payload.metadata().type == :FILE: &&
-      payload.metadata().size == metadata.get("size"))
+    let info = payload.metadata()
+    (info.type == :FILE: && info.size == metadata.size)
   catch _
     false
 
-def file_size path
+def file_size path @ Path -> (Int | nil)
   try
     let info = path.metadata()
     if (info.type == :FILE:)
@@ -170,46 +228,43 @@ def file_size path
 # The resume offset for a retained partial, or `nil` to start over. The actual
 # size of the sidecar is authoritative; metadata only says whether the bytes
 # can be trusted and what the whole representation is expected to look like.
-def partial_offset part metadata
-  if (metadata == nil || metadata.get("state") != "partial")
-    return nil
+def partial_offset part @ Path metadata @ Partial -> (Int | nil)
   let size = (file_size part)
   if (size == nil || size == 0)
     return nil
-  let total = metadata.get "total"
+  let total = metadata.total
   # At or past the recorded total there is nothing left to ask for, and no way
   # to tell a complete download from a corrupt one without a validator.
   if (total != nil && size >= total)
     return nil
   size
 
-def conditional_headers metadata
-  let headers = {}
-  let etag = metadata.get "etag"
-  let modified = metadata.get "last_modified"
-  if etag
-    headers["if-none-match"] = etag
-  if modified
-    headers["if-modified-since"] = DateTime.parse_rfc $modified
-  headers
+def conditional_headers metadata @ Complete -> Dict[Str, Str | DateTime]
+  let etag = metadata.etag
+  let modified = metadata.last_modified
+  $
+    if etag
+      "if-none-match": $etag
+    if modified
+      "if-modified-since": $ DateTime.parse_rfc $modified
 
-def range_headers metadata offset
-  let headers = {}
-  headers["range"] = "bytes=$offset-"
-  let etag = metadata.get "etag"
-  let modified = metadata.get "last_modified"
-  # `If-Range` needs a strong validator: a weak ETag says two representations
-  # are equivalent, not byte-identical, which is not enough to splice ranges.
-  if (etag && !etag.starts_with "W/")
-    headers["if-range"] = etag
-  else if modified
-    headers["if-range"] = DateTime.parse_rfc $modified
-  headers
+def range_headers metadata @ Partial offset @ Int -> Dict[Str, Str | DateTime]
+  let etag = metadata.etag
+  let modified = metadata.last_modified
+  $
+    "range": "bytes=$offset-"
+    # `If-Range` needs a strong validator: a weak ETag says two representations
+    # are equivalent, not byte-identical, which is not enough to splice ranges.
+    if (etag && !etag.starts_with "W/")
+      "if-range": $etag
+    else if modified
+      "if-range": $ DateTime.parse_rfc $modified
 
-def parse_content_range value
-  if (value == nil)
+# The start and total (`nil` when unknown) of a `Content-Range` header.
+def parse_content_range value @ (Str | DateTime | nil) -> ((Int, (Int | nil)) | nil)
+  if !(type value Str)
     return nil
-  let captures = CONTENT_RANGE.match(str value)
+  let captures = CONTENT_RANGE.match $value
   if (captures == nil)
     return nil
   let raw = (str captures[3])
@@ -217,90 +272,107 @@ def parse_content_range value
     nil
   else
     int $raw
-  record start: (int (str captures[1])) :total
+  (int (str captures[1]), total)
 
-def partial_metadata identity response payload total
+# A response header as recorded in metadata: dates in their RFC form.
+def header_text value @ (Str | DateTime | nil) -> (Str | nil)
+  if (type value DateTime)
+    value.rfc()
+  else
+    value
+
+def partial_metadata identity @ Str response @ http.Response payload @ Str total @ (Int | nil) -> Partial
   let headers = response.headers
-  let modified = (headers.get "last-modified")
-  let now = DateTime.now().rfc()
-  return $
+  return Partial $
     version: 1
     url: $identity
     final_url: (str response.url)
-    payload: $payload.name
+    :payload
     state: "partial"
-    etag: (headers.get "etag")
-    last_modified: (modified && modified.rfc())
-    total: $total
-    fetched_at: $now
+    etag: (header_text (headers.get "etag"))
+    last_modified: (header_text (headers.get "last-modified"))
+    :total
+    fetched_at: $DateTime.now().rfc()
 
-def response_metadata identity response payload digest_info
+def response_metadata
+  identity @ Str
+  response @ http.Response
+  payload @ Path
+  name @ Str
+  digest_info @ (DigestSpec | nil)
+do -> Complete
   let headers = response.headers
-  # Digests verified against a previous representation say nothing about the
-  # bytes just downloaded, so `verified` starts empty on every fresh body.
-  let verified = {}
-  if digest_info
-    verified[digest_info[:algorithm:]] = digest_info[:expected:]
   let now = DateTime.now().rfc()
-  let modified = (headers.get "last-modified")
-  return $
+  Complete $
     version: 1
     url: $identity
     final_url: (str response.url)
-    payload: $payload.name
-    etag: (headers.get "etag")
-    last_modified: (modified && modified.rfc())
+    payload: $name
+    etag: (header_text (headers.get "etag"))
+    last_modified: (header_text (headers.get "last-modified"))
     size: $payload.metadata().size
     fetched_at: $now
     checked_at: $now
-    verified: $verified
+    # Digests verified against a previous representation say nothing about the
+    # bytes just downloaded, so `verified` starts empty on every fresh body.
+    verified:
+      if digest_info
+        $digest_info.algorithm: $digest_info.expected
 
 class Cache
-  field root = nil
-  field client = http.Client()
+  field root @ Path
+  field client @ http.Client = http.Client()
 
-  def (init) self app cache
-    self.#root = if (cache != nil)
-      Path $cache
-    else
-      (fs.cache_dir app: (normalize_app app) / "transfer")
+  def (init) self root @ Path
+    self.#root = root
 
-  def entry self url
+  def entry self url @ Url -> (Str, Path)
     let identity = str(normalized_url url)
     let key = "${digest.blake3(identity):x}"
     let entry = (self.#root / key)
     entry.create_dir all: true
-    [identity, entry]
+    (identity, entry)
 
   # Streams the body into the `.part` sidecar, appending to it when resuming.
   # Returns the payload, or `:RETRY:` when the request has to be reissued
   # without the range and validators it was conditioned on.
-  def fetch self identity entry payload part metadata digest_info offset indicator
+  def fetch
+    self
+    identity @ Str
+    entry @ Path
+    name @ Str
+    part @ Path
+    metadata @ (Partial | Complete | nil)
+    digest_info @ (DigestSpec | nil)
+    indicator @ progress.Indicator
+  do -> (Path | :RETRY:)
+    let payload = (entry / name)
     let metadata_path = (entry / "metadata.json")
-    let headers = if (offset != nil)
-      range_headers $metadata $offset
-    else if (metadata && metadata.get("state") == nil && digest_info == nil)
-      conditional_headers $metadata
-    else
-      {}
-    let message = (payload.name || identity)
+    let offset @ (Int | nil) = nil
+    let headers @ Dict[Str, Str | DateTime] = {}
+    if (type metadata Partial)
+      offset = partial_offset $part $metadata
+      if (offset != nil)
+        headers = range_headers $metadata $offset
+    else if (type metadata Complete && digest_info == nil)
+      headers = conditional_headers $metadata
 
-    self.#client.get $identity headers: $headers status: :IGNORE: do |response|
-      if (response.status == 304 && intact_payload(payload, metadata))
-        metadata["checked_at"] = DateTime.now().rfc()
-        write_metadata $metadata_path $metadata
-        let total = metadata["size"]
-        indicator.update message: "$message (cached)" :total position: $total units: :BYTES:
-        return payload
-
+    self.#client.get $identity :headers status: :IGNORE: do |response|
       if (response.status == 304)
+        if (type metadata Complete && intact_payload payload metadata)
+          metadata.checked_at = DateTime.now().rfc()
+          write_metadata $metadata_path $metadata
+          let total = metadata.size
+          indicator.update message: "$name (cached)" :total position: $total units: :BYTES:
+          return payload
         # The validators still match, but the payload they stand for is gone or
         # the wrong size, so there is nothing to serve and no body to fall back
         # on. Ask again without them rather than publishing the empty response.
         return :RETRY:
 
-      let append = false
-      let total = nil
+      # Where the body continues the sidecar, or `nil` when it replaces it.
+      let resume_from @ (Int | nil) = nil
+      let total @ (Int | nil) = nil
 
       if (offset != nil)
         if (response.status == 416)
@@ -309,42 +381,42 @@ class Cache
           return :RETRY:
         if (response.status == 206)
           let range = (parse_content_range (response.headers.get "content-range"))
-          if (range == nil || range[:start:] != offset)
+          if (range == nil || range[0] != offset)
             part.remove ignore: true
             return :RETRY:
-          append = true
-          total = range[:total:]
+          resume_from = range[0]
+          total = range[1]
         else
           # A `200` means the range was ignored (or `If-Range` failed), so the
           # body is the whole representation: start over without another
           # request.
           response.throw_for_status()
-          offset = nil
       else
         response.throw_for_status()
 
-      if !append
+      if (resume_from == nil)
         let length = (response.headers.get "content-length")
-        total = (length && int length)
+        if (type length Str)
+          total = int $length
 
-      if append
-        indicator.update total: $total position: $offset units: :BYTES:
+      if (resume_from != nil)
+        indicator.update :total position: $resume_from units: :BYTES:
       else
-        indicator.update total: $total units: :BYTES:
+        indicator.update :total units: :BYTES:
 
       # Recorded before the first byte lands so an abrupt exit still leaves an
       # entry that says what the sidecar holds and how to resume it.
-      let pending = (partial_metadata identity response payload total)
+      let pending = (partial_metadata identity response name total)
       write_metadata $metadata_path $pending
 
       let state = if (digest_info == nil)
         nil
-      else if append
-        digest_state $part $digest_info[:constructor:]
+      else if (resume_from != nil)
+        digest_state $part $digest_info.constructor
       else
-        digest_info[:constructor:]()
+        digest_info.constructor()
 
-      let mode = if append
+      let mode @ ("ab" | "wb") = if (resume_from != nil)
         "ab"
       else
         "wb"
@@ -359,58 +431,70 @@ class Cache
       if (total != nil && size != total)
         # The sidecar and its metadata stay put: the next `get` resumes here.
         throw std.ValueError "incomplete download for $identity: got $size of $total bytes"
-      if (state && "${state.digest():x}" != digest_info[:expected:])
+      if (digest_info != nil && state != nil && "${state.digest():x}" != digest_info.expected)
         part.remove ignore: true
         metadata_path.remove ignore: true
         throw std.ValueError "digest mismatch for $identity"
 
       part.rename $payload
-      let updated = (response_metadata identity response payload digest_info)
+      let updated = (response_metadata identity response payload name digest_info)
       write_metadata $metadata_path $updated
       payload
 
-  def download self identity entry payload metadata digest_info
-    let part = payload.add_ext part
-    let offset = (partial_offset part metadata)
-    let message = (payload.name || identity)
-    progress.show :message icon: ⬇️ do |indicator|
-      let result = self.#fetch $identity $entry $payload $part $metadata $digest_info $offset $indicator
-      if (result == :RETRY:)
+  def download
+    self
+    identity @ Str
+    entry @ Path
+    name @ Str
+    metadata @ (Partial | Complete | nil)
+    digest_info @ (DigestSpec | nil)
+  do -> Path
+    let part = (entry / name).add_ext part
+    progress.show message: $name icon: ⬇️ do |indicator|
+      let result = self.#fetch $identity $entry $name $part $metadata $digest_info $indicator
+      if (type result Path)
+        result
+      else
         # Retry with no metadata as well as no offset: what we knew about the
         # entry is exactly what the server just refused to honor, so sending
         # its validators again would only repeat the same answer.
-        self.#fetch $identity $entry $payload $part nil $digest_info nil $indicator
-      else
-        result
+        let retried = self.#fetch $identity $entry $name $part nil $digest_info $indicator
+        if (type retried Path)
+          retried
+        else
+          throw std.ValueError "server refused an unconditional request for $identity"
 
-  pub def get self url digest
+  pub def get self url @ Url digest @ (Str | nil) -> Path
     url = (normalized_url url)
     let identity entry = (self.#entry url)
     let payload_name = (safe_leaf url.name)
     let metadata_path = (entry / "metadata.json")
     let lock_path = (entry / "lock")
-    let digest_info = (digest && digest_spec digest)
+    let digest_info = if digest
+      digest_spec $digest
+    else
+      nil
 
     lock_path.open a+ do |lock| lock.lock (..) do |_|
       let metadata = (read_metadata metadata_path identity)
-      let payload = (metadata_payload entry metadata payload_name)
-      if (intact_payload payload metadata)
+      let name = (metadata && metadata.payload || payload_name)
+      let payload = (entry / name)
+      if (type metadata Complete && intact_payload payload metadata)
         if digest_info
-          let verified = (metadata.get "verified" || {})
-          if (verified.get(digest_info[:algorithm:]) == digest_info[:expected:])
+          let verified = metadata.verified
+          if (verified.get(digest_info.algorithm) == digest_info.expected)
             return payload
-          let actual = (file_digest payload digest_info[:constructor:])
-          if (actual == digest_info[:expected:])
-            verified[digest_info[:algorithm:]] = digest_info[:expected:]
-            metadata["verified"] = verified
+          let actual = (file_digest payload digest_info.constructor)
+          if (actual == digest_info.expected)
+            verified[digest_info.algorithm] = digest_info.expected
             write_metadata $metadata_path $metadata
             return payload
-        self.#download $identity $entry $payload $metadata $digest_info
-      else if (metadata && metadata.get("state") == "partial")
+        self.#download $identity $entry $name $metadata $digest_info
+      else if (type metadata Partial)
         # Resume against the name the interrupted download was using.
-        self.#download $identity $entry $payload $metadata $digest_info
+        self.#download $identity $entry $name $metadata $digest_info
       else
-        self.#download $identity $entry (entry / payload_name) $metadata $digest_info
+        self.#download $identity $entry $payload_name $metadata $digest_info
 
 # Resolves a local path or downloads an HTTP(S) URL into the application cache.
 #
@@ -441,19 +525,25 @@ pub def get
 do -> Path
   if (app != nil && cache != nil)
     throw std.ValueError "app: not valid together with cache"
-  source = parse_location $source
-  if (type source Path)
+  let location = parse_location $source
+  if (type location Path)
     if (digest != nil)
       let digest_info = digest_spec $digest
-      let actual = file_digest $source $digest_info[:constructor:]
-      if (actual != digest_info[:expected:])
-        throw std.ValueError "digest mismatch for $source"
-    return source
+      let actual = file_digest $location $digest_info.constructor
+      if (actual != digest_info.expected)
+        throw std.ValueError "digest mismatch for $location"
+    return location
 
-  (Cache app cache).get(source, digest)
+  let root = if (cache != nil)
+    Path $cache
+  else
+    (fs.cache_dir app: (normalize_app app) / "transfer")
+  (Cache root).get(location, digest)
 
-def put_path source destination
-  destination.parent.create_dir all: true
+def put_path source @ Path destination @ Path -> nil
+  let parent = destination.parent
+  if (parent != nil)
+    parent.create_dir all: true
   let tmp = destination.add_ext tmp
   try
     source.copy $tmp
@@ -461,18 +551,17 @@ def put_path source destination
   finally
     tmp.remove ignore: true
 
-def put_url source destination headers
+def put_url source @ Path destination @ Url headers @ (std.BaseDict[Str | Sym, Str] | nil) -> nil
   let total = source.metadata().size
   let message = (destination.name || str destination)
   progress.show :message :total icon: ⬆️ units: :BYTES: do |indicator|
     source.open rb do |file|
-      let track = do |chunk|
+      let track = do |chunk @ Bin| -> Bin
         indicator.delta $chunk.len
         chunk
       let chunks = (file.map track)
-      let response = http.put(destination, headers: (headers || {}), body: chunks)
+      let response = http.put(destination, headers: (headers || ({} @ Dict[Str, Str])), body: chunks)
       response.close()
-  nil
 
 # Copies or uploads `source` to `destination`.
 pub def put
@@ -487,68 +576,65 @@ pub def put
   # Only valid for an HTTP(S) destination.
   :headers @ std.BaseDict[Str | Sym, Str] = nil
 do -> nil
-  source = (parse_location source)
-  if (type source Url)
-    source = get $source
-  destination = (parse_location destination)
-  if (type destination Url)
-    put_url $source (require_http destination) $headers
+  let from = (parse_location source)
+  let local = if (type from Url)
+    get $from
+  else
+    from
+  let to = (parse_location destination)
+  if (type to Url)
+    put_url $local (require_http to) $headers
   else
     if (headers != nil)
       throw std.ValueError "headers: only valid for an HTTP destination"
-    put_path $source $destination
-  nil
+    put_path $local $to
 
-let ARCHIVE_FORMATS = Set $
+let ARCHIVE_FORMATS @ Set[ArchiveFormat] = Set $
   :TAR: :TAR_GZIP: :TAR_ZSTD: :ZIP:
 
-let INPUT_FORMATS = Set $
+let INPUT_FORMATS @ Set[UnpackFormat] = Set $
   :TAR: :TAR_GZIP: :TAR_ZSTD: :ZIP: :GZIP: :ZSTD: :XZ:
 
-def parse_input_format format
+def parse_input_format format @ (UnpackFormat | nil) -> (UnpackFormat | nil)
   if (format == nil)
     return nil
   if !(INPUT_FORMATS.contains format)
     throw std.ValueError "format: expected :TAR:, :TAR_GZIP:, :TAR_ZSTD:, :ZIP:, :GZIP:, :ZSTD:, or :XZ:"
   format
 
-def parse_archive_format format
+def parse_archive_format format @ (ArchiveFormat | nil) -> (ArchiveFormat | nil)
   if (format == nil)
     return nil
   if !(ARCHIVE_FORMATS.contains format)
     throw std.ValueError "format: expected :TAR:, :TAR_GZIP:, :TAR_ZSTD:, or :ZIP:"
   format
 
-def archive_format_from_name name
+def archive_format_from_name name @ (Str | nil) -> (ArchiveFormat | nil)
   if (name == nil)
     return nil
-  name = name.lower()
-  if name.ends_with ".zip"
+  let lower = name.lower()
+  if lower.ends_with ".zip"
     :ZIP:
-  else if (name.ends_with ".tar.gz" || name.ends_with ".tgz")
+  else if (lower.ends_with ".tar.gz" || lower.ends_with ".tgz")
     :TAR_GZIP:
-  else if (name.ends_with ".tar.zst" || name.ends_with ".tzst")
+  else if (lower.ends_with ".tar.zst" || lower.ends_with ".tzst")
     :TAR_ZSTD:
-  else if name.ends_with ".tar"
+  else if lower.ends_with ".tar"
     :TAR:
-  else
-    nil
 
-def input_format_from_name name
+def input_format_from_name name @ (Str | nil) -> (UnpackFormat | nil)
   let format = archive_format_from_name $name
   if (format != nil || name == nil)
     return format
-  name = name.lower()
-  if name.ends_with ".gz"
+  let lower = name.lower()
+  if lower.ends_with ".gz"
     :GZIP:
-  else if name.ends_with ".zst"
+  else if lower.ends_with ".zst"
     :ZSTD:
-  else if name.ends_with ".xz"
+  else if lower.ends_with ".xz"
     :XZ:
-  else
-    nil
 
-def sniff_format path
+def sniff_format path @ Path -> UnpackFormat
   let head = path.open rb do |file| file.read 512
   if (head.starts_with b"PK\x03\x04" || head.starts_with b"PK\x05\x06" ||
       head.starts_with b"PK\x07\x08")
@@ -562,16 +648,16 @@ def sniff_format path
   else
     :TAR:
 
-def input_format path format
+def input_format path @ Path format @ (UnpackFormat | nil) -> UnpackFormat
   (parse_input_format format || input_format_from_name path.name || sniff_format path)
 
-def output_format destination format
+def output_format destination @ (Url | Path) format @ (ArchiveFormat | nil) -> ArchiveFormat
   let selected = (parse_archive_format format || archive_format_from_name destination.name)
   if (selected == nil)
     throw std.ValueError "can't infer archive format from destination"
   selected
 
-def compression_for format
+def compression_for format @ ArchiveFormat -> (:NONE: | :GZIP: | :ZSTD:)
   if (format == :TAR_GZIP:)
     :GZIP:
   else if (format == :TAR_ZSTD:)
@@ -579,62 +665,66 @@ def compression_for format
   else
     :NONE:
 
-def safe_components path label
-  path = unix_fs.Path $path
-  if path.is_absolute
-    throw std.ValueError "$label must be relative: $path"
-  let parts = path.components
+def safe_components path @ (Str | Path) label @ Str -> Seq[Str]
+  let relative = UnixPath $path
+  if relative.is_absolute
+    throw std.ValueError "$label must be relative: $relative"
+  let parts = relative.components
   if (parts.len == 0 ||
       parts.any(do |p| p == "" || p == "." || p == ".."))
-    throw std.ValueError "unsafe $label: $path"
+    throw std.ValueError "unsafe $label: $relative"
   parts
 
-def prefix_components prefix
-  if (prefix == nil)
-    []
+def archive_name path @ Path source @ Path prefix @ Seq[Str] -> Path
+  let relative = if (path == source)
+    let name = path.name
+    if (name == nil)
+      throw std.ValueError "can't pack a path with no final component: $path"
+    name
   else
-    safe_components $prefix "prefix"
+    path.relative $source
+  UnixPath.join ...prefix $relative
 
-def archive_name path source prefix
-  unix_fs.Path.join ...prefix
-    if (path == source)
-      $path.name
+# Metadata for one packed entry, spread into the writer's call.
+@let EntryMetadata = $
+  mode: Int
+  uid: Int
+  gid: Int
+  mtime: DateTime
+  ?owner_name: Str
+  ?group_name: Str
+
+# Looks up the name of a file's owner or group, given as `Metadata.owner` or
+# `Metadata.group` reports it.
+def account_name id @ (Int | Sid) kind @ (:USER: | :GROUP:) -> (Str | nil)
+  try
+    if (type id Int)
+      if (kind == :USER:)
+        security_unix.user_name $id
+      else
+        security_unix.group_name $id
     else
-      $path.relative(source)
+      id.lookup().qualified_name
+  catch sys.NotFoundError: _
+    nil
 
-def filesystem_metadata path kind options
+def filesystem_metadata
+  path @ Path
+  kind @ (:FILE: | :DIR: | :SYMLINK:)
+  options @ Dict[PackOptions]
+do -> Dict[EntryMetadata]
   let metadata = path.metadata resolve: :LINK:
   let unix = (sys.os_info().family != :WINDOWS:)
-  let default_mode = if (kind == :DIR:)
-    0o755
+  let requested default_mode = if (kind == :DIR:)
+    (options.get(:dir_mode:), 0o755)
   else if (kind == :SYMLINK:)
-    0o777
+    (options.get(:link_mode:), 0o777)
   else
-    0o644
-  let mode_key = if (kind == :DIR:)
-    :dir_mode:
-  else if (kind == :SYMLINK:)
-    :link_mode:
-  else
-    :mode:
-  let owner_name = options.get :owner_name: else: do
-    try
-      if unix
-        security_unix.user_name $metadata.uid
-      else
-        metadata.owner.lookup().qualified_name
-    catch sys.NotFoundError: _
-      nil
-  let group_name = options.get :group_name: else: do
-    try
-      if unix
-        security_unix.group_name $metadata.gid
-      else
-        metadata.group.lookup().qualified_name
-    catch sys.NotFoundError: _
-      nil
-  return $
-    mode: (_vfs.parse_mode(options.get(mode_key)) || (unix && (metadata.mode.int & 0o7777)) || default_mode)
+    (options.get(:mode:), 0o644)
+  let owner_name = options.get :owner_name: else: do account_name $metadata.owner :USER:
+  let group_name = options.get :group_name: else: do account_name $metadata.group :GROUP:
+  $
+    mode: (_vfs.parse_mode(requested) || (unix && (metadata.mode.int & 0o7777)) || default_mode)
     uid: (options.get(:uid:) || (unix && metadata.uid) || 0)
     gid: (options.get(:gid:) || (unix && metadata.gid) || 0)
     mtime: (options.get(:mtime:) || metadata.modified || DateTime.from_unix(0))
@@ -643,7 +733,7 @@ def filesystem_metadata path kind options
     if group_name
       :group_name
 
-def source_entries source
+def source_entries source @ Path -> Array[Path]
   let metadata = (source.metadata resolve: :LINK:)
   if (metadata.type == :DIR:)
     # `**` matches the source directory itself, which sorts first and must not
@@ -652,7 +742,14 @@ def source_entries source
   else
     [source]
 
-def pack_tar source destination format prefix metadata indicator
+def pack_tar
+  source @ Path
+  destination @ Path
+  format @ ArchiveFormat
+  prefix @ Seq[Str]
+  metadata @ Dict[PackOptions]
+  indicator @ progress.Indicator
+do -> nil
   tar.write $destination compression: (compression_for format) do |archive|
     for path = source_entries(source)
       let file_metadata = (path.metadata resolve: :LINK:)
@@ -661,8 +758,8 @@ def pack_tar source destination format prefix metadata indicator
         let values = (filesystem_metadata path :DIR: metadata)
         archive.create_dir $name ...values
       else if (file_metadata.type == :SYMLINK:)
-        let target = path.read_link()
-        let target = (packed_link name target prefix path)
+        let link = path.read_link()
+        let target = (packed_link name link prefix path)
         let values = (filesystem_metadata path :SYMLINK: metadata)
         archive.symlink $target $name ...values
       else if (file_metadata.type == :FILE:)
@@ -675,7 +772,13 @@ def pack_tar source destination format prefix metadata indicator
       else
         throw std.ValueError "unsupported file type while packing: $path"
 
-def pack_zip source destination prefix metadata indicator
+def pack_zip
+  source @ Path
+  destination @ Path
+  prefix @ Seq[Str]
+  metadata @ Dict[PackOptions]
+  indicator @ progress.Indicator
+do -> nil
   zip.open $destination w do |archive|
     for path = source_entries(source)
       let file_metadata = path.metadata resolve: :LINK:
@@ -684,8 +787,8 @@ def pack_zip source destination prefix metadata indicator
         let values = (filesystem_metadata path :DIR: metadata)
         archive.create_dir (str name) mode: $values[:mode:]
       else if (file_metadata.type == :SYMLINK:)
-        let target = path.read_link()
-        let target = (packed_link name target prefix path)
+        let link = path.read_link()
+        let target = (packed_link name link prefix path)
         let values = (filesystem_metadata path :SYMLINK: metadata)
         archive.symlink (str target) (str name) mode: $values[:mode:]
       else if (file_metadata.type == :FILE:)
@@ -700,7 +803,14 @@ def pack_zip source destination prefix metadata indicator
       else
         throw std.ValueError "unsupported file type while packing: $path"
 
-def pack_local source archive destination format prefix metadata
+def pack_local
+  source @ Path
+  archive @ Path
+  destination @ (Url | Path)
+  format @ ArchiveFormat
+  prefix @ Seq[Str]
+  metadata @ Dict[PackOptions]
+do -> nil
   let total = 0
   for path = source_entries(source)
     let item_metadata = path.metadata resolve: :LINK:
@@ -712,6 +822,32 @@ def pack_local source archive destination format prefix metadata
       pack_zip $source $archive $prefix $metadata $indicator
     else
       pack_tar $source $archive $format $prefix $metadata $indicator
+
+# Options for [`pack`](transfer.pack) that override what the filesystem reports
+# for each entry.
+pub @let PackOptions = $
+  # Permissions for regular files. Defaults to the source mode, or `0o644` when
+  # unavailable.
+  ?mode: (Int | Mode)
+  # Permissions for directories. Defaults to the source mode, or `0o755` when
+  # unavailable.
+  ?dir_mode: (Int | Mode)
+  # Permissions for symlinks. Defaults to the source mode, or `0o777` when
+  # unavailable.
+  ?link_mode: (Int | Mode)
+  # Owner ID. Defaults to the source owner, or `0` when unavailable.
+  ?uid: Int
+  # Group ID. Defaults to the source group, or `0` when unavailable.
+  ?gid: Int
+  # Owner name. Defaults to the source owner's qualified name when it can be
+  # looked up.
+  ?owner_name: Str
+  # Group name. Defaults to the source group's qualified name when it can be
+  # looked up.
+  ?group_name: Str
+  # Modification time. Defaults to the source modification time, or the Unix
+  # epoch when unavailable.
+  ?mtime: DateTime
 
 # Packs a file or directory into TAR, compressed TAR, or ZIP.
 #
@@ -726,95 +862,84 @@ pub def pack
   # Inferred from the destination name when omitted, which fails if the name
   # carries no recognized extension.
   :format @ ArchiveFormat = nil
-  # Relative path prepended
-  # to every archive entry.
+  # Relative path prepended to every archive entry.
   :prefix @ (Str | Path) = nil
-  # Permissions for regular
-  # files. Defaults to the source mode, or `0o644` when unavailable.
-  :mode @ (Int | Mode) = nil
-  # Permissions for
-  # directories. Defaults to the source mode, or `0o755` when unavailable.
-  :dir_mode @ (Int | Mode) = nil
-  # Permissions for
-  # symlinks. Defaults to the source mode, or `0o777` when unavailable.
-  :link_mode @ (Int | Mode) = nil
-  # Owner ID. Defaults to the source owner, or `0` when
-  # unavailable.
-  :uid @ Int = nil
-  # Group ID. Defaults to the source group, or `0` when
-  # unavailable.
-  :gid @ Int = nil
-  # Owner name. Defaults to the source owner's qualified
-  # name when it can be looked up.
-  :owner_name @ Str = nil
-  # Group name. Defaults to the source group's qualified
-  # name when it can be looked up.
-  :group_name @ Str = nil
-  # Modification time. Defaults to the source
-  # modification time, or the Unix epoch when unavailable.
-  :mtime @ DateTime = nil
+  # Overrides for the metadata of each entry.
+  ...options @ PackOptions
 do -> nil
-  let metadata = $
-    if (mode != nil)
-      mode: $mode
-    if (dir_mode != nil)
-      dir_mode: $dir_mode
-    if (link_mode != nil)
-      link_mode: $link_mode
-    if (uid != nil)
-      uid: $uid
-    if (gid != nil)
-      gid: $gid
-    if (owner_name != nil)
-      owner_name: $owner_name
-    if (group_name != nil)
-      group_name: $group_name
-    if (mtime != nil)
-      mtime: $mtime
-  source = (parse_location source)
-  if (type source Url)
-    source = get $source
-  destination = (parse_location destination)
-  let prefix = (prefix_components prefix)
-  if (type destination Url)
-    let selected = (output_format destination format)
-    with_temp_dir do |dir|
-      let temporary = (dir / (destination.name || "archive"))
-      pack_local $source $temporary $destination $selected $prefix $metadata
-      put $temporary $destination
+  let overrides @ Dict[PackOptions] = {...options}
+  let from = (parse_location source)
+  let local = if (type from Url)
+    get $from
   else
-    let selected = (output_format destination format)
-    destination.parent.create_dir all: true
-    let tmp = destination.add_ext tmp
+    from
+  let to = (parse_location destination)
+  let parts @ Seq[Str] = if (prefix == nil)
+    ([] @ Array[Str])
+  else
+    safe_components $prefix "prefix"
+  let selected = (output_format to format)
+  if (type to Url)
+    with_temp_dir do |dir|
+      let temporary = (dir / (to.name || "archive"))
+      pack_local $local $temporary $to $selected $parts $overrides
+      put $temporary $to
+  else
+    let parent = to.parent
+    if (parent != nil)
+      parent.create_dir all: true
+    let tmp = to.add_ext tmp
     try
-      pack_local $source $tmp $destination $selected $prefix $metadata
-      tmp.rename $destination
+      pack_local $local $tmp $to $selected $parts $overrides
+      tmp.rename $to
     finally
       tmp.remove ignore: true
-  nil
 
-def link_path path label
-  path = (unix_fs.Path path)
-  if path.is_absolute
-    throw std.ValueError "$label must be relative: $path"
-  if (path.components.len == 0)
-    throw std.ValueError "unsafe $label: $path"
-  path
+def link_path path @ (Str | Path) label @ Str -> UnixPath
+  let link = UnixPath $path
+  if link.is_absolute
+    throw std.ValueError "$label must be relative: $link"
+  if (link.components.len == 0)
+    throw std.ValueError "unsafe $label: $link"
+  link
 
-def packed_link name target prefix source
-  let target = (link_path target "symlink target")
+def packed_link name @ Path target @ Path prefix @ Seq[Str] source @ Path -> UnixPath
+  let link = (link_path target "symlink target")
   let name_parts = name.components[prefix.len..]
-  let resolved = (resolve_link name_parts target)
-  let resolved_parts = resolved.components
+  let resolved_parts = (resolve_link name_parts link).components
   if (resolved_parts.len > 0 && resolved_parts[0] == "..")
     throw std.ValueError "symlink escapes archive root: $source"
-  target
+  link
 
-def strip_count records strip
+# Fields of an archive entry, as parsed from the archive.
+@let EntryFields = $
+  raw: Str
+  parts: Seq[Str]
+  kind: (:FILE: | :DIR: | :SYMLINK: | :HARDLINK:)
+  size: Int
+  mode: (Int | nil)
+  mtime: (DateTime | nil)
+  # The target of a symlink or hard link, as the archive gives it.
+  link: (Str | nil)
+
+# One archive entry, as parsed from the archive.
+class ArchiveEntry: Struct[EntryFields]
+
+@let PlacedFields = $
+  ...EntryFields
+  output_parts: Seq[Str]
+  output: Str
+  resolved_link: (Str | nil)
+
+# An archive entry and where it lands. Normalizing the manifest fills in
+# `resolved_link` once every output is known.
+class Placed: Struct[PlacedFields]
+
+def strip_count entries @ Array[ArchiveEntry] strip @ (Int | :ROOT:) -> Int
   if (strip == :ROOT:)
-    if (records.len == 0)
+    if (entries.len == 0)
       throw std.ValueError "strip: :ROOT: requires a non-empty archive"
-    let root ...rest = [...records.map do |p| p.parts[0]]
+    let root ...rest = [...entries.map do |p| p.parts[0]]
     if [...rest].any do |x| (x != root)
       throw std.ValueError "strip: :ROOT: requires one shared root component"
     1
@@ -823,40 +948,39 @@ def strip_count records strip
   else
     throw std.ValueError "strip: expected a non-negative Int or :ROOT:"
 
-def record_path parts
-  let path = unix_fs.Path.join ...parts
+def record_path parts @ Seq[Str] -> Str
+  let path = UnixPath.join ...parts
   str $path
 
-def resolve_link output_parts target
-  let output = unix_fs.Path.join ...output_parts
+def resolve_link output_parts @ Seq[Str] target @ UnixPath -> Path
+  let output = UnixPath.join ...output_parts
   let parent = output.parent
-  if !parent
+  if (parent == nil)
     throw std.ValueError "empty output path"
-  unix_fs.Path.join(parent, target).normalize()
+  UnixPath.join(parent, target).normalize()
 
-def normalize_manifest records strip
-  let count = (strip_count records strip)
-  let outputs = {}
-  let normalized = []
+def normalize_manifest
+  entries @ Array[ArchiveEntry]
+  strip @ (Int | :ROOT:)
+do -> (Array[Placed], Dict[Str, Placed])
+  let count = (strip_count entries strip)
+  let outputs @ Dict[Str, Placed] = {}
+  let placed @ Array[Placed] = []
 
-  for item = records
+  for item = entries
     let parts = item.parts
     if (parts.len < count)
       throw std.ValueError "archive path has fewer than $count components: $item.raw"
     let output_parts = parts[count..]
     if (output_parts.len == 0)
-      if (item.kind == :DIR:)
-        nil
-      else
+      if (item.kind != :DIR:)
         throw std.ValueError "stripping removes archive entry path: $item.raw"
     else
       let output = (record_path output_parts)
       if (outputs.contains output)
         throw std.ValueError "duplicate archive output: $output"
-      let ancestor = []
-      for component = output_parts[..-1]
-        ancestor.push $component
-        let ancestor_key = (record_path ancestor)
+      for end = 1..output_parts.len
+        let ancestor_key = (record_path output_parts[..end])
         let ancestor_record = (outputs.get ancestor_key)
         if (ancestor_record && ancestor_record.kind != :DIR:)
           throw std.ValueError "archive path conflicts with non-directory: $ancestor_key"
@@ -864,58 +988,46 @@ def normalize_manifest records strip
         let prefix = "$output/"
         if outputs.keys().any(do |key| key.starts_with prefix)
           throw std.ValueError "archive path conflicts with directory: $output"
-      item.output_parts = output_parts
-      item.output = output
-      outputs[output] = item
-      normalized.push $item
+      let place = Placed {...item, :output_parts, :output, resolved_link: nil}
+      outputs[output] = place
+      placed.push $place
 
-  for item = normalized
+  for item = placed
+    let link = item.link
+    if (link == nil)
+      continue
     if (item.kind == :SYMLINK:)
-      let target = (link_path item.link  "symlink target")
-      let resolved = (resolve_link item.output_parts target)
-      let resolved_parts = resolved.components
+      let target = (link_path link "symlink target")
+      let resolved_parts = (resolve_link item.output_parts target).components
       if (resolved_parts.len > 0 && resolved_parts[0] == "..")
         throw std.ValueError "link target escapes extraction root"
       item.resolved_link = (record_path resolved_parts)
     else if (item.kind == :HARDLINK:)
-      let target_parts = (safe_components item.link "hard-link target")
+      let target_parts = (safe_components link "hard-link target")
       if (target_parts.len < count)
-        throw std.ValueError "hard-link target removed by strip: $item.link"
+        throw std.ValueError "hard-link target removed by strip: $link"
       let target = (record_path target_parts[count..])
       let target_record = (outputs.get target)
       if (target_record == nil || target_record.kind != :FILE:)
-        throw std.ValueError "hard-link target is not a regular archive file: $item.link"
+        throw std.ValueError "hard-link target is not a regular archive file: $link"
       item.resolved_link = target
 
-  [normalized, outputs]
+  (placed, outputs)
 
-# One archive entry. Normalizing the manifest fills in where it lands, and the
-# entry is shared with the output map and a TAR unpacker's lookup by raw path,
-# so it is updated in place.
-class ArchiveEntry
-  pub field raw parts kind size mode mtime = nil
-  pub field link output_parts output resolved_link = nil
-
-  def (init) self :raw :parts :kind :size :mode :mtime
-    self.raw = raw
-    self.parts = parts
-    self.kind = kind
-    self.size = size
-    self.mode = mode
-    self.mtime = mtime
-
-def output_path root item
+def output_path root @ Path item @ Placed -> Path
   (root / item.output)
 
-def create_directories root records
-  for item = records
+def create_directories root @ Path placed @ Array[Placed] -> nil
+  for item = placed
     let destination = (output_path root item)
     if (item.kind == :DIR:)
       destination.create_dir all: true
     else
-      destination.parent.create_dir all: true
+      let parent = destination.parent
+      if (parent != nil)
+        parent.create_dir all: true
 
-def apply_metadata path item
+def apply_metadata path @ Path item @ Placed -> nil
   if !path.exists()
     throw std.ValueError "archive entry was not extracted: $item.output"
   let modified = item.mtime
@@ -923,49 +1035,57 @@ def apply_metadata path item
   if (sys.os_info().family != :WINDOWS: && mode != nil)
     path.update_metadata mode: (mode & 0o7777)
   if modified
-    path.update_metadata modified: $modified
+    path.update_metadata :modified
 
-def finish_links root records outputs
-  for item = records
-    if (item.kind == :HARDLINK:)
-      let source = (root / item.resolved_link)
+def finish_links
+  root @ Path
+  placed @ Array[Placed]
+  outputs @ Dict[Str, Placed]
+do -> nil
+  for item = placed
+    let target = item.resolved_link
+    if (item.kind == :HARDLINK: && target != nil)
+      let source = (root / target)
       source.hard_link (output_path root item)
 
-  for item = records
-    if (item.kind == :SYMLINK:)
+  for item = placed
+    let link = item.link
+    let resolved = item.resolved_link
+    if (item.kind == :SYMLINK: && link != nil && resolved != nil)
       let destination = (output_path root item)
-      let target_record = (outputs.get item.resolved_link)
+      let target_record = (outputs.get resolved)
       if (target_record && target_record.kind == :DIR:)
-        fs.symlink_dir $item.link $destination
+        fs.symlink_dir $link $destination
       else
-        fs.symlink_file $item.link $destination
+        fs.symlink_file $link $destination
 
-def finish_metadata root records
-  for item = records
+def finish_metadata root @ Path placed @ Array[Placed] -> nil
+  for item = placed
     if (item.kind == :FILE:)
       apply_metadata (output_path root item) $item
-  for item = records
+  for item = placed
     if (item.kind == :DIR:)
       apply_metadata (output_path root item) $item
 
-def prepare_extraction root records
-  create_directories $root $records
+def prepare_extraction root @ Path placed @ Array[Placed] -> Int
+  create_directories $root $placed
   let total = 0
-  for item = records
+  for item = placed
     if (item.kind == :FILE:)
       total = (total + item.size)
   total
 
 class TarUnpack
-  field source = nil
-  field by_raw = nil
+  field source @ Path
+  # Raw paths `parse` saw, including entries that stripping drops.
+  field parsed @ Set[Str]
 
-  def (init) self source
+  def (init) self source @ Path
     self.#source = source
+    self.#parsed = Set()
 
-  pub def parse self
-    let records = []
-    self.#by_raw = {}
+  pub def parse self -> Array[ArchiveEntry]
+    let entries @ Array[ArchiveEntry] = []
     tar.read $self.#source do |archive|
       for entry = archive
         let kind = entry.type
@@ -973,80 +1093,96 @@ class TarUnpack
              kind == :HARDLINK:)
           throw std.ValueError "unsupported TAR entry type: $kind"
         let raw = (str entry.path)
-        if (self.#by_raw.contains raw)
+        if (self.#parsed.contains raw)
           throw std.ValueError "duplicate archive entry: $raw"
-        let item = ArchiveEntry :raw :kind
-          parts: $safe_components(entry.path, "archive path")
+        self.#parsed.add $raw
+        let parts = (safe_components entry.path "archive path")
+        let link_name = entry.link_name
+        let link = if (kind == :SYMLINK: || kind == :HARDLINK:)
+          if (link_name == nil)
+            throw std.ValueError "archive link is missing its target: $raw"
+          str $link_name
+        else
+          nil
+        entries.push $ ArchiveEntry $
+          :raw :parts :kind :link
           size: $entry.size
           mode: $entry.mode
           mtime: $entry.mtime
-        if (kind == :SYMLINK: || kind == :HARDLINK:)
-          if (entry.link_name == nil)
-            throw std.ValueError "archive link is missing its target: $raw"
-          item.link = (str entry.link_name)
-        self.#by_raw[raw] = item
-        records.push $item
-    records
+    entries
 
-  pub def extract self root records outputs
-    let total = prepare_extraction(root, records)
+  pub def extract
+    self
+    root @ Path
+    placed @ Array[Placed]
+    outputs @ Dict[Str, Placed]
+  do -> nil
+    let by_raw @ Dict[Str, Placed] = $
+      for item = placed
+        $item.raw: $item
+    let total = (prepare_extraction root placed)
     let message = (self.#source.name || str self.#source)
-    progress.show message: $message total: $total units: :BYTES: do |indicator|
+    progress.show :message :total units: :BYTES: do |indicator|
       tar.read $self.#source do |archive|
         for entry = archive
           let raw = (str entry.path)
-          let item = (self.#by_raw.get raw)
-          if (item == nil)
+          if !(self.#parsed.contains raw)
             throw std.ValueError "manifest entry missing during TAR extraction: $raw"
-          if (item.kind == :FILE:)
+          # Entries that stripping drops have no placement.
+          let item = (by_raw.get raw)
+          if (item != nil && item.kind == :FILE:)
             let destination = (output_path root item)
             destination.open wb do |file|
               for chunk = entry
                 file.write $chunk
                 indicator.delta $chunk.len
-    finish_links $root $records $outputs
-    finish_metadata $root $records
+    finish_links $root $placed $outputs
+    finish_metadata $root $placed
 
 class ZipUnpack
-  field source = nil
+  field source @ Path
 
-  def (init) self source
+  def (init) self source @ Path
     self.#source = source
 
-  pub def parse self
-    let records = []
+  pub def parse self -> Array[ArchiveEntry]
+    let entries @ Array[ArchiveEntry] = []
     zip.open $self.#source do |archive|
-      let entries = [...archive.entries]
-      let seen = Set()
-
-      for entry = entries
+      let seen @ Set[Str] = Set()
+      for entry = archive.entries
         let raw = (str entry.name)
         if (seen.contains raw)
           throw std.ValueError "duplicate ZIP entry: $raw"
         seen.add $raw
-        let mode = entry.mode
         let kind = entry.type
         if !(kind == :FILE: || kind == :DIR: || kind == :SYMLINK:)
           throw std.ValueError "unsupported ZIP entry type: $raw"
-        let item = ArchiveEntry :kind :mode
-          raw: $raw
-          parts: $safe_components(raw, "archive path")
-          size: $entry.size
-          mtime: nil
-        if (kind == :SYMLINK:)
+        let parts = (safe_components raw "archive path")
+        let link = if (kind == :SYMLINK:)
           entry.open do |file|
             let target = (file.read(entry.size + 1))
             file.read 1
-            item.link = (str target)
-        records.push $item
-    records
+            str $target
+        else
+          nil
+        entries.push $ ArchiveEntry $
+          :raw :parts :kind :link
+          size: $entry.size
+          mode: $entry.mode
+          mtime: nil
+    entries
 
-  pub def extract self root records outputs
-    let total = prepare_extraction $root $records
+  pub def extract
+    self
+    root @ Path
+    placed @ Array[Placed]
+    outputs @ Dict[Str, Placed]
+  do -> nil
+    let total = (prepare_extraction root placed)
     let message = (self.#source.name || str self.#source)
-    progress.show message: $message total: $total units: :BYTES: do |indicator|
+    progress.show :message :total units: :BYTES: do |indicator|
       zip.open $self.#source do |archive|
-        for item = records
+        for item = placed
           if (item.kind == :FILE:)
             archive.open $item.raw do |entry|
               let destination = (output_path root item)
@@ -1064,8 +1200,8 @@ class ZipUnpack
                   indicator.delta $chunk.len
                   remaining = (remaining - chunk.len)
                 entry.read 1
-    finish_links $root $records $outputs
-    finish_metadata $root $records
+    finish_links $root $placed $outputs
+    finish_metadata $root $placed
 
 # Raised when unpacking a raw compressed stream (gzip, Zstandard, XZ) fails.
 pub class ArchiveError: std.RuntimeError
@@ -1074,7 +1210,7 @@ pub class ArchiveError: std.RuntimeError
   # The failing tool's error output, when it printed exactly one line.
   pub field detail @ (Str | nil) = nil
 
-  def (init) self source detail = nil
+  def (init) self source @ Path detail @ (Str | nil) = nil
     std.RuntimeError.(init) $self
       if detail
         "archive operation failed: $source: $detail"
@@ -1083,10 +1219,11 @@ pub class ArchiveError: std.RuntimeError
     self.source = source
     self.detail = detail
 
-def raw_format format
-  (format == :GZIP: || format == :ZSTD: || format == :XZ:)
-
-def decompress_raw source destination format
+def decompress_raw
+  source @ Path
+  destination @ Path
+  format @ (:GZIP: | :ZSTD: | :XZ:)
+do -> nil
   let prog = if (format == :GZIP:)
     "gzip"
   else if (format == :ZSTD:)
@@ -1101,10 +1238,10 @@ def decompress_raw source destination format
   # original error rather than guessing how to summarize it. If there's more
   # than a single line, dump it to stderr for logging purposes (same as
   # libvirt's fallback for unrecognized errors) before rethrowing.
-  let lines = []
+  let lines @ Array[Str] = []
   try
     destination.open wb do |file|
-      run $prog -dc -- $source stdout: $file stderr: $lines.prechomp()
+      run $prog -dc -- $source stdin: [] stdout: $file stderr: $lines.prechomp()
   catch proc.Error: e
     if (lines.len == 1)
       throw ArchiveError $source $lines[0]
@@ -1141,39 +1278,41 @@ pub def unpack
   # for a URL source.
   :app @ Str = nil
 do -> nil
-  source = parse_location $source
-  if (type source Url)
-    source = get $source
+  let from = (parse_location source)
+  let local = if (type from Url)
+    get $from
       if (app != nil)
-        app: $app
-  destination = parse_location $destination
-  if (type destination Url)
-    throw std.ValueError "unpack destination must be a path"
-  if destination.exists()
-    throw std.ValueError "unpack destination already exists: $destination"
+        :app
+  else
+    from
+  let to = match parse_location(destination)
+    Url(_) do throw std.ValueError "unpack destination must be a path"
+    path do path
+  if to.exists()
+    throw std.ValueError "unpack destination already exists: $to"
 
-  let selected = input_format $source $format
-  let parent = (destination.parent || Path ".")
-  if raw_format $selected
+  let selected = (input_format local format)
+  let parent = (to.parent || Path ".")
+  if (selected == :GZIP: || selected == :ZSTD: || selected == :XZ:)
     if (strip != 0)
       throw std.ValueError "strip: not valid for raw compressed input"
     parent.create_dir all: true
-    with_temp_dir parent: $parent do |staging|
+    with_temp_dir :parent do |staging|
       let output = (staging / "output")
-      decompress_raw $source $output $selected
-      if destination.exists()
-        throw std.ValueError "unpack destination appeared during decompression: $destination"
-      output.rename $destination
+      decompress_raw $local $output $selected
+      if to.exists()
+        throw std.ValueError "unpack destination appeared during decompression: $to"
+      output.rename $to
     return nil
 
   let unpacker = if (selected == :ZIP:)
-    ZipUnpack $source
+    ZipUnpack $local
   else
-    TarUnpack $source
-  let records outputs = normalize_manifest $unpacker.parse() $strip
+    TarUnpack $local
+  let placed outputs = normalize_manifest $unpacker.parse() $strip
   parent.create_dir all: true
-  with_temp_dir parent: $parent do |staging|
-    unpacker.extract $staging $records $outputs
-    if destination.exists()
-      throw std.ValueError "unpack destination appeared during extraction: $destination"
-    staging.rename $destination
+  with_temp_dir :parent do |staging|
+    unpacker.extract $staging $placed $outputs
+    if to.exists()
+      throw std.ValueError "unpack destination appeared during extraction: $to"
+    staging.rename $to
