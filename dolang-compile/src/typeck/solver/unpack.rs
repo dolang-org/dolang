@@ -23,7 +23,7 @@
 //! itself, `Rest` carries over only where `S` is its own tail. So a class whose
 //! `Rest` depends on `S` has its `(unpack)` return its own type, not `Unpack`.
 
-use std::collections::BTreeSet;
+use bitvec::{bitbox, boxed::BitBox};
 
 use super::{
     schema::{Opacity, Shape, Slot},
@@ -520,45 +520,48 @@ impl Solver<'_> {
             }
             steps
         };
-        let mut forward: Vec<BTreeSet<usize>> = vec![BTreeSet::from([0])];
+        // Include the terminal state; iter_ones keeps joins in ascending order.
+        let mut initial = bitbox![0; atoms.len() + 1];
+        initial.set(0, true);
+        let mut forward: Vec<BitBox> = vec![initial];
         for step in 0..slots {
-            let next = (forward[step].iter())
-                .flat_map(|&state| steps(state))
-                .map(|(_, next)| next)
-                .collect();
+            let mut next = bitbox![0; atoms.len() + 1];
+            for state in forward[step].iter_ones() {
+                for (_, state) in steps(state) {
+                    next.set(state, true);
+                }
+            }
             forward.push(next);
         }
         // The states on a path the pattern accepts: with `k` items, where
         // defaults fill the slots past them or a rest takes what's left
-        let mut alive: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); slots + 1];
+        let mut alive = vec![bitbox![0; atoms.len() + 1]; slots + 1];
         let mut accepted = Vec::new();
         for (count, states) in forward.iter().enumerate().skip(required) {
-            for &state in states {
+            for state in states.iter_ones() {
                 if ends(state) || (count == slots && pattern.positional_rest()) {
-                    alive[count].insert(state);
+                    alive[count].set(state, true);
                     accepted.push(state);
                 }
             }
         }
         for step in (0..slots).rev() {
-            let live: Vec<usize> = (forward[step].iter())
-                .copied()
-                .filter(|&state| {
-                    (steps(state).iter()).any(|(_, next)| alive[step + 1].contains(next))
-                })
-                .collect();
-            alive[step].extend(live);
+            for state in forward[step].iter_ones() {
+                if (steps(state).iter()).any(|&(_, next)| alive[step + 1][next]) {
+                    alive[step].set(state, true);
+                }
+            }
         }
-        if !alive[0].contains(&0) {
+        if !alive[0][0] {
             return None;
         }
         let bottom = self.db.bottom();
         let types = (0..slots)
             .map(|step| {
                 let mut ty = bottom;
-                for &state in &alive[step] {
+                for state in alive[step].iter_ones() {
                     for (index, next) in steps(state) {
-                        if alive[step + 1].contains(&next) {
+                        if alive[step + 1][next] {
                             ty = self.lub(ty, atoms[index].1);
                         }
                     }

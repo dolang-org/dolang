@@ -16,10 +16,10 @@
 //! run: its results are bottom. An item of a comprehension is the exception, since
 //! bottom only says that it occurs zero times.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 
 use dolang_util::mono::MonoVec;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
     At, Flow, State,
@@ -2781,8 +2781,8 @@ impl<'a> Flow<'a, '_> {
         parts: &[Expr],
         expected: Option<TypeId>,
     ) -> TypeId {
-        let mut holes = BTreeMap::new();
-        let mut positional = std::collections::BTreeSet::new();
+        let mut holes = FxHashMap::default();
+        let mut positional = FxHashSet::default();
         for part in parts {
             if let ExprKind::FmtParam {
                 name, name_span, ..
@@ -2803,6 +2803,9 @@ impl<'a> Flow<'a, '_> {
             true => self.db.top(),
             false => self.db.unknown(),
         };
+        // Keep the schema's keyed items and gap diagnostics in TypeId order.
+        let mut holes: Vec<_> = holes.into_iter().collect();
+        holes.sort_unstable_by_key(|(key, _)| *key);
         for (key, (span, name)) in holes {
             let element = match name {
                 Literal::Int(index) if index < prefix as i128 => {

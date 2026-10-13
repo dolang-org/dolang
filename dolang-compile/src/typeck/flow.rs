@@ -125,7 +125,7 @@ struct Accumulator {
     ty: TypeId,
     widening: Widening,
     /// The blocks that read it, queued again when it grows or thaws
-    readers: BTreeSet<(BlockId, CtxId)>,
+    readers: FxHashSet<(BlockId, CtxId)>,
     /// Whether its owner assigned it after it escaped, so that the functions that
     /// cache it read it here instead
     thawed: bool,
@@ -186,6 +186,8 @@ struct Flow<'a, 'u> {
     modules: FxHashMap<&'u str, UnitId>,
     contexts: Contexts,
     states: FxHashMap<(BlockId, CtxId), Entry>,
+    /// Deduplicating priority queue ordered by reverse-postorder rank; both
+    /// forward and reversed traversal need its order.
     queue: BTreeSet<(u32, BlockId, CtxId)>,
     /// Take the queue's last entry rather than its first, to show that the result
     /// doesn't depend on the order
@@ -733,7 +735,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         self.accumulators.entry(var).or_insert_with(|| Accumulator {
             ty: bottom,
             widening: Widening::default(),
-            readers: BTreeSet::new(),
+            readers: FxHashSet::default(),
             thawed: false,
         })
     }

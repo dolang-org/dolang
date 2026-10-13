@@ -250,6 +250,47 @@ fn rest_shape_inclusions_of_rigids_and_unknown() {
 }
 
 #[test]
+fn schema_contents_can_skip_optional_atoms() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let tuple = nominal(
+        &mut db,
+        "Tuple",
+        vec![Binder {
+            variance: Variance::Covariant,
+            ..bounded(Kind::Schema, Binding::Positional, None)
+        }],
+        vec![],
+    );
+    let expected = items(
+        &db,
+        vec![
+            positional(Multiplicity::Optional, int),
+            positional(Multiplicity::Repeated, str),
+            positional(Multiplicity::Optional, int),
+        ],
+    );
+    let expected = apply(&db, tuple, &[expected]);
+    let actuals: Vec<_> = [vec![], vec![str], vec![str, str], vec![str, int]]
+        .into_iter()
+        .map(|types| apply(&db, tuple, &[schema(&db, &types)]))
+        .collect();
+    let impossible = apply(&db, tuple, &[schema(&db, &[str, int, str])]);
+    db.seal();
+    // Counting assigns the first string to the leading optional Int, but a
+    // proven automaton path skips it, loops on Str, and reaches the terminal.
+    for actual in actuals {
+        let outcome = check(&db, actual, expected);
+        assert_eq!(outcome.status, Status::Proven, "{outcome:?}");
+    }
+    assert_eq!(
+        check(&db, impossible, expected).status,
+        Status::Contradicted
+    );
+}
+
+#[test]
 fn positional_items_are_distributed_by_count() {
     use Multiplicity::{Optional as Opt, Repeated as Rep, Required as Req};
     let mut db = Database::new();
