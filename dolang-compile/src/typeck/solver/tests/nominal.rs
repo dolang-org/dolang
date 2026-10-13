@@ -157,20 +157,19 @@ fn unused_supertype_bounds_do_not_create_obligations() {
 }
 
 #[test]
-#[should_panic(expected = "transparent declaration cycle")]
-fn alias_cycles_panic() {
+fn alias_cycles_are_recursive() {
     let mut db = Database::new();
     let (aid, a, asrc) = reserve(&mut db, DeclKind::Alias, "A");
     let (bid, b, bsrc) = reserve(&mut db, DeclKind::Alias, "B");
     populate(&mut db, aid, asrc, b, vec![]);
     populate(&mut db, bid, bsrc, a, vec![]);
     db.seal();
-    check(&db, a, b);
+    let outcome = check(&db, a, b);
+    assert!(has(&outcome, Residual::Recursive.into()));
 }
 
 #[test]
-#[should_panic(expected = "transparent declaration cycle")]
-fn generic_alias_cycles_panic() {
+fn generic_alias_cycles_are_recursive() {
     let mut db = Database::new();
     let int = nominal(&mut db, "Int", vec![], vec![]);
     let r = reference(&db, 0, 0);
@@ -182,7 +181,8 @@ fn generic_alias_cycles_panic() {
     populate(&mut db, bid, bsrc, body, vec![]);
     let applied = apply(&db, a, &[int]);
     db.seal();
-    check(&db, applied, int);
+    let outcome = check(&db, applied, int);
+    assert!(has(&outcome, Residual::Recursive.into()));
 }
 
 #[test]

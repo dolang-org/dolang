@@ -1,0 +1,59 @@
+# dolang: strict
+# A schema alias as a collection's schema argument projects as the schema it
+# stands for, whether it's declared before or after its use, and through the
+# aliases it includes
+
+@let Fields = {size: Int, total: (Int | nil)}
+
+pub def struct_items x @ Struct[Fields]
+  let _ = x[:size:]
+  #   ^: flow std.Int
+  let _ = x.total
+  #   ^: flow nil | std.Int
+  x.size = 3
+  x.size = "x"
+  # error: expected `std.Int`, found `"x"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   x.size = "x"
+  #    |            ^^^
+
+pub def dict_items x @ Dict[Fields]
+  let _ = x[:size:]
+  #   ^: flow std.Int
+
+pub def record_items x @ Record[...Fields]
+  let _ = x[:total:]
+  #   ^: flow nil | std.Int
+
+pub def missing x @ Struct[Fields]
+  let _ = x.missing
+  # error: `std.Struct[m.Fields]` has no member `missing`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = x.missing
+  #    |           ^^^^^^^^^
+  #    |
+  #    = note: `(get)`: expected `std.Keys[...m.Fields]`, found `:missing:`
+  #    = note: `:missing:` does not fit `std.Keys[...m.Fields]`
+
+pub def subclass x @ Sized
+  let _ = x.size
+  #   ^: flow std.Int
+
+pub class Sized: Struct[Later]
+  pub def (init) _self
+    nil
+
+@let Later = $
+  size: Int
+
+@let Base = {a: Int}
+@let Left = {...Base, b: Str}
+@let Both = {...Base, ...Left}
+
+pub def included x @ Struct[Both]
+  let _ = x[:a:]
+  #   ^: flow std.Int
+  let _ = x[:b:]
+  #   ^: flow std.Str

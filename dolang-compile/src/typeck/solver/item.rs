@@ -156,6 +156,7 @@ impl Solver<'_> {
 
     /// The values of a schema's items a key selects
     fn selected(&self, schema: TypeId, key: TypeId) -> Result<Vec<TypeId>, Issue> {
+        let schema = self.exposed_schema(schema)?.unwrap_or(schema);
         if let Type::Unknown(_) = self.db.ty(schema) {
             return Ok(vec![self.db.unknown()]);
         }
