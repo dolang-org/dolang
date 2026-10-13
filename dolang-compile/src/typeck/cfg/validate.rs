@@ -45,6 +45,9 @@ pub(crate) enum Invalid {
     /// An escaping variable its function's parent doesn't own, or that's joined
     /// as it's assigned
     Escape { func: FuncId, var: VarId },
+    /// A `Cache` other than first in its function's entry block, or naming a
+    /// variable its function doesn't capture, or that it may not cache
+    Cache(BlockId),
 }
 
 impl Ir {
@@ -90,8 +93,22 @@ impl Ir {
             }
         }
         let mut created = vec![0usize; self.funcs().count()];
-        for (_, block) in self.blocks() {
-            for step in &block.steps {
+        for (id, block) in self.blocks() {
+            for (index, step) in block.steps.iter().enumerate() {
+                if let Step::Cache(vars) = step {
+                    let func = self.func(block.func);
+                    let valid = index == 0
+                        && func.entry == id
+                        && vars.iter().all(|&var| {
+                            let data = self.var(var);
+                            func.captures.contains(&var)
+                                && !data.flags.contains(VarFlags::VOLATILE)
+                                && !matches!(data.origin, Origin::Signature | Origin::Result)
+                        });
+                    if !valid {
+                        return Err(Invalid::Cache(id));
+                    }
+                }
                 let Step::Capture(funcs) = step else {
                     continue;
                 };
@@ -137,6 +154,7 @@ impl Ir {
                     }
                     Step::Eval(expr) | Step::Push(expr) => exprs.push(expr),
                     Step::Dup | Step::Pop | Step::Capture(_) => {}
+                    Step::Cache(cached) => vars.extend(cached),
                     Step::Assume(assume) => {
                         vars.push(assume.var);
                         match &assume.against {
@@ -370,7 +388,7 @@ impl Ir {
                         depth += 1;
                     }
                     Step::Pop => pop(&mut depth, 1),
-                    Step::Capture(_) => {}
+                    Step::Capture(_) | Step::Cache(_) => {}
                     Step::Assume(assume) => match &assume.against {
                         Against::Class(expr) | Against::Value(expr) => {
                             assert_eq!(operands(expr), 0)

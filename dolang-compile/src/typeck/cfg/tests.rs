@@ -558,6 +558,54 @@ fn captures() {
 }
 
 #[test]
+fn caches() {
+    /// A closure caching a variable of the module's with the given origin,
+    /// volatile or not, captured or not, in its entry block's first step or else a
+    /// later one
+    fn caching(origin: Origin, volatile: bool, captured: bool, first: bool) -> Result<(), Invalid> {
+        let graph = Graph::new();
+        let top = returning(&graph);
+        let lambda = closure(&graph, top);
+        let var = graph.alloc_var(top, origin, None);
+        graph.var_mut(var).flags.set(VarFlags::VOLATILE, volatile);
+        let (entry, exit) = {
+            let mut func = graph.func_mut(lambda);
+            if captured {
+                func.captures.push(var);
+            }
+            (func.entry, func.exit)
+        };
+        if !first {
+            push(&graph, entry, Step::Pop);
+        }
+        push(&graph, entry, Step::Cache(vec![var]));
+        terminate(&graph, entry, Terminal::Branch(exit));
+        graph.freeze().validate()
+    }
+
+    let source = Origin::Source(Span::INVALID);
+    assert_eq!(caching(source, false, true, true), Ok(()));
+    assert!(matches!(
+        caching(source, true, true, true),
+        Err(Invalid::Cache(_))
+    ));
+    assert!(matches!(
+        caching(source, false, false, true),
+        Err(Invalid::Cache(_))
+    ));
+    assert!(matches!(
+        caching(source, false, true, false),
+        Err(Invalid::Cache(_))
+    ));
+    for origin in [Origin::Signature, Origin::Result] {
+        assert!(matches!(
+            caching(origin, false, true, true),
+            Err(Invalid::Cache(_))
+        ));
+    }
+}
+
+#[test]
 fn signatures() {
     /// Validate a module with a parameterless closure whose signature has a result
     /// variable, owned by the module or else the closure, captured or not, and

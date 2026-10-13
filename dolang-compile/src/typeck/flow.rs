@@ -21,16 +21,24 @@
 //! its type in its state, and narrows it there, unless it's volatile: assigned by
 //! another function, whose calls could change it at any time. A volatile
 //! variable's owner reads the accumulator too, and keeps only whether it may be
-//! unassigned; to narrow it, copy it to a local first. Every assignment to a
-//! volatile variable joins its accumulator. Any other ivar joins what its owner
-//! holds when a function it escapes through is created, at a [`Step::Capture`],
-//! and each assignment on a path after one: no function that reads it can run
-//! before. A binding other than a `def`'s or `class`'s, which are hoisted, makes a
-//! fresh cell that no function has captured yet, so it starts a new path before
-//! any capture. A non-local return joins its value into its def's result the same
-//! way, as does a `do` block's signature: what the calls it's passed to give its
-//! parameters and channels, and its result. A block that reads a joined type depends on it, and
-//! is queued again when it grows.
+//! unassigned. Every assignment to a volatile variable joins its accumulator. Any
+//! other ivar joins what its owner holds when a function it escapes through is
+//! created, at a [`Step::Capture`], and each assignment on a path after one: no
+//! function that reads it can run before. A binding other than a `def`'s or
+//! `class`'s, which are hoisted, makes a fresh cell that no function has captured
+//! yet, so it starts a new path before any capture. A non-local return joins its
+//! value into its def's result the same way, as does a `do` block's signature:
+//! what the calls it's passed to give its parameters and channels, and its
+//! result. A block that reads a joined type depends on it, and is queued again
+//! when it grows.
+//!
+//! A function also caches each ivar it captures that isn't volatile, loading it
+//! from the accumulator at its entry ([`Step::Cache`]), and narrows it there,
+//! until the owner assigns it on a path where it may have escaped. A spawned
+//! function may run between any two of its owner's steps, so only a variable
+//! that doesn't change once it escapes keeps what a test showed. That assignment
+//! thaws the variable: the entries that loaded it run again and mark their
+//! copies, and every read after goes to the accumulator.
 //!
 //! A step that can throw joins its state before it into its handler, with the
 //! exception alone on the stack.
@@ -116,15 +124,19 @@ pub(crate) fn analyze(ir: &Ir, db: &Database, tables: &Tables<'_>) -> Results {
 struct Accumulator {
     ty: TypeId,
     widening: Widening,
-    /// The blocks that read it, queued again when it grows
+    /// The blocks that read it, queued again when it grows or thaws
     readers: BTreeSet<(BlockId, CtxId)>,
+    /// Whether its owner assigned it after it escaped, so that the functions that
+    /// cache it read it here instead
+    thawed: bool,
 }
 
 /// What flow knows of a function
 struct Frame {
     /// Its declared type, under its rigids, if it's a function type
     declared: Option<Function>,
-    /// The variable in each slot of its states
+    /// The variable in each slot of its states: those it owns, then those it
+    /// caches
     vars: Box<[VarId]>,
 }
 
@@ -193,10 +205,26 @@ impl<'a, 'u> Flow<'a, 'u> {
         let blocks = order(ir);
         let mut scope = Vec::new();
         let mut slots = FxHashMap::default();
+        let mut funcs = Vec::new();
         for (id, func) in ir.funcs() {
-            for (slot, &var) in func.vars.iter().enumerate() {
+            let cached = (ir.block(func.entry).steps.first()).and_then(|step| match step {
+                Step::Cache(vars) => Some(&vars[..]),
+                _ => None,
+            });
+            let vars: Box<[VarId]> = (func.vars.iter())
+                .chain(cached.into_iter().flatten())
+                .copied()
+                .collect();
+            for (slot, &var) in vars.iter().enumerate() {
                 slots.insert((id, var), slot);
             }
+            funcs.push(Frame {
+                declared: match func.kind {
+                    FuncKind::Decl(decl) => declared_function(db, tables, decl),
+                    FuncKind::Module(_) => None,
+                },
+                vars,
+            });
             if let FuncKind::Decl(decl) = func.kind {
                 let key = (decl, tables.primary_sig(decl));
                 for binder in tables.groups.get(&key).into_iter().flatten() {
@@ -214,15 +242,6 @@ impl<'a, 'u> Flow<'a, 'u> {
                 FuncKind::Decl(_) => None,
             })
             .expect("a unit's graph has its module function");
-        let funcs = (ir.funcs())
-            .map(|(_, func)| Frame {
-                declared: match func.kind {
-                    FuncKind::Decl(decl) => declared_function(db, tables, decl),
-                    FuncKind::Module(_) => None,
-                },
-                vars: func.vars.clone().into(),
-            })
-            .collect();
         let modules = (tables.units.iter().enumerate())
             .filter_map(|(index, unit)| Some((unit.module?, UnitId::from_index(index))))
             .collect();
@@ -231,7 +250,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             db,
             tables,
             unit,
-            funcs,
+            funcs: funcs.into(),
             blocks,
             slots,
             accumulators: FxHashMap::default(),
@@ -263,15 +282,19 @@ impl<'a, 'u> Flow<'a, 'u> {
                 }
             }
         }
-        for (_, func) in self.ir.funcs() {
-            let vars = (func.vars.iter())
-                .map(|&var| VarState {
-                    ty: bottom,
-                    may: if self.ir.var(var).flags.contains(VarFlags::BOTTOM) {
-                        May::empty()
-                    } else {
-                        May::UNASSIGNED
-                    },
+        for (id, func) in self.ir.funcs() {
+            // A cached capture is loaded before it's read
+            let vars = (self.funcs[id.index()].vars.iter())
+                .map(|&var| {
+                    let data = self.ir.var(var);
+                    VarState {
+                        ty: bottom,
+                        may: if data.owner != id || data.flags.contains(VarFlags::BOTTOM) {
+                            May::empty()
+                        } else {
+                            May::UNASSIGNED
+                        },
+                    }
                 })
                 .collect();
             let state = State {
@@ -672,6 +695,38 @@ impl<'a, 'u> Flow<'a, 'u> {
         self.slots[&(owner, var)]
     }
 
+    /// The slot of a capture the running function caches, unless it's thawed
+    fn cached(&self, at: At, state: &State, var: VarId) -> Option<usize> {
+        if self.ir.var(var).owner == at.func {
+            return None;
+        }
+        let slot = *self.slots.get(&(at.func, var))?;
+        (!state.vars[slot].may.contains(May::THAWED)).then_some(slot)
+    }
+
+    /// Thaw a variable its owner assigns after it may have escaped: the functions
+    /// that cache it read its accumulator from then on. Its readers include their
+    /// entries, which load it, and run again to say so.
+    fn thaw(&mut self, at: At, state: &State, var: VarId) {
+        let data = self.ir.var(var);
+        if self.observing()
+            || data.owner != at.func
+            || data.flags.contains(VarFlags::VOLATILE)
+            || !state.vars[self.slot(var)].may.contains(May::ESCAPED)
+        {
+            return;
+        }
+        let accumulator = self.accumulator(var);
+        if mem::replace(&mut accumulator.thawed, true) {
+            return;
+        }
+        let readers = accumulator.readers.clone();
+        trace!("thaw {}", self.var_name(var));
+        for (block, ctx) in readers {
+            self.enqueue(block, ctx);
+        }
+    }
+
     /// A variable's accumulator, made bottom if it has none yet
     fn accumulator(&mut self, var: VarId) -> &mut Accumulator {
         let bottom = self.db.bottom();
@@ -679,6 +734,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             ty: bottom,
             widening: Widening::default(),
             readers: BTreeSet::new(),
+            thawed: false,
         })
     }
 
@@ -868,6 +924,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                     let slot = self.slot(*var);
                     state.vars[slot].ty = self.lub(state.vars[slot].ty, ty);
                 }
+                self.thaw(at, state, *var);
                 if self.publishes(at, state, *var) {
                     self.join(*var, ty);
                 }
@@ -894,6 +951,16 @@ impl<'a, 'u> Flow<'a, 'u> {
                 for &func in funcs {
                     for &var in &self.ir.func(func).escapes {
                         self.escape(state, var);
+                    }
+                }
+            }
+            Step::Cache(vars) => {
+                for &var in vars {
+                    let ty = self.joined(var, at);
+                    let slot = &mut state.vars[self.slots[&(at.func, var)]];
+                    slot.ty = ty;
+                    if self.accumulators[&var].thawed {
+                        slot.may.insert(May::THAWED);
                     }
                 }
             }
@@ -981,6 +1048,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         let ty = self.settle(var, ty);
         self.check(var, ty, span);
         let data = self.ir.var(var);
+        self.thaw(at, state, var);
         if data.owner == at.func {
             let slot = &mut state.vars[self.slot(var)];
             slot.ty = if data.flags.contains(VarFlags::VOLATILE) {
@@ -1136,10 +1204,17 @@ impl<'a, 'u> Flow<'a, 'u> {
         })
     }
 
-    /// What a variable holds: its fact where its owner caches its type, and its
-    /// joined type elsewhere. Its owner still knows whether it may be unassigned.
+    /// What a variable holds: its fact where its owner or the running function
+    /// caches its type, and its joined type elsewhere. Its owner still knows
+    /// whether it may be unassigned.
     fn read(&mut self, at: At, state: &State, var: VarId) -> Fact {
         let data = self.ir.var(var);
+        if let Some(slot) = self.cached(at, state, var) {
+            return Fact {
+                ty: state.vars[slot].ty,
+                unassigned: false,
+            };
+        }
         if data.owner != at.func {
             return Fact {
                 ty: self.joined(var, at),
@@ -1156,14 +1231,22 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
     }
 
-    /// Narrow a variable whose type its function caches. Returns whether anything
-    /// is left.
+    /// Narrow a variable whose type the running function caches. Returns whether
+    /// anything is left.
     fn assume(&mut self, at: At, state: &mut State, assume: &Assume) -> bool {
         let data = self.ir.var(assume.var);
-        if data.owner != at.func || data.flags.contains(VarFlags::VOLATILE) {
-            // An accumulator isn't narrowed: a copy of the variable is
-            return true;
-        }
+        let slot = if data.owner == at.func {
+            if data.flags.contains(VarFlags::VOLATILE) {
+                // An accumulator isn't narrowed
+                return true;
+            }
+            self.slot(assume.var)
+        } else {
+            match self.cached(at, state, assume.var) {
+                Some(slot) => slot,
+                None => return true,
+            }
+        };
         let mut none = VecDeque::new();
         let bottom = self.db.bottom();
         // An operand with no value yet, such as a captured variable whose
@@ -1200,7 +1283,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         {
             return true;
         }
-        let fact = &mut state.vars[self.slot(assume.var)];
+        let fact = &mut state.vars[slot];
         if fact.ty == bottom {
             return true;
         }
@@ -1453,7 +1536,7 @@ fn throws(step: &Step) -> bool {
         Step::Let { pattern, value } => matches!(pattern, Pattern::Unpack(_)) || has_rule(value),
         Step::Assign(target) => !matches!(target, Target::Var { .. }) || has_rule(target.value()),
         Step::Default { value, .. } | Step::Eval(value) | Step::Push(value) => has_rule(value),
-        Step::Dup | Step::Pop | Step::Assume(_) | Step::Capture(_) => false,
+        Step::Dup | Step::Pop | Step::Assume(_) | Step::Capture(_) | Step::Cache(_) => false,
     }
 }
 

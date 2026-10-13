@@ -23,7 +23,9 @@
 //! that creates it. Each function lists in [`Func::escapes`] the variables of its
 //! parent that it or a function nested in it captures, and that only their owner
 //! assigns. Such a function can't run before the step, so the first value of each
-//! it can see is the one its owner holds there.
+//! it can see is the one its owner holds there. A function that captures such a
+//! variable loads it at its entry, a [`Step::Cache`], and reads and narrows that
+//! copy for as long as its owner doesn't assign it after it escapes.
 //!
 //! A `do` block's unannotated parameters, omitted channels and omitted return type
 //! are its [`Signature`]: variables its parent owns and it captures, which start
@@ -252,6 +254,12 @@ pub(crate) enum Step {
     /// A lambda that's a comprehension's item is created in the item's block,
     /// though it stays in the collection's tree.
     Capture(Vec<FuncId>),
+    /// Load captures from their accumulators into the function's own state, where
+    /// it narrows them, until their owner assigns one after it escapes. It's the
+    /// first step of a function's entry block, which nothing branches to, and
+    /// names the captures that only their owner assigns, other than
+    /// [`Signature`] and result variables.
+    Cache(Vec<VarId>),
 }
 
 pub(crate) enum Terminal {

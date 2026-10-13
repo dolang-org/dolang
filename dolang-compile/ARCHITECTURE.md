@@ -790,7 +790,8 @@ Creating a function is preceded by a `Capture` step naming it, in the creating
 statement's block; for a comprehension item, the item block. `Func.escapes`
 lists the variables of its parent that it or a function nested in it captures,
 which `finish` filters to those only their owner assigns, other than signature
-variables. A
+variables. `finish` also starts a function's entry block with a `Cache` step
+naming the captures it may cache. A
 pattern binds without its defaults; each default is a `Default` step after the
 binding step, or on the success edge of the terminal that binds it, which joins
 it into the variable. An optional sub-pattern marks its item optional in the
@@ -921,8 +922,7 @@ same way. Its owner caches its type in its flow state, narrowing it there,
 unless it's volatile: assigned by another function, and so changed by any call
 that may run that function. A volatile variable's owner reads the accumulator
 too, and keeps only whether it may be unassigned. Only a cached type is
-narrowed; to narrow an accumulator, a program copies the variable to a local
-first. Reading an accumulator makes the block depend on it, and it is queued
+narrowed. Reading an accumulator makes the block depend on it, and it is queued
 again when the type grows.
 
 Every assignment to a volatile variable joins its accumulator. Any other ivar is
@@ -937,6 +937,18 @@ loop's `let` does on each iteration; a `def` or `class` is the exception
 its binding runs. A type that doesn't fit the annotation, as a sentinel
 default's, joins with the annotation; an assignment's value that doesn't fit is
 reported where it's written, and joins as the annotation.
+
+A function caches the ivars it captures too, other than volatile and signature
+variables and results: `finish` lists them in a `Cache` step at its entry, which
+loads each one's accumulator into the function's flow state. Reads and
+narrowing then use that copy, and the entry, as the accumulator's reader, runs
+again when it grows. The copy holds while the owner doesn't change the variable
+once it escapes: a function the owner spawns may run between any two of the
+owner's steps. An owner's assignment on a path where the variable may have
+escaped thaws its accumulator, which queues its readers again. The entries then
+mark their copies thawed (`May::THAWED`, joined by `or`), so the reads after
+them go to the accumulator, and nothing narrows it. Nothing branches to an
+entry block, so every block of the function sees the mark.
 
 A `do` block's signature variables are joined the same way. Its exit joins its
 result into its result variable. A call it's an argument of types it: it enters

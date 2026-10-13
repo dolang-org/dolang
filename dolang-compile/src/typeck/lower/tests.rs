@@ -223,6 +223,38 @@ let outer = do
     );
 }
 
+/// A function caches the variables it captures, at its entry, unless another
+/// function assigns them
+#[test]
+fn cached() {
+    lower_with(
+        "
+let v = 1
+let w = 1
+let outer = do
+  let inner = do
+    w = v
+  inner
+",
+        |ir| {
+            let cached = |func: FuncId| match ir.block(ir.func(func).entry).steps.first() {
+                Some(Step::Cache(vars)) => vars.clone(),
+                _ => Vec::new(),
+            };
+            let outer = (ir.funcs())
+                .find(|(_, func)| func.parent.is_some_and(|p| ir.func(p).parent.is_none()))
+                .map(|(id, _)| id)
+                .unwrap();
+            let inner = (ir.funcs())
+                .find(|(_, func)| func.parent == Some(outer))
+                .map(|(id, _)| id)
+                .unwrap();
+            assert!(cached(outer).is_empty());
+            assert_eq!(cached(inner), ir.func(outer).escapes);
+        },
+    );
+}
+
 /// Only a `def`'s or `class`'s variable is hoisted
 #[test]
 fn hoisted() {

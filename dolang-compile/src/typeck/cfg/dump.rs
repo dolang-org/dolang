@@ -217,6 +217,14 @@ impl Dump<'_, '_> {
                 }
                 Ok(())
             }
+            Step::Cache(vars) => {
+                write!(out, "cache")?;
+                for &var in vars {
+                    write!(out, " ")?;
+                    self.var(out, var)?;
+                }
+                Ok(())
+            }
             Step::Assume(assume) => {
                 write!(out, "assume ")?;
                 self.var(out, assume.var)?;

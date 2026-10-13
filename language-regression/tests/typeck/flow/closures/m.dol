@@ -170,6 +170,57 @@ pub def fresh items @ Array[Str | nil]
       nil
     read()
 
+# A block narrows a variable it captures, as long as its owner doesn't assign it
+# once it escapes
+pub def tested v @ (Str | nil)
+  let read = do
+    if v
+      let _ = v
+      #       ^: flow std.Str
+    nil
+  read()
+
+pub def tested_nested v @ (Str | nil)
+  let read = do
+    let inner = do
+      if v
+        let _ = v
+        #       ^: flow std.Str
+      nil
+    inner()
+  read()
+
+pub def tested_loop items @ Array[Str | nil]
+  for item = items
+    let read = do
+      if item
+        let _ = item
+        #       ^~~~: flow std.Str
+      nil
+    read()
+
+# Once its owner assigns it after it escapes, even a value of a type it already
+# holds, a test doesn't narrow it
+pub def thawed v @ (Str | nil)
+  let read = do
+    if v
+      let _ = v
+      #       ^: flow nil | std.Str
+    nil
+  read()
+  v = "b"
+
+pub def thawed_volatile()
+  let v = nil
+  let set = do v = "a"
+  let read = do
+    if v
+      let _ = v
+      #       ^: flow std.Nil | std.Str
+    nil
+  set()
+  read()
+
 # A def sees itself, and the defs after it
 pub def recursive n @ Int
   def count m @ Int -> Int
