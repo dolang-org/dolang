@@ -379,6 +379,8 @@ impl<'v> Protocol<'v> for Class {
             ],
             members: members![
                 Method(sym::INIT_METHOD),
+                Method(sym::GET_METHOD),
+                Method(sym::SET_METHOD),
                 Method(sym::STR_METHOD),
                 Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
