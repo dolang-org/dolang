@@ -75,6 +75,16 @@ pub def compared v @ (Int | nil)
     let _ = v
     #       ^: flow std.Int
 
+# An alias member is compared by its alternatives
+@let Archive = (:TAR: | :ZIP:)
+pub def compared_alias v @ (Archive | :GZIP: | :XZ:)
+  if (v == :GZIP:)
+    let _ = v
+    #       ^: flow :GZIP:
+  else
+    let _ = v
+    #       ^: flow :TAR: | :XZ: | :ZIP:
+
 pub def typed v @ (Int | Str)
   if (type(v, Int))
     let _ = v

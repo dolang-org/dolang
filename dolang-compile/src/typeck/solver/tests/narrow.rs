@@ -128,6 +128,28 @@ fn generic_union_alias_preserves_narrowed_arguments() {
 }
 
 #[test]
+fn union_alias_members_are_exposed() {
+    let mut w = World::new();
+    let one = w.int_lit(1);
+    let two = w.int_lit(2);
+    let three = w.int_lit(3);
+    let pair = union(&w.db, &[one, two]);
+    let pair = alias(&mut w.db, "Pair", pair);
+    let nested = union(&w.db, &[pair, w.str]);
+    let nested = alias(&mut w.db, "Nested", nested);
+    w.db.seal();
+    let gas = Gas::default();
+    let s = Solver::new(&w.db, &gas);
+
+    let ty = union(&w.db, &[pair, three]);
+    assert_eq!(value(&s, ty, false, three), three);
+    assert_eq!(value(&s, ty, true, three), union(&w.db, &[one, two]));
+    let ty = union(&w.db, &[nested, three]);
+    assert_eq!(value(&s, ty, false, three), union(&w.db, &[w.str, three]));
+    assert_eq!(class(&s, ty, Relation::Upper, false, w.str), w.str);
+}
+
+#[test]
 fn upper_bounds_keep_reaching_members() {
     let mut w = World::new();
     w.db.seal();

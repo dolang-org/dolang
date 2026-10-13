@@ -60,16 +60,10 @@ impl Solver<'_> {
                 None => return ty,
             },
         };
-        // A transparent alias can hide the alternatives whose class test
-        // preserves their own type arguments, as FmtSegment[V] does.
-        let exposed = match self.head(self.closed(ty)) {
-            Ok(Head::Structural(view)) if matches!(self.db.ty(view.ty), Type::Union(_)) => {
-                self.reify(Term::View(view)).unwrap_or(ty)
-            }
-            _ => ty,
-        };
+        let mut members = Vec::new();
+        self.exposed_members(ty, &mut FxHashSet::default(), &mut members);
         let mut result = self.db.bottom();
-        for member in self.union_members(exposed) {
+        for member in members {
             // A projection's members are unknown, so it's kept
             let member = match member {
                 UnionMember::Type(member) => member,
@@ -92,6 +86,30 @@ impl Solver<'_> {
             }
         }
         result
+    }
+
+    /// A type's union members, with each transparent alias of a union, the whole
+    /// or a member, replaced by its alternatives. An alias can hide alternatives
+    /// a relation drops, as `A` in `A | :GZIP:` does `:TAR:` and `:ZIP:`, or whose
+    /// class test preserves their own type arguments, as `FmtSegment[V]` does.
+    fn exposed_members(
+        &self,
+        ty: TypeId,
+        exposed: &mut FxHashSet<TypeId>,
+        members: &mut Vec<UnionMember>,
+    ) {
+        for member in self.union_members(ty) {
+            if let UnionMember::Type(alias) = member
+                && let Ok(Head::Structural(view)) = self.head(self.closed(alias))
+                && matches!(self.db.ty(view.ty), Type::Union(_))
+                && exposed.insert(alias)
+                && let Ok(body) = self.reify(Term::View(view))
+            {
+                self.exposed_members(body, exposed, members);
+            } else {
+                members.push(member);
+            }
+        }
     }
 
     /// A member narrowed against a class, or `None` when it's dropped
