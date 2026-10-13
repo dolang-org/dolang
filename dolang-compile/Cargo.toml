@@ -16,6 +16,10 @@ features = ["macros"]
 workspace = true
 
 
+[dependencies.bitvec]
+workspace = true
+
+
 [dependencies.dolang-util]
 workspace = true
 

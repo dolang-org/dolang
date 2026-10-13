@@ -501,11 +501,6 @@ impl Ir {
     pub(crate) fn blocks(&self) -> impl Iterator<Item = (BlockId, &Block)> {
         (self.blocks.iter().enumerate()).map(|(index, block)| (BlockId::from_index(index), block))
     }
-
-    /// How many variables were allocated
-    pub(crate) fn var_count(&self) -> usize {
-        self.vars.len()
-    }
 }
 
 impl Terminal {
