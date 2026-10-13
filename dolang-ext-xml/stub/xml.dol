@@ -9,6 +9,12 @@ import std:
   - @MutSeq
   - @Spread
 
+# A value accepted by [`encode`](xml.encode).
+pub @let EncodeValue = (Node | Str)
+
+# A value returned by [`decode`](xml.decode).
+pub @let DecodeValue = Node
+
 # An XML attribute.
 pub class Attr
   # Creates an attribute.
@@ -236,7 +242,7 @@ pub class Node: @Index[{*(Str): Str, *(Node | Str)}] @Assign[Str, Str] @Spread[N
 pub def decode
   # XML document.
   xml @ Str
-do -> Node
+do -> DecodeValue
   ...
 
 # Validates and serializes an XML tree.
@@ -257,7 +263,7 @@ do -> Node
 # ```
 pub def encode
   # XML node or text.
-  node @ (Node | Str)
+  node @ EncodeValue
 do -> Str
   ...
 

@@ -11,7 +11,7 @@ import std:
   - FmtParam
   - StrBuf
 import json:
-  - @Data
+  - @DecodeValue
 import url:
   - Url
 import fs:
@@ -22,13 +22,13 @@ import security.windows:
 import uuid:
   - Uuid
 
-pub def decoded d @ Data
+pub def decoded d @ DecodeValue
   if let Dict(o) = d
     let _ = o
-    #       ^: flow std.Dict[std.Str, json.Data]
+    #       ^: flow std.Dict[std.Str, json.DecodeValue]
   else if let Array(a) = d
     let _ = a
-    #       ^: flow [json.Data]
+    #       ^: flow [json.DecodeValue]
   else if let Int(n) = d
     let _ = n
     #       ^: flow std.Int

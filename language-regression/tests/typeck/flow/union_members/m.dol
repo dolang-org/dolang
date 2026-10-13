@@ -3,7 +3,7 @@
 # The use gives what its alternatives give.
 
 import json:
-  - @Data
+  - @DecodeValue
 
 pub class Cat
   pub field name @ Str = ""
@@ -151,7 +151,7 @@ pub def indexed p @ (Cat | Dog) a @ (Array[Int] | Array[Str])
   #       ^: flow std.Int | std.Str
 
 # A union alias's alternatives are its union's
-pub def decoded d @ Data
+pub def decoded d @ DecodeValue
   let _ = d["key"]
   # error: no overload of `(index)` accepts these arguments
   #   --> m.dol:LL:LL
@@ -159,14 +159,14 @@ pub def decoded d @ Data
   # LL |   let _ = d["key"]
   #    |           ^^^^^^^^
   #    |
-  #    = note: `@[K] ([json.Data], K) -> std.IndexItem[{*json.Data}, K]`: expected `std.Int`, found `"key"`
-  #    = note: `([json.Data], std.Range[std.Int]) -> [json.Data]`: expected `std.Range[std.Int]`, found `"key"`
+  #    = note: `@[K] ([json.DecodeValue], K) -> std.IndexItem[{*json.DecodeValue}, K]`: expected `std.Int`, found `"key"`
+  #    = note: `([json.DecodeValue], std.Range[std.Int]) -> [json.DecodeValue]`: expected `std.Range[std.Int]`, found `"key"`
   # error: expected `std.Range[std.Int]`, found `"key"`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _ = d["key"]
   #    |             ^^^^^
-  # error: `nil`, `std.Bool`, `std.Float` and `std.Int` in `json.Data` have no member `(index)`
+  # error: `nil`, `std.Bool`, `std.Float` and `std.Int` in `json.DecodeValue` have no member `(index)`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _ = d["key"]
@@ -174,4 +174,4 @@ pub def decoded d @ Data
   if (type(d, Dict))
     let v = d["key"]
     let _ = v
-    #       ^: flow json.Data
+    #       ^: flow json.DecodeValue

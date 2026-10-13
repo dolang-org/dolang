@@ -9,10 +9,10 @@ pub @let A = (nil | Int | Array[A])
 pub @let B = (nil | Int | BaseArray[B])
 
 pub def encode
-  data @ json.Data
-  dict @ Dict[Str, json.Data]
-  config @ toml.Data
-  document @ yaml.Data
+  data @ json.DecodeValue
+  dict @ Dict[Str, json.DecodeValue]
+  config @ toml.DecodeValue
+  document @ yaml.DecodeValue
 do
   json.encode $data
   json.encode $dict
@@ -23,9 +23,9 @@ do
 pub def decoded()
   let Dict(data) = json.decode "{}"
   json.encode $data
-  let _ @ json.Encodable = json.decode "[]"
-  let _ @ toml.Encodable = toml.decode "[]"
-  let _ @ yaml.Encodable = yaml.decode "[]"
+  let _ @ json.EncodeValue = json.decode "[]"
+  let _ @ toml.EncodeValue = toml.decode "[]"
+  let _ @ yaml.EncodeValue = yaml.decode "[]"
 
 pub def views a @ A
   let _ @ B = a

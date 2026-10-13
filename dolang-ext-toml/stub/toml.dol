@@ -4,27 +4,29 @@
 import std:
   - @BaseArray
   - @BaseDict
+  - @BaseStruct
 
 # A value decoded from TOML.
-pub @let Data = $
+pub @let DecodeValue = $
   | Bool
   | Int
   | Float
   | Str
-  | Array[Data]
-  | Dict[Str, Data]
+  | Array[DecodeValue]
+  | Dict[Str, DecodeValue]
 
 # A value that encodes as TOML.
-pub @let Encodable = $
+pub @let EncodeValue = $
   | Bool
   | Int
   | Float
   | Str
   | Sym
-  | BaseArray[Encodable]
-  | Tuple[...Encodable]
-  | Record[...{**Encodable}]
-  | BaseDict[Str | Sym, Encodable]
+  | BaseArray[EncodeValue]
+  | Tuple[...EncodeValue]
+  | Record[...{**EncodeValue}]
+  | BaseStruct[{**EncodeValue}]
+  | BaseDict[Str | Sym, EncodeValue]
 
 # Parses a TOML string into a Do value.
 #
@@ -67,7 +69,7 @@ pub @let Encodable = $
 pub def decode
   # TOML input to parse.
   toml @ Str
-do -> Data
+do -> DecodeValue
   ...
 
 # Serializes a Do value to a TOML string.
@@ -82,9 +84,10 @@ do -> Data
 # | `Array`  | array      |
 # | `Tuple`  | array      |
 # | `Dict`   | table      |
+# | `Struct` | table      |
 # | `Record` | table      |
 #
-# Top-level dicts and records serialize as documents, while other values
+# Top-level dicts, records, and structs serialize as documents, while other values
 # serialize as values.
 #
 # ## Errors
@@ -103,6 +106,6 @@ do -> Data
 # ```
 pub def encode
   # The value to serialize.
-  value @ Encodable
+  value @ EncodeValue
 do -> Str
   ...
