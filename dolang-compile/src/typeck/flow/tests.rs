@@ -215,6 +215,41 @@ for ?key: (p = 1) = [(), ()]
 }
 
 #[test]
+fn captures_keep_outer_binders_before_inner_binders() {
+    agree_with(
+        "
+def outer[T, U @ Array[T]] _u @ U
+  def middle[V @ U] _v @ V
+    @let Capture = (V, U)
+    let result @ Capture = nil
+    result
+  middle
+",
+        |check| {
+            let (index, _) = check
+                .tables
+                .decls
+                .iter()
+                .enumerate()
+                .find(|(_, decl)| {
+                    decl.name
+                        .is_some_and(|name| check.tables.text(decl.unit, name.span) == "Capture")
+                })
+                .unwrap();
+            let lifted = &check.tables.lifted[&crate::typeck::r#type::DeclId::from_index(index)];
+            // T is captured through U's bound, even though the alias names V first.
+            assert_eq!(lifted.len(), 3);
+            assert_eq!(
+                lifted.iter().map(|binder| binder.slot).collect::<Vec<_>>(),
+                [0, 1, 0]
+            );
+            assert_eq!(lifted[0].decl, lifted[1].decl);
+            assert!(lifted[1].decl < lifted[2].decl);
+        },
+    );
+}
+
+#[test]
 fn templates_are_order_independent() {
     let mut config = Config::new();
     config
@@ -235,6 +270,9 @@ pub def keep[S @ {*, *(Int | Sym): Value}] f @ Fmt[Int, S] -> Fmt[Int, S]
 pub def choose f
   f
 pub def run n @ Int width @ Int text @ Str
+  let seed = t"${#earlier_hole} ${#later_hole}"
+  let ordered = t"${#later_hole} ${#1} ${#earlier_hole} ${#0} ${#later_hole}"
+  let _ = (seed, ordered)
   let generic = keep t"${n:$width} ${#a}"
   generic.format a: 1
   let chosen = choose t"$n ${#a}"
@@ -278,4 +316,18 @@ pub def run n @ Int width @ Int text @ Str
         .collect();
     assert!(!types.is_empty());
     assert!(types.iter().all(|ty| ty == "std.Int"), "{types:?}");
+    let types: Vec<_> = forward
+        .facts
+        .iter()
+        .filter(|(span, _)| check.tables.text(UnitId::from_index(1), **span) == "ordered")
+        .map(|(_, fact)| check.tables.render_type(&check.forks[1], fact.ty))
+        .collect();
+    assert!(!types.is_empty());
+    // The earlier template interns its keys first; preserve TypeId order, not the
+    // second template's source order, while sorting positional holes numerically.
+    assert!(
+        types.iter().all(|ty| ty
+            == "std.Fmt[Never, {Unknown, Unknown, earlier_hole: Unknown, later_hole: Unknown}]"),
+        "{types:?}",
+    );
 }

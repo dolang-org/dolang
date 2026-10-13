@@ -133,6 +133,30 @@ fn pattern(positional: &[bool], keyed: &[(TypeId, bool)], rest: bool) -> Pattern
 }
 
 #[test]
+fn empty_patterns_reach_the_terminal_state() {
+    let mut w = World::new();
+    let int = w.int;
+    let empty = w.class(vec![]);
+    let optional = w.class(vec![positional(Multiplicity::Optional, int)]);
+    let required = w.class(vec![positional(Multiplicity::Required, int)]);
+    for ty in [empty, optional] {
+        let walked = w.walk(ty, &pattern(&[], &[], false)).unwrap();
+        assert!(walked.possible);
+        assert!(walked.slots.is_empty());
+    }
+    let walked = w.walk(required, &pattern(&[], &[], false)).unwrap();
+    assert!(!walked.possible);
+    let walked = w.walk(required, &pattern(&[], &[], true)).unwrap();
+    assert!(walked.possible);
+    assert!(walked.slots.is_empty());
+    let tail = w.spread_of(vec![positional(Multiplicity::Required, int)]);
+    assert_eq!(walked.rests, vec![tail]);
+    let walked = w.walk(empty, &pattern(&[true], &[], false)).unwrap();
+    assert!(walked.possible);
+    assert_eq!(walked.slots, vec![w.db.bottom()]);
+}
+
+#[test]
 fn an_optional_item_splits_the_possibilities() {
     let mut w = World::new();
     let (int, str, bool) = (w.int, w.str, w.bool);

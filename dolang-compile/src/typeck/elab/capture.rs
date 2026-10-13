@@ -11,9 +11,7 @@
 //! less the declaration's own binders, is what it is lifted over, outermost
 //! declaration first and in slot order.
 
-use std::collections::BTreeSet;
-
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
     Ambient, BinderRef, DeclNode, Referent, Role, Tables, sig,
@@ -29,7 +27,7 @@ pub(crate) fn captures(tables: &mut Tables<'_>) {
     let count = tables.decls.len();
     let mut needs = Needs {
         tables: &*tables,
-        binders: vec![BTreeSet::new(); count],
+        binders: vec![FxHashSet::default(); count],
         deps: vec![Vec::new(); count],
         bounds: FxHashMap::default(),
         expanding: Vec::new(),
@@ -40,7 +38,7 @@ pub(crate) fn captures(tables: &mut Tables<'_>) {
         }
         if let Role::Bound(binder) = site.role {
             let node = needs.binders.len();
-            needs.binders.push(BTreeSet::new());
+            needs.binders.push(FxHashSet::default());
             needs.deps.push(Vec::new());
             needs.bounds.insert(binder, node);
             needs.ty(node, site.unit, &site.ty);
@@ -102,7 +100,10 @@ pub(crate) fn captures(tables: &mut Tables<'_>) {
 
     for (index, set) in binders.into_iter().take(count).enumerate() {
         let id = DeclId::from_index(index);
-        let lifted: Vec<_> = set.into_iter().filter(|binder| binder.decl != id).collect();
+        let mut lifted: Vec<_> = set.into_iter().filter(|binder| binder.decl != id).collect();
+        // BinderRef orders enclosing declarations first, then signature and slot;
+        // these positions become the leading arguments of lifted declarations.
+        lifted.sort_unstable();
         if matches!(tables.decls[index].node, DeclNode::Class(_)) {
             debug_assert!(tables.decls[index].outer.is_none());
             debug_assert!(
@@ -136,7 +137,7 @@ struct Needs<'t, 'u> {
     tables: &'t Tables<'u>,
     /// The binders each declaration, and then each binder's bound, names directly,
     /// and then all it needs
-    binders: Vec<BTreeSet<BinderRef>>,
+    binders: Vec<FxHashSet<BinderRef>>,
     /// The declarations whose needs each declaration or bound shares
     deps: Vec<Vec<DeclId>>,
     /// Each bounded binder's entry in `binders` and `deps`

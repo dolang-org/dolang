@@ -917,6 +917,7 @@ fn check_units<'v, 's>(
 /// The undecided checks grouped by the kind of reason, each group's locations
 /// sorted
 fn render_undecided(paths: &[String], undecided: Vec<(String, compile::SourceSpan)>) -> String {
+    // Reason names appear in sorted order in the user-facing report.
     let mut kinds: BTreeMap<String, Vec<(&str, u32, u32)>> = BTreeMap::new();
     for (kind, location) in undecided {
         let path = location

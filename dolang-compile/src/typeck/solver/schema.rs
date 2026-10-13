@@ -28,7 +28,7 @@
 //! would take it: otherwise a domain of every key would leave the others
 //! nothing to check.
 
-use std::collections::BTreeSet;
+use bitvec::{bitbox, boxed::BitBox};
 
 use super::*;
 
@@ -1237,7 +1237,7 @@ impl Solver<'_> {
             Relation::Call(_) => Fill::Arguments,
         };
         let mut decided = FxHashMap::default();
-        let mut pairs = BTreeSet::new();
+        let mut pairs = FxHashSet::default();
         let mut digits = vec![0; xs.len()];
         loop {
             self.spend()?;
@@ -1355,37 +1355,42 @@ impl Solver<'_> {
     ) -> Result<bool, Issue> {
         // The expected atoms that may take the next item, skipping those that
         // need not take any
-        let close = |states: &mut BTreeSet<usize>| {
+        let close = |states: &mut BitBox| {
             let mut j = 0;
             while j < ys.len() {
-                if states.contains(&j) && ys[j].multiplicity != Multiplicity::Required {
-                    states.insert(j + 1);
+                if states[j] && ys[j].multiplicity != Multiplicity::Required {
+                    states.set(j + 1, true);
                 }
                 j += 1;
             }
         };
-        let mut states = BTreeSet::from([0]);
+        // Include the terminal state; iter_ones preserves ascending work order.
+        let mut states = bitbox![0; ys.len() + 1];
+        states.set(0, true);
         close(&mut states);
         for (i, &count) in counts.iter().enumerate() {
             for _ in 0..count {
-                let mut next = BTreeSet::new();
-                for &j in states.iter().filter(|&&j| j < ys.len()) {
+                let mut next = bitbox![0; ys.len() + 1];
+                for j in states.iter_ones().filter(|&j| j < ys.len()) {
                     if self.decide(decided, xs, ys, i, j)? != Status::Proven {
                         continue;
                     }
-                    next.insert(match ys[j].multiplicity {
-                        Multiplicity::Repeated => j,
-                        _ => j + 1,
-                    });
+                    next.set(
+                        match ys[j].multiplicity {
+                            Multiplicity::Repeated => j,
+                            _ => j + 1,
+                        },
+                        true,
+                    );
                 }
                 close(&mut next);
-                if next.is_empty() {
+                if next.not_any() {
                     return Ok(false);
                 }
                 states = next;
             }
         }
-        Ok(states.contains(&ys.len()))
+        Ok(states[ys.len()])
     }
 
     /// Whether an actual atom's type fits an expected atom's, decided without
