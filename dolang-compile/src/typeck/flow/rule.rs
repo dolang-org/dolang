@@ -1583,10 +1583,11 @@ impl<'a> Flow<'a, '_> {
                 expectations[index] = expected;
             }
         }
-        // Likewise for an array an overloaded callee takes: its undecided choice
-        // leaves the array's parameter unsolved, so its literal items would
-        // decay. Each overload the call doesn't contradict gives the parameter it
-        // would, and the array takes the one a fresh array can be, if only one is.
+        // Likewise for an array or range an overloaded callee takes: its
+        // undecided choice leaves the literal's parameter unsolved, so an array's
+        // items would decay and a range's bounds decide nothing. Each overload the
+        // call doesn't contradict gives the parameter it would, and the literal
+        // takes the one a fresh value of its class can be, if only one is.
         let overloads = match self.db.ty(callee) {
             Type::Overloaded { overloads, .. } => overloads.to_vec(),
             &Type::Decl(decl) if self.overloaded(callee) => (self.db.overloads(decl).iter())
@@ -1594,24 +1595,23 @@ impl<'a> Flow<'a, '_> {
                 .collect(),
             _ => Vec::new(),
         };
-        let array = self.designated(Designated::Array);
-        let arrays: Vec<usize> = (held.iter())
-            .map(|&(index, _)| index)
-            .filter(|&index| {
-                expectations[index].is_none()
-                    && matches!(
-                        values.held[index].expr.kind,
-                        ExprKind::Collection {
-                            kind: Collection::Array,
-                            ..
-                        }
-                    )
+        let (array, range) = (
+            self.designated(Designated::Array),
+            self.designated(Designated::Range),
+        );
+        let literals: Vec<(usize, DeclId)> = (held.iter())
+            .filter(|&&(index, _)| expectations[index].is_none())
+            .filter_map(|&(index, _)| match values.held[index].expr.kind {
+                ExprKind::Collection {
+                    kind: Collection::Array,
+                    ..
+                } => array.map(|class| (index, class)),
+                ExprKind::Range { .. } => range.map(|class| (index, class)),
+                _ => None,
             })
             .collect();
-        if let Some(array) = array
-            && !arrays.is_empty()
-        {
-            let mut chosen: Vec<Vec<TypeId>> = vec![Vec::new(); arrays.len()];
+        if !literals.is_empty() {
+            let mut chosen: Vec<Vec<TypeId>> = vec![Vec::new(); literals.len()];
             for &overload in &overloads {
                 let gas = Gas::default();
                 let (mut solver, held, contradicted) =
@@ -1620,14 +1620,14 @@ impl<'a> Flow<'a, '_> {
                     continue;
                 }
                 default_all(&mut solver, self.db, true, None);
-                for (&index, chosen) in arrays.iter().zip(&mut chosen) {
+                for (&(index, class), chosen) in literals.iter().zip(&mut chosen) {
                     let term = held
                         .iter()
                         .find(|&&(held, _)| held == index)
                         .map(|&(_, term)| term);
                     let expected = term
                         .and_then(|term| expectation(&solver, term))
-                        .filter(|&ty| self.fresh_expected(array, Kind::Type, ty).is_some());
+                        .filter(|&ty| self.fresh_expected(class, Kind::Type, ty).is_some());
                     if let Some(ty) = expected
                         && !chosen.contains(&ty)
                     {
@@ -1635,7 +1635,7 @@ impl<'a> Flow<'a, '_> {
                     }
                 }
             }
-            for (index, chosen) in arrays.into_iter().zip(chosen) {
+            for ((index, _), chosen) in literals.into_iter().zip(chosen) {
                 if let [ty] = chosen[..] {
                     expectations[index] = Some(ty);
                 }
@@ -3082,10 +3082,8 @@ fn outputs(results: &[Term], parameters: &[Term]) -> Vec<(Term, Variance)> {
 
 /// Solve, defaulting every unsolved variable whose lower bounds are solved, and,
 /// if `bare`, then any variable without lower bounds to its binder's default, or
-/// without one, unless it decides one of `roots`' results (see
-/// [`Solver::deciding`]),
-/// to the meet of its upper bounds (see [`Solver::default_upper`]), until
-/// nothing more can be defaulted. A round that can default no bare
+/// without one, to the meet of its upper bounds (see [`Solver::default_upper`]),
+/// until nothing more can be defaulted. A round that can default no bare
 /// variable these ways defaults them all to the dynamic type of their kind, or
 /// for a strict unit's solver, which doesn't make up `Unknown`, leaves them
 /// unresolved. Literals decay as [`default_where`] decays them.
@@ -3107,14 +3105,6 @@ fn default_all(
         if bare.is_empty() {
             break;
         }
-        // A variable that decides a result isn't given its upper bounds, which
-        // would be the most the result could be, not what it is
-        let results: Vec<Term> = (roots.unwrap_or_default().iter())
-            .filter(|&&(_, variance)| variance == Variance::Covariant)
-            .map(|&(term, _)| term)
-            .collect();
-        let deciding =
-            (solver.deciding(&results)).unwrap_or_else(|_| solver.unresolved().collect());
         // An upper bound may wait on another bare variable's default, so one
         // whose bounds don't give a default yet waits a round for it
         let count = bare.len();
@@ -3122,7 +3112,7 @@ fn default_all(
         for id in bare {
             if let Some(default) = solver.fallback(id) {
                 solver.constrain(default, Term::Infer(id), Provenance::default());
-            } else if deciding.contains(&id) || solver.default_upper(id).is_err() {
+            } else if solver.default_upper(id).is_err() {
                 deferred.push(id);
             }
         }

@@ -1,0 +1,10 @@
+# dolang: strict
+# A capture's sink is decided from the array it's made from, as an argument of
+# an overloaded call
+
+import proc fs:
+  - @Path
+
+pub def captures lines @ Array[Str] source @ Path -> nil
+  proc.run gzip -dc -- $source stdin: $std.null stdout: $std.null stderr: $lines.prechomp()
+  nil

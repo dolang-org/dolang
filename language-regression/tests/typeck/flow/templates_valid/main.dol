@@ -41,7 +41,7 @@ pub def template n @ Int
   let built = Fmt ["prefix", FmtValue(n)]
   built.format arbitrary: true
   let _ = built
-  #       ^~~~~: flow std.Fmt[Unknown, Unknown{}]
+  #       ^~~~~: flow std.Fmt[Unknown, {*Value, *(std.Int | std.Sym): Value}]
 
 pub def prepared conn @ Connection n @ Int
   let s = conn.prepare t"SELECT $n, ${#name}, ${#0}"
