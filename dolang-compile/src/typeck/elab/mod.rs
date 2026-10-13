@@ -41,7 +41,7 @@ pub(crate) use super::report::{Diag, UnitDiag};
 pub(crate) use capture::captures;
 pub(crate) use collect::{Harvest, Pending, harvest, link};
 pub(crate) use ids::Ids;
-pub(crate) use judge::JUDGMENTS;
+pub(crate) use judge::{JUDGMENTS, Scoped};
 pub(crate) use kind::{Fill, kinds};
 pub(crate) use overrides::overrides;
 pub(crate) use populate::populate;

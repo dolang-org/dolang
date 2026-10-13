@@ -1,34 +1,11 @@
 //! How diagnostics show types
 
-use std::borrow::Cow;
-
 use super::Flow;
 use crate::typeck::{
     cfg::FuncKind,
-    elab::Tables,
-    r#type::{Collection, DeclId, Names, Shown, Style, TypeId},
+    elab::Scoped,
+    r#type::{Shown, Style, TypeId},
 };
-
-/// What a diagnostic about the running block's function sees
-pub(super) struct Scoped<'a, 'u> {
-    tables: &'a Tables<'u>,
-    /// The declarations whose binders the function is within
-    scope: Vec<DeclId>,
-}
-
-impl Names for Scoped<'_, '_> {
-    fn declaration(&self, id: DeclId) -> Cow<'_, str> {
-        self.tables.declaration(id)
-    }
-
-    fn collection(&self, id: DeclId) -> Option<Collection> {
-        self.tables.collection(id)
-    }
-
-    fn in_scope(&self, decl: DeclId) -> bool {
-        self.scope.contains(&decl)
-    }
-}
 
 impl<'u> Flow<'_, 'u> {
     /// What a diagnostic about the running block's function sees
