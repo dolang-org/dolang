@@ -443,6 +443,7 @@ def local_user_lifecycle :user
   let never_expires = user.update password_never_expires: true
   assert_eq $never_expires.disabled true
   assert_eq $never_expires.password_never_expires true
+  assert_eq $(user.update disabled: true).disabled true
   let enabled = user.update disabled: false
   assert_eq $enabled.disabled false
   assert_eq $enabled.password_never_expires true
@@ -647,3 +648,29 @@ def local_group_lifecycle :user :group
   assert_eq $group.info().comment renamed
   let renamed_lookup = winnet.group $renamed
   assert_eq (str renamed_lookup.sid) (str group.sid)
+
+#[test]
+#[vfs]
+def credential_storage_policy()
+  if (sys.os_info().family != :WINDOWS:)
+    ignore "requires the Windows connection backend"
+  # An invalid device/path prevents any connection or credential-store writes.
+  # Storage requests without a username are rejected before calling Windows.
+  for persistent save password expected = [
+    (false, nil, "secret", false),
+    (true, nil, "secret", true),
+    (true, false, "secret", false),
+    (false, true, "secret", true),
+    (true, true, nil, false)
+  ]
+    let options = {local: "invalid-device", persistent: persistent, password: password}
+    if (save != nil)
+      options[:save_credentials:] = save
+    let error = try
+      let connection = winnet.connect not-a-UNC-path ...options
+      connection.disconnect()
+      nil
+    catch err
+      err
+    assert (error != nil) "invalid connection arguments unexpectedly succeeded"
+    assert_eq (str(error).contains("saving credentials requires a user name")) $expected

@@ -1,5 +1,6 @@
-import progress
+import progress fs shell
   test:
+    - assert
     - assert_eq
     - assert_type
     - assert_throws
@@ -129,3 +130,18 @@ def style_array_read_view()
   for non_array = [(:BOLD:,), (0..2)]
     assert_throws $TypeError do
       progress.with style: {message: {attrs: non_array}} do nil
+
+#[test]
+def percent_status_uses_total()
+  fs.with_temp_dir do |dir|
+    let path = (dir / "percent.dol")
+    path.write r|
+      import progress
+      progress.with do
+        progress.show message: percent total: 10 units: :PERCENT: do |indicator|
+          indicator.update position: 4
+          indicator.update message: percent
+    let output = []
+    env DOLANG_CONSOLE: "tty=false,style=false" do
+      run $shell.exe --no-cache $path stderr: $output
+    assert (("".join output).contains "40%")

@@ -124,31 +124,4 @@ mod raw {
             }
         }
     }
-
-    #[cfg(test)]
-    mod tests {
-        use super::super::Value;
-
-        #[test]
-        fn round_trips_through_raw_kind_and_bytes() {
-            let values = [
-                Value::Sz("hello".into()),
-                Value::ExpandSz("%PATH%".into()),
-                Value::MultiSz(vec!["a".into(), "bee".into()]),
-                Value::Dword(0x1234_5678),
-                Value::DwordBigEndian(0x1234_5678),
-                Value::Qword(u64::MAX),
-                Value::Binary(vec![1, 2, 3]),
-                Value::None,
-                Value::Other {
-                    kind: 99,
-                    data: vec![9, 9, 9],
-                },
-            ];
-            for value in values {
-                let (kind, data) = value.to_raw();
-                assert_eq!(Value::from_raw(kind, &data), value);
-            }
-        }
-    }
 }

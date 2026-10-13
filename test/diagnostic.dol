@@ -1,5 +1,7 @@
 import
   _shell
+  fs
+  shell
   compile
   strand
   term
@@ -70,3 +72,29 @@ def error_bad_type()
   catch e
     e
   assert_eq (str type_err) "type error: expected strand.Backtrace"
+
+#[test]
+def backtrace_source_is_relative_highlighted_and_unique()
+  fs.with_temp_dir do |dir|
+    let path = (dir / "backtrace.dol")
+    path.write r|
+      import _shell strand shell
+      def fail n
+        if (n > 0)
+          fail (n - 1)
+        else
+          throw "boom"
+      try
+        fail 2
+      catch err
+        shell.stdout.write $(_shell.render_error(err, backtrace: strand.error_backtrace()).encode())
+    let output = []
+    cd $dir do run $shell.exe --no-cache $path stdout: $output
+    let encoded = "".join(output)
+    let plain = str $term.preformat(encoded)
+    assert (plain.contains "backtrace.dol:6")
+    assert (!plain.contains(str(dir)))
+    assert_eq (Array(plain.split("fail (n - 1)")).len - 1) 1
+    assert (plain.contains "throw \"boom\"")
+    assert (encoded.contains(str(b"\x1b")))
+    assert_eq (str(term.text(encoded))) $plain

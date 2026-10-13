@@ -384,27 +384,3 @@ impl VfsExtension for WinScmExt {
 }
 
 dolang_vfs::extension::vfs_extension!(WinScmExt);
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn assert_numeric_round_trip<T>(value: T, bits: u32)
-    where
-        T: Copy + std::fmt::Debug + PartialEq + Serialize + for<'de> Deserialize<'de>,
-    {
-        let encoded = postcard::to_stdvec(&value).unwrap();
-        assert_eq!(encoded, postcard::to_stdvec(&bits).unwrap());
-        assert_eq!(postcard::from_bytes::<T>(&encoded).unwrap(), value);
-    }
-
-    #[test]
-    fn flag_sets_preserve_unknown_bits_and_numeric_encoding() {
-        assert_numeric_round_trip(ServiceType::from_bits_retain(0x8000_0010), 0x8000_0010);
-        assert_numeric_round_trip(NotifyMask::from_bits_retain(0x8000_0008), 0x8000_0008);
-        assert_numeric_round_trip(
-            ServiceControlsAccepted::from_bits_retain(0x8000_0001),
-            0x8000_0001,
-        );
-    }
-}

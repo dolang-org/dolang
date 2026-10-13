@@ -598,26 +598,6 @@ pub(crate) fn write_status_text(
     s
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{Style, Units, write_status_text};
-
-    #[test]
-    fn percent_status_uses_total() {
-        assert_eq!(
-            write_status_text(
-                Some(Units::Percent),
-                4,
-                Some(10),
-                None,
-                false,
-                &Style::default()
-            ),
-            "40%"
-        );
-    }
-}
-
 /// [`write_status_text`], capped to `width` if it would exceed it —
 /// deliberately *not* padded when it's shorter, unlike [`fit`] (used for
 /// `message`, where a fixed width keeps sibling rows' bar/status columns

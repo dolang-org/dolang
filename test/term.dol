@@ -1,4 +1,4 @@
-import shell term strand
+import shell term strand json
   fs:
     - with_temp_dir
   test:
@@ -807,3 +807,61 @@ def reentrant_console_does_not_recurse()
     # Two of them: the data the console was handed already carried `echo`'s
     # terminator, and the re-entrant `echo` adds its own.
     assert_eq $err.read() "loud: hello\n\n"
+
+#[test]
+def filters_control_sequences()
+  let input = "a\u{0007}b$ESC[2Jc$(ESC)]0;title\u{0007}d\u{009b}31me\u{009d}title\u{0007}f\n\tg"
+  assert_eq (str(term.text(input))) "abcdef\n\tg"
+  assert_eq (str(term.text("before$ESC[31mred$ESC[0mafter"))) beforeredafter
+  assert_eq (term.preformat("$ESC[1;31mred$ESC[39m bold").encode()) "$ESC[1m$ESC[31mred$ESC[39m bold$ESC[0m"
+  assert_eq (term.preformat("$ESC[38;5;123ma$ESC[48;2;1;2;3mb").encode()) "$ESC[38;5;123ma$ESC[48;2;1;2;3mb$ESC[0m"
+  assert_eq (term.text(term.preformat("$ESC[31mred$ESC[0mparent"), bold: true).encode()) "$ESC[1m$ESC[31mred$ESC[0m$ESC[1mparent$ESC[0m"
+
+#[test]
+def sub_strips_exactly_one_line_ending()
+  for input expected = [
+    ("text\r\n", "text"),
+    ("text\n", "text"),
+    ("text\r", "text\r"),
+    ("text\n\n", "text\n"),
+    ("text\r\r\n", "text\r")
+  ]
+    assert_eq (term.sub do term.output().write input) $expected
+
+# Console policy is fixed at startup, so each probe needs a fresh interpreter.
+def console_snapshot override force no_color
+  with_temp_dir do |dir|
+    let path = script $dir console.dol r|
+      import json term strand
+      let g = term.console.geometry()
+      strand.put $json.encode([term.console.is_tty, term.console.can_style, g.rows, g.cols])
+    let out = []
+    env DOLANG_CONSOLE: $override FORCE_COLOR: $force NO_COLOR: $no_color do
+      run $shell.exe --no-cache $path stdout: $out
+    json.decode $out[0]
+
+#[test]
+def console_color_policy()
+  for tty force no_color expected = [
+    (true, nil, nil, true),
+    (false, nil, nil, false),
+    (true, nil, "", true),
+    (true, nil, "1", false),
+    (false, "1", "", true),
+    (false, "1", "1", true),
+    (true, "0", nil, false)
+  ]
+    let result = console_snapshot "tty=$tty" $force $no_color
+    assert_eq $result[0] $tty
+    assert_eq $result[1] $expected
+
+#[test]
+def console_override_parsing()
+  assert_eq (console_snapshot "tty=false,cols=120,rows=40,style=true" nil nil) [false, true, 40, 120]
+  assert_eq (console_snapshot " tty = false , , cols=80,rows=24 " nil nil) [false, false, 24, 80]
+  let baseline = console_snapshot nil nil nil
+  let malformed = console_snapshot "wat=1,tty=maybe,cols=wide,rows=40" nil nil
+  assert_eq $malformed[0] $baseline[0]
+  assert_eq $malformed[1] $baseline[1]
+  assert_eq $malformed[2] 40
+  assert_eq $malformed[3] $baseline[3]

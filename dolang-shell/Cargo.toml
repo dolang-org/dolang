@@ -16,6 +16,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(asan)"] }
 [[bin]]
 name = "dolang"
 path = "src/main.rs"
+test = false
 
 
 [features]
@@ -86,14 +87,6 @@ workspace = true
 [dependencies.dolang]
 workspace = true
 
-
-[target.'cfg(windows)'.dev-dependencies.dolang-vfs]
-workspace = true
-
-
-[target.'cfg(windows)'.dev-dependencies.tokio]
-workspace = true
-features = ["io-util", "macros", "net", "process", "rt-multi-thread", "time"]
 
 [dependencies.dolang-ext-digest]
 workspace = true

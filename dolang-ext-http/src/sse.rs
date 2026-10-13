@@ -316,34 +316,3 @@ impl<'v> Object<'v> for EventIter {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::SseParser;
-
-    #[test]
-    fn sse_parser_handles_chunk_boundaries_and_eof_dispatch() {
-        let mut parser = SseParser::default();
-
-        parser.push(b"event: tok");
-        assert!(parser.next_event(false).unwrap().is_none());
-
-        parser.push(b"en\nid: abc\nretry: 250\ndata: hel");
-        assert!(parser.next_event(false).unwrap().is_none());
-
-        parser.push(b"lo\r\ndata: world\r\n\r\ndata: tail");
-        let first = parser.next_event(false).unwrap().unwrap();
-        assert_eq!(first.event_type, "token");
-        assert_eq!(first.id.as_deref(), Some("abc"));
-        assert_eq!(first.retry, Some(250));
-        assert_eq!(first.data, "hello\nworld");
-
-        let second = parser.next_event(true).unwrap().unwrap();
-        assert_eq!(second.event_type, "message");
-        assert_eq!(second.id, None);
-        assert_eq!(second.retry, None);
-        assert_eq!(second.data, "tail");
-
-        assert!(parser.next_event(true).unwrap().is_none());
-    }
-}

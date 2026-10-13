@@ -8,9 +8,11 @@ import sys _vfs time
     - assert_eq
     - assert_throws
     - ignore
+    - parametrize
     - test
   shell:
     - Vfs
+    - exe
     - with_host
     - vfs_exe
   fs:
@@ -22,6 +24,9 @@ import sys _vfs time
 
 let launch_cwd = cd()
 let vfs_bin = _vfs.bin()
+let stdio_launchers = [[vfs_bin, "--stdio"]]
+if (sys.os_info().family == :WINDOWS:)
+  stdio_launchers.push [exe, "--vfs", "--stdio"]
 
 #[test]
 #[vfs]
@@ -81,11 +86,12 @@ def stdio_vfs_runs_over_strand_stream()
     open $marker r do |file| assert_eq $file.read() "remote"
 
 #[test]
-def stopping_stdio_vfs_joins_launcher()
+#[parametrize command: stdio_launchers]
+def stopping_stdio_vfs_joins_launcher :command
   with_temp_dir do |dir|
     let marker = (dir / "stopped")
     let vfs = Vfs do
-      run $vfs_bin --stdio
+      run ...command
       open $marker w do |file| file.write "stopped"
     time.timeout 30 do vfs.stop()
     assert $marker.exists()

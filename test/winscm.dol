@@ -1,9 +1,12 @@
-import winscm rand sys shell
+import winscm rand sys shell strand time
+  testlib.vfs:
+    - vfs
   test:
     - assert
     - assert_eq
     - assert_throws
     - assert_type
+    - fixture
     - ignore
     - skip
     - test
@@ -13,6 +16,13 @@ import winscm rand sys shell
     - UnsupportedError
   security.windows:
     - SecDesc
+
+let scm_resource = strand.Resource 1
+
+# Wine's SCM cannot reliably handle concurrent test operations.
+#[fixture]
+def serialized_scm block ...rest
+  scm_resource.with do block(...rest)
 
 #[test]
 def flags_raw_integer_round_trip()
@@ -29,6 +39,7 @@ def flags_raw_integer_round_trip()
   assert $access.contains(:SERVICE_START:)
 
 #[test]
+#[vfs]
 def unsupported_without_windows_backend()
   if (sys.os_info().family == :WINDOWS:)
     ignore "only exercises the non-Windows stub backend"
@@ -36,6 +47,8 @@ def unsupported_without_windows_backend()
     winscm.open access: :SC_MANAGER_CONNECT:
 
 #[test]
+#[vfs]
+#[serialized_scm]
 def scm_crud_round_trips()
   if (sys.os_info().family != :WINDOWS:)
     ignore "requires a real Windows SCM"
@@ -66,6 +79,8 @@ def scm_crud_round_trips()
     let config = service.config()
     assert_type $winscm.ServiceConfig $config
     assert_eq $config.display_name $display_name
+    assert_eq $config.service_type (winscm.ServiceType :WIN32_OWN_PROCESS:)
+    assert_eq $config.error_control :NORMAL:
     assert_eq $config.start_type :DEMAND_START:
     assert_eq $config.dependencies.len 0
     let updated_display_name = "$display_name updated"
@@ -75,15 +90,8 @@ def scm_crud_round_trips()
     let updated_config = service.config()
     assert_eq $updated_config.display_name $updated_display_name
     assert_eq $updated_config.binary_path $config.binary_path
+    assert_eq $updated_config.start_type $config.start_type
     assert_eq $config.display_name $display_name
-
-    # `control`/`wait_for_status_change` need the service to actually be
-    # running (a stopped service rejects every control code with
-    # ERROR_SERVICE_NOT_ACTIVE), and this dummy binary transitions too
-    # unreliably under test conditions to assert on — the reactor/wait
-    # machinery itself is already covered end-to-end by
-    # dolang-vfs-winscm's own Rust-level tests, so this only needs to
-    # prove `query_status`'s Status decoding, which it just did.
 
     # Fetch the owner for query coverage, then round-trip only the DACL.
     # Replaying an unchanged owner still requests an owner assignment, which
@@ -92,13 +100,17 @@ def scm_crud_round_trips()
     # READ_CONTROL/WRITE_DAC rights the DACL calls need.
     let owner_descriptor = service.sec_desc group: false dacl: false
     assert_type $SecDesc $owner_descriptor
+    if !sys.os_info().is_wine
+      assert (owner_descriptor.owner != nil)
     let dacl_descriptor = service.sec_desc owner: false group: false
     service.update_sec_desc $dacl_descriptor
 
     # The scratch service shows up in an enumeration.
     let services = manager.enumerate_services()
-    let found = [...services].any(do |entry| (entry.name == name))
-    assert $found "scratch service $name missing from enumerate_services()"
+    let matches = [...services].filter(do |entry| entry.name == name)
+    let entries = [...matches]
+    assert_eq $entries.len 1
+    assert_eq $entries[0].status.current_state :STOPPED:
 
     service.delete()
     service.close()
@@ -106,3 +118,71 @@ def scm_crud_round_trips()
   assert_throws $NotFoundError do
     winscm.open access: :SC_MANAGER_CONNECT: do |manager|
       manager.open_service $name
+
+#[fixture]
+def scratch_service block ...rest
+  if (sys.os_info().family != :WINDOWS:)
+    ignore "requires a real Windows SCM"
+  winscm.open access: [:SC_MANAGER_CREATE_SERVICE:, :SC_MANAGER_CONNECT:] do |manager|
+    let name = "do-notify-$(rand.string 16)"
+    let binary_path = "$(shell.env["SystemRoot"])\\System32\\cmd.exe /c exit 0"
+    let service = try
+      manager.create_service $name :binary_path
+        access: :SERVICE_ALL_ACCESS:
+        service_start_name: LocalSystem
+    catch PermissionDeniedError: _
+      skip "requires administrator privileges to create a service"
+    try
+      block :service ...rest
+    finally
+      try
+        service.delete()
+      finally
+        service.close()
+
+# Wine supports immediate matching notifications, but not future transitions.
+def observe_start service
+  let wine = sys.os_info().is_wine
+  let mask = if wine
+    [:START_PENDING:, :RUNNING:, :STOPPED:]
+  else
+    [:START_PENDING:, :RUNNING:]
+  let entered ready = strand.channel()
+  let worker = strand.spawn do
+    entered.put true
+    service.wait_for_status_change $mask
+  try
+    ready.next()
+    time.sleep 0.05
+    if !wine
+      assert (!worker.done) "notification resolved before the service started"
+    # The dummy executable does not implement the service-control protocol.
+    try
+      service.start()
+    catch sys.Error: _
+      nil
+    let status = time.timeout 10 do worker.join()
+    if !wine
+      assert (status.current_state != :STOPPED:)
+    status
+  finally
+    worker.cancel()
+    time.timeout 10 do worker.wait()
+
+#[test]
+#[vfs]
+#[serialized_scm]
+#[scratch_service]
+def status_change_notification :service
+  observe_start $service
+
+#[test]
+#[vfs]
+#[serialized_scm]
+#[scratch_service]
+def canceled_notification_leaves_service_usable :service
+  assert_throws $std.TimedOutError do
+    time.timeout 0.2 do
+      service.wait_for_status_change [:START_PENDING:, :RUNNING:]
+  # Timeout cancels a genuinely pending wait. Reuse that same service handle.
+  observe_start $service

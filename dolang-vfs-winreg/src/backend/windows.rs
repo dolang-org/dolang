@@ -842,7 +842,11 @@ unsafe fn set_value(handle: HKEY, name: Option<&str>, value: &Value) -> Result<(
             wide_name.as_ptr(),
             0,
             kind,
-            data.as_ptr(),
+            if data.is_empty() {
+                ptr::null()
+            } else {
+                data.as_ptr()
+            },
             data.len() as u32,
         )
     };

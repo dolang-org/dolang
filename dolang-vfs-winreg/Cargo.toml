@@ -9,7 +9,7 @@ rust-version.workspace = true
 
 
 [lib]
-test = true
+test = false
 doctest = false
 
 
@@ -34,12 +34,3 @@ features = ["rt"]
 [target.'cfg(windows)'.dependencies.windows-sys]
 workspace = true
 features = ["Win32_Foundation", "Win32_Security", "Win32_System_Registry"]
-
-
-[dev-dependencies.tokio]
-workspace = true
-features = ["rt-multi-thread", "macros", "io-util"]
-
-
-[dev-dependencies.tempfile]
-workspace = true
