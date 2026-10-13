@@ -2373,9 +2373,9 @@ impl<'db> Solver<'db> {
         Ok((args, environment))
     }
 
-    /// Expose the head form of a solver term. Transparent declarations must be
-    /// acyclic; well-formedness checking rejects cycles before solving, so
-    /// exposing the same declaration or application twice panics.
+    /// Expose the head form of a solver term. Well-formedness rejects cycles of
+    /// transparent declarations, but this doesn't rely on it: exposing the same
+    /// declaration or application twice is recursive.
     fn head(&self, mut term: Term) -> Result<Head, Issue> {
         let mut exposed = FxHashSet::default();
         for depth in 0.. {
@@ -2419,10 +2419,9 @@ impl<'db> Solver<'db> {
                         }));
                     }
                     // Declarations are closed, so their environment is irrelevant.
-                    assert!(
-                        exposed.insert(self.closed(view.ty)),
-                        "transparent declaration cycle"
-                    );
+                    if !exposed.insert(self.closed(view.ty)) {
+                        return Err(Residual::Recursive.into());
+                    }
                     term = self.closed(decl.ty);
                 }
                 Type::Meta(id) => {
@@ -2439,7 +2438,9 @@ impl<'db> Solver<'db> {
                     }));
                 }
                 Type::Apply { base, ref args, .. } => {
-                    assert!(exposed.insert(term), "transparent declaration cycle");
+                    if !exposed.insert(term) {
+                        return Err(Residual::Recursive.into());
+                    }
                     // Scoped to this application: applications with different
                     // arguments can legitimately expose the same constructor.
                     let mut constructors = FxHashSet::default();
@@ -2464,7 +2465,9 @@ impl<'db> Solver<'db> {
                         if meta || decl.source.kind.nominal() {
                             break (Some(id), meta, constructor);
                         }
-                        assert!(constructors.insert(id), "transparent declaration cycle");
+                        if !constructors.insert(id) {
+                            return Err(Residual::Recursive.into());
+                        }
                         base = Term::View(constructor);
                     };
                     let Type::Quantified { binders, body } = self.db.ty(constructor.ty) else {
@@ -2504,9 +2507,18 @@ impl<'db> Solver<'db> {
                         Err(residual) => return Err(residual.into()),
                     }
                 }
-                // An item projection takes the solver to select by its key. One that
-                // can't be evaluated is left for the rules of unions.
-                Type::Union(ref members) if members.iter().any(|member| member.key().is_some()) => {
+                Type::Union(ref members)
+                    if members.iter().any(|member| member.projected().is_some()) =>
+                {
+                    // Interning evaluates a projection only of a schema written
+                    // out, so one of a transparent declaration is evaluated once
+                    // exposed
+                    if let Some(exposed) = self.exposed_projections(members)? {
+                        term = self.closed(exposed);
+                        continue;
+                    }
+                    // An item projection takes the solver to select by its key.
+                    // One that can't be evaluated is left for the rules of unions.
                     match self.evaluate_items(view.ty) {
                         Ok(Some(evaluated)) => term = self.closed(evaluated),
                         Ok(None) | Err(Issue::Residual(_)) => return Ok(Head::Structural(view)),
@@ -2517,6 +2529,91 @@ impl<'db> Solver<'db> {
             }
         }
         unreachable!()
+    }
+
+    /// A closed union with each projection's schema exposed (see
+    /// [`Self::exposed_schema`]), or `None` if none has a transparent
+    /// declaration to expose
+    fn exposed_projections(&self, members: &[UnionMember]) -> Result<Option<TypeId>, Issue> {
+        let mut changed = false;
+        let mut exposed = Vec::with_capacity(members.len());
+        for &member in members {
+            match member.projected().map(|schema| self.exposed_schema(schema)) {
+                Some(Ok(Some(schema))) => {
+                    changed = true;
+                    exposed.push(member.with(schema));
+                }
+                // A projection whose schema can't be exposed stays as it is
+                Some(Ok(None) | Err(Issue::Residual(_))) | None => exposed.push(member),
+                Some(Err(issue)) => return Err(issue),
+            }
+        }
+        Ok(changed.then(|| self.db.intern(Type::Union(exposed.into()))))
+    }
+
+    /// A closed schema with each transparent declaration it is or includes
+    /// replaced by what it stands for, or `None` if it has none. A schema
+    /// included along its own path of inclusions is recursive, which
+    /// well-formedness rejects, but this doesn't rely on it.
+    pub(super) fn exposed_schema(&self, schema: TypeId) -> Result<Option<TypeId>, Issue> {
+        self.expose_schema(schema, &mut Vec::new())
+    }
+
+    fn expose_schema(
+        &self,
+        schema: TypeId,
+        path: &mut Vec<TypeId>,
+    ) -> Result<Option<TypeId>, Issue> {
+        self.spend()?;
+        self.depth(path.len())?;
+        if path.contains(&schema) {
+            return Err(Residual::Recursive.into());
+        }
+        let mut exposed = None;
+        let mut current = schema;
+        let transparent = match *self.db.ty(schema) {
+            Type::Decl(id) => !self.db.declaration(id).source.kind.nominal(),
+            Type::Apply { .. } => true,
+            _ => false,
+        };
+        if transparent {
+            let Head::Structural(view) = self.head(self.closed(schema))? else {
+                return Ok(None);
+            };
+            current = self.reify(Term::View(view))?;
+            exposed = Some(current);
+        }
+        let Type::Schema(items) = self.db.ty(current) else {
+            return Ok(exposed);
+        };
+        path.push(schema);
+        let mut changed = false;
+        let mut rebuilt = Vec::with_capacity(items.len());
+        for item in items.iter() {
+            let element = match item.element {
+                Element::Include(inner) => match self.expose_schema(inner, path) {
+                    Ok(Some(inner)) => {
+                        changed = true;
+                        Element::Include(inner)
+                    }
+                    Ok(None) => item.element.clone(),
+                    Err(issue) => {
+                        path.pop();
+                        return Err(issue);
+                    }
+                },
+                ref element => element.clone(),
+            };
+            rebuilt.push(SchemaItem {
+                multiplicity: item.multiplicity,
+                element,
+            });
+        }
+        path.pop();
+        Ok(match changed {
+            true => Some(self.db.intern(Type::Schema(rebuilt.into()))),
+            false => exposed,
+        })
     }
 
     /// A term's head, with a metatype's widened to `Type[C[A]]`'s, as it
