@@ -1,3 +1,4 @@
+import json shell
 import proc sys sys.unix sys.windows _vfs term
   testlib.vfs:
     - vfs
@@ -528,3 +529,25 @@ def cross_domain_redirects_host_process_stdout_into_remote_file()
       echo "remote-stdout" stdout: $output
       output.close()
     assert_eq (path.read().trim_end "\r\n") "remote-stdout"
+
+#[test]
+#[vfs]
+def sub_strips_exactly_one_line_ending()
+  let script = Path "chomp-child.dol"
+  script.write r|
+    import shell strand json
+    strand.put $json.decode(shell.args[0])
+  for input expected = [
+    ("text\r\n", "text"),
+    ("text\n", "text"),
+    ("text\r", "text\r"),
+    ("text\n\n", "text\n"),
+    ("text\r\r\n", "text\r")
+  ]
+    assert_eq (sub do run exe script (json.encode input)) $expected
+
+#[test]
+#[vfs]
+def native_line_ending()
+  let expected = (sys.os_info().family == :WINDOWS: && "\r\n" || "\n")
+  assert_eq (shell.line_ending()) $expected

@@ -27,16 +27,3 @@ pub fn typelibs() -> impl Iterator<Item = (&'static str, &'static [u8])> {
 pub fn iter() -> impl Iterator<Item = (&'static str, &'static [u8])> {
     BUNDLED_MODULES.iter().copied()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::get;
-
-    #[test]
-    fn lookup_exposes_known_modules() {
-        assert!(get("dodo").is_some());
-        assert!(get("test").is_some());
-        assert!(get("docker").is_some());
-        assert!(get("transfer").is_some());
-    }
-}

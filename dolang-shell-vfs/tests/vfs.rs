@@ -1,10 +1,13 @@
 #![deny(warnings)]
 
+#[path = "../../dolang-vfs/tests/support/temp.rs"]
+mod temp;
+
 use std::time::Duration;
 
+use crate::temp::tempdir;
 use dolang_vfs::{Vfs, security::SecurityInfo, target::TargetInfo};
 use std::collections::HashMap;
-use tempfile::tempdir;
 use tokio::time::timeout;
 
 const AGENT_BIN: &str = env!("CARGO_BIN_EXE_dolang-vfs");
@@ -305,8 +308,8 @@ mod listen_mode {
         time::Duration,
     };
 
+    use crate::temp::tempdir;
     use dolang_vfs::Vfs;
-    use tempfile::tempdir;
     use tokio::time::timeout;
 
     use super::AGENT_BIN;
@@ -315,7 +318,7 @@ mod listen_mode {
         dolang_vfs::path::Path::unix(path)
     }
 
-    fn find_free_socket_path() -> (tempfile::TempDir, std::path::PathBuf) {
+    fn find_free_socket_path() -> (crate::temp::TempDir, std::path::PathBuf) {
         let dir = tempdir().unwrap();
         let mut perms = std::fs::metadata(&dir).unwrap().permissions();
         perms.set_mode(0o700);
@@ -681,7 +684,7 @@ mod listen_mode {
 mod login_env {
     use std::path::Path;
 
-    use tempfile::tempdir;
+    use crate::temp::tempdir;
 
     use super::spawn_and_query;
 
@@ -912,9 +915,9 @@ mod login_env {
 mod accept_mode {
     use std::{os::unix::fs::PermissionsExt, path::Path, process::Stdio, time::Duration};
 
+    use crate::temp::tempdir;
     use dolang_rpc::auth::AuthKey;
     use dolang_vfs::Vfs;
-    use tempfile::tempdir;
     use tokio::time::timeout;
     use tokio::{
         io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -925,7 +928,7 @@ mod accept_mode {
 
     const TEST_KEY: &[u8] = b"a-sufficiently-long-test-key";
 
-    fn find_free_socket_path() -> (tempfile::TempDir, std::path::PathBuf) {
+    fn find_free_socket_path() -> (crate::temp::TempDir, std::path::PathBuf) {
         let dir = tempdir().unwrap();
         let mut perms = std::fs::metadata(&dir).unwrap().permissions();
         perms.set_mode(0o700);

@@ -1,0 +1,13 @@
+import _shell
+  test:
+    - assert
+    - test
+
+#[test]
+def stock_bundles_are_present()
+  for name = ["std", "strand", "math", "proc", "json", "args"]
+    assert (_shell.bundled_typelib(name) != nil)
+  for name = ["test", "dodo", "ssh", "fs", "proc"]
+    assert (_shell.bundled_entrypoint(name) != nil)
+  for name = ["dodo", "test", "docker", "transfer"]
+    assert (_shell.bundled_module(name) != nil)

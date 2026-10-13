@@ -123,10 +123,6 @@ features = [
 ]
 
 
-[dev-dependencies.tempfile]
-workspace = true
-
-
 [dev-dependencies.postcard]
 workspace = true
 features = ["use-std"]

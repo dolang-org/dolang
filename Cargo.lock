@@ -981,7 +981,6 @@ dependencies = [
  "dolang-ext-shell",
  "dolang-ext-term",
  "dolang-private-bundle",
- "futures",
  "indicatif",
  "tokio",
  "unicode-width",
@@ -1069,7 +1068,6 @@ version = "0.1.1"
 dependencies = [
  "dolang",
  "dolang-private-bundle",
- "futures",
  "unicode-segmentation",
  "unicode-width",
 ]
@@ -1321,9 +1319,7 @@ dependencies = [
  "dolang-shell-main",
  "dolang-shell-modules",
  "dolang-shell-vfs",
- "dolang-vfs",
  "mimalloc",
- "tokio",
 ]
 
 [[package]]
@@ -1367,7 +1363,6 @@ dependencies = [
  "libc",
  "mimalloc",
  "nix",
- "tempfile",
  "tokio",
  "windows-sys 0.61.2",
 ]
@@ -1390,7 +1385,6 @@ dependencies = [
  "postcard",
  "rand",
  "serde",
- "tempfile",
  "thiserror",
  "tokio",
  "typed-path",
@@ -1407,9 +1401,7 @@ dependencies = [
  "bitflags",
  "dolang-vfs",
  "dolang-winterop",
- "postcard",
  "serde",
- "tempfile",
  "tokio",
  "windows-sys 0.61.2",
 ]
@@ -1421,7 +1413,6 @@ dependencies = [
  "dolang-vfs",
  "dolang-winterop",
  "serde",
- "tempfile",
  "tokio",
  "windows-sys 0.61.2",
 ]
@@ -1434,9 +1425,7 @@ dependencies = [
  "dolang-vfs",
  "dolang-winterop",
  "futures",
- "postcard",
  "serde",
- "tempfile",
  "tokio",
  "windows-sys 0.61.2",
 ]

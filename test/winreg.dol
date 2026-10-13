@@ -1,4 +1,6 @@
 import winreg rand sys
+  testlib.vfs:
+    - vfs
   test:
     - assert
     - assert_eq
@@ -26,6 +28,7 @@ def access_masks_are_precise_and_lossless()
   assert $unknown.contains(:QUERY_VALUE:)
 
 #[test]
+#[vfs]
 def unsupported_without_windows_backend()
   if (sys.os_info().family == :WINDOWS:)
     ignore "only exercises the non-Windows stub backend"
@@ -33,6 +36,7 @@ def unsupported_without_windows_backend()
     winreg.open :CURRENT_USER:
 
 #[test]
+#[vfs]
 def registry_crud_round_trips()
   if (sys.os_info().family != :WINDOWS:)
     ignore "requires a real Windows registry"
@@ -110,14 +114,19 @@ def registry_crud_round_trips()
   scratch.set enabled false
   assert_eq $scratch.get("enabled") 0
 
-  scratch.set qword 4294967296 kind: :QWORD:
-  assert_eq $scratch.get("qword") 4294967296
+  scratch.set qword 18446744073709551615 kind: :QWORD:
+  assert_eq $scratch.get("qword") 18446744073709551615
   scratch.set qword true
   assert_eq $scratch.get("qword") 1
   assert_eq $scratch.get_value("qword").kind :QWORD:
 
   scratch.set binary b"\x01\x02\x03" kind: :BINARY:
   assert_eq $scratch.get("binary") b"\x01\x02\x03"
+
+  scratch.set big_endian 305419896 kind: :DWORD_BIG_ENDIAN:
+  assert_eq $scratch.get("big_endian") 305419896
+  scratch.set none nil kind: :NONE:
+  assert_eq $scratch.get("none") nil
 
   # Default (unnamed) value, addressed by an empty name.
   scratch.set "" default kind: :SZ:
@@ -130,11 +139,13 @@ def registry_crud_round_trips()
   assert_eq $entry.value 42
 
   # Snapshot fetch reaches every name we set.
-  assert_eq $scratch.values().len 9
+  assert_eq $scratch.values().len 11
   let all_values = [...scratch.values()]
   let names = [...all_values.map(do |v| v.name)]
-  for expected = ["sz", "expand_sz", "multi_sz", "multi_sz_tuple", "dword", "enabled", "qword", "binary", ""]
+  for expected = ["sz", "expand_sz", "multi_sz", "multi_sz_tuple", "dword", "enabled", "qword", "binary", "big_endian", "none", ""]
     assert (names.any(do |n| (n == expected))) "missing $expected in values()"
+  for entry = all_values
+    assert_eq $entry.value $scratch.get(entry.name)
 
   # Delete a value.
   scratch.delete_value binary
@@ -158,7 +169,12 @@ def registry_crud_round_trips()
     let followed = scratch.open link resolve: :TARGET:
     assert_eq $followed.get("marker") 7
     followed.close()
-    let raw_link = scratch.open link resolve: :LINK:
+    let raw_link = scratch.open link resolve: :LINK: access: :READ_WRITE:
+    assert_eq $raw_link.get_value("SymbolicLinkValue").kind 6
+    # REG_LINK is an opaque kind: writing its bytes back preserves the kind.
+    let link_bytes = raw_link.get SymbolicLinkValue
+    raw_link.set SymbolicLinkValue $link_bytes
+    assert_eq $raw_link.get("SymbolicLinkValue") $link_bytes
     assert_eq $raw_link.get_value("SymbolicLinkValue").kind 6
     raw_link.close()
     assert_throws $sys.InvalidInputError do
@@ -167,8 +183,23 @@ def registry_crud_round_trips()
       scratch.link :CURRENT_USER: $target_path link
     scratch.delete link all: true
     assert_eq $target.get("marker") 7
+    # Deleting a tree containing a link must leave the target intact.
+    let link_tree = scratch.create link-tree access: [:READ_WRITE:, :CREATE_LINK:]
+    link_tree.link :CURRENT_USER: $target_path nested-link
+    link_tree.close()
+    scratch.delete link-tree all: true
+    assert_eq $target.get("marker") 7
     target.close()
     scratch.delete link-target all: true
+
+    # HKCU Software is shared between views; this checks flag acceptance.
+    let wow32 = scratch.create view-probe view: :WOW32: access: :READ_WRITE:
+    wow32.set marker 1
+    let wow64 = scratch.open view-probe view: :WOW64:
+    assert_eq $wow64.get("marker") 1
+    wow32.close()
+    wow64.close()
+    scratch.delete view-probe view: :WOW32:
 
   # Security descriptor: fetch (default mask: owner/group/dacl), and
   # round-trip it back unmodified. The scratch key was opened with the

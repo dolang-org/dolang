@@ -64,6 +64,7 @@ def events_identity_and_hash()
               id: nil
               retry: nil
 
+          assert_eq $events.len $expected.len
           for e x = events.zip(expected)
             assert_eq $e $x
 

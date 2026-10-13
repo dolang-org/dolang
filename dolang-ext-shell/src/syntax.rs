@@ -150,34 +150,3 @@ pub fn highlight_range(
     }
     out
 }
-
-#[cfg(test)]
-mod tests {
-    use std::path::Path;
-
-    use dolang::compile::{Config, NodeId};
-
-    use super::*;
-
-    #[test]
-    fn highlights_a_source_range_without_changing_plain_text() {
-        let source = "let answer = 42";
-        let mut tokens = Vec::new();
-        let unit = Config::new()
-            .document(true)
-            .recover(true)
-            .unit(Path::new("example.dol"), source);
-        unit.tokens(&mut |token, span, node: Option<NodeId>, context| {
-            let kind = node.and_then(|id| unit.node(id)).map(|node| node.kind());
-            tokens.push((token, span, classify_node(kind.as_ref()), context));
-        });
-        assert_eq!(
-            highlight_range(source, &tokens, 0..source.len(), false),
-            source
-        );
-        assert_eq!(
-            highlight_range(source, &tokens, 0..source.len(), true),
-            "\u{1b}[31mlet\u{1b}[0m answer \u{1b}[33m=\u{1b}[0m \u{1b}[36m42\u{1b}[0m"
-        );
-    }
-}

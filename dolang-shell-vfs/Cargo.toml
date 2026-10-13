@@ -81,10 +81,6 @@ features = [
 ]
 
 
-[dev-dependencies.tempfile]
-workspace = true
-
-
 [dev-dependencies.tokio]
 workspace = true
 features = [

@@ -1136,7 +1136,8 @@ mod tests {
     use super::*;
 
     fn file() -> Arc<std::fs::File> {
-        Arc::new(tempfile::tempfile().unwrap())
+        // These tests only use distinct Arc/file-handle identities.
+        Arc::new(std::fs::File::open(std::env::current_exe().unwrap()).unwrap())
     }
 
     #[test]

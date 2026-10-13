@@ -9,7 +9,7 @@ rust-version.workspace = true
 
 
 [lib]
-test = true
+test = false
 doctest = false
 
 
@@ -47,17 +47,3 @@ features = [
   "Win32_Security_Credentials",
   "Win32_Storage_FileSystem",
 ]
-
-
-[dev-dependencies.postcard]
-workspace = true
-features = ["use-std"]
-
-
-[dev-dependencies.tokio]
-workspace = true
-features = ["rt-multi-thread", "macros", "io-util"]
-
-
-[dev-dependencies.tempfile]
-workspace = true

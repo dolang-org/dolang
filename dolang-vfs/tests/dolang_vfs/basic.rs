@@ -12,7 +12,7 @@ use nix::unistd::getgroups;
 use nix::unistd::{Group, User, getegid, geteuid, getgid, getuid};
 use std::{os::fd::OwnedFd, path::Path};
 
-use tempfile::tempdir;
+use crate::temp::tempdir;
 use tokio::task::JoinHandle;
 
 fn typed(path: &Path) -> dolang_vfs::path::Path<'_> {
@@ -340,13 +340,14 @@ async fn fd_passing() {
 
     let server_task = start_server(&socket_path).await;
 
-    let file = tempfile::NamedTempFile::new().unwrap();
+    let file = dir.path().join("passed-file");
+    std::fs::write(&file, []).unwrap();
 
     let client = connect_client(&socket_path).await;
     let output = client
         .open_options()
         .write(true)
-        .open(typed_str(file.path().to_str().unwrap()))
+        .open(typed_str(file.to_str().unwrap()))
         .await
         .unwrap();
     let mut command = client.command(typed_str("echo"));
@@ -362,7 +363,7 @@ async fn fd_passing() {
     drop(child);
     drop(client);
 
-    let content = std::fs::read_to_string(file.path()).unwrap();
+    let content = std::fs::read_to_string(&file).unwrap();
     assert_eq!(content.trim(), "hello_world");
 
     server_task.abort();

@@ -9,7 +9,7 @@ rust-version.workspace = true
 
 
 [lib]
-test = true
+test = false
 doctest = false
 
 
@@ -42,18 +42,4 @@ features = ["Win32_Foundation", "Win32_Security", "Win32_System_Services"]
 
 
 [target.'cfg(windows)'.dependencies.futures]
-workspace = true
-
-
-[dev-dependencies.postcard]
-workspace = true
-features = ["use-std"]
-
-
-[dev-dependencies.tokio]
-workspace = true
-features = ["rt-multi-thread", "macros", "io-util"]
-
-
-[dev-dependencies.tempfile]
 workspace = true

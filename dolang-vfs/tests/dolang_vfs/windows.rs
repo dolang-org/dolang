@@ -8,6 +8,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+use crate::temp::tempdir;
 use dolang_vfs::{
     Vfs,
     error::Result as VfsResult,
@@ -16,7 +17,6 @@ use dolang_vfs::{
     server::Server,
     target::TargetInfo,
 };
-use tempfile::tempdir;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::windows::named_pipe::{ClientOptions, ServerOptions},

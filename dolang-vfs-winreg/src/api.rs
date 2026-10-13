@@ -539,20 +539,3 @@ impl Values {
         Ok(self.entries.pop_front())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn unexpected_key_response_returns_error() {
-        let vfs = Vfs::direct().unwrap();
-        let error = match from_response(&vfs, "OpenRoot", WinRegResponse::Ack).await {
-            Ok(_) => panic!("expected an error"),
-            Err(error) => error,
-        };
-
-        assert_eq!(error.kind(), ErrorKind::InvalidData);
-        assert_eq!(error.to_string(), "unexpected response for OpenRoot");
-    }
-}

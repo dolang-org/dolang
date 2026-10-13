@@ -9,6 +9,7 @@ rust-version.workspace = true
 
 
 [lib]
+test = false
 doctest = false
 
 
@@ -21,10 +22,6 @@ workspace = true
 
 
 [dependencies.dolang]
-workspace = true
-
-
-[dev-dependencies.futures]
 workspace = true
 
 

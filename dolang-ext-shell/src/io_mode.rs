@@ -226,25 +226,3 @@ pub(crate) fn strip_line_ending(value: &str) -> &str {
         .or_else(|| value.strip_suffix('\n'))
         .unwrap_or(value)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn line_endings_are_native_to_the_platform() {
-        assert_eq!(line_ending(OperatingSystem::Linux), b"\n");
-        assert_eq!(line_ending(OperatingSystem::Macos), b"\n");
-        assert_eq!(line_ending(OperatingSystem::FreeBsd), b"\n");
-        assert_eq!(line_ending(OperatingSystem::Windows), b"\r\n");
-    }
-
-    #[test]
-    fn strips_exactly_one_complete_line_ending() {
-        assert_eq!(strip_line_ending("text\r\n"), "text");
-        assert_eq!(strip_line_ending("text\n"), "text");
-        assert_eq!(strip_line_ending("text\r"), "text\r");
-        assert_eq!(strip_line_ending("text\n\n"), "text\n");
-        assert_eq!(strip_line_ending("text\r\r\n"), "text\r");
-    }
-}

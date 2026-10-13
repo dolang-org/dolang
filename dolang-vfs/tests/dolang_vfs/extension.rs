@@ -1,11 +1,11 @@
 #![cfg(unix)]
 
+use crate::temp::tempdir;
 use dolang_vfs::Vfs;
 use dolang_vfs::extension::{
     ExtCite, ExtContext, ExtGift, ExtResource, VfsExtension, vfs_extension,
 };
 use serde::{Deserialize, Serialize};
-use tempfile::tempdir;
 use tokio::task::JoinHandle;
 
 /// Marker type for a `Counter` retained through [`ExtContext::register`].
