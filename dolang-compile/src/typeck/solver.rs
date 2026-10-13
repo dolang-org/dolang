@@ -2713,9 +2713,25 @@ impl<'db> Solver<'db> {
         depth: usize,
         visit: &mut impl FnMut(Visited<'_>) -> Result<Option<T>, Issue>,
     ) -> Result<Option<T>, Issue> {
+        self.mro_flagged(current, runtime, true, path, depth, &mut |visited, _| {
+            visit(visited)
+        })
+    }
+
+    /// [`Self::mro`], also telling `visit` whether every edge on the path to what
+    /// it visits is one the runtime inherits, starting from `inherited`
+    fn mro_flagged<T>(
+        &self,
+        current: Nominal,
+        runtime: bool,
+        inherited: bool,
+        path: &mut FxHashSet<DeclId>,
+        depth: usize,
+        visit: &mut impl FnMut(Visited<'_>, bool) -> Result<Option<T>, Issue>,
+    ) -> Result<Option<T>, Issue> {
         self.depth(depth)?;
         self.spend()?;
-        if let Some(found) = visit(Visited::Nominal(&current))? {
+        if let Some(found) = visit(Visited::Nominal(&current), inherited)? {
             return Ok(Some(found));
         }
         if !path.insert(current.declaration) {
@@ -2727,9 +2743,12 @@ impl<'db> Solver<'db> {
             .filter(|supertype| supertype.runtime || !runtime)
         {
             let head = self.head(self.view(supertype.ty, current.environment))?;
+            let inherited = inherited && supertype.runtime;
             let found = match head {
-                Head::Nominal(next) => self.mro(next, runtime, path, depth + 1, visit)?,
-                _ => visit(Visited::Structural)?,
+                Head::Nominal(next) => {
+                    self.mro_flagged(next, runtime, inherited, path, depth + 1, visit)?
+                }
+                _ => visit(Visited::Structural, inherited)?,
             };
             if found.is_some() {
                 return Ok(found);
@@ -3025,7 +3044,7 @@ mod unpack;
 
 use alternatives::Alternatives;
 pub(crate) use callable::{Constructor, Signature, bound_method};
-pub(crate) use conform::{Inheritance, Requirement, RequirementKind};
+pub(crate) use conform::{Inheritance, Masked, Requirement, RequirementKind};
 pub(crate) use lattice::Widening;
 pub(crate) use member::{Access, Found, FoundKind, Lookup, Signatures};
 pub(crate) use narrow::Target as NarrowTarget;

@@ -569,3 +569,24 @@ impl Names for Tables<'_> {
         }
     }
 }
+
+/// The tables' names, with the binders of the declarations in `scope` named bare,
+/// as a diagnostic within them shows them
+pub(crate) struct Scoped<'a, 'u> {
+    pub(crate) tables: &'a Tables<'u>,
+    pub(crate) scope: Vec<DeclId>,
+}
+
+impl Names for Scoped<'_, '_> {
+    fn declaration(&self, id: DeclId) -> Cow<'_, str> {
+        self.tables.declaration(id)
+    }
+
+    fn collection(&self, id: DeclId) -> Option<Collection> {
+        self.tables.collection(id)
+    }
+
+    fn in_scope(&self, decl: DeclId) -> bool {
+        self.scope.contains(&decl)
+    }
+}

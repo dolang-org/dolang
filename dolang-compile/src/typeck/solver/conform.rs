@@ -12,6 +12,10 @@
 //! takes the conforming declaration's own type as its receiver, or `Type` of it
 //! for a class method, since only calls on its instances or its object matter.
 //!
+//! A generic class reached more than once in a declaration's ancestry is reached
+//! only as its first instance, so that instance must be below the others it
+//! masks, by the class's variances, for the ancestor walk to stop there.
+//!
 //! Every requirement is a set of ordinary subtype judgments for the caller to
 //! constrain, so no verdict is cached here.
 
@@ -65,6 +69,27 @@ pub(crate) enum Inheritance {
     /// The class as inherited must be below the class as named
     Relate(Term, Term),
     Undecided(Issue),
+}
+
+/// An instance of a generic class in a declaration's ancestry
+#[derive(Clone, Debug)]
+pub(crate) struct Reached {
+    pub(crate) ty: TypeId,
+    /// The index of the declaration's supertype it's reached through
+    pub(crate) supertype: usize,
+    /// Whether it is that supertype itself
+    pub(crate) direct: bool,
+    /// Whether the runtime inherits it, through every edge on the way
+    pub(crate) inherited: bool,
+}
+
+/// A later instance of a generic class that the first instance masks
+#[derive(Clone, Debug)]
+pub(crate) struct Masked {
+    pub(crate) first: Reached,
+    pub(crate) other: Reached,
+    /// `first` is only claimed, but `other` is inherited at runtime
+    pub(crate) reorder: bool,
 }
 
 impl Solver<'_> {
@@ -438,21 +463,99 @@ impl Solver<'_> {
         if claimed.is_empty() {
             return Ok(None);
         }
-        let apply = |args: Vec<Term>| -> Result<Term, Issue> {
-            let args = args
-                .into_iter()
-                .map(|arg| self.reify(arg).map(Argument::Positional))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(self.closed(self.db.intern(Type::Apply {
-                base: self.db.intern(Type::Decl(class)),
-                args: args.into(),
-                kind: Kind::Type,
-            })))
-        };
         Ok(Some(Inheritance::Relate(
-            apply(inherited)?,
-            apply(claimed)?,
+            self.closed(self.applied(class, &inherited)?),
+            self.closed(self.applied(class, &claimed)?),
         )))
+    }
+
+    /// The instances of generic classes in the ancestry of the declaration whose
+    /// instances have the closed type `instance` that the first instance of
+    /// each class masks, which the first must be below. With
+    /// `runtime`, as for a class, a claimed instance masked by one the runtime
+    /// inherits is left to [`Self::claimed_classes`]. Instances reached through
+    /// the same supertype were checked at it, so only pairs reached through
+    /// different supertypes are returned.
+    pub(crate) fn masked(&self, instance: Term, runtime: bool) -> Result<Vec<Masked>, Issue> {
+        let Head::Nominal(nominal) = self.head(instance)? else {
+            return Ok(Vec::new());
+        };
+        let declaration = nominal.declaration;
+        let mut path = FxHashSet::default();
+        path.insert(declaration);
+        // Each class's instances, in the order the walk reaches them
+        let mut reached: Vec<(DeclId, Vec<Reached>)> = Vec::new();
+        let supertypes = &self.db.declaration(declaration).supertypes;
+        for (index, supertype) in supertypes.iter().enumerate() {
+            let Head::Nominal(next) = self.head(self.view(supertype.ty, nominal.environment))?
+            else {
+                continue;
+            };
+            let mut direct = true;
+            self.mro_flagged(
+                next,
+                false,
+                supertype.runtime,
+                &mut path,
+                1,
+                &mut |visited, inherited| {
+                    let Visited::Nominal(found) = visited else {
+                        return Ok(None::<()>);
+                    };
+                    let is_direct = std::mem::take(&mut direct);
+                    if found.arguments.is_empty() {
+                        return Ok(None);
+                    }
+                    let instance = Reached {
+                        ty: self.applied(found.declaration, &found.arguments)?,
+                        supertype: index,
+                        direct: is_direct,
+                        inherited,
+                    };
+                    match reached
+                        .iter_mut()
+                        .find(|(class, _)| *class == found.declaration)
+                    {
+                        Some((_, instances)) => instances.push(instance),
+                        None => reached.push((found.declaration, vec![instance])),
+                    }
+                    Ok(None)
+                },
+            )?;
+        }
+        let mut masked = Vec::new();
+        for (_, instances) in reached {
+            let Some((first, rest)) = instances.split_first() else {
+                continue;
+            };
+            for other in rest {
+                if other.supertype == first.supertype
+                    || other.ty == first.ty
+                    || (runtime && first.inherited && !other.inherited)
+                {
+                    continue;
+                }
+                masked.push(Masked {
+                    first: first.clone(),
+                    other: other.clone(),
+                    reorder: runtime && !first.inherited && other.inherited,
+                });
+            }
+        }
+        Ok(masked)
+    }
+
+    /// `class` applied to `args`
+    fn applied(&self, class: DeclId, args: &[Term]) -> Result<TypeId, Issue> {
+        let args = args
+            .iter()
+            .map(|&arg| self.reify(arg).map(Argument::Positional))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(self.db.intern(Type::Apply {
+            base: self.db.intern(Type::Decl(class)),
+            args: args.into(),
+            kind: Kind::Type,
+        }))
     }
 
     fn is_protocol(&self, decl: DeclId) -> bool {

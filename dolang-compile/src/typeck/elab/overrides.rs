@@ -7,7 +7,8 @@
 //! `solver/conform.rs`); this pass relates the requirements under the
 //! declaration's rigids and reports them. A class must also inherit at runtime
 //! each class that a supertype it only claims names, with compatible arguments,
-//! as a protocol's supertypes are claims too.
+//! as a protocol's supertypes are claims too. A generic class reached more than
+//! once in its ancestry must be reached first as an instance below every other.
 //!
 //! Every check is local: it assumes only the declaration's own bounds, and no
 //! verdict is cached. Each is solved on its own fork of a solver holding the
@@ -18,8 +19,8 @@
 use rustc_hash::FxHashMap;
 
 use super::{
-    DeclNode, Designated, Diag, Hidden, IncoherentClasses, Nonconforming, Tables, Uncallable,
-    UnitDiag, Unresolved, sig,
+    DeclNode, Designated, Diag, Hidden, IncoherentClasses, Nonconforming, Scoped, Tables,
+    Uncallable, UnitDiag, Unresolved, sig,
     surface::{Class, Member, MemberScope},
 };
 use crate::{
@@ -27,12 +28,12 @@ use crate::{
     source::Span,
     typeck::{
         solver::{
-            Found, FoundKind, Gas, Inheritance, Issue, Lookup, Provenance, Reach, Requirement,
-            RequirementKind, Residual, Solver, Status, Term,
+            Found, FoundKind, Gas, Inheritance, Issue, Lookup, Masked, Provenance, Reach,
+            Requirement, RequirementKind, Residual, Solver, Status, Term,
         },
         r#type::{
             Argument, Database, DeclId, DeclKind, Intrinsic, Kind, Member as Declared, MemberKey,
-            NoAncestor, Scope, Type, TypeId, UnitId, UnitSpan,
+            NoAncestor, Scope, Style, Type, TypeId, UnitId, UnitSpan,
         },
     },
 };
@@ -152,6 +153,18 @@ impl Check<'_, '_> {
                         }
                     }
                     Err(issue) => self.undecided(span, issue),
+                }
+            }
+        }
+        match solver.masked(solver.closed(instance), runtime) {
+            Ok(masked) => {
+                for masked in masked {
+                    self.masked(&solver, &mut pending, masked);
+                }
+            }
+            Err(issue) => {
+                if let Some(span) = self.tables.decls[self.id.index()].name_span() {
+                    self.undecided(span, issue);
                 }
             }
         }
@@ -422,6 +435,64 @@ impl Check<'_, '_> {
             }
             Inheritance::Undecided(issue) => self.undecided(span, issue),
         }
+    }
+
+    /// Relate the first instance of a generic class in the ancestry to one it
+    /// masks, reporting at the supertype that brings the first
+    fn masked(&mut self, solver: &Solver<'_>, pending: &mut Vec<Pending>, masked: Masked) {
+        let Some((span, through)) = self.supertype(masked.first.supertype) else {
+            return;
+        };
+        let Some((_, other_through)) = self.supertype(masked.other.supertype) else {
+            return;
+        };
+        let names = Scoped {
+            tables: self.tables,
+            scope: vec![self.id],
+        };
+        let render = |ty: TypeId, direct: bool, through: &str| {
+            let ty = self.db.render(ty, &names, Style::Reader);
+            match direct {
+                true => format!("`{ty}`"),
+                false => format!("`{ty}` from `{through}`"),
+            }
+        };
+        let mut message = format!(
+            "{} is not below {}",
+            render(masked.first.ty, masked.first.direct, &through),
+            render(masked.other.ty, masked.other.direct, &other_through),
+        );
+        if masked.reorder {
+            message.push_str(&format!("; name `{other_through}` before `{through}`"));
+        }
+        // The class's own rule relates the instances' arguments by its variances
+        let pairs = vec![(
+            solver.closed(masked.first.ty),
+            solver.closed(masked.other.ty),
+        )];
+        pending.push(Pending {
+            span,
+            pairs,
+            message,
+        });
+    }
+
+    /// Where the declaration names its supertype at `index`, and its name
+    fn supertype(&self, index: usize) -> Option<(Span, String)> {
+        let ty = self.db.declaration(self.id).supertypes.get(index)?.ty;
+        self.class.supers.iter().find_map(|super_ref| {
+            let span = super_ref.span();
+            let found = self.tables.expr_types.get(&UnitSpan {
+                unit: self.unit,
+                span,
+            });
+            (found == Some(&ty)).then(|| {
+                let name = self
+                    .tables
+                    .dotted(self.unit, super_ref.head, &super_ref.fields);
+                (span, name)
+            })
+        })
     }
 
     /// The declaration's own type, its class applied to its rigids

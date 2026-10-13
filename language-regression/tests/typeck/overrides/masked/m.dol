@@ -1,0 +1,165 @@
+# A generic class reached more than once in an ancestry is reached only as its
+# first instance, so that instance must be below the others, as the class's
+# binders vary.
+
+pub class Num
+pub class Int: Num
+
+pub class Source[T]
+  pub def get _self -> T
+    ...
+
+pub class Drain[T]
+  pub def put _self x @ T
+    ...
+
+pub class Cell[T]
+  pub field value @ T = nil
+
+# No member mentions `T`, so it's invariant
+pub class Tag[T]
+# warning: unused binder
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Tag[T]
+#    |               ^
+
+pub class Ints: Source[Int]
+pub class Nums: Source[Num]
+
+# Covariant: the first instance may be narrower
+pub class Narrow: Source[Int] Nums
+
+pub class Loose: Source[Num] Ints
+# error: `get` from `Source` does not match `Source.get`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Loose: Source[Num] Ints
+#    |                              ^^^^
+# error: `m.Source[m.Num]` is not below `m.Source[m.Int]` from `Ints`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Loose: Source[Num] Ints
+#    |                  ^^^^^^
+
+# The masked instance may be named directly
+pub class Late: Nums Source[Int]
+# error: `get` from `Source` does not match `Source.get`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Late: Nums Source[Int]
+#    |                      ^^^^^^
+# error: `m.Source[m.Num]` from `Nums` is not below `m.Source[m.Int]`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Late: Nums Source[Int]
+#    |                 ^^^^
+
+# A violation within a supertype's ancestry is reported only there
+pub class Below: Loose
+
+# Contravariant: the first instance may accept more
+pub class IntDrain: Drain[Int]
+pub class NumDrain: Drain[Num]
+pub class Accepting: Drain[Num] IntDrain
+pub class Picky: Drain[Int] NumDrain
+# error: `put` from `Drain` does not match `Drain.put`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Picky: Drain[Int] NumDrain
+#    |                             ^^^^^^^^
+# error: `m.Drain[m.Int]` is not below `m.Drain[m.Num]` from `NumDrain`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Picky: Drain[Int] NumDrain
+#    |                  ^^^^^
+
+# Invariant: the instances must agree
+pub class IntCell: Cell[Int]
+pub class Mixed: Cell[Num] IntCell
+# error: `value` from `Cell` does not match `Cell.value`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Mixed: Cell[Num] IntCell
+#    |                            ^^^^^^^
+# error: `m.Cell[m.Num]` is not below `m.Cell[m.Int]` from `IntCell`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Mixed: Cell[Num] IntCell
+#    |                  ^^^^
+pub class Agreed: Cell[Int] IntCell
+
+pub class IntTag: Tag[Int]
+pub class Tagged: Tag[Num] IntTag
+# error: `m.Tag[m.Num]` is not below `m.Tag[m.Int]` from `IntTag`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Tagged: Tag[Num] IntTag
+#    |                   ^^^
+pub class Retagged: Tag[Int] IntTag
+
+# A diamond reaches the same instance twice
+
+#[mixable]
+pub class Left: Ints
+#[mixable]
+pub class Right: Ints
+pub class Both: Left Right
+
+pub class Holder[T]: Source[T]
+pub class Twice[T]: Holder[T] Source[T]
+pub class Loosened[T @ Num]: Source[Num] Holder[T]
+# error: `m.Source[m.Num]` is not below `m.Source[T]` from `Holder`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Loosened[T @ Num]: Source[Num] Holder[T]
+#    |                              ^^^^^^
+# error: `get` from `Source` does not match `Source.get`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Loosened[T @ Num]: Source[Num] Holder[T]
+#    |                                          ^^^^^^
+
+# A protocol's supertypes are held to the rule too
+pub @class Conflicted: Source[Num] Ints
+# error: `get` from `Source` does not match `Source.get`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @class Conflicted: Source[Num] Ints
+#    |                                    ^^^^
+# error: `m.Source[m.Num]` is not below `m.Source[m.Int]` from `Ints`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @class Conflicted: Source[Num] Ints
+#    |                        ^^^^^^
+
+# A claimed instance first must be below what the runtime inherits
+pub @class Numbered: Source[Num]
+pub @class Precise: Source[Int]
+
+pub class Claimed: @Numbered Ints
+# error: `get` from `Source` does not match `Source.get`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Claimed: @Numbered Ints
+#    |                              ^^^^
+# error: `m.Source[m.Num]` from `Numbered` is not below `m.Source[m.Int]` from `Ints`; name `Ints` before `Numbered`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Claimed: @Numbered Ints
+#    |                     ^^^^^^^^
+pub class Inherited: Ints @Numbered
+
+# An instance the runtime inherits first is held to a claim by the claim alone
+pub class Vague: @Precise Nums
+# error: `Vague` inherits `Source` with arguments `Precise` does not allow
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Vague: @Precise Nums
+#    |                   ^^^^^^^
+pub class Reordered: Nums @Precise
+# error: `Reordered` inherits `Source` with arguments `Precise` does not allow
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Reordered: Nums @Precise
+#    |                            ^^^^^^^
