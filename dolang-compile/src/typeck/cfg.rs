@@ -178,20 +178,29 @@ pub(crate) struct Var {
     /// Closed: the binders of the group it's written in are the rigids its
     /// declaration's body is checked under
     pub(crate) annotation: Option<TypeId>,
-    /// An ivar: read or written by a function other than its owner, which reads
-    /// it as an accumulator. Its value when a function that captures it is
-    /// created, and every assignment after, joins the accumulator.
-    pub(crate) interprocedural: bool,
-    /// Assigned by a function other than its owner, so that its owner caches no
-    /// type for it either and reads the accumulator too
-    pub(crate) volatile: bool,
-    /// Starts as bottom rather than unassigned: a comprehension's bindings and item
-    /// values, which are assigned only on the paths its structure accounts for
-    pub(crate) bottom: bool,
-    /// Exported from a module, so an importer may assign it anything that fits
-    /// its annotation, or anything at all without one. Such a variable is also
-    /// interprocedural and volatile.
-    pub(crate) exported: bool,
+    pub(crate) flags: VarFlags,
+}
+
+bitflags::bitflags! {
+    /// What lowering learned about a [`Var`]
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub(crate) struct VarFlags: u8 {
+        /// An ivar: read or written by a function other than its owner, which
+        /// reads it as an accumulator. Its value when a function that captures it
+        /// is created, and every assignment after, joins the accumulator.
+        const INTERPROCEDURAL = 1 << 0;
+        /// Assigned by a function other than its owner, so that its owner caches
+        /// no type for it either and reads the accumulator too
+        const VOLATILE = 1 << 1;
+        /// Starts as bottom rather than unassigned: a comprehension's bindings and
+        /// item values, which are assigned only on the paths its structure
+        /// accounts for
+        const BOTTOM = 1 << 2;
+        /// Exported from a module, so an importer may assign it anything that fits
+        /// its annotation, or anything at all without one. Such a variable is also
+        /// interprocedural and volatile.
+        const EXPORTED = 1 << 3;
+    }
 }
 
 pub(crate) struct Block {
@@ -420,10 +429,7 @@ impl Graph {
             owner,
             origin,
             annotation,
-            interprocedural: false,
-            volatile: false,
-            bottom: false,
-            exported: false,
+            flags: VarFlags::empty(),
         }));
         self.func_mut(owner).vars.push(id);
         id

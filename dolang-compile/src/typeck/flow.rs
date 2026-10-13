@@ -73,12 +73,12 @@ use problem::MemberUse;
 pub(crate) use problem::Problem;
 use rustc_hash::{FxHashMap, FxHashSet};
 pub(crate) use state::Fact;
-use state::{Contexts, CtxId, State};
+use state::{Contexts, CtxId, May, State, VarState};
 
 use super::{
     cfg::{
         Against, Assume, BlockId, Expr, ExprKind, FuncId, FuncKind, Ir, Origin, Pattern,
-        PatternItem, PatternKey, Step, Tag, Target, Terminal, VarId,
+        PatternItem, PatternKey, Step, Tag, Target, Terminal, VarFlags, VarId,
     },
     elab::{Designated, Tables},
     solver::{Gas, NarrowTarget, Outcome, Provenance, Residual, Solver, Status, Widening},
@@ -104,6 +104,15 @@ pub(crate) struct Results {
 /// Analyze a unit's graph
 pub(crate) fn analyze(ir: &Ir, db: &Database, tables: &Tables<'_>) -> Results {
     Flow::new(ir, db, tables, false).analyze()
+}
+
+/// The type a variable is read as by functions that don't cache it, which every
+/// value that reaches them joins
+struct Accumulator {
+    ty: TypeId,
+    widening: Widening,
+    /// The blocks that read it, queued again when it grows
+    readers: BTreeSet<(BlockId, CtxId)>,
 }
 
 /// Where a block is being analyzed
@@ -143,9 +152,7 @@ struct Flow<'a, 'u> {
     widenings: FxHashMap<(BlockId, CtxId, VarId), Widening>,
     /// The accumulator of each ivar, and of each result a non-local
     /// return gives a value
-    joined: FxHashMap<VarId, (TypeId, Widening)>,
-    /// The blocks that read each joined type
-    readers: FxHashMap<VarId, BTreeSet<(BlockId, CtxId)>>,
+    accumulators: FxHashMap<VarId, Accumulator>,
     /// The blocks whose latest run left a rule undecided
     unsettled: FxHashSet<(BlockId, CtxId)>,
     /// The blocks whose next run defaults the rules it leaves undecided
@@ -208,8 +215,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             queue: BTreeSet::new(),
             reversed,
             widenings: FxHashMap::default(),
-            joined: FxHashMap::default(),
-            readers: FxHashMap::default(),
+            accumulators: FxHashMap::default(),
             unsettled: FxHashSet::default(),
             marked: FxHashSet::default(),
             defaulting: false,
@@ -225,22 +231,25 @@ impl<'a, 'u> Flow<'a, 'u> {
         for (_, func) in self.ir.funcs() {
             for &var in &func.vars {
                 let data = self.ir.var(var);
-                if data.exported {
+                if data.flags.contains(VarFlags::EXPORTED) {
                     let ty = data.annotation.unwrap_or(self.db.unknown());
-                    self.joined.insert(var, (ty, Widening::default()));
+                    self.accumulator(var).ty = ty;
                 }
             }
         }
         for (_, func) in self.ir.funcs() {
             let vars = (func.vars.iter())
-                .map(|&var| Fact {
+                .map(|&var| VarState {
                     ty: bottom,
-                    unassigned: !self.ir.var(var).bottom,
+                    may: if self.ir.var(var).flags.contains(VarFlags::BOTTOM) {
+                        May::empty()
+                    } else {
+                        May::UNASSIGNED
+                    },
                 })
                 .collect();
             let state = State {
                 vars,
-                escaped: vec![false; func.vars.len()],
                 stack: Vec::new(),
                 dup: false,
             };
@@ -535,20 +544,16 @@ impl<'a, 'u> Flow<'a, 'u> {
             } else {
                 self.lub(old.ty, new.ty)
             };
-            vars.push(Fact {
+            vars.push(VarState {
                 ty,
-                unassigned: old.unassigned || new.unassigned,
+                may: old.may | new.may,
             });
         }
         let stack = (old.stack.iter().zip(&state.stack))
             .map(|(&old, &new)| self.lub(old, new))
             .collect();
-        let escaped = (old.escaped.iter().zip(&state.escaped))
-            .map(|(&old, &new)| old || new)
-            .collect();
         let joined = State {
             vars,
-            escaped,
             stack,
             dup: old.dup && state.dup,
         };
@@ -602,25 +607,33 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
         let gas = Gas::default();
         let solver = self.solver(&gas);
-        let bottom = self.db.bottom();
         let annotation = self.ir.var(var).annotation;
-        let (old, widening) = self
-            .joined
-            .entry(var)
-            .or_insert((bottom, Widening::default()));
-        let joined = solver.lub(*old, ty);
-        let new = match (widening.join(&solver, *old, ty), annotation) {
+        let accumulator = self.accumulator(var);
+        let old = accumulator.ty;
+        let joined = solver.lub(old, ty);
+        let new = match (accumulator.widening.join(&solver, old, ty), annotation) {
             (widened, Some(annotation)) if widened != joined => annotation,
             (widened, _) => widened,
         };
-        if new == *old {
+        if new == old {
             return;
         }
-        *old = new;
+        accumulator.ty = new;
+        let readers = accumulator.readers.clone();
         trace!("accumulate {}: {}", self.var_name(var), self.show(new));
-        for (block, ctx) in self.readers.get(&var).cloned().into_iter().flatten() {
+        for (block, ctx) in readers {
             self.enqueue(block, ctx);
         }
+    }
+
+    /// A variable's accumulator, made bottom if it has none yet
+    fn accumulator(&mut self, var: VarId) -> &mut Accumulator {
+        let bottom = self.db.bottom();
+        self.accumulators.entry(var).or_insert_with(|| Accumulator {
+            ty: bottom,
+            widening: Widening::default(),
+            readers: BTreeSet::new(),
+        })
     }
 
     /// Make each `do` block parameter and channel that's still bottom dynamic,
@@ -640,7 +653,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                     .chain([(signature.input, input), (signature.output, output)])
                     .filter_map(|(var, ty)| Some((var?, ty)))
             })
-            .filter(|(var, _)| self.joined.get(var).is_none_or(|&(ty, _)| ty == bottom))
+            .filter(|(var, _)| self.accumulators.get(var).is_none_or(|acc| acc.ty == bottom))
             .collect();
         for &(var, ty) in &vars {
             trace!("no call gives {}", self.var_name(var));
@@ -651,13 +664,9 @@ impl<'a, 'u> Flow<'a, 'u> {
 
     /// A variable's joined type, making the block depend on it
     fn joined(&mut self, var: VarId, at: At) -> TypeId {
-        self.readers
-            .entry(var)
-            .or_default()
-            .insert((at.block, at.ctx));
-        self.joined
-            .get(&var)
-            .map_or(self.db.bottom(), |&(ty, _)| ty)
+        let accumulator = self.accumulator(var);
+        accumulator.readers.insert((at.block, at.ctx));
+        accumulator.ty
     }
 
     fn run(&mut self, block: BlockId, ctx: CtxId) {
@@ -715,7 +724,6 @@ impl<'a, 'u> Flow<'a, 'u> {
         };
         let state = State {
             vars: state.vars.clone(),
-            escaped: state.escaped.clone(),
             stack: vec![self.db.top()],
             dup: false,
         };
@@ -805,12 +813,9 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let ty = self.default(*var, ty, value.span);
                 trace!("default {}: {}", self.var_name(*var), self.show(ty));
                 let data = self.ir.var(*var);
-                if data.owner == at.func && !data.volatile {
-                    let fact = state.vars[self.slots[var.index()]];
-                    state.vars[self.slots[var.index()]] = Fact {
-                        ty: self.lub(fact.ty, ty),
-                        unassigned: fact.unassigned,
-                    };
+                if data.owner == at.func && !data.flags.contains(VarFlags::VOLATILE) {
+                    let slot = self.slots[var.index()];
+                    state.vars[slot].ty = self.lub(state.vars[slot].ty, ty);
                 }
                 if self.publishes(at, state, *var) {
                     self.join(*var, ty);
@@ -851,7 +856,7 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// with the annotation.
     fn escape(&mut self, state: &mut State, var: VarId) {
         let slot = self.slots[var.index()];
-        state.escaped[slot] = true;
+        state.vars[slot].may.insert(May::ESCAPED);
         let ty = state.vars[slot].ty;
         let ty = match self.ir.var(var).annotation {
             Some(annotation) if self.relate(ty, annotation).status == Status::Contradicted => {
@@ -867,8 +872,8 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// volatile
     fn publishes(&self, at: At, state: &State, var: VarId) -> bool {
         let data = self.ir.var(var);
-        data.interprocedural
-            && (data.volatile || data.owner != at.func || state.escaped[self.slots[var.index()]])
+        data.flags.contains(VarFlags::INTERPROCEDURAL)
+            && (data.flags.contains(VarFlags::VOLATILE) || data.owner != at.func || state.vars[self.slots[var.index()]].may.contains(May::ESCAPED))
     }
 
     /// The type an assignment stores: a literal assigned to a declared local decays
@@ -924,10 +929,13 @@ impl<'a, 'u> Flow<'a, 'u> {
         self.check(var, ty, span);
         let data = self.ir.var(var);
         if data.owner == at.func {
-            state.vars[self.slots[var.index()]] = Fact {
-                ty: if data.volatile { self.db.bottom() } else { ty },
-                unassigned: false,
+            let slot = &mut state.vars[self.slots[var.index()]];
+            slot.ty = if data.flags.contains(VarFlags::VOLATILE) {
+                self.db.bottom()
+            } else {
+                ty
             };
+            slot.may.remove(May::UNASSIGNED);
         }
         if self.publishes(at, state, var) {
             // A value that doesn't fit the annotation is reported where it's
@@ -1080,8 +1088,8 @@ impl<'a, 'u> Flow<'a, 'u> {
                 unassigned: false,
             };
         }
-        let fact = state.vars[self.slots[var.index()]];
-        if !data.volatile {
+        let fact = state.vars[self.slots[var.index()]].fact();
+        if !data.flags.contains(VarFlags::VOLATILE) {
             return fact;
         }
         Fact {
@@ -1094,7 +1102,7 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// is left.
     fn assume(&mut self, at: At, state: &mut State, assume: &Assume) -> bool {
         let data = self.ir.var(assume.var);
-        if data.owner != at.func || data.volatile {
+        if data.owner != at.func || data.flags.contains(VarFlags::VOLATILE) {
             // An accumulator isn't narrowed: a copy of the variable is
             return true;
         }

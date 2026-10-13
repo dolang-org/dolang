@@ -16,7 +16,7 @@ use crate::{
     typeck::{
         cfg::{
             Against, Assume, BlockId, Collection, Expr, ExprKind, FmtSpec, Item, Member, Relation,
-            Step, Terminal, VarId,
+            Step, Terminal, VarFlags, VarId,
         },
         r#type::{Literal, MemberKey},
     },
@@ -422,7 +422,7 @@ impl<'u> Scope<'_, '_, 'u> {
         }
         let span = value.span;
         let var = self.synthetic();
-        self.graph().var_mut(var).bottom = true;
+        self.graph().var_mut(var).flags.insert(VarFlags::BOTTOM);
         self.assign(var, value);
         expr(ExprKind::Copy(var), span)
     }
@@ -439,7 +439,7 @@ impl<'u> Scope<'_, '_, 'u> {
         let items = self.in_frame(frame, |scope| items(scope, elems));
         self.ctx.hoist = hoist;
         for var in frame.vars() {
-            self.graph().var_mut(var).bottom = true;
+            self.graph().var_mut(var).flags.insert(VarFlags::BOTTOM);
         }
         items
     }

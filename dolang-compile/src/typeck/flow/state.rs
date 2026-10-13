@@ -13,14 +13,40 @@ pub(crate) struct Fact {
     pub(crate) unassigned: bool,
 }
 
-/// The state at a point: a fact for each variable its function owns, by its slot,
-/// and the operand stack
+/// What a variable holds at a point, and what some path to it may have done
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct VarState {
+    /// The join of the values it may hold; bottom when it holds none
+    pub(super) ty: TypeId,
+    pub(super) may: May,
+}
+
+impl VarState {
+    pub(super) fn fact(self) -> Fact {
+        Fact {
+            ty: self.ty,
+            unassigned: self.may.contains(May::UNASSIGNED),
+        }
+    }
+}
+
+bitflags::bitflags! {
+    /// What some path to a point may have done to a variable, joined by union
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub(super) struct May: u8 {
+        /// Reached it without assigning it
+        const UNASSIGNED = 1 << 0;
+        /// Created a function it escapes through, so that assigning it joins its
+        /// accumulator
+        const ESCAPED = 1 << 1;
+    }
+}
+
+/// The state at a point: each variable its function owns, by its slot, and the
+/// operand stack
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct State {
-    pub(super) vars: Vec<Fact>,
-    /// By slot, whether some path has created a function its variable escapes
-    /// through, so that assigning it joins its accumulator
-    pub(super) escaped: Vec<bool>,
+    pub(super) vars: Vec<VarState>,
     pub(super) stack: Vec<TypeId>,
     /// Whether the top of the stack is a `Dup` of the slot below it, which a
     /// branch on it narrows too

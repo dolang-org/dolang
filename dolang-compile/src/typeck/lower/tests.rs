@@ -4,7 +4,7 @@ use crate::{
     Config,
     typeck::{
         Builder,
-        cfg::{BlockId, ExprKind, FuncId, Ir, Step, Terminal},
+        cfg::{BlockId, ExprKind, FuncId, Ir, Step, Terminal, VarFlags},
     },
 };
 
@@ -216,7 +216,7 @@ let outer = do
                 .unwrap();
             let outer = ir.func(outer);
             assert_eq!(outer.escapes.len(), 1);
-            assert!(!ir.var(outer.escapes[0]).volatile);
+            assert!(!ir.var(outer.escapes[0]).flags.contains(VarFlags::VOLATILE));
             assert!(inner.escapes.is_empty());
             assert!(inner.captures.contains(&outer.escapes[0]));
         },

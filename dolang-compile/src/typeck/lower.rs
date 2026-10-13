@@ -25,7 +25,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use scope::{DeclKey, Frame};
 
 use super::{
-    cfg::{BlockId, Expr, ExprKind, FuncId, FuncKind, Graph, Ir, Origin, Step, Terminal, VarId},
+    cfg::{BlockId, Expr, ExprKind, FuncId, FuncKind, Graph, Ir, Origin, Step, Terminal, VarFlags,
+        VarId},
     elab::{DeclAst, ModuleRef, Tables},
     r#type::{Database, DeclId, Literal, SymbolId, UnitId},
 };
@@ -158,7 +159,7 @@ impl<'t, 'u> Lower<'t, 'u> {
             let mut func = self.graph.func_mut(id);
             func.escapes.retain(|&var| {
                 let var = self.graph.var(var);
-                !var.volatile && var.origin != Origin::Signature
+                !var.flags.contains(VarFlags::VOLATILE) && var.origin != Origin::Signature
             });
         }
         for (guard, targets) in self.guards.take() {

@@ -81,7 +81,7 @@ fn well_formed() {
         func.escapes.push(x);
         (func.entry, func.exit)
     };
-    graph.var_mut(x).interprocedural = true;
+    graph.var_mut(x).flags.insert(VarFlags::INTERPROCEDURAL);
     push(
         &graph,
         lambda_entry,
@@ -531,7 +531,7 @@ fn captures() {
         let lambda = closure(&graph, top);
         let owner = if owner_is_parent { top } else { lambda };
         let var = graph.alloc_var(owner, origin, None);
-        graph.var_mut(var).volatile = volatile;
+        graph.var_mut(var).flags.set(VarFlags::VOLATILE, volatile);
         let (entry, exit) = {
             let mut func = graph.func_mut(lambda);
             func.escapes.push(var);

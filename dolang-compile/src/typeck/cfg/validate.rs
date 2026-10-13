@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap;
 
 use super::{
     Against, BlockId, Expr, ExprKind, FuncId, FuncKind, Ir, Origin, Pattern, Step, Tag, Target,
-    Terminal, VarId,
+    Terminal, VarFlags, VarId,
 };
 
 /// Why a graph is malformed
@@ -66,7 +66,7 @@ impl Ir {
             for &var in &func.escapes {
                 let data = self.var(var);
                 if Some(data.owner) != func.parent
-                    || data.volatile
+                    || data.flags.contains(VarFlags::VOLATILE)
                     || data.origin == Origin::Signature
                 {
                     return Err(Invalid::Escape { func: id, var });

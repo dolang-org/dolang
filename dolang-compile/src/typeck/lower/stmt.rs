@@ -22,7 +22,7 @@ use crate::{
         cfg::{
             Against, Assume, BlockId, Collection, Expr, ExprKind, FuncId, FuncKind, Item, Origin,
             Pattern, PatternItem, PatternKey, Relation, Signature, Step, Tag, Target, Terminal,
-            VarId,
+            VarFlags, VarId,
         },
         elab::Referent,
         flow::{class_object, function_value},
@@ -74,7 +74,7 @@ impl<'u> Scope<'_, '_, 'u> {
         let slot = |annotated: bool| {
             (!annotated).then(|| {
                 let var = graph.alloc_var(parent, Origin::Signature, None);
-                graph.var_mut(var).bottom = true;
+                graph.var_mut(var).flags.insert(VarFlags::BOTTOM);
                 self.capture(var);
                 var
             })
