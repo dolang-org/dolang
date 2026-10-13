@@ -1,0 +1,8 @@
+class Bad:
+  -Base
+# error: got identifier, expected: <whitespace>
+#   --> class_vertical_dash_no_space.dol:LL:LL
+#    |
+# LL |   -Base
+#    |    ^^^^
+do

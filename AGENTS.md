@@ -563,6 +563,18 @@ echo $p.x                     # field access
 echo $p.magnitude()           # method call
 ```
 
+An empty `:` introduces vertical supertypes. Mix bin-packed lines and single
+supertype dash lines; a dedented `do` ends the list. Protocols use the same
+layout, with implicitly type-only supertypes:
+
+```
+class Derived[T]:
+  Base[T] @Readable[T]
+  - @Writable[T]
+do
+  pub field value @ T = nil
+```
+
 Private fields/methods use `.#`:
 
 ```

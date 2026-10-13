@@ -542,6 +542,7 @@ impl Parser<'_> {
         Ok(PatBind::Nested {
             pattern: Box::new(Pattern::TypeTest(Box::new(TypePattern {
                 class: ClassSuper {
+                    minus_span: None,
                     at_span: None,
                     type_only: false,
                     ident: Ident::new(span),

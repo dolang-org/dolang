@@ -1,0 +1,8 @@
+class Bad:
+  item: Base
+# error: supertype lists have no keyed items
+#   --> class_vertical_key.dol:LL:LL
+#    |
+# LL |   item: Base
+#    |   ^^^^
+do

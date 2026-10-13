@@ -1,0 +1,8 @@
+class Bad:
+  Base
+  do
+# error: expected superclass name
+#   --> class_vertical_wrong_do_indent.dol:LL:LL
+#    |
+# LL |   do
+#    |   ^^
