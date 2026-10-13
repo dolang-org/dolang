@@ -25,8 +25,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use scope::{DeclKey, Frame};
 
 use super::{
-    cfg::{BlockId, Expr, ExprKind, FuncId, FuncKind, Graph, Ir, Origin, Step, Terminal, VarFlags,
-        VarId},
+    cfg::{
+        BlockId, Expr, ExprKind, FuncId, FuncKind, Graph, Ir, Origin, Step, Terminal, VarFlags,
+        VarId,
+    },
     elab::{DeclAst, ModuleRef, Tables},
     r#type::{Database, DeclId, Literal, SymbolId, UnitId},
 };

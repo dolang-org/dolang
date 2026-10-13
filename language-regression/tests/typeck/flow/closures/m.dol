@@ -157,7 +157,20 @@ pub def sentinel_after v @ Str = nil
     nil
   read()
 
-# A def sees itself
+# Each iteration's binding is a new variable, so a block sees only what the
+# variable holds when the block is created
+pub def fresh items @ Array[Str | nil]
+  for i = items
+    let item = i
+    if !item
+      continue
+    let read = do
+      let _ = item
+      #       ^~~~: flow std.Str
+      nil
+    read()
+
+# A def sees itself, and the defs after it
 pub def recursive n @ Int
   def count m @ Int -> Int
     let r = count (m - 1)
@@ -165,6 +178,16 @@ pub def recursive n @ Int
     #       ^: flow std.Int
     r
   count $n
+
+pub def recursive_pair n @ Int
+  def even m @ Int -> Bool
+    let r = odd (m - 1)
+    let _ = r
+    #       ^: flow std.Bool
+    r
+  def odd m @ Int -> Bool
+    (m == 0 || even (m - 1))
+  even $n
 
 # A module's variables escape through its defs the same way
 let shared = nil

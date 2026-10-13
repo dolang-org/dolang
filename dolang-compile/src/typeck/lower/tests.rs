@@ -4,7 +4,7 @@ use crate::{
     Config,
     typeck::{
         Builder,
-        cfg::{BlockId, ExprKind, FuncId, Ir, Step, Terminal, VarFlags},
+        cfg::{BlockId, ExprKind, FuncId, Ir, Origin, Step, Terminal, VarFlags},
     },
 };
 
@@ -221,4 +221,44 @@ let outer = do
             assert!(inner.captures.contains(&outer.escapes[0]));
         },
     );
+}
+
+/// Only a `def`'s or `class`'s variable is hoisted
+#[test]
+fn hoisted() {
+    let source = "
+def f()
+  1
+class C
+  pub field y = 1
+let v = 1
+for i = [1]
+  let w = i
+";
+    lower_with(source, |ir| {
+        let (_, top) = (ir.funcs())
+            .find(|(_, func)| func.parent.is_none())
+            .unwrap();
+        let mut hoisted: Vec<_> = (top.vars.iter())
+            .filter_map(|&var| {
+                let var = ir.var(var);
+                let Origin::Source(span) = var.origin else {
+                    return None;
+                };
+                let name = &source[span.start as usize..span.end as usize];
+                Some((name, var.flags.contains(VarFlags::HOISTED)))
+            })
+            .collect();
+        hoisted.sort();
+        assert_eq!(
+            hoisted,
+            [
+                ("C", true),
+                ("f", true),
+                ("i", false),
+                ("v", false),
+                ("w", false)
+            ]
+        );
+    });
 }

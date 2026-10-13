@@ -925,15 +925,18 @@ narrowed; to narrow an accumulator, a program copies the variable to a local
 first. Reading an accumulator makes the block depend on it, and it is queued
 again when the type grows.
 
-Every assignment to a volatile variable joins its accumulator. Any other ivar
-is assigned only by its owner, and read elsewhere only by functions it escapes
+Every assignment to a volatile variable joins its accumulator. Any other ivar is
+assigned only by its owner, and read elsewhere only by functions it escapes
 through, none of which can run before it's created. Its accumulator joins what
 the owner holds at each `Capture` of such a function, so a narrowing before the
 function is created reaches it, and then each assignment on a path after one:
-the flow state carries a may-have-escaped bit per variable, joined by `or`. A
-type that doesn't fit the annotation, as a sentinel default's, joins with the
-annotation; an assignment's value that doesn't fit is reported where it's
-written, and joins as the annotation.
+the flow state carries a may-have-escaped bit per variable, joined by `or`.
+Binding a variable clears the bit, since each binding makes a fresh cell, as a
+loop's `let` does on each iteration; a `def` or `class` is the exception
+(`VarFlags::HOISTED`), since its name is in scope, and may be captured, before
+its binding runs. A type that doesn't fit the annotation, as a sentinel
+default's, joins with the annotation; an assignment's value that doesn't fit is
+reported where it's written, and joins as the annotation.
 
 A `do` block's signature variables are joined the same way. Its exit joins its
 result into its result variable. A call it's an argument of types it: it enters

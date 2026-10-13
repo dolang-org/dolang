@@ -1338,8 +1338,10 @@ impl<'u> Scope<'_, '_, 'u> {
             self.value_nil(dest, span);
             return;
         };
+        let mut data = self.graph().var_mut(var);
+        data.flags.insert(VarFlags::HOISTED);
         if declared.is_some() {
-            self.graph().var_mut(var).annotation = declared;
+            data.annotation = declared;
         }
         self.emit(Step::Let {
             pattern: Pattern::Bind(var),
@@ -1407,6 +1409,7 @@ impl<'u> Scope<'_, '_, 'u> {
             self.value_nil(dest, span);
             return;
         };
+        self.graph().var_mut(var).flags.insert(VarFlags::HOISTED);
         if (class.decorators.is_empty() || marked)
             && let Some(ty) = self.declared(decl, || class_object(self.lower.db, decl))
         {

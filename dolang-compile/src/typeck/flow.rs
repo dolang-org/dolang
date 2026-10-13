@@ -25,10 +25,11 @@
 //! volatile variable joins its accumulator. Any other ivar joins what its owner
 //! holds when a function it escapes through is created, at a [`Step::Capture`],
 //! and each assignment on a path after one: no function that reads it can run
-//! before. A
-//! non-local return joins its value into its def's result the same way, as does a
-//! `do` block's signature: what the calls it's passed to give its parameters and
-//! channels, and its result. A block that reads a joined type depends on it, and
+//! before. A binding other than a `def`'s or `class`'s, which are hoisted, makes a
+//! fresh cell that no function has captured yet, so it starts a new path before
+//! any capture. A non-local return joins its value into its def's result the same
+//! way, as does a `do` block's signature: what the calls it's passed to give its
+//! parameters and channels, and its result. A block that reads a joined type depends on it, and
 //! is queued again when it grows.
 //!
 //! A step that can throw joins its state before it into its handler, with the
@@ -653,7 +654,11 @@ impl<'a, 'u> Flow<'a, 'u> {
                     .chain([(signature.input, input), (signature.output, output)])
                     .filter_map(|(var, ty)| Some((var?, ty)))
             })
-            .filter(|(var, _)| self.accumulators.get(var).is_none_or(|acc| acc.ty == bottom))
+            .filter(|(var, _)| {
+                self.accumulators
+                    .get(var)
+                    .is_none_or(|acc| acc.ty == bottom)
+            })
             .collect();
         for &(var, ty) in &vars {
             trace!("no call gives {}", self.var_name(var));
@@ -873,7 +878,11 @@ impl<'a, 'u> Flow<'a, 'u> {
     fn publishes(&self, at: At, state: &State, var: VarId) -> bool {
         let data = self.ir.var(var);
         data.flags.contains(VarFlags::INTERPROCEDURAL)
-            && (data.flags.contains(VarFlags::VOLATILE) || data.owner != at.func || state.vars[self.slots[var.index()]].may.contains(May::ESCAPED))
+            && (data.flags.contains(VarFlags::VOLATILE)
+                || data.owner != at.func
+                || state.vars[self.slots[var.index()]]
+                    .may
+                    .contains(May::ESCAPED))
     }
 
     /// The type an assignment stores: a literal assigned to a declared local decays
@@ -987,6 +996,11 @@ impl<'a, 'u> Flow<'a, 'u> {
 
     /// Bind a variable, checking the value at `span` against its annotation
     fn binding(&mut self, at: At, state: &mut State, var: VarId, ty: TypeId, span: Span) {
+        let data = self.ir.var(var);
+        if data.owner == at.func && !data.flags.contains(VarFlags::HOISTED) {
+            // A fresh cell, which no function has captured yet
+            state.vars[self.slots[var.index()]].may.remove(May::ESCAPED);
+        }
         let ty = self.assign(at, state, var, ty, span);
         if let Origin::Source(span) = self.ir.var(var).origin {
             let fact = Fact {

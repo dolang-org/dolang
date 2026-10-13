@@ -200,6 +200,10 @@ bitflags::bitflags! {
         /// its annotation, or anything at all without one. Such a variable is also
         /// interprocedural and volatile.
         const EXPORTED = 1 << 3;
+        /// Bound by a `def` or `class`, whose name is in scope before its binding
+        /// runs, so a function may capture it first. Its binding isn't a fresh
+        /// cell.
+        const HOISTED = 1 << 4;
     }
 }
 

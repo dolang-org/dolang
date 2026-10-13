@@ -132,9 +132,8 @@ impl<'u> Lower<'_, 'u> {
                     let id = self.graph.alloc_var(func, origin, None);
                     if module && var.flags.contains(VarFlags::EXPORTED) {
                         let mut data = self.graph.var_mut(id);
-                        data.flags |= CfgFlags::EXPORTED
-                            | CfgFlags::INTERPROCEDURAL
-                            | CfgFlags::VOLATILE;
+                        data.flags |=
+                            CfgFlags::EXPORTED | CfgFlags::INTERPROCEDURAL | CfgFlags::VOLATILE;
                     }
                     Entry::Var(id)
                 })
