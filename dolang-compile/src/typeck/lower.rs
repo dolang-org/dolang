@@ -26,8 +26,8 @@ use scope::{DeclKey, Frame};
 
 use super::{
     cfg::{
-        BlockId, Expr, ExprKind, FuncId, FuncKind, Graph, Ir, Origin, Step, Terminal, VarFlags,
-        VarId,
+        BlockId, EscapeKind, Expr, ExprKind, FuncId, FuncKind, Graph, Ir, Origin, Step, Terminal,
+        VarFlags, VarId,
     },
     elab::{DeclAst, ModuleRef, Tables},
     r#type::{Database, DeclId, Literal, SymbolId, UnitId},
@@ -77,6 +77,17 @@ struct Lower<'t, 'u> {
     returns: RefCell<FxHashMap<BlockId, BlockId>>,
     /// The binder group each type written in the unit is interpreted in, by its span
     site_groups: FxHashMap<Span, Option<(DeclId, usize)>>,
+    /// The functions created in an `(init)`, which escape its receiver if they
+    /// capture it
+    captures: RefCell<Vec<Capture>>,
+}
+
+/// A function created in an `(init)` whose receiver is `receiver`, in `block`
+struct Capture {
+    block: BlockId,
+    func: FuncId,
+    receiver: VarId,
+    span: Span,
 }
 
 impl<'t, 'u> Lower<'t, 'u> {
@@ -122,6 +133,7 @@ impl<'t, 'u> Lower<'t, 'u> {
             modules,
             guards: RefCell::new(FxHashMap::default()),
             returns: RefCell::new(FxHashMap::default()),
+            captures: RefCell::new(Vec::new()),
             site_groups: (tables.sites.iter())
                 .filter(|site| site.unit == unit)
                 .map(|site| (site.ty.span(), site.group()))
@@ -158,6 +170,41 @@ impl<'t, 'u> Lower<'t, 'u> {
     /// entry, and freeze the graph. Whether a variable is volatile is known only
     /// now.
     fn finish(self) -> Ir {
+        // An `(init)`'s receiver escapes before a function capturing it is created,
+        // once for the functions a statement creates. Their escapes are complete
+        // now.
+        for capture in self.captures.take() {
+            if !self
+                .graph
+                .func(capture.func)
+                .escapes
+                .contains(&capture.receiver)
+            {
+                continue;
+            }
+            let mut block = self.graph.block_mut(capture.block);
+            let index = (block.steps.iter())
+                .position(
+                    |step| matches!(step, Step::Capture(funcs) if funcs.contains(&capture.func)),
+                )
+                .expect("a function is created after its `Capture` step");
+            if index > 0
+                && let Step::Escape {
+                    kind: EscapeKind::Capture,
+                    ..
+                } = block.steps[index - 1]
+            {
+                continue;
+            }
+            block.steps.insert(
+                index,
+                Step::Escape {
+                    span: capture.span,
+                    kind: EscapeKind::Capture,
+                    except: None,
+                },
+            );
+        }
         for id in self.graph.func_ids() {
             let mut func = self.graph.func_mut(id);
             func.escapes.retain(|&var| {
@@ -259,6 +306,8 @@ struct Init<'u> {
     ast: &'u Class,
     /// The frame the class statement is in, where its field initializers resolve
     outer: Rc<Frame<'u>>,
+    /// The `(init)`'s name, where its return is reported
+    span: Span,
     receiver: Option<VarId>,
     fields: FxHashMap<SymbolId, VarId>,
 }

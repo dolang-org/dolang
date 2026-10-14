@@ -90,8 +90,8 @@ use state::{Contexts, CtxId, May, State, VarState};
 
 use super::{
     cfg::{
-        Against, Assume, BlockId, Expr, ExprKind, FuncId, FuncKind, Ir, Origin, Pattern,
-        PatternItem, PatternKey, Step, Tag, Target, Terminal, VarFlags, VarId,
+        Against, Assume, BlockId, EscapeKind, Expr, ExprKind, FuncId, FuncKind, Ir, Origin,
+        Pattern, PatternItem, PatternKey, Step, Tag, Target, Terminal, VarFlags, VarId,
     },
     elab::{Designated, Tables},
     solver::{Gas, NarrowTarget, Outcome, Provenance, Residual, Solver, Status, Widening},
@@ -956,6 +956,13 @@ impl<'a, 'u> Flow<'a, 'u> {
                     }
                 }
             }
+            &Step::Escape { span, kind, except } => {
+                for &var in &self.ir.func(at.func).fields {
+                    if Some(var) != except {
+                        self.publish_field(state, var, span, kind);
+                    }
+                }
+            }
             Step::Cache(vars) => {
                 for &var in vars {
                     let ty = self.joined(var, at);
@@ -985,6 +992,39 @@ impl<'a, 'u> Flow<'a, 'u> {
             _ => ty,
         };
         self.join(var, ty);
+    }
+
+    /// An `(init)`'s receiver becomes observable at `span` while a field's variable
+    /// holds what it does: reported if that doesn't fit the field's annotation.
+    /// Anything may assign the field from here on, so the variable takes the
+    /// annotation.
+    fn publish_field(&mut self, state: &mut State, var: VarId, span: Span, kind: EscapeKind) {
+        let slot = self.slot(var);
+        let ty = state.vars[slot].ty;
+        let data = self.ir.var(var);
+        let Some(annotation) = data.annotation else {
+            state.vars[slot].ty = self.db.unknown();
+            return;
+        };
+        if self.observing()
+            && ty != self.db.bottom()
+            && self.conform(ty, annotation, span) == Status::Contradicted
+        {
+            let Origin::Field(key) = data.origin else {
+                unreachable!("an `(init)` tracks fields")
+            };
+            let hash = if key.private { "#" } else { "" };
+            let field = format!("{hash}{}", self.db.symbol(key.name));
+            let (found, annotation) = self.pair(ty, annotation);
+            self.problem(Problem::Uninitialized {
+                span,
+                field,
+                found,
+                annotation,
+                kind,
+            });
+        }
+        state.vars[slot].ty = annotation;
     }
 
     /// Whether assigning a variable joins its accumulator: an ivar's assignment by
@@ -1545,7 +1585,12 @@ fn throws(step: &Step) -> bool {
         Step::Let { pattern, value } => matches!(pattern, Pattern::Unpack(_)) || has_rule(value),
         Step::Assign(target) => !matches!(target, Target::Var { .. }) || has_rule(target.value()),
         Step::Default { value, .. } | Step::Eval(value) | Step::Push(value) => has_rule(value),
-        Step::Dup | Step::Pop | Step::Assume(_) | Step::Capture(_) | Step::Cache(_) => false,
+        Step::Dup
+        | Step::Pop
+        | Step::Assume(_)
+        | Step::Capture(_)
+        | Step::Cache(_)
+        | Step::Escape { .. } => false,
     }
 }
 

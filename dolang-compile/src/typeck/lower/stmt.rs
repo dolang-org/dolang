@@ -6,7 +6,7 @@ use dolang_util::alias;
 use rustc_hash::FxHashMap;
 
 use super::{
-    Ctx, End, Init, Job, Scope, expr,
+    Capture, Ctx, End, Init, Job, Scope, expr,
     expr::is_path,
     jump::{Finally, Loop},
     nil,
@@ -21,9 +21,9 @@ use crate::{
     source::Span,
     typeck::{
         cfg::{
-            Against, Assume, BlockId, Collection, Expr, ExprKind, FuncId, FuncKind, Item, Origin,
-            Pattern, PatternItem, PatternKey, Relation, Signature, Step, Tag, Target, Terminal,
-            VarFlags, VarId,
+            Against, Assume, BlockId, Collection, EscapeKind, Expr, ExprKind, FuncId, FuncKind,
+            Item, Origin, Pattern, PatternItem, PatternKey, Relation, Signature, Step, Tag, Target,
+            Terminal, VarFlags, VarId,
         },
         elab::{Designated, Referent},
         flow::{class_object, function_value},
@@ -69,6 +69,15 @@ impl<'u> Scope<'_, '_, 'u> {
             self.assign(result, expr(ExprKind::Never, span));
             self.end(Terminal::Branch(exit));
             return;
+        }
+        // Returning publishes the receiver
+        if let Some(init) = &self.ctx.init {
+            let escape = Step::Escape {
+                span: init.span,
+                kind: EscapeKind::Return,
+                except: None,
+            };
+            self.graph().block_mut(exit).steps.insert(0, escape);
         }
         if !self.stmts(&func.body.stmts, Some(result)) {
             self.end(Terminal::Branch(exit));
@@ -119,12 +128,14 @@ impl<'u> Scope<'_, '_, 'u> {
                 self.emit(Step::Default { var, value });
                 if private {
                     fields.insert(key.name, var);
+                    self.graph().func_mut(self.ctx.func).fields.push(var);
                 }
             }
         }
         self.ctx.init = Some(Rc::new(Init {
             ast: init.ast,
             outer: init.outer.clone(),
+            span: init.span,
             receiver,
             fields,
         }));
@@ -1356,8 +1367,8 @@ impl<'u> Scope<'_, '_, 'u> {
         body
     }
 
-    /// Create a nested function and queue its body. For a class's `(init)`, `init`
-    /// is the class.
+    /// Create a nested function, named by `span`, and queue its body. For a class's
+    /// `(init)`, `init` is the class.
     pub(super) fn function_value(
         &self,
         decl: DeclId,
@@ -1365,6 +1376,7 @@ impl<'u> Scope<'_, '_, 'u> {
         lambda: bool,
         class: Option<DeclId>,
         init: Option<&'u Class>,
+        span: Span,
     ) -> FuncId {
         let graph = self.graph();
         let id = graph.alloc_func(FuncKind::Decl(decl), Some(self.ctx.func));
@@ -1374,6 +1386,14 @@ impl<'u> Scope<'_, '_, 'u> {
             _ => block.steps.push(Step::Capture(vec![id])),
         }
         drop(block);
+        if let Some(receiver) = self.ctx.init.as_ref().and_then(|init| init.receiver) {
+            (self.lower.captures.borrow_mut()).push(Capture {
+                block: self.bb,
+                func: id,
+                receiver,
+                span,
+            });
+        }
         let frame = self.lower.frame(
             id,
             Some(self.ctx.frame.clone()),
@@ -1387,6 +1407,7 @@ impl<'u> Scope<'_, '_, 'u> {
             Rc::new(Init {
                 ast,
                 outer: self.ctx.frame.clone(),
+                span,
                 receiver: None,
                 fields: FxHashMap::default(),
             })
@@ -1415,7 +1436,7 @@ impl<'u> Scope<'_, '_, 'u> {
 
     fn def(&mut self, def: &'u Def, dest: Option<VarId>) {
         let decl = self.lower.decl(DeclKey::def(def));
-        let id = self.function_value(decl, &def.func, false, self.ctx.class, None);
+        let id = self.function_value(decl, &def.func, false, self.ctx.class, None, def.ident.span);
         let value = expr(ExprKind::Lambda(id), def.ident.span);
         let value = self.decorate(&def.decorators, value);
         let declared = (def.decorators.is_empty())
@@ -1481,7 +1502,8 @@ impl<'u> Scope<'_, '_, 'u> {
                     if !method.type_only {
                         let id = self.lower.decl(DeclKey::method(method));
                         let init = is_init(method).then_some(class);
-                        self.function_value(id, &method.func, false, Some(decl), init);
+                        let span = method.name_span;
+                        self.function_value(id, &method.func, false, Some(decl), init, span);
                     }
                 }
                 ClassMember::Field(field) => {
@@ -1492,7 +1514,8 @@ impl<'u> Scope<'_, '_, 'u> {
                         }
                         FieldInit::Thunk(func) => {
                             let id = self.lower.decl(DeclKey::closure(func));
-                            self.function_value(id, func, false, Some(decl), None);
+                            let span = field.fields[0].ident.span;
+                            self.function_value(id, func, false, Some(decl), None, span);
                         }
                         FieldInit::Expr(value) | FieldInit::Const(value, _)
                             if field.scope == MemberScope::Static =>

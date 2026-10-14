@@ -89,6 +89,25 @@ do -> R
       program: $program
     - $func
 
+# The key a source's compiled bytecode is cached under
+def cache_key
+  path @ fs.Path
+  name @ (Str | nil)
+  prelude @ std.BaseDict[Str | Sym, compile.PreludeBinding]
+  inject @ std.BaseDict[Sym, Value]
+do -> Str
+  let state = digest.Blake3()
+  state.update $ str $ path.absolute().normalize()
+  state.update "\0"
+  state.update (name == nil && "script" || "module")
+  state.update "\0"
+  state.update (name || "")
+  state.update "\0"
+  state.update (str prelude)
+  state.update "\0"
+  state.update (str $ inject_keys inject)
+  "${state.digest():x}"
+
 # A source to compile, cache and run: a module when it has a `name`, otherwise a
 # script
 class Operation
@@ -119,22 +138,9 @@ class Operation
     self.#prelude = prelude
     self.#inject = inject
     self.#import = normalize_imports $import
-    self.#key = self.#cache_key()
+    self.#key = cache_key $self.#path $name $prelude $inject
     self.#cache = (cache_root app / "$(self.#key).dolc")
     self.#synthetic = synthetic_module_name $self.#key
-
-  def cache_key self -> Str
-    let state = digest.Blake3()
-    state.update $ str $ self.#path.absolute().normalize()
-    state.update "\0"
-    state.update (self.#name == nil && "script" || "module")
-    state.update "\0"
-    state.update (self.#name || "")
-    state.update "\0"
-    state.update (str self.#prelude)
-    state.update "\0"
-    state.update (str $ inject_keys self.#inject)
-    "${state.digest():x}"
 
   def compile self -> compile.Unit
     let source = self.#path.read()

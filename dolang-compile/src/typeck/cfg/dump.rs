@@ -26,13 +26,20 @@ impl Ir {
     }
 
     /// A variable's name in a dump, by the source text of its span
-    pub(crate) fn var_name<'s>(&self, var: VarId, text: impl Fn(Span) -> &'s str) -> String {
+    pub(crate) fn var_name<'s>(
+        &self,
+        var: VarId,
+        db: &Database,
+        text: impl Fn(Span) -> &'s str,
+    ) -> String {
         match self.var(var).origin {
             Origin::Source(span) => text(span).to_owned(),
             Origin::Result => format!("result{}", self.var(var).owner.index()),
-            Origin::Synthetic | Origin::Field(_) | Origin::Signature => {
-                format!("t{}", var.index())
+            Origin::Field(key) => {
+                let hash = if key.private { "#" } else { "" };
+                format!("{hash}{}", db.symbol(key.name))
             }
+            Origin::Synthetic | Origin::Signature => format!("t{}", var.index()),
         }
     }
 }
@@ -150,7 +157,7 @@ impl Dump<'_, '_> {
     }
 
     fn var(&self, out: &mut String, var: VarId) -> fmt::Result {
-        write!(out, "{}", self.ir.var_name(var, self.text))
+        write!(out, "{}", self.ir.var_name(var, self.db, self.text))
     }
 
     /// A signature's variable, or `_` for an annotated item
@@ -222,6 +229,14 @@ impl Dump<'_, '_> {
                 for &var in vars {
                     write!(out, " ")?;
                     self.var(out, var)?;
+                }
+                Ok(())
+            }
+            Step::Escape { kind, except, .. } => {
+                write!(out, "escape {kind:?}")?;
+                if let Some(var) = except {
+                    write!(out, " except ")?;
+                    self.var(out, *var)?;
                 }
                 Ok(())
             }

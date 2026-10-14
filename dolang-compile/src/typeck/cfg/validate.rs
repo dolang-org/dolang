@@ -155,6 +155,7 @@ impl Ir {
                     Step::Eval(expr) | Step::Push(expr) => exprs.push(expr),
                     Step::Dup | Step::Pop | Step::Capture(_) => {}
                     Step::Cache(cached) => vars.extend(cached),
+                    Step::Escape { except, .. } => vars.extend(except),
                     Step::Assume(assume) => {
                         vars.push(assume.var);
                         match &assume.against {
@@ -388,7 +389,7 @@ impl Ir {
                         depth += 1;
                     }
                     Step::Pop => pop(&mut depth, 1),
-                    Step::Capture(_) | Step::Cache(_) => {}
+                    Step::Capture(_) | Step::Cache(_) | Step::Escape { .. } => {}
                     Step::Assume(assume) => match &assume.against {
                         Against::Class(expr) | Against::Value(expr) => {
                             assert_eq!(operands(expr), 0)

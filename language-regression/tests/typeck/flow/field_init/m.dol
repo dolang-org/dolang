@@ -33,6 +33,7 @@ pub class Counter
     let _ = self.#count
     #       ^~~~~~~~~~~: flow std.Int
     self.#label = "x"
+    self.#mode = "manual"
 
 pub class Misfit
   field count @ Int = "zero"

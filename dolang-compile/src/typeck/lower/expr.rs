@@ -15,8 +15,8 @@ use crate::{
     source::Span,
     typeck::{
         cfg::{
-            Against, Assume, BlockId, Collection, Expr, ExprKind, FmtSpec, Item, Member, Relation,
-            Step, Terminal, VarFlags, VarId,
+            Against, Assume, BlockId, Collection, EscapeKind, Expr, ExprKind, FmtSpec, Item,
+            Member, Relation, Step, Terminal, VarFlags, VarId,
         },
         r#type::{Literal, MemberKey},
     },
@@ -112,7 +112,8 @@ impl<'u> Scope<'_, '_, 'u> {
             ast::Expr::Call { arg0, args, .. } => self.call(arg0, args),
             ast::Expr::Lambda { func, .. } => {
                 let decl = self.lower.decl(super::DeclKey::closure(func));
-                ExprKind::Lambda(self.function_value(decl, func, true, self.ctx.class, None))
+                let class = self.ctx.class;
+                ExprKind::Lambda(self.function_value(decl, func, true, class, None, span))
             }
             ast::Expr::Get { object, field, .. } if let Some(var) = self.tracked(object, field) => {
                 return self.spill(expr(ExprKind::Var(var), span));
@@ -263,6 +264,15 @@ impl<'u> Scope<'_, '_, 'u> {
         match self.entry(ident.res) {
             Some(Entry::Var(var) | Entry::Item { var: Some(var), .. }) => {
                 self.capture(var);
+                // Any use of an `(init)`'s receiver but a private field access may
+                // observe its fields
+                if self.ctx.init.as_ref().and_then(|init| init.receiver) == Some(var) {
+                    self.emit(Step::Escape {
+                        span: ident.span,
+                        kind: EscapeKind::Use,
+                        except: None,
+                    });
+                }
                 ExprKind::Var(var)
             }
             Some(Entry::Item {

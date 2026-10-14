@@ -135,6 +135,9 @@ pub(crate) struct Func {
     /// leaving out volatile variables and [`Signature`] variables, which are
     /// joined as they're assigned
     pub(crate) escapes: Vec<VarId>,
+    /// In an `(init)`, the variables standing for the receiver's fields, which a
+    /// [`Step::Escape`] checks
+    pub(crate) fields: Vec<VarId>,
 }
 
 /// A `do` block's callable state: variables its parent owns and it captures,
@@ -259,6 +262,24 @@ pub(crate) enum Step {
     /// names the captures that only their owner assigns, other than
     /// [`Signature`] and result variables.
     Cache(Vec<VarId>),
+    /// In an `(init)`, the receiver becomes observable: each of [`Func::fields`]
+    /// but `except` must fit its annotation, and has it from here on
+    Escape {
+        span: Span,
+        kind: EscapeKind,
+        except: Option<VarId>,
+    },
+}
+
+/// How an `(init)`'s receiver becomes observable
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EscapeKind {
+    /// It's used other than to access its private fields
+    Use,
+    /// `(init)` returns it
+    Return,
+    /// A function capturing it is created
+    Capture,
 }
 
 pub(crate) enum Terminal {
@@ -405,6 +426,7 @@ impl Graph {
             vars: Vec::new(),
             captures: Vec::new(),
             escapes: Vec::new(),
+            fields: Vec::new(),
         }));
         let allocated = self.alloc_var(id, Origin::Result, None);
         debug_assert_eq!(allocated, result);

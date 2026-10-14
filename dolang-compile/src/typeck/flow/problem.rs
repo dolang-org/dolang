@@ -5,7 +5,7 @@ use std::fmt::{self, Write};
 use crate::{
     diag::{NoteKind, Severity},
     source::Span,
-    typeck::{report::Report, r#type::Shown},
+    typeck::{cfg::EscapeKind, report::Report, r#type::Shown},
 };
 
 /// A diagnosed problem, with the types it names rendered
@@ -109,6 +109,15 @@ pub(crate) enum Problem {
         name: String,
         definitely: bool,
     },
+    /// An `(init)`'s receiver becoming observable while one of its fields doesn't
+    /// fit the field's annotation
+    Uninitialized {
+        span: Span,
+        field: String,
+        found: Shown,
+        annotation: Shown,
+        kind: EscapeKind,
+    },
 }
 
 /// How a member is misused
@@ -160,7 +169,8 @@ impl Report for Problem {
             | Problem::BypassedFactory { span, .. }
             | Problem::InexactConstruction { span, .. }
             | Problem::MissingExport { span, .. }
-            | Problem::Unassigned { span, .. } => span,
+            | Problem::Unassigned { span, .. }
+            | Problem::Uninitialized { span, .. } => span,
         }
     }
 
@@ -313,6 +323,23 @@ impl Report for Problem {
                 definitely: false,
                 ..
             } => write!(w, "`{name}` may be read before it is assigned"),
+            Problem::Uninitialized {
+                field,
+                found,
+                annotation,
+                kind,
+                ..
+            } => {
+                let event = match kind {
+                    EscapeKind::Use => "`self` escapes",
+                    EscapeKind::Return => "`(init)` returns",
+                    EscapeKind::Capture => "a function capturing `self` is created",
+                };
+                write!(
+                    w,
+                    "{event} while field `{field}` is {found}, which doesn't fit {annotation}"
+                )
+            }
         }
     }
 }
