@@ -56,16 +56,15 @@ jobs:
       - name: Run integration tests
         run: |
           let is_win = (sys.os_info().family == :WINDOWS:)
-          if is_win
-            # Temporarily build polyfill binary and place it next to dolang
-            dodo.run build -- --bin dolang-private-polyfill
-            fs.copy
-              target/$((str $ sys.cpu_info().arch).lower())-pc-windows-msvc/debug/dolang-private-polyfill.exe
-              release/bin/dolang-private-polyfill.exe
+          let exe = "dolang-private-polyfill$(is_win && ".exe" || "")"
+          # Temporarily build polyfill binary and place it next to dolang
+          dodo.run build -- --bin dolang-private-polyfill
+          fs.copy
+            ...fs.glob("target/*/debug/$exe")
+            release/bin/$exe
           run release/bin/dolang --module-path testlib -m test --tags !release test
-          if is_win
-            # Now remove it
-            fs.remove release/bin/dolang-private-polyfill.exe
+          # Now remove it
+          fs.remove release/bin/$exe
 
       - name: Package release (host)
         if: matrix.target != 'x86_64-freebsd'
