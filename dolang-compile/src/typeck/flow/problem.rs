@@ -161,6 +161,15 @@ pub(crate) enum Problem {
         span: Span,
         kind: usize,
     },
+    /// An irrefutable pattern in a strict unit that some value of its type
+    /// doesn't match, by whether it may lack an item the pattern requires or
+    /// have one it doesn't take, with a note giving an example
+    Unguaranteed {
+        span: Span,
+        found: Shown,
+        missing: bool,
+        note: String,
+    },
 }
 
 /// How a member is misused
@@ -216,7 +225,8 @@ impl Report for Problem {
             | Problem::Uninitialized { span, .. }
             | Problem::SuperUninitialized { span, .. }
             | Problem::Unreachable { span, .. }
-            | Problem::ElseFallthrough { span, .. } => span,
+            | Problem::ElseFallthrough { span, .. }
+            | Problem::Unguaranteed { span, .. } => span,
         }
     }
 
@@ -252,6 +262,7 @@ impl Report for Problem {
             Problem::MissingMember { reasons, .. } => (reasons.iter())
                 .map(|reason| (NoteKind::Info, reason.clone()))
                 .collect(),
+            Problem::Unguaranteed { note, .. } => vec![(NoteKind::Info, note.clone())],
             Problem::AmbiguousCall { survivors, .. } => (survivors.iter())
                 .map(|survivor| (NoteKind::Info, format!("`{survivor}` accepts them")))
                 .collect(),
@@ -313,6 +324,16 @@ impl Report for Problem {
             Problem::Impossible { found, .. } => {
                 write!(w, "{found} can never unpack as this pattern")
             }
+            Problem::Unguaranteed {
+                found,
+                missing: true,
+                ..
+            } => write!(w, "{found} may lack an item this pattern requires"),
+            Problem::Unguaranteed {
+                found,
+                missing: false,
+                ..
+            } => write!(w, "{found} may have an item this pattern doesn't take"),
             Problem::Annotation {
                 found,
                 annotation,

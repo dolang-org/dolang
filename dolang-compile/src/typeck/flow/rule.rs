@@ -42,7 +42,8 @@ use crate::{
         elab::Designated,
         solver::{
             Call as SolverCall, CallArgument, Contradiction, Gas, InferVarId, Issue, Node,
-            ObligationId, Outcome, PatternShape, Provenance, Relation, Residual, Solver, Status,
+            ObligationId, Outcome, PatternShape, Provenance, Reason, Relation, Residual, Solver,
+            Status,
             Step as Derivation, Term,
         },
         r#type::{
@@ -2890,7 +2891,8 @@ impl<'a> Flow<'a, '_> {
 
     /// The types a pattern's items unpack from a value, diagnosed at `span`;
     /// `None` if the pattern can't match it. What its `(unpack)` gives must be
-    /// an `Unpack[S]`.
+    /// an `Unpack[S]`. In a strict unit, an `irrefutable` pattern must match
+    /// every value `S` admits.
     /// The pattern is walked against `S` (see [`Solver::unpack_pattern`]), giving
     /// a rest `Unpack[tail]`. Where `S` can't be found, every item is optional and
     /// the pattern admits any others, giving a const key or a rest `Unknown`.
@@ -2901,8 +2903,10 @@ impl<'a> Flow<'a, '_> {
         items: &[PatternItem],
         value: TypeId,
         span: Span,
+        irrefutable: bool,
     ) -> Option<Vec<TypeId>> {
         let unknown = self.db.unknown();
+        let original = value;
         if value == self.db.bottom() {
             return Some(vec![value; items.len()]);
         }
@@ -2960,6 +2964,32 @@ impl<'a> Flow<'a, '_> {
             if !unpacked.possible {
                 return None;
             }
+            if irrefutable
+                && self.strict()
+                && self.observing()
+                && let Some(rejection) = unpacked.rejection
+            {
+                let member = self.shown(rejection.member);
+                let (missing, note) = match rejection.reason {
+                    Reason::Fewer(count) => (true, format!("`{member}` admits {count} items")),
+                    Reason::More(count) => (false, format!("`{member}` admits {count} items")),
+                    Reason::Lacks(key) => {
+                        let key = self.shown(key);
+                        (true, format!("`{member}` may have no item keyed `{key}`"))
+                    }
+                    Reason::Extra(key) => {
+                        let key = self.shown(key);
+                        (false, format!("`{member}` may have an item keyed `{key}`"))
+                    }
+                };
+                let found = self.subject(original);
+                self.problem(Problem::Unguaranteed {
+                    span,
+                    found,
+                    missing,
+                    note,
+                });
+            }
             let (positional, keyed) = unpacked.slots.split_at(pattern.positional.len());
             let (mut positional, mut keyed) = (positional.iter(), keyed.iter());
             let mut rests = unpacked.rests.iter();
@@ -2975,6 +3005,7 @@ impl<'a> Flow<'a, '_> {
                 .collect();
             return Some(types);
         }
+        self.gap(span, "a pattern against a schema that can't be found");
         let types = self.conclude(at, span, None, |rule| {
             let vars: Vec<Option<Term>> = (items.iter())
                 .map(|item| match item.key {
