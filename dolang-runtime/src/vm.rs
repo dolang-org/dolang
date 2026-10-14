@@ -1268,6 +1268,10 @@ impl<'v> Builder<'v> {
     /// Note that `import` statements that import individual items from modules do so through
     /// field access (equivalent to `.field` syntax).
     ///
+    /// The importer runs with strand input and output redirected to `std.null`.
+    /// Input ends immediately and output is discarded; the caller's channels are
+    /// restored when import resolution returns or raises.
+    ///
     /// # Arguments
     /// - `import`: takes 3 arguments
     ///   * `strand`: the current strand

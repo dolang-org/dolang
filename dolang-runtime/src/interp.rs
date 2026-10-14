@@ -19,10 +19,10 @@ use crate::{
         tuple,
     },
     sig::{self, Pack},
-    strand::{InterruptMask, Strand, StrandInner},
+    strand::{InterruptMask, Redirect, Strand, StrandInner},
     sym::{self, Sym},
     unpack,
-    value::{Output, Slot, Slots, StrEmbryo, Value},
+    value::{Output, Singleton, Slot, Slots, StrEmbryo, Value},
     vm::{ImportCacheEntry, ImportGuard, Vm, force_lazy_unit},
 };
 use dolang_bytecode::{Opcode, builtin};
@@ -112,73 +112,79 @@ impl<'v> Vm<'v> {
         name: &str,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let mut module = self.native_modules.borrow().get(name).map(Value::dup);
-        if module.is_none() {
-            let unit = self.lazy.borrow().by_module.get(name).copied();
-            if let Some(unit) = unit {
-                force_lazy_unit(strand, unit);
-                module = self.native_modules.borrow().get(name).map(Value::dup);
-            }
-        }
-        if let Some(module) = module {
-            out.store(module);
-            return Ok(());
-        }
-        loop {
-            match self.import_cache.borrow().get(name) {
-                Some(ImportCacheEntry::Pending(guard)) => {
-                    if ptr::eq(guard.owner, strand.inner) {
-                        return Err(Error::cyclic_import(strand, name));
+        Redirect::new(strand)
+            .input(Singleton::Null)
+            .output(Singleton::Null)
+            .enter(async move |strand| {
+                let mut module = self.native_modules.borrow().get(name).map(Value::dup);
+                if module.is_none() {
+                    let unit = self.lazy.borrow().by_module.get(name).copied();
+                    if let Some(unit) = unit {
+                        force_lazy_unit(strand, unit);
+                        module = self.native_modules.borrow().get(name).map(Value::dup);
                     }
                 }
-                Some(ImportCacheEntry::Ready(value)) => {
-                    out.store(value.dup());
+                if let Some(module) = module {
+                    out.store(module);
                     return Ok(());
                 }
-                None => break,
-            }
-            poll_fn(|cx| {
-                let mut borrow = self.import_cache.borrow_mut();
-                if let Some(ImportCacheEntry::Pending(guard)) = borrow.get_mut(name) {
-                    if ptr::eq(guard.owner, strand.inner) {
-                        return Poll::Ready(Err(Error::cyclic_import(strand, name)));
+                loop {
+                    match self.import_cache.borrow().get(name) {
+                        Some(ImportCacheEntry::Pending(guard)) => {
+                            if ptr::eq(guard.owner, strand.inner) {
+                                return Err(Error::cyclic_import(strand, name));
+                            }
+                        }
+                        Some(ImportCacheEntry::Ready(value)) => {
+                            out.store(value.dup());
+                            return Ok(());
+                        }
+                        None => break,
                     }
-                    guard.waiters.push(cx.waker().clone());
-                    Poll::Pending
-                } else {
-                    Poll::Ready(Ok(()))
+                    poll_fn(|cx| {
+                        let mut borrow = self.import_cache.borrow_mut();
+                        if let Some(ImportCacheEntry::Pending(guard)) = borrow.get_mut(name) {
+                            if ptr::eq(guard.owner, strand.inner) {
+                                return Poll::Ready(Err(Error::cyclic_import(strand, name)));
+                            }
+                            guard.waiters.push(cx.waker().clone());
+                            Poll::Pending
+                        } else {
+                            Poll::Ready(Ok(()))
+                        }
+                    })
+                    .await?;
                 }
-            })
-            .await?;
-        }
 
-        let mut err = Error::not_supported(strand);
-        {
-            let mut borrow = self.import_cache.borrow_mut();
-            borrow.insert(
-                name.to_owned(),
-                ImportCacheEntry::Pending(ImportGuard {
-                    owner: strand.inner,
-                    waiters: Vec::new(),
-                }),
-            );
-        }
-        for importer in self.importers.iter() {
-            if let Err(e) = call!(strand, importer, Slot::reborrow(&mut out), name).await {
-                if e.kind() == ErrorKind::Import {
-                    err = e;
-                    continue;
+                let mut err = Error::not_supported(strand);
+                {
+                    let mut borrow = self.import_cache.borrow_mut();
+                    borrow.insert(
+                        name.to_owned(),
+                        ImportCacheEntry::Pending(ImportGuard {
+                            owner: strand.inner,
+                            waiters: Vec::new(),
+                        }),
+                    );
+                }
+                for importer in self.importers.iter() {
+                    if let Err(e) = call!(strand, importer, Slot::reborrow(&mut out), name).await {
+                        if e.kind() == ErrorKind::Import {
+                            err = e;
+                            continue;
+                        }
+                        self.import_cache.borrow_mut().remove(name);
+                        return Err(e);
+                    }
+                    self.import_cache
+                        .borrow_mut()
+                        .insert(name.to_owned(), ImportCacheEntry::Ready(out.dup()));
+                    return Ok(());
                 }
                 self.import_cache.borrow_mut().remove(name);
-                return Err(e);
-            }
-            self.import_cache
-                .borrow_mut()
-                .insert(name.to_owned(), ImportCacheEntry::Ready(out.dup()));
-            return Ok(());
-        }
-        self.import_cache.borrow_mut().remove(name);
-        Err(err)
+                Err(err)
+            })
+            .await
     }
 
     #[inline(never)]
@@ -189,64 +195,72 @@ impl<'v> Vm<'v> {
         importer: Option<&Value<'v>>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        enum Mode {
-            Get,
-            Insert,
-            Module,
-        }
+        Redirect::new(strand)
+            .input(Singleton::Null)
+            .output(Singleton::Null)
+            .enter(async move |strand| {
+                enum Mode {
+                    Get,
+                    Insert,
+                    Module,
+                }
 
-        let (name, mode) = match args.next() {
-            Some(Arg::Key(key, slot)) if key.tag() == sym::GET => (slot, Mode::Get),
-            Some(Arg::Key(key, slot)) if key.tag() == sym::INSERT => (slot, Mode::Insert),
-            Some(Arg::Key(key, slot)) if key.tag() == sym::MODULE => (slot, Mode::Module),
-            Some(Arg::Pos(_)) => return Err(Error::unexpected_positional(strand, 0)),
-            _ => return Err(Error::missing_key(strand, Sym::well_known(sym::GET))),
-        };
-        let name = name
-            .as_str_raw(strand)
-            .ok_or_else(|| Error::type_error(strand, "import must be a string"))?;
-        let components: Vec<_> = name.split('.').collect();
-        strand
-            .with_slots(async move |strand, [mut raw]| {
-                match importer {
-                    Some(importer) => {
-                        call!(strand, importer, Slot::reborrow(&mut raw), name).await?
-                    }
-                    None => {
-                        self.import_raw(strand, name, Slot::reborrow(&mut raw))
-                            .await?
-                    }
-                }
-                match mode {
-                    Mode::Get => Slot::set(strand, out, raw),
-                    Mode::Insert => {
-                        let root = args
-                            .next()
-                            .ok_or_else(|| Error::missing_positional(strand, 0))?;
-                        let root = match root {
-                            Arg::Pos(slot) => slot,
-                            Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
-                        };
-                        let ns = root
-                            .downcast_ref(strand.builtin_types().namespace)
-                            .ok_or_else(|| {
-                                Error::type_error(strand, "import root must be a namespace")
-                            })?;
-                        ns.borrow_mut()
-                            .ok_or_else(|| Error::concurrency(strand))?
-                            .insert(strand, components.get(1..).unwrap_or(&[]), raw)?;
-                    }
-                    Mode::Module => {
-                        let mut ns = Namespace::new(strand);
-                        ns.insert(strand, components.get(1..).unwrap_or(&[]), raw)?;
-                        strand
-                            .vm()
-                            .builtin_types()
-                            .namespace
-                            .create(strand, ns, out);
-                    }
-                }
-                Ok(())
+                let (name, mode) = match args.next() {
+                    Some(Arg::Key(key, slot)) if key.tag() == sym::GET => (slot, Mode::Get),
+                    Some(Arg::Key(key, slot)) if key.tag() == sym::INSERT => (slot, Mode::Insert),
+                    Some(Arg::Key(key, slot)) if key.tag() == sym::MODULE => (slot, Mode::Module),
+                    Some(Arg::Pos(_)) => return Err(Error::unexpected_positional(strand, 0)),
+                    _ => return Err(Error::missing_key(strand, Sym::well_known(sym::GET))),
+                };
+                let name = name
+                    .as_str_raw(strand)
+                    .ok_or_else(|| Error::type_error(strand, "import must be a string"))?;
+                let components: Vec<_> = name.split('.').collect();
+                strand
+                    .with_slots(async move |strand, [mut raw]| {
+                        match importer {
+                            Some(importer) => {
+                                call!(strand, importer, Slot::reborrow(&mut raw), name).await?
+                            }
+                            None => {
+                                self.import_raw(strand, name, Slot::reborrow(&mut raw))
+                                    .await?
+                            }
+                        }
+                        match mode {
+                            Mode::Get => Slot::set(strand, out, raw),
+                            Mode::Insert => {
+                                let root = args
+                                    .next()
+                                    .ok_or_else(|| Error::missing_positional(strand, 0))?;
+                                let root = match root {
+                                    Arg::Pos(slot) => slot,
+                                    Arg::Key(sym, _) => {
+                                        return Err(Error::unexpected_key(strand, sym));
+                                    }
+                                };
+                                let ns = root
+                                    .downcast_ref(strand.builtin_types().namespace)
+                                    .ok_or_else(|| {
+                                        Error::type_error(strand, "import root must be a namespace")
+                                    })?;
+                                ns.borrow_mut()
+                                    .ok_or_else(|| Error::concurrency(strand))?
+                                    .insert(strand, components.get(1..).unwrap_or(&[]), raw)?;
+                            }
+                            Mode::Module => {
+                                let mut ns = Namespace::new(strand);
+                                ns.insert(strand, components.get(1..).unwrap_or(&[]), raw)?;
+                                strand
+                                    .vm()
+                                    .builtin_types()
+                                    .namespace
+                                    .create(strand, ns, out);
+                            }
+                        }
+                        Ok(())
+                    })
+                    .await
             })
             .await
     }
