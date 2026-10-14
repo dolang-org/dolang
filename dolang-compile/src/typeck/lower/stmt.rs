@@ -3,9 +3,10 @@
 use std::{mem, rc::Rc};
 
 use dolang_util::alias;
+use rustc_hash::FxHashMap;
 
 use super::{
-    Ctx, End, Job, Scope, expr,
+    Ctx, End, Init, Job, Scope, expr,
     expr::is_path,
     jump::{Finally, Loop},
     nil,
@@ -14,8 +15,8 @@ use super::{
 use crate::{
     ast::{
         self, Assign, Block, Class, ClassMember, CondPattern, Decorator, Def, FieldInit, For,
-        Function, Ident, If, IfBranch, LValue, Match, MemberScope, PatBind, PatIdent, PatItem,
-        PrimStmt, Return, Stmt, Try, While, visit::Node,
+        Function, Ident, If, IfBranch, LValue, Match, MemberScope, Method, PatBind, PatIdent,
+        PatItem, PrimStmt, Return, SpecialMethod, Stmt, Try, TypeExpr, While, visit::Node,
     },
     source::Span,
     typeck::{
@@ -24,7 +25,7 @@ use crate::{
             Pattern, PatternItem, PatternKey, Relation, Signature, Step, Tag, Target, Terminal,
             VarFlags, VarId,
         },
-        elab::Referent,
+        elab::{Designated, Referent},
         flow::{class_object, function_value},
         r#type::{DeclId, DeclKind, Literal, TypeId, UnitSpan},
     },
@@ -42,6 +43,18 @@ impl<'u> Scope<'_, '_, 'u> {
         let items = self.in_frame(&frame, |scope| {
             scope.pattern_items(&func.params, &mut nested)
         });
+        // The runtime gives the receiver's fields their defaults before `(init)` runs,
+        // so they're joined before any parameter default, which may use them
+        if self.ctx.init.is_some() {
+            let receiver = match func.params.first() {
+                Some(PatItem::Pos {
+                    bind: PatBind::Ident(_),
+                    ..
+                }) => items[0].var,
+                _ => None,
+            };
+            self.prelude(receiver);
+        }
         self.graph().func_mut(self.ctx.func).params = Pattern::Unpack(items.into());
         self.nested_lets(nested, &frame);
         self.defaults(&func.params, &frame, false);
@@ -60,6 +73,89 @@ impl<'u> Scope<'_, '_, 'u> {
         if !self.stmts(&func.body.stmts, Some(result)) {
             self.end(Terminal::Branch(exit));
         }
+    }
+
+    /// The defaults an `(init)`'s receiver's instance fields start with, each joined
+    /// into a variable standing for its field. An initializer is lowered in place,
+    /// in a frame of its own for its comprehensions' variables: it resolves in the
+    /// class's enclosing frame, as `(init)`'s parameters do. Reads and writes of the
+    /// receiver's private fields use the variables from here on.
+    fn prelude(&mut self, receiver: Option<VarId>) {
+        let init = self.ctx.init.clone().expect("lowering an `(init)`");
+        let mut fields = FxHashMap::default();
+        for member in &init.ast.body.members {
+            let ClassMember::Field(field) = member else {
+                continue;
+            };
+            if field.scope != MemberScope::Instance || self.phantom_field(field.ty.as_deref()) {
+                continue;
+            }
+            let private = field.pub_span.is_none();
+            let annotation = field.ty.as_deref().and_then(|annot| self.annotation(annot));
+            for name in &field.fields {
+                let span = name.ident.span;
+                let key = self.member_key(span, false, private).key;
+                let var = self
+                    .graph()
+                    .alloc_var(self.ctx.func, Origin::Field(key), annotation);
+                self.graph().var_mut(var).flags.insert(VarFlags::BOTTOM);
+                let value = match &field.init {
+                    FieldInit::None => nil(span),
+                    FieldInit::Const(value, _) | FieldInit::Expr(value) => self.expr(value),
+                    FieldInit::Thunk(thunk) => {
+                        let [Stmt::Prim(PrimStmt::Expr(value))] = &thunk.body.stmts[..] else {
+                            unreachable!("an initializer is one expression")
+                        };
+                        let frame = self.lower.frame(
+                            self.ctx.func,
+                            Some(init.outer.clone()),
+                            &thunk.body.vars,
+                            &[],
+                            None,
+                        );
+                        self.in_frame(&frame, |scope| scope.expr(value))
+                    }
+                };
+                self.emit(Step::Default { var, value });
+                if private {
+                    fields.insert(key.name, var);
+                }
+            }
+        }
+        self.ctx.init = Some(Rc::new(Init {
+            ast: init.ast,
+            outer: init.outer.clone(),
+            receiver,
+            fields,
+        }));
+    }
+
+    /// Whether a field's annotation applies `std.Phantom`, which only marks
+    /// variance: the field holds no value
+    fn phantom_field(&self, annot: Option<&ast::Annot>) -> bool {
+        let Some(mut ty) = annot.map(|annot| &annot.ty) else {
+            return false;
+        };
+        while let TypeExpr::Group { ty: inner, .. } = ty {
+            ty = inner;
+        }
+        let TypeExpr::App { base, .. } = ty else {
+            return false;
+        };
+        let mut base = &**base;
+        while let TypeExpr::Group { ty: inner, .. } = base {
+            base = inner;
+        }
+        let TypeExpr::Name { head, .. } = base else {
+            return false;
+        };
+        let tables = self.lower.tables;
+        let head = UnitSpan {
+            unit: self.lower.unit,
+            span: *head,
+        };
+        matches!(tables.referents.get(&head), Some(Referent::Decl(decl))
+            if tables.designated.get(decl) == Some(&Designated::Phantom))
     }
 
     /// A `do` block's signature: a variable of its parent's, which it captures, for
@@ -305,6 +401,14 @@ impl<'u> Scope<'_, '_, 'u> {
                 return;
             };
             self.assigned(var);
+            self.assign(var, value);
+            self.value_nil(dest, span);
+            return;
+        }
+        if let LValue::PrivateField { object, field, .. } = &node.lhs
+            && let Some(var) = self.tracked_field(object, *field)
+        {
+            let value = self.prim_value(&node.rhs);
             self.assign(var, value);
             self.value_nil(dest, span);
             return;
@@ -1252,13 +1356,15 @@ impl<'u> Scope<'_, '_, 'u> {
         body
     }
 
-    /// Create a nested function and queue its body
+    /// Create a nested function and queue its body. For a class's `(init)`, `init`
+    /// is the class.
     pub(super) fn function_value(
         &self,
         decl: DeclId,
         func: &'u Function,
         lambda: bool,
         class: Option<DeclId>,
+        init: Option<&'u Class>,
     ) -> FuncId {
         let graph = self.graph();
         let id = graph.alloc_func(FuncKind::Decl(decl), Some(self.ctx.func));
@@ -1276,11 +1382,16 @@ impl<'u> Scope<'_, '_, 'u> {
             Some(self.ctx.clone()),
         );
         let entry = graph.func(id).entry;
-        self.queue(
-            entry,
-            Ctx::function(id, lambda, frame, class),
-            Job::Function(func),
-        );
+        let mut ctx = Ctx::function(id, lambda, frame, class);
+        ctx.init = init.map(|ast| {
+            Rc::new(Init {
+                ast,
+                outer: self.ctx.frame.clone(),
+                receiver: None,
+                fields: FxHashMap::default(),
+            })
+        });
+        self.queue(entry, ctx, Job::Function(func));
         id
     }
 
@@ -1304,7 +1415,7 @@ impl<'u> Scope<'_, '_, 'u> {
 
     fn def(&mut self, def: &'u Def, dest: Option<VarId>) {
         let decl = self.lower.decl(DeclKey::def(def));
-        let id = self.function_value(decl, &def.func, false, self.ctx.class);
+        let id = self.function_value(decl, &def.func, false, self.ctx.class, None);
         let value = expr(ExprKind::Lambda(id), def.ident.span);
         let value = self.decorate(&def.decorators, value);
         let declared = (def.decorators.is_empty())
@@ -1357,6 +1468,11 @@ impl<'u> Scope<'_, '_, 'u> {
     fn class(&mut self, class: &'u Class, dest: Option<VarId>) {
         let decl = self.lower.decl(DeclKey::class(class));
         let span = class.ident.span;
+        let has_init = class
+            .body
+            .members
+            .iter()
+            .any(|member| matches!(member, ClassMember::Method(method) if is_init(method)));
         let mut statics = Vec::new();
         for member in &class.body.members {
             match member {
@@ -1364,15 +1480,19 @@ impl<'u> Scope<'_, '_, 'u> {
                     self.decorator_evals(&method.decorators);
                     if !method.type_only {
                         let id = self.lower.decl(DeclKey::method(method));
-                        self.function_value(id, &method.func, false, Some(decl));
+                        let init = is_init(method).then_some(class);
+                        self.function_value(id, &method.func, false, Some(decl), init);
                     }
                 }
                 ClassMember::Field(field) => {
                     self.decorator_evals(&field.decorators);
                     match &field.init {
+                        // An `(init)` lowers its instance fields' initializers
+                        FieldInit::Thunk(_) if field.scope == MemberScope::Instance && has_init => {
+                        }
                         FieldInit::Thunk(func) => {
                             let id = self.lower.decl(DeclKey::closure(func));
-                            self.function_value(id, func, false, Some(decl));
+                            self.function_value(id, func, false, Some(decl), None);
                         }
                         FieldInit::Expr(value) | FieldInit::Const(value, _)
                             if field.scope == MemberScope::Static =>
@@ -1438,6 +1558,13 @@ impl<'u> Scope<'_, '_, 'u> {
             self.emit(Step::Eval(value));
         }
     }
+}
+
+/// Whether a method is its class's `(init)` implementation
+fn is_init(method: &Method) -> bool {
+    !method.type_only
+        && method.scope == MemberScope::Instance
+        && matches!(method.special, Some(SpecialMethod::Init))
 }
 
 /// Whether any item has a default, at any level

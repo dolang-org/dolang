@@ -33,7 +33,7 @@ use super::{
     r#type::{Database, DeclId, Literal, SymbolId, UnitId},
 };
 use crate::{
-    ast::{Function, Stmt},
+    ast::{Class, Function, Stmt},
     source::Span,
 };
 
@@ -231,6 +231,8 @@ struct Ctx<'u> {
     /// Lowering a comprehension body's items, whose variable reads and short
     /// circuits go in variables
     hoist: bool,
+    /// Lowering an `(init)`, not a function nested in one
+    init: Option<Rc<Init<'u>>>,
 }
 
 impl<'u> Ctx<'u> {
@@ -246,8 +248,19 @@ impl<'u> Ctx<'u> {
             guard: None,
             class,
             hoist: false,
+            init: None,
         }
     }
+}
+
+/// An `(init)`: the class it initializes, and once its parameters are bound,
+/// its receiver and the variables standing for the receiver's private fields
+struct Init<'u> {
+    ast: &'u Class,
+    /// The frame the class statement is in, where its field initializers resolve
+    outer: Rc<Frame<'u>>,
+    receiver: Option<VarId>,
+    fields: FxHashMap<SymbolId, VarId>,
 }
 
 struct Work<'u> {

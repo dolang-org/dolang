@@ -112,7 +112,10 @@ impl<'u> Scope<'_, '_, 'u> {
             ast::Expr::Call { arg0, args, .. } => self.call(arg0, args),
             ast::Expr::Lambda { func, .. } => {
                 let decl = self.lower.decl(super::DeclKey::closure(func));
-                ExprKind::Lambda(self.function_value(decl, func, true, self.ctx.class))
+                ExprKind::Lambda(self.function_value(decl, func, true, self.ctx.class, None))
+            }
+            ast::Expr::Get { object, field, .. } if let Some(var) = self.tracked(object, field) => {
+                return self.spill(expr(ExprKind::Var(var), span));
             }
             ast::Expr::Get { object, field, .. } => match self.import_path(node) {
                 Some(import) => import,
@@ -327,7 +330,9 @@ impl<'u> Scope<'_, '_, 'u> {
                 args: self.args(args).into(),
             };
         }
-        if let ast::Expr::Get { object, field, .. } = callee {
+        if let ast::Expr::Get { object, field, .. } = callee
+            && self.tracked(object, field).is_none()
+        {
             let receiver = self.expr(object);
             return ExprKind::Invoke {
                 receiver: Box::new(receiver),
@@ -339,6 +344,26 @@ impl<'u> Scope<'_, '_, 'u> {
         ExprKind::Call {
             callee: Box::new(callee),
             args: self.args(args).into(),
+        }
+    }
+
+    /// The variable standing for a private field of the receiver, when `object` is
+    /// an `(init)`'s receiver and `field` one of its class's private fields
+    pub(super) fn tracked_field(&self, object: &ast::Expr, field: Span) -> Option<VarId> {
+        let init = self.ctx.init.as_ref()?;
+        let ast::Expr::Ident(ident) = strip(object) else {
+            return None;
+        };
+        if self.var(ident)? != init.receiver? {
+            return None;
+        }
+        init.fields.get(&self.symbol(field)).copied()
+    }
+
+    fn tracked(&self, object: &ast::Expr, field: &GetVariant) -> Option<VarId> {
+        match field {
+            GetVariant::Private { span, .. } => self.tracked_field(object, *span),
+            GetVariant::Normal(_) | GetVariant::SpecialMethod { .. } => None,
         }
     }
 
@@ -613,7 +638,7 @@ impl<'u> Scope<'_, '_, 'u> {
         match node {
             ast::Expr::Group { expr, .. } => self.narrowing(expr),
             // Only `nil` and `false` are always falsy
-            ast::Expr::Ident(ident) => match self.narrowed(ident) {
+            ast::Expr::Ident(_) | ast::Expr::Get { .. } => match self.subject(node) {
                 Some(var) => Narrowing {
                     truthy: [Literal::Nil, Literal::Bool(false)]
                         .into_iter()
@@ -621,7 +646,7 @@ impl<'u> Scope<'_, '_, 'u> {
                             var,
                             relation: Relation::Exact,
                             negated: true,
-                            against: Against::Value(expr(ExprKind::Literal(literal), ident.span)),
+                            against: Against::Value(expr(ExprKind::Literal(literal), node.span())),
                         })
                         .collect(),
                     falsy: Vec::new(),
@@ -694,10 +719,11 @@ impl<'u> Scope<'_, '_, 'u> {
         }
     }
 
-    /// The variable a narrowing test is about
+    /// The variable a narrowing test is about: a name's, or a tracked field's
     fn subject(&self, node: &ast::Expr) -> Option<VarId> {
         match strip(node) {
             ast::Expr::Ident(ident) => self.narrowed(ident),
+            ast::Expr::Get { object, field, .. } => self.tracked(object, field),
             _ => None,
         }
     }

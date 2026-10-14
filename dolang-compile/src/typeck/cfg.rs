@@ -166,7 +166,6 @@ pub(crate) enum Origin {
     /// Introduced by lowering, such as a `for` loop's iterator or a caught exception
     Synthetic,
     /// The state of one of `self`'s fields in `(init)`
-    #[expect(dead_code, reason = "`(init)` doesn't track field states yet")]
     Field(MemberKey),
     /// A function's result
     Result,

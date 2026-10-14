@@ -998,11 +998,18 @@ impl<'a, 'u> Flow<'a, 'u> {
                 || state.vars[self.slot(var)].may.contains(May::ESCAPED))
     }
 
-    /// The type an assignment stores: a literal assigned to a declared local decays
-    /// to its class, when that fits the local's annotation
-    fn settle(&self, var: VarId, ty: TypeId) -> TypeId {
+    /// The type an assignment stores: a literal assigned to a declared local or a
+    /// field decays to its class, when that fits the annotation. A field keeps its
+    /// annotation instead of a value that doesn't fit, which is reported where it's
+    /// written.
+    fn settle(&mut self, var: VarId, ty: TypeId) -> TypeId {
         let var = self.ir.var(var);
-        if !matches!(var.origin, Origin::Source(_)) {
+        if let (Origin::Field(_), Some(annotation)) = (var.origin, var.annotation)
+            && self.relate(ty, annotation).status == Status::Contradicted
+        {
+            return annotation;
+        }
+        if !matches!(var.origin, Origin::Source(_) | Origin::Field(_)) {
             return ty;
         }
         let decayed = self.db.decay(ty);
@@ -1047,8 +1054,8 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// Assign a variable, strongly where its owner caches its type, checking the
     /// value at `span` against its annotation. Returns the type stored.
     fn assign(&mut self, at: At, state: &mut State, var: VarId, ty: TypeId, span: Span) -> TypeId {
-        let ty = self.settle(var, ty);
         self.check(var, ty, span);
+        let ty = self.settle(var, ty);
         let data = self.ir.var(var);
         self.thaw(at, state, var);
         if data.owner == at.func {
