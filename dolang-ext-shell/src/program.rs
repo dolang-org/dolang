@@ -8,7 +8,7 @@ use dolang::runtime::object::fmt;
 use dolang::runtime::{
     AllocExt, Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
     method,
-    object::{Rest, Spread, SpreadContext, TypeBuilder, Unpack, UnpackItem},
+    object::TypeBuilder,
     unpack,
     value::{Nil, Singleton, TypeObject},
     vm::Register,
@@ -49,12 +49,10 @@ fn program_name_from_value<'v, 's>(
         Ok(path.as_str().to_owned())
     } else if let Some(name) = value.as_str(strand) {
         Ok(name.to_string())
-    } else if let Some(name) = value.as_sym(strand) {
-        Ok(name.as_str(strand.vm()).to_string())
     } else {
         Err(Error::type_error(
             strand,
-            "program must be a string, symbol, or Path",
+            "program must be a string or Path",
         ))
     }
 }
@@ -943,56 +941,6 @@ impl<'v> Object<'v> for Run<'v> {
         let ([name], [], args) = unpack!(strand, args, 1, 0, ...)?;
         let name = program_name_from_value(strand, global, &name)?;
         dispatch_run(strand, &name, args, global).await
-    }
-
-    /// Every name is a valid key, but none can be listed, so `run` spreads as
-    /// no items.
-    async fn spread<'a, 's>(
-        _this: Instance<'v, 'a, Self>,
-        _strand: &'a mut Strand<'v, 's>,
-        _context: SpreadContext,
-        _sink: &'a mut dyn Spread<'v, 's>,
-    ) -> Result<'v, 's, ()> {
-        Ok(())
-    }
-
-    async fn unpack<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        mut unpack: Unpack<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        if unpack.key_rest() == Rest::None {
-            return Err(Error::value(
-                strand,
-                "proc.run unpacking requires a trailing `...` or `**`",
-            ));
-        }
-
-        let global = this.borrow(strand)?.global;
-        for item in unpack.iter() {
-            match item {
-                UnpackItem::SymKey { key, slot, .. } => {
-                    Run { global }.get(strand, key.as_str(strand.vm()).to_string(), slot);
-                }
-                UnpackItem::ConstKey { key, slot, .. } => {
-                    let name = key.as_str(strand).ok_or_else(|| {
-                        Error::type_error(strand, "proc.run unpack keys must be strings or symbols")
-                    })?;
-                    Run { global }.get(strand, name.to_string(), slot);
-                }
-                UnpackItem::Rest { slot } | UnpackItem::KeyRest { slot } => {
-                    Output::set(strand, slot, this)
-                }
-                UnpackItem::PosRest { slot } => Unpack::empty_pos_rest(strand, slot),
-                UnpackItem::Pos { .. } => {
-                    return Err(Error::value(
-                        strand,
-                        "proc.run supports only keyed unpack patterns",
-                    ));
-                }
-            }
-        }
-        Ok(())
     }
 }
 

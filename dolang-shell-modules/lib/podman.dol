@@ -35,7 +35,7 @@ pub import _container.dockman:
   - @PullPolicy
   - @RestartSpec
 
-let podman_cli = proc.run[:podman:]
+let podman_cli = proc.run["podman"]
 
 class PodmanRuntime: dockman.Runtime
   def (init) self

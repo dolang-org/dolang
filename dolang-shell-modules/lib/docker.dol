@@ -35,7 +35,7 @@ pub import _container.dockman:
   - @PullPolicy
   - @RestartSpec
 
-let docker_cli = proc.run[:docker:]
+let docker_cli = proc.run["docker"]
 
 class DockerRuntime: dockman.Runtime
   def (init) self

@@ -1,9 +1,8 @@
 #!/usr/bin/env -S dolang --strict
 import xml progress docker
-let :zypper ... = run
 
 def search name
-  let doc = xml.decode $ sub do zypper --xmlout search $name
+  let doc = xml.decode $ sub do run zypper --xmlout search $name
   return $
     for n = doc.traverse()
       if (type n xml.Node && n.tag == "solvable")
@@ -15,15 +14,15 @@ progress.with do docker.build
     - type: :CACHE:
       target: /var/cache/zypp
   run: do progress.show message: "updating repos" do |_|
-    zypper -n modifyrepo --all --keep-packages
-    zypper -n refresh
+    run zypper -n modifyrepo --all --keep-packages
+    run zypper -n refresh
   commit: After refresh
   run: do progress.show message: searching icon: 📦 do |w|
     let pkgs = search cow*
     w.update total: $pkgs.len
     for pkg = pkgs
       w.update message: "install $pkg"
-      zypper -n install $pkg
+      run zypper -n install $pkg
       w.delta()
     run cowsay MOO
   tag: opensuse-with-cows
