@@ -429,16 +429,16 @@ pub class AccessMask: Iterable[AccessRight]
   pub def (bnot)[S @ AccessMask] self @ S -> S
     ...
 
-
 # A symbol naming a flag of an [`AceFlags`](security.windows.AceFlags).
 #
 # The trust-protected-filter flag occupies the same bit as
 # `:SUCCESSFUL_ACCESS:` and has no symbol of its own. Read it from an
 # access-filter entry's
-# [`trust_protected_filter`](security.windows.Ace.trust_protected_filter).
+# [`trust_protected_filter`](security.windows.AccessFilterAce.trust_protected_filter).
 #
-# [`ace`](security.windows.ace) and the [`Ace`](security.windows.Ace)
-# constructor set the outcome flags from their own `successful` and `failed`
+# [`ace`](security.windows.ace), [`CommonAce`](security.windows.CommonAce),
+# and [`ObjectAce`](security.windows.ObjectAce) set the outcome flags from
+# their own `successful` and `failed`
 # arguments.
 #
 # | Symbol                   | Meaning                                                |
@@ -512,7 +512,6 @@ pub class AceFlags: Iterable[AceFlag]
   pub def (bnot)[S @ AceFlags] self @ S -> S
     ...
 
-
 # A symbol naming a flag of a [`SecDescControl`](security.windows.SecDescControl).
 #
 # | Symbol                         | Meaning                               |
@@ -585,7 +584,6 @@ pub class SecDescControl: Iterable[SecDescControlFlag]
   pub def (bnot)[S @ SecDescControl] self @ S -> S
     ...
 
-
 # A symbol naming components of a [`SecInfo`](security.windows.SecInfo).
 #
 # | Symbol    | Component                |
@@ -639,7 +637,6 @@ pub class SecInfo: Iterable[SecInfoComponent]
   # Returns the flags of the type that are not set.
   pub def (bnot)[S @ SecInfo] self @ S -> S
     ...
-
 
 # A symbol naming an attribute of a [`TokenGroupAttributes`](security.windows.TokenGroupAttributes).
 #
@@ -702,7 +699,6 @@ pub class TokenGroupAttributes: Iterable[TokenGroupAttribute]
   # Returns the flags of the type that are not set.
   pub def (bnot)[S @ TokenGroupAttributes] self @ S -> S
     ...
-
 
 # Windows security identifier.
 #
@@ -821,64 +817,11 @@ pub class SidName
   pub def sid self -> Sid
     ...
 
-# Immutable view of a native Windows access-control entry.
+# Inspects the header and native packet of a Windows access-control entry.
 #
 # An entry can also be written as an [`AceSpec`](security.windows.AceSpec)
 # wherever one is accepted.
 pub class Ace
-  # Constructs an access-allowed, access-denied, or system-audit entry.
-  #
-  # Exactly one of `allow`, `deny`, or `audit` names the trustee. The
-  # constructor is strict; use [`ace`](security.windows.ace) to build an entry
-  # from declarative values such as SID strings and symbolic flags.
-  #
-  # ## Errors
-  #
-  # `ValueError` if zero or several trustees are given, if an audit entry has
-  # no outcome, or if `successful` or `failed` is given for an allow or deny
-  # entry.
-  #
-  # ## Example
-  #
-  # ```
-  # let entry = Ace
-  #   allow: (Sid :EVERYONE:)
-  #   mask: (AccessMask :GENERIC_READ:)
-  # ```
-  pub def (init)
-    self
-    # Trustee of an access-allowed entry.
-    :allow @ Sid = nil
-    # Trustee of an access-denied entry.
-    :deny @ Sid = nil
-    # Trustee of a system-audit entry.
-    :audit @ Sid = nil
-    # Access mask.
-    :mask @ AccessMask
-    # ACE header flags, other than the audit outcomes.
-    :flags @ AceFlags = nil
-    # Object type, making this an object entry.
-    :object_type @ Guid = nil
-    # Inherited object type, making this an object entry.
-    :inherited_object_type @ Guid = nil
-    # Build a callback entry.
-    :callback @ Bool = nil
-    # Trailing application data, zero-padded to 32-bit alignment.
-    :application_data @ Bin = nil
-    # Audit successful access.
-    :successful @ Bool = nil
-    # Audit failed access.
-    :failed @ Bool = nil
-  do
-    ...
-
-  # The exact bytes after the SID, which may be empty.
-  #
-  # Raises `FieldError` when the entry body is not interpreted.
-  #[getter]
-  pub def application_data self -> Bin
-    ...
-
   # Whether container child objects inherit this entry.
   #[getter]
   pub def container_inherit self -> Bool
@@ -887,13 +830,6 @@ pub class Ace
   # Whether the critical flag is set.
   #[getter]
   pub def critical self -> Bool
-    ...
-
-  # Whether an audit or alarm entry selects failed access.
-  #
-  # Raises `FieldError` for other entry types.
-  #[getter]
-  pub def failed_access self -> Bool
     ...
 
   # The ACE header flags.
@@ -911,30 +847,9 @@ pub class Ace
   pub def inherited self -> Bool
     ...
 
-  # The inherited object type, or `nil` when its object flag is clear.
-  #
-  # Raises `FieldError` for a non-object entry.
-  #[getter]
-  pub def inherited_object_type self -> (Guid | nil)
-    ...
-
-  # The access mask.
-  #
-  # Raises `FieldError` for an entry layout without a mask.
-  #[getter]
-  pub def mask self -> AccessMask
-    ...
-
   # Whether inherited copies stop propagating after one generation.
   #[getter]
   pub def no_propagate_inherit self -> Bool
-    ...
-
-  # Native object entry flags.
-  #
-  # Raises `FieldError` for a non-object entry.
-  #[getter]
-  pub def object_flags self -> Int
     ...
 
   # Whether non-container child objects inherit this entry.
@@ -942,37 +857,9 @@ pub class Ace
   pub def object_inherit self -> Bool
     ...
 
-  # The object type, or `nil` when its object flag is clear.
-  #
-  # Raises `FieldError` for a non-object entry.
-  #[getter]
-  pub def object_type self -> (Guid | nil)
-    ...
-
-  # The trustee.
-  #
-  # Raises `FieldError` for an entry layout without a SID.
-  #[getter]
-  pub def sid self -> Sid
-    ...
-
   # Declared entry packet size.
   #[getter]
   pub def size self -> Int
-    ...
-
-  # Whether an audit or alarm entry selects successful access.
-  #
-  # Raises `FieldError` for other entry types.
-  #[getter]
-  pub def successful_access self -> Bool
-    ...
-
-  # Whether an access-filter entry has the trust-protected flag.
-  #
-  # Raises `FieldError` for other entry types.
-  #[getter]
-  pub def trust_protected_filter self -> Bool
     ...
 
   # The entry type.
@@ -989,6 +876,148 @@ pub class Ace
   # data.
   pub def to_bin self -> Bin
     ...
+
+# Inspects an entry with a trustee and access mask.
+pub class KnownAce: Ace
+  # The access mask.
+  #[getter]
+  pub def mask self -> AccessMask
+    ...
+
+  # The trustee.
+  #[getter]
+  pub def sid self -> Sid
+    ...
+
+# Qualifier of an access-control entry.
+pub @let AceQualifier = (:ALLOW: | :DENY: | :AUDIT: | :ALARM:)
+
+# Inspects an allow, deny, audit, or alarm entry, including callback forms.
+pub class QualifiedAce: KnownAce
+  # The exact bytes after the SID, which may be empty.
+  #[getter]
+  pub def application_data self -> Bin
+    ...
+
+  # Whether the failed-access flag is set; meaningful for audit/alarm entries.
+  #[getter]
+  pub def failed_access self -> Bool
+    ...
+
+  # Whether the successful-access flag is set; meaningful for audit/alarm entries.
+  #[getter]
+  pub def successful_access self -> Bool
+    ...
+
+  # Entry qualifier.
+  #[getter]
+  pub def qualifier self -> AceQualifier
+    ...
+
+  # Whether this is a callback entry.
+  #[getter]
+  pub def callback self -> Bool
+    ...
+
+# Inspects a common qualified entry.
+pub class CommonAce: QualifiedAce
+
+  # Constructs a qualified entry from built components.
+  #
+  # Audit and alarm entries require at least one selected outcome.
+  # Allow and deny entries reject outcome arguments.
+  pub def (init)
+    self
+    :qualifier @ AceQualifier
+    :sid @ Sid
+    :mask @ AccessMask
+    :flags @ AceFlags = nil
+    :callback @ Bool = nil
+    :application_data @ Bin = nil
+    :successful @ Bool = nil
+    :failed @ Bool = nil
+  do
+    ...
+
+# Inspects an object-specific qualified entry.
+pub class ObjectAce: QualifiedAce
+  # The inherited object type, or `nil` when its object flag is clear.
+  #[getter]
+  pub def inherited_object_type self -> (Guid | nil)
+    ...
+
+  # Native object entry flags.
+  #[getter]
+  pub def object_flags self -> Int
+    ...
+
+  # The object type, or `nil` when its object flag is clear.
+  #[getter]
+  pub def object_type self -> (Guid | nil)
+    ...
+
+  # Constructs a qualified entry from built components.
+  #
+  # Audit and alarm entries require at least one selected outcome.
+  # Allow and deny entries reject outcome arguments.
+  # Object layout is used even when neither GUID is supplied.
+  pub def (init)
+    self
+    :qualifier @ AceQualifier
+    :sid @ Sid
+    :mask @ AccessMask
+    :flags @ AceFlags = nil
+    :callback @ Bool = nil
+    :application_data @ Bin = nil
+    :successful @ Bool = nil
+    :failed @ Bool = nil
+    :object_type @ Guid = nil
+    :inherited_object_type @ Guid = nil
+  do
+    ...
+
+# Inspects a mandatory integrity label entry.
+pub class MandatoryLabelAce: KnownAce
+  # The exact bytes after the SID, which may be empty.
+  #[getter]
+  pub def application_data self -> Bin
+    ...
+
+# Inspects a resource attribute entry.
+pub class ResourceAttributeAce: KnownAce
+  # The exact bytes after the SID, which may be empty.
+  #[getter]
+  pub def application_data self -> Bin
+    ...
+
+# Inspects a scoped policy ID entry.
+pub class ScopedPolicyIdAce: KnownAce
+  # The exact bytes after the SID, which may be empty.
+  #[getter]
+  pub def application_data self -> Bin
+    ...
+
+# Inspects a process trust label entry.
+pub class ProcessTrustLabelAce: KnownAce
+  # The exact bytes after the SID, which may be empty.
+  #[getter]
+  pub def application_data self -> Bin
+    ...
+
+# Inspects a system access filter entry.
+pub class AccessFilterAce: KnownAce
+  # The exact bytes after the SID, which may be empty.
+  #[getter]
+  pub def application_data self -> Bin
+    ...
+
+  # Whether an access-filter entry has the trust-protected flag.
+  #[getter]
+  pub def trust_protected_filter self -> Bool
+    ...
+
+# Preserves an uninterpreted entry, including unknown and compound kinds.
+pub class CustomAce: Ace
 
 # Immutable view of a native Windows access-control list.
 #
@@ -1036,8 +1065,8 @@ pub class Acl
 # A descriptor can also be written as a
 # [`SecDescSpec`](security.windows.SecDescSpec) wherever one is accepted.
 #
-# ACL-related fields raise `FieldError` when the corresponding ACL was not
-# loaded.
+# Component getters and their control flags raise `FieldError` when the
+# component was not requested. Loaded but absent components return `nil`.
 pub class SecDesc
   # Parses a self-relative security descriptor packet.
   #
@@ -1100,9 +1129,9 @@ pub class SecDesc
   pub def control self -> SecDescControl
     ...
 
-  # The discretionary ACL, or `nil` for a present null ACL.
+  # The discretionary ACL, or `nil` when absent or present-null.
   #
-  # Raises `FieldError` when the DACL was not loaded or is not present.
+  # Raises `FieldError` when the DACL was not loaded.
   #[getter]
   pub def dacl self -> (Acl | nil)
     ...
@@ -1134,9 +1163,9 @@ pub class SecDesc
 
   # The primary group.
   #
-  # Raises `FieldError` when the group was not loaded or is absent.
+  # Raises `FieldError` when the group was not loaded.
   #[getter]
-  pub def group self -> Sid
+  pub def group self -> (Sid | nil)
     ...
 
   # Whether the group was supplied by a default mechanism.
@@ -1155,9 +1184,9 @@ pub class SecDesc
 
   # The owner.
   #
-  # Raises `FieldError` when the owner was not loaded or is absent.
+  # Raises `FieldError` when the owner was not loaded.
   #[getter]
-  pub def owner self -> Sid
+  pub def owner self -> (Sid | nil)
     ...
 
   # Whether the owner was supplied by a default mechanism.
@@ -1172,9 +1201,9 @@ pub class SecDesc
 
   # Resource-manager-defined control byte.
   #
-  # Raises `FieldError` when `rm_control_valid` is false.
+  # Returns `nil` when `rm_control_valid` is false.
   #[getter]
-  pub def rm_control self -> Int
+  pub def rm_control self -> (Int | nil)
     ...
 
   # Whether the resource-manager control byte is valid.
@@ -1182,9 +1211,9 @@ pub class SecDesc
   pub def rm_control_valid self -> Bool
     ...
 
-  # The system ACL, or `nil` for a present null ACL.
+  # The system ACL, or `nil` when absent or present-null.
   #
-  # Raises `FieldError` when the SACL was not loaded or is not present.
+  # Raises `FieldError` when the SACL was not loaded.
   #[getter]
   pub def sacl self -> (Acl | nil)
     ...

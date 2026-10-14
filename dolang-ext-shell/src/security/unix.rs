@@ -245,7 +245,6 @@ impl<'v> Object<'v> for PosixAceObject {
     type TypeAnnex = ();
 
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        let id_field = builder.sym("id");
         let user_obj = builder.sym("USER_OBJ");
         let user = builder.sym("USER");
         let group_obj = builder.sym("GROUP_OBJ");
@@ -318,7 +317,10 @@ impl<'v> Object<'v> for PosixAceObject {
             .get("id", move |this, strand, out| {
                 let id = match this.annex().qualifier() {
                     VfsPosixAclQualifier::User(id) | VfsPosixAclQualifier::Group(id) => id,
-                    _ => return Err(Error::field(strand, id_field)),
+                    _ => {
+                        Output::set(strand, out, Nil);
+                        return Ok(());
+                    }
                 };
                 Output::set(strand, out, id);
                 Ok(())

@@ -1,3 +1,5 @@
+use super::{FS_BASE, FS_UNIX, FS_WINDOWS};
+
 use std::ops::{BitAnd, BitOr, BitXor, Not};
 
 use dolang::runtime::{
@@ -130,7 +132,7 @@ impl FlagLike for Mode {
     }
 }
 
-pub(crate) struct Metadata;
+pub(crate) struct Metadata<const FAMILY: u8 = FS_BASE>;
 
 pub(crate) struct MetadataAnnex<'v> {
     pub(crate) global: State<'v, FsGlobal<'v>>,
@@ -166,20 +168,20 @@ fn write_timestamp<'v, 's>(
     dolang_ext_time::create_datetime(strand, timestamp_nanos(secs, nanos), out)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn attr_field<'v, 's>(
+fn attr_field<'v, 's, const FAMILY: u8>(
     strand: &mut Strand<'v, 's>,
-    this: Instance<'v, '_, Metadata>,
+    this: Instance<'v, '_, Metadata<FAMILY>>,
     out: impl Output<'v>,
-    sym: Sym<'v, 'v>,
     windows: u32,
     linux: u32,
     macos: u32,
     freebsd: u32,
 ) -> Result<'v, 's, ()> {
     match attrs::flag(&this.annex().inner, windows, linux, macos, freebsd) {
-        attrs::Flag::Inapplicable => Err(Error::field(strand, sym)),
-        attrs::Flag::Unavailable => Ok(()),
+        attrs::Flag::Inapplicable | attrs::Flag::Unavailable => {
+            Output::set(strand, out, dolang::runtime::value::Nil);
+            Ok(())
+        }
         attrs::Flag::Value(value) => {
             Output::set(strand, out, value);
             Ok(())
@@ -193,20 +195,31 @@ pub(crate) fn create_metadata<'v>(
     metadata: VfsMetadata,
     out: impl Output<'v>,
 ) {
-    global.types.metadata.create_with_annex(
-        strand,
-        Metadata,
-        MetadataAnnex {
-            global,
-            inner: metadata,
-        },
-        out,
-    );
+    let unix = metadata.unix().is_some();
+    let annex = MetadataAnnex {
+        global,
+        inner: metadata,
+    };
+    if unix {
+        global
+            .types
+            .unix_metadata
+            .create_with_annex(strand, Metadata::<FS_UNIX>, annex, out);
+    } else {
+        global
+            .types
+            .windows_metadata
+            .create_with_annex(strand, Metadata::<FS_WINDOWS>, annex, out);
+    }
 }
 
-impl<'v> Object<'v> for Metadata {
+impl<'v, const FAMILY: u8> Object<'v> for Metadata<FAMILY> {
     const NAME: &'v str = "Metadata";
-    const MODULE: &'v str = "fs";
+    const MODULE: &'v str = match FAMILY {
+        FS_UNIX => "fs.unix",
+        FS_WINDOWS => "fs.windows",
+        _ => "fs",
+    };
     type Annex = MetadataAnnex<'v>;
     type Type = ();
     type TypeAnnex = ();
@@ -222,41 +235,10 @@ impl<'v> Object<'v> for Metadata {
         let blksize = builder.sym("blksize");
         let blocks = builder.sym("blocks");
         let win_attrs = builder.sym("win_attrs");
-        let freebsd_attrs = builder.sym("freebsd_attrs");
         let linux_attrs = builder.sym("linux_attrs");
-        let macos_attrs = builder.sym("macos_attrs");
         let owner = builder.sym("owner");
         let group = builder.sym("group");
-        let readonly = builder.sym("readonly");
-        let hidden = builder.sym("hidden");
-        let system = builder.sym("system");
-        let archive = builder.sym("archive");
-        let reparse_point = builder.sym("reparse_point");
-        let compressed = builder.sym("compressed");
-        let sparse = builder.sym("sparse");
-        let encrypted = builder.sym("encrypted");
-        let temporary = builder.sym("temporary");
-        let offline = builder.sym("offline");
-        let not_content_indexed = builder.sym("not_content_indexed");
-        let immutable = builder.sym("immutable");
-        let append_only = builder.sym("append_only");
-        let no_dump = builder.sym("no_dump");
-        let no_atime = builder.sym("no_atime");
-        let no_copy_on_write = builder.sym("no_copy_on_write");
-        let dir_sync = builder.sym("dir_sync");
-        let casefold = builder.sym("casefold");
-        let data_journaling = builder.sym("data_journaling");
-        let no_compress = builder.sym("no_compress");
-        let project_inherit = builder.sym("project_inherit");
-        let secure_delete = builder.sym("secure_delete");
-        let sync = builder.sym("sync");
-        let no_tail_merge = builder.sym("no_tail_merge");
-        let top_dir = builder.sym("top_dir");
-        let undelete = builder.sym("undelete");
-        let direct_access = builder.sym("direct_access");
-        let extent_format = builder.sym("extent_format");
-        let opaque = builder.sym("opaque");
-        builder
+        builder = builder
             .get("size", |this, strand, out| {
                 Output::set(strand, out, this.annex().inner.len());
                 Ok(())
@@ -280,82 +262,85 @@ impl<'v> Object<'v> for Metadata {
             .get("created", |this, strand, out| {
                 let annex = this.annex();
                 write_timestamp(strand, annex.inner.ctime(), annex.inner.ctime_nsec(), out)
-            })
-            .get("mode", move |this, strand, out| {
-                let annex = this.annex();
-                let Some(unix) = annex.inner.unix() else {
-                    return Err(Error::field(strand, mode));
-                };
-                annex
-                    .global
-                    .types
-                    .mode
-                    .create_flags(strand, Mode(unix.mode()), out);
-                Ok(())
-            })
-            .get("dev", move |this, strand, out| {
-                util::option_field(strand, this.annex().inner.unix().map(|v| v.dev()), dev, out)
-            })
-            .get("ino", move |this, strand, out| {
-                util::option_field(strand, this.annex().inner.unix().map(|v| v.ino()), ino, out)
-            })
-            .get("nlink", move |this, strand, out| {
-                util::option_field(
-                    strand,
-                    this.annex().inner.unix().map(|v| v.nlink()),
-                    nlink,
-                    out,
-                )
-            })
-            .get("uid", move |this, strand, out| {
-                util::option_field(strand, this.annex().inner.unix().map(|v| v.uid()), uid, out)
-            })
-            .get("gid", move |this, strand, out| {
-                util::option_field(strand, this.annex().inner.unix().map(|v| v.gid()), gid, out)
-            })
-            .get("rdev", move |this, strand, out| {
-                util::option_field(
-                    strand,
-                    this.annex().inner.unix().map(|v| v.rdev()),
-                    rdev,
-                    out,
-                )
-            })
-            .get("blksize", move |this, strand, out| {
-                util::option_field(
-                    strand,
-                    this.annex().inner.unix().map(|v| v.block_size()),
-                    blksize,
-                    out,
-                )
-            })
-            .get("blocks", move |this, strand, out| {
-                util::option_field(
-                    strand,
-                    this.annex().inner.unix().map(|v| v.blocks()),
-                    blocks,
-                    out,
-                )
-            })
-            .get("win_attrs", move |this, strand, out| {
+            });
+        if FAMILY == FS_UNIX {
+            builder = builder
+                .get("mode", move |this, strand, out| {
+                    let annex = this.annex();
+                    let Some(unix) = annex.inner.unix() else {
+                        return Err(Error::field(strand, mode));
+                    };
+                    annex
+                        .global
+                        .types
+                        .mode
+                        .create_flags(strand, Mode(unix.mode()), out);
+                    Ok(())
+                })
+                .get("dev", move |this, strand, out| {
+                    util::option_field(strand, this.annex().inner.unix().map(|v| v.dev()), dev, out)
+                })
+                .get("ino", move |this, strand, out| {
+                    util::option_field(strand, this.annex().inner.unix().map(|v| v.ino()), ino, out)
+                })
+                .get("nlink", move |this, strand, out| {
+                    util::option_field(
+                        strand,
+                        this.annex().inner.unix().map(|v| v.nlink()),
+                        nlink,
+                        out,
+                    )
+                })
+                .get("uid", move |this, strand, out| {
+                    util::option_field(strand, this.annex().inner.unix().map(|v| v.uid()), uid, out)
+                })
+                .get("gid", move |this, strand, out| {
+                    util::option_field(strand, this.annex().inner.unix().map(|v| v.gid()), gid, out)
+                })
+                .get("rdev", move |this, strand, out| {
+                    util::option_field(
+                        strand,
+                        this.annex().inner.unix().map(|v| v.rdev()),
+                        rdev,
+                        out,
+                    )
+                })
+                .get("blksize", move |this, strand, out| {
+                    util::option_field(
+                        strand,
+                        this.annex().inner.unix().map(|v| v.block_size()),
+                        blksize,
+                        out,
+                    )
+                })
+                .get("blocks", move |this, strand, out| {
+                    util::option_field(
+                        strand,
+                        this.annex().inner.unix().map(|v| v.blocks()),
+                        blocks,
+                        out,
+                    )
+                });
+        }
+        if FAMILY == FS_WINDOWS {
+            builder = builder.get("win_attrs", move |this, strand, out| {
                 util::option_field(strand, this.annex().inner.win_attrs(), win_attrs, out)
-            })
-            .get("freebsd_attrs", move |this, strand, out| {
-                util::option_field(
-                    strand,
-                    this.annex().inner.freebsd_attrs(),
-                    freebsd_attrs,
-                    out,
-                )
-            })
-            // `owner`/`group` are the portable view of ownership that
-            // `update_metadata` also accepts: a `Sid` on Windows, a uid/gid on
-            // Unix, where they mirror `uid`/`gid`.
+            });
+        }
+        if FAMILY == FS_UNIX {
+            builder = builder.get("freebsd_attrs", move |this, strand, out| {
+                util::nullable_field(strand, this.annex().inner.freebsd_attrs(), out)
+            });
+        }
+        // Ownership matches the representation accepted by `update_metadata`:
+        // a SID on Windows, or a uid/gid on Unix.
+        builder = builder
             .get("owner", move |this, strand, mut out| {
                 let annex = this.annex();
                 if let Some(windows) = annex.inner.windows() {
                     let Some(value) = windows.user().cloned() else {
-                        return Err(Error::field(strand, owner));
+                        Output::set(strand, out, dolang::runtime::value::Nil);
+                        return Ok(());
                     };
                     let windows = strand.force_state::<WindowsSecurityGlobal<'v>>();
                     crate::security::create_sid(strand, windows, value, &mut out);
@@ -367,311 +352,224 @@ impl<'v> Object<'v> for Metadata {
                 let annex = this.annex();
                 if let Some(windows) = annex.inner.windows() {
                     let Some(value) = windows.group().cloned() else {
-                        return Err(Error::field(strand, group));
+                        Output::set(strand, out, dolang::runtime::value::Nil);
+                        return Ok(());
                     };
                     let windows = strand.force_state::<WindowsSecurityGlobal<'v>>();
                     crate::security::create_sid(strand, windows, value, &mut out);
                     return Ok(());
                 }
                 util::option_field(strand, annex.inner.unix().map(|v| v.gid()), group, out)
-            })
-            .get("linux_attrs", move |this, strand, out| {
-                let annex = this.annex();
-                let Some(unix) = annex.inner.unix() else {
-                    return Err(Error::field(strand, linux_attrs));
-                };
-                if let Some(attrs) = unix.linux_attrs() {
-                    Output::set(strand, out, attrs);
-                }
-                Ok(())
-            })
-            .get("macos_attrs", move |this, strand, out| {
-                util::option_field(strand, this.annex().inner.macos_attrs(), macos_attrs, out)
-            })
-            .get("readonly", move |this, strand, out| {
+            });
+        if FAMILY == FS_UNIX {
+            builder = builder
+                .get("linux_attrs", move |this, strand, out| {
+                    let annex = this.annex();
+                    let Some(unix) = annex.inner.unix() else {
+                        return Err(Error::field(strand, linux_attrs));
+                    };
+                    util::nullable_field(strand, unix.linux_attrs(), out)
+                })
+                .get("macos_attrs", move |this, strand, out| {
+                    util::nullable_field(strand, this.annex().inner.macos_attrs(), out)
+                });
+        }
+        if FAMILY != FS_BASE {
+            builder = builder
+                .get("readonly", move |this, strand, out| {
+                    attr_field(
+                        strand,
+                        this,
+                        out,
+                        attrs::windows::READONLY,
+                        0,
+                        0,
+                        attrs::freebsd::READONLY,
+                    )
+                })
+                .get("hidden", move |this, strand, out| {
+                    attr_field(
+                        strand,
+                        this,
+                        out,
+                        attrs::windows::HIDDEN,
+                        0,
+                        attrs::macos::HIDDEN,
+                        attrs::freebsd::HIDDEN,
+                    )
+                })
+                .get("system", move |this, strand, out| {
+                    attr_field(
+                        strand,
+                        this,
+                        out,
+                        attrs::windows::SYSTEM,
+                        0,
+                        0,
+                        attrs::freebsd::SYSTEM,
+                    )
+                })
+                .get("archive", move |this, strand, out| {
+                    attr_field(
+                        strand,
+                        this,
+                        out,
+                        attrs::windows::ARCHIVE,
+                        0,
+                        0,
+                        attrs::freebsd::ARCHIVE,
+                    )
+                })
+                .get("reparse_point", move |this, strand, out| {
+                    attr_field(
+                        strand,
+                        this,
+                        out,
+                        attrs::windows::REPARSE_POINT,
+                        0,
+                        0,
+                        attrs::freebsd::REPARSE_POINT,
+                    )
+                });
+        }
+        builder = builder.get("compressed", move |this, strand, out| {
+            attr_field(
+                strand,
+                this,
+                out,
+                attrs::windows::COMPRESSED,
+                attrs::linux::COMPRESSED,
+                attrs::macos::COMPRESSED,
+                attrs::freebsd::COMPRESSED,
+            )
+        });
+        if FAMILY == FS_WINDOWS {
+            builder = builder
+                .get("sparse", move |this, strand, out| {
+                    attr_field(strand, this, out, attrs::windows::SPARSE, 0, 0, 0)
+                })
+                .get("encrypted", move |this, strand, out| {
+                    attr_field(strand, this, out, attrs::windows::ENCRYPTED, 0, 0, 0)
+                })
+                .get("temporary", move |this, strand, out| {
+                    attr_field(strand, this, out, attrs::windows::TEMPORARY, 0, 0, 0)
+                });
+        }
+        if FAMILY != FS_BASE {
+            builder = builder.get("offline", move |this, strand, out| {
                 attr_field(
                     strand,
                     this,
                     out,
-                    readonly,
-                    attrs::windows::READONLY,
-                    0,
-                    0,
-                    attrs::freebsd::READONLY,
-                )
-            })
-            .get("hidden", move |this, strand, out| {
-                attr_field(
-                    strand,
-                    this,
-                    out,
-                    hidden,
-                    attrs::windows::HIDDEN,
-                    0,
-                    attrs::macos::HIDDEN,
-                    attrs::freebsd::HIDDEN,
-                )
-            })
-            .get("system", move |this, strand, out| {
-                attr_field(
-                    strand,
-                    this,
-                    out,
-                    system,
-                    attrs::windows::SYSTEM,
-                    0,
-                    0,
-                    attrs::freebsd::SYSTEM,
-                )
-            })
-            .get("archive", move |this, strand, out| {
-                attr_field(
-                    strand,
-                    this,
-                    out,
-                    archive,
-                    attrs::windows::ARCHIVE,
-                    0,
-                    0,
-                    attrs::freebsd::ARCHIVE,
-                )
-            })
-            .get("reparse_point", move |this, strand, out| {
-                attr_field(
-                    strand,
-                    this,
-                    out,
-                    reparse_point,
-                    attrs::windows::REPARSE_POINT,
-                    0,
-                    0,
-                    attrs::freebsd::REPARSE_POINT,
-                )
-            })
-            .get("compressed", move |this, strand, out| {
-                attr_field(
-                    strand,
-                    this,
-                    out,
-                    compressed,
-                    attrs::windows::COMPRESSED,
-                    attrs::linux::COMPRESSED,
-                    attrs::macos::COMPRESSED,
-                    attrs::freebsd::COMPRESSED,
-                )
-            })
-            .get("sparse", move |this, strand, out| {
-                attr_field(strand, this, out, sparse, attrs::windows::SPARSE, 0, 0, 0)
-            })
-            .get("encrypted", move |this, strand, out| {
-                attr_field(
-                    strand,
-                    this,
-                    out,
-                    encrypted,
-                    attrs::windows::ENCRYPTED,
-                    0,
-                    0,
-                    0,
-                )
-            })
-            .get("temporary", move |this, strand, out| {
-                attr_field(
-                    strand,
-                    this,
-                    out,
-                    temporary,
-                    attrs::windows::TEMPORARY,
-                    0,
-                    0,
-                    0,
-                )
-            })
-            .get("offline", move |this, strand, out| {
-                attr_field(
-                    strand,
-                    this,
-                    out,
-                    offline,
                     attrs::windows::OFFLINE,
                     0,
                     0,
                     attrs::freebsd::OFFLINE,
                 )
-            })
-            .get("not_content_indexed", move |this, strand, out| {
+            });
+        }
+        if FAMILY == FS_WINDOWS {
+            builder = builder.get("not_content_indexed", move |this, strand, out| {
                 attr_field(
                     strand,
                     this,
                     out,
-                    not_content_indexed,
                     attrs::windows::NOT_CONTENT_INDEXED,
                     0,
                     0,
                     0,
                 )
-            })
-            .get("immutable", move |this, strand, out| {
-                attr_field(
-                    strand,
-                    this,
-                    out,
-                    immutable,
-                    0,
-                    attrs::linux::IMMUTABLE,
-                    attrs::macos::IMMUTABLE,
-                    attrs::freebsd::IMMUTABLE,
-                )
-            })
-            .get("append_only", move |this, strand, out| {
-                attr_field(
-                    strand,
-                    this,
-                    out,
-                    append_only,
-                    0,
-                    attrs::linux::APPEND_ONLY,
-                    attrs::macos::APPEND_ONLY,
-                    attrs::freebsd::APPEND_ONLY,
-                )
-            })
-            .get("no_dump", move |this, strand, out| {
-                attr_field(
-                    strand,
-                    this,
-                    out,
-                    no_dump,
-                    0,
-                    attrs::linux::NO_DUMP,
-                    attrs::macos::NO_DUMP,
-                    attrs::freebsd::NO_DUMP,
-                )
-            })
-            .get("no_atime", move |this, strand, out| {
-                attr_field(strand, this, out, no_atime, 0, attrs::linux::NO_ATIME, 0, 0)
-            })
-            .get("no_copy_on_write", move |this, strand, out| {
-                attr_field(
-                    strand,
-                    this,
-                    out,
-                    no_copy_on_write,
-                    0,
-                    attrs::linux::NO_COPY_ON_WRITE,
-                    0,
-                    0,
-                )
-            })
-            .get("dir_sync", move |this, strand, out| {
-                attr_field(strand, this, out, dir_sync, 0, attrs::linux::DIR_SYNC, 0, 0)
-            })
-            .get("casefold", move |this, strand, out| {
-                attr_field(strand, this, out, casefold, 0, attrs::linux::CASEFOLD, 0, 0)
-            })
-            .get("data_journaling", move |this, strand, out| {
-                attr_field(
-                    strand,
-                    this,
-                    out,
-                    data_journaling,
-                    0,
-                    attrs::linux::DATA_JOURNALING,
-                    0,
-                    0,
-                )
-            })
-            .get("no_compress", move |this, strand, out| {
-                attr_field(
-                    strand,
-                    this,
-                    out,
-                    no_compress,
-                    0,
-                    attrs::linux::NO_COMPRESS,
-                    0,
-                    0,
-                )
-            })
-            .get("project_inherit", move |this, strand, out| {
-                attr_field(
-                    strand,
-                    this,
-                    out,
-                    project_inherit,
-                    0,
-                    attrs::linux::PROJECT_INHERIT,
-                    0,
-                    0,
-                )
-            })
-            .get("secure_delete", move |this, strand, out| {
-                attr_field(
-                    strand,
-                    this,
-                    out,
-                    secure_delete,
-                    0,
-                    attrs::linux::SECURE_DELETE,
-                    0,
-                    0,
-                )
-            })
-            .get("sync", move |this, strand, out| {
-                attr_field(strand, this, out, sync, 0, attrs::linux::SYNC, 0, 0)
-            })
-            .get("no_tail_merge", move |this, strand, out| {
-                attr_field(
-                    strand,
-                    this,
-                    out,
-                    no_tail_merge,
-                    0,
-                    attrs::linux::NO_TAIL_MERGE,
-                    0,
-                    0,
-                )
-            })
-            .get("top_dir", move |this, strand, out| {
-                attr_field(strand, this, out, top_dir, 0, attrs::linux::TOP_DIR, 0, 0)
-            })
-            .get("undelete", move |this, strand, out| {
-                attr_field(strand, this, out, undelete, 0, attrs::linux::UNDELETE, 0, 0)
-            })
-            .get("direct_access", move |this, strand, out| {
-                attr_field(
-                    strand,
-                    this,
-                    out,
-                    direct_access,
-                    0,
-                    attrs::linux::DIRECT_ACCESS,
-                    0,
-                    0,
-                )
-            })
-            .get("extent_format", move |this, strand, out| {
-                attr_field(
-                    strand,
-                    this,
-                    out,
-                    extent_format,
-                    0,
-                    attrs::linux::EXTENT_FORMAT,
-                    0,
-                    0,
-                )
-            })
-            .get("opaque", move |this, strand, out| {
-                attr_field(
-                    strand,
-                    this,
-                    out,
-                    opaque,
-                    0,
-                    0,
-                    attrs::macos::OPAQUE,
-                    attrs::freebsd::OPAQUE,
-                )
-            })
+            });
+        }
+        if FAMILY == FS_UNIX {
+            builder = builder
+                .get("immutable", move |this, strand, out| {
+                    attr_field(
+                        strand,
+                        this,
+                        out,
+                        0,
+                        attrs::linux::IMMUTABLE,
+                        attrs::macos::IMMUTABLE,
+                        attrs::freebsd::IMMUTABLE,
+                    )
+                })
+                .get("append_only", move |this, strand, out| {
+                    attr_field(
+                        strand,
+                        this,
+                        out,
+                        0,
+                        attrs::linux::APPEND_ONLY,
+                        attrs::macos::APPEND_ONLY,
+                        attrs::freebsd::APPEND_ONLY,
+                    )
+                })
+                .get("no_dump", move |this, strand, out| {
+                    attr_field(
+                        strand,
+                        this,
+                        out,
+                        0,
+                        attrs::linux::NO_DUMP,
+                        attrs::macos::NO_DUMP,
+                        attrs::freebsd::NO_DUMP,
+                    )
+                })
+                .get("no_atime", move |this, strand, out| {
+                    attr_field(strand, this, out, 0, attrs::linux::NO_ATIME, 0, 0)
+                })
+                .get("no_copy_on_write", move |this, strand, out| {
+                    attr_field(strand, this, out, 0, attrs::linux::NO_COPY_ON_WRITE, 0, 0)
+                })
+                .get("dir_sync", move |this, strand, out| {
+                    attr_field(strand, this, out, 0, attrs::linux::DIR_SYNC, 0, 0)
+                })
+                .get("casefold", move |this, strand, out| {
+                    attr_field(strand, this, out, 0, attrs::linux::CASEFOLD, 0, 0)
+                })
+                .get("data_journaling", move |this, strand, out| {
+                    attr_field(strand, this, out, 0, attrs::linux::DATA_JOURNALING, 0, 0)
+                })
+                .get("no_compress", move |this, strand, out| {
+                    attr_field(strand, this, out, 0, attrs::linux::NO_COMPRESS, 0, 0)
+                })
+                .get("project_inherit", move |this, strand, out| {
+                    attr_field(strand, this, out, 0, attrs::linux::PROJECT_INHERIT, 0, 0)
+                })
+                .get("secure_delete", move |this, strand, out| {
+                    attr_field(strand, this, out, 0, attrs::linux::SECURE_DELETE, 0, 0)
+                })
+                .get("sync", move |this, strand, out| {
+                    attr_field(strand, this, out, 0, attrs::linux::SYNC, 0, 0)
+                })
+                .get("no_tail_merge", move |this, strand, out| {
+                    attr_field(strand, this, out, 0, attrs::linux::NO_TAIL_MERGE, 0, 0)
+                })
+                .get("top_dir", move |this, strand, out| {
+                    attr_field(strand, this, out, 0, attrs::linux::TOP_DIR, 0, 0)
+                })
+                .get("undelete", move |this, strand, out| {
+                    attr_field(strand, this, out, 0, attrs::linux::UNDELETE, 0, 0)
+                })
+                .get("direct_access", move |this, strand, out| {
+                    attr_field(strand, this, out, 0, attrs::linux::DIRECT_ACCESS, 0, 0)
+                })
+                .get("extent_format", move |this, strand, out| {
+                    attr_field(strand, this, out, 0, attrs::linux::EXTENT_FORMAT, 0, 0)
+                })
+                .get("opaque", move |this, strand, out| {
+                    attr_field(
+                        strand,
+                        this,
+                        out,
+                        0,
+                        0,
+                        attrs::macos::OPAQUE,
+                        attrs::freebsd::OPAQUE,
+                    )
+                });
+        }
+        builder
     }
 }

@@ -1,4 +1,7 @@
+use super::{FS_BASE, FS_UNIX, FS_WINDOWS};
+
 use dolang::runtime::object::fmt;
+use dolang::runtime::value::fmt::Format;
 
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Value, object::TypeBuilder,
@@ -15,7 +18,7 @@ use crate::global::FsGlobal;
 
 use crate::fs::metadata::file_type_to_sym;
 
-pub(crate) struct DirEntry;
+pub(crate) struct DirEntry<const FAMILY: u8 = FS_BASE>;
 
 pub(crate) struct DirEntryAnnex<'v> {
     pub(crate) global: State<'v, FsGlobal<'v>>,
@@ -39,23 +42,35 @@ pub(crate) fn create_dir_entry<'v, 's>(
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     let name = entry.file_name().to_string_lossy().into_owned();
-    global.types.dir_entry.create_with_annex(
-        strand,
-        DirEntry,
-        DirEntryAnnex {
-            global,
-            name,
-            file_type: entry.file_type(),
-            ino: entry.ino(),
-        },
-        out,
-    );
+    let annex = DirEntryAnnex {
+        global,
+        name,
+        file_type: entry.file_type(),
+        ino: entry.ino(),
+    };
+    if annex.ino.is_some() {
+        global
+            .types
+            .unix_dir_entry
+            .create_with_annex(strand, DirEntry::<FS_UNIX>, annex, out);
+    } else {
+        global.types.windows_dir_entry.create_with_annex(
+            strand,
+            DirEntry::<FS_WINDOWS>,
+            annex,
+            out,
+        );
+    }
     Ok(())
 }
 
-impl<'v> Object<'v> for DirEntry {
+impl<'v, const FAMILY: u8> Object<'v> for DirEntry<FAMILY> {
     const NAME: &'v str = "DirEntry";
-    const MODULE: &'v str = "fs";
+    const MODULE: &'v str = match FAMILY {
+        FS_UNIX => "fs.unix",
+        FS_WINDOWS => "fs.windows",
+        _ => "fs",
+    };
     type Annex = DirEntryAnnex<'v>;
     type Type = ();
     type TypeAnnex = ();
@@ -70,7 +85,7 @@ impl<'v> Object<'v> for DirEntry {
 
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         let ino = builder.sym("ino");
-        builder
+        let builder = builder
             .get("name", |this, strand, out| {
                 Output::set(strand, out, this.annex().name.as_str());
                 Ok(())
@@ -82,10 +97,14 @@ impl<'v> Object<'v> for DirEntry {
                     file_type_to_sym(this.annex().file_type, this.annex().global),
                 );
                 Ok(())
-            })
-            .get("ino", move |this, strand, out| {
+            });
+        if FAMILY == FS_UNIX {
+            builder.get("ino", move |this, strand, out| {
                 crate::util::option_field(strand, this.annex().ino, ino, out)
             })
+        } else {
+            builder
+        }
     }
 }
 
@@ -135,13 +154,15 @@ pub(crate) fn path_with_entry<'v, 's>(
     path: vfs_path::Path<'_>,
     entry: &Value<'v>,
 ) -> Result<'v, 's, vfs_path::PathBuf> {
-    let entry = global
-        .types
-        .dir_entry
-        .cast(entry)
-        .ok_or_else(|| Error::not_supported(strand))?;
-    Ok(entry.enter_sync(strand, |_strand, entry| {
-        path.join(entry.annex().name.as_str())
-    }))
+    if let Some(entry) = global.types.unix_dir_entry.cast(entry) {
+        return Ok(entry.enter_sync(strand, |_strand, entry| {
+            path.join(entry.annex().name.as_str())
+        }));
+    }
+    if let Some(entry) = global.types.windows_dir_entry.cast(entry) {
+        return Ok(entry.enter_sync(strand, |_strand, entry| {
+            path.join(entry.annex().name.as_str())
+        }));
+    }
+    Err(Error::not_supported(strand))
 }
-use dolang::runtime::value::fmt::Format;

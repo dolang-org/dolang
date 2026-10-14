@@ -114,9 +114,9 @@ pub def file_scopes >Sink[Str] -> Int
 # Ownership is a uid/gid or a SID, depending on the platform
 pub def owners meta @ fs.Metadata -> nil
   let _owner = meta.owner
-  #   ^~~~~~: flow security.windows.Sid | std.Int
+  #   ^~~~~~: flow nil | security.windows.Sid | std.Int
   let _group = meta.group
-  #   ^~~~~~: flow security.windows.Sid | std.Int
+  #   ^~~~~~: flow nil | security.windows.Sid | std.Int
   nil
 
 # Registry, service and connection scopes run with their caller's channels

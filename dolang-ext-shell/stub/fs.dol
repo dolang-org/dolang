@@ -14,8 +14,14 @@
 import
   fs.unix:
     - @Mode
+    - @Metadata: UnixMetadata
+    - @FsMetadata: UnixFsMetadata
+    - @DirEntry: UnixDirEntry
   fs.windows:
     - @StreamEntry
+    - @Metadata: WindowsMetadata
+    - @FsMetadata: WindowsFsMetadata
+    - @DirEntry: WindowsDirEntry
   @security
   std:
     - @Seq
@@ -101,8 +107,9 @@ pub @let OpenBinaryMode = ("rb" | "wb" | "ab" | "r+b" | "w+b" | "a+b")
 
 # An entry within a directory.
 #
-# Yielded by [`entries`](fs.entries) and
-# [`Path.entries`](fs.Path.entries).
+# Yielded as [`fs.unix.DirEntry`](fs.unix.DirEntry) or
+# [`fs.windows.DirEntry`](fs.windows.DirEntry) by [`entries`](fs.entries)
+# and [`Path.entries`](fs.Path.entries).
 #
 # ## Operators
 #
@@ -134,14 +141,6 @@ pub class DirEntry
   # ```
   #[getter]
   pub def type self -> FileType
-    ...
-
-  # The inode number of the entry.
-  #
-  # Unix only: reading it against a Windows target raises
-  # [`FieldError`](std.FieldError).
-  #[getter]
-  pub def ino self -> Int
     ...
 
 # An open file.
@@ -421,7 +420,7 @@ pub class File: Iter[Str | Bin] Sink[Value]
   #   echo "Size: $(meta.size)"
   #   echo "Modified: $(meta.modified)"
   # ```
-  pub def metadata self -> Metadata
+  pub def metadata self -> (UnixMetadata | WindowsMetadata)
     ...
 
   # Gets filesystem metadata for the filesystem backing the open file.
@@ -433,7 +432,7 @@ pub class File: Iter[Str | Bin] Sink[Value]
   #   let meta = file.fs_metadata()
   #   echo "Available: $(meta.available)"
   # ```
-  pub def fs_metadata self -> FsMetadata
+  pub def fs_metadata self -> (UnixFsMetadata | WindowsFsMetadata)
     ...
 
   # Gets selected parts of the Windows security descriptor through this file's
@@ -763,8 +762,8 @@ pub class FileLock
 # [`File.fs_metadata`](fs.File.fs_metadata). For metadata about a single file
 # entry, use [`Metadata`](fs.Metadata).
 #
-# Accessing a field that does not apply to the target platform raises
-# [`FieldError`](std.FieldError).
+# Platform-specific members belong to [`fs.unix.FsMetadata`](fs.unix.FsMetadata)
+# and [`fs.windows.FsMetadata`](fs.windows.FsMetadata).
 pub class FsMetadata
   # Total filesystem capacity in bytes.
   #[getter]
@@ -793,127 +792,6 @@ pub class FsMetadata
   pub def read_only self -> Bool
     ...
 
-  # Total data blocks. Unix only.
-  #[getter]
-  pub def blocks self -> Int
-    ...
-
-  # Free data blocks, including reserved blocks. Unix
-  # only.
-  #[getter]
-  pub def blocks_free self -> Int
-    ...
-
-  # Free data blocks available to unprivileged users.
-  # Unix only.
-  #[getter]
-  pub def blocks_available self -> Int
-    ...
-
-  # Total file nodes. Unix only.
-  #[getter]
-  pub def files self -> Int
-    ...
-
-  # Free file nodes. Unix only.
-  #[getter]
-  pub def files_free self -> Int
-    ...
-
-  # Free file nodes available to unprivileged users.
-  # Unix only.
-  #[getter]
-  pub def files_available self -> Int
-    ...
-
-  # Filesystem fragment size in bytes. Unix only.
-  #[getter]
-  pub def fragment_size self -> Int
-    ...
-
-  # Raw filesystem identifier when the platform
-  # reports one. Unix only.
-  #[getter]
-  pub def fsid self -> (Int | nil)
-    ...
-
-  # Maximum filename length. Unix only.
-  #[getter]
-  pub def name_max self -> Int
-    ...
-
-  # Raw Linux filesystem mount attribute mask. Unix
-  # only.
-  #[getter]
-  pub def linux_attrs self -> Int
-    ...
-
-  # Raw FreeBSD filesystem mount attribute mask. Unix
-  # only.
-  #[getter]
-  pub def freebsd_attrs self -> Int
-    ...
-
-  # Raw macOS filesystem mount attribute mask. Unix
-  # only.
-  #[getter]
-  pub def macos_attrs self -> Int
-    ...
-
-  # Whether setuid execution is disabled. Unix only.
-  #[getter]
-  pub def no_suid self -> Bool
-    ...
-
-  # Whether execution is disabled. Unix only.
-  #[getter]
-  pub def no_exec self -> Bool
-    ...
-
-  # Whether writes are synchronous. Unix only.
-  #[getter]
-  pub def synchronous self -> Bool
-    ...
-
-  # Whether device files are disabled. Unix only.
-  #[getter]
-  pub def no_dev self -> Bool
-    ...
-
-  # Whether access time updates are disabled. Unix
-  # only.
-  #[getter]
-  pub def no_atime self -> Bool
-    ...
-
-  # Whether directory access time updates are
-  # disabled. Unix only.
-  #[getter]
-  pub def no_dir_atime self -> Bool
-    ...
-
-  # Whether relative-atime updates are enabled. Unix
-  # only.
-  #[getter]
-  pub def relatime self -> Bool
-    ...
-
-  # Raw Windows volume flags. Windows only.
-  #[getter]
-  pub def win_flags self -> Int
-    ...
-
-  # Raw Windows volume serial number. Windows only.
-  #[getter]
-  pub def volume_serial_number self -> Int
-    ...
-
-  # Maximum path component length for the volume.
-  # Windows only.
-  #[getter]
-  pub def component_length_max self -> Int
-    ...
-
 # Metadata about a single filesystem entry.
 #
 # Returned by [`metadata`](fs.metadata),
@@ -921,10 +799,9 @@ pub class FsMetadata
 # [`File.metadata`](fs.File.metadata). For filesystem-level capacity and
 # mount metadata, use [`FsMetadata`](fs.FsMetadata).
 #
-# Accessing a field that does not apply to the target platform raises
-# [`FieldError`](std.FieldError). `freebsd_attrs`, `linux_attrs`,
-# `macos_attrs`, and related attribute fields are `nil` when the filesystem or
-# file type does not support querying file attributes.
+# Platform-specific members belong to [`fs.unix.Metadata`](fs.unix.Metadata)
+# and [`fs.windows.Metadata`](fs.windows.Metadata).
+# Unix attribute getters return `nil` when unavailable or inapplicable.
 pub class Metadata
   # File size in bytes.
   #[getter]
@@ -954,254 +831,28 @@ pub class Metadata
   # Owner: the uid as an [`Int`](std.Int) on Unix, or the owner
   # [`Sid`](security.windows.Sid) on Windows.
   #
+  # Missing Windows ownership returns `nil`.
   # This representation matches the `owner` argument accepted by
   # [`update_metadata`](fs.update_metadata).
   #[getter]
-  pub def owner self -> (Int | Sid)
+  pub def owner self -> (Int | Sid | nil)
     ...
 
   # Owning group: the gid as an [`Int`](std.Int) on Unix, or the primary
   # group [`Sid`](security.windows.Sid) on Windows.
   #
+  # Missing Windows ownership returns `nil`.
   # This representation matches the `group` argument accepted by
   # [`update_metadata`](fs.update_metadata).
   #[getter]
-  pub def group self -> (Int | Sid)
-    ...
-
-  # Permissions and file type. Unix only.
-  #[getter]
-  pub def mode self -> Mode
-    ...
-
-  # Device ID. Unix only.
-  #[getter]
-  pub def dev self -> Int
-    ...
-
-  # Inode number. Unix only.
-  #[getter]
-  pub def ino self -> Int
-    ...
-
-  # Hard-link count. Unix only.
-  #[getter]
-  pub def nlink self -> Int
-    ...
-
-  # Owner user ID. Unix only.
-  #[getter]
-  pub def uid self -> Int
-    ...
-
-  # Owner group ID. Unix only.
-  #[getter]
-  pub def gid self -> Int
-    ...
-
-  # Special-device ID. Unix only.
-  #[getter]
-  pub def rdev self -> Int
-    ...
-
-  # Preferred block size for I/O. Unix only.
-  #[getter]
-  pub def blksize self -> Int
-    ...
-
-  # Number of allocated 512-byte blocks. Unix only.
-  #[getter]
-  pub def blocks self -> Int
-    ...
-
-  # Whether the platform hidden flag is set.
-  #[getter]
-  pub def hidden self -> Bool
-    ...
-
-  # Whether the platform immutable flag is set.
-  #[getter]
-  pub def immutable self -> Bool
-    ...
-
-  # Whether the platform append-only flag is set.
-  #[getter]
-  pub def append_only self -> Bool
-    ...
-
-  # Whether the platform no-dump flag is set.
-  #[getter]
-  pub def no_dump self -> Bool
+  pub def group self -> (Int | Sid | nil)
     ...
 
   # Whether the platform compressed flag is set.
   #[getter]
-  pub def compressed self -> Bool
+  pub def compressed self -> (Bool | nil)
     ...
 
-  # Raw Windows file attribute bitmask. Windows only.
-  #[getter]
-  pub def win_attrs self -> Int
-    ...
-
-  # Whether the readonly attribute is set. Windows
-  # only.
-  #[getter]
-  pub def readonly self -> Bool
-    ...
-
-  # Whether the system attribute is set. Windows
-  # only.
-  #[getter]
-  pub def system self -> Bool
-    ...
-
-  # Whether the archive attribute is set. Windows
-  # only.
-  #[getter]
-  pub def archive self -> Bool
-    ...
-
-  # Whether the reparse-point attribute is set.
-  # Windows only.
-  #[getter]
-  pub def reparse_point self -> Bool
-    ...
-
-  # Whether sparse allocation is enabled. Windows
-  # only.
-  #[getter]
-  pub def sparse self -> Bool
-    ...
-
-  # Whether the encrypted attribute is set. Windows
-  # only.
-  #[getter]
-  pub def encrypted self -> Bool
-    ...
-
-  # Whether the temporary attribute is set. Windows
-  # only.
-  #[getter]
-  pub def temporary self -> Bool
-    ...
-
-  # Whether the offline attribute is set. Windows
-  # only.
-  #[getter]
-  pub def offline self -> Bool
-    ...
-
-  # Whether the not-content-indexed attribute is
-  # set. Windows only.
-  #[getter]
-  pub def not_content_indexed self -> Bool
-    ...
-
-  # Raw Linux attribute flags. Linux only.
-  #[getter]
-  pub def linux_attrs self -> Int
-    ...
-
-  # Whether the no-atime flag is set. Linux only.
-  #[getter]
-  pub def no_atime self -> Bool
-    ...
-
-  # Whether the no-copy-on-write flag is set. Linux
-  # only.
-  #[getter]
-  pub def no_copy_on_write self -> Bool
-    ...
-
-  # Whether the synchronous-directory-updates flag
-  # is set. Linux only.
-  #[getter]
-  pub def dir_sync self -> Bool
-    ...
-
-  # Whether the case-insensitive-directory-lookups
-  # flag is set. Linux only.
-  #[getter]
-  pub def casefold self -> Bool
-    ...
-
-  # Whether the data-journaling flag is set. Linux
-  # only.
-  #[getter]
-  pub def data_journaling self -> Bool
-    ...
-
-  # Whether the don't-compress flag is set. Linux
-  # only.
-  #[getter]
-  pub def no_compress self -> Bool
-    ...
-
-  # Whether the project-hierarchy flag is set. Linux
-  # only.
-  #[getter]
-  pub def project_inherit self -> Bool
-    ...
-
-  # Whether the secure-deletion flag is set. Linux
-  # only.
-  #[getter]
-  pub def secure_delete self -> Bool
-    ...
-
-  # Whether the synchronous-updates flag is set.
-  # Linux only.
-  #[getter]
-  pub def sync self -> Bool
-    ...
-
-  # Whether the no-tail-merging flag is set. Linux
-  # only.
-  #[getter]
-  pub def no_tail_merge self -> Bool
-    ...
-
-  # Whether the top-of-directory-hierarchy flag is
-  # set. Linux only.
-  #[getter]
-  pub def top_dir self -> Bool
-    ...
-
-  # Whether the undeletable flag is set. Linux only.
-  #[getter]
-  pub def undelete self -> Bool
-    ...
-
-  # Whether the direct-access flag is set. Linux
-  # only.
-  #[getter]
-  pub def direct_access self -> Bool
-    ...
-
-  # Whether the extent-format flag is set. Linux
-  # only.
-  #[getter]
-  pub def extent_format self -> Bool
-    ...
-
-  # Raw macOS file flags. macOS only.
-  #[getter]
-  pub def macos_attrs self -> Int
-    ...
-
-  # Whether the opaque flag is set. macOS only.
-  #[getter]
-  pub def opaque self -> Bool
-    ...
-
-  # Raw FreeBSD file flags. FreeBSD only.
-  #[getter]
-  pub def freebsd_attrs self -> Int
-    ...
-
-# A filesystem path.
-#
 # The supertype of [`fs.unix.Path`](fs.unix.Path) and
 # [`fs.windows.Path`](fs.windows.Path); which of the two a constructed path
 # is depends on the current VFS context.
@@ -1501,7 +1152,7 @@ pub class Path
     self
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
-  do -> Metadata
+  do -> (UnixMetadata | WindowsMetadata)
     ...
 
   # The method form of [`fs.fs_metadata`](fs.fs_metadata).
@@ -1509,7 +1160,7 @@ pub class Path
     self
     # Resolution mode. Defaults to `:TARGET:`.
     :resolve @ Resolve = nil
-  do -> FsMetadata
+  do -> (UnixFsMetadata | WindowsFsMetadata)
     ...
 
   # The method form of [`fs.update_metadata`](fs.update_metadata),
@@ -1555,7 +1206,7 @@ pub class Path
     ...
 
   # The method form of [`fs.entries`](fs.entries).
-  pub def entries self -> Iter[DirEntry]
+  pub def entries self -> Iter[UnixDirEntry | WindowsDirEntry]
     ...
 
   # The method form of [`fs.glob`](fs.glob), searching within this
@@ -1759,7 +1410,7 @@ pub class XattrEntry
   #   echo "$(attr.namespace):$(attr.name)"
   # ```
   #[getter]
-  pub def namespace self -> Str
+  pub def namespace self -> (Str | nil)
     ...
 
   # Attribute value size in bytes. Windows only.
@@ -2116,7 +1767,7 @@ pub def metadata
   # Resolution mode. Defaults to
   # `:TARGET:`.
   :resolve @ Resolve = nil
-do -> Metadata
+do -> (UnixMetadata | WindowsMetadata)
   ...
 
 # Gets metadata for the filesystem containing the given path.
@@ -2139,7 +1790,7 @@ pub def fs_metadata
   # Resolution mode. Defaults to
   # `:TARGET:`.
   :resolve @ Resolve = nil
-do -> FsMetadata
+do -> (UnixFsMetadata | WindowsFsMetadata)
   ...
 
 # Updates timestamps, permissions, ownership, and filesystem attributes.
@@ -2444,7 +2095,7 @@ do -> Iter[StreamEntry]
 pub def entries
   # Path to the directory.
   path @ (Str | Path)
-do -> Iter[DirEntry]
+do -> Iter[UnixDirEntry | WindowsDirEntry]
   ...
 
 # Returns an iterator over paths matching a glob pattern.

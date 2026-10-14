@@ -30,6 +30,11 @@ def query_security_descriptors()
     assert_eq $descriptor.mask (SecInfo :OWNER: :GROUP: :DACL:)
     let shallow = path.sec_desc owner: false group: false dacl: false
     assert_eq $shallow.mask (SecInfo())
+    assert_throws $std.FieldError do shallow.owner
+    assert_throws $std.FieldError do shallow.group
+    assert_throws $std.FieldError do shallow.dacl
+    assert_throws $std.FieldError do shallow.owner_defaulted
+    assert_throws $std.FieldError do shallow.dacl_present
     assert_type $SecDesc (sec_desc "test_sec_desc.txt")
     update_sec_desc test_sec_desc.txt $shallow
     # A descriptor whose mask is empty never reaches Windows — the backend

@@ -13,6 +13,7 @@ import _vfs digest fs http json proc progress shell std sys tar zip
   fs.unix:
     Path: UnixPath
     - @Mode
+    Metadata: UnixMetadata
   regex:
     - Regex
   std:
@@ -693,7 +694,9 @@ def archive_name path@Path source@Path prefix@Seq[Str] -> Path
 
 # Looks up the name of a file's owner or group, given as `Metadata.owner` or
 # `Metadata.group` reports it.
-def account_name id@(Int | Sid) kind@(:USER: | :GROUP:) -> (Str | nil)
+def account_name id@(Int | Sid | nil) kind@(:USER: | :GROUP:) -> (Str | nil)
+  if (id == nil)
+    return nil
   try
     if (type id Int)
       if (kind == :USER:)
@@ -711,19 +714,22 @@ def filesystem_metadata
   options @ Dict[PackOptions]
 do -> Dict[EntryMetadata]
   let metadata = path.metadata resolve: :LINK:
-  let unix = (sys.os_info().family != :WINDOWS:)
   let requested default_mode = if (kind == :DIR:)
     (options.get(:dir_mode:), 0o755)
   else if (kind == :SYMLINK:)
     (options.get(:link_mode:), 0o777)
   else
     (options.get(:mode:), 0o644)
+  let mode uid gid = if (type metadata UnixMetadata)
+    ((metadata.mode.int & 0o7777), metadata.uid, metadata.gid)
+  else
+    (default_mode, 0, 0)
   let owner_name = options.get :owner_name: else: do account_name $metadata.owner :USER:
   let group_name = options.get :group_name: else: do account_name $metadata.group :GROUP:
   $
-    mode: (_vfs.parse_mode(requested) || (unix && (metadata.mode.int & 0o7777)) || default_mode)
-    uid: (options.get(:uid:) || (unix && metadata.uid) || 0)
-    gid: (options.get(:gid:) || (unix && metadata.gid) || 0)
+    mode: (_vfs.parse_mode(requested) || mode || default_mode)
+    uid: (options.get(:uid:) || uid || 0)
+    gid: (options.get(:gid:) || gid || 0)
     mtime: (options.get(:mtime:) || metadata.modified || DateTime.from_unix(0))
     if owner_name
       :owner_name

@@ -248,10 +248,10 @@ pub class Ace
 
   # Numeric user or group ID.
   #
-  # Raises [`FieldError`](std.FieldError) unless
+  # Returns `nil` unless
   # [`principal`](security.nfs4.Ace.principal) is `:USER:` or `:GROUP:`.
   #[getter]
-  pub def id self -> Int
+  pub def id self -> (Int | nil)
     ...
 
   # The entry's permission mask.

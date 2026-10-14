@@ -1,6 +1,5 @@
 import security.nfs4: nfs4_security
   std:
-    - FieldError
     - ImmutableError
     - MissingKeyError
     - TypeError
@@ -35,7 +34,7 @@ def constructs_nfs4_acls_on_every_platform()
   assert_eq $owner.principal :OWNER:
   assert_eq $owner.mask $rw
   assert_eq $owner.flags (nfs4_security.Flags())
-  assert_throws $FieldError do owner.id
+  assert_eq $owner.id nil
 
   assert_eq $group.principal :OWNING_GROUP:
   assert_eq $group.flags $inherit
@@ -45,7 +44,7 @@ def constructs_nfs4_acls_on_every_platform()
 
   assert_eq $named_user.principal :USER:
   assert_eq $named_user.id 1234
-  assert_throws $FieldError do everyone.id
+  assert_eq $everyone.id nil
 
   assert_eq $named_group.type :AUDIT:
   assert_eq $named_group.principal :GROUP:

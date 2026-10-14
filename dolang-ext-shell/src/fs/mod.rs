@@ -25,6 +25,10 @@ use tokio::io::{AsyncRead, AsyncWriteExt, ReadBuf};
 
 use rand::{RngExt, distr::Alphanumeric};
 
+pub(crate) const FS_BASE: u8 = 0;
+pub(crate) const FS_UNIX: u8 = 1;
+pub(crate) const FS_WINDOWS: u8 = 2;
+
 pub(crate) mod attrs;
 pub(crate) mod file;
 pub(crate) mod file_lock;
@@ -1594,12 +1598,18 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
 
     builder
         .module("fs.unix")
+        .value("Metadata", global.types.unix_metadata)
+        .value("FsMetadata", global.types.unix_fs_metadata)
+        .value("DirEntry", global.types.unix_dir_entry)
         .value("Path", global.types.unix_path)
         .value("Mode", global.types.mode)
         .commit();
 
     builder
         .module("fs.windows")
+        .value("Metadata", global.types.windows_metadata)
+        .value("FsMetadata", global.types.windows_fs_metadata)
+        .value("DirEntry", global.types.windows_dir_entry)
         .value("Path", global.types.windows_path)
         .value("StreamEntry", global.types.stream_entry)
         .function("sec_desc", async move |strand, args, out| {

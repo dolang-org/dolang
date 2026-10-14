@@ -67,10 +67,7 @@ impl<'v> Object<'v> for Info {
         )
     }
 
-    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        let unix_id = builder.sym("unix_id");
-        let token_info = builder.sym("token_info");
-        let cmdline_win = builder.sym("cmdline_win");
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("pid", |this, strand, out| {
                 Output::set(strand, out, this.annex().info.pid());
@@ -124,10 +121,6 @@ impl<'v> Object<'v> for Info {
                 }
                 Ok(())
             })
-            // The record itself knows which platform it came from, so an
-            // inapplicable field reports `Unsupported` rather than an absence
-            // the caller would have to interpret. That becomes a `FieldError`,
-            // which is what a field the platform does not have means here.
             .get("unix_id", move |this, strand, mut out| {
                 let annex = this.annex();
                 match annex.info.identity() {
@@ -136,7 +129,7 @@ impl<'v> Object<'v> for Info {
                         create_identity(strand, security, identity, &mut out)
                     }
                     Ok(None) => Output::set(strand, out, Nil),
-                    Err(_) => return Err(Error::field(strand, unix_id)),
+                    Err(_) => Output::set(strand, out, Nil),
                 }
                 Ok(())
             })
@@ -148,7 +141,7 @@ impl<'v> Object<'v> for Info {
                         create_token_info(strand, security, token, &mut out)
                     }
                     Ok(None) => Output::set(strand, out, Nil),
-                    Err(_) => return Err(Error::field(strand, token_info)),
+                    Err(_) => Output::set(strand, out, Nil),
                 }
                 Ok(())
             })
@@ -168,7 +161,7 @@ impl<'v> Object<'v> for Info {
                 match this.annex().info.windows_command_line() {
                     Ok(Some(cmdline)) => Output::set(strand, out, cmdline),
                     Ok(None) => Output::set(strand, out, Nil),
-                    Err(_) => return Err(Error::field(strand, cmdline_win)),
+                    Err(_) => Output::set(strand, out, Nil),
                 }
                 Ok(())
             })

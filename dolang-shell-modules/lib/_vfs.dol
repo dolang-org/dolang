@@ -1,6 +1,6 @@
 # dolang: strict
 
-import base64 rand shell sys std xdg
+import base64 rand shell std xdg
 import
   regex:
     - Regex
@@ -60,8 +60,9 @@ pub def bin exe @ Path = nil -> Path
 
   if (bin_meta.type != :FILE:)
     throw "VFS helper is not a regular file: $bin"
-  if (sys.os_info().family != :WINDOWS:)
-    let exe_meta = exe.metadata resolve: :LINK:
+  if (type bin_meta unix_fs.Metadata)
+    let unix_fs.Metadata(exe_meta) = exe.metadata resolve: :LINK:
+    else throw "interpreter metadata does not match VFS helper platform: $bin"
     if (bin_meta.uid != exe_meta.uid)
       throw "VFS helper owner does not match interpreter: $bin"
     if (bin_meta.gid != exe_meta.gid)
