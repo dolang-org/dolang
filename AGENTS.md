@@ -630,6 +630,28 @@ bind args
   :verbose = false
 ```
 
+Standalone `let` and `bind` accept a diverging `else`. Matching follows
+`if let` / `if bind`; a single name tests truthiness. Bindings remain in scope
+afterward, but are not visible in `else`:
+
+```
+let k v = s.split "="
+else throw std.ValueError "expected KEY=VALUE: $s"
+echo "$k -> $v"
+
+bind response
+  :status
+  :body = ""
+else
+  return nil
+```
+
+`else` starts a new line at the statement's indentation and takes an inline
+statement or an indented block. Falling through raises `std.RuntimeError`;
+the checker warns when it finds a path to that end. `else if` is not allowed.
+For a `let` RHS beginning with `if` or `match`, `else` belongs to the RHS;
+a subsequent `else` cannot attach to the `let`.
+
 ### Type Annotations
 
 Annotations document types and have no runtime effect. `@` and a type follow a

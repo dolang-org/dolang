@@ -181,6 +181,7 @@ impl Term {
 
         match &self.0 {
             Ret => write!(w, "ret"),
+            ElseFallthrough(kind) => write!(w, "elsefall {kind}"),
             Branch(id) => write!(w, "br #{}", id.0),
             If(tid, fid) => write!(w, "if #{}, #{}", tid.0, fid.0),
             UnpackIf(id, tid, fid) => {
@@ -259,7 +260,7 @@ impl Block {
 
         use TermInfo::*;
         match &self.term.0 {
-            Ret | NlBranch(..) => {
+            Ret | NlBranch(..) | ElseFallthrough(_) => {
                 // No outgoing edges
             }
             Branch(target) => {

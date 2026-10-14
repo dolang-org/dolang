@@ -1,0 +1,17 @@
+let x y = []
+# warning: unused variable
+#   --> binding_else_pattern.dol:LL:LL
+#    |
+# LL | let x y = []
+#    |     ^
+# warning: unused variable
+#   --> binding_else_pattern.dol:LL:LL
+#    |
+# LL | let x y = []
+#    |       ^
+else throw std.ValueError $x
+# error: unbound identifier
+#   --> binding_else_pattern.dol:LL:LL
+#    |
+# LL | else throw std.ValueError $x
+#    |                            ^

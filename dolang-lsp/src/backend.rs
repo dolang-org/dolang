@@ -2648,6 +2648,53 @@ mod tests {
         assert_eq!(utf16_data[0].length, 4);
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn binding_else_definitions_and_tokens() {
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///binding-else-test.dol".parse().unwrap();
+        let source = concat!(
+            "let name = 1\n",
+            "let Int(name) = nil\n",
+            "else throw std.ValueError (str name)\n",
+            "echo $name\n",
+        );
+        harness.open(uri.clone(), source, 1).await;
+        for (line, col, expected) in [
+            (2, 31, Range::new(Position::new(0, 4), Position::new(0, 8))),
+            (3, 6, Range::new(Position::new(1, 8), Position::new(1, 12))),
+        ] {
+            let response = harness
+                .send_request::<request::GotoDefinition>(GotoDefinitionParams {
+                    text_document_position_params: TextDocumentPositionParams {
+                        text_document: TextDocumentIdentifier { uri: uri.clone() },
+                        position: Position::new(line, col),
+                    },
+                    work_done_progress_params: Default::default(),
+                    partial_result_params: Default::default(),
+                })
+                .await
+                .unwrap();
+            match response {
+                GotoDefinitionResponse::Scalar(location) => assert_eq!(location.range, expected),
+                other => panic!("unexpected definition response: {other:?}"),
+            }
+        }
+        let tokens = harness
+            .send_request::<request::SemanticTokensFullRequest>(SemanticTokensParams {
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                text_document: TextDocumentIdentifier { uri },
+            })
+            .await
+            .unwrap();
+        let SemanticTokensResult::Tokens(tokens) = tokens else {
+            panic!("partial tokens")
+        };
+        let absolute = absolute_tokens(&tokens.data);
+        assert_eq!(token_at(&absolute, 2, 0), (TT_KEYWORD, 0));
+    }
+
     /// Go-to-definition for the kinds of name a document node can describe.
     ///
     /// The old origin annotations distinguished these variants too, but only the

@@ -399,7 +399,8 @@ pub enum Opcode {
     NlBranch, // depth: uvar, indicator: uvar
     Shl,
     Shr,
-    UnpackBranch, // unpack: uvar, offset: ivar
+    UnpackBranch,    // unpack: uvar, offset: ivar
+    ElseFallthrough, // statement: uvar (0 = let, 1 = bind)
 }
 
 // Decoded instruction
@@ -454,6 +455,7 @@ pub enum Inst {
     Shl,
     Shr,
     UnpackBranch(usize, isize),
+    ElseFallthrough(usize),
 }
 
 #[cfg(feature = "debug")]
@@ -515,6 +517,7 @@ impl Display for Inst {
             NlGuard(id) => write!(f, "nlgd #{id}"),
             NlBranch(depth, indicator) => write!(f, "nlbr {depth},{indicator}"),
             UnpackBranch(id, ofs) => write!(f, "upbr #{id} {ofs}"),
+            ElseFallthrough(kind) => write!(f, "elft {kind}"),
         }
     }
 }
@@ -583,8 +586,8 @@ impl Decode for Opcode {
                 Some(Shl),
                 Some(Shr),
                 Some(UnpackBranch),
+                Some(ElseFallthrough),
                 // This is worse than anything
-                None,
                 None,
                 None,
                 None,
@@ -925,6 +928,10 @@ impl Inst {
                 w.usize(*depth)?;
                 w.usize(*indicator)
             }
+            ElseFallthrough(kind) => {
+                w.opcode(Opcode::ElseFallthrough)?;
+                w.usize(*kind)
+            }
             Shl => w.opcode(Opcode::Shl),
             Shr => w.opcode(Opcode::Shr),
             UnpackBranch(id, target) => {
@@ -1105,6 +1112,7 @@ impl<R: io::Read + io::Seek> Iterator for InstDecoder<R> {
                 Shl => Inst::Shl,
                 Shr => Inst::Shr,
                 UnpackBranch => Inst::UnpackBranch(self.usize()?, self.isize()?),
+                ElseFallthrough => Inst::ElseFallthrough(self.usize()?),
             })
         })())
     }

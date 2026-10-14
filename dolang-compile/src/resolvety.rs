@@ -736,10 +736,16 @@ impl Check<'_> {
             Stmt::Prim(prim) => self.prim(frame, prim),
             Stmt::Let(node) => {
                 self.prim(frame, &mut node.rhs);
+                if let Some((body, _)) = &mut node.else_branch {
+                    self.branch(frame, &mut **body, None);
+                }
                 self.pattern(frame, &mut node.bind);
             }
             Stmt::Bind(node) => {
                 self.expr(frame, &mut node.expr);
+                if let Some((body, _)) = &mut node.else_branch {
+                    self.branch(frame, &mut **body, None);
+                }
                 self.pattern(frame, &mut node.bind);
             }
             Stmt::Assign(node) => {

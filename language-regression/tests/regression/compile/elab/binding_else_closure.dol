@@ -1,0 +1,14 @@
+let x = nil
+# warning: unused variable
+#   --> binding_else_closure.dol:LL:LL
+#    |
+# LL | let x = nil
+#    |     ^
+else
+  let f = do x
+  # error: unbound identifier
+  #   --> binding_else_closure.dol:LL:LL
+  #    |
+  # LL |   let f = do x
+  #    |              ^
+  return f()

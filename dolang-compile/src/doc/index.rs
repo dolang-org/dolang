@@ -1104,11 +1104,19 @@ impl Index<'_> {
             Stmt::Let(node) => {
                 let span = node.span();
                 self.prim(scope, &mut node.rhs);
+                if let Some((body, else_span)) = &mut node.else_branch {
+                    let else_span = *else_span | body.span();
+                    self.branch(scope, &mut **body, None, Kind::Else, else_span, Self::block);
+                }
                 self.pattern(scope, &mut node.bind, node.pub_span.is_some(), Some(span));
             }
             Stmt::Bind(node) => {
                 let span = node.span();
                 self.expr(scope, &mut node.expr);
+                if let Some((body, else_span)) = &mut node.else_branch {
+                    let else_span = *else_span | body.span();
+                    self.branch(scope, &mut **body, None, Kind::Else, else_span, Self::block);
+                }
                 self.pattern(scope, &mut node.bind, false, Some(span));
             }
             Stmt::Assign(node) => {

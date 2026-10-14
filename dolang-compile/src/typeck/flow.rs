@@ -1609,6 +1609,12 @@ impl<'a, 'u> Flow<'a, 'u> {
                 }
                 self.flow(at.ctx, *exit, state);
             }
+            &Terminal::ElseFallthrough { span, kind } => {
+                self.raise(at.ctx, data.handler, &state);
+                if self.observing() {
+                    self.problem(Problem::ElseFallthrough { span, kind });
+                }
+            }
             Terminal::Throw(value) => {
                 if has_rule(value) {
                     self.raise(at.ctx, data.handler, &state);

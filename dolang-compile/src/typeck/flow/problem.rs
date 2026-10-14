@@ -35,7 +35,10 @@ pub(crate) enum Problem {
     /// An argument the callee has no parameter for
     ExtraArgument(Span),
     /// A call that doesn't fit its callee in some other way
-    Call { span: Span, callee: String },
+    Call {
+        span: Span,
+        callee: String,
+    },
     /// A call none of its callee's overloads accepts, with a note for each
     /// overload saying why
     NoOverload {
@@ -54,7 +57,10 @@ pub(crate) enum Problem {
     /// positions' indexes
     Conflict(Span),
     /// A call whose types select by a key its schema doesn't admit
-    Unadmitted { span: Span, key: Shown },
+    Unadmitted {
+        span: Span,
+        key: Shown,
+    },
     /// A value that doesn't fit what its use requires of it
     Misfit {
         span: Span,
@@ -62,7 +68,10 @@ pub(crate) enum Problem {
         misfit: Misfit,
     },
     /// A pattern that can't unpack a value of the type found
-    Impossible { span: Span, found: Shown },
+    Impossible {
+        span: Span,
+        found: Shown,
+    },
     /// A value that doesn't fit a variable's annotation, or a function's declared
     /// result
     Annotation {
@@ -72,9 +81,16 @@ pub(crate) enum Problem {
         result: bool,
     },
     /// A value that doesn't fit the type it's cast to
-    Cast { span: Span, found: Shown, ty: Shown },
+    Cast {
+        span: Span,
+        found: Shown,
+        ty: Shown,
+    },
     /// An unchecked cast whose value can be shown to fit its type
-    Assertion { span: Span, ty: Shown },
+    Assertion {
+        span: Span,
+        ty: Shown,
+    },
     /// A default that neither fits its variable's annotation nor is a sentinel
     Default {
         span: Span,
@@ -98,9 +114,15 @@ pub(crate) enum Problem {
         misuse: MemberUse,
     },
     /// `Type.(call)` passed a class with its own `(call)`, outside the class
-    BypassedFactory { span: Span, class: String },
+    BypassedFactory {
+        span: Span,
+        class: String,
+    },
     /// `Type.(call)` passed a `Type[C]`, which may hold a subclass's object
-    InexactConstruction { span: Span, found: Shown },
+    InexactConstruction {
+        span: Span,
+        found: Shown,
+    },
     /// An item a checked module doesn't export
     MissingExport {
         span: Span,
@@ -131,7 +153,14 @@ pub(crate) enum Problem {
     },
     /// Code that can't run because the call at `call` never returns. Where the
     /// two are the same, what can't run is what uses the call's result.
-    Unreachable { span: Span, call: Span },
+    Unreachable {
+        span: Span,
+        call: Span,
+    },
+    ElseFallthrough {
+        span: Span,
+        kind: usize,
+    },
 }
 
 /// How a member is misused
@@ -186,15 +215,17 @@ impl Report for Problem {
             | Problem::Unassigned { span, .. }
             | Problem::Uninitialized { span, .. }
             | Problem::SuperUninitialized { span, .. }
-            | Problem::Unreachable { span, .. } => span,
+            | Problem::Unreachable { span, .. }
+            | Problem::ElseFallthrough { span, .. } => span,
         }
     }
 
     fn severity(&self) -> Severity {
         match self {
-            Self::FmtGap { .. } | Self::Assertion { .. } | Self::Unreachable { .. } => {
-                Severity::Warning
-            }
+            Self::FmtGap { .. }
+            | Self::Assertion { .. }
+            | Self::Unreachable { .. }
+            | Self::ElseFallthrough { .. } => Severity::Warning,
             _ => Severity::Error,
         }
     }
@@ -373,6 +404,10 @@ impl Report for Problem {
                 write!(w, "this call never returns, so its result is never used")
             }
             Problem::Unreachable { .. } => write!(w, "unreachable code"),
+            Problem::ElseFallthrough { kind, .. } => {
+                let statement = if *kind == 0 { "let" } else { "bind" };
+                write!(w, "`{statement}` else block may not diverge")
+            }
         }
     }
 }

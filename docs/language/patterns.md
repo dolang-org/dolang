@@ -471,6 +471,38 @@ let parts = $
     - "no pair"
 ```
 
+### `let` / `bind` with `else`
+
+A standalone `let` or `bind` can run an `else` block when its pattern does not
+match. The bindings remain in scope after the statement:
+
+```
+let k v = s.split "="
+else throw std.ValueError "expected KEY=VALUE: $s"
+echo "$k -> $v"
+
+bind response
+  :status
+  :body = ""
+else
+  return nil
+```
+
+Matching follows the same rules as `if let` and `if bind`, including the
+truthiness test for a single name. The new bindings are not in scope inside
+`else`; an existing outer name is still visible there.
+
+The `else` body must diverge: return, throw, break, continue, or call something
+that does not return. Reaching its end raises `std.RuntimeError`, naming the
+`let` or `bind` statement. The type checker warns when it finds a path to that
+end.
+
+Write `else` on its own line at the statement's indentation, followed by an
+indented block or a single inline statement. `else if` is not accepted here;
+put an `if` inside an indented body instead. When the RHS of `let` is an `if`
+or `match`, its `else` belongs to that construct, and an additional `else`
+cannot be attached to the `let`.
+
 ### What Counts as a Match
 
 A pattern takes the failure branch when an unpack has too few or too many

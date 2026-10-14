@@ -1,0 +1,13 @@
+let x = nil
+# warning: unused variable
+#   --> binding_else_duplicate.dol:LL:LL
+#    |
+# LL | let x = nil
+#    |     ^
+else return nil
+else return nil
+# error: unbound identifier
+#   --> binding_else_duplicate.dol:LL:LL
+#    |
+# LL | else return nil
+#    | ^^^^

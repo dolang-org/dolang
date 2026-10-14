@@ -153,7 +153,7 @@ impl<'a, A: Analysis + 'a> Flow<'a, A> {
                         queue.push(fid);
                     }
                 }
-                Term(TermInfo::Ret | TermInfo::NlBranch(..), _) => (),
+                Term(TermInfo::Ret | TermInfo::NlBranch(..) | TermInfo::ElseFallthrough(_), _) => {}
             }
         }
         Ok(())

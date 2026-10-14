@@ -64,7 +64,7 @@ impl<'a, 'b> FuncEmitter<'a, 'b> {
         let block = emitter.graph.block(id);
         match block.term.0 {
             // No successors
-            TermInfo::Ret | TermInfo::NlBranch(..) => (),
+            TermInfo::Ret | TermInfo::NlBranch(..) | TermInfo::ElseFallthrough(_) => (),
             TermInfo::Branch(bid) => {
                 if seen.insert(bid) {
                     out.push(bid);
@@ -224,6 +224,7 @@ impl<'a, 'b> FuncEmitter<'a, 'b> {
 
         let inst = match &input.term.0 {
             Ret => return BcInst::Ret.write(&mut write).unwrap(),
+            ElseFallthrough(kind) => BcInst::ElseFallthrough(*kind),
             Branch(id) if Some(*id) != next => {
                 let i = self.map[id];
                 let dest = self.blocks[i].offset.get();
