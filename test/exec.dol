@@ -1,10 +1,13 @@
-import exec fs shell
+import exec fs shell strand
   std:
     - TypeError
   test:
     - assert
     - assert_eq
+    - assert_throws
     - test
+  time:
+    - DateTime
 
 #[test]
 def module_defaults_app_from_program_module_name()
@@ -133,3 +136,83 @@ def run_keeps_caller_cache_scope()
     let probe = "exec-program-override-probe"
     exec.run $script program: $probe
     assert (!(fs.cache_dir() / probe).exists())
+
+# A private cache scope, removed along with the temporary source files.
+def with_channel_source block
+  fs.with_temp_dir do |dir|
+    let app = "exec-channels-$(dir.name)"
+    let cache = (fs.cache_dir() / app)
+    try
+      block $dir $app (cache / "bytecode")
+    finally
+      if cache.exists()
+        cache.remove all: true
+
+# Invalid source with an old timestamp proves that the second run uses bytecode.
+# Restoring the source and corrupting that bytecode exercises recompilation.
+def channel_cache_phases path cache source run
+  path.write $source
+  path.update_metadata modified: $DateTime.from_unix(1)
+  run()
+  let files = [...cache.glob("*.dolc")]
+  assert_eq $files.len 1
+  path.write "let =\n"
+  path.update_metadata modified: $DateTime.from_unix(1)
+  run()
+  path.write $source
+  path.update_metadata modified: $DateTime.from_unix(1)
+  files[0].write b"invalid bytecode"
+  run()
+
+def check_module_channels fail
+  with_channel_source do |dir app cache|
+    let path = (dir / "module.dol")
+    let source = r|
+      import strand std
+      pub let seen = [...strand.input()]
+      strand.put module_output
+      pub def forward()
+        strand.put $strand.input().next()
+    if fail
+      source = "$(source)throw std.TypeError(\"module failed\")\n"
+    channel_cache_phases $path $cache $source do
+      let output = []
+      strand.pipeline input: [11, 12] output: $output
+        do
+          let input = strand.input()
+          let sink = strand.output()
+          if fail
+            assert_throws $TypeError do exec.module $path :app
+          else
+            let module = exec.module $path :app
+            assert_eq $module.seen []
+            module.forward()
+          assert_eq (strand.input()) $input
+          assert_eq (strand.output()) $sink
+          if fail
+            strand.put $input.next()
+          strand.put $input.next()
+      assert_eq $output [11, 12]
+
+#[test]
+def module_isolates_channels()
+  check_module_channels false
+
+#[test]
+def module_error_restores_channels()
+  check_module_channels true
+
+#[test]
+def run_passes_channels_through()
+  with_channel_source do |dir app cache|
+    let path = (dir / "script.dol")
+    let source = r|
+      import strand
+      strand.put $strand.input().next()
+      import std
+      strand.put $strand.input().next()
+    channel_cache_phases $path $cache $source do
+      let output = []
+      strand.pipeline input: [1, 2] output: $output
+        do exec.run $path :app
+      assert_eq $output [1, 2]

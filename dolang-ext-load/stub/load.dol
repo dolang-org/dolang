@@ -88,6 +88,9 @@ do -> ImportHandler
 
 # Executes compiled Do bytecode.
 #
+# The loaded program uses the caller's input and output. Imports run with input
+# ended and output discarded, including code executed by their importers.
+#
 # The optional importer belongs to the loaded program and remains active for
 # retained functions and modules. Imports call it directly, bypassing native
 # modules, caching, and registered handlers. Results are not cached, and an

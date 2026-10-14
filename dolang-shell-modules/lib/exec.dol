@@ -5,7 +5,7 @@
 # Cached bytecode is stored under `fs.cache_dir()`, scoped by application name.
 # If `app:` is omitted, the scope is derived from `shell.program`.
 
-import compile digest fs load std shell
+import compile digest fs load std shell strand
 
 # Derive a default cache application name from `shell.program`.
 #
@@ -176,6 +176,9 @@ class Operation
 
 # Compiles a script if needed, caches the bytecode, and runs it.
 #
+# The script uses the caller's input and output. Its import handlers run with
+# input ended and output discarded.
+#
 # ## Returns
 #
 # The value of the script's final expression or early return.
@@ -218,6 +221,10 @@ do -> Value
 
 # Compiles a module if needed, caches the bytecode, and loads it.
 #
+# While the module initializes, input ends immediately and output is discarded.
+# The caller's input and output are restored when initialization returns or
+# raises. Exported functions use the channels of their caller when invoked.
+#
 # ## Example
 #
 # ```
@@ -250,11 +257,10 @@ pub def module
   # Identity the module sees as [`shell.program`](shell.program) while it
   # loads. Defaults to the caller's.
   :program @ (Str | fs.Path) = nil
-  <Iter[Value]
-  >Sink[Value]
 do -> std.Module
   let name = module_name (fs.Path path) $name
   let op = Operation $path :name :app :prelude :inject :import
   # Unsound while a module's top level can `return` something else (#1029)
-  let module = with_invocation $args $program do op.run()
+  let module = strand.redirect input: $std.null output: $std.null do
+    with_invocation $args $program do op.run()
   (module !@ std.Module)
