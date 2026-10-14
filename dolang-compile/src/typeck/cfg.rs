@@ -307,7 +307,12 @@ pub(crate) enum EscapeKind {
 }
 
 pub(crate) enum Terminal {
-    Branch(BlockId),
+    /// Continue at `target`. A `return`, `break` or `continue` has its
+    /// statement's span; a synthetic branch, `Span::INVALID`.
+    Branch {
+        target: BlockId,
+        span: Span,
+    },
     /// Test a condition, popping it if it's an [`ExprKind::Operand`]
     If {
         cond: Expr,
@@ -357,8 +362,9 @@ pub(crate) enum Terminal {
         next: BlockId,
         targets: alias::Box<[BlockId]>,
     },
-    /// A non-local `break` or `continue`, which continues at the guard point
-    Escape,
+    /// A non-local `break` or `continue`, which continues at the guard point,
+    /// with its statement's span
+    Escape(Span),
     /// A non-local `return` from an enclosing function, which continues at its exit
     /// block with the value as its result and nothing else known
     ReturnFrom {
@@ -564,7 +570,7 @@ impl Terminal {
     pub(crate) fn successors(&self) -> impl Iterator<Item = BlockId> {
         let mut blocks = Vec::new();
         match self {
-            Terminal::Branch(block) => blocks.push(*block),
+            Terminal::Branch { target, .. } => blocks.push(*target),
             Terminal::If { then, else_, .. } | Terminal::Unpack { then, else_, .. } => {
                 blocks.extend([*then, *else_]);
             }
@@ -581,10 +587,29 @@ impl Terminal {
             Terminal::Return
             | Terminal::Throw(_)
             | Terminal::EndFinally
-            | Terminal::Escape
+            | Terminal::Escape(_)
             | Terminal::ReturnFrom { .. }
             | Terminal::Unreachable => {}
         }
         blocks.into_iter()
+    }
+
+    /// The span of the source construct it lowers, or `Span::INVALID` for a
+    /// synthetic one
+    pub(crate) fn span(&self) -> Span {
+        match self {
+            &Terminal::Branch { span, .. } | &Terminal::Escape(span) => span,
+            Terminal::If { cond: value, .. }
+            | Terminal::Unpack { value, .. }
+            | Terminal::Throw(value)
+            | Terminal::ReturnFrom { value, .. } => value.span,
+            &Terminal::Next { span, .. } => span,
+            Terminal::Catch { .. }
+            | Terminal::Return
+            | Terminal::Leave { .. }
+            | Terminal::EndFinally
+            | Terminal::Guard { .. }
+            | Terminal::Unreachable => Span::INVALID,
+        }
     }
 }

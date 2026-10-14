@@ -595,6 +595,8 @@ impl Flow<'_, '_> {
             let receiver = (receiver, object.span);
             return self.got(at, state, operands, receiver, None, member, call);
         };
+        // An alternative that never returns ends the path only if they all do
+        let diverged = self.diverged;
         let mut result = self.db.bottom();
         for alternative in alternatives {
             let given = match alternative {
@@ -613,6 +615,9 @@ impl Flow<'_, '_> {
                 None => self.db.unknown(),
             };
             result = self.solver(&Gas::default()).lub(result, given);
+        }
+        if result != self.db.bottom() {
+            self.diverged = diverged;
         }
         result
     }

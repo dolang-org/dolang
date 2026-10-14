@@ -1,0 +1,210 @@
+# A call decided never to return ends its path, as `throw` does
+
+def fail msg @ Str -> std.Never
+  throw std.ValueError $msg
+
+def log _a _b
+  nil
+
+# The field is assigned on every path that returns
+pub class Init
+  pub field x @ Int
+
+  def (init) self c @ Bool
+    if c
+      self.x = 1
+    else
+      fail "no"
+
+pub def branched c @ Bool
+  let y = if c
+    1
+  else
+    fail "no"
+  y
+# ^: flow std.Int
+
+# A call whose argument never arrives isn't made
+pub def nested c @ Bool
+  let y = 1
+  if c
+    y = "s"
+    log (fail "no") 2
+  # warning: unreachable code
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |     log (fail "no") 2
+  #    |     ^^^^^---------^^^
+  #    |          |
+  #    |          any code after this call is unreachable
+  y
+# ^: flow std.Int
+
+pub def bound c @ Bool
+  let y = 1
+  if c
+    y = "s"
+    let _ = fail "no"
+  # warning: this call never returns, so its result is never used
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |     let _ = fail "no"
+  #    |             ^^^^^^^^^
+  y
+# ^: flow std.Int
+
+# Neither edge of a `match` or `for` is taken
+pub def matched c @ Bool
+  let y = 1
+  if c
+    match fail "no"
+      # warning: this call never returns, so its result is never used
+      #   --> m.dol:LL:LL
+      #    |
+      # LL |     match fail "no"
+      #    |           ^^^^^^^^^
+      _ do
+        y = "s"
+  y
+# ^: flow std.Int
+
+pub def looped c @ Bool
+  let y = 1
+  if c
+    for _ = fail "no"
+      # warning: this call never returns, so its result is never used
+      #   --> m.dol:LL:LL
+      #    |
+      # LL |     for _ = fail "no"
+      #    |             ^^^^^^^^^
+      y = "s"
+    y = :k:
+  y
+# ^: flow std.Int
+
+# The handler is still reached, from the state before the call
+pub def caught()
+  let y = 1
+  try
+    y = "s"
+    fail "no"
+    y = :k:
+    # warning: unreachable code
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     fail "no"
+    #    |     --------- any code after this call is unreachable
+    # LL |     y = :k:
+    #    |         ^^^
+  catch _
+    nil
+  y
+# ^: flow std.Str
+
+# One alternative that never returns doesn't end the path
+pub class Stops
+  pub def go _self -> std.Never
+    throw "no"
+
+pub class Goes
+  pub def go _self -> Int
+    1
+
+pub def alternatives r @ (Stops | Goes)
+  let y = r.go()
+  y
+# ^: flow std.Int
+
+# What a call that never returns makes unreachable is warned about at the first
+# thing after it
+pub def after()
+  fail "no"
+  log 1 2
+  # warning: unreachable code
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   fail "no"
+  #    |   --------- any code after this call is unreachable
+  # LL |   log 1 2
+  #    |   ^^^^^^^
+  log 3 4
+
+pub def then_if c @ Bool
+  fail "no"
+  if c
+    # warning: unreachable code
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   fail "no"
+    #    |   --------- any code after this call is unreachable
+    # LL |   if c
+    #    |      ^
+    log 1 2
+
+pub def then_broken()
+  for _ = [1]
+    fail "no"
+    break
+# warning: unreachable code
+#   --> m.dol:LL:LL
+#    |
+# LL |     fail "no"
+#    |     --------- any code after this call is unreachable
+# LL |     break
+#    |     ^^^^^
+
+# A call that ends a body or a branch makes nothing unreachable
+pub def trailing c @ Bool
+  let _y = if c
+    1
+  else
+    fail "no"
+  fail "end"
+
+# A call nested in a statement makes the rest of it unreachable
+pub def assigned()
+  let x = 1
+  x = fail "no"
+  # warning: this call never returns, so its result is never used
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   x = fail "no"
+  #    |       ^^^^^^^^^
+  x
+
+pub def returned()
+  return fail "no"
+# warning: unreachable code
+#   --> m.dol:LL:LL
+#    |
+# LL |   return fail "no"
+#    |   ^^^^^^^---------
+#    |          |
+#    |          any code after this call is unreachable
+
+pub def returned_from()
+  log 1 do
+    return fail "no"
+# warning: this call never returns, so its result is never used
+#   --> m.dol:LL:LL
+#    |
+# LL |     return fail "no"
+#    |            ^^^^^^^^^
+
+pub def thrown()
+  throw (fail "no")
+# warning: this call never returns, so its result is never used
+#   --> m.dol:LL:LL
+#    |
+# LL |   throw (fail "no")
+#    |          ^^^^^^^^^
+
+# Code after `return` is elaboration's to warn about
+pub def explicit()
+  return 1
+  log 1 2
+# warning: unreachable statement
+#   --> m.dol:LL:LL
+#    |
+# LL |   log 1 2
+#    |   ^^^^^^^

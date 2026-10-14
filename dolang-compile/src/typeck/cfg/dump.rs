@@ -278,7 +278,7 @@ impl Dump<'_, '_> {
 
     fn terminal(&self, out: &mut String, terminal: &Terminal) -> fmt::Result {
         match terminal {
-            Terminal::Branch(block) => write!(out, "goto b{}", block.index()),
+            Terminal::Branch { target, .. } => write!(out, "goto b{}", target.index()),
             Terminal::If { cond, then, else_ } => {
                 write!(out, "if ")?;
                 self.expr(out, cond)?;
@@ -341,7 +341,7 @@ impl Dump<'_, '_> {
                 }
                 Ok(())
             }
-            Terminal::Escape => write!(out, "escape"),
+            Terminal::Escape(_) => write!(out, "escape"),
             Terminal::ReturnFrom { func, value } => {
                 write!(out, "return from f{} ", func.index())?;
                 self.expr(out, value)

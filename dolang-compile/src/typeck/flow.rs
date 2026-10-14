@@ -41,7 +41,11 @@
 //! copies, and every read after goes to the accumulator.
 //!
 //! A step that can throw joins its state before it into its handler, with the
-//! exception alone on the stack.
+//! exception alone on the stack. A step or terminal with a call that gives bottom
+//! ends its path there, after reaching its handler. The call may never return,
+//! or what it gives may not be known yet: its callee, an argument, or its rule's
+//! decision. Either way nothing after it is known to run, and the block runs
+//! again when what it waits on grows.
 //!
 //! Calls, collection literals, binary strings, interpolations, `for` items and
 //! unpacking patterns are checking rules, each solved by a solver of its own (see
@@ -56,6 +60,12 @@
 //! and binding saw and to report: contradicted rules, values that don't fit an
 //! annotation or a declared result, and reads that may be unassigned. A block in a
 //! `finally` is judged once per context, and a problem at a span is reported once.
+//!
+//! The final pass also warns about the code a call decided never to return makes
+//! unreachable. A call that is all of a statement, as its root expression or a
+//! result's value, ends its path as `throw` would, so the warning goes to the next
+//! step or terminal of its block that has a span, if any. Otherwise what's
+//! unreachable is the rest of the step or terminal the call is in.
 
 /// Trace under `typeck.flow`
 macro_rules! trace {
@@ -156,6 +166,14 @@ struct Entry {
     widenings: Box<[Widening]>,
 }
 
+/// A call that gave bottom
+#[derive(Clone, Copy)]
+struct Divergence {
+    span: Span,
+    /// Whether it's decided never to return, rather than not known yet to
+    decided: bool,
+}
+
 /// Where a block is being analyzed
 #[derive(Clone, Copy)]
 struct At {
@@ -198,6 +216,9 @@ struct Flow<'a, 'u> {
     marked: FxHashSet<(BlockId, CtxId)>,
     /// Whether the running block defaults the rules it leaves undecided
     defaulting: bool,
+    /// The first call in the running step or terminal that gave bottom, which
+    /// ends its path
+    diverged: Option<Divergence>,
     /// Filled by the final pass, which leaves states alone
     results: Option<Results>,
 }
@@ -266,6 +287,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             unsettled: FxHashSet::default(),
             marked: FxHashSet::default(),
             defaulting: false,
+            diverged: None,
             results: None,
         }
     }
@@ -814,15 +836,53 @@ impl<'a, 'u> Flow<'a, 'u> {
             let fact = &mut state.vars[self.slot(func.result)];
             fact.ty = self.lub(fact.ty, returned);
         }
-        for step in &data.steps {
+        for (index, step) in data.steps.iter().enumerate() {
             if throws(step) {
                 self.raise(at.ctx, data.handler, &state);
             }
             if !self.step(at, &mut state, step) {
+                self.unreachable(at.block, index);
                 return;
             }
         }
         self.terminal(at, state);
+        self.unreachable(at.block, data.steps.len());
+    }
+
+    /// In the final pass, warn about the code a call decided never to return
+    /// makes unreachable, if one ended the path at the step `index` of `block`,
+    /// or past its last step, at its terminal
+    fn unreachable(&mut self, block: BlockId, index: usize) {
+        let Some(Divergence {
+            span: call,
+            decided: true,
+        }) = self.diverged
+        else {
+            return;
+        };
+        if !self.observing() {
+            return;
+        }
+        let data = self.ir.block(block);
+        let span = match data.steps.get(index) {
+            // The call is the whole statement: what's unreachable is what follows
+            Some(Step::Eval(value)) if value.span == call => None,
+            Some(Step::Assign(Target::Var { var, value }))
+                if value.span == call && !matches!(self.ir.var(*var).origin, Origin::Source(_)) =>
+            {
+                None
+            }
+            Some(step) => Some(step_span(step)),
+            None => Some(data.terminal.span()),
+        };
+        let span = span.or_else(|| {
+            (data.steps[index + 1..].iter().map(step_span))
+                .chain([data.terminal.span()])
+                .find(|&span| span != Span::INVALID)
+        });
+        if let Some(span) = span.filter(|&span| span != Span::INVALID) {
+            self.problem(Problem::Unreachable { span, call });
+        }
     }
 
     /// Join a state into a handler, with the exception alone on the stack. Which
@@ -850,9 +910,28 @@ impl<'a, 'u> Flow<'a, 'u> {
         state.stack.split_off(at).into()
     }
 
-    /// Apply a step. Returns whether its end is reachable.
+    /// A call at `span` gave bottom, so the running step or terminal ends its
+    /// path: for good if it's `decided` never to return, and otherwise until what
+    /// it waits on grows. The first such call is the one it stops at.
+    fn diverge(&mut self, span: Span, decided: bool) {
+        if self.diverged.is_none() {
+            trace!(
+                "{}: {}",
+                self.tables.locate(self.unit, span),
+                match decided {
+                    true => "never returns",
+                    false => "gives nothing yet",
+                }
+            );
+            self.diverged = Some(Divergence { span, decided });
+        }
+    }
+
+    /// Apply a step. Returns whether its end is reachable: not if its pattern
+    /// can't match, its narrowing leaves nothing, or a call in it gives bottom.
     fn step(&mut self, at: At, state: &mut State, step: &Step) -> bool {
         state.dup = false;
+        self.diverged = None;
         match step {
             Step::Let { pattern, value } => {
                 let mut operands = Self::operands(state, holes(value));
@@ -861,6 +940,9 @@ impl<'a, 'u> Flow<'a, 'u> {
                     Pattern::Unpack(_) => None,
                 };
                 let ty = self.expect(at, state, &mut operands, value, expected);
+                if self.diverged.is_some() {
+                    return false;
+                }
                 return self.bind(at, state, pattern, ty, value.span);
             }
             Step::Assign(target) => {
@@ -876,6 +958,9 @@ impl<'a, 'u> Flow<'a, 'u> {
                         let expected =
                             (self.ir.var(var).annotation).or_else(|| self.result_annotation(var));
                         let ty = self.expect(at, state, &mut operands, value, expected);
+                        if self.diverged.is_some() {
+                            return false;
+                        }
                         self.assign(at, state, var, ty, value.span);
                     }
                     Target::Field {
@@ -901,6 +986,9 @@ impl<'a, 'u> Flow<'a, 'u> {
                     } => {
                         let expected = self.written_import(module, item, span);
                         let ty = self.expect(at, state, &mut operands, value, expected);
+                        if self.diverged.is_some() {
+                            return false;
+                        }
                         match expected {
                             Some(expected) => self.store(at, ty, expected, value.span),
                             None if self.observing() && span != Span::INVALID => {
@@ -919,6 +1007,9 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let mut operands = Self::operands(state, holes(value));
                 let annotation = self.ir.var(*var).annotation;
                 let ty = self.expect(at, state, &mut operands, value, annotation);
+                if self.diverged.is_some() {
+                    return false;
+                }
                 let ty = self.default(*var, ty, value.span);
                 trace!("default {}: {}", self.var_name(*var), self.show(ty));
                 let data = self.ir.var(*var);
@@ -984,7 +1075,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 }
             }
         }
-        true
+        self.diverged.is_none()
     }
 
     /// A variable escapes through a function being created: what its owner holds
@@ -1404,10 +1495,14 @@ impl<'a, 'u> Flow<'a, 'u> {
             })
     }
 
+    /// Continue from a block's end along the edges its terminal takes. None is
+    /// taken if a call in it gives bottom, though the handler still is where it
+    /// can throw first.
     fn terminal(&mut self, at: At, mut state: State) {
         let data = self.ir.block(at.block);
+        self.diverged = None;
         match &data.terminal {
-            &Terminal::Branch(target) => self.flow(at.ctx, target, state),
+            &Terminal::Branch { target, .. } => self.flow(at.ctx, target, state),
             Terminal::If { cond, then, else_ } => {
                 if has_rule(cond) {
                     self.raise(at.ctx, data.handler, &state);
@@ -1416,6 +1511,9 @@ impl<'a, 'u> Flow<'a, 'u> {
                 state.dup = false;
                 let mut operands = Self::operands(&mut state, holes(cond));
                 self.eval(at, &mut state, &mut operands, cond);
+                if self.diverged.is_some() {
+                    return;
+                }
                 let mut truthy = state.clone();
                 if dup {
                     // The value copied for the test is the one left
@@ -1441,6 +1539,9 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let mut operands = Self::operands(&mut state, holes(value));
                 self.raise(at.ctx, data.handler, &state);
                 let ty = self.eval(at, &mut state, &mut operands, value);
+                if self.diverged.is_some() {
+                    return;
+                }
                 let mut bound = state.clone();
                 if self.bind(at, &mut bound, pattern, ty, value.span) {
                     self.flow(at.ctx, *then, bound);
@@ -1466,6 +1567,9 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let mut rest = *state.stack.last().expect("the exception");
                 for (class, clause) in clauses {
                     let ty = self.eval(at, &mut state, &mut operands, class);
+                    if self.diverged.is_some() {
+                        return;
+                    }
                     let caught = match self.class_of(ty).map(|(class, _)| class) {
                         Some(class) => {
                             let target = NarrowTarget::Class(class);
@@ -1496,6 +1600,9 @@ impl<'a, 'u> Flow<'a, 'u> {
                 self.raise(at.ctx, data.handler, &state);
                 let iteratee = iter.map(|iter| self.read(at, &state, iter).ty);
                 let item = self.next(at, &mut state, iteratee, *span);
+                if self.diverged.is_some() {
+                    return;
+                }
                 let mut bound = state.clone();
                 if self.bind(at, &mut bound, pattern, item, *span) {
                     self.flow(at.ctx, *body, bound);
@@ -1508,6 +1615,9 @@ impl<'a, 'u> Flow<'a, 'u> {
                 }
                 let mut operands = Self::operands(&mut state, holes(value));
                 self.eval(at, &mut state, &mut operands, value);
+                if self.diverged.is_some() {
+                    return;
+                }
                 self.raise(at.ctx, data.handler, &state);
             }
             &Terminal::Leave { entry, tag } => {
@@ -1541,10 +1651,13 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let expected = self.result_annotation(result);
                 let mut operands = Self::operands(&mut state, holes(value));
                 let ty = self.expect(at, &mut state, &mut operands, value, expected);
+                if self.diverged.is_some() {
+                    return;
+                }
                 self.check(result, ty, value.span);
                 self.join(result, ty);
             }
-            Terminal::Return | Terminal::Escape | Terminal::Unreachable => {}
+            Terminal::Return | Terminal::Escape(_) | Terminal::Unreachable => {}
         }
     }
 
@@ -1607,6 +1720,27 @@ fn has_rule(expr: &Expr) -> bool {
     let mut found = false;
     expr.walk(&mut |expr| found |= expr.is_rule());
     found
+}
+
+/// The span of the source a step evaluates, or `Span::INVALID` if it evaluates
+/// none
+fn step_span(step: &Step) -> Span {
+    match step {
+        Step::Let { value, .. }
+        | Step::Default { value, .. }
+        | Step::Eval(value)
+        | Step::Push(value)
+        | Step::Assign(Target::Var { value, .. } | Target::Import { value, .. }) => value.span,
+        Step::Assign(target @ (Target::Field { object, .. } | Target::Index { object, .. })) => {
+            object.span | target.value().span
+        }
+        Step::Dup
+        | Step::Pop
+        | Step::Assume(_)
+        | Step::Capture(_)
+        | Step::Cache(_)
+        | Step::Escape { .. } => Span::INVALID,
+    }
 }
 
 /// Whether a step can throw: it has a rule, which may call or fail, or it unpacks

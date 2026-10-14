@@ -70,13 +70,13 @@ impl Scope<'_, '_, '_> {
         route(self, self.ctx.finally.as_ref(), target, to)
     }
 
-    /// `break` or `continue`, to the innermost loop
-    pub(super) fn loop_jump(&mut self, next: bool) {
+    /// `break` or `continue` at `span`, to the innermost loop
+    pub(super) fn loop_jump(&mut self, next: bool, span: Span) {
         if let Some(target) = &self.ctx.loop_ {
             let block = if next { target.next } else { target.exit };
             let finally = target.finally.clone();
             let target = self.route(block, finally.as_ref());
-            self.end(Terminal::Branch(target));
+            self.end(Terminal::Branch { target, span });
             return;
         }
         // Out of a `do` block: to the loop in scope where it was created
@@ -90,13 +90,13 @@ impl Scope<'_, '_, '_> {
             }
             outer = origin(&ctx).cloned();
         }
-        self.escape();
+        self.escape(span);
     }
 
-    /// `return`, with its value already lowered
-    pub(super) fn return_(&mut self, value: Expr) {
+    /// `return` at `span`, with its value already lowered
+    pub(super) fn return_(&mut self, value: Expr, span: Span) {
         if !self.ctx.lambda {
-            self.local_return(value);
+            self.local_return(value, span);
             return;
         }
         // Out of `do` blocks, to the def that encloses them
@@ -114,22 +114,22 @@ impl Scope<'_, '_, '_> {
             outer = origin(&ctx).cloned();
         }
         // A `do` block outside any def returns from itself
-        self.local_return(value);
+        self.local_return(value, span);
     }
 
-    fn local_return(&mut self, value: Expr) {
+    fn local_return(&mut self, value: Expr, span: Span) {
         let (result, exit) = {
             let func = self.graph().func(self.ctx.func);
             (func.result, func.exit)
         };
         self.assign(result, value);
         let target = self.route(exit, None);
-        self.end(Terminal::Branch(target));
+        self.end(Terminal::Branch { target, span });
     }
 
-    fn escape(&mut self) {
+    fn escape(&mut self, span: Span) {
         if self.graph().func(self.ctx.func).parent.is_some() {
-            self.end(Terminal::Escape);
+            self.end(Terminal::Escape(span));
         } else {
             self.end(Terminal::Unreachable);
         }
@@ -163,7 +163,10 @@ impl Scope<'_, '_, '_> {
                 var: result,
                 value: expr(ExprKind::Never, Span::INVALID),
             }));
-            block_mut.terminal = Terminal::Branch(target);
+            block_mut.terminal = Terminal::Branch {
+                target,
+                span: Span::INVALID,
+            };
             block
         };
         match ctx.guard {

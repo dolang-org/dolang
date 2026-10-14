@@ -67,7 +67,10 @@ impl<'u> Scope<'_, '_, 'u> {
         }
         if let Some(span) = func.stub_span {
             self.assign(result, expr(ExprKind::Never, span));
-            self.end(Terminal::Branch(exit));
+            self.end(Terminal::Branch {
+                target: exit,
+                span: Span::INVALID,
+            });
             return;
         }
         // Returning publishes the receiver
@@ -81,7 +84,10 @@ impl<'u> Scope<'_, '_, 'u> {
             self.graph().block_mut(exit).steps.insert(0, escape);
         }
         if !self.stmts(&func.body.stmts, Some(result)) {
-            self.end(Terminal::Branch(exit));
+            self.end(Terminal::Branch {
+                target: exit,
+                span: Span::INVALID,
+            });
         }
     }
 
@@ -111,7 +117,10 @@ impl<'u> Scope<'_, '_, 'u> {
             (func.result, func.exit)
         };
         self.value_nil(Some(result), span);
-        self.end(Terminal::Branch(exit));
+        self.end(Terminal::Branch {
+            target: exit,
+            span: Span::INVALID,
+        });
     }
 
     /// The defaults an `(init)`'s receiver's instance fields start with, each joined
@@ -335,11 +344,11 @@ impl<'u> Scope<'_, '_, 'u> {
             }
             Stmt::Assign(node) => self.assignment(node, dest),
             Stmt::Break(..) => {
-                self.loop_jump(false);
+                self.loop_jump(false, span);
                 return true;
             }
             Stmt::Continue(..) => {
-                self.loop_jump(true);
+                self.loop_jump(true, span);
                 return true;
             }
             Stmt::Return(Return { expr: value, .. }) => {
@@ -347,7 +356,7 @@ impl<'u> Scope<'_, '_, 'u> {
                     Some(value) => self.expr(value),
                     None => nil(span),
                 };
-                self.return_(value);
+                self.return_(value, span);
                 return true;
             }
             Stmt::Throw(node) => {
@@ -583,7 +592,10 @@ impl<'u> Scope<'_, '_, 'u> {
             if let ast::Pattern::Alt(alt) = pattern {
                 let join = self.block();
                 let entry = self.alternatives(var, alt, span, frame, None, join);
-                self.end(Terminal::Branch(entry));
+                self.end(Terminal::Branch {
+                    target: entry,
+                    span: Span::INVALID,
+                });
                 self.switch(join);
                 continue;
             }
@@ -685,7 +697,10 @@ impl<'u> Scope<'_, '_, 'u> {
                     self.block()
                 };
                 let entry = self.alternatives(var, alt, span, frame, Some(else_), join);
-                self.end(Terminal::Branch(entry));
+                self.end(Terminal::Branch {
+                    target: entry,
+                    span: Span::INVALID,
+                });
                 if !pending.is_empty() {
                     self.switch(join);
                 }
@@ -721,7 +736,10 @@ impl<'u> Scope<'_, '_, 'u> {
                     negated: true,
                     against: Against::Value(rejected),
                 }));
-                self.end(Terminal::Branch(else_));
+                self.end(Terminal::Branch {
+                    target: else_,
+                    span: Span::INVALID,
+                });
                 self.switch(success);
                 self.emit(Step::Assume(Assume {
                     var,
@@ -730,7 +748,10 @@ impl<'u> Scope<'_, '_, 'u> {
                     against: Against::Value(value),
                 }));
                 if pending.is_empty() {
-                    self.end(Terminal::Branch(then));
+                    self.end(Terminal::Branch {
+                        target: then,
+                        span: Span::INVALID,
+                    });
                 }
                 continue;
             }
@@ -758,7 +779,10 @@ impl<'u> Scope<'_, '_, 'u> {
                         against: Against::Decl(class),
                     }));
                 }
-                self.end(Terminal::Branch(else_));
+                self.end(Terminal::Branch {
+                    target: else_,
+                    span: Span::INVALID,
+                });
                 self.switch(success);
                 if let Some(class) = class {
                     self.emit(Step::Assume(Assume {
@@ -784,7 +808,10 @@ impl<'u> Scope<'_, '_, 'u> {
                     pattern,
                     value: expr(ExprKind::Copy(var), span),
                 });
-                self.end(Terminal::Branch(next));
+                self.end(Terminal::Branch {
+                    target: next,
+                    span: Span::INVALID,
+                });
             } else {
                 self.end(Terminal::Unpack {
                     pattern,
@@ -824,7 +851,10 @@ impl<'u> Scope<'_, '_, 'u> {
                     let entry = self.block();
                     self.switch(entry);
                     self.nested_lets(vec![(var, pattern, span)], frame);
-                    self.end(Terminal::Branch(join));
+                    self.end(Terminal::Branch {
+                        target: join,
+                        span: Span::INVALID,
+                    });
                     entry
                 }
             };
@@ -934,7 +964,10 @@ impl<'u> Scope<'_, '_, 'u> {
         self.switch(block);
         self.nested_lets(nested, frame);
         self.pattern_defaults(pattern, frame, false);
-        self.end(Terminal::Branch(target));
+        self.end(Terminal::Branch {
+            target,
+            span: Span::INVALID,
+        });
         self.switch(from);
         block
     }
@@ -1080,7 +1113,10 @@ impl<'u> Scope<'_, '_, 'u> {
                     pattern: Pattern::Bind(var),
                     value,
                 });
-                self.end(Terminal::Branch(then));
+                self.end(Terminal::Branch {
+                    target: then,
+                    span: Span::INVALID,
+                });
             }
             // A name binds the value itself, on its truthiness
             ast::Pattern::Ident(PatIdent { ident, ty, .. }) => {
@@ -1099,10 +1135,16 @@ impl<'u> Scope<'_, '_, 'u> {
                     pattern: Pattern::Bind(var),
                     value: expr(ExprKind::Operand, span),
                 });
-                self.end(Terminal::Branch(then));
+                self.end(Terminal::Branch {
+                    target: then,
+                    span: Span::INVALID,
+                });
                 self.switch(failed);
                 self.emit(Step::Pop);
-                self.end(Terminal::Branch(else_));
+                self.end(Terminal::Branch {
+                    target: else_,
+                    span: Span::INVALID,
+                });
             }
             ast::Pattern::TypeTest(_) | ast::Pattern::Constant { .. } | ast::Pattern::Alt(_) => {
                 let var = match value.kind {
@@ -1114,7 +1156,10 @@ impl<'u> Scope<'_, '_, 'u> {
                 };
                 let then = self.defaulted(pattern, Vec::new(), frame, then);
                 let entry = self.nested_tests(vec![(var, pattern, span)], frame, then, else_);
-                self.end(Terminal::Branch(entry));
+                self.end(Terminal::Branch {
+                    target: entry,
+                    span: Span::INVALID,
+                });
             }
             pattern @ ast::Pattern::Unpack(_) => {
                 let (bound, nested) = self.pattern(pattern, frame);
@@ -1161,7 +1206,10 @@ impl<'u> Scope<'_, '_, 'u> {
         }
         if !complete && dest.is_some() {
             self.value_nil(dest, node.tbranch.span);
-            self.end(Terminal::Branch(join));
+            self.end(Terminal::Branch {
+                target: join,
+                span: Span::INVALID,
+            });
         }
         self.switch(join);
     }
@@ -1216,7 +1264,10 @@ impl<'u> Scope<'_, '_, 'u> {
         }
         if !complete && dest.is_some() {
             self.value_nil(dest, node.match_span);
-            self.end(Terminal::Branch(join));
+            self.end(Terminal::Branch {
+                target: join,
+                span: Span::INVALID,
+            });
         }
         self.switch(join);
     }
@@ -1237,7 +1288,10 @@ impl<'u> Scope<'_, '_, 'u> {
         let header = self.block();
         let exit = self.block();
         let body = self.block();
-        self.end(Terminal::Branch(header));
+        self.end(Terminal::Branch {
+            target: header,
+            span: Span::INVALID,
+        });
         self.switch(header);
         let frame = self.block_frame(&node.body);
         self.test(&node.expr, node.bind.as_ref(), &frame, body, exit);
@@ -1282,7 +1336,10 @@ impl<'u> Scope<'_, '_, 'u> {
         let header = self.block();
         let exit = self.block();
         let body = self.block();
-        self.end(Terminal::Branch(header));
+        self.end(Terminal::Branch {
+            target: header,
+            span: Span::INVALID,
+        });
         self.switch(header);
         let (pattern, nested) = self.pattern(&node.bind, frame);
         let entry = self.defaulted(&node.bind, nested, frame, body);
@@ -1358,7 +1415,10 @@ impl<'u> Scope<'_, '_, 'u> {
         let body = graph.alloc_block(func, dispatch.or(part_handler), depth);
         let ctx = part_ctx(self.block_frame(&node.body.body), dispatch.or(part_handler));
         self.queue_block(body, ctx, &node.body.body, dest, join);
-        self.end(Terminal::Branch(body));
+        self.end(Terminal::Branch {
+            target: body,
+            span: Span::INVALID,
+        });
 
         let Some(mut dispatch) = dispatch else {
             self.switch(join);

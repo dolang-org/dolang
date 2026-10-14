@@ -103,11 +103,11 @@ fn edges(ir: &Ir, digraph: &mut Scope, block: BlockId, terminal: &Terminal) {
         Terminal::ReturnFrom { func, .. } => {
             edge(ir.func(*func).exit, "return", Some(Style::Dashed));
         }
-        Terminal::Branch(_)
+        Terminal::Branch { .. }
         | Terminal::Return
         | Terminal::Throw(_)
         | Terminal::EndFinally
-        | Terminal::Escape
+        | Terminal::Escape(_)
         | Terminal::Unreachable => {
             for to in terminal.successors() {
                 edge(to, "", None);

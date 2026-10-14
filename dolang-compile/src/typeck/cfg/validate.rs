@@ -191,7 +191,7 @@ impl Ir {
                         return Err(Invalid::EndOutside(id));
                     }
                 }
-                Terminal::Escape => {
+                Terminal::Escape(_) => {
                     if self.func(block.func).parent.is_none() {
                         return Err(Invalid::NonLocal(id));
                     }
@@ -202,7 +202,7 @@ impl Ir {
                     }
                     exprs.push(value);
                 }
-                Terminal::Branch(_)
+                Terminal::Branch { .. }
                 | Terminal::Leave { .. }
                 | Terminal::Guard { .. }
                 | Terminal::Unreachable => {}
@@ -400,7 +400,7 @@ impl Ir {
             }
             let empty = |depth: usize| assert_eq!(depth, 0, "b{} leaves with a stack", id.index());
             match &block.terminal {
-                Terminal::Branch(next) => enter(*next, depth),
+                Terminal::Branch { target, .. } => enter(*target, depth),
                 Terminal::If { cond, then, else_ } => {
                     pop(&mut depth, operands(cond));
                     enter(*then, depth);
@@ -455,7 +455,7 @@ impl Ir {
                     }
                 }
                 Terminal::Return | Terminal::EndFinally => empty(depth),
-                Terminal::Escape | Terminal::Unreachable => {}
+                Terminal::Escape(_) | Terminal::Unreachable => {}
             }
         }
     }
