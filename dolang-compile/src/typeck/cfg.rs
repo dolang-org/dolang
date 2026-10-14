@@ -404,6 +404,9 @@ pub(crate) enum Against {
     Value(Expr),
     #[expect(dead_code, reason = "lowering doesn't narrow to a written type yet")]
     Type(TypeId),
+    /// A pattern's items, with no variables or constant keys, on its mismatch
+    /// edge: a member the pattern always matches is dropped
+    Shape(alias::Box<[PatternItem]>),
 }
 
 pub(crate) enum Pattern {

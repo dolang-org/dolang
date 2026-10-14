@@ -32,6 +32,7 @@ use super::{
 use crate::{RestKind, typeck::r#type::BinderOrigin};
 
 /// A destructuring pattern, as the walk sees it
+#[derive(Debug)]
 pub(crate) struct PatternShape {
     /// Each positional slot, by whether it has a default. Defaulted slots follow
     /// the others.
@@ -250,6 +251,27 @@ impl Solver<'_> {
             possible,
             rejection,
         })
+    }
+
+    /// Whether `pattern` always matches a member: its schema is known and
+    /// static, and the walk can't fail
+    pub(super) fn guaranteed(&self, member: TypeId, unpack: DeclId, pattern: &PatternShape) -> bool {
+        if member == self.db.unknown() {
+            return false;
+        }
+        let Ok(Some((schema, _))) = self.unpack_schema(member, unpack) else {
+            return false;
+        };
+        if self.head(schema).map_or(true, |head| self.is_unknown(&head)) {
+            return false;
+        }
+        let Ok(Some(atoms)) = self.schema_atoms(schema) else {
+            return false;
+        };
+        if atoms.dynamic_positional || atoms.dynamic_keyed {
+            return false;
+        }
+        matches!(self.walk(&atoms, pattern), Ok((Some(_), None)))
     }
 
     /// The schema a member unpacks as, with where its `Unpack` came

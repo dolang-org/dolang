@@ -2889,6 +2889,36 @@ impl<'a> Flow<'a, '_> {
         )
     }
 
+    /// A pattern's items as the walk sees them, with each constant key evaluated
+    pub(super) fn pattern_shape(
+        &mut self,
+        at: At,
+        state: &mut State,
+        items: &[PatternItem],
+    ) -> PatternShape {
+        let mut pattern = PatternShape {
+            positional: Vec::new(),
+            keyed: Vec::new(),
+            rests: Vec::new(),
+        };
+        for item in items {
+            match item.key {
+                PatternKey::Pos => pattern.positional.push(item.default),
+                PatternKey::Key(key) => {
+                    let key = self.db.intern(Type::Literal(Literal::Sym(key)));
+                    pattern.keyed.push((key, item.default));
+                }
+                PatternKey::ConstKey(ref key) => {
+                    // A constant, without operands
+                    let key = self.eval(at, state, &mut VecDeque::new(), key);
+                    pattern.keyed.push((self.db.regular(key), item.default));
+                }
+                PatternKey::Rest(kind) => pattern.rests.push(kind),
+            }
+        }
+        pattern
+    }
+
     /// The types a pattern's items unpack from a value, diagnosed at `span`;
     /// `None` if the pattern can't match it. What its `(unpack)` gives must be
     /// an `Unpack[S]`. In a strict unit, an `irrefutable` pattern must match
@@ -2919,26 +2949,7 @@ impl<'a> Flow<'a, '_> {
             return Some(vec![value; items.len()]);
         }
         let check = Check::Fits(span, Misfit::Unpackable);
-        let mut pattern = PatternShape {
-            positional: Vec::new(),
-            keyed: Vec::new(),
-            rests: Vec::new(),
-        };
-        for item in items {
-            match item.key {
-                PatternKey::Pos => pattern.positional.push(item.default),
-                PatternKey::Key(key) => {
-                    let key = self.db.intern(Type::Literal(Literal::Sym(key)));
-                    pattern.keyed.push((key, item.default));
-                }
-                PatternKey::ConstKey(ref key) => {
-                    // A constant, without operands
-                    let key = self.eval(at, state, &mut VecDeque::new(), key);
-                    pattern.keyed.push((self.db.regular(key), item.default));
-                }
-                PatternKey::Rest(kind) => pattern.rests.push(kind),
-            }
-        }
+        let pattern = self.pattern_shape(at, state, items);
         if let Some(unpacked) = self
             .solver(&Gas::default())
             .unpack_pattern(value, unpack, &pattern)

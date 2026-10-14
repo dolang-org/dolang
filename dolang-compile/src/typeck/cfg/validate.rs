@@ -160,7 +160,7 @@ impl Ir {
                         vars.push(assume.var);
                         match &assume.against {
                             Against::Class(expr) | Against::Value(expr) => exprs.push(expr),
-                            Against::Type(_) | Against::Decl(_) => {}
+                            Against::Type(_) | Against::Decl(_) | Against::Shape(_) => {}
                         }
                     }
                 }
@@ -395,7 +395,7 @@ impl Ir {
                         Against::Class(expr) | Against::Value(expr) => {
                             assert_eq!(operands(expr), 0)
                         }
-                        Against::Type(_) | Against::Decl(_) => {}
+                        Against::Type(_) | Against::Decl(_) | Against::Shape(_) => {}
                     },
                 }
             }

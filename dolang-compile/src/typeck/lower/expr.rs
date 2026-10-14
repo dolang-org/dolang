@@ -730,7 +730,7 @@ impl<'u> Scope<'_, '_, 'u> {
     }
 
     /// A block holding an edge's narrowing, on its way to `target`
-    fn landing(&self, target: BlockId, assumes: Vec<Assume>) -> BlockId {
+    pub(super) fn landing(&self, target: BlockId, assumes: Vec<Assume>) -> BlockId {
         if assumes.is_empty() {
             return target;
         }

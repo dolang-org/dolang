@@ -20,17 +20,27 @@
 //! other literals and never reduces a class to the literal. Only a `Nil` or a
 //! `Bool` member, whose values are all literals, loses the literal it's unequal
 //! to.
+//!
+//! A destructuring pattern's mismatch drops each member the pattern always
+//! matches, by the schema it unpacks as. Nothing is subtracted from a member's
+//! schema.
 
 use super::*;
 use crate::typeck::cfg::Relation as Narrowing;
 
 /// What a variable is narrowed against, as flow analysis evaluates an `Against`
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum Target {
+pub(crate) enum Target<'a> {
     /// The class `C` of `Type[C]`, possibly generic and unapplied
     Class(DeclId),
     /// A literal type
     Literal(TypeId),
+    /// A destructuring pattern, through `unpack`, the `Unpack` declaration. Only
+    /// its mismatch narrows, dropping each member the pattern always matches.
+    Shape {
+        unpack: DeclId,
+        pattern: &'a PatternShape,
+    },
 }
 
 /// A union member, as narrowing sees it
@@ -51,10 +61,16 @@ impl Solver<'_> {
         ty: TypeId,
         relation: Narrowing,
         negated: bool,
-        target: Target,
+        target: Target<'_>,
     ) -> TypeId {
         let literal = match target {
             Target::Class(_) => None,
+            Target::Shape { unpack, pattern } => {
+                return match negated {
+                    true => self.mismatched(ty, unpack, pattern),
+                    false => ty,
+                };
+            }
             Target::Literal(literal) => match self.db.literal(literal) {
                 Some(literal) => Some(literal),
                 None => return ty,
@@ -79,11 +95,28 @@ impl Solver<'_> {
                     assert_eq!(relation, Narrowing::Exact, "narrowing below a literal");
                     self.narrow_literal(member, negated, literal)
                 }
-                (Target::Literal(_), None) => unreachable!(),
+                (Target::Literal(_), None) | (Target::Shape { .. }, _) => unreachable!(),
             };
             if let Some(narrowed) = narrowed {
                 result = self.lub(result, narrowed);
             }
+        }
+        result
+    }
+
+    /// A type without the members a pattern always matches, as its mismatch
+    /// leaves it. Only whole members are dropped.
+    fn mismatched(&self, ty: TypeId, unpack: DeclId, pattern: &PatternShape) -> TypeId {
+        let mut members = Vec::new();
+        self.exposed_members(ty, &mut FxHashSet::default(), &mut members);
+        let mut result = self.db.bottom();
+        for member in members {
+            let kept = match member {
+                UnionMember::Type(member) if self.guaranteed(member, unpack, pattern) => continue,
+                UnionMember::Type(member) => member,
+                _ => self.db.intern(Type::Union(vec![member].into())),
+            };
+            result = self.lub(result, kept);
         }
         result
     }

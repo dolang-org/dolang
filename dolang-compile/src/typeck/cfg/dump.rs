@@ -5,7 +5,7 @@ use std::fmt::{self, Write};
 
 use super::{
     Against, BlockId, Collection, Expr, ExprKind, FmtSpec, FuncId, FuncKind, Ir, Item, Member,
-    Origin, Pattern, PatternKey, Relation, Step, Tag, Target, Terminal, VarFlags, VarId,
+    Origin, Pattern, PatternItem, PatternKey, Relation, Step, Tag, Target, Terminal, VarFlags, VarId,
 };
 use crate::{
     source::Span,
@@ -271,6 +271,10 @@ impl Dump<'_, '_> {
                     Against::Value(value) => self.expr(out, value),
                     Against::Decl(decl) => write!(out, "class{}", decl.index()),
                     Against::Type(ty) => write!(out, "type{}", ty.index()),
+                    Against::Shape(items) => {
+                        write!(out, "shape ")?;
+                        self.pattern_items(out, items)
+                    }
                 }
             }
         }
@@ -356,6 +360,10 @@ impl Dump<'_, '_> {
             Pattern::Bind(var) => return self.var(out, *var),
             Pattern::Unpack(items) => items,
         };
+        self.pattern_items(out, items)
+    }
+
+    fn pattern_items(&self, out: &mut String, items: &[PatternItem]) -> fmt::Result {
         write!(out, "(")?;
         for (index, item) in items.iter().enumerate() {
             if index != 0 {

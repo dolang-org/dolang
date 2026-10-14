@@ -1425,8 +1425,19 @@ impl<'a, 'u> Flow<'a, 'u> {
         // An operand with no value yet, such as a captured variable whose
         // accumulator hasn't grown, leaves nothing: narrowing nothing would let the
         // edge's state join a wider type than the operand later narrows to
+        let shape;
         let target = match &assume.against {
             &Against::Decl(decl) => Some(NarrowTarget::Class(decl)),
+            Against::Shape(items) => match self.designated(Designated::Unpack) {
+                Some(unpack) => {
+                    shape = self.pattern_shape(at, state, items);
+                    Some(NarrowTarget::Shape {
+                        unpack,
+                        pattern: &shape,
+                    })
+                }
+                None => None,
+            },
             Against::Class(class) => {
                 let ty = self.eval(at, state, &mut none, class);
                 if ty == bottom {
@@ -1472,6 +1483,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             match target {
                 NarrowTarget::Class(decl) => self.tables.qualified(decl),
                 NarrowTarget::Literal(ty) => self.show(ty),
+                NarrowTarget::Shape { .. } => "a pattern".into(),
             },
             self.show(fact.ty),
             self.show(narrowed),
