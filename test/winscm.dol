@@ -22,7 +22,10 @@ let scm_resource = strand.Resource 1
 # Wine's SCM cannot reliably handle concurrent test operations.
 #[fixture]
 def serialized_scm block ...rest
-  scm_resource.with do block(...rest)
+  if (sys.os_info().family == :WINDOWS: && sys.os_info().is_wine)
+    scm_resource.with do block(...rest)
+  else
+    block(...rest)
 
 #[test]
 def flags_raw_integer_round_trip()
@@ -185,4 +188,11 @@ def canceled_notification_leaves_service_usable :service
     time.timeout 0.2 do
       service.wait_for_status_change [:START_PENDING:, :RUNNING:]
   # Timeout cancels a genuinely pending wait. Reuse that same service handle.
-  observe_start $service
+  # Match its stable current state: cmd.exe is not a service, so starting it
+  # introduces a fleeting transition unrelated to cancellation cleanup. Each
+  # transport has its own scratch service and can run this check concurrently.
+  let status = time.timeout 10 do
+    service.wait_for_status_change [:STOPPED:]
+  assert_type $winscm.Status $status
+  assert_eq $status.current_state :STOPPED:
+  assert_eq $service.query_status().current_state :STOPPED:
