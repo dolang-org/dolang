@@ -1,0 +1,64 @@
+# In `(init)`, the receiver's private fields are variables: they start as their
+# defaults, as the runtime sets them before `(init)` runs, with a `nil` or symbol
+# sentinel joined in, and `(init)` narrows and assigns them as it would a local.
+# Each default is checked against its field's annotation there.
+
+pub class Counter
+  field count @ Int = 0
+  field limit @ Int = nil
+  field mode @ Str = :auto:
+  field label @ Str
+  field items @ Array[Int] = $
+    for x = [1, 2]
+      - (x * 2)
+
+  def (init) self limit @ Int
+    let _ = self.#count
+    #       ^~~~~~~~~~~: flow std.Int
+    let _ = self.#limit
+    #       ^~~~~~~~~~~: flow nil | std.Int
+    let _ = self.#mode
+    #       ^~~~~~~~~~: flow :auto: | std.Str
+    let _ = self.#label
+    #       ^~~~~~~~~~~: flow nil | std.Str
+    let _ = self.#items
+    #       ^~~~~~~~~~~: flow [std.Int]
+    if self.#limit
+      let _ = self.#limit
+      #       ^~~~~~~~~~~: flow std.Int
+    self.#limit = limit
+    let _ = self.#limit
+    #       ^~~~~~~~~~~: flow std.Int
+    self.#count = 5
+    let _ = self.#count
+    #       ^~~~~~~~~~~: flow std.Int
+    self.#label = "x"
+    self.#mode = "manual"
+
+pub class Misfit
+  field count @ Int = "zero"
+  # error: default `"zero"` does not fit the annotation `std.Int`, and isn't a `nil` or symbol sentinel
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   field count @ Int = "zero"
+  #    |                       ^^^^^^
+
+  def (init) self
+    self.#count = "one"
+    # error: `"one"` does not fit the annotation `std.Int`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     self.#count = "one"
+    #    |                   ^^^^^
+    let _ = self.#count
+    #       ^~~~~~~~~~~: flow std.Int
+
+pub class Holder[T]
+  field item @ T = nil
+
+  def (init) self item @ T
+    let _ = item
+    #       ^~~~: flow m.Holder.#0
+    self.#item = item
+    let _ = self.#item
+    #       ^~~~~~~~~~: flow m.Holder.#0

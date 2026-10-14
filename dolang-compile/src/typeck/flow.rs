@@ -90,8 +90,8 @@ use state::{Contexts, CtxId, May, State, VarState};
 
 use super::{
     cfg::{
-        Against, Assume, BlockId, Expr, ExprKind, FuncId, FuncKind, Ir, Origin, Pattern,
-        PatternItem, PatternKey, Step, Tag, Target, Terminal, VarFlags, VarId,
+        Against, Assume, BlockId, EscapeKind, Expr, ExprKind, FuncId, FuncKind, Ir, Origin,
+        Pattern, PatternItem, PatternKey, Step, Tag, Target, Terminal, VarFlags, VarId,
     },
     elab::{Designated, Tables},
     solver::{Gas, NarrowTarget, Outcome, Provenance, Residual, Solver, Status, Widening},
@@ -223,11 +223,11 @@ impl<'a, 'u> Flow<'a, 'u> {
             funcs.push(Frame {
                 declared: match func.kind {
                     FuncKind::Decl(decl) => declared_function(db, tables, decl),
-                    FuncKind::Module(_) => None,
+                    FuncKind::Module(_) | FuncKind::DefaultInit(_) => None,
                 },
                 vars,
             });
-            if let FuncKind::Decl(decl) = func.kind {
+            if let Some(decl) = func.kind.scope() {
                 let key = (decl, tables.primary_sig(decl));
                 for binder in tables.groups.get(&key).into_iter().flatten() {
                     let key = (binder.decl, binder.sig);
@@ -241,7 +241,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         let unit = (ir.funcs())
             .find_map(|(_, func)| match func.kind {
                 FuncKind::Module(unit) => Some(unit),
-                FuncKind::Decl(_) => None,
+                FuncKind::Decl(_) | FuncKind::DefaultInit(_) => None,
             })
             .expect("a unit's graph has its module function");
         let modules = (tables.units.iter().enumerate())
@@ -956,6 +956,13 @@ impl<'a, 'u> Flow<'a, 'u> {
                     }
                 }
             }
+            &Step::Escape { span, kind, except } => {
+                for &var in &self.ir.func(at.func).fields {
+                    if Some(var) != except {
+                        self.publish_field(state, var, span, kind);
+                    }
+                }
+            }
             Step::Cache(vars) => {
                 for &var in vars {
                     let ty = self.joined(var, at);
@@ -987,6 +994,39 @@ impl<'a, 'u> Flow<'a, 'u> {
         self.join(var, ty);
     }
 
+    /// An `(init)`'s receiver becomes observable at `span` while a field's variable
+    /// holds what it does: reported if that doesn't fit the field's annotation.
+    /// Anything may assign the field from here on, so the variable takes the
+    /// annotation.
+    fn publish_field(&mut self, state: &mut State, var: VarId, span: Span, kind: EscapeKind) {
+        let slot = self.slot(var);
+        let ty = state.vars[slot].ty;
+        let data = self.ir.var(var);
+        let Some(annotation) = data.annotation else {
+            state.vars[slot].ty = self.db.unknown();
+            return;
+        };
+        if self.observing()
+            && ty != self.db.bottom()
+            && self.conform(ty, annotation, span) == Status::Contradicted
+        {
+            let Origin::Field(key) = data.origin else {
+                unreachable!("an `(init)` tracks fields")
+            };
+            let hash = if key.private { "#" } else { "" };
+            let field = format!("{hash}{}", self.db.symbol(key.name));
+            let (found, annotation) = self.pair(ty, annotation);
+            self.problem(Problem::Uninitialized {
+                span,
+                field,
+                found,
+                annotation,
+                kind,
+            });
+        }
+        state.vars[slot].ty = annotation;
+    }
+
     /// Whether assigning a variable joins its accumulator: an ivar's assignment by
     /// another function, or by its owner once it may have escaped or if it's
     /// volatile
@@ -998,11 +1038,18 @@ impl<'a, 'u> Flow<'a, 'u> {
                 || state.vars[self.slot(var)].may.contains(May::ESCAPED))
     }
 
-    /// The type an assignment stores: a literal assigned to a declared local decays
-    /// to its class, when that fits the local's annotation
-    fn settle(&self, var: VarId, ty: TypeId) -> TypeId {
+    /// The type an assignment stores: a literal assigned to a declared local or a
+    /// field decays to its class, when that fits the annotation. A field keeps its
+    /// annotation instead of a value that doesn't fit, which is reported where it's
+    /// written.
+    fn settle(&mut self, var: VarId, ty: TypeId) -> TypeId {
         let var = self.ir.var(var);
-        if !matches!(var.origin, Origin::Source(_)) {
+        if let (Origin::Field(_), Some(annotation)) = (var.origin, var.annotation)
+            && self.relate(ty, annotation).status == Status::Contradicted
+        {
+            return annotation;
+        }
+        if !matches!(var.origin, Origin::Source(_) | Origin::Field(_)) {
             return ty;
         }
         let decayed = self.db.decay(ty);
@@ -1047,8 +1094,8 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// Assign a variable, strongly where its owner caches its type, checking the
     /// value at `span` against its annotation. Returns the type stored.
     fn assign(&mut self, at: At, state: &mut State, var: VarId, ty: TypeId, span: Span) -> TypeId {
-        let ty = self.settle(var, ty);
         self.check(var, ty, span);
+        let ty = self.settle(var, ty);
         let data = self.ir.var(var);
         self.thaw(at, state, var);
         if data.owner == at.func {
@@ -1538,7 +1585,12 @@ fn throws(step: &Step) -> bool {
         Step::Let { pattern, value } => matches!(pattern, Pattern::Unpack(_)) || has_rule(value),
         Step::Assign(target) => !matches!(target, Target::Var { .. }) || has_rule(target.value()),
         Step::Default { value, .. } | Step::Eval(value) | Step::Push(value) => has_rule(value),
-        Step::Dup | Step::Pop | Step::Assume(_) | Step::Capture(_) | Step::Cache(_) => false,
+        Step::Dup
+        | Step::Pop
+        | Step::Assume(_)
+        | Step::Capture(_)
+        | Step::Cache(_)
+        | Step::Escape { .. } => false,
     }
 }
 

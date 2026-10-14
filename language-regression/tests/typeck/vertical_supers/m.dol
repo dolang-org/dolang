@@ -1,7 +1,7 @@
 pub class Num
 pub class Other
 pub class Base[T]
-  pub field value @ T = nil
+  pub field value @ T = ...
 
 pub @class Read[T]
   pub def get self -> T

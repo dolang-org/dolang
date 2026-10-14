@@ -47,11 +47,11 @@ pub class Unasserted: @Picks
 # A specialized receiver is on an overload, so a subclass that inherits the
 # method conforms through the unspecialized implementation.
 pub class Pair[K, V]
-  pub field key @ K = nil
-  pub field value @ V = nil
+  pub field key @ K = ...
+  pub field value @ V = ...
 
 pub class Seq[T]
-  pub field item @ T = nil
+  pub field item @ T = ...
   @def key[K, V] _self @ Seq[Pair[K, V]] -> K
   pub def key _self
     ...

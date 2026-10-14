@@ -18,7 +18,7 @@ impl Flow<'_, '_> {
     pub(super) fn var_name(&self, var: VarId) -> String {
         let source = self.tables.units[self.unit.index()].source;
         let file = &source.expect("flow analyzes a unit from source").file;
-        self.ir.var_name(var, |span| file.str(span))
+        self.ir.var_name(var, self.db, |span| file.str(span))
     }
 
     /// A block in a context: the block, the `finally` tags it was entered with,
@@ -28,6 +28,9 @@ impl Flow<'_, '_> {
         let name = match self.ir.func(func).kind {
             FuncKind::Module(_) => "<module>".to_owned(),
             FuncKind::Decl(decl) => self.tables.qualified(decl),
+            FuncKind::DefaultInit(class) => {
+                format!("default (init) of {}", self.tables.qualified(class))
+            }
         };
         let mut out = format!("b{} of f{} {name}", block.index(), func.index());
         let tags = self.contexts.tags(ctx);

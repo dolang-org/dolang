@@ -15,8 +15,8 @@ use crate::{
     source::Span,
     typeck::{
         cfg::{
-            Against, Assume, BlockId, Collection, Expr, ExprKind, FmtSpec, Item, Member, Relation,
-            Step, Terminal, VarFlags, VarId,
+            Against, Assume, BlockId, Collection, EscapeKind, Expr, ExprKind, FmtSpec, Item,
+            Member, Relation, Step, Terminal, VarFlags, VarId,
         },
         r#type::{Literal, MemberKey},
     },
@@ -112,7 +112,11 @@ impl<'u> Scope<'_, '_, 'u> {
             ast::Expr::Call { arg0, args, .. } => self.call(arg0, args),
             ast::Expr::Lambda { func, .. } => {
                 let decl = self.lower.decl(super::DeclKey::closure(func));
-                ExprKind::Lambda(self.function_value(decl, func, true, self.ctx.class))
+                let class = self.ctx.class;
+                ExprKind::Lambda(self.function_value(decl, func, true, class, None, span))
+            }
+            ast::Expr::Get { object, field, .. } if let Some(var) = self.tracked(object, field) => {
+                return self.spill(expr(ExprKind::Var(var), span));
             }
             ast::Expr::Get { object, field, .. } => match self.import_path(node) {
                 Some(import) => import,
@@ -260,6 +264,15 @@ impl<'u> Scope<'_, '_, 'u> {
         match self.entry(ident.res) {
             Some(Entry::Var(var) | Entry::Item { var: Some(var), .. }) => {
                 self.capture(var);
+                // Any use of an `(init)`'s receiver but an access of a field that
+                // doesn't dispatch may observe its fields
+                if self.ctx.init.as_ref().and_then(|init| init.receiver) == Some(var) {
+                    self.emit(Step::Escape {
+                        span: ident.span,
+                        kind: EscapeKind::Use,
+                        except: None,
+                    });
+                }
                 ExprKind::Var(var)
             }
             Some(Entry::Item {
@@ -327,7 +340,9 @@ impl<'u> Scope<'_, '_, 'u> {
                 args: self.args(args).into(),
             };
         }
-        if let ast::Expr::Get { object, field, .. } = callee {
+        if let ast::Expr::Get { object, field, .. } = callee
+            && self.tracked(object, field).is_none()
+        {
             let receiver = self.expr(object);
             return ExprKind::Invoke {
                 receiver: Box::new(receiver),
@@ -339,6 +354,42 @@ impl<'u> Scope<'_, '_, 'u> {
         ExprKind::Call {
             callee: Box::new(callee),
             args: self.args(args).into(),
+        }
+    }
+
+    /// The variable standing for a field of the receiver, when `object` is an
+    /// `(init)`'s receiver and `field` an instance field its class declares, and
+    /// whether accessing the field may dispatch to a property overriding it
+    pub(super) fn own_field(
+        &self,
+        object: &ast::Expr,
+        field: Span,
+        private: bool,
+    ) -> Option<(VarId, bool)> {
+        let init = self.ctx.init.as_ref()?;
+        let ast::Expr::Ident(ident) = strip(object) else {
+            return None;
+        };
+        if self.var(ident)? != init.receiver? {
+            return None;
+        }
+        let var = *init
+            .fields
+            .get(&self.member_key(field, false, private).key)?;
+        Some((var, !private && !init.final_))
+    }
+
+    /// The variable standing for a field of the receiver whose accesses never
+    /// dispatch, so they read and write it directly
+    fn tracked(&self, object: &ast::Expr, field: &GetVariant) -> Option<VarId> {
+        let (span, private) = match field {
+            GetVariant::Normal(span) => (*span, false),
+            GetVariant::Private { span, .. } => (*span, true),
+            GetVariant::SpecialMethod { .. } => return None,
+        };
+        match self.own_field(object, span, private)? {
+            (var, false) => Some(var),
+            (_, true) => None,
         }
     }
 
@@ -613,7 +664,7 @@ impl<'u> Scope<'_, '_, 'u> {
         match node {
             ast::Expr::Group { expr, .. } => self.narrowing(expr),
             // Only `nil` and `false` are always falsy
-            ast::Expr::Ident(ident) => match self.narrowed(ident) {
+            ast::Expr::Ident(_) | ast::Expr::Get { .. } => match self.subject(node) {
                 Some(var) => Narrowing {
                     truthy: [Literal::Nil, Literal::Bool(false)]
                         .into_iter()
@@ -621,7 +672,7 @@ impl<'u> Scope<'_, '_, 'u> {
                             var,
                             relation: Relation::Exact,
                             negated: true,
-                            against: Against::Value(expr(ExprKind::Literal(literal), ident.span)),
+                            against: Against::Value(expr(ExprKind::Literal(literal), node.span())),
                         })
                         .collect(),
                     falsy: Vec::new(),
@@ -694,10 +745,11 @@ impl<'u> Scope<'_, '_, 'u> {
         }
     }
 
-    /// The variable a narrowing test is about
+    /// The variable a narrowing test is about: a name's, or a tracked field's
     fn subject(&self, node: &ast::Expr) -> Option<VarId> {
         match strip(node) {
             ast::Expr::Ident(ident) => self.narrowed(ident),
+            ast::Expr::Get { object, field, .. } => self.tracked(object, field),
             _ => None,
         }
     }

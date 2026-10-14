@@ -2,7 +2,6 @@
 
 use super::Flow;
 use crate::typeck::{
-    cfg::FuncKind,
     elab::Scoped,
     r#type::{Shown, Style, TypeId},
 };
@@ -15,7 +14,7 @@ impl<'u> Flow<'_, 'u> {
         let mut func = self.current;
         while let Some(id) = func {
             let data = self.ir.func(id);
-            if let FuncKind::Decl(decl) = data.kind {
+            if let Some(decl) = data.kind.scope() {
                 let key = (decl, tables.primary_sig(decl));
                 for binder in tables.groups.get(&key).into_iter().flatten() {
                     let owner = tables.sig_decls[&(binder.decl, binder.sig)];

@@ -21,7 +21,7 @@ use crate::{
     lex::Op,
     source::Span,
     typeck::{
-        cfg::{Expr, ExprKind, FuncKind, Item, Member},
+        cfg::{Expr, ExprKind, Item, Member},
         elab::Designated,
         report::Report,
         solver::{
@@ -251,7 +251,7 @@ impl Flow<'_, '_> {
         let mut func = self.current;
         while let Some(id) = func {
             let data = self.ir.func(id);
-            if let FuncKind::Decl(decl) = data.kind {
+            if let Some(decl) = data.kind.scope() {
                 let mut at = Some(decl);
                 while let Some(decl) = at {
                     if decl == class {

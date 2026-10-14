@@ -1,0 +1,54 @@
+# A class without an `(init)` of its own runs a default one: its instance fields
+# get their defaults, and it passes the instance on to the next `(init)`. Each of
+# the instance fields it declares must fit its annotation there.
+
+pub class Fits
+  field a @ Int = 0
+  field items @ Array[Int] = $
+    for x = [1, 2]
+      - (x * 2)
+  pub field name @ Str = "fits"
+
+# A sentinel default is left in place
+pub class Sentinel
+  # error: `self` escapes from the default `(init)` while field `b` is `nil | std.Int`, which doesn't fit `std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub class Sentinel
+  #    |           ^^^^^^^^
+  # error: `self` escapes from the default `(init)` while field `#a` is `nil | std.Int`, which doesn't fit `std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub class Sentinel
+  #    |           ^^^^^^^^
+  field a @ Int = nil
+  pub field b @ Int = nil
+
+# A misfit public default is reported where it's written
+pub class Misfit
+  pub field b @ Int = "b"
+# error: default `"b"` does not fit the annotation `std.Int`, and isn't a `nil` or symbol sentinel
+#   --> m.dol:LL:LL
+#    |
+# LL |   pub field b @ Int = "b"
+#    |                       ^^^
+
+pub class Base
+  field a @ Int = nil
+
+  def (init) self
+    self.#a = 1
+
+# An inherited `(init)` doesn't initialize the subclass's own fields
+pub class Child: Base
+  # error: `self` escapes from the default `(init)` while field `#d` is `nil | std.Int`, which doesn't fit `std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub class Child: Base
+  #    |           ^^^^^
+  field c @ Int = 0
+  field d @ Int = nil
+
+pub class Generic[T]
+  field value @ (T | nil) = nil
+  field items @ Array[T] = []

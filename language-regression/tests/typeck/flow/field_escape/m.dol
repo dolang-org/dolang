@@ -1,0 +1,162 @@
+# `(init)`'s receiver is observable once it escapes: when it's used other than to
+# access its private fields, when a function capturing it is created, and when
+# `(init)` returns. Each of its private fields must fit its annotation there, and
+# reads as its annotation after.
+
+def use _value
+  nil
+
+def each items @ Array[Int] f @ (Int -> nil)
+  for x = items
+    f $x
+
+pub class Base
+  def (init) _self
+    nil
+
+pub class Complete: Base
+  field a @ Int = nil
+  field b @ Str = nil
+
+  def (init) self flag @ Bool
+    if flag
+      self.#a = 1
+    else
+      self.#a = 2
+    # A private field access doesn't escape
+    let _ = self.#a
+    self.#b = "b"
+    use $self
+    let _ = self.#b
+    #       ^~~~~~~: flow std.Str
+    Base.(init) $self
+
+pub class Partial
+  field a @ Int = nil
+
+  def (init) self flag @ Bool
+    # error: `(init)` returns while field `#a` is `nil | std.Int`, which doesn't fit `std.Int`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   def (init) self flag @ Bool
+    #    |        ^^^^
+    if flag
+      self.#a = 1
+
+pub class Method
+  field a @ Int = nil
+
+  def (init) self
+    self.go()
+    # error: `self` escapes while field `#a` is `nil | std.Int`, which doesn't fit `std.Int`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     self.go()
+    #    |     ^^^^
+    self.#a = 1
+
+  pub def go _self
+    nil
+
+pub class Operator
+  field a @ Int = nil
+
+  def (init) self
+    let _ = (self == nil)
+    # error: `self` escapes while field `#a` is `nil | std.Int`, which doesn't fit `std.Int`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     let _ = (self == nil)
+    #    |              ^^^^
+    self.#a = 1
+
+pub class Passed
+  field a @ Int = nil
+
+  def (init) self
+    # Reported once: after an escape, the field has its annotation
+    use $self
+    # error: `self` escapes while field `#a` is `nil | std.Int`, which doesn't fit `std.Int`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     use $self
+    #    |          ^^^^
+    use $self
+    let _ = self.#a
+    #       ^~~~~~~: flow std.Int
+
+pub class Super: Base
+  field a @ Int = nil
+
+  def (init) self
+    Base.(init) $self
+    # error: `self` escapes while field `#a` is `nil | std.Int`, which doesn't fit `std.Int`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     Base.(init) $self
+    #    |                  ^^^^
+    self.#a = 1
+
+pub class Captured
+  field a @ Int = nil
+  field b @ Int = nil
+
+  def (init) self
+    # `f` doesn't capture `self`
+    let f = do 1
+    let g = do self.#a
+    # error: a function capturing `self` is created while field `#a` is `nil | std.Int`, which doesn't fit `std.Int`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     let g = do self.#a
+    #    |             ^^^^^^^^^^
+    # error: a function capturing `self` is created while field `#b` is `nil | std.Int`, which doesn't fit `std.Int`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     let g = do self.#a
+    #    |             ^^^^^^^^^^
+    self.#a = f()
+    self.#b = g()
+
+pub class Public
+  field a @ Int = nil
+  pub field b @ Int = 0
+
+  def (init) self
+    let _ = self.b
+    # error: `self` escapes while field `#a` is `nil | std.Int`, which doesn't fit `std.Int`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     let _ = self.b
+    #    |             ^^^^
+    self.#a = 1
+
+# A `return` from a `do` block returns from `(init)`
+pub class NonLocal
+  field a @ Int = nil
+
+  def (init) self items @ Array[Int]
+    # error: `(init)` returns while field `#a` is `nil | std.Int`, which doesn't fit `std.Int`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   def (init) self items @ Array[Int]
+    #    |        ^^^^
+    each $items do |x|
+      if (x > 0)
+        return nil
+    self.#a = 1
+
+pub class Caught
+  field a @ Int = nil
+
+  def (init) self
+    # error: `(init)` returns while field `#a` is `nil | std.Int`, which doesn't fit `std.Int`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   def (init) self
+    #    |        ^^^^
+    try
+      use 1
+      self.#a = 1
+    catch _
+      nil
