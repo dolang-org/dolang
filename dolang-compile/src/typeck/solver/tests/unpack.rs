@@ -449,7 +449,10 @@ fn a_guaranteed_pattern_takes_exactly_what_the_schema_admits() {
         None
     );
     // A default fills a slot the schema may leave empty
-    assert_eq!(w.reason(optional, &pattern(&[false, true], &[], false)), None);
+    assert_eq!(
+        w.reason(optional, &pattern(&[false, true], &[], false)),
+        None
+    );
 }
 
 #[test]
@@ -465,12 +468,12 @@ fn positional_items_may_be_too_few_or_too_many() {
         positional(Multiplicity::Required, int),
         positional(Multiplicity::Repeated, int),
     ]);
-    // The fewest items the schema admits, below what's required
+    // The most items the schema admits, below what's required
     let two = pattern(&[false, false], &[], false);
-    assert_eq!(w.reason(strs, &two), Some(Reason::Fewer(0)));
+    assert_eq!(w.reason(strs, &two), Some(Reason::Fewer(1)));
     assert_eq!(
         w.reason(strs, &pattern(&[false, false], &[], true)),
-        Some(Reason::Fewer(0))
+        Some(Reason::Fewer(1))
     );
     assert_eq!(w.reason(optional, &two), Some(Reason::Fewer(1)));
     // One more item than the slots, with no rest to take it
@@ -493,10 +496,7 @@ fn keys_may_be_absent_or_left_over() {
     let domain = w.class(vec![keyed(Multiplicity::Repeated, str, bool)]);
     let take_a = pattern(&[], &[(a, false)], false);
     assert_eq!(w.reason(optional, &take_a), Some(Reason::Lacks(a)));
-    assert_eq!(
-        w.reason(optional, &pattern(&[], &[(a, true)], false)),
-        None
-    );
+    assert_eq!(w.reason(optional, &pattern(&[], &[(a, true)], false)), None);
     assert_eq!(w.reason(extra, &take_a), Some(Reason::Extra(b)));
     assert_eq!(w.reason(extra, &pattern(&[], &[(a, false)], true)), None);
     // A domain may lack any key
@@ -521,7 +521,7 @@ fn every_member_must_be_guaranteed() {
     assert_eq!(
         walked.rejection,
         Some(Rejection {
-            member: single,
+            schema: items(&w.db, vec![positional(Multiplicity::Required, int)]),
             reason: Reason::Fewer(1),
         })
     );

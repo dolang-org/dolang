@@ -235,7 +235,8 @@ impl Report for Problem {
             Self::FmtGap { .. }
             | Self::Assertion { .. }
             | Self::Unreachable { .. }
-            | Self::ElseFallthrough { .. } => Severity::Warning,
+            | Self::ElseFallthrough { .. }
+            | Self::Unguaranteed { .. } => Severity::Warning,
             _ => Severity::Error,
         }
     }

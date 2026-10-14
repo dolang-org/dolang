@@ -96,9 +96,11 @@ pub def effect() -> nil
     proc.run cat
   nil
 
-# `run` destructures by name with a trailing rest, and spreads as no items
+# `run` destructures by name with a trailing rest, and spreads as no items. A
+# name may be missing, so destructuring is refutable.
 pub def names() -> nil
   let :git "clang++": clang ...rest = proc.run
+  else return nil
   let _ = git
   #       ^~~: flow proc.Program
   let _ = clang

@@ -78,6 +78,18 @@ types rather than unknown ones:
       put done
     ```
 
+A pattern that raises when it doesn't match, in `let`, `bind`, `for`, or a
+block's parameters, must match every value its scrutinee's type admits. A
+strict file gets a warning when the value may lack an item the pattern requires,
+or have one it doesn't take. Type tests and constants in the pattern are
+exempt. To handle a mismatch, give the `let` or `bind` an
+[`else`](patterns.md#let-bind-with-else):
+
+```
+let k v = s.split "="
+else throw std.ValueError "expected KEY=VALUE: $s"
+```
+
 To leave one declaration unchecked in a strict file, annotate it with
 [`std.Unknown`](std.Unknown), the unknown type, rather than omitting the
 annotation:

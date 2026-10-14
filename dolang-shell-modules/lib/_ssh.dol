@@ -113,7 +113,8 @@ pub def with_program[R]
   block @ (() -> R)
   ...options @ Options
 do -> R
-  let _ *args = build_command $host ...options
+  # `build_command` gives `ssh` first, which `executable` replaces
+  let args = build_command(host, ...options)[1..]
   let vfs = Vfs do run $executable ...args
   try
     vfs.with $block

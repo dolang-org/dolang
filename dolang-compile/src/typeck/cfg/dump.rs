@@ -5,7 +5,8 @@ use std::fmt::{self, Write};
 
 use super::{
     Against, BlockId, Collection, Expr, ExprKind, FmtSpec, FuncId, FuncKind, Ir, Item, Member,
-    Origin, Pattern, PatternItem, PatternKey, Relation, Step, Tag, Target, Terminal, VarFlags, VarId,
+    Origin, Pattern, PatternItem, PatternKey, Relation, Step, Tag, Target, Terminal, VarFlags,
+    VarId,
 };
 use crate::{
     source::Span,

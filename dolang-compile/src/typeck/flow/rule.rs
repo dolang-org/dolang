@@ -43,8 +43,7 @@ use crate::{
         solver::{
             Call as SolverCall, CallArgument, Contradiction, Gas, InferVarId, Issue, Node,
             ObligationId, Outcome, PatternShape, Provenance, Reason, Relation, Residual, Solver,
-            Status,
-            Step as Derivation, Term,
+            Status, Step as Derivation, Term,
         },
         r#type::{
             Argument, BoundRef, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
@@ -2980,19 +2979,29 @@ impl<'a> Flow<'a, '_> {
                 && self.observing()
                 && let Some(rejection) = unpacked.rejection
             {
-                let member = self.shown(rejection.member);
-                let (missing, note) = match rejection.reason {
-                    Reason::Fewer(count) => (true, format!("`{member}` admits {count} items")),
-                    Reason::More(count) => (false, format!("`{member}` admits {count} items")),
-                    Reason::Lacks(key) => {
-                        let key = self.shown(key);
-                        (true, format!("`{member}` may have no item keyed `{key}`"))
-                    }
-                    Reason::Extra(key) => {
-                        let key = self.shown(key);
-                        (false, format!("`{member}` may have an item keyed `{key}`"))
-                    }
+                let schema = self.shown(rejection.schema);
+                let items = |count| match count {
+                    0 => "no items".to_owned(),
+                    1 => "1 item".to_owned(),
+                    _ => format!("{count} items"),
                 };
+                let (missing, example) = match rejection.reason {
+                    Reason::Fewer(count) => (true, format!("may have {}", items(count))),
+                    Reason::More(count) => (false, format!("may have {}", items(count))),
+                    Reason::Lacks(key) => (
+                        true,
+                        format!("may have no item keyed `{}`", self.shown(key)),
+                    ),
+                    Reason::Extra(key) => (
+                        false,
+                        format!("may have an item keyed `{}`", self.shown(key)),
+                    ),
+                };
+                let whole = match self.db.ty(original) {
+                    Type::Union(_) => "a member",
+                    _ => "it",
+                };
+                let note = format!("{whole} unpacks as `{schema}`, which {example}");
                 let found = self.subject(original);
                 self.problem(Problem::Unguaranteed {
                     span,

@@ -9,8 +9,6 @@ import _vfs shell proc time
   strand:
     - pipeline
 
-let :sudo ... = proc.run
-
 # Runs a verbatim command through `sudo`.
 #
 # ## Example
@@ -33,7 +31,7 @@ pub def run
   <Iter[Value]
   >Sink[Str]
 do -> nil
-  shell.env $env do sudo
+  shell.env $env do proc.run sudo
     if (user != nil)
       -u $user
     if (cd != nil)
@@ -75,7 +73,7 @@ do -> R
     # unlinks the socket.
     let key = _vfs.key()
     pipeline
-      do sudo -E
+      do proc.run sudo -E
         if (user != nil)
           -u $user
         $agent ...(_vfs.vfs_args cd env) --key-stdin --accept $socket

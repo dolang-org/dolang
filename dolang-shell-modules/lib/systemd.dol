@@ -57,12 +57,14 @@ def read_keys path @ (Str | Path) -> Dict[Str, Str]
       # Ignore comments and empty lines
       if (line.starts_with "#" || !line.trim())
         continue
-      try
-        let k v = shlex.split(line).next().split "=" limit: 1
-        res[k] = v
+      # Ignore lines that are malformed
+      let parts = try
+        shlex.split(line).next().split "=" limit: 1
       catch std.RuntimeError: _
-        # Ignore lines that are malformed
         continue
+      let k v = parts
+      else continue
+      res[k] = v
     res
 
 def words value @ Str -> Iter[Str]

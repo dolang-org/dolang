@@ -34,6 +34,7 @@ do -> [Value]
 pub def with_command[R] argv @ [Value] block @ (() -> R) -> R
   # `command` items are passed verbatim, the program included
   let program *args = argv
+  else throw std.ValueError "command: expected a program"
   let vfs = Vfs do run (str program) ...args
   try
     vfs.with $block

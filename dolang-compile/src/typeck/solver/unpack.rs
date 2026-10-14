@@ -73,15 +73,16 @@ pub(crate) struct Unpacked {
 /// A member of a value that a pattern may fail to match
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Rejection {
-    /// The member, as it unpacks
-    pub(crate) member: TypeId,
+    /// The schema the member unpacks as, or the member if it can't be reified
+    pub(crate) schema: TypeId,
     pub(crate) reason: Reason,
 }
 
 /// Why a pattern may fail to match a schema, by an example the schema admits
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Reason {
-    /// This many positional items, fewer than the pattern requires
+    /// The most positional items the schema admits short of what the pattern
+    /// requires
     Fewer(usize),
     /// This many positional items, more than the pattern takes
     More(usize),
@@ -187,7 +188,8 @@ impl Solver<'_> {
             if rejection.is_none()
                 && let Some(reason) = reason
             {
-                rejection = Some(Rejection { member, reason });
+                let schema = self.reify(schema).unwrap_or(member);
+                rejection = Some(Rejection { schema, reason });
             }
             if let Some(mut walk) = walk {
                 walk.rests = (pattern.rests.iter())
@@ -255,14 +257,22 @@ impl Solver<'_> {
 
     /// Whether `pattern` always matches a member: its schema is known and
     /// static, and the walk can't fail
-    pub(super) fn guaranteed(&self, member: TypeId, unpack: DeclId, pattern: &PatternShape) -> bool {
+    pub(super) fn guaranteed(
+        &self,
+        member: TypeId,
+        unpack: DeclId,
+        pattern: &PatternShape,
+    ) -> bool {
         if member == self.db.unknown() {
             return false;
         }
         let Ok(Some((schema, _))) = self.unpack_schema(member, unpack) else {
             return false;
         };
-        if self.head(schema).map_or(true, |head| self.is_unknown(&head)) {
+        if self
+            .head(schema)
+            .map_or(true, |head| self.is_unknown(&head))
+        {
             return false;
         }
         let Ok(Some(atoms)) = self.schema_atoms(schema) else {
@@ -574,7 +584,11 @@ impl Solver<'_> {
     /// index of the next atom that can take an item. The pattern may fail to
     /// match if the schema can end before its required slots are filled, or, with
     /// no rest, take another item once they're all filled.
-    fn walk_positional(&self, atoms: &[(Multiplicity, TypeId)], pattern: &PatternShape) -> LaneWalk {
+    fn walk_positional(
+        &self,
+        atoms: &[(Multiplicity, TypeId)],
+        pattern: &PatternShape,
+    ) -> LaneWalk {
         let slots = pattern.positional.len();
         let required = pattern.positional.iter().filter(|&&d| !d).count();
         // Whether every atom from a state on may take no item
@@ -612,7 +626,7 @@ impl Solver<'_> {
             }
             forward.push(next);
         }
-        let fewer = (0..required).find(|&count| forward[count].iter_ones().any(ends));
+        let fewer = (0..required).rfind(|&count| forward[count].iter_ones().any(ends));
         let more = !pattern.positional_rest()
             && forward[slots]
                 .iter_ones()
