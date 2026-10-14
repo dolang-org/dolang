@@ -167,7 +167,11 @@ class Operation
     for diag = diagnostics
       echo $diag.render()
     if diagnostics.any do |diag| (diag.severity == :ERROR:)
-      throw std.CompileError "failed to compile $(self.#path.relative())"
+      let path = try
+        self.#path.relative()
+      catch std.ValueError: _
+        self.#path
+      throw std.CompileError "failed to compile $path"
     let bytecode = compiled.emit()
     self.#cache.write $bytecode
     self.#run_loaded $bytecode
@@ -231,6 +235,11 @@ do -> Value
 # The caller's input and output are restored when initialization returns or
 # raises. Exported functions use the channels of their caller when invoked.
 #
+# ## Errors
+#
+# Raises [`std.TypeError`](std.TypeError) if the loaded bytecode returns a value
+# other than a module.
+#
 # ## Example
 #
 # ```
@@ -266,7 +275,9 @@ pub def module
 do -> std.Module
   let name = module_name (fs.Path path) $name
   let op = Operation $path :name :app :prelude :inject :import
-  # Unsound while a module's top level can `return` something else (#1029)
   let module = strand.redirect input: $std.null output: $std.null do
     with_invocation $args $program do op.run()
-  (module !@ std.Module)
+  if type(module, std.Module)
+    module
+  else
+    throw std.TypeError "module result: expected `Module`"

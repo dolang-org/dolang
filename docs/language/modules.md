@@ -3,6 +3,10 @@
 Do modules are named namespaces of values. A module can export functions,
 classes, constants, and other public bindings.
 
+A module cannot use `return` to exit its top level or replace its namespace
+with another value. Functions and methods declared in a module may return
+normally.
+
 ## Importing Modules
 
 ### Whole-Module Imports
