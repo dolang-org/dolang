@@ -1,4 +1,4 @@
-import compile load
+import compile load strand
   test:
     - assert_eq
     - assert_type
@@ -138,3 +138,111 @@ def program_importer_explicit_fallback()
   let bytecode = (compile.compile "fallback.dol" source).emit()
 
   assert_eq true $ load.run $bytecode importer: $importer
+
+# Compile without type checking so the VM must enforce channel isolation.
+def channel_module name fail = false
+  let source = r|
+    import strand std
+    pub let seen = [...strand.input()]
+    strand.put module_output
+  if fail
+    source = "$(source)throw std.TypeError(\"module failed\")\n"
+  (compile.compile "channels.dol" source module: name).emit()
+
+def check_import_channels program_specific fail
+  let name = "isolated_$(program_specific)_$(fail)"
+  let module_code = channel_module $name $fail
+  let importer = do |requested|
+    if (requested == name)
+      load.run $module_code
+    else if program_specific
+      global_import $requested
+    else
+      throw ImportError(requested)
+  let handle = if !program_specific
+    load.import_handler $importer
+  let script = (compile.compile "caller.dol" "import $name: m\nm.seen\n").emit()
+  let output = []
+  try
+    strand.pipeline input: [11, 12] output: $output
+      do
+        let input = strand.input()
+        let sink = strand.output()
+        let run = do
+          if program_specific
+            load.run $script importer: $importer
+          else
+            load.run $script
+        if fail
+          assert_throws $TypeError $run
+        else
+          assert_eq $run() []
+          # Repeat to exercise the global cache or repeated program importer.
+          assert_eq $run() []
+        assert_eq (strand.input()) $input
+        assert_eq (strand.output()) $sink
+        strand.put $input.next()
+        strand.put $input.next()
+    assert_eq $output [11, 12]
+  finally
+    if !program_specific
+      handle.unregister()
+
+#[test]
+def global_import_channels()
+  check_import_channels false false
+
+#[test]
+def global_import_error_restores_channels()
+  check_import_channels false true
+
+#[test]
+def program_import_channels()
+  check_import_channels true false
+
+#[test]
+def program_import_error_restores_channels()
+  check_import_channels true true
+
+#[test]
+def fallback_and_nested_import_channels()
+  let seen = []
+  let first = load.import_handler do |name|
+    if (name == "isolated_outer" || name == "isolated_inner")
+      seen.push [...strand.input()]
+      strand.put declined_output
+    throw ImportError(name)
+  let second = load.import_handler do |name|
+    if (name == "isolated_outer")
+      let code = (compile.compile "outer.dol" "import isolated_inner: inner\ninner\n").emit()
+      load.run $code
+    else if (name == "isolated_inner")
+      load.run $ channel_module $name
+    else
+      throw ImportError(name)
+  let output = []
+  try
+    strand.redirect input: [42] output: $output do
+      let module = global_import isolated_outer
+      assert_eq $module.seen []
+      assert_eq $seen [[], []]
+      # Exhausted fallback also restores the caller's channels.
+      assert_throws $ImportError do global_import isolated_missing
+      strand.put $strand.input().next()
+    assert_eq $output [42]
+  finally
+    second.unregister()
+    first.unregister()
+
+#[test]
+def script_channels_survive_import()
+  let source = r|
+    import strand
+    strand.put $strand.input().next()
+    import std
+    strand.put $strand.input().next()
+  let code = (compile.compile "script.dol" source).emit()
+  let output = []
+  strand.redirect input: [1, 2] output: $output do
+    load.run $code
+  assert_eq $output [1, 2]

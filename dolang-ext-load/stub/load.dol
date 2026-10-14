@@ -80,7 +80,8 @@ do -> Value
 # handle.unregister()
 # ```
 pub def import_handler
-  # Called with the requested module name.
+  # Called with the requested module name. Input ends immediately and output
+  # is discarded while the handler runs.
   callback @ ((Str, <Value, >Value) -> Value)
 do -> ImportHandler
   ...
@@ -113,6 +114,7 @@ pub def run
   # Compiled Do bytecode.
   bytecode @ Bin
   # Program-specific module importer, called with the requested module name.
+  # Input ends immediately and output is discarded while the importer runs.
   :importer @ ((Str, <Value, >Value) -> Value) = nil
   <Iter[Value]
   >Sink[Value]
