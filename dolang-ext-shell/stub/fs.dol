@@ -14,14 +14,14 @@
 import
   fs.unix:
     - @Mode
-    - @Metadata: UnixMetadata
-    - @FsMetadata: UnixFsMetadata
-    - @DirEntry: UnixDirEntry
+    @Metadata: UnixMetadata
+    @FsMetadata: UnixFsMetadata
+    @DirEntry: UnixDirEntry
   fs.windows:
     - @StreamEntry
-    - @Metadata: WindowsMetadata
-    - @FsMetadata: WindowsFsMetadata
-    - @DirEntry: WindowsDirEntry
+    @Metadata: WindowsMetadata
+    @FsMetadata: WindowsFsMetadata
+    @DirEntry: WindowsDirEntry
   @security
   std:
     - @Seq

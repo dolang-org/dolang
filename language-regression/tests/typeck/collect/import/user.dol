@@ -5,13 +5,13 @@ import geo:
   - Point
   Shape: Form
   - @Pair
-  - @Point: Spot
+  @Point: Spot
 import geo: g
 @import geo: tg
 import @security.unix
 import @security.nfs4
 import hub:
-  - @g: hubgeo
+  @g: hubgeo
 import elsewhere:
   - @Thing
 @import geo:

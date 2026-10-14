@@ -468,7 +468,7 @@ types are imported from it.
 import geometry:
   - distance
   - @Point
-  - @Vector: Offset
+  @Vector: Offset
 
 def shift p@Point by@Offset -> Point
   (p + by)

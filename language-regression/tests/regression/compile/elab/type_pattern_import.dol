@@ -1,5 +1,5 @@
 import std:
-  - @Int: Number
+  @Int: Number
 let Number(n) = 1
 # error: unbound identifier
 #   --> type_pattern_import.dol:LL:LL

@@ -2,7 +2,7 @@
 import import_fixture:
   - @Adder
   - add
-  - @Summer: Total
+  @Summer: Total
   add: plus
   - @Last
 
@@ -22,7 +22,7 @@ assert_eq (plus 2 2) 4
   - First
   Second: Renamed
   - @Third
-  - @Fourth: LastType
+  @Fourth: LastType
 @import
   missing.dotted
   missing.renamed: renamed

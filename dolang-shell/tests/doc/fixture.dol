@@ -11,10 +11,10 @@ import std
 
 # Re-exported for types only.
 pub import std:
-  - @Iterable: Seq
+  @Iterable: Seq
 
 import std:
-  - @Iter: Cursor
+  @Iter: Cursor
 
 # A greeting.
 #

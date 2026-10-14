@@ -451,7 +451,7 @@
             }
         },
         "import_types": {
-            "match": "^([ \\t]*-[ \\t]+)(@)([A-Za-z_][A-Za-z0-9_]*)",
+            "match": "^[ \\t]*(?:(-)[ \\t]+)?(@)(?!(?:def|class|let|import)\\b)([A-Za-z_][A-Za-z0-9_]*)",
             "name": "meta.type.import.dol",
             "captures": {
                 "1": { "name": "punctuation.definition.list.dol" },

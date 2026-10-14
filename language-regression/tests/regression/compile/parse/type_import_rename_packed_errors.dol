@@ -1,0 +1,7 @@
+import b:
+  Foo @Bar: Baz
+# error: renamed import items must start a line
+#   --> type_import_rename_packed_errors.dol:LL:LL
+#    |
+# LL |   Foo @Bar: Baz
+#    |        ^^^

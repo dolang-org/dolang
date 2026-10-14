@@ -97,7 +97,7 @@ import math:
 
 Plain item names can share a continuation line. The `-` form keeps an item on
 its own line; renamed items use one line each. An item written `@Item`,
-`- @Item`, or `- @Item: name` is named only in
+`- @Item`, or `@Item: name` is named only in
 [types](./types.md#type-only-imports), and is not imported.
 
 The vertical form is useful when importing multiple modules at once:

@@ -1051,7 +1051,7 @@
       "import @geometry",
       "import geometry:",
       "  - @Point",
-      "  - @Vector: Offset",
+      "  @Vector: Offset",
       "def sink count @ Int <Iter[Int] >Sink[Str] -> nil",
       "  echo true"
     ],

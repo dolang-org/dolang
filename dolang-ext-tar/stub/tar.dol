@@ -5,7 +5,7 @@ import
   fs:
     - @Path
   fs.unix:
-    - @Path: UnixPath
+    @Path: UnixPath
   time:
     - @DateTime
 

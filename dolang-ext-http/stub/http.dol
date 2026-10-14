@@ -1,8 +1,8 @@
 # dolang: strict
 import
   json:
-    - @DecodeValue: JsonDecodeValue
-    - @EncodeValue: JsonEncodeValue
+    @DecodeValue: JsonDecodeValue
+    @EncodeValue: JsonEncodeValue
   std:
     - @BaseDict
     - RuntimeError

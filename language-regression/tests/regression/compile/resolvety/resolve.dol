@@ -65,7 +65,7 @@ let _before @Early = nil
 import import_fixture:
   - add
   - @Early
-  - @Summer: Total
+  @Summer: Total
 
 def adder x @Early -> Total.Part
   (add x 1)
