@@ -109,7 +109,7 @@ impl Parser<'_> {
                         type_only: None,
                     },
                     Some(token!(At, at_span)) => {
-                        self.parse_type_import_item(scope, minus_span, at_span)?
+                        self.parse_type_import_item(scope, Some(minus_span), at_span, false)?
                     }
                     Some(token @ token!(Key)) => {
                         return Err(self.syntax_error(
@@ -132,32 +132,17 @@ impl Parser<'_> {
                     "dash import items must be alone on their line",
                 );
             }
-            Some(token @ token!(At)) => {
+            Some(token!(At)) => {
                 let at_span = self.advance();
-                match decay_ident!(self.next()?) {
-                    Some(token!(Ident, span)) => ImportItem::AsIs {
-                        bind: Ident::new(span),
-                        delim_span: None,
-                        type_only: Some(TypeOnly {
-                            at_span: Some(at_span),
-                            node: None,
-                        }),
-                    },
-                    Some(token!(Key)) => {
-                        return Err(self.syntax_error(
-                            scope,
-                            Some(token),
-                            "type-only renamed items require `- @Item: name`",
-                        ));
-                    }
-                    other => {
-                        return Err(self.syntax_error(
-                            scope,
-                            other,
-                            "expected item name after `@`",
-                        ));
-                    }
+                let item = self.parse_type_import_item(scope, None, at_span, packed)?;
+                if let ImportItem::Renamed { .. } = item {
+                    items.push(item);
+                    return self.expect_import_line_end(
+                        scope,
+                        "renamed import items must be alone on their line",
+                    );
                 }
+                item
             }
             Some(token!(Ident, span)) => {
                 self.advance();
@@ -184,7 +169,6 @@ impl Parser<'_> {
                             item: token.span,
                             bind: Ident::new(span),
                             delim_span: token.span.after_right_char(),
-                            minus_span: None,
                             type_only: None,
                         });
                         return self.expect_import_line_end(
@@ -216,12 +200,13 @@ impl Parser<'_> {
         Ok(())
     }
 
-    /// Parse the rest of `- @Item` or `- @Item: name`, after the `@`.
+    /// Parse the rest of `@Item`, `- @Item`, or `@Item: name`, after the `@`.
     fn parse_type_import_item(
         &mut self,
         scope: &mut Scope,
-        minus_span: Span,
+        minus_span: Option<Span>,
         at_span: Span,
+        packed: bool,
     ) -> Result<ImportItem> {
         use self::Ident;
         use TokenInfo::*;
@@ -233,17 +218,30 @@ impl Parser<'_> {
         match decay_ident!(self.next()?) {
             Some(token!(Ident, span)) => Ok(ImportItem::AsIs {
                 bind: Ident::new(span),
-                delim_span: Some(minus_span),
+                delim_span: minus_span,
                 type_only,
             }),
-            Some(token!(Key, item)) => {
+            Some(token @ token!(Key, item)) => {
+                if minus_span.is_some() {
+                    return Err(self.syntax_error(
+                        scope,
+                        Some(token),
+                        "renamed import items omit `-`",
+                    ));
+                }
+                if packed {
+                    return Err(self.syntax_error(
+                        scope,
+                        Some(token),
+                        "renamed import items must start a line",
+                    ));
+                }
                 self.expect(scope, &[ExpectKind::ArgSep])?;
                 match decay_ident!(self.next()?) {
                     Some(token!(Ident, span)) => Ok(ImportItem::Renamed {
                         item,
                         bind: Ident::new(span),
                         delim_span: item.after_right_char(),
-                        minus_span: Some(minus_span),
                         type_only,
                     }),
                     other => Err(self.syntax_error(

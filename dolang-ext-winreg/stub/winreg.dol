@@ -9,7 +9,7 @@
 
 import
   security.windows:
-    - @AccessRight: WindowsAccessRight
+    @AccessRight: WindowsAccessRight
     - @SecDesc
     - @SecDescSpec
     AccessMask: WindowsAccessMask

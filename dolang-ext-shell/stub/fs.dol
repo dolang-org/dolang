@@ -14,14 +14,14 @@
 import
   fs.unix:
     - @Mode
-    - @Metadata: UnixMetadata
-    - @FsMetadata: UnixFsMetadata
-    - @DirEntry: UnixDirEntry
+    @Metadata: UnixMetadata
+    @FsMetadata: UnixFsMetadata
+    @DirEntry: UnixDirEntry
   fs.windows:
     - @StreamEntry
-    - @Metadata: WindowsMetadata
-    - @FsMetadata: WindowsFsMetadata
-    - @DirEntry: WindowsDirEntry
+    @Metadata: WindowsMetadata
+    @FsMetadata: WindowsFsMetadata
+    @DirEntry: WindowsDirEntry
   @security
   std:
     - @Seq
@@ -871,12 +871,12 @@ pub class Path
   do -> Path
     ...
 
-  # Joins a path, or derives the path of a directory entry or stream.
-  pub def (div) self other @ (Str | Path | DirEntry | StreamEntry) -> Path
+  # Joins a path, or derives the path of a directory entry.
+  pub def (div) self other @ (Str | Path | DirEntry) -> Path
     ...
 
-  # Joins this path onto a string or path.
-  pub def (rdiv) self other @ (Str | Path) -> Path
+  # Joins this path onto a string.
+  pub def (rdiv) self other @ Str -> Path
     ...
 
   # Orders paths lexically.

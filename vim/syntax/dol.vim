@@ -73,7 +73,7 @@ syn match dolRest "\.\.\.\|\*\*\|\*" contained
 syn region dolDeclaration keepend matchgroup=dolKeyword start="\%([A-Za-z0-9_.#]\)\@<!\<\%(def\|class\)\>\%(:\)\@!" end="$" contains=dolKeyword,dolDeclaredName,dolDeclaredType,dolBinders,dolSupertype,dolAnnotation,dolReturnType,dolImplicit,dolRest,@dolStrings,dolNumber,dolConstant,dolFullExpr,dolDittoKey,dolComment
 syn region dolTypeAlias keepend start="@let\s\+" end="$" contains=dolKeyword,dolTypeOnly,@dolTypes
 syn match dolAliasKeyword "\<let\>" contained containedin=dolTypeAlias
-syn match dolImportType "\%(\<import\s\+\|^\s*-\s\+\)\@<=@[A-Za-z_][A-Za-z0-9_]*\%([.][A-Za-z_][A-Za-z0-9_]*\)*" contains=dolTypeName,dolTypeMarker
+syn match dolImportType "\%(\<import\s\+\|^\s*\%(-\s\+\)\=\)\@<=@\%(\%(def\|class\|let\|import\)\>\)\@![A-Za-z_][A-Za-z0-9_]*\%([.][A-Za-z_][A-Za-z0-9_]*\)*" contains=dolTypeName,dolTypeMarker
 syn region dolImport matchgroup=dolInclude start="\%([A-Za-z0-9_.#]\)\@<!\<import\>\%(:\)\@!" end="$" contains=dolInclude,dolImportType,dolIdentifier,dolColon,dolComment
 
 syn cluster dolPatterns contains=dolPatternType,dolPatternGroup,dolIdentifier,dolRest,dolPatternBar,dolPatternDollar,dolAnnotation,@dolStrings,dolNumber,dolConstant,dolKey,dolDittoKey,dolSymbol,dolListItem,dolComment

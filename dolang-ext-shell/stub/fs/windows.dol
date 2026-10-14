@@ -2,6 +2,8 @@
 # Windows filesystem types and security descriptor access.
 
 import fs
+import std:
+  - @UnpackIter
 import security.windows:
   - @Sid
   - @SecDesc
@@ -58,6 +60,58 @@ pub class Path: fs.Path
     # Path value.
     path @ (Str | fs.Path)
   do
+    ...
+
+  pub def (div) self other @ (Str | fs.Path | fs.DirEntry | StreamEntry) -> Path
+    ...
+
+  pub def (rdiv) self other @ Str -> Path
+    ...
+
+  #[class]
+  pub def join self *components @ (Str | fs.Path) -> Path
+    ...
+
+  #[getter]
+  pub def parent self -> (Path | nil)
+    ...
+
+  pub def add_ext self ext @ Str -> Path
+    ...
+
+  pub def with_ext self ext @ Str -> Path
+    ...
+
+  pub def without_ext self -> Path
+    ...
+
+  pub def with_name self name @ Str -> Path
+    ...
+
+  pub def with_stem self stem @ Str -> Path
+    ...
+
+  pub def absolute self -> Path
+    ...
+
+  pub def canonical self -> Path
+    ...
+
+  pub def normalize self -> Path
+    ...
+
+  pub def relative self base @ (Str | fs.Path) = nil -> Path
+    ...
+
+  pub def read_link self -> Path
+    ...
+
+  pub def glob
+    self
+    pattern @ Str
+    :max_depth @ Int = nil
+    :resolve @ fs.Resolve = nil
+  do -> UnpackIter[Path]
     ...
 
   # Device namespace name for `\\.\name` paths, or

@@ -2057,8 +2057,6 @@ pub(crate) enum ImportItem {
         item: Span,
         bind: Ident,
         delim_span: Span,
-        /// The `-` before an item named only in types
-        minus_span: Option<Span>,
         type_only: Option<TypeOnly>,
     },
 }
@@ -2115,12 +2113,8 @@ impl Node for ImportItem {
                 item,
                 bind,
                 delim_span,
-                minus_span,
                 type_only,
             } => {
-                if let Some(minus_span) = minus_span {
-                    visit.token(Token::Delim, *minus_span, None)?;
-                }
                 if let Some(span) = type_only.as_ref().and_then(|ty| ty.at_span) {
                     visit.token(Token::Annotation, span, None)?;
                 }
@@ -2263,14 +2257,14 @@ pub(crate) enum TypeDecl<'a> {
         type_only: &'a TypeOnly,
         is_pub: bool,
     },
-    /// `- @X` under `import m:`
+    /// `@X` or `- @X` under `import m:`
     ItemAsIs {
         module: Span,
         bind: &'a Ident,
         type_only: &'a TypeOnly,
         is_pub: bool,
     },
-    /// `- @X: Y` under `import m:`
+    /// `@X: Y` under `import m:`
     ItemRenamed {
         module: Span,
         item: Span,

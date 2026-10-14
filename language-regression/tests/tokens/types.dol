@@ -104,11 +104,11 @@ import import_fixture:
   - @Adder
   # ^: annotation
   #  ^~~~~: type_token, node=import_item
-  - @Summer: Total
-  # ^: annotation
-  #  ^~~~~~: type_token
-  #        ^: delim
-  #          ^~~~~: type_token, node=import_item
+  #: annotation
+  @Summer: Total
+  #^~~~~~: type_token
+  #      ^: delim
+  #        ^~~~~: type_token, node=import_item
 
 let adder @Adder = nil
 #          ^~~~~: type_token, node=import_item

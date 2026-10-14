@@ -2,7 +2,7 @@
 # through nested applications.
 
 import b:
-  - @Wrap: W
+  @Wrap: W
 
 pub @let Pair[T] = W[W[T]]
 #             ^: variance covariant

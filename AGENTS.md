@@ -719,7 +719,7 @@ class Square: @Shape
 ```
 import geometry:
   - @Point
-  - @Vector: Offset
+  @Vector: Offset
 ```
 
 `@import` makes every module and item in the statement type-only, including
