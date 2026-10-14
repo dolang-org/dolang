@@ -1,10 +1,12 @@
-import exec fs shell strand
+import compile exec fs shell strand std
   std:
     - TypeError
+    - CompileError
   test:
     - assert
     - assert_eq
     - assert_throws
+    - assert_type
     - test
   time:
     - DateTime
@@ -13,9 +15,11 @@ import exec fs shell strand
 def module_defaults_app_from_program_module_name()
   fs.with_temp_dir do |dir|
     let mod_path = (dir / "demo_mod.dol")
-    mod_path.write "pub let answer = 42\n"
+    mod_path.write "pub let answer = 42\npub def get()\n  return answer\n"
     let m = exec.module $mod_path
+    assert_type $std.Module $m
     assert_eq $m.answer 42
+    assert_eq $m.get() 42
 
 #[test]
 def run_injects_globals()
@@ -216,3 +220,50 @@ def run_passes_channels_through()
       strand.pipeline input: [1, 2] output: $output
         do exec.run $path :app
       assert_eq $output [1, 2]
+
+#[test]
+def module_rejects_top_level_return()
+  with_channel_source do |dir app _cache|
+    let path = (dir / "module.dol")
+    path.write "return 42\n"
+    assert_throws $CompileError do exec.module $path :app
+    assert_eq (exec.run path :app) 42
+
+#[test]
+def module_checks_cached_result()
+  with_channel_source do |dir app cache|
+    let path = (dir / "module.dol")
+    path.write "pub let answer = 42\n"
+    path.update_metadata modified: $DateTime.from_unix(1)
+    assert_type $std.Module (exec.module path :app)
+    let files = [...cache.glob("*.dolc")]
+    assert_eq $files.len 1
+    let source = r|
+      import shell strand
+      if ([...shell.args] != ["guard"] || shell.program != "guard-program")
+        throw "invocation overrides missing"
+      if ([...strand.input()] != [])
+        throw "module input not isolated"
+      strand.put discarded
+      return 42
+    files[0].write $compile.compile("cached-script.dol", source).emit()
+    # Force the cache path: recompiling this source would raise CompileError.
+    path.write "let =\n"
+    path.update_metadata modified: $DateTime.from_unix(1)
+    let caller_args = [...shell.args]
+    let caller_program = shell.program
+    let output = []
+    strand.pipeline input: [11, 12] output: $output
+      do
+        let input = strand.input()
+        let sink = strand.output()
+        let err = assert_throws $TypeError do
+          exec.module $path :app args: ["guard"] program: guard-program
+        assert_eq (str err) "type error: module result: expected `Module`"
+        assert_eq (strand.input()) $input
+        assert_eq (strand.output()) $sink
+        assert_eq [...shell.args] $caller_args
+        assert_eq $shell.program $caller_program
+        strand.put $input.next()
+        strand.put $input.next()
+    assert_eq $output [11, 12]

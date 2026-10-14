@@ -277,3 +277,78 @@ fn owned_unit_is_shared_between_threads() {
     let unit: Unit<'static> = config(module()).unit(path, source.to_owned());
     assert_eq!(thread::spawn(move || emit(unit)).join().unwrap(), expected);
 }
+
+#[test]
+fn returns_cannot_exit_modules_or_repl() {
+    let sources = [
+        "return\n",
+        "return 42\n",
+        "if true\n  return 42\n",
+        "while true\n  return\n",
+        "for x = [1]\n  return x\n",
+        "try\n  return\ncatch _\n  nil\n",
+        "match 1\n  _ do return\n",
+        "let _f = do return 42\n",
+        "def call block\n  block()\ncall do return 42\n",
+        "throw 1\nreturn\n",
+    ];
+    for mode in [Mode::Module { name: "m".into() }, Mode::Repl] {
+        let expected = if mode == Mode::Repl {
+            "return at top level of REPL"
+        } else {
+            "return at top level of module"
+        };
+        for source in sources {
+            for typecheck in [false, true] {
+                for recover in [false, true] {
+                    let mut config = Config::new();
+                    config
+                        .mode(mode.clone())
+                        .typecheck(typecheck)
+                        .recover(recover);
+                    let unit = config.unit(Path::new("return.dol"), source);
+                    let diag = unit
+                        .diagnostics()
+                        .find(|diag| diag.message().to_string() == expected);
+                    assert!(
+                        diag.is_some(),
+                        "{source:?}, typecheck={typecheck}, recover={recover}"
+                    );
+                    let span = diag.unwrap().span().span();
+                    assert_eq!(
+                        &source[span.start().byte_offset()..span.end().byte_offset()],
+                        "return"
+                    );
+                    assert!(unit.emit(&mut Vec::new()).is_err());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn returns_remain_valid_in_scripts_and_declared_functions() {
+    let sources = [
+        "pub def f()\n  return 42\nf()\n",
+        "def call block\n  block()\npub def f()\n  call do return 42\nf()\n",
+        "pub class C\n  pub def f self\n    return 42\nC().f()\n",
+        "def call block\n  block()\npub class C\n  pub field x = call do return 42\nC().x\n",
+    ];
+    for mode in [Mode::Script, Mode::Module { name: "m".into() }, Mode::Repl] {
+        for source in sources {
+            let mut config = Config::new();
+            config.mode(mode.clone());
+            let unit = config.unit(Path::new("functions.dol"), source);
+            assert!(unit.emit(&mut Vec::new()).is_ok(), "{source:?}");
+        }
+    }
+    for source in [
+        "return\n",
+        "return 42\n",
+        "if true\n  return 42\n",
+        "def call block\n  block()\ncall do return 42\n",
+    ] {
+        let unit = Config::new().unit(Path::new("script.dol"), source);
+        assert!(unit.emit(&mut Vec::new()).is_ok(), "{source:?}");
+    }
+}

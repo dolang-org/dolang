@@ -1408,7 +1408,8 @@ impl Bytecode {
     ///
     /// For Do code compiled in script mode, the result (if not a raised error) is that of the
     /// final top-level statement, or any top-level early `return`.  For module mode, it's a
-    /// module containing all exported bindings, or the the value of an early `return`.
+    /// module containing all exported bindings. The compiler disallows top-level `return`
+    /// in module mode; bytecode itself does not identify its compilation mode.
     ///
     /// The bytecode is gifted to the VM.
     ///

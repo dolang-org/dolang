@@ -334,7 +334,10 @@ impl Diagnose for BadContinue {
     }
 }
 
-struct BadReturn(Span);
+struct BadReturn {
+    span: Span,
+    repl: bool,
+}
 
 impl Diagnose for BadReturn {
     fn severity(&self) -> Severity {
@@ -342,11 +345,12 @@ impl Diagnose for BadReturn {
     }
 
     fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(w, "return at top level of REPL")
+        let context = if self.repl { "REPL" } else { "module" };
+        write!(w, "return at top level of {context}")
     }
 
     fn span(&self) -> Span {
-        self.0
+        self.span
     }
 }
 
@@ -3109,7 +3113,10 @@ impl<'a> Elaborater<'a> {
         match scope.can_return() {
             CanBranch::No => {
                 self.fail = true;
-                self.diags.push(BadReturn(*span));
+                self.diags.push(BadReturn {
+                    span: *span,
+                    repl: self.mode == Mode::Repl,
+                });
             }
             CanBranch::BadNl(lambda) => {
                 self.fail = true;
@@ -3582,7 +3589,7 @@ impl<'a> Elaborater<'a> {
         method: Option<bool>,
     ) -> Result<()> {
         let is_class_method = method.is_some();
-        let mut scope = scope.function(self.mode != Mode::Repl || prelude.is_none());
+        let mut scope = scope.function(matches!(self.mode, Mode::Script) || prelude.is_none());
         self.visit_params(&mut scope, &mut node.params, is_class_method)?;
         if let Scope::Nested {
             receiver,

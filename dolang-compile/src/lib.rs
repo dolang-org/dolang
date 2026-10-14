@@ -997,7 +997,8 @@ impl visit::Visit for VisitAdapter<'_, '_> {
 pub enum Mode<'a> {
     /// Compile as script: return value is value of final statement or early return
     Script,
-    /// Compile as module: return value is a module of top-level bindings, or that of early return
+    /// Compile as module: return value is a module of top-level bindings.
+    /// Early return is disallowed at top level.
     Module { name: Cow<'a, str> },
     /// Compile in REPL mode:
     /// - Return value is a module of top-level bindings, including private bindings (e.g. imports)

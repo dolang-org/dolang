@@ -211,7 +211,9 @@ for item = items
 
 ### `return`
 
-Return a value from a function early.
+Return a value from a function early. A script may also return from its top
+level. Modules and the REPL disallow returns that exit their top level,
+including returns inside nested control flow or `do` blocks.
 
 ```playground
 #> import test:
