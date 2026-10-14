@@ -156,3 +156,9 @@ pub fn preformatted_text<'v, 's>(
     let global = strand.state::<Global<'v>>();
     term::create_preformatted_text(strand, global, value, out)
 }
+
+/// Resources bundled by this crate.
+pub static RESOURCES: &[dolang::resource::Resource] =
+    include!(concat!(env!("OUT_DIR"), "/resources.rs"));
+
+dolang::resources!(RESOURCES);

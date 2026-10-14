@@ -20,9 +20,9 @@ pub enum NameMode {
 
 /// What to bundle from a tree of sources, and where.
 ///
-/// Each output named here is written to `<out_dir>/<name>/`, with
-/// `<out_dir>/<name>.rs` holding a `&[(&str, &[u8])]` expression that pairs each
-/// name with its file, for `include!`.
+/// Each output named here is written to `<out_dir>/<name>/`. A combined
+/// `<out_dir>/resources.rs` holds a `&[dolang::resource::Resource]` expression
+/// for the producing crate to include.
 pub struct Bundle<'a> {
     pub source_root: &'a Path,
     pub out_dir: &'a Path,
@@ -72,8 +72,7 @@ fn derive_name(path: &Path, source_root: &Path, name_mode: NameMode) -> String {
     components.join(".")
 }
 
-/// Bundle the typelibs of a crate's `stub/` directory as `typelibs`, for
-/// `dolang::typelibs!`.
+/// Bundle the typelibs of a crate's `stub/` directory as resources.
 pub fn stub_typelibs() {
     let manifest_dir = env::var_os("CARGO_MANIFEST_DIR").unwrap();
     let out_dir = env::var_os("OUT_DIR").unwrap();
@@ -90,29 +89,29 @@ pub fn stub_typelibs() {
     });
 }
 
-/// An output being written: its directory and its table.
+/// An output's artifact directory and resource namespace.
 struct Output {
     dir: PathBuf,
-    table: fs::File,
+    namespace: &'static str,
 }
 
 impl Output {
-    fn new(out_dir: &Path, name: &str) -> Self {
+    fn new(out_dir: &Path, name: &str, namespace: &'static str) -> Self {
         let dir = out_dir.join(name);
         fs::create_dir_all(&dir).unwrap();
-        let mut table = fs::File::create(out_dir.join(format!("{name}.rs"))).unwrap();
-        writeln!(table, "&[").unwrap();
-        Self { dir, table }
+        Self { dir, namespace }
     }
 
-    fn add(&mut self, name: &str, ext: &str, bytes: &[u8]) {
+    fn add(&self, table: &mut fs::File, name: &str, ext: &str, bytes: &[u8]) {
         let path = self.dir.join(format!("{name}.{ext}"));
         fs::write(&path, bytes).unwrap();
-        writeln!(self.table, "    ({name:?}, include_bytes!({path:?})),").unwrap();
-    }
-
-    fn finish(mut self) {
-        writeln!(self.table, "]").unwrap();
+        writeln!(
+            table,
+            "    ::dolang::resource::Resource {{ namespace: {:?}, name: {name:?}, \
+             payload: ::dolang::resource::Payload::Bytes(include_bytes!({path:?})) }},",
+            self.namespace,
+        )
+        .unwrap();
     }
 }
 
@@ -121,8 +120,18 @@ pub fn bundle(spec: &Bundle<'_>) {
         spec.typelibs.is_none() || matches!(spec.compile_mode, CompileMode::Module),
         "only modules have typelibs"
     );
-    let mut bytecode_out = spec.bytecode.map(|name| Output::new(spec.out_dir, name));
-    let mut typelib_out = spec.typelibs.map(|name| Output::new(spec.out_dir, name));
+    let bytecode_namespace = match spec.compile_mode {
+        CompileMode::Module => "dolang.module",
+        CompileMode::Script => "dolang.entrypoint",
+    };
+    let bytecode_out = spec
+        .bytecode
+        .map(|name| Output::new(spec.out_dir, name, bytecode_namespace));
+    let typelib_out = spec
+        .typelibs
+        .map(|name| Output::new(spec.out_dir, name, "dolang.typelib"));
+    let mut table = fs::File::create(spec.out_dir.join("resources.rs")).unwrap();
+    writeln!(table, "&[").unwrap();
 
     let mut files = Vec::new();
     walk_dol_files(spec.source_root, &mut files);
@@ -168,21 +177,18 @@ pub fn bundle(spec: &Bundle<'_>) {
             panic!("compilation warnings in {}", compiler_path.display());
         }
 
-        if let Some(out) = &mut typelib_out {
+        if let Some(out) = &typelib_out {
             let typelib = typeck::typelib(&unit)
                 .unwrap_or_else(|err| panic!("no typelib for {}: {err}", compiler_path.display()));
-            out.add(&name, "dolt", &typelib);
+            out.add(&mut table, &name, "dolt", &typelib);
         }
-        if let Some(out) = &mut bytecode_out {
+        if let Some(out) = &bytecode_out {
             let mut bytecode = Vec::new();
             unit.emit(&mut bytecode)
                 .unwrap_or_else(|_| panic!("failed to compile {}", compiler_path.display()));
-            out.add(&name, "dolc", &bytecode);
+            out.add(&mut table, &name, "dolc", &bytecode);
         }
     }
 
-    bytecode_out
-        .into_iter()
-        .chain(typelib_out)
-        .for_each(Output::finish);
+    writeln!(table, "]").unwrap();
 }
