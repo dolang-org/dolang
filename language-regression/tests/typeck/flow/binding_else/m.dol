@@ -95,3 +95,11 @@ pub def loops values @ Array[Tuple[Int, Int]]
     let Int(n) = a
     else break
     [n, b]
+
+pub def narrowed value @ (Tuple[Int, Int] | Tuple[Str]) -> Str
+  let _a _b = value
+  else
+    let _ = value
+    #       ^~~~~: flow (std.Str,)
+    return "single"
+  "pair"

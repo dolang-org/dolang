@@ -3050,7 +3050,7 @@ pub(crate) use member::{Access, Found, FoundKind, Lookup, Signatures};
 pub(crate) use narrow::Target as NarrowTarget;
 pub(crate) use nest::Gas;
 use nest::{Nesting, Parent, Revisit};
-pub(crate) use unpack::PatternShape;
+pub(crate) use unpack::{PatternShape, Reason};
 
 #[cfg(test)]
 mod tests;

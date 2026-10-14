@@ -126,10 +126,8 @@ def safe_leaf name @ (Str | nil) -> Str
   name.replace("/", "_").replace("\\", "_")
 
 def digest_spec spec @ Str -> DigestSpec
-  let parts = [...spec.lower().split ":" limit: 1]
-  if (parts.len != 2)
-    throw std.ValueError "digest: expected `algorithm:hex`"
-  let algorithm expected = parts
+  let algorithm expected = spec.lower().split ":" limit: 1
+  else throw std.ValueError "digest: expected `algorithm:hex`"
   let constructor = DIGESTS.get $algorithm else: do
     throw std.ValueError "digest: unsupported algorithm: $algorithm"
   let expected_len = (constructor().digest().len * 2)
@@ -936,9 +934,8 @@ class Placed: Struct[PlacedFields]
 
 def strip_count entries@Array[ArchiveEntry] strip@(Int | :ROOT:) -> Int
   if (strip == :ROOT:)
-    if (entries.len == 0)
-      throw std.ValueError "strip: :ROOT: requires a non-empty archive"
     let root ...rest = [...entries.map do |p| p.parts[0]]
+    else throw std.ValueError "strip: :ROOT: requires a non-empty archive"
     if [...rest].any do |x| (x != root)
       throw std.ValueError "strip: :ROOT: requires one shared root component"
     1

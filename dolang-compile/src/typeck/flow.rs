@@ -943,7 +943,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 if self.diverged.is_some() {
                     return false;
                 }
-                return self.bind(at, state, pattern, ty, value.span);
+                return self.bind(at, state, pattern, ty, value.span, true);
             }
             Step::Assign(target) => {
                 let value = target.value();
@@ -1244,6 +1244,8 @@ impl<'a, 'u> Flow<'a, 'u> {
 
     /// Bind a pattern to a value at `span`, recording each binding. Unpacking is
     /// a rule. Returns whether the pattern can match, reporting it if it can't.
+    /// An `irrefutable` pattern raises on a mismatch, so a strict unit requires
+    /// it to match every value of the type.
     fn bind(
         &mut self,
         at: At,
@@ -1251,11 +1253,12 @@ impl<'a, 'u> Flow<'a, 'u> {
         pattern: &Pattern,
         ty: TypeId,
         span: Span,
+        irrefutable: bool,
     ) -> bool {
         match pattern {
             &Pattern::Bind(var) => self.binding(at, state, var, ty, span),
             Pattern::Unpack(items) => {
-                let Some(types) = self.unpack(at, state, items, ty, span) else {
+                let Some(types) = self.unpack(at, state, items, ty, span, irrefutable) else {
                     if self.observing() {
                         let found = self.subject(ty);
                         self.problem(Problem::Impossible { span, found });
@@ -1422,8 +1425,19 @@ impl<'a, 'u> Flow<'a, 'u> {
         // An operand with no value yet, such as a captured variable whose
         // accumulator hasn't grown, leaves nothing: narrowing nothing would let the
         // edge's state join a wider type than the operand later narrows to
+        let shape;
         let target = match &assume.against {
             &Against::Decl(decl) => Some(NarrowTarget::Class(decl)),
+            Against::Shape(items) => match self.designated(Designated::Unpack) {
+                Some(unpack) => {
+                    shape = self.pattern_shape(at, state, items);
+                    Some(NarrowTarget::Shape {
+                        unpack,
+                        pattern: &shape,
+                    })
+                }
+                None => None,
+            },
             Against::Class(class) => {
                 let ty = self.eval(at, state, &mut none, class);
                 if ty == bottom {
@@ -1469,6 +1483,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             match target {
                 NarrowTarget::Class(decl) => self.tables.qualified(decl),
                 NarrowTarget::Literal(ty) => self.show(ty),
+                NarrowTarget::Shape { .. } => "a pattern".into(),
             },
             self.show(fact.ty),
             self.show(narrowed),
@@ -1543,7 +1558,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                     return;
                 }
                 let mut bound = state.clone();
-                if self.bind(at, &mut bound, pattern, ty, value.span) {
+                if self.bind(at, &mut bound, pattern, ty, value.span, false) {
                     self.flow(at.ctx, *then, bound);
                 }
                 self.flow(at.ctx, *else_, state);
@@ -1604,7 +1619,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                     return;
                 }
                 let mut bound = state.clone();
-                if self.bind(at, &mut bound, pattern, item, *span) {
+                if self.bind(at, &mut bound, pattern, item, *span, true) {
                     self.flow(at.ctx, *body, bound);
                 }
                 self.flow(at.ctx, *exit, state);

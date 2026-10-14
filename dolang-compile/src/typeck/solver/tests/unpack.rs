@@ -1,5 +1,8 @@
 use super::*;
-use crate::{RestKind, typeck::solver::unpack::Unpacked};
+use crate::{
+    RestKind,
+    typeck::solver::unpack::{Reason, Rejection, Unpacked},
+};
 
 /// A world with `Spread[S]`, `Unpack[S, :Rest @ Spread[S] = Spread[S]]`, and a few classes to
 /// put in schemas
@@ -119,6 +122,12 @@ impl World {
     fn walk(&mut self, ty: TypeId, pattern: &PatternShape) -> Option<Unpacked> {
         let unpack = self.unpack_decl();
         Solver::new(self.sealed(), &Gas::default()).unpack_pattern(ty, unpack, pattern)
+    }
+
+    /// Why `pattern` may fail to match a value of `ty`, by the reason only
+    fn reason(&mut self, ty: TypeId, pattern: &PatternShape) -> Option<Reason> {
+        let rejection = self.walk(ty, pattern).unwrap().rejection;
+        rejection.map(|rejection| rejection.reason)
     }
 }
 
@@ -414,4 +423,126 @@ fn an_unpack_type_keeps_its_rest_only_for_its_own_tail() {
     let walked = w.walk(fixed, &pattern(&[false], &[], true)).unwrap();
     let left = w.spread_of(vec![positional(Multiplicity::Required, str)]);
     assert_eq!(walked.rests, vec![left]);
+}
+
+#[test]
+fn a_guaranteed_pattern_takes_exactly_what_the_schema_admits() {
+    let mut w = World::new();
+    let (int, str) = (w.int, w.str);
+    let a = w.key("a");
+    let pair = w.class(vec![
+        positional(Multiplicity::Required, str),
+        positional(Multiplicity::Required, str),
+    ]);
+    let record = w.class(vec![
+        positional(Multiplicity::Required, int),
+        keyed(Multiplicity::Required, a, str),
+    ]);
+    let optional = w.class(vec![
+        positional(Multiplicity::Required, int),
+        positional(Multiplicity::Optional, str),
+    ]);
+    assert_eq!(w.reason(pair, &pattern(&[false, false], &[], false)), None);
+    assert_eq!(w.reason(pair, &pattern(&[false], &[], true)), None);
+    assert_eq!(
+        w.reason(record, &pattern(&[false], &[(a, false)], false)),
+        None
+    );
+    // A default fills a slot the schema may leave empty
+    assert_eq!(
+        w.reason(optional, &pattern(&[false, true], &[], false)),
+        None
+    );
+}
+
+#[test]
+fn positional_items_may_be_too_few_or_too_many() {
+    let mut w = World::new();
+    let (int, str) = (w.int, w.str);
+    let strs = w.class(vec![positional(Multiplicity::Repeated, str)]);
+    let optional = w.class(vec![
+        positional(Multiplicity::Required, int),
+        positional(Multiplicity::Optional, str),
+    ]);
+    let ints = w.class(vec![
+        positional(Multiplicity::Required, int),
+        positional(Multiplicity::Repeated, int),
+    ]);
+    // The most items the schema admits, below what's required
+    let two = pattern(&[false, false], &[], false);
+    assert_eq!(w.reason(strs, &two), Some(Reason::Fewer(1)));
+    assert_eq!(
+        w.reason(strs, &pattern(&[false, false], &[], true)),
+        Some(Reason::Fewer(1))
+    );
+    assert_eq!(w.reason(optional, &two), Some(Reason::Fewer(1)));
+    // One more item than the slots, with no rest to take it
+    let one = pattern(&[false], &[], false);
+    assert_eq!(w.reason(optional, &one), Some(Reason::More(2)));
+    assert_eq!(w.reason(ints, &one), Some(Reason::More(2)));
+    assert_eq!(w.reason(ints, &pattern(&[false], &[], true)), None);
+}
+
+#[test]
+fn keys_may_be_absent_or_left_over() {
+    let mut w = World::new();
+    let (int, str, bool) = (w.int, w.str, w.bool);
+    let (a, b) = (w.key("a"), w.key("b"));
+    let optional = w.class(vec![keyed(Multiplicity::Optional, a, int)]);
+    let extra = w.class(vec![
+        keyed(Multiplicity::Required, a, int),
+        keyed(Multiplicity::Optional, b, str),
+    ]);
+    let domain = w.class(vec![keyed(Multiplicity::Repeated, str, bool)]);
+    let take_a = pattern(&[], &[(a, false)], false);
+    assert_eq!(w.reason(optional, &take_a), Some(Reason::Lacks(a)));
+    assert_eq!(w.reason(optional, &pattern(&[], &[(a, true)], false)), None);
+    assert_eq!(w.reason(extra, &take_a), Some(Reason::Extra(b)));
+    assert_eq!(w.reason(extra, &pattern(&[], &[(a, false)], true)), None);
+    // A domain may lack any key
+    assert_eq!(
+        w.reason(domain, &pattern(&[], &[(a, false)], true)),
+        Some(Reason::Lacks(a))
+    );
+}
+
+#[test]
+fn every_member_must_be_guaranteed() {
+    let mut w = World::new();
+    let int = w.int;
+    let pair = w.class(vec![
+        positional(Multiplicity::Required, int),
+        positional(Multiplicity::Required, int),
+    ]);
+    let single = w.class(vec![positional(Multiplicity::Required, int)]);
+    let both = w.union(&[pair, single]);
+    let walked = w.walk(both, &pattern(&[false, false], &[], false)).unwrap();
+    assert!(walked.possible);
+    assert_eq!(
+        walked.rejection,
+        Some(Rejection {
+            schema: items(&w.db, vec![positional(Multiplicity::Required, int)]),
+            reason: Reason::Fewer(1),
+        })
+    );
+}
+
+#[test]
+fn dynamic_schemas_never_reject() {
+    let mut w = World::new();
+    let int = w.int;
+    let unknown_schema = w.db.unknown_schema();
+    let open = w.class(vec![
+        positional(Multiplicity::Required, int),
+        include(Multiplicity::Required, unknown_schema),
+    ]);
+    let schema = w.db.unknown_schema();
+    let supertype = w.db.apply_defaults(w.unpack_decl(), &[schema]).unwrap();
+    let dynamic = nominal(&mut w.db, "Dynamic", vec![], vec![supertype]);
+    let unknown = w.db.unknown();
+    let key = w.key("name");
+    let three = pattern(&[false, false, false], &[(key, false)], false);
+    assert_eq!(w.reason(open, &three), None);
+    assert_eq!(w.reason(dynamic, &three), None);
+    assert_eq!(w.reason(unknown, &three), None);
 }

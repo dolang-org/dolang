@@ -4,10 +4,8 @@ import
    - Path
   xdg
 
-let :id ... = run
-
 pub def runtime_dir <Iter[Value] -> Path
-  (xdg.runtime_dir() || Path "/run/user/$(sub do id "-u")")
+  (xdg.runtime_dir() || Path "/run/user/$(sub do run "id" "-u")")
 
 pub def cache_home() -> Path
   xdg.cache_home()

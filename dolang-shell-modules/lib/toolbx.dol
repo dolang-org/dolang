@@ -11,8 +11,6 @@ import _vfs proc time
   strand:
     - pipeline
 
-let :toolbox ... = proc.run
-
 pub def run
   cmd @ (Str | Path)
   :name @ Str = nil
@@ -22,7 +20,7 @@ pub def run
   <Iter[Value]
   >Sink[Str]
 do -> nil
-  toolbox run
+  proc.run toolbox run
     if (name != nil)
       --container $name
     -- env ...(_vfs.env_args cd env) $cmd ...args

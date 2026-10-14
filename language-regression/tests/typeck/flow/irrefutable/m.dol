@@ -1,0 +1,34 @@
+# Outside a strict unit, a pattern is diagnosed only if it can never match
+pub def split s @ Str -> nil
+  let _k _v = s.split "="
+  nil
+
+pub def first xs @ Array[Int] -> nil
+  let _first ..._rest = xs
+  nil
+
+pub def member value @ ((Int, Int) | (Int,)) -> Int
+  let a _b = value
+  a
+
+pub def domain d @ Dict[Sym, Int] -> nil
+  let foo: _foo ... = d
+  nil
+
+pub def loops pairs @ Array[Array[Str]] -> nil
+  for _k _v = pairs
+    nil
+  nil
+
+pub def split_schema value @ (Str, ?Str) -> Str
+  let (a _) | (a) = value
+  a
+
+pub def impossible() -> nil
+  let _a _b = (4,)
+  # error: `(4,)` can never unpack as this pattern
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _a _b = (4,)
+  #    |               ^^^^
+  nil

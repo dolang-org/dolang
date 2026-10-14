@@ -8,7 +8,7 @@ pub def dotted value @ (shapes.Point | Str)
     #       ^: flow std.Int
   else
     let _ = value
-    #       ^~~~~: flow m.Point | std.Str
+    #       ^~~~~: flow std.Str
 
 pub def renamed value @ (P | Str)
   if let P(p) = value

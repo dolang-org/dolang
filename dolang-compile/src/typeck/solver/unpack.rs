@@ -32,6 +32,7 @@ use super::{
 use crate::{RestKind, typeck::r#type::BinderOrigin};
 
 /// A destructuring pattern, as the walk sees it
+#[derive(Debug)]
 pub(crate) struct PatternShape {
     /// Each positional slot, by whether it has a default. Defaulted slots follow
     /// the others.
@@ -64,6 +65,31 @@ pub(crate) struct Unpacked {
     pub(crate) rests: Vec<TypeId>,
     /// Whether any possibility matches
     pub(crate) possible: bool,
+    /// Why the pattern may fail to match a value, for the first member it may
+    /// fail for. Dynamic schemas never reject.
+    pub(crate) rejection: Option<Rejection>,
+}
+
+/// A member of a value that a pattern may fail to match
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Rejection {
+    /// The schema the member unpacks as, or the member if it can't be reified
+    pub(crate) schema: TypeId,
+    pub(crate) reason: Reason,
+}
+
+/// Why a pattern may fail to match a schema, by an example the schema admits
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Reason {
+    /// The most positional items the schema admits short of what the pattern
+    /// requires
+    Fewer(usize),
+    /// This many positional items, more than the pattern takes
+    More(usize),
+    /// No item with this key, which the pattern requires
+    Lacks(TypeId),
+    /// An item with this key, which the pattern doesn't take
+    Extra(TypeId),
 }
 
 /// The items a pattern leaves, by lane
@@ -91,6 +117,10 @@ impl Tail {
 struct Atoms {
     positional: Vec<(Multiplicity, TypeId)>,
     keyed: Vec<(Multiplicity, TypeId, TypeId)>,
+    /// Whether a dynamic schema is among the positional atoms
+    dynamic_positional: bool,
+    /// Whether a dynamic schema is among the keyed atoms
+    dynamic_keyed: bool,
 }
 
 /// Where a member's `Unpack` came from, to find its rests by
@@ -112,6 +142,9 @@ struct Walk {
     rests: Vec<Option<TypeId>>,
 }
 
+/// A lane's walk, `None` if it's impossible, and why it may fail to match
+type LaneWalk = (Option<Lane>, Option<Reason>);
+
 impl Solver<'_> {
     /// Walk `pattern` against the schemas `ty`'s members unpack as, through
     /// `unpack`, the `Unpack` declaration. `None` when a member's schema can't be
@@ -127,6 +160,7 @@ impl Solver<'_> {
         let mut walks = Vec::new();
         let mut dynamic = false;
         let mut dynamic_rests = Vec::new();
+        let mut rejection = None;
         for member in self.union_members(ty) {
             let UnionMember::Type(member) = member else {
                 return None;
@@ -150,7 +184,14 @@ impl Solver<'_> {
                 continue;
             };
             let atoms = self.schema_atoms(schema).ok()??;
-            if let Some(mut walk) = self.walk(&atoms, pattern).ok()? {
+            let (walk, reason) = self.walk(&atoms, pattern).ok()?;
+            if rejection.is_none()
+                && let Some(reason) = reason
+            {
+                let schema = self.reify(schema).unwrap_or(member);
+                rejection = Some(Rejection { schema, reason });
+            }
+            if let Some(mut walk) = walk {
                 walk.rests = (pattern.rests.iter())
                     .map(|&kind| {
                         let tail = walk.tail.schema(self.db, kind);
@@ -165,6 +206,7 @@ impl Solver<'_> {
                 slots: vec![unknown; count],
                 rests: vec![unknown; pattern.rests.len()],
                 possible: true,
+                rejection,
             });
         }
         let mut slots = vec![self.db.bottom(); count];
@@ -209,7 +251,37 @@ impl Solver<'_> {
             slots,
             rests,
             possible,
+            rejection,
         })
+    }
+
+    /// Whether `pattern` always matches a member: its schema is known and
+    /// static, and the walk can't fail
+    pub(super) fn guaranteed(
+        &self,
+        member: TypeId,
+        unpack: DeclId,
+        pattern: &PatternShape,
+    ) -> bool {
+        if member == self.db.unknown() {
+            return false;
+        }
+        let Ok(Some((schema, _))) = self.unpack_schema(member, unpack) else {
+            return false;
+        };
+        if self
+            .head(schema)
+            .map_or(true, |head| self.is_unknown(&head))
+        {
+            return false;
+        }
+        let Ok(Some(atoms)) = self.schema_atoms(schema) else {
+            return false;
+        };
+        if atoms.dynamic_positional || atoms.dynamic_keyed {
+            return false;
+        }
+        matches!(self.walk(&atoms, pattern), Ok((Some(_), None)))
     }
 
     /// The schema a member unpacks as, with where its `Unpack` came
@@ -442,6 +514,8 @@ impl Solver<'_> {
         let mut atoms = Atoms {
             positional: Vec::new(),
             keyed: Vec::new(),
+            dynamic_positional: false,
+            dynamic_keyed: false,
         };
         let mut open_keyed = false;
         for slot in &shape.positional {
@@ -457,6 +531,7 @@ impl Solver<'_> {
                     }
                     if opaque.positional() {
                         atoms.positional.push((Multiplicity::Repeated, unknown));
+                        atoms.dynamic_positional = true;
                     }
                     open_keyed |= opaque.keyed();
                 }
@@ -469,33 +544,51 @@ impl Solver<'_> {
         }
         if open_keyed {
             atoms.keyed.push((Multiplicity::Repeated, unknown, unknown));
+            atoms.dynamic_keyed = true;
         }
         Ok(Some(atoms))
     }
 
-    /// Walk a pattern against one schema's atoms: `None` if it's impossible
-    fn walk(&self, atoms: &Atoms, pattern: &PatternShape) -> Result<Option<Walk>, Issue> {
-        let Some((mut slots, positional)) = self.walk_positional(&atoms.positional, pattern) else {
-            return Ok(None);
+    /// Walk a pattern against one schema's atoms: `None` if it's impossible,
+    /// and why the pattern may fail to match, unless the lane that may fail is
+    /// dynamic
+    fn walk(
+        &self,
+        atoms: &Atoms,
+        pattern: &PatternShape,
+    ) -> Result<(Option<Walk>, Option<Reason>), Issue> {
+        let (positional, mut reason) = self.walk_positional(&atoms.positional, pattern);
+        if atoms.dynamic_positional {
+            reason = None;
+        }
+        let Some((mut slots, positional)) = positional else {
+            return Ok((None, reason));
         };
-        let Some((keyed_slots, keyed)) = self.walk_keyed(&atoms.keyed, pattern)? else {
-            return Ok(None);
+        let (keyed, keyed_reason) = self.walk_keyed(&atoms.keyed, pattern)?;
+        if !atoms.dynamic_keyed {
+            reason = reason.or(keyed_reason);
+        }
+        let Some((keyed_slots, keyed)) = keyed else {
+            return Ok((None, reason));
         };
         slots.extend(keyed_slots);
-        Ok(Some(Walk {
+        let walk = Walk {
             slots,
             tail: Tail { positional, keyed },
             rests: Vec::new(),
-        }))
+        };
+        Ok((Some(walk), reason))
     }
 
     /// The positional slots' types and the positional tail. Each state is the
-    /// index of the next atom that can take an item.
+    /// index of the next atom that can take an item. The pattern may fail to
+    /// match if the schema can end before its required slots are filled, or, with
+    /// no rest, take another item once they're all filled.
     fn walk_positional(
         &self,
         atoms: &[(Multiplicity, TypeId)],
         pattern: &PatternShape,
-    ) -> Option<Lane> {
+    ) -> LaneWalk {
         let slots = pattern.positional.len();
         let required = pattern.positional.iter().filter(|&&d| !d).count();
         // Whether every atom from a state on may take no item
@@ -533,6 +626,16 @@ impl Solver<'_> {
             }
             forward.push(next);
         }
+        let fewer = (0..required).rfind(|&count| forward[count].iter_ones().any(ends));
+        let more = !pattern.positional_rest()
+            && forward[slots]
+                .iter_ones()
+                .any(|state| !steps(state).is_empty());
+        let reason = match (fewer, more) {
+            (Some(count), _) => Some(Reason::Fewer(count)),
+            (None, true) => Some(Reason::More(slots + 1)),
+            (None, false) => None,
+        };
         // The states on a path the pattern accepts: with `k` items, where
         // defaults fill the slots past them or a rest takes what's left
         let mut alive = vec![bitbox![0; atoms.len() + 1]; slots + 1];
@@ -553,7 +656,7 @@ impl Solver<'_> {
             }
         }
         if !alive[0][0] {
-            return None;
+            return (None, reason);
         }
         let bottom = self.db.bottom();
         let types = (0..slots)
@@ -585,31 +688,37 @@ impl Solver<'_> {
                 }
             })
             .collect();
-        Some((types, tail))
+        (Some((types, tail)), reason)
     }
 
     /// The keyed slots' types and the keyed tail. A literal key takes the first
     /// item with that key, in the atoms' order: a required literal-keyed atom
     /// before it ends the search, and the first owner, if a literal-keyed atom
     /// with at most one item, leaves the tail. A domain keeps its items, since
-    /// the slots can't take every key in it.
+    /// the slots can't take every key in it. The pattern may fail to match if a
+    /// key it requires isn't first owned by a required literal-keyed atom, or,
+    /// with no rest, if any atom is left.
     fn walk_keyed(
         &self,
         atoms: &[(Multiplicity, TypeId, TypeId)],
         pattern: &PatternShape,
-    ) -> Result<Option<Lane>, Issue> {
+    ) -> Result<LaneWalk, Issue> {
         let unknown = self.db.unknown();
         let keys: Vec<TypeId> = atoms.iter().map(|&(_, key, _)| key).collect();
         let literal = |key: TypeId| self.db.literal(key).is_some();
         let mut taken = vec![false; atoms.len()];
         let mut demoted = vec![false; atoms.len()];
         let mut types = Vec::new();
+        let mut reason = None;
         for &(key, defaulted) in &pattern.keyed {
             let mut ty = self.db.bottom();
             if !literal(key) {
                 let owning = self.owning(key, &keys)?;
-                if owning.is_empty() && !defaulted {
-                    return Ok(None);
+                if !defaulted {
+                    reason = reason.or(Some(Reason::Lacks(key)));
+                    if owning.is_empty() {
+                        return Ok((None, reason));
+                    }
                 }
                 for (index, _) in owning {
                     ty = self.lub(ty, atoms[index].2);
@@ -634,7 +743,11 @@ impl Solver<'_> {
                 ty = self.lub(ty, value);
                 let first = !owned;
                 owned = true;
-                if owner != unknown && literal(owner) {
+                let single = owner != unknown && literal(owner);
+                if first && !defaulted && !(single && multiplicity == Multiplicity::Required) {
+                    reason = reason.or(Some(Reason::Lacks(key)));
+                }
+                if single {
                     if multiplicity == Multiplicity::Required {
                         match first {
                             true => taken[index] = true,
@@ -648,7 +761,7 @@ impl Solver<'_> {
                 }
             }
             if !owned && !defaulted {
-                return Ok(None);
+                return Ok((None, reason.or(Some(Reason::Lacks(key)))));
             }
             types.push(ty);
         }
@@ -657,18 +770,21 @@ impl Solver<'_> {
             if taken[index] {
                 continue;
             }
+            if !pattern.keyed_rest() {
+                reason = reason.or(Some(Reason::Extra(key)));
+            }
             if demoted[index] {
                 multiplicity = Multiplicity::Optional;
             }
             if multiplicity == Multiplicity::Required && !pattern.keyed_rest() {
-                return Ok(None);
+                return Ok((None, reason));
             }
             tail.push(SchemaItem {
                 multiplicity,
                 element: Element::Keyed { key, value },
             });
         }
-        Ok(Some((types, tail)))
+        Ok((Some((types, tail)), reason))
     }
 
     /// A tail admitting each of several. Positional items become one repeated

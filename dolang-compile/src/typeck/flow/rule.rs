@@ -42,8 +42,8 @@ use crate::{
         elab::Designated,
         solver::{
             Call as SolverCall, CallArgument, Contradiction, Gas, InferVarId, Issue, Node,
-            ObligationId, Outcome, PatternShape, Provenance, Relation, Residual, Solver, Status,
-            Step as Derivation, Term,
+            ObligationId, Outcome, PatternShape, Provenance, Reason, Relation, Residual, Solver,
+            Status, Step as Derivation, Term,
         },
         r#type::{
             Argument, BoundRef, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
@@ -2888,33 +2888,13 @@ impl<'a> Flow<'a, '_> {
         )
     }
 
-    /// The types a pattern's items unpack from a value, diagnosed at `span`;
-    /// `None` if the pattern can't match it. What its `(unpack)` gives must be
-    /// an `Unpack[S]`.
-    /// The pattern is walked against `S` (see [`Solver::unpack_pattern`]), giving
-    /// a rest `Unpack[tail]`. Where `S` can't be found, every item is optional and
-    /// the pattern admits any others, giving a const key or a rest `Unknown`.
-    pub(super) fn unpack(
+    /// A pattern's items as the walk sees them, with each constant key evaluated
+    pub(super) fn pattern_shape(
         &mut self,
         at: At,
         state: &mut State,
         items: &[PatternItem],
-        value: TypeId,
-        span: Span,
-    ) -> Option<Vec<TypeId>> {
-        let unknown = self.db.unknown();
-        if value == self.db.bottom() {
-            return Some(vec![value; items.len()]);
-        }
-        let Some(unpack) = self.designated(Designated::Unpack) else {
-            return Some(vec![unknown; items.len()]);
-        };
-        // What's unpacked is what the value's `(unpack)` gives
-        let value = self.send_special(at, state, value, "unpack", span);
-        if value == self.db.bottom() {
-            return Some(vec![value; items.len()]);
-        }
-        let check = Check::Fits(span, Misfit::Unpackable);
+    ) -> PatternShape {
         let mut pattern = PatternShape {
             positional: Vec::new(),
             keyed: Vec::new(),
@@ -2935,6 +2915,40 @@ impl<'a> Flow<'a, '_> {
                 PatternKey::Rest(kind) => pattern.rests.push(kind),
             }
         }
+        pattern
+    }
+
+    /// The types a pattern's items unpack from a value, diagnosed at `span`;
+    /// `None` if the pattern can't match it. What its `(unpack)` gives must be
+    /// an `Unpack[S]`. In a strict unit, an `irrefutable` pattern must match
+    /// every value `S` admits.
+    /// The pattern is walked against `S` (see [`Solver::unpack_pattern`]), giving
+    /// a rest `Unpack[tail]`. Where `S` can't be found, every item is optional and
+    /// the pattern admits any others, giving a const key or a rest `Unknown`.
+    pub(super) fn unpack(
+        &mut self,
+        at: At,
+        state: &mut State,
+        items: &[PatternItem],
+        value: TypeId,
+        span: Span,
+        irrefutable: bool,
+    ) -> Option<Vec<TypeId>> {
+        let unknown = self.db.unknown();
+        let original = value;
+        if value == self.db.bottom() {
+            return Some(vec![value; items.len()]);
+        }
+        let Some(unpack) = self.designated(Designated::Unpack) else {
+            return Some(vec![unknown; items.len()]);
+        };
+        // What's unpacked is what the value's `(unpack)` gives
+        let value = self.send_special(at, state, value, "unpack", span);
+        if value == self.db.bottom() {
+            return Some(vec![value; items.len()]);
+        }
+        let check = Check::Fits(span, Misfit::Unpackable);
+        let pattern = self.pattern_shape(at, state, items);
         if let Some(unpacked) = self
             .solver(&Gas::default())
             .unpack_pattern(value, unpack, &pattern)
@@ -2960,6 +2974,42 @@ impl<'a> Flow<'a, '_> {
             if !unpacked.possible {
                 return None;
             }
+            if irrefutable
+                && self.strict()
+                && self.observing()
+                && let Some(rejection) = unpacked.rejection
+            {
+                let schema = self.shown(rejection.schema);
+                let items = |count| match count {
+                    0 => "no items".to_owned(),
+                    1 => "1 item".to_owned(),
+                    _ => format!("{count} items"),
+                };
+                let (missing, example) = match rejection.reason {
+                    Reason::Fewer(count) => (true, format!("may have {}", items(count))),
+                    Reason::More(count) => (false, format!("may have {}", items(count))),
+                    Reason::Lacks(key) => (
+                        true,
+                        format!("may have no item keyed `{}`", self.shown(key)),
+                    ),
+                    Reason::Extra(key) => (
+                        false,
+                        format!("may have an item keyed `{}`", self.shown(key)),
+                    ),
+                };
+                let whole = match self.db.ty(original) {
+                    Type::Union(_) => "a member",
+                    _ => "it",
+                };
+                let note = format!("{whole} unpacks as `{schema}`, which {example}");
+                let found = self.subject(original);
+                self.problem(Problem::Unguaranteed {
+                    span,
+                    found,
+                    missing,
+                    note,
+                });
+            }
             let (positional, keyed) = unpacked.slots.split_at(pattern.positional.len());
             let (mut positional, mut keyed) = (positional.iter(), keyed.iter());
             let mut rests = unpacked.rests.iter();
@@ -2975,6 +3025,7 @@ impl<'a> Flow<'a, '_> {
                 .collect();
             return Some(types);
         }
+        self.gap(span, "a pattern against a schema that can't be found");
         let types = self.conclude(at, span, None, |rule| {
             let vars: Vec<Option<Term>> = (items.iter())
                 .map(|item| match item.key {

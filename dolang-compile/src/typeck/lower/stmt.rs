@@ -847,6 +847,7 @@ impl<'u> Scope<'_, '_, 'u> {
                     span: Span::INVALID,
                 });
             } else {
+                let else_ = self.landing(else_, mismatch(var, &pattern).into_iter().collect());
                 self.end(Terminal::Unpack {
                     pattern,
                     value: expr(ExprKind::Copy(var), span),
@@ -1199,6 +1200,11 @@ impl<'u> Scope<'_, '_, 'u> {
                 let (bound, nested) = self.pattern(pattern, frame);
                 let then = self.defaulted(pattern, Vec::new(), frame, then);
                 let then = self.nested_tests(nested, frame, then, else_);
+                let assume = match value.kind {
+                    ExprKind::Var(var) | ExprKind::Copy(var) => mismatch(var, &bound),
+                    _ => None,
+                };
+                let else_ = self.landing(else_, assume.into_iter().collect());
                 self.end(Terminal::Unpack {
                     pattern: bound,
                     value,
@@ -1803,6 +1809,35 @@ impl<'u> Scope<'_, '_, 'u> {
 }
 
 /// Whether a method is its class's `(init)` implementation
+/// The narrowing of `var` on the mismatch edge of `pattern`, which drops the
+/// members the pattern always matches. A pattern with a constant key has none.
+fn mismatch(var: VarId, pattern: &Pattern) -> Option<Assume> {
+    let Pattern::Unpack(items) = pattern else {
+        return None;
+    };
+    let items = (items.iter())
+        .map(|item| {
+            let key = match item.key {
+                PatternKey::Pos => PatternKey::Pos,
+                PatternKey::Key(key) => PatternKey::Key(key),
+                PatternKey::Rest(kind) => PatternKey::Rest(kind),
+                PatternKey::ConstKey(_) => return None,
+            };
+            Some(PatternItem {
+                key,
+                var: None,
+                default: item.default,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(Assume {
+        var,
+        relation: Relation::Upper,
+        negated: true,
+        against: Against::Shape(items.into()),
+    })
+}
+
 fn is_init(method: &Method) -> bool {
     !method.type_only
         && method.scope == MemberScope::Instance

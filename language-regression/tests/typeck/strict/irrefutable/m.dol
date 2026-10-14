@@ -1,0 +1,176 @@
+# dolang: strict
+# An irrefutable pattern must match every value its scrutinee's type admits
+
+import std:
+  - @Unpack
+
+pub def impossible() -> nil
+  let _a _b = (4,)
+  # error: `(4,)` can never unpack as this pattern
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _a _b = (4,)
+  #    |               ^^^^
+  nil
+
+pub def split s @ Str -> nil
+  let _k _v = s.split "="
+  # warning: `std.UnpackIter[std.Str]` may lack an item this pattern requires
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _k _v = s.split "="
+  #    |               ^^^^^^^^^^^
+  #    |
+  #    = note: it unpacks as `{*std.Str}`, which may have 1 item
+  let _k2 _v2 ... = s.split "="
+  # warning: `std.UnpackIter[std.Str]` may lack an item this pattern requires
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _k2 _v2 ... = s.split "="
+  #    |                     ^^^^^^^^^^^
+  #    |
+  #    = note: it unpacks as `{*std.Str}`, which may have 1 item
+  nil
+
+pub def pair p @ (Str, Str) -> Str
+  let k _v = p
+  k
+
+pub def first xs @ Array[Int] -> nil
+  let _first ..._rest = xs
+  # warning: `[std.Int]` may lack an item this pattern requires
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _first ..._rest = xs
+  #    |                         ^^
+  #    |
+  #    = note: it unpacks as `{*std.Int}`, which may have no items
+  nil
+
+pub def defaults value @ ((Int,) | (Int, Int)) -> Int
+  let (a _b = 0) = value
+  a
+
+# Every member must be guaranteed
+pub def member value @ ((Int, Int) | (Int,)) -> Int
+  let a _b = value
+  # warning: `(std.Int, std.Int) | (std.Int,)` may lack an item this pattern requires
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let a _b = value
+  #    |              ^^^^^
+  #    |
+  #    = note: a member unpacks as `{std.Int}`, which may have 1 item
+  a
+
+pub def keyed d @ {foo: Int} -> Int
+  let :foo = d
+  foo
+
+pub def optional_key d @ {?foo: Int} -> nil
+  let foo: _foo = d
+  # warning: `{?foo: std.Int}` may lack an item this pattern requires
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let foo: _foo = d
+  #    |                   ^
+  #    |
+  #    = note: it unpacks as `{?foo: std.Int}`, which may have no item keyed `:foo:`
+  nil
+
+pub def extra_key d @ {foo: Int, ?bar: Int} -> nil
+  let foo: _foo = d
+  # warning: `{foo: std.Int, ?bar: std.Int}` may have an item this pattern doesn't take
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let foo: _foo = d
+  #    |                   ^
+  #    |
+  #    = note: it unpacks as `{foo: std.Int, ?bar: std.Int}`, which may have an item keyed `:bar:`
+  let foo: _foo2 ** = d
+  nil
+
+pub def domain d @ Dict[Sym, Int] -> nil
+  let foo: _foo ... = d
+  # warning: `std.Dict[std.Sym, std.Int]` may lack an item this pattern requires
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let foo: _foo ... = d
+  #    |                       ^
+  #    |
+  #    = note: it unpacks as `{*(std.Sym): std.Int}`, which may have no item keyed `:foo:`
+  nil
+
+pub def loops pairs @ Array[Array[Str]] tuples @ Array[(Str, Str)] -> nil
+  for _k _v = pairs
+    # warning: `[std.Str]` may lack an item this pattern requires
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   for _k _v = pairs
+    #    |               ^^^^^
+    #    |
+    #    = note: it unpacks as `{*std.Str}`, which may have 1 item
+    nil
+  for _k _v = tuples
+    nil
+  nil
+
+@let Pair = (Int, Int)
+
+pub def lambdas() -> nil
+  let _f @ (Array[Int] -> Int) = (do |(a _b)| a)
+  # warning: `[std.Int]` may lack an item this pattern requires
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _f @ (Array[Int] -> Int) = (do |(a _b)| a)
+  #    |                                       ^^^^^^
+  #    |
+  #    = note: it unpacks as `{*std.Int}`, which may have 1 item
+  let _g @ (Pair -> Int) = (do |(a _b)| a)
+  nil
+
+# Each level is checked against its own scrutinee
+pub def nested value @ (Int, Array[Int]) -> Int
+  let a (_b _c) = value
+  # warning: `[std.Int]` may lack an item this pattern requires
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let a (_b _c) = value
+  #    |         ^^^^^^^
+  #    |
+  #    = note: it unpacks as `{*std.Int}`, which may have 1 item
+  a
+
+# The last alternative sees what the earlier ones leave
+pub def alternatives value @ ((Str, Str) | (Str,)) -> Str
+  let (a _) | (a) = value
+  a
+
+# Narrowing drops only whole members
+pub def split_schema value @ (Str, ?Str) -> Str
+  let (a _) | (a) = value
+  # warning: `(std.Str, ?std.Str)` may have an item this pattern doesn't take
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let (a _) | (a) = value
+  #    |        ^^^^^^^^^
+  #    |
+  #    = note: it unpacks as `{std.Str, ?std.Str}`, which may have 2 items
+  a
+
+# A schema that can't be exposed would make up `Unknown`
+pub def unknown[S @ {...}] value @ Unpack[S] -> nil
+  let _a _b = value
+  # warning: `std.Unpack[S]` may lack an item this pattern requires
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _a _b = value
+  #    |               ^^^^^
+  #    |
+  #    = note: it unpacks as `S`, which may have 1 item
+  nil
+
+pub def refutable s @ Str -> Str
+  let k _v = s.split "="
+  else return ""
+  k

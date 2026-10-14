@@ -492,6 +492,9 @@ Matching follows the same rules as `if let` and `if bind`, including the
 truthiness test for a single name. The new bindings are not in scope inside
 `else`; an existing outer name is still visible there.
 
+In a [strict](types.md#strict-checking) file, `else` is how to destructure a
+value that may not match.
+
 The `else` body must diverge: return, throw, break, continue, or call something
 that does not return. Reaching its end raises `std.RuntimeError`, naming the
 `let` or `bind` statement. The type checker warns when it finds a path to that

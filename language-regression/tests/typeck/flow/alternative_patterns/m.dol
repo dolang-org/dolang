@@ -35,3 +35,41 @@ pub def nested value @ Tuple[Sym, (1 | 2 | 3)]
   if let (k (1 | 2) | k _) = value
     let _ = k
     #       ^: flow std.Sym
+
+# A pattern's mismatch drops the members it always matches
+pub def mismatch value @ (Tuple[Int, Int] | Tuple[Str] | Array[Int])
+  if let _a _b = value
+    nil
+  else
+    let _ = value
+    #       ^~~~~: flow (std.Str,) | [std.Int]
+
+pub def mismatch_defaults value @ (Tuple[Int] | Tuple[Int, Int] | Tuple[Int, Int, Int])
+  if let (_a _b = 0) = value
+    nil
+  else
+    let _ = value
+    #       ^~~~~: flow (std.Int, std.Int, std.Int)
+
+pub def mismatch_keyed value @ ({a: Int, b: Int} | {a: Int} | Dict[Sym, Int])
+  if let :a b: _b = value
+    a
+  else
+    let _ = value
+    #       ^~~~~: flow std.Dict[std.Sym, std.Int] | {a: std.Int}
+
+# A sub-pattern's mismatch doesn't narrow the whole
+pub def mismatch_nested value @ (Tuple[Int, Tuple[Int, Int]] | Tuple[Int])
+  if let _a (_b _c) = value
+    nil
+  else
+    let _ = value
+    #       ^~~~~: flow (std.Int, (std.Int, std.Int)) | (std.Int,)
+
+pub def mismatch_arms value @ (Tuple[Int, Int] | Tuple[Str]) -> Str
+  match value
+    _ _ do "pair"
+    other do
+      let _ = other
+      #       ^~~~~: flow (std.Str,)
+      "single"
