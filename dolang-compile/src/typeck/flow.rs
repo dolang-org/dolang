@@ -956,10 +956,20 @@ impl<'a, 'u> Flow<'a, 'u> {
                     }
                 }
             }
-            &Step::Escape { span, kind, except } => {
+            &Step::Escape {
+                span,
+                kind,
+                except,
+                supers,
+            } => {
                 for &var in &self.ir.func(at.func).fields {
                     if Some(var) != except {
                         self.publish_field(state, var, span, kind);
+                    }
+                }
+                if supers {
+                    for &var in &self.ir.func(at.func).supers {
+                        self.require_super(state, var, span, kind);
                     }
                 }
             }
@@ -1025,6 +1035,26 @@ impl<'a, 'u> Flow<'a, 'u> {
             });
         }
         state.vars[slot].ty = annotation;
+    }
+
+    /// An `(init)`'s receiver becomes observable at `span`: reported unless a
+    /// superclass's flag says it's initialized. It's reported once, so the flag
+    /// says so from here on.
+    fn require_super(&mut self, state: &mut State, var: VarId, span: Span, kind: EscapeKind) {
+        let slot = self.slot(var);
+        let ty = state.vars[slot].ty;
+        let initialized = self.db.intern(Type::Literal(Literal::Bool(true)));
+        if self.observing()
+            && ty != self.db.bottom()
+            && self.relate(ty, initialized).status != Status::Proven
+        {
+            let Origin::Super(class) = self.ir.var(var).origin else {
+                unreachable!("an `(init)` tracks superclasses")
+            };
+            let class = self.shown(self.db.intern(Type::Decl(class)));
+            self.problem(Problem::SuperUninitialized { span, class, kind });
+        }
+        state.vars[slot].ty = initialized;
     }
 
     /// Whether assigning a variable joins its accumulator: an ivar's assignment by

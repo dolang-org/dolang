@@ -118,6 +118,13 @@ pub(crate) enum Problem {
         annotation: Shown,
         kind: EscapeKind,
     },
+    /// An `(init)`'s receiver becoming observable before one of its class's
+    /// superclasses is initialized
+    SuperUninitialized {
+        span: Span,
+        class: String,
+        kind: EscapeKind,
+    },
 }
 
 /// How a member is misused
@@ -170,7 +177,8 @@ impl Report for Problem {
             | Problem::InexactConstruction { span, .. }
             | Problem::MissingExport { span, .. }
             | Problem::Unassigned { span, .. }
-            | Problem::Uninitialized { span, .. } => span,
+            | Problem::Uninitialized { span, .. }
+            | Problem::SuperUninitialized { span, .. } => span,
         }
     }
 
@@ -330,17 +338,28 @@ impl Report for Problem {
                 kind,
                 ..
             } => {
-                let event = match kind {
-                    EscapeKind::Use => "`self` escapes",
-                    EscapeKind::Return => "`(init)` returns",
-                    EscapeKind::Capture => "a function capturing `self` is created",
-                    EscapeKind::Default => "`self` escapes from the default `(init)`",
-                };
+                let event = kind.event();
                 write!(
                     w,
                     "{event} while field `{field}` is {found}, which doesn't fit {annotation}"
                 )
             }
+            Problem::SuperUninitialized { class, kind, .. } => {
+                let event = kind.event();
+                write!(w, "{event} before superclass `{class}` is initialized")
+            }
+        }
+    }
+}
+
+impl EscapeKind {
+    /// How the receiver becomes observable, as a diagnostic's sentence begins
+    fn event(self) -> &'static str {
+        match self {
+            EscapeKind::Use => "`self` escapes",
+            EscapeKind::Return => "`(init)` returns",
+            EscapeKind::Capture => "a function capturing `self` is created",
+            EscapeKind::Default => "`self` escapes from the default `(init)`",
         }
     }
 }

@@ -24,8 +24,8 @@ pub class Shape
     "shape"
 
 pub class Circle: Shape
-  def (init) _self _radius @ Int
-    nil
+  def (init) self _radius @ Int
+    Shape.(init) $self circle
 
   # Its receiver is `Type[Circle]`, which overrides `Type[Shape]`'s
   #[class]

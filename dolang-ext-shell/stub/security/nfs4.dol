@@ -62,6 +62,9 @@ pub class Mask: Iterable[MaskBit]
   pub def (call) cls ...flags @ (MaskBit | Iterable[MaskBit]) -> Mask
     ...
 
+  pub def (init) self ...flags @ (MaskBit | Iterable[MaskBit])
+    ...
+
   # Tests whether all flags named by `flag` are set.
   pub def contains self flag @ MaskBit -> Bool
     ...
@@ -122,6 +125,9 @@ pub class Flags: Iterable[FlagBit]
 
   #[class]
   pub def (call) cls ...flags @ (FlagBit | Iterable[FlagBit]) -> Flags
+    ...
+
+  pub def (init) self ...flags @ (FlagBit | Iterable[FlagBit])
     ...
 
   # Tests whether all flags named by `flag` are set.

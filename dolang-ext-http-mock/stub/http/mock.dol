@@ -138,6 +138,9 @@ pub class Server: Func
   pub def (call) self ...func
     ...
 
+  pub def (init) self
+    ...
+
   # The server's base URL. Use `/` to build
   # request paths.
   #

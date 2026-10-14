@@ -39,6 +39,10 @@ impl Ir {
                 let hash = if key.private { "#" } else { "" };
                 format!("{hash}{}", db.symbol(key.name))
             }
+            Origin::Super(class) => match db.declaration(class).source.name {
+                Some(name) => format!("super {}", db.symbol(name)),
+                None => format!("super decl{}", class.index()),
+            },
             Origin::Synthetic | Origin::Signature => format!("t{}", var.index()),
         }
     }
@@ -233,8 +237,16 @@ impl Dump<'_, '_> {
                 }
                 Ok(())
             }
-            Step::Escape { kind, except, .. } => {
+            Step::Escape {
+                kind,
+                except,
+                supers,
+                ..
+            } => {
                 write!(out, "escape {kind:?}")?;
+                if !supers {
+                    write!(out, " partial")?;
+                }
                 if let Some(var) = except {
                     write!(out, " except ")?;
                     self.var(out, *var)?;

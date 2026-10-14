@@ -404,6 +404,7 @@ let NO_CONTAINER_ERRORS = $
   - NO CONTAINER FOUND
 
 # Raised when an image reference is malformed.
+#[final]
 pub class InvalidImageReferenceError: RuntimeError
   # The malformed reference.
   pub field ref @ Str = nil
@@ -413,6 +414,7 @@ pub class InvalidImageReferenceError: RuntimeError
     RuntimeError.(init) $self "invalid image reference: $ref"
 
 # Raised when a registry rejects the credentials for an image.
+#[final]
 pub class RegistryAuthError: RuntimeError
   # The image reference.
   pub field ref @ Str = nil
@@ -422,6 +424,7 @@ pub class RegistryAuthError: RuntimeError
     RuntimeError.(init) $self "registry authentication failed: $ref"
 
 # Raised when an image archive cannot be read or written.
+#[final]
 pub class ArchiveError: RuntimeError
   # The archive.
   pub field source @ (Str | Path) = nil
@@ -440,6 +443,7 @@ pub class ArchiveError: RuntimeError
 # catch docker.NoImageError: e
 #   echo "not found: $e.ref"
 # ```
+#[final]
 pub class NoImageError: RuntimeError
   # The image reference that was not found.
   pub field ref @ Str = nil
@@ -452,6 +456,7 @@ pub class NoImageError: RuntimeError
     "<NoImageError ref: $(dbg self.ref)>"
 
 # Raised when a container ID or name cannot be found.
+#[final]
 pub class NoContainerError: RuntimeError
   # The container ID or name that was not found.
   pub field ref @ Str = nil
@@ -464,6 +469,7 @@ pub class NoContainerError: RuntimeError
     "<NoContainerError ref: $(dbg self.ref)>"
 
 # Raised by `Container.wait` when the container exits unsuccessfully.
+#[final]
 pub class ContainerExitError: RuntimeError
   # Numeric container exit status.
   pub field rc @ Int = nil

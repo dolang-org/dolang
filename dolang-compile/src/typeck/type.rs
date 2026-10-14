@@ -1283,6 +1283,41 @@ impl Database {
         self.try_declaration(id).expect("unpopulated declaration")
     }
 
+    /// Whether a class has an instance `(init)`, its own or one it inherits at
+    /// runtime. A runtime supertype is a class's value, never an alias.
+    pub(crate) fn has_init(&self, class: DeclId) -> bool {
+        let init = MemberKey {
+            name: self.intern_symbol("init"),
+            special: true,
+            private: false,
+        };
+        let mut visited = FxHashSet::default();
+        let mut pending = vec![class];
+        while let Some(class) = pending.pop() {
+            if !visited.insert(class) {
+                continue;
+            }
+            let Some(declaration) = self.try_declaration(class) else {
+                continue;
+            };
+            if (declaration.members.iter())
+                .any(|(key, member)| *key == init && member.scope() == Scope::Instance)
+            {
+                return true;
+            }
+            for supertype in declaration.supertypes.iter().filter(|s| s.runtime) {
+                let mut ty = supertype.ty;
+                if let Type::Apply { base, .. } = self.ty(ty) {
+                    ty = *base;
+                }
+                if let Type::Decl(decl) = self.ty(ty) {
+                    pending.push(*decl);
+                }
+            }
+        }
+        false
+    }
+
     pub(crate) fn symbol(&self, id: SymbolId) -> &str {
         match self.base() {
             Some(base) if id.index() < base.symbols.len() => &base.symbols[id],

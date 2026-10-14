@@ -151,6 +151,9 @@ pub(crate) struct Func {
     /// In an `(init)`, the variables standing for the receiver's fields, which a
     /// [`Step::Escape`] checks
     pub(crate) fields: Vec<VarId>,
+    /// In an `(init)`, the variables saying whether each superclass with an
+    /// `(init)` was initialized, which a [`Step::Escape`] checks
+    pub(crate) supers: Vec<VarId>,
 }
 
 /// A `do` block's callable state: variables its parent owns and it captures,
@@ -183,6 +186,9 @@ pub(crate) enum Origin {
     Synthetic,
     /// The state of one of `self`'s fields in `(init)`
     Field(MemberKey),
+    /// Whether `(init)` initialized a superclass of `self`'s class: `true` once
+    /// it did
+    Super(DeclId),
     /// A function's result
     Result,
     /// Part of a `do` block's [`Signature`]
@@ -276,11 +282,14 @@ pub(crate) enum Step {
     /// [`Signature`] and result variables.
     Cache(Vec<VarId>),
     /// In an `(init)`, the receiver becomes observable: each of [`Func::fields`]
-    /// but `except` must fit its annotation, and has it from here on
+    /// but `except` must fit its annotation, and has it from here on. Unless the
+    /// receiver goes to a superclass's `(init)`, which expects it partly
+    /// initialized, each of [`Func::supers`] must be `true` too.
     Escape {
         span: Span,
         kind: EscapeKind,
         except: Option<VarId>,
+        supers: bool,
     },
 }
 
@@ -442,6 +451,7 @@ impl Graph {
             captures: Vec::new(),
             escapes: Vec::new(),
             fields: Vec::new(),
+            supers: Vec::new(),
         }));
         let allocated = self.alloc_var(id, Origin::Result, None);
         debug_assert_eq!(allocated, result);

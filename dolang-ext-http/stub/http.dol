@@ -535,6 +535,18 @@ pub class Client: Func
   pub def (call) self ...options @ Value -> Value
     ...
 
+  pub def (init)
+    self
+    :unix_socket @ Str = nil
+    :proxy @ (Str | (Url | nil)) = nil
+    :cookies @ Bool = nil
+    :ca_cert @ (Str | Bin) = nil
+    :identity @ (Str | Bin) = nil
+    :password @ Str = nil
+    :invalid_certs @ :DANGER_ACCEPT: = nil
+  do
+    ...
+
   # Makes a request without a body.
   #
   # ## Errors
