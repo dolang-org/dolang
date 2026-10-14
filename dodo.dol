@@ -1,4 +1,4 @@
-import sys admin dodo exec toml json proc
+import sys admin dodo exec toml json proc shlex
   fs:
     - Path
     - copy
@@ -7,6 +7,7 @@ import sys admin dodo exec toml json proc
     - remove
     - with_temp_dir
     - symlink_file
+    - home_dir
 
 let MIRI_CRATES = $
   - dolang-bytecode
@@ -71,7 +72,7 @@ def run_cargo ...args
 
 class Spec
   pub field target tuple profile channel target_dir
-  field extra debug
+  field extra debug runner
 
   def (init)
     self args
@@ -87,6 +88,7 @@ class Spec
     self.channel = channel
     self.#extra = extra
     self.#debug = args.debug
+    self.#runner = nil
     let artifact_profile = (self.profile == "bench" && "release" || self.profile)
     self.target_dir = if variant
       (Path("target") / self.tuple / variant / artifact_profile)
@@ -113,6 +115,23 @@ class Spec
       if self.#debug
         --features debug
       ...self.#extra ...rest
+
+  # Runs the interpreter already built for this spec.
+  pub def dolang self ...args
+    if (self.#runner == nil)
+      let cargo_home = env.get CARGO_HOME
+      let config_path = ((cargo_home && Path(cargo_home) || home_dir() / ".cargo") / "config.toml")
+      let runner = if config_path.exists()
+        let Dict("target": Dict(target = {}) ...) = toml.decode $config_path.read()
+        let Dict(target = {}) = target.get $self.tuple default: {}
+        target.get runner default: []
+      else
+        []
+      self.#runner = if (type runner Str)
+        [...shlex.split(runner)]
+      else
+        runner
+    dodo.show ...self.#runner (self.bin "dolang") ...args
 
   pub def cargo_vfs self ...rest
     self.cargo build --bin dolang-vfs --bin dolang-private-polyfill
@@ -254,7 +273,8 @@ def lsp_test spec rest
   with_lsp_bundle $spec do spec.cargo test -p dolang-lsp ...rest
 
 def shell_test spec args
-  spec.cargo_vfs run --bin dolang -- --module-path testlib -m test
+  spec.cargo_vfs build --bin dolang
+  spec.dolang --module-path testlib -m test
     ...(args.args || default_shell_tests args.slow args.release)
 
 # Distribution builds must use the same native-library and CRT settings in
@@ -275,12 +295,14 @@ def typecheck spec rest :all = false
         ...(Path(dir).glob "**/*.dol")
   if (all && sources.len == 0)
     throw "no bundled library sources found"
-  with_build_env $spec do spec.cargo run --bin dolang -- -m compile check
-    if all
-      --strict --no-bundled
-    for dir = dirs
-      --path $dir
-    ...sources ...rest
+  with_build_env $spec do
+    spec.cargo build --bin dolang
+    spec.dolang -m compile check
+      if all
+        --strict --no-bundled
+      for dir = dirs
+        --path $dir
+      ...sources ...rest
 
 def both_test spec args
   typecheck $spec [] all: true
@@ -396,7 +418,8 @@ return $
       collect: true
     do |args|
       let spec = Spec $args
-      spec.cargo_vfs run --bin dolang -- ...args.args
+      spec.cargo_vfs build --bin dolang
+      spec.dolang ...args.args
 
   "cargo-test":
     help: run cargo tests
