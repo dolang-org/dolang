@@ -3,9 +3,13 @@
 use std::fmt::{self, Write};
 
 use crate::{
-    diag::{NoteKind, Severity},
+    diag::{AnnotationKind, NoteKind, Severity},
     source::Span,
-    typeck::{cfg::EscapeKind, report::Report, r#type::Shown},
+    typeck::{
+        cfg::EscapeKind,
+        report::{Annotation, Report},
+        r#type::Shown,
+    },
 };
 
 /// A diagnosed problem, with the types it names rendered
@@ -125,6 +129,9 @@ pub(crate) enum Problem {
         class: String,
         kind: EscapeKind,
     },
+    /// Code that can't run because the call at `call` never returns. Where the
+    /// two are the same, what can't run is what uses the call's result.
+    Unreachable { span: Span, call: Span },
 }
 
 /// How a member is misused
@@ -178,14 +185,28 @@ impl Report for Problem {
             | Problem::MissingExport { span, .. }
             | Problem::Unassigned { span, .. }
             | Problem::Uninitialized { span, .. }
-            | Problem::SuperUninitialized { span, .. } => span,
+            | Problem::SuperUninitialized { span, .. }
+            | Problem::Unreachable { span, .. } => span,
         }
     }
 
     fn severity(&self) -> Severity {
         match self {
-            Self::FmtGap { .. } | Self::Assertion { .. } => Severity::Warning,
+            Self::FmtGap { .. } | Self::Assertion { .. } | Self::Unreachable { .. } => {
+                Severity::Warning
+            }
             _ => Severity::Error,
+        }
+    }
+
+    fn annotations(&self) -> Vec<Annotation> {
+        match *self {
+            Problem::Unreachable { span, call } if span != call => vec![Annotation {
+                kind: AnnotationKind::Context,
+                span: call,
+                message: "any code after this call is unreachable".to_owned(),
+            }],
+            _ => Vec::new(),
         }
     }
 
@@ -348,6 +369,10 @@ impl Report for Problem {
                 let event = kind.event();
                 write!(w, "{event} before superclass `{class}` is initialized")
             }
+            Problem::Unreachable { span, call } if span == call => {
+                write!(w, "this call never returns, so its result is never used")
+            }
+            Problem::Unreachable { .. } => write!(w, "unreachable code"),
         }
     }
 }

@@ -254,6 +254,27 @@ let double = do |x @ Int| -> Int (x * 2)
 let halve = (do |x @ Int| -> Int x // 2)
 ```
 
+A function whose return type is [`Never`](std.Never) doesn't return. The checker
+treats a call to it as it does `throw`: nothing after the call runs, so a field
+assigned on every other path is initialized:
+
+```
+def fail msg @ Str -> std.Never
+  throw msg
+
+class Port
+  pub field number @ Int
+
+  def (init) self number @ Int
+    if (number > 0)
+      self.number = number
+    else
+      fail "port must be positive"
+```
+
+The checker warns about code after such a call, including a statement that
+would use its result, as in `let x = fail "no"`.
+
 ## Casts
 
 `(value @ Type)` checks `value` against `Type` as an annotated binding would,

@@ -15,6 +15,11 @@
 //! A value of bottom type is never produced, so a rule with such an input doesn't
 //! run: its results are bottom. An item of a comprehension is the exception, since
 //! bottom only says that it occurs zero times.
+//!
+//! A call that gives bottom ends the path of the step or terminal making it (see
+//! [`Flow::diverge`]). It's decided never to return only if its rule is decided
+//! and doesn't take a `do` block's result that isn't known yet to be bottom. A
+//! union's alternatives end it only if they all do.
 
 use std::collections::VecDeque;
 
@@ -743,6 +748,21 @@ impl<'a> Flow<'a, '_> {
         expected: Option<TypeId>,
         build: impl Fn(&mut Rule<'_, '_>) -> Vec<Term>,
     ) -> Vec<TypeId> {
+        self.decide(at, span, expected, build).0
+    }
+
+    /// Run a rule as [`Flow::conclude`] does, also saying whether its results are
+    /// decided: solved, or defaulted without an unresolved check and without
+    /// taking a `do` block's result that isn't known yet to be bottom. A decided
+    /// bottom is a value that's never produced, where an undecided one only
+    /// stands in for what isn't known yet.
+    fn decide(
+        &mut self,
+        at: At,
+        span: Span,
+        expected: Option<TypeId>,
+        build: impl Fn(&mut Rule<'_, '_>) -> Vec<Term>,
+    ) -> (Vec<TypeId>, bool) {
         // Each run has a budget of its own
         let gases = MonoVec::new();
         let run = |seed: bool, default: bool| {
@@ -823,8 +843,8 @@ impl<'a> Flow<'a, '_> {
         let reified: Option<Vec<TypeId>> = (results.iter())
             .map(|&term| solver.reify(term).ok())
             .collect();
-        let values: Vec<TypeId> = match reified {
-            Some(values) if !contradicted && !unresolved => values,
+        let (values, decided): (Vec<TypeId>, bool) = match reified {
+            Some(values) if !contradicted && !unresolved => (values, true),
             _ if self.defaulting || self.observing() => {
                 (solver, results, checks, lambdas, outcomes, _) = attempt(true, Some(seeded));
                 let reified: Vec<_> = (results.iter())
@@ -837,24 +857,25 @@ impl<'a> Flow<'a, '_> {
                 if reified.contains(&None) && decided {
                     self.gap(span, "a type nothing determines");
                 }
-                (reified.into_iter())
+                let values = (reified.into_iter())
                     .map(|ty| ty.unwrap_or(self.db.unknown()))
-                    .collect()
+                    .collect();
+                (values, decided && lambdas.1.is_empty())
             }
             _ => {
                 self.unsettled.insert((at.block, at.ctx));
-                vec![self.db.bottom(); results.len()]
+                (vec![self.db.bottom(); results.len()], false)
             }
         };
         if self.observing() {
             self.blame(&solver, &checks, &outcomes[..checks.len()]);
-            return values;
+            return (values, decided);
         }
         let (passed, pending) = lambdas;
         for (var, ty) in self::passed(&mut solver, self.db, &results, &passed, &pending) {
             self.join(var, ty);
         }
-        values
+        (values, decided)
     }
 
     /// Diagnose the checks a rule's final run contradicted, and record the ones it
@@ -1419,8 +1440,11 @@ impl<'a> Flow<'a, '_> {
         let expectations = expectations.unwrap_or_else(|| vec![None; values.held.len()]);
         self.release(at, state, &mut values, &expectations);
         if values.never {
+            self.diverge(call.span, false);
             return bottom;
         }
+        // An alternative that never returns ends the path only if they all do
+        let diverged = self.diverged;
         let mut result = bottom;
         for (target, callee) in targets.iter().zip(callees) {
             received(&mut values, &target.receivers, bottom);
@@ -1438,6 +1462,9 @@ impl<'a> Flow<'a, '_> {
                 self.show(given)
             );
             result = self.solver(&Gas::default()).lub(result, given);
+        }
+        if result != bottom {
+            self.diverged = diverged;
         }
         result
     }
@@ -1472,13 +1499,14 @@ impl<'a> Flow<'a, '_> {
             self.release(at, state, values, &expectations);
         }
         if callee_type == bottom || values.never {
+            self.diverge(span, false);
             return bottom;
         }
         if !callable {
             self.untyped(at, values);
             return unknown;
         }
-        let given = self.conclude(at, span, expected, |rule| {
+        let (given, decided) = self.decide(at, span, expected, |rule| {
             vec![call_constraint(
                 rule,
                 values,
@@ -1488,7 +1516,11 @@ impl<'a> Flow<'a, '_> {
                 input,
                 output,
             )]
-        })[0];
+        });
+        let given = given[0];
+        if given == bottom {
+            self.diverge(span, decided);
+        }
         trace!(
             "{}: call of {} gives {}",
             self.tables.locate(self.unit, span),

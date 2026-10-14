@@ -588,7 +588,10 @@ impl<'u> Scope<'_, '_, 'u> {
         let (_, body, exit) = self.next_head(node, &frame);
         self.switch(body);
         let items = self.body_items(&frame, &node.body.elems, items);
-        self.end(Terminal::Branch(exit));
+        self.end(Terminal::Branch {
+            target: exit,
+            span: Span::INVALID,
+        });
         self.switch(exit);
         self.ctx.hoist = hoist;
         Item::For {
@@ -624,14 +627,20 @@ impl<'u> Scope<'_, '_, 'u> {
             self.switch(then);
             arms.push(self.body_items(&frame, &branch.body.elems, items));
             spans.push(branch.span);
-            self.end(Terminal::Branch(join));
+            self.end(Terminal::Branch {
+                target: join,
+                span: Span::INVALID,
+            });
             self.switch(fallback);
         }
         let mut else_ = match &node.else_branch {
             Some((body, _)) => {
                 let frame = self.body_frame(body);
                 let items = self.body_items(&frame, &body.elems, items);
-                self.end(Terminal::Branch(join));
+                self.end(Terminal::Branch {
+                    target: join,
+                    span: Span::INVALID,
+                });
                 self.switch(join);
                 items
             }
@@ -699,7 +708,10 @@ impl<'u> Scope<'_, '_, 'u> {
                 } else {
                     self.emit(Step::Eval(value));
                 }
-                self.end(Terminal::Branch(then));
+                self.end(Terminal::Branch {
+                    target: then,
+                    span: Span::INVALID,
+                });
             }
             node => {
                 let narrowing = self.narrowing(node);
@@ -725,7 +737,10 @@ impl<'u> Scope<'_, '_, 'u> {
         let block = self.block();
         let mut landing = self.graph().block_mut(block);
         landing.steps.extend(assumes.into_iter().map(Step::Assume));
-        landing.terminal = Terminal::Branch(target);
+        landing.terminal = Terminal::Branch {
+            target,
+            span: Span::INVALID,
+        };
         block
     }
 

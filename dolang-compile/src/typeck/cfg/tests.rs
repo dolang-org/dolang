@@ -58,7 +58,14 @@ fn returning(graph: &Graph) -> FuncId {
         entry,
         result(graph, func, ExprKind::Literal(Literal::Nil)),
     );
-    terminate(graph, entry, Terminal::Branch(exit));
+    terminate(
+        graph,
+        entry,
+        Terminal::Branch {
+            target: exit,
+            span: Span::INVALID,
+        },
+    );
     func
 }
 
@@ -87,7 +94,14 @@ fn well_formed() {
         lambda_entry,
         result(&graph, lambda, ExprKind::Var(x)),
     );
-    terminate(&graph, lambda_entry, Terminal::Branch(lambda_exit));
+    terminate(
+        &graph,
+        lambda_entry,
+        Terminal::Branch {
+            target: lambda_exit,
+            span: Span::INVALID,
+        },
+    );
 
     // Only the short circuit spills: `f` and the first `x` stay in the tree
     push(&graph, entry, Step::Push(expr(ExprKind::Var(x))));
@@ -106,7 +120,14 @@ fn well_formed() {
     push(&graph, rhs, Step::Pop);
     let g = call(expr(ExprKind::Lambda(lambda)), Vec::new());
     push(&graph, rhs, Step::Push(g));
-    terminate(&graph, rhs, Terminal::Branch(join));
+    terminate(
+        &graph,
+        rhs,
+        Terminal::Branch {
+            target: join,
+            span: Span::INVALID,
+        },
+    );
 
     // `try … finally`, whose body calls and falls through
     let value = call(
@@ -129,7 +150,14 @@ fn well_formed() {
     );
     terminate(&graph, finally, Terminal::EndFinally);
     push(&graph, after, result(&graph, top, ExprKind::Var(x)));
-    terminate(&graph, after, Terminal::Branch(exit));
+    terminate(
+        &graph,
+        after,
+        Terminal::Branch {
+            target: exit,
+            span: Span::INVALID,
+        },
+    );
 
     let ir = graph.freeze();
     assert_eq!(ir.validate(), Ok(()));
@@ -213,7 +241,14 @@ fn non_local() {
             value: expr(ExprKind::Literal(Literal::Nil)),
         }),
     );
-    terminate(&graph, func_entry, Terminal::Branch(header));
+    terminate(
+        &graph,
+        func_entry,
+        Terminal::Branch {
+            target: header,
+            span: Span::INVALID,
+        },
+    );
     terminate(
         &graph,
         header,
@@ -234,16 +269,34 @@ fn non_local() {
         },
     );
     let breaking = closure(&graph, func);
-    terminate(&graph, graph.func(breaking).entry, Terminal::Escape);
+    terminate(
+        &graph,
+        graph.func(breaking).entry,
+        Terminal::Escape(Span::INVALID),
+    );
     let each = call(expr(ExprKind::Lambda(breaking)), Vec::new());
     push(&graph, call_block, Step::Eval(each));
-    terminate(&graph, call_block, Terminal::Branch(header));
+    terminate(
+        &graph,
+        call_block,
+        Terminal::Branch {
+            target: header,
+            span: Span::INVALID,
+        },
+    );
     push(
         &graph,
         loop_exit,
         result(&graph, func, ExprKind::Literal(Literal::Nil)),
     );
-    terminate(&graph, loop_exit, Terminal::Branch(func_exit));
+    terminate(
+        &graph,
+        loop_exit,
+        Terminal::Branch {
+            target: func_exit,
+            span: Span::INVALID,
+        },
+    );
     assert_eq!(graph.freeze().validate(), Ok(()));
 }
 
@@ -253,7 +306,7 @@ fn non_local_outside_closure() {
     let graph = Graph::new();
     let top = returning(&graph);
     let block = graph.alloc_block(top, None, 0);
-    terminate(&graph, block, Terminal::Escape);
+    terminate(&graph, block, Terminal::Escape(Span::INVALID));
     assert_eq!(graph.freeze().validate(), Err(Invalid::NonLocal(block)));
 
     // Returning from a function that doesn't enclose the closure
@@ -281,7 +334,14 @@ fn foreign_edge() {
     let lambda_entry = graph.func(lambda).entry;
     // A function's block can't branch into a closure it encloses
     let entry = graph.func(top).entry;
-    terminate(&graph, entry, Terminal::Branch(lambda_entry));
+    terminate(
+        &graph,
+        entry,
+        Terminal::Branch {
+            target: lambda_entry,
+            span: Span::INVALID,
+        },
+    );
     assert_eq!(
         graph.freeze().validate(),
         Err(Invalid::ForeignEdge {
@@ -296,7 +356,14 @@ fn foreign_edge() {
     let lambda = closure(&graph, top);
     let lambda_entry = graph.func(lambda).entry;
     let exit = graph.func(top).exit;
-    terminate(&graph, lambda_entry, Terminal::Branch(exit));
+    terminate(
+        &graph,
+        lambda_entry,
+        Terminal::Branch {
+            target: exit,
+            span: Span::INVALID,
+        },
+    );
     assert_eq!(
         graph.freeze().validate(),
         Err(Invalid::ForeignEdge {
@@ -314,7 +381,14 @@ fn finally_depths() {
     let entry = graph.func(top).entry;
     let finally = graph.alloc_block(top, None, 1);
     terminate(&graph, finally, Terminal::EndFinally);
-    terminate(&graph, entry, Terminal::Branch(finally));
+    terminate(
+        &graph,
+        entry,
+        Terminal::Branch {
+            target: finally,
+            span: Span::INVALID,
+        },
+    );
     assert_eq!(
         graph.freeze().validate(),
         Err(Invalid::Deeper {
@@ -421,7 +495,14 @@ fn variables() {
         (func.entry, func.exit)
     };
     push(&graph, lambda_entry, Step::Push(expr(ExprKind::Var(x))));
-    terminate(&graph, lambda_entry, Terminal::Branch(lambda_exit));
+    terminate(
+        &graph,
+        lambda_entry,
+        Terminal::Branch {
+            target: lambda_exit,
+            span: Span::INVALID,
+        },
+    );
     assert_eq!(
         graph.freeze().validate(),
         Err(Invalid::Var {
@@ -456,7 +537,14 @@ fn variables() {
     graph.func_mut(lambda).params = Pattern::Bind(x);
     let lambda_exit = graph.func(lambda).exit;
     let lambda_entry = graph.func(lambda).entry;
-    terminate(&graph, lambda_entry, Terminal::Branch(lambda_exit));
+    terminate(
+        &graph,
+        lambda_entry,
+        Terminal::Branch {
+            target: lambda_exit,
+            span: Span::INVALID,
+        },
+    );
     assert_eq!(
         graph.freeze().validate(),
         Err(Invalid::Param {
@@ -478,7 +566,14 @@ fn lambdas() {
             let func = graph.func(func);
             (func.entry, func.exit)
         };
-        terminate(&graph, entry, Terminal::Branch(exit));
+        terminate(
+            &graph,
+            entry,
+            Terminal::Branch {
+                target: exit,
+                span: Span::INVALID,
+            },
+        );
     }
     let entry = graph.func(top).entry;
     graph
@@ -506,7 +601,14 @@ fn captures() {
             let func = graph.func(lambda);
             (func.entry, func.exit)
         };
-        terminate(&graph, entry, Terminal::Branch(exit));
+        terminate(
+            &graph,
+            entry,
+            Terminal::Branch {
+                target: exit,
+                span: Span::INVALID,
+            },
+        );
         let block = if in_parent {
             graph.func(top).entry
         } else {
@@ -537,7 +639,14 @@ fn captures() {
             func.escapes.push(var);
             (func.entry, func.exit)
         };
-        terminate(&graph, entry, Terminal::Branch(exit));
+        terminate(
+            &graph,
+            entry,
+            Terminal::Branch {
+                target: exit,
+                span: Span::INVALID,
+            },
+        );
         graph.freeze().validate()
     }
 
@@ -579,7 +688,14 @@ fn caches() {
             push(&graph, entry, Step::Pop);
         }
         push(&graph, entry, Step::Cache(vec![var]));
-        terminate(&graph, entry, Terminal::Branch(exit));
+        terminate(
+            &graph,
+            entry,
+            Terminal::Branch {
+                target: exit,
+                span: Span::INVALID,
+            },
+        );
         graph.freeze().validate()
     }
 
@@ -629,7 +745,14 @@ fn signatures() {
             });
             (func.entry, func.exit)
         };
-        terminate(&graph, entry, Terminal::Branch(exit));
+        terminate(
+            &graph,
+            entry,
+            Terminal::Branch {
+                target: exit,
+                span: Span::INVALID,
+            },
+        );
         graph.freeze().validate()
     }
 

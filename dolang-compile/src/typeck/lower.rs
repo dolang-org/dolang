@@ -410,7 +410,10 @@ impl<'u> Scope<'_, '_, 'u> {
         match end {
             End::Goto { target, finally } => {
                 let target = self.route(target, finally.as_ref());
-                self.end(Terminal::Branch(target));
+                self.end(Terminal::Branch {
+                    target,
+                    span: Span::INVALID,
+                });
             }
             End::EndFinally => self.end(Terminal::EndFinally),
         }
