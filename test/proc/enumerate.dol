@@ -14,7 +14,6 @@ import proc shell sys uuid
     - pipeline
     - collect
   std:
-    - FieldError
     - StateError
     - Str
     - TypeError
@@ -124,16 +123,15 @@ def open_a_process_by_pid_and_terminate_it()
 
     assert (info.cwd != nil)
 
-    # The platform-specific fields exist only on the platform they describe:
-    # reading the wrong one is a FieldError, not nil.
+    # Platform-specific process fields are nil on the other platform.
     if is_windows
-      assert_throws $FieldError do info.unix_id
+      assert_eq $info.unix_id nil
       assert (info.token_info != nil)
       assert (info.token_info.user_sid != nil)
       assert (info.cmdline_win.contains(nonce))
     else
-      assert_throws $FieldError do info.token_info
-      assert_throws $FieldError do info.cmdline_win
+      assert_eq $info.token_info nil
+      assert_eq $info.cmdline_win nil
       assert (info.unix_id != nil)
       assert (info.unix_id.uid >= 0)
 

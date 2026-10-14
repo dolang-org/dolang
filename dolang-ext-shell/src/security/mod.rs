@@ -51,7 +51,6 @@ use crate::{
     error,
     global::{MacosSecurityGlobal, Nfs4SecurityGlobal, UnixSecurityGlobal, WindowsSecurityGlobal},
     local::Local,
-    util,
 };
 
 pub(crate) fn configure_compiler<'a>(_config: &mut Config<'a>) {}

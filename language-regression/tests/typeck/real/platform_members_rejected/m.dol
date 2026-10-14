@@ -1,0 +1,75 @@
+# dolang: strict
+import @fs fs.unix: unix fs.windows: windows security.windows: win
+# warning: unused variable
+#   --> m.dol:LL:LL
+#    |
+# LL | import @fs fs.unix: unix fs.windows: windows security.windows: win
+#    |                     ^^^^
+# warning: unused variable
+#   --> m.dol:LL:LL
+#    |
+# LL | import @fs fs.unix: unix fs.windows: windows security.windows: win
+#    |                                      ^^^^^^^
+
+pub def constructors sid @ win.Sid mask @ win.AccessMask -> nil
+  let common = win.CommonAce qualifier: :ALLOW: :sid :mask
+  let _ = common.object_type
+  # error: `security.windows.CommonAce` has no member `object_type`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = common.object_type
+  #    |           ^^^^^^^^^^^^^^^^^^
+  win.CommonAce qualifier: :ALLOW: :sid :mask object_type: nil
+  # error: the callee takes no such argument
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   win.CommonAce qualifier: :ALLOW: :sid :mask object_type: nil
+  #    |                                                            ^^^
+  win.ObjectAce qualifier: :OTHER: :sid :mask
+  # error: expected `security.windows.AceQualifier`, found `:OTHER:`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   win.ObjectAce qualifier: :OTHER: :sid :mask
+  #    |                            ^^^^^^^
+  nil
+
+pub def rejected meta @ fs.Metadata filesystem @ fs.FsMetadata entry @ fs.DirEntry ace @ win.Ace -> nil
+  let _ = meta.uid
+  # error: `fs.Metadata` has no member `uid`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = meta.uid
+  #    |           ^^^^^^^^
+  let _ = filesystem.blocks
+  # error: `fs.FsMetadata` has no member `blocks`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = filesystem.blocks
+  #    |           ^^^^^^^^^^^^^^^^^
+  let _ = entry.ino
+  # error: `fs.DirEntry` has no member `ino`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = entry.ino
+  #    |           ^^^^^^^^^
+  let _ = ace.sid
+  # error: `security.windows.Ace` has no member `sid`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = ace.sid
+  #    |           ^^^^^^^
+  let unix_meta = (meta !@ unix.Metadata)
+  let _ = unix_meta.win_attrs
+  # error: `fs.unix.Metadata` has no member `win_attrs`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = unix_meta.win_attrs
+  #    |           ^^^^^^^^^^^^^^^^^^^
+  let windows_meta = (meta !@ windows.Metadata)
+  let _ = windows_meta.mode
+  # error: `fs.windows.Metadata` has no member `mode`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = windows_meta.mode
+  #    |           ^^^^^^^^^^^^^^^^^
+  nil

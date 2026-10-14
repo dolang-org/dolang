@@ -163,10 +163,10 @@ pub class Ace
 
   # Numeric user or group ID.
   #
-  # Raises [`FieldError`](std.FieldError) unless
+  # Returns `nil` unless
   # [`type`](security.unix.Ace.type) is `:USER:` or `:GROUP:`.
   #[getter]
-  pub def id self -> Int
+  pub def id self -> (Int | nil)
     ...
 
   # The entry's permissions.

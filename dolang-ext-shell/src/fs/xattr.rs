@@ -216,7 +216,6 @@ impl<'v> Object<'v> for XattrEntry {
     type TypeAnnex = ();
 
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        let namespace = builder.sym("namespace");
         let size = builder.sym("size");
         let flags = builder.sym("flags");
 
@@ -226,7 +225,7 @@ impl<'v> Object<'v> for XattrEntry {
                 Ok(())
             })
             .get("namespace", move |this, strand, out| {
-                util::option_field(strand, this.annex().inner.namespace(), namespace, out)
+                util::nullable_field(strand, this.annex().inner.namespace(), out)
             })
             .get("size", move |this, strand, out| {
                 util::option_field(strand, this.annex().inner.size(), size, out)

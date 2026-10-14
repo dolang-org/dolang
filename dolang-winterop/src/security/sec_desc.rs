@@ -646,6 +646,7 @@ pub struct AceBuildOptions {
     object_type: Option<Guid>,
     inherited_object_type: Option<Guid>,
     callback: bool,
+    object: bool,
     application_data: Vec<u8>,
 }
 
@@ -658,6 +659,7 @@ impl AceBuildOptions {
             object_type: None,
             inherited_object_type: None,
             callback: false,
+            object: false,
             application_data: Vec::new(),
         }
     }
@@ -677,6 +679,12 @@ impl AceBuildOptions {
     /// Adds an inherited-object-type GUID, selecting an object ACE layout.
     pub fn inherited_object_type(mut self, inherited_object_type: Guid) -> Self {
         self.inherited_object_type = Some(inherited_object_type);
+        self
+    }
+
+    /// Selects an object ACE layout, even without object GUIDs.
+    pub fn object(mut self) -> Self {
+        self.object = true;
         self
     }
 
@@ -743,6 +751,26 @@ impl AceBuf {
         Self::build(AceFamily::Audit, sid, mask, successful, failed, options)
     }
 
+    /// Builds a system-alarm ACE with the same outcome rules as an audit ACE.
+    pub fn alarm(
+        sid: &Sid,
+        mask: AccessMask,
+        successful: bool,
+        failed: bool,
+        options: AceBuildOptions,
+    ) -> Result<Self, AceBuildError> {
+        if !successful && !failed {
+            return Err(AceBuildError::AuditOutcome);
+        }
+        if options
+            .flags
+            .intersects(AceFlags::SUCCESSFUL_ACCESS | AceFlags::FAILED_ACCESS)
+        {
+            return Err(AceBuildError::AuditFlags);
+        }
+        Self::build(AceFamily::Alarm, sid, mask, successful, failed, options)
+    }
+
     fn build(
         family: AceFamily,
         sid: &Sid,
@@ -751,20 +779,26 @@ impl AceBuf {
         failed: bool,
         options: AceBuildOptions,
     ) -> Result<Self, AceBuildError> {
-        let object = options.object_type.is_some() || options.inherited_object_type.is_some();
+        let object = options.object
+            || options.object_type.is_some()
+            || options.inherited_object_type.is_some();
         let type_code = match (family, options.callback, object) {
             (AceFamily::Allow, false, false) => 0,
             (AceFamily::Deny, false, false) => 1,
             (AceFamily::Audit, false, false) => 2,
+            (AceFamily::Alarm, false, false) => 3,
             (AceFamily::Allow, false, true) => 5,
             (AceFamily::Deny, false, true) => 6,
             (AceFamily::Audit, false, true) => 7,
+            (AceFamily::Alarm, false, true) => 8,
             (AceFamily::Allow, true, false) => 9,
             (AceFamily::Deny, true, false) => 10,
             (AceFamily::Allow, true, true) => 11,
             (AceFamily::Deny, true, true) => 12,
             (AceFamily::Audit, true, false) => 13,
+            (AceFamily::Alarm, true, false) => 14,
             (AceFamily::Audit, true, true) => 15,
+            (AceFamily::Alarm, true, true) => 16,
         };
         let mut flags = options.flags;
         if successful {
@@ -813,6 +847,7 @@ enum AceFamily {
     Allow,
     Deny,
     Audit,
+    Alarm,
 }
 
 impl Deref for AceBuf {

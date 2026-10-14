@@ -3,6 +3,7 @@
 
 import fs
 import security.windows:
+  - @Sid
   - @SecDesc
   - @SecDescSpec
 
@@ -284,3 +285,106 @@ pub def update_sec_desc
   **options @ Value
 do
   ...
+
+# Windows directory entries.
+pub class DirEntry: fs.DirEntry
+
+# Windows filesystem metadata.
+pub class FsMetadata: fs.FsMetadata
+  # Raw Windows volume flags.
+  #[getter]
+  pub def win_flags self -> Int
+    ...
+
+  # Raw Windows volume serial number.
+  #[getter]
+  pub def volume_serial_number self -> Int
+    ...
+
+  # Maximum path component length for the volume.
+  #
+  #[getter]
+  pub def component_length_max self -> Int
+    ...
+
+# Windows file metadata.
+pub class Metadata: fs.Metadata
+  # Whether the platform hidden flag is set.
+  #[getter]
+  pub def hidden self -> Bool
+    ...
+
+  # Raw Windows file attribute bitmask.
+  #[getter]
+  pub def win_attrs self -> Int
+    ...
+
+  # Whether the readonly attribute is set. Windows
+  #[getter]
+  pub def readonly self -> Bool
+    ...
+
+  # Whether the system attribute is set. Windows
+  #[getter]
+  pub def system self -> Bool
+    ...
+
+  # Whether the archive attribute is set. Windows
+  #[getter]
+  pub def archive self -> Bool
+    ...
+
+  # Whether the reparse-point attribute is set.
+  #
+  #[getter]
+  pub def reparse_point self -> Bool
+    ...
+
+  # Whether sparse allocation is enabled. Windows
+  #[getter]
+  pub def sparse self -> Bool
+    ...
+
+  # Whether the encrypted attribute is set. Windows
+  #[getter]
+  pub def encrypted self -> Bool
+    ...
+
+  # Whether the temporary attribute is set. Windows
+  #[getter]
+  pub def temporary self -> Bool
+    ...
+
+  # Whether the offline attribute is set. Windows
+  #[getter]
+  pub def offline self -> Bool
+    ...
+
+  # Whether the not-content-indexed attribute is
+  # set.
+  #[getter]
+  pub def not_content_indexed self -> Bool
+    ...
+
+  # Owner: the uid as an [`Int`](std.Int) on Unix, or the owner
+  # [`Sid`](security.windows.Sid) on Windows.
+  #
+  # This representation matches the `owner` argument accepted by
+  # [`update_metadata`](fs.update_metadata).
+  #[getter]
+  pub def owner self -> (Sid | nil)
+    ...
+
+  # Owning group: the gid as an [`Int`](std.Int) on Unix, or the primary
+  # group [`Sid`](security.windows.Sid) on Windows.
+  #
+  # This representation matches the `group` argument accepted by
+  # [`update_metadata`](fs.update_metadata).
+  #[getter]
+  pub def group self -> (Sid | nil)
+    ...
+
+  # Whether the platform compressed flag is set.
+  #[getter]
+  pub def compressed self -> Bool
+    ...

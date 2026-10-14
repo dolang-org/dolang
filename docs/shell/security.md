@@ -225,8 +225,11 @@ Windows file ownership and access control are represented by
 - `SecDesc` carries selected owner, group, DACL, and SACL components plus
   native control flags.
 - `Acl` is an immutable ordered collection of access-control entries.
-- `Ace` exposes its trustee SID, access mask, inheritance flags, and native
-  ACE type.
+- `Ace` exposes the header flags and native entry type. `KnownAce` adds the
+  trustee SID and access mask. `CommonAce` and `ObjectAce` add a qualifier
+  and callback status; only `ObjectAce` exposes object GUIDs.
+- Construct qualified entries with `CommonAce` or `ObjectAce`, or use
+  declarative ACE specs. `CustomAce` preserves uninterpreted entries.
 
 Read selected components with
 [`fs.windows.sec_desc`](fs.windows.sec_desc):

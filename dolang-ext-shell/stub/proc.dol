@@ -137,8 +137,7 @@ pub class Error: std.RuntimeError
   #   assert_eq $err.signal 15
   # ```
   #
-  # Unix only: reading it against a Windows target raises
-  # [`FieldError`](std.FieldError).
+  # Returns `nil` for a Windows target.
   #[getter]
   pub def signal self -> (Int | nil)
     ...
@@ -216,8 +215,7 @@ pub class Info
   # The process
   # credentials.
   #
-  # Unix only: reading it on a record captured from another platform raises
-  # [`FieldError`](std.FieldError). On macOS, `groups` is capped at 16
+  # Returns `nil` on non-Unix targets. On macOS, `groups` is capped at 16
   # entries.
   #[getter]
   pub def unix_id self -> (Identity | nil)
@@ -225,8 +223,7 @@ pub class Info
 
   # The command line as a single string.
   #
-  # Windows only: reading it on a record captured from another platform raises
-  # [`FieldError`](std.FieldError).
+  # Returns `nil` on non-Windows targets.
   #
   # ```
   # let p = proc.open $pid
@@ -239,8 +236,7 @@ pub class Info
   # The
   # process access token.
   #
-  # Windows only: reading it on a record captured from another platform raises
-  # [`FieldError`](std.FieldError).
+  # Returns `nil` on non-Windows targets.
   #[getter]
   pub def token_info self -> (TokenInfo | nil)
     ...

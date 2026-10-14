@@ -1,4 +1,5 @@
 use super::*;
+use crate::util;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SecInfo(pub WinSecInfo);
@@ -698,22 +699,17 @@ impl<'v> ArrayLike<'v> for AclAces {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let global = strand.state::<WindowsSecurityGlobal<'v>>();
-        global
-            .types
-            .ace
-            .create_with_annex(strand, Ace, AceAnnex::InAcl(index), &mut out);
-        global
-            .types
-            .ace
-            .cast(&out)
-            .unwrap()
-            .enter_sync(strand, |strand, ace| {
-                Output::set(
-                    strand,
-                    Mut::slot_mut::<0>(&mut ace.borrow_mut_unwrap()),
-                    this,
-                );
-            });
+        let kind = with_acl(this, strand, |acl| {
+            ace_kind(acl.aces().nth(index).expect("normalized ACE index"))
+        })?;
+        create_ace(
+            strand,
+            global,
+            kind,
+            AceAnnex::InAcl(index),
+            Some(this),
+            &mut out,
+        );
         Ok(())
     }
 }
@@ -742,12 +738,9 @@ impl<'v> Object<'v> for Acl {
         iterable.iter(strand, &mut out).await?;
         let mut aces = Vec::new();
         while out.next(strand, &mut iterable).await? {
-            let ace = global.types.ace.cast(&iterable).ok_or_else(|| {
+            let value = ace_value_to_owned(strand, global, &iterable).ok_or_else(|| {
                 Error::type_error(strand, "Acl: iterable must contain security.windows.Ace")
-            })?;
-            let value = ace.enter_sync(strand, |strand, ace| {
-                with_ace(ace, strand, VfsAce::to_owned)
-            })?;
+            })??;
             aces.push(value);
         }
         let acl = VfsAclBuf::from_aces(&aces, revision)
@@ -792,7 +785,99 @@ pub(crate) enum AceAnnex {
     Owned(VfsAceBuf),
 }
 
-pub(crate) struct Ace;
+pub(crate) const ACE_BASE: u8 = 0;
+pub(crate) const ACE_KNOWN: u8 = 1;
+pub(crate) const ACE_QUALIFIED: u8 = 2;
+pub(crate) const ACE_COMMON: u8 = 3;
+pub(crate) const ACE_OBJECT: u8 = 4;
+pub(crate) const ACE_CUSTOM: u8 = 5;
+pub(crate) const ACE_MANDATORY_LABEL: u8 = 6;
+pub(crate) const ACE_RESOURCE_ATTRIBUTE: u8 = 7;
+pub(crate) const ACE_SCOPED_POLICY_ID: u8 = 8;
+pub(crate) const ACE_PROCESS_TRUST_LABEL: u8 = 9;
+pub(crate) const ACE_ACCESS_FILTER: u8 = 10;
+
+pub(crate) struct Ace<const KIND: u8 = ACE_BASE>;
+
+fn ace_kind(ace: &VfsAce) -> u8 {
+    match ace.type_code() {
+        0..=3 | 9..=10 | 13..=14 => ACE_COMMON,
+        5..=8 | 11..=12 | 15..=16 => ACE_OBJECT,
+        17 => ACE_MANDATORY_LABEL,
+        18 => ACE_RESOURCE_ATTRIBUTE,
+        19 => ACE_SCOPED_POLICY_ID,
+        20 => ACE_PROCESS_TRUST_LABEL,
+        21 => ACE_ACCESS_FILTER,
+        _ => ACE_CUSTOM,
+    }
+}
+
+fn ace_value_to_owned<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
+    value: &Value<'v>,
+) -> Option<Result<'v, 's, VfsAceBuf>> {
+    macro_rules! cast {
+        ($field:ident) => {
+            if let Some(ace) = global.types.$field.cast(value) {
+                return Some(ace.enter_sync(strand, |strand, ace| {
+                    with_ace(ace, strand, VfsAce::to_owned)
+                }));
+            }
+        };
+    }
+    cast!(common_ace);
+    cast!(object_ace);
+    cast!(custom_ace);
+    cast!(mandatory_label_ace);
+    cast!(resource_attribute_ace);
+    cast!(scoped_policy_id_ace);
+    cast!(process_trust_label_ace);
+    cast!(access_filter_ace);
+    None
+}
+
+fn create_ace<'v>(
+    strand: &mut Strand<'v, '_>,
+    global: State<'v, WindowsSecurityGlobal<'v>>,
+    kind: u8,
+    annex: AceAnnex,
+    parent: Option<Instance<'v, '_, Acl>>,
+    out: &mut Slot<'v, '_>,
+) {
+    macro_rules! create {
+        ($field:ident, $kind:ident) => {{
+            global
+                .types
+                .$field
+                .create_with_annex(strand, Ace::<$kind>, annex, &mut *out);
+            if let Some(parent) = parent {
+                global
+                    .types
+                    .$field
+                    .cast(out)
+                    .unwrap()
+                    .enter_sync(strand, |strand, ace| {
+                        Output::set(
+                            strand,
+                            Mut::slot_mut::<0>(&mut ace.borrow_mut_unwrap()),
+                            parent,
+                        );
+                    });
+            }
+        }};
+    }
+    match kind {
+        ACE_COMMON => create!(common_ace, ACE_COMMON),
+        ACE_OBJECT => create!(object_ace, ACE_OBJECT),
+        ACE_MANDATORY_LABEL => create!(mandatory_label_ace, ACE_MANDATORY_LABEL),
+        ACE_RESOURCE_ATTRIBUTE => create!(resource_attribute_ace, ACE_RESOURCE_ATTRIBUTE),
+        ACE_SCOPED_POLICY_ID => create!(scoped_policy_id_ace, ACE_SCOPED_POLICY_ID),
+        ACE_PROCESS_TRUST_LABEL => create!(process_trust_label_ace, ACE_PROCESS_TRUST_LABEL),
+        ACE_ACCESS_FILTER => create!(access_filter_ace, ACE_ACCESS_FILTER),
+        _ => create!(custom_ace, ACE_CUSTOM),
+    }
+}
 
 fn ace_u32<'v, 's>(
     strand: &mut Strand<'v, 's>,
@@ -897,8 +982,8 @@ fn ace_bool<'v, 's>(
         .ok_or_else(|| Error::type_error(strand, format!("{path}: expected Bool")))
 }
 
-fn with_ace<'v, 's, T>(
-    this: Instance<'v, '_, Ace>,
+fn with_ace<'v, 's, T, const KIND: u8>(
+    this: Instance<'v, '_, Ace<KIND>>,
     strand: &mut Strand<'v, 's>,
     f: impl FnOnce(&VfsAce) -> T,
 ) -> Result<'v, 's, T> {
@@ -927,8 +1012,20 @@ fn with_ace<'v, 's, T>(
     })
 }
 
-impl<'v> Object<'v> for Ace {
-    const NAME: &'v str = "Ace";
+impl<'v, const KIND: u8> Object<'v> for Ace<KIND> {
+    const NAME: &'v str = match KIND {
+        ACE_KNOWN => "KnownAce",
+        ACE_QUALIFIED => "QualifiedAce",
+        ACE_COMMON => "CommonAce",
+        ACE_OBJECT => "ObjectAce",
+        ACE_CUSTOM => "CustomAce",
+        ACE_MANDATORY_LABEL => "MandatoryLabelAce",
+        ACE_RESOURCE_ATTRIBUTE => "ResourceAttributeAce",
+        ACE_SCOPED_POLICY_ID => "ScopedPolicyIdAce",
+        ACE_PROCESS_TRUST_LABEL => "ProcessTrustLabelAce",
+        ACE_ACCESS_FILTER => "AccessFilterAce",
+        _ => "Ace",
+    };
     const MODULE: &'v str = "security.windows";
     const SLOTS: usize = 1;
     type Annex = AceAnnex;
@@ -941,178 +1038,157 @@ impl<'v> Object<'v> for Ace {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        if KIND != ACE_COMMON && KIND != ACE_OBJECT {
+            return Err(Error::not_supported(strand));
+        }
         let global = strand.state::<WindowsSecurityGlobal<'v>>();
-        let allow_sym = global.syms.allow;
-        let deny_sym = global.syms.deny;
-        let audit_sym = global.syms.audit;
         let mask_sym = global.syms.mask;
         let flags_sym = global.syms.flags;
-        let object_type_sym = global.syms.object_type;
-        let inherited_object_type_sym = global.syms.inherited_object_type;
         let callback_sym = global.syms.callback;
         let application_data_sym = global.syms.application_data;
         let successful_sym = global.syms.successful;
         let failed_sym = global.syms.failed;
+        let object_type_sym = global.syms.object_type;
+        let inherited_object_type_sym = global.syms.inherited_object_type;
+        let qualifier = global.syms.qualifier;
+        let sid = global.syms.sid;
         let (
-            [mask_value],
+            [qualifier_value, sid_value, mask_value],
             [
-                allow_value,
-                deny_value,
-                audit_value,
-                flags_value,
-                object_type_value,
-                inherited_value,
-                callback_value,
-                application_value,
-                successful_value,
-                failed_value,
+                flags,
+                callback,
+                data,
+                successful,
+                failed,
+                object_type,
+                inherited_object_type,
             ],
         ) = unpack!(
             strand,
             args,
             0,
             0,
+            qualifier,
+            sid,
             mask_sym,
-            allow_sym = None,
-            deny_sym = None,
-            audit_sym = None,
             flags_sym = None,
-            object_type_sym = None,
-            inherited_object_type_sym = None,
             callback_sym = None,
             application_data_sym = None,
             successful_sym = None,
-            failed_sym = None
+            failed_sym = None,
+            object_type_sym = None,
+            inherited_object_type_sym = None
         )?;
-
-        enum Trustee {
-            Allow(VfsSid),
-            Deny(VfsSid),
-            Audit(VfsSid),
-        }
-        let trustee = match (
-            allow_value.as_deref(),
-            deny_value.as_deref(),
-            audit_value.as_deref(),
-        ) {
-            (Some(value), None, None) => Trustee::Allow(
-                global
-                    .types
-                    .sid
-                    .cast(value)
-                    .ok_or_else(|| {
-                        Error::type_error(strand, "Ace.allow: expected security.windows.Sid")
-                    })?
-                    .enter_sync(strand, |_strand, sid| (*sid.annex()).clone()),
-            ),
-            (None, Some(value), None) => Trustee::Deny(
-                global
-                    .types
-                    .sid
-                    .cast(value)
-                    .ok_or_else(|| {
-                        Error::type_error(strand, "Ace.deny: expected security.windows.Sid")
-                    })?
-                    .enter_sync(strand, |_strand, sid| (*sid.annex()).clone()),
-            ),
-            (None, None, Some(value)) => Trustee::Audit(
-                global
-                    .types
-                    .sid
-                    .cast(value)
-                    .ok_or_else(|| {
-                        Error::type_error(strand, "Ace.audit: expected security.windows.Sid")
-                    })?
-                    .enter_sync(strand, |_strand, sid| (*sid.annex()).clone()),
-            ),
-            (None, None, None) => {
-                return Err(Error::value(
-                    strand,
-                    "Ace: expected one of allow, deny, audit",
-                ));
-            }
-            _ => {
-                return Err(Error::value(
-                    strand,
-                    "Ace: multiple arguments name conflicting ACE types",
-                ));
-            }
-        };
-
-        let path = SpecPath::root("Ace");
+        let qualifier = qualifier_value
+            .as_sym(strand)
+            .ok_or_else(|| Error::type_error(strand, "qualifier: expected AceQualifier"))?
+            .as_str(strand.vm())
+            .to_owned();
+        let sid = global
+            .types
+            .sid
+            .cast(&sid_value)
+            .ok_or_else(|| Error::type_error(strand, "sid: expected security.windows.Sid"))?
+            .enter_sync(strand, |_strand, sid| (*sid.annex()).clone());
         let mask = global
             .types
             .access_mask
             .cast_flags(&mask_value)
-            .map(|mask| mask.0)
-            .ok_or_else(|| {
-                Error::type_error(strand, "Ace.mask: expected security.windows.AccessMask")
-            })?;
+            .ok_or_else(|| Error::type_error(strand, "mask: expected security.windows.AccessMask"))?
+            .0;
         let mut options = AceBuildOptions::new();
-        if let Some(value) = flags_value.as_deref() {
-            let flags = global.types.ace_flags.cast_flags(value).ok_or_else(|| {
-                Error::type_error(strand, "Ace.flags: expected security.windows.AceFlags")
-            })?;
-            options = options.flags(flags.0);
+        if KIND == ACE_OBJECT {
+            options = options.object();
         }
-        if let Some(value) = object_type_value.as_deref() {
-            let guid = dolang_ext_uuid::downcast_guid(strand, value)
-                .ok_or_else(|| Error::type_error(strand, "Ace.object_type: expected uuid.Guid"))?;
-            options = options.object_type(guid);
+        if let Some(flags) = flags.as_deref() {
+            options = options.flags(
+                global
+                    .types
+                    .ace_flags
+                    .cast_flags(flags)
+                    .ok_or_else(|| Error::type_error(strand, "flags: expected AceFlags"))?
+                    .0,
+            );
         }
-        if let Some(value) = inherited_value.as_deref() {
-            let guid = dolang_ext_uuid::downcast_guid(strand, value).ok_or_else(|| {
-                Error::type_error(strand, "Ace.inherited_object_type: expected uuid.Guid")
-            })?;
-            options = options.inherited_object_type(guid);
-        }
-        if callback_value
-            .as_deref()
-            .map(|value| ace_bool(strand, value, &path.key("callback")))
-            .transpose()?
-            .unwrap_or(false)
+        if let Some(value) = callback.as_deref()
+            && ace_bool(strand, value, &SpecPath::root("callback"))?
         {
             options = options.callback();
         }
-        if let Some(value) = application_value.as_deref() {
-            let data = value
-                .as_bin(strand)
-                .ok_or_else(|| Error::type_error(strand, "Ace.application_data: expected Bin"))?;
-            options = options.application_data(data.to_vec());
+        if let Some(value) = data.as_deref() {
+            options = options.application_data(
+                value
+                    .as_bin(strand)
+                    .ok_or_else(|| Error::type_error(strand, "application_data: expected Bin"))?
+                    .to_vec(),
+            );
         }
-        let successful = successful_value
-            .as_deref()
-            .map(|value| ace_bool(strand, value, &path.key("successful")))
-            .transpose()?;
-        let failed = failed_value
-            .as_deref()
-            .map(|value| ace_bool(strand, value, &path.key("failed")))
-            .transpose()?;
-        let ace = match trustee {
-            Trustee::Allow(_) | Trustee::Deny(_) if successful.is_some() || failed.is_some() => {
-                return Err(Error::value(
-                    strand,
-                    "Ace: successful and failed apply only to audit",
-                ));
+        for (value, inherited) in [
+            (object_type.as_deref(), false),
+            (inherited_object_type.as_deref(), true),
+        ] {
+            if let Some(value) = value {
+                if KIND != ACE_OBJECT {
+                    return Err(Error::unexpected_key(
+                        strand,
+                        if inherited {
+                            global.syms.inherited_object_type
+                        } else {
+                            global.syms.object_type
+                        },
+                    ));
+                }
+                let guid = dolang_ext_uuid::downcast_guid(strand, value)
+                    .ok_or_else(|| Error::type_error(strand, "object type: expected uuid.Guid"))?;
+                options = if inherited {
+                    options.inherited_object_type(guid)
+                } else {
+                    options.object_type(guid)
+                };
             }
-            Trustee::Allow(sid) => VfsAceBuf::allow(&sid, mask, options),
-            Trustee::Deny(sid) => VfsAceBuf::deny(&sid, mask, options),
-            Trustee::Audit(_) if successful.is_none() && failed.is_none() => {
-                return Err(Error::value(
-                    strand,
-                    "Ace: audit requires successful or failed",
-                ));
-            }
-            Trustee::Audit(sid) => VfsAceBuf::audit(
+        }
+        let success = successful
+            .as_deref()
+            .map(|v| ace_bool(strand, v, &SpecPath::root("successful")))
+            .transpose()?;
+        let failure = failed
+            .as_deref()
+            .map(|v| ace_bool(strand, v, &SpecPath::root("failed")))
+            .transpose()?;
+        if matches!(qualifier.as_str(), "ALLOW" | "DENY")
+            && (success.is_some() || failure.is_some())
+        {
+            return Err(Error::value(
+                strand,
+                "audit outcomes require AUDIT or ALARM",
+            ));
+        }
+        let ace = match qualifier.as_str() {
+            "ALLOW" => VfsAceBuf::allow(&sid, mask, options),
+            "DENY" => VfsAceBuf::deny(&sid, mask, options),
+            "AUDIT" => VfsAceBuf::audit(
                 &sid,
                 mask,
-                successful.unwrap_or(false),
-                failed.unwrap_or(false),
+                success.unwrap_or(false),
+                failure.unwrap_or(false),
                 options,
             ),
+            "ALARM" => VfsAceBuf::alarm(
+                &sid,
+                mask,
+                success.unwrap_or(false),
+                failure.unwrap_or(false),
+                options,
+            ),
+            _ => {
+                return Err(Error::value(
+                    strand,
+                    "qualifier: expected ALLOW, DENY, AUDIT, or ALARM",
+                ));
+            }
         }
-        .map_err(|error| Error::value(strand, format!("Ace: {error}")))?;
-        this.create_with_annex(strand, Ace, AceAnnex::Owned(ace), out);
+        .map_err(|e| Error::value(strand, e.to_string()))?;
+        this.create_with_annex(strand, Ace::<KIND>, AceAnnex::Owned(ace), out);
         Ok(())
     }
 
@@ -1123,8 +1199,6 @@ impl<'v> Object<'v> for Ace {
         let object_type_field = builder.sym("object_type");
         let inherited_object_type_field = builder.sym("inherited_object_type");
         let application_data_field = builder.sym("application_data");
-        let successful_access_field = builder.sym("successful_access");
-        let failed_access_field = builder.sym("failed_access");
         let trust_protected_filter_field = builder.sym("trust_protected_filter");
 
         let access_allowed = builder.sym("ACCESS_ALLOWED");
@@ -1151,7 +1225,7 @@ impl<'v> Object<'v> for Ace {
         let system_access_filter = builder.sym("SYSTEM_ACCESS_FILTER");
         let unknown = builder.sym("UNKNOWN");
 
-        builder
+        builder = builder
             .get("type", move |this, strand, out| {
                 let ace_type = with_ace(this, strand, |ace| ace.ace_type())?;
                 let value = match ace_type {
@@ -1198,61 +1272,68 @@ impl<'v> Object<'v> for Ace {
                 let value = with_ace(this, strand, |ace| ace.size())?;
                 Output::set(strand, out, value);
                 Ok(())
-            })
-            .get("mask", move |this, strand, out| {
-                let Some(value) = with_ace(this, strand, |ace| ace.mask())? else {
-                    return Err(Error::field(strand, mask_field));
-                };
-                let global = strand.state::<WindowsSecurityGlobal<'v>>();
-                global
-                    .types
-                    .access_mask
-                    .create_flags(strand, AccessMask(value), out);
-                Ok(())
-            })
-            .get("sid", move |this, strand, mut out| {
-                let Some(value) = with_ace(this, strand, |ace| ace.sid())? else {
-                    return Err(Error::field(strand, sid_field));
-                };
-                let global = strand.state::<WindowsSecurityGlobal<'v>>();
-                create_sid(strand, global, value, &mut out);
-                Ok(())
-            })
-            .get("object_flags", move |this, strand, out| {
-                let Some(value) = with_ace(this, strand, |ace| ace.object_flags())? else {
-                    return Err(Error::field(strand, object_flags_field));
-                };
-                Output::set(strand, out, value.bits());
-                Ok(())
-            })
-            .get("object_type", move |this, strand, out| {
-                let (flags, value) =
-                    with_ace(this, strand, |ace| (ace.object_flags(), ace.object_type()))?;
-                if flags.is_none() {
-                    return Err(Error::field(strand, object_type_field));
-                }
-                if let Some(value) = value {
-                    dolang_ext_uuid::create_guid(strand, value, out);
-                } else {
-                    Output::set(strand, out, Nil);
-                }
-                Ok(())
-            })
-            .get("inherited_object_type", move |this, strand, out| {
-                let (flags, value) = with_ace(this, strand, |ace| {
-                    (ace.object_flags(), ace.inherited_object_type())
-                })?;
-                if flags.is_none() {
-                    return Err(Error::field(strand, inherited_object_type_field));
-                }
-                if let Some(value) = value {
-                    dolang_ext_uuid::create_guid(strand, value, out);
-                } else {
-                    Output::set(strand, out, Nil);
-                }
-                Ok(())
-            })
-            .get("application_data", move |this, strand, out| {
+            });
+        if KIND != ACE_BASE && KIND != ACE_CUSTOM {
+            builder = builder
+                .get("mask", move |this, strand, out| {
+                    let Some(value) = with_ace(this, strand, |ace| ace.mask())? else {
+                        return Err(Error::field(strand, mask_field));
+                    };
+                    let global = strand.state::<WindowsSecurityGlobal<'v>>();
+                    global
+                        .types
+                        .access_mask
+                        .create_flags(strand, AccessMask(value), out);
+                    Ok(())
+                })
+                .get("sid", move |this, strand, mut out| {
+                    let Some(value) = with_ace(this, strand, |ace| ace.sid())? else {
+                        return Err(Error::field(strand, sid_field));
+                    };
+                    let global = strand.state::<WindowsSecurityGlobal<'v>>();
+                    create_sid(strand, global, value, &mut out);
+                    Ok(())
+                });
+        }
+        if KIND == ACE_OBJECT {
+            builder = builder
+                .get("object_flags", move |this, strand, out| {
+                    let Some(value) = with_ace(this, strand, |ace| ace.object_flags())? else {
+                        return Err(Error::field(strand, object_flags_field));
+                    };
+                    Output::set(strand, out, value.bits());
+                    Ok(())
+                })
+                .get("object_type", move |this, strand, out| {
+                    let (flags, value) =
+                        with_ace(this, strand, |ace| (ace.object_flags(), ace.object_type()))?;
+                    if flags.is_none() {
+                        return Err(Error::field(strand, object_type_field));
+                    }
+                    if let Some(value) = value {
+                        dolang_ext_uuid::create_guid(strand, value, out);
+                    } else {
+                        Output::set(strand, out, Nil);
+                    }
+                    Ok(())
+                })
+                .get("inherited_object_type", move |this, strand, out| {
+                    let (flags, value) = with_ace(this, strand, |ace| {
+                        (ace.object_flags(), ace.inherited_object_type())
+                    })?;
+                    if flags.is_none() {
+                        return Err(Error::field(strand, inherited_object_type_field));
+                    }
+                    if let Some(value) = value {
+                        dolang_ext_uuid::create_guid(strand, value, out);
+                    } else {
+                        Output::set(strand, out, Nil);
+                    }
+                    Ok(())
+                });
+        }
+        if KIND != ACE_BASE && KIND != ACE_KNOWN && KIND != ACE_CUSTOM {
+            builder = builder.get("application_data", move |this, strand, out| {
                 let Some(value) = with_ace(this, strand, |ace| {
                     ace.application_data().map(<[u8]>::to_vec)
                 })?
@@ -1261,7 +1342,9 @@ impl<'v> Object<'v> for Ace {
                 };
                 Output::set(strand, out, value.as_slice());
                 Ok(())
-            })
+            });
+        }
+        builder = builder
             .get("object_inherit", |this, strand, out| {
                 ace_flag(this, strand, out, 0x01)
             })
@@ -1279,24 +1362,22 @@ impl<'v> Object<'v> for Ace {
             })
             .get("critical", |this, strand, out| {
                 ace_flag(this, strand, out, 0x20)
-            })
-            .get("successful_access", move |this, strand, out| {
-                let (kind, flags) = with_ace(this, strand, |ace| (ace.ace_type(), ace.flags()))?;
-                if !ace_is_audit(kind) {
-                    return Err(Error::field(strand, successful_access_field));
-                }
-                Output::set(strand, out, flags.contains(WinAceFlags::SUCCESSFUL_ACCESS));
-                Ok(())
-            })
-            .get("failed_access", move |this, strand, out| {
-                let (kind, flags) = with_ace(this, strand, |ace| (ace.ace_type(), ace.flags()))?;
-                if !ace_is_audit(kind) {
-                    return Err(Error::field(strand, failed_access_field));
-                }
-                Output::set(strand, out, flags.contains(WinAceFlags::FAILED_ACCESS));
-                Ok(())
-            })
-            .get("trust_protected_filter", move |this, strand, out| {
+            });
+        if KIND == ACE_QUALIFIED || KIND == ACE_COMMON || KIND == ACE_OBJECT {
+            builder = builder
+                .get("successful_access", move |this, strand, out| {
+                    let flags = with_ace(this, strand, |ace| ace.flags())?;
+                    Output::set(strand, out, flags.contains(WinAceFlags::SUCCESSFUL_ACCESS));
+                    Ok(())
+                })
+                .get("failed_access", move |this, strand, out| {
+                    let flags = with_ace(this, strand, |ace| ace.flags())?;
+                    Output::set(strand, out, flags.contains(WinAceFlags::FAILED_ACCESS));
+                    Ok(())
+                });
+        }
+        if KIND == ACE_ACCESS_FILTER {
+            builder = builder.get("trust_protected_filter", move |this, strand, out| {
                 let (kind, flags) = with_ace(this, strand, |ace| (ace.ace_type(), ace.flags()))?;
                 if kind != VfsAceType::SystemAccessFilter {
                     return Err(Error::field(strand, trust_protected_filter_field));
@@ -1307,18 +1388,43 @@ impl<'v> Object<'v> for Ace {
                     flags.contains(WinAceFlags::TRUST_PROTECTED_FILTER),
                 );
                 Ok(())
-            })
-            .method("to_bin", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
-                let bytes = with_ace(this, strand, |ace| ace.as_bytes().to_vec())?;
-                Output::set(strand, out, bytes.as_slice());
-                Ok(())
-            })
+            });
+        }
+        builder = builder.method("to_bin", async move |this, strand, args, out| {
+            let ([], []) = unpack!(strand, args, 0, 0)?;
+            let bytes = with_ace(this, strand, |ace| ace.as_bytes().to_vec())?;
+            Output::set(strand, out, bytes.as_slice());
+            Ok(())
+        });
+        if KIND == ACE_QUALIFIED || KIND == ACE_COMMON || KIND == ACE_OBJECT {
+            let allow = builder.sym("ALLOW");
+            let deny = builder.sym("DENY");
+            let audit = builder.sym("AUDIT");
+            let alarm = builder.sym("ALARM");
+            builder = builder
+                .get("qualifier", move |this, strand, out| {
+                    let code = with_ace(this, strand, |ace| ace.type_code())?;
+                    let sym = match code {
+                        0 | 5 | 9 | 11 => allow,
+                        1 | 6 | 10 | 12 => deny,
+                        2 | 7 | 13 | 15 => audit,
+                        _ => alarm,
+                    };
+                    Output::set(strand, out, sym);
+                    Ok(())
+                })
+                .get("callback", |this, strand, out| {
+                    let code = with_ace(this, strand, |ace| ace.type_code())?;
+                    Output::set(strand, out, (9..=16).contains(&code));
+                    Ok(())
+                });
+        }
+        builder
     }
 }
 
-fn ace_flag<'v, 's>(
-    this: Instance<'v, '_, Ace>,
+fn ace_flag<'v, 's, const KIND: u8>(
+    this: Instance<'v, '_, Ace<KIND>>,
     strand: &mut Strand<'v, 's>,
     out: impl Output<'v>,
     flag: u8,
@@ -1330,20 +1436,6 @@ fn ace_flag<'v, 's>(
         flags.contains(WinAceFlags::from_bits_retain(flag)),
     );
     Ok(())
-}
-
-const fn ace_is_audit(kind: VfsAceType) -> bool {
-    matches!(
-        kind,
-        VfsAceType::SystemAudit
-            | VfsAceType::SystemAlarm
-            | VfsAceType::SystemAuditObject
-            | VfsAceType::SystemAlarmObject
-            | VfsAceType::SystemAuditCallback
-            | VfsAceType::SystemAlarmCallback
-            | VfsAceType::SystemAuditCallbackObject
-            | VfsAceType::SystemAlarmCallbackObject
-    )
 }
 
 pub(crate) struct SecDesc;
@@ -1741,10 +1833,8 @@ async fn coerce_ace<'v, 's>(
     value: &Value<'v>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsAceBuf> {
-    if let Some(ace) = global.types.ace.cast(value) {
-        return ace.enter_sync(strand, |strand, ace| {
-            with_ace(ace, strand, VfsAce::to_owned)
-        });
+    if let Some(ace) = ace_value_to_owned(strand, global, value) {
+        return ace;
     }
     let Some(dict) = value.as_dict(strand.vm()) else {
         return Err(Error::type_error(
@@ -2814,12 +2904,16 @@ impl<'v> Object<'v> for SecDesc {
                 Ok(())
             })
             .get("rm_control", move |this, strand, out| {
-                util::option_field(strand, this.annex().rm_control(), rm_control, out)
+                util::nullable_field(strand, this.annex().rm_control(), out)
             })
             .get("owner", move |this, strand, mut out| {
                 let descriptor = this.annex();
-                let Some(value) = descriptor.owner().filter(|_| descriptor.owner_loaded()) else {
+                if !descriptor.owner_loaded() {
                     return Err(Error::field(strand, owner));
+                }
+                let Some(value) = descriptor.owner() else {
+                    Output::set(strand, out, Nil);
+                    return Ok(());
                 };
                 let global = strand.state::<WindowsSecurityGlobal<'v>>();
                 create_sid(strand, global, value.clone(), &mut out);
@@ -2827,8 +2921,12 @@ impl<'v> Object<'v> for SecDesc {
             })
             .get("group", move |this, strand, mut out| {
                 let descriptor = this.annex();
-                let Some(value) = descriptor.group().filter(|_| descriptor.group_loaded()) else {
+                if !descriptor.group_loaded() {
                     return Err(Error::field(strand, group));
+                }
+                let Some(value) = descriptor.group() else {
+                    Output::set(strand, out, Nil);
+                    return Ok(());
                 };
                 let global = strand.state::<WindowsSecurityGlobal<'v>>();
                 create_sid(strand, global, value.clone(), &mut out);
@@ -2836,10 +2934,10 @@ impl<'v> Object<'v> for SecDesc {
             })
             .get("dacl", move |this, strand, mut out| {
                 let descriptor = this.annex();
-                if !descriptor.dacl_loaded() || !descriptor.dacl_present() {
+                if !descriptor.dacl_loaded() {
                     return Err(Error::field(strand, dacl));
                 }
-                if descriptor.dacl().is_none() {
+                if !descriptor.dacl_present() || descriptor.dacl().is_none() {
                     Output::set(strand, out, Nil);
                 } else {
                     let global = strand.state::<WindowsSecurityGlobal<'v>>();
@@ -2849,10 +2947,10 @@ impl<'v> Object<'v> for SecDesc {
             })
             .get("sacl", move |this, strand, mut out| {
                 let descriptor = this.annex();
-                if !descriptor.sacl_loaded() || !descriptor.sacl_present() {
+                if !descriptor.sacl_loaded() {
                     return Err(Error::field(strand, sacl));
                 }
-                if descriptor.sacl().is_none() {
+                if !descriptor.sacl_present() || descriptor.sacl().is_none() {
                     Output::set(strand, out, Nil);
                 } else {
                     let global = strand.state::<WindowsSecurityGlobal<'v>>();
@@ -3471,6 +3569,16 @@ pub(crate) fn configure_vm<'v>(
         .value("TokenGroupAttributes", global.types.token_group_attributes)
         .value("Acl", global.types.acl)
         .value("Ace", global.types.ace)
+        .value("KnownAce", global.types.known_ace)
+        .value("QualifiedAce", global.types.qualified_ace)
+        .value("CommonAce", global.types.common_ace)
+        .value("ObjectAce", global.types.object_ace)
+        .value("CustomAce", global.types.custom_ace)
+        .value("MandatoryLabelAce", global.types.mandatory_label_ace)
+        .value("ResourceAttributeAce", global.types.resource_attribute_ace)
+        .value("ScopedPolicyIdAce", global.types.scoped_policy_id_ace)
+        .value("ProcessTrustLabelAce", global.types.process_trust_label_ace)
+        .value("AccessFilterAce", global.types.access_filter_ace)
         .value("SecDesc", global.types.sec_desc)
         .value("Sid", global.types.sid)
         .value("SidName", global.types.sid_name)
@@ -3478,10 +3586,8 @@ pub(crate) fn configure_vm<'v>(
         .value("TokenInfo", global.types.token_info)
         .function_with_slots("ace", async move |strand, args, mut out, [mut slot]| {
             let ace = ace_from_args(strand, global, args, &SpecPath::root("ace")).await?;
-            global
-                .types
-                .ace
-                .create_with_annex(strand, Ace, AceAnnex::Owned(ace), &mut slot);
+            let kind = ace_kind(&ace);
+            create_ace(strand, global, kind, AceAnnex::Owned(ace), None, &mut slot);
             Output::set(strand, &mut out, &slot);
             Ok(())
         })

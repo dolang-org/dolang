@@ -10,8 +10,10 @@ import sys
     - test
   std:
     - RuntimeError
+    - FieldError
   fs:
     - FsMetadata
+    - entries
     - Metadata
     - Path
     - fs_metadata
@@ -21,6 +23,13 @@ import sys
     - update_metadata
   fs.unix:
     - Mode
+    Metadata: UnixMetadata
+    FsMetadata: UnixFsMetadata
+    DirEntry: UnixDirEntry
+  fs.windows:
+    Metadata: WindowsMetadata
+    FsMetadata: WindowsFsMetadata
+    DirEntry: WindowsDirEntry
   security.windows:
     - Sid
   time:
@@ -354,3 +363,49 @@ def unix_raw()
   assert_type $Int $meta.name_max
 
   remove $test_path
+
+#[test]
+#[vfs]
+def nominal_platform_classes()
+  open entry.txt w do |file| file.write "data"
+  let meta = metadata entry.txt
+  let filesystem = fs_metadata entry.txt
+  let directory = [...entries(".")][0]
+  assert_eq (Path(".") / directory) (Path(".") / directory.name)
+  if (sys.os_info().family == :WINDOWS:)
+    assert_type $WindowsMetadata $meta
+    assert_type $WindowsFsMetadata $filesystem
+    assert_type $WindowsDirEntry $directory
+    assert_eq (type meta UnixMetadata) false
+    assert_eq (type filesystem UnixFsMetadata) false
+    assert_eq (type directory UnixDirEntry) false
+    assert_eq $meta.readonly false
+    assert_throws $FieldError do meta.mode
+    assert_throws $FieldError do meta.linux_attrs
+    assert_throws $FieldError do filesystem.blocks
+    assert_throws $FieldError do directory.ino
+  else
+    assert_type $UnixMetadata $meta
+    assert_type $UnixFsMetadata $filesystem
+    assert_type $UnixDirEntry $directory
+    assert_eq (type meta WindowsMetadata) false
+    assert_eq (type filesystem WindowsFsMetadata) false
+    assert_eq (type directory WindowsDirEntry) false
+    assert_throws $FieldError do meta.win_attrs
+    assert_throws $FieldError do meta.encrypted
+    assert_throws $FieldError do filesystem.win_flags
+    if (sys.os_info().os == :LINUX:)
+      assert_eq $meta.macos_attrs nil
+      assert_eq $meta.freebsd_attrs nil
+      assert_eq $meta.opaque nil
+      assert_eq $meta.hidden nil
+    else
+      assert_eq $meta.linux_attrs nil
+      assert_eq $meta.no_atime nil
+      assert_eq $filesystem.relatime nil
+      assert_eq $filesystem.no_dir_atime nil
+      assert_eq $filesystem.no_exec nil
+      assert_eq $filesystem.synchronous nil
+      assert_eq $filesystem.no_dev nil
+      assert_eq $filesystem.no_atime nil
+  remove entry.txt

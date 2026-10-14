@@ -1,0 +1,53 @@
+# dolang: strict
+import @fs fs.unix: unix fs.windows: windows security.windows: win @uuid
+
+pub def metadata p @ fs.Path -> nil
+  let meta = p.metadata()
+  if (type meta unix.Metadata)
+    let _uid @ Int = meta.uid
+    let _owner @ Int = meta.owner
+    let _mask @ (Int | nil) = meta.linux_attrs
+  else
+    let _attrs @ Int = meta.win_attrs
+    let _owner @ (win.Sid | nil) = meta.owner
+  match meta
+    unix.Metadata(u) do u.mode
+    windows.Metadata(w) do w.win_attrs
+  nil
+
+pub def filesystem p @ fs.Path -> nil
+  let meta = p.fs_metadata()
+  if (type meta unix.FsMetadata)
+    let _blocks @ Int = meta.blocks
+    let _relative @ (Bool | nil) = meta.relatime
+  else
+    let _serial @ Int = meta.volume_serial_number
+  nil
+
+pub def entries p @ fs.Path -> nil
+  for entry = p.entries()
+    if (type entry unix.DirEntry)
+      let _ino @ Int = entry.ino
+    else
+      let _name @ Str = entry.name
+  nil
+
+pub def ace entry @ win.Ace -> nil
+  if (type entry win.KnownAce)
+    let _sid @ win.Sid = entry.sid
+    let _mask @ win.AccessMask = entry.mask
+  if (type entry win.QualifiedAce)
+    let _qualifier @ win.AceQualifier = entry.qualifier
+    let _callback @ Bool = entry.callback
+    let _success @ Bool = entry.successful_access
+  if (type entry win.ObjectAce)
+    let _guid @ (uuid.Guid | nil) = entry.object_type
+  nil
+
+pub def constructors sid @ win.Sid mask @ win.AccessMask -> nil
+  let common @ win.CommonAce = win.CommonAce qualifier: :ALLOW: :sid :mask
+  let object @ win.ObjectAce = win.ObjectAce qualifier: :AUDIT: :sid :mask successful: true
+  let _guid @ (uuid.Guid | nil) = object.object_type
+  let _sid @ win.Sid = common.sid
+  nil
+

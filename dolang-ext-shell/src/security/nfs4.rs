@@ -324,7 +324,6 @@ impl<'v> Object<'v> for Nfs4AceObject {
         let type_sym = builder.sym("type");
         let mask_sym = builder.sym("mask");
         let flags_sym = builder.sym("flags");
-        let id_field = builder.sym("id");
         let allow = builder.sym("ALLOW");
         let deny = builder.sym("DENY");
         let audit = builder.sym("AUDIT");
@@ -440,7 +439,10 @@ impl<'v> Object<'v> for Nfs4AceObject {
             .get("id", move |this, strand, out| {
                 let id = match this.annex().qualifier() {
                     VfsNfs4AceQualifier::User(id) | VfsNfs4AceQualifier::Group(id) => id,
-                    _ => return Err(Error::field(strand, id_field)),
+                    _ => {
+                        Output::set(strand, out, Nil);
+                        return Ok(());
+                    }
                 };
                 Output::set(strand, out, id);
                 Ok(())

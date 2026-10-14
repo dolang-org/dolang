@@ -36,6 +36,19 @@ pub(crate) fn bytes<'v, 's>(
     }
 }
 
+/// Writes an optional value, keeping absence distinct from a missing member.
+pub(crate) fn nullable_field<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: Option<impl Input<'v>>,
+    out: impl Output<'v>,
+) -> Result<'v, 's, ()> {
+    match value {
+        Some(value) => Output::set(strand, out, value),
+        None => Output::set(strand, out, dolang::runtime::value::Nil),
+    }
+    Ok(())
+}
+
 pub(crate) fn option_field<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: Option<impl Input<'v>>,

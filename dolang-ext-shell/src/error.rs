@@ -237,7 +237,7 @@ impl<'v> Object<'v> for ProcError {
     type TypeAnnex = ();
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        let mut builder =
+        let builder =
             builder
                 .nominal_supertype(TypeObject::RuntimeError)
                 .get("rc", |this, strand, out| {
@@ -246,13 +246,15 @@ impl<'v> Object<'v> for ProcError {
                     }
                     Ok(())
                 });
-        let signal = builder.sym("signal");
         builder.get("signal", move |this, strand, out| {
             if matches!(this.annex().operating_system, OperatingSystem::Windows) {
-                return Err(Error::field(strand, signal));
+                Output::set(strand, out, dolang::runtime::value::Nil);
+                return Ok(());
             }
             if let Some(signal) = this.annex().status.signal() {
                 Output::set(strand, out, i64::from(signal));
+            } else {
+                Output::set(strand, out, dolang::runtime::value::Nil);
             }
             Ok(())
         })

@@ -34,6 +34,7 @@ use crate::{
     },
     error_code::{CodeObject, Errno, ErrorCode, FreeBsdErrno, LinuxErrno, MacosErrno, WinError},
     fs::{
+        FS_UNIX, FS_WINDOWS,
         file::{BinaryFile, File, TextFile},
         file_lock::FileLock,
         fs_metadata::FsMetadata,
@@ -53,6 +54,10 @@ use crate::{
         MacosAclObject, Nfs4AceFlags, Nfs4AceMask, Nfs4AceObject, Nfs4AclObject, Permission,
         PosixAceObject, PosixAclObject, SecDesc, SecDescControl, SecInfo, Sid, SidName, TokenGroup,
         TokenGroupAttributes, TokenInfo, WellKnownSids,
+        windows::{
+            ACE_ACCESS_FILTER, ACE_COMMON, ACE_CUSTOM, ACE_KNOWN, ACE_MANDATORY_LABEL, ACE_OBJECT,
+            ACE_PROCESS_TRUST_LABEL, ACE_QUALIFIED, ACE_RESOURCE_ATTRIBUTE, ACE_SCOPED_POLICY_ID,
+        },
     },
     shell::{Stderr, Stdin, Stdout, Vfs},
     shell_args::ArgsData,
@@ -541,12 +546,18 @@ pub(crate) struct FsTypes<'v> {
     pub(crate) stream_entry: Type<'v, StreamEntry>,
     pub(crate) stream_iter: Type<'v, StreamIter>,
     pub(crate) metadata: Type<'v, Metadata>,
+    pub(crate) unix_metadata: Type<'v, Metadata<FS_UNIX>>,
+    pub(crate) windows_metadata: Type<'v, Metadata<FS_WINDOWS>>,
     pub(crate) fs_metadata: Type<'v, FsMetadata>,
+    pub(crate) unix_fs_metadata: Type<'v, FsMetadata<FS_UNIX>>,
+    pub(crate) windows_fs_metadata: Type<'v, FsMetadata<FS_WINDOWS>>,
     pub(crate) file: Type<'v, File<'v>>,
     pub(crate) str_file: Type<'v, File<'v, TextFile>>,
     pub(crate) bin_file: Type<'v, File<'v, BinaryFile>>,
     pub(crate) file_lock: Type<'v, FileLock>,
     pub(crate) dir_entry: Type<'v, DirEntry>,
+    pub(crate) unix_dir_entry: Type<'v, DirEntry<FS_UNIX>>,
+    pub(crate) windows_dir_entry: Type<'v, DirEntry<FS_WINDOWS>>,
     pub(crate) dir_entry_iter: Type<'v, DirEntryIter>,
     pub(crate) glob_iter: Type<'v, crate::fs::glob::GlobIter>,
     pub(crate) mode: Type<'v, Flags<Mode>>,
@@ -590,6 +601,33 @@ impl<'v> FsGlobal<'v> {
             .build_type::<WindowsPath>((), ())
             .nominal_supertype(path)
             .build();
+        let metadata = builder.register_type::<Metadata>();
+        let unix_metadata = builder
+            .build_type::<Metadata<FS_UNIX>>((), ())
+            .nominal_supertype(metadata)
+            .build();
+        let windows_metadata = builder
+            .build_type::<Metadata<FS_WINDOWS>>((), ())
+            .nominal_supertype(metadata)
+            .build();
+        let fs_metadata = builder.register_type::<FsMetadata>();
+        let unix_fs_metadata = builder
+            .build_type::<FsMetadata<FS_UNIX>>((), ())
+            .nominal_supertype(fs_metadata)
+            .build();
+        let windows_fs_metadata = builder
+            .build_type::<FsMetadata<FS_WINDOWS>>((), ())
+            .nominal_supertype(fs_metadata)
+            .build();
+        let dir_entry = builder.register_type::<DirEntry>();
+        let unix_dir_entry = builder
+            .build_type::<DirEntry<FS_UNIX>>((), ())
+            .nominal_supertype(dir_entry)
+            .build();
+        let windows_dir_entry = builder
+            .build_type::<DirEntry<FS_WINDOWS>>((), ())
+            .nominal_supertype(dir_entry)
+            .build();
         let file = builder.register_type::<File>();
         let str_file = builder
             .build_type::<File<TextFile>>((), ())
@@ -609,13 +647,19 @@ impl<'v> FsGlobal<'v> {
                 xattr_iter: builder.register_type(),
                 stream_entry: builder.register_type(),
                 stream_iter: builder.register_type(),
-                metadata: builder.register_type(),
-                fs_metadata: builder.register_type(),
+                metadata,
+                unix_metadata,
+                windows_metadata,
+                fs_metadata,
+                unix_fs_metadata,
+                windows_fs_metadata,
                 file,
                 str_file,
                 bin_file,
                 file_lock: builder.register_type(),
-                dir_entry: builder.register_type(),
+                dir_entry,
+                unix_dir_entry,
+                windows_dir_entry,
                 dir_entry_iter: builder.register_type(),
                 glob_iter: builder.register_type(),
                 mode: Mode::register_type(builder),
@@ -978,6 +1022,16 @@ pub(crate) struct WindowsSecurityTypes<'v> {
     pub(crate) token_group_attributes: Type<'v, Flags<TokenGroupAttributes>>,
     pub(crate) acl: Type<'v, Acl>,
     pub(crate) ace: Type<'v, Ace>,
+    pub(crate) known_ace: Type<'v, Ace<ACE_KNOWN>>,
+    pub(crate) qualified_ace: Type<'v, Ace<ACE_QUALIFIED>>,
+    pub(crate) common_ace: Type<'v, Ace<ACE_COMMON>>,
+    pub(crate) object_ace: Type<'v, Ace<ACE_OBJECT>>,
+    pub(crate) custom_ace: Type<'v, Ace<ACE_CUSTOM>>,
+    pub(crate) mandatory_label_ace: Type<'v, Ace<ACE_MANDATORY_LABEL>>,
+    pub(crate) resource_attribute_ace: Type<'v, Ace<ACE_RESOURCE_ATTRIBUTE>>,
+    pub(crate) scoped_policy_id_ace: Type<'v, Ace<ACE_SCOPED_POLICY_ID>>,
+    pub(crate) process_trust_label_ace: Type<'v, Ace<ACE_PROCESS_TRUST_LABEL>>,
+    pub(crate) access_filter_ace: Type<'v, Ace<ACE_ACCESS_FILTER>>,
     pub(crate) sec_desc: Type<'v, SecDesc>,
     pub(crate) sid: Type<'v, Sid>,
     pub(crate) sid_name: Type<'v, SidName>,
@@ -986,6 +1040,8 @@ pub(crate) struct WindowsSecurityTypes<'v> {
 }
 
 pub(crate) struct WindowsSecuritySyms<'v> {
+    pub(crate) qualifier: Sym<'v, 'v>,
+    pub(crate) sid: Sym<'v, 'v>,
     /// `int`, the raw-bits field every `AccessMask` subtype must expose.
     pub(crate) int: Sym<'v, 'v>,
     // Declarative ACE spec keys.
@@ -1034,6 +1090,47 @@ impl<'v> Stateful<'v> for WindowsSecurityGlobal<'v> {
 
 impl<'v> WindowsSecurityGlobal<'v> {
     pub(crate) fn new(builder: &mut Register<'v>, local: LocalKey<'v, Local>) -> Self {
+        let ace = builder.register_type::<Ace>();
+        let known_ace = builder
+            .build_type::<Ace<ACE_KNOWN>>((), ())
+            .nominal_supertype(ace)
+            .build();
+        let qualified_ace = builder
+            .build_type::<Ace<ACE_QUALIFIED>>((), ())
+            .nominal_supertype(known_ace)
+            .build();
+        let common_ace = builder
+            .build_type::<Ace<ACE_COMMON>>((), ())
+            .nominal_supertype(qualified_ace)
+            .build();
+        let object_ace = builder
+            .build_type::<Ace<ACE_OBJECT>>((), ())
+            .nominal_supertype(qualified_ace)
+            .build();
+        let custom_ace = builder
+            .build_type::<Ace<ACE_CUSTOM>>((), ())
+            .nominal_supertype(ace)
+            .build();
+        let mandatory_label_ace = builder
+            .build_type::<Ace<ACE_MANDATORY_LABEL>>((), ())
+            .nominal_supertype(known_ace)
+            .build();
+        let resource_attribute_ace = builder
+            .build_type::<Ace<ACE_RESOURCE_ATTRIBUTE>>((), ())
+            .nominal_supertype(known_ace)
+            .build();
+        let scoped_policy_id_ace = builder
+            .build_type::<Ace<ACE_SCOPED_POLICY_ID>>((), ())
+            .nominal_supertype(known_ace)
+            .build();
+        let process_trust_label_ace = builder
+            .build_type::<Ace<ACE_PROCESS_TRUST_LABEL>>((), ())
+            .nominal_supertype(known_ace)
+            .build();
+        let access_filter_ace = builder
+            .build_type::<Ace<ACE_ACCESS_FILTER>>((), ())
+            .nominal_supertype(known_ace)
+            .build();
         Self {
             local,
             types: WindowsSecurityTypes {
@@ -1043,7 +1140,18 @@ impl<'v> WindowsSecurityGlobal<'v> {
                 sec_info: SecInfo::register_type(builder),
                 token_group_attributes: TokenGroupAttributes::register_type(builder),
                 acl: builder.register_type(),
-                ace: builder.register_type(),
+                ace,
+                known_ace,
+                qualified_ace,
+                common_ace,
+                object_ace,
+                custom_ace,
+                mandatory_label_ace,
+                resource_attribute_ace,
+                scoped_policy_id_ace,
+                process_trust_label_ace,
+                access_filter_ace,
+
                 sec_desc: builder.register_type(),
                 sid: builder.register_type(),
                 sid_name: builder.register_type(),
@@ -1051,6 +1159,8 @@ impl<'v> WindowsSecurityGlobal<'v> {
                 token_info: builder.register_type(),
             },
             syms: WindowsSecuritySyms {
+                sid: builder.sym("sid"),
+                qualifier: builder.sym("qualifier"),
                 int: builder.sym("int"),
                 allow: builder.sym("allow"),
                 deny: builder.sym("deny"),

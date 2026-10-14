@@ -58,7 +58,8 @@ pub @let ModeBit = $
 # Reading a file's mode and applying it elsewhere:
 #
 # ```
-# let mode = metadata("template.sh").mode
+# let Metadata(info) = fs.metadata "template.sh"
+# let mode = info.mode
 # update_metadata "script.sh" mode: $mode
 # ```
 #
@@ -104,7 +105,8 @@ pub class Mode: Iterable[ModeBit]
   # Mask with `0o7777` for the permission bits alone.
   #
   # ```
-  # let mode = metadata("script.sh").mode
+  # let Metadata(info) = fs.metadata "script.sh"
+  # let mode = info.mode
   # assert_eq (mode.int & 0o7777) 0o755
   # ```
   #[getter]
@@ -146,7 +148,6 @@ pub class Mode: Iterable[ModeBit]
   pub def (bnot)[S @ Mode] self @ S -> S
     ...
 
-
 # [`fs.Path`](fs.Path) using Unix path syntax.
 #
 # See [`fs.Path`](fs.Path) for fields, methods, and operators.
@@ -160,4 +161,320 @@ pub class Path: fs.Path
     # Path value.
     path @ (Str | fs.Path)
   do
+    ...
+
+# Unix directory entries.
+pub class DirEntry: fs.DirEntry
+  # The inode number of the entry.
+  #
+  #[getter]
+  pub def ino self -> Int
+    ...
+
+# Unix filesystem metadata.
+pub class FsMetadata: fs.FsMetadata
+  # Total data blocks.
+  #[getter]
+  pub def blocks self -> Int
+    ...
+
+  # Free data blocks, including reserved blocks.
+  #[getter]
+  pub def blocks_free self -> Int
+    ...
+
+  # Free data blocks available to unprivileged users.
+  #
+  #[getter]
+  pub def blocks_available self -> Int
+    ...
+
+  # Total file nodes.
+  #[getter]
+  pub def files self -> Int
+    ...
+
+  # Free file nodes.
+  #[getter]
+  pub def files_free self -> Int
+    ...
+
+  # Free file nodes available to unprivileged users.
+  #
+  #[getter]
+  pub def files_available self -> Int
+    ...
+
+  # Filesystem fragment size in bytes.
+  #[getter]
+  pub def fragment_size self -> Int
+    ...
+
+  # Raw filesystem identifier when the platform
+  # reports one.
+  #[getter]
+  pub def fsid self -> (Int | nil)
+    ...
+
+  # Maximum filename length.
+  #[getter]
+  pub def name_max self -> Int
+    ...
+
+  # Raw Linux filesystem mount attribute mask.
+  #[getter]
+  pub def linux_attrs self -> (Int | nil)
+    ...
+
+  # Raw FreeBSD filesystem mount attribute mask.
+  #[getter]
+  pub def freebsd_attrs self -> (Int | nil)
+    ...
+
+  # Raw macOS filesystem mount attribute mask.
+  #[getter]
+  pub def macos_attrs self -> (Int | nil)
+    ...
+
+  # Whether setuid execution is disabled.
+  #[getter]
+  pub def no_suid self -> Bool
+    ...
+
+  # Whether execution is disabled.
+  #[getter]
+  pub def no_exec self -> (Bool | nil)
+    ...
+
+  # Whether writes are synchronous.
+  #[getter]
+  pub def synchronous self -> (Bool | nil)
+    ...
+
+  # Whether device files are disabled.
+  #[getter]
+  pub def no_dev self -> (Bool | nil)
+    ...
+
+  # Whether access time updates are disabled.
+  #[getter]
+  pub def no_atime self -> (Bool | nil)
+    ...
+
+  # Whether directory access time updates are
+  # disabled.
+  #[getter]
+  pub def no_dir_atime self -> (Bool | nil)
+    ...
+
+  # Whether relative-atime updates are enabled.
+  #[getter]
+  pub def relatime self -> (Bool | nil)
+    ...
+
+# Unix file metadata.
+#
+# Attribute getters return `nil` when unavailable or inapplicable.
+pub class Metadata: fs.Metadata
+  # Permissions and file type.
+  #[getter]
+  pub def mode self -> Mode
+    ...
+
+  # Device ID.
+  #[getter]
+  pub def dev self -> Int
+    ...
+
+  # Inode number.
+  #[getter]
+  pub def ino self -> Int
+    ...
+
+  # Hard-link count.
+  #[getter]
+  pub def nlink self -> Int
+    ...
+
+  # Owner user ID.
+  #[getter]
+  pub def uid self -> Int
+    ...
+
+  # Owner group ID.
+  #[getter]
+  pub def gid self -> Int
+    ...
+
+  # Special-device ID.
+  #[getter]
+  pub def rdev self -> Int
+    ...
+
+  # Preferred block size for I/O.
+  #[getter]
+  pub def blksize self -> Int
+    ...
+
+  # Number of allocated 512-byte blocks.
+  #[getter]
+  pub def blocks self -> Int
+    ...
+
+  # Whether the platform hidden flag is set.
+  #[getter]
+  pub def hidden self -> (Bool | nil)
+    ...
+
+  # Whether the platform immutable flag is set.
+  #[getter]
+  pub def immutable self -> (Bool | nil)
+    ...
+
+  # Whether the platform append-only flag is set.
+  #[getter]
+  pub def append_only self -> (Bool | nil)
+    ...
+
+  # Whether the platform no-dump flag is set.
+  #[getter]
+  pub def no_dump self -> (Bool | nil)
+    ...
+
+  # Whether the readonly attribute is set.
+  #[getter]
+  pub def readonly self -> (Bool | nil)
+    ...
+
+  # Whether the system attribute is set.
+  #[getter]
+  pub def system self -> (Bool | nil)
+    ...
+
+  # Whether the archive attribute is set.
+  #[getter]
+  pub def archive self -> (Bool | nil)
+    ...
+
+  # Whether the reparse-point attribute is set.
+  #
+  #[getter]
+  pub def reparse_point self -> (Bool | nil)
+    ...
+
+  # Whether the offline attribute is set.
+  #[getter]
+  pub def offline self -> (Bool | nil)
+    ...
+
+  # Raw Linux attribute flags. Linux only.
+  #[getter]
+  pub def linux_attrs self -> (Int | nil)
+    ...
+
+  # Whether the no-atime flag is set. Linux only.
+  #[getter]
+  pub def no_atime self -> (Bool | nil)
+    ...
+
+  # Whether the no-copy-on-write flag is set. Linux
+  #[getter]
+  pub def no_copy_on_write self -> (Bool | nil)
+    ...
+
+  # Whether the synchronous-directory-updates flag
+  # is set. Linux only.
+  #[getter]
+  pub def dir_sync self -> (Bool | nil)
+    ...
+
+  # Whether the case-insensitive-directory-lookups
+  # flag is set. Linux only.
+  #[getter]
+  pub def casefold self -> (Bool | nil)
+    ...
+
+  # Whether the data-journaling flag is set. Linux
+  #[getter]
+  pub def data_journaling self -> (Bool | nil)
+    ...
+
+  # Whether the don't-compress flag is set. Linux
+  #[getter]
+  pub def no_compress self -> (Bool | nil)
+    ...
+
+  # Whether the project-hierarchy flag is set. Linux
+  #[getter]
+  pub def project_inherit self -> (Bool | nil)
+    ...
+
+  # Whether the secure-deletion flag is set. Linux
+  #[getter]
+  pub def secure_delete self -> (Bool | nil)
+    ...
+
+  # Whether the synchronous-updates flag is set.
+  # Linux only.
+  #[getter]
+  pub def sync self -> (Bool | nil)
+    ...
+
+  # Whether the no-tail-merging flag is set. Linux
+  #[getter]
+  pub def no_tail_merge self -> (Bool | nil)
+    ...
+
+  # Whether the top-of-directory-hierarchy flag is
+  # set. Linux only.
+  #[getter]
+  pub def top_dir self -> (Bool | nil)
+    ...
+
+  # Whether the undeletable flag is set. Linux only.
+  #[getter]
+  pub def undelete self -> (Bool | nil)
+    ...
+
+  # Whether the direct-access flag is set. Linux
+  #[getter]
+  pub def direct_access self -> (Bool | nil)
+    ...
+
+  # Whether the extent-format flag is set. Linux
+  #[getter]
+  pub def extent_format self -> (Bool | nil)
+    ...
+
+  # Raw macOS file flags. macOS only.
+  #[getter]
+  pub def macos_attrs self -> (Int | nil)
+    ...
+
+  # Whether the opaque flag is set on macOS or FreeBSD.
+  #[getter]
+  pub def opaque self -> (Bool | nil)
+    ...
+
+  # Raw FreeBSD file flags. FreeBSD only.
+  #[getter]
+  pub def freebsd_attrs self -> (Int | nil)
+    ...
+
+  # Owner: the uid as an [`Int`](std.Int) on Unix, or the owner
+  # [`Sid`](security.windows.Sid) on Windows.
+  #
+  # This representation matches the `owner` argument accepted by
+  # [`update_metadata`](fs.update_metadata).
+  #[getter]
+  pub def owner self -> Int
+    ...
+
+  # Owning group: the gid as an [`Int`](std.Int) on Unix, or the primary
+  # group [`Sid`](security.windows.Sid) on Windows.
+  #
+  # This representation matches the `group` argument accepted by
+  # [`update_metadata`](fs.update_metadata).
+  #[getter]
+  pub def group self -> Int
     ...
