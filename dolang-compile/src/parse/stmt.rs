@@ -89,7 +89,12 @@ impl Parser<'_> {
         let bind = self.parse_pattern(scope, false)?;
         let equal_span = self.expect(scope, &[ExpectKind::Equal])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
-        let rhs = match self.peek()? {
+        let rhs_start = self.peek()?;
+        let rhs_owns_else = matches!(
+            rhs_start,
+            Some(token!(TokenInfo::Keyword(Keyword::If | Keyword::Match)))
+        );
+        let rhs = match rhs_start {
             Some(token!(TokenInfo::Ellipsis, span)) => {
                 self.advance();
                 if let Some(token!(TokenInfo::ArgSep)) = self.peek()? {
@@ -109,7 +114,20 @@ impl Parser<'_> {
             }
             _ => self.parse_rhs_value(scope)?,
         };
+        let else_branch = if rhs_owns_else {
+            if let token @ Some(token!(TokenInfo::Keyword(Keyword::Else))) = self.peek()? {
+                return Err(self.syntax_error(
+                    scope,
+                    token,
+                    "`else` belongs to the `if` or `match` RHS, not the `let`",
+                ));
+            }
+            None
+        } else {
+            self.parse_binding_else(scope)?
+        };
         Ok(Stmt::Let(Let {
+            else_branch,
             bind,
             rhs,
             let_span,
@@ -123,11 +141,46 @@ impl Parser<'_> {
         self.expect(scope, &[ExpectKind::ArgSep])?;
         let expr = self.parse_cmd_or_expr(scope, false)?;
         let bind = self.parse_pattern(scope, true)?;
+        let else_branch = self.parse_binding_else(scope)?;
         Ok(Bind {
+            else_branch,
             bind,
             expr,
             bind_span,
         })
+    }
+
+    /// A binding's failure body, after its value or vertical pattern.
+    fn parse_binding_else(&mut self, scope: &mut Scope) -> Result<Option<(Box<Block>, Span)>> {
+        loop {
+            match self.peek()? {
+                Some(token!(TokenInfo::StmtSep)) => {
+                    self.advance();
+                }
+                Some(token!(TokenInfo::Keyword(Keyword::Else))) => break,
+                _ => return Ok(None),
+            }
+        }
+        let span = self.advance();
+        let body = if let Some(token!(TokenInfo::Indent)) = self.peek()? {
+            self.advance();
+            self.parse_block_through_dedent(scope)?
+        } else {
+            self.expect(scope, &[ExpectKind::ArgSep])?;
+            if let token @ Some(token!(TokenInfo::Keyword(Keyword::If))) = self.peek()? {
+                return Err(self.syntax_error(
+                    scope,
+                    token,
+                    "`else if` is not allowed after `let` or `bind`",
+                ));
+            }
+            Block {
+                stmts: vec![self.parse_stmt(scope)?],
+                vars: Vec::new(),
+                repl: None,
+            }
+        };
+        Ok(Some((Box::new(body), span)))
     }
 
     /// Parse the condition of an `if` or `while`, along with the conditional

@@ -1,0 +1,180 @@
+# Successful bindings remain in the enclosing scope.
+let a b = [1, 2]
+else throw std.ValueError "pair"
+assert_eq [a, b] [1, 2]
+
+bind {status: 200}
+  :status
+  :body = "empty"
+else
+  throw std.ValueError "response"
+assert_eq [status, body] [200, "empty"]
+
+# A failed match returns from its function; the RHS runs once.
+let calls = 0
+def pair value
+  calls = (calls + 1)
+  let x y = value
+  else return "mismatch"
+  [x, y]
+assert_eq (pair([1])) "mismatch"
+assert_eq (pair [3, 4]) [3, 4]
+assert_eq $calls 2
+
+# Single names use truthiness.
+def truthy value
+  let found = value
+  else return "absent"
+  found
+assert_eq (truthy nil) "absent"
+assert_eq (truthy false) "absent"
+assert_eq (truthy 7) 7
+
+# Type, constant, nested and alternative tests share conditional semantics.
+def nested value
+  let Array(1 Int(x)) = value
+  else return nil
+  x
+assert_eq (nested [1, 9]) 9
+assert_eq (nested [2, 9]) nil
+assert_eq (nested [1, "wrong"]) nil
+assert_eq (nested 42) nil
+
+def alternative value
+  let Int(x) | Str(x) = value
+  else return nil
+  x
+assert_eq (alternative 7) 7
+assert_eq (alternative "s") "s"
+assert_eq (alternative false) nil
+
+# The failure body sees the outer name, including in a closure.
+let outer = "outer"
+def shadow()
+  let outer = nil
+  else
+    let f = do outer
+    return f()
+  outer
+assert_eq (shadow()) "outer"
+
+# Break and continue leave the surrounding loop.
+let seen = []
+for value = [[1], [2, 3], [], [4, 5]]
+  let x y = value
+  else continue
+  seen.push [x, y]
+assert_eq $seen [[2, 3], [4, 5]]
+for value = [[1, 2], []]
+  let x y = value
+  else break
+  seen.push [x, y]
+assert_eq $seen [[2, 3], [4, 5], [1, 2]]
+
+# Falling through raises and runs finally, rather than exposing unbound locals.
+let finalized = false
+let error = try
+  let x y = []
+  else nil
+  [x, y]
+catch std.RuntimeError: e
+  str $e
+finally
+  finalized = true
+assert_eq $error "`let` else block did not diverge"
+assert $finalized
+
+let error = try
+  bind {}
+    missing: _missing
+  else nil
+catch std.RuntimeError: e
+  str $e
+assert_eq $error "`bind` else block did not diverge"
+
+# Errors other than a mismatch propagate without running else.
+let entered = false
+let caught = try
+  let _x _y = 42
+  else
+    entered = true
+    throw std.ValueError "wrong branch"
+catch std.TypeError: _
+  true
+assert $caught
+assert $!entered
+
+# Successful binding statements still return nil.
+def result()
+  let _x _y = [1, 2]
+  else throw std.ValueError "pair"
+assert_eq (result()) nil
+
+# An RHS if owns its else, and ordinary command arguments stay literal.
+let choice = if false
+  1
+else
+  2
+assert_eq $choice 2
+let words = str else
+assert_eq $words "else"
+
+# Defaults run only on success, and preserve references to earlier bindings.
+let defaults = 0
+def default_value()
+  defaults = (defaults + 1)
+  "default"
+def keyed value
+  bind value
+    :a
+    :b = a
+    :c = default_value()
+  else return nil
+  [a, b, c]
+assert_eq (keyed {a: 2}) [2, 2, "default"]
+assert_eq (keyed {bad: 2}) nil
+assert_eq $defaults 1
+
+# A bare vertical name has the same truthiness behavior.
+def vertical value
+  bind value
+    found
+  else return nil
+  found
+assert_eq (vertical false) nil
+assert_eq (vertical 42) 42
+
+# Nested unpack mismatch cleans up intermediate values on the failure edge.
+def unpack_nested value
+  let a (b c) d = value
+  else return "mismatch"
+  [a, b, c, d]
+assert_eq (unpack_nested [1, [2], 3]) "mismatch"
+assert_eq (unpack_nested [1, [2, 3], 4]) [1, 2, 3, 4]
+
+# Optional nested defaults keep their existing matching behavior.
+let ?k: (optional = 3) = {}
+else throw std.ValueError "optional"
+assert_eq $optional 3
+
+# Return through a try body runs finally.
+let finished = false
+def nonlocal_return()
+  try
+    let _a _b = []
+    else return 7
+  finally
+    finished = true
+assert_eq (nonlocal_return()) 7
+assert $finished
+
+# An inline failure statement can itself have an indented body.
+let error = try
+  let _a _b = []
+  else try
+    throw std.ValueError "inner"
+  catch _
+    nil
+catch std.RuntimeError: e
+  str $e
+assert_eq $error "`let` else block did not diverge"

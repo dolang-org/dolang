@@ -65,6 +65,22 @@ An unpacking mismatch or a failed type test or constant comparison takes the
 failure branch; other errors propagate. See
 [Conditional Matching](./patterns.md#conditional-matching) for the details.
 
+### `let` / `bind` with `else`
+
+Use a diverging `else` to leave on a mismatch and keep the bindings in the
+surrounding scope:
+
+```
+let k v = s.split "="
+else throw std.ValueError "expected KEY=VALUE: $s"
+echo "$k -> $v"
+```
+
+`else` accepts an inline statement or an indented block. Its body must return,
+throw, break, continue, or otherwise never return; falling through raises
+`std.RuntimeError`. See [Patterns](./patterns.md#let-bind-with-else) for scope
+and matching rules.
+
 ### `if` in `let` and Assignments
 
 `if` statements can be the right-hand side of `let` bindings and assignments:

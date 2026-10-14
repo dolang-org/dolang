@@ -205,6 +205,7 @@ impl Ir {
                 Terminal::Branch { .. }
                 | Terminal::Leave { .. }
                 | Terminal::Guard { .. }
+                | Terminal::ElseFallthrough { .. }
                 | Terminal::Unreachable => {}
             }
             let mut nested = Vec::new();
@@ -455,7 +456,7 @@ impl Ir {
                     }
                 }
                 Terminal::Return | Terminal::EndFinally => empty(depth),
-                Terminal::Escape(_) | Terminal::Unreachable => {}
+                Terminal::Escape(_) | Terminal::ElseFallthrough { .. } | Terminal::Unreachable => {}
             }
         }
     }

@@ -13,6 +13,7 @@ use dolang_util::debug_eprintln;
 #[derive(PartialEq, Eq)]
 pub(crate) enum InstError {
     InvalidOpcode,
+    InvalidElseKind,
     Truncated,
     IntegerOverflow,
     OperandDepthConflict {
@@ -59,6 +60,7 @@ impl Display for InstError {
 
         match self {
             InvalidOpcode => write!(f, "invalid opcode"),
+            InvalidElseKind => write!(f, "invalid else statement kind"),
             Truncated => write!(f, "truncated instruction"),
             IntegerOverflow => write!(f, "integer overflow"),
             OperandDepthConflict { from, into } => {
@@ -537,6 +539,16 @@ impl<'a, C: Context> FuncVerifier<'a, C> {
                     ))?;
                     self.used[self.index].uses.insert(index);
                 }
+                ElseFallthrough(kind) => {
+                    if kind > 1 {
+                        return Err(FuncError::inst(
+                            bytecode,
+                            before,
+                            InstError::InvalidElseKind,
+                        ));
+                    }
+                    need_bb = true;
+                }
                 // Upvar depth/indicator checked during data flow;
                 // terminal instruction
                 NlBranch(_, _) => {
@@ -567,7 +579,7 @@ impl<'a, C: Context> FuncVerifier<'a, C> {
         // success path, which always has somewhere to go, so it is never legitimately
         // the final instruction of a function.
         match last.inst {
-            Ret | Branch(_) | NlBranch(_, _) => (),
+            Ret | Branch(_) | NlBranch(_, _) | ElseFallthrough(_) => (),
             _ => return Err(FuncError::UnexpectedEnd),
         }
         Ok(())
@@ -838,6 +850,7 @@ impl<'a, C: Context> FuncVerifier<'a, C> {
                 block.push();
                 block.push();
             }
+            ElseFallthrough(_) => {}
             NlBranch(depth, _) => {
                 // Terminal: validates upvar depth is in bounds
                 if *depth >= block.upvars.len() {
@@ -950,7 +963,7 @@ impl<'a, C: Context> FuncVerifier<'a, C> {
 
             // Immediate fall-through successor block, if applicable
             let next = match last.inst {
-                Branch(_) | Ret | NlBranch(_, _) => None,
+                Branch(_) | Ret | NlBranch(_, _) | ElseFallthrough(_) => None,
                 _ => {
                     if bb + 1 != self.blocks.len() {
                         Some(bb + 1)
@@ -1738,6 +1751,67 @@ mod test {
             symbols: 0,
             constants: 1,
         }
+    }
+
+    #[test]
+    fn else_fallthrough_is_terminal() {
+        use Inst::*;
+
+        for kind in [0, 1] {
+            let ctx = link(
+                unpack_branch_mock(),
+                vec![func(0, vec![], vec![ElseFallthrough(kind)])],
+            );
+            run(&ctx).unwrap();
+            let mut decoder = InstDecoder::new(std::io::Cursor::new(&ctx.funcs[0].bytecode));
+            assert!(
+                matches!(decoder.next().unwrap().unwrap(), ElseFallthrough(got) if got == kind)
+            );
+        }
+    }
+
+    #[test]
+    fn else_fallthrough_does_not_join_success() {
+        use Inst::*;
+
+        // The failure edge must not reach the load of the successful binding.
+        let ctx = link(
+            unpack_branch_mock(),
+            vec![func(
+                1,
+                vec![],
+                vec![
+                    LoadConst(0),
+                    UnpackBranch(1, 5),
+                    Pop,
+                    StoreLocal(0),
+                    Branch(6),
+                    ElseFallthrough(0),
+                    LoadLocal(0),
+                    Ret,
+                ],
+            )],
+        );
+        run(&ctx).unwrap();
+    }
+
+    #[test]
+    fn else_fallthrough_invalid_kind() {
+        let ctx = link(
+            unpack_branch_mock(),
+            vec![func(0, vec![], vec![Inst::ElseFallthrough(2)])],
+        );
+        inst_error(ctx, InstError::InvalidElseKind);
+    }
+
+    #[test]
+    fn else_fallthrough_unreachable_successor() {
+        use Inst::*;
+        let ctx = link(
+            unpack_branch_mock(),
+            vec![func(0, vec![], vec![ElseFallthrough(0), LoadConst(0), Ret])],
+        );
+        inst_error(ctx, InstError::InstructionUnreachable);
     }
 
     #[test]

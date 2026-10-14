@@ -1,0 +1,10 @@
+let x = if true
+  1
+else
+  2
+else return nil
+# error: `else` belongs to the `if` or `match` RHS, not the `let`
+#   --> binding_else_rhs_if.dol:LL:LL
+#    |
+# LL | else return nil
+#    | ^^^^

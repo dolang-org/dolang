@@ -2531,6 +2531,9 @@ impl<'a> Elaborater<'a> {
         }
 
         self.visit_prim_stmt(scope, &mut node.rhs, true)?;
+        if let Some((body, _)) = &mut node.else_branch {
+            self.visit_block(scope, body)?;
+        }
 
         // In a class body, let bindings are not inserted into the lexical index.
         // Private fields use their unique private sym; pub fields use the plain sym.
@@ -2562,6 +2565,9 @@ impl<'a> Elaborater<'a> {
 
     fn visit_bind(&mut self, scope: &mut Scope<'_>, node: &mut Bind) -> Result<()> {
         self.visit_expr(scope, &mut node.expr, false)?;
+        if let Some((body, _)) = &mut node.else_branch {
+            self.visit_block(scope, body)?;
+        }
         self.visit_pattern(scope, &mut node.bind, false)?;
         Ok(())
     }

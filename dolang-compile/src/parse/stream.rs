@@ -170,7 +170,8 @@ pub(super) struct Peek<'a> {
     peek: Inner<<Self as Iterator>::Item>,
 }
 
-const PEEK_INTERNAL_ERROR_COUNT: usize = 10;
+// A statement can pass several optional-clause checks before its next token is consumed.
+const PEEK_INTERNAL_ERROR_COUNT: usize = 20;
 
 impl<'a> Peek<'a> {
     fn set_mode(&mut self, mode: Mode) -> Mode {

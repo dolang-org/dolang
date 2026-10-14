@@ -1108,10 +1108,16 @@ impl<'u> Walk<'_, 'u> {
             Stmt::Prim(prim) => self.prim(frame, prim),
             Stmt::Let(node) => {
                 self.prim(frame, &node.rhs);
+                if let Some((body, _)) = &node.else_branch {
+                    self.branch(frame, &**body, None);
+                }
                 self.pattern(frame, &node.bind);
             }
             Stmt::Bind(node) => {
                 self.expr(frame, &node.expr);
+                if let Some((body, _)) = &node.else_branch {
+                    self.branch(frame, &**body, None);
+                }
                 self.pattern(frame, &node.bind);
             }
             Stmt::Assign(node) => {

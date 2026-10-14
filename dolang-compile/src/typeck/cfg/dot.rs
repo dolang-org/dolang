@@ -106,6 +106,7 @@ fn edges(ir: &Ir, digraph: &mut Scope, block: BlockId, terminal: &Terminal) {
         Terminal::Branch { .. }
         | Terminal::Return
         | Terminal::Throw(_)
+        | Terminal::ElseFallthrough { .. }
         | Terminal::EndFinally
         | Terminal::Escape(_)
         | Terminal::Unreachable => {

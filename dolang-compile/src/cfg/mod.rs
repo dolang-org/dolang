@@ -105,6 +105,7 @@ pub(crate) enum TermInfo {
     /// one value per element of the signature; the failure edge receives nothing.
     UnpackIf(sig::UnpackId, BlockId, BlockId),
     NlBranch(usize, u8),
+    ElseFallthrough(usize),
 }
 
 #[derive(Default)]

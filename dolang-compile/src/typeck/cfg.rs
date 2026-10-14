@@ -348,6 +348,11 @@ pub(crate) enum Terminal {
     /// Return the function's result
     Return,
     Throw(Expr),
+    /// A binding failure body returned normally; raises a runtime error.
+    ElseFallthrough {
+        span: Span,
+        kind: usize,
+    },
     /// Enter a `finally` at `entry`, pushing a tag
     Leave {
         entry: BlockId,
@@ -586,6 +591,7 @@ impl Terminal {
             }
             Terminal::Return
             | Terminal::Throw(_)
+            | Terminal::ElseFallthrough { .. }
             | Terminal::EndFinally
             | Terminal::Escape(_)
             | Terminal::ReturnFrom { .. }
@@ -604,7 +610,8 @@ impl Terminal {
             | Terminal::Throw(value)
             | Terminal::ReturnFrom { value, .. } => value.span,
             &Terminal::Next { span, .. } => span,
-            Terminal::Catch { .. }
+            Terminal::ElseFallthrough { .. }
+            | Terminal::Catch { .. }
             | Terminal::Return
             | Terminal::Leave { .. }
             | Terminal::EndFinally

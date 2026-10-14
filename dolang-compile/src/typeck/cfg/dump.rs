@@ -346,6 +346,7 @@ impl Dump<'_, '_> {
                 write!(out, "return from f{} ", func.index())?;
                 self.expr(out, value)
             }
+            Terminal::ElseFallthrough { kind, .. } => write!(out, "elsefall {kind}"),
             Terminal::Unreachable => write!(out, "unreachable"),
         }
     }

@@ -1291,7 +1291,11 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         let Let { bind, rhs, .. } = node;
 
         self.lower_prim_stmt(rhs, true)?;
-        self.lower_pattern(bind, want_result)?;
+        if let Some((body, span)) = &node.else_branch {
+            self.lower_binding_else(bind, body, *span, 0, want_result)?;
+        } else {
+            self.lower_pattern(bind, want_result)?;
+        }
         Ok(())
     }
 
@@ -1299,7 +1303,63 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         let Bind { bind, expr, .. } = node;
 
         self.lower_expr(expr)?;
-        self.lower_pattern(bind, want_result)?;
+        if let Some((body, span)) = &node.else_branch {
+            self.lower_binding_else(bind, body, *span, 1, want_result)?;
+        } else {
+            self.lower_pattern(bind, want_result)?;
+        }
+        Ok(())
+    }
+
+    /// Match the already evaluated value, keeping successful bindings in this scope.
+    fn lower_binding_else(
+        &mut self,
+        pattern: &'a Pattern,
+        body: &'a Block,
+        span: Span,
+        kind: usize,
+        want_result: bool,
+    ) -> Result<()> {
+        let scope = self.block.scope;
+        let func = self.block.func;
+        let success = self.graph.alloc_block(func, scope);
+        let failed_scope = self
+            .graph
+            .alloc_scope(false, false, func, Some(scope), &body.vars);
+        let failed = self.graph.alloc_block(func, failed_scope);
+        let fallthrough = self.graph.alloc_block(func, scope);
+        self.graph.block_mut(fallthrough).term = Term(TermInfo::ElseFallthrough(kind), span);
+        self.queue(Work {
+            bb: failed,
+            ast: WorkAst::Block(body, false),
+            params: self.branch_params(None, None, fallthrough),
+        });
+        let plan = if let Pattern::Ident(PatIdent { ident, .. }) = pattern {
+            let cleanup = self.graph.alloc_block(func, scope);
+            self.block.insts.push(Inst(InstInfo::Dup, span));
+            self.block.term = Term(TermInfo::If(success, cleanup), span);
+            self.link(success);
+            self.link(cleanup);
+            self.switch(cleanup);
+            self.block.insts.push(Inst(InstInfo::Pop, span));
+            self.block.term = Term(TermInfo::Branch(failed), span);
+            self.link(failed);
+            let res = ident.res.as_ref().expect("resolved binding");
+            BindPlan {
+                steps: Vec::new(),
+                vars: vec![Some(self.resolve_var(res.index, res.depth))],
+            }
+        } else {
+            self.lower_cond_test(pattern, scope, success, failed, span)?
+                .0
+                .unwrap()
+        };
+        self.switch(success);
+        self.lower_bind_plan(plan, span);
+        self.lower_pattern_defaults(pattern, span)?;
+        if want_result {
+            self.lower_load_nil(span);
+        }
         Ok(())
     }
 

@@ -1,0 +1,15 @@
+let x = true
+# warning: unused variable
+#   --> binding_else_local.dol:LL:LL
+#    |
+# LL | let x = true
+#    |     ^
+else
+  let local = 1
+  throw std.ValueError $local
+echo $local
+# error: unbound identifier
+#   --> binding_else_local.dol:LL:LL
+#    |
+# LL | echo $local
+#    |       ^^^^^

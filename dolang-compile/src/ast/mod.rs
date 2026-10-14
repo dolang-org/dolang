@@ -1914,6 +1914,7 @@ impl Node for Pattern {
 }
 
 pub(crate) struct Let {
+    pub(crate) else_branch: Option<(Box<Block>, Span)>,
     pub(crate) bind: Pattern,
     pub(crate) rhs: PrimStmt,
     pub(crate) let_span: Span,
@@ -1971,7 +1972,12 @@ impl Node for Let {
         visit.token(Token::Keyword, self.let_span, None)?;
         visit.node(&self.bind)?;
         visit.token(Token::Operator, self.equal_span, None)?;
-        visit.node(&self.rhs)
+        visit.node(&self.rhs)?;
+        if let Some((body, span)) = &self.else_branch {
+            visit.token(Token::Keyword, *span, None)?;
+            visit.node(&**body)?;
+        }
+        ControlFlow::Continue(())
     }
 
     fn kind(&self) -> NodeKind {
@@ -1980,6 +1986,7 @@ impl Node for Let {
 }
 
 pub(crate) struct Bind {
+    pub(crate) else_branch: Option<(Box<Block>, Span)>,
     pub(crate) bind: Pattern,
     pub(crate) expr: Expr,
     pub(crate) bind_span: Span,
@@ -1989,7 +1996,12 @@ impl Node for Bind {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         visit.token(Token::Keyword, self.bind_span, None)?;
         visit.node(&self.expr)?;
-        visit.node(&self.bind)
+        visit.node(&self.bind)?;
+        if let Some((body, span)) = &self.else_branch {
+            visit.token(Token::Keyword, *span, None)?;
+            visit.node(&**body)?;
+        }
+        ControlFlow::Continue(())
     }
 
     fn kind(&self) -> NodeKind {

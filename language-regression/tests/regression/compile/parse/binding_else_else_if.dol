@@ -1,0 +1,8 @@
+let x = nil
+else if true
+  # error: `else if` is not allowed after `let` or `bind`
+  #   --> binding_else_else_if.dol:LL:LL
+  #    |
+  # LL | else if true
+  #    |      ^^
+  return nil

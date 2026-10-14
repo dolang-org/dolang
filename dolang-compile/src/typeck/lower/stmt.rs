@@ -336,11 +336,19 @@ impl<'u> Scope<'_, '_, 'u> {
             Stmt::Prim(prim) => self.prim(prim, dest),
             Stmt::Let(node) => {
                 let value = self.prim_value(&node.rhs);
-                self.bind(&node.bind, value, dest);
+                if let Some((body, span)) = &node.else_branch {
+                    self.binding_else(&node.bind, value, body, *span, 0, dest);
+                } else {
+                    self.bind(&node.bind, value, dest);
+                }
             }
             Stmt::Bind(node) => {
                 let value = self.expr(&node.expr);
-                self.bind(&node.bind, value, dest);
+                if let Some((body, span)) = &node.else_branch {
+                    self.binding_else(&node.bind, value, body, *span, 1, dest);
+                } else {
+                    self.bind(&node.bind, value, dest);
+                }
             }
             Stmt::Assign(node) => self.assignment(node, dest),
             Stmt::Break(..) => {
@@ -451,6 +459,32 @@ impl<'u> Scope<'_, '_, 'u> {
             value,
         });
         var
+    }
+
+    /// Match a binding, continuing in this frame or leaving through its failure body.
+    fn binding_else(
+        &mut self,
+        pattern: &'u ast::Pattern,
+        value: Expr,
+        body: &'u Block,
+        span: Span,
+        kind: usize,
+        dest: Option<VarId>,
+    ) {
+        let success = self.block();
+        let failed = self.block();
+        let fallthrough = self.block();
+        let frame = self.ctx.frame.clone();
+        self.test_pattern(value, pattern, true, &frame, success, failed);
+        let ctx = Ctx {
+            frame: self.block_frame(body),
+            ..self.ctx.clone()
+        };
+        self.queue_block(failed, ctx, body, None, fallthrough);
+        self.switch(fallthrough);
+        self.end(Terminal::ElseFallthrough { span, kind });
+        self.switch(success);
+        self.value_nil(dest, pattern.span());
     }
 
     /// Bind a pattern to a value, whose operands are the only ones on the stack

@@ -1146,6 +1146,14 @@ impl<'v> Vm<'v> {
                         reader.seek(offset)
                     }
                 }
+                ElseFallthrough => {
+                    frame.pc = reader.offset();
+                    let message = match reader.usize() {
+                        0 => "`let` else block did not diverge",
+                        _ => "`bind` else block did not diverge",
+                    };
+                    return Err(Error::runtime_raw(inner, message));
+                }
                 // Non-local branch: jump to a target frame outside the current call stack.
                 // Used to implement break/continue/return across closure boundaries.
                 //

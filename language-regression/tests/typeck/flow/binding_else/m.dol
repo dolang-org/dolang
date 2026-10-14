@@ -1,0 +1,97 @@
+def fail msg @ Str -> std.Never
+  throw std.ValueError $msg
+
+pub def typed value @ (Int | Str) -> Int
+  let Int(n) = value
+  else return 0
+  n
+# ^: flow std.Int
+
+pub def never value @ (Int | Str) -> Int
+  let Int(n) = value
+  else fail "integer required"
+  n
+# ^: flow std.Int
+
+pub def fallthrough value
+  let a _b = value
+  else nil
+  # warning: `let` else block may not diverge
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   else nil
+  #    |   ^^^^
+  a
+
+pub def bind_fallthrough value
+  bind value
+    :key
+  else nil
+  # warning: `bind` else block may not diverge
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   else nil
+  #    |   ^^^^
+  key
+
+pub def partial value c @ Bool
+  let a _b = value
+  else
+    # warning: `let` else block may not diverge
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   else
+    #    |   ^^^^
+    if c
+      return nil
+  a
+
+pub def handler value
+  let x = 1
+  try
+    let _a _b = value
+    else
+      # warning: `let` else block may not diverge
+      #   --> m.dol:LL:LL
+      #    |
+      # LL |     else
+      #    |     ^^^^
+      x = "failed"
+  catch _
+    x
+#   ^: flow std.Int | std.Str
+
+pub def nested_scope value
+  let n = "outer"
+  let Int(n) = value
+  else
+    let f = do n
+    fail (f())
+  n
+# ^: flow std.Int
+
+# The rejected type is empty, so the endpoint is unreachable.
+pub def guaranteed value @ Int -> Int
+  let Int(n) = value
+  else nil
+  n
+# ^: flow std.Int
+
+pub def truthy value @ (Int | nil) -> Int
+  let n = value
+  else return 0
+  n
+# ^: flow std.Int
+
+pub def throws value
+  let a b = value
+  else throw std.ValueError "pair"
+  [a, b]
+
+pub def loops values @ Array[Tuple[Int, Int]]
+  for value = values
+    let a b = value
+    else continue
+    let Int(n) = a
+    else break
+    [n, b]
