@@ -1210,13 +1210,13 @@ pub class ArchiveError: std.RuntimeError
   pub field detail @ (Str | nil) = nil
 
   def (init) self source @ Path detail @ (Str | nil) = nil
+    self.source = source
+    self.detail = detail
     std.RuntimeError.(init) $self
       if detail
         "archive operation failed: $source: $detail"
       else
         "archive operation failed: $source"
-    self.source = source
-    self.detail = detail
 
 def decompress_raw
   source @ Path

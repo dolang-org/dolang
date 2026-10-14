@@ -50,7 +50,7 @@ pub def pick x y = nil
   [x, y]
 
 pub class Box[T]
-  pub field item @ T = nil
+  pub field item @ T = ...
   #                ^: ref binder T
 
   pub def map[U] self f@((T) -> U) -> Box[U]

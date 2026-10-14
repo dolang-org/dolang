@@ -1,7 +1,7 @@
 # A method's unannotated receiver is its class.
 
 pub class Box[T]
-  pub field item @ T = nil
+  pub field item @ T = ...
   pub field loose = nil
 
   pub def get self -> T

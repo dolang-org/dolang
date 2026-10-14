@@ -5,7 +5,7 @@
 pub class Num
 pub class Text
 pub class Box[T]
-  pub field item @ T = nil
+  pub field item @ T = ...
 pub class Pair[A, B]
   pub field items @ Phantom[A, B] = nil
 pub class Tuple[*Ts]

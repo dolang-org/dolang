@@ -14,7 +14,7 @@ pub class Drain[T]
     ...
 
 pub class Cell[T]
-  pub field value @ T = nil
+  pub field value @ T = ...
 
 # No member mentions `T`, so it's invariant
 pub class Tag[T]

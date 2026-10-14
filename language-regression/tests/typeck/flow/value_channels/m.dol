@@ -9,7 +9,7 @@ pub class Holder
   #                     ^~: ambient <Value >Value
 
 pub class Box[T]
-  pub field item @ T = nil
+  pub field item @ T = ...
 
 pub class CallbackBox: Box[(Int) -> nil]
 #                                ^~: ambient <Value >Value

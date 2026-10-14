@@ -11,7 +11,7 @@ pub class Box[S @ {...}]
 #    |                    ^
 
 pub class Plain[T]
-  pub field item @ T = nil
+  pub field item @ T = ...
 
 pub class Flat
   pub field item = nil

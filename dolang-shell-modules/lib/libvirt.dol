@@ -450,8 +450,8 @@ pub class NoDomainError: std.RuntimeError
   pub field name @ Str = nil
 
   def (init) self name
-    std.RuntimeError.(init) $self "libvirt domain does not exist: $name"
     self.name = name
+    std.RuntimeError.(init) $self "libvirt domain does not exist: $name"
 
 def virsh connect_uri ...args
   cli virsh --quiet --connect $connect_uri ...args

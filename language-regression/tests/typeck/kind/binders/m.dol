@@ -5,7 +5,7 @@ import @ext
 
 pub class Plain[T]
   #             ^: kind type
-  pub field item @ T = nil
+  pub field item @ T = ...
 
 pub class Bounded[S @ {...}]
   #               ^: kind schema

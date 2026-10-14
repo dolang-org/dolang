@@ -1,6 +1,6 @@
 # A class without an `(init)` of its own runs a default one: its instance fields
 # get their defaults, and it passes the instance on to the next `(init)`. Each of
-# its private fields must fit its annotation there.
+# the instance fields it declares must fit its annotation there.
 
 pub class Fits
   field a @ Int = 0
@@ -11,6 +11,11 @@ pub class Fits
 
 # A sentinel default is left in place
 pub class Sentinel
+  # error: `self` escapes from the default `(init)` while field `b` is `nil | std.Int`, which doesn't fit `std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub class Sentinel
+  #    |           ^^^^^^^^
   # error: `self` escapes from the default `(init)` while field `#a` is `nil | std.Int`, which doesn't fit `std.Int`
   #   --> m.dol:LL:LL
   #    |

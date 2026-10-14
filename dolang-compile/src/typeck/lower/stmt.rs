@@ -105,11 +105,13 @@ impl<'u> Scope<'_, '_, 'u> {
     /// The defaults an `(init)`'s receiver's instance fields start with, each joined
     /// into a variable standing for its field. An initializer is lowered in place,
     /// in a frame of its own for its comprehensions' variables: it resolves in the
-    /// class's enclosing frame, as `(init)`'s parameters do. Reads and writes of the
-    /// receiver's private fields use the variables from here on.
+    /// class's enclosing frame, as `(init)`'s parameters do. Accesses of the
+    /// receiver's fields use the variables from here on.
     fn prelude(&mut self, receiver: Option<VarId>) {
         let init = self.ctx.init.clone().expect("lowering an `(init)`");
         let mut fields = FxHashMap::default();
+        let final_ =
+            (self.ctx.class).is_some_and(|class| self.lower.db.declaration(class).source.is_final);
         for member in &init.ast.body.members {
             let ClassMember::Field(field) = member else {
                 continue;
@@ -144,10 +146,8 @@ impl<'u> Scope<'_, '_, 'u> {
                     }
                 };
                 self.emit(Step::Default { var, value });
-                if private {
-                    fields.insert(key.name, var);
-                    self.graph().func_mut(self.ctx.func).fields.push(var);
-                }
+                fields.insert(key, var);
+                self.graph().func_mut(self.ctx.func).fields.push(var);
             }
         }
         self.ctx.init = Some(Rc::new(Init {
@@ -156,6 +156,7 @@ impl<'u> Scope<'_, '_, 'u> {
             span: init.span,
             receiver,
             fields,
+            final_,
         }));
     }
 
@@ -434,10 +435,20 @@ impl<'u> Scope<'_, '_, 'u> {
             self.value_nil(dest, span);
             return;
         }
-        if let LValue::PrivateField { object, field, .. } = &node.lhs
-            && let Some(var) = self.tracked_field(object, *field)
+        if let LValue::Field { object, field, .. } | LValue::PrivateField { object, field, .. } =
+            &node.lhs
+            && let private = matches!(node.lhs, LValue::PrivateField { .. })
+            && let Some((var, dispatches)) = self.own_field(object, *field, private)
         {
             let value = self.prim_value(&node.rhs);
+            // A setter overriding the field may observe the others
+            if dispatches {
+                self.emit(Step::Escape {
+                    span: object.span(),
+                    kind: EscapeKind::Use,
+                    except: Some(var),
+                });
+            }
             self.assign(var, value);
             self.value_nil(dest, span);
             return;
@@ -1422,6 +1433,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 span,
                 receiver: None,
                 fields: FxHashMap::default(),
+                final_: false,
             })
         });
         self.queue(entry, ctx, Job::Function(func));
@@ -1458,6 +1470,7 @@ impl<'u> Scope<'_, '_, 'u> {
             span: class.ident.span,
             receiver: None,
             fields: FxHashMap::default(),
+            final_: false,
         }));
         let entry = self.graph().func(id).entry;
         self.queue(entry, ctx, Job::DefaultInit);

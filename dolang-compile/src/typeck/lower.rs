@@ -30,7 +30,7 @@ use super::{
         VarFlags, VarId,
     },
     elab::{DeclAst, ModuleRef, Tables},
-    r#type::{Database, DeclId, Literal, SymbolId, UnitId},
+    r#type::{Database, DeclId, Literal, MemberKey, SymbolId, UnitId},
 };
 use crate::{
     ast::{Class, Function, Stmt},
@@ -302,7 +302,8 @@ impl<'u> Ctx<'u> {
 }
 
 /// An `(init)`: the class it initializes, and once its parameters are bound,
-/// its receiver and the variables standing for the receiver's private fields
+/// its receiver and the variables standing for the instance fields the class
+/// declares
 struct Init<'u> {
     ast: &'u Class,
     /// The frame the class statement is in, where its field initializers resolve
@@ -310,7 +311,10 @@ struct Init<'u> {
     /// The `(init)`'s name, where its return is reported
     span: Span,
     receiver: Option<VarId>,
-    fields: FxHashMap<SymbolId, VarId>,
+    fields: FxHashMap<MemberKey, VarId>,
+    /// Whether the class is final, so its public fields can't be overridden by
+    /// properties: accessing one never dispatches
+    final_: bool,
 }
 
 struct Work<'u> {

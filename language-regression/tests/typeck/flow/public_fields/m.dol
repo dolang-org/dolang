@@ -1,0 +1,108 @@
+# A class's `(init)` is responsible for the public instance fields it declares.
+# Writing one may run a setter overriding it, so `self` escapes but for that
+# field: only the first written can start with a sentinel. A final class's public
+# fields can't be overridden, so they're accessed like private ones.
+
+pub class One
+  pub field a @ Int = nil
+  pub field b @ Str = "b"
+
+  def (init) self
+    self.a = 1
+    self.b = "c"
+
+pub class Two
+  pub field a @ Int = nil
+  pub field b @ Str = nil
+
+  def (init) self
+    self.a = 1
+    # error: `self` escapes while field `b` is `nil | std.Str`, which doesn't fit `std.Str`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     self.a = 1
+    #    |     ^^^^
+    self.b = "b"
+
+pub class Read
+  pub field a @ Int = nil
+
+  def (init) self
+    # A read may run a getter
+    let _ = self.a
+    # error: `self` escapes while field `a` is `nil | std.Int`, which doesn't fit `std.Int`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     let _ = self.a
+    #    |             ^^^^
+    self.a = 1
+
+pub class Missing
+  pub field a @ Int = nil
+
+  def (init) _self
+    # error: `(init)` returns while field `a` is `nil | std.Int`, which doesn't fit `std.Int`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   def (init) _self
+    #    |        ^^^^
+    nil
+
+pub class Misfit
+  pub field a @ Int = 0
+
+  def (init) self
+    self.a = "a"
+# error: `"a"` does not fit the annotation `std.Int`
+#   --> m.dol:LL:LL
+#    |
+# LL |     self.a = "a"
+#    |              ^^^
+
+#[final]
+pub class Final
+  pub field a @ Int = nil
+  pub field b @ Str = nil
+  pub field c @ (Int | nil) = nil
+
+  def (init) self flag @ Bool
+    self.a = 1
+    self.b = "b"
+    if flag
+      self.c = 1
+    # Reads are narrowed, and don't escape
+    let _ = self.c
+    #       ^~~~~~: flow nil | std.Int
+    if self.c
+      let _ = self.c
+      #       ^~~~~~: flow std.Int
+
+# An inherited field is the superclass's responsibility, and writing it escapes
+pub class Inherits: One
+  field c @ Int = nil
+
+  def (init) self
+    self.#c = 3
+    One.(init) $self
+    self.a = 2
+
+pub class Inherited: One
+  field c @ Int = nil
+
+  def (init) self
+    self.a = 2
+    # error: `self` escapes while field `#c` is `nil | std.Int`, which doesn't fit `std.Int`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     self.a = 2
+    #    |     ^^^^
+    self.#c = 3
+
+# The default `(init)` is responsible for public fields too
+pub class Default
+  # error: `self` escapes from the default `(init)` while field `a` is `nil | std.Int`, which doesn't fit `std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub class Default
+  #    |           ^^^^^^^
+  pub field a @ Int = nil

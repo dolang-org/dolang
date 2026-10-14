@@ -42,7 +42,7 @@ pub class Picky: Drain[Num]
 
 # Invariant: a field keeps its type exactly
 pub class Cell[T]
-  pub field value @ T = nil
+  pub field value @ T = ...
 
 pub class IntCell: Cell[Int]
   pub field value @ Int = nil

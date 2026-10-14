@@ -96,7 +96,7 @@ pub class Loose: @Solid
     ...
 
 pub class Holder[T]
-  pub field value @ T = nil
+  pub field value @ T = ...
 
 pub @class IntHolder: Holder[Int]
 

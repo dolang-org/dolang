@@ -264,8 +264,8 @@ impl<'u> Scope<'_, '_, 'u> {
         match self.entry(ident.res) {
             Some(Entry::Var(var) | Entry::Item { var: Some(var), .. }) => {
                 self.capture(var);
-                // Any use of an `(init)`'s receiver but a private field access may
-                // observe its fields
+                // Any use of an `(init)`'s receiver but an access of a field that
+                // doesn't dispatch may observe its fields
                 if self.ctx.init.as_ref().and_then(|init| init.receiver) == Some(var) {
                     self.emit(Step::Escape {
                         span: ident.span,
@@ -357,9 +357,15 @@ impl<'u> Scope<'_, '_, 'u> {
         }
     }
 
-    /// The variable standing for a private field of the receiver, when `object` is
-    /// an `(init)`'s receiver and `field` one of its class's private fields
-    pub(super) fn tracked_field(&self, object: &ast::Expr, field: Span) -> Option<VarId> {
+    /// The variable standing for a field of the receiver, when `object` is an
+    /// `(init)`'s receiver and `field` an instance field its class declares, and
+    /// whether accessing the field may dispatch to a property overriding it
+    pub(super) fn own_field(
+        &self,
+        object: &ast::Expr,
+        field: Span,
+        private: bool,
+    ) -> Option<(VarId, bool)> {
         let init = self.ctx.init.as_ref()?;
         let ast::Expr::Ident(ident) = strip(object) else {
             return None;
@@ -367,13 +373,23 @@ impl<'u> Scope<'_, '_, 'u> {
         if self.var(ident)? != init.receiver? {
             return None;
         }
-        init.fields.get(&self.symbol(field)).copied()
+        let var = *init
+            .fields
+            .get(&self.member_key(field, false, private).key)?;
+        Some((var, !private && !init.final_))
     }
 
+    /// The variable standing for a field of the receiver whose accesses never
+    /// dispatch, so they read and write it directly
     fn tracked(&self, object: &ast::Expr, field: &GetVariant) -> Option<VarId> {
-        match field {
-            GetVariant::Private { span, .. } => self.tracked_field(object, *span),
-            GetVariant::Normal(_) | GetVariant::SpecialMethod { .. } => None,
+        let (span, private) = match field {
+            GetVariant::Normal(span) => (*span, false),
+            GetVariant::Private { span, .. } => (*span, true),
+            GetVariant::SpecialMethod { .. } => return None,
+        };
+        match self.own_field(object, span, private)? {
+            (var, false) => Some(var),
+            (_, true) => None,
         }
     }
 

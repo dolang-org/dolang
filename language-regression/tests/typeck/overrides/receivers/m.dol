@@ -5,7 +5,7 @@ pub class Num
 pub class Int: Num
 
 pub class Box[T]
-  pub field item @ T = nil
+  pub field item @ T = ...
   pub def only self @ Box[T] -> T
     self.item
 

@@ -10,15 +10,15 @@ pub class Square: Shape
 pub class Circle: Shape
 
 pub class Grid[T]: Raster
-  pub field cells @ Array[T]
+  pub field cells @ Array[T] = ...
 
 #[mixable]
 pub class Mesh[T]: Shape
-  pub field cells @ Array[T]
+  pub field cells @ Array[T] = ...
 
 #[mixable]
 pub class Layer[T]: Raster
-  pub field cells @ Array[T]
+  pub field cells @ Array[T] = ...
 
 # A `Square` isn't a `Grid` of any kind
 pub def tested s @ (Square | Grid[Int])
@@ -40,7 +40,7 @@ pub def mixed s @ (Square | Layer[Int])
 
 # Sibling disjoint classes
 pub class Wedge[T]: Shape
-  pub field cells @ Array[T]
+  pub field cells @ Array[T] = ...
 
 pub def cousins s @ (Square | Wedge[Int])
   if let Wedge(w) = s

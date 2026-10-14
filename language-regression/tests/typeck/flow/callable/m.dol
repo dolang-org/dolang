@@ -34,8 +34,8 @@ pub class Symbols: Func
     ...
 
 pub class Holder
-  pub field callee @ Callable = nil
-  pub field mixed @ (((Int) -> Int) | Callable) = nil
+  pub field callee @ Callable = ...
+  pub field mixed @ (((Int) -> Int) | Callable) = ...
 
   #[getter]
   pub def callable _self -> Callable

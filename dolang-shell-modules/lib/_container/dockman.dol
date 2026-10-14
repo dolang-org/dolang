@@ -409,8 +409,8 @@ pub class InvalidImageReferenceError: RuntimeError
   pub field ref @ Str = nil
 
   def (init) self ref
-    RuntimeError.(init) $self "invalid image reference: $ref"
     self.ref = ref
+    RuntimeError.(init) $self "invalid image reference: $ref"
 
 # Raised when a registry rejects the credentials for an image.
 pub class RegistryAuthError: RuntimeError
@@ -418,8 +418,8 @@ pub class RegistryAuthError: RuntimeError
   pub field ref @ Str = nil
 
   def (init) self ref
-    RuntimeError.(init) $self "registry authentication failed: $ref"
     self.ref = ref
+    RuntimeError.(init) $self "registry authentication failed: $ref"
 
 # Raised when an image archive cannot be read or written.
 pub class ArchiveError: RuntimeError
@@ -427,8 +427,8 @@ pub class ArchiveError: RuntimeError
   pub field source @ (Str | Path) = nil
 
   def (init) self source
-    RuntimeError.(init) $self "archive operation failed: $source"
     self.source = source
+    RuntimeError.(init) $self "archive operation failed: $source"
 
 # Raised when an image reference cannot be found.
 #
@@ -445,8 +445,8 @@ pub class NoImageError: RuntimeError
   pub field ref @ Str = nil
 
   def (init) self ref
-    RuntimeError.(init) $self "image not found: $ref"
     self.ref = ref
+    RuntimeError.(init) $self "image not found: $ref"
 
   pub def (dbg) self
     "<NoImageError ref: $(dbg self.ref)>"
@@ -457,8 +457,8 @@ pub class NoContainerError: RuntimeError
   pub field ref @ Str = nil
 
   def (init) self ref
-    RuntimeError.(init) $self "container not found: $ref"
     self.ref = ref
+    RuntimeError.(init) $self "container not found: $ref"
 
   pub def (dbg) self
     "<NoContainerError ref: $(dbg self.ref)>"
@@ -469,8 +469,8 @@ pub class ContainerExitError: RuntimeError
   pub field rc @ Int = nil
 
   def (init) self rc
-    RuntimeError.(init) $self "container exited with status: $rc"
     self.rc = rc
+    RuntimeError.(init) $self "container exited with status: $rc"
 
   pub def (dbg) self
     "<ContainerExitError rc: $(self.rc)>"
@@ -1503,6 +1503,7 @@ pub class Builder
         self.#cleanup()
 
 # A container image.
+#[final]
 pub class Image
   # Full image ID, `sha256:...`.
   pub field id @ Str = nil
