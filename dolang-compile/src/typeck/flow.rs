@@ -223,11 +223,11 @@ impl<'a, 'u> Flow<'a, 'u> {
             funcs.push(Frame {
                 declared: match func.kind {
                     FuncKind::Decl(decl) => declared_function(db, tables, decl),
-                    FuncKind::Module(_) => None,
+                    FuncKind::Module(_) | FuncKind::DefaultInit(_) => None,
                 },
                 vars,
             });
-            if let FuncKind::Decl(decl) = func.kind {
+            if let Some(decl) = func.kind.scope() {
                 let key = (decl, tables.primary_sig(decl));
                 for binder in tables.groups.get(&key).into_iter().flatten() {
                     let key = (binder.decl, binder.sig);
@@ -241,7 +241,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         let unit = (ir.funcs())
             .find_map(|(_, func)| match func.kind {
                 FuncKind::Module(unit) => Some(unit),
-                FuncKind::Decl(_) => None,
+                FuncKind::Decl(_) | FuncKind::DefaultInit(_) => None,
             })
             .expect("a unit's graph has its module function");
         let modules = (tables.units.iter().enumerate())

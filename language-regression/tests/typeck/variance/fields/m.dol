@@ -23,12 +23,18 @@ pub class Setter[T]
   #              ^: variance contravariant
   field item @ T
 
+  pub def (init) self item @ T
+    self.#item = item
+
   pub def set self item @ T
     self.#item = item
 
 pub class Hidden[T]
   #              ^: variance invariant
   field item @ T
+
+  pub def (init) self item @ T
+    self.#item = item
 
   def take self item @ T
     self.#item = item

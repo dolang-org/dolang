@@ -84,6 +84,24 @@ impl<'u> Scope<'_, '_, 'u> {
         }
     }
 
+    /// A default `(init)`: the receiver's fields get their defaults, and it passes
+    /// the receiver on to the next `(init)`, whose call isn't modeled
+    pub(super) fn default_init(&mut self) {
+        self.prelude(None);
+        let span = self.ctx.init.as_ref().expect("lowering an `(init)`").span;
+        self.emit(Step::Escape {
+            span,
+            kind: EscapeKind::Default,
+            except: None,
+        });
+        let (result, exit) = {
+            let func = self.graph().func(self.ctx.func);
+            (func.result, func.exit)
+        };
+        self.value_nil(Some(result), span);
+        self.end(Terminal::Branch(exit));
+    }
+
     /// The defaults an `(init)`'s receiver's instance fields start with, each joined
     /// into a variable standing for its field. An initializer is lowered in place,
     /// in a frame of its own for its comprehensions' variables: it resolves in the
@@ -1379,13 +1397,7 @@ impl<'u> Scope<'_, '_, 'u> {
         span: Span,
     ) -> FuncId {
         let graph = self.graph();
-        let id = graph.alloc_func(FuncKind::Decl(decl), Some(self.ctx.func));
-        let mut block = graph.block_mut(self.bb);
-        match block.steps.last_mut() {
-            Some(Step::Capture(funcs)) => funcs.push(id),
-            _ => block.steps.push(Step::Capture(vec![id])),
-        }
-        drop(block);
+        let id = self.created(FuncKind::Decl(decl));
         if let Some(receiver) = self.ctx.init.as_ref().and_then(|init| init.receiver) {
             (self.lower.captures.borrow_mut()).push(Capture {
                 block: self.bb,
@@ -1414,6 +1426,41 @@ impl<'u> Scope<'_, '_, 'u> {
         });
         self.queue(entry, ctx, Job::Function(func));
         id
+    }
+
+    /// Allocate a function nested in this one, created here
+    fn created(&self, kind: FuncKind) -> FuncId {
+        let graph = self.graph();
+        let id = graph.alloc_func(kind, Some(self.ctx.func));
+        let mut block = graph.block_mut(self.bb);
+        match block.steps.last_mut() {
+            Some(Step::Capture(funcs)) => funcs.push(id),
+            _ => block.steps.push(Step::Capture(vec![id])),
+        }
+        id
+    }
+
+    /// A class's default `(init)`, which it runs without one of its own, created
+    /// with the class
+    fn default_init_value(&self, class: &'u Class, decl: DeclId) {
+        let id = self.created(FuncKind::DefaultInit(decl));
+        let frame = (self.lower).frame(
+            id,
+            Some(self.ctx.frame.clone()),
+            &[],
+            &[],
+            Some(self.ctx.clone()),
+        );
+        let mut ctx = Ctx::function(id, false, frame, Some(decl));
+        ctx.init = Some(Rc::new(Init {
+            ast: class,
+            outer: self.ctx.frame.clone(),
+            span: class.ident.span,
+            receiver: None,
+            fields: FxHashMap::default(),
+        }));
+        let entry = self.graph().func(id).entry;
+        self.queue(entry, ctx, Job::DefaultInit);
     }
 
     /// Apply decorators to a value, the last one written first. The decorators are
@@ -1494,6 +1541,14 @@ impl<'u> Scope<'_, '_, 'u> {
             .members
             .iter()
             .any(|member| matches!(member, ClassMember::Method(method) if is_init(method)));
+        let has_fields = class.body.members.iter().any(|member| {
+            matches!(member, ClassMember::Field(field)
+                if field.scope == MemberScope::Instance
+                    && !self.phantom_field(field.ty.as_deref()))
+        });
+        if has_fields && !has_init {
+            self.default_init_value(class, decl);
+        }
         let mut statics = Vec::new();
         for member in &class.body.members {
             match member {
@@ -1510,8 +1565,7 @@ impl<'u> Scope<'_, '_, 'u> {
                     self.decorator_evals(&field.decorators);
                     match &field.init {
                         // An `(init)` lowers its instance fields' initializers
-                        FieldInit::Thunk(_) if field.scope == MemberScope::Instance && has_init => {
-                        }
+                        FieldInit::Thunk(_) if field.scope == MemberScope::Instance => {}
                         FieldInit::Thunk(func) => {
                             let id = self.lower.decl(DeclKey::closure(func));
                             let span = field.fields[0].ident.span;

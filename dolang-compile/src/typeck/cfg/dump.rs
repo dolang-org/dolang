@@ -75,6 +75,7 @@ impl Dump<'_, '_> {
         match func.kind {
             FuncKind::Module(_) => write!(out, " module")?,
             FuncKind::Decl(decl) => write!(out, " decl{}", decl.index())?,
+            FuncKind::DefaultInit(class) => write!(out, " default init decl{}", class.index())?,
         }
         if let Some(parent) = func.parent {
             write!(out, " in f{}", parent.index())?;

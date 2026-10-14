@@ -157,6 +157,7 @@ impl<'t, 'u> Lower<'t, 'u> {
         };
         match work.job {
             Job::Function(func) => scope.function(func),
+            Job::DefaultInit => scope.default_init(),
             Job::Block { stmts, dest, end } => {
                 if !scope.stmts(stmts, dest) {
                     scope.finish(end);
@@ -321,6 +322,8 @@ struct Work<'u> {
 enum Job<'u> {
     /// A function's parameters and body, starting in its entry block
     Function(&'u Function),
+    /// A default `(init)`, for the class its context's [`Init`] holds
+    DefaultInit,
     /// A block's statements, with where its value goes and how it ends
     Block {
         stmts: &'u [Stmt],

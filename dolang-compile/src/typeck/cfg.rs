@@ -109,6 +109,19 @@ pub(crate) enum FuncKind {
     Module(UnitId),
     /// A def, method implementation, lambda or field initializer
     Decl(DeclId),
+    /// The `(init)` a class without one of its own runs: it gives the instance
+    /// fields their defaults and passes the instance on
+    DefaultInit(DeclId),
+}
+
+impl FuncKind {
+    /// The declaration whose binders are in scope, its own included
+    pub(crate) fn scope(self) -> Option<DeclId> {
+        match self {
+            Self::Module(_) => None,
+            Self::Decl(decl) | Self::DefaultInit(decl) => Some(decl),
+        }
+    }
 }
 
 pub(crate) struct Func {
@@ -280,6 +293,8 @@ pub(crate) enum EscapeKind {
     Return,
     /// A function capturing it is created
     Capture,
+    /// A default `(init)` passes it on
+    Default,
 }
 
 pub(crate) enum Terminal {

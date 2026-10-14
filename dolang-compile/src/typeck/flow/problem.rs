@@ -334,6 +334,7 @@ impl Report for Problem {
                     EscapeKind::Use => "`self` escapes",
                     EscapeKind::Return => "`(init)` returns",
                     EscapeKind::Capture => "a function capturing `self` is created",
+                    EscapeKind::Default => "`self` escapes from the default `(init)`",
                 };
                 write!(
                     w,

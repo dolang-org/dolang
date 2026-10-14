@@ -28,6 +28,9 @@ impl Flow<'_, '_> {
         let name = match self.ir.func(func).kind {
             FuncKind::Module(_) => "<module>".to_owned(),
             FuncKind::Decl(decl) => self.tables.qualified(decl),
+            FuncKind::DefaultInit(class) => {
+                format!("default (init) of {}", self.tables.qualified(class))
+            }
         };
         let mut out = format!("b{} of f{} {name}", block.index(), func.index());
         let tags = self.contexts.tags(ctx);
