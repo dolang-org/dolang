@@ -6,7 +6,7 @@ import _shell args load shell shlex ssh
 # the target should see as its own invocation.
 def load_target main target
   if main
-    let bytecode = _shell.bundled_entrypoint $target
+    let bytecode = _shell.resource "dolang.entrypoint" $target
     if (bytecode == nil)
       throw args.Error "unknown entrypoint: $target"
     [bytecode, target]

@@ -1,12 +1,13 @@
 #![deny(warnings)]
 
-use std::{error::Error, sync::Arc};
+use std::error::Error;
 
 use tokio::runtime::Builder;
 
 use dolang::{
     compile,
     extension::VmExt,
+    resource::{self, Payload},
     runtime::{
         self, Error as RuntimeError, Output,
         error::ErrorKind,
@@ -32,56 +33,10 @@ mod interactive;
 mod load;
 mod terminal_state;
 
-pub trait Config: Send + Sync + 'static {
-    fn bundled_module(&self, name: &str) -> Option<&'static [u8]> {
-        let _ = name;
-        None
-    }
-
-    fn bundled_entrypoint(&self, name: &str) -> Option<&'static [u8]> {
-        let _ = name;
-        None
-    }
-
-    /// The typelib of a bundled module, for checking code that imports it. The
-    /// typelibs of `dolang` and its extensions are found without this.
-    fn bundled_typelib(&self, name: &str) -> Option<&'static [u8]> {
-        let _ = name;
-        None
-    }
-
-    fn default_entrypoint(&self) -> Option<&str> {
-        None
-    }
-}
-
-/// The typelib of the module named `name`, from the embedder's bundle, else from
-/// `dolang` and its extensions.
-fn bundled_typelib(config: &dyn Config, name: &str) -> Option<&'static [u8]> {
-    config.bundled_typelib(name).or_else(|| {
-        compile::typelibs()
-            .find(|(module, _)| *module == name)
-            .map(|(_, bytes)| bytes)
-    })
-}
-
-/// Unpack the single name argument of a bundled resource lookup.
-fn bundled_name<'v, 's>(
-    strand: &mut runtime::Strand<'v, 's>,
-    args: runtime::Args<'v, '_>,
-) -> runtime::Result<'v, 's, String> {
-    let ([name], []) = unpack!(strand, args, 1, 0)?;
-    let name = name
-        .as_str(strand)
-        .ok_or_else(|| RuntimeError::type_error(strand, "name must be a Str"))?;
-    Ok(name.to_string())
-}
-
-fn get_action(cli: &Cli, config: &Arc<dyn Config>) -> Action {
+fn get_action(cli: &Cli) -> Action {
     if cli.check {
         Action::Check {
             module_paths: cli.module_paths.clone(),
-            config: config.clone(),
         }
     } else if let Some(output) = &cli.compile {
         Action::Compile(output.clone())
@@ -116,19 +71,18 @@ async fn interrupt_signal() -> std::io::Result<()> {
 /// Run a `dolang`-compatible CLI and return its process exit code.
 ///
 /// Custom binaries can call this after linking any additional extensions they
-/// want to register via `dolang::extension!`.
-pub fn main(config: impl Config) -> i32 {
+/// want to register via `dolang::extension!` and resource-producing crates.
+pub fn main() -> i32 {
     // Spawn a thread with a larger stack to avoid stack overflow in debug
     // builds, where deep call stacks of uninlined frames can exceed the
     // default stack size (particularly on Windows).
     const STACK_SIZE: usize = 8 * 1024 * 1024;
-    let config = Arc::new(config);
 
     std::thread::Builder::new()
         .stack_size(STACK_SIZE)
         .spawn(move || {
             let terminal_restore = TerminalRestoreGuard::capture_if_terminal();
-            let outcome = run(config);
+            let outcome = run();
             drop(terminal_restore);
             finish(outcome)
         })
@@ -167,11 +121,11 @@ fn launch(command: &mut std::process::Command) -> i32 {
     }
 }
 
-fn run(config: Arc<dyn Config>) -> Outcome {
+fn run() -> Outcome {
     let argv: Vec<_> = std::env::args_os().collect();
     let implicit_main =
         cli::infer_implicit_entrypoint(argv.first().map(|arg| arg.as_os_str()), |name| {
-            config.bundled_entrypoint(name).is_some()
+            resource::get(resource::ENTRYPOINT, name).is_some()
         });
     let mut cli = match cli::parse_from(argv, implicit_main) {
         ParseOutcome::Run(cli) => cli,
@@ -184,7 +138,7 @@ fn run(config: Arc<dyn Config>) -> Outcome {
             return Outcome::Exit(2);
         }
     };
-    let action = get_action(&cli, &config);
+    let action = get_action(&cli);
 
     let rt = Builder::new_current_thread().enable_all().build().unwrap();
 
@@ -202,11 +156,6 @@ fn run(config: Arc<dyn Config>) -> Outcome {
             }
 
             let compile_prelude = cli.prelude.clone();
-            let importer_config = config.clone();
-            let batch_config = config.clone();
-            let module_config = config.clone();
-            let entrypoint_config = config.clone();
-            let typelib_config = config.clone();
             let backtrace_sym = builder.sym("backtrace");
 
             builder
@@ -231,26 +180,20 @@ fn run(config: Arc<dyn Config>) -> Outcome {
                     Output::set(strand, out, bytecode.as_slice());
                     Ok(())
                 })
-                .function("bundled_module", async move |strand, args, out| {
-                    let name = bundled_name(strand, args)?;
-                    match module_config.bundled_module(&name) {
-                        Some(bytecode) => Output::set(strand, out, bytecode),
-                        None => Output::set(strand, out, Nil),
-                    }
-                    Ok(())
-                })
-                .function("bundled_typelib", async move |strand, args, out| {
-                    let name = bundled_name(strand, args)?;
-                    match bundled_typelib(&*typelib_config, &name) {
-                        Some(typelib) => Output::set(strand, out, typelib),
-                        None => Output::set(strand, out, Nil),
-                    }
-                    Ok(())
-                })
-                .function("bundled_entrypoint", async move |strand, args, out| {
-                    let name = bundled_name(strand, args)?;
-                    match entrypoint_config.bundled_entrypoint(&name) {
-                        Some(bytecode) => Output::set(strand, out, bytecode),
+                .function("resource", async move |strand, args, out| {
+                    let ([namespace, name], []) = unpack!(strand, args, 2, 0)?;
+                    let namespace = namespace.as_str(strand).ok_or_else(|| {
+                        RuntimeError::type_error(strand, "namespace must be a Str")
+                    })?;
+                    let name = name
+                        .as_str(strand)
+                        .ok_or_else(|| RuntimeError::type_error(strand, "name must be a Str"))?;
+                    let payload = strand.access(|access| {
+                        resource::get(namespace.as_str(access), name.as_str(access))
+                    });
+                    match payload {
+                        Some(Payload::Text(text)) => Output::set(strand, out, text),
+                        Some(Payload::Bytes(bytes)) => Output::set(strand, out, bytes),
                         None => Output::set(strand, out, Nil),
                     }
                     Ok(())
@@ -272,8 +215,10 @@ fn run(config: Arc<dyn Config>) -> Outcome {
                     .await
                 })
                 .importer(async move |strand, name, mut out| {
-                    if let Some(bytes) = importer_config.bundled_module(name) {
-                        runtime::Bytecode::new(bytes).run(strand, &mut out).await
+                    if let Some(payload) = resource::get(resource::MODULE, name) {
+                        runtime::Bytecode::new(payload.as_bytes())
+                            .run(strand, &mut out)
+                            .await
                     } else {
                         Err(runtime::Error::import(strand, name))
                     }
@@ -305,8 +250,7 @@ fn run(config: Arc<dyn Config>) -> Outcome {
                                     let entrypoint = if cli.main {
                                         let name = path.to_string_lossy();
                                         Some(
-                                            batch_config
-                                                .bundled_entrypoint(name.as_ref())
+                                            resource::get(resource::ENTRYPOINT, name.as_ref())
                                                 .ok_or_else(|| {
                                                     runtime::Error::runtime(
                                                         strand,
@@ -314,7 +258,8 @@ fn run(config: Arc<dyn Config>) -> Outcome {
                                                             "unknown bundled entrypoint: {name}"
                                                         ),
                                                     )
-                                                })?,
+                                                })?
+                                                .as_bytes(),
                                         )
                                     } else {
                                         None
@@ -384,24 +329,4 @@ fn run(config: Arc<dyn Config>) -> Outcome {
         })
         .await
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::Config;
-
-    struct EmptyConfig;
-
-    impl Config for EmptyConfig {
-        fn bundled_module(&self, _name: &str) -> Option<&'static [u8]> {
-            None
-        }
-    }
-
-    #[test]
-    fn config_defaults_have_no_bundled_entrypoint_policy() {
-        let config = EmptyConfig;
-        assert!(config.bundled_entrypoint("main").is_none());
-        assert!(config.default_entrypoint().is_none());
-    }
 }

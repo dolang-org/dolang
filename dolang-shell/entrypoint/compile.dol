@@ -957,7 +957,7 @@ def check p
     let typelib = if no_bundled
       nil
     else
-      _shell.bundled_typelib $name
+      _shell.resource "dolang.typelib" $name
     if (typelib != nil)
       add_typelib $compile.Typelib(typelib) $bundled
     else

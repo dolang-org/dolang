@@ -289,7 +289,6 @@ pub(crate) async fn check<'v, 's>(
     prelude: &[PreludeImport],
     strict: bool,
     module_paths: &[PathBuf],
-    bundled_typelib: impl Fn(&str) -> Option<&'static [u8]>,
 ) -> Result<'v, 's, ()> {
     if !fs::try_exists(path).await.into_do(strand)? {
         return Err(Error::runtime(
@@ -341,7 +340,8 @@ pub(crate) async fn check<'v, 's>(
             queue(unit.imports(), &mut pending);
             drop(unit);
             sources.push(source);
-        } else if let Some(bytes) = bundled_typelib(&name) {
+        } else if let Some(payload) = dolang::resource::get(dolang::resource::TYPELIB, &name) {
+            let bytes = payload.as_bytes();
             let typelib =
                 typeck::Typelib::read(bytes).map_err(|error| Error::compile(strand, error))?;
             queue(typelib.imports(), &mut pending);

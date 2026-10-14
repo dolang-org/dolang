@@ -5,7 +5,9 @@ use std::process;
 #[cfg(windows)]
 use std::ffi::OsString;
 
-mod stock_config;
+mod resources;
+
+extern crate dolang_shell_modules;
 
 extern crate dolang_ext_compile;
 extern crate dolang_ext_load;
@@ -59,7 +61,7 @@ fn main() {
         process::exit(code);
     }
 
-    process::exit(dolang_shell_main::main(stock_config::StockConfig));
+    process::exit(dolang_shell_main::main());
 }
 
 #[cfg(windows)]

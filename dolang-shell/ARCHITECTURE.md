@@ -5,7 +5,7 @@ Stock `dolang` CLI binary. The reusable interpreter logic now lives in
 `dolang-shell-modules`, and stock bundled `--main` entrypoints live here.
 
 - **VM setup**: single-threaded tokio runtime, extension discovery/registration,
-  stock shell config wiring
+  linked resource discovery
 - **Bundled entrypoints**: `build.rs` compiles stock script entrypoints such as
   `test` and `dodo`
 - **REPL**: `rustyline` for history/editing; `$dynamic$` module persists

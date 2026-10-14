@@ -1,0 +1,47 @@
+import _shell
+  test:
+    - assert_eq
+    - assert_throws
+    - assert_type
+    - test
+
+#[test]
+def looks_up_module_bytecode()
+  assert_type $Bin (_shell.resource "dolang.module" "test")
+
+#[test]
+def looks_up_typelibs()
+  # From the shell's bundle, the facade, and native extensions.
+  for name = ["test", "std", "json"]
+    assert_type $Bin (_shell.resource "dolang.typelib" name)
+
+#[test]
+def looks_up_entrypoint_bytecode()
+  assert_type $Bin (_shell.resource "dolang.entrypoint" "test")
+
+#[test]
+def returns_nil_when_missing()
+  assert_eq (_shell.resource "dolang.module" "no.such.module") nil
+  assert_eq (_shell.resource "dolang.typelib" "no.such.module") nil
+  assert_eq (_shell.resource "dolang.entrypoint" "no_such_entrypoint") nil
+  assert_eq (_shell.resource "no.such.namespace" "test") nil
+
+#[test]
+def namespaces_select_distinct_payloads()
+  let module = _shell.resource dolang.module test
+  let typelib = _shell.resource dolang.typelib test
+  let entrypoint = _shell.resource dolang.entrypoint test
+  assert_eq (module == typelib) false
+  assert_eq (module == entrypoint) false
+  assert_eq (typelib == entrypoint) false
+
+#[test]
+def requires_string_keys()
+  assert_throws $std.TypeError do _shell.resource 42 test
+  assert_throws $std.TypeError do _shell.resource dolang.module 42
+
+#[test]
+def requires_two_positional_arguments()
+  assert_throws $std.MissingPosError do _shell.resource dolang.module
+  assert_throws $std.UnexpectedPosError do _shell.resource dolang.module test extra
+  assert_throws $std.UnexpectedKeyError do _shell.resource dolang.module test unused: true

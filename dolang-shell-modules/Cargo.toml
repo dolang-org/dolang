@@ -26,3 +26,6 @@ workspace = true
 
 [features]
 debug = ["dolang-private-bundle/debug"]
+
+[dependencies.dolang]
+workspace = true
