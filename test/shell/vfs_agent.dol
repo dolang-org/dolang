@@ -146,7 +146,7 @@ def listener_multiple_clients_and_shutdown :stale
           clients.push (Vfs.unix_socket socket)
         let workers = $
           for client = clients
-            - do client.with do run :true:
+            - do client.with do run "true"
         strand.fork ...workers
       finally
         for client = clients

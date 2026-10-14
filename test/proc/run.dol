@@ -194,32 +194,41 @@ def path_selector()
     "echo"
   let path = run[name].which()
   let prog = run[path]
+  let constructed = proc.Program $path
   strand.redirect output: $null do
     if is_windows
       prog /c echo ok
+      constructed /c echo ok
       run $path /c echo ok
     else
       prog ok
+      constructed ok
       run $path ok
 
 #[test]
 #[vfs]
 def program_proxies()
-  let :echo ... = run
-  let "clang++": clang ... = run
-  let ...rest_run = run
-  let constructed = proc.Program :echo:
+  let echo = run["echo"]
+  let clang = run["clang++"]
+  let constructed = proc.Program "echo"
 
   assert_type $proc.Program $echo
   assert_type $proc.Program $clang
-  assert_type $proc.Program $run[:echo:]
   assert_type $proc.Program $constructed
-  assert_type $proc.Program $rest_run[:echo:]
+  assert_type $proc.Program $proc.Program(Path "echo")
 
 #[test]
-def run_spreads_empty()
-  assert_eq {...run} {}
-  assert_eq [...run] []
+def symbol_program_names_rejected()
+  assert_throws $TypeError do run[:echo:]
+  assert_throws $TypeError do run :echo:
+  assert_throws $TypeError do proc.Program :echo:
+
+#[test]
+def run_unpack_and_spread_rejected()
+  assert_throws $RuntimeError do
+    let echo: _echo ... = run
+  assert_throws $RuntimeError do {...run}
+  assert_throws $RuntimeError do [...run]
 
 #[test]
 def console_redirects()

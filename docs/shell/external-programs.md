@@ -5,23 +5,20 @@ Programs inherit the current strand's shell context, including its
 working directory, environment, and standard streams.
 
 ```
-let :git :sort ... = run
-
-git status --short
-sort stdin: $["c", "a", "b"].crimp()
+run git status --short
+run sort stdin: $["c", "a", "b"].crimp()
 ```
 
 ## Program Lookup
 
-Call `run` directly, index it with a name or path, or match its keys to bind
-identifier-safe program names. The resulting [`Program`](proc.Program)
-proxy is a function:
+Call `run` directly or index it with a string name or path. Indexing returns a
+[`Program`](proc.Program) proxy, which is a function:
 
 ```
 run git status
 run["/usr/local/bin/tool"] --version
 
-let :make ... = run
+let make = run["make"]
 
 make -j4
 ```
@@ -138,12 +135,11 @@ External programs integrate with
 import 
   strand:
     - pipeline
-let :cat :grep :sort ... = run
 
 pipeline
-  do cat messages.log
-  do grep ERROR
-  do sort
+  do run cat messages.log
+  do run grep ERROR
+  do run sort
 ```
 
 When two external program stages are adjacent, the pipeline connects their
@@ -169,10 +165,9 @@ import
     - pipeline
     - each
     - collect
-let :cat ... = run
 
 let lines = pipeline
-  do cat messages.log
+  do run cat messages.log
   do each do |line| line.upper()
   do collect()
 ```

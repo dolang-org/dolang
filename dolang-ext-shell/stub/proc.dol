@@ -16,7 +16,6 @@ import
   std:
     - @BaseDict
     - @Never
-    - @Unpack
   time:
     - @Duration
 
@@ -366,7 +365,7 @@ pub class Program: Func
   pub def (init)
     self
     # Program name or path.
-    value @ (Str | Sym | Path)
+    value @ (Str | Path)
   do
     ...
 
@@ -379,7 +378,7 @@ pub class Program: Func
   # ## Example
   #
   # ```
-  # let git = Program :git:
+  # let git = Program "git"
   # echo $git.which()
   # ```
   pub def which self -> (Path | nil)
@@ -700,8 +699,7 @@ do -> R
 # Calling it takes the program name or path as its first argument, followed by
 # the [launch arguments accepted by `Program`](proc.Program.(call)). Index it
 # with a [`Str`](std.Str) or [`fs.Path`](fs.Path) to create a
-# proxy. Destructuring requires a trailing `...` or `**`; symbol and string keys create
-# proxies with the corresponding program names. It spreads as no items.
+# proxy.
 #
 # ## Example
 #
@@ -709,18 +707,19 @@ do -> R
 # run git status
 # run["clang++"] --version
 #
-# let :git :cargo "clang++": clang ... = run
+# let git = run["git"]
+# git status
 # ```
 pub let run @ Run = ...
 
 # The type of [`run`](proc.run).
-pub @class Run: Func Unpack[{*(Str | Sym): Program}, Rest: Run]
+pub @class Run: Func
   # Runs a program with the supplied command-line arguments, as
   # [`Program.(call)`](proc.Program.(call)) does.
   @def (call)
     self
     # Program name or path.
-    program @ (Str | Sym | Path)
+    program @ (Str | Path)
     # Destination for standard error, or `:STDOUT:` to merge it with standard
     # output.
     :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
@@ -741,7 +740,7 @@ pub @class Run: Func Unpack[{*(Str | Sym): Program}, Rest: Run]
   # as chunks.
   @def (call)
     self
-    program @ (Str | Sym | Path)
+    program @ (Str | Path)
     :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
     :mode @ :CHUNK:
@@ -753,7 +752,7 @@ pub @class Run: Func Unpack[{*(Str | Sym): Program}, Rest: Run]
   # Runs the program, reading the strand's input and writing `stdout:` as lines.
   @def (call)
     self
-    program @ (Str | Sym | Path)
+    program @ (Str | Path)
     # Destination for
     # standard output.
     :stdout @ (Path | Str | Sinkable[Str])
@@ -768,7 +767,7 @@ pub @class Run: Func Unpack[{*(Str | Sym): Program}, Rest: Run]
   # chunks.
   @def (call)
     self
-    program @ (Str | Sym | Path)
+    program @ (Str | Path)
     :stdout @ (Path | Str | Sinkable[Bin])
     :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
@@ -780,7 +779,7 @@ pub @class Run: Func Unpack[{*(Str | Sym): Program}, Rest: Run]
   # Runs the program, reading `stdin:` and writing the strand's output as lines.
   @def (call)
     self
-    program @ (Str | Sym | Path)
+    program @ (Str | Path)
     # Source for
     # standard input.
     :stdin @ (Path | Str | Iterable[Value])
@@ -795,7 +794,7 @@ pub @class Run: Func Unpack[{*(Str | Sym): Program}, Rest: Run]
   # chunks.
   @def (call)
     self
-    program @ (Str | Sym | Path)
+    program @ (Str | Path)
     :stdin @ (Path | Str | Iterable[Value])
     :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = nil
@@ -807,7 +806,7 @@ pub @class Run: Func Unpack[{*(Str | Sym): Program}, Rest: Run]
   # Runs the program, reading `stdin:` and writing `stdout:` as lines.
   @def (call)
     self
-    program @ (Str | Sym | Path)
+    program @ (Str | Path)
     :stdin @ (Path | Str | Iterable[Value])
     :stdout @ (Path | Str | Sinkable[Str])
     :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
@@ -819,7 +818,7 @@ pub @class Run: Func Unpack[{*(Str | Sym): Program}, Rest: Run]
   # Runs the program, reading `stdin:` and writing `stdout:` as chunks.
   @def (call)
     self
-    program @ (Str | Sym | Path)
+    program @ (Str | Path)
     :stdin @ (Path | Str | Iterable[Value])
     :stdout @ (Path | Str | Sinkable[Bin])
     :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = nil
@@ -834,5 +833,5 @@ pub @class Run: Func Unpack[{*(Str | Sym): Program}, Rest: Run]
   pub def (index)
     self
     # Program name or path.
-    name @ (Str | Sym | Path)
+    name @ (Str | Path)
   do -> Program
