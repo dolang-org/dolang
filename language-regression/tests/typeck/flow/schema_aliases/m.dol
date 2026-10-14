@@ -42,8 +42,8 @@ pub def subclass x @ Sized
   #   ^: flow std.Int
 
 pub class Sized: Struct[Later]
-  pub def (init) _self
-    nil
+  pub def (init) self
+    Struct.(init) $self (size: 1)
 
 @let Later = $
   size: Int

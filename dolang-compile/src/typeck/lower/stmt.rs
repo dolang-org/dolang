@@ -76,6 +76,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 span: init.span,
                 kind: EscapeKind::Return,
                 except: None,
+                supers: true,
             };
             self.graph().block_mut(exit).steps.insert(0, escape);
         }
@@ -85,14 +86,25 @@ impl<'u> Scope<'_, '_, 'u> {
     }
 
     /// A default `(init)`: the receiver's fields get their defaults, and it passes
-    /// the receiver on to the next `(init)`, whose call isn't modeled
+    /// the receiver on to the next `(init)` in its class's MRO. That call isn't
+    /// modeled, except that it initializes the first superclass with an `(init)`;
+    /// any other is reported.
+    ///
+    /// The first superclass in declaration order stands for the next `(init)` in
+    /// the MRO. Under C3 linearization they differ only when the first superclass
+    /// inherits its `(init)` from an ancestor placed after another superclass.
     pub(super) fn default_init(&mut self) {
         self.prelude(None);
-        let span = self.ctx.init.as_ref().expect("lowering an `(init)`").span;
+        let init = self.ctx.init.clone().expect("lowering an `(init)`");
+        let span = init.span;
+        if let Some(&(_, flag)) = init.supers.first() {
+            self.assign(flag, expr(ExprKind::Literal(Literal::Bool(true)), span));
+        }
         self.emit(Step::Escape {
             span,
             kind: EscapeKind::Default,
             except: None,
+            supers: true,
         });
         let (result, exit) = {
             let func = self.graph().func(self.ctx.func);
@@ -150,14 +162,56 @@ impl<'u> Scope<'_, '_, 'u> {
                 self.graph().func_mut(self.ctx.func).fields.push(var);
             }
         }
+        // Each superclass with an `(init)` is initialized only by calling it
+        let mut supers = Vec::new();
+        for class in self.checked_supers(init.ast) {
+            let var = (self.graph()).alloc_var(self.ctx.func, Origin::Super(class), None);
+            self.graph().var_mut(var).flags.insert(VarFlags::BOTTOM);
+            self.assign(
+                var,
+                expr(ExprKind::Literal(Literal::Bool(false)), init.span),
+            );
+            supers.push((class, var));
+            self.graph().func_mut(self.ctx.func).supers.push(var);
+        }
         self.ctx.init = Some(Rc::new(Init {
             ast: init.ast,
             outer: init.outer.clone(),
             span: init.span,
             receiver,
             fields,
+            supers,
             final_,
         }));
+    }
+
+    /// A class's superclasses its `(init)` must initialize, in declaration order:
+    /// those that have an `(init)`, own or inherited. Others are exempt, as is a
+    /// superclass that can't be resolved to a declaration.
+    fn checked_supers(&self, class: &Class) -> Vec<DeclId> {
+        let mut supers = Vec::new();
+        for super_ref in class.super_refs.iter().filter(|s| !s.type_only) {
+            let Some(decl) = self.super_decl(super_ref.ident.span) else {
+                continue;
+            };
+            if !supers.contains(&decl) && self.lower.db.has_init(decl) {
+                supers.push(decl);
+            }
+        }
+        supers
+    }
+
+    /// The class a name refers to, as elaboration resolved it: a superclass, or
+    /// what a superclass's `(init)` is called on
+    pub(super) fn super_decl(&self, head: Span) -> Option<DeclId> {
+        let head = UnitSpan {
+            unit: self.lower.unit,
+            span: head,
+        };
+        match self.lower.tables.referents.get(&head) {
+            Some(&Referent::Decl(decl)) => Some(decl),
+            _ => None,
+        }
     }
 
     /// Whether a field's annotation applies `std.Phantom`, which only marks
@@ -381,7 +435,7 @@ impl<'u> Scope<'_, '_, 'u> {
     }
 
     /// Bind a synthetic variable to a value
-    fn temporary(&self, value: Expr) -> VarId {
+    pub(super) fn temporary(&self, value: Expr) -> VarId {
         let var = self.synthetic();
         self.emit(Step::Let {
             pattern: Pattern::Bind(var),
@@ -447,6 +501,7 @@ impl<'u> Scope<'_, '_, 'u> {
                     span: object.span(),
                     kind: EscapeKind::Use,
                     except: Some(var),
+                    supers: true,
                 });
             }
             self.assign(var, value);
@@ -1433,6 +1488,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 span,
                 receiver: None,
                 fields: FxHashMap::default(),
+                supers: Vec::new(),
                 final_: false,
             })
         });
@@ -1470,6 +1526,7 @@ impl<'u> Scope<'_, '_, 'u> {
             span: class.ident.span,
             receiver: None,
             fields: FxHashMap::default(),
+            supers: Vec::new(),
             final_: false,
         }));
         let entry = self.graph().func(id).entry;
@@ -1559,7 +1616,8 @@ impl<'u> Scope<'_, '_, 'u> {
                 if field.scope == MemberScope::Instance
                     && !self.phantom_field(field.ty.as_deref()))
         });
-        if has_fields && !has_init {
+        // The default `(init)` initializes only the first superclass with one
+        if !has_init && (has_fields || self.checked_supers(class).len() > 1) {
             self.default_init_value(class, decl);
         }
         let mut statics = Vec::new();

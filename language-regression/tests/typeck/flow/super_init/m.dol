@@ -1,0 +1,158 @@
+# An `(init)` initializes each superclass that has an `(init)` by calling it on
+# `self` before `self` escapes otherwise. The call itself expects a partly
+# initialized `self`.
+import std
+
+pub class Base
+  field a @ Int = nil
+
+  def (init) self
+    self.#a = 1
+
+  pub def method self
+    self.#a
+
+pub class All: Base
+  def (init) self flag @ Bool
+    if flag
+      Base.(init) $self
+    else
+      Base.(init) $self
+    self.method()
+
+pub class Some: Base
+  def (init) self flag @ Bool
+    # error: `(init)` returns before superclass `m.Base` is initialized
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   def (init) self flag @ Bool
+    #    |        ^^^^
+    if flag
+      Base.(init) $self
+
+pub class Early: Base
+  def (init) self
+    self.method()
+    # error: `self` escapes before superclass `m.Base` is initialized
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     self.method()
+    #    |     ^^^^
+    Base.(init) $self
+
+pub class Captured: Base
+  def (init) self
+    let _ = (do self.method())
+    # error: a function capturing `self` is created before superclass `m.Base` is initialized
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     let _ = (do self.method())
+    #    |              ^^^^^^^^^^^^^^^^
+    Base.(init) $self
+
+# Private fields don't dispatch, so accessing them doesn't escape
+pub class Private: Base
+  field b @ Int = nil
+
+  def (init) self
+    self.#b = 2
+    let _ = self.#b
+    Base.(init) $self
+
+# Writing a public field may run a setter overriding it
+pub class Public: Base
+  pub field b @ Int = nil
+
+  def (init) self
+    self.b = 2
+    # error: `self` escapes before superclass `m.Base` is initialized
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     self.b = 2
+    #    |     ^^^^
+    Base.(init) $self
+
+#[final]
+pub class FinalPublic: Base
+  pub field b @ Int = nil
+
+  def (init) self
+    self.b = 2
+    Base.(init) $self
+
+#[mixable]
+pub class Other
+  def (init) _self
+    nil
+
+pub class Both: Base Other
+  def (init) self
+    # error: `(init)` returns before superclass `m.Other` is initialized
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   def (init) self
+    #    |        ^^^^
+    Base.(init) $self
+
+# A class without an `(init)` anywhere needs no call
+#[mixable]
+pub class Mixin
+  pub def mixed _self
+    1
+
+pub class Mixed: Base Mixin
+  def (init) self
+    Base.(init) $self
+    self.mixed()
+
+# An inherited `(init)` must be called too
+pub class Middle: Base
+  pub def middle _self
+    2
+
+pub class Inheriting: Middle
+  def (init) _self
+    # error: `(init)` returns before superclass `m.Middle` is initialized
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   def (init) _self
+    #    |        ^^^^
+    nil
+
+# Only a call naming the superclass directly counts
+pub class Indirect: Base
+  def (init) self
+    let base = Base
+    base.(init) $self
+# error: `self` escapes before superclass `m.Base` is initialized
+#   --> m.dol:LL:LL
+#    |
+# LL |     base.(init) $self
+#    |                  ^^^^
+
+pub class Dotted: std.RuntimeError
+  def (init) self
+    std.RuntimeError.(init) $self "dotted"
+
+pub class DottedMissing: std.RuntimeError
+  def (init) _self
+    # error: `(init)` returns before superclass `std.RuntimeError` is initialized
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   def (init) _self
+    #    |        ^^^^
+    nil
+
+# A default `(init)` passes `self` on to the first superclass's `(init)`, but no
+# other
+pub class DefaultBoth: Base Other
+# error: `self` escapes from the default `(init)` before superclass `m.Other` is initialized
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class DefaultBoth: Base Other
+#    |           ^^^^^^^^^^^
+
+pub class DefaultMixed: Base Mixin
+  field b @ Int = 1
+
+pub class DefaultOne: Base

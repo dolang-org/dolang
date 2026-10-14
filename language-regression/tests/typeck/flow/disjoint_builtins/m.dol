@@ -93,6 +93,11 @@ pub def principals v @ (Str | Int | Sid | Uuid)
 
 # A class can't be two builtins at once, but may refine one
 pub class Both: Int Str
+# error: `self` escapes from the default `(init)` before superclass `std.Str` is initialized
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Both: Int Str
+#    |           ^^^^
 # error: `Both` inherits from unrelated disjoint classes `Int` and `Str`
 #   --> m.dol:LL:LL
 #    |
@@ -104,7 +109,17 @@ pub class Quantity: Float
 # A module's error may also be one of the error kinds, but not a stop signal
 pub class Error: RuntimeError
 pub class Invalid: Error ValueError
+# error: `self` escapes from the default `(init)` before superclass `std.ValueError` is initialized
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Invalid: Error ValueError
+#    |           ^^^^^^^
 pub class Stopped: IterStop ValueError
+# error: `self` escapes from the default `(init)` before superclass `std.ValueError` is initialized
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Stopped: IterStop ValueError
+#    |           ^^^^^^^
 # error: `Stopped` inherits from unrelated disjoint classes `IterStop` and `RuntimeError`
 #   --> m.dol:LL:LL
 #    |

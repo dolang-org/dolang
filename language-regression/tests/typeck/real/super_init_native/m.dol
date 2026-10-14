@@ -1,0 +1,31 @@
+# A native superclass is initialized by calling its `(init)`, as any other is
+import fs.unix:
+  - Mode
+import http:
+  - Client
+
+pub class Perms: Mode
+  def (init) self
+    Mode.(init) $self :OWNER_READ:
+
+pub class PermsMissing: Mode
+  def (init) _self
+    # error: `(init)` returns before superclass `fs.unix.Mode` is initialized
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   def (init) _self
+    #    |        ^^^^
+    nil
+
+pub class Session: Client
+  def (init) self
+    Client.(init) $self cookies: true
+
+pub class SessionMissing: Client
+  def (init) _self
+    # error: `(init)` returns before superclass `http.Client` is initialized
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   def (init) _self
+    #    |        ^^^^
+    nil

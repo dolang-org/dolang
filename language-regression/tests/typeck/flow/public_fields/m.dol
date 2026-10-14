@@ -91,6 +91,11 @@ pub class Inherited: One
 
   def (init) self
     self.a = 2
+    # error: `self` escapes before superclass `m.One` is initialized
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     self.a = 2
+    #    |     ^^^^
     # error: `self` escapes while field `#c` is `nil | std.Int`, which doesn't fit `std.Int`
     #   --> m.dol:LL:LL
     #    |

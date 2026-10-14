@@ -406,6 +406,9 @@ pub class AccessMask: Iterable[AccessRight]
   pub def (call) cls ...flags @ (AccessRight | Iterable[AccessRight]) -> AccessMask
     ...
 
+  pub def (init) self ...flags @ (AccessRight | Iterable[AccessRight])
+    ...
+
   # Tests whether all flags named by `flag` are set.
   pub def contains self flag @ AccessRight -> Bool
     ...
@@ -486,6 +489,9 @@ pub class AceFlags: Iterable[AceFlag]
   pub def (call) cls ...flags @ (AceFlag | Iterable[AceFlag]) -> AceFlags
     ...
 
+  pub def (init) self ...flags @ (AceFlag | Iterable[AceFlag])
+    ...
+
   # Tests whether all flags named by `flag` are set.
   pub def contains self flag @ AceFlag -> Bool
     ...
@@ -556,6 +562,9 @@ pub class SecDescControl: Iterable[SecDescControlFlag]
   pub def (call) cls ...flags @ (SecDescControlFlag | Iterable[SecDescControlFlag]) -> SecDescControl
     ...
 
+  pub def (init) self ...flags @ (SecDescControlFlag | Iterable[SecDescControlFlag])
+    ...
+
   # Tests whether all flags named by `flag` are set.
   pub def contains self flag @ SecDescControlFlag -> Bool
     ...
@@ -606,6 +615,9 @@ pub class SecInfo: Iterable[SecInfoComponent]
 
   #[class]
   pub def (call) cls ...flags @ (SecInfoComponent | Iterable[SecInfoComponent]) -> SecInfo
+    ...
+
+  pub def (init) self ...flags @ (SecInfoComponent | Iterable[SecInfoComponent])
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -666,6 +678,9 @@ pub class TokenGroupAttributes: Iterable[TokenGroupAttribute]
 
   #[class]
   pub def (call) cls ...flags @ (TokenGroupAttribute | Iterable[TokenGroupAttribute]) -> TokenGroupAttributes
+    ...
+
+  pub def (init) self ...flags @ (TokenGroupAttribute | Iterable[TokenGroupAttribute])
     ...
 
   # Tests whether all flags named by `flag` are set.

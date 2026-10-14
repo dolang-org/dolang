@@ -445,6 +445,7 @@ def normalized_state text
   DOMAIN_STATES.get $text.lower() default: $text
 
 # Raised when a requested libvirt domain does not exist.
+#[final]
 pub class NoDomainError: std.RuntimeError
   # The domain name.
   pub field name @ Str = nil

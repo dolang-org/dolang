@@ -9,7 +9,7 @@ use super::{
 use crate::{
     ast::{
         self, Arg, ArrayElem, DictElem, ExprBody, For, GetVariant, Ident, If, Key, Pair, Single,
-        visit::Node,
+        SpecialMethod, visit::Node,
     },
     lex::Op,
     source::Span,
@@ -266,11 +266,12 @@ impl<'u> Scope<'_, '_, 'u> {
                 self.capture(var);
                 // Any use of an `(init)`'s receiver but an access of a field that
                 // doesn't dispatch may observe its fields
-                if self.ctx.init.as_ref().and_then(|init| init.receiver) == Some(var) {
+                if self.receiver() == Some(var) {
                     self.emit(Step::Escape {
                         span: ident.span,
                         kind: EscapeKind::Use,
                         except: None,
+                        supers: self.ctx.partial != Some(ident.span),
                     });
                 }
                 ExprKind::Var(var)
@@ -340,6 +341,19 @@ impl<'u> Scope<'_, '_, 'u> {
                 args: self.args(args).into(),
             };
         }
+        if let ast::Expr::Get {
+            object,
+            field:
+                field @ GetVariant::SpecialMethod {
+                    method: SpecialMethod::Init,
+                    ..
+                },
+            ..
+        } = callee
+            && let Some(flag) = self.super_flag(object)
+        {
+            return self.super_init(object, field, callee.span(), args, flag);
+        }
         if let ast::Expr::Get { object, field, .. } = callee
             && self.tracked(object, field).is_none()
         {
@@ -355,6 +369,62 @@ impl<'u> Scope<'_, '_, 'u> {
             callee: Box::new(callee),
             args: self.args(args).into(),
         }
+    }
+
+    /// An `(init)`'s receiver, once its parameters are bound
+    fn receiver(&self) -> Option<VarId> {
+        self.ctx.init.as_ref()?.receiver
+    }
+
+    /// The flag of the superclass whose `(init)` is called on `object`, when it's
+    /// named directly in an `(init)`
+    fn super_flag(&self, object: &ast::Expr) -> Option<VarId> {
+        let init = self.ctx.init.as_ref()?;
+        let mut head = strip(object);
+        while let ast::Expr::Get {
+            object,
+            field: GetVariant::Normal(_),
+            ..
+        } = head
+        {
+            head = strip(object);
+        }
+        let ast::Expr::Ident(ident) = head else {
+            return None;
+        };
+        let class = self.super_decl(ident.span)?;
+        (init.supers.iter()).find_map(|&(decl, var)| (decl == class).then_some(var))
+    }
+
+    /// A call of a superclass's `(init)`, which initializes it once it returns. It
+    /// takes the receiver partly initialized.
+    fn super_init(
+        &mut self,
+        object: &'u ast::Expr,
+        field: &GetVariant,
+        span: Span,
+        args: &'u [Arg],
+        flag: VarId,
+    ) -> ExprKind {
+        let receiver = self.expr(object);
+        let partial = match args.first() {
+            Some(Arg::Pos(single)) => match strip(&single.expr) {
+                ast::Expr::Ident(ident) if self.var(ident) == self.receiver() => Some(ident.span),
+                _ => None,
+            },
+            _ => None,
+        };
+        let outer = mem::replace(&mut self.ctx.partial, partial);
+        let args = self.args(args).into();
+        self.ctx.partial = outer;
+        let call = ExprKind::Invoke {
+            receiver: Box::new(receiver),
+            member: self.member(field),
+            args,
+        };
+        let result = self.temporary(expr(call, span));
+        self.assign(flag, expr(ExprKind::Literal(Literal::Bool(true)), span));
+        ExprKind::Copy(result)
     }
 
     /// The variable standing for a field of the receiver, when `object` is an

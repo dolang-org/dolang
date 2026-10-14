@@ -27,6 +27,11 @@ pub class Complete: Base
     let _ = self.#a
     self.#b = "b"
     use $self
+    # error: `self` escapes before superclass `m.Base` is initialized
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     use $self
+    #    |          ^^^^
     let _ = self.#b
     #       ^~~~~~~: flow std.Str
     Base.(init) $self

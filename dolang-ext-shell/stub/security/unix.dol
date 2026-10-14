@@ -69,6 +69,9 @@ pub class Permission: Iterable[PermissionBit]
   pub def (call) cls ...flags @ (PermissionBit | Iterable[PermissionBit]) -> Permission
     ...
 
+  pub def (init) self ...flags @ (PermissionBit | Iterable[PermissionBit])
+    ...
+
   # Tests whether all flags named by `flag` are set.
   pub def contains self flag @ PermissionBit -> Bool
     ...

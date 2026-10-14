@@ -172,6 +172,9 @@ pub class AccessMask: WindowsAccessMask
   pub def (call) cls ...flags @ (AccessRight | Iterable[AccessRight]) -> AccessMask
     ...
 
+  pub def (init) self ...flags @ (AccessRight | Iterable[AccessRight])
+    ...
+
   # Tests whether all flags named by `flag` are set.
   pub def contains self flag @ AccessRight -> Bool
     ...

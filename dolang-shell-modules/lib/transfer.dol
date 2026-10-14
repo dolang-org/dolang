@@ -1203,6 +1203,7 @@ class ZipUnpack
     finish_metadata $root $placed
 
 # Raised when unpacking a raw compressed stream (gzip, Zstandard, XZ) fails.
+#[final]
 pub class ArchiveError: std.RuntimeError
   # The stream that failed to unpack.
   pub field source @ Path = nil

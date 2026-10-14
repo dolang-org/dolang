@@ -203,6 +203,7 @@ impl<'t, 'u> Lower<'t, 'u> {
                     span: capture.span,
                     kind: EscapeKind::Capture,
                     except: None,
+                    supers: true,
                 },
             );
         }
@@ -281,6 +282,9 @@ struct Ctx<'u> {
     hoist: bool,
     /// Lowering an `(init)`, not a function nested in one
     init: Option<Rc<Init<'u>>>,
+    /// Where the receiver is passed to a superclass's `(init)`, which expects it
+    /// partly initialized
+    partial: Option<Span>,
 }
 
 impl<'u> Ctx<'u> {
@@ -297,6 +301,7 @@ impl<'u> Ctx<'u> {
             class,
             hoist: false,
             init: None,
+            partial: None,
         }
     }
 }
@@ -312,6 +317,9 @@ struct Init<'u> {
     span: Span,
     receiver: Option<VarId>,
     fields: FxHashMap<MemberKey, VarId>,
+    /// The variables saying whether each superclass with an `(init)` is
+    /// initialized
+    supers: Vec<(DeclId, VarId)>,
     /// Whether the class is final, so its public fields can't be overridden by
     /// properties: accessing one never dispatches
     final_: bool,

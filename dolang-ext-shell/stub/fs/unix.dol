@@ -123,6 +123,9 @@ pub class Mode: Iterable[ModeBit]
   pub def (call) cls ...flags @ (ModeBit | Iterable[ModeBit]) -> Mode
     ...
 
+  pub def (init) self ...flags @ (ModeBit | Iterable[ModeBit])
+    ...
+
   # Tests whether all flags named by `flag` are set.
   pub def contains self flag @ ModeBit -> Bool
     ...

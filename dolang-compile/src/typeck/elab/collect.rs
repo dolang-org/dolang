@@ -21,9 +21,9 @@ use crate::{
     Mode, PreludeImport, Unit,
     ast::{
         self, AliasBody, Annot, Arg, ArrayElem, Binders, Block, Class, ClassMember, Const,
-        DictElem, Expr, ExprBody, FieldInit, For, Function, Ident, If, ImportElement, LValue,
-        Method, PatBind, PatIdent, PatItem, Pattern, PrimStmt, Res, Stmt, TypeDecl, TypeEntry,
-        TypeRes, Var, visit::Node,
+        DictElem, Expr, ExprBody, FieldInit, For, Function, GetVariant, Ident, If, ImportElement,
+        LValue, Method, PatBind, PatIdent, PatItem, Pattern, PrimStmt, Res, SpecialMethod, Stmt,
+        TypeDecl, TypeEntry, TypeRes, Var, visit::Node,
     },
     resolvety::names_type_in,
     source::{File, Span},
@@ -786,7 +786,7 @@ impl<'u> Walk<'_, 'u> {
     }
 
     /// Record what a type name refers to, given the entry its head resolved to.
-    fn refer(&mut self, head: Span, entry: Entry<'u>, fields: &'u [Span]) {
+    fn refer(&mut self, head: Span, entry: Entry<'u>, fields: &[Span]) {
         let file = self.file;
         let item = fields.last().map(|field| file.str(*field));
         let base = match entry {
@@ -1460,6 +1460,23 @@ impl<'u> Walk<'_, 'u> {
             Expr::Lambda { func, .. } => self.closure(frame, func),
             Expr::Call { arg0, args, .. } => {
                 self.expr(frame, arg0);
+                // What a class's `(init)` is called on, which lowering compares with
+                // the superclasses of an `(init)` making the call
+                if let Expr::Get {
+                    object,
+                    field:
+                        GetVariant::SpecialMethod {
+                            method: SpecialMethod::Init,
+                            ..
+                        },
+                    ..
+                } = &**arg0
+                    && let Some((head, fields)) = path(object)
+                    && let Some(res) = head.res
+                    && let Some(entry) = frame.value_entry(res)
+                {
+                    self.refer(head.span, entry, &fields);
+                }
                 for arg in args {
                     arg.walk(self, frame);
                 }
@@ -1894,4 +1911,26 @@ impl Element for DictElem {
             Self::If(node) => walk.if_body(frame, node),
         }
     }
+}
+
+/// A name and the fields after it, as in `a.b.c`
+fn path(mut expr: &Expr) -> Option<(&Ident, Vec<Span>)> {
+    let mut fields = Vec::new();
+    let head = loop {
+        match expr {
+            Expr::Get {
+                object,
+                field: GetVariant::Normal(span),
+                ..
+            } => {
+                fields.push(*span);
+                expr = object;
+            }
+            Expr::Group { expr: inner, .. } => expr = inner,
+            Expr::Ident(ident) => break ident,
+            _ => return None,
+        }
+    };
+    fields.reverse();
+    Some((head, fields))
 }

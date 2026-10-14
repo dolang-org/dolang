@@ -150,6 +150,9 @@ pub class ManagerAccessMask: AccessMask
   pub def (call) cls ...flags @ (ManagerAccessRight | Iterable[ManagerAccessRight]) -> ManagerAccessMask
     ...
 
+  pub def (init) self ...flags @ (ManagerAccessRight | Iterable[ManagerAccessRight])
+    ...
+
   # Tests whether all flags named by `flag` are set.
   pub def contains self flag @ ManagerAccessRight -> Bool
     ...
@@ -229,6 +232,9 @@ pub class ServiceAccessMask: AccessMask
   pub def (call) cls ...flags @ (ServiceAccessRight | Iterable[ServiceAccessRight]) -> ServiceAccessMask
     ...
 
+  pub def (init) self ...flags @ (ServiceAccessRight | Iterable[ServiceAccessRight])
+    ...
+
   # Tests whether all flags named by `flag` are set.
   pub def contains self flag @ ServiceAccessRight -> Bool
     ...
@@ -291,6 +297,9 @@ pub class ServiceType: Iterable[ServiceTypeFlag]
 
   #[class]
   pub def (call) cls ...flags @ (ServiceTypeFlag | Iterable[ServiceTypeFlag]) -> ServiceType
+    ...
+
+  pub def (init) self ...flags @ (ServiceTypeFlag | Iterable[ServiceTypeFlag])
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -378,6 +387,9 @@ pub class NotifyMask: Iterable[NotifyChange]
 
   #[class]
   pub def (call) cls ...flags @ (NotifyChange | Iterable[NotifyChange]) -> NotifyMask
+    ...
+
+  pub def (init) self ...flags @ (NotifyChange | Iterable[NotifyChange])
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -469,6 +481,9 @@ pub class ServiceControlsAccepted: Iterable[AcceptedControl]
 
   #[class]
   pub def (call) cls ...flags @ (AcceptedControl | Iterable[AcceptedControl]) -> ServiceControlsAccepted
+    ...
+
+  pub def (init) self ...flags @ (AcceptedControl | Iterable[AcceptedControl])
     ...
 
   # Tests whether all flags named by `flag` are set.
