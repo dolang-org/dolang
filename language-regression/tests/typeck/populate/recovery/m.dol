@@ -54,33 +54,13 @@ pub @let Loop = Loop2
 pub @let Loop2 = Loop
 #        ^~~~~: decl Unknown
 
-pub class Chicken: @Egg
-#         ^~~~~~~: decl nominal <: m.Egg
-# error: the checker couldn't decide this, which shouldn't happen
-#   --> m.dol:LL:LL
-#    |
-# LL | pub class Chicken: @Egg
-#    |                     ^^^
-#    |
-#    = note: this may come from an inconsistent or stale typelib (rebuild, or clear the build directory); otherwise it is a checker bug
-# error: the checker couldn't decide this, which shouldn't happen
-#   --> m.dol:LL:LL
-#    |
-# LL | pub class Chicken: @Egg
-#    |           ^^^^^^^
-#    |
-#    = note: this may come from an inconsistent or stale typelib (rebuild, or clear the build directory); otherwise it is a checker bug
-pub class Egg: @Chicken
-# error: the checker couldn't decide this, which shouldn't happen
-#   --> m.dol:LL:LL
-#    |
-# LL | pub class Egg: @Chicken
-#    |           ^^^
-#    |
-#    = note: this may come from an inconsistent or stale typelib (rebuild, or clear the build directory); otherwise it is a checker bug
+# The supertype closing a cycle is dropped
+pub @class Chicken: Egg
+#          ^~~~~~~: decl nominal <: m.Egg
+pub @class Egg: Chicken
+#          ^~~: decl nominal
 # error: class inherits from itself
 #   --> m.dol:LL:LL
 #    |
-# LL | pub class Egg: @Chicken
+# LL | pub @class Egg: Chicken
 #    |                 ^^^^^^^
-

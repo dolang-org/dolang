@@ -585,7 +585,7 @@ impl Solver<'_> {
         }
         Err(match (outside && reached < 2, cycle) {
             (true, _) => Issue::Contradiction(Contradiction::Outside),
-            (false, true) => Residual::Recursive.into(),
+            (false, true) => Residual::Cycle.into(),
             (false, false) => {
                 Residual::Unsupported("a type that may be inside a union member").into()
             }

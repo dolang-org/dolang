@@ -2,7 +2,7 @@
 //!
 //! A strict unit is meant to be checked without passing through `Unknown`, so each
 //! check it leaves undecided is a warning: the checker can't verify that code. A
-//! residual that shouldn't arise at all (see [`Residual::internal`]) is an error
+//! residual that shouldn't arise at all (see [`ResidualClass::Internal`]) is an error
 //! in any unit. A typelib's declarations were reported when its source was
 //! checked, so they are not reported again.
 
@@ -13,7 +13,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::{
     elab::{UnitInfo, Unresolved},
     report::{Diag, Report, UnitDiag},
-    solver::Residual,
+    solver::{Residual, ResidualClass},
     r#type::UnitSpan,
 };
 use crate::{
@@ -29,7 +29,7 @@ struct Undecided {
 
 impl Undecided {
     fn internal(&self) -> bool {
-        self.residuals.iter().any(|residual| residual.internal())
+        (self.residuals.iter()).any(|residual| residual.class() == ResidualClass::Internal)
     }
 }
 
@@ -72,6 +72,9 @@ impl Report for Undecided {
                     Residual::GenericArguments => "it can't match these type arguments".to_owned(),
                     Residual::Alignment => "it can't match up these positional items".to_owned(),
                     Residual::Ambiguous => "several alternatives remain possible".to_owned(),
+                    Residual::Cycle => {
+                        "it can't infer a type that refers to itself; annotate it".to_owned()
+                    }
                     Residual::Recursive | Residual::MissingIntrinsic(_) | Residual::Escape => {
                         unreachable!("an internal residual has its own note")
                     }

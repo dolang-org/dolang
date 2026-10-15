@@ -63,3 +63,9 @@ pub @let Growing[T] = (nil | Box[Growing[Box[T]]])
 #    |
 # LL | pub @let Growing[T] = (nil | Box[Growing[Box[T]]])
 #    |                                  ^^^^^^^^^^^^^^^
+
+# A rejected alias stands for `Unknown`, so using one adds no diagnostics
+pub def unfold bad @ Bad worse @ Worse -> Int
+  if worse
+    return bad
+  worse
