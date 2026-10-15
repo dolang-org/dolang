@@ -102,7 +102,7 @@
 # `reboot` is also the only place a lost connection is not an error; a guest
 # that vanishes during a `run` block propagates.
 
-import _vfs base64 digest json proc progress rand shell shlex ssh std strand sys tar term time transfer xdg xml zip
+import _shell _vfs base64 digest json proc progress rand shell shlex ssh std strand sys tar term time transfer xdg xml zip
   fs:
     - Path
     - with_temp_dir
@@ -120,7 +120,6 @@ import _vfs base64 digest json proc progress rand shell shlex ssh std strand sys
     - READY_PATH
   _vm.provision:
     - BOOTSTRAP_CMD
-    - PROVISION_SOURCE
     - WINDOWS_ROOT
     - WINDOWS_VFS_COMMAND
   fs.unix:
@@ -3166,6 +3165,11 @@ class ImageSource: Source
 # `image` is `nil` and `create` sizes the overlay instead of backing it.
 class InstallerSource: Source
   def (init) self :installers :drivers :os :arch :app :user :dolang :keys :root :workdir
+    # The guest runs a released interpreter, so deliver source rather than
+    # host bytecode or a module that would need to exist in that release.
+    let provision_source = _shell.resource dolang-shell-modules provision.dol
+    if !type(provision_source, Str)
+      throw std.RuntimeError "libvirt: missing or non-text resource dolang-shell-modules/provision.dol"
     let media = []
     # The installer boots first and the disk it writes boots after it; driver
     # media is read by Setup and never booted, so it takes no order.
@@ -3200,7 +3204,7 @@ class InstallerSource: Source
         "autounattend.xml": $ unattend.unattend_xml $user :edition :index
           drivers: (drivers.len > 0)
         "bootstrap.cmd": $BOOTSTRAP_CMD
-        "provision.dol": $PROVISION_SOURCE
+        "provision.dol": $provision_source
         # The password reaches the guest here rather than through the answer
         # file: this disc is a cdrom, which `export_source` excludes, so
         # nothing on it survives into an exported image.

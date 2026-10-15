@@ -293,6 +293,10 @@ def typecheck spec rest :all = false
     if all
       for dir = dirs
         ...(Path(dir).glob "**/*.dol")
+      # Outside the lookup roots, so these use script mode and the shell
+      # prelude. Imports resolve against host-independent stubs, including
+      # Windows APIs; checking never runs the guest operations.
+      ...(Path("dolang-shell-modules/resource").glob "**/*.dol")
   if (all && sources.len == 0)
     throw "no bundled library sources found"
   with_build_env $spec do
@@ -446,7 +450,7 @@ return $
       typecheck (Spec args) $args.args
 
   "typecheck-test":
-    help: type check every bundled library and stub with zero diagnostics
+    help: type check every bundled library, resource script, and stub with zero diagnostics
     - opt: profile
       default: debug
       help: Cargo profile containing the compiler

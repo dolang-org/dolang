@@ -1,0 +1,238 @@
+# dolang: strict
+
+import json proc std sys term winnet winreg winscm
+  fs.windows:
+    - Path
+  security.windows:
+    - Sid
+  proc:
+    - console
+
+# The Feature-on-Demand package holding the Windows OpenSSH server, and the
+# inbound rule DISM is expected to add to the firewall along with it.
+let CAPABILITY = "OpenSSH.Server~~~~0.0.1.0"
+let FIREWALL_RULE = "OpenSSH-Server-In-TCP"
+
+# Where Windows keeps the machine-wide environment.
+let ENV_KEY = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+
+def log message @ Str
+  echo "[provision] $message"
+
+# Reports whether a function completed, rather than raising. A missing
+# program raises `sys.NotFoundError` rather than `proc.Error` — there is no
+# process error without a process — so a probe has to catch both or the one
+# case it exists for is the one that escapes.
+def probe func @ ((<std.Iter[std.Never], >std.Sink[Value]) -> nil) -> Bool
+  try
+    console $func
+    true
+  catch proc.Error: _
+    false
+  catch sys.NotFoundError: _
+    false
+
+# Creates the account the host logs in as, and makes it an administrator.
+#
+# Audit mode has no `UserAccounts` to do this from the answer file: that is an
+# `oobeSystem` component, and `oobeSystem` never runs here. The password comes
+# from `provision.json` on the provisioning disc, which is excluded from
+# exported images, and is passed directly to NetAPI without a command line.
+#
+# An existing account gets its password updated, and existing administrator
+# membership is tolerated, so provisioning can run again on the same guest.
+# The built-in group and the new member are identified by SID so localized
+# account names do not affect membership.
+def create_account user@Str password@Str
+  let existing = try
+    winnet.user $user
+  catch sys.NotFoundError: _
+    nil
+  let account = if existing
+    log "setting the password on $user"
+    existing.update :password
+    existing
+  else
+    log "creating $user"
+    winnet.create_user $user :password
+
+  # Accounts and groups are named by SID, never by name. Every account and
+  # group name Windows ships is localized — `BUILTIN\Administrators` is
+  # `VORDEFINIERT\Administratoren` on German media — and only the SID is the
+  # same everywhere, so anything that has to name one resolves it from its SID
+  # first.
+  let admins = winnet.group $ Sid :BUILTIN_ADMINISTRATORS:
+  log "adding $user to $(admins.info().name)"
+  try
+    admins.add_member $account.sid
+  catch sys.AlreadyExistsError: _
+    nil
+
+def install_openssh()
+  log "installing $CAPABILITY"
+  let capability = "/capabilityname:$CAPABILITY"
+  console do run dism /online /add-capability $capability /norestart
+
+# OpenSSH reads an administrator's keys from one machine-wide file rather
+# than from the account's own `.ssh` directory, and refuses to read it unless
+# it is owned by an administrator and writable by nobody else. The refusal
+# reaches the client only as "publickey denied", so getting the descriptor
+# right here is what makes the failure mode diagnosable at all.
+def write_authorized_keys key @ Str
+  let program_data = Path $ env.get ProgramData default: C:\ProgramData
+  let directory = (program_data / "ssh")
+  directory.create_dir all: true
+  let path = (directory / "administrators_authorized_keys")
+  log "writing $path"
+  path.write "$(key.trim())\n"
+
+  # Protected, so the inherited entries granting the containing directory to
+  # everyone do not come back and disqualify the file.
+  path.update_sec_desc
+    owner: :BUILTIN_ADMINISTRATORS:
+    dacl_protected: true
+    dacl:
+      for sid = [:LOCAL_SYSTEM:, :BUILTIN_ADMINISTRATORS:]
+        - allow: $sid
+          mask: :GENERIC_ALL:
+
+# DISM adds this rule itself on the builds seen so far, but a build where it
+# does not looks exactly like a guest that never finished booting.
+def ensure_firewall_rule()
+  let name = "name=$FIREWALL_RULE"
+  # Only the exit status is wanted; the rule dump would otherwise land in
+  # `provision.log` on every run of an already-provisioned guest.
+  let present = probe do
+    run netsh advfirewall firewall show rule $name
+      stdout: $std.null
+      stderr: $std.null
+  if present
+    log "firewall rule $FIREWALL_RULE is present"
+    return
+  log "adding firewall rule $FIREWALL_RULE"
+  console do run netsh advfirewall firewall add rule $name
+    dir=in action=allow protocol=TCP localport=22
+
+# Puts the payload directory on the machine `PATH`.
+#
+# This is one of the few things that genuinely has to happen in the guest,
+# and it has to happen before sshd starts. sshd hands a session an
+# environment composed from a snapshot it took when the service started, so
+# a `PATH` written any later — from the host, over the VFS — stays invisible
+# until the service is restarted or the guest reboots.
+#
+# Read-modify-write, and `:EXPAND_SZ:` because that is the kind the value
+# already has: rewriting it as a plain `:SZ:` would strip the `%SystemRoot%`
+# expansion most of its other entries are written in terms of.
+def set_machine_path directory @ Str
+  winreg.open :LOCAL_MACHINE: do |root|
+    root.open $ENV_KEY access: :READ_WRITE: do |key|
+      let entry = key.get_value "Path"
+      let current = if entry
+        str $entry.value
+      else
+        ""
+      let parts @ Array[Str] = []
+      let present = false
+      for part = current.split ";"
+        if (part.trim() == "")
+          continue
+        if (part.trim().lower() == directory.lower())
+          present = true
+        parts.push $part
+      if present
+        log "$directory is already on the machine PATH"
+      else
+        log "adding $directory to the machine PATH"
+        parts.push $directory
+        key.set "Path" $";".join(parts) kind: :EXPAND_SZ:
+
+# Started last, so that "SSH answers" is the readiness signal: there is no
+# Windows analogue of the cloud-init ready file, and anything probed earlier
+# would race a half-provisioned guest.
+def start_sshd()
+  log "configuring sshd"
+  winscm.open access: :SC_MANAGER_CONNECT: do |manager| manager.open_service sshd
+    access:
+      - :SERVICE_CHANGE_CONFIG:
+      - :SERVICE_START:
+      - :SERVICE_QUERY_STATUS:
+    do |service|
+      service.update_config start_type: :AUTO_START:
+      # Starting an already-running service raises rather than doing
+      # nothing, which would make a second run of this script fail on a
+      # guest that is already provisioned.
+      if (service.query_status().current_state == :RUNNING:)
+        log "sshd is already running"
+      else
+        log "starting sshd"
+        service.start()
+
+def main config_path @ Path
+  bind json.decode $config_path.read()
+    Dict $
+      "user": Str(user)
+      "password": Str(password)
+      "authorized_key": Str(key)
+      "root": Str(root)
+  else
+    throw std.RuntimeError "unexpected configuration JSON"
+
+  create_account $user $password
+  install_openssh()
+  write_authorized_keys $key
+  ensure_firewall_rule()
+  set_machine_path $root
+  start_sshd()
+  log "done"
+
+# Writes everything to several consoles at once.
+class Tee: term.Console
+  field consoles @ Array[term.Console]
+
+  def (init) self *consoles @ term.Console
+    self.#consoles = [...consoles]
+    term.Console.(init) $self
+
+  pub def write self *data @ (Str | Bin) -> Int
+    let written = 0
+    for console = self.#consoles
+      written = (console.write ...data)
+    written
+
+  pub def flush self
+    for console = self.#consoles
+      console.flush()
+
+# The answer file names this script directly, with no shell behind it to
+# redirect with, so the transcript is captured here instead. Child output
+# follows the capture too, which is what puts `dism`'s and `netsh`'s own
+# complaints in the log rather than nowhere.
+#
+# It goes to the console as well as the file. The audit pass runs this in a
+# visible window on the guest's console, and a capture that named only the
+# file would leave that window blank for the whole of provisioning — the one
+# view of it a person watching the install actually has. `term.console`
+# rather than `term.output()`: the target is the window behind the capture,
+# not whatever the capture just installed.
+#
+# It is written beside this script rather than beside anything derived from
+# the arguments: where the log goes must not depend on parsing succeeding, or
+# a failure early enough takes the record of itself with it.
+#
+# What throws is logged and then re-thrown, never swallowed. A failure that
+# exits zero leaves no exit code for sysprep to record, no event, and nothing
+# to distinguish "provisioning broke" from "provisioning never started" — the
+# difference that matters most when the only other evidence is a guest that
+# does not answer SSH.
+if (shell.args.len < 1)
+  throw std.ValueError "usage: provision.dol <config.json>"
+let Path(directory) = (shell.program !@ Path).absolute().parent
+else throw std.RuntimeError "could not determine script parent directory"
+(directory / "provision.log").open w do |out|
+  term.capture (Tee term.console (term.SinkConsole out)) do
+    try
+      main $Path(shell.args[0]).absolute()
+    catch e
+      log "failed: $e"
+      throw e
