@@ -2253,7 +2253,7 @@ impl<'db> Solver<'db> {
     }
 
     /// Follow root environment substitutions and committed assignments without exposing declarations.
-    fn resolve(&self, mut term: Term) -> Result<Term, Residual> {
+    pub(crate) fn resolve(&self, mut term: Term) -> Result<Term, Residual> {
         for depth in 0.. {
             self.depth(depth)?;
             self.spend()?;
