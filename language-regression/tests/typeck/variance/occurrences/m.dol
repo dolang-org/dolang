@@ -18,15 +18,15 @@ pub @class Each[T]
   #             ^: variance covariant
   pub def each self f @ (T -> nil)
 
-pub @class Rests[P, K, S @ {...}]
+pub @class Rests[P, K, S @ {*, **Value}]
   #              ^: variance contravariant
   #                 ^: variance contravariant
   #                    ^: variance contravariant
   pub def take self *items @ P **named @ K ...pack @ S
 
-pub @class Keyed[K, V]
+pub @class Keyed[K @ Sym, V]
   #              ^: variance contravariant
-  #                 ^: variance contravariant
+  #                       ^: variance contravariant
   pub def take self ...pack @ {?(K): V}
 
 pub @class Shapes[A, B, C]

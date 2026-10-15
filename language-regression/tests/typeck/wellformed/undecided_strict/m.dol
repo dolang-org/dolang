@@ -1,0 +1,19 @@
+# dolang: strict
+# A strict unit is warned where the checker can't verify a check, with a note
+# giving the reason.
+
+pub class Num
+
+pub class Split[*Ts, U @ Num]
+  field items @ std.Phantom[...Ts, U] = ...
+
+pub def split[*Xs] _x @ Split[...Xs, Num]
+  #                     ^~~~~~~~~~~~~~~~~: wf undecided GenericArguments
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def split[*Xs] _x @ Split[...Xs, Num]
+  #    |                         ^^^^^^^^^^^^^^^^^
+  #    |
+  #    = note: it can't match these type arguments
+  ...

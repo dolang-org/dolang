@@ -19,23 +19,24 @@ import elsewhere:
 
 pub let point @ Point = (Point())
 #               ^~~~~: ref geo.Point
-pub let form @ Form = Form
+pub let form @ Form = ...
 #              ^~~~: ref geo.Shape
-pub let pair @ Pair[Int] = nil
+pub let form_class = Form
+pub let pair @ Pair[Int] = ...
 #              ^~~~: ref geo.Pair
-pub let spot @ Spot = nil
+pub let spot @ Spot = ...
 #              ^~~~: ref geo.Point
-pub let outline @ Outline = nil
+pub let outline @ Outline = ...
 #                 ^~~~~~~: ref geo.Shape
 
 # A dotted name picks its module through the name the import binds
 pub let dotted @ g.Point = g
 #                ^: ref geo.Point
-pub let typed @ tg.Shape = nil
+pub let typed @ tg.Shape = ...
 #               ^~: ref geo.Shape
-pub let mode @ security.unix.Mode = nil
+pub let mode @ security.unix.Mode = ...
 #              ^~~~~~~~: ref security.unix.Mode
-pub let acl @ security.nfs4.Acl = nil
+pub let acl @ security.nfs4.Acl = ...
 #             ^~~~~~~~: ref security.nfs4.Acl
 
 # A module no checked unit provides

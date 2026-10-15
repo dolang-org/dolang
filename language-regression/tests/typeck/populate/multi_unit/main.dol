@@ -3,5 +3,5 @@ import shapes:
 import geo:
   - @Boxes
 
-let _c @ Crate[Boxes[Crate[nil]]] = nil
+let _c @ Crate[Boxes[Crate[nil]]] = ...
 #        ^~~~~~~~~~~~~~~~~~~~~~~~: type shapes.Crate[geo.Boxes[shapes.Crate[nil]]]

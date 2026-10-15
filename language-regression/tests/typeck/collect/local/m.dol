@@ -17,16 +17,16 @@ pub class Circle: @Shape
     1
 
 pub @let Pair[T] = Tuple[T, T]
-#                  ^~~~~: ref external std.Tuple
+#                  ^~~~~: ref std.Tuple
 #                        ^: ref binder T
 
-pub let origin @ Point = nil
+pub let origin @ Point = ...
 #                ^~~~~: ref m.Point
-pub let shape @ Shape = nil
+pub let shape @ Shape = ...
 #               ^~~~~: ref m.Shape
-pub let pair @ Pair[Int] = nil
+pub let pair @ Pair[Int] = ...
 #              ^~~~: ref m.Pair
-#                   ^~~: ref external std.Int
+#                   ^~~: ref std.Int
 
 let count = 0
 pub let odd @ count = count
@@ -52,6 +52,9 @@ pub def pick x y = nil
 pub class Box[T]
   pub field item @ T = ...
   #                ^: ref binder T
+
+  def (init) self item @ T
+    self.item = item
 
   pub def map[U] self f@((T) -> U) -> Box[U]
     #                     ^: ref binder T

@@ -9,7 +9,7 @@ pub @let Chain = Base
 pub @let Opaque = Prim
 #        ^~~~~~: head a.Prim
 pub @let Generic[T] = Array[T]
-#        ^~~~~~~: head external std.Array
+#        ^~~~~~~: head std.Array
 pub @let Param[T] = T
 #        ^~~~~: head binder T
 pub @let Union = (Int | Str)

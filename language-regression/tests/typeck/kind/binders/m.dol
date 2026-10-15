@@ -9,12 +9,12 @@ pub class Plain[T]
 
 pub class Bounded[S @ {...}]
   #               ^: kind schema
-  pub field items @ ((...S) -> nil) = nil
+  pub field items @ std.Phantom[((...S) -> nil)] = ...
 
 pub class Chained[A @ {...}, B @ A]
   #               ^: kind schema
   #                          ^: kind schema
-  pub field items @ ((...A, ...B) -> nil) = nil
+  pub field items @ std.Phantom[((...A, ...B) -> nil)] = ...
 
 pub def rests[*P, **K, ...M, :Key] x @ ((...P, ...K, ...M) -> Key)
   #            ^: kind schema

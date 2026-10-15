@@ -8,7 +8,7 @@ def wrap f
   f
 
 pub class Config
-  field port @ Num = nil
+  field port @ Num = ...
   #     ^~~~: member field instance private m.Num
 
   #[getter]

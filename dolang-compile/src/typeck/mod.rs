@@ -10,6 +10,7 @@ pub(crate) mod solver;
 mod trace;
 pub(crate) mod r#type;
 pub(crate) mod typelib;
+mod undecided;
 
 use std::{
     num::NonZeroUsize,
@@ -291,6 +292,7 @@ impl<'u, 's> Builder<'u, 's> {
             cfgs.push(output.cfg);
             flows.push(output.flow);
         }
+        undecided::report(&tables.units, &unresolved, &mut diags);
         Check {
             cfgs,
             flows,
@@ -440,11 +442,11 @@ fn export_dot(ir: &cfg::Ir, db: &r#type::Database, info: &elab::UnitInfo) -> std
 
 /// The result of checking a set of units.
 ///
-/// A check is *validated* when every well-formedness check passed: the checker
-/// reported no errors, and could decide every check it ran, except those that
-/// need a form it doesn't support yet. Those are provisionally accepted.
-/// Otherwise it is *partial*: its declarations are usable for diagnostics and
-/// tooling, but checking code against them proves nothing. Units that could not
+/// A check is *validated* when the checker reported no errors. A check it
+/// couldn't decide in a strict unit is a warning; in a non-strict unit, which
+/// accepts `Unknown`, it isn't reported. Otherwise the check is *partial*: its
+/// declarations are usable for diagnostics and tooling, but checking code against
+/// them proves nothing. Units that could not
 /// be checked at all are refused by [`Builder::unit`].
 pub struct Check<'u> {
     diagnostics: Vec<Diag>,
@@ -492,13 +494,7 @@ impl Check<'_> {
 
     /// Whether every well-formedness check passed. See [`Check`].
     pub fn validated(&self) -> bool {
-        self.unresolved
-            .iter()
-            .all(|unresolved| matches!(unresolved.residual, solver::Residual::Unsupported(_)))
-            && self
-                .diagnostics
-                .iter()
-                .all(|diag| diag.severity() != Severity::Error)
+        (self.diagnostics.iter()).all(|diag| diag.severity() != Severity::Error)
     }
 
     /// The checks the checker could not decide, each with the kind of reason,

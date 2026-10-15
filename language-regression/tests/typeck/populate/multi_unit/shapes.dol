@@ -4,5 +4,5 @@ import geo:
 
 pub class Crate[T]: Box[T]
   #       ^~~~~: decl nominal <: geo.Box[T]
-  pub field extra @ Boxes[T] = nil
+  pub field extra @ Boxes[T] = ...
   #                 ^~~~~~~~: type geo.Boxes[T]

@@ -3,7 +3,7 @@ import a:
   - @Hidden
   - @Absent
 
-pub let present @ Present = nil
+pub let present @ Present = ...
 #                 ^~~~~~~: ref a.Present
 pub let hidden @ Hidden = nil
 #                ^~~~~~: ref error

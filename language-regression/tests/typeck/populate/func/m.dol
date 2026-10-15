@@ -4,15 +4,15 @@
 pub class Num
 pub class Text
 
-pub let bare @ Func = nil
+pub let bare @ Func = ...
 #              ^~~~: type (...Unknown{}) -> Unknown
-pub let applied @ Func[{Num}, Text] = nil
+pub let applied @ Func[{Num}, Text] = ...
 # error: type takes no type arguments
 #   --> m.dol:LL:LL
 #    |
-# LL | pub let applied @ Func[{Num}, Text] = nil
+# LL | pub let applied @ Func[{Num}, Text] = ...
 #    |                   ^^^^^^^^^^^^^^^^^
-pub let nested @ ((Func) -> Text) = nil
+pub let nested @ ((Func) -> Text) = ...
 #                ^~~~~~~~~~~~~~~~: type ((...Unknown{}) -> Unknown, <Value, >Value) -> m.Text
 
 pub class Handler: Func

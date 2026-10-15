@@ -133,6 +133,13 @@ do
 pub def relations()
   # Relations see the static `(call)` too
   let _f @ (Str -> Shape) = Shape
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _f @ (Str -> Shape) = Shape
+  #    |                             ^^^^^
+  #    |
+  #    = note: nothing determines a type here; annotate it
   let _g @ (Int -> Shape) = Shape
 # error: `<type m.Shape>` does not fit the annotation `(std.Int) -> m.Shape`
 #   --> m.dol:LL:LL

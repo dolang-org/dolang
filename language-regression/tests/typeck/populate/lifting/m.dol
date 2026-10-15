@@ -16,7 +16,7 @@ pub class Box[T, U]
     #     ^~~: quantifier ^T covariant, ^U invariant, V invariant, in invariant, out invariant
     #                       ^~~~~~~~: type (T, <in, >out) -> V
     #                                   ^~~~~~~~~: type m.Box[V, U]
-    nil
+    ...
 
 pub def outer[A, B] _a @ A _b @ B
   @let OnlyA = (A | nil)
@@ -39,7 +39,7 @@ pub def outer[A, B] _a @ A _b @ B
     y
   let f = do |x @ A| x
   #               ^: type A
-  let _n @ Neither = nil
+  let _n @ Neither = ...
   (uses_alias, body_only, f)
 
 pub class Bounded[T, U @ Box[T, Num]]

@@ -164,6 +164,33 @@ def strict_check_rejects_compiler_warnings()
     assert ((printed out).contains "partial:")
 
 #[test]
+def strict_check_rejects_unverified_code()
+  with_temp_dir do |dir|
+    let source = (dir / "gap.dol")
+    source.write r|
+      # dolang: strict
+      class Picker
+        @def pick _self x@Int -> Int
+        @def pick _self x@Str -> Str
+        pub def pick _self x @ (Int | Str)
+          x
+      let pick = Picker().pick
+      echo $pick(1)
+    let out = BinBuf()
+    run $shell.exe -m compile check $source stdout: $out stderr: :STDOUT: mode: :CHUNK:
+    let text = printed $out
+    assert (text.contains "the checker can't verify this")
+    assert (text.contains "validated: 1 units, 1 diagnostics")
+    assert $!text.contains("undecided checks:")
+    out = BinBuf()
+    run $shell.exe -m compile check --undecided $source stdout: $out stderr: :STDOUT: mode: :CHUNK:
+    assert ((printed out).contains "undecided checks:")
+    out = BinBuf()
+    let err = assert_throws $proc.Error do
+      run $shell.exe -m compile check --strict $source stdout: $out stderr: :STDOUT: mode: :CHUNK:
+    assert_eq $err.rc 1
+
+#[test]
 def no_bundled_check_rejects_missing_imports()
   with_temp_dir do |dir|
     let source = (dir / "main.dol")

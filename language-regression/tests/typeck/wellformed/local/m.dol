@@ -19,7 +19,7 @@ pub class Holder[T @ Broken]
   pub def get _self -> T
     ...
 
-pub let held @ Holder[Broken] = nil
+pub let held @ Holder[Broken] = ...
 
 pub def unwrap x @ Broken -> Broken
   x

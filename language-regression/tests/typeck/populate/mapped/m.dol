@@ -7,14 +7,14 @@ pub class Text
 pub class Box[T]
   pub field item @ T = ...
 pub class Pair[A, B]
-  pub field items @ Phantom[A, B] = nil
+  pub field items @ Phantom[A, B] = ...
 pub class Tuple[*Ts]
-  pub field items @ Phantom[...Ts] = nil
+  pub field items @ Phantom[...Ts] = ...
 pub @let Phantom[...Ts] = ...
 
 pub def fork[*Rs] *blocks @ ...(() -> Rs) -> Tuple[...Rs]
   #     ^~~~: decl (...(<in, >out) -> Rs, <in, >out) -> m.Tuple[...Rs]
-  blocks
+  ...
 
 pub def mixed[...Us] ...values @ ...Box[Us]
   #     ^~~~~: decl (...m.Box[Us], <in, >out) -> Unknown

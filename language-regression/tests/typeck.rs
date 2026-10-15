@@ -28,11 +28,11 @@
 //!
 //! | Key | Meaning | Default |
 //! | --- | ------- | ------- |
-//! | `stubs` | Modules to add from `tests/typeck/stub/` | none |
+//! | `stubs` | Modules to add from `tests/typeck/stub/`; `std` is added whenever the case has no other | none |
 //! | `repo-stubs` | Modules to add from the repository's native module stubs | none |
 //! | `prelude` | `default` for the default prelude, `none` for an empty one | `default` |
 //! | `pipes` | The types `strand`'s pipe placeholders stand for, sender then receiver, each `module.Item` | `strand.Sender strand.Receiver` |
-//! | `validated` | `true` or `false`: whether every well-formedness check must pass | not asserted |
+//! | `validated` | `true` or `false`: whether the check reports no errors | not asserted |
 //! | `bench` | `false`, `true` (source), or a list of `source`, `typelib`, `compile` | `false` |
 //! | `skip` | `miri` to skip under Miri | none |
 
@@ -189,6 +189,19 @@ fn sources(case: &Path, settings: &Settings) -> Vec<Source> {
     for name in &settings.repo_stubs {
         let (path, file) = repo_stub(name);
         sources.push(Source::read(path, file, Some(name.clone()), false));
+    }
+    // The checker designates classes in `std` that every case relies on
+    if !sources
+        .iter()
+        .any(|source| source.module.as_deref() == Some("std"))
+    {
+        let path = Path::new(ROOT).join("stub").join("std.dol");
+        sources.push(Source::read(
+            path,
+            "stub/std.dol".to_owned(),
+            Some("std".to_owned()),
+            false,
+        ));
     }
 
     let mut seen = HashMap::new();

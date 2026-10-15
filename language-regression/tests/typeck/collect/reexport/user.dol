@@ -4,7 +4,7 @@ import c:
   - @Renamed
   - @Ghost
 
-pub let renamed @ Renamed = nil
+pub let renamed @ Renamed = ...
 #                 ^~~~~~~: ref a.Thing
-pub let ghost @ Ghost = nil
+pub let ghost @ Ghost = ...
 #               ^~~~~: ref a.Thing

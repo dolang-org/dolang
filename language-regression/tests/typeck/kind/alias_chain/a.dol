@@ -6,7 +6,7 @@ import y:
 
 pub class Keyed[S @ Mid]
   #             ^: kind schema
-  pub field items @ ((...S) -> nil) = nil
+  pub field items @ ((...S) -> nil) = ...
 
 pub let bad @ Mid = nil
 # error: expected a type, found a schema
