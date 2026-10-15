@@ -214,11 +214,12 @@ impl<'a> Rule<'_, 'a> {
                             None => joined.positional.add(rule, term),
                         }
                     }
-                    Value::Held(key, index, _) => {
+                    Value::Held(at, index, _) => {
                         let term = Part::Term(rule.held(index, values.held[index].preview));
-                        match key {
-                            Some(key) => joined.keyed(rule, symbol(key), term),
-                            None => joined.positional.add(rule, term),
+                        match at {
+                            HeldAt::Positional => joined.positional.add(rule, term),
+                            HeldAt::Keyword(key) => joined.keyed(rule, symbol(key), term),
+                            HeldAt::Pair(key) => joined.keyed(rule, rule.db.regular(key), term),
                         }
                     }
                     Value::Spread(..) => {
@@ -258,11 +259,14 @@ impl<'a> Rule<'_, 'a> {
                     };
                     vec![(multiplicity, argument, span)]
                 }
-                Value::Held(key, index, span) => {
+                Value::Held(at, index, span) => {
                     let term = rule.held(index, values.held[index].preview);
-                    let argument = match key {
-                        Some(key) => CallArgument::Keyword(key, term),
-                        None => CallArgument::Positional(term),
+                    let argument = match at {
+                        HeldAt::Positional => CallArgument::Positional(term),
+                        HeldAt::Keyword(key) => CallArgument::Keyword(key, term),
+                        HeldAt::Pair(key) => {
+                            CallArgument::Pair(rule.closed(rule.db.regular(key)), term)
+                        }
                     };
                     vec![(multiplicity, argument, span)]
                 }
@@ -362,8 +366,17 @@ enum Value {
     /// A `do` block that the rule types, positional or keyed
     Lambda(Option<SymbolId>, Lambda, Span),
     /// An argument held back until the call's parameters give it an expectation,
-    /// positional or keyed, by its index into [`Values::held`]
-    Held(Option<SymbolId>, usize, Span),
+    /// by its index into [`Values::held`]
+    Held(HeldAt, usize, Span),
+}
+
+/// Where an argument held back goes
+#[derive(Clone, Copy)]
+enum HeldAt {
+    Positional,
+    Keyword(SymbolId),
+    /// Under an evaluated key
+    Pair(TypeId),
 }
 
 /// An argument held back, with the operands its holes pop
@@ -1854,7 +1867,7 @@ impl<'a> Flow<'a, '_> {
             .collect();
         let mut never = false;
         values.values.retain_mut(|placed| {
-            let Value::Held(key, index, span) = placed.value else {
+            let Value::Held(at, index, span) = placed.value else {
                 return true;
             };
             let ty = types[index];
@@ -1863,9 +1876,10 @@ impl<'a> Flow<'a, '_> {
                 never |= placed.group.is_none();
                 return false;
             }
-            placed.value = match key {
-                Some(key) => Value::Key(key, ty, span),
-                None => Value::Pos(ty, span),
+            placed.value = match at {
+                HeldAt::Positional => Value::Pos(ty, span),
+                HeldAt::Keyword(key) => Value::Key(key, ty, span),
+                HeldAt::Pair(key) => Value::Pair(key, ty),
             };
             true
         });
@@ -2073,7 +2087,7 @@ impl<'a> Flow<'a, '_> {
                     gathering.advance(place);
                     if let Some(index) = hold(gathering, place, expected, value, operands, values) {
                         self.preview_template(at, state, values, index);
-                        out.push(placed(Value::Held(None, index, value.span)));
+                        out.push(placed(Value::Held(HeldAt::Positional, index, value.span)));
                         continue;
                     }
                     let ty = self.expect(at, state, operands, value, expected);
@@ -2087,7 +2101,7 @@ impl<'a> Flow<'a, '_> {
                     });
                     if let Some(index) = hold(gathering, place, expected, value, operands, values) {
                         self.preview_template(at, state, values, index);
-                        out.push(placed(Value::Held(Some(key), index, value.span)));
+                        out.push(placed(Value::Held(HeldAt::Keyword(key), index, value.span)));
                         continue;
                     }
                     let ty = self.expect(at, state, operands, value, expected);
@@ -2095,10 +2109,20 @@ impl<'a> Flow<'a, '_> {
                         out.push(placed(Value::Key(key, ty, value.span)));
                     }
                 }
+                // The key is evaluated first, as its operands come first
                 Item::Pair(key, value) => {
                     let key_type = self.eval(at, state, operands, key);
+                    let key_produced = produced(values, key_type);
+                    if key_produced
+                        && let Some(index) = hold(gathering, place, None, value, operands, values)
+                    {
+                        self.preview_template(at, state, values, index);
+                        let held = Value::Held(HeldAt::Pair(key_type), index, value.span);
+                        out.push(placed(held));
+                        continue;
+                    }
                     let ty = self.eval(at, state, operands, value);
-                    if produced(values, key_type) && produced(values, ty) {
+                    if key_produced && produced(values, ty) {
                         out.push(placed(Value::Pair(key_type, ty)));
                     }
                 }

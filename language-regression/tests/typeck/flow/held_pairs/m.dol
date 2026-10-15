@@ -1,0 +1,18 @@
+# A dict item under a key that isn't a bare symbol is held back for the dict's
+# schema as a keyword's is, so a literal there takes the schema's value type
+
+pub def keys n @ Int
+  let _ @ Dict[Str, Dict[{?a: Bool}]] = {"x": {a: true}}
+  let _ @ Dict[Int, Dict[{?a: Bool}]] = {1: {a: true}}
+  let _ @ Dict[{(1): Dict[{?a: Bool}]}] = {1: {a: true}}
+  # The key's operands come before the value's
+  let _ @ Dict[Int, Dict[{?a: Bool}]] = {(n * 2): {a: (n > 0)}}
+  let _ @ Dict[Int, Array[(Int | Str)]] = {(n + 1): [n]}
+  let _ @ Dict[Int, Dict[{?a: Bool}]] = {1: {b: 1}}
+# error: expected `{?a: std.Bool}`, found `{b: 1}`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ @ Dict[Int, Dict[{?a: Bool}]] = {1: {b: 1}}
+#    |                                             ^^^^^^
+#    |
+#    = note: `{?a: std.Bool}` doesn't admit `b: 1`
