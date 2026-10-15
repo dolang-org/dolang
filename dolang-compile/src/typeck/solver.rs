@@ -1598,11 +1598,13 @@ impl<'db> Solver<'db> {
                     match *member {
                         UnionMember::Type(ty) => walk(ty, variance, 0)?,
                         // `IndexItem` joins the values its key selects, which a
-                        // wider key raises. `AssignItem` meets them, which a
-                        // wider key lowers, and its schema is invariant: wider
-                        // values raise the meet, but more items lower it.
+                        // wider key raises. `AssignItem` and `InsertItem` meet
+                        // them, which a wider key lowers, and their schema is
+                        // invariant: wider values raise the meet, but more items
+                        // lower it.
                         UnionMember::IndexItem(schema, key)
-                        | UnionMember::AssignItem(schema, key) => {
+                        | UnionMember::AssignItem(schema, key)
+                        | UnionMember::InsertItem(schema, key) => {
                             let (inner, by_key) = match member {
                                 UnionMember::IndexItem(..) => {
                                     (Variance::Covariant, Variance::Covariant)
@@ -1634,6 +1636,20 @@ impl<'db> Solver<'db> {
                     )?;
                 }
                 walk(pattern, variance, 1)
+            }
+            // A restricted schema is its schema where every item its key
+            // removes admits zero, which a wider key removes more of
+            Type::Restricted {
+                schema,
+                restriction,
+            } => {
+                walk(schema, variance.compose(Variance::Invariant), 0)?;
+                if let Some(key) = restriction.key()
+                    && purpose.keys()
+                {
+                    walk(key, variance.compose(Variance::Contravariant), 0)?;
+                }
+                Ok(())
             }
             Type::Quantified { .. } => {
                 let mut children = Vec::new();

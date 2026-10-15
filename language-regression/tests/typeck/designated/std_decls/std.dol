@@ -29,6 +29,17 @@ pub @let AssignItem[S @ {...}, K] = ...
 #        ^~~~~~~~~~: designated intrinsic AssignItem
 #                   ^: variance invariant
 #                              ^: variance contravariant
+pub @let InsertItem[S @ {...}, K] = ...
+#        ^~~~~~~~~~: designated intrinsic InsertItem
+#                   ^: variance invariant
+#                              ^: variance contravariant
+pub @let Deletable[S @ {...}, K] = ...
+#        ^~~~~~~~~: designated intrinsic Deletable
+#                  ^: variance invariant
+#                             ^: variance contravariant
+pub @let Clearable[S @ {...}] = ...
+#        ^~~~~~~~~: designated intrinsic Clearable
+#                  ^: variance invariant
 pub class Func
 #         ^~~~: designated intrinsic Func
 pub class Int

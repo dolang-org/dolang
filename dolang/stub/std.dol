@@ -45,6 +45,23 @@ pub @let IndexItem[S @ {...}, K] = ...
 # and `Str`. A key `S` doesn't admit is an error.
 pub @let AssignItem[S @ {...}, K] = ...
 
+# The meet of the values of the items of `S` that a key selects, as in
+# `AssignItem`, which an added value at a key of type `K` must fit. Each item
+# selected must be keyed and admit repetition: `InsertItem[{*(Str): Int}, Str]`
+# is `Int`, but `InsertItem[{a: Int}, :a:]` is an error.
+pub @let InsertItem[S @ {...}, K] = ...
+
+# `S`, where removing every item that a key of type `K` selects leaves a value
+# of `S`. Each item selected must be keyed and admit zero:
+# `Deletable[{a: Int, ?b: Str}, :b:]` is `{a: Int, ?b: Str}`, but
+# `Deletable[{a: Int, ?b: Str}, :a:]` is an error.
+pub @let Deletable[S @ {...}, K] = ...
+
+# `S`, where every item admits zero, so removing all of them leaves a value of
+# `S`. `Clearable[{?a: Int, *Str}]` is `{?a: Int, *Str}`, but
+# `Clearable[{a: Int}]` is an error.
+pub @let Clearable[S @ {...}] = ...
+
 # The singleton [`Null`](std.Null) value.
 #
 # As an iterator it ends immediately; as a sink it discards every value.

@@ -11,7 +11,7 @@ use std::{
 
 use super::{
     Argument, Binder, BinderOrigin, Binding, BoundRef, Database, DeclId, Element, Intrinsic, Kind,
-    Literal, Multiplicity, Rest, SchemaItem, Type, TypeId, UnionMember,
+    Literal, Multiplicity, Rest, Restriction, SchemaItem, Type, TypeId, UnionMember,
 };
 
 /// What the environment a type is rendered in knows about it
@@ -472,10 +472,12 @@ impl Renderer<'_> {
                                 out.push(']');
                             }
                             UnionMember::IndexItem(schema, key)
-                            | UnionMember::AssignItem(schema, key) => {
+                            | UnionMember::AssignItem(schema, key)
+                            | UnionMember::InsertItem(schema, key) => {
                                 let head = match member {
                                     UnionMember::IndexItem(..) => Intrinsic::IndexItem,
-                                    _ => Intrinsic::AssignItem,
+                                    UnionMember::AssignItem(..) => Intrinsic::AssignItem,
+                                    _ => Intrinsic::InsertItem,
                                 };
                                 self.head(head, naming, &mut out);
                                 out.push('[');
@@ -519,6 +521,23 @@ impl Renderer<'_> {
                 out.push_str("{...");
                 self.pattern(packs, *pattern, naming, out);
                 out.push('}');
+            }
+            Type::Restricted {
+                schema,
+                restriction,
+            } => {
+                let head = match restriction {
+                    Restriction::Deletable(_) => Intrinsic::Deletable,
+                    Restriction::Clearable => Intrinsic::Clearable,
+                };
+                self.head(head, naming, out);
+                out.push('[');
+                self.render_into(*schema, naming, out);
+                if let Some(key) = restriction.key() {
+                    out.push_str(", ");
+                    self.render_into(key, naming, out);
+                }
+                out.push(']');
             }
         }
     }

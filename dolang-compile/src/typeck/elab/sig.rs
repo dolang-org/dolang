@@ -356,7 +356,7 @@ fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
 
 /// The declarations of `std` behind each [`Intrinsic`], which the solver can't
 /// do without
-const INTRINSICS: [&str; 15] = [
+const INTRINSICS: [&str; 18] = [
     "Value",
     "Union",
     "Keys",
@@ -364,6 +364,9 @@ const INTRINSICS: [&str; 15] = [
     "Entries",
     "IndexItem",
     "AssignItem",
+    "InsertItem",
+    "Deletable",
+    "Clearable",
     "Tuple",
     "Func",
     "Int",
@@ -439,6 +442,18 @@ pub(super) fn designation(tables: &Tables<'_>, decl: DeclId) -> Option<(Designat
         ),
         ("std", "AssignItem") => (
             Designated::Intrinsic(Intrinsic::AssignItem),
+            DeclKind::OpaqueAlias,
+        ),
+        ("std", "InsertItem") => (
+            Designated::Intrinsic(Intrinsic::InsertItem),
+            DeclKind::OpaqueAlias,
+        ),
+        ("std", "Deletable") => (
+            Designated::Intrinsic(Intrinsic::Deletable),
+            DeclKind::OpaqueAlias,
+        ),
+        ("std", "Clearable") => (
+            Designated::Intrinsic(Intrinsic::Clearable),
             DeclKind::OpaqueAlias,
         ),
         ("std", "Func") => (Designated::Intrinsic(Intrinsic::Func), DeclKind::Class),
