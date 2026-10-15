@@ -14,6 +14,7 @@ pub(crate) struct Cli {
     pub(crate) compile: Option<PathBuf>,
     pub(crate) strict: bool,
     pub(crate) cache: bool,
+    pub(crate) history: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -59,6 +60,7 @@ pub(crate) fn parse_from(
             compile: None,
             strict: false,
             cache: true,
+            history: true,
         });
     }
 
@@ -70,6 +72,7 @@ pub(crate) fn parse_from(
     let mut compile = None;
     let mut strict = false;
     let mut cache = true;
+    let mut history = true;
     let mut trailing = Vec::new();
     let mut stop_options = false;
 
@@ -178,6 +181,10 @@ pub(crate) fn parse_from(
                     });
                     continue;
                 }
+                Some("--no-history") => {
+                    history = false;
+                    continue;
+                }
                 Some("--no-cache") => {
                     cache = false;
                     continue;
@@ -216,6 +223,7 @@ pub(crate) fn parse_from(
         compile,
         strict,
         cache,
+        history,
     })
 }
 
@@ -264,6 +272,7 @@ Options:
       --import <MODULE[=NAME]>  Add a module to the prelude
       --import-item <MODULE.ITEM[=NAME]>  Add a module item to the prelude
       --no-cache          Disable the bytecode cache
+      --no-history        Disable REPL history loading and saving
       --strict            Treat warnings as errors
   -h, --help              Print help"
     )
@@ -477,6 +486,13 @@ mod tests {
             panic!("expected error");
         };
         assert!(error.contains("--import-item requires MODULE.ITEM[=NAME]"));
+    }
+
+    #[test]
+    fn no_history_disables_history() {
+        let cli = parse_ok(["dolang", "--no-history"]);
+        assert!(!cli.history);
+        assert!(parse_ok(["dolang"]).history);
     }
 
     #[test]

@@ -7,15 +7,8 @@ use tokio::runtime::Builder;
 use dolang::{
     compile,
     extension::VmExt,
-    resource::{self, Payload},
-    runtime::{
-        self, Error as RuntimeError, Output,
-        error::ErrorKind,
-        strand::Redirect,
-        unpack,
-        value::{Empty, Nil, Root},
-        vm,
-    },
+    resource,
+    runtime::{self, error::ErrorKind, strand::Redirect, vm},
 };
 
 use dolang_ext_shell::{Exec, Exit};
@@ -23,7 +16,6 @@ use dolang_ext_shell::{Exec, Exit};
 use crate::{
     batch::Action,
     cli::{Cli, ParseOutcome},
-    interactive::{DYNAMIC_PRELUDE, DynamicPrelude},
     terminal_state::TerminalRestoreGuard,
 };
 
@@ -31,6 +23,7 @@ mod batch;
 mod cli;
 mod interactive;
 mod load;
+mod services;
 mod terminal_state;
 
 fn get_action(cli: &Cli) -> Action {
@@ -148,57 +141,7 @@ fn run() -> Outcome {
                 ext.apply(builder).unwrap();
             }
 
-            if cli.path.is_none() && !cli.main {
-                let dynamic_prelude = builder.register_type::<DynamicPrelude>();
-                let mut root = Root::new(builder);
-                Output::set(builder, &mut root, Empty::Dict);
-                builder.module_object(DYNAMIC_PRELUDE, &dynamic_prelude, DynamicPrelude { root });
-            }
-
-            let compile_prelude = cli.prelude.clone();
-            let backtrace_sym = builder.sym("backtrace");
-
-            builder
-                .module("_shell")
-                .function("render_error", async move |strand, args, out| {
-                    let ([error], [backtrace]) = unpack!(strand, args, 1, 0, backtrace_sym = None)?;
-                    dolang_ext_shell::render_error(strand, &error, backtrace.as_deref(), out)
-                })
-                .function("compile_script", async move |strand, args, out| {
-                    let ([path], []) = unpack!(strand, args, 1, 0)?;
-                    let path = dolang_ext_shell::as_path(strand, &path).ok_or_else(|| {
-                        RuntimeError::type_error(strand, "path must be a Str or fs.Path")
-                    })?;
-                    let bytecode = load::compile_script_cached(
-                        strand,
-                        &path,
-                        &compile_prelude,
-                        cli.strict,
-                        cli.cache,
-                    )
-                    .await?;
-                    Output::set(strand, out, bytecode.as_slice());
-                    Ok(())
-                })
-                .function("resource", async move |strand, args, out| {
-                    let ([namespace, name], []) = unpack!(strand, args, 2, 0)?;
-                    let namespace = namespace.as_str(strand).ok_or_else(|| {
-                        RuntimeError::type_error(strand, "namespace must be a Str")
-                    })?;
-                    let name = name
-                        .as_str(strand)
-                        .ok_or_else(|| RuntimeError::type_error(strand, "name must be a Str"))?;
-                    let payload = strand.access(|access| {
-                        resource::get(namespace.as_str(access), name.as_str(access))
-                    });
-                    match payload {
-                        Some(Payload::Text(text)) => Output::set(strand, out, text),
-                        Some(Payload::Bytes(bytes)) => Output::set(strand, out, bytes),
-                        None => Output::set(strand, out, Nil),
-                    }
-                    Ok(())
-                })
-                .commit();
+            services::register(builder, &cli);
 
             builder
                 .importer(async move |strand, name, out| {
@@ -275,7 +218,20 @@ fn run() -> Outcome {
                                     )
                                     .await
                                 } else {
-                                    interactive::main(strand, &cli.prelude, cli.strict).await
+                                    let entrypoint = resource::get(resource::ENTRYPOINT, "repl")
+                                        .ok_or_else(|| {
+                                            runtime::Error::runtime(
+                                                strand,
+                                                "missing bundled repl entrypoint",
+                                            )
+                                        })?;
+                                    strand
+                                        .with_slots(async |strand, [out]| {
+                                            runtime::Bytecode::new(entrypoint.as_bytes())
+                                                .run(strand, out)
+                                                .await
+                                        })
+                                        .await
                                 }
                             });
 
@@ -284,8 +240,11 @@ fn run() -> Outcome {
 
                         loop {
                             tokio::select! {
-                                res = (&mut res) => { break res }
+                                // Register Tokio's SIGINT handler before a readline
+                                // worker can save and later restore that handler.
+                                biased;
                                 _ = interrupt_signal(), if !ct.is_canceled() => { ct.cancel() }
+                                res = (&mut res) => { break res }
                             }
                         }
                     };

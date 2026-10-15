@@ -1,0 +1,125 @@
+import proc shell strand time
+  fs:
+    - with_temp_dir
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+    - test
+
+def repl source *options
+  let out = BinBuf()
+  run $shell.exe --no-history ...options
+    stdin: [source]
+    stdout: $out
+    stderr: :STDOUT:
+    mode: :CHUNK:
+  Str $out.freeze()
+
+#[test]
+def bindings_and_retained_functions()
+  let text = repl r|
+    let x = 10
+    let f = (do x)
+    x = 20
+    echo $x
+    echo $f()
+  assert_eq $text "20\n10\n"
+
+#[test]
+def echoes_only_non_nil_results()
+  assert_eq (repl "(40 + 2)\nnil\n") "↪ 42\n"
+
+#[test]
+def errors_do_not_end_the_loop()
+  let text = repl r|
+    throw std.ValueError boom
+    echo after-runtime-error
+    let =
+    echo after-compile-error
+  assert (text.contains "boom")
+  assert (text.contains "after-runtime-error\n")
+  assert (text.contains "after-compile-error\n")
+
+#[test]
+def cancellation_ends_the_session()
+  let error = assert_throws $proc.Error do
+    repl "throw std.CanceledError()\necho should-not-run\n"
+  assert_eq $error.rc 1
+
+#[test]
+def cli_prelude_applies_to_each_turn()
+  let source = r|
+    echo $s.program
+    echo $stringify(42)
+    echo $types.str(7)
+  let text = repl $source --import shell=s --import std=types --import-item std.str=stringify
+  assert_eq $text "nil\n42\n7\n"
+
+#[test]
+def unaliased_dotted_cli_imports_share_their_namespace()
+  with_temp_dir do |dir|
+    (dir / "outer").create_dir()
+    (dir / "outer/one.dol").write "pub let value = 1\n"
+    (dir / "outer/two.dol").write "pub let value = 2\n"
+    let source = r|
+      echo $outer.one.value $outer.two.value
+    let text = repl $source --module-path $dir --import outer.one --import outer.two
+    assert_eq $text "1 2\n"
+
+#[test]
+def dynamic_bindings_shadow_the_cli_prelude()
+  let source = r|
+    let stringify = (do |value| value + 1)
+    echo $stringify(41)
+  assert_eq (repl(source, "--import-item", "std.str=stringify")) "42\n"
+
+#[test]
+def explicit_repl_entrypoint()
+  assert_eq (repl("echo explicit\n", "-m", "repl")) "explicit\n"
+
+#[test]
+def imports_use_the_global_fallback()
+  let source = r|
+    import json
+    echo $json.encode([1, 2])
+  assert_eq (repl source) "[1,2]\n"
+
+#[test]
+def readline_allows_other_strands_to_progress()
+  with_temp_dir do |dir|
+    let script = (dir / "editor.dol")
+    let marker = (dir / "ready")
+    script.write r|
+      import _shell shell strand time
+        fs:
+          - Path
+      let worker = strand.spawn do
+        time.sleep 0.01
+        (Path shell.args[0]).write ready
+      let editor = _shell.Editor nil
+      let line = editor.readline "" []
+      shell.stdout.write "$line\n"
+      worker.join()
+    let out = BinBuf()
+    strand.pipeline
+      do
+        while !marker.exists()
+          time.sleep 0.01
+        strand.put "hello\n"
+      do
+        run $shell.exe $script $marker stdout: $out
+    assert_eq (Str(out.freeze())) "hello\n"
+
+#[test]
+def editor_saves_history_explicitly()
+  with_temp_dir do |dir|
+    let script = (dir / "history.dol")
+    let history = (dir / "nested/history")
+    script.write r|
+      import _shell shell
+      let editor = _shell.Editor $shell.args[0]
+      editor.readline "" []
+      editor.save_history()
+    run $shell.exe $script $history stdin: ["remember me\n"]
+    assert (history.read().contains "remember me")

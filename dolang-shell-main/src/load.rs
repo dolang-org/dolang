@@ -7,7 +7,7 @@ use directories::ProjectDirs;
 use tokio::fs;
 
 use dolang::{
-    compile::{self, Config, Mode, Severity, typeck},
+    compile::{Config, Mode, Severity, typeck},
     extension::CompilerExt,
     runtime::{
         Bytecode, Error, Result, Slot, Strand,
@@ -15,7 +15,7 @@ use dolang::{
     },
 };
 
-use crate::{cli::PreludeImport, interactive::DYNAMIC_PRELUDE};
+use crate::cli::PreludeImport;
 
 /// Maximum number of errors reported for a single compilation
 const MAX_ERRORS: usize = 10;
@@ -24,9 +24,19 @@ pub(crate) async fn compile<'v, 's, 'a>(
     strand: &mut Strand<'v, 's>,
     path: &'a Path,
     source: &'a str,
-    dynamic: Option<&[String]>,
     prelude: &[PreludeImport],
     mode: Mode<'a>,
+    strict: bool,
+) -> Result<'v, 's, Vec<u8>> {
+    let config = compile_setup(prelude, mode);
+    compile_config(strand, path, source, &config, strict).await
+}
+
+pub(crate) async fn compile_config<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    path: &Path,
+    source: &str,
+    config: &Config<'_>,
     strict: bool,
 ) -> Result<'v, 's, Vec<u8>> {
     let mut out = Vec::new();
@@ -34,7 +44,7 @@ pub(crate) async fn compile<'v, 's, 'a>(
     let mut warnings = 0usize;
     let mut diagnostics = Vec::new();
 
-    let unit = compile_setup(dynamic, prelude, mode).unit(path, source);
+    let unit = config.unit(path, source);
 
     for diag in unit.diagnostics() {
         match diag.severity() {
@@ -65,11 +75,7 @@ pub(crate) async fn compile<'v, 's, 'a>(
     }
 }
 
-fn compile_setup<'a>(
-    dynamic: Option<&[String]>,
-    prelude: &[PreludeImport],
-    mode: Mode<'a>,
-) -> Config<'a> {
+pub(crate) fn compile_setup<'a>(prelude: &[PreludeImport], mode: Mode<'a>) -> Config<'a> {
     let mut config = Config::new();
 
     config.mode(mode);
@@ -107,28 +113,7 @@ fn compile_setup<'a>(
             }
         }
     }
-    if let Some(dynamic) = dynamic {
-        config
-            .prelude()
-            .import_items(DYNAMIC_PRELUDE)
-            .items(dynamic)
-            .commit();
-    }
-
     config
-}
-
-/// Build a REPL compilation unit for analysis, recovering from errors so that tokens
-/// remain available for incomplete input.
-pub(crate) fn unit<'a>(
-    path: &'a Path,
-    source: &'a str,
-    dynamic: Option<&[String]>,
-    prelude: &[PreludeImport],
-) -> compile::Unit<'a> {
-    let mut config = compile_setup(dynamic, prelude, Mode::Repl);
-    config.recover(true).document(true);
-    config.unit(path, source)
 }
 
 async fn file_is_newer(older: &Path, newer: &Path) -> bool {
@@ -199,7 +184,7 @@ fn is_bytecode(path: &Path, data: &[u8]) -> bool {
 ///
 /// A missing or unreadable file is reported as not being bytecode so the
 /// regular compile path produces the usual error.
-async fn is_precompiled(path: &Path) -> bool {
+pub(crate) async fn is_precompiled(path: &Path) -> bool {
     use tokio::io::AsyncReadExt as _;
 
     if has_bytecode_extension(path) {
@@ -225,39 +210,13 @@ async fn compile_script<'v, 's>(
         }
         let source = String::from_utf8(data)
             .map_err(|_| Error::runtime(strand, format!("not valid UTF-8: {}", path.display())))?;
-        compile(strand, path, &source, None, prelude, Mode::Script, strict).await
+        compile(strand, path, &source, prelude, Mode::Script, strict).await
     } else {
         Err(Error::runtime(
             strand,
             format!("could not find file: {}", path.display()),
         ))
     }
-}
-
-pub(crate) async fn compile_script_cached<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    path: &Path,
-    prelude: &[PreludeImport],
-    strict: bool,
-    cache: bool,
-) -> Result<'v, 's, Vec<u8>> {
-    // Pre-compiled input needs neither compilation nor caching.
-    if is_precompiled(path).await {
-        return fs::read(path).await.into_do(strand);
-    }
-
-    let mode = Mode::Script;
-    let bc = cache
-        .then(|| cache_path(strand, path, &mode, prelude, strict))
-        .transpose()?;
-
-    if let Some(data) = read_cached(strand, path, bc.as_deref()).await? {
-        return Ok(data);
-    }
-
-    let data = compile_script(strand, path, prelude, strict).await?;
-    write_cached(strand, bc.as_deref(), &data).await?;
-    Ok(data)
 }
 
 /// A source to check, as found: the script, or a module on the search path.
@@ -271,9 +230,9 @@ struct Source {
 impl Source {
     fn config(&self, prelude: &[PreludeImport]) -> Config<'_> {
         let mut config = match &self.module {
-            None => compile_setup(None, prelude, Mode::Script),
+            None => compile_setup(prelude, Mode::Script),
             // Modules are loaded without the command line's prelude
-            Some(name) => compile_setup(None, &[], Mode::Module { name: name.into() }),
+            Some(name) => compile_setup(&[], Mode::Module { name: name.into() }),
         };
         config.typecheck(true);
         config
@@ -460,14 +419,14 @@ pub(crate) async fn load<'v, 's>(
         }
     }
     let source = fs::read_to_string(path).await.into_do(strand)?;
-    let data = compile(strand, path, &source, None, prelude, mode, strict).await?;
+    let data = compile(strand, path, &source, prelude, mode, strict).await?;
     write_cached(strand, bc.as_deref(), &data).await?;
     let bytecode = Bytecode::new(data);
     bytecode.run(strand, &mut out).await?;
     Ok(())
 }
 
-async fn read_cached<'v, 's>(
+pub(crate) async fn read_cached<'v, 's>(
     strand: &mut Strand<'v, 's>,
     path: &Path,
     bc: Option<&Path>,
@@ -482,7 +441,7 @@ async fn read_cached<'v, 's>(
     }
 }
 
-async fn write_cached<'v, 's>(
+pub(crate) async fn write_cached<'v, 's>(
     strand: &mut Strand<'v, 's>,
     bc: Option<&Path>,
     data: &[u8],

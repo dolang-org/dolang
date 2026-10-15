@@ -29,6 +29,7 @@ Other options:
 - `--import-item MODULE.ITEM[=NAME]` -- add a module item to the prelude
     (repeatable)
 - `--no-cache` -- disable reading and writing the bytecode cache
+- `--no-history` -- disable loading and saving REPL history
 - `-h`, `--help` -- show command-line help
 
 Explicit module paths are searched in command-line order before the `site/`
@@ -85,6 +86,9 @@ dolang
 The REPL provides an interactive environment where you can evaluate Do
 expressions and statements. Variables and definitions persist across lines
 within a session.
+
+`dolang -m repl` also starts the REPL. Use `dolang --no-history` to leave
+history files untouched.
 
 ## Shell Prelude
 

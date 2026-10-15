@@ -12,7 +12,7 @@ def load_target main target
     [bytecode, target]
   else
     let script = Path $target
-    [(_shell.compile_script script), script]
+    [(_shell.compile script), script]
 
 def parse_port value
   let port = try

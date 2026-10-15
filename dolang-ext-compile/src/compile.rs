@@ -1042,7 +1042,8 @@ fn apply_prelude_dict_items<'v, 's>(
     Ok(())
 }
 
-fn apply_prelude_value<'v, 's>(
+/// Applies a Do `compile.Prelude` value without initializing extension state.
+pub fn apply_prelude_value<'v, 's>(
     strand: &mut Strand<'v, 's>,
     config: &mut Config,
     value: &Value<'v>,
@@ -1078,6 +1079,21 @@ fn apply_prelude_value<'v, 's>(
                     let has_next = pairs.next(strand, &mut k, &mut v)?;
                     if !has_next {
                         break;
+                    }
+
+                    if k.as_int(strand).is_some() {
+                        let name = match v.view(strand) {
+                            View::Str(name) => name.to_string(),
+                            View::Sym(name) => name.as_str(strand).to_owned(),
+                            _ => {
+                                return Err(Error::type_error(
+                                    strand,
+                                    "positional prelude entry must be Str or Sym",
+                                ));
+                            }
+                        };
+                        config.prelude().import_module(name);
+                        continue;
                     }
 
                     let module = match k.view(strand) {

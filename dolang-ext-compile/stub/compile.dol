@@ -36,12 +36,13 @@ pub @let PreludeBinding = $
   | BaseDict[Str | Sym, Str | Sym]
 
 # Imports to bind before compiled source: a module name, an array of module
-# names, or a dictionary of module names to their bindings.
+# names, or a dictionary of module names to their bindings. Positional
+# dictionary entries import unaliased modules.
 pub @let Prelude = $
   | Str
   | Sym
   | BaseArray[Str | Sym]
-  | BaseDict[Str | Sym, PreludeBinding]
+  | BaseDict[{*(Str | Sym), *(Str | Sym): PreludeBinding}]
 
 # A staged compilation unit.
 #
