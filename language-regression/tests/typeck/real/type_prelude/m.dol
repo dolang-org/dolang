@@ -1,0 +1,24 @@
+# dolang: strict
+
+pub def fail message @ Str -> Never
+  throw std.ValueError $message
+
+pub def union[...Ts] value @ Union[...Ts] -> Union[...Ts]
+  value
+
+pub def native items@BaseArray[Value] mapping@BaseDict[Sym, Value] -> Int
+  (items.len + mapping.len)
+
+pub def covariant items@Array[Str] mapping@Dict[Sym, Int] -> Int
+  native $items $mapping
+
+pub def sequence items @ Seq[Str] -> Str
+  items[0]
+
+pub def protocols
+  a@AssignSeq[Int] b@MutSeq[Int] c@Index[Int] d@Assign[Int]
+  e@Spread[Int] f@Unpack[Int] g@BaseIterable[Int] h@BaseIter[Int]
+  i@BaseSinkable[Int] j@BaseSink[Int] k@UnpackIter[Int] l@UnpackIterable[Int]
+do -> nil
+  let _ = (a, b, c, d, e, f, g, h, i, j, k, l)
+  nil

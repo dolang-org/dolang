@@ -49,20 +49,32 @@ pub(crate) struct DocEntry {
 include!(concat!(env!("OUT_DIR"), "/doc_index_data.rs"));
 
 #[cfg(test)]
-pub(crate) static ENTRIES: &[DocEntry] = &[DocEntry {
-    module: "term",
-    item: "echo",
-    kind: "function",
-    doc: "Writes to standard output.",
-    binders: &[],
-    decorators: &[],
-    params: &[Param {
-        name: "...args",
-        optional: false,
-        type_: None,
-    }],
-    type_: Some("nil"),
-}];
+pub(crate) static ENTRIES: &[DocEntry] = &[
+    DocEntry {
+        module: "std",
+        item: "Never",
+        kind: "alias",
+        doc: "The type with no values, which a function that never returns can declare as its result.",
+        binders: &[],
+        decorators: &[],
+        params: &[],
+        type_: Some("Union[]"),
+    },
+    DocEntry {
+        module: "term",
+        item: "echo",
+        kind: "function",
+        doc: "Writes to standard output.",
+        binders: &[],
+        decorators: &[],
+        params: &[Param {
+            name: "...args",
+            optional: false,
+            type_: None,
+        }],
+        type_: Some("nil"),
+    },
+];
 
 /// Looks up a documented module/item pair: one entry, or one per overload in
 /// source order.
@@ -111,6 +123,7 @@ pub(crate) fn signature(entry: &DocEntry) -> String {
         }
         "field" => format!("field {short_name}{}", annot(entry.type_)),
         "value" => format!("let {short_name}"),
+        "alias" => format!("@let {name} = {}", entry.type_.unwrap_or("...")),
         _ => {
             let params: Vec<String> = entry
                 .params

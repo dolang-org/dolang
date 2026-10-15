@@ -64,6 +64,26 @@ const STD_PRELUDE: &[&str] = &[
     "record", "setter", "static", "str", "struct", "sym", "tuple", "type",
 ];
 
+const STD_TYPE_PRELUDE: &[&str] = &[
+    "Never",
+    "Union",
+    "Seq",
+    "AssignSeq",
+    "MutSeq",
+    "Index",
+    "Assign",
+    "Spread",
+    "Unpack",
+    "BaseIterable",
+    "BaseIter",
+    "BaseSinkable",
+    "BaseSink",
+    "UnpackIter",
+    "UnpackIterable",
+    "BaseArray",
+    "BaseDict",
+];
+
 #[derive(Debug)]
 enum ErrorInfo {
     Fail,
@@ -449,6 +469,7 @@ impl<'a> Node<'a> {
                 module: &prelude.module,
                 item: &prelude.item,
                 name: &prelude.name,
+                type_only: prelude.type_only,
             },
             doc::Kind::Lambda => Kind::Lambda,
             doc::Kind::If => Kind::If,
@@ -697,6 +718,8 @@ pub enum Kind<'a> {
         item: &'a str,
         /// The bound name
         name: &'a str,
+        /// Available only in types
+        type_only: bool,
     },
     /// A `do` block
     Lambda,
@@ -1012,6 +1035,10 @@ pub(crate) struct PreludeItem {
     item: String,
     bind: String,
     res: Option<Res>,
+    /// Available only in types, independently of runtime usage.
+    type_only: bool,
+    /// Named during type resolution, for document indexing.
+    type_used: bool,
     /// Never read by the code, so lowering does not import it. A type may still name it.
     unused: bool,
 }
@@ -1037,6 +1064,19 @@ pub(crate) enum PreludeImport {
         /// As [`PreludeItem::unused`]
         unused: bool,
     },
+}
+
+/// Configured items in their shared resolution order.
+pub(crate) fn prelude_items(
+    prelude: &[PreludeImport],
+) -> impl DoubleEndedIterator<Item = (&str, &PreludeItem)> {
+    prelude
+        .iter()
+        .filter_map(|import| match import {
+            PreludeImport::Items { module, items } => Some((module.as_str(), items)),
+            _ => None,
+        })
+        .flat_map(|(module, items)| items.iter().map(move |item| (module, item)))
 }
 
 /// Prelude configurer
@@ -1127,6 +1167,8 @@ impl<'a, 'b> Items<'a, 'b> {
                 bind: item,
                 res: None,
                 unused: false,
+                type_only: false,
+                type_used: false,
             }),
             _ => unreachable!(),
         };
@@ -1158,9 +1200,41 @@ impl<'a, 'b> Items<'a, 'b> {
                 bind: name.into(),
                 res: None,
                 unused: false,
+                type_only: false,
+                type_used: false,
             }),
             _ => unreachable!(),
         };
+        self
+    }
+
+    /// Imports an item for use only in types, as a `- @item` import item does.
+    pub fn type_item(self, item: impl Into<String>) -> Self {
+        let item = item.into();
+        self.type_item_with_name(item.clone(), item)
+    }
+
+    /// Imports items for use only in types.
+    pub fn type_items(mut self, items: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        for item in items {
+            self = self.type_item(item);
+        }
+        self
+    }
+
+    /// Imports an item under a different name for use only in types.
+    pub fn type_item_with_name(self, item: impl Into<String>, name: impl Into<String>) -> Self {
+        match self.config.prelude.last_mut().unwrap() {
+            PreludeImport::Items { items, .. } => items.push(PreludeItem {
+                item: item.into(),
+                bind: name.into(),
+                res: None,
+                unused: false,
+                type_only: true,
+                type_used: false,
+            }),
+            _ => unreachable!(),
+        }
         self
     }
 
@@ -1209,6 +1283,7 @@ impl<'a> Config<'a> {
             .import_module("strand")
             .import_items("std")
             .items(STD_PRELUDE.iter().copied())
+            .type_items(STD_TYPE_PRELUDE.iter().copied())
             .commit()
             .import_items("strand")
             .items(["fork", "pipeline", "stream", "put", "spawn"])
@@ -1334,6 +1409,7 @@ impl<'a> Config<'a> {
         if resolved {
             resolvety::check(
                 &mut ast,
+                &mut compiler.prelude,
                 &compiler.file,
                 &compiler.symtab,
                 &compiler.bintab,

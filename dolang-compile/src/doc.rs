@@ -233,6 +233,7 @@ pub(crate) struct PreludeModule {
 
 #[derive(Debug)]
 pub(crate) struct PreludeItem {
+    pub(crate) type_only: bool,
     pub(crate) module: alias::Box<str>,
     pub(crate) item: alias::Box<str>,
     pub(crate) name: alias::Box<str>,

@@ -34,11 +34,12 @@ pub(crate) fn index(
         }),
         index.blocks.root(),
     ));
-    let scope = Scope {
+    let mut scope = Scope {
         outer: None,
         kind: ScopeKind::Lexical {
             vars: Cell::from_mut(root.0.body.vars.as_mut_slice()).as_slice_of_cells(),
             types: OnceCell::new(),
+            prelude: Vec::new(),
         },
         parent: Some(root_id),
         loop_target: None,
@@ -48,15 +49,22 @@ pub(crate) fn index(
         match import {
             PreludeImport::Items { module, items } => {
                 for item in items {
-                    index.prelude(
-                        &scope,
-                        &mut item.res,
-                        Kind::PreludeItem(alias::Box::new(doc::PreludeItem {
-                            module: module.as_str().into(),
-                            item: item.item.as_str().into(),
-                            name: item.bind.as_str().into(),
-                        })),
-                    );
+                    let kind = Kind::PreludeItem(alias::Box::new(doc::PreludeItem {
+                        module: module.as_str().into(),
+                        item: item.item.as_str().into(),
+                        name: item.bind.as_str().into(),
+                        type_only: item.type_only,
+                    }));
+                    let node = if item.type_only {
+                        item.type_used
+                            .then(|| index.table.push(Node::new(scope.parent, kind, None, None)))
+                    } else {
+                        index.prelude(&scope, &mut item.res, kind);
+                        item.res.and_then(|res| res.node)
+                    };
+                    if let ScopeKind::Lexical { prelude, .. } = &mut scope.kind {
+                        prelude.push(node);
+                    }
                 }
             }
             PreludeImport::ModuleAsIs {
@@ -105,6 +113,7 @@ enum ScopeKind<'s> {
         /// The name and node of each type-only declaration of the block's statements,
         /// numbered as [`Stmt::type_decls`] numbers them. Set once they are declared.
         types: OnceCell<Vec<(Span, Option<Id>)>>,
+        prelude: Vec<Option<Id>>,
     },
     /// The name and node of each binder of a declaration. Only type names count this
     /// frame, so it does not count toward `Res::depth`.
@@ -118,6 +127,7 @@ impl Scope<'_> {
             kind: ScopeKind::Lexical {
                 vars: Cell::from_mut(vars).as_slice_of_cells(),
                 types: OnceCell::new(),
+                prelude: Vec::new(),
             },
             parent: parent.or(self.parent),
             loop_target: self.loop_target,
@@ -143,6 +153,9 @@ impl Scope<'_> {
             scope = scope.outer?;
         }
         let target = match (&scope.kind, res.entry) {
+            (ScopeKind::Lexical { prelude, .. }, TypeEntry::Prelude(index)) => {
+                return prelude.get(index).copied().flatten();
+            }
             (ScopeKind::Binders(slots), TypeEntry::Binder(index)) => slots.get(index).copied(),
             (ScopeKind::Lexical { types, .. }, TypeEntry::Type(index)) => {
                 types.get().and_then(|types| types.get(index)).copied()
