@@ -1,0 +1,20 @@
+# A held argument takes its parameter as its expectation, through the binders
+# the parameter names
+
+def same[T] x @ T -> T
+  x
+def wrap[T] x @ T -> Array[T]
+  [x]
+
+pub def bounds()
+  let _ @ Dict[{a: Int}] = same {a: 1}
+  let _ @ BaseDict[{a: Int}] = same {a: 1}
+  let _ @ Array[Dict[{a: Int}]] = wrap {a: 1}
+  let _ @ Dict[{a: Int}] = same {b: 1}
+# error: expected `{a: std.Int}`, found `{b: 1}`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ @ Dict[{a: Int}] = same {b: 1}
+#    |                                 ^^^^^^
+#    |
+#    = note: `{b: 1}` may be missing `a: std.Int`

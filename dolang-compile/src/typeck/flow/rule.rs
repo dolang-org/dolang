@@ -3341,8 +3341,9 @@ fn call_constraint(
     result
 }
 
-/// What a held argument is expected to be: its parameter, if it's solved. The
-/// variable of a `for`'s joined items stands between them.
+/// What a held argument is expected to be: its parameter, if it's solved, seen
+/// through the binders it names. The variable of a `for`'s joined items stands
+/// between them.
 fn expectation(solver: &Solver<'_>, held: Term) -> Option<TypeId> {
     let mut found = None;
     let mut pending = vec![held];
@@ -3355,6 +3356,7 @@ fn expectation(solver: &Solver<'_>, held: Term) -> Option<TypeId> {
             continue;
         }
         for upper in solver.bounds(id).upper() {
+            let upper = solver.resolve(upper).unwrap_or(upper);
             let ty = match (upper, solver.reify(upper)) {
                 (_, Ok(ty)) => ty,
                 (Term::Infer(_), Err(_)) => {
