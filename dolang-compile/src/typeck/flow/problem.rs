@@ -61,6 +61,16 @@ pub(crate) enum Problem {
         span: Span,
         key: Shown,
     },
+    /// A call whose types remove an item its schema requires
+    Required {
+        span: Span,
+        key: Shown,
+    },
+    /// A call whose types insert a second item where its schema admits one
+    Unrepeatable {
+        span: Span,
+        key: Shown,
+    },
     /// A value that doesn't fit what its use requires of it
     Misfit {
         span: Span,
@@ -210,6 +220,8 @@ impl Report for Problem {
             | Problem::AmbiguousCall { span, .. }
             | Problem::Conflict(span)
             | Problem::Unadmitted { span, .. }
+            | Problem::Required { span, .. }
+            | Problem::Unrepeatable { span, .. }
             | Problem::Misfit { span, .. }
             | Problem::Impossible { span, .. }
             | Problem::Annotation { span, .. }
@@ -310,6 +322,15 @@ impl Report for Problem {
                 write!(
                     w,
                     "this call selects by {key}, which isn't one of the schema's keys"
+                )
+            }
+            Problem::Required { key, .. } => {
+                write!(w, "this call removes the required item at {key}")
+            }
+            Problem::Unrepeatable { key, .. } => {
+                write!(
+                    w,
+                    "this call inserts at {key}, where the schema admits only one item"
                 )
             }
             Problem::Misfit { found, misfit, .. } => {

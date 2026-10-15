@@ -1922,3 +1922,82 @@ fn a_mapping_has_packs_of_schemas_and_a_type_pattern() {
         });
     });
 }
+
+#[test]
+fn restrictions_lower_and_imply_key_bounds() {
+    let mut db = Database::new();
+    let designate = |db: &mut Database, intrinsic, name| {
+        let (id, alias, mut source) = declare(db, DeclKind::OpaqueAlias, name);
+        source.result_kind = Kind::Schema;
+        db.set_intrinsic(intrinsic, alias);
+        db.populate(id, definition(source, alias));
+        alias
+    };
+    let deletable = designate(&mut db, Intrinsic::Deletable, "Deletable");
+    let clearable = designate(&mut db, Intrinsic::Clearable, "Clearable");
+    let int = intern(&mut db, Type::Literal(Literal::Int(1)));
+    let s = schema(&mut db, &[int]);
+    let k = reference(&mut db, 0, 0, Kind::Type);
+    let apply = |db: &mut Database, base, args: Vec<TypeId>| {
+        intern(
+            db,
+            Type::Apply {
+                base,
+                args: args.into_iter().map(Argument::Positional).collect(),
+                kind: Kind::Schema,
+            },
+        )
+    };
+    let restricted = apply(&mut db, deletable, vec![s, k]);
+    assert_eq!(
+        *db.ty(restricted),
+        Type::Restricted {
+            schema: s,
+            restriction: Restriction::Deletable(k),
+        }
+    );
+    assert_eq!(db.kind(restricted), Kind::Schema);
+    let cleared = apply(&mut db, clearable, vec![s]);
+    assert_eq!(
+        *db.ty(cleared),
+        Type::Restricted {
+            schema: s,
+            restriction: Restriction::Clearable,
+        }
+    );
+    // Removing items of the dynamic schema leaves it
+    let unknown = db.unknown_schema();
+    assert_eq!(apply(&mut db, clearable, vec![unknown]), unknown);
+    assert_eq!(apply(&mut db, deletable, vec![unknown, k]), unknown);
+    // [K] (K, ...Deletable[S, K]) -> 1
+    let params = intern(
+        &mut db,
+        Type::Schema(
+            vec![
+                SchemaItem {
+                    multiplicity: Multiplicity::Required,
+                    element: Element::Positional(k),
+                },
+                SchemaItem {
+                    multiplicity: Multiplicity::Required,
+                    element: Element::Include(restricted),
+                },
+            ]
+            .into(),
+        ),
+    );
+    let body = intern(
+        &mut db,
+        Type::Function(Function {
+            params,
+            result: int,
+            input: None,
+            output: None,
+        }),
+    );
+    let f = quantify(&mut db, vec![binder(Kind::Type)], body);
+    let keys = intern(&mut db, Type::Union(vec![UnionMember::Keys(s)].into()));
+    db.seal();
+    assert_eq!(db.item_keys(f), [0]);
+    assert_eq!(db.implied_bounds(f), [(0, keys)]);
+}

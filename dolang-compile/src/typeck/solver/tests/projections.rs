@@ -230,6 +230,132 @@ fn a_key_selects_items_positions_by_their_indexes() {
 }
 
 #[test]
+fn mutators_check_their_items_multiplicities() {
+    let db = &mut Database::new();
+    let int = int(db);
+    let sym = nominal(db, "Sym", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Sym, sym);
+    let (x, y) = (self::sym(db, "x"), self::sym(db, "y"));
+    let (zero, three) = (literal(db, 0), literal(db, 3));
+    let required = items(db, vec![keyed(Multiplicity::Required, x, int)]);
+    let optional = items(db, vec![keyed(Multiplicity::Optional, x, int)]);
+    let repeated = items(db, vec![keyed(Multiplicity::Repeated, sym, int)]);
+    // `{Int, *Int}` and `{*Int}`
+    let fixed = items(
+        db,
+        vec![
+            positional(Multiplicity::Required, int),
+            positional(Multiplicity::Repeated, int),
+        ],
+    );
+    let varying = items(db, vec![positional(Multiplicity::Repeated, int)]);
+    // `{x: Int, ...Unknown{}}`
+    let unknown = items(
+        db,
+        vec![
+            keyed(Multiplicity::Required, x, int),
+            include(Multiplicity::Required, db.unknown_schema()),
+        ],
+    );
+    let inserting = |db: &Database, schema, key| {
+        db.intern(Type::Union(
+            vec![UnionMember::InsertItem(schema, key)].into(),
+        ))
+    };
+    let insertions: Vec<_> = [
+        (required, x),
+        (optional, x),
+        (repeated, x),
+        (fixed, zero),
+        (varying, three),
+        (unknown, y),
+        (required, y),
+    ]
+    .into_iter()
+    .map(|(schema, key)| (schema, key, inserting(db, schema, key)))
+    .collect();
+    db.seal();
+    use Contradiction::{Required, Unadmitted, Unrepeatable};
+    // `InsertItem`, `Deletable` and `Clearable` of each
+    let expected = [
+        (Err(Unrepeatable(x)), Err(Required(x)), Err(Required(x))),
+        (Err(Unrepeatable(x)), Ok(()), Ok(())),
+        (Ok(int), Ok(()), Ok(())),
+        // A position is never inserted or deleted
+        (
+            Err(Unrepeatable(zero)),
+            Err(Required(zero)),
+            Err(Required(zero)),
+        ),
+        (Err(Unrepeatable(three)), Err(Required(three)), Ok(())),
+        // An included unknown schema may hold anything, but not instead of
+        // a required item. What fits its items, as what fits `AssignItem`'s,
+        // is anything.
+        (Ok(db.top()), Ok(()), Err(Required(x))),
+        (Err(Unadmitted(y)), Err(Unadmitted(y)), Err(Required(x))),
+    ];
+    let gas = Gas::default();
+    let mut s = Solver::new(db, &gas);
+    s.gradual();
+    for ((schema, key, insertion), (insert, delete, clear)) in insertions.into_iter().zip(expected)
+    {
+        let inserted = s.evaluate_items(insertion).map(Option::unwrap);
+        assert_eq!(
+            inserted,
+            insert.map_err(Issue::Contradiction),
+            "{schema:?} {key:?}"
+        );
+        let restricted = |restriction| s.restricted(schema, restriction).map(|_| ());
+        assert_eq!(
+            restricted(Restriction::Deletable(key)),
+            delete.map_err(Issue::Contradiction),
+            "{schema:?} {key:?}"
+        );
+        assert_eq!(
+            restricted(Restriction::Clearable),
+            clear.map_err(Issue::Contradiction),
+            "{schema:?}"
+        );
+    }
+}
+
+#[test]
+fn a_rigid_key_deletes_where_its_bound_does() {
+    let db = &mut Database::new();
+    let int = int(db);
+    let (a, b, c) = (sym(db, "a"), sym(db, "b"), sym(db, "c"));
+    // `{?a: Int, *b: Int, c: Int}`
+    let schema = items(
+        db,
+        vec![
+            keyed(Multiplicity::Optional, a, int),
+            keyed(Multiplicity::Repeated, b, int),
+            keyed(Multiplicity::Required, c, int),
+        ],
+    );
+    let key = reference(db, 0, 0);
+    let deletable = db.intern(Type::Restricted {
+        schema,
+        restriction: Restriction::Deletable(key),
+    });
+    let ab = union(db, &[a, b]);
+    let ac = union(db, &[a, c]);
+    let binder = |bound| bounded(Kind::Type, Binding::Positional, Some(bound));
+    let admitted = generic(db, vec![binder(ab)], db.top());
+    let required = generic(db, vec![binder(ac)], db.top());
+    db.seal();
+    assert_eq!(
+        under(db, admitted, schema, deletable).status,
+        Status::Proven
+    );
+    let outcome = under(db, required, schema, deletable);
+    assert!(
+        contradiction(&outcome, Contradiction::Required(c)),
+        "{outcome:?}"
+    );
+}
+
+#[test]
 fn item_projections_meet_without_intersections() {
     let db = &mut Database::new();
     let int = int(db);

@@ -242,6 +242,9 @@ pub(crate) enum UnionMember {
     /// The meet of the values of a schema's items a key selects, as
     /// `AssignItem[S, K]`
     AssignItem(TypeId, TypeId),
+    /// The meet of the values of a schema's items a key selects, each of which
+    /// must admit repetition, as `InsertItem[S, K]`
+    InsertItem(TypeId, TypeId),
 }
 
 impl UnionMember {
@@ -253,14 +256,17 @@ impl UnionMember {
         | Self::Values(id)
         | Self::Entries(id)
         | Self::IndexItem(id, _)
-        | Self::AssignItem(id, _)) = self;
+        | Self::AssignItem(id, _)
+        | Self::InsertItem(id, _)) = self;
         id
     }
 
     /// The key an item projection selects by
     pub(crate) fn key(self) -> Option<TypeId> {
         match self {
-            Self::IndexItem(_, key) | Self::AssignItem(_, key) => Some(key),
+            Self::IndexItem(_, key) | Self::AssignItem(_, key) | Self::InsertItem(_, key) => {
+                Some(key)
+            }
             _ => None,
         }
     }
@@ -283,6 +289,7 @@ impl UnionMember {
             Self::Entries(_) => Self::Entries(id),
             Self::IndexItem(_, key) => Self::IndexItem(id, key),
             Self::AssignItem(_, key) => Self::AssignItem(id, key),
+            Self::InsertItem(_, key) => Self::InsertItem(id, key),
         }
     }
 
@@ -291,7 +298,35 @@ impl UnionMember {
         match self {
             Self::IndexItem(schema, _) => Self::IndexItem(schema, key),
             Self::AssignItem(schema, _) => Self::AssignItem(schema, key),
+            Self::InsertItem(schema, _) => Self::InsertItem(schema, key),
             _ => self,
+        }
+    }
+}
+
+/// What a [`Type::Restricted`] schema requires of its items
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Restriction {
+    /// `Deletable[S, K]`: each item the key selects is keyed and admits zero
+    Deletable(TypeId),
+    /// `Clearable[S]`: each item admits zero
+    Clearable,
+}
+
+impl Restriction {
+    /// The key it selects items by
+    pub(crate) fn key(self) -> Option<TypeId> {
+        match self {
+            Self::Deletable(key) => Some(key),
+            Self::Clearable => None,
+        }
+    }
+
+    /// The same restriction with its key replaced, if it has one
+    fn with_key(self, key: TypeId) -> Self {
+        match self {
+            Self::Deletable(_) => Self::Deletable(key),
+            Self::Clearable => self,
         }
     }
 }
@@ -389,6 +424,14 @@ pub(crate) enum Type {
         packs: alias::Box<[TypeId]>,
         pattern: TypeId,
     },
+    /// A schema, restricted to where removing what the restriction names leaves
+    /// a value of it: `Deletable[S, K]` or `Clearable[S]`. The solver evaluates it
+    /// to the schema where the restriction holds, and to a contradiction where it
+    /// doesn't.
+    Restricted {
+        schema: TypeId,
+        restriction: Restriction,
+    },
     /// An overloaded function's value: its `@def` signatures, one of which a call
     /// or a function type it's passed as chooses, and its implementation's
     /// signature, which it relates as anywhere else. Never written; a solver
@@ -467,6 +510,15 @@ impl Type {
                 }
                 visit(*pattern, 1);
             }
+            Self::Restricted {
+                schema,
+                restriction,
+            } => {
+                visit(*schema, 0);
+                if let Some(key) = restriction.key() {
+                    visit(key, 0);
+                }
+            }
             Self::Overloaded {
                 overloads,
                 implementation,
@@ -476,6 +528,26 @@ impl Type {
                     visit(*ty, 0);
                 }
             }
+        }
+    }
+
+    /// The schema and key of each projection or restriction that selects items
+    /// of a schema by a key: an item projection member of a union, or a
+    /// `Deletable` schema
+    pub(crate) fn keyed_projections(&self) -> Vec<(TypeId, TypeId)> {
+        match self {
+            Self::Union(members) => (members.iter())
+                .filter_map(|member| Some((member.projected()?, member.key()?)))
+                .collect(),
+            Self::Restricted {
+                schema,
+                restriction,
+            } => restriction
+                .key()
+                .map(|key| (*schema, key))
+                .into_iter()
+                .collect(),
+            _ => Vec::new(),
         }
     }
 
@@ -526,6 +598,9 @@ impl Type {
                     })
             }
             (Self::Map { packs: a, .. }, Self::Map { packs: b, .. }) => a.len() == b.len(),
+            (Self::Restricted { restriction: a, .. }, Self::Restricted { restriction: b, .. }) => {
+                discriminant(a) == discriminant(b)
+            }
             (
                 Self::Overloaded {
                     overloads: a,
@@ -611,6 +686,15 @@ impl Type {
                     *pack = f(*pack, 0)?;
                 }
                 *pattern = f(*pattern, 1)?;
+            }
+            Self::Restricted {
+                schema,
+                restriction,
+            } => {
+                *schema = f(*schema, 0)?;
+                if let Some(key) = restriction.key() {
+                    *restriction = restriction.with_key(f(key, 0)?);
+                }
             }
             Self::Overloaded {
                 overloads,
@@ -845,6 +929,12 @@ pub(crate) enum Intrinsic {
     IndexItem,
     /// `AssignItem[S, K]`, the meet of the values of a schema's items a key selects
     AssignItem,
+    /// `InsertItem[S, K]`, as `AssignItem` where each item admits repetition
+    InsertItem,
+    /// `Deletable[S, K]`, `S` where each item a key selects admits zero
+    Deletable,
+    /// `Clearable[S]`, `S` where each of its items admits zero
+    Clearable,
     /// The class of a tuple, which `Entries` builds
     Tuple,
     /// The class of function values, and of every function type (see
@@ -871,6 +961,9 @@ struct Intrinsics {
     entries: Option<TypeId>,
     index_item: Option<TypeId>,
     assign_item: Option<TypeId>,
+    insert_item: Option<TypeId>,
+    deletable: Option<TypeId>,
+    clearable: Option<TypeId>,
     tuple: Option<TypeId>,
     func: Option<TypeId>,
     int: Option<TypeId>,
@@ -891,6 +984,9 @@ impl Intrinsics {
             Intrinsic::Entries => self.entries,
             Intrinsic::IndexItem => self.index_item,
             Intrinsic::AssignItem => self.assign_item,
+            Intrinsic::InsertItem => self.insert_item,
+            Intrinsic::Deletable => self.deletable,
+            Intrinsic::Clearable => self.clearable,
             Intrinsic::Tuple => self.tuple,
             Intrinsic::Func => self.func,
             Intrinsic::Int => self.int,
@@ -911,6 +1007,9 @@ impl Intrinsics {
             Intrinsic::Entries => &mut self.entries,
             Intrinsic::IndexItem => &mut self.index_item,
             Intrinsic::AssignItem => &mut self.assign_item,
+            Intrinsic::InsertItem => &mut self.insert_item,
+            Intrinsic::Deletable => &mut self.deletable,
+            Intrinsic::Clearable => &mut self.clearable,
             Intrinsic::Tuple => &mut self.tuple,
             Intrinsic::Func => &mut self.func,
             Intrinsic::Int => &mut self.int,
@@ -1236,7 +1335,11 @@ impl Database {
             self.intrinsic(intrinsic).is_none(),
             "intrinsic already set: {intrinsic:?}"
         );
-        self.expect_kind(ty, Kind::Type);
+        let kind = match intrinsic {
+            Intrinsic::Deletable | Intrinsic::Clearable => Kind::Schema,
+            _ => Kind::Type,
+        };
+        self.expect_kind(ty, kind);
         *self.local_mut().intrinsics.slot_mut(intrinsic) = Some(ty);
     }
 
@@ -1514,7 +1617,7 @@ impl Database {
 
     fn known_kind(&self, id: TypeId) -> Option<Kind> {
         match self.ty(id) {
-            Type::Schema(_) | Type::Map { .. } => Some(Kind::Schema),
+            Type::Schema(_) | Type::Map { .. } | Type::Restricted { .. } => Some(Kind::Schema),
             Type::Bound { kind, .. } | Type::Rigid { kind, .. } | Type::Apply { kind, .. } => {
                 Some(*kind)
             }
@@ -1550,7 +1653,9 @@ impl Database {
 
     /// A type's canonical outer form, which interning gives it: a quantifier
     /// without binders is its body, and an application of the `Union`, `Keys`,
-    /// `Values` or `Entries` intrinsic is a union of its projection. A union is
+    /// `Values` or `Entries` intrinsic is a union of its projection, and one of
+    /// `Deletable` or `Clearable` a restricted schema, which leaves the dynamic
+    /// schema as it is. A union is
     /// flattened, with its members sorted and deduplicated, and each projection of
     /// a schema among them is evaluated as far as the schema is known (see
     /// [`Self::project`]), a projection of `{...S}` being one of `S`. A union
@@ -1564,10 +1669,19 @@ impl Database {
                 Some(reduced) => reduced,
                 None => Type::Map { packs, pattern },
             },
-            Type::Apply { base, args, kind } => match self.projection(base, &args) {
-                Some(members) => self.normalize(Type::Union(members.into())),
-                None => Type::Apply { base, args, kind },
-            },
+            Type::Apply { base, args, kind } => {
+                if let Some(restricted) = self.restriction(base, &args) {
+                    return self.normalize(restricted);
+                }
+                match self.projection(base, &args) {
+                    Some(members) => self.normalize(Type::Union(members.into())),
+                    None => Type::Apply { base, args, kind },
+                }
+            }
+            // Removing items of the dynamic schema leaves it
+            Type::Restricted { schema, .. } if matches!(self.ty(schema), Type::Unknown(_)) => {
+                self.ty(schema).clone()
+            }
             Type::Union(members) => {
                 let mut normalized = Vec::new();
                 let mut pending: Vec<UnionMember> = members.iter().rev().copied().collect();
@@ -1628,6 +1742,28 @@ impl Database {
         }
     }
 
+    /// The restricted schema an application of `Deletable` or `Clearable` stands
+    /// for
+    fn restriction(&self, base: TypeId, args: &[Argument]) -> Option<Type> {
+        let (schema, restriction) = if self.intrinsic(Intrinsic::Deletable) == Some(base) {
+            let [Argument::Positional(schema), Argument::Positional(key)] = *args else {
+                return None;
+            };
+            (schema, Restriction::Deletable(key))
+        } else if self.intrinsic(Intrinsic::Clearable) == Some(base) {
+            let [Argument::Positional(schema)] = *args else {
+                return None;
+            };
+            (schema, Restriction::Clearable)
+        } else {
+            return None;
+        };
+        Some(Type::Restricted {
+            schema,
+            restriction,
+        })
+    }
+
     /// The union members an application of a projecting intrinsic stands for, one
     /// for each schema argument
     fn projection(&self, base: TypeId, args: &[Argument]) -> Option<Vec<UnionMember>> {
@@ -1637,6 +1773,7 @@ impl Database {
                 UnionMember::IndexItem as fn(TypeId, TypeId) -> UnionMember,
             ),
             (Intrinsic::AssignItem, UnionMember::AssignItem),
+            (Intrinsic::InsertItem, UnionMember::InsertItem),
         ] {
             if self.intrinsic(intrinsic) == Some(base) {
                 return match *args {
@@ -2072,6 +2209,15 @@ impl Database {
                 }
                 self.expect_kind(*pattern, Kind::Type);
             }
+            Type::Restricted {
+                schema,
+                restriction,
+            } => {
+                self.expect_kind(*schema, Kind::Schema);
+                if let Some(key) = restriction.key() {
+                    self.expect_kind(key, Kind::Type);
+                }
+            }
         }
     }
 
@@ -2396,9 +2542,9 @@ impl Database {
         result
     }
 
-    /// The binders of a quantified type's group that an item projection in its
-    /// body selects by, by slot. Its variables keep the literals they're given,
-    /// since a decayed key would select differently.
+    /// The binders of a quantified type's group that an item projection or a
+    /// restriction in its body selects by, by slot. Its variables keep the
+    /// literals they're given, since a decayed key would select differently.
     pub(crate) fn item_keys(&self, quantified: TypeId) -> Vec<u16> {
         let mut slots = Vec::new();
         for (slot, _, _) in self.key_projections(quantified) {
@@ -2411,7 +2557,7 @@ impl Database {
 
     /// The bounds item projections in a quantified type's body imply for its
     /// group's binders, with the binder's slot: `Keys[S]` for each schema `S`
-    /// the body projects an item of by the binder, since a key outside them
+    /// the body selects items of by the binder, since a key outside them
     /// selects nothing. Each is interpreted in the group's environment. Only
     /// the body's own projections count: one under a nested quantifier may
     /// select from a schema of that quantifier's binders.
@@ -2426,9 +2572,10 @@ impl Database {
         bounds
     }
 
-    /// Each item projection in a quantified type's body whose key is one of its
-    /// group's binders: the binder's slot, the schema, and the number of groups
-    /// the projection is under within the body
+    /// Each item projection or `Deletable` restriction in a quantified type's
+    /// body whose key is one of its group's binders (see
+    /// [`Type::keyed_projections`]): the binder's slot, the schema, and the
+    /// number of groups the projection is under within the body
     fn key_projections(&self, quantified: TypeId) -> Vec<(u16, TypeId, u32)> {
         let Type::Quantified { body, .. } = self.ty(quantified) else {
             return Vec::new();
@@ -2440,16 +2587,11 @@ impl Database {
             if !seen.insert((ty, depth)) {
                 continue;
             }
-            if let Type::Union(members) = self.ty(ty) {
-                for member in members.iter() {
-                    let (Some(key), Some(schema)) = (member.key(), member.projected()) else {
-                        continue;
-                    };
-                    if let Type::Bound { reference, .. } = *self.ty(key)
-                        && u32::from(reference.depth) == depth
-                    {
-                        found.push((reference.slot, schema, depth));
-                    }
+            for (schema, key) in self.ty(ty).keyed_projections() {
+                if let Type::Bound { reference, .. } = *self.ty(key)
+                    && u32::from(reference.depth) == depth
+                {
+                    found.push((reference.slot, schema, depth));
                 }
             }
             self.ty(ty)

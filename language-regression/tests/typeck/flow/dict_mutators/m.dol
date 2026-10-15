@@ -1,0 +1,128 @@
+# Dict's mutators check their keys against the multiplicities of the schema:
+# deleting and clearing need items that admit zero, and inserting needs keyed
+# items that admit repetition
+
+pub def fixed b @ Dict[{x: Int}]
+  b.delete :x:
+  # error: this call removes the required item at `:x:`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   b.delete :x:
+  #    |   ^^^^^^^^^^^^
+  b.pop :x:
+  # error: this call removes the required item at `:x:`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   b.pop :x:
+  #    |   ^^^^^^^^^
+  b.clear()
+  # error: this call removes the required item at `:x:`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   b.clear()
+  #    |   ^^^^^^^^^
+  b.insert :x: 2
+# error: this call inserts at `:x:`, where the schema admits only one item
+#   --> m.dol:LL:LL
+#    |
+# LL |   b.insert :x: 2
+#    |   ^^^^^^^^^^^^^^
+
+pub def optional b @ Dict[{x: Int, ?y: Int}]
+  b.delete :y:
+  b.pop :y:
+  b.pop :y: default: 0
+  b.insert :y: 2
+  # error: this call inserts at `:y:`, where the schema admits only one item
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   b.insert :y: 2
+  #    |   ^^^^^^^^^^^^^^
+  b.clear()
+# error: this call removes the required item at `:x:`
+#   --> m.dol:LL:LL
+#    |
+# LL |   b.clear()
+#    |   ^^^^^^^^^
+
+pub def positions b @ Dict[{Int, *Int}]
+  b.delete 0
+  # error: this call removes the required item at `0`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   b.delete 0
+  #    |   ^^^^^^^^^^
+  b.pop 1
+  # error: this call removes the required item at `1`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   b.pop 1
+  #    |   ^^^^^^^
+  b.clear()
+# error: this call removes the required item at `0`
+#   --> m.dol:LL:LL
+#    |
+# LL |   b.clear()
+#    |   ^^^^^^^^^
+
+pub def varying b @ Dict[{*Int}]
+  b.clear()
+  b.insert 0 1
+# error: this call inserts at `0`, where the schema admits only one item
+#   --> m.dol:LL:LL
+#    |
+# LL |   b.insert 0 1
+#    |   ^^^^^^^^^^^^
+
+pub def open b @ Dict[Sym, Int]
+  b.delete :x:
+  b.pop :x:
+  b.insert :x: 2
+  b.clear()
+
+@let Optional[T] = {?x: T, *(Str): T}
+
+pub def alias b @ Dict[Optional[Int]]
+  b.delete :x:
+  b.delete "k"
+  b.insert "k" 1
+  b.clear()
+
+# A generic key deletes where every key its bound selects does
+pub def keyed[K @ (:x: | :y:)] b @ Dict[{x: Int, ?y: Int}] k @ K
+  b.delete $k
+# error: this call removes the required item at `:x:`
+#   --> m.dol:LL:LL
+#    |
+# LL |   b.delete $k
+#    |   ^^^^^^^^^^^
+
+pub def optional_keyed[K @ (:y: | :z:)] b @ Dict[{x: Int, ?y: Int, ?z: Int}] k @ K
+  b.delete $k
+  b.pop $k
+
+# An open schema admits every mutator
+pub def generic_open[K, V] b @ Dict[K, V] k @ K v @ V
+  b.delete $k
+  b.pop $k
+  b.insert $k $v
+  b.clear()
+
+# An arbitrary schema may have required items
+pub def generic_schema[S @ {...}, K @ std.Keys[S]] b @ Dict[S] k @ K
+  b.delete $k
+  # error: expected `std.Dict[std.Deletable[S, K]]`, found `std.Dict[S]`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   b.delete $k
+  #    |   ^
+  #    |
+  #    = note: `S` doesn't accept `std.Deletable[S, K]`
+  b.clear()
+# error: expected `std.Dict[std.Clearable[S]]`, found `std.Dict[S]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   b.clear()
+#    |   ^
+#    |
+#    = note: `S` doesn't accept `std.Clearable[S]`

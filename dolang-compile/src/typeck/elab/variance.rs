@@ -306,10 +306,11 @@ impl<'t> Collect<'t, '_> {
         }
 
         // Designated opaque aliases take their binders covariantly, but for
-        // `AssignItem`: a wider key selects more items, whose meet is lower, and
-        // its schema is invariant, since wider values raise the meet but more
-        // items lower it
-        let assign_item = Designated::Intrinsic(Intrinsic::AssignItem);
+        // `AssignItem` and `InsertItem`: a wider key selects more items, whose
+        // meet is lower, and its schema is invariant, since wider values raise
+        // the meet but more items lower it. `Deletable` and `Clearable` are their
+        // schema where every item they remove admits zero, which neither a wider
+        // nor a narrower schema keeps, and a wider key removes more items.
         if let Some(
             designated @ (Designated::Phantom
             | Designated::Intrinsic(
@@ -318,10 +319,22 @@ impl<'t> Collect<'t, '_> {
                 | Intrinsic::Values
                 | Intrinsic::Entries
                 | Intrinsic::IndexItem
-                | Intrinsic::AssignItem,
+                | Intrinsic::AssignItem
+                | Intrinsic::InsertItem
+                | Intrinsic::Deletable
+                | Intrinsic::Clearable,
             )),
         ) = tables.designated.get(&id)
         {
+            let antitone = matches!(
+                designated,
+                Designated::Intrinsic(
+                    Intrinsic::AssignItem
+                        | Intrinsic::InsertItem
+                        | Intrinsic::Deletable
+                        | Intrinsic::Clearable
+                )
+            );
             for slot in 0..tables.binders(id, 0).len() {
                 let binder = BinderRef {
                     decl: id,
@@ -329,8 +342,8 @@ impl<'t> Collect<'t, '_> {
                     slot,
                 };
                 let used = match slot {
-                    0 if *designated == assign_item => Use::BOTH,
-                    1 if *designated == assign_item => Use::CONTRA,
+                    0 if antitone => Use::BOTH,
+                    1 if antitone => Use::CONTRA,
                     _ => Use::CO,
                 };
                 self.constraints

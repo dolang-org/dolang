@@ -45,6 +45,23 @@ pub @let IndexItem[S @ {...}, K] = ...
 # and `Str`. A key `S` doesn't admit is an error.
 pub @let AssignItem[S @ {...}, K] = ...
 
+# The meet of the values of the items of `S` that a key selects, as in
+# `AssignItem`, which an added value at a key of type `K` must fit. Each item
+# selected must be keyed and admit repetition: `InsertItem[{*(Str): Int}, Str]`
+# is `Int`, but `InsertItem[{a: Int}, :a:]` is an error.
+pub @let InsertItem[S @ {...}, K] = ...
+
+# `S`, where removing every item that a key of type `K` selects leaves a value
+# of `S`. Each item selected must be keyed and admit zero:
+# `Deletable[{a: Int, ?b: Str}, :b:]` is `{a: Int, ?b: Str}`, but
+# `Deletable[{a: Int, ?b: Str}, :a:]` is an error.
+pub @let Deletable[S @ {...}, K] = ...
+
+# `S`, where every item admits zero, so removing all of them leaves a value of
+# `S`. `Clearable[{?a: Int, *Str}]` is `{?a: Int, *Str}`, but
+# `Clearable[{a: Int}]` is an error.
+pub @let Clearable[S @ {...}] = ...
+
 # The singleton [`Null`](std.Null) value.
 #
 # As an iterator it ends immediately; as a sink it discards every value.
@@ -2079,6 +2096,8 @@ pub class Dict[S @ {...}]: BaseDict[S] @Assign[S]
   pub def (init) self source @ Spread[S]
     ...
 
+  @def clear self @ Dict[Clearable[S]]
+
   #
   # Removes all key-value pairs.
   #
@@ -2095,6 +2114,8 @@ pub class Dict[S @ {...}]: BaseDict[S] @Assign[S]
   # [`BaseDict.copy`](std.BaseDict.copy) does.
   pub def copy self -> Dict[S]
     ...
+
+  @def delete[K] self @ Dict[Deletable[S, K]] key @ K -> Bool
 
   #
   # Indicates whether any values were removed. Removes all values for the key.
@@ -2125,9 +2146,17 @@ pub class Dict[S @ {...}]: BaseDict[S] @Assign[S]
     # the key
     key @ K
     # the value
-    value @ AssignItem[S, K]
+    value @ InsertItem[S, K]
   do
     ...
+
+  @def pop[K, D = Never]
+    self @ Dict[Deletable[S, K]]
+    key @ K
+    instance @ Int = nil
+    :default @ D = nil
+    :else @ (() -> D) = nil
+  do -> (IndexItem[S, K] | D)
 
   #
   # Removes and returns a value for a key. Raises an error if the key is missing
@@ -2139,7 +2168,7 @@ pub class Dict[S @ {...}]: BaseDict[S] @Assign[S]
   # ## Example
   #
   # ```
-  # let d = {a: 1, b: 2}
+  # let d @ Dict[Str, Str] = {}
   # d.insert "multi" "first"
   # d.insert "multi" "second"
   #

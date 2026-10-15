@@ -5,7 +5,8 @@
 //! a keyword binder a type; any other binder takes the kind of its bound, and an
 //! alias the kind of its body. Those equations are solved with union-find, so alias
 //! chains and cycles across units need no ordering. A kind no declaration
-//! determines is a type.
+//! determines is a type. An opaque alias is a type, unless it's designated as an
+//! intrinsic schema, and an application has its alias's kind.
 
 use rustc_hash::FxHashMap;
 
@@ -45,7 +46,16 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
         }
         match tables.decls[index].kind {
             DeclKind::Alias => infer.var(Var::Alias(decl), None),
-            DeclKind::OpaqueAlias => infer.var(Var::Alias(decl), Some(Kind::Type)),
+            DeclKind::OpaqueAlias => {
+                let kind = match sig::designation(tables, decl) {
+                    Some((
+                        Designated::Intrinsic(Intrinsic::Deletable | Intrinsic::Clearable),
+                        _,
+                    )) => Kind::Schema,
+                    _ => Kind::Type,
+                };
+                infer.var(Var::Alias(decl), Some(kind))
+            }
             _ => {}
         }
     }
@@ -220,9 +230,23 @@ impl Infer {
                     | None => Term::Flexible,
                 }
             }
-            // Applying a schema is an error, reported where it is checked
-            TypeExpr::App { .. }
-            | TypeExpr::Tuple { .. }
+            // An application of an alias has its kind. Applying anything else
+            // that isn't a class is an error, reported where it is checked.
+            TypeExpr::App { base, .. } => match base.ungrouped() {
+                TypeExpr::Name { head, .. }
+                    if matches!(
+                        tables.referents.get(&UnitSpan { unit, span: head.span }),
+                        Some(Referent::Decl(decl)) if matches!(
+                            tables.decls[decl.index()].kind,
+                            DeclKind::Alias | DeclKind::OpaqueAlias
+                        )
+                    ) =>
+                {
+                    self.synth(tables, unit, base)
+                }
+                _ => Term::Known(Kind::Type),
+            },
+            TypeExpr::Tuple { .. }
             | TypeExpr::Record { .. }
             | TypeExpr::Array { .. }
             | TypeExpr::Union { .. }
@@ -411,20 +435,36 @@ impl<'t> Check<'_, 't, '_> {
             }
             TypeExpr::App { base, args, .. } => {
                 let base = base.ungrouped();
-                match base {
+                let found = match base {
                     TypeExpr::Name { head, fields, .. } => {
                         let named = self.named(head.span);
                         if let Named::NotAType = named {
                             self.name(base.span(), head, fields, &named, None);
                         }
                         self.args(&named, args, ty.span());
+                        // An application of an alias has its kind. One of an
+                        // alias without binders is already diagnosed.
+                        match named {
+                            Named::Generic(kind, _, _, decl, binders)
+                                if matches!(
+                                    self.tables.decls[decl.index()].kind,
+                                    DeclKind::Alias | DeclKind::OpaqueAlias
+                                ) =>
+                            {
+                                (!kind.flexible && !binders.is_empty()).then_some(kind.kind)
+                            }
+                            _ => Some(Kind::Type),
+                        }
                     }
                     _ => {
                         self.check(base, None);
                         self.args(&Named::Unknown, args, ty.span());
+                        Some(Kind::Type)
                     }
+                };
+                if let Some(found) = found {
+                    self.expect(ty.span(), expected, found, None);
                 }
-                self.expect(ty.span(), expected, Kind::Type, None);
             }
             TypeExpr::Schema { params, tuple, .. } => {
                 self.items(params);
@@ -514,9 +554,7 @@ impl<'t> Check<'_, 't, '_> {
     /// binder it fills.
     fn args(&mut self, named: &Named<'t>, args: &'t [TypeArg], span: Span) {
         match *named {
-            Named::Generic(kind, .., binders)
-                if !kind.flexible && kind.kind == Kind::Type && !binders.is_empty() =>
-            {
+            Named::Generic(kind, .., binders) if !kind.flexible && !binders.is_empty() => {
                 return self.match_args(named, args);
             }
             // A binder stands for a type, not for something that takes arguments
@@ -718,8 +756,22 @@ impl Tables<'_> {
                     _ => None,
                 }
             }
-            TypeExpr::App { .. }
-            | TypeExpr::Tuple { .. }
+            // An application of an alias has its kind
+            TypeExpr::App { base, .. } => match base.ungrouped() {
+                name @ TypeExpr::Name { head, .. }
+                    if matches!(
+                        self.referents.get(&UnitSpan { unit, span: head.span }),
+                        Some(Referent::Decl(decl)) if matches!(
+                            self.decls[decl.index()].kind,
+                            DeclKind::Alias | DeclKind::OpaqueAlias
+                        )
+                    ) =>
+                {
+                    self.kind_of(unit, name)
+                }
+                _ => Some(Kind::Type),
+            },
+            TypeExpr::Tuple { .. }
             | TypeExpr::Record { .. }
             | TypeExpr::Array { .. }
             | TypeExpr::Union { .. }
