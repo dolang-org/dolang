@@ -43,6 +43,7 @@ const ITERABLE_METHODS: &[sym::Tag] = &[
     sym::TAKE,
     sym::SKIP,
     sym::ENUMERATE,
+    sym::KV,
     sym::FIND,
     sym::MIN,
     sym::MAX,
@@ -55,9 +56,7 @@ const ITERABLE_METHODS: &[sym::Tag] = &[
 ///   over `next` would spin on the first element forever.
 /// - `count` is `len` spelled expensively, and `Dict`/`dict_view`/`Record`
 ///   already define `count` with unrelated semantics.
-/// - `kv` describes the pair shape of an iterator; spread behavior belongs to
-///   the iterable itself.
-const ITER_ONLY_METHODS: &[sym::Tag] = &[sym::NEXT, sym::COUNT, sym::KV, sym::SPREAD_METHOD];
+const ITER_ONLY_METHODS: &[sym::Tag] = &[sym::NEXT, sym::COUNT, sym::SPREAD_METHOD];
 
 /// Methods of [`Sink`], all of which [`Sinkable`] forwards by materializing a
 /// sink from the receiver with `sink` and re-dispatching onto it.
@@ -132,6 +131,7 @@ fn iterable_members<'v, 'a>() -> &'a [Member<'v, 'a>] {
         Method(sym::TAKE),
         Method(sym::SKIP),
         Method(sym::ENUMERATE),
+        Method(sym::KV),
         Method(sym::FIND),
         Method(sym::MIN),
         Method(sym::MAX),

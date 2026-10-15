@@ -39,10 +39,8 @@ s.add 7
 assert_eq [...s.map (do |x| x + 1)] [8]
 
 # Methods deliberately withheld from Iterable stay withheld: `next` would mint
-# a fresh iterator per call, `count` is `len` spelled expensively, and `kv` is
-# the iterable's own business.
+# a fresh iterator per call, and `count` is `len` spelled expensively.
 assert_throws $FieldError do [1, 2, 3].next()
-assert_throws $FieldError do [1, 2, 3].kv()
 assert_throws $FieldError do [1, 2, 3].count()
 assert_throws $FieldError do (Range start: 1 end: 4).next()
 
@@ -120,3 +118,14 @@ mysink.put 1
 let pre = mysink.premap (do |x| x * 10)
 pre.put 2
 assert_eq $mysink.dest [1, 20]
+
+# Keyed spreading forwards through native containers and user-defined iterables.
+let pairs = [(:a:, 1), (:b:, 2)]
+assert_eq {...pairs.kv()} {a: 1, b: 2}
+assert_eq {...pairs.kv()} {...pairs.iter().kv()}
+assert_eq {...((:a:, 1), (:b:, 2)).kv()} {a: 1, b: 2}
+let keyed = pairs.kv
+assert_eq {...keyed()} {a: 1, b: 2}
+assert_eq {...Iterable.kv(pairs)} {a: 1, b: 2}
+let custom = MyIterable $pairs
+assert_eq {...custom.kv()} {a: 1, b: 2}

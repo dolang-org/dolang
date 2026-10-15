@@ -598,6 +598,20 @@ pub class Iterable[T]: @BaseIterable[T]
   pub def fold[A] self init@A func@((A, T) -> A) -> A
     ...
 
+  @def kv[K, V] self @ Iterable[Unpack[{K, V}]] -> Spread[K, V]
+
+  # Adapts the elements for keyed spreading, using [`iter`](std.Iterable.iter).
+  #
+  # Each element must unpack into exactly two values without being consumed.
+  # Spreading consumes the source iterator. The adapter does not support iteration.
+  #
+  # ```
+  # let entries = [("x", 1), ("y", 2)]
+  # assert_eq {...entries.kv()} {"x": 1, "y": 2}
+  # ```
+  pub def kv self -> Spread[{...}]
+    ...
+
   # Returns an iterator that maps each item through `func`.
   pub def map[U] self func @ ((T, <Value, >Value) -> U) -> Iter[U]
     ...
