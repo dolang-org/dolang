@@ -79,6 +79,13 @@ pub class Over
 pub def overloaded o @ Over
   let _ = o.pick
   #       ^~~~~~: wf undecided Unsupported("an overloaded method as a value")
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = o.pick
+  #    |           ^^^^^^
+  #    |
+  #    = note: it doesn't handle an overloaded method as a value
   nil
 
 # A boundless range takes its element type from what's expected of it

@@ -5,17 +5,17 @@ import @ext
 
 pub class Num
 pub class Pair[A, B]
-  pub field items @ Phantom[A, B] = nil
+  pub field items @ Phantom[A, B] = ...
 pub class Two[S @ {...}, T]
   pub field items @ Phantom[...S, T] = nil
 pub @let Phantom[...Ts] = ...
 
-pub let missing @ Pair[Num] = nil
+pub let missing @ Pair[Num] = ...
 #                 ^~~~~~~~~: type m.Pair[m.Num, Unknown]
 # error: missing type arguments for `B`
 #   --> m.dol:LL:LL
 #    |
-# LL | pub let missing @ Pair[Num] = nil
+# LL | pub let missing @ Pair[Num] = ...
 #    |                   ^^^^^^^^^
 pub let bare @ Pair = nil
 #              ^~~~: type Unknown
@@ -31,7 +31,7 @@ pub let not_generic @ Num[Num] = nil
 #    |
 # LL | pub let not_generic @ Num[Num] = nil
 #    |                       ^^^^^^^^
-pub let mis_kinded @ Two[Num, Num] = nil
+pub let mis_kinded @ Two[Num, Num] = ...
 #                    ^~~~~~~~~~~~~: type m.Two[Unknown{}, m.Num]
 # error: expected a schema, found a type
 #   --> m.dol:LL:LL
@@ -39,9 +39,9 @@ pub let mis_kinded @ Two[Num, Num] = nil
 # LL | pub class Num
 #    |           --- declared here
 # ...
-# LL | pub let mis_kinded @ Two[Num, Num] = nil
+# LL | pub let mis_kinded @ Two[Num, Num] = ...
 #    |                          ^^^
-pub let flexible @ Two[ext.S, Num] = nil
+pub let flexible @ Two[ext.S, Num] = ...
 #                  ^~~~~~~~~~~~~~~: type m.Two[Unknown{}, m.Num]
 
 pub @let Loop = Loop2
@@ -56,7 +56,28 @@ pub @let Loop2 = Loop
 
 pub class Chicken: @Egg
 #         ^~~~~~~: decl nominal <: m.Egg
+# error: the checker couldn't decide this, which shouldn't happen
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Chicken: @Egg
+#    |                     ^^^
+#    |
+#    = note: this may come from an inconsistent or stale typelib (rebuild, or clear the build directory); otherwise it is a checker bug
+# error: the checker couldn't decide this, which shouldn't happen
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Chicken: @Egg
+#    |           ^^^^^^^
+#    |
+#    = note: this may come from an inconsistent or stale typelib (rebuild, or clear the build directory); otherwise it is a checker bug
 pub class Egg: @Chicken
+# error: the checker couldn't decide this, which shouldn't happen
+#   --> m.dol:LL:LL
+#    |
+# LL | pub class Egg: @Chicken
+#    |           ^^^
+#    |
+#    = note: this may come from an inconsistent or stale typelib (rebuild, or clear the build directory); otherwise it is a checker bug
 # error: class inherits from itself
 #   --> m.dol:LL:LL
 #    |

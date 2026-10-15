@@ -82,3 +82,20 @@ def bundled_modules_are_checked_against()
       echo $error
     let text = check_fails $dir main.dol
     assert (text.contains "`args.Error` does not fit the annotation `std.Int`")
+
+#[test]
+def a_strict_script_is_warned_where_it_is_unverified()
+  with_temp_dir do |dir|
+    (dir / "main.dol").write r|
+      # dolang: strict
+      class Picker
+        @def pick _self x@Int -> Int
+        @def pick _self x@Str -> Str
+        pub def pick _self x @ (Int | Str)
+          x
+      let pick = Picker().pick
+      echo $pick(1)
+    let text = check $dir main.dol
+    assert (text.contains "the checker can't verify this")
+    assert (text.contains "main.dol:7:12")
+    assert (text.contains "an overloaded method as a value")

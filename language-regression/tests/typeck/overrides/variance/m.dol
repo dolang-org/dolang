@@ -45,12 +45,12 @@ pub class Cell[T]
   pub field value @ T = ...
 
 pub class IntCell: Cell[Int]
-  pub field value @ Int = nil
+  pub field value @ Int = ...
 
 pub class Widened: Cell[Int]
-  pub field value @ Num = nil
+  pub field value @ Num = ...
 # error: `value` does not match `Cell.value`
 #   --> m.dol:LL:LL
 #    |
-# LL |   pub field value @ Num = nil
+# LL |   pub field value @ Num = ...
 #    |             ^^^^^

@@ -1,4 +1,5 @@
-# A small stand-in for the standard library.
+# A small stand-in for the standard library, declaring what the checker
+# designates in `std`.
 
 pub @let Union[...Ts] = ...
 
@@ -17,3 +18,53 @@ pub def getter func
 
 pub def setter func
   ...
+
+pub def final cls
+  ...
+
+pub def mixable cls
+  ...
+
+pub @let Keys[S @ {...}] = ...
+
+pub @let Values[S @ {...}] = ...
+
+pub @let Entries[S @ {...}] = ...
+
+pub @let IndexItem[S @ {...}, K] = ...
+
+pub @let AssignItem[S @ {...}, K] = ...
+
+pub class Value
+
+#[mixable]
+pub class Func
+
+#[final]
+pub class Nil
+
+pub class Bool
+
+pub class Sym
+
+pub class Tuple[*Ts]
+  field items @ Phantom[...Ts]
+
+pub class Type[T]: Func
+  field instance @ Phantom[T]
+
+pub let class @ Value = ...
+
+pub let static @ Value = ...
+
+pub class Iter[T]
+  field items @ Phantom[T]
+
+pub class Array[T]
+  field items @ Phantom[T]
+
+  pub def (index) self index @ Int -> T
+    ...
+
+  pub def (assign) self index @ Int value @ T
+    ...

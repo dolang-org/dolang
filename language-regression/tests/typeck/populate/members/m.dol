@@ -5,7 +5,7 @@ pub class Num
 pub class Text
 
 pub class Counter[T]
-  pub field count @ Num = nil
+  pub field count @ Num = ...
   #         ^~~~~: member field instance pub m.Num
   field secret @ T = nil
   #     ^~~~~~: member field instance private T

@@ -4,6 +4,9 @@ pub class Box[T]
   pub field item @ T = ...
   pub field loose = nil
 
+  def (init) self item @ T
+    self.item = item
+
   pub def get self -> T
     #     ^~~: sig (self: Self, <#0, >#1) -> T
     self.item
@@ -20,7 +23,7 @@ pub class Box[T]
   #[class]
   pub def make cls x
     #     ^~~~: sig (cls: Type[Self], x: Unknown, <#0, >#1) -> Unknown
-    cls(x)
+    ...
 
 pub @class Shape
   pub def area self -> Int

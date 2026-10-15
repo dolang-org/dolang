@@ -19,11 +19,12 @@ bundled type libraries when no source module is found. Add
 fail the check too. See [Running Scripts](../shell/index.md#running-scripts)
 for the shell's options.
 
-Checking is gradual: unknown information leaves operations unchecked rather
-than making every unannotated program an error. An imported module with neither
-source nor a bundled type library is unknown to the checker. Some unsupported
-type forms are provisionally accepted, so a successful check is not a guarantee
-that every operation has been checked.
+Checking is gradual: unknown information leaves operations unchecked rather than
+making every unannotated program an error. An imported module with neither
+source nor a bundled type library is unknown to the checker. Where a non-strict
+file uses a form the checker doesn't handle, it leaves that code unchecked
+without a diagnostic, so a successful check is not a guarantee that every
+operation has been checked.
 
 ### Inference
 
@@ -89,6 +90,9 @@ exempt. To handle a mismatch, give the `let` or `bind` an
 let k v = s.split "="
 else throw std.ValueError "expected KEY=VALUE: $s"
 ```
+
+Code the checker can't verify, such as a form it doesn't handle, gets a warning
+in a strict file, with a note giving the reason.
 
 To leave one declaration unchecked in a strict file, annotate it with
 [`std.Unknown`](std.Unknown), the unknown type, rather than omitting the

@@ -185,6 +185,18 @@ pub(crate) enum Residual {
     Ambiguous,
 }
 
+impl Residual {
+    /// Whether the residual shouldn't arise for checked code: from a typelib
+    /// that is inconsistent, or was written without being checked, or otherwise
+    /// from a checker bug. Any other residual is a limitation of the checker.
+    pub(crate) fn internal(self) -> bool {
+        matches!(
+            self,
+            Self::Recursive | Self::MissingIntrinsic(_) | Self::Escape
+        )
+    }
+}
+
 /// What relating a [`Type::Unsupported`] stand-in is
 const UNREPRESENTED: Residual = Residual::Unsupported("a type the checker can't represent yet");
 

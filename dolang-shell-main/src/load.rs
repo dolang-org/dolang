@@ -415,8 +415,6 @@ pub(crate) async fn check<'v, 's>(
             strand,
             "warnings treated as errors due to --strict flag",
         ))
-    } else if !check.validated() {
-        Err(Error::compile(strand, "some checks could not be decided"))
     } else {
         Ok(())
     }

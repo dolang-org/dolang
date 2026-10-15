@@ -34,22 +34,22 @@ pub def applied_binder[T] x @ T[Int]
   #    |                               ^^^^^^
   x
 
-pub let too_many @ Plain[Int, Str] = nil
+pub let too_many @ Plain[Int, Str] = ...
 # error: too many type arguments
 #   --> m.dol:LL:LL
 #    |
-# LL | pub let too_many @ Plain[Int, Str] = nil
+# LL | pub let too_many @ Plain[Int, Str] = ...
 #    |                               ^^^
-pub let keyword @ Plain[item: Int] = nil
+pub let keyword @ Plain[item: Int] = ...
 # error: no binder takes the keyword type argument `item`
 #   --> m.dol:LL:LL
 #    |
-# LL | pub let keyword @ Plain[item: Int] = nil
+# LL | pub let keyword @ Plain[item: Int] = ...
 #    |                         ^^^^
 # error: missing type arguments for `T`
 #   --> m.dol:LL:LL
 #    |
-# LL | pub let keyword @ Plain[item: Int] = nil
+# LL | pub let keyword @ Plain[item: Int] = ...
 #    |                   ^^^^^^^^^^^^^^^^
 pub let flat @ Flat[Int] = nil
 # error: type takes no type arguments
@@ -57,11 +57,11 @@ pub let flat @ Flat[Int] = nil
 #    |
 # LL | pub let flat @ Flat[Int] = nil
 #    |                ^^^^^^^^^
-pub let included @ ((...Plain[Int]) -> nil) = nil
+pub let included @ ((...Plain[Int]) -> nil) = ...
 # error: expected a schema, found a type
 #   --> m.dol:LL:LL
 #    |
-# LL | pub let included @ ((...Plain[Int]) -> nil) = nil
+# LL | pub let included @ ((...Plain[Int]) -> nil) = ...
 #    |                         ^^^^^^^^^^
 pub let schema_default @ Box = nil
 # error: `Box` needs type arguments
@@ -71,24 +71,24 @@ pub let schema_default @ Box = nil
 #    |                          ^^^
 
 # A type expands as a pack of any number of it
-pub let expanded @ Opaque[...Int] = nil
+pub let expanded @ Opaque[...Int] = ...
 pub @let Opaque[...Ts] = ...
 
 # A dictionary-like type takes its schema's items directly
 pub class Table[S @ {...}]
-  pub field rows @ ((...S) -> nil) = nil
-pub let one @ Table[Int] = nil
-pub let two @ Table[Sym, Int] = nil
-pub let three @ Table[Sym, Int, Str] = nil
+  pub field rows @ std.Phantom[((...S) -> nil)] = ...
+pub let one @ Table[Int] = ...
+pub let two @ Table[Sym, Int] = ...
+pub let three @ Table[Sym, Int, Str] = ...
 # error: too many type arguments
 #   --> m.dol:LL:LL
 #    |
-# LL | pub let three @ Table[Sym, Int, Str] = nil
+# LL | pub let three @ Table[Sym, Int, Str] = ...
 #    |                                 ^^^
-pub let whole @ Table[{name: Str}] = nil
+pub let whole @ Table[{name: Str}] = ...
 
 pub def fork[*Rs] *thunks @ ...(() -> Rs) -> Tuple[...Rs]
-  thunks
+  ...
 
 pub def unpatterned *thunks @ ...(() -> Int)
   # error: `...` pattern names no pack to expand over

@@ -58,7 +58,7 @@ pub class Grouped[T]
 
 pub class Nested[T]
   #              ^: variance invariant
-  pub field marker @ Wrap[Phantom[T]]
+  pub field marker @ Wrap[Phantom[T]] = ...
 
 pub @class Wrap[W]
   #             ^: variance covariant

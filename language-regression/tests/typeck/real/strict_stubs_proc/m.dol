@@ -123,12 +123,26 @@ pub def removed_operations() -> nil
   # LL |   let _a ... = proc.run
   #    |                ^^^^^^^^
   let _ = {...proc.run}
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = {...proc.run}
+  #    |           ^^^^^^^^^^^^^
+  #    |
+  #    = note: it doesn't handle a type nothing determines
   # error: `proc.Run` is not spreadable
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _ = {...proc.run}
   #    |               ^^^^^^^^
   let _ = [...proc.run]
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = [...proc.run]
+  #    |           ^^^^^^^^^^^^^
+  #    |
+  #    = note: it doesn't handle a type nothing determines
   # error: `proc.Run` is not spreadable
   #   --> m.dol:LL:LL
   #    |

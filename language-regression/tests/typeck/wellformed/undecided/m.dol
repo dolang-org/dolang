@@ -1,11 +1,11 @@
 # Where arguments after an expansion of unknown length go is not known, so their
-# bounds are undecided: nothing is diagnosed, but the check is not validated.
+# bounds are undecided. Outside a strict unit, nothing is diagnosed.
 
 pub class Num
 
 pub class Split[*Ts, U @ Num]
   pub def items _self -> Split[...Ts, U]
-    nil
+    ...
 
 pub def split[*Xs] x @ Split[...Xs, Num]
   #                    ^~~~~~~~~~~~~~~~~: wf undecided GenericArguments

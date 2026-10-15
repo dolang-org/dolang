@@ -4,7 +4,7 @@
 pub class Num
 
 pub class Base
-  pub field name @ Num = nil
+  pub field name @ Num = ...
   pub def run _self -> Num
     ...
 
@@ -28,9 +28,9 @@ pub class Property: Base
     ...
 
 pub class Field: Base
-  pub field run @ Num = nil
+  pub field run @ Num = ...
 # error: `run` is a field, but `Base.run` is a method
 #   --> m.dol:LL:LL
 #    |
-# LL |   pub field run @ Num = nil
+# LL |   pub field run @ Num = ...
 #    |             ^^^

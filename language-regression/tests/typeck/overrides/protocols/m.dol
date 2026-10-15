@@ -10,7 +10,7 @@ pub @class Shape
   pub def area self -> Num
 
 pub class Square: @Shape
-  pub field name @ Num = nil
+  pub field name @ Num = ...
   pub def area _self -> Int
     ...
 
@@ -20,10 +20,10 @@ pub class Blob: @Shape
   #    |
   # LL | pub class Blob: @Shape
   #    |                  ^^^^^
-  pub field name @ Num = nil
+  pub field name @ Num = ...
 
 pub class Wrong: @Shape
-  pub field name @ Num = nil
+  pub field name @ Num = ...
   pub def area _self -> Other
     # error: `area` does not match `Shape.area`
     #   --> m.dol:LL:LL
@@ -60,7 +60,7 @@ pub class ReadOnly: @Shape
 
 # An implementation may come from a superclass the runtime inherits
 pub class Named
-  pub field name @ Num = nil
+  pub field name @ Num = ...
 
 pub class Tile: Named @Shape
   pub def area _self -> Num
@@ -75,7 +75,7 @@ pub @class Solid: Shape Base
   pub def volume self -> Num
 
 pub class Cube: Base @Solid
-  pub field name @ Num = nil
+  pub field name @ Num = ...
   pub def area _self -> Num
     ...
   pub def volume _self -> Num
@@ -87,7 +87,7 @@ pub class Loose: @Solid
   #    |
   # LL | pub class Loose: @Solid
   #    |                   ^^^^^
-  pub field name @ Num = nil
+  pub field name @ Num = ...
   pub def area _self -> Num
     ...
   pub def volume _self -> Num
