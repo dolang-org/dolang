@@ -1,7 +1,24 @@
-# The declarations of `std` that parameter keys and channels are checked against.
+# The declarations of `std` that parameter keys and channels are checked against,
+# with the rest the checker requires.
 
-pub class Sym
+pub class Value
+pub @let Union[...Ts] = ...
 pub @let Phantom[...Ts] = ...
+pub @let Keys[S @ {...}] = ...
+pub @let Values[S @ {...}] = ...
+pub @let Entries[S @ {...}] = ...
+pub @let IndexItem[S @ {...}, K] = ...
+pub @let AssignItem[S @ {...}, K] = ...
+pub class Func
+pub class Nil
+pub class Bool
+pub class Sym
+pub class Int
+pub class Str
+pub class Tuple[*Ts]
+  field items @ Phantom[...Ts]
+pub class Type[T]: Func
+  field instance @ Phantom[T]
 pub class Iter[T]
   pub def next _self -> T
     ...

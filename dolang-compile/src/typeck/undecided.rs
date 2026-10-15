@@ -2,8 +2,9 @@
 //!
 //! A strict unit is meant to be checked without passing through `Unknown`, so each
 //! check it leaves undecided is a warning: the checker can't verify that code. A
-//! residual that shouldn't arise at all (see [`Residual::internal`]) is an error
-//! in any unit. A typelib's declarations were reported when its source was
+//! residual that shouldn't arise at all (see [`ResidualClass::Internal`]) is an error
+//! in any unit, and one an error elsewhere explains (see [`ResidualClass::Cascade`])
+//! is never reported. A typelib's declarations were reported when its source was
 //! checked, so they are not reported again.
 
 use std::fmt::{self, Write};
@@ -13,7 +14,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::{
     elab::{UnitInfo, Unresolved},
     report::{Diag, Report, UnitDiag},
-    solver::Residual,
+    solver::{Residual, ResidualClass},
     r#type::UnitSpan,
 };
 use crate::{
@@ -29,7 +30,7 @@ struct Undecided {
 
 impl Undecided {
     fn internal(&self) -> bool {
-        self.residuals.iter().any(|residual| residual.internal())
+        (self.residuals.iter()).any(|residual| residual.class() == ResidualClass::Internal)
     }
 }
 
@@ -69,12 +70,21 @@ impl Report for Undecided {
                         "it's too complex to check; an annotation may help".to_owned()
                     }
                     Residual::Inference => "nothing determines a type here; annotate it".to_owned(),
-                    Residual::GenericArguments => "it can't match these type arguments".to_owned(),
+                    Residual::GenericArguments => "it can't match type arguments past an \
+                                                   expansion; put positional arguments first"
+                        .to_owned(),
                     Residual::Alignment => "it can't match up these positional items".to_owned(),
-                    Residual::Ambiguous => "several alternatives remain possible".to_owned(),
-                    Residual::Recursive | Residual::MissingIntrinsic(_) | Residual::Escape => {
+                    Residual::Ambiguous => {
+                        "several alternatives remain possible; an annotation may pick one"
+                            .to_owned()
+                    }
+                    Residual::Cycle => {
+                        "it can't infer a type that refers to itself; annotate it".to_owned()
+                    }
+                    Residual::Recursive | Residual::Escape | Residual::Malformed => {
                         unreachable!("an internal residual has its own note")
                     }
+                    Residual::MissingIntrinsic(_) => unreachable!("a cascade isn't reported"),
                 };
                 (NoteKind::Info, note)
             })
@@ -95,7 +105,11 @@ pub(crate) fn report(units: &[UnitInfo<'_>], unresolved: &[Unresolved], diags: &
     let mut index: FxHashMap<UnitSpan, usize> = FxHashMap::default();
     for &Unresolved { span, residual } in unresolved {
         let info = &units[span.unit.index()];
-        if info.source.is_none() || span.span == Span::INVALID || reported.contains(&span) {
+        if info.source.is_none()
+            || span.span == Span::INVALID
+            || reported.contains(&span)
+            || residual.class() == ResidualClass::Cascade
+        {
             continue;
         }
         let at = *index.entry(span).or_insert_with(|| {

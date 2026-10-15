@@ -15,5 +15,5 @@ pub def split[*Xs] _x @ Split[...Xs, Num]
   # LL | pub def split[*Xs] _x @ Split[...Xs, Num]
   #    |                         ^^^^^^^^^^^^^^^^^
   #    |
-  #    = note: it can't match these type arguments
+  #    = note: it can't match type arguments past an expansion; put positional arguments first
   ...

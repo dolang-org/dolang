@@ -165,7 +165,20 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
     for index in 0..tables.decls.len() {
         populate.decl(DeclId::from_index(index), &sig_decls, &mut declarations);
     }
-    populate.inheritance_cycles();
+    // A supertype closing a cycle is dropped, so that the database's supertypes
+    // stay acyclic and walking them can't revisit a declaration
+    for (decl, span) in populate.inheritance_cycles() {
+        let unit = tables.decls[decl.index()].unit;
+        let ty = populate.expr_types[&UnitSpan { unit, span }];
+        let (_, declaration) = (declarations.iter_mut())
+            .find(|(id, _)| *id == decl)
+            .expect("a class with supertypes is populated");
+        let mut supertypes = declaration.supertypes.to_vec();
+        if let Some(at) = supertypes.iter().position(|supertype| supertype.ty == ty) {
+            supertypes.remove(at);
+        }
+        declaration.supertypes = supertypes.into();
+    }
     diags.append(&mut populate.diags);
 
     let expr_types = std::mem::take(&mut populate.expr_types);
@@ -279,7 +292,8 @@ impl<'t, 'u> Populate<'t, 'u> {
         }
     }
 
-    /// The type of a symbol key
+    /// The type of a symbol key: `Unknown` when `Sym` is not designated, which
+    /// [`super::signatures`] reports, so what that hides is a cascade
     fn sym(&self) -> TypeId {
         self.db
             .intrinsic(Intrinsic::Sym)
@@ -1578,8 +1592,10 @@ impl<'t, 'u> Populate<'t, 'u> {
     }
 
     /// Diagnose each cycle of supertypes among classes and protocols once, where
-    /// it closes, in declaration order.
-    fn inheritance_cycles(&mut self) {
+    /// it closes, in declaration order. Returns the supertype references that
+    /// close them, by the declaring class and the reference's span.
+    fn inheritance_cycles(&mut self) -> Vec<(DeclId, Span)> {
+        let mut closing = Vec::new();
         let tables = self.tables;
         let count = tables.decls.len();
         let mut edges: Vec<Vec<(DeclId, Span)>> = vec![Vec::new(); count];
@@ -1645,11 +1661,13 @@ impl<'t, 'u> Populate<'t, 'u> {
                     Color::Gray => {
                         let unit = tables.decls[node].unit;
                         self.report(unit, InheritanceCycle(span));
+                        closing.push((DeclId::from_index(node), span));
                     }
                     Color::Black => {}
                 }
             }
         }
+        closing
     }
 }
 

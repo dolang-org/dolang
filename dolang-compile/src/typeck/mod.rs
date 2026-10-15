@@ -253,7 +253,7 @@ impl<'u, 's> Builder<'u, 's> {
         elab::specialize(&mut db, &tables, &mut diags);
         let bounds = elab::bounds(&tables);
         let mut recursion = Vec::new();
-        let recursion_unresolved = elab::recursion(&db, &tables, &bounds, &mut recursion);
+        let recursion_unresolved = elab::recursion(&mut db, &tables, &bounds, &mut recursion);
         // Every later pass runs in a fork per unit, so no unit's results depend on
         // what another interned
         let shared = db.share();

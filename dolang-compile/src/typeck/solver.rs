@@ -159,41 +159,76 @@ pub(crate) struct Provenance {
 /// A reason a judgment remains unresolved, rather than proven or refuted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Residual {
-    /// An inference variable has no committed solution.
+    /// An inference variable has no committed solution. A limitation: an
+    /// annotation supplies one.
     Inference,
     /// No implemented rule handles this combination of exposed type forms. It
-    /// names what wasn't handled.
+    /// names what wasn't handled. A limitation of the rules implemented.
     Unsupported(&'static str),
-    /// Generic application needs unsupported argument matching or a constructor
-    /// that cannot yet be exposed. Also covers unapplied generic declarations.
+    /// Generic application has arguments after an expansion, whose binders
+    /// aren't known. A limitation: source can write them.
     GenericArguments,
-    /// An intrinsic subtype rule needs a backing type that the database has not registered.
+    /// A type form that population never produces: a generic declaration left
+    /// unapplied, an application missing defaulted arguments, or one whose
+    /// constructor isn't a declaration's type. Internal, as only a typelib
+    /// written without being checked, or a checker bug, can supply one.
+    Malformed,
+    /// An intrinsic subtype rule needs a backing type that the database has not
+    /// registered. A cascade: `std` checked from source reports what it lacks
+    /// once.
     MissingIntrinsic(Intrinsic),
-    /// A candidate contains a recursive substitution, inheritance revisited a
-    /// declaration, or current proof dependencies cycle. None establishes a proof.
+    /// Exposing declarations, or walking supertypes, revisited a declaration,
+    /// or closed proof dependencies cycle without a guard. Internal, as
+    /// well-formedness and population recover from recursion of each of these
+    /// kinds.
     Recursive,
+    /// A candidate contains a recursive substitution, or proof dependencies
+    /// cycle through a judgment that is not closed. None establishes a proof. A
+    /// limitation of inference: an annotation closes the judgment.
+    Cycle,
     /// A work or traversal-depth limit prevented completion. Also used for
-    /// obligations left pending when solving exhausted its work budget.
+    /// obligations left pending when solving exhausted its work budget. A
+    /// limitation: an annotation may simplify the work.
     Limit,
-    /// A rigid of a declaration this solver does not check has escaped its own check.
+    /// A rigid of a declaration this solver does not check has escaped its own
+    /// check. Internal, as each declaration's rigids stay in its own check.
     Escape,
     /// Positional schema items can't be matched up by count: several expected
-    /// items repeat, or an opaque schema precedes items of varying count.
+    /// items repeat, or an opaque schema precedes items of varying count. A
+    /// limitation of schema matching.
     Alignment,
     /// Several alternatives of a judgment that needs one remain possible, so
-    /// none is chosen (see [`Solver::trial`]).
+    /// none is chosen (see [`Solver::trial`]). A limitation: an annotation may
+    /// pick one.
     Ambiguous,
 }
 
+/// What a [`Residual`] says about the code it leaves undecided
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResidualClass {
+    /// The checker can't decide checked code; a reader may work around it.
+    Limitation,
+    /// It shouldn't arise for checked code: it comes from a typelib that is
+    /// inconsistent, or was written without being checked, or otherwise from a
+    /// checker bug.
+    Internal,
+    /// An error reported elsewhere explains it, so it isn't reported.
+    Cascade,
+}
+
 impl Residual {
-    /// Whether the residual shouldn't arise for checked code: from a typelib
-    /// that is inconsistent, or was written without being checked, or otherwise
-    /// from a checker bug. Any other residual is a limitation of the checker.
-    pub(crate) fn internal(self) -> bool {
-        matches!(
-            self,
-            Self::Recursive | Self::MissingIntrinsic(_) | Self::Escape
-        )
+    pub(crate) fn class(self) -> ResidualClass {
+        match self {
+            Self::Recursive | Self::Escape | Self::Malformed => ResidualClass::Internal,
+            Self::MissingIntrinsic(_) => ResidualClass::Cascade,
+            Self::Inference
+            | Self::Unsupported(_)
+            | Self::GenericArguments
+            | Self::Cycle
+            | Self::Limit
+            | Self::Alignment
+            | Self::Ambiguous => ResidualClass::Limitation,
+        }
     }
 }
 
@@ -1282,8 +1317,8 @@ impl<'db> Solver<'db> {
     /// [`Self::probe`], as a premise of `from` if given, and whether an
     /// unresolved result rests on a cycle: a probe of a judgment an enclosing
     /// probe is proving that it may not assume (see [`Self::revisit`]), or a
-    /// nested [`Residual::Recursive`]. Such a cycle is left unresolved rather
-    /// than unfolded until the work budget runs out.
+    /// nested [`Residual::Recursive`] or [`Residual::Cycle`]. Such a cycle is
+    /// left unresolved rather than unfolded until the work budget runs out.
     fn probe_cycle(
         &self,
         actual: TypeId,
@@ -1322,10 +1357,12 @@ impl<'db> Solver<'db> {
             return Err(Residual::Limit);
         }
         let cycle = result.status == Status::Unresolved
-            && result
-                .diagnostics
-                .iter()
-                .any(|d| d.issue == Residual::Recursive.into());
+            && result.diagnostics.iter().any(|d| {
+                matches!(
+                    d.issue,
+                    Issue::Residual(Residual::Recursive | Residual::Cycle)
+                )
+            });
         Ok((result.status, cycle))
     }
 
@@ -1627,7 +1664,7 @@ impl<'db> Solver<'db> {
                                 state.get(),
                                 State::Issue(Issue::Residual(Residual::Inference))
                             ) {
-                                state.set(State::Issue(Residual::Recursive.into()));
+                                state.set(State::Issue(Residual::Cycle.into()));
                             }
                         }
                     }
@@ -2361,7 +2398,7 @@ impl<'db> Solver<'db> {
                 .iter()
                 .any(|b| b.default.is_some())
         {
-            return Err(Residual::GenericArguments.into());
+            return Err(Residual::Malformed.into());
         }
         assert_eq!(
             binders.len(),
@@ -2403,7 +2440,7 @@ impl<'db> Solver<'db> {
                     let decl = self.db.declaration(id);
                     if decl.source.kind.nominal() {
                         if matches!(self.db.ty(decl.ty), Type::Quantified { .. }) {
-                            return Err(Residual::GenericArguments.into());
+                            return Err(Residual::Malformed.into());
                         }
                         return Ok(Head::Nominal(Nominal {
                             declaration: id,
@@ -2441,7 +2478,7 @@ impl<'db> Solver<'db> {
                         self.db.ty(self.db.declaration(id).ty),
                         Type::Quantified { .. }
                     ) {
-                        return Err(Residual::GenericArguments.into());
+                        return Err(Residual::Malformed.into());
                     }
                     return Ok(Head::Meta(Nominal {
                         declaration: id,
@@ -2461,7 +2498,7 @@ impl<'db> Solver<'db> {
                         self.spend()?;
                         base = self.resolve(base)?;
                         let Term::View(base_view) = base else {
-                            return Err(Residual::GenericArguments.into());
+                            return Err(Residual::Malformed.into());
                         };
                         // A metatype is applied as its class is
                         let (id, meta) = match *self.db.ty(base_view.ty) {
@@ -2908,18 +2945,23 @@ impl<'db> Solver<'db> {
         steps: &[Option<Step>],
         back: Option<&Step>,
     ) -> bool {
-        let closed = |id| match self.relation(id) {
+        let edges = (cycle.iter().zip(cycle.iter().skip(1).chain(cycle.first())))
+            .zip(steps.iter().map(Option::as_ref).chain([back]));
+        cycle.iter().all(|&id| self.closed_relation(id))
+            && edges.into_iter().any(|((&from, &to), step)| {
+                step.is_some_and(|step| self.guards(step, self.relation(from), self.relation(to)))
+            })
+    }
+
+    /// Whether an obligation relates closed types, as a judgment assumed while
+    /// it's proven must
+    fn closed_relation(&self, id: ObligationId) -> bool {
+        match self.relation(id) {
             Relation::Subtype {
                 actual, expected, ..
             } => self.reify(actual).is_ok() && self.reify(expected).is_ok(),
             Relation::Call(_) => false,
-        };
-        let edges = (cycle.iter().zip(cycle.iter().skip(1).chain(cycle.first())))
-            .zip(steps.iter().map(Option::as_ref).chain([back]));
-        cycle.iter().all(|&id| closed(id))
-            && edges.into_iter().any(|((&from, &to), step)| {
-                step.is_some_and(|step| self.guards(step, self.relation(from), self.relation(to)))
-            })
+        }
     }
 
     /// Trace a root through its dependencies to collect issues and determine its status.
@@ -2943,10 +2985,16 @@ impl<'db> Solver<'db> {
             if active.contains(&id) {
                 let start = path.iter().rposition(|&on| on == id).unwrap();
                 if !self.coinductive(&path[start..], &steps[start + 1..], step.as_ref()) {
+                    // A closed cycle needs a guard that well-formedness
+                    // ensures; one through an open judgment rests on inference
+                    let residual = match path[start..].iter().all(|&on| self.closed_relation(on)) {
+                        true => Residual::Recursive,
+                        false => Residual::Cycle,
+                    };
                     let mut cycle = path.clone();
                     cycle.push(id);
                     diagnostics.push(Diagnostic {
-                        issue: Residual::Recursive.into(),
+                        issue: residual.into(),
                         path: cycle,
                     });
                 }

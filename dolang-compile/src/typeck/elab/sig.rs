@@ -16,9 +16,11 @@
 
 use super::{
     Ambient, BadNominee, BinderRef, DeclNode, Designated, Diag, KindOf, MisdeclaredIntrinsic,
-    MissingAnnotation, PIPES, ParamTy, Referent, RestSlot, Sig, Slot, Tables, UnitDiag,
+    MissingAnnotation, MissingIntrinsic, PIPES, ParamTy, Referent, RestSlot, Sig, Slot, Tables,
+    UnitDiag,
     surface::{BinderKind, Class, Decorator, Member, Method, ParamKind, Signature},
 };
+use crate::source::Span;
 use crate::typeck::r#type::{DeclId, DeclKind, Intrinsic, Kind, Scope, UnitId, UnitSpan};
 
 /// Complete every def and method signature, record every field's type, and find
@@ -73,6 +75,7 @@ pub(crate) fn signatures(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
         }
         designate(tables, decl, diags);
     }
+    missing_intrinsics(tables, diags);
     missing_values(tables, diags);
     let mut placeholders: Vec<_> = tables
         .designated
@@ -348,6 +351,55 @@ fn designate(tables: &mut Tables<'_>, decl: DeclId, diags: &mut Vec<UnitDiag>) {
                 expected,
             }),
         ));
+    }
+}
+
+/// The declarations of `std` behind each [`Intrinsic`], which the solver can't
+/// do without
+const INTRINSICS: [&str; 15] = [
+    "Value",
+    "Union",
+    "Keys",
+    "Values",
+    "Entries",
+    "IndexItem",
+    "AssignItem",
+    "Tuple",
+    "Func",
+    "Int",
+    "Bool",
+    "Sym",
+    "Nil",
+    "Str",
+    "Type",
+];
+
+/// Report once each intrinsic a `std` checked from source doesn't declare, so
+/// the checks that need it can go unreported. One declared as the wrong kind is
+/// already reported by [`designate`]. Without `std` checked from source, nothing
+/// is reported: a typelib's was reported when it was checked, and with no `std`
+/// at all, everything it would declare is dynamic.
+fn missing_intrinsics(tables: &Tables<'_>, diags: &mut Vec<UnitDiag>) {
+    for (index, info) in tables.units.iter().enumerate() {
+        if info.module != Some("std") || info.source.is_none() {
+            continue;
+        }
+        let unit = UnitId::from_index(index);
+        let declared: Vec<&str> = (tables.decls.iter())
+            .filter(|decl| decl.unit == unit && decl.outer.is_none())
+            .filter_map(|decl| decl.name.map(|name| tables.name(unit, name)))
+            .collect();
+        for name in INTRINSICS {
+            if !declared.contains(&name) {
+                diags.push((
+                    unit,
+                    Diag::new(MissingIntrinsic {
+                        span: Span::default(),
+                        name,
+                    }),
+                ));
+            }
+        }
     }
 }
 

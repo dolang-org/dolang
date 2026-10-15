@@ -62,6 +62,13 @@ pub class Point
     # LL |   pub def moved self dx -> Point
     #    |                      ^^
     Point (self.x + dx)
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |     Point (self.x + dx)
+  #    |            ^^^^^^^^^^^
+  #    |
+  #    = note: several alternatives remain possible; an annotation may pick one
 
   #[class]
   pub def origin _cls -> Point

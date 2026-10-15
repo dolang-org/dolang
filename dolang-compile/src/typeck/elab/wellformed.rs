@@ -95,8 +95,10 @@ pub(crate) fn wellformed(
 
 /// Check that recursion among every unit's transparent aliases is contractive and
 /// regular. A cycle may cross units, so this is checked over them all at once.
+/// An alias with a rejected reference stands for the dynamic type or schema
+/// afterward, so that exposing it can't revisit it.
 pub(crate) fn recursion(
-    db: &Database,
+    db: &mut Database,
     tables: &Tables<'_>,
     bounds: &Bounds<'_>,
     diags: &mut Vec<UnitDiag>,
@@ -108,8 +110,21 @@ pub(crate) fn recursion(
         unresolved: Vec::new(),
         bounds,
     };
-    check.recursion();
-    check.unresolved
+    let rejected = check.recursion();
+    let unresolved = check.unresolved;
+    for id in rejected {
+        let declaration = db.declaration(id);
+        let unknown = db.unknown_of(declaration.source.result_kind);
+        let ty = match db.ty(declaration.ty) {
+            Type::Quantified { binders, .. } => db.intern(Type::Quantified {
+                binders: binders.clone(),
+                body: unknown,
+            }),
+            _ => unknown,
+        };
+        db.retype(id, ty);
+    }
+    unresolved
 }
 
 /// Whether a check held
@@ -417,8 +432,10 @@ impl Check<'_, '_> {
     /// Check recursion among transparent aliases: every cycle must pass through a
     /// reference guarded by a nominal application's arguments, a function type or
     /// a schema's items (contractive), and each reference within a cycle must pass
-    /// the referring alias's binders unchanged (regular)
-    fn recursion(&mut self) {
+    /// the referring alias's binders unchanged (regular). Returns the aliases
+    /// with a reference diagnosed.
+    fn recursion(&mut self) -> Vec<DeclId> {
+        let mut rejected = Vec::new();
         let mut aliases: Vec<DeclId> = self
             .tables
             .aliases
@@ -491,9 +508,13 @@ impl Check<'_, '_> {
                         dolang_util::debug_eprintln!(topic: "typeck.wf", "{location}: fails: {message}");
                     }
                     self.diags.push((reference.unit, Diag::new(diag)));
+                    if !rejected.contains(&reference.alias) {
+                        rejected.push(reference.alias);
+                    }
                 }
             }
         }
+        rejected
     }
 
     /// Walk a recursive alias's body for references to its cycle, adding each to

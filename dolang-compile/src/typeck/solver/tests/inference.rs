@@ -447,7 +447,7 @@ fn direct_and_indirect_recursive_candidates_are_explicit_residuals() {
         }
         let outcomes = s.solve();
         assert!(outcomes.iter().all(|o| o.status == Status::Unresolved));
-        assert!(outcomes.iter().any(|o| has(o, Residual::Recursive.into())));
+        assert!(outcomes.iter().any(|o| has(o, Residual::Cycle.into())));
         assert_eq!(s.solution(variable_id(a)), None);
         assert_eq!(s.solution(variable_id(b)), None);
         assert!(!s.gas.is_exhausted());
