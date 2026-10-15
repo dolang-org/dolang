@@ -892,12 +892,15 @@ impl<'a> Flow<'a, '_> {
                     Check::Call { callee, .. }
                         if let Some(survivors) = self.ambiguous(solver, outcome) =>
                     {
-                        if let Some(survivors) = survivors {
-                            self.problem(Problem::AmbiguousCall {
+                        match survivors {
+                            Some(survivors) => self.problem(Problem::AmbiguousCall {
                                 span,
                                 callee: callee.clone(),
                                 survivors,
-                            });
+                            }),
+                            // What would tell them apart may be unknown, so
+                            // it's only undecided
+                            None => self.undecided(span, Residual::Ambiguous),
                         }
                     }
                     _ => self.undecided(span, super::residual(outcome)),
@@ -1026,7 +1029,7 @@ impl<'a> Flow<'a, '_> {
     /// Whether a call's check is left unresolved only by an ambiguous choice of
     /// overload, and if so, the overloads left possible, unless what it's
     /// passed is partly dynamic. Several may then fit only for lack of what
-    /// would tell them apart, so the call isn't diagnosed.
+    /// would tell them apart, so the call is only undecided.
     fn ambiguous(&self, solver: &Solver<'_>, outcome: &Outcome) -> Option<Option<Vec<String>>> {
         let mut overloaded = None;
         for diagnostic in &outcome.diagnostics {

@@ -331,7 +331,7 @@ fn omitted_generic_defaults_are_not_arity_errors() {
     db.seal();
     let result = check(&db, omitted, supplied);
     assert_eq!(result.status, Status::Unresolved);
-    assert!(has(&result, Residual::GenericArguments.into()));
+    assert!(has(&result, Residual::Malformed.into()));
     assert_eq!(check(&db, supplied, supplied).status, Status::Proven);
 }
 

@@ -70,13 +70,18 @@ impl Report for Undecided {
                         "it's too complex to check; an annotation may help".to_owned()
                     }
                     Residual::Inference => "nothing determines a type here; annotate it".to_owned(),
-                    Residual::GenericArguments => "it can't match these type arguments".to_owned(),
+                    Residual::GenericArguments => "it can't match type arguments past an \
+                                                   expansion; put positional arguments first"
+                        .to_owned(),
                     Residual::Alignment => "it can't match up these positional items".to_owned(),
-                    Residual::Ambiguous => "several alternatives remain possible".to_owned(),
+                    Residual::Ambiguous => {
+                        "several alternatives remain possible; an annotation may pick one"
+                            .to_owned()
+                    }
                     Residual::Cycle => {
                         "it can't infer a type that refers to itself; annotate it".to_owned()
                     }
-                    Residual::Recursive | Residual::Escape => {
+                    Residual::Recursive | Residual::Escape | Residual::Malformed => {
                         unreachable!("an internal residual has its own note")
                     }
                     Residual::MissingIntrinsic(_) => unreachable!("a cascade isn't reported"),

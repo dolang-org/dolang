@@ -1219,7 +1219,7 @@ impl Solver<'_> {
             n.checked_mul(c).filter(|&n| n <= COMBINATIONS)
         });
         if combinations.is_none() {
-            return Err(Residual::Alignment.into());
+            return Err(Residual::Limit.into());
         }
         // Advance to the next combination, if there is one
         let advance = |digits: &mut [usize]| {

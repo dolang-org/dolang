@@ -159,36 +159,47 @@ pub(crate) struct Provenance {
 /// A reason a judgment remains unresolved, rather than proven or refuted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Residual {
-    /// An inference variable has no committed solution.
+    /// An inference variable has no committed solution. A limitation: an
+    /// annotation supplies one.
     Inference,
     /// No implemented rule handles this combination of exposed type forms. It
-    /// names what wasn't handled.
+    /// names what wasn't handled. A limitation of the rules implemented.
     Unsupported(&'static str),
-    /// Generic application needs unsupported argument matching or a constructor
-    /// that cannot yet be exposed. Also covers unapplied generic declarations.
+    /// Generic application has arguments after an expansion, whose binders
+    /// aren't known. A limitation: source can write them.
     GenericArguments,
+    /// A type form that population never produces: a generic declaration left
+    /// unapplied, an application missing defaulted arguments, or one whose
+    /// constructor isn't a declaration's type. Internal, as only a typelib
+    /// written without being checked, or a checker bug, can supply one.
+    Malformed,
     /// An intrinsic subtype rule needs a backing type that the database has not
-    /// registered. `std` checked from source reports what it lacks once, so this
-    /// is a cascade.
+    /// registered. A cascade: `std` checked from source reports what it lacks
+    /// once.
     MissingIntrinsic(Intrinsic),
     /// Exposing declarations, or walking supertypes, revisited a declaration,
-    /// or closed proof dependencies cycle without a guard. Well-formedness and
-    /// population recover from recursion of each of these kinds, so it is
-    /// internal.
+    /// or closed proof dependencies cycle without a guard. Internal, as
+    /// well-formedness and population recover from recursion of each of these
+    /// kinds.
     Recursive,
     /// A candidate contains a recursive substitution, or proof dependencies
-    /// cycle through a judgment that is not closed. None establishes a proof.
+    /// cycle through a judgment that is not closed. None establishes a proof. A
+    /// limitation of inference: an annotation closes the judgment.
     Cycle,
     /// A work or traversal-depth limit prevented completion. Also used for
-    /// obligations left pending when solving exhausted its work budget.
+    /// obligations left pending when solving exhausted its work budget. A
+    /// limitation: an annotation may simplify the work.
     Limit,
-    /// A rigid of a declaration this solver does not check has escaped its own check.
+    /// A rigid of a declaration this solver does not check has escaped its own
+    /// check. Internal, as each declaration's rigids stay in its own check.
     Escape,
     /// Positional schema items can't be matched up by count: several expected
-    /// items repeat, or an opaque schema precedes items of varying count.
+    /// items repeat, or an opaque schema precedes items of varying count. A
+    /// limitation of schema matching.
     Alignment,
     /// Several alternatives of a judgment that needs one remain possible, so
-    /// none is chosen (see [`Solver::trial`]).
+    /// none is chosen (see [`Solver::trial`]). A limitation: an annotation may
+    /// pick one.
     Ambiguous,
 }
 
@@ -208,7 +219,7 @@ pub(crate) enum ResidualClass {
 impl Residual {
     pub(crate) fn class(self) -> ResidualClass {
         match self {
-            Self::Recursive | Self::Escape => ResidualClass::Internal,
+            Self::Recursive | Self::Escape | Self::Malformed => ResidualClass::Internal,
             Self::MissingIntrinsic(_) => ResidualClass::Cascade,
             Self::Inference
             | Self::Unsupported(_)
@@ -1346,15 +1357,12 @@ impl<'db> Solver<'db> {
             return Err(Residual::Limit);
         }
         let cycle = result.status == Status::Unresolved
-            && result
-                .diagnostics
-                .iter()
-                .any(|d| {
-                    matches!(
-                        d.issue,
-                        Issue::Residual(Residual::Recursive | Residual::Cycle)
-                    )
-                });
+            && result.diagnostics.iter().any(|d| {
+                matches!(
+                    d.issue,
+                    Issue::Residual(Residual::Recursive | Residual::Cycle)
+                )
+            });
         Ok((result.status, cycle))
     }
 
@@ -2390,7 +2398,7 @@ impl<'db> Solver<'db> {
                 .iter()
                 .any(|b| b.default.is_some())
         {
-            return Err(Residual::GenericArguments.into());
+            return Err(Residual::Malformed.into());
         }
         assert_eq!(
             binders.len(),
@@ -2432,7 +2440,7 @@ impl<'db> Solver<'db> {
                     let decl = self.db.declaration(id);
                     if decl.source.kind.nominal() {
                         if matches!(self.db.ty(decl.ty), Type::Quantified { .. }) {
-                            return Err(Residual::GenericArguments.into());
+                            return Err(Residual::Malformed.into());
                         }
                         return Ok(Head::Nominal(Nominal {
                             declaration: id,
@@ -2470,7 +2478,7 @@ impl<'db> Solver<'db> {
                         self.db.ty(self.db.declaration(id).ty),
                         Type::Quantified { .. }
                     ) {
-                        return Err(Residual::GenericArguments.into());
+                        return Err(Residual::Malformed.into());
                     }
                     return Ok(Head::Meta(Nominal {
                         declaration: id,
@@ -2490,7 +2498,7 @@ impl<'db> Solver<'db> {
                         self.spend()?;
                         base = self.resolve(base)?;
                         let Term::View(base_view) = base else {
-                            return Err(Residual::GenericArguments.into());
+                            return Err(Residual::Malformed.into());
                         };
                         // A metatype is applied as its class is
                         let (id, meta) = match *self.db.ty(base_view.ty) {

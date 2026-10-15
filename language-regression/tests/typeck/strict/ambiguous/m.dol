@@ -1,0 +1,37 @@
+# dolang: strict
+# A call whose arguments are partly `Unknown` may fit several overloads only for
+# lack of what would tell them apart. It isn't an error, but a strict unit warns
+# that it's undecided.
+
+import std:
+  - @Unknown
+
+@def vague x @ Int -> Int
+@def vague x @ (Int | Str) -> Str
+pub def vague x @ (Int | Str)
+  x
+
+# Known arguments that fit several are an error
+pub def known() -> nil
+  let _ = vague 1
+  # error: several overloads of `m.vague` accept these arguments
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = vague 1
+  #    |           ^^^^^^^
+  #    |
+  #    = note: `(std.Int) -> std.Int` accepts them
+  #    = note: `(std.Int | std.Str) -> std.Str` accepts them
+  nil
+
+# Dynamic ones are only undecided
+pub def dynamic x @ Unknown -> nil
+  let _ = vague $x
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = vague $x
+  #    |           ^^^^^^^^
+  #    |
+  #    = note: several alternatives remain possible; an annotation may pick one
+  nil

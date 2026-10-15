@@ -16,7 +16,8 @@
 
 use super::{
     Ambient, BadNominee, BinderRef, DeclNode, Designated, Diag, KindOf, MisdeclaredIntrinsic,
-    MissingAnnotation, MissingIntrinsic, PIPES, ParamTy, Referent, RestSlot, Sig, Slot, Tables, UnitDiag,
+    MissingAnnotation, MissingIntrinsic, PIPES, ParamTy, Referent, RestSlot, Sig, Slot, Tables,
+    UnitDiag,
     surface::{BinderKind, Class, Decorator, Member, Method, ParamKind, Signature},
 };
 use crate::source::Span;
