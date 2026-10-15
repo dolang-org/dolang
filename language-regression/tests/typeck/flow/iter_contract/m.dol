@@ -69,6 +69,17 @@ pub def pairs tuples @ Iter[Tuple[Str, Int]]
   let _ = tuples.kv()
   #   ^: flow std.Spread[std.Str, std.Int]
 
+pub def iterable_pairs tuples @ Iterable[Tuple[Str, Int]]
+  let entries = tuples.kv()
+  let _ = entries
+  #       ^~~~~~~: flow std.Spread[std.Str, std.Int]
+  let _ = {...entries}
+  #   ^: flow std.Dict[std.Str, std.Int]
+
+pub def array_pairs tuples @ Array[Tuple[Str, Int]]
+  let _ = tuples.kv()
+  #   ^: flow std.Spread[std.Str, std.Int]
+
 # The kv adapter promises only spreading, not iterator methods or unpacking.
 pub def spread_surface entries @ Spread[Str, Int]
   let d = {...entries}

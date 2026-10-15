@@ -103,10 +103,10 @@ let base = {name: "Alice"}
 let extended = {...base, age: 30}
 ```
 
-Use `kv()` when you want an iterator of pairs to spread as key/value entries:
+Use `kv()` when you want an iterable of pairs to spread as key/value entries:
 
 ```
-let entries = [("x", 1), ("y", 2)].iter()
+let entries = [("x", 1), ("y", 2)]
 let dict = {...entries.kv()}
 ```
 
