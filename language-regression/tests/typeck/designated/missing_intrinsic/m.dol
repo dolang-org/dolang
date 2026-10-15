@@ -1,0 +1,5 @@
+# dolang: strict
+# A check that needs the missing declaration is left undecided without its own
+# report, even in a strict unit.
+
+pub let key @ Int = :name:

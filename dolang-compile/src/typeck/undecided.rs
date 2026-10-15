@@ -3,7 +3,8 @@
 //! A strict unit is meant to be checked without passing through `Unknown`, so each
 //! check it leaves undecided is a warning: the checker can't verify that code. A
 //! residual that shouldn't arise at all (see [`ResidualClass::Internal`]) is an error
-//! in any unit. A typelib's declarations were reported when its source was
+//! in any unit, and one an error elsewhere explains (see [`ResidualClass::Cascade`])
+//! is never reported. A typelib's declarations were reported when its source was
 //! checked, so they are not reported again.
 
 use std::fmt::{self, Write};
@@ -75,9 +76,10 @@ impl Report for Undecided {
                     Residual::Cycle => {
                         "it can't infer a type that refers to itself; annotate it".to_owned()
                     }
-                    Residual::Recursive | Residual::MissingIntrinsic(_) | Residual::Escape => {
+                    Residual::Recursive | Residual::Escape => {
                         unreachable!("an internal residual has its own note")
                     }
+                    Residual::MissingIntrinsic(_) => unreachable!("a cascade isn't reported"),
                 };
                 (NoteKind::Info, note)
             })
@@ -98,7 +100,11 @@ pub(crate) fn report(units: &[UnitInfo<'_>], unresolved: &[Unresolved], diags: &
     let mut index: FxHashMap<UnitSpan, usize> = FxHashMap::default();
     for &Unresolved { span, residual } in unresolved {
         let info = &units[span.unit.index()];
-        if info.source.is_none() || span.span == Span::INVALID || reported.contains(&span) {
+        if info.source.is_none()
+            || span.span == Span::INVALID
+            || reported.contains(&span)
+            || residual.class() == ResidualClass::Cascade
+        {
             continue;
         }
         let at = *index.entry(span).or_insert_with(|| {

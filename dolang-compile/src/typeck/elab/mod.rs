@@ -1031,6 +1031,31 @@ impl Report for MisdeclaredIntrinsic {
     }
 }
 
+/// A designated declaration the checker requires that `std` doesn't declare. Each
+/// check that needs it is left undecided, without its own report.
+struct MissingIntrinsic {
+    span: Span,
+    name: &'static str,
+}
+
+impl Report for MissingIntrinsic {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "`std` doesn't declare `{}`, which the checker requires",
+            self.name
+        )
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
 /// An annotation a strict unit omits
 #[derive(Clone)]
 struct MissingAnnotation {

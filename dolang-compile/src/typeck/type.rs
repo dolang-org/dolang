@@ -2583,7 +2583,8 @@ impl Database {
     }
 
     /// The shape of a rest mode: `{*Value}`, `{**Sym: Value}` or both. The key is
-    /// `Unknown` when `Sym` is not designated.
+    /// `Unknown` when `Sym` is not designated, which `std` reports if it was
+    /// checked from source; what that hides is a cascade.
     pub(crate) fn rest_shape(&self, rest: Rest) -> TypeId {
         let top = self.top();
         let key = self.intrinsic(Intrinsic::Sym).unwrap_or(self.unknown());

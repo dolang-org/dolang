@@ -292,7 +292,8 @@ impl<'t, 'u> Populate<'t, 'u> {
         }
     }
 
-    /// The type of a symbol key
+    /// The type of a symbol key: `Unknown` when `Sym` is not designated, which
+    /// [`super::signatures`] reports, so what that hides is a cascade
     fn sym(&self) -> TypeId {
         self.db
             .intrinsic(Intrinsic::Sym)

@@ -167,7 +167,9 @@ pub(crate) enum Residual {
     /// Generic application needs unsupported argument matching or a constructor
     /// that cannot yet be exposed. Also covers unapplied generic declarations.
     GenericArguments,
-    /// An intrinsic subtype rule needs a backing type that the database has not registered.
+    /// An intrinsic subtype rule needs a backing type that the database has not
+    /// registered. `std` checked from source reports what it lacks once, so this
+    /// is a cascade.
     MissingIntrinsic(Intrinsic),
     /// Exposing declarations, or walking supertypes, revisited a declaration,
     /// or closed proof dependencies cycle without a guard. Well-formedness and
@@ -199,14 +201,15 @@ pub(crate) enum ResidualClass {
     /// inconsistent, or was written without being checked, or otherwise from a
     /// checker bug.
     Internal,
+    /// An error reported elsewhere explains it, so it isn't reported.
+    Cascade,
 }
 
 impl Residual {
     pub(crate) fn class(self) -> ResidualClass {
         match self {
-            Self::Recursive | Self::MissingIntrinsic(_) | Self::Escape => {
-                ResidualClass::Internal
-            }
+            Self::Recursive | Self::Escape => ResidualClass::Internal,
+            Self::MissingIntrinsic(_) => ResidualClass::Cascade,
             Self::Inference
             | Self::Unsupported(_)
             | Self::GenericArguments
