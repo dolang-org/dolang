@@ -363,12 +363,9 @@ pub(crate) fn class_object(db: &Database, decl: DeclId) -> TypeId {
     if binders.is_empty() {
         return db.meta(decl, Vec::new());
     }
-    // An application gives a keyword binder's argument in its slot, as a
-    // positional binder's
-    if binders
-        .iter()
-        .any(|binder| !matches!(binder.binding, Binding::Positional | Binding::Keyword(_)))
-    {
+    // An application gives a keyword or rest binder's argument in its slot, as
+    // a positional binder's, but nothing fills an implicit one
+    if (binders.iter()).any(|binder| binder.binding == Binding::Implicit) {
         return db.unknown();
     }
     let args = (binders.iter().enumerate())

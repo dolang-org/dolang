@@ -55,10 +55,15 @@ def cache_usable cache @ fs.Path path @ fs.Path -> Bool
 
 # Values a script reads as the fields of an imported module.
 class Namespace
-  field values @ Record
+  field values @ Record[...{**Value}]
 
-  def (init) self values @ Value
-    self.#values = Record $values
+  def (init) self values @ BaseDict[{...}]
+    let fields @ Dict[Sym, Value] = {}
+    for name value = values
+      if !(type name Sym)
+        throw std.TypeError "module field: expected `Sym`"
+      fields[name] = value
+    self.#values = Record $fields
 
   def (get) self name @ Sym -> Value
     self.#values.get $name else: do throw std.FieldError $name
@@ -69,7 +74,7 @@ class Namespace
 def normalize_imports imports @ BaseDict[Str | Sym, Value] -> Dict[Str, Value]
   let normalized @ Dict[Str, Value] = {}
   for name value = imports
-    normalized[str name] = if (type value Dict)
+    normalized[str name] = if (type value std.BaseDict)
       Namespace $value
     else
       value

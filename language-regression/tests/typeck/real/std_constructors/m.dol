@@ -1,0 +1,40 @@
+# dolang: strict
+# The standard constructors type what they build from what they're given.
+
+pub def fits
+  pairs @ Array[(Sym, Int)]
+  fields @ Dict[{a: Int}]
+do
+  let _d @ Dict[Sym, Int] = Dict $ pairs.iter().kv()
+  let _r @ Record[a: Int] = Record $fields
+  let _t @ Tuple[...Int] = Tuple [1, 2]
+  let _f @ std.Fmt[Int, {}] = std.Fmt ["a", std.FmtValue 1]
+
+pub def misfits
+  pairs @ Array[(Sym, Int)]
+  ints @ Array[Int]
+do
+  let _d @ Dict[{a: Int}] = Dict $ pairs.iter().kv()
+  # error: `std.Dict[std.Sym, std.Int]` does not fit the annotation `{a: std.Int}`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _d @ Dict[{a: Int}] = Dict $ pairs.iter().kv()
+  #    |                             ^^^^^^^^^^^^^^^^^^^^^^^^
+  let _e @ Dict[{x: Int}] = Dict $ints
+  # error: `std.Dict[std.Int]` does not fit the annotation `{x: std.Int}`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _e @ Dict[{x: Int}] = Dict $ints
+  #    |                             ^^^^^^^^^^
+  let _t @ Tuple[Int, Int] = Tuple [1, 2]
+  # error: `(*std.Int)` does not fit the annotation `(std.Int, std.Int)`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _t @ Tuple[Int, Int] = Tuple [1, 2]
+  #    |                              ^^^^^^^^^^^^
+  let _f @ std.Fmt[Str, {}] = std.Fmt ["a", std.FmtValue 1]
+# error: `std.Fmt[std.Int, {*Value, *(std.Int | std.Sym): Value}]` does not fit the annotation `std.Fmt[std.Str, {}]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _f @ std.Fmt[Str, {}] = std.Fmt ["a", std.FmtValue 1]
+#    |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -28,24 +28,6 @@ let EXTENSION_SCOPES @ Dict[Str, ExtensionScope] = $
   "initrd": :INITRD:
   "portable": :PORTABLE:
 
-let SGR_OPTIONS = $
-  1: {bold: true}
-  2: {dim: true}
-  3: {italic: true}
-  4: {underline: true}
-  5: {blink: true}
-  6: {blink: true}
-  7: {reverse: true}
-  8: {hidden: true}
-  9: {strikethrough: true}
-  22: {bold: :INHERIT:, dim: :INHERIT:}
-  23: {italic: :INHERIT:}
-  24: {underline: :INHERIT:}
-  25: {blink: :INHERIT:}
-  27: {reverse: :INHERIT:}
-  28: {hidden: :INHERIT:}
-  29: {strikethrough: :INHERIT:}
-
 def read_keys path @ (Str | Path) -> Dict[Str, Str]
   open $path do |file|
     let res @ Dict[Str, Str] = {}
@@ -85,9 +67,9 @@ def support_end value @ (Str | nil) -> (Date | nil)
 def scopes value @ Str -> Iter[ExtensionScope]
   words(value).map do |item| EXTENSION_SCOPES.get $item default: $item
 
-def sgr_color code @ Int :bright @ Bool = false -> Sym
-  let names = [:BLACK:, :RED:, :GREEN:, :YELLOW:, :BLUE:, :MAGENTA:, :CYAN:, :WHITE:]
-  let bright_names = [
+def sgr_color code @ Int :bright @ Bool = false -> term.Color
+  let names @ Array[term.Color] = [:BLACK:, :RED:, :GREEN:, :YELLOW:, :BLUE:, :MAGENTA:, :CYAN:, :WHITE:]
+  let bright_names @ Array[term.Color] = [
     :BRIGHT_BLACK:, :BRIGHT_RED:, :BRIGHT_GREEN:, :BRIGHT_YELLOW:,
     :BRIGHT_BLUE:, :BRIGHT_MAGENTA:, :BRIGHT_CYAN:, :BRIGHT_WHITE:
   ]
@@ -118,36 +100,54 @@ def ansi_style value @ (Str | nil) -> (term.Style | nil)
       return nil
 
   let parts = codes.iter()
-  let args @ Dict[Sym, Value] = {}
+  let style = term.Style()
   for code = parts
     if (code == 0)
-      args.clear()
+      style = term.Style()
     else if (code >= 30 && code <= 37)
-      args[:fg:] = sgr_color(code - 30)
+      style = style fg: $sgr_color(code - 30)
     else if (code >= 90 && code <= 97)
-      args[:fg:] = sgr_color(code - 90, bright: true)
+      style = style fg: $sgr_color(code - 90, bright: true)
     else if (code >= 40 && code <= 47)
-      args[:bg:] = sgr_color(code - 40)
+      style = style bg: $sgr_color(code - 40)
     else if (code >= 100 && code <= 107)
-      args[:bg:] = sgr_color(code - 100, bright: true)
+      style = style bg: $sgr_color(code - 100, bright: true)
     else if (code == 38 || code == 48)
-      let key = (code == 38 && :fg: || :bg:)
       let mode = parts.next default: nil
+      let color @ (term.Color | nil) = nil
       if (mode == 5)
-        let color = sgr_byte $parts
-        if (color != nil)
-          args[key] = color
+        color = sgr_byte $parts
       else if (mode == 2)
         let red = sgr_byte $parts
         let green = sgr_byte $parts
         let blue = sgr_byte $parts
         if (red != nil && green != nil && blue != nil)
-          args[key] = [red, green, blue]
+          color = (red, green, blue)
+      if (color != nil)
+        style = if (code == 38)
+          style fg: $color
+        else
+          style bg: $color
     else
-      let options = SGR_OPTIONS.get $code else: do return nil
-      for key value = options
-        args[key] = value
-  term.Style ...args
+      style = match code
+        1 do style bold: true
+        2 do style dim: true
+        3 do style italic: true
+        4 do style underline: true
+        5 | 6 do style blink: true
+        7 do style reverse: true
+        8 do style hidden: true
+        9 do style strikethrough: true
+        22 do style bold: :INHERIT: dim: :INHERIT:
+        23 do style italic: :INHERIT:
+        24 do style underline: :INHERIT:
+        25 do style blink: :INHERIT:
+        27 do style reverse: :INHERIT:
+        28 do style hidden: :INHERIT:
+        29 do style strikethrough: :INHERIT:
+      else
+        return nil
+  style
 
 def fancy_value value @ (Str | nil) -> (term.Text | nil)
   if (value == nil)
