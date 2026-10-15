@@ -7,7 +7,7 @@ use dolang::runtime::value::fmt::Format;
 
 use crate::{
     error::ResultExt as _,
-    fs::{path_absolute, path_relative},
+    fs::{path_absolute, path_relative, path_shorten},
     global::{FsGlobal, Global, WindowsSecurityGlobal},
 };
 use dolang::runtime::object::fmt;
@@ -1033,6 +1033,11 @@ macro_rules! impl_concrete_path {
                         let ([], [base]) = unpack!(strand, args, 0, 1)?;
                         let annex = this.annex();
                         path_relative(strand, annex.global, annex.as_path(), base, out)
+                    })
+                    .method("shorten", async move |this, strand, args, out| {
+                        let ([], [base]) = unpack!(strand, args, 0, 1)?;
+                        let annex = this.annex();
+                        path_shorten(strand, annex.global, annex.as_path(), base, out)
                     })
                     .method("add_ext", async move |this, strand, args, out| {
                         let ([ext], []) = unpack!(strand, args, 1, 0)?;

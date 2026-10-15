@@ -878,14 +878,12 @@ fn relative_components(
     Some(relative)
 }
 
-/// Shared implementation for `fs.relative` and `Path.relative`.
-pub(crate) fn path_relative<'v, 's>(
+fn relative_path<'v, 's>(
     strand: &mut Strand<'v, 's>,
     global: State<'v, FsGlobal<'v>>,
     path: vfs_path::Path<'_>,
     base: Option<Slot<'v, '_>>,
-    out: impl Output<'v>,
-) -> Result<'v, 's, ()> {
+) -> Result<'v, 's, Option<vfs_path::PathBuf>> {
     let cwd = global.local.get(strand).cwd().clone();
     let base = match base {
         Some(base) => path_from_value(strand, &base)?,
@@ -904,13 +902,39 @@ pub(crate) fn path_relative<'v, 's>(
     let base = convert_path_kind(strand, base, path.kind())?;
     let path = path.normalize();
     let base = base.normalize();
-    let relative = relative_components(path.to_path(), base.to_path()).ok_or_else(|| {
+    Ok(relative_components(path.to_path(), base.to_path()))
+}
+
+/// Shared implementation for `fs.relative` and `Path.relative`.
+pub(crate) fn path_relative<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, FsGlobal<'v>>,
+    path: vfs_path::Path<'_>,
+    base: Option<Slot<'v, '_>>,
+    out: impl Output<'v>,
+) -> Result<'v, 's, ()> {
+    let relative = relative_path(strand, global, path, base)?.ok_or_else(|| {
         Error::value(
             strand,
             "paths cannot be made relative: incompatible or unresolved roots",
         )
     })?;
     create_path(strand, global, relative, out)?;
+    Ok(())
+}
+
+/// Shared implementation for `fs.shorten` and `Path.shorten`.
+pub(crate) fn path_shorten<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    global: State<'v, FsGlobal<'v>>,
+    path: vfs_path::Path<'_>,
+    base: Option<Slot<'v, '_>>,
+    out: impl Output<'v>,
+) -> Result<'v, 's, ()> {
+    let shortened = relative_path(strand, global, path, base)?
+        .filter(|relative| relative.as_str().len() < path.as_str().len())
+        .unwrap_or_else(|| path.to_path_buf());
+    create_path(strand, global, shortened, out)?;
     Ok(())
 }
 
@@ -1540,6 +1564,11 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             let ([path], [base]) = unpack!(strand, args, 1, 1)?;
             let path = path_from_value(strand, &path)?;
             path_relative(strand, global, path.to_path(), base, out)
+        })
+        .function("shorten", async move |strand, args, out| {
+            let ([path], [base]) = unpack!(strand, args, 1, 1)?;
+            let path = path_from_value(strand, &path)?;
+            path_shorten(strand, global, path.to_path(), base, out)
         })
         .function("canonical", async move |strand, args, out| {
             let ([path], []) = unpack!(strand, args, 1, 0)?;

@@ -167,10 +167,7 @@ class Operation
     for diag = diagnostics
       echo $diag.render()
     if diagnostics.any do |diag| (diag.severity == :ERROR:)
-      let path = try
-        self.#path.relative()
-      catch std.ValueError: _
-        self.#path
+      let path = self.#path.shorten()
       throw std.CompileError "failed to compile $path"
     let bytecode = compiled.emit()
     self.#cache.write $bytecode
