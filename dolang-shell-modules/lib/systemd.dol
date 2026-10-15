@@ -9,10 +9,6 @@ import shlex term
     - Date
   url:
     - Url
-  std:
-    - @Index
-    - @Spread
-    - @Unpack
 
 let ESC = str b"\x1b"
 

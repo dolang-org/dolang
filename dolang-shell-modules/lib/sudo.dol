@@ -4,8 +4,6 @@
 import _vfs shell proc time
   fs:
     - @Path
-  std:
-    - @BaseDict
   strand:
     - pipeline
 

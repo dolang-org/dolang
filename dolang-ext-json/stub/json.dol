@@ -2,8 +2,6 @@
 # JSON serialization and deserialization.
 
 import std:
-  - @BaseArray
-  - @BaseDict
   - @BaseStruct
 
 # A value decoded from JSON.

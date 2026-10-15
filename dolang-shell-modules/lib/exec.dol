@@ -36,7 +36,7 @@ def module_name path @ fs.Path name @ (Str | nil) -> Str
       throw std.RuntimeError "can't derive module name from path: $path"
     stem
 
-def inject_keys inject @ std.BaseDict[Sym, Value] -> [Sym]
+def inject_keys inject @ BaseDict[Sym, Value] -> [Sym]
   let keys = [...inject.keys()]
   if !(keys.all do |k| type k Sym)
     throw std.TypeError "inject key: expected `Sym`"
@@ -66,7 +66,7 @@ class Namespace
   def (set) _self _name @ Sym _value @ Value
     throw std.ImmutableError()
 
-def normalize_imports imports @ std.BaseDict[Str | Sym, Value] -> Dict[Str, Value]
+def normalize_imports imports @ BaseDict[Str | Sym, Value] -> Dict[Str, Value]
   let normalized @ Dict[Str, Value] = {}
   for name value = imports
     normalized[str name] = if (type value Dict)
@@ -93,8 +93,8 @@ do -> R
 def cache_key
   path @ fs.Path
   name @ (Str | nil)
-  prelude @ std.BaseDict[Str | Sym, compile.PreludeBinding]
-  inject @ std.BaseDict[Sym, Value]
+  prelude @ BaseDict[Str | Sym, compile.PreludeBinding]
+  inject @ BaseDict[Sym, Value]
 do -> Str
   let state = digest.Blake3()
   state.update $ str $ path.absolute().normalize()
@@ -113,8 +113,8 @@ do -> Str
 class Operation
   field path @ fs.Path
   field name @ (Str | nil)
-  field prelude @ std.BaseDict[Str | Sym, compile.PreludeBinding]
-  field inject @ std.BaseDict[Sym, Value]
+  field prelude @ BaseDict[Str | Sym, compile.PreludeBinding]
+  field inject @ BaseDict[Sym, Value]
   field import @ Dict[Str, Value]
   field key @ Str
   field cache @ fs.Path
@@ -125,9 +125,9 @@ class Operation
     path @ (Str | fs.Path)
     :name @ (Str | nil)
     :app @ (Str | nil)
-    :prelude @ std.BaseDict[Str | Sym, compile.PreludeBinding]
-    :inject @ std.BaseDict[Sym, Value]
-    :import @ std.BaseDict[Str | Sym, Value]
+    :prelude @ BaseDict[Str | Sym, compile.PreludeBinding]
+    :inject @ BaseDict[Sym, Value]
+    :import @ BaseDict[Str | Sym, Value]
   do
     if !(type inject Dict)
       throw std.TypeError "inject: expected `Dict`"
@@ -208,12 +208,12 @@ pub def run
   :app @ Str = nil
   # Imports to bind before the source, as
   # [`compile.compile`](compile.compile) takes them.
-  :prelude @ std.BaseDict[Str | Sym, compile.PreludeBinding] = {}
+  :prelude @ BaseDict[Str | Sym, compile.PreludeBinding] = {}
   # Global bindings visible to the source when compiled and run.
-  :inject @ std.BaseDict[Sym, Value] = {}
+  :inject @ BaseDict[Sym, Value] = {}
   # Modules supplied by name while running. A dictionary with symbol keys is
   # exposed as a module whose fields are its entries.
-  :import @ std.BaseDict[Str | Sym, Value] = {}
+  :import @ BaseDict[Str | Sym, Value] = {}
   # Arguments the script sees as [`shell.args`](shell.args). Defaults to the
   # caller's.
   :args @ Iterable[Value] = nil
@@ -257,12 +257,12 @@ pub def module
   :app @ Str = nil
   # Imports to bind before the source, as
   # [`compile.compile`](compile.compile) takes them.
-  :prelude @ std.BaseDict[Str | Sym, compile.PreludeBinding] = {}
+  :prelude @ BaseDict[Str | Sym, compile.PreludeBinding] = {}
   # Global bindings visible to the source when compiled and run.
-  :inject @ std.BaseDict[Sym, Value] = {}
+  :inject @ BaseDict[Sym, Value] = {}
   # Modules supplied by name while running. A dictionary with symbol keys is
   # exposed as a module whose fields are its entries.
-  :import @ std.BaseDict[Str | Sym, Value] = {}
+  :import @ BaseDict[Str | Sym, Value] = {}
   # Arguments the module sees as [`shell.args`](shell.args) while it loads.
   # Defaults to the caller's.
   :args @ Iterable[Value] = nil

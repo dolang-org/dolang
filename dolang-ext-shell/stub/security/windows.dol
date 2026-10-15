@@ -22,12 +22,7 @@
 #       flags: [:OBJECT_INHERIT:, :CONTAINER_INHERIT:]
 # ```
 
-import std:
-  - @BaseDict
-
 import
-  std:
-    - @Seq
   uuid:
     - @Guid
 

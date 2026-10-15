@@ -1,9 +1,6 @@
 # dolang: strict
 # URL parsing and construction utilities.
 
-import std:
-  - @Seq
-
 # Structured URL value with parsed access to components and decoded path/query
 # iteration.
 pub class Url

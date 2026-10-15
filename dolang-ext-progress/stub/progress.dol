@@ -13,10 +13,6 @@
 # an indicator's icon or message are printed immediately. Indicator creation
 # and completion are always logged.
 
-import std:
-  - @BaseArray
-  - @BaseDict
-
 # A progress bar or spinner.
 #
 # Indicators are created by [`show`](progress.show). An indicator is a

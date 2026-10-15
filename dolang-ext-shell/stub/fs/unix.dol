@@ -2,8 +2,6 @@
 # Unix filesystem types.
 
 import fs
-import std:
-  - @UnpackIter
 import
   security.unix:
     - @Permission

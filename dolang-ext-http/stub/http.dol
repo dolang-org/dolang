@@ -4,7 +4,6 @@ import
     @DecodeValue: JsonDecodeValue
     @EncodeValue: JsonEncodeValue
   std:
-    - @BaseDict
     - RuntimeError
   time:
     - @DateTime

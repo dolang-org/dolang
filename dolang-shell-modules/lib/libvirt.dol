@@ -107,8 +107,6 @@ import _shell _vfs base64 digest json proc progress rand shell shlex ssh std str
     - Path
     - with_temp_dir
   std:
-    - @BaseArray
-    - @BaseDict
     - null
   url:
     - Url

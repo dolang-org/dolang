@@ -6,7 +6,6 @@ import _wsl sys
   fs:
     - @Path
 import std:
-  - @BaseDict
   - RuntimeError
 
 def require_windows() -> nil

@@ -8,9 +8,6 @@ import
     - @Path
     - with_temp_dir
 import fs.unix: unix_fs
-import std:
-  - @BaseDict
-
 # Survives unquoted in both POSIX shells and cmd.exe. The base64 alphabet is a
 # subset, so an encoded value always matches.
 let BARE = Regex r"^[A-Za-z0-9_.:/=@+,-]+$"

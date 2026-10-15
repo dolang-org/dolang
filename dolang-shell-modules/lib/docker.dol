@@ -5,8 +5,6 @@ import
   fs:
     - @Path
   _container.dockman: dockman
-  std:
-    - @BaseDict
 
 pub import _container.dockman:
   - Image

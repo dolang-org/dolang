@@ -2,12 +2,7 @@
 # Parses, edits, validates, and serializes XML element trees.
 
 import std:
-  - @Assign
-  - @BaseDict
-  - @Index
   - @IndexItem
-  - @MutSeq
-  - @Spread
 
 # A value accepted by [`encode`](xml.encode).
 pub @let EncodeValue = (Node | Str)

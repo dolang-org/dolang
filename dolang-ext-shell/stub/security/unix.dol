@@ -1,12 +1,7 @@
 # dolang: strict
 # Unix security types and uid/gid identity lookups.
 
-import std:
-  - @BaseDict
-
 import
-  std:
-    - @Seq
   uuid:
     - @Uuid
 

@@ -1,6 +1,3 @@
-import std:
-  - @BaseDict
-
 import progress json patch rand shlex strand proc sys transfer _vfs time
   std:
     - RuntimeError

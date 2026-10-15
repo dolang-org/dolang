@@ -2,8 +2,6 @@
 # YAML serialization and deserialization.
 
 import std:
-  - @BaseArray
-  - @BaseDict
   - @BaseStruct
 
 # A value decoded from YAML. A mapping key may be any YAML value.

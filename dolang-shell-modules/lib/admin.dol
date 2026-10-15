@@ -5,8 +5,6 @@ import sudo sys shell time
     - @Path
   security.unix: security_unix
   security.windows: security_windows
-  std:
-    - @BaseDict
 
 # Reports whether the active target has effective administrator privileges.
 #

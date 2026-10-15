@@ -4,8 +4,6 @@ import _vfs proc time
     - @Path
   shell:
     - Vfs
-  std:
-    - @BaseDict
   _container.common:
     - runtime_dir
   strand:

@@ -2,12 +2,7 @@
 # macOS extended access-control-list types and principal identity resolution
 # between Unix uid/gid values and macOS `guid_t` UUIDs.
 
-import std:
-  - @BaseDict
-
 import
-  std:
-    - @Seq
   uuid:
     - @Uuid
 
