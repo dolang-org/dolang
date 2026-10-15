@@ -23,10 +23,6 @@
 # An item's name becomes a field of the resulting [`Args`](args.Args), with
 # hyphens converted to underscores: `dry-run` is read as `p.dry_run`.
 
-import std:
-  - @BaseDict
-  - @Unpack
-
 import shell
 import fs:
   - Path

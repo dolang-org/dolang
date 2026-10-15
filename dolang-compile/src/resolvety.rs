@@ -173,21 +173,59 @@ impl Diagnose for ValueShadowsType {
 
 pub(crate) fn check(
     root: &mut Root,
+    prelude: &mut [crate::PreludeImport],
     file: &File<'_>,
     symtab: &sym::Table,
     bintab: &BinTable,
     diags: &Diags,
 ) {
+    // A later module or runtime item can also replace a type-only default.
+    let mut type_only = FxHashSet::default();
+    for import in prelude.iter() {
+        match import {
+            crate::PreludeImport::Items { items, .. } => {
+                for item in items {
+                    if item.type_only {
+                        type_only.insert(item.bind.as_str());
+                    } else {
+                        type_only.remove(item.bind.as_str());
+                    }
+                }
+            }
+            crate::PreludeImport::ModuleAsIs { bind, .. }
+            | crate::PreludeImport::ModuleRenamed { bind, .. } => {
+                type_only.remove(bind.as_str());
+            }
+        }
+    }
     let mut check = Check {
+        type_only,
+        used: crate::prelude_items(prelude)
+            .map(|_| Cell::new(false))
+            .collect(),
+        prelude: crate::prelude_items(prelude).collect(),
         file,
         symtab,
         bintab,
         diags,
     };
     check.function(None, &mut root.0);
+    let used: Vec<_> = check.used.iter().map(Cell::get).collect();
+    drop(check);
+    let mut used = used.into_iter();
+    for import in prelude {
+        if let crate::PreludeImport::Items { items, .. } = import {
+            for item in items {
+                item.type_used = used.next().unwrap();
+            }
+        }
+    }
 }
 
 struct Check<'a> {
+    prelude: Vec<(&'a str, &'a crate::PreludeItem)>,
+    type_only: FxHashSet<&'a str>,
+    used: Vec<Cell<bool>>,
     file: &'a File<'a>,
     symtab: &'a sym::Table,
     bintab: &'a BinTable,
@@ -528,6 +566,9 @@ impl Check<'_> {
                         continue;
                     }
                     let decl = decls.decl(index);
+                    if var.is_prelude() && self.type_only.contains(name) {
+                        continue;
+                    }
                     let visible = match var.origin {
                         Origin::Source(span) | Origin::SelfParam(span) | Origin::Import(span) => {
                             span.start < site || (decl.is_some() && in_body.get())
@@ -552,6 +593,19 @@ impl Check<'_> {
                         decl == Some(Decl::Import) || var.is_prelude(),
                     ));
                 }
+            }
+            if current.outer.is_none()
+                && self.type_only.contains(name)
+                && let Some((index, (_, item))) = self
+                    .prelude
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find(|(_, (_, item))| item.bind == name)
+                && item.type_only
+            {
+                self.used[index].set(true);
+                return Some((res(TypeEntry::Prelude(index)), true));
             }
             depth += 1;
             frame = current.outer;

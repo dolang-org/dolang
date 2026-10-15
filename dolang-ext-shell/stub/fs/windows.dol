@@ -2,8 +2,6 @@
 # Windows filesystem types and security descriptor access.
 
 import fs
-import std:
-  - @UnpackIter
 import security.windows:
   - @Sid
   - @SecDesc

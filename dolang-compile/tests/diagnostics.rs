@@ -352,3 +352,183 @@ fn returns_remain_valid_in_scripts_and_declared_functions() {
         assert!(unit.emit(&mut Vec::new()).is_ok(), "{source:?}");
     }
 }
+
+#[test]
+fn type_only_prelude_bindings_have_no_runtime_effect() {
+    for mode in [Mode::Script, Mode::Module { name: "m".into() }, Mode::Repl] {
+        for document in [false, true] {
+            for typecheck in [false, true] {
+                let mut config = Config::new();
+                config
+                    .mode(mode.clone())
+                    .document(document)
+                    .typecheck(typecheck);
+                config
+                    .prelude()
+                    .import_items("missing_at_runtime")
+                    .type_item("Unused")
+                    .type_items(["Input"])
+                    .type_item_with_name("Output", "Result")
+                    .commit();
+                let unit = config.unit(
+                    Path::new("m.dol"),
+                    "let answer @ Input = 42\nlet result @ Result = answer\nresult\n",
+                );
+                assert!(unit.diagnostics().next().is_none());
+                if document {
+                    let items: Vec<_> = unit
+                        .nodes()
+                        .filter_map(|(_, node)| match node.kind() {
+                            dolang_compile::Kind::PreludeItem {
+                                module: "missing_at_runtime",
+                                item,
+                                type_only,
+                                ..
+                            } => Some((item, type_only)),
+                            _ => None,
+                        })
+                        .collect();
+                    assert_eq!(items, [("Input", true), ("Output", true)]);
+                }
+                let mut bytes = Vec::new();
+                unit.emit(&mut bytes).unwrap();
+                // A missing module name must not enter emitted bytecode.
+                assert!(
+                    !bytes
+                        .windows(b"missing_at_runtime".len())
+                        .any(|window| window == b"missing_at_runtime")
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn type_only_prelude_values_are_unbound() {
+    for typecheck in [false, true] {
+        for name in ["Never", "Seq", "BaseArray", "BaseDict"] {
+            let mut config = Config::new();
+            config.typecheck(typecheck);
+            let unit = config.unit(Path::new("m.dol"), name.to_owned());
+            assert!(
+                unit.diagnostics()
+                    .any(|diag| diag.message().to_string().contains("unbound")),
+                "{name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn type_only_prelude_shadowing() {
+    let mut config = Config::new();
+    config.document(true).typecheck(true);
+    config
+        .prelude()
+        .import_items("custom")
+        .type_item("Name")
+        .commit();
+    for source in [
+        "let Name = Int\nlet value @ Name = 1\nvalue\n",
+        "@let Name = Int\nlet value @ Name = 1\nvalue\n",
+        "import local:\n  - @Name\nlet value @ Name = 1\nvalue\n",
+        "def identity[Name] value@Name -> Name\n  value\nidentity 1\n",
+    ] {
+        let unit = config.unit(Path::new("m.dol"), source);
+        assert!(
+            !unit
+                .diagnostics()
+                .any(|diag| diag.message().to_string().contains("unbound"))
+        );
+        assert!(!unit.nodes().any(|(_, node)| matches!(
+            node.kind(),
+            dolang_compile::Kind::PreludeItem {
+                module: "custom",
+                ..
+            }
+        )));
+    }
+}
+
+#[test]
+fn later_prelude_items_win_in_types_only() {
+    for last_type_only in [false, true] {
+        let mut config = Config::new();
+        config.document(true);
+        let items = config.prelude().import_items("custom");
+        let items = if last_type_only {
+            items
+                .item_with_name("Runtime", "Name")
+                .type_item_with_name("TypeOnly", "Name")
+        } else {
+            items
+                .type_item_with_name("TypeOnly", "Name")
+                .item_with_name("Runtime", "Name")
+        };
+        items.commit();
+        let unit = config.unit(Path::new("m.dol"), "let value @ Name = 1\nName\nvalue\n");
+        for (_, node) in unit.nodes() {
+            if let dolang_compile::Kind::NameType {
+                target: Some(target),
+                ..
+            } = node.kind()
+            {
+                assert!(
+                    matches!(unit.node(target).unwrap().kind(), dolang_compile::Kind::PreludeItem { type_only, .. } if type_only == last_type_only)
+                );
+            }
+        }
+        let mut bytes = Vec::new();
+        unit.emit(&mut bytes).unwrap();
+        assert!(
+            !bytes
+                .windows(b"TypeOnly".len())
+                .any(|part| part == b"TypeOnly")
+        );
+    }
+}
+
+#[test]
+fn module_prelude_bindings_follow_type_only_configuration_order() {
+    for last_type_only in [false, true] {
+        let mut config = Config::new();
+        config.document(true);
+        let prelude = config.prelude();
+        if last_type_only {
+            prelude
+                .import_module_with_name("module", "Name")
+                .import_items("types")
+                .type_item_with_name("Item", "Name")
+                .commit();
+        } else {
+            prelude
+                .import_items("types")
+                .type_item_with_name("Item", "Name")
+                .commit()
+                .import_module_with_name("module", "Name");
+        }
+        let unit = config.unit(Path::new("m.dol"), "let value @ Name = nil\nvalue\n");
+        assert!(unit.diagnostics().next().is_none());
+        let (_, node) = unit
+            .nodes()
+            .find(|(_, node)| matches!(node.kind(), dolang_compile::Kind::NameType { .. }))
+            .unwrap();
+        let dolang_compile::Kind::NameType {
+            target: Some(target),
+            ..
+        } = node.kind()
+        else {
+            panic!("missing target")
+        };
+        assert_eq!(
+            matches!(
+                unit.node(target).unwrap().kind(),
+                dolang_compile::Kind::PreludeItem {
+                    type_only: true,
+                    ..
+                }
+            ),
+            last_type_only
+        );
+    }
+}

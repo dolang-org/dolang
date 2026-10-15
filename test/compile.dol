@@ -1255,3 +1255,23 @@ def prelude_array_read_view()
     compile.compile "m.dol" "nil" prelude: ("std",)
   assert_throws $std.TypeError do
     compile.compile "m.dol" "nil" prelude: {std: ("Int",)}
+
+#[test]
+def type_only_prelude_configuration()
+  import load
+  for binding = [["@Custom"], [sym("@Custom")], {"@Export": "Custom"}]
+    let unit = compile.compile "m.dol" "let value @Custom = 1\nvalue\n"
+      document: true
+      prelude: {missing_at_runtime: binding}
+    assert_no_errors $unit
+    let items = [...unit.nodes().filter(do |pair| type(pair[1], compile.PreludeItem))]
+    let custom = items.find(do |pair| pair[1].module == "missing_at_runtime")[1]
+    assert $custom.type_only
+    assert_eq $custom.name Custom
+    assert_eq (load.run(unit.emit())) 1
+  for binding = [["@"], {"@": "Custom"}]
+    let err = try
+      compile.compile "m.dol" "nil" prelude: {std: binding}
+    catch e
+      e
+    assert_type $std.ValueError $err

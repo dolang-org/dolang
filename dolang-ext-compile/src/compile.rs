@@ -940,6 +940,20 @@ fn render_undecided(paths: &[String], undecided: Vec<(String, compile::SourceSpa
     out
 }
 
+fn prelude_item_name<'a, 'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    name: &'a str,
+) -> Result<'v, 's, (&'a str, bool)> {
+    match name.strip_prefix('@') {
+        Some("") => Err(Error::value(
+            strand,
+            "type-only prelude item name cannot be empty",
+        )),
+        Some(name) => Ok((name, true)),
+        None => Ok((name, false)),
+    }
+}
+
 fn apply_prelude_module_items<'v, 's>(
     strand: &mut Strand<'v, 's>,
     config: &mut Config,
@@ -960,11 +974,14 @@ fn apply_prelude_module_items<'v, 's>(
                 }
             },
         )?;
-        let _prelude = config
-            .prelude()
-            .import_items(module_name)
-            .item(item_name)
-            .commit();
+        let (item_name, type_only) = prelude_item_name(strand, &item_name)?;
+        let builder = config.prelude().import_items(module_name);
+        let builder = if type_only {
+            builder.type_item(item_name)
+        } else {
+            builder.item(item_name)
+        };
+        builder.commit();
     }
     Ok(())
 }
@@ -1007,12 +1024,13 @@ fn apply_prelude_dict_items<'v, 's>(
                         ));
                     }
                 };
-                items_builder = Some(
-                    items_builder
-                        .take()
-                        .unwrap()
-                        .item_with_name(&item_name, &bind_name),
-                );
+                let (item_name, type_only) = prelude_item_name(strand, &item_name)?;
+                let builder = items_builder.take().unwrap();
+                items_builder = Some(if type_only {
+                    builder.type_item_with_name(item_name, &bind_name)
+                } else {
+                    builder.item_with_name(item_name, &bind_name)
+                });
             }
             Ok(())
         },
@@ -2010,6 +2028,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                 | "SpecialMethod"
                 | "ImportModule"
                 | "ImportItem"
+                | "PreludeItem"
                 | "Type"
         ) {
             builder = builder.get("type_only", |this, strand, out| {
@@ -2460,6 +2479,7 @@ fn project_type_only<'v, 's, T: NodeMarker + 'static>(
         | compile::Kind::SpecialMethod { type_only, .. }
         | compile::Kind::ImportModule { type_only, .. }
         | compile::Kind::ImportItem { type_only, .. }
+        | compile::Kind::PreludeItem { type_only, .. }
         | compile::Kind::Type { type_only, .. } => type_only,
         _ => unreachable!(),
     })?;

@@ -492,6 +492,7 @@ fn add_entity(rows: &mut Vec<Row>, module: &str, prefix: &str, entity: &Entity) 
             "function" => "function",
             "method" => "method",
             "field" => "field",
+            "alias" => "alias",
             _ => "value",
         },
         doc: hover_doc(entity.doc.as_deref()),

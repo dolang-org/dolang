@@ -1,12 +1,6 @@
 # dolang: strict
 # NFSv4 access-control-list types.
 
-import std:
-  - @BaseDict
-
-import std:
-  - @Seq
-
 # A symbol naming a bit of a [`Mask`](security.nfs4.Mask).
 #
 # | Symbol                | Meaning                                                |

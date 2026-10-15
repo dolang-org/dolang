@@ -8,8 +8,6 @@ import fs:
   - @Path
 import fs.unix:
   @Path: UnixPath
-import std:
-  - @Seq
 import time:
   - @DateTime
 

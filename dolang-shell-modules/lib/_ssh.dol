@@ -6,7 +6,6 @@ import
   shell:
     - Vfs
   std:
-    - @BaseDict
     - UnexpectedKeyError
     - UnexpectedPosError
     - ValueError

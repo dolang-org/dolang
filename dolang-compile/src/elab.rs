@@ -3617,7 +3617,7 @@ impl<'a> Elaborater<'a> {
             for import in prelude.iter_mut() {
                 match import {
                     PreludeImport::Items { module, items, .. } => {
-                        for field in items.iter_mut() {
+                        for field in items.iter_mut().filter(|item| !item.type_only) {
                             let id = self.symtab.id(&self.bintab.id_str(&field.bind));
                             let origin = Origin::PreludeItem {
                                 module: self.bintab.id_str(module),
@@ -3675,7 +3675,7 @@ impl<'a> Elaborater<'a> {
             for import in prelude.iter_mut() {
                 match import {
                     PreludeImport::Items { items, .. } => {
-                        for item in items.iter_mut() {
+                        for item in items.iter_mut().filter(|item| !item.type_only) {
                             let res = item.res.as_ref().unwrap();
                             item.unused = !scope.is_read(res.index, res.depth);
                         }

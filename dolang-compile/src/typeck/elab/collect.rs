@@ -265,6 +265,7 @@ enum FrameKind<'u> {
         vars: &'u [Var],
         entries: Vec<Entry<'u>>,
         types: Vec<(Span, Entry<'u>)>,
+        prelude: Vec<Entry<'u>>,
     },
 }
 
@@ -280,6 +281,9 @@ impl<'u> Frame<'_, 'u> {
             frame = outer;
         }
         let found = match (&frame.kind, res.entry) {
+            (FrameKind::Scope { prelude, .. }, TypeEntry::Prelude(index)) => {
+                prelude.get(index).map(|entry| (None, entry.clone()))
+            }
             (FrameKind::Binders { decl, sig, binders }, TypeEntry::Binder(slot)) => {
                 binders.get(slot).map(|binder| {
                     let referent = Referent::Binder(BinderRef {
@@ -611,6 +615,18 @@ impl<'u> Walk<'_, 'u> {
                 vars,
                 entries: block.entries,
                 types: block.types,
+                prelude: if outer.is_none() {
+                    crate::prelude_items(self.prelude)
+                        .map(|(module, item)| {
+                            Entry::Target(Target::Import {
+                                module,
+                                item: &item.item,
+                            })
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                },
             },
         }
     }

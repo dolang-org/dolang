@@ -83,6 +83,8 @@ pub(crate) struct TypeRes {
 /// An entry of the frame a [`TypeRes`] reaches
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TypeEntry {
+    /// Configured item in the root prelude
+    Prelude(usize),
     /// Slot n of a binder group
     Binder(usize),
     /// Variable n of a lexical scope

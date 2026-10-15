@@ -23,15 +23,12 @@
 #   echo $id $node.span
 # ```
 
-import std:
-  - @BaseArray
-  - @BaseDict
-
 import term:
   - @Text
 
 # What a prelude binds a module to: an alias, an array of items, or a
-# dictionary of items to their aliases.
+# dictionary of items to their aliases. Prefix an item name with `@` to bind it
+# only in types; aliases are written without the prefix.
 pub @let PreludeBinding = $
   | Str
   | Sym
@@ -402,6 +399,11 @@ pub class PreludeModule: Import
 # [`Str`](std.Str) values rather than spans, and it appears only where
 # the binding it introduces is referenced.
 pub class PreludeItem: Import
+  # Whether this binding is available only in types.
+  #[getter]
+  pub def type_only self -> Bool
+    ...
+
   # The item name within the module.
   #[getter]
   pub def item self -> Str
@@ -1019,6 +1021,12 @@ pub class Pos
 #     sys:
 #       - echo
 #       - exit
+#
+# # Type-only items
+# compile "test.dol" $source
+#   prelude:
+#     std:
+#       - "@Seq"
 #
 # # Items with aliases
 # compile "test.dol" $source

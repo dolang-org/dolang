@@ -41,6 +41,22 @@ Embedded runtimes may provide a different additional prelude.
 | [`Type`](std.Type)     | [`Type`](std.Type) type            |
 | [`type`](std.type)     | Type query and test function       |
 
+## Type-only names from `std`
+
+These names are available in annotations without an import. They do not bind
+runtime values, including [`BaseArray`](std.BaseArray) and
+[`BaseDict`](std.BaseDict), which are runtime classes. Use a qualified name or
+an explicit runtime import to use those classes as values.
+
+| Names                                                                                                                          | Purpose                                               |
+| ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
+| [`Never`](std.Never), [`Union`](std.Union)                                                                                     | Empty type and unions, including unions of type packs |
+| [`Seq`](std.Seq), [`AssignSeq`](std.AssignSeq), [`MutSeq`](std.MutSeq)                                                         | Sequences and their mutation capabilities             |
+| [`Index`](std.Index), [`Assign`](std.Assign), [`Spread`](std.Spread), [`Unpack`](std.Unpack)                                   | Indexing, assignment, spreading, and destructuring    |
+| [`BaseIterable`](std.BaseIterable), [`BaseIter`](std.BaseIter), [`BaseSinkable`](std.BaseSinkable), [`BaseSink`](std.BaseSink) | Minimal iteration and sink protocols                  |
+| [`UnpackIter`](std.UnpackIter), [`UnpackIterable`](std.UnpackIterable)                                                         | Iteration with read-only unpacking                    |
+| [`BaseArray`](std.BaseArray), [`BaseDict`](std.BaseDict)                                                                       | Native container read-only interfaces                 |
+
 ## `strand`
 
 The module itself is imported, along with these functions:

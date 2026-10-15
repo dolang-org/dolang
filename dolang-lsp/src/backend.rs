@@ -96,6 +96,9 @@ fn classify_token(token: Token, kind: Option<&Kind<'_>>, context: Context) -> (u
         Token::Operator => (TT_OPERATOR, 0),
         Token::StringDelim => (TT_STRING, 0),
         Token::Type => match kind {
+            Some(Kind::PreludeItem {
+                type_only: true, ..
+            }) => (TT_TYPE, MOD_PRELUDE),
             Some(Kind::Binder { .. }) => (TT_TYPE_PARAMETER, 0),
             _ => (TT_TYPE, 0),
         },
@@ -644,6 +647,24 @@ pub(crate) enum Import {
     ModuleAs(String, String),
     Item(String, String),
     ItemAs(String, String, String),
+    TypeItem(String, String),
+    TypeItemAs(String, String, String),
+}
+
+impl Import {
+    fn item(module: &str, item: &str, bind: Option<&str>) -> std::result::Result<Self, String> {
+        let type_only = item.starts_with('@');
+        let item = if type_only { &item[1..] } else { item };
+        if type_only && item.is_empty() {
+            return Err("type-only prelude item name cannot be empty".into());
+        }
+        Ok(match (type_only, bind) {
+            (false, None) => Self::Item(module.into(), item.into()),
+            (false, Some(bind)) => Self::ItemAs(module.into(), item.into(), bind.into()),
+            (true, None) => Self::TypeItem(module.into(), item.into()),
+            (true, Some(bind)) => Self::TypeItemAs(module.into(), item.into(), bind.into()),
+        })
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -988,6 +1009,18 @@ fn compile_document(path: &Path, text: String, settings: Option<&Settings>) -> U
             match import {
                 Import::Module(module) => {
                     prelude = prelude.import_module(module.clone());
+                }
+                Import::TypeItem(module, item) => {
+                    prelude = prelude
+                        .import_items(module.clone())
+                        .type_item(item.clone())
+                        .commit();
+                }
+                Import::TypeItemAs(module, item, bind) => {
+                    prelude = prelude
+                        .import_items(module.clone())
+                        .type_item_with_name(item.clone(), bind.clone())
+                        .commit();
                 }
                 Import::Item(module, item) => {
                     let items = prelude.import_items(module.clone());
@@ -1447,7 +1480,7 @@ impl Backend {
                     let item = item.as_str().ok_or_else(|| {
                         format!("prelude array for {module} must contain only strings")
                     })?;
-                    prelude.push(Import::Item(module.to_owned(), item.to_owned()));
+                    prelude.push(Import::item(module, item, None)?);
                 }
             }
             TomlValue::Table(table) => Self::parse_prelude_descriptor(module, table, prelude)?,
@@ -1487,13 +1520,13 @@ impl Backend {
 
             match value {
                 TomlValue::Boolean(true) => {
-                    prelude.push(Import::Item(module.to_owned(), key.clone()));
+                    prelude.push(Import::item(module, key, None)?);
                 }
                 TomlValue::Boolean(false) => {
                     return Err(format!("descriptor entry {module}.{key} cannot be false"));
                 }
                 TomlValue::String(bind) => {
-                    prelude.push(Import::ItemAs(module.to_owned(), key.clone(), bind.clone()));
+                    prelude.push(Import::item(module, key, Some(bind))?);
                 }
                 _ => {
                     return Err(format!(
@@ -2382,6 +2415,62 @@ mod tests {
     }
 
     #[test]
+    fn parse_type_only_prelude_items() {
+        let settings = Backend::parse_settings_toml(&parse_toml(
+            "[prelude]\nstd = [\"@Never\"]\n[prelude.custom]\n\"@Seq\" = \"Sequence\"\n\"@Index\" = true\n",
+        )).unwrap();
+        assert!(
+            settings
+                .prelude
+                .contains(&Import::TypeItem("std".into(), "Never".into()))
+        );
+        assert!(
+            settings
+                .prelude
+                .contains(&Import::TypeItem("custom".into(), "Index".into()))
+        );
+        assert!(settings.prelude.contains(&Import::TypeItemAs(
+            "custom".into(),
+            "Seq".into(),
+            "Sequence".into()
+        )));
+        for config in ["[prelude]\nstd = [\"@\"]", "[prelude.std]\n\"@\" = \"Bad\""] {
+            assert!(
+                Backend::parse_settings_toml(&parse_toml(config))
+                    .unwrap_err()
+                    .contains("cannot be empty")
+            );
+        }
+    }
+
+    #[test]
+    fn configured_type_only_items_resolve_to_prelude_nodes() {
+        for config in [
+            "[prelude]\nstd = [\"@Seq\"]",
+            "[prelude.std]\n\"@Seq\" = \"Sequence\"",
+        ] {
+            let settings = Backend::parse_settings_toml(&parse_toml(config)).unwrap();
+            let name = if config.contains("Sequence") {
+                "Sequence"
+            } else {
+                "Seq"
+            };
+            let unit = compile_document(
+                Path::new("m.dol"),
+                format!("def first items@{name}[Int] -> Int\n  items[0]\nfirst [1]\n"),
+                Some(&settings),
+            );
+            assert!(unit.diagnostics().next().is_none());
+            assert!(
+                unit.nodes()
+                    .any(|(_, node)| matches!(node.kind(), Kind::PreludeItem {
+                module: "std", item: "Seq", name: bind, type_only: true,
+            } if bind == name))
+            );
+        }
+    }
+
+    #[test]
     fn reject_unknown_top_level_key() {
         let error = Backend::parse_settings_toml(&parse_toml("other = true\n")).unwrap_err();
 
@@ -2556,6 +2645,28 @@ mod tests {
                 .to_owned(),
             })
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn hover_resolves_type_only_prelude_items() {
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///type-prelude-hover.dol".parse().unwrap();
+        harness
+            .open(
+                uri.clone(),
+                "def fail() -> Never\n  throw std.ValueError \"failed\"\n",
+                1,
+            )
+            .await;
+        let tokens = semantic_tokens(&mut harness, uri.clone()).await;
+        assert_eq!(token_at(&tokens, 0, 14), (TT_TYPE, MOD_PRELUDE));
+        let hover = hover_at(&mut harness, uri, 0, 14).await.unwrap();
+        let HoverContents::Markup(content) = hover.contents else {
+            panic!("expected markup")
+        };
+        assert!(content.value.contains("@let Never = Union[]"));
+        assert!(content.value.contains("no values"));
     }
 
     #[tokio::test(flavor = "current_thread")]

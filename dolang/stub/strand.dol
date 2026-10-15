@@ -257,9 +257,9 @@ pub class Stream[R, I, O]: Iterable[I] Sinkable[O]
 # Obtained from [`backtrace`](strand.backtrace) or
 # [`error_backtrace`](strand.error_backtrace). Iterating it gives a
 # [`Frame`](strand.Frame) for each call.
-pub class Backtrace: std.Iterable[Frame] @std.Spread[Frame]
+pub class Backtrace: std.Iterable[Frame] @Spread[Frame]
   # Spreads the frames positionally.
-  pub def (spread) self -> std.Spread[Frame]
+  pub def (spread) self -> Spread[Frame]
     ...
 
   # The number of frames.
@@ -545,7 +545,7 @@ pub def throw
   value @ Value
   # Backtrace to report instead of the current strand's calls.
   :backtrace @ Backtrace = nil
-do -> std.Never
+do -> Never
   ...
 
 # Writes the values of the strand-local input that satisfy a predicate to the

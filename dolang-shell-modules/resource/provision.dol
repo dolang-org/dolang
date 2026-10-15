@@ -23,7 +23,7 @@ def log message @ Str
 # program raises `sys.NotFoundError` rather than `proc.Error` — there is no
 # process error without a process — so a probe has to catch both or the one
 # case it exists for is the one that escapes.
-def probe func @ ((<std.Iter[std.Never], >std.Sink[Value]) -> nil) -> Bool
+def probe func @ ((<std.Iter[Never], >std.Sink[Value]) -> nil) -> Bool
   try
     console $func
     true

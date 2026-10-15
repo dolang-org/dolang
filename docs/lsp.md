@@ -72,6 +72,17 @@ sub = true
 run = true
 ```
 
+Prefix an item name with `@` to bind it only in types. In a table, the
+prefix belongs to the source name; an alias has no prefix:
+
+```toml
+[prelude]
+geometry = ["@Point"]
+
+[prelude.collections]
+"@Sequence" = "Seq"
+```
+
 ### Default Prelude
 
 When no `.dolang-lsp.toml` is found, the LSP defaults to the `dolang`

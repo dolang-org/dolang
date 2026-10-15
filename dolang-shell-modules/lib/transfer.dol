@@ -16,8 +16,6 @@ import _vfs digest fs http json proc progress shell std sys tar zip
     Metadata: UnixMetadata
   regex:
     - Regex
-  std:
-    - @Seq
   time:
     - DateTime
   url:
@@ -549,7 +547,7 @@ def put_path source@Path destination@Path -> nil
   finally
     tmp.remove ignore: true
 
-def put_url source@Path destination@Url headers@(std.BaseDict[Str | Sym, Str] | nil) -> nil
+def put_url source@Path destination@Url headers@(BaseDict[Str | Sym, Str] | nil) -> nil
   let total = source.metadata().size
   let message = (destination.name || str destination)
   progress.show :message :total icon: ⬆️ units: :BYTES: do |indicator|
@@ -572,7 +570,7 @@ pub def put
   # Request headers for an HTTP(S) destination.
   #
   # Only valid for an HTTP(S) destination.
-  :headers @ std.BaseDict[Str | Sym, Str] = nil
+  :headers @ BaseDict[Str | Sym, Str] = nil
 do -> nil
   let from = (parse_location source)
   let local = if (type from Url)

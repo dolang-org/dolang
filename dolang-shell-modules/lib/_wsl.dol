@@ -4,9 +4,6 @@ import shell:
   - Vfs
 import fs:
   - @Path
-import std:
-  - @BaseDict
-
 pub def build_linux_command
   command @ Iterable[Value]
   :distro @ Str = nil

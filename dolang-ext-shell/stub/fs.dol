@@ -23,9 +23,6 @@ import
     @FsMetadata: WindowsFsMetadata
     @DirEntry: WindowsDirEntry
   @security
-  std:
-    - @Seq
-    - @UnpackIter
   security.windows:
     - @Sid
     - @SecDesc
