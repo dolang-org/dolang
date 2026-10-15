@@ -2049,11 +2049,20 @@ do
 pub class Dict[S @ {...}]: BaseDict[S] @Assign[S]
   #
   #
-  # Builds a dictionary from one spreadable source of key-value pairs. The
-  # lowercase `dict` factory instead assigns integer keys to positional arguments
-  # and symbol keys to key arguments.
+  # Builds a dictionary by spreading one source, as `{...source}` does.
   #
-  pub def (init) self source @ Value
+  # Spreading an array gives positional items, so an array of pairs is not a
+  # mapping: `Dict [(:a:, 1)]` is `{(:a:, 1)}`. Adapt pairs with
+  # [`Iter.kv`](std.Iter.kv) instead:
+  #
+  # ```
+  # let d = Dict $ pairs.iter().kv()
+  # ```
+  #
+  # The lowercase `dict` factory instead assigns integer keys to positional
+  # arguments and symbol keys to key arguments.
+  #
+  pub def (init) self source @ Spread[S]
     ...
 
   #
@@ -2877,8 +2886,8 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[FmtSegment[V]] @Spread[Fm
   # Builds a sequence from an iterable of segments.
   #
   # Writing a `t"..."` is the usual way to get one; the constructor is for
-  # assembling a sequence at runtime. Its interpolation types and hole schema
-  # remain unknown to the checker.
+  # assembling a sequence at runtime. Its hole schema remains unknown to the
+  # checker.
   #
   # ## Errors
   #
@@ -2894,7 +2903,7 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[FmtSegment[V]] @Spread[Fm
   # assert_eq $built.format() "a=42;"
   # ```
   #
-  pub def (init) self segments @ Value
+  pub def (init) self segments @ Iterable[FmtSegment[V]]
     ...
 
   #
@@ -3664,7 +3673,7 @@ pub class Record[...Ts]: Iterable[Entries[Ts]] @Index[Ts] @Spread[Ts] @Unpack[Ts
   # ## Errors
   #
   # Raises `TypeError` for any other key that is not a symbol.
-  pub def (init) self source @ Value
+  pub def (init) self source @ Spread[Ts]
     ...
 
   #
@@ -4972,11 +4981,13 @@ do
   #   echo "$k: $v"
   # ```
   #
-  pub def (init)
-    self
+  @def (init)[T]
+    self @ Tuple[...T]
     # values to collect
-    iterable @ Value
+    iterable @ Iterable[T]
   do
+
+  pub def (init) self iterable @ Value
     ...
 
   #
