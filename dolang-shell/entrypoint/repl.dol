@@ -1,0 +1,46 @@
+import _shell load term
+  fs:
+    - Path
+
+# A separate call gives every retained importer its own binding snapshot.
+def run_turn bytecode bindings
+  let snapshot = Struct $bindings
+  let importer = do |name|
+    if (name == r"$dynamic$")
+      snapshot
+    else
+      load.import $name
+  load.run $bytecode importer: $importer
+
+let options = _shell.repl_options()
+let history_path = nil
+if options[:history:]
+  let directory = (options.get(:state_dir:) || options[:data_local_dir:])
+  if directory
+    history_path = (Path(directory) / "history")
+
+let editor = _shell.Editor $history_path prelude: $options[:prelude:]
+let bindings @ Dict[Sym, Value] = {}
+try
+  while true
+    let names = [...bindings.keys()]
+    let line = editor.readline "❯ " $names
+    if (line == :EOF: || line == :INTERRUPTED:)
+      break
+    try
+      let prelude = {...options[:prelude:], r"$dynamic$": names}
+      let bytecode = _shell.compile "<repl>" $line
+        mode: :REPL:
+        prelude: $prelude
+        strict: $options[:strict:]
+      let result = run_turn $bytecode $bindings
+      for key value = result
+        bindings[key] = value
+        if (key == :_: && value != nil)
+          term.print "↪ $(dbg value)\n"
+    catch std.CanceledError: error
+      throw error
+    catch error
+      term.print (_shell.render_error error) "\n"
+finally
+  editor.save_history()

@@ -1,13 +1,46 @@
 # Internal shell services used by bundled modules and entrypoints.
-@import fs
+@import fs term
+@import compile: compiler
 import strand:
   - @Backtrace
 
-pub def render_error error :backtrace @ Backtrace = nil -> Str
+pub def render_error error :backtrace @ Backtrace = nil -> term.Text
   ...
 
-pub def compile_script path @ (Str | fs.Path) -> Bin
+# Compiles source, or reads and compiles a file when source is omitted.
+# Non-REPL compilation retains bytecode detection and the shell's cache.
+pub def compile
+  path @ (Str | fs.Path)
+  source @ Str = nil
+  :mode @ (:SCRIPT: | :REPL: | Str) = :SCRIPT:
+  :prelude @ compiler.Prelude = nil
+  :strict @ Bool = nil
+do -> Bin
   ...
+
+# Returns the CLI prelude, strictness, history flag, and native history directories.
+pub def repl_options() -> Dict[ReplOptions]
+  ...
+
+pub @let ReplOptions = {
+  prelude: Dict[{*Str, *(Str): compiler.PreludeBinding}],
+  strict: Bool,
+  history: Bool,
+  state_dir: (Str | nil),
+  data_local_dir: (Str | nil),
+}
+
+# Edits Do input with syntax highlighting and multiline validation.
+pub class Editor
+  pub def (init) self history_path @ (Str | fs.Path | nil) :prelude @ compiler.Prelude = nil
+    ...
+
+  # Returns input, EOF, or an interrupted prompt.
+  pub def readline self prompt@Str names@BaseArray[Str | Sym] -> (Str | :EOF: | :INTERRUPTED:)
+    ...
+
+  pub def save_history self -> nil
+    ...
 
 # Looks up a linked resource, returning nil when absent.
 # Text resources retain their Str representation; byte resources return Bin.

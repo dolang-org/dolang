@@ -1,14 +1,21 @@
-use std::{borrow::Cow, path::Path, string::String};
-
-use dolang::runtime::value::fmt::Format;
-
-use dolang::{
-    compile::{Context, Mode, NodeId, Span, Token},
-    runtime::{
-        Bytecode, Error, Instance, Object, Result, Slot, Strand, Sym, error::ResultExt, value::Root,
-    },
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
 };
 
+use dolang::{
+    compile::{Config, Context, Mode, NodeId, Span, Token},
+    runtime::{
+        Error, Object, Output, Result, Strand, Type,
+        error::ResultExt,
+        object::{Mut, TypeBuilder},
+        strand::InterruptMask,
+        unpack,
+        value::Nil,
+    },
+};
+use dolang_ext_compile::apply_prelude_value;
+use dolang_ext_shell::classify_node;
 use rustyline::{
     Editor, Helper,
     completion::{Candidate, Completer},
@@ -20,99 +27,7 @@ use rustyline::{
     validate::{ValidationContext, ValidationResult, Validator},
 };
 
-use dolang_ext_shell::classify_node;
-
-use crate::{cli::PreludeImport, load};
-
-pub(crate) const DYNAMIC_PRELUDE: &str = "$dynamic$";
-
-pub(crate) struct DynamicPrelude<'v> {
-    pub(crate) root: Root<'v>,
-}
-
-impl<'v> Object<'v> for DynamicPrelude<'v> {
-    const NAME: &'v str = "Prelude";
-    const MODULE: &'v str = "<repl>";
-    type Annex = ();
-    type Type = ();
-    type TypeAnnex = ();
-
-    fn display<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        Self::debug(this, strand, w)
-    }
-
-    fn get<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        field: Sym<'v, 'a>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        this.borrow(strand)?.root.index(strand, field, out)
-    }
-
-    fn set<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        field: Sym<'v, 'a>,
-        value: Slot<'v, '_>,
-    ) -> Result<'v, 's, ()> {
-        this.borrow(strand)?.root.assign(strand, field, value)
-    }
-
-    async fn iter<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        this.borrow(strand)?.root.iter(strand, out).await
-    }
-}
-
-async fn compile_and_run<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    path: &str,
-    source: &str,
-    out: Slot<'v, '_>,
-    prelude: &[PreludeImport],
-    strict: bool,
-) -> Result<'v, 's, ()> {
-    let dynamic = dynamic_prelude(strand).await?;
-    let bytecode = Bytecode::new(
-        load::compile(
-            strand,
-            Path::new(path),
-            source,
-            Some(&dynamic),
-            prelude,
-            Mode::Repl,
-            strict,
-        )
-        .await?,
-    );
-    bytecode.run(strand, out).await
-}
-
-async fn dynamic_prelude<'v, 's>(strand: &mut Strand<'v, 's>) -> Result<'v, 's, Vec<String>> {
-    let dynamic = strand
-        .with_slots(
-            async move |strand, [mut prelude, mut iter, mut pair, mut key]| {
-                let mut dynamic = Vec::new();
-                strand.import(DYNAMIC_PRELUDE, &mut prelude).await?;
-                prelude.iter(strand, &mut iter).await?;
-                while iter.next(strand, &mut pair).await? {
-                    pair.index(strand, 0, &mut key)?;
-                    dynamic.push(key.as_sym(strand).unwrap().as_str(strand).to_string())
-                }
-                Ok(dynamic)
-            },
-        )
-        .await?;
-    Ok(dynamic)
-}
+use crate::load;
 
 struct DoCandidate {}
 
@@ -139,8 +54,7 @@ impl Hint for DoHint {
 }
 
 struct DoHelper {
-    dynamic_prelude: Vec<String>,
-    prelude: Vec<PreludeImport>,
+    config: Config<'static>,
 }
 
 impl Completer for DoHelper {
@@ -154,12 +68,7 @@ impl Hinter for DoHelper {
 impl Highlighter for DoHelper {
     fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
         let mut tokens = Vec::new();
-        let unit = load::unit(
-            Path::new("<repl>"),
-            line,
-            Some(&self.dynamic_prelude),
-            &self.prelude,
-        );
+        let unit = self.config.unit(Path::new("<repl>"), line);
         unit.tokens(
             &mut |token: Token, span: Span, node: Option<NodeId>, context: Context| {
                 let kind = node.and_then(|id| unit.node(id)).map(|node| node.kind());
@@ -205,78 +114,169 @@ impl Helper for DoHelper {}
 
 fn create_editor(
     history_path: Option<&Path>,
-    prelude: &[PreludeImport],
+    config: Config<'static>,
 ) -> rustyline::Result<Editor<DoHelper, DefaultHistory>> {
     let builder = Builder::new();
-    let config = builder.build();
-    let mut editor = Editor::<DoHelper, DefaultHistory>::with_config(config).unwrap();
+    let editor_config = builder.build();
+    let mut editor = Editor::<DoHelper, DefaultHistory>::with_config(editor_config)?;
     if let Some(path) = history_path
         && path.exists()
         && let Err(e) = editor.load_history(path)
     {
         eprintln!("Warning: could not load history: {e}");
     }
-    editor.set_helper(Some(DoHelper {
-        dynamic_prelude: Default::default(),
-        prelude: prelude.to_vec(),
-    }));
+    editor.set_helper(Some(DoHelper { config }));
     Ok(editor)
 }
 
-async fn repl<'v, 's>(
-    st: &mut Strand<'v, 's>,
-    custom_prelude: &[PreludeImport],
-    strict: bool,
-    editor: &mut Editor<DoHelper, DefaultHistory>,
-) -> Result<'v, 's, ()> {
-    st.with_slots(
-        async |st,
-               [
-            mut prelude,
-            mut iter,
-            mut pair,
-            mut key,
-            mut value,
-            mut result,
-        ]| loop {
-            let line = match editor.readline("❯ ") {
-                Ok(line) => line,
-                Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => break Ok(()),
-                Err(e) => return Err(Error::runtime(st, e)),
-            };
-            editor.add_history_entry(&line).into_do(st)?;
-            match compile_and_run(
-                st,
-                "<repl>",
-                &line,
-                Slot::reborrow(&mut result),
-                custom_prelude,
-                strict,
-            )
-            .await
-            {
-                Err(e) if e.catchable() => {
-                    let _ = dolang_ext_shell::print_error_stderr(st, e).await;
-                    continue;
+/// Only owned native data crosses the blocking-task boundary.
+pub(crate) struct LineEditor {
+    editor: Option<Editor<DoHelper, DefaultHistory>>,
+    history_path: Option<PathBuf>,
+}
+
+impl<'v> Object<'v> for LineEditor {
+    const NAME: &'v str = "Editor";
+    const MODULE: &'v str = "_shell";
+    // Slot 0: prelude used to rebuild the highlighting configuration each turn.
+    const SLOTS: usize = 1;
+    type Annex = ();
+    type Type = ();
+    type TypeAnnex = dolang::runtime::Sym<'v, 'v>;
+
+    async fn new<'a, 's>(
+        this: Type<'v, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        args: dolang::runtime::Args<'v, 'a>,
+        mut out: dolang::runtime::Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let prelude_sym = *this.annex(strand.vm());
+        let ([path], [prelude]) = unpack!(strand, args, 1, 0, prelude_sym = None)?;
+        let history_path = if path.is_nil() {
+            None
+        } else {
+            Some(dolang_ext_shell::as_path(strand, &path).ok_or_else(|| {
+                Error::type_error(strand, "history path must be Str, fs.Path, or nil")
+            })?)
+        };
+        let mut config = load::compile_setup(&[], Mode::Repl);
+        config.recover(true).document(true);
+        if let Some(prelude) = prelude.as_ref().filter(|value| !value.is_nil()) {
+            apply_prelude_value(strand, &mut config, prelude)?;
+        }
+        let editor = create_editor(history_path.as_deref(), config).into_do(strand)?;
+        this.create(
+            strand,
+            Self {
+                editor: Some(editor),
+                history_path,
+            },
+            &mut out,
+        );
+        if let Some(prelude) = prelude {
+            this.cast(&out)
+                .unwrap()
+                .enter_sync(strand, |strand, editor| {
+                    Output::set(
+                        strand,
+                        Mut::slot_mut::<0>(&mut editor.borrow_mut_unwrap()),
+                        prelude,
+                    );
+                });
+        }
+        Ok(())
+    }
+
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        let eof = builder.sym("EOF");
+        let interrupted = builder.sym("INTERRUPTED");
+        builder
+            .method("readline", async move |this, strand, args, out| {
+                let ([prompt, names], []) = unpack!(strand, args, 2, 0)?;
+                let prompt = prompt
+                    .as_str(strand)
+                    .ok_or_else(|| Error::type_error(strand, "prompt must be Str"))?
+                    .to_string();
+                let names = names
+                    .as_array(strand)
+                    .ok_or_else(|| Error::type_error(strand, "names must be Array"))?;
+                let names = strand.with_slots_sync(|strand, [mut name]| {
+                    let mut result = Vec::new();
+                    for i in 0..names.len(strand)? {
+                        names.get(strand, i, &mut name)?;
+                        let text = if let Some(sym) = name.as_sym(strand) {
+                            sym.as_str(strand).to_owned()
+                        } else if let Some(text) = name.as_str(strand) {
+                            text.to_string()
+                        } else {
+                            return Err(Error::type_error(
+                                strand,
+                                "binding name must be Str or Sym",
+                            ));
+                        };
+                        result.push(text);
+                    }
+                    Ok(result)
+                })?;
+                let mut borrow = this.borrow_mut(strand)?;
+                let mut config = load::compile_setup(&[], Mode::Repl);
+                config.recover(true).document(true);
+                let prelude = Mut::slot::<0>(&borrow);
+                if !prelude.is_nil() {
+                    apply_prelude_value(strand, &mut config, prelude)?;
                 }
-                Err(e) => return Err(e),
-                Ok(()) => (),
-            }
-            st.import(DYNAMIC_PRELUDE, &mut prelude).await?;
-            result.iter(st, &mut iter).await?;
-            while iter.next(st, &mut pair).await? {
-                pair.index(st, 0, &mut key)?;
-                let key = key.as_sym(st).expect("module key was not a symbol?!");
-                pair.index(st, 1, &mut value)?;
-                if key.as_str(st) == "_" && !value.is_nil() {
-                    eprintln!("↪ {}", value.to_debug(st)?);
+                config
+                    .prelude()
+                    .import_items("$dynamic$")
+                    .items(&names)
+                    .commit();
+                let mut editor = borrow
+                    .editor
+                    .take()
+                    .ok_or_else(|| Error::concurrency_msg(strand, "editor is already reading"))?;
+                editor.helper_mut().unwrap().config = config;
+                drop(borrow);
+
+                // Rustyline cannot be aborted from another thread. Keep the editor
+                // owned by this call until it returns, even after cancellation.
+                let result = strand
+                    .with_interrupt_mask(InterruptMask::all(), async |strand| {
+                        tokio::task::spawn_blocking(move || {
+                            let result = editor.readline(&prompt).and_then(|line| {
+                                editor.add_history_entry(&line)?;
+                                Ok(line)
+                            });
+                            (editor, result)
+                        })
+                        .await
+                        .into_do(strand)
+                    })
+                    .await?;
+                let (editor, result) = result;
+                this.borrow_mut(strand)?.editor = Some(editor);
+                match result {
+                    Ok(line) => Output::set(strand, out, line.as_str()),
+                    Err(ReadlineError::Eof) => Output::set(strand, out, eof),
+                    Err(ReadlineError::Interrupted) => Output::set(strand, out, interrupted),
+                    Err(error) => return Err(Error::runtime(strand, error)),
                 }
-                prelude.set(st, key, &mut value)?;
-            }
-            editor.helper_mut().unwrap().dynamic_prelude = dynamic_prelude(st).await?;
-        },
-    )
-    .await
+                Ok(())
+            })
+            .method("save_history", async |this, strand, args, out| {
+                let ([], []) = unpack!(strand, args, 0, 0)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                let path = borrow.history_path.clone();
+                let editor = borrow
+                    .editor
+                    .as_mut()
+                    .ok_or_else(|| Error::concurrency_msg(strand, "editor is already reading"))?;
+                if let Some(path) = path {
+                    save_history(editor, &path);
+                }
+                Output::set(strand, out, Nil);
+                Ok(())
+            })
+    }
 }
 
 fn save_history(editor: &mut Editor<DoHelper, DefaultHistory>, history_path: &Path) {
@@ -289,21 +289,4 @@ fn save_history(editor: &mut Editor<DoHelper, DefaultHistory>, history_path: &Pa
     if let Err(e) = editor.save_history(history_path) {
         eprintln!("Warning: could not save history: {e}");
     }
-}
-
-pub(crate) async fn main<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    custom_prelude: &[PreludeImport],
-    strict: bool,
-) -> Result<'v, 's, ()> {
-    let dirs = load::dirs(strand)?;
-    let history_path = dirs
-        .state_dir()
-        .unwrap_or_else(|| dirs.data_local_dir())
-        .join("history");
-    let mut editor = create_editor(Some(&history_path), custom_prelude).into_do(strand)?;
-
-    let res = repl(strand, custom_prelude, strict, &mut editor).await;
-    save_history(&mut editor, &history_path);
-    res
 }

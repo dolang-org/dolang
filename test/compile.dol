@@ -1257,6 +1257,16 @@ def prelude_array_read_view()
     compile.compile "m.dol" "nil" prelude: {std: ("Int",)}
 
 #[test]
+def prelude_unaliased_module_and_items()
+  import load
+  let unit = compile.compile "m.dol" "[std.Int, Integer]"
+    prelude: {"std", std: {Int: "Integer"}}
+  assert_no_errors $unit
+  assert_eq (load.run(unit.emit())) [Int, Int]
+  assert_throws $std.TypeError do
+    compile.compile "m.dol" "nil" prelude: {42}
+
+#[test]
 def type_only_prelude_configuration()
   import load
   for binding = [["@Custom"], [sym("@Custom")], {"@Export": "Custom"}]

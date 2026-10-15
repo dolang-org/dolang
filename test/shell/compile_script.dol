@@ -1,12 +1,14 @@
 import load
   _shell:
-    - compile_script
+    - compile
   fs:
     - with_temp_dir
   shell:
     - exe
   test:
+    - assert
     - assert_eq
+    - assert_throws
     - assert_type
     - test
 
@@ -16,7 +18,7 @@ def compiles_a_script_to_bytecode()
     let script = (dir / "script.dol")
     script.write "(40 + 2)\n"
 
-    let bytecode = compile_script $script
+    let bytecode = compile $script
     assert_type $Bin $bytecode
     assert_eq (load.run bytecode) 42
 
@@ -25,17 +27,17 @@ def passes_through_precompiled_bytecode()
   with_temp_dir do |dir|
     let script = (dir / "script.dol")
     script.write "(40 + 2)\n"
-    let bytecode = compile_script $script
+    let bytecode = compile $script
 
     # Recognized by extension...
     let by_extension = (dir / "script.dolc")
     by_extension.write $bytecode
-    assert_eq (compile_script by_extension) $bytecode
+    assert_eq (compile by_extension) $bytecode
 
     # ...and by magic prefix, whatever the extension.
     let by_magic = (dir / "script.bytes")
     by_magic.write $bytecode
-    assert_eq (compile_script by_magic) $bytecode
+    assert_eq (compile by_magic) $bytecode
 
 #[test]
 def runs_a_precompiled_script()
@@ -50,7 +52,46 @@ def runs_a_precompiled_script()
       (Path $shell.args[0]).write "ran"
 
     let compiled = (dir / "script.dolc")
-    compiled.write (compile_script script)
+    compiled.write (compile script)
 
     run $exe $compiled $output
     assert_eq $output.read() "ran"
+
+#[test]
+def explicit_source_and_modes()
+  let script = compile "<script>" "(40 + 2)"
+  assert_eq (load.run script) 42
+  let module = compile "<module>" "pub let answer = 42" mode: example
+  let result = load.run $module
+  assert_eq $result.answer 42
+  let turn = compile "<repl>" "let answer = 42" mode: :REPL:
+  let result = load.run $turn
+  assert_eq $result.answer 42
+  assert_throws $std.ValueError do compile "<repl>" mode: :REPL:
+  assert_throws $std.TypeError do compile "<script>" "nil" mode: 42
+
+#[test]
+def supplied_source_is_part_of_cache_identity()
+  assert_eq (load.run(compile("<same-path>", "41"))) 41
+  assert_eq (load.run(compile("<same-path>", "42"))) 42
+
+#[test]
+def prelude_and_module_name_are_part_of_cache_identity()
+  let first = compile "<same-prelude-path>" "value"
+    prelude: {std: {Int: "value"}}
+  let second = compile "<same-prelude-path>" "value"
+    prelude: {std: {Str: "value"}}
+  assert_eq (load.run first) $Int
+  assert_eq (load.run second) $Str
+
+  let source = "pub def f()\n  42\n"
+  let one = compile "<module>" $source mode: one
+  let two = compile "<module>" $source mode: two
+  assert (one != two)
+
+#[test]
+def strict_compilation_rejects_warnings()
+  let source = "return nil\necho unreachable\n"
+  let _ = compile "<warnings>" $source strict: false
+  assert_throws $std.CompileError do
+    compile "<warnings>" $source strict: true
