@@ -1,0 +1,44 @@
+# dolang: strict
+# The styling functions take the style options as keyword arguments, and
+# `echo` prints any.
+import term
+
+pub def fits()
+  let warning = term.Style fg: :YELLOW: bold: true
+  let _s @ term.Style = warning fg: :RED: underline: true
+  let _t @ term.Text = warning "Warning" 3
+  let _u @ term.Text = term.text "x" fg: (1, 2, 3) bg: 200
+  term.print "x" 1 fg: :BRIGHT_GREEN: dim: :INHERIT:
+  term.echo status: ready count: 3
+
+pub def misfits()
+  let _e = term.Style colour: :RED:
+  # error: the callee takes no such argument
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _e = term.Style colour: :RED:
+  #    |                               ^^^^^
+  let _f = term.text "x" bold: false
+  # error: expected `term.Attribute`, found `false`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _f = term.text "x" bold: false
+  #    |                                ^^^^^
+  term.print "x" status: ready
+  # error: the callee takes no such argument
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   term.print "x" status: ready
+  #    |                          ^^^^^
+  let _g = term.Style fg: :PINK:
+  # error: expected `term.Color`, found `:PINK:`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _g = term.Style fg: :PINK:
+  #    |                           ^^^^^^
+  let _h = term.Style "x"
+# error: the callee takes no such argument
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _h = term.Style "x"
+#    |                       ^^^

@@ -33,6 +33,25 @@
 # whose value is neither `true` nor `:INHERIT:`, an unknown color name, a
 # numeric value out of range, or an RGB value that is not three integers.
 
+# A color [style option](term.style-options).
+pub @let Color = (:BLACK: | :RED: | :GREEN: | :YELLOW: | :BLUE: | :MAGENTA: | :CYAN: | :WHITE: | :BRIGHT_BLACK: | :BRIGHT_RED: | :BRIGHT_GREEN: | :BRIGHT_YELLOW: | :BRIGHT_BLUE: | :BRIGHT_MAGENTA: | :BRIGHT_CYAN: | :BRIGHT_WHITE: | :INHERIT: | Int | (Int, Int, Int) | Array[Int])
+
+# An attribute [style option](term.style-options).
+pub @let Attribute = (true | :INHERIT:)
+
+# The [style options](term.style-options), as keyword arguments.
+pub @let StyleOptions = $
+  ?fg: Color
+  ?bg: Color
+  ?bold: Attribute
+  ?dim: Attribute
+  ?italic: Attribute
+  ?underline: Attribute
+  ?blink: Attribute
+  ?reverse: Attribute
+  ?hidden: Attribute
+  ?strikethrough: Attribute
+
 # The console interface: where human-readable output goes.
 #
 # `Console` is abstract. The implementations provided are the host console
@@ -314,9 +333,13 @@ pub class Style: Func
   pub def (init)
     self
     # The [style options](term.style-options).
-    ...options @ Value
+    ...options @ StyleOptions
   do
     ...
+
+  @def (call) self ...options @ StyleOptions -> Style
+
+  @def (call) self value @ Value ...args @ {*Value, ...StyleOptions} -> Text
 
   # Applies or derives the saved style.
   #
@@ -342,8 +365,8 @@ pub class Style: Func
   pub def (call)
     self
     # Values converted to display strings.
-    ...args @ Value
-  do -> Text
+    ...args @ {*Value, ...StyleOptions}
+  do -> (Text | Style)
     ...
 
 # Validated terminal presentation.
@@ -656,7 +679,7 @@ do -> Text
 # ```
 pub def print
   # Values converted to display strings.
-  ...args @ Value
+  ...args @ {*Value, ...StyleOptions}
 do
   ...
 
@@ -705,7 +728,7 @@ do -> Str
 # ```
 pub def text
   # Values converted to display strings.
-  ...args @ Value
+  ...args @ {*Value, ...StyleOptions}
 do -> Text
   ...
 
