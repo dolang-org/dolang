@@ -1061,6 +1061,14 @@ pub class Path
   do -> Path
     ...
 
+  # The method form of [`fs.shorten`](fs.shorten).
+  pub def shorten
+    self
+    # Base directory. Defaults to the current working directory.
+    base @ (Str | Path) = nil
+  do -> Path
+    ...
+
   # The method form of [`fs.exists`](fs.exists).
   pub def exists self -> Bool
     ...
@@ -2483,6 +2491,32 @@ pub def relative
   path @ (Str | Path)
   # Base directory. Defaults to
   # the current working directory.
+  base @ (Str | Path) = nil
+do -> Path
+  ...
+
+# Shortens a path for display relative to a base directory.
+#
+# Uses the lexical semantics of [`relative`](fs.relative), returning the relative
+# path only when its string representation is strictly shorter than the input.
+# Otherwise returns the original path unchanged, including when the roots are
+# incompatible or unresolved, or the representations have equal lengths.
+# Lengths are measured in UTF-8 bytes. Neither path needs to exist.
+#
+# ## Errors
+#
+# Raises `TypeError` if the path types cannot be converted to a common syntax.
+#
+# ## Example
+#
+# ```
+# echo (shorten "/project/src/main.dol" "/project")  # src/main.dol
+# echo (shorten "/a/b" "/x/y/z")                  # /a/b
+# ```
+pub def shorten
+  # Path to shorten.
+  path @ (Str | Path)
+  # Base directory. Defaults to the current working directory.
   base @ (Str | Path) = nil
 do -> Path
   ...

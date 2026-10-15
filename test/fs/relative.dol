@@ -12,6 +12,7 @@ import sys
   fs:
     - Path
     - relative
+    - shorten
     - create_dir
     - symlink_dir
 import fs.unix: unix_fs
@@ -120,3 +121,52 @@ def lexical_symlinks()
   let target = Path "real"
   check $target $base (Path "../real")
   check $target.canonical() $base.canonical() (Path "..")
+
+#[test]
+def shorten_paths()
+  for path base expected = [
+    ("/project/src/main.dol", "/project", "src/main.dol"),
+    ("/a/b", "/x/y/z", "/a/b"),
+    ("/a/b", "/a/c", "/a/b"),
+    ("/a/./b/", "/x/y/z", "/a/./b/"),
+    ("/a/b", "/a/b", "."),
+    ("/", "/", "/"),
+    ("/a/./x/../b/c/", "/a/b", "c")
+  ]
+    let path = unix_fs.Path $path
+    let base = unix_fs.Path $base
+    let expected = unix_fs.Path $expected
+    assert_eq (shorten path base) $expected
+    assert_eq $path.shorten(base) $expected
+    assert_type (type expected) (shorten path base)
+
+  for path base expected = [
+    (r"C:\project\src\main.dol", r"C:\project", r"src\main.dol"),
+    (r"C:\a", r"D:\a", r"C:\a"),
+    (r"C:\a", r"C:\x\y\z", r"C:\a"),
+    (r"\\server\one\a", r"\\server\two\a", r"\\server\one\a"),
+  ]
+    let path = windows_fs.Path $path
+    let base = windows_fs.Path $base
+    let expected = windows_fs.Path $expected
+    assert_eq (shorten path base) $expected
+    assert_eq $path.shorten(base) $expected
+    assert_type (type expected) (shorten path base)
+
+#[test]
+#[vfs]
+def shorten_current_directory()
+  let cwd = cd()
+  assert_eq (shorten (cwd / "missing/file")) (Path "missing/file")
+  assert_eq $(cwd / "missing/file").shorten() (Path "missing/file")
+  assert_eq (shorten "missing/file") (Path "missing/file")
+  assert_eq (shorten "a/../x" ".") (Path "x")
+  assert_eq (shorten "a" "x/y/z") (Path "a")
+  assert_eq (shorten "" "") (Path "")
+  if (sys.os_info().family == :WINDOWS:)
+    let other = (cwd.disk == "Z" && "Y" || "Z")
+    let path = Path "$other:child"
+    assert_eq $path.shorten() $path
+  assert_throws $TypeError do shorten 42
+  assert_throws $TypeError do (Path "a").shorten 42
+  assert_throws $TypeError do shorten (unix_fs.Path "/a") (windows_fs.Path r"C:\a")

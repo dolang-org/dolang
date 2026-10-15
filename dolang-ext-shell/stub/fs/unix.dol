@@ -206,6 +206,9 @@ pub class Path: fs.Path
   pub def relative self base @ (Str | fs.Path) = nil -> Path
     ...
 
+  pub def shorten self base @ (Str | fs.Path) = nil -> Path
+    ...
+
   pub def read_link self -> Path
     ...
 
