@@ -1927,7 +1927,8 @@ fn a_mapping_has_packs_of_schemas_and_a_type_pattern() {
 fn restrictions_lower_and_imply_key_bounds() {
     let mut db = Database::new();
     let designate = |db: &mut Database, intrinsic, name| {
-        let (id, alias, source) = declare(db, DeclKind::OpaqueAlias, name);
+        let (id, alias, mut source) = declare(db, DeclKind::OpaqueAlias, name);
+        source.result_kind = Kind::Schema;
         db.set_intrinsic(intrinsic, alias);
         db.populate(id, definition(source, alias));
         alias

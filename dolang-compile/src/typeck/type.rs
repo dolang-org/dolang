@@ -1332,7 +1332,11 @@ impl Database {
             self.intrinsic(intrinsic).is_none(),
             "intrinsic already set: {intrinsic:?}"
         );
-        self.expect_kind(ty, Kind::Type);
+        let kind = match intrinsic {
+            Intrinsic::Deletable | Intrinsic::Clearable => Kind::Schema,
+            _ => Kind::Type,
+        };
+        self.expect_kind(ty, kind);
         *self.local_mut().intrinsics.slot_mut(intrinsic) = Some(ty);
     }
 

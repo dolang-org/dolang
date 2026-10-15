@@ -29,7 +29,7 @@ use crate::typeck::r#type::UnitSpan;
 
 use super::r#type::{
     Argument, Binder, Binding, BoundRef, Database, DeclId, DeclKind, Element, Function, Intrinsic,
-    Kind, Literal, MemberKey, Multiplicity, Promotion, Rest, SchemaItem, SymbolId, Type, TypeId,
+    Kind, Literal, MemberKey, Multiplicity, Promotion, Rest, Restriction, SchemaItem, SymbolId, Type, TypeId,
     UnionMember, Variance,
 };
 
@@ -252,6 +252,11 @@ pub(crate) enum Contradiction {
     Conflict,
     /// An item projection's key has a member its schema doesn't admit
     Unadmitted(TypeId),
+    /// A restricted schema's item admits only one, where the restriction
+    /// requires it to admit none, by the key that selects it
+    Required(TypeId),
+    /// An `InsertItem`'s key selects an item that doesn't admit repetition
+    Unrepeatable(TypeId),
     /// A mapping's packs have items that don't correspond, by count,
     /// multiplicity or form
     MappedPacks,
@@ -1216,11 +1221,21 @@ impl<'db> Solver<'db> {
                     self.reify_scoped(view.child(child), local + groups, depth + 1)
                 })?;
                 let reified = self.db.intern(mapped);
-                // Item projections are evaluated where they're closed
+                // Item projections and restrictions are evaluated where they're
+                // closed
                 if local == 0
                     && let Ok(Some(evaluated)) = self.evaluate_items(reified)
                 {
                     return Ok(evaluated);
+                }
+                if local == 0
+                    && let Type::Restricted {
+                        schema,
+                        restriction,
+                    } = *self.db.ty(reified)
+                    && let Ok(schema) = self.restricted(schema, restriction)
+                {
+                    return Ok(schema);
                 }
                 Ok(reified)
             }
@@ -2572,6 +2587,29 @@ impl<'db> Solver<'db> {
                         Err(residual) => return Err(residual.into()),
                     }
                 }
+                // A restriction is evaluated once its schema and key are
+                // substituted
+                Type::Restricted { .. } if view.environment != self.empty_environment() => {
+                    match self.reify(term) {
+                        Ok(reified) => term = self.closed(reified),
+                        // A skolem key is known only by its bounds
+                        Err(Residual::Escape) => match self.evaluate_skolem_restriction(view)? {
+                            Some(schema) => term = self.closed(schema),
+                            None => return Ok(Head::Structural(view)),
+                        },
+                        Err(residual) => return Err(residual.into()),
+                    }
+                }
+                // A restriction that holds is its schema. One that can't be
+                // evaluated relates only as itself.
+                Type::Restricted {
+                    schema,
+                    restriction,
+                } => match self.restricted(schema, restriction) {
+                    Ok(schema) => term = self.closed(schema),
+                    Err(Issue::Residual(_)) => return Ok(Head::Structural(view)),
+                    Err(issue) => return Err(issue),
+                },
                 Type::Union(ref members)
                     if members.iter().any(|member| member.projected().is_some()) =>
                 {
@@ -2616,8 +2654,9 @@ impl<'db> Solver<'db> {
         Ok(changed.then(|| self.db.intern(Type::Union(exposed.into()))))
     }
 
-    /// A closed schema with each transparent declaration it is or includes
-    /// replaced by what it stands for, or `None` if it has none. A schema
+    /// A closed schema with each transparent declaration and restriction it is
+    /// or includes replaced by what it stands for, or `None` if it has none. A
+    /// restriction that doesn't hold is its issue. A schema
     /// included along its own path of inclusions is recursive, which
     /// well-formedness rejects, but this doesn't rely on it.
     pub(super) fn exposed_schema(&self, schema: TypeId) -> Result<Option<TypeId>, Issue> {
@@ -2633,6 +2672,19 @@ impl<'db> Solver<'db> {
         self.depth(path.len())?;
         if path.contains(&schema) {
             return Err(Residual::Recursive.into());
+        }
+        // A restriction that holds is its schema, as a specialized receiver's
+        // restriction of the restricted class binder is
+        if let Type::Restricted {
+            schema: restricted,
+            restriction,
+        } = *self.db.ty(schema)
+        {
+            let held = self.restricted(restricted, restriction)?;
+            path.push(schema);
+            let exposed = self.expose_schema(held, path);
+            path.pop();
+            return Ok(Some(exposed?.unwrap_or(held)));
         }
         let mut exposed = None;
         let mut current = schema;

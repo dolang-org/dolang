@@ -1128,6 +1128,14 @@ impl<'a> Flow<'a, '_> {
                 let key = self.subject(key);
                 return Problem::Unadmitted { span, key };
             }
+            Contradiction::Required(key) => {
+                let key = self.subject(key);
+                return Problem::Required { span, key };
+            }
+            Contradiction::Unrepeatable(key) => {
+                let key = self.subject(key);
+                return Problem::Unrepeatable { span, key };
+            }
             _ => {}
         }
         let fallback = Problem::Call {
