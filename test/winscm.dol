@@ -143,41 +143,18 @@ def scratch_service block ...rest
       finally
         service.close()
 
-# Wine supports immediate matching notifications, but not future transitions.
-def observe_start service
-  let wine = sys.os_info().is_wine
-  let mask = if wine
-    [:START_PENDING:, :RUNNING:, :STOPPED:]
-  else
-    [:START_PENDING:, :RUNNING:]
-  let entered ready = strand.channel()
-  let worker = strand.spawn do
-    entered.put true
-    service.wait_for_status_change $mask
-  try
-    ready.next()
-    time.sleep 0.05
-    if !wine
-      assert (!worker.done) "notification resolved before the service started"
-    # The dummy executable does not implement the service-control protocol.
-    try
-      service.start()
-    catch sys.Error: _
-      nil
-    let status = time.timeout 10 do worker.join()
-    if !wine
-      assert (status.current_state != :STOPPED:)
-    status
-  finally
-    worker.cancel()
-    time.timeout 10 do worker.wait()
-
 #[test]
 #[vfs]
 #[serialized_scm]
 #[scratch_service]
 def status_change_notification :service
-  observe_start $service
+  # A matching current state delivers a notification immediately. Starting
+  # cmd.exe only produces a fleeting transition, and a worker reaching the
+  # wait call does not mean the backend has registered its notification yet.
+  let status = time.timeout 10 do
+    service.wait_for_status_change [:STOPPED:]
+  assert_type $winscm.Status $status
+  assert_eq $status.current_state :STOPPED:
 
 #[test]
 #[vfs]
