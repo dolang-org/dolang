@@ -436,7 +436,7 @@ pub def unknown_key d @ Dict[Sym, Str] k
   let _ = d.get $k
 
 # A dict's methods that take a key select by it, as indexing does
-pub def dict_methods d @ Dict[{a: Int, ?b: Str}] k @ (:a: | :b:)
+pub def dict_methods d @ Dict[{*a: Int, ?b: Str}] k @ (:a: | :b:)
   # A binder nothing determines takes its default: `get`'s `nil`, `pop`'s
   # `Never`
   let _ = d.get :a:
@@ -583,7 +583,7 @@ pub class Slots[S @ {...}]
 pub def assigned_items
   d @ Dict[Str, Array[(Int | Str)]]
   s @ Slots[{*(Str): Array[(Int | Str)]}]
-  r @ Dict[{a: Array[(Int | Str)], b: Int}]
+  r @ Dict[{*a: Array[(Int | Str)], b: Int}]
 do
   d["k"] = [1]
   d.insert "k" [1]

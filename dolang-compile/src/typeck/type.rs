@@ -542,7 +542,11 @@ impl Type {
             Self::Restricted {
                 schema,
                 restriction,
-            } => restriction.key().map(|key| (*schema, key)).into_iter().collect(),
+            } => restriction
+                .key()
+                .map(|key| (*schema, key))
+                .into_iter()
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -594,10 +598,9 @@ impl Type {
                     })
             }
             (Self::Map { packs: a, .. }, Self::Map { packs: b, .. }) => a.len() == b.len(),
-            (
-                Self::Restricted { restriction: a, .. },
-                Self::Restricted { restriction: b, .. },
-            ) => discriminant(a) == discriminant(b),
+            (Self::Restricted { restriction: a, .. }, Self::Restricted { restriction: b, .. }) => {
+                discriminant(a) == discriminant(b)
+            }
             (
                 Self::Overloaded {
                     overloads: a,

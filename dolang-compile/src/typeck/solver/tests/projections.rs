@@ -282,7 +282,11 @@ fn mutators_check_their_items_multiplicities() {
         (Err(Unrepeatable(x)), Ok(()), Ok(())),
         (Ok(int), Ok(()), Ok(())),
         // A position is never inserted or deleted
-        (Err(Unrepeatable(zero)), Err(Required(zero)), Err(Required(zero))),
+        (
+            Err(Unrepeatable(zero)),
+            Err(Required(zero)),
+            Err(Required(zero)),
+        ),
         (Err(Unrepeatable(three)), Err(Required(three)), Ok(())),
         // An included unknown schema may hold anything, but not instead of
         // a required item. What fits its items, as what fits `AssignItem`'s,
@@ -296,7 +300,11 @@ fn mutators_check_their_items_multiplicities() {
     for ((schema, key, insertion), (insert, delete, clear)) in insertions.into_iter().zip(expected)
     {
         let inserted = s.evaluate_items(insertion).map(Option::unwrap);
-        assert_eq!(inserted, insert.map_err(Issue::Contradiction), "{schema:?} {key:?}");
+        assert_eq!(
+            inserted,
+            insert.map_err(Issue::Contradiction),
+            "{schema:?} {key:?}"
+        );
         let restricted = |restriction| s.restricted(schema, restriction).map(|_| ());
         assert_eq!(
             restricted(Restriction::Deletable(key)),
@@ -336,7 +344,10 @@ fn a_rigid_key_deletes_where_its_bound_does() {
     let admitted = generic(db, vec![binder(ab)], db.top());
     let required = generic(db, vec![binder(ac)], db.top());
     db.seal();
-    assert_eq!(under(db, admitted, schema, deletable).status, Status::Proven);
+    assert_eq!(
+        under(db, admitted, schema, deletable).status,
+        Status::Proven
+    );
     let outcome = under(db, required, schema, deletable);
     assert!(
         contradiction(&outcome, Contradiction::Required(c)),

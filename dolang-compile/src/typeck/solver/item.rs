@@ -402,9 +402,8 @@ impl Solver<'_> {
                 .db
                 .intrinsic(Intrinsic::Int)
                 .ok_or(Residual::MissingIntrinsic(Intrinsic::Int))?;
-            domains.extend(
-                (promoted.varying.iter()).map(|&value| (int, value, Occurrence::Position)),
-            );
+            domains
+                .extend((promoted.varying.iter()).map(|&value| (int, value, Occurrence::Position)));
         }
         for &(multiplicity, key, value) in &promoted.keyed {
             let occurrence = Occurrence::Keyed(multiplicity);

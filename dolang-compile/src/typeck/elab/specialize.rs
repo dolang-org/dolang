@@ -16,7 +16,7 @@
 use super::{BadReceiver, DeclNode, Diag, ParamTy, Slot, SpecializedReceiver, Tables, UnitDiag};
 use crate::typeck::{
     solver::{Gas, Reach, Solver},
-    r#type::{Binder, Database, DeclId, Element, Scope, Type, TypeId},
+    r#type::{Binder, Database, DeclId, Element, Function, Scope, Type, TypeId},
 };
 
 /// Specialize every method with an annotated receiver.
@@ -163,9 +163,29 @@ fn rewrite(db: &mut Database, method: DeclId, slots: &[usize], args: Vec<TypeId>
             ..binder.clone()
         })
         .collect();
+    let receiver = receiver(db, method).expect("a specialized method has a receiver");
+    let body = replace(*body);
+    let body = with_receiver(db, body, receiver);
     let ty = db.intern(Type::Quantified {
         binders: binders.into(),
-        body: replace(*body),
+        body,
     });
     db.retype(method, ty);
+}
+
+/// A method's function type with its receiver replaced by `receiver`
+fn with_receiver(db: &mut Database, body: TypeId, receiver: TypeId) -> TypeId {
+    let Type::Function(function) = db.ty(body) else {
+        unreachable!()
+    };
+    let Type::Schema(items) = db.ty(function.params) else {
+        unreachable!()
+    };
+    let mut items = items.to_vec();
+    items[0].element = Element::Positional(receiver);
+    let function = Function {
+        params: db.intern(Type::Schema(items.into())),
+        ..function.clone()
+    };
+    db.intern(Type::Function(function))
 }

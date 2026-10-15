@@ -729,6 +729,13 @@ impl Solver<'_> {
                 self.derive(obligation, self.closed(backing), expected, step);
                 Ok(())
             }
+            // A restriction is its schema or an error, so it's below whatever
+            // its schema is
+            (&Type::Restricted { schema, .. }, _) => {
+                let schema = Term::View(TypeView { ty: schema, ..a });
+                self.derive(obligation, schema, expected, Step::Restricted);
+                Ok(())
+            }
             _ => Err(Residual::Unsupported("these structural types").into()),
         }
     }

@@ -2096,6 +2096,8 @@ pub class Dict[S @ {...}]: BaseDict[S] @Assign[S]
   pub def (init) self source @ Spread[S]
     ...
 
+  @def clear self @ Dict[Clearable[S]]
+
   #
   # Removes all key-value pairs.
   #
@@ -2112,6 +2114,8 @@ pub class Dict[S @ {...}]: BaseDict[S] @Assign[S]
   # [`BaseDict.copy`](std.BaseDict.copy) does.
   pub def copy self -> Dict[S]
     ...
+
+  @def delete[K] self @ Dict[Deletable[S, K]] key @ K -> Bool
 
   #
   # Indicates whether any values were removed. Removes all values for the key.
@@ -2142,9 +2146,17 @@ pub class Dict[S @ {...}]: BaseDict[S] @Assign[S]
     # the key
     key @ K
     # the value
-    value @ AssignItem[S, K]
+    value @ InsertItem[S, K]
   do
     ...
+
+  @def pop[K, D = Never]
+    self @ Dict[Deletable[S, K]]
+    key @ K
+    instance @ Int = nil
+    :default @ D = nil
+    :else @ (() -> D) = nil
+  do -> (IndexItem[S, K] | D)
 
   #
   # Removes and returns a value for a key. Raises an error if the key is missing
@@ -2156,7 +2168,7 @@ pub class Dict[S @ {...}]: BaseDict[S] @Assign[S]
   # ## Example
   #
   # ```
-  # let d = {a: 1, b: 2}
+  # let d @ Dict[Str, Str] = {}
   # d.insert "multi" "first"
   # d.insert "multi" "second"
   #

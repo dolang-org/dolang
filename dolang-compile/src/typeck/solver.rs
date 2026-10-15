@@ -29,8 +29,8 @@ use crate::typeck::r#type::UnitSpan;
 
 use super::r#type::{
     Argument, Binder, Binding, BoundRef, Database, DeclId, DeclKind, Element, Function, Intrinsic,
-    Kind, Literal, MemberKey, Multiplicity, Promotion, Rest, Restriction, SchemaItem, SymbolId, Type, TypeId,
-    UnionMember, Variance,
+    Kind, Literal, MemberKey, Multiplicity, Promotion, Rest, Restriction, SchemaItem, SymbolId,
+    Type, TypeId, UnionMember, Variance,
 };
 
 /// A member of a generic class's object: its class, the class a private one is
@@ -332,6 +332,9 @@ pub(crate) enum Step {
     Implementation,
     /// A metatype related as the `Type[C]` it reaches
     Metatype,
+    /// A restriction that can't be evaluated reduced to its schema, which it
+    /// is if it holds
+    Restricted,
 }
 
 impl Step {
@@ -2673,8 +2676,7 @@ impl<'db> Solver<'db> {
         if path.contains(&schema) {
             return Err(Residual::Recursive.into());
         }
-        // A restriction that holds is its schema, as a specialized receiver's
-        // restriction of the restricted class binder is
+        // A restriction that holds is its schema
         if let Type::Restricted {
             schema: restricted,
             restriction,
