@@ -110,7 +110,11 @@ def listening dir block :stale = false
         block $socket $process
       finally
         if socket.exists()
-          process.signal :TERM:
+          # The last client can stop the listener after the socket check.
+          try
+            process.signal :TERM:
+          catch sys.NotFoundError: _
+            nil
 
 #[test]
 #[parametrize signal: [:INT:, :TERM:]]
