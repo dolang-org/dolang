@@ -1,0 +1,59 @@
+# dolang: strict
+# Instantiating a class gives its instance: the receiver of the `(init)`
+# signature chosen, which a `@def` may specialize, and the class itself under an
+# inherited one. A class with rest binders is constructed as any other.
+
+pub class Pack[*Ts]
+  field items @ std.Phantom[...Ts]
+
+pub class Keyed[...Ts]
+  field items @ std.Phantom[...Ts]
+
+pub class Box[T]
+  field item @ std.Phantom[T]
+
+  @def (init) self @ Box[Int] text @ Str
+
+  @def (init)[U] self @ Box[U] items @ Array[U]
+
+  def (init) _self _source @ Value
+    nil
+
+pub class Many[*Ts]
+  field items @ std.Phantom[...Ts]
+
+  @def (init)[U] self @ Many[...U] items @ Array[U]
+
+  def (init) _self _items @ Value
+    nil
+
+pub class Labeled: Box[Str]
+
+pub def constructions()
+  let _ = Pack()
+  #   ^: flow m.Pack[...Value]
+  let _ = Keyed()
+  #   ^: flow m.Keyed[...Value, ...{*(std.Sym): Value}]
+  let _ = Box "a"
+  #   ^: flow m.Box[std.Int]
+  let _ = Box [1]
+  #   ^: flow m.Box[std.Int]
+  let _ = Many [1]
+  #   ^: flow m.Many[...std.Int]
+  # An inherited `(init)`'s receiver is the superclass, so it gives the class
+  let _ = Labeled "a"
+  #   ^: flow m.Labeled
+
+pub def misfits()
+  let _p @ Str = Pack()
+  # error: `m.Pack[...Value]` does not fit the annotation `std.Str`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _p @ Str = Pack()
+  #    |                  ^^^^^^
+  let _m @ Many[Int, Int] = Many [1, 2]
+# error: `m.Many[...std.Int]` does not fit the annotation `m.Many[std.Int, std.Int]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _m @ Many[Int, Int] = Many [1, 2]
+#    |                             ^^^^^^^^^^^

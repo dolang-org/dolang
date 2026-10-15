@@ -198,19 +198,25 @@ impl Solver<'_> {
             Ok(Lookup::Dynamic | Lookup::Fallback { .. }) | Err(_) => return None,
         };
         // `(init)`'s signature taking the arguments a class object is called
-        // with, and giving the instance
+        // with, and giving the instance: its receiver, which an overload may
+        // specialize, unless it's inherited
         let constructor = |signature: Term| {
             let signature = solver.reify(signature).ok()?;
             let (binders, body) = match db.ty(signature) {
                 Type::Quantified { binders, body } => (Some(binders.clone()), *body),
                 _ => (None, signature),
             };
-            let (function, _) = drop_receiver(db, body)?;
+            let (function, receiver) = drop_receiver(db, body)?;
             let Type::Function(function) = db.ty(function) else {
                 unreachable!("a function without its receiver")
             };
+            let own = match *db.ty(receiver) {
+                Type::Decl(id) => id == class,
+                Type::Apply { base, .. } => *db.ty(base) == Type::Decl(class),
+                _ => false,
+            };
             let function = db.intern(Type::Function(Function {
-                result: instance,
+                result: if own { receiver } else { instance },
                 ..function.clone()
             }));
             abstracted(match binders {
