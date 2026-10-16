@@ -93,7 +93,8 @@ use windows_sys::{
             },
         },
         UI::Shell::{
-            FOLDERID_LocalAppData, FOLDERID_Profile, KF_FLAG_DONT_VERIFY, SHGetKnownFolderPath,
+            FOLDERID_LocalAppData, FOLDERID_Profile, FOLDERID_RoamingAppData, KF_FLAG_DONT_VERIFY,
+            SHGetKnownFolderPath,
         },
     },
     core::GUID,
@@ -1082,6 +1083,29 @@ impl Direct {
             Some(app) => base.join(app).join("Cache"),
             None => base,
         })
+    }
+
+    pub(super) fn data_dir_platform(
+        app: Option<&str>,
+        _env: &HashMap<String, Option<String>>,
+        local: bool,
+    ) -> Result<PathBuf> {
+        let base = Self::known_folder(if local {
+            &FOLDERID_LocalAppData
+        } else {
+            &FOLDERID_RoamingAppData
+        })?;
+        Ok(match app {
+            Some(app) => base.join(app).join("data"),
+            None => base,
+        })
+    }
+
+    pub(super) fn state_dir_platform(
+        _app: Option<&str>,
+        _env: &HashMap<String, Option<String>>,
+    ) -> Result<Option<PathBuf>> {
+        Ok(None)
     }
 
     pub(super) fn temp_dir_platform(env: &HashMap<String, Option<String>>) -> Result<PathBuf> {

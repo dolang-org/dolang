@@ -849,7 +849,7 @@ pub(crate) enum ResponseKind {
     AccountName(SidName),
     ResolvePrincipalId(PrincipalId),
     Which(Option<path::PathBuf>),
-    WellKnownPath(path::PathBuf),
+    WellKnownPath(Option<path::PathBuf>),
     Stop,
     ClearCache,
     Pipe(PipeResponse),

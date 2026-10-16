@@ -791,6 +791,46 @@ impl Direct {
         }
     }
 
+    pub(super) fn data_dir_platform(
+        app: Option<&str>,
+        env: &HashMap<String, Option<String>>,
+        _local: bool,
+    ) -> Result<PathBuf> {
+        #[cfg(target_os = "macos")]
+        let base = Self::home_dir_platform(env)?.join("Library/Application Support");
+        #[cfg(not(target_os = "macos"))]
+        let base = match Self::absolute_env_path(env, "XDG_DATA_HOME")? {
+            Some(path) => path,
+            None => Self::home_dir_platform(env)?.join(".local/share"),
+        };
+        Ok(match app {
+            Some(app) => base.join(app),
+            None => base,
+        })
+    }
+
+    pub(super) fn state_dir_platform(
+        app: Option<&str>,
+        env: &HashMap<String, Option<String>>,
+    ) -> Result<Option<PathBuf>> {
+        #[cfg(target_os = "macos")]
+        {
+            let _ = (app, env);
+            Ok(None)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let base = match Self::absolute_env_path(env, "XDG_STATE_HOME")? {
+                Some(path) => path,
+                None => Self::home_dir_platform(env)?.join(".local/state"),
+            };
+            Ok(Some(match app {
+                Some(app) => base.join(app),
+                None => base,
+            }))
+        }
+    }
+
     pub(super) fn temp_dir_platform(env: &HashMap<String, Option<String>>) -> Result<PathBuf> {
         Ok(Self::absolute_env_path(env, "TMPDIR")?.unwrap_or_else(|| PathBuf::from("/tmp")))
     }

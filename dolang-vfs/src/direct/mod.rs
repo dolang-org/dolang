@@ -1801,13 +1801,20 @@ impl Direct {
         key: WellKnownPath,
         app: Option<&str>,
         env: &HashMap<String, Option<String>>,
-    ) -> Result<path::PathBuf> {
+    ) -> Result<Option<path::PathBuf>> {
         let path = match key {
             WellKnownPath::HomeDir => Self::home_dir_platform(env),
             WellKnownPath::CacheDir => Self::cache_dir_platform(app, env),
             WellKnownPath::TempDir => Self::temp_dir_platform(env),
+            WellKnownPath::DataDir => Self::data_dir_platform(app, env, false),
+            WellKnownPath::DataLocalDir => Self::data_dir_platform(app, env, true),
+            WellKnownPath::StateDir => {
+                return Self::state_dir_platform(app, env)?
+                    .map(path::PathBuf::from_native)
+                    .transpose();
+            }
         }?;
-        path::PathBuf::from_native(path)
+        path::PathBuf::from_native(path).map(Some)
     }
 
     pub(crate) async fn clear_cache(&self) -> Result<()> {

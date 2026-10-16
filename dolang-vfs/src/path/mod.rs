@@ -32,6 +32,12 @@ pub enum WellKnownPath {
     CacheDir,
     /// Directory for temporary files.
     TempDir,
+    /// Per-user roaming application data directory.
+    DataDir,
+    /// Per-user local application data directory.
+    DataLocalDir,
+    /// Per-user state directory, where supported.
+    StateDir,
 }
 
 /// Path syntax used by a target.

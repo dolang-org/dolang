@@ -18,3 +18,4 @@ Reusable interpreter core for `dolang`-style binaries.
   `_shell.Editor` runs Do-aware line editing under `spawn_blocking`;
   cancellation waits for readline to return. `_shell.repl_options` bridges CLI
   settings and native history directories until startup moves into Do.
+  Directory lookups use a direct VFS and the process environment.

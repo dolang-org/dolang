@@ -65,3 +65,47 @@ def temp_dir_honors_tmpdir_on_unix()
     ignore "requires Unix"
   env TMPDIR: /tmp/dolang-tmp do
     assert_eq (fs.temp_dir()) (Path "/tmp/dolang-tmp")
+
+#[test]
+#[vfs]
+def data_and_state_dirs_on_unix_non_macos()
+  if !(sys.os_info().family == :UNIX: && sys.os_info().os != :MACOS:)
+    ignore "requires Unix outside macOS"
+  env HOME: /tmp/dolang-home XDG_DATA_HOME: nil XDG_STATE_HOME: nil do
+    assert_eq (fs.data_dir()) (Path "/tmp/dolang-home/.local/share")
+    assert_eq (fs.data_local_dir app: "My App") (Path "/tmp/dolang-home/.local/share/My App")
+    assert_eq (fs.state_dir app: "dolang") (Path "/tmp/dolang-home/.local/state/dolang")
+  env XDG_DATA_HOME: /tmp/dolang-data XDG_STATE_HOME: /tmp/dolang-state do
+    assert_eq (fs.data_dir app: "dolang") (Path "/tmp/dolang-data/dolang")
+    assert_eq (fs.data_local_dir()) (Path "/tmp/dolang-data")
+    assert_eq (fs.state_dir()) (Path "/tmp/dolang-state")
+  for value = ["relative", ""]
+    assert_throws $sys.Error do
+      env XDG_DATA_HOME: $value do fs.data_dir()
+    assert_throws $sys.Error do
+      env XDG_DATA_HOME: $value do fs.data_local_dir()
+    assert_throws $sys.Error do
+      env XDG_STATE_HOME: $value do fs.state_dir()
+
+#[test]
+#[vfs]
+def data_and_state_dirs_on_macos()
+  if (sys.os_info().os != :MACOS:)
+    ignore "requires macOS"
+  env HOME: /tmp/dolang-home XDG_DATA_HOME: relative XDG_STATE_HOME: relative do
+    assert_eq (fs.data_dir()) (Path "/tmp/dolang-home/Library/Application Support")
+    assert_eq (fs.data_local_dir app: "dolang") (Path "/tmp/dolang-home/Library/Application Support/dolang")
+    assert_eq (fs.state_dir()) nil
+    assert_eq (fs.state_dir app: "dolang") nil
+
+#[test]
+#[vfs]
+def data_and_state_dirs_on_windows()
+  if (sys.os_info().family != :WINDOWS:)
+    ignore "requires Windows"
+  assert $fs.data_dir().is_absolute
+  assert $fs.data_local_dir().is_absolute
+  assert_eq (fs.data_dir app: "dolang") (fs.data_dir() / "dolang" / "data")
+  assert_eq (fs.data_local_dir app: "dolang") (fs.data_local_dir() / "dolang" / "data")
+  assert_eq (fs.state_dir()) nil
+  assert_eq (fs.state_dir app: "dolang") nil

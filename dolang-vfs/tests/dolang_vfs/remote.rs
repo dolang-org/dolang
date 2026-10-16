@@ -1828,3 +1828,38 @@ async fn process_kill_ends_a_process_that_ignores_sigterm() {
 
     stop_pair(client, server_task).await;
 }
+
+#[tokio::test]
+async fn remote_well_known_paths_match_direct() {
+    use dolang_vfs::path::WellKnownPath;
+    let direct = Vfs::direct().unwrap();
+    let (client, task) = connected_pair().await;
+    let env = std::collections::HashMap::from([
+        ("HOME".into(), Some("/tmp/test-home".into())),
+        ("XDG_DATA_HOME".into(), None),
+        ("XDG_STATE_HOME".into(), None),
+    ]);
+    for key in [
+        WellKnownPath::DataDir,
+        WellKnownPath::DataLocalDir,
+        WellKnownPath::StateDir,
+    ] {
+        for app in [None, Some("example")] {
+            assert_eq!(
+                client.well_known_path(key, app, &env).await.unwrap(),
+                direct.well_known_path(key, app, &env).await.unwrap()
+            );
+        }
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let env =
+            std::collections::HashMap::from([("XDG_STATE_HOME".into(), Some("relative".into()))]);
+        let error = client
+            .well_known_path(WellKnownPath::StateDir, None, &env)
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    }
+    stop_pair(client, task).await;
+}

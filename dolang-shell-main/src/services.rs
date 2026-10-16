@@ -11,6 +11,7 @@ use dolang::{
     },
 };
 use dolang_ext_compile::apply_prelude_value;
+use dolang_vfs::path::WellKnownPath;
 
 use crate::{
     cli::{Cli, PreludeImport},
@@ -40,6 +41,16 @@ pub(crate) fn register<'v>(builder: &mut Register<'v>, cli: &Cli) {
         })
         .function("repl_options", async move |strand, args, mut out| {
             let ([], []) = unpack!(strand, args, 0, 0)?;
+            let state_dir = if history {
+                load::directory(strand, WellKnownPath::StateDir).await?
+            } else {
+                None
+            };
+            let data_local_dir = if history {
+                Some(load::required_directory(strand, WellKnownPath::DataLocalDir).await?)
+            } else {
+                None
+            };
             strand.with_slots_sync(|strand, [mut prelude]| {
                 prelude_value(strand, &options_prelude, Slot::reborrow(&mut prelude))?;
                 Output::set(strand, &mut out, Empty::Dict);
@@ -49,20 +60,19 @@ pub(crate) fn register<'v>(builder: &mut Register<'v>, cli: &Cli) {
                 dict.insert(strand, AsSym::new("history"), history, true)?;
                 dict.insert(strand, AsSym::new("state_dir"), Nil, true)?;
                 dict.insert(strand, AsSym::new("data_local_dir"), Nil, true)?;
-                if history {
-                    let dirs = load::dirs(strand)?;
-                    if let Some(path) = dirs.state_dir() {
-                        dict.insert(
-                            strand,
-                            AsSym::new("state_dir"),
-                            path.to_string_lossy().as_ref(),
-                            true,
-                        )?;
-                    }
+                if let Some(path) = &state_dir {
+                    dict.insert(
+                        strand,
+                        AsSym::new("state_dir"),
+                        path.to_string_lossy().as_ref(),
+                        true,
+                    )?;
+                }
+                if let Some(path) = &data_local_dir {
                     dict.insert(
                         strand,
                         AsSym::new("data_local_dir"),
-                        dirs.data_local_dir().to_string_lossy().as_ref(),
+                        path.to_string_lossy().as_ref(),
                         true,
                     )?;
                 }
@@ -157,8 +167,8 @@ pub(crate) fn register<'v>(builder: &mut Register<'v>, cli: &Cli) {
                     hash.update(b"file");
                 }
                 Some(
-                    load::dirs(strand)?
-                        .cache_dir()
+                    load::required_directory(strand, WellKnownPath::CacheDir)
+                        .await?
                         .join("bytecode")
                         .join(hash.finalize().to_hex().as_str())
                         .with_extension("dolc"),

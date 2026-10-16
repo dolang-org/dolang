@@ -1,0 +1,76 @@
+import sys shell
+  fs:
+    - with_temp_dir
+  test:
+    - assert
+    - ignore
+    - test
+
+# The child resolves these paths from its process environment, independently
+# of strand-local environment changes it makes after startup.
+#[test]
+def startup_uses_process_directories()
+  if !(sys.os_info().family == :UNIX: && sys.os_info().os != :MACOS:)
+    ignore "requires XDG directories"
+  with_temp_dir do |dir|
+    let data = (dir / "data")
+    let cache = (dir / "cache")
+    let state = (dir / "state")
+    let site = (data / "dolang/site")
+    site.create_dir all: true
+    (site / "directory_probe.dol").write "pub let value = 42\n"
+    let script = (dir / "probe.dol")
+    script.write r|
+      import directory_probe _shell shell
+        test:
+          - assert_eq
+      assert_eq $directory_probe.value 42
+      # Native startup services must keep using the process environment.
+      env XDG_DATA_HOME: relative XDG_STATE_HOME: relative XDG_CACHE_HOME: relative do
+        let options = _shell.repl_options()
+        assert_eq $options[:state_dir:] $shell.args[0]
+        assert_eq $options[:data_local_dir:] $shell.args[1]
+        _shell.compile "<directory-probe>" "42"
+    env XDG_DATA_HOME: $data XDG_CACHE_HOME: $cache XDG_STATE_HOME: $state do
+      run $shell.exe $script (state / "dolang") (data / "dolang")
+    let cached = [...cache.glob("dolang/bytecode/*.dolc")]
+    assert (cached.len >= 3)
+
+#[test]
+def history_options_match_host_directories()
+  with_temp_dir do |dir|
+    let script = (dir / "history-options.dol")
+    script.write r|
+      import fs _shell
+        test:
+          - assert_eq
+      let options = _shell.repl_options()
+      if options[:history:]
+        let state = fs.state_dir app: dolang
+        let data = fs.data_local_dir app: dolang
+        assert_eq $options[:state_dir:] (state && str(state) || nil)
+        assert_eq $options[:data_local_dir:] (str data)
+        let fallback = (options[:state_dir:] || options[:data_local_dir:])
+        assert_eq (fs.Path fallback) (state || data)
+      else
+        assert_eq $options[:state_dir:] nil
+        assert_eq $options[:data_local_dir:] nil
+    run $shell.exe $script
+    run $shell.exe --no-history $script
+    if (sys.os_info().family == :UNIX: && sys.os_info().os != :MACOS:)
+      env XDG_STATE_HOME: relative do
+        run $shell.exe --no-history $script
+
+#[test]
+def startup_directory_errors_are_sys_errors()
+  if !(sys.os_info().family == :UNIX: && sys.os_info().os != :MACOS:)
+    ignore "requires XDG directories"
+  with_temp_dir do |dir|
+    let script = (dir / "directory-error.dol")
+    script.write r|
+      import sys _shell
+        test:
+          - assert_throws
+      assert_throws $sys.InvalidInputError do _shell.repl_options()
+    env XDG_STATE_HOME: relative do
+      run $shell.exe --no-cache $script

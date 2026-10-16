@@ -837,7 +837,10 @@ async fn well_known_path<'v, 's>(
     let vfs = local.vfs();
     let env = local.env().flatten_delta();
     let path = vfs.well_known_path(key, app, &env).await.into_sys(strand)?;
-    create_path(strand, global, path, out)?;
+    match path {
+        Some(path) => create_path(strand, global, path, out)?,
+        None => Output::set(strand, out, dolang::runtime::value::Nil),
+    }
     Ok(())
 }
 
@@ -1023,7 +1026,8 @@ async fn resolve_temp_parent<'v, 's>(
                 .vfs()
                 .well_known_path(WellKnownPath::TempDir, None, &env)
                 .await
-                .into_sys(strand)
+                .into_sys(strand)?
+                .ok_or_else(|| Error::runtime(strand, "temporary directory unavailable"))
         }
     }
 }
@@ -1424,6 +1428,28 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             let ([], [app]) = unpack!(strand, args, 0, 0, app = None)?;
             let app = app.and_then(|s| s.as_str(strand).map(|s| s.to_string()));
             well_known_path(strand, global, WellKnownPath::CacheDir, app.as_deref(), out).await
+        })
+        .function("data_dir", async move |strand, args, out| {
+            let ([], [app]) = unpack!(strand, args, 0, 0, app = None)?;
+            let app = app.and_then(|s| s.as_str(strand).map(|s| s.to_string()));
+            well_known_path(strand, global, WellKnownPath::DataDir, app.as_deref(), out).await
+        })
+        .function("data_local_dir", async move |strand, args, out| {
+            let ([], [app]) = unpack!(strand, args, 0, 0, app = None)?;
+            let app = app.and_then(|s| s.as_str(strand).map(|s| s.to_string()));
+            well_known_path(
+                strand,
+                global,
+                WellKnownPath::DataLocalDir,
+                app.as_deref(),
+                out,
+            )
+            .await
+        })
+        .function("state_dir", async move |strand, args, out| {
+            let ([], [app]) = unpack!(strand, args, 0, 0, app = None)?;
+            let app = app.and_then(|s| s.as_str(strand).map(|s| s.to_string()));
+            well_known_path(strand, global, WellKnownPath::StateDir, app.as_deref(), out).await
         })
         .function("temp_dir", async move |strand, args, out| {
             let ([], []) = unpack!(strand, args, 0, 0)?;

@@ -553,12 +553,15 @@ impl Vfs {
     }
 
     /// Resolves a target-specific well-known path.
+    ///
+    /// Returns `None` for a state directory on platforms without one. Other
+    /// directory kinds return `Some` or an error.
     pub async fn well_known_path(
         &self,
         key: path::WellKnownPath,
         app: Option<&str>,
         env: &HashMap<String, Option<String>>,
-    ) -> error::Result<path::PathBuf> {
+    ) -> error::Result<Option<path::PathBuf>> {
         match &self.inner {
             VfsInner::Client(client) => client.well_known_path(key, app, env).await,
             VfsInner::Direct(direct) => direct.well_known_path(key, app, env).await,

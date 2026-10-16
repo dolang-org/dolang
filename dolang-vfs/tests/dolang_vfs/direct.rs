@@ -1,4 +1,3 @@
-#[cfg(unix)]
 use std::collections::HashMap;
 use std::{io, path::Path};
 
@@ -1489,6 +1488,7 @@ async fn direct_well_known_home_dir_prefers_absolute_home_override() {
     let path = direct
         .well_known_path(dolang_vfs::path::WellKnownPath::HomeDir, None, &env)
         .await
+        .unwrap()
         .unwrap();
 
     assert_eq!(path.as_str(), "/tmp/test-home");
@@ -1503,6 +1503,7 @@ async fn direct_well_known_temp_dir_prefers_tmpdir_override() {
     let path = direct
         .well_known_path(dolang_vfs::path::WellKnownPath::TempDir, None, &env)
         .await
+        .unwrap()
         .unwrap();
 
     assert_eq!(path.as_str(), "/tmp/test-temp");
@@ -1517,6 +1518,7 @@ async fn direct_well_known_temp_dir_falls_back_to_tmp() {
     let path = direct
         .well_known_path(dolang_vfs::path::WellKnownPath::TempDir, None, &env)
         .await
+        .unwrap()
         .unwrap();
 
     assert_eq!(path.as_str(), "/tmp");
@@ -1551,6 +1553,7 @@ async fn direct_well_known_cache_dir_prefers_xdg_override() {
     let path = direct
         .well_known_path(dolang_vfs::path::WellKnownPath::CacheDir, None, &env)
         .await
+        .unwrap()
         .unwrap();
 
     assert_eq!(path.as_str(), "/tmp/test-cache");
@@ -1568,6 +1571,7 @@ async fn direct_well_known_cache_dir_falls_back_to_home() {
     let path = direct
         .well_known_path(dolang_vfs::path::WellKnownPath::CacheDir, None, &env)
         .await
+        .unwrap()
         .unwrap();
 
     assert_eq!(path.as_str(), "/tmp/test-home/.cache");
@@ -1588,6 +1592,7 @@ async fn direct_well_known_cache_dir_uses_macos_convention() {
     let path = direct
         .well_known_path(dolang_vfs::path::WellKnownPath::CacheDir, None, &env)
         .await
+        .unwrap()
         .unwrap();
 
     assert_eq!(path.as_str(), "/tmp/test-home/Library/Caches");
@@ -1929,4 +1934,83 @@ async fn copy_data_refuses_to_promise_block_sharing() {
     dst.close().await.unwrap();
     append.close().await.unwrap();
     assert_eq!(std::fs::read(&dst_path).unwrap(), b"0123");
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+#[tokio::test]
+async fn direct_well_known_data_and_state_dirs() {
+    use dolang_vfs::path::WellKnownPath::{DataDir, DataLocalDir, StateDir};
+    let direct = Vfs::direct().unwrap();
+    for (key, variable, fallback) in [
+        (DataDir, "XDG_DATA_HOME", ".local/share"),
+        (DataLocalDir, "XDG_DATA_HOME", ".local/share"),
+        (StateDir, "XDG_STATE_HOME", ".local/state"),
+    ] {
+        for (value, expected) in [
+            (None, format!("/tmp/test-home/{fallback}")),
+            (Some("/tmp/override"), "/tmp/override".into()),
+        ] {
+            let env = HashMap::from([
+                ("HOME".into(), Some("/tmp/test-home".into())),
+                (variable.into(), value.map(str::to_owned)),
+            ]);
+            for app in [None, Some("My App")] {
+                let path = direct
+                    .well_known_path(key, app, &env)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let expected = match app {
+                    Some(app) => format!("{expected}/{app}"),
+                    None => expected.clone(),
+                };
+                assert_eq!(path.as_str(), expected);
+            }
+        }
+        for value in ["relative", ""] {
+            let env = HashMap::from([(variable.into(), Some(value.into()))]);
+            let error = direct.well_known_path(key, None, &env).await.unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", windows))]
+#[tokio::test]
+async fn direct_well_known_data_dirs_and_absent_state() {
+    use dolang_vfs::path::WellKnownPath::{DataDir, DataLocalDir, StateDir};
+    let direct = Vfs::direct().unwrap();
+    let env = HashMap::from([
+        ("HOME".into(), Some("/tmp/test-home".into())),
+        ("XDG_DATA_HOME".into(), Some("relative-ignored".into())),
+        ("XDG_STATE_HOME".into(), Some("relative-ignored".into())),
+    ]);
+    for key in [DataDir, DataLocalDir] {
+        let base = direct
+            .well_known_path(key, None, &env)
+            .await
+            .unwrap()
+            .unwrap();
+        let scoped = direct
+            .well_known_path(key, Some("My App"), &env)
+            .await
+            .unwrap()
+            .unwrap();
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(base.as_str(), "/tmp/test-home/Library/Application Support");
+            assert_eq!(scoped, base.join("My App"));
+        }
+        #[cfg(windows)]
+        {
+            assert!(base.is_absolute());
+            assert_eq!(scoped, base.join("My App").join("data"));
+        }
+    }
+    for app in [None, Some("My App")] {
+        assert_eq!(
+            direct.well_known_path(StateDir, app, &env).await.unwrap(),
+            None
+        );
+    }
 }
