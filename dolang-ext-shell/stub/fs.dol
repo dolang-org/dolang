@@ -2568,6 +2568,40 @@ pub def cache_dir
 do -> Path
   ...
 
+# Returns the platform-native user data directory.
+#
+# | Platform       | Base directory                                      |
+# | -------------- | --------------------------------------------------- |
+# | Non-macOS Unix | `$XDG_DATA_HOME`, otherwise `~/.local/share`          |
+# | macOS          | `~/Library/Application Support`                     |
+# | Windows        | `FOLDERID_RoamingAppData`                            |
+pub def data_dir
+  # Application name to scope the result to. Appends the name on Unix and
+  # macOS, or the name followed by `data` on Windows.
+  :app @ Str = nil
+do -> Path
+  ...
+
+# Returns the platform-native user data directory for this machine.
+#
+# Uses the same location as [`data_dir`](fs.data_dir) on Unix and macOS,
+# and `FOLDERID_LocalAppData` on Windows.
+pub def data_local_dir
+  # Application name to scope the result to, as for [`data_dir`](fs.data_dir).
+  :app @ Str = nil
+do -> Path
+  ...
+
+# Returns the platform-native user state directory.
+#
+# On non-macOS Unix, uses `$XDG_STATE_HOME`, otherwise `~/.local/state`.
+# Returns `nil` on macOS and Windows.
+pub def state_dir
+  # Application name to append to the base directory.
+  :app @ Str = nil
+do -> (Path | nil)
+  ...
+
 # Creates a temporary directory and returns its path.
 #
 # Unlike [`with_temp_dir`](fs.with_temp_dir), this does not remove the directory

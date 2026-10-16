@@ -3029,7 +3029,7 @@ impl Client {
         key: WellKnownPath,
         app: Option<&str>,
         env: &HashMap<String, Option<String>>,
-    ) -> Result<path::PathBuf> {
+    ) -> Result<Option<path::PathBuf>> {
         let request = WellKnownPathRequest {
             key,
             app: app.map(str::to_owned),

@@ -3,7 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use directories::ProjectDirs;
+use dolang_ext_shell::ResultExt as _;
+use dolang_vfs::{Vfs, path::WellKnownPath};
 use tokio::fs;
 
 use dolang::{
@@ -124,17 +125,36 @@ async fn file_is_newer(older: &Path, newer: &Path) -> bool {
         .unwrap_or(false)
 }
 
-pub(crate) fn dirs<'v, 's>(strand: &mut Strand<'v, 's>) -> Result<'v, 's, ProjectDirs> {
-    ProjectDirs::from("", "", "dolang")
-        .ok_or_else(|| Error::runtime(strand, "can't locate application directories"))
+pub(crate) async fn directory<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    key: WellKnownPath,
+) -> Result<'v, 's, Option<PathBuf>> {
+    let vfs = Vfs::direct().into_sys(strand)?;
+    vfs.well_known_path(key, Some("dolang"), &Default::default())
+        .await
+        .and_then(|path| path.map(|path| path.to_native()).transpose())
+        .into_sys(strand)
 }
 
-fn get_module_search_paths<'v, 's>(
+pub(crate) async fn required_directory<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    key: WellKnownPath,
+) -> Result<'v, 's, PathBuf> {
+    directory(strand, key)
+        .await?
+        .ok_or_else(|| Error::runtime(strand, "can't locate application directory"))
+}
+
+async fn get_module_search_paths<'v, 's>(
     strand: &mut Strand<'v, 's>,
     module_paths: &[PathBuf],
 ) -> Result<'v, 's, Vec<PathBuf>> {
     let mut paths = module_paths.to_vec();
-    paths.push(dirs(strand)?.data_dir().join("site"));
+    paths.push(
+        required_directory(strand, WellKnownPath::DataDir)
+            .await?
+            .join("site"),
+    );
     Ok(paths)
 }
 
@@ -143,7 +163,7 @@ pub(crate) async fn find_module_file<'v, 's>(
     name: &str,
     module_paths: &[PathBuf],
 ) -> Result<'v, 's, PathBuf> {
-    let search_paths = get_module_search_paths(strand, module_paths)?;
+    let search_paths = get_module_search_paths(strand, module_paths).await?;
     let mut relative_path = PathBuf::new();
 
     relative_path.extend(name.split('.'));
@@ -406,9 +426,11 @@ pub(crate) async fn load<'v, 's>(
         return Bytecode::new(data).run(strand, &mut out).await;
     }
 
-    let bc = cache
-        .then(|| cache_path(strand, path, &mode, prelude, strict))
-        .transpose()?;
+    let bc = if cache {
+        Some(cache_path(strand, path, &mode, prelude, strict).await?)
+    } else {
+        None
+    };
 
     if let Some(data) = read_cached(strand, path, bc.as_deref()).await? {
         let bytecode = Bytecode::new(data);
@@ -455,14 +477,16 @@ pub(crate) async fn write_cached<'v, 's>(
     Ok(())
 }
 
-fn cache_path<'v, 's>(
+async fn cache_path<'v, 's>(
     strand: &mut Strand<'v, 's>,
     path: &Path,
     mode: &Mode<'_>,
     prelude: &[PreludeImport],
     strict: bool,
 ) -> Result<'v, 's, PathBuf> {
-    let mut bc = dirs(strand)?.cache_dir().join("bytecode").clone();
+    let mut bc = required_directory(strand, WellKnownPath::CacheDir)
+        .await?
+        .join("bytecode");
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"dolang-shell-cache-v2");
     hash_bytes(&mut hasher, path.as_os_str().as_encoded_bytes());
