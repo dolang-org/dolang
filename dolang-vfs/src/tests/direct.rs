@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::{io, path::Path};
 
-use crate::temp::tempdir;
 #[cfg(any(windows, target_os = "linux"))]
-use dolang_vfs::metadata::AttrFlags;
+use crate::metadata::AttrFlags;
 #[cfg(any(unix, windows))]
-use dolang_vfs::process::{ProcessControl, Signal, TerminationPolicy};
-use dolang_vfs::{
+use crate::process::{ProcessControl, Signal, TerminationPolicy};
+use crate::test_temp::tempdir;
+use crate::{
     Vfs,
     error::ErrorKind,
     file::{CopyDest, CopyMode, File, FileLockBehavior, FileLockMode, FileLockRange},
@@ -15,8 +15,8 @@ use dolang_vfs::{
 #[cfg(windows)]
 use dolang_winterop::security::SecInfo;
 
-fn typed(path: &Path) -> dolang_vfs::path::Path<'_> {
-    dolang_vfs::path::Path::new(path.to_str().unwrap(), dolang_vfs::path::Kind::native())
+fn typed(path: &Path) -> crate::path::Path<'_> {
+    crate::path::Path::new(path.to_str().unwrap(), crate::path::Kind::native())
 }
 
 #[cfg(any(windows, target_os = "linux"))]
@@ -26,8 +26,8 @@ fn attr_patch(flag: AttrFlags, value: bool) -> MetadataPatch {
     patch
 }
 
-fn typed_str(path: &str) -> dolang_vfs::path::Path<'_> {
-    dolang_vfs::path::Path::new(path, dolang_vfs::path::Kind::native())
+fn typed_str(path: &str) -> crate::path::Path<'_> {
+    crate::path::Path::new(path, crate::path::Kind::native())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
@@ -132,7 +132,7 @@ async fn background_termination_signals_the_process_group() {
     let dir = tempdir().unwrap();
     let pid_path = dir.path().join("descendant.pid");
     let script = format!("sleep 60 & echo $! > '{}'; wait", pid_path.display());
-    let mut command = direct.command(dolang_vfs::path::Path::unix("sh"));
+    let mut command = direct.command(crate::path::Path::unix("sh"));
     command
         .arg("-c")
         .arg(&script)
@@ -165,7 +165,7 @@ async fn force_false_orphans_the_background_process_group() {
         "trap '' TERM; echo $$ > '{}'; sleep 60 & wait",
         pid_path.display()
     );
-    let mut command = direct.command(dolang_vfs::path::Path::unix("sh"));
+    let mut command = direct.command(crate::path::Path::unix("sh"));
     command
         .arg("-c")
         .arg(&script)
@@ -188,7 +188,7 @@ async fn force_false_orphans_the_background_process_group() {
 #[cfg(windows)]
 async fn assert_windows_termination(control: ProcessControl) {
     let direct = Vfs::direct().unwrap();
-    let mut command = direct.command(dolang_vfs::path::Path::windows("cmd"));
+    let mut command = direct.command(crate::path::Path::windows("cmd"));
     command
         .arg("/C")
         .arg("ping -n 60 127.0.0.1 >nul")
@@ -231,14 +231,14 @@ trait FileLockTestExt {
     async fn lock_request(
         &self,
         request: (FileLockRange, FileLockMode, FileLockBehavior),
-    ) -> dolang_vfs::error::Result<Option<dolang_vfs::file::FileLock>>;
+    ) -> crate::error::Result<Option<crate::file::FileLock>>;
 }
 
 impl FileLockTestExt for File {
     async fn lock_request(
         &self,
         (range, mode, behavior): (FileLockRange, FileLockMode, FileLockBehavior),
-    ) -> dolang_vfs::error::Result<Option<dolang_vfs::file::FileLock>> {
+    ) -> crate::error::Result<Option<crate::file::FileLock>> {
         self.lock(range, mode, behavior).await
     }
 }
@@ -845,10 +845,7 @@ async fn a_busy_handoff_returns_the_handle() {
     let pending = file.read_at(&mut buf, 0);
 
     let failed = file.into_stdio_send(0).await.unwrap_err();
-    assert_eq!(
-        failed.error().kind(),
-        dolang_vfs::error::ErrorKind::ResourceBusy
-    );
+    assert_eq!(failed.error().kind(), crate::error::ErrorKind::ResourceBusy);
     let file = failed.into_handle();
 
     // Nothing was surrendered, so the handle still works and the retry lands
@@ -940,7 +937,7 @@ async fn direct_close_reports_busy_with_an_operation_outstanding() {
         .close()
         .await
         .expect_err("close with an operation outstanding");
-    assert_eq!(error.kind(), dolang_vfs::error::ErrorKind::ResourceBusy);
+    assert_eq!(error.kind(), crate::error::ErrorKind::ResourceBusy);
 
     // The detached operation still completes against the descriptor it holds.
     assert_eq!(outstanding.await.unwrap(), 1024);
@@ -1486,7 +1483,7 @@ async fn direct_well_known_home_dir_prefers_absolute_home_override() {
     let env = HashMap::from([(String::from("HOME"), Some(String::from("/tmp/test-home")))]);
 
     let path = direct
-        .well_known_path(dolang_vfs::path::WellKnownPath::HomeDir, None, &env)
+        .well_known_path(crate::path::WellKnownPath::HomeDir, None, &env)
         .await
         .unwrap()
         .unwrap();
@@ -1501,7 +1498,7 @@ async fn direct_well_known_temp_dir_prefers_tmpdir_override() {
     let env = HashMap::from([(String::from("TMPDIR"), Some(String::from("/tmp/test-temp")))]);
 
     let path = direct
-        .well_known_path(dolang_vfs::path::WellKnownPath::TempDir, None, &env)
+        .well_known_path(crate::path::WellKnownPath::TempDir, None, &env)
         .await
         .unwrap()
         .unwrap();
@@ -1516,7 +1513,7 @@ async fn direct_well_known_temp_dir_falls_back_to_tmp() {
     let env = HashMap::from([(String::from("TMPDIR"), None)]);
 
     let path = direct
-        .well_known_path(dolang_vfs::path::WellKnownPath::TempDir, None, &env)
+        .well_known_path(crate::path::WellKnownPath::TempDir, None, &env)
         .await
         .unwrap()
         .unwrap();
@@ -1531,7 +1528,7 @@ async fn direct_well_known_home_dir_rejects_relative_home_override() {
     let env = HashMap::from([(String::from("HOME"), Some(String::from("relative-home")))]);
 
     let err = direct
-        .well_known_path(dolang_vfs::path::WellKnownPath::HomeDir, None, &env)
+        .well_known_path(crate::path::WellKnownPath::HomeDir, None, &env)
         .await
         .unwrap_err();
 
@@ -1551,7 +1548,7 @@ async fn direct_well_known_cache_dir_prefers_xdg_override() {
     ]);
 
     let path = direct
-        .well_known_path(dolang_vfs::path::WellKnownPath::CacheDir, None, &env)
+        .well_known_path(crate::path::WellKnownPath::CacheDir, None, &env)
         .await
         .unwrap()
         .unwrap();
@@ -1569,7 +1566,7 @@ async fn direct_well_known_cache_dir_falls_back_to_home() {
     ]);
 
     let path = direct
-        .well_known_path(dolang_vfs::path::WellKnownPath::CacheDir, None, &env)
+        .well_known_path(crate::path::WellKnownPath::CacheDir, None, &env)
         .await
         .unwrap()
         .unwrap();
@@ -1590,7 +1587,7 @@ async fn direct_well_known_cache_dir_uses_macos_convention() {
     ]);
 
     let path = direct
-        .well_known_path(dolang_vfs::path::WellKnownPath::CacheDir, None, &env)
+        .well_known_path(crate::path::WellKnownPath::CacheDir, None, &env)
         .await
         .unwrap()
         .unwrap();
@@ -1939,7 +1936,7 @@ async fn copy_data_refuses_to_promise_block_sharing() {
 #[cfg(all(unix, not(target_os = "macos")))]
 #[tokio::test]
 async fn direct_well_known_data_and_state_dirs() {
-    use dolang_vfs::path::WellKnownPath::{DataDir, DataLocalDir, StateDir};
+    use crate::path::WellKnownPath::{DataDir, DataLocalDir, StateDir};
     let direct = Vfs::direct().unwrap();
     for (key, variable, fallback) in [
         (DataDir, "XDG_DATA_HOME", ".local/share"),
@@ -1978,7 +1975,7 @@ async fn direct_well_known_data_and_state_dirs() {
 #[cfg(any(target_os = "macos", windows))]
 #[tokio::test]
 async fn direct_well_known_data_dirs_and_absent_state() {
-    use dolang_vfs::path::WellKnownPath::{DataDir, DataLocalDir, StateDir};
+    use crate::path::WellKnownPath::{DataDir, DataLocalDir, StateDir};
     let direct = Vfs::direct().unwrap();
     let env = HashMap::from([
         ("HOME".into(), Some("/tmp/test-home".into())),

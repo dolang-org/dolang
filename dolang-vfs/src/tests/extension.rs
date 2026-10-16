@@ -1,10 +1,8 @@
 #![cfg(unix)]
 
-use crate::temp::tempdir;
-use dolang_vfs::Vfs;
-use dolang_vfs::extension::{
-    ExtCite, ExtContext, ExtGift, ExtResource, VfsExtension, vfs_extension,
-};
+use crate::Vfs;
+use crate::extension::{ExtCite, ExtContext, ExtGift, ExtResource, VfsExtension, vfs_extension};
+use crate::test_temp::tempdir;
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
 
@@ -114,7 +112,7 @@ async fn direct_dispatch_round_trips_through_opaque_handle() {
 
 async fn start_server(socket_path: &std::path::Path) -> JoinHandle<()> {
     let path = socket_path.to_path_buf();
-    let server = dolang_vfs::server::Server::bind(&path).await.unwrap();
+    let server = crate::server::Server::bind(&path).await.unwrap();
     tokio::spawn(async move {
         let _ = server.accept().await;
     })

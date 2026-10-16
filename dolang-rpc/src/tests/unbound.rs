@@ -1,4 +1,4 @@
-use dolang_rpc::{Builder, Error, Protocol};
+use crate::{Builder, Error, Protocol};
 
 struct Test;
 impl Protocol for Test {

@@ -1,6 +1,6 @@
-//! Helpers shared across the integration tests.
+//! Helpers shared across the tests.
 
-use dolang_vfs::{
+use crate::{
     file::File,
     process::{StdioRecv, StdioSend},
 };

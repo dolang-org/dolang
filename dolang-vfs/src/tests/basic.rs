@@ -1,31 +1,31 @@
 #![cfg(unix)]
-use dolang_rpc::auth::AuthKey;
-use dolang_vfs::{
+use crate::{
     Vfs,
     file::AccessFlags,
     metadata::{FileType, MetadataPatch, Mode},
     security::OwnershipIdentity,
     target::TargetInfo,
 };
+use dolang_rpc::auth::AuthKey;
 #[cfg(not(target_os = "macos"))]
 use nix::unistd::getgroups;
 use nix::unistd::{Group, User, getegid, geteuid, getgid, getuid};
 use std::{os::fd::OwnedFd, path::Path};
 
-use crate::temp::tempdir;
+use crate::test_temp::tempdir;
 use tokio::task::JoinHandle;
 
-fn typed(path: &Path) -> dolang_vfs::path::Path<'_> {
-    dolang_vfs::path::Path::unix(path.to_str().unwrap())
+fn typed(path: &Path) -> crate::path::Path<'_> {
+    crate::path::Path::unix(path.to_str().unwrap())
 }
 
-fn typed_str(path: &str) -> dolang_vfs::path::Path<'_> {
-    dolang_vfs::path::Path::unix(path)
+fn typed_str(path: &str) -> crate::path::Path<'_> {
+    crate::path::Path::unix(path)
 }
 
 async fn start_server(socket_path: &Path) -> JoinHandle<()> {
     let path = socket_path.to_path_buf();
-    let server = dolang_vfs::server::Server::bind(&path).await.unwrap();
+    let server = crate::server::Server::bind(&path).await.unwrap();
     tokio::spawn(async move {
         let _ = server.accept().await;
     })
@@ -118,9 +118,7 @@ async fn client_from_owned_fd() {
     let dir = tempdir().unwrap();
     let socket_path = dir.path().join("test.sock");
 
-    let server = dolang_vfs::server::Server::bind(&socket_path)
-        .await
-        .unwrap();
+    let server = crate::server::Server::bind(&socket_path).await.unwrap();
     let accept_task = tokio::spawn(async move {
         let _ = server.accept().await;
     });
@@ -353,7 +351,7 @@ async fn fd_passing() {
     let mut command = client.command(typed_str("echo"));
     command
         .arg("hello_world")
-        .stdout(crate::support::stdio_send(output).await)
+        .stdout(crate::tests::support::stdio_send(output).await)
         .unwrap();
     let mut child = command.spawn().await.unwrap();
     let status = child.wait().await.unwrap();
@@ -1126,7 +1124,7 @@ const TEST_KEY: &[u8] = b"a-sufficiently-long-test-key";
 
 async fn start_keyed_server(socket_path: &Path, key: &[u8]) -> JoinHandle<()> {
     let key = AuthKey::new(key).unwrap();
-    let server = dolang_vfs::server::Server::bind_with_key(socket_path, Some(key))
+    let server = crate::server::Server::bind_with_key(socket_path, Some(key))
         .await
         .unwrap();
     tokio::spawn(async move {

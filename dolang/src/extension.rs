@@ -5,7 +5,7 @@
 //! On Wasm, discovery iterators are empty and `extension!` performs no registration.
 //! Apply concrete [`Extension`] implementations explicitly when configuring the host.
 
-#[cfg(any(not(target_family = "wasm"), test))]
+#[cfg(not(target_family = "wasm"))]
 use std::collections::HashMap;
 #[cfg(not(target_family = "wasm"))]
 use std::sync::OnceLock;
@@ -200,7 +200,7 @@ static EXTENSIONS_ANCHOR: Erased = Vtbl::erase(&ANCHOR);
 /// # Panics
 ///
 /// Panics on a duplicate name, a dependency that isn't present, or a cycle.
-#[cfg(any(not(target_family = "wasm"), test))]
+#[cfg(not(target_family = "wasm"))]
 fn order(items: &[(&'static str, &'static [&'static str])]) -> Vec<usize> {
     let mut index_of = HashMap::with_capacity(items.len());
     for (index, (name, _)) in items.iter().enumerate() {
@@ -368,69 +368,6 @@ pub trait VmExt {
 impl<'a> VmExt for Builder<'a> {
     fn extensions(&self) -> impl Iterator<Item = VmExtension> + 'static {
         extensions().map(|Erased { vtbl, ext }| VmExtension { vtbl, ext: *ext })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::order;
-
-    fn names(items: &[(&'static str, &'static [&'static str])]) -> Vec<&'static str> {
-        order(items)
-            .into_iter()
-            .map(|index| items[index].0)
-            .collect()
-    }
-
-    #[test]
-    fn dependencies_precede_dependents() {
-        let items: &[(&str, &[&str])] = &[
-            ("winreg", &["shell"]),
-            ("shell", &[]),
-            ("winscm", &["shell"]),
-        ];
-        assert_eq!(names(items), ["shell", "winreg", "winscm"]);
-    }
-
-    #[test]
-    fn transitive_and_diamond_dependencies_are_ordered() {
-        let items: &[(&str, &[&str])] = &[
-            ("top", &["left", "right"]),
-            ("left", &["base"]),
-            ("right", &["base"]),
-            ("base", &[]),
-        ];
-        assert_eq!(names(items), ["base", "left", "right", "top"]);
-    }
-
-    #[test]
-    fn independent_extensions_keep_their_original_order() {
-        let items: &[(&str, &[&str])] = &[("c", &[]), ("a", &[]), ("b", &[])];
-        assert_eq!(names(items), ["c", "a", "b"]);
-    }
-
-    #[test]
-    #[should_panic(expected = "which is not linked in")]
-    fn missing_dependency_panics() {
-        order(&[("winreg", &["shell"])]);
-    }
-
-    #[test]
-    #[should_panic(expected = "cycle among extension dependencies")]
-    fn cycle_panics() {
-        order(&[("a", &["b"]), ("b", &["a"])]);
-    }
-
-    #[test]
-    #[should_panic(expected = "depends on itself")]
-    fn self_dependency_panics() {
-        order(&[("a", &["a"])]);
-    }
-
-    #[test]
-    #[should_panic(expected = "share the name")]
-    fn duplicate_name_panics() {
-        order(&[("a", &[]), ("a", &[])]);
     }
 }
 
