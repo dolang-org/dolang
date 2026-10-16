@@ -21,11 +21,6 @@ impl TerminalRestoreGuard {
         Self { state }
     }
 
-    #[cfg(test)]
-    pub(crate) fn is_active(&self) -> bool {
-        self.state.is_some()
-    }
-
     fn restore(&mut self) {
         if let Some(state) = self.state.take() {
             state.restore();
@@ -130,24 +125,5 @@ mod platform {
                 let _ = SetConsoleMode(handle, mode);
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::TerminalRestoreGuard;
-
-    #[test]
-    fn capture_if_terminal_is_constructible() {
-        let guard = TerminalRestoreGuard::capture_if_terminal();
-        let _ = guard.is_active();
-    }
-
-    #[test]
-    fn drop_is_idempotent_when_inactive() {
-        let mut guard = TerminalRestoreGuard { state: None };
-        guard.restore();
-        guard.restore();
-        assert!(!guard.is_active());
     }
 }

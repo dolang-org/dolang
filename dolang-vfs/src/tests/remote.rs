@@ -5,10 +5,10 @@ use std::{
 
 use bytes::{Bytes, BytesMut};
 
-use crate::temp::tempdir;
 #[cfg(target_os = "linux")]
-use dolang_vfs::file::XattrNamespace;
-use dolang_vfs::{
+use crate::file::XattrNamespace;
+use crate::test_temp::tempdir;
+use crate::{
     Vfs,
     directory::{DirEntry, ReadDir},
     error::{ErrorKind, Result as VfsResult},
@@ -22,7 +22,7 @@ use dolang_vfs::{
 use dolang_winterop::security::SecInfo;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
-use crate::support;
+use crate::tests::support;
 
 async fn connected_pair() -> (Vfs, tokio::task::JoinHandle<VfsResult<()>>) {
     let (client_stream, server_stream) = tokio::io::duplex(1024 * 1024);
@@ -59,7 +59,7 @@ async fn stop_pair(vfs: Vfs, server: tokio::task::JoinHandle<VfsResult<()>>) {
 #[tokio::test]
 async fn windows_admin_reports_unsupported_from_non_windows_backend() {
     let (client, server_task) = connected_pair().await;
-    let cwd = dolang_vfs::path::Path::windows(r"C:\");
+    let cwd = crate::path::Path::windows(r"C:\");
     let error = client
         .windows_admin(cwd, std::collections::HashMap::new(), true)
         .await
@@ -76,8 +76,8 @@ async fn socket_server(path: &std::path::Path) -> tokio::task::JoinHandle<VfsRes
     tokio::spawn(server.accept())
 }
 
-fn typed_str(path: &str) -> dolang_vfs::path::Path<'_> {
-    dolang_vfs::path::Path::new(path, dolang_vfs::path::Kind::native())
+fn typed_str(path: &str) -> crate::path::Path<'_> {
+    crate::path::Path::new(path, crate::path::Kind::native())
 }
 
 #[cfg(unix)]
@@ -175,11 +175,11 @@ async fn opaque_session_chains_to_unix_vfs() {
     let inner_task = socket_server(&socket).await;
     let (outer, outer_task) = connected_pair().await;
 
-    let socket = dolang_vfs::path::PathBuf::from_native(socket).unwrap();
+    let socket = crate::path::PathBuf::from_native(socket).unwrap();
     let inner = outer.unix_socket(socket.to_path(), None).await.unwrap();
-    assert_eq!(inner.target(), &dolang_vfs::target::TargetInfo::current());
+    assert_eq!(inner.target(), &crate::target::TargetInfo::current());
 
-    let dir = dolang_vfs::path::PathBuf::from_native(temp.path().join("through-chain")).unwrap();
+    let dir = crate::path::PathBuf::from_native(temp.path().join("through-chain")).unwrap();
     inner.create_dir(dir.to_path(), false).await.unwrap();
     let file_path = dir.join("file");
     let mut options = inner.open_options();
@@ -201,7 +201,7 @@ async fn opaque_session_chains_to_unix_vfs() {
 
     inner.stop().await.unwrap();
     inner_task.await.unwrap().unwrap();
-    assert_eq!(outer.target(), &dolang_vfs::target::TargetInfo::current());
+    assert_eq!(outer.target(), &crate::target::TargetInfo::current());
     stop_pair(outer, outer_task).await;
 }
 
@@ -215,8 +215,8 @@ async fn opaque_session_supports_multiple_vfs_hops() {
     let inner_task = socket_server(&inner_socket).await;
     let (outer, outer_task) = connected_pair().await;
 
-    let middle_path = dolang_vfs::path::PathBuf::from_native(middle_socket).unwrap();
-    let inner_path = dolang_vfs::path::PathBuf::from_native(inner_socket).unwrap();
+    let middle_path = crate::path::PathBuf::from_native(middle_socket).unwrap();
+    let inner_path = crate::path::PathBuf::from_native(inner_socket).unwrap();
     let middle = outer
         .unix_socket(middle_path.to_path(), None)
         .await
@@ -225,7 +225,7 @@ async fn opaque_session_supports_multiple_vfs_hops() {
         .unix_socket(inner_path.to_path(), None)
         .await
         .unwrap();
-    assert_eq!(inner.target(), &dolang_vfs::target::TargetInfo::current());
+    assert_eq!(inner.target(), &crate::target::TargetInfo::current());
 
     inner.stop().await.unwrap();
     inner_task.await.unwrap().unwrap();
@@ -242,7 +242,7 @@ async fn outer_teardown_does_not_stop_retained_vfs_daemon() {
     let inner_task = socket_server(&socket).await;
     let (outer, outer_task) = connected_pair().await;
 
-    let socket_path = dolang_vfs::path::PathBuf::from_native(socket.clone()).unwrap();
+    let socket_path = crate::path::PathBuf::from_native(socket.clone()).unwrap();
     let inner = outer
         .unix_socket(socket_path.to_path(), None)
         .await
@@ -261,8 +261,8 @@ async fn path_operations_work_over_generic_stream() {
     assert_eq!(client.target(), &TargetInfo::current());
 
     let temp = tempdir().unwrap();
-    let first = dolang_vfs::path::PathBuf::from_native(temp.path().join("first")).unwrap();
-    let second = dolang_vfs::path::PathBuf::from_native(temp.path().join("second")).unwrap();
+    let first = crate::path::PathBuf::from_native(temp.path().join("first")).unwrap();
+    let second = crate::path::PathBuf::from_native(temp.path().join("second")).unwrap();
 
     client.create_dir(first.to_path(), false).await.unwrap();
     assert_eq!(
@@ -294,8 +294,8 @@ async fn rename_replace_flag_works_over_generic_stream() {
     let temp = tempdir().unwrap();
     let first_native = temp.path().join("first");
     let second_native = temp.path().join("second");
-    let first = dolang_vfs::path::PathBuf::from_native(first_native.clone()).unwrap();
-    let second = dolang_vfs::path::PathBuf::from_native(second_native.clone()).unwrap();
+    let first = crate::path::PathBuf::from_native(first_native.clone()).unwrap();
+    let second = crate::path::PathBuf::from_native(second_native.clone()).unwrap();
     tokio::fs::write(&first_native, b"first").await.unwrap();
     tokio::fs::write(&second_native, b"second").await.unwrap();
 
@@ -500,9 +500,9 @@ async fn opaque_pipe_connects_remote_children_without_client_relay() {
 async fn retained_files_can_be_used_for_remote_stdio() {
     let (client, server_task) = connected_pair().await;
     let temp = tempdir().unwrap();
-    let stdin_path = dolang_vfs::path::PathBuf::from_native(temp.path().join("stdin")).unwrap();
-    let stdout_path = dolang_vfs::path::PathBuf::from_native(temp.path().join("stdout")).unwrap();
-    let stderr_path = dolang_vfs::path::PathBuf::from_native(temp.path().join("stderr")).unwrap();
+    let stdin_path = crate::path::PathBuf::from_native(temp.path().join("stdin")).unwrap();
+    let stdout_path = crate::path::PathBuf::from_native(temp.path().join("stdout")).unwrap();
+    let stderr_path = crate::path::PathBuf::from_native(temp.path().join("stderr")).unwrap();
 
     let mut options = client.open_options();
     options.read(true).write(true).create(true).truncate(true);
@@ -581,7 +581,7 @@ async fn direct_file_relays_as_remote_process_stdin() {
     let remote_vfs = client.clone();
     let direct = Vfs::direct().unwrap();
     let temp = tempdir().unwrap();
-    let stdin_path = dolang_vfs::path::PathBuf::from_native(temp.path().join("stdin")).unwrap();
+    let stdin_path = crate::path::PathBuf::from_native(temp.path().join("stdin")).unwrap();
 
     let mut options = direct.open_options();
     options.read(true).write(true).create(true).truncate(true);
@@ -602,7 +602,7 @@ async fn remote_file_relays_as_direct_process_stdin() {
     let (client, server_task) = connected_pair().await;
     let direct_vfs = Vfs::direct().unwrap();
     let temp = tempdir().unwrap();
-    let stdin_path = dolang_vfs::path::PathBuf::from_native(temp.path().join("stdin")).unwrap();
+    let stdin_path = crate::path::PathBuf::from_native(temp.path().join("stdin")).unwrap();
 
     let mut options = client.open_options();
     options.read(true).write(true).create(true).truncate(true);
@@ -624,7 +624,7 @@ async fn remote_process_stdout_relays_into_direct_file() {
     let remote_vfs = client.clone();
     let direct = Vfs::direct().unwrap();
     let temp = tempdir().unwrap();
-    let stdout_path = dolang_vfs::path::PathBuf::from_native(temp.path().join("stdout")).unwrap();
+    let stdout_path = crate::path::PathBuf::from_native(temp.path().join("stdout")).unwrap();
 
     let mut options = direct.open_options();
     options.read(true).write(true).create(true).truncate(true);
@@ -675,8 +675,8 @@ async fn file_relays_between_two_remote_sessions() {
     let (second, second_server) = connected_pair().await;
     let second_vfs = second.clone();
     let temp = tempdir().unwrap();
-    let stdin_path = dolang_vfs::path::PathBuf::from_native(temp.path().join("stdin")).unwrap();
-    let stdout_path = dolang_vfs::path::PathBuf::from_native(temp.path().join("stdout")).unwrap();
+    let stdin_path = crate::path::PathBuf::from_native(temp.path().join("stdin")).unwrap();
+    let stdout_path = crate::path::PathBuf::from_native(temp.path().join("stdout")).unwrap();
 
     let mut options = first.open_options();
     options.read(true).write(true).create(true).truncate(true);
@@ -717,8 +717,8 @@ async fn pipeline_relays_across_three_domains() {
     let b_vfs = b.clone();
     let direct = Vfs::direct().unwrap();
     let temp = tempdir().unwrap();
-    let stdin_path = dolang_vfs::path::PathBuf::from_native(temp.path().join("stdin")).unwrap();
-    let stdout_path = dolang_vfs::path::PathBuf::from_native(temp.path().join("stdout")).unwrap();
+    let stdin_path = crate::path::PathBuf::from_native(temp.path().join("stdin")).unwrap();
+    let stdout_path = crate::path::PathBuf::from_native(temp.path().join("stdout")).unwrap();
 
     let mut options = direct.open_options();
     options.read(true).write(true).create(true).truncate(true);
@@ -915,7 +915,7 @@ async fn directory_enumeration_round_trip_over_generic_stream() {
     }
 
     for path in [&empty, &small, &mixed, &exact_page, &multiple_pages] {
-        let path = dolang_vfs::path::PathBuf::from_native(path.to_path_buf()).unwrap();
+        let path = crate::path::PathBuf::from_native(path.to_path_buf()).unwrap();
         let remote = collect_entries(client.read_dir(path.to_path()).await.unwrap()).await;
         let local = collect_entries(direct.read_dir(path.to_path()).await.unwrap()).await;
         assert_eq!(remote, local);
@@ -928,7 +928,7 @@ async fn directory_enumeration_round_trip_over_generic_stream() {
 async fn regular_file_round_trip_over_generic_stream() {
     let (client, server_task) = connected_pair().await;
     let temp = tempdir().unwrap();
-    let path = dolang_vfs::path::PathBuf::from_native(temp.path().join("file")).unwrap();
+    let path = crate::path::PathBuf::from_native(temp.path().join("file")).unwrap();
 
     let mut options = client.open_options();
     options.read(true).write(true).create(true).truncate(true);
@@ -987,7 +987,7 @@ async fn regular_file_round_trip_over_generic_stream() {
 async fn remote_file_closes_with_a_read_trailer_outstanding() {
     let (client, server_task) = connected_pair().await;
     let temp = tempdir().unwrap();
-    let path = dolang_vfs::path::PathBuf::from_native(temp.path().join("partial")).unwrap();
+    let path = crate::path::PathBuf::from_native(temp.path().join("partial")).unwrap();
 
     let mut options = client.open_options();
     options.read(true).write(true).create(true).truncate(true);
@@ -1019,7 +1019,7 @@ async fn remote_file_closes_with_a_read_trailer_outstanding() {
 async fn remote_append_writes_ignore_the_cursor() {
     let (client, server_task) = connected_pair().await;
     let temp = tempdir().unwrap();
-    let path = dolang_vfs::path::PathBuf::from_native(temp.path().join("appended")).unwrap();
+    let path = crate::path::PathBuf::from_native(temp.path().join("appended")).unwrap();
 
     let mut options = client.open_options();
     options.read(true).write(true).create(true).truncate(true);
@@ -1053,7 +1053,7 @@ async fn remote_append_writes_ignore_the_cursor() {
 async fn remote_try_into_std_fails_immediately_after_open() {
     let (client, server_task) = connected_pair().await;
     let temp = tempdir().unwrap();
-    let path = dolang_vfs::path::PathBuf::from_native(temp.path().join("opaque")).unwrap();
+    let path = crate::path::PathBuf::from_native(temp.path().join("opaque")).unwrap();
 
     let mut options = client.open_options();
     options.read(true).write(true).create(true).truncate(true);
@@ -1070,7 +1070,7 @@ async fn remote_try_into_std_fails_immediately_after_open() {
 async fn remote_file_locks_round_trip() {
     let (client, server_task) = connected_pair().await;
     let temp = tempdir().unwrap();
-    let path = dolang_vfs::path::PathBuf::from_native(temp.path().join("locks")).unwrap();
+    let path = crate::path::PathBuf::from_native(temp.path().join("locks")).unwrap();
     let mut options = client.open_options();
     options.read(true).write(true).create(true);
     let first = options.open(path.to_path()).await.unwrap();
@@ -1123,7 +1123,7 @@ async fn remote_file_locks_round_trip() {
 async fn security_descriptor_round_trip_over_generic_stream() {
     let (client, server_task) = connected_pair().await;
     let temp = tempdir().unwrap();
-    let path = dolang_vfs::path::PathBuf::from_native(temp.path().join("security")).unwrap();
+    let path = crate::path::PathBuf::from_native(temp.path().join("security")).unwrap();
     std::fs::write(path.to_path().as_str(), "hello").unwrap();
 
     let descriptor = client
@@ -1168,7 +1168,7 @@ async fn security_descriptor_round_trip_over_generic_stream() {
 async fn regular_file_xattrs_round_trip_over_generic_stream() {
     let (client, server_task) = connected_pair().await;
     let temp = tempdir().unwrap();
-    let path = dolang_vfs::path::PathBuf::from_native(temp.path().join("file")).unwrap();
+    let path = crate::path::PathBuf::from_native(temp.path().join("file")).unwrap();
 
     let mut options = client.open_options();
     options.read(true).write(true).create(true).truncate(true);
@@ -1243,7 +1243,7 @@ async fn stop_drains_pipe_receivers_without_waiting_for_senders() {
 async fn remote_relative_seeks_track_the_client_cursor() {
     let (client, server_task) = connected_pair().await;
     let temp = tempdir().unwrap();
-    let path = dolang_vfs::path::PathBuf::from_native(temp.path().join("cursor")).unwrap();
+    let path = crate::path::PathBuf::from_native(temp.path().join("cursor")).unwrap();
 
     let mut options = client.open_options();
     options.read(true).write(true).create(true).truncate(true);
@@ -1300,7 +1300,7 @@ async fn remote_relative_seeks_track_the_client_cursor() {
 async fn remote_positional_io_is_independent_of_the_cursor() {
     let (client, server_task) = connected_pair().await;
     let temp = tempdir().unwrap();
-    let path = dolang_vfs::path::PathBuf::from_native(temp.path().join("positional")).unwrap();
+    let path = crate::path::PathBuf::from_native(temp.path().join("positional")).unwrap();
 
     let mut options = client.open_options();
     options.read(true).write(true).create(true).truncate(true);
@@ -1375,7 +1375,7 @@ async fn remote_positional_io_is_independent_of_the_cursor() {
 async fn remote_read_at_into_lands_the_trailer_in_the_destination() {
     let (client, server_task) = connected_pair().await;
     let temp = tempdir().unwrap();
-    let path = dolang_vfs::path::PathBuf::from_native(temp.path().join("into")).unwrap();
+    let path = crate::path::PathBuf::from_native(temp.path().join("into")).unwrap();
 
     let size = 16 * 1024;
     let source: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
@@ -1427,7 +1427,7 @@ async fn remote_read_failure_reports_its_error_kind() {
     let temp = tempdir().unwrap();
     // A directory opens read-only on unix but cannot be read from, which is a
     // failure of the read itself rather than of opening or of the transport.
-    let path = dolang_vfs::path::PathBuf::from_native(temp.path().to_path_buf()).unwrap();
+    let path = crate::path::PathBuf::from_native(temp.path().to_path_buf()).unwrap();
 
     let mut options = client.open_options();
     options.read(true);
@@ -1451,7 +1451,7 @@ async fn remote_read_failure_reports_its_error_kind() {
 
 /// Opens a file on `vfs` for reading and writing, seeded with `content`.
 async fn seeded_remote(vfs: &Vfs, temp: &Path, name: &str, content: &[u8]) -> File {
-    let path = dolang_vfs::path::PathBuf::from_native(temp.join(name)).unwrap();
+    let path = crate::path::PathBuf::from_native(temp.join(name)).unwrap();
     let file = vfs
         .open_options()
         .read(true)
@@ -1512,7 +1512,7 @@ async fn remote_append_copy_reports_the_actual_end() {
         .open_options()
         .append(true)
         .open(
-            dolang_vfs::path::PathBuf::from_native(temp.path().join("append-dst"))
+            crate::path::PathBuf::from_native(temp.path().join("append-dst"))
                 .unwrap()
                 .to_path(),
         )
@@ -1588,7 +1588,7 @@ async fn remote_copy_data_rejects_overlap_the_client_cannot_see() {
         .read(true)
         .write(true)
         .open(
-            dolang_vfs::path::PathBuf::from_native(temp.path().join("overlap"))
+            crate::path::PathBuf::from_native(temp.path().join("overlap"))
                 .unwrap()
                 .to_path(),
         )
@@ -1831,7 +1831,7 @@ async fn process_kill_ends_a_process_that_ignores_sigterm() {
 
 #[tokio::test]
 async fn remote_well_known_paths_match_direct() {
-    use dolang_vfs::path::WellKnownPath;
+    use crate::path::WellKnownPath;
     let direct = Vfs::direct().unwrap();
     let (client, task) = connected_pair().await;
     let env = std::collections::HashMap::from([

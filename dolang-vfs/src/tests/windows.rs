@@ -8,8 +8,8 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use crate::temp::tempdir;
-use dolang_vfs::{
+use crate::test_temp::tempdir;
+use crate::{
     Vfs,
     error::Result as VfsResult,
     metadata::MetadataPatch,
@@ -70,12 +70,12 @@ fn direct_security_info_reports_token_elevation() {
     assert_eq!(info.is_elevated(), is_elevated());
 }
 
-fn typed(path: &Path) -> dolang_vfs::path::Path<'_> {
-    dolang_vfs::path::Path::windows(path.to_str().unwrap())
+fn typed(path: &Path) -> crate::path::Path<'_> {
+    crate::path::Path::windows(path.to_str().unwrap())
 }
 
-fn typed_str(path: &str) -> dolang_vfs::path::Path<'_> {
-    dolang_vfs::path::Path::windows(path)
+fn typed_str(path: &str) -> crate::path::Path<'_> {
+    crate::path::Path::windows(path)
 }
 
 fn current_process_handle() -> OwnedHandle {
@@ -292,7 +292,7 @@ async fn file_stdio_is_reopened_without_overlapped() {
         .arg("/s")
         .arg("/c")
         .arg("echo first")
-        .stdout(crate::support::stdio_send(output).await)
+        .stdout(crate::tests::support::stdio_send(output).await)
         .unwrap();
     let mut child = command.spawn().await.unwrap();
     assert!(child.wait().await.unwrap().success());
@@ -306,7 +306,7 @@ async fn file_stdio_is_reopened_without_overlapped() {
         .arg("/s")
         .arg("/c")
         .arg("echo second")
-        .stdout(crate::support::stdio_send(output).await)
+        .stdout(crate::tests::support::stdio_send(output).await)
         .unwrap();
     let mut child = command.spawn().await.unwrap();
     assert!(child.wait().await.unwrap().success());

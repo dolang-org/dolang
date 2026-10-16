@@ -1,4 +1,4 @@
-use dolang_compile::{Config, ErrorKind, Mode, Unit, typeck};
+use crate::{Config, ErrorKind, Mode, Unit, typeck};
 use std::{path::Path, thread};
 
 fn config(mode: Mode<'_>) -> Config<'_> {
@@ -94,7 +94,7 @@ fn judgments_do_not_depend_on_the_order_units_are_added() {
         Path::new("user.dol"),
         "import geo:\n  - Box\npub class Crate[T]: Box[T]\n  pub field extra @ Box[T] = nil\n",
     );
-    let judge = |units: [(&'static str, &dolang_compile::Unit<'_>); 2]| {
+    let judge = |units: [(&'static str, &crate::Unit<'_>); 2]| {
         let mut checker = typeck::Builder::new();
         let ids = units.map(|(_, unit)| checker.unit(unit).unwrap());
         let check = checker.check();
@@ -379,7 +379,7 @@ fn type_only_prelude_bindings_have_no_runtime_effect() {
                     let items: Vec<_> = unit
                         .nodes()
                         .filter_map(|(_, node)| match node.kind() {
-                            dolang_compile::Kind::PreludeItem {
+                            crate::Kind::PreludeItem {
                                 module: "missing_at_runtime",
                                 item,
                                 type_only,
@@ -442,7 +442,7 @@ fn type_only_prelude_shadowing() {
         );
         assert!(!unit.nodes().any(|(_, node)| matches!(
             node.kind(),
-            dolang_compile::Kind::PreludeItem {
+            crate::Kind::PreludeItem {
                 module: "custom",
                 ..
             }
@@ -468,13 +468,13 @@ fn later_prelude_items_win_in_types_only() {
         items.commit();
         let unit = config.unit(Path::new("m.dol"), "let value @ Name = 1\nName\nvalue\n");
         for (_, node) in unit.nodes() {
-            if let dolang_compile::Kind::NameType {
+            if let crate::Kind::NameType {
                 target: Some(target),
                 ..
             } = node.kind()
             {
                 assert!(
-                    matches!(unit.node(target).unwrap().kind(), dolang_compile::Kind::PreludeItem { type_only, .. } if type_only == last_type_only)
+                    matches!(unit.node(target).unwrap().kind(), crate::Kind::PreludeItem { type_only, .. } if type_only == last_type_only)
                 );
             }
         }
@@ -511,9 +511,9 @@ fn module_prelude_bindings_follow_type_only_configuration_order() {
         assert!(unit.diagnostics().next().is_none());
         let (_, node) = unit
             .nodes()
-            .find(|(_, node)| matches!(node.kind(), dolang_compile::Kind::NameType { .. }))
+            .find(|(_, node)| matches!(node.kind(), crate::Kind::NameType { .. }))
             .unwrap();
-        let dolang_compile::Kind::NameType {
+        let crate::Kind::NameType {
             target: Some(target),
             ..
         } = node.kind()
@@ -523,7 +523,7 @@ fn module_prelude_bindings_follow_type_only_configuration_order() {
         assert_eq!(
             matches!(
                 unit.node(target).unwrap().kind(),
-                dolang_compile::Kind::PreludeItem {
+                crate::Kind::PreludeItem {
                     type_only: true,
                     ..
                 }

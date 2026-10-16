@@ -1,6 +1,6 @@
 use std::process::Stdio;
 
-use dolang_vfs::Vfs;
+use crate::Vfs;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     process::Command,

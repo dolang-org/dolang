@@ -1,6 +1,8 @@
 //! Static checking of a set of compilation units.
 
 pub(crate) mod cfg;
+#[cfg(test)]
+mod diagnostics;
 pub(crate) mod elab;
 mod flow;
 mod lower;
