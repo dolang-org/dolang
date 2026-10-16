@@ -1023,7 +1023,7 @@ pub class Pos
 #       - echo
 #       - exit
 #
-# # Type-only items
+# # Checker-only items
 # compile "test.dol" $source
 #   prelude:
 #     std:

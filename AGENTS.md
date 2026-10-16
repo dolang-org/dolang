@@ -685,8 +685,9 @@ let double = (do |x @ Int| -> Int x * 2)
 types; also `:K`, and `...R` or `*R`/`**R` as for rest parameters, in any
 number and order).
 Binders may have type-expression bounds and defaults (`T @ Bound = Default`); a
-schema bound such as `S @ {...}` marks a schema binder. Type arguments expand a
-pack only with `...`, whatever its binder: `class Tuple[*Ts]` is used as
+schema bound such as `S @ {...}` marks a schema binder. A variadic binder
+collects arguments into a schema; once bound, it is a schema like any other,
+and becomes type arguments only through `...`: `class Tuple[*Ts]` is used as
 `Tuple[...Ts]`. A superclass may take type arguments:
 
 ```

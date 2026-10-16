@@ -6,7 +6,7 @@ and arithmetic operators.
 
 ## Defining a Class
 
-`class` and type-only `@class` declarations are allowed only at module top
+`class` and checker-only `@class` declarations are allowed only at module top
 level, including the top level of a script. They cannot appear inside functions,
 control-flow blocks, or class bodies.
 
@@ -269,7 +269,7 @@ be used with `.#`, even inside the same class. Nested functions may access
 private members through the captured receiver. A decorated class's name grants
 no private access, since the decorator may replace the class, unless every
 decorator is the prelude's [`final`](#final-classes) or
-[`mixable`](./types.md#disjoint-classes), which return the class they are
+[`mixable`](#disjoint-classes), which return the class they are
 given.
 
 Fields declared without `pub` are private. Within the class, private fields are
@@ -417,7 +417,7 @@ do
 Undashed lines may contain several supertypes. A dash line contains exactly
 one; both styles may appear in the same list. The list must contain at least
 one supertype and has no keyed items. Protocols (`@class`) use the same layout,
-with all supertypes implicitly type-only. A declaration without members may
+with all supertypes implicitly checker-only. A declaration without members may
 end at `do`.
 
 ### Member Resolution Order
@@ -523,7 +523,35 @@ class Point3: Point   # TypeError: cannot inherit from final type
 `final` raises a [`StateError`](std.StateError) for a class that already has a
 subclass. Since a final class has no subclasses, the type checker treats its
 values as outside every class it doesn't inherit from, so a type test for such
-a class drops it (see [Unions](./types.md#unions)).
+a class drops it (see [Narrowing](./type-checking.md#narrowing)).
+
+### Disjoint Classes
+
+Every class is disjoint unless it is decorated with the prelude's
+[`mixable`](std.mixable), and `Value` is disjoint. A class can't inherit from
+two disjoint classes neither of which inherits from the other; the type checker
+reports one that does. A mixable class takes the place of its nearest disjoint
+superclass, so subclasses of unrelated classes may share it:
+
+```
+#[mixable]
+class Named
+  pub field name = nil
+
+class Shape
+class Image
+class Square: Shape Named
+class Icon: Image Named
+
+class Tile: Square Image   # error: unrelated disjoint classes `Square` and `Image`
+```
+
+A diamond is allowed when every class in its middle is mixable. Classes whose
+nearest disjoint superclasses are unrelated have no instances in common, so a
+type test for one drops the other. `Iterable`, `Iter`, `Sinkable`, `Sink`,
+`Func`, and the error kinds below [`RuntimeError`](std.RuntimeError) are
+mixable. Only runtime supertypes count, and protocols are never disjoint. The
+runtime doesn't enforce the rule.
 
 ## Type Inspection
 

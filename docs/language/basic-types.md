@@ -129,7 +129,7 @@ See [Classes](./classes.md) for defining your own types.
 
 ## Type Conversions
 
-The built-in types can be called as functions to convert values:
+The built-in types have associated functions to convert values:
 
 ```
 assert_eq (str 42) "42"

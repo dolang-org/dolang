@@ -25,10 +25,12 @@ nav:
     - language/patterns.md
     - language/modules.md
     - language/classes.md
-    - language/types.md
     - language/error-handling.md
     - language/concurrency.md
     - language/decorators.md
+    - language/types.md
+    - language/type-syntax.md
+    - language/type-checking.md
     - language/misc.md
     - language/prelude.md
   - Shell Guide:

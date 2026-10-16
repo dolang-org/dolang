@@ -2,8 +2,8 @@
 #
 # The `std` module provides core language facilities.
 
-# The union of its type arguments. `Union[Int, Str]` is `(Int | Str)`, and a
-# pack spreads into one, as in `Union[T, ...Us]`.
+# The union of its type arguments. `Union[Int, Str]` is `(Int | Str)`, and an
+# expanded schema adds its items' types, as in `Union[T, ...Us]`.
 pub @let Union[...Ts] = ...
 
 # The type with no values, which a function that never returns can declare as
@@ -13,7 +13,7 @@ pub @let Never = Union[]
 # The unchecked type. Unlike [`Value`](std.Value), which admits every value but
 # allows few operations without narrowing, `Unknown` is consistent with every
 # type in both directions, so the checker accepts any use of it. A
-# [strict](../../language/types.md#strict-checking) file may write it to leave
+# [strict](../../language/type-checking.md#strict-checking) file may write it to leave
 # one declaration unchecked.
 pub @let Unknown = ...
 
@@ -140,7 +140,7 @@ pub def final[T] cls @ Type[T] -> Type[T]
 # disjoint classes may share it as a superclass. The type checker reports a
 # class that breaks the rule, and takes classes below unrelated disjoint classes
 # to have no instances in common. See
-# [Disjoint Classes](../../language/types.md#disjoint-classes).
+# [Disjoint Classes](../../language/classes.md#disjoint-classes).
 #
 # ```
 # #[mixable]
