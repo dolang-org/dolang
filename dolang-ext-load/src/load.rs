@@ -1,11 +1,11 @@
-use std::{collections::HashSet, mem};
+use std::{cell::Cell, collections::HashSet, mem};
 
 use dolang::runtime::{
-    Error, Object, State, call,
+    Error, Object, Output, State, call,
     error::ErrorKind,
-    method,
-    object::TypeBuilder,
+    object::{Mut, Ref, TypeBuilder},
     unpack,
+    value::Nil,
     vm::{Builder, Register},
 };
 
@@ -20,34 +20,40 @@ pub(crate) fn configure_importer<'v>(builder: &mut Builder<'v>) {
         let Some(global) = strand.try_state::<Global<'v>>() else {
             return Err(Error::import(strand, name));
         };
-        let dict = global
-            .handlers
-            .as_dict(strand)
-            .expect("load handler registry must be a dict");
-        let mut pairs = dict.pairs();
-
+        let _executor = ImportExecutor::new(&global.executors);
+        let handlers = global.handlers.as_array(strand).unwrap();
+        // Appended handlers participate in the next resolution. Existing
+        // indices cannot move until every executor has finished.
+        let end = handlers.len(strand)?;
         strand
             .with_slots(async move |strand, [mut key, mut callback]| {
-                loop {
-                    if !pairs.next(strand, &mut key, &mut callback)? {
-                        break;
+                for index in 0..end {
+                    handlers.get(strand, index, &mut key)?;
+                    if key.is_nil() {
+                        continue;
                     }
-
-                    match call!(strand, &callback, &mut out, name).await {
-                        Ok(()) => {
-                            let handler = global
-                                .types
-                                .import_handler
-                                .cast(&key)
-                                .expect("load handler registry key must be an ImportHandler");
-                            handler
-                                .enter(strand, async |strand, inst| {
-                                    inst.borrow_mut(strand)?.loaded.insert(name.to_owned());
-                                    Ok(())
-                                })
-                                .await?;
-                            return Ok(());
-                        }
+                    let handler = global.types.import_handler.cast(&key).unwrap();
+                    let result = handler
+                        .enter(strand, async |strand, inst| {
+                            Output::set(
+                                strand,
+                                &mut callback,
+                                Ref::slot::<0>(&inst.borrow_unwrap()),
+                            );
+                            let result = call!(strand, &callback, &mut out, name).await;
+                            if inst.annex().unregistered.get() {
+                                // Unregistration raced this callback. Decline even
+                                // success so the VM cannot cache its result.
+                                return Err(Error::import(strand, name));
+                            }
+                            if result.is_ok() {
+                                inst.borrow_mut_unwrap().loaded.insert(name.to_owned());
+                            }
+                            result
+                        })
+                        .await;
+                    match result {
+                        Ok(()) => return Ok(()),
                         Err(e) if e.kind() == ErrorKind::Import => (),
                         Err(e) => return Err(e),
                     }
@@ -89,22 +95,43 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .function("import_handler", async move |strand, args, mut out| {
             let ([callback], []) = unpack!(strand, args, 1, 0)?;
 
+            let handlers = global.handlers.as_array(strand).unwrap();
+            if global.executors.get() == 0 && global.gravestones.get() {
+                strand.with_slots_sync(|strand, [mut item]| {
+                    for index in (0..handlers.len(strand)?).rev() {
+                        handlers.get(strand, index, &mut item)?;
+                        if item.is_nil() {
+                            handlers.delete(strand, index)?;
+                        }
+                    }
+                    Ok(())
+                })?;
+                global.gravestones.set(false);
+            }
             global.types.import_handler.create_with_annex(
                 strand,
                 ImportHandler {
                     loaded: HashSet::new(),
                 },
-                ImportHandlerAnnex { global },
+                ImportHandlerAnnex {
+                    global,
+                    unregistered: Cell::new(false),
+                },
                 &mut out,
             );
-
-            {
-                let dict = global
-                    .handlers
-                    .as_dict(strand)
-                    .expect("load handler registry must be a dict");
-                dict.insert(strand, &out, callback, false)?;
-            }
+            global
+                .types
+                .import_handler
+                .cast(&out)
+                .unwrap()
+                .enter_sync(strand, |strand, inst| {
+                    Output::set(
+                        strand,
+                        Mut::slot_mut::<0>(&mut inst.borrow_mut_unwrap()),
+                        callback,
+                    );
+                });
+            handlers.push(strand, &out)?;
 
             Ok(())
         })
@@ -117,32 +144,61 @@ pub(crate) struct ImportHandler {
 
 pub(crate) struct ImportHandlerAnnex<'v> {
     global: State<'v, Global<'v>>,
+    unregistered: Cell<bool>,
 }
 
 impl<'v> Object<'v> for ImportHandler {
     const NAME: &'v str = "ImportHandler";
     const MODULE: &'v str = "load";
+    const SLOTS: usize = 1;
     type Annex = ImportHandlerAnnex<'v>;
     type Type = ();
     type TypeAnnex = ();
 
-    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        let delete = builder.sym("delete");
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder.method_with_slots(
             "unregister",
-            async move |this, strand, args, _out, [tmp]| {
+            async move |this, strand, args, _out, [mut item]| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let loaded = {
-                    let mut this = this.borrow_mut(strand)?;
-                    mem::take(&mut this.loaded)
-                };
                 let annex = this.annex();
-                method!(strand, &annex.global.handlers, delete, tmp, this).await?;
+                if annex.unregistered.replace(true) {
+                    return Ok(());
+                }
+                let global = annex.global;
+                let handlers = global.handlers.as_array(strand).unwrap();
+                for index in 0..handlers.len(strand)? {
+                    handlers.get(strand, index, &mut item)?;
+                    if item.repr_eq(strand, this) {
+                        if global.executors.get() == 0 {
+                            handlers.delete(strand, index)?;
+                        } else {
+                            handlers.set(strand, index, Nil)?;
+                            global.gravestones.set(true);
+                        }
+                        break;
+                    }
+                }
+                let loaded = mem::take(&mut this.borrow_mut(strand)?.loaded);
                 for name in loaded {
                     strand.vm().evict_import_cache(&name);
                 }
                 Ok(())
             },
         )
+    }
+}
+
+struct ImportExecutor<'a>(&'a Cell<usize>);
+
+impl<'a> ImportExecutor<'a> {
+    fn new(count: &'a Cell<usize>) -> Self {
+        count.set(count.get() + 1);
+        Self(count)
+    }
+}
+
+impl Drop for ImportExecutor<'_> {
+    fn drop(&mut self) {
+        self.0.set(self.0.get() - 1);
     }
 }

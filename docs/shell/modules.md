@@ -47,9 +47,10 @@ stored in a central location:
 | macOS    | `~/Library/Caches/dolang/bytecode/`                |
 | Windows  | `%LOCALAPPDATA%\dolang\cache\bytecode\`            |
 
-Cache files are named by a Blake3 hash of the source file path and compilation
-mode, with a `.dolc` extension. The cache is automatically invalidated when the
-source file is newer than the cached bytecode.
+Cache files are named by a Blake3 hash of the absolute source path, compilation
+mode, strictness, and prelude bindings, with a `.dolc` extension. The cache is
+invalidated when the source file is newer than the cached bytecode. A cached
+file that fails bytecode verification is recompiled.
 
 This happens automatically and requires no configuration.
 

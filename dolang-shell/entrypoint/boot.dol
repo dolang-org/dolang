@@ -1,0 +1,209 @@
+# Stock startup policy. Only native modules are available until the resource
+# importer has been registered.
+import _shell load shell fs
+
+let ENTRYPOINT = "dolang.entrypoint"
+let MODULE = "dolang.module"
+let Str(program) = shell.program
+else throw std.RuntimeError "can't determine program"
+program = fs.Path $program
+let name = (program.name || "dolang")
+let usage = "Usage: $name [OPTIONS] [PATH] [ARGS]..."
+
+# Bootstrap without depending on any bundled Do module.
+def bundled_import name
+  if let Bin(bytecode) = _shell.resource $MODULE $name
+    load.run $bytecode
+  else
+    throw std.ImportError $name
+
+let resources = load.import_handler $bundled_import
+
+def argument_error message
+  print |
+    error: $message
+
+    $usage
+
+    For more information, try '--help'.
+  shell.exit 2
+
+def conflict left right
+  argument_error "the argument '$left' cannot be used with '$right'"
+
+def help()
+  print |
+    $usage
+
+    Arguments:
+      [PATH]     Script path (or bundled entrypoint name if -m is used)
+      [ARGS]...  Script arguments (appear in `shell.args`)
+
+    Options:
+      -m, --main                              Run a bundled main entrypoint
+          --check                             Check a script and its imports without executing
+          --compile <OUTPUT>                  Compile to bytecode file
+          --module-path <PATH>                Add a module search path
+          --import <MODULE[=NAME]>            Add a module to the prelude
+          --import-item <MODULE.ITEM[=NAME]>  Add a module item to the prelude
+          --no-cache                          Disable the bytecode cache
+          --no-history                        Disable REPL history loading and saving
+          --strict                            Treat warnings as errors
+      -h, --help                              Print help
+  shell.exit 0
+
+let iter = shell.args.iter()
+let target = nil
+let main = false
+let check = false
+let output = nil
+let module_paths = []
+let prelude = {}
+let strict = false
+let cache = true
+let history = true
+let trailing = []
+let stop_options = false
+
+# A matching executable stem runs its entrypoint with every argument untouched.
+let stem = (program.stem || "").without_prefix dolang-
+if (stem != "dolang" && stem != "boot" && stem != "" && _shell.resource(ENTRYPOINT, stem) != nil)
+  target = stem
+  main = true
+
+# Consume values even if they look like flags, matching the CLI's existing rules.
+def value option
+  let result = iter.next default: nil
+  if (result == nil)
+    argument_error "a value is required for '$option' but none was supplied"
+  result
+
+while true
+  let arg = iter.next default: nil
+  if (arg == nil)
+    break
+  if (target != nil)
+    trailing.push $arg
+    continue
+  if !stop_options
+    match arg
+      "--" do
+        stop_options = true
+        continue
+      "-h" | "--help" do help()
+      "-m" | "--main" do
+        if check
+          conflict --check --main
+        if (output != nil)
+          conflict --compile --main
+        main = true
+        continue
+      "--check" do
+        if main
+          conflict --check --main
+        check = true
+        continue
+      "--compile" do
+        output = value "--compile <OUTPUT>"
+        if main
+          conflict --compile --main
+        continue
+      "--module-path" do
+        module_paths.push (fs.Path(value "--module-path <PATH>"))
+        continue
+      "--import" | "--import-item" do
+        let spec = value "$(arg) <$(arg == "--import" && "MODULE[=NAME]" || "MODULE.ITEM[=NAME]")>"
+        let parts = [...spec.split "=" limit: 1]
+        let name = parts[0]
+        let alias = (parts.len == 2 && parts[1])
+        if (arg == "--import")
+          if (parts.len == 2)
+            prelude.insert $name $alias
+          else
+            prelude.insert $prelude.len $name
+        else
+          let qualified = [...name.rsplit "." limit: 1]
+          if (qualified.len != 2)
+            argument_error "--import-item requires MODULE.ITEM[=NAME]"
+          let item = qualified[0]
+          let binding = if (parts.len == 2)
+            alias
+          else
+            item
+          prelude.insert $qualified[1] {$item: binding}
+        continue
+      "--no-history" do
+        history = false
+        continue
+      "--no-cache" do
+        cache = false
+        continue
+      "--strict" do
+        strict = true
+        continue
+    if (arg.starts_with("-") && arg != "-")
+      argument_error "unexpected argument '$arg' found"
+  target = arg
+
+if (main && target == nil)
+  argument_error "expected a target after '--main'"
+
+# The snapshot is supplied through an ordinary import handler, without native
+# CLI state or a special REPL invocation protocol.
+let options = Struct {:prelude, :strict, :history, :cache}
+let _options_handler = load.import_handler do |name|
+  if (name == "_boot_options")
+    options
+  else
+    throw std.ImportError $name
+
+# Load the native-only source helper through the bootstrap importer before a
+# filesystem importer could depend on it recursively.
+import _script
+
+# Filesystem modules precede bundled modules once CLI paths are known.
+resources.unregister()
+def search_paths()
+  [...module_paths, fs.data_dir(app: "dolang") / "site"]
+
+def find_module name
+  shell.with_host do
+    let relative = name.replace "." "/"
+    for dir = search_paths()
+      for path = [dir / "$relative.dol", dir / "$relative/mod.dol"]
+        if path.exists()
+          return path
+    throw std.ImportError $name
+
+let _files = load.import_handler do |name|
+  _script.run (find_module name) mode: $name :strict :cache
+let _bundled = load.import_handler $bundled_import
+
+let implicit_repl = (target == nil)
+if implicit_repl
+  target = "repl"
+  main = true
+let identity = if implicit_repl
+  nil
+else if main
+  target
+else
+  fs.Path $target
+
+shell.with_override args: $trailing program: $identity do
+  if main
+    let bytecode = _shell.resource $ENTRYPOINT $target
+    if (bytecode == nil || target == "boot")
+      throw std.RuntimeError "unknown bundled entrypoint: $target"
+    load.run $bytecode
+  else
+    let path = fs.Path $target
+    if check
+      if !_script.precompiled(path)
+        import _compile
+        _compile.check_script $path prelude: $prelude strict: $strict paths: (search_paths())
+    else if (output != nil)
+      let bytecode = _script.compile $path prelude: $prelude strict: $strict cache: false
+      fs.write $output $bytecode
+    else
+      _script.run $path prelude: $prelude strict: $strict cache: $cache

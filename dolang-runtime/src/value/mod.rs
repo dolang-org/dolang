@@ -100,7 +100,8 @@ impl<'v> Value<'v> {
     pub(crate) const FALSE: Self = Self(Repr::FALSE, PhantomData);
     pub(crate) const TRUE: Self = Self(Repr::TRUE, PhantomData);
 
-    pub(crate) fn repr_eq(&self, vm: &Vm<'v>, mut other: impl Input<'v>) -> bool {
+    /// Compare representations without invoking Do equality methods.
+    pub fn repr_eq(&self, vm: &Vm<'v>, mut other: impl Input<'v>) -> bool {
         match other.input_take(vm, private::Sealed) {
             InputBy::Borrow(value) => value.0 == self.0,
             InputBy::Value(value, slot) => {

@@ -859,143 +859,16 @@ def serve()
     put "$(json.encode(serve_line(line)))\n"
     shell.stdout.flush()
 
-# A source's module name under a search directory, `a/b.dol` being `a.b`, or
-# `nil` when it isn't under the directory.
-def module_under file dir
-  let parts = [...file.canonical().components]
-  let base = [...dir.canonical().components]
-  if (parts.len <= base.len || parts[..base.len] != base)
-    return nil
-  let rest = parts[base.len..]
-  if (rest[rest.len - 1] == "mod.dol")
-    rest.pop()
-  else
-    rest[rest.len - 1] = Path(rest[rest.len - 1]).stem
-  ".".join $rest
-
-# A source's module name under the first of the directories it is under, or
-# `nil` when it is under none.
-def module_among file dirs
-  for dir = dirs
-    let module = module_under $file $dir
-    if (module != nil)
-      return module
-  nil
-
-# Whether a file is a typelib, as `compile typelib` writes one.
-def is_typelib file
-  (file.ext == "dolt")
-
-# Checks the entries together with the modules they import, found by searching
-# the directories for `a/b.dol` as module `a.b`, or for its typelib `a/b.dolt`,
-# and then among the typelibs bundled with `dolang`. An entry under one of the
-# directories is compiled as its module, so a stub can be checked directly, and
-# meets the other entries' imports of that module. An entry that is a typelib is
-# its own module.
 def check p
+  import _compile
   let :entries :path :strict :no_bundled :undecided ... = p.check
-  let dirs = [...path.map do |dir| (Path dir)]
-  let units = []
-  let typelibs = []
-  let bundled = []
-  let seen = Set []
-  let pending = []
-  let missing = []
-
-  def add_typelib typelib to
-    to.push $typelib
-    queue $typelib.imports()
-
-  def queue imports
-    for name = imports
-      if !seen.contains(name)
-        seen.add $name
-        pending.push $name
-
-  def add file module
-    if is_typelib(file)
-      add_typelib $compile.Typelib(file.read("b")) $typelibs
-    else
-      let unit = compile.compile "$file" $file.read() module: $module typecheck: true document: true
-      units.push $unit
-      if (module != nil)
-        seen.add $module
-      queue $unit.imports()
-
-  # Every entry's module is known before any is compiled, so an import of one
-  # is met by the entry rather than found again
-  let roots = []
-  for entry = entries
-    let file = Path $entry
-    let module = if is_typelib(file)
-      compile.Typelib(file.read("b")).module
-    else
-      module_among $file $dirs
-    if (module != nil)
-      if seen.contains(module)
-        continue
-      seen.add $module
-    roots.push [file, module]
-  for root = roots
-    add $root[0] $root[1]
-  # `proc` holds the pipe types `strand`'s placeholders stand for
-  if !seen.contains("proc")
-    seen.add proc
-    pending.push proc
-  while (pending.len > 0)
-    let name = pending.pop()
-    let relative = name.replace(".", "/")
-    let candidates = $
-      for dir = dirs
-        - (dir / "$relative.dol")
-        - (dir / "$relative/mod.dol")
-        - (dir / "$relative.dolt")
-    let found = candidates.find (do |file| file.exists()) default: nil
-    if (found != nil)
-      add $found $name
-      continue
-    let typelib = if no_bundled
-      nil
-    else
-      _shell.resource "dolang.typelib" $name
-    if (typelib != nil)
-      add_typelib $compile.Typelib(typelib) $bundled
-    else
-      missing.push $name
-
-  let failed = (no_bundled && missing.len > 0)
-  let diagnostics = 0
-  for unit = units
-    for diag = unit.diagnostics()
-      diagnostics = (diagnostics + 1)
-      if (strict || diag.severity == :ERROR:)
-        failed = true
-      echo $diag.render()
-  let result = compile.check [...units, ...typelibs, ...bundled]
-  diagnostics = (diagnostics + result.diagnostics.len)
-  if (strict && result.diagnostics.len > 0)
-    failed = true
-  for diag = result.diagnostics
-    echo $diag.render()
-  if undecided
-    let listing = result.undecided()
-    if (listing != "")
-      echo "undecided checks:\n$(listing.trim_end())"
-  missing.sort()
-  for name = missing
-    echo "not found, treated as unknown: $name"
-  let verdict = if (result.validated && !failed)
-    "validated"
-  else
-    "partial"
-  let summary = "$verdict: $(units.len + typelibs.len) units, $diagnostics diagnostics"
-  echo "$summary ($(bundled.len) bundled typelibs)"
-  if (verdict != "validated")
-    shell.exit 1
+  _compile.check $entries paths: $path :strict :no_bundled :undecided
 
 # Writes a module's typelib, by default beside its source as `.dolt`. The module
 # is named by `--module`, or by where its source is under a search directory.
 def typelib p
+  import _compile:
+    - module_among
   let :source :module :path :output ... = p.typelib
   let file = Path $source
   if (module == nil)

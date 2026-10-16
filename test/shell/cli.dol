@@ -24,3 +24,140 @@ def custom_prelude_imports_and_no_cache()
       $script $output
 
     assert_eq $output.read() "first second"
+
+# Capture each stream separately so shell usage errors and help stay distinct.
+def invoke arguments
+  import proc
+  let out = BinBuf()
+  let err = BinBuf(b"x")
+  let code = try
+    run $exe ...arguments stdin: [] stdout: $out stderr: $err mode: :CHUNK:
+    0
+  catch proc.Error: error
+    error.rc
+  (code, Str(out.freeze()), Str(err.freeze())[1..])
+
+#[test]
+def shell_help_and_usage_errors()
+  import test:
+    - assert
+  let code out err = invoke ["--help"]
+  assert_eq $code 0
+  assert_eq $out ""
+  assert (err.starts_with "Usage: dolang")
+  for arguments message = [
+    (["--wat"], "unexpected argument '--wat'"),
+    (["-m"], "expected a target after '--main'"),
+    (["--compile"], "a value is required for '--compile <OUTPUT>'"),
+    (["--module-path"], "a value is required for '--module-path <PATH>'"),
+    (["--import"], "a value is required for '--import <MODULE[=NAME]>'"),
+    (["--import-item"], "a value is required for '--import-item <MODULE.ITEM[=NAME]>'"),
+    (["--import-item", "item"], "--import-item requires MODULE.ITEM[=NAME]"),
+    (["--check", "-m", "test"], "'--check' cannot be used with '--main'"),
+    (["-m", "--check", "test"], "'--check' cannot be used with '--main'"),
+    (["--compile", "out", "-m", "test"], "'--compile' cannot be used with '--main'"),
+    (["-m", "--compile", "out", "test"], "'--compile' cannot be used with '--main'")
+  ]
+    let code out err = invoke $arguments
+    assert_eq $code 2
+    assert_eq $out ""
+    assert (err.starts_with "error: ")
+    assert (err.contains message)
+    assert (err.ends_with "For more information, try '--help'.\n")
+
+#[test]
+def flags_after_target_and_option_terminator_are_forwarded()
+  with_temp_dir do |dir|
+    let script = (dir / "--help")
+    script.write r|
+      import shell
+      shell.stdout.write "$(str([...shell.args]))\n"
+    let code out err = invoke [str(script), "--help", "--wat"]
+    assert_eq (code, out, err) (0, "[\"--help\", \"--wat\"]\n", "")
+    cd $dir do
+      let code out err = invoke ["--", "--help", "--check"]
+      assert_eq (code, out, err) (0, "[\"--check\"]\n", "")
+  let code out err = invoke ["-m", "repl", "--help"]
+  # Arguments after the entrypoint are not parsed by the interpreter.
+  assert_eq (code, out, err) (0, "", "")
+
+#[test]
+def check_takes_precedence_over_compile()
+  with_temp_dir do |dir|
+    let script = (dir / "main.dol")
+    let output = (dir / "out.dolc")
+    script.write "throw std.RuntimeError should-not-run\n"
+    let code out err = invoke ["--compile", str(output), "--check", str(script)]
+    assert_eq (code, out, err) (0, "", "")
+    assert_eq $output.exists() false
+
+#[test]
+def module_paths_preserve_order_and_modules_have_no_cli_prelude()
+  with_temp_dir do |dir|
+    let first = (dir / "first")
+    let second = (dir / "second")
+    (first / "pkg").create_dir all: true
+    second.create_dir()
+    (first / "pkg/mod.dol").write "pub let value = 1\n"
+    (second / "pkg.dol").write "pub let value = 2\n"
+    let script = (dir / "main.dol")
+    script.write r|
+      import pkg
+      put "$(pkg.value)\n"
+    let code out err = invoke ["--module-path", str(first), "--module-path", str(second), str(script)]
+    assert_eq (code, out, err) (0, "1\n", "")
+    (first / "pkg.dol").write "pub let value = 3\n"
+    let code out err = invoke ["--module-path", str(first), str(script)]
+    assert_eq (code, out, err) (0, "3\n", "")
+    # The CLI's `injected` binding must not leak into a module compilation.
+    (first / "pkg.dol").write "pub let value = injected\n"
+    let code _out _err = invoke ["--no-cache", "--module-path", str(first), "--import-item", "std.Int=injected", str(script)]
+    assert_eq $code 1
+
+#[test]
+def implicit_entrypoint_names_forward_all_arguments()
+  import fs sys
+    test:
+      - ignore
+  if !(sys.os_info().family == :UNIX: && sys.os_info().os != :MACOS:)
+    ignore "requires symlinks and XDG history isolation"
+  with_temp_dir do |dir|
+    for name = ["dolang-repl", "repl", "dolang-repl.exe"]
+      let link = (dir / name)
+      fs.symlink_file $exe $link
+      let out = BinBuf()
+      env XDG_STATE_HOME: $dir do
+        run $link --help --strict stdin: ["echo hello\n"] stdout: $out stderr: :STDOUT: mode: :CHUNK:
+      assert_eq (Str(out.freeze())) "hello\n"
+
+#[test]
+def help_needs_no_filesystem_loader()
+  import sys
+    test:
+      - ignore
+  if !(sys.os_info().family == :UNIX: && sys.os_info().os != :MACOS:)
+    ignore "requires XDG directories"
+  env XDG_DATA_HOME: relative XDG_CACHE_HOME: relative XDG_STATE_HOME: relative do
+    let code out _err = invoke ["--help"]
+    assert_eq $code 0
+    assert_eq $out ""
+
+#[test]
+def checking_is_loaded_only_when_requested()
+  with_temp_dir do |dir|
+    (dir / "_compile.dol").write "throw std.RuntimeError checker-loaded\n"
+    let script = (dir / "main.dol")
+    script.write "nil\n"
+    let code out err = invoke ["--module-path", str(dir), str(script)]
+    assert_eq (code, out, err) (0, "", "")
+    let code _out _err = invoke ["--module-path", str(dir), "--check", str(script)]
+    assert_eq $code 1
+
+#[test]
+def boot_is_reserved_for_startup()
+  import test:
+    - assert
+  let code out err = invoke ["-m", "boot"]
+  assert_eq $code 1
+  assert_eq $out ""
+  assert (err.contains "unknown bundled entrypoint: boot")

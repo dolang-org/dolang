@@ -1,0 +1,50 @@
+# Host source loading and bytecode caching. Execution stays in the caller's VFS.
+import _shell fs load shell
+
+def is_precompiled path
+  if (path.ext == "dolc")
+    return true
+  path.open rb do |file|
+    (file.read(8) == b"\xffdobytec")
+
+# Recognizes bytecode without reading the entire file.
+pub def precompiled path
+  shell.with_host do is_precompiled $path
+
+# Include duplicate prelude keys and their order in the compilation identity.
+def cache_path path mode prelude strict
+  import digest
+  let key = dbg ["dolang-shell-cache-v3", str(path.absolute()), mode, strict, [...prelude.pairs()]]
+  let hash = digest.blake3 $key
+  (fs.cache_dir(app: "dolang") / "bytecode" / "${hash:x}.dolc")
+
+# Return whether the bytecode came from a cache, so only cache verification
+# failures trigger a retry. All IO, including directory lookup, is host-local.
+def read path mode prelude strict cache refresh
+  shell.with_host do
+    if is_precompiled(path)
+      return (path.read("b"), false)
+    let cached = (cache && cache_path(path, mode, prelude, strict) || nil)
+    if (!refresh && cached != nil && cached.exists() && path.metadata().modified <= cached.metadata().modified)
+      return (cached.read("b"), true)
+    let bytecode = _shell.compile $path $path.read() mode: $mode prelude: $prelude strict: $strict
+    if (cached != nil)
+      cached.parent.create_dir all: true
+      cached.write $bytecode
+    (bytecode, false)
+
+# Compile a source file or pass through bytecode, without executing it.
+pub def compile path :mode = :SCRIPT: :prelude = {} :strict = false :cache = true
+  let bytecode _cached = read $path $mode $prelude $strict $cache false
+  bytecode
+
+# Execute in the caller's context, retrying cached verification failures only.
+pub def run path :mode = :SCRIPT: :prelude = {} :strict = false :cache = true
+  let bytecode cached = read $path $mode $prelude $strict $cache false
+  try
+    load.run $bytecode
+  catch std.BytecodeError: error
+    if !cached
+      throw error
+    let bytecode _cached = read $path $mode $prelude $strict $cache true
+    load.run $bytecode

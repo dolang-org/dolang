@@ -1,0 +1,84 @@
+import shell sys
+  fs:
+    - with_temp_dir
+  test:
+    - assert_eq
+    - assert_throws
+    - ignore
+    - test
+
+# XDG isolates the child's cache without touching the user's existing entries.
+def isolated block
+  if !(sys.os_info().family == :UNIX: && sys.os_info().os != :MACOS:)
+    ignore "requires XDG directories"
+  with_temp_dir do |dir|
+    env XDG_CACHE_HOME: (dir / "cache") do block $dir
+
+def run_script script *options
+  let out = BinBuf()
+  run $shell.exe ...options $script stdout: $out stderr: :STDOUT: mode: :CHUNK:
+  Str $out.freeze()
+
+def entries dir
+  [...(dir / "cache").glob("dolang/bytecode/*.dolc")]
+
+#[test]
+def cache_reuse_invalidation_recovery_and_disable()
+  isolated do |dir|
+    let script = (dir / "main.dol")
+    script.write "echo first\n"
+    assert_eq (run_script script) "first\n"
+    let cached = entries $dir
+    assert_eq $cached.len 1
+    let stamp = cached[0].metadata().modified
+    assert_eq (run_script script) "first\n"
+    assert_eq $cached[0].metadata().modified $stamp
+    cached[0].write b"invalid bytecode"
+    assert_eq (run_script script) "first\n"
+    # A future timestamp makes invalidation independent of clock granularity.
+    script.write "echo second\n"
+    import time
+    script.update_metadata modified: (time.DateTime.from_unix(time.DateTime.now().unix_secs + 2))
+    assert_eq (run_script script) "second\n"
+    let before = cached[0].read "b"
+    script.write "echo third\n"
+    assert_eq (run_script(script, "--no-cache")) "third\n"
+    assert_eq $cached[0].read("b") $before
+
+#[test]
+def cache_settings_and_execution_errors()
+  isolated do |dir|
+    let script = (dir / "main.dol")
+    script.write "echo \$value\n"
+    assert_eq (run_script(script, "--import-item", "std.Int=value")) "<type std.Int>\n"
+    assert_eq (run_script(script, "--import-item", "std.Str=value")) "<type std.Str>\n"
+    assert_eq $(entries dir).len 2
+    let error_script = (dir / "failure.dol")
+    let marker = (dir / "marker")
+    error_script.write "import fs\nfs.append $(dbg(str(marker))) x\nthrow std.RuntimeError failed\n"
+    import proc
+    for _ = 0..2
+      assert_throws $proc.Error do
+        run $shell.exe $error_script stderr: (BinBuf())
+    assert_eq $marker.read() "xx"
+
+#[test]
+def strictness_and_compilation_mode_have_separate_cache_entries()
+  isolated do |dir|
+    let module = (dir / "shared.dol")
+    module.write "pub let value = 42\n"
+    assert_eq (run_script module) ""
+    let main = (dir / "main.dol")
+    main.write "import shared\nshared.value\n"
+    assert_eq (run_script(main, "--module-path", str(dir))) ""
+    assert_eq $(entries dir).len 3
+    assert_eq (run_script(module, "--strict")) ""
+    assert_eq $(entries dir).len 4
+    let warnings = (dir / "warnings.dol")
+    warnings.write "return nil\necho unreachable\n"
+    let _ = run_script $warnings
+    import proc
+    let error = assert_throws $proc.Error do
+      run_script $warnings --strict
+    assert_eq $error.rc 1
+    assert_eq $(entries dir).len 5

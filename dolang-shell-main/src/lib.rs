@@ -1,11 +1,13 @@
 #![deny(warnings)]
 
+// Boot uses load.import_handler even in binaries that only link this crate.
+extern crate dolang_ext_load;
+
 use std::error::Error;
 
 use tokio::runtime::Builder;
 
 use dolang::{
-    compile,
     extension::VmExt,
     resource,
     runtime::{self, error::ErrorKind, strand::Redirect, vm},
@@ -13,30 +15,12 @@ use dolang::{
 
 use dolang_ext_shell::{Exec, Exit};
 
-use crate::{
-    batch::Action,
-    cli::{Cli, ParseOutcome},
-    terminal_state::TerminalRestoreGuard,
-};
+use crate::terminal_state::TerminalRestoreGuard;
 
-mod batch;
-mod cli;
 mod interactive;
 mod load;
 mod services;
 mod terminal_state;
-
-fn get_action(cli: &Cli) -> Action {
-    if cli.check {
-        Action::Check {
-            module_paths: cli.module_paths.clone(),
-        }
-    } else if let Some(output) = &cli.compile {
-        Action::Compile(output.clone())
-    } else {
-        Action::Run
-    }
-}
 
 #[cfg(unix)]
 async fn interrupt_signal() -> std::io::Result<()> {
@@ -65,6 +49,9 @@ async fn interrupt_signal() -> std::io::Result<()> {
 ///
 /// Custom binaries can call this after linking any additional extensions they
 /// want to register via `dolang::extension!` and resource-producing crates.
+/// Link exactly one `dolang.entrypoint/boot` resource to supply startup policy.
+/// Boot receives the executable name in `shell.program` and raw arguments in
+/// `shell.args`; the launcher installs no bundled-module or filesystem loader.
 pub fn main() -> i32 {
     // Spawn a thread with a larger stack to avoid stack overflow in debug
     // builds, where deep call stacks of uninlined frames can exceed the
@@ -115,23 +102,20 @@ fn launch(command: &mut std::process::Command) -> i32 {
 }
 
 fn run() -> Outcome {
-    let argv: Vec<_> = std::env::args_os().collect();
-    let implicit_main =
-        cli::infer_implicit_entrypoint(argv.first().map(|arg| arg.as_os_str()), |name| {
-            resource::get(resource::ENTRYPOINT, name).is_some()
-        });
-    let mut cli = match cli::parse_from(argv, implicit_main) {
-        ParseOutcome::Run(cli) => cli,
-        ParseOutcome::Help(help) => {
-            println!("{help}");
-            return Outcome::Exit(0);
+    let mut argv = Vec::new();
+    for arg in std::env::args_os() {
+        match arg.into_string() {
+            Ok(arg) => argv.push(arg),
+            Err(arg) => {
+                eprintln!(
+                    "error: argument '{}' is not valid UTF-8",
+                    arg.to_string_lossy()
+                );
+                return Outcome::Exit(2);
+            }
         }
-        ParseOutcome::Error(error) => {
-            eprintln!("{error}");
-            return Outcome::Exit(2);
-        }
-    };
-    let action = get_action(&cli);
+    }
+    let program = argv.first().cloned();
 
     let rt = Builder::new_current_thread().enable_all().build().unwrap();
 
@@ -141,31 +125,9 @@ fn run() -> Outcome {
                 ext.apply(builder).unwrap();
             }
 
-            services::register(builder, &cli);
+            services::register(builder);
 
             builder
-                .importer(async move |strand, name, out| {
-                    let path = load::find_module_file(strand, name, &cli.module_paths).await?;
-                    load::load(
-                        strand,
-                        &path,
-                        compile::Mode::Module { name: name.into() },
-                        &[],
-                        cli.strict,
-                        cli.cache,
-                        out,
-                    )
-                    .await
-                })
-                .importer(async move |strand, name, mut out| {
-                    if let Some(payload) = resource::get(resource::MODULE, name) {
-                        runtime::Bytecode::new(payload.as_bytes())
-                            .run(strand, &mut out)
-                            .await
-                    } else {
-                        Err(runtime::Error::import(strand, name))
-                    }
-                })
                 .enter_with_slots(async move |strand, [mut stdin, mut stdout]| {
                     dolang_ext_shell::stdin(strand, &mut stdin);
                     dolang_ext_shell::default_output(strand, &mut stdout);
@@ -175,64 +137,24 @@ fn run() -> Outcome {
                             .input(stdin)
                             .output(&stdout)
                             .enter(async |strand| {
-                                dolang_ext_shell::set_args(strand, cli.args.drain(..)).await?;
-                                dolang_ext_shell::set_program(
-                                    strand,
-                                    cli.path.as_ref().map(|path| {
-                                        if cli.main {
-                                            dolang_ext_shell::ProgramSource::Module(
-                                                path.to_string_lossy().into_owned(),
-                                            )
-                                        } else {
-                                            dolang_ext_shell::ProgramSource::Path(path.clone())
-                                        }
-                                    }),
-                                )
-                                .await?;
-                                if let Some(path) = &cli.path {
-                                    let entrypoint = if cli.main {
-                                        let name = path.to_string_lossy();
-                                        Some(
-                                            resource::get(resource::ENTRYPOINT, name.as_ref())
-                                                .ok_or_else(|| {
-                                                    runtime::Error::runtime(
-                                                        strand,
-                                                        format!(
-                                                            "unknown bundled entrypoint: {name}"
-                                                        ),
-                                                    )
-                                                })?
-                                                .as_bytes(),
+                                dolang_ext_shell::set_args(strand, argv.into_iter().skip(1))
+                                    .await?;
+                                dolang_ext_shell::set_program(strand, program).await?;
+                                let boot = resource::get(resource::ENTRYPOINT, "boot").ok_or_else(
+                                    || {
+                                        runtime::Error::runtime(
+                                            strand,
+                                            "missing bundled boot entrypoint",
                                         )
-                                    } else {
-                                        None
-                                    };
-                                    batch::main(
-                                        strand,
-                                        path,
-                                        action,
-                                        entrypoint,
-                                        &cli.prelude,
-                                        cli.strict,
-                                        cli.cache,
-                                    )
+                                    },
+                                )?;
+                                strand
+                                    .with_slots(async |strand, [out]| {
+                                        runtime::Bytecode::new(boot.as_bytes())
+                                            .run(strand, out)
+                                            .await
+                                    })
                                     .await
-                                } else {
-                                    let entrypoint = resource::get(resource::ENTRYPOINT, "repl")
-                                        .ok_or_else(|| {
-                                            runtime::Error::runtime(
-                                                strand,
-                                                "missing bundled repl entrypoint",
-                                            )
-                                        })?;
-                                    strand
-                                        .with_slots(async |strand, [out]| {
-                                            runtime::Bytecode::new(entrypoint.as_bytes())
-                                                .run(strand, out)
-                                                .await
-                                        })
-                                        .await
-                                }
                             });
 
                     let res = {

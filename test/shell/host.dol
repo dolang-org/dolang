@@ -101,3 +101,38 @@ def stdio_vfs_reports_launcher_error()
   let err = assert_throws $RuntimeError do
     Vfs do throw RuntimeError "launcher failed"
   assert_eq $str(err) "launcher failed"
+
+#[test]
+def filesystem_imports_load_on_host_and_execute_in_active_vfs()
+  with_temp_dir do |dir|
+    let remote = (dir / "remote")
+    (dir / "lib").create_dir()
+    (remote / "lib").create_dir all: true
+    (dir / "lib/boot_host_probe.dol").write r|
+      import fs
+      pub let source = "host"
+      pub let cwd = cd()
+      fs.write module-marker host
+    (remote / "lib/boot_host_probe.dol").write r|
+      pub let source = "remote"
+      pub let cwd = cd()
+    let script = (dir / "main.dol")
+    script.write r|
+      import shell fs time
+        test:
+          - assert_eq
+      let remote = fs.Path $shell.args[1]
+      let vfs = shell.Vfs do run $shell.args[0] --stdio
+      try
+        vfs.with do
+          cd $remote do
+            env XDG_CACHE_HOME: relative XDG_DATA_HOME: relative do
+              import boot_host_probe
+              assert_eq $boot_host_probe.source host
+              assert_eq $boot_host_probe.cwd $remote
+              assert_eq (fs.read "module-marker") host
+      finally
+        time.timeout 30 do vfs.stop()
+      assert_eq $fs.Path("module-marker").exists() false
+    cd $dir do
+      run $exe --module-path lib $script $vfs_bin $remote

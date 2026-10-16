@@ -6,8 +6,6 @@ import sys shell
     - ignore
     - test
 
-# The child resolves these paths from its process environment, independently
-# of strand-local environment changes it makes after startup.
 #[test]
 def startup_uses_process_directories()
   if !(sys.os_info().family == :UNIX: && sys.os_info().os != :MACOS:)
@@ -15,62 +13,81 @@ def startup_uses_process_directories()
   with_temp_dir do |dir|
     let data = (dir / "data")
     let cache = (dir / "cache")
-    let state = (dir / "state")
     let site = (data / "dolang/site")
     site.create_dir all: true
     (site / "directory_probe.dol").write "pub let value = 42\n"
     let script = (dir / "probe.dol")
     script.write r|
-      import directory_probe _shell shell
+      import directory_probe
         test:
           - assert_eq
       assert_eq $directory_probe.value 42
-      # Native startup services must keep using the process environment.
-      env XDG_DATA_HOME: relative XDG_STATE_HOME: relative XDG_CACHE_HOME: relative do
-        let options = _shell.repl_options()
-        assert_eq $options[:state_dir:] $shell.args[0]
-        assert_eq $options[:data_local_dir:] $shell.args[1]
-        _shell.compile "<directory-probe>" "42"
-    env XDG_DATA_HOME: $data XDG_CACHE_HOME: $cache XDG_STATE_HOME: $state do
-      run $shell.exe $script (state / "dolang") (data / "dolang")
-    let cached = [...cache.glob("dolang/bytecode/*.dolc")]
-    assert (cached.len >= 3)
+    env XDG_DATA_HOME: $data XDG_CACHE_HOME: $cache do
+      run $shell.exe $script
+    assert_eq_count $cache 2
+
+def assert_eq_count cache count
+  import test:
+    - assert_eq
+  assert_eq $[...cache.glob("dolang/bytecode/*.dolc")].len $count
 
 #[test]
-def history_options_match_host_directories()
+def boot_options_deliver_history_and_prelude()
   with_temp_dir do |dir|
-    let script = (dir / "history-options.dol")
+    let script = (dir / "options.dol")
     script.write r|
-      import fs _shell
+      import _boot_options
         test:
           - assert_eq
-      let options = _shell.repl_options()
-      if options[:history:]
-        let state = fs.state_dir app: dolang
-        let data = fs.data_local_dir app: dolang
-        assert_eq $options[:state_dir:] (state && str(state) || nil)
-        assert_eq $options[:data_local_dir:] (str data)
-        let fallback = (options[:state_dir:] || options[:data_local_dir:])
-        assert_eq (fs.Path fallback) (state || data)
-      else
-        assert_eq $options[:state_dir:] nil
-        assert_eq $options[:data_local_dir:] nil
-    run $shell.exe $script
-    run $shell.exe --no-history $script
+      assert_eq $_boot_options.history (s.args[0] == "true")
+      assert_eq $_boot_options.strict true
+      assert_eq [..._boot_options.prelude.pairs()] [("shell", "s")]
+    run $shell.exe --strict --import shell=s $script true
+    run $shell.exe --strict --no-history --import shell=s $script false
     if (sys.os_info().family == :UNIX: && sys.os_info().os != :MACOS:)
       env XDG_STATE_HOME: relative do
-        run $shell.exe --no-history $script
+        run $shell.exe --no-history --strict --import shell=s $script false
 
 #[test]
-def startup_directory_errors_are_sys_errors()
+def repl_directory_errors_are_sys_errors()
   if !(sys.os_info().family == :UNIX: && sys.os_info().os != :MACOS:)
     ignore "requires XDG directories"
+  let error = BinBuf()
+  import proc
+    test:
+      - assert_eq
+      - assert_throws
+  env XDG_STATE_HOME: relative do
+    let failure = assert_throws $proc.Error do
+      run $shell.exe --no-cache stdin: [] stderr: $error mode: :CHUNK:
+    assert_eq $failure.rc 1
+  assert (Str(error.freeze()).contains("XDG_STATE_HOME must be an absolute path"))
+
+#[test]
+def remote_repl_keeps_history_on_the_host()
+  if !(sys.os_info().family == :UNIX: && sys.os_info().os != :MACOS:)
+    ignore "requires XDG directories"
+  import _vfs
+    test:
+      - assert_eq
   with_temp_dir do |dir|
-    let script = (dir / "directory-error.dol")
+    let state = (dir / "state")
+    let script = (dir / "remote-repl.dol")
     script.write r|
-      import sys _shell
-        test:
-          - assert_throws
-      assert_throws $sys.InvalidInputError do _shell.repl_options()
-    env XDG_STATE_HOME: relative do
-      run $shell.exe --no-cache $script
+      import _shell load shell time
+      let bytecode = _shell.resource "dolang.entrypoint" repl
+      let vfs = shell.Vfs do run $shell.args[0] --stdio
+      try
+        vfs.with do
+          env XDG_STATE_HOME: relative XDG_DATA_HOME: relative do load.run $bytecode
+      finally
+        time.timeout 30 do vfs.stop()
+    let output = BinBuf()
+    env XDG_STATE_HOME: $state do
+      run $shell.exe --no-cache $script $(_vfs.bin())
+        stdin: ["echo remote-repl\n"]
+        stdout: $output
+        stderr: :STDOUT:
+        mode: :CHUNK:
+    assert_eq (Str(output.freeze())) "remote-repl\n"
+    assert ((state / "dolang/history").read().contains("echo remote-repl"))

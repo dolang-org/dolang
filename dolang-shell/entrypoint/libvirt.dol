@@ -1,4 +1,4 @@
-import _shell args libvirt load shell
+import _shell _script _boot_options args libvirt load shell
   fs:
     - Path
 
@@ -12,7 +12,11 @@ def load_target main target
     [bytecode, target]
   else
     let script = Path $target
-    [(_shell.compile script), script]
+    let bytecode = _script.compile $script
+      prelude: $_boot_options.prelude
+      strict: $_boot_options.strict
+      cache: $_boot_options.cache
+    [bytecode, script]
 
 def parse_env sets unsets
   let overrides = {}
