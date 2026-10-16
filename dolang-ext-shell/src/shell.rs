@@ -861,6 +861,7 @@ pub(crate) fn configure_vm<'v>(
                     let fs = strand.force_state::<FsGlobal<'v>>();
                     create_path(strand, fs, path, out)?;
                 }
+                Some(ProgramOverride::Nil) => Output::set(strand, out, Nil),
                 Some(ProgramOverride::Module(name)) => Output::set(strand, out, name.as_ref()),
                 None => match core.program.borrow().as_ref() {
                     Some(ProgramSource::Path(path)) => {
@@ -892,14 +893,16 @@ pub(crate) fn configure_vm<'v>(
                 };
 
                 let program = if let Some(program) = program {
-                    if let Some(name) = program.as_str(strand) {
+                    if program.is_nil() {
+                        Some(ProgramOverride::Nil)
+                    } else if let Some(name) = program.as_str(strand) {
                         Some(ProgramOverride::Module(name.to_string().into_boxed_str()))
                     } else if let Some(path) = cast_path(strand, &program) {
                         Some(ProgramOverride::Path(path))
                     } else {
                         return Err(Error::type_error(
                             strand,
-                            "program: expected fs.Path or Str",
+                            "program: expected fs.Path, Str, or nil",
                         ));
                     }
                 } else {

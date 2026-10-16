@@ -159,7 +159,7 @@ impl<'v> Object<'v> for LineEditor {
                 Error::type_error(strand, "history path must be Str, fs.Path, or nil")
             })?)
         };
-        let mut config = load::compile_setup(&[], Mode::Repl);
+        let mut config = load::compile_setup(Mode::Repl);
         config.recover(true).document(true);
         if let Some(prelude) = prelude.as_ref().filter(|value| !value.is_nil()) {
             apply_prelude_value(strand, &mut config, prelude)?;
@@ -219,7 +219,7 @@ impl<'v> Object<'v> for LineEditor {
                     Ok(result)
                 })?;
                 let mut borrow = this.borrow_mut(strand)?;
-                let mut config = load::compile_setup(&[], Mode::Repl);
+                let mut config = load::compile_setup(Mode::Repl);
                 config.recover(true).document(true);
                 let prelude = Mut::slot::<0>(&borrow);
                 if !prelude.is_nil() {

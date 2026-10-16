@@ -23,21 +23,17 @@ def compiles_a_script_to_bytecode()
     assert_eq (load.run bytecode) 42
 
 #[test]
-def passes_through_precompiled_bytecode()
+def cli_compilation_passes_through_precompiled_bytecode()
   with_temp_dir do |dir|
     let script = (dir / "script.dol")
     script.write "(40 + 2)\n"
     let bytecode = compile $script
-
-    # Recognized by extension...
-    let by_extension = (dir / "script.dolc")
-    by_extension.write $bytecode
-    assert_eq (compile by_extension) $bytecode
-
-    # ...and by magic prefix, whatever the extension.
-    let by_magic = (dir / "script.bytes")
-    by_magic.write $bytecode
-    assert_eq (compile by_magic) $bytecode
+    for name = ["script.dolc", "script.bytes"]
+      let source = (dir / name)
+      let output = (dir / "output.dolc")
+      source.write $bytecode
+      run $exe --compile $output $source
+      assert_eq $output.read("b") $bytecode
 
 #[test]
 def runs_a_precompiled_script()
@@ -71,12 +67,12 @@ def explicit_source_and_modes()
   assert_throws $std.TypeError do compile "<script>" "nil" mode: 42
 
 #[test]
-def supplied_source_is_part_of_cache_identity()
+def supplied_source_is_compiled_each_time()
   assert_eq (load.run(compile("<same-path>", "41"))) 41
   assert_eq (load.run(compile("<same-path>", "42"))) 42
 
 #[test]
-def prelude_and_module_name_are_part_of_cache_identity()
+def prelude_and_module_name_affect_compilation()
   let first = compile "<same-prelude-path>" "value"
     prelude: {std: {Int: "value"}}
   let second = compile "<same-prelude-path>" "value"

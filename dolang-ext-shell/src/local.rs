@@ -177,6 +177,7 @@ impl Env {
 
 #[derive(Clone)]
 pub(crate) enum ProgramOverride {
+    Nil,
     Path(vfs_path::PathBuf),
     Module(Box<str>),
 }

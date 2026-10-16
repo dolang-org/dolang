@@ -1,17 +1,34 @@
 # dolang-shell Architecture
 
-Stock `dolang` CLI binary. The reusable interpreter logic now lives in
-`dolang-shell-main`, the stock bundled Do modules live in
-`dolang-shell-modules`, and stock bundled `--main` entrypoints live here.
+Stock `dolang` binary. Process lifecycle lives in `dolang-shell-main`, bundled
+modules in `dolang-shell-modules`, and stock entrypoints here.
 
-- **VM setup**: single-threaded tokio runtime, extension discovery/registration,
-  linked resource discovery
-- **Bundled entrypoints**: `build.rs` compiles stock script entrypoints such as
-  `test`, `dodo`, and `repl`
-- **REPL**: bundled `repl.dol` owns the loop and bindings. `_shell.Editor`
-  supplies rustyline editing/history on a blocking worker. Each turn runs with
-  its own `$dynamic$` struct snapshot and program-specific importer.
-  `--no-history` disables history loading and saving.
-- **Bytecode caching**: `~/.cache/dolang/bytecode/`, keyed by Blake3 hash
-  of file path
-- **Diagnostics**: `annotate-snippets` for colorized output
+- **Boot**: `entrypoint/boot.dol` parses CLI arguments and selects script,
+  compile, check, or bundled-entrypoint execution. With no target it selects
+  `repl`, using the same entrypoint dispatch as `-m`. Help and usage errors go
+  to stderr. Non-UTF-8 argv is rejected by the Rust launcher with status 2.
+- **Importers**: boot first registers a bundled-resource loader using native
+  modules alone. After parsing it installs filesystem search before bundled
+  fallback: ordered `--module-path` roots, then the application data directory's
+  `site/`, with `foo.dol` before `foo/mod.dol`. Module resolution, source
+  compilation, and cache IO run under `shell.with_host`; imported bytecode
+  executes in the caller's VFS. Modules receive no CLI prelude.
+- **Invocation identity**: boot scopes script arguments and identity through
+  `shell.with_override`. Script identities are paths, entrypoint identities
+  are strings, and the implicit REPL's identity is nil.
+- **REPL**: `repl.dol` owns the loop, bindings, and per-turn `$dynamic$`
+  importer. Boot supplies prelude, strictness, and history through the internal
+  `_boot_options` import handler. History uses `fs.state_dir`, falling back to
+  `fs.data_local_dir` in the host context; `--no-history` skips directory
+  lookup and persistence.
+- **Bytecode**: `_script` recognizes `.dolc` or the magic header. Its versioned
+  Blake3 cache keys include absolute path, mode/module name, strictness, and
+  ordered prelude bindings. Source mtime invalidates cache entries; bytecode
+  verification errors trigger recompilation. `--no-cache` bypasses the cache.
+  The stock shell always links `digest`.
+- **Checking**: boot lazily imports `_compile`, shared with `compile check`.
+  `--check` retains quiet success and permits partial verification; the tooling
+  entrypoint retains summaries and fails partial verification.
+- **Build**: `build.rs` compiles stock entrypoints and a separate boot resource
+  table for the `custom_main` example. Custom boot tables do not overlap the
+  stock table in one binary.

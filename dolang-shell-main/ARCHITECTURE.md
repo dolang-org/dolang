@@ -1,21 +1,23 @@
 # dolang-shell-main Architecture
 
-Reusable interpreter core for `dolang`-style binaries.
+Reusable process lifecycle for `dolang`-style binaries.
 
-- **Startup**: parse CLI args, build a single-threaded Tokio runtime, register
-  linked extensions, and run a script or bundled entrypoint. With no script,
-  select `repl` without changing `shell.program` from nil.
-- **Importer layering**: first search explicit `--module-path` roots in order,
-  then `site/`, then fall back to linked resources in the `dolang.module`
-  namespace.
-- **Bundled entrypoints**: `-m` / `--main` runs precompiled bundled script
-  entrypoints rather than importing modules and calling `main`.
-- **Resources**: typelibs, module bytecode, entrypoint bytecode, and assets are
-  discovered through `dolang::resource`. Embedders choose resources by linking
-  contributing crates. `_shell.resource` exposes their text or bytes to Do.
-- **Entrypoint services**: `_shell.compile` compiles supplied source or reads
-  a file, retaining native bytecode detection and caching outside REPL mode.
-  `_shell.Editor` runs Do-aware line editing under `spawn_blocking`;
-  cancellation waits for readline to return. `_shell.repl_options` bridges CLI
-  settings and native history directories until startup moves into Do.
-  Directory lookups use a direct VFS and the process environment.
+- **Startup**: validate UTF-8 argv, build a single-threaded Tokio runtime,
+  register linked extensions, redirect stdio, and execute the linked
+  `dolang.entrypoint/boot` resource. Boot receives argv[0] as `shell.program`
+  and the remaining arguments unchanged as `shell.args`.
+- **Lifecycle**: the large-stack thread restores terminal state before returning
+  an exit status or replacing the process. Signals cancel the root strand;
+  output is flushed before runtime shutdown. Unhandled errors are printed as
+  a last resort.
+- **Startup policy**: supplied entirely by boot. This crate installs no module
+  search paths, bundled-module importer, CLI parser, or bytecode cache.
+  Embedders link exactly one boot entrypoint; linked resource table order does
+  not define portable duplicate precedence.
+- **Resources**: `_shell.resource` exposes linked text or byte resources to Do.
+- **Compiler service**: `_shell.compile` compiles supplied source or reads a
+  source file, applies explicit prelude and strictness settings, prints
+  diagnostics, and returns bytecode. It does no bytecode detection or caching.
+- **REPL services**: `_shell.Editor` runs Do-aware editing/history under
+  `spawn_blocking`; cancellation waits for readline to return.
+  `_shell.render_error` formats runtime errors.

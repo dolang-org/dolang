@@ -3,6 +3,7 @@ import compile load strand
     - assert_eq
     - assert_type
     - assert_throws
+    - parametrize
     - test
   std:
     - ImportError
@@ -37,12 +38,13 @@ def fallback_after_import_error()
   let seen = []
 
   let first = load.import_handler do |name|
-    seen.push $name
+    if (name == "synthetic_fallback")
+      seen.push $name
     throw ImportError(name)
 
   let second = load.import_handler do |name|
-    seen.push $name
     if (name == "synthetic_fallback")
+      seen.push $name
       Answer 7
     else
       throw ImportError(name)
@@ -246,3 +248,169 @@ def script_channels_survive_import()
   strand.redirect input: [1, 2] output: $output do
     load.run $code
   assert_eq $output [1, 2]
+
+#[test]
+def registration_during_import_applies_to_the_next_resolution()
+  let added = []
+  let first = load.import_handler do |name|
+    if (name == "synthetic_append" && added.len == 0)
+      let handle = load.import_handler do |requested|
+        if (requested == "synthetic_append")
+          Answer 42
+        else
+          throw ImportError(requested)
+      added.push $handle
+    throw ImportError(name)
+  try
+    assert_throws $ImportError do global_import synthetic_append
+    assert_eq $global_import("synthetic_append").answer 42
+  finally
+    first.unregister()
+    for handle = added
+      handle.unregister()
+
+#[test]
+#[parametrize fail: [false, true]]
+def unregistering_a_running_callback_discards_its_result :fail
+  let entered_send entered = strand.channel()
+  let release_send release = strand.channel()
+  let handle = load.import_handler do |name|
+    if (name == "synthetic_removed_running")
+      entered_send.put true
+      release.next()
+      if fail
+        throw TypeError "discard this error too"
+      Answer 1
+    else
+      throw ImportError(name)
+  let reader = strand.spawn do
+    assert_throws $ImportError do global_import synthetic_removed_running
+  entered.next()
+  try
+    handle.unregister()
+    handle.unregister()
+    release_send.put true
+    reader.join()
+    assert_throws $ImportError do global_import synthetic_removed_running
+  finally
+    release_send.close()
+    reader.wait()
+    handle.unregister()
+
+#[test]
+def callback_can_unregister_itself_and_fall_back()
+  let own = []
+  let first = load.import_handler do |name|
+    if (name == "synthetic_self_removed")
+      own[0].unregister()
+      Answer 1
+    else
+      throw ImportError(name)
+  own.push $first
+  let second = load.import_handler do |name|
+    if (name == "synthetic_self_removed")
+      Answer 2
+    else
+      throw ImportError(name)
+  try
+    assert_eq $global_import("synthetic_self_removed").answer 2
+    assert_eq $global_import("synthetic_self_removed").answer 2
+  finally
+    first.unregister()
+    second.unregister()
+
+#[test]
+def removing_a_pending_handler_preserves_following_handlers()
+  let own = []
+  let first = load.import_handler do |name|
+    if (name == "synthetic_gravestones")
+      own[0].unregister()
+    throw ImportError(name)
+  let removed = load.import_handler do |name|
+    if (name == "synthetic_gravestones")
+      throw TypeError "removed handler was called"
+    throw ImportError(name)
+  own.push $removed
+  let last = load.import_handler do |name|
+    if (name == "synthetic_gravestones")
+      Answer 42
+    else
+      throw ImportError(name)
+  try
+    assert_eq $global_import("synthetic_gravestones").answer 42
+  finally
+    first.unregister()
+    removed.unregister()
+    last.unregister()
+
+#[test]
+def canceled_imports_allow_later_registry_compaction()
+  let entered_send entered = strand.channel()
+  let release_send release = strand.channel()
+  let handle = load.import_handler do |name|
+    if (name == "synthetic_gravestone_cancel")
+      entered_send.put true
+      release.next()
+      Answer 1
+    else
+      throw ImportError(name)
+  let reader = strand.spawn do global_import synthetic_gravestone_cancel
+  entered.next()
+  handle.unregister()
+  reader.cancel()
+  reader.wait()
+  release_send.close()
+  # Registration after cancellation can reclaim gravestones and preserve order.
+  let replacement = load.import_handler do |name|
+    if (name == "synthetic_gravestone_cancel")
+      Answer 2
+    else
+      throw ImportError(name)
+  try
+    assert_eq $global_import("synthetic_gravestone_cancel").answer 2
+  finally
+    replacement.unregister()
+
+#[test]
+def compaction_waits_for_the_last_executor()
+  let entered_send entered = strand.channel 2
+  let left_send left_release = strand.channel()
+  let right_send right_release = strand.channel()
+  let earlier = load.import_handler do |name| throw ImportError(name)
+  let blocker = load.import_handler do |name|
+    if (name == "synthetic_count_left" || name == "synthetic_count_right")
+      entered_send.put $name
+      if (name == "synthetic_count_left")
+        left_release.next()
+      else
+        right_release.next()
+    throw ImportError(name)
+  let last = load.import_handler do |name|
+    if (name == "synthetic_count_left" || name == "synthetic_count_right")
+      Answer 42
+    else
+      throw ImportError(name)
+  let left = strand.spawn do global_import synthetic_count_left
+  let right = strand.spawn do global_import synthetic_count_right
+  entered.next()
+  entered.next()
+  earlier.unregister()
+  let added = []
+  try
+    left_send.put true
+    assert_eq $left.join().answer 42
+    # The other cursor is past `earlier`; compacting now would skip `last`.
+    let late = load.import_handler do |name| throw ImportError(name)
+    added.push $late
+    right_send.put true
+    assert_eq $right.join().answer 42
+  finally
+    left_send.close()
+    right_send.close()
+    left.wait()
+    right.wait()
+    earlier.unregister()
+    blocker.unregister()
+    last.unregister()
+    for handle = added
+      handle.unregister()

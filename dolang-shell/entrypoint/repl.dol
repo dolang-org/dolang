@@ -1,6 +1,4 @@
-import _shell load term
-  fs:
-    - Path
+import _shell _boot_options load term fs shell
 
 # A separate call gives every retained importer its own binding snapshot.
 def run_turn bytecode bindings
@@ -12,14 +10,16 @@ def run_turn bytecode bindings
       load.import $name
   load.run $bytecode importer: $importer
 
-let options = _shell.repl_options()
+let options = _boot_options
 let history_path = nil
-if options[:history:]
-  let directory = (options.get(:state_dir:) || options[:data_local_dir:])
+if options.history
+  # The native editor reads and writes history on the interpreter's host.
+  let directory = shell.with_host do
+    (fs.state_dir(app: "dolang") || fs.data_local_dir(app: "dolang"))
   if directory
-    history_path = (Path(directory) / "history")
+    history_path = (directory / "history")
 
-let editor = _shell.Editor $history_path prelude: $options[:prelude:]
+let editor = _shell.Editor $history_path prelude: $options.prelude
 let bindings @ Dict[Sym, Value] = {}
 try
   while true
@@ -28,11 +28,11 @@ try
     if (line == :EOF: || line == :INTERRUPTED:)
       break
     try
-      let prelude = {...options[:prelude:], r"$dynamic$": names}
+      let prelude = {...options.prelude, r"$dynamic$": names}
       let bytecode = _shell.compile "<repl>" $line
         mode: :REPL:
         prelude: $prelude
-        strict: $options[:strict:]
+        strict: $options.strict
       let result = run_turn $bytecode $bindings
       for key value = result
         bindings[key] = value

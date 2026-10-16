@@ -450,16 +450,17 @@ do -> R
 # Runs a function with a scoped command-line arguments or program identity.
 #
 # The two are independent, and an omitted one keeps its current value, so
-# nested calls can override just one part of the invocation identity. Strands
-# created within the call inherit the overrides. Previous values are restored
-# when `func` returns, however it exits.
+# nested calls can override just one part of the invocation identity. Passing
+# `program: nil` clears the program identity. Strands created within the call
+# inherit the overrides. Previous values are restored when `func` returns,
+# however it exits.
 #
 # ## Errors
 #
 # | Exception                           | Condition                         |
 # | ----------------------------------- | --------------------------------- |
 # | [`TypeError`](std.TypeError) | `args` is not iterable            |
-# | [`TypeError`](std.TypeError) | `program` is not a string or path |
+# | [`TypeError`](std.TypeError) | `program` is not a string, path, or nil |
 pub def with_override[R]
   # Function to run.
   func @ (() -> R)
@@ -469,7 +470,7 @@ pub def with_override[R]
   :args @ Iterable[Value] = nil
   # Identity seen as
   # [`shell.program`](shell.program).
-  :program @ (Str | Path) = nil
+  :program @ (Str | Path | nil) = nil
 do -> R
   ...
 

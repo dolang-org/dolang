@@ -1318,14 +1318,12 @@ dependencies = [
 name = "dolang-shell-main"
 version = "0.1.1"
 dependencies = [
- "blake3",
  "console",
  "crossterm",
  "dolang",
  "dolang-ext-compile",
  "dolang-ext-load",
  "dolang-ext-shell",
- "dolang-vfs",
  "libc",
  "rustyline",
  "tokio",

@@ -139,3 +139,23 @@ def rejects_unknown_bundled_entrypoint()
         run $exe -m ssh --command $(_vfs.bin()) example -m no_such_entrypoint
           stderr: $err
     assert (err.read().contains "unknown entrypoint: no_such_entrypoint")
+
+#[test]
+def remote_scripts_keep_cli_prelude_and_precompiled_support()
+  with_temp_dir do |dir|
+    write_ssh_shim $dir
+    let script = (dir / "script.dol")
+    let compiled = (dir / "script.bytes")
+    let marker = (dir / "marker")
+    script.write r|
+      import fs shell
+      fs.write $shell.args[0] (stringify 42)
+    env PATH: "$dir:$(shell.env["PATH"])" do
+      run $exe --no-cache --import-item std.str=stringify -m ssh
+        --command $(_vfs.bin()) --no-login-env example $script $marker
+      assert_eq $marker.read() "42"
+      run $exe --import-item std.str=stringify --compile $compiled $script
+      marker.remove()
+      run $exe -m ssh
+        --command $(_vfs.bin()) --no-login-env example $compiled $marker
+      assert_eq $marker.read() "42"

@@ -84,7 +84,24 @@ def invalid_overrides_do_not_change_context()
   assert_throws $TypeError do
     with_override args: 1 do nil
   assert_throws $TypeError do
-    with_override program: nil do nil
+    with_override program: 42 do nil
 
   assert_eq [...shell.args] $original_args
   assert_eq $shell.program $original_program
+
+#[test]
+def nil_program_clears_and_restores_identity()
+  let original = shell.program
+  with_override program: outer do
+    with_override program: nil do
+      assert_eq $shell.program nil
+      with_override args: [] do
+        assert_eq $shell.program nil
+      let child = stream do shell.program
+      assert_eq $child.join() nil
+    assert_eq $shell.program outer
+
+  assert_throws $RuntimeError do
+    with_override program: nil do
+      throw RuntimeError expected
+  assert_eq $shell.program $original

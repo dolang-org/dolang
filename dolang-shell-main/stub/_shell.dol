@@ -8,7 +8,6 @@ pub def render_error error :backtrace @ Backtrace = nil -> term.Text
   ...
 
 # Compiles source, or reads and compiles a file when source is omitted.
-# Non-REPL compilation retains bytecode detection and the shell's cache.
 pub def compile
   path @ (Str | fs.Path)
   source @ Str = nil
@@ -17,18 +16,6 @@ pub def compile
   :strict @ Bool = nil
 do -> Bin
   ...
-
-# Returns the CLI prelude, strictness, history flag, and native history directories.
-pub def repl_options() -> Dict[ReplOptions]
-  ...
-
-pub @let ReplOptions = {
-  prelude: Dict[{*Str, *(Str): compiler.PreludeBinding}],
-  strict: Bool,
-  history: Bool,
-  state_dir: (Str | nil),
-  data_local_dir: (Str | nil),
-}
 
 # Edits Do input with syntax highlighting and multiline validation.
 pub class Editor

@@ -22,7 +22,6 @@ test = false
 [features]
 default = [
   "base64",
-  "digest",
   "json",
   "regex",
   "glob",
@@ -43,7 +42,6 @@ default = [
 ]
 debug = ["dolang-shell-main/debug"]
 base64 = ["dep:dolang-ext-base64"]
-digest = ["dep:dolang-ext-digest"]
 json = [
   "dep:dolang-ext-json",
   "dolang-ext-http?/json",
@@ -90,7 +88,6 @@ workspace = true
 
 [dependencies.dolang-ext-digest]
 workspace = true
-optional = true
 
 
 [dependencies.dolang-ext-base64]
