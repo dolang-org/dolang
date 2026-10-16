@@ -5,7 +5,8 @@
 pub class ImportHandler
   # Removes this handler from the runtime import handler registry.
   #
-  # Calling this more than once has no effect.
+  # Calling this more than once has no effect. A callback already running
+  # when unregistered has its result discarded.
   #
   # ## Example
   #
@@ -58,6 +59,9 @@ do -> Value
   ...
 
 # Registers a module import handler.
+#
+# A resolution considers the handlers registered when it starts. Handlers
+# registered during a callback participate in subsequent resolutions.
 #
 # Handlers run after native modules and cached Do modules. The first successful
 # handler supplies the imported value. Raise [`ImportError`](std.ImportError)
