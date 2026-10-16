@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use std::{
     hash::{Hash, Hasher},
     mem, result, str,
@@ -191,7 +193,7 @@ impl<'v> Object<'v> for Event {
         strand: &'a mut Strand<'v, 's>,
         other: &dolang::runtime::Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         if let Some(other) = global.types.event.cast(other) {
             Ok(other.enter_sync(strand, |_strand, other| {
                 let this = this.annex();

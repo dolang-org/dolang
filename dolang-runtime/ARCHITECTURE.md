@@ -22,12 +22,16 @@ Registration goes through `Register`, a handle lent out only as
 setups are declared on `Builder` alone, because strands and the import path
 depend on them being fixed before the VM is entered.
 
-A lazy setup (`Builder::lazy`) is keyed by a tag type and owns a set of module
-names. It runs at most once, with a fresh `Register`, when an import misses a
-module it owns or when `AllocExt::force` names its tag. Forcing requires an
-`Alloc` because setup allocates; `Vm::state` never forces, and panics on state
-whose setup hasn't run. The table tracks the running setups to report cycles,
-and rejects any module registered outside the setup that declared it.
+VM state is keyed by a `StateTag`, whose `State<'v>` associated type determines
+the stored value and every lookup's result.
+
+A lazy setup (`Builder::lazy`) is keyed by a `StateTag` and owns a set of module
+names. It must register state under that tag, using `()` if it has none of its
+own. It runs once, with a fresh `Register`, when an import misses a module it
+owns or `AllocExt::force` names its tag. Forcing requires an `Alloc` because
+setup allocates; `Vm::state` never forces, and panics if state is missing. The
+table tracks running setups to report cycles, checks that each registers its
+state and declared modules, and rejects modules registered outside their setup.
 
 ## Value Representation
 

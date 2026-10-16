@@ -22,7 +22,7 @@ use crate::{
         file,
         path::{cast_path, create_path, path_from_value},
     },
-    global::{FsGlobal, Global, ProcGlobal, ShellGlobal},
+    global::{FsTag, ProcGlobal, ProcTag, ShellTag, Tag},
     io_mode::{IoMode, encode_value, read_value},
     pipe_channel::{self, RecvGuard, SendGuard},
     proc::{parse_policy_dict, vfs_policy},
@@ -183,7 +183,7 @@ async fn resolve_io_file<'v, 's>(
         return Ok(false);
     };
 
-    let fs = strand.force_state::<FsGlobal<'v>>();
+    let fs = strand.force_state::<FsTag>();
     let file = file::open(strand, fs, path.to_path(), mode).await?;
     file::create_file(strand, fs, file, mode, out);
     Ok(true)
@@ -254,14 +254,14 @@ async fn configure_direct_input<'v, 's>(
         return Ok(true);
     }
     if strand
-        .try_state::<ShellGlobal<'v>>()
+        .try_state::<ShellTag>()
         .is_some_and(|shell| shell.types.stdin.cast(input).is_some())
     {
         command.stdin_inherit().into_sys(strand)?;
         return Ok(true);
     }
     if let Some(file) = strand
-        .try_state::<FsGlobal<'v>>()
+        .try_state::<FsTag>()
         .and_then(|fs| file::cast_file(fs, input))
     {
         let stdio = file.command_recv(strand).await?;
@@ -280,7 +280,7 @@ async fn configure_direct_input<'v, 's>(
 /// to raw fd inheritance instead of a value-framed pump.
 fn is_default_stdout<'v>(strand: &Strand<'v, '_>, value: &Value<'v>) -> bool {
     strand
-        .try_state::<ShellGlobal<'v>>()
+        .try_state::<ShellTag>()
         .is_some_and(|shell| shell.types.stdout.cast(value).is_some())
         || dolang_ext_term::is_default_output(strand, value)
 }
@@ -299,7 +299,7 @@ async fn configure_direct_output<'v, 's>(
         return Ok(true);
     }
     if let Some(file) = strand
-        .try_state::<FsGlobal<'v>>()
+        .try_state::<FsTag>()
         .and_then(|fs| file::cast_file(fs, output))
     {
         let stdio = file.command_send(strand).await?;
@@ -325,14 +325,14 @@ async fn configure_direct_stderr<'v, 's>(
         return Ok(true);
     }
     if strand
-        .try_state::<ShellGlobal<'v>>()
+        .try_state::<ShellTag>()
         .is_some_and(|shell| shell.types.stderr.cast(stderr).is_some())
     {
         command.stderr_inherit().into_sys(strand)?;
         return Ok(true);
     }
     if let Some(file) = strand
-        .try_state::<FsGlobal<'v>>()
+        .try_state::<FsTag>()
         .and_then(|fs| file::cast_file(fs, stderr))
     {
         let stdio = file.command_send(strand).await?;
@@ -445,7 +445,7 @@ async fn output_pump<'v, 's, R>(
 where
     R: AsyncRead + Unpin,
 {
-    let global = strand.vm().state::<ProcGlobal<'v>>();
+    let global = strand.vm().state::<ProcTag>();
     if let Some(capture) = global.types.capture.cast(output) {
         let mut reader = reader;
         let mut value = String::new();
@@ -659,7 +659,7 @@ async fn run<'v, 's>(
     // console instead, so a child's output does not scribble over an extension
     // that has taken the terminal over. Naming `shell.stdout`/`shell.stderr`
     // explicitly pins the channel to the real stream and opts out.
-    let core = strand.state::<Global<'v>>();
+    let core = strand.state::<Tag>();
     let console_owned = core.terminal.redirected.get();
     // A capture routes regardless of whether stdout/stderr is a terminal:
     // gating it on a tty would make capture work interactively and silently
@@ -826,7 +826,7 @@ impl<'v> Object<'v> for Program {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([name], []) = unpack!(strand, args, 1, 0)?;
-        let global = strand.state::<ProcGlobal<'v>>();
+        let global = strand.state::<ProcTag>();
         let name = program_name_from_value(strand, global, &name)?;
         this.create_with_annex(strand, Program, ProgramAnnex { name, global }, out);
         Ok(())
@@ -871,7 +871,7 @@ impl<'v> Object<'v> for Program {
                     .into_sys(strand)?;
 
                 if let Some(path) = resolved {
-                    let fs = strand.force_state::<FsGlobal<'v>>();
+                    let fs = strand.force_state::<FsTag>();
                     create_path(strand, fs, path, out)?;
                 } else {
                     Output::set(strand, out, Nil);

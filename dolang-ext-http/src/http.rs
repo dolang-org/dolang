@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use std::{borrow::Cow, mem, pin::Pin, result, str};
 
 use dolang::runtime::value::fmt::Format;
@@ -459,7 +461,7 @@ impl<'v> Object<'v> for StatusObject {
 }
 
 fn reqwest_error<'v, 's>(strand: &mut Strand<'v, 's>, error: reqwest::Error) -> Error<'v, 's> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     Error::object_with_annex(
         strand,
         global.types.error,
@@ -839,7 +841,7 @@ impl<'v> Object<'v> for Client {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         let unix_socket = global.syms.unix_socket;
         let proxy = global.syms.proxy;
         let cookies = global.syms.cookies;

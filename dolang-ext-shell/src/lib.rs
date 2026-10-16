@@ -49,7 +49,7 @@ pub use shell::{Exec, Exit};
 use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
 
-use crate::global::{FsGlobal, Global, ShellGlobal, WindowsSecurityGlobal};
+use crate::global::{FsTag, ShellTag, Tag, WindowsSecurityTag};
 
 pub use diagnostic::{
     print_check_diag_stderr, print_compile_diag_stderr, print_error_stderr,
@@ -66,7 +66,7 @@ pub use syntax::{
 /// The handle is stateless — the buffered reader itself lives on the VM — so
 /// this and `shell.stdin` read the same stream and cannot split its buffer.
 pub fn stdin<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
-    let global = strand.force_state::<ShellGlobal<'v>>();
+    let global = strand.force_state::<ShellTag>();
     global
         .types
         .stdin
@@ -77,7 +77,7 @@ pub fn stdin<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
 ///
 /// Stateless, as with [`stdin`].
 pub fn stdout<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
-    let global = strand.force_state::<ShellGlobal<'v>>();
+    let global = strand.force_state::<ShellTag>();
     global.types.stdout.create(strand, shell::Stdout, out)
 }
 
@@ -88,7 +88,7 @@ pub fn stdout<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
 /// literal `shell.stdout` otherwise, since there is nothing to follow and raw
 /// fd inheritance is the cheaper, simpler path.
 pub fn default_output<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
-    if strand.state::<Global<'v>>().terminal.stdout_is_terminal {
+    if strand.state::<Tag>().terminal.stdout_is_terminal {
         dolang_ext_term::default_output(strand, out)
     } else {
         stdout(strand, out)
@@ -100,7 +100,7 @@ pub fn default_output<'v, 's>(strand: &mut Strand<'v, 's>, out: impl Output<'v>)
 /// Tokio stdio handles can retain buffered output when the runtime shuts down,
 /// so this must run while the runtime is still alive.
 pub async fn flush<'v, 's>(strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     global
         .stdio
         .stdout
@@ -150,13 +150,13 @@ pub fn windows_sid_name<'v>(
     name: dolang_vfs::security::SidName,
     out: &mut dolang::runtime::Slot<'v, '_>,
 ) {
-    let global = strand.force_state::<WindowsSecurityGlobal<'v>>();
+    let global = strand.force_state::<WindowsSecurityTag>();
     security::create_sid_name(strand, global, name, out);
 }
 
 /// Get current working directory of strand
 pub fn cwd<'v>(strand: &Strand<'v, '_>) -> PathBuf {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     global
         .local
         .get(strand)
@@ -170,7 +170,7 @@ pub async fn set_args<'v, 's>(
     strand: &mut Strand<'v, 's>,
     args: impl IntoIterator<Item = impl AsRef<str>>,
 ) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     *global.args.borrow_mut() = args
         .into_iter()
         .map(|arg| Box::<str>::from(arg.as_ref()))
@@ -184,7 +184,7 @@ pub async fn set_program<'v, 's>(
     strand: &mut Strand<'v, 's>,
     program: Option<impl Into<ProgramSource>>,
 ) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     *global.program.borrow_mut() = program.map(Into::into);
     Ok(())
 }
@@ -202,7 +202,7 @@ pub fn as_unix_path<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
 ) -> Option<vfs_path::PathBuf> {
-    let global = strand.try_state::<FsGlobal<'v>>()?;
+    let global = strand.try_state::<FsTag>()?;
     let path = global.types.unix_path.cast(value)?;
     path.enter_sync(strand, |_strand, inst| {
         let path = &inst.annex().path;
@@ -215,7 +215,7 @@ pub fn as_windows_path<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
 ) -> Option<vfs_path::PathBuf> {
-    let global = strand.try_state::<FsGlobal<'v>>()?;
+    let global = strand.try_state::<FsTag>()?;
     let path = global.types.windows_path.cast(value)?;
     path.enter_sync(strand, |_strand, inst| {
         let path = &inst.annex().path;
@@ -229,7 +229,7 @@ pub fn unix_path<'v, 's>(
     path: impl AsRef<str>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    let global = strand.force_state::<FsGlobal<'v>>();
+    let global = strand.force_state::<FsTag>();
     fs::path::create_path(
         strand,
         global,
@@ -244,7 +244,7 @@ pub fn windows_path<'v, 's>(
     path: impl AsRef<str>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    let global = strand.force_state::<FsGlobal<'v>>();
+    let global = strand.force_state::<FsTag>();
     fs::path::create_path(
         strand,
         global,
@@ -258,7 +258,7 @@ pub fn path<'v, 's>(
     path: PathBuf,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    let global = strand.force_state::<FsGlobal<'v>>();
+    let global = strand.force_state::<FsTag>();
     let path = vfs_path::PathBuf::from_native(path).map_err(|e| Error::runtime(strand, e))?;
     fs::path::create_path(strand, global, path, out)
 }
@@ -273,7 +273,7 @@ pub async fn open<'v, 's>(
         "r" | "w" | "a" | "r+" | "w+" | "a+" => {}
         _ => return Err(io::Error::other(format!("invalid mode: {}", mode))),
     }
-    let global = strand.force_state::<FsGlobal<'v>>();
+    let global = strand.force_state::<FsTag>();
     fs::file::open_native(
         strand,
         global,
@@ -294,7 +294,7 @@ pub fn create_sec_desc<'v>(
     sec_desc: dolang_winterop::security::SecDesc,
     out: impl Output<'v>,
 ) {
-    let global = strand.force_state::<WindowsSecurityGlobal<'v>>();
+    let global = strand.force_state::<WindowsSecurityTag>();
     global
         .types
         .sec_desc
@@ -314,7 +314,7 @@ pub async fn sec_desc_from_args<'v, 's>(
     args: dolang::runtime::Args<'v, '_>,
     name: &str,
 ) -> Result<'v, 's, dolang_winterop::security::SecDesc> {
-    let global = strand.force_state::<WindowsSecurityGlobal<'v>>();
+    let global = strand.force_state::<WindowsSecurityTag>();
     security::sec_desc_from_args(strand, global, args, &security::SpecPath::root(name)).await
 }
 
@@ -324,7 +324,7 @@ pub async fn sec_desc_from_value<'v, 's>(
     value: &dolang::runtime::Value<'v>,
     name: &str,
 ) -> Result<'v, 's, dolang_winterop::security::SecDesc> {
-    let global = strand.force_state::<WindowsSecurityGlobal<'v>>();
+    let global = strand.force_state::<WindowsSecurityTag>();
     security::sec_desc_from_value(strand, global, value, name).await
 }
 
@@ -341,17 +341,14 @@ pub async fn sec_desc_from_value<'v, 's>(
 pub fn windows_access_mask_type<'v>(
     alloc: &mut dyn Alloc<'v>,
 ) -> dolang::runtime::Type<'v, dolang::runtime::object::Flags<WindowsAccessMask>> {
-    alloc
-        .force_state::<WindowsSecurityGlobal<'v>>()
-        .types
-        .access_mask
+    alloc.force_state::<WindowsSecurityTag>().types.access_mask
 }
 
 /// Returns the [`AnyVfs`] in scope for the strand (the ambient
 /// filesystem/registry/etc. backend — direct or remote — for the current
 /// shell/session/container context).
 pub fn vfs<'v, 's, 'a>(strand: &'a Strand<'v, 's>) -> Vfs {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     let local = global.local.get(strand);
     local.vfs()
 }
@@ -366,7 +363,7 @@ pub fn vfs<'v, 's, 'a>(strand: &'a Strand<'v, 's>) -> Vfs {
 /// ignores installed capture consoles, and stays true while an extension has
 /// taken the terminal over.
 pub fn stderr_is_tty<'v>(strand: &Strand<'v, '_>) -> bool {
-    strand.state::<Global<'v>>().terminal.stderr_is_terminal
+    strand.state::<Tag>().terminal.stderr_is_terminal
 }
 
 /// Stderr's terminal width in columns, the same override-aware answer
@@ -375,7 +372,7 @@ pub fn stderr_is_tty<'v>(strand: &Strand<'v, '_>) -> bool {
 /// terminal (or the terminal declines to report its size) and no override
 /// pins the column count down.
 pub fn stderr_cols<'v>(strand: &Strand<'v, '_>) -> Option<u16> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     let ov = &global.terminal.console_override;
     ov.cols
         .or_else(|| ::console::Term::stderr().size_checked().map(|(_, c)| c))
@@ -405,7 +402,7 @@ pub async fn with_terminal<'v, 's>(
     writer: Pin<Box<dyn AsyncWrite>>,
     f: impl AsyncFnOnce(&mut Strand<'v, 's>) -> Result<'v, 's, ()>,
 ) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
 
     if !stderr_is_tty(strand) {
         return Err(Error::runtime(strand, "stderr is not a terminal"));
@@ -439,7 +436,7 @@ pub async fn with_terminal<'v, 's>(
     // destination. This is particularly important for progress writers,
     // which buffer partial lines.
     let flush_result = {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         global
             .terminal
             .writer
@@ -451,7 +448,7 @@ pub async fn with_terminal<'v, 's>(
     };
 
     // Restore
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     {
         let mut guard = global.terminal.writer.lock().await;
         *guard = original;

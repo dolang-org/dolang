@@ -12,7 +12,7 @@ use dolang_vfs::metadata::{FileType, Metadata as VfsMetadata, Mode as VfsMode};
 
 use crate::{
     fs::attrs,
-    global::{FsGlobal, UnixSecurityGlobal, WindowsSecurityGlobal},
+    global::{FsGlobal, UnixSecurityTag, WindowsSecurityTag},
     security::Permission,
     util,
 };
@@ -96,26 +96,17 @@ impl FlagLike for Mode {
     ) -> TypeBuilder<'v, 'a, dolang::runtime::object::Flags<Self>> {
         builder
             .get("owner", |this, strand, out| {
-                let permission = strand
-                    .force_state::<UnixSecurityGlobal<'v>>()
-                    .types
-                    .permission;
+                let permission = strand.force_state::<UnixSecurityTag>().types.permission;
                 permission.create_flags(strand, Permission(this.flags().0.owner()), out);
                 Ok(())
             })
             .get("group", |this, strand, out| {
-                let permission = strand
-                    .force_state::<UnixSecurityGlobal<'v>>()
-                    .types
-                    .permission;
+                let permission = strand.force_state::<UnixSecurityTag>().types.permission;
                 permission.create_flags(strand, Permission(this.flags().0.group()), out);
                 Ok(())
             })
             .get("other", |this, strand, out| {
-                let permission = strand
-                    .force_state::<UnixSecurityGlobal<'v>>()
-                    .types
-                    .permission;
+                let permission = strand.force_state::<UnixSecurityTag>().types.permission;
                 permission.create_flags(strand, Permission(this.flags().0.other()), out);
                 Ok(())
             })
@@ -342,7 +333,7 @@ impl<'v, const FAMILY: u8> Object<'v> for Metadata<FAMILY> {
                         Output::set(strand, out, dolang::runtime::value::Nil);
                         return Ok(());
                     };
-                    let windows = strand.force_state::<WindowsSecurityGlobal<'v>>();
+                    let windows = strand.force_state::<WindowsSecurityTag>();
                     crate::security::create_sid(strand, windows, value, &mut out);
                     return Ok(());
                 }
@@ -355,7 +346,7 @@ impl<'v, const FAMILY: u8> Object<'v> for Metadata<FAMILY> {
                         Output::set(strand, out, dolang::runtime::value::Nil);
                         return Ok(());
                     };
-                    let windows = strand.force_state::<WindowsSecurityGlobal<'v>>();
+                    let windows = strand.force_state::<WindowsSecurityTag>();
                     crate::security::create_sid(strand, windows, value, &mut out);
                     return Ok(());
                 }

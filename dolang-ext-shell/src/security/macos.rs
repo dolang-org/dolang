@@ -1,3 +1,5 @@
+use crate::global::MacosSecurityTag;
+
 use super::*;
 
 /// macOS extended ACE permission mask (`security.macos.Mask`), a local
@@ -87,7 +89,7 @@ impl<'v> ArrayLike<'v> for MacosAclAces {
     ) -> Result<'v, 's, ()> {
         let ace = this.annex().entries()[index];
         strand
-            .state::<MacosSecurityGlobal<'v>>()
+            .state::<MacosSecurityTag>()
             .types
             .macos_ace
             .create_with_annex(strand, MacosAceObject, ace, out);
@@ -109,7 +111,7 @@ impl<'v> Object<'v> for MacosAclObject {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([mut iterable], []) = unpack!(strand, args, 1, 0)?;
-        let global = strand.state::<MacosSecurityGlobal<'v>>();
+        let global = strand.state::<MacosSecurityTag>();
         iterable.iter(strand, &mut out).await?;
         let mut entries = Vec::new();
         while out.next(strand, &mut iterable).await? {
@@ -203,7 +205,7 @@ impl<'v> Object<'v> for MacosAceObject {
                 $builder.type_method($name, async move |this, strand, args, out| {
                     let ([principal], [mask, flags]) =
                         unpack!(strand, args, 1, 0, mask_sym = None, flags_sym = None)?;
-                    let global = strand.state::<MacosSecurityGlobal<'v>>();
+                    let global = strand.state::<MacosSecurityTag>();
                     let qualifier =
                         dolang_ext_uuid::cast_uuid(strand, &principal).ok_or_else(|| {
                             Error::type_error(strand, "principal: expected uuid.Uuid")
@@ -238,18 +240,12 @@ impl<'v> Object<'v> for MacosAceObject {
                 Ok(())
             })
             .get("mask", |this, strand, out| {
-                let mask = strand
-                    .state::<MacosSecurityGlobal<'v>>()
-                    .types
-                    .macos_ace_mask;
+                let mask = strand.state::<MacosSecurityTag>().types.macos_ace_mask;
                 mask.create_flags(strand, MacosAceMask(this.annex().mask()), out);
                 Ok(())
             })
             .get("flags", |this, strand, out| {
-                let flags = strand
-                    .state::<MacosSecurityGlobal<'v>>()
-                    .types
-                    .macos_ace_flags;
+                let flags = strand.state::<MacosSecurityTag>().types.macos_ace_flags;
                 flags.create_flags(strand, MacosAceFlags(this.annex().flags()), out);
                 Ok(())
             })

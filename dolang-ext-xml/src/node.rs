@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use dolang::runtime::object::fmt;
 use dolang::runtime::value::fmt::Format;
 
@@ -8,10 +10,7 @@ use dolang::runtime::{
     value::{Empty, Nil, TypeObject},
 };
 
-use crate::{
-    attr::{Attr, Name, optional_string, required_string},
-    global::Global,
-};
+use crate::attr::{Attr, Name, optional_string, required_string};
 
 pub(crate) const CHILDREN: usize = 0;
 pub(crate) const ATTRS: usize = 1;
@@ -185,7 +184,7 @@ fn find_attr<'v, 's>(
     local: &str,
     namespace: Option<&str>,
 ) -> Result<'v, 's, Option<(usize, String)>> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     let borrow = this.borrow(strand)?;
     let attrs = Ref::slot::<ATTRS>(&borrow).as_array(strand).unwrap();
     strand.with_slots_sync(|strand, [mut item]| {
@@ -214,7 +213,7 @@ fn append_attr<'v, 's>(
     strand: &mut Strand<'v, 's>,
     attr: Attr,
 ) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     let borrow = this.borrow(strand)?;
     let attrs = Ref::slot::<ATTRS>(&borrow).as_array(strand).unwrap();
     strand.with_slots_sync(|strand, [mut item]| {
@@ -275,7 +274,7 @@ fn append_item<'v, 's>(
     strand: &mut Strand<'v, 's>,
     item: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     if let Some(attr) = global.attr_type.cast(&item) {
         let attr = attr.enter_sync(strand, |strand, attr| Ok(attr.borrow(strand)?.clone()))?;
         return append_attr(this, strand, attr);
@@ -299,7 +298,7 @@ impl<'v> Object<'v> for Node {
         args: Args<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         let namespace_sym = global.syms.namespace;
         let prefix_sym = global.syms.prefix;
         let attrs_sym = global.syms.attrs;
@@ -388,7 +387,7 @@ impl<'v> Object<'v> for Node {
         let key = required_string(strand, &index, "index")?;
         let value = required_string(strand, &value, "value")?;
         if let Some((attr_index, _)) = find_attr(this, strand, &key, None)? {
-            let global = strand.state::<Global<'v>>();
+            let global = strand.state::<Tag>();
             let borrow = this.borrow(strand)?;
             let attrs = Ref::slot::<ATTRS>(&borrow).as_array(strand).unwrap();
             strand.with_slots_sync(|strand, [mut item]| {
@@ -514,7 +513,7 @@ impl<'v> Object<'v> for Node {
                     .map(|prefix| optional_string(strand, Some(prefix), "prefix"))
                     .transpose()?;
                 if let Some((index, _)) = find_attr(this, strand, &name, namespace.as_deref())? {
-                    let global = strand.state::<Global<'v>>();
+                    let global = strand.state::<Tag>();
                     let borrow = this.borrow(strand)?;
                     let attrs = Ref::slot::<ATTRS>(&borrow).as_array(strand).unwrap();
                     if let Some(prefix) = prefix {
@@ -568,7 +567,7 @@ impl<'v> Object<'v> for Node {
                 let ([name], [namespace]) = unpack!(strand, args, 1, 0, namespace_sym = None)?;
                 let name = required_string(strand, &name, "name")?;
                 let namespace = optional_string(strand, namespace.as_deref(), "namespace")?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let borrow = this.borrow(strand)?;
                 let attrs = Ref::slot::<ATTRS>(&borrow).as_array(strand).unwrap();
                 let deleted = strand.with_slots_sync(|strand, [mut item]| {
@@ -602,7 +601,7 @@ impl<'v> Object<'v> for Node {
             })
             .method("traverse", async move |this, strand, args, mut out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 global
                     .traverse_iter_type
                     .create(strand, TraverseIter, &mut out);
@@ -653,7 +652,7 @@ impl<'v> Object<'v> for TraverseIter {
         strand: &'a mut Strand<'v, 's>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         let borrow = this.borrow(strand)?;
         let stack = Ref::slot::<STACK>(&borrow).as_array(strand).unwrap();
         strand.with_slots_sync(|strand, [mut tmp]| {

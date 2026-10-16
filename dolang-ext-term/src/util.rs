@@ -1,6 +1,6 @@
-use dolang::runtime::{Arg, Args, Error, Result, Strand, Value, value::View};
+use crate::global::Tag;
 
-use crate::global::Global;
+use dolang::runtime::{Arg, Args, Error, Result, Strand, Value, value::View};
 
 /// How a [`SinkConsole`](crate::console::SinkConsole) quantizes the bytes
 /// written to it into values.
@@ -21,7 +21,7 @@ pub(crate) fn parse_mode<'v, 's>(
     strand: &mut Strand<'v, 's>,
     mode: Option<&Value<'v>>,
 ) -> Result<'v, 's, Framing> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     match mode {
         None => Ok(Framing::Line),
         Some(value) => match value.as_sym(strand) {

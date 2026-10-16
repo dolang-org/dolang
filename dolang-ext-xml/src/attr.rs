@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use dolang::runtime::object::fmt;
 use dolang::runtime::value::fmt::Format;
 
@@ -5,8 +7,6 @@ use dolang::runtime::{
     Args, Error, Instance, Object, Output, Result, Slot, Strand, Type, Value, object::TypeBuilder,
     unpack, value::Nil,
 };
-
-use crate::global::Global;
 
 #[derive(Clone)]
 pub(crate) struct Name {
@@ -66,7 +66,7 @@ impl<'v> Object<'v> for Attr {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         let namespace = global.syms.namespace;
         let prefix = global.syms.prefix;
         let ([name, value], [namespace, prefix]) =

@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use std::convert::Infallible;
 
 use dolang::{
@@ -25,7 +27,7 @@ impl Extension for TermExt {
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
         let global = Global::new(builder);
-        let global = builder.register_state(global);
+        let global = builder.register_state::<Tag>(global);
         term::configure_vm(builder, global);
         Ok(())
     }

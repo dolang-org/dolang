@@ -40,7 +40,7 @@ impl Extension for WinregExt {
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
         builder.lazy::<global::Tag>(&["winreg"], |reg| {
             let global = Global::new(reg);
-            let global = reg.register_state(global);
+            let global = reg.register_state::<global::Tag>(global);
             crate::key::configure_vm(reg, global);
         });
         Ok(())

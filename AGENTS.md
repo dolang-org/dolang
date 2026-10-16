@@ -1008,7 +1008,7 @@ impl Extension for MyExt {
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Self::Error> {
         let global = Global::new(builder);
-        let global = builder.register_state(global);
+        let global = builder.register_state::<global::Tag>(global);
         configure_vm(builder, global);
         Ok(())
     }
@@ -1030,39 +1030,42 @@ that only look up state should take `&Vm<'v>`, never a builder.
 
 `Builder::lazy` defers registration until something needs it. The setup runs at
 most once: when Do code imports one of the modules it declares, or when Rust
-code forces its tag through an `Alloc`. Declare it under the `Tag` of the state
-it registers, so `force_state` can run it and return that state:
+code forces its tag through an `Alloc`. Declare it under the tag naming its
+state, so `force_state` can run it and return that state:
 
 ```rust
 fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Self::Error> {
     builder.lazy::<global::Tag>(&["my_ext"], |reg| {
         let global = Global::new(reg);
-        let global = reg.register_state(global);
+        let global = reg.register_state::<global::Tag>(global);
         configure_vm(reg, global);
     });
     Ok(())
 }
 ```
 
-- The setup must register exactly the modules it declares; anything else panics.
+- The setup must register state under its tag and exactly the modules it
+  declares; missing state or a module mismatch panics. A setup with no state
+  of its own names `()` as its state type and registers `()` under its tag.
 - Strand-local keys, importers, and traps are `Builder`-only. Reserve them in
   `apply_vm` and move them into the setup.
 - `Vm::state` never runs a setup, and panics on state whose setup hasn't run.
   Public functions for other crates that create objects call
-  `strand.force_state::<Global>()` (`AllocExt` must be in scope). A function
-  that only needs to force can take `&mut dyn Alloc<'v>`, so it works from a
-  strand or during registration.
+  `strand.force_state::<global::Tag>()` (`AllocExt` must be in scope). A
+  function that only needs to force can take `&mut dyn Alloc<'v>`, so it works
+  from a strand or during registration.
 - Code that only recognizes existing objects can use `Vm::try_state`: if it
   returns `None`, the setup hasn't run, so no instance exists.
 
 ### Global State (`State<'v, T>`)
 
 `Register::register_state` stores a value for the lifetime of the VM and returns
-a `State<'v, T>` handle. `State` is `Copy` and dereferences to `&T`. Use it to
-hold `Type` handles and other VM-lifetime data that methods need.
+a `State<'v, K::State<'v>>` handle, where `K: StateTag` names the state type.
+`State` is `Copy` and dereferences to the stored value. Use it to hold `Type`
+handles and other VM-lifetime data that methods need.
 
 ```rust
-use dolang::runtime::{Type, vm::{Register, Stateful}};
+use dolang::runtime::{Type, vm::{Register, StateTag}};
 
 pub(crate) struct Global<'v> {
     pub(crate) types: Types<'v>,
@@ -1073,9 +1076,9 @@ pub(crate) struct Types<'v> {
     pub(crate) widget_iter: Type<'v, WidgetIter>,
 }
 
-pub struct Tag;
-impl<'v> Stateful<'v> for Global<'v> {
-    type Tag = Tag; // unique tag prevents collisions
+pub(crate) struct Tag;
+impl StateTag for Tag {
+    type State<'v> = Global<'v>;
 }
 
 impl<'v> Global<'v> {

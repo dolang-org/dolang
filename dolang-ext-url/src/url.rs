@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use std::hash::{Hash, Hasher};
 
 use dolang::runtime::value::fmt::Format;
@@ -170,7 +172,7 @@ fn create_url_with_global<'v, 'a>(
 
 /// Creates a Do `url.Url` object from an owned `url::Url`.
 pub fn create_url<'v, 'a>(strand: &mut Strand<'v, '_>, url: url::Url, out: Slot<'v, 'a>) {
-    let global = strand.force_state::<Global<'v>>();
+    let global = strand.force_state::<Tag>();
     create_url_with_global(global, strand, url, out);
 }
 
@@ -179,7 +181,7 @@ pub fn value_to_url<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
 ) -> Result<'v, 's, url::Url> {
-    let global = strand.try_state::<Global<'v>>();
+    let global = strand.try_state::<Tag>();
     UrlOrStr::new(strand, global, value)?.to_url(strand)
 }
 
@@ -211,7 +213,7 @@ impl<'v> Object<'v> for Url {
     ) -> Result<'v, 's, ()> {
         let ([value], []) = unpack!(strand, args, 1, 0)?;
         let url = value_to_url(strand, &value)?;
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         this.create_with_annex(strand, Url, UrlAnnex { inner: url, global }, out);
         Ok(())
     }

@@ -1,5 +1,7 @@
 //! `winscm.Service` — an open handle to a specific service.
 
+use crate::global::Tag;
+
 use dolang::runtime::{
     Error, Object, Result, Slot, State, Strand, call, method,
     object::{FlagsTypeExt, TypeBuilder},
@@ -138,7 +140,7 @@ impl<'v> Object<'v> for Service {
                 service.start_with_args(&start_args).await.into_sys(strand)
             })
             .method("control", async move |this, strand, args, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let ([control], []) = unpack!(strand, args, 1, 0)?;
                 let control = convert::service_control_from_sym(strand, global, control)?;
                 let status = {
@@ -153,7 +155,7 @@ impl<'v> Object<'v> for Service {
                 Ok(())
             })
             .method("query_status", async move |this, strand, args, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let status = {
                     let borrow = this.borrow(strand)?;
@@ -167,7 +169,7 @@ impl<'v> Object<'v> for Service {
                 Ok(())
             })
             .method("config", async move |this, strand, args, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let config = {
                     let borrow = this.borrow(strand)?;
@@ -186,7 +188,7 @@ impl<'v> Object<'v> for Service {
                 Ok(())
             })
             .method("update_config", async move |this, strand, args, _out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let service_type = global.syms.service_type;
                 let start_type = global.syms.start_type;
                 let error_control = global.syms.error_control;
@@ -282,7 +284,7 @@ impl<'v> Object<'v> for Service {
             .method(
                 "wait_for_status_change",
                 async move |this, strand, args, out| {
-                    let global = strand.state::<Global<'v>>();
+                    let global = strand.state::<Tag>();
                     let ([mask], []) = unpack!(strand, args, 1, 0)?;
                     let mask = global.types.notify_mask.coerce(strand, &mask).await?;
                     let status = {

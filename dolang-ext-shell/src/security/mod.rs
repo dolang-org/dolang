@@ -49,7 +49,10 @@ use dolang_winterop::{
 
 use crate::{
     error,
-    global::{MacosSecurityGlobal, Nfs4SecurityGlobal, UnixSecurityGlobal, WindowsSecurityGlobal},
+    global::{
+        MacosSecurityGlobal, MacosSecurityTag, Nfs4SecurityGlobal, Nfs4SecurityTag,
+        UnixSecurityGlobal, UnixSecurityTag, WindowsSecurityGlobal,
+    },
     local::Local,
 };
 
@@ -164,15 +167,15 @@ pub(crate) fn create_any_acl<'v>(
     match acl {
         None => Output::set(strand, out, Nil),
         Some(VfsAnyAcl::Posix(acl)) => {
-            let global = strand.force_state::<UnixSecurityGlobal<'v>>();
+            let global = strand.force_state::<UnixSecurityTag>();
             create_posix_acl(strand, global, Some(acl), out)
         }
         Some(VfsAnyAcl::Nfs4(acl)) => {
-            let global = strand.force_state::<Nfs4SecurityGlobal<'v>>();
+            let global = strand.force_state::<Nfs4SecurityTag>();
             create_nfs4_acl(strand, global, Some(acl), out)
         }
         Some(VfsAnyAcl::Macos(acl)) => {
-            let global = strand.force_state::<MacosSecurityGlobal<'v>>();
+            let global = strand.force_state::<MacosSecurityTag>();
             create_macos_acl(strand, global, Some(acl), out)
         }
         Some(_) => Output::set(strand, out, Nil),
@@ -188,7 +191,7 @@ fn built_acl_from_value<'v>(strand: &mut Strand<'v, '_>, value: &Value<'v>) -> O
         return None;
     }
     if let Some(acl) = strand
-        .try_state::<UnixSecurityGlobal<'v>>()
+        .try_state::<UnixSecurityTag>()
         .and_then(|global| global.types.posix_acl.cast(value))
     {
         return Some(VfsAnyAcl::Posix(
@@ -196,7 +199,7 @@ fn built_acl_from_value<'v>(strand: &mut Strand<'v, '_>, value: &Value<'v>) -> O
         ));
     }
     if let Some(acl) = strand
-        .try_state::<Nfs4SecurityGlobal<'v>>()
+        .try_state::<Nfs4SecurityTag>()
         .and_then(|global| global.types.nfs4_acl.cast(value))
     {
         return Some(VfsAnyAcl::Nfs4(
@@ -204,7 +207,7 @@ fn built_acl_from_value<'v>(strand: &mut Strand<'v, '_>, value: &Value<'v>) -> O
         ));
     }
     if let Some(acl) = strand
-        .try_state::<MacosSecurityGlobal<'v>>()
+        .try_state::<MacosSecurityTag>()
         .and_then(|global| global.types.macos_acl.cast(value))
     {
         return Some(VfsAnyAcl::Macos(
@@ -251,15 +254,15 @@ pub(crate) async fn resolve_acl_input<'v, 's>(
     })?;
     let acl = match kind {
         VfsAclKind::Posix => {
-            let global = strand.force_state::<UnixSecurityGlobal<'v>>();
+            let global = strand.force_state::<UnixSecurityTag>();
             VfsAnyAcl::Posix(unix::coerce_acl(strand, global, value, path).await?)
         }
         VfsAclKind::Nfs4 => {
-            let global = strand.force_state::<Nfs4SecurityGlobal<'v>>();
+            let global = strand.force_state::<Nfs4SecurityTag>();
             VfsAnyAcl::Nfs4(nfs4::coerce_acl(strand, global, value, path).await?)
         }
         VfsAclKind::Macos => {
-            let global = strand.force_state::<MacosSecurityGlobal<'v>>();
+            let global = strand.force_state::<MacosSecurityTag>();
             VfsAnyAcl::Macos(macos::coerce_acl(strand, global, value, path).await?)
         }
         _ => return Err(Error::not_supported(strand)),

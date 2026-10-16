@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use std::mem;
 
 use dolang::runtime::value::fmt::Format;
@@ -8,10 +10,7 @@ use dolang::runtime::{
     value::{TypeObject, View},
 };
 
-use crate::{
-    global::Global,
-    util::{Framing, data_bytes, encode_value, write_data},
-};
+use crate::util::{Framing, data_bytes, encode_value, write_data};
 
 /// The console interface: where human-readable output goes.
 ///
@@ -104,7 +103,7 @@ impl<'v> Object<'v> for Console {
         strand: &'a mut Strand<'v, 's>,
         value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         let bytes = encode_value(strand, &value)?;
         strand
             .with_slots(async move |strand, [mut rcvr, mut out]| {
@@ -181,7 +180,7 @@ impl<'v> Object<'v> for DefaultOutput {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         Ok(global.types.default.cast(other).is_some())
     }
 
@@ -273,7 +272,7 @@ impl<'v> Object<'v> for SinkConsole {
         args: dolang::runtime::Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         let can_style_sym = global.syms.can_style;
         let mode_sym = global.syms.mode;
         let ([target], [can_style, mode]) =
@@ -365,7 +364,7 @@ pub(crate) async fn create_sink_console<'v, 'a, 's>(
     mode: Framing,
     mut out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     global.types.sink_console.create(
         strand,
         SinkConsole {
@@ -531,20 +530,20 @@ impl<'v> Object<'v> for SubConsole {
 /// False while already dispatching into a console, so a console whose own
 /// `write` calls `echo` falls through to the host instead of recursing.
 fn captured<'v>(strand: &Strand<'v, '_>) -> bool {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     !global.capture.slot(strand).is_nil() && !global.local.get(strand).capturing()
 }
 
 /// Whether a console is installed for this strand at all, whether or not a
 /// write is currently being dispatched into it.
 pub(crate) fn is_captured<'v>(strand: &Strand<'v, '_>) -> bool {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     !global.capture.slot(strand).is_nil()
 }
 
 /// Stores the host console in `out`.
 fn host<'v, 's>(strand: &mut Strand<'v, 's>, out: &mut Slot<'v, '_>) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     let console = global.host.console.borrow();
     if console.is_nil() {
         return Err(Error::state_error(strand, "no console installed"));
@@ -559,7 +558,7 @@ fn route<'v, 's>(strand: &mut Strand<'v, 's>, out: &mut Slot<'v, '_>) -> Result<
     if !captured(strand) {
         return host(strand, out);
     }
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     let root = global.capture.slot(strand);
     Output::set(strand, out, &root);
     Ok(())
@@ -568,7 +567,7 @@ fn route<'v, 's>(strand: &mut Strand<'v, 's>, out: &mut Slot<'v, '_>) -> Result<
 /// Stores the line ending of the console [`route`] picks in `out`, as read
 /// when that console was installed.
 fn route_line_ending<'v>(strand: &mut Strand<'v, '_>, out: &mut Slot<'v, '_>) {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     if captured(strand) {
         let ending = global.capture_line_ending.slot(strand);
         Output::set(strand, out, &ending);
@@ -584,7 +583,7 @@ async fn guarded<'v, 's, R>(
     strand: &mut Strand<'v, 's>,
     f: impl AsyncFnOnce(&mut Strand<'v, 's>) -> R,
 ) -> R {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     let prev = global.local.get(strand).set_capturing(true);
     let result = f(strand).await;
     global.local.get(strand).set_capturing(prev);
@@ -593,7 +592,7 @@ async fn guarded<'v, 's, R>(
 
 /// Writes bytes to the ambient console verbatim.
 pub(crate) async fn write<'v, 's>(strand: &mut Strand<'v, 's>, bytes: &[u8]) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     strand
         .with_slots(async move |strand, [mut rcvr, mut out]| {
             route(strand, &mut rcvr)?;
@@ -610,7 +609,7 @@ pub(crate) async fn write_value<'v, 's>(
     strand: &mut Strand<'v, 's>,
     data: &Value<'v>,
 ) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     strand
         .with_slots(async move |strand, [mut rcvr, mut out]| {
             route(strand, &mut rcvr)?;
@@ -631,7 +630,7 @@ pub(crate) async fn write_line<'v, 's>(
     strand: &mut Strand<'v, 's>,
     line: &Value<'v>,
 ) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     strand
         .with_slots(async move |strand, [mut rcvr, mut ending, mut out]| {
             route(strand, &mut rcvr)?;
@@ -650,7 +649,7 @@ pub(crate) async fn writeln<'v, 's>(
     strand: &mut Strand<'v, 's>,
     bytes: &[u8],
 ) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     strand
         .with_slots(async move |strand, [mut rcvr, mut ending, mut out]| {
             route(strand, &mut rcvr)?;
@@ -671,7 +670,7 @@ pub(crate) async fn write_line_to<'v, 's>(
     line_ending: &[u8],
     bytes: &[u8],
 ) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     strand
         .with_slots(async move |strand, [mut rcvr, mut out]| {
             if target.is_nil() {
@@ -697,7 +696,7 @@ pub(crate) async fn write_line_to<'v, 's>(
 
 /// Flushes the ambient console.
 pub(crate) async fn flush<'v, 's>(strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     strand
         .with_slots(async move |strand, [mut rcvr, mut out]| {
             route(strand, &mut rcvr)?;
@@ -723,7 +722,7 @@ pub(crate) fn ambient_line_ending<'v, 's>(strand: &mut Strand<'v, 's>) -> Result
 /// Stores the console an enclosing capture installed in `out`, or `nil` for
 /// the host console.
 pub(crate) fn capture_root<'v>(strand: &mut Strand<'v, '_>, out: impl Output<'v>) {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     let capture = global.capture.slot(strand);
     Output::set(strand, out, &capture);
 }
@@ -734,7 +733,7 @@ pub(crate) fn ambient<'v, 's>(
     strand: &mut Strand<'v, 's>,
     out: &mut Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     let capture = global.capture.slot(strand);
     if capture.is_nil() {
         return host(strand, out);
@@ -745,7 +744,7 @@ pub(crate) fn ambient<'v, 's>(
 
 /// Stores the host console in `out`, or `nil` if none is installed.
 pub(crate) fn host_or_nil<'v>(strand: &mut Strand<'v, '_>, out: impl Output<'v>) {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     let console = global.host.console.borrow();
     Output::set(strand, out, &*console);
 }
@@ -757,7 +756,7 @@ pub(crate) fn host_or_nil<'v>(strand: &mut Strand<'v, '_>, out: impl Output<'v>)
 /// asserting on `echo`ed text would otherwise pass piped and fail on a
 /// developer's terminal.
 pub(crate) fn ansi<'v>(strand: &Strand<'v, '_>) -> bool {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     if captured(strand) {
         return global.local.get(strand).capture_can_style();
     }
@@ -769,7 +768,7 @@ pub(crate) fn can_style<'v, 's>(
     strand: &mut Strand<'v, 's>,
     console: &Value<'v>,
 ) -> Result<'v, 's, bool> {
-    let sym = strand.state::<Global<'v>>().syms.can_style;
+    let sym = strand.state::<Tag>().syms.can_style;
     strand.with_slots_sync(|strand, [mut value]| {
         console.get(strand, sym, &mut value)?;
         value
@@ -785,7 +784,7 @@ pub(crate) fn line_ending<'v, 's>(
     console: &Value<'v>,
     out: &mut Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let sym = strand.state::<Global<'v>>().syms.line_ending;
+    let sym = strand.state::<Tag>().syms.line_ending;
     console.get(strand, sym, &mut *out)?;
     match out.view(strand) {
         View::Str(_) | View::Bin(_) => Ok(()),
@@ -801,7 +800,7 @@ pub(crate) fn line_ending<'v, 's>(
 /// Read live from the console rather than snapshotted: the host console stops
 /// being usable as a terminal while an extension has taken it over.
 pub(crate) fn is_tty<'v, 's>(strand: &mut Strand<'v, 's>) -> Result<'v, 's, bool> {
-    let sym = strand.state::<Global<'v>>().syms.is_tty;
+    let sym = strand.state::<Tag>().syms.is_tty;
     strand.with_slots_sync(|strand, [mut rcvr, mut value]| {
         route(strand, &mut rcvr)?;
         rcvr.get(strand, sym, &mut value)?;
@@ -819,7 +818,7 @@ pub(crate) async fn geometry<'v, 's, 'a>(
     strand: &'a mut Strand<'v, 's>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     strand
         .with_slots(async move |strand, [mut rcvr]| {
             route(strand, &mut rcvr)?;

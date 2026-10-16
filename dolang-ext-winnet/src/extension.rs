@@ -20,7 +20,7 @@ impl Extension for WinnetExt {
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Self::Error> {
         builder.lazy::<global::Tag>(&["winnet"], |reg| {
             let global = Global::new(reg);
-            let global = reg.register_state(global);
+            let global = reg.register_state::<global::Tag>(global);
             let module = reg.module("winnet");
             let module = crate::user::configure_module(module, global);
             let module = crate::policy::configure_module(module, global);

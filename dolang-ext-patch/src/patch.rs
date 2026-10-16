@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use std::{borrow::Cow, mem, path::PathBuf, result};
 
 use dolang::runtime::value::fmt::Format;
@@ -459,7 +461,7 @@ impl<'v> Object<'v> for PatchIter<'v> {
         };
         let item = item.map_err(|err| parse_error(strand, err.to_string()))?;
         let payload = into_payload(item, borrow.is_git);
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         // SAFETY: slot 0 roots the original patch stream for as long as the
         // produced patch object lives.
         let primary = unsafe { Backing::from_value(strand, Mut::slot::<0>(&borrow))? };
@@ -491,7 +493,7 @@ impl<'v> Object<'v> for PatchIter<'v> {
 }
 
 fn parse_error<'v, 's>(strand: &mut Strand<'v, 's>, message: String) -> Error<'v, 's> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     Error::object_with_annex(
         strand,
         global.types.parse_error,
@@ -501,7 +503,7 @@ fn parse_error<'v, 's>(strand: &mut Strand<'v, 's>, message: String) -> Error<'v
 }
 
 fn apply_error<'v, 's>(strand: &mut Strand<'v, 's>, message: String) -> Error<'v, 's> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     Error::object_with_annex(
         strand,
         global.types.apply_error,

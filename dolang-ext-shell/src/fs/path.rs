@@ -8,7 +8,7 @@ use dolang::runtime::value::fmt::Format;
 use crate::{
     error::ResultExt as _,
     fs::{path_absolute, path_relative, path_shorten},
-    global::{FsGlobal, Global, WindowsSecurityGlobal},
+    global::{FsGlobal, FsTag, Tag, WindowsSecurityTag},
 };
 use dolang::runtime::object::fmt;
 
@@ -46,7 +46,7 @@ pub(crate) fn cast_path<'v>(
     strand: &mut Strand<'v, '_>,
     value: &Value<'v>,
 ) -> Option<vfs_path::PathBuf> {
-    let global = strand.try_state::<FsGlobal<'v>>()?;
+    let global = strand.try_state::<FsTag>()?;
     path_object_from_value(strand, global, value)
 }
 
@@ -57,7 +57,7 @@ pub(crate) fn path_from_value<'v, 's>(
     if let Some(path) = cast_path(strand, value) {
         Ok(path)
     } else if let Some(str) = value.as_str(strand) {
-        let local = strand.state::<Global<'v>>().local;
+        let local = strand.state::<Tag>().local;
         let target = local.get(strand).target().os().path_kind();
         Ok(strand.access(|x| match target {
             vfs_path::Kind::Unix => vfs_path::PathBuf::from_unix(str.as_str(x)),
@@ -299,7 +299,7 @@ impl<'v> Object<'v> for Path {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.state::<FsGlobal<'v>>();
+        let global = strand.state::<FsTag>();
         let ([path], []) = unpack!(strand, args, 1, 0)?;
         let path = any_path_from_value(strand, global, &path)?;
         let target = target_path_type(strand, global);
@@ -309,7 +309,7 @@ impl<'v> Object<'v> for Path {
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder.type_method("join", async move |_this, strand, args, out| {
-            let global = strand.state::<FsGlobal<'v>>();
+            let global = strand.state::<FsTag>();
             let ([], [], paths) = unpack!(strand, args, 0, 0, *)?;
             let mut target = None;
             let mut buf = None;
@@ -344,7 +344,7 @@ macro_rules! impl_concrete_path {
                 args: Args<'v, 'a>,
                 out: Slot<'v, 'a>,
             ) -> Result<'v, 's, ()> {
-                let global = strand.state::<FsGlobal<'v>>();
+                let global = strand.state::<FsTag>();
                 let ([path], []) = unpack!(strand, args, 1, 0)?;
                 let path = concrete_path_from_value(strand, global, &path, $style)?;
                 let annex = PathAnnex::try_new(strand, path, global)?;
@@ -542,7 +542,7 @@ macro_rules! impl_concrete_path {
                         let ([], [resolve], rest) =
                             unpack!(strand, args, 0, 0, resolve = None, ...)?;
                         let annex = this.annex();
-                        let windows = strand.force_state::<WindowsSecurityGlobal<'v>>();
+                        let windows = strand.force_state::<WindowsSecurityTag>();
                         let descriptor = crate::security::sec_desc_from_args(
                             strand,
                             windows,
@@ -1089,7 +1089,7 @@ macro_rules! impl_concrete_path {
                         })
                     })
                     .type_method("join", async move |this, strand, args, out| {
-                        let global = strand.state::<FsGlobal<'v>>();
+                        let global = strand.state::<FsTag>();
                         let mut buf = match $style {
                             vfs_path::Kind::Unix => vfs_path::PathBuf::from_unix(""),
                             vfs_path::Kind::Windows => vfs_path::PathBuf::from_windows(""),

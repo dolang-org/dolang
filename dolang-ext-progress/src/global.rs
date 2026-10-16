@@ -4,7 +4,7 @@ use dolang::runtime::{
     Sym, Type,
     strand::LocalKey,
     value::Root,
-    vm::{Register, Stateful},
+    vm::{Register, StateTag},
 };
 
 use crate::progress::{Indicator, ProgressLocal};
@@ -28,10 +28,10 @@ pub(crate) struct Global<'v> {
     pub(crate) plain_active: Cell<bool>,
 }
 
-pub struct Tag;
+pub(crate) struct Tag;
 
-impl<'v> Stateful<'v> for Global<'v> {
-    type Tag = Tag;
+impl StateTag for Tag {
+    type State<'v> = Global<'v>;
 }
 
 impl<'v> Global<'v> {

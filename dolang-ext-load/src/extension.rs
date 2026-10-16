@@ -40,7 +40,7 @@ impl Extension for LoadExt {
         crate::load::configure_importer(builder);
         builder.lazy::<global::Tag>(&["load"], |reg| {
             let global = Global::new(reg);
-            let global = reg.register_state(global);
+            let global = reg.register_state::<global::Tag>(global);
             crate::load::configure(reg, global);
         });
         Ok(())

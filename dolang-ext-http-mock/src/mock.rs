@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use std::borrow::Cow;
 
 use dolang::runtime::{
@@ -334,7 +336,7 @@ async fn run_callback_strand<'v, 's>(
     callbacks: &Value<'v>,
     mut rx: tokio::sync::mpsc::UnboundedReceiver<Dispatch>,
 ) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     let callbacks = callbacks.as_array(strand).unwrap();
     while let Some(msg) = rx.recv().await {
         match msg {
@@ -922,7 +924,7 @@ impl<'v> Object<'v> for Server {
         args: Args<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         let ([], [func]) = unpack!(strand, args, 0, 1)?;
         let (runtime, shutdown, thread) = spawn_runtime();
         let server = runtime.spawn(MockServer::start()).await.into_do(strand)?;

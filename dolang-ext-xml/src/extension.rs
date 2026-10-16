@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use std::{
     error,
     fmt::{self, Debug, Display, Formatter},
@@ -35,9 +37,9 @@ impl Extension for XmlExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        builder.lazy::<crate::global::Tag>(&["xml"], |reg| {
+        builder.lazy::<Tag>(&["xml"], |reg| {
             let state = crate::global::Global::new(reg);
-            let state = reg.register_state(state);
+            let state = reg.register_state::<Tag>(state);
             crate::xml::configure(reg, state);
         });
         Ok(())

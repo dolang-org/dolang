@@ -34,7 +34,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Output, Slot, Slots, TypeObject, Value},
-    vm::{Builder, Stateful, Vm},
+    vm::{Builder, StateTag, Vm},
 };
 
 use super::protocol::{GcObj, GcObjBorrow, Protocol};
@@ -52,7 +52,7 @@ fn unwrap_member_scope<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &mut Value<'v>,
 ) -> Result<'v, 's, MemberScope> {
-    let scopes = strand.vm().state::<MemberScopeTypes<'v>>();
+    let scopes = strand.vm().state::<crate::object::class::MemberScopeTag>();
     let (scope, inner) = if let Some(cast) = scopes.class.cast(value) {
         let inner = cast.enter_sync(strand, |strand, inst| {
             Ok(native::Ref::slot::<0>(&inst.borrow(strand)?).dup())
@@ -828,8 +828,8 @@ pub(crate) struct MemberScopeTypes<'v> {
     pub(crate) statik: native::Type<'v, StaticMarker>,
 }
 
-impl<'v> Stateful<'v> for MemberScopeTypes<'v> {
-    type Tag = MemberScopeTag;
+impl StateTag for MemberScopeTag {
+    type State<'v> = MemberScopeTypes<'v>;
 }
 
 /// Forbid inheriting from a class, as `#[final]` does

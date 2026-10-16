@@ -15,8 +15,8 @@ use crate::{
     global::{
         ErrorGlobal, ErrorTag, FsGlobal, FsTag, Global, MacosSecurityGlobal, MacosSecurityTag,
         Nfs4SecurityGlobal, Nfs4SecurityTag, PipeGlobal, PipeTag, ProcGlobal, ProcTag, SecurityTag,
-        ShellGlobal, ShellTag, ShlexTag, SysGlobal, SysTag, UnixSecurityGlobal, UnixSecurityTag,
-        WindowsSecurityGlobal, WindowsSecurityTag,
+        ShellGlobal, ShellTag, ShlexTag, SysGlobal, SysTag, Tag, UnixSecurityGlobal,
+        UnixSecurityTag, WindowsSecurityGlobal, WindowsSecurityTag,
     },
     pipe_channel, platform, proc, security, shell, shlex, sys,
 };
@@ -56,7 +56,7 @@ impl Extension for Shell {
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
         let global = Global::new(builder);
-        let global = builder.register_state(global);
+        let global = builder.register_state::<Tag>(global);
         let local = global.local;
         pipe_channel::install(builder);
         console::install(builder, global);
@@ -70,61 +70,65 @@ impl Extension for Shell {
             ],
             move |reg| {
                 let state = ErrorGlobal::new(reg, local);
-                let state = reg.register_state(state);
+                let state = reg.register_state::<ErrorTag>(state);
                 platform::configure_vm(reg, state);
             },
         );
         builder.lazy::<PipeTag>(&[], move |reg| {
             let state = PipeGlobal::new(reg, local);
-            reg.register_state(state);
+            reg.register_state::<PipeTag>(state);
         });
         builder.lazy::<FsTag>(&["fs", "fs.unix", "fs.windows"], move |reg| {
             let state = FsGlobal::new(reg, local);
-            let state = reg.register_state(state);
+            let state = reg.register_state::<FsTag>(state);
             fs::configure_vm(reg, state);
         });
         builder.lazy::<ShellTag>(&["shell"], move |reg| {
             let state = ShellGlobal::new(reg, local);
-            let state = reg.register_state(state);
+            let state = reg.register_state::<ShellTag>(state);
             shell::configure_vm(reg, global, state);
         });
         builder.lazy::<ProcTag>(&["proc", "proc.windows"], move |reg| {
-            let errors = reg.force_state::<ErrorGlobal<'v>>();
-            let pipes = reg.force_state::<PipeGlobal<'v>>();
+            let errors = reg.force_state::<ErrorTag>();
+            let pipes = reg.force_state::<PipeTag>();
             let state = ProcGlobal::new(reg, local);
-            let state = reg.register_state(state);
+            let state = reg.register_state::<ProcTag>(state);
             proc::configure_vm(reg, state, errors, pipes);
         });
         builder.lazy::<SysTag>(&["sys"], move |reg| {
-            let errors = reg.force_state::<ErrorGlobal<'v>>();
+            let errors = reg.force_state::<ErrorTag>();
             let state = SysGlobal::new(reg, local);
-            let state = reg.register_state(state);
+            let state = reg.register_state::<SysTag>(state);
             sys::configure_vm(reg, state, errors);
         });
         builder.lazy::<SecurityTag>(&["security"], move |reg| {
+            reg.register_state::<SecurityTag>(());
             security::configure_vm(reg, local);
         });
         builder.lazy::<UnixSecurityTag>(&["security.unix"], move |reg| {
             let state = UnixSecurityGlobal::new(reg, local);
-            let state = reg.register_state(state);
+            let state = reg.register_state::<UnixSecurityTag>(state);
             security::unix::configure_vm(reg, state);
         });
         builder.lazy::<Nfs4SecurityTag>(&["security.nfs4"], |reg| {
             let state = Nfs4SecurityGlobal::new(reg);
-            let state = reg.register_state(state);
+            let state = reg.register_state::<Nfs4SecurityTag>(state);
             security::nfs4::configure_vm(reg, state);
         });
         builder.lazy::<MacosSecurityTag>(&["security.macos"], move |reg| {
             let state = MacosSecurityGlobal::new(reg, local);
-            let state = reg.register_state(state);
+            let state = reg.register_state::<MacosSecurityTag>(state);
             security::macos::configure_vm(reg, state);
         });
         builder.lazy::<WindowsSecurityTag>(&["security.windows"], move |reg| {
             let state = WindowsSecurityGlobal::new(reg, local);
-            let state = reg.register_state(state);
+            let state = reg.register_state::<WindowsSecurityTag>(state);
             security::windows::configure_vm(reg, state);
         });
-        builder.lazy::<ShlexTag>(&["shlex"], shlex::configure_vm);
+        builder.lazy::<ShlexTag>(&["shlex"], |reg| {
+            reg.register_state::<ShlexTag>(());
+            shlex::configure_vm(reg);
+        });
         Ok(())
     }
 }

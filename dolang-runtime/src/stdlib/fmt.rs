@@ -16,7 +16,7 @@ use crate::{
         Empty, Input, Output, Slot, StrEmbryo, TypeObject, Value,
         fmt::{Align, Fill, Format, Kind, Pad, Sign, Spec},
     },
-    vm::{Builder, State, Stateful, Vm},
+    vm::{Builder, State, StateTag, Vm},
 };
 
 /// Every symbol this module needs: the keyword parameter names, and the symbol
@@ -179,26 +179,26 @@ impl<'v> Global<'v> {
 
 pub(crate) struct Tag;
 
-impl<'v> Stateful<'v> for Global<'v> {
-    type Tag = Tag;
+impl StateTag for Tag {
+    type State<'v> = Global<'v>;
 }
 
 /// Returns the [`FmtValue`] type object singleton, for
 /// [`TypeObject::FmtValue`](crate::value::TypeObject).
 pub(crate) fn fmt_value_singleton<'v, 'a>(vm: &'a Vm<'v>) -> &'a Value<'v> {
-    vm.state::<Global<'v>>().types.value.singleton(vm)
+    vm.state::<Tag>().types.value.singleton(vm)
 }
 
 /// Returns the [`FmtParam`] type object singleton, for
 /// [`TypeObject::FmtParam`](crate::value::TypeObject).
 pub(crate) fn fmt_param_singleton<'v, 'a>(vm: &'a Vm<'v>) -> &'a Value<'v> {
-    vm.state::<Global<'v>>().types.param.singleton(vm)
+    vm.state::<Tag>().types.param.singleton(vm)
 }
 
 /// Returns the [`Fmt`] type object singleton, for
 /// [`TypeObject::Fmt`](crate::value::TypeObject).
 pub(crate) fn fmt_singleton<'v, 'a>(vm: &'a Vm<'v>) -> &'a Value<'v> {
-    vm.state::<Global<'v>>().types.fmt.singleton(vm)
+    vm.state::<Tag>().types.fmt.singleton(vm)
 }
 
 /// Immutable per-instance data shared by [`FmtSpec`] and [`FmtValue`].
@@ -249,7 +249,7 @@ impl<'v> Object<'v> for FmtSpec {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.vm().state::<Global<'v>>();
+        let global = strand.vm().state::<Tag>();
         let spec = merge_spec(strand, global, Spec::default(), args)?;
         create_spec(strand, global, spec, out);
         Ok(())
@@ -284,7 +284,7 @@ impl<'v> Object<'v> for FmtValue {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.vm().state::<Global<'v>>();
+        let global = strand.vm().state::<Tag>();
         let source_sym = global.symbols.source;
         let ([value], [source], rest) = unpack!(strand, args, 1, 0, source_sym = None, ...)?;
         let spec = merge_spec(strand, global, Spec::default(), rest)?;
@@ -398,7 +398,7 @@ impl<'v> Object<'v> for FmtParam {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.vm().state::<Global<'v>>();
+        let global = strand.vm().state::<Tag>();
         create_fmt_param(strand, global, args, out)
     }
 
@@ -584,7 +584,7 @@ impl<'v> Object<'v> for Fmt {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.vm().state::<Global<'v>>();
+        let global = strand.vm().state::<Tag>();
         let ([items], []) = unpack!(strand, args, 1, 0)?;
         strand
             .with_slots(async move |strand, [mut segments, mut iter, mut item]| {
@@ -1228,7 +1228,7 @@ pub(crate) fn register<'v>(builder: &mut Builder<'v>) -> State<'v, Global<'v>> {
             fmt,
         },
     );
-    builder.register_state(global)
+    builder.register_state::<Tag>(global)
 }
 
 /// Merges keyword options over `base`, producing a new `FmtSpec` or, when a
@@ -1265,7 +1265,7 @@ pub(crate) fn spec_of<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
 ) -> Result<'v, 's, Spec> {
-    let global = strand.vm().state::<Global<'v>>();
+    let global = strand.vm().state::<Tag>();
     if let Some(cast) = global.types.spec.cast(value) {
         return Ok(cast.enter_sync(strand, |_, this| this.annex().spec));
     }
@@ -1280,7 +1280,7 @@ pub(crate) fn spec_of<'v, 's>(
 /// This is the entry point for code outside this module — notably the class
 /// protocol, which hands a `FmtSpec` to a Do-defined `(fmt)` method.
 pub(crate) fn reify_spec<'v>(strand: &mut Strand<'v, '_>, spec: Spec, out: Slot<'v, '_>) {
-    let global = strand.vm().state::<Global<'v>>();
+    let global = strand.vm().state::<Tag>();
     create_spec(strand, global, spec, out);
 }
 

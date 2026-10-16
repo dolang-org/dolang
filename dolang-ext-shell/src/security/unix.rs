@@ -1,3 +1,5 @@
+use crate::global::UnixSecurityTag;
+
 use super::macos::resolve_uid_or_gid_arg;
 use super::*;
 
@@ -118,7 +120,7 @@ impl<'v> ArrayLike<'v> for PosixAclAces {
     ) -> Result<'v, 's, ()> {
         let ace = this.annex().entries()[index];
         strand
-            .state::<UnixSecurityGlobal<'v>>()
+            .state::<UnixSecurityTag>()
             .types
             .posix_ace
             .create_with_annex(strand, PosixAceObject, ace, out);
@@ -140,7 +142,7 @@ impl<'v> Object<'v> for PosixAclObject {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([mut iterable], []) = unpack!(strand, args, 1, 0)?;
-        let global = strand.state::<UnixSecurityGlobal<'v>>();
+        let global = strand.state::<UnixSecurityTag>();
         iterable.iter(strand, &mut out).await?;
         let mut entries = Vec::new();
         while out.next(strand, &mut iterable).await? {
@@ -256,7 +258,7 @@ impl<'v> Object<'v> for PosixAceObject {
             ($builder:expr, $name:literal, $qualifier:expr) => {
                 $builder.type_method($name, async move |this, strand, args, out| {
                     let ([], [permissions]) = unpack!(strand, args, 0, 1)?;
-                    let global = strand.state::<UnixSecurityGlobal<'v>>();
+                    let global = strand.state::<UnixSecurityTag>();
                     let permissions =
                         posix_permissions(strand, global, permissions.as_deref()).await?;
                     this.create_with_annex(
@@ -278,7 +280,7 @@ impl<'v> Object<'v> for PosixAceObject {
         builder
             .type_method("user", async move |this, strand, args, out| {
                 let ([id], [permissions]) = unpack!(strand, args, 1, 1)?;
-                let global = strand.state::<UnixSecurityGlobal<'v>>();
+                let global = strand.state::<UnixSecurityTag>();
                 let permissions = posix_permissions(strand, global, permissions.as_deref()).await?;
                 let id = posix_id(strand, &id, "uid")?;
                 this.create_with_annex(
@@ -291,7 +293,7 @@ impl<'v> Object<'v> for PosixAceObject {
             })
             .type_method("group", async move |this, strand, args, out| {
                 let ([id], [permissions]) = unpack!(strand, args, 1, 1)?;
-                let global = strand.state::<UnixSecurityGlobal<'v>>();
+                let global = strand.state::<UnixSecurityTag>();
                 let permissions = posix_permissions(strand, global, permissions.as_deref()).await?;
                 let id = posix_id(strand, &id, "gid")?;
                 this.create_with_annex(
@@ -326,7 +328,7 @@ impl<'v> Object<'v> for PosixAceObject {
                 Ok(())
             })
             .get("permissions", |this, strand, out| {
-                let permission = strand.state::<UnixSecurityGlobal<'v>>().types.permission;
+                let permission = strand.state::<UnixSecurityTag>().types.permission;
                 permission.create_flags(strand, Permission(this.annex().permissions()), out);
                 Ok(())
             })

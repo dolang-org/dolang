@@ -7,7 +7,7 @@ use dolang::{
     compile::Config,
     extension,
     extension::{Extension, Version},
-    runtime::vm::Builder,
+    runtime::vm::{Builder, StateTag},
 };
 
 /// Digest extension
@@ -15,6 +15,10 @@ pub struct DigestExt;
 
 /// Lazy setup tag
 struct Tag;
+
+impl StateTag for Tag {
+    type State<'v> = ();
+}
 
 #[derive(Debug)]
 pub enum Infallible {}
@@ -38,7 +42,10 @@ impl Extension for DigestExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        builder.lazy::<Tag>(&["digest"], crate::digest::configure_vm);
+        builder.lazy::<Tag>(&["digest"], |reg| {
+            reg.register_state::<Tag>(());
+            crate::digest::configure_vm(reg);
+        });
         Ok(())
     }
 }
