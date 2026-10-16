@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use std::{borrow::Cow, mem};
 
 use dolang::runtime::object::fmt;
@@ -52,7 +54,7 @@ impl<'v> Object<'v> for Regex {
             .ok_or_else(|| Error::type_error(strand, "pattern: expected Str"))?
             .pin();
         let regex = rx::Regex::new(&pattern).into_do(strand)?;
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         this.create_with_annex(strand, Regex, RegexAnnex { global, regex }, out);
         Ok(())
     }
@@ -946,7 +948,7 @@ impl<'v> Object<'v> for RegexSplit<'v> {
                             .pin()
                             .into_static_unchecked()
                     };
-                    let ty = strand.state::<Global<'v>>().types.split;
+                    let ty = strand.state::<Tag>().types.split;
                     ty.create_with_annex(
                         strand,
                         RegexSplit {

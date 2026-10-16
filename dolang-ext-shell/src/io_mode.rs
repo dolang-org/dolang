@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use std::io;
 
 use dolang::runtime::{
@@ -10,7 +12,6 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWriteExt};
 use crate::{
     error::{ErrorExt as _, ResultExt as _},
     fs::{read_all, read_into_spare},
-    global::Global,
 };
 
 /// How a byte stream is quantized into values.
@@ -37,7 +38,7 @@ pub(crate) fn parse_mode<'v, 's>(
     strand: &mut Strand<'v, 's>,
     mode: Option<&Value<'v>>,
 ) -> Result<'v, 's, IoMode> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     match mode {
         None => Ok(IoMode::Line),
         Some(value) => match value.as_sym(strand) {

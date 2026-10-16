@@ -28,7 +28,7 @@ use crate::{
     env::Env as EnvObject,
     error::{ErrorExt, ResultExt as _},
     fs::path::{cast_path, create_path, path_from_value},
-    global::{FsGlobal, Global, ProgramSource, ShellGlobal},
+    global::{FsTag, Global, ProgramSource, ShellGlobal, ShellTag, Tag},
     io_mode::{IoMode, encode_value, line_ending, read_raw, read_value, write_raw},
     local::{Local, ProgramOverride},
     pipe_channel,
@@ -148,13 +148,13 @@ impl<'v> Object<'v> for Stdin {
                             })
                     })
                     .transpose()?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let mut reader = global.stdio.stdin.lock().await;
                 read_raw(&mut *reader, size, strand, out).await
             })
             .method("lines", async move |_this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<ShellGlobal<'v>>();
+                let global = strand.state::<ShellTag>();
                 global
                     .types
                     .stdin
@@ -163,7 +163,7 @@ impl<'v> Object<'v> for Stdin {
             })
             .method("chunks", async move |_this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<ShellGlobal<'v>>();
+                let global = strand.state::<ShellTag>();
                 global
                     .types
                     .stdin
@@ -179,7 +179,7 @@ impl<'v> Object<'v> for Stdin {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let global = strand.state::<ShellGlobal<'v>>();
+        let global = strand.state::<ShellTag>();
         let Some(other) = global.types.stdin.cast(other) else {
             return Ok(false);
         };
@@ -203,7 +203,7 @@ impl<'v> Object<'v> for Stdin {
         strand: &'a mut Strand<'v, 's>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         let mode = this.borrow(strand)?.mode;
         let read = {
             let mut reader = global.stdio.stdin.lock().await;
@@ -239,13 +239,13 @@ impl<'v> Object<'v> for Stdout {
             .supertype(TypeObject::Sink)
             .method("write", async move |_this, strand, args, out| {
                 let ([data], []) = unpack!(strand, args, 1, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let mut writer = global.stdio.stdout.lock().await;
                 write_raw(&mut *writer, data, strand, out).await
             })
             .method("flush", async move |_this, strand, args, _out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 global
                     .stdio
                     .stdout
@@ -263,7 +263,7 @@ impl<'v> Object<'v> for Stdout {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let global = strand.state::<ShellGlobal<'v>>();
+        let global = strand.state::<ShellTag>();
         Ok(global.types.stdout.cast(other).is_some())
     }
 
@@ -281,7 +281,7 @@ impl<'v> Object<'v> for Stdout {
         strand: &'a mut Strand<'v, 's>,
         value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         let bytes = encode_value(strand, &value)?;
         let mut writer = global.stdio.stdout.lock().await;
         writer
@@ -315,13 +315,13 @@ impl<'v> Object<'v> for Stderr {
             .supertype(TypeObject::Sink)
             .method("write", async move |_this, strand, args, out| {
                 let ([data], []) = unpack!(strand, args, 1, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let mut writer = global.stdio.stderr.lock().await;
                 write_raw(&mut *writer, data, strand, out).await
             })
             .method("flush", async move |_this, strand, args, _out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 global
                     .stdio
                     .stderr
@@ -339,7 +339,7 @@ impl<'v> Object<'v> for Stderr {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let global = strand.state::<ShellGlobal<'v>>();
+        let global = strand.state::<ShellTag>();
         Ok(global.types.stderr.cast(other).is_some())
     }
 
@@ -357,7 +357,7 @@ impl<'v> Object<'v> for Stderr {
         strand: &'a mut Strand<'v, 's>,
         value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         let bytes = encode_value(strand, &value)?;
         let mut writer = global.stdio.stderr.lock().await;
         writer
@@ -452,7 +452,7 @@ impl<'v> Object<'v> for Vfs {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([callable], []) = unpack!(strand, args, 1, 0)?;
-        let global = strand.state::<ShellGlobal<'v>>();
+        let global = strand.state::<ShellTag>();
         strand
             .with_slots(
                 async move |strand,
@@ -570,7 +570,7 @@ impl<'v> Object<'v> for Vfs {
         builder
             .type_method("unix_socket", async move |_this, strand, args, out| {
                 let ([path], [key]) = unpack!(strand, args, 1, 0, key_sym = None)?;
-                let global = strand.vm().state::<ShellGlobal<'v>>();
+                let global = strand.vm().state::<ShellTag>();
                 let path = path_from_value(strand, &path)?;
                 let key = key
                     .map(|key| bytes_from_value(strand, &key, "key"))
@@ -650,7 +650,7 @@ impl<'v> Object<'v> for Vfs {
                     Some(elevate) => util::bool(strand, elevate, "elevate")?,
                     None => true,
                 };
-                let global = strand.vm().state::<ShellGlobal<'v>>();
+                let global = strand.vm().state::<ShellTag>();
                 let current_cwd = global.local.get(strand).cwd().clone();
                 let cwd = if let Some(cd) = cd {
                     let cd = path_from_value(strand, &cd)?;
@@ -858,7 +858,7 @@ pub(crate) fn configure_vm<'v>(
             let invocation = global.local.get(strand).invocation();
             match invocation.program {
                 Some(ProgramOverride::Path(path)) => {
-                    let fs = strand.force_state::<FsGlobal<'v>>();
+                    let fs = strand.force_state::<FsTag>();
                     create_path(strand, fs, path, out)?;
                 }
                 Some(ProgramOverride::Nil) => Output::set(strand, out, Nil),
@@ -866,7 +866,7 @@ pub(crate) fn configure_vm<'v>(
                 None => match core.program.borrow().as_ref() {
                     Some(ProgramSource::Path(path)) => {
                         let path = vfs_path::PathBuf::from_native(path.clone()).into_sys(strand)?;
-                        let fs = strand.force_state::<FsGlobal<'v>>();
+                        let fs = strand.force_state::<FsTag>();
                         create_path(strand, fs, path, out)?;
                     }
                     Some(ProgramSource::Module(name)) => Output::set(strand, out, name.as_str()),
@@ -931,14 +931,14 @@ pub(crate) fn configure_vm<'v>(
                 std::env::current_exe().expect("could not get current exe"),
             )
             .expect("current executable path is UTF-8");
-            let fs = strand.force_state::<FsGlobal<'v>>();
+            let fs = strand.force_state::<FsTag>();
             create_path(strand, fs, exe, out)
         })
         .function("vfs_exe", async move |strand, args, out| {
             let ([], []) = unpack!(strand, args, 0, 0)?;
             match global.local.get(strand).vfs_exe() {
                 Some(path) => {
-                    let fs = strand.force_state::<FsGlobal<'v>>();
+                    let fs = strand.force_state::<FsTag>();
                     create_path(strand, fs, path, out)?;
                 }
                 None => Output::set(strand, out, Nil),
@@ -963,7 +963,7 @@ pub(crate) fn configure_vm<'v>(
             let dir = match args.next() {
                 None => {
                     let cwd = global.local.get(strand).cwd().clone();
-                    let fs = strand.force_state::<FsGlobal<'v>>();
+                    let fs = strand.force_state::<FsTag>();
                     create_path(strand, fs, cwd, out)?;
                     return Ok(());
                 }

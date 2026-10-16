@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use std::{
     hash::{Hash, Hasher},
     io,
@@ -460,7 +462,7 @@ impl<'v> Object<'v> for Date {
                 Ok(())
             })
             .get("month", |this, strand, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 Output::set(
                     strand,
                     out,
@@ -473,7 +475,7 @@ impl<'v> Object<'v> for Date {
                 Ok(())
             })
             .get("weekday", |this, strand, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 Output::set(
                     strand,
                     out,
@@ -496,7 +498,7 @@ impl<'v> Object<'v> for Date {
                     .as_int(strand)
                     .and_then(|year| i32::try_from(year).ok())
                     .ok_or_else(|| Error::type_error(strand, "from_ymd: expected Int year"))?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let month = if let Some(month) = global.types.month.cast(&month) {
                     month.enter_sync(strand, |_strand, month| *month.annex())
                 } else {
@@ -536,7 +538,7 @@ impl<'v> Object<'v> for Date {
             })
             .method("datetime", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 create_datetime(
                     strand,
                     global,
@@ -557,7 +559,7 @@ impl<'v> Object<'v> for Date {
                     .annex()
                     .checked_add(TimeDuration::days(days))
                     .ok_or_else(|| Error::overflow(strand))?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 create_date(strand, global, date, out);
                 Ok(())
             })
@@ -571,7 +573,7 @@ impl<'v> Object<'v> for Date {
                     .annex()
                     .checked_sub(TimeDuration::days(days))
                     .ok_or_else(|| Error::overflow(strand))?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 create_date(strand, global, date, out);
                 Ok(())
             })
@@ -604,7 +606,7 @@ impl<'v> Object<'v> for Date {
         strand: &'a mut Strand<'v, 's>,
         other: &dolang::runtime::Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         if let Some(other) = global.types.date.cast(other) {
             Ok(other.enter_sync(strand, |_strand, other| *this.annex() == *other.annex()))
         } else {
@@ -617,7 +619,7 @@ impl<'v> Object<'v> for Date {
         strand: &'a mut Strand<'v, 's>,
         other: &dolang::runtime::Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         if let Some(other) = global.types.date.cast(other) {
             Ok(other.enter_sync(strand, |_strand, other| *this.annex() < *other.annex()))
         } else {
@@ -630,7 +632,7 @@ impl<'v> Object<'v> for Date {
         other: &dolang::runtime::Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         if let Some(other) = global.types.date.cast(other) {
             other.enter_sync(strand, |strand, other| {
                 global.types.duration.create_with_annex(
@@ -662,7 +664,7 @@ macro_rules! calendar_enum {
                 builder
                     .method("next", async move |this, strand, args, out| {
                         let ([], []) = unpack!(strand, args, 0, 0)?;
-                        let global = strand.state::<Global<'v>>();
+                        let global = strand.state::<Tag>();
                         Output::set(
                             strand,
                             out,
@@ -673,7 +675,7 @@ macro_rules! calendar_enum {
                     })
                     .method("previous", async move |this, strand, args, out| {
                         let ([], []) = unpack!(strand, args, 0, 0)?;
-                        let global = strand.state::<Global<'v>>();
+                        let global = strand.state::<Tag>();
                         let len = global.calendar.$roots.len();
                         Output::set(
                             strand,
@@ -690,7 +692,7 @@ macro_rules! calendar_enum {
                 out: Slot<'v, 'a>,
             ) -> Result<'v, 's, ()> {
                 let field_name = field.as_str(strand).to_owned();
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let index = global.calendar.$roots.iter().position(|value| {
                     let value = global.types.$field.cast(value).unwrap();
                     value.enter_sync(strand, |_strand, value| {
@@ -737,7 +739,7 @@ macro_rules! calendar_enum {
                 strand: &'a mut Strand<'v, 's>,
                 other: &dolang::runtime::Value<'v>,
             ) -> Result<'v, 's, bool> {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 if let Some(other) = global.types.$field.cast(other) {
                     Ok(other.enter_sync(strand, |_strand, other| *this.annex() == *other.annex()))
                 } else {
@@ -767,7 +769,7 @@ impl<'v> Object<'v> for Month {
         builder
             .method("next", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 Output::set(
                     strand,
                     out,
@@ -777,7 +779,7 @@ impl<'v> Object<'v> for Month {
             })
             .method("previous", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 Output::set(
                     strand,
                     out,
@@ -793,7 +795,7 @@ impl<'v> Object<'v> for Month {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let field_name = field.as_str(strand).to_owned();
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         let index = global.calendar.months.iter().position(|value| {
             let value = global.types.month.cast(value).unwrap();
             value.enter_sync(strand, |_strand, value| {
@@ -818,7 +820,7 @@ impl<'v> Object<'v> for Month {
             .and_then(|index| usize::try_from(index).ok())
             .filter(|index| (1..=12).contains(index))
             .ok_or_else(|| Error::value(strand, "month index must be in 1..12"))?;
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         Output::set(strand, out, &global.calendar.months[index - 1]);
         Ok(())
     }
@@ -849,7 +851,7 @@ impl<'v> Object<'v> for Month {
         strand: &'a mut Strand<'v, 's>,
         other: &dolang::runtime::Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         if let Some(other) = global.types.month.cast(other) {
             Ok(other.enter_sync(strand, |_strand, other| *this.annex() == *other.annex()))
         } else {
@@ -862,7 +864,7 @@ impl<'v> Object<'v> for Month {
         strand: &'a mut Strand<'v, 's>,
         other: &dolang::runtime::Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         if let Some(other) = global.types.month.cast(other) {
             Ok(other.enter_sync(strand, |_strand, other| *this.annex() < *other.annex()))
         } else {
@@ -898,7 +900,7 @@ impl<'v> Object<'v> for DateTime {
                 let datetime =
                     OffsetDateTime::from_unix_timestamp_nanos(this.annex().total_nanos())
                         .map_err(|_| Error::runtime(strand, "invalid DateTime"))?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 create_date(strand, global, datetime.date(), out);
                 Ok(())
             })
@@ -990,7 +992,7 @@ impl<'v> Object<'v> for DateTime {
         strand: &'a mut Strand<'v, 's>,
         other: &dolang::runtime::Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         if let Some(other) = global.types.date_time.cast(other) {
             Ok(other.enter_sync(strand, |_strand, other| {
                 this.annex().total_nanos == other.annex().total_nanos
@@ -1005,7 +1007,7 @@ impl<'v> Object<'v> for DateTime {
         strand: &'a mut Strand<'v, 's>,
         other: &dolang::runtime::Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         if let Some(other) = global.types.date_time.cast(other) {
             Ok(other.enter_sync(strand, |_strand, other| {
                 this.annex().total_nanos < other.annex().total_nanos
@@ -1021,7 +1023,7 @@ impl<'v> Object<'v> for DateTime {
         other: &dolang::runtime::Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         if let Some(other) = global.types.date_time.cast(other) {
             other.enter_sync(strand, |strand, other| {
                 let left = this.annex().total_nanos;
@@ -1091,7 +1093,7 @@ impl<'v> Object<'v> for Duration {
         strand: &'a mut Strand<'v, 's>,
         other: &dolang::runtime::Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         if let Some(other) = global.types.duration.cast(other) {
             Ok(other.enter_sync(strand, |_strand, other| {
                 this.annex().total_nanos == other.annex().total_nanos
@@ -1106,7 +1108,7 @@ impl<'v> Object<'v> for Duration {
         strand: &'a mut Strand<'v, 's>,
         other: &dolang::runtime::Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         if let Some(other) = global.types.duration.cast(other) {
             Ok(other.enter_sync(strand, |_strand, other| {
                 this.annex().total_nanos < other.annex().total_nanos

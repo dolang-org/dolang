@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use std::{
     cell::Cell,
     ffi::{CStr, CString},
@@ -55,7 +57,7 @@ unsafe fn map_sqlite_error<'v, 's>(
     rc: i32,
     raw: *mut sqlite3,
 ) -> Error<'v, 's> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     let msg = unsafe { sqlite_error_message(raw) };
     if matches!(rc, SQLITE_BUSY | SQLITE_LOCKED) {
         Error::object_with_annex(strand, global.types.busy, SqliteBusy, ErrorAnnex(rc, msg))
@@ -76,7 +78,7 @@ unsafe fn sqlite_error_string(rc: i32) -> String {
 }
 
 fn map_sqlite_errcode<'v, 's>(strand: &mut Strand<'v, 's>, rc: i32) -> Error<'v, 's> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     let msg = unsafe { sqlite_error_string(rc) };
     if matches!(rc, SQLITE_BUSY | SQLITE_LOCKED) {
         Error::object_with_annex(strand, global.types.busy, SqliteBusy, ErrorAnnex(rc, msg))

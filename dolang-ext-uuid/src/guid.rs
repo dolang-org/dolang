@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use std::hash::{Hash, Hasher};
 
 use dolang::runtime::value::fmt::Format;
@@ -34,7 +36,7 @@ pub fn create_guid<'v, 'a>(
     id: dolang_winterop::guid::Guid,
     out: Slot<'v, 'a>,
 ) {
-    let global = strand.force_state::<Global<'v>>();
+    let global = strand.force_state::<Tag>();
     create_guid_with_global(global, strand, id, out);
 }
 
@@ -44,7 +46,7 @@ pub fn downcast_guid<'v>(
     value: &Value<'v>,
 ) -> Option<dolang_winterop::guid::Guid> {
     // No `Guid` can exist before the extension is initialized
-    let global = strand.try_state::<Global<'v>>()?;
+    let global = strand.try_state::<Tag>()?;
     global
         .types
         .guid
@@ -143,7 +145,7 @@ impl<'v> Object<'v> for Guid {
                 Ok(())
             })
             .type_get("NIL", |_this, strand, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let nil = dolang_winterop::guid::Guid {
                     data1: 0,
                     data2: 0,
@@ -155,7 +157,7 @@ impl<'v> Object<'v> for Guid {
             })
             .type_method("generate", async move |_this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 create_guid_with_global(global, strand, dolang_winterop::guid::Guid::new_v4(), out);
                 Ok(())
             })

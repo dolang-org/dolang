@@ -4,7 +4,7 @@ use dolang::runtime::{
     Sym, Type,
     strand::{LocalKey, LocalRootKey},
     value::Root,
-    vm::{Builder, Stateful},
+    vm::{Builder, StateTag},
 };
 
 use crate::{
@@ -70,10 +70,10 @@ pub(crate) struct Global<'v> {
     pub(crate) host: Host<'v>,
 }
 
-pub struct Tag;
+pub(crate) struct Tag;
 
-impl<'v> Stateful<'v> for Global<'v> {
-    type Tag = Tag;
+impl StateTag for Tag {
+    type State<'v> = Global<'v>;
 }
 
 impl<'v> Global<'v> {

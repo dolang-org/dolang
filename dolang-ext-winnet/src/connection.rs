@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use crate::global::Global;
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call,
@@ -154,7 +156,7 @@ impl<'v> Object<'v> for Connection {
             })
             .method("info", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let borrow = this.borrow(strand)?;
                 let info = capability(&borrow, strand)?.info().await.into_sys(strand)?;
                 make_info(strand, global, info, out);
@@ -173,7 +175,7 @@ impl<'v> Object<'v> for Connection {
                 dolang_ext_shell::windows_path(strand, path, out)
             })
             .method("disconnect", async move |this, strand, args, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let force_sym = global.syms.force;
                 let forget_sym = global.syms.forget_credentials;
                 let ([], [force, forget]) =

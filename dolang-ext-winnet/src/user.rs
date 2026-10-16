@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use std::time::{Duration, SystemTime};
 
 use dolang::runtime::{
@@ -232,7 +234,7 @@ impl<'v> Object<'v> for User {
             })
             .method("info", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let info = {
                     let mut b = this.borrow_mut(strand)?;
                     b.0.as_mut()
@@ -245,7 +247,7 @@ impl<'v> Object<'v> for User {
                 Ok(())
             })
             .method("update", async move |this, strand, args, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let name_sym = global.syms.name;
                 let password_sym = global.syms.password;
                 let full_name_sym = global.syms.full_name;

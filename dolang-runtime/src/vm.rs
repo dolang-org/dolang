@@ -74,8 +74,9 @@ impl Drop for ErasedState {
     }
 }
 
-pub trait Stateful<'v>: 'v {
-    type Tag: 'static;
+/// Names the state type stored under a unique VM state key.
+pub trait StateTag: 'static {
+    type State<'v>: 'v;
 }
 
 pub(crate) mod private {
@@ -123,7 +124,7 @@ pub trait AllocExt<'v>: Alloc<'v> {
     ///
     /// Does nothing if no lazy setup is declared under `K`, so a crate can move between eager
     /// and lazy registration without affecting callers.
-    fn force<K: 'static>(&mut self) {
+    fn force<K: StateTag>(&mut self) {
         let vm = self.alloc_vm(private::Sealed);
         let unit = vm.lazy.borrow().by_tag.get(&TypeId::of::<K>()).copied();
         if let Some(unit) = unit {
@@ -131,15 +132,15 @@ pub trait AllocExt<'v>: Alloc<'v> {
         }
     }
 
-    /// Run the lazy setup declared under `T::Tag`, then fetch the state registered with that
+    /// Run the lazy setup declared under `K`, then fetch the state registered with that
     /// tag.
     ///
     /// # Panics
     ///
-    /// Panics if no state is registered under `T::Tag` once the setup has run.
-    fn force_state<T: Stateful<'v>>(&mut self) -> State<'v, T> {
-        self.force::<T::Tag>();
-        self.alloc_vm(private::Sealed).state()
+    /// Panics if no state is registered under `K` once the setup has run.
+    fn force_state<K: StateTag>(&mut self) -> State<'v, K::State<'v>> {
+        self.force::<K>();
+        self.alloc_vm(private::Sealed).state::<K>()
     }
 }
 
@@ -154,6 +155,7 @@ enum LazyPhase<'v> {
 }
 
 struct LazyUnit<'v> {
+    tag: TypeId,
     tag_name: &'static str,
     modules: Box<[&'v str]>,
     phase: LazyPhase<'v>,
@@ -200,7 +202,6 @@ pub(crate) fn force_lazy_unit<'v, A: Alloc<'v> + ?Sized>(alloc: &mut A, unit: us
     let lazy = &mut *lazy;
     lazy.running.pop();
     let entry = &mut lazy.units[unit];
-    entry.phase = LazyPhase::Done;
     let native_modules = vm.native_modules.borrow();
     if let Some(name) = entry
         .modules
@@ -212,6 +213,12 @@ pub(crate) fn force_lazy_unit<'v, A: Alloc<'v> + ?Sized>(alloc: &mut A, unit: us
             entry.tag_name
         );
     }
+    assert!(
+        vm.state.borrow().contains_key(&entry.tag),
+        "lazy unit {} did not register its state",
+        entry.tag_name
+    );
+    entry.phase = LazyPhase::Done;
 }
 
 type Trap<'v> = dyn for<'s> Fn(&mut Strand<'v, 's>) -> Result<'v, 's, ()> + 'v;
@@ -334,13 +341,13 @@ impl<'v> Vm<'v> {
     ///
     /// # Panics
     ///
-    /// Panics if no state is registered under `T::Tag`. State registered by a lazy setup
+    /// Panics if no state is registered under `K`. State registered by a lazy setup
     /// that hasn't run yet is not registered; use [`AllocExt::force_state`] to run it first.
     #[inline]
-    pub fn state<T: Stateful<'v>>(&self) -> State<'v, T> {
-        match self.try_state() {
+    pub fn state<K: StateTag>(&self) -> State<'v, K::State<'v>> {
+        match self.try_state::<K>() {
             Some(state) => state,
-            None => self.state_missing(TypeId::of::<T::Tag>()),
+            None => self.state_missing(TypeId::of::<K>()),
         }
     }
 
@@ -348,11 +355,12 @@ impl<'v> Vm<'v> {
     ///
     /// Returns `None` for state registered by a lazy setup that hasn't run yet.
     #[inline]
-    pub fn try_state<T: Stateful<'v>>(&self) -> Option<State<'v, T>> {
+    pub fn try_state<K: StateTag>(&self) -> Option<State<'v, K::State<'v>>> {
         self.state
             .borrow()
-            .get(&TypeId::of::<T::Tag>())
-            .map(|entry| State(entry.ptr.cast(), PhantomData))
+            .get(&TypeId::of::<K>())
+            // SAFETY: registration under K stores only K::State<'v>.
+            .map(|entry| State(entry.ptr.cast::<K::State<'v>>(), PhantomData))
     }
 
     #[cold]
@@ -1067,15 +1075,33 @@ impl<'v> Register<'v> {
 
     /// Register custom state that will live for the life of the VM, and can therefore be
     /// referenced by native objects, functions, and modules, etc.
-    pub fn register_state<T: Stateful<'v>>(&mut self, value: T) -> State<'v, T> {
-        match self.inner.state.borrow_mut().entry(TypeId::of::<T::Tag>()) {
+    ///
+    /// A tag accepts only the state type it names:
+    ///
+    /// ```compile_fail,E0308
+    /// use dolang_runtime::vm::{Register, StateTag};
+    /// struct CountTag;
+    /// impl StateTag for CountTag {
+    ///     type State<'v> = usize;
+    /// }
+    /// fn register(reg: &mut Register<'_>) {
+    ///     reg.register_state::<CountTag>(String::new());
+    /// }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if state is already registered under `K`.
+    pub fn register_state<K: StateTag>(&mut self, value: K::State<'v>) -> State<'v, K::State<'v>> {
+        match self.inner.state.borrow_mut().entry(TypeId::of::<K>()) {
             Entry::Occupied(_) => panic!("duplicate state registration"),
             Entry::Vacant(entry) => {
                 let state = alias::Box::into_non_null(alias::Box::new(value));
                 entry.insert(ErasedState {
                     ptr: state.cast(),
                     free: |ptr| {
-                        let _ = unsafe { alias::Box::from_non_null(ptr.cast::<T>()) };
+                        // SAFETY: this pointer was allocated as K::State<'v> above.
+                        let _ = unsafe { alias::Box::from_non_null(ptr.cast::<K::State<'v>>()) };
                     },
                 });
                 State(state, PhantomData)
@@ -1183,18 +1209,18 @@ impl<'v> Builder<'v> {
     /// Declare a lazy setup under tag `K`.
     ///
     /// `init` runs at most once: when Do code imports one of `modules`, or when Rust code
-    /// calls [`AllocExt::force`] with `K`. Declaring the setup under the `Tag` of the state it
+    /// calls [`AllocExt::force`] with `K`. Declaring the setup under the tag naming the state it
     /// registers lets [`AllocExt::force_state`] run it and fetch that state in one step.
     ///
-    /// `init` must register every module in `modules`, and no other modules. Strand-local keys,
-    /// importers, and traps are only available on `Builder`; reserve them before declaring the
-    /// setup and move them into `init`.
+    /// `init` must register state under `K`, every module in `modules`, and no other modules.
+    /// Strand-local keys, importers, and traps are only available on `Builder`; reserve them
+    /// before declaring the setup and move them into `init`.
     ///
     /// # Panics
     ///
     /// Panics if a setup is already declared under `K`, or if a module in `modules` is already
     /// registered or declared by another setup.
-    pub fn lazy<K: 'static>(
+    pub fn lazy<K: StateTag>(
         &mut self,
         modules: &[&str],
         init: impl FnOnce(&mut Register<'v>) + 'v,
@@ -1223,6 +1249,7 @@ impl<'v> Builder<'v> {
             })
             .collect();
         lazy.units.push(LazyUnit {
+            tag: TypeId::of::<K>(),
             tag_name,
             modules,
             phase: LazyPhase::Pending(Box::new(init)),
@@ -1505,8 +1532,12 @@ mod tests {
         value: i64,
     }
 
-    impl<'v> Stateful<'v> for TestState {
-        type Tag = TagA;
+    impl StateTag for TagB {
+        type State<'v> = TestState;
+    }
+
+    impl StateTag for TagA {
+        type State<'v> = TestState;
     }
 
     #[test]
@@ -1516,16 +1547,16 @@ mod tests {
             let counter = runs.clone();
             vm.lazy::<TagA>(&["lazy_test"], move |reg| {
                 counter.set(counter.get() + 1);
-                reg.register_state(TestState { value: 7 });
+                reg.register_state::<TagA>(TestState { value: 7 });
                 reg.module("lazy_test").value("x", 7_i64).commit();
             });
             assert_eq!(runs.get(), 0);
             vm.enter_with_slots(async move |strand, [mut out]| {
-                assert!(strand.try_state::<TestState>().is_none());
+                assert!(strand.try_state::<TagA>().is_none());
                 strand.import("lazy_test", &mut out).await.unwrap();
                 strand.import("lazy_test", &mut out).await.unwrap();
                 assert_eq!(runs.get(), 1);
-                assert_eq!(strand.state::<TestState>().value, 7);
+                assert_eq!(strand.state::<TagA>().value, 7);
             })
             .await
         });
@@ -1535,12 +1566,12 @@ mod tests {
     fn force_state_runs_setup() {
         with_builder(async |vm| {
             vm.lazy::<TagA>(&[], |reg| {
-                reg.register_state(TestState { value: 3 });
+                reg.register_state::<TagA>(TestState { value: 3 });
             });
             vm.enter(async |strand| {
-                assert!(strand.try_state::<TestState>().is_none());
-                assert_eq!(strand.force_state::<TestState>().value, 3);
-                assert_eq!(strand.try_state::<TestState>().unwrap().value, 3);
+                assert!(strand.try_state::<TagA>().is_none());
+                assert_eq!(strand.force_state::<TagA>().value, 3);
+                assert_eq!(strand.try_state::<TagA>().unwrap().value, 3);
                 // Forcing again is a no-op
                 strand.force::<TagA>();
             })
@@ -1551,8 +1582,8 @@ mod tests {
     #[test]
     fn force_without_lazy_unit_is_noop() {
         with_builder(async |vm| {
-            vm.register_state(TestState { value: 5 });
-            assert_eq!(vm.force_state::<TestState>().value, 5);
+            vm.register_state::<TagA>(TestState { value: 5 });
+            assert_eq!(vm.force_state::<TagA>().value, 5);
         });
     }
 
@@ -1561,9 +1592,81 @@ mod tests {
     fn state_before_force_panics() {
         with_builder(async |vm| {
             vm.lazy::<TagA>(&[], |reg| {
-                reg.register_state(TestState { value: 1 });
+                reg.register_state::<TagA>(TestState { value: 1 });
             });
-            vm.state::<TestState>();
+            vm.state::<TagA>();
+        });
+    }
+
+    #[test]
+    fn same_state_type_under_distinct_tags() {
+        with_builder(async |vm| {
+            let a = vm.register_state::<TagA>(TestState { value: 1 });
+            let b = vm.register_state::<TagB>(TestState { value: 2 });
+            assert_eq!(a.value, 1);
+            assert_eq!(b.value, 2);
+            assert_eq!(vm.state::<TagA>().value, 1);
+            assert_eq!(vm.try_state::<TagB>().unwrap().value, 2);
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate state registration")]
+    fn duplicate_state_panics() {
+        with_builder(async |vm| {
+            vm.register_state::<TagA>(TestState { value: 1 });
+            vm.register_state::<TagA>(TestState { value: 2 });
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "did not register its state")]
+    fn force_without_registering_state_panics() {
+        with_builder(async |vm| {
+            vm.lazy::<TagA>(&[], |reg| {
+                reg.register_state::<TagB>(TestState { value: 1 });
+            });
+            vm.force::<TagA>();
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "did not register its state")]
+    fn import_without_registering_state_panics() {
+        with_builder(async |vm| {
+            vm.lazy::<TagA>(&["lazy_missing_state"], |reg| {
+                reg.module("lazy_missing_state").commit();
+            });
+            vm.enter_with_slots(async |strand, [mut out]| {
+                strand.import("lazy_missing_state", &mut out).await.unwrap();
+            })
+            .await;
+        });
+    }
+
+    #[test]
+    fn unit_state_runs_once() {
+        struct UnitTag;
+        impl StateTag for UnitTag {
+            type State<'v> = ();
+        }
+        with_builder(async |vm| {
+            let runs = Rc::new(Cell::new(0));
+            let counter = runs.clone();
+            vm.lazy::<UnitTag>(&["lazy_unit_state"], move |reg| {
+                counter.set(counter.get() + 1);
+                reg.register_state::<UnitTag>(());
+                reg.module("lazy_unit_state").commit();
+            });
+            vm.enter_with_slots(async |strand, [mut out]| {
+                assert!(strand.try_state::<UnitTag>().is_none());
+                strand.force_state::<UnitTag>();
+                strand.import("lazy_unit_state", &mut out).await.unwrap();
+                strand.force::<UnitTag>();
+                assert!(strand.try_state::<UnitTag>().is_some());
+                assert_eq!(runs.get(), 1);
+            })
+            .await;
         });
     }
 

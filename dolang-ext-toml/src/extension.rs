@@ -7,7 +7,7 @@ use dolang::{
     compile::Config,
     extension,
     extension::{Extension, Version},
-    runtime::vm::Builder,
+    runtime::vm::{Builder, StateTag},
 };
 
 /// TOML extension
@@ -15,6 +15,10 @@ pub struct TomlExt;
 
 /// Lazy setup tag
 struct Tag;
+
+impl StateTag for Tag {
+    type State<'v> = ();
+}
 
 #[derive(Debug)]
 pub enum Infallible {}
@@ -38,7 +42,10 @@ impl Extension for TomlExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        builder.lazy::<Tag>(&["toml"], crate::toml::configure);
+        builder.lazy::<Tag>(&["toml"], |reg| {
+            reg.register_state::<Tag>(());
+            crate::toml::configure(reg);
+        });
         Ok(())
     }
 }

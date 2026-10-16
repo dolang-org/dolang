@@ -49,7 +49,7 @@ use crate::{
         path::{convert_path_kind, create_path, path_from_value, safe_concat},
         readdir::{DirEntryIter, DirEntryIterAnnex},
     },
-    global::{FsGlobal, WindowsSecurityGlobal},
+    global::{FsGlobal, WindowsSecurityTag},
     security, util,
 };
 
@@ -102,7 +102,7 @@ async fn sec_desc<'v, 's>(
         .sec_desc(path.to_path(), mask, follow)
         .await
         .into_sys(strand)?;
-    let windows = strand.force_state::<WindowsSecurityGlobal<'v>>();
+    let windows = strand.force_state::<WindowsSecurityTag>();
     security::create_sec_desc(strand, windows, descriptor, &mut out);
     Ok(())
 }
@@ -792,7 +792,7 @@ fn parse_ownership_identity<'v, 's>(
             value.to_string(),
         ))
     } else if let Some(value) = strand
-        .try_state::<WindowsSecurityGlobal<'v>>()
+        .try_state::<WindowsSecurityTag>()
         .and_then(|windows| windows.types.sid.cast(value))
     {
         Ok(dolang_vfs::security::OwnershipIdentity::Sid(
@@ -1687,7 +1687,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
         .function("update_sec_desc", async move |strand, args, _out| {
             let ([path], [resolve], rest) = unpack!(strand, args, 1, 0, resolve = None, ...)?;
             let path = path_from_value(strand, &path)?;
-            let windows = strand.force_state::<WindowsSecurityGlobal<'v>>();
+            let windows = strand.force_state::<WindowsSecurityTag>();
             let descriptor = security::sec_desc_from_args(
                 strand,
                 windows,

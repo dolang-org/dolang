@@ -24,7 +24,7 @@ use crate::{
     },
     unpack,
     value::{Empty, Output, Singleton, Slot, Value},
-    vm::{Builder, State, Stateful},
+    vm::{Builder, State, StateTag},
 };
 
 /// Creates a channel pair using the VM's registered factory if set,
@@ -236,8 +236,8 @@ struct StrandState<'v> {
 
 struct StrandStateTag;
 
-impl<'v> Stateful<'v> for StrandState<'v> {
-    type Tag = StrandStateTag;
+impl StateTag for StrandStateTag {
+    type State<'v> = StrandState<'v>;
 }
 
 struct Resource;
@@ -267,7 +267,7 @@ impl<'v> Object<'v> for Resource {
                 "strand.Resource: count must be positive",
             ));
         }
-        let state = strand.state::<StrandState<'v>>();
+        let state = strand.state::<StrandStateTag>();
         let id = state.next_resource_id.get();
         state.next_resource_id.set(id.strict_add(1));
         this.create_with_annex(
@@ -319,7 +319,7 @@ impl<'v> Object<'v> for Key {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get_with_slots("value", |this, strand, mut out, [mut key]| {
-                let state = strand.state::<StrandState<'v>>();
+                let state = strand.state::<StrandStateTag>();
                 Output::set(strand, &mut key, this);
                 let root = state.local_root.slot(strand);
                 if !root.is_nil() {
@@ -333,7 +333,7 @@ impl<'v> Object<'v> for Key {
                 Ok(())
             })
             .set_with_slots("value", |this, strand, mut value, [mut key]| {
-                let state = strand.state::<StrandState<'v>>();
+                let state = strand.state::<StrandStateTag>();
                 Output::set(strand, &mut key, this);
                 let root = unique_local_root(state, strand)?;
                 let dict = root
@@ -346,7 +346,7 @@ impl<'v> Object<'v> for Key {
                 "with",
                 async |this, strand, args, out, [mut key, mut prior]| {
                     let ([mut value, block], []) = unpack!(strand, args, 2, 0)?;
-                    let state = strand.state::<StrandState<'v>>();
+                    let state = strand.state::<StrandStateTag>();
                     Output::set(strand, &mut key, this);
                     let root = state.local_root.slot(strand);
                     let had_prior = if root.is_nil() {
@@ -422,7 +422,7 @@ async fn resource_with<'v, 's>(
     block: Slot<'v, '_>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let state = strand.state::<StrandState<'v>>();
+    let state = strand.state::<StrandStateTag>();
 
     if state.resource.get(strand).inherited.contains(&resource.id) {
         return strand
@@ -548,7 +548,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     let local_root = builder.local_root();
     let key = builder.register_type();
     let resource_type = builder.register_type();
-    let state = builder.register_state(StrandState {
+    let state = builder.register_state::<StrandStateTag>(StrandState {
         resource,
         next_resource_id: Cell::new(0),
         local,

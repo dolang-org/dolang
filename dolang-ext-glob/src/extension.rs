@@ -38,7 +38,7 @@ impl Extension for GlobExt {
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
         builder.lazy::<global::Tag>(&["glob"], |reg| {
             let global = Global::new(reg);
-            let global = reg.register_state(global);
+            let global = reg.register_state::<global::Tag>(global);
             crate::glob::configure_vm(reg, global);
         });
         Ok(())

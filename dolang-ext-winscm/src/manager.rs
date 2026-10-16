@@ -1,6 +1,8 @@
 //! `winscm.ScManager` — an open handle to the Service Control Manager
 //! database, and the `winscm.open` entry point that bootstraps one.
 
+use crate::global::Tag;
+
 use dolang::runtime::{
     Args, Error, Object, Result, Slot, State, Strand, call, method,
     object::{FlagsTypeExt, TypeBuilder},
@@ -196,7 +198,7 @@ impl<'v> Object<'v> for ScManager {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .method("open_service", async move |this, strand, args, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let access_sym = global.syms.access;
                 let ([name], [block, access]) = unpack!(strand, args, 1, 1, access_sym = None)?;
                 let name = expect_str(strand, name, "name")?;
@@ -215,7 +217,7 @@ impl<'v> Object<'v> for ScManager {
                 finish_open_service(strand, global, inner, block, out).await
             })
             .method("create_service", async move |this, strand, args, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let service_type_sym = global.syms.service_type;
                 let start_type_sym = global.syms.start_type;
                 let error_control_sym = global.syms.error_control;
@@ -326,7 +328,7 @@ impl<'v> Object<'v> for ScManager {
             .method(
                 "enumerate_services",
                 async move |this, strand, args, out| {
-                    let global = strand.state::<Global<'v>>();
+                    let global = strand.state::<Tag>();
                     let service_type_sym = global.syms.service_type;
                     let state_filter_sym = global.syms.state_filter;
                     let ([], [service_type, state_filter]) = unpack!(

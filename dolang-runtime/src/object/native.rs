@@ -4575,7 +4575,7 @@ mod tests {
         method, sig, sym,
         test_support::{args_from_slots, with_builder},
         value::TypeObject,
-        vm::{Builder, Stateful},
+        vm::{Builder, StateTag},
     };
 
     use super::*;
@@ -4739,8 +4739,8 @@ mod tests {
 
     struct FixtureStateTag;
 
-    impl<'v> Stateful<'v> for FixtureState<'v> {
-        type Tag = FixtureStateTag;
+    impl StateTag for FixtureStateTag {
+        type State<'v> = FixtureState<'v>;
     }
 
     fn configure(vm: &mut Builder<'_>) {
@@ -4758,7 +4758,7 @@ mod tests {
         let readonly_sym = vm.sym("readonly");
         let absent_sym = vm.sym("absent");
         let bad_sym = vm.sym("bad");
-        vm.register_state(FixtureState {
+        vm.register_state::<FixtureStateTag>(FixtureState {
             fixture_ty,
             error_ty,
             slot_ty,
@@ -4786,7 +4786,7 @@ mod tests {
     }
 
     fn make_fixture<'v>(strand: &mut Strand<'v, '_>, out: impl Output<'v>) {
-        let ty = strand.vm().state::<FixtureState>().fixture_ty;
+        let ty = strand.vm().state::<FixtureStateTag>().fixture_ty;
         ty.create(strand, Fixture, out);
     }
 
@@ -4796,7 +4796,7 @@ mod tests {
         tag: &'static str,
         out: impl Output<'v>,
     ) {
-        let ty = strand.vm().state::<FixtureState>().slot_ty;
+        let ty = strand.vm().state::<FixtureStateTag>().slot_ty;
         ty.create_with_annex(strand, SlotFixture { counter }, SlotAnnex { tag }, out);
     }
 
@@ -4832,7 +4832,7 @@ mod tests {
     #[test]
     fn native_type_proxy_saved_methods_survive_collection() {
         with_fixture_vm(async |strand, [mut ty, mut proxy, mut saved, mut out]| {
-            let state = strand.vm().state::<FixtureState>();
+            let state = strand.vm().state::<FixtureStateTag>();
             Output::set(strand, Slot::reborrow(&mut ty), state.slot_ty);
             ty.op_type(strand, Slot::reborrow(&mut proxy));
             proxy
@@ -4871,7 +4871,7 @@ mod tests {
             let const_key = Value::from_i64(strand, 99);
             let opt_default = Value::from_i64(strand, 7);
             let key_default = Value::from_i64(strand, 8);
-            let sym_key = strand.vm().state::<FixtureState>().counter_sym;
+            let sym_key = strand.vm().state::<FixtureStateTag>().counter_sym;
             let sig = sig::Unpack::new(
                 1,
                 vec![opt_default],
@@ -5003,7 +5003,7 @@ mod tests {
         with_fixture_vm(async |strand, [mut owner, mut out]| {
             make_fixture(strand, Slot::reborrow(&mut owner));
             let value: &Value = &owner;
-            let state = strand.vm().state::<FixtureState>();
+            let state = strand.vm().state::<FixtureStateTag>();
             let sig = sig::Unpack::new(0, vec![], vec![], Variadic::NONE);
             state
                 .fixture_ty
@@ -5066,7 +5066,7 @@ mod tests {
     fn default_native_unpack_reads_registered_fields_and_captures_lazy_tail() {
         with_fixture_vm(async |strand, [mut owner, mut tail, mut tmp]| {
             make_slot_fixture(strand, 4, "unpack", Slot::reborrow(&mut owner));
-            let state = strand.vm().state::<FixtureState>();
+            let state = strand.vm().state::<FixtureStateTag>();
             let sig = sig::Unpack::new(
                 0,
                 vec![],
@@ -5143,7 +5143,7 @@ mod tests {
     fn default_native_exhaustive_unpack_evaluates_unmatched_getters_atomically() {
         with_fixture_vm(async |strand, [mut owner]| {
             make_slot_fixture(strand, 4, "unpack", Slot::reborrow(&mut owner));
-            let state = strand.vm().state::<FixtureState>();
+            let state = strand.vm().state::<FixtureStateTag>();
             let sig = sig::Unpack::new(
                 0,
                 vec![],
@@ -5189,7 +5189,7 @@ mod tests {
             make_fixture(strand, Slot::reborrow(&mut owner));
             Output::set(strand, Slot::reborrow(&mut delegator), 42_i64);
             let value: &Value = &owner;
-            let state = strand.vm().state::<FixtureState>();
+            let state = strand.vm().state::<FixtureStateTag>();
             state
                 .fixture_ty
                 .vtbl
@@ -5223,7 +5223,7 @@ mod tests {
             make_slot_fixture(strand, 0, "x", Slot::reborrow(&mut owner));
             Output::set(strand, Slot::reborrow(&mut delegator), 42_i64);
             let value: &Value = &owner;
-            let state = strand.vm().state::<FixtureState>();
+            let state = strand.vm().state::<FixtureStateTag>();
             state
                 .slot_ty
                 .vtbl
@@ -5259,7 +5259,7 @@ mod tests {
         with_fixture_vm(async |strand, [mut owner, mut out]| {
             make_slot_fixture(strand, 3, "x", Slot::reborrow(&mut owner));
             let value: &Value = &owner;
-            let state = strand.vm().state::<FixtureState>();
+            let state = strand.vm().state::<FixtureStateTag>();
             state
                 .slot_ty
                 .vtbl
@@ -5320,7 +5320,7 @@ mod tests {
         with_fixture_vm(async |strand, [mut owner, mut val]| {
             make_slot_fixture(strand, 0, "x", Slot::reborrow(&mut owner));
             let value: &Value = &owner;
-            let state = strand.vm().state::<FixtureState>();
+            let state = strand.vm().state::<FixtureStateTag>();
             state
                 .slot_ty
                 .vtbl
@@ -5372,7 +5372,7 @@ mod tests {
         with_fixture_vm(async |strand, [mut owner, mut out]| {
             make_slot_fixture(strand, 0, "x", Slot::reborrow(&mut owner));
             let value: &Value = &owner;
-            let state = strand.vm().state::<FixtureState>();
+            let state = strand.vm().state::<FixtureStateTag>();
             state
                 .slot_ty
                 .vtbl
@@ -5532,7 +5532,7 @@ mod tests {
     #[test]
     fn type_object_inspect_borrows_stable_semantic_members() {
         with_fixture_vm(async |strand, [mut ty_slot]| {
-            let state = strand.vm().state::<FixtureState>();
+            let state = strand.vm().state::<FixtureStateTag>();
             type_value(strand, state.slot_ty, Slot::reborrow(&mut ty_slot));
             let ty_value: &Value = &ty_slot;
 
@@ -5596,7 +5596,7 @@ mod tests {
     #[test]
     fn type_object_op_mcall_type_method_unbound_method_and_default_field() {
         with_fixture_vm(async |strand, [mut ty_slot, mut inst_slot, mut out]| {
-            let state = strand.vm().state::<FixtureState>();
+            let state = strand.vm().state::<FixtureStateTag>();
             type_value(strand, state.slot_ty, Slot::reborrow(&mut ty_slot));
             make_slot_fixture(strand, 4, "u", Slot::reborrow(&mut inst_slot));
             let ty_value: &Value = &ty_slot;
@@ -5671,7 +5671,7 @@ mod tests {
     #[test]
     fn type_object_op_get_op_set_dispatch() {
         with_fixture_vm(async |strand, [mut ty_slot, mut out]| {
-            let state = strand.vm().state::<FixtureState>();
+            let state = strand.vm().state::<FixtureStateTag>();
             type_value(strand, state.slot_ty, Slot::reborrow(&mut ty_slot));
             let ty_value: &Value = &ty_slot;
 
@@ -5765,7 +5765,7 @@ mod tests {
     #[test]
     fn type_object_op_hash_op_eq_op_subtype() {
         with_fixture_vm(async |strand, [mut ty_slot, mut other_ty_slot]| {
-            let state = strand.vm().state::<FixtureState>();
+            let state = strand.vm().state::<FixtureStateTag>();
             type_value(strand, state.slot_ty, Slot::reborrow(&mut ty_slot));
             type_value(strand, state.fixture_ty, Slot::reborrow(&mut other_ty_slot));
             let ty_value: &Value = &ty_slot;
@@ -5819,7 +5819,7 @@ mod tests {
         with_fixture_vm(async |strand, [mut owner]| {
             make_slot_fixture(strand, 3, "hello", Slot::reborrow(&mut owner));
             let value: &Value = &owner;
-            let state = strand.vm().state::<FixtureState>();
+            let state = strand.vm().state::<FixtureStateTag>();
             state
                 .slot_ty
                 .cast(value)
@@ -5842,7 +5842,7 @@ mod tests {
         with_fixture_vm(async |strand, [mut owner]| {
             make_slot_fixture(strand, 0, "x", Slot::reborrow(&mut owner));
             let value: &Value = &owner;
-            let state = strand.vm().state::<FixtureState>();
+            let state = strand.vm().state::<FixtureStateTag>();
             state
                 .slot_ty
                 .cast(value)
@@ -5866,7 +5866,7 @@ mod tests {
         with_fixture_vm(async |strand, [mut owner]| {
             make_fixture(strand, Slot::reborrow(&mut owner));
             let value: &Value = &owner;
-            let state = strand.vm().state::<FixtureState>();
+            let state = strand.vm().state::<FixtureStateTag>();
             state
                 .fixture_ty
                 .cast(value)
@@ -5883,7 +5883,7 @@ mod tests {
         with_fixture_vm(async |strand, [mut owner]| {
             make_fixture(strand, Slot::reborrow(&mut owner));
             let value: &Value = &owner;
-            let state = strand.vm().state::<FixtureState>();
+            let state = strand.vm().state::<FixtureStateTag>();
             let cast = state.fixture_ty.cast(value).unwrap();
             let bool_result = cast.enter_finalize(|instance| Fixture::bool(instance, strand));
             assert!(bool_result.unwrap());
@@ -5893,7 +5893,7 @@ mod tests {
     #[test]
     fn type_borrow_and_annex_roundtrip() {
         with_fixture_vm(async |strand, []| {
-            let state = strand.vm().state::<FixtureState>();
+            let state = strand.vm().state::<FixtureStateTag>();
             assert_eq!(*state.slot_ty.borrow(strand).unwrap(), 0);
             {
                 let mut m = state.slot_ty.borrow_mut(strand).unwrap();
@@ -5912,7 +5912,7 @@ mod tests {
     #[test]
     fn error_kind_follows_the_declared_nominal_supertype() {
         with_fixture_vm(async |strand, [mut declared, mut plain]| {
-            let state = strand.vm().state::<FixtureState>();
+            let state = strand.vm().state::<FixtureStateTag>();
             state
                 .error_ty
                 .create(strand, ErrorFixture, Slot::reborrow(&mut declared));
@@ -5933,7 +5933,7 @@ mod tests {
     #[test]
     fn type_create_and_create_with_annex_produce_castable_instances() {
         with_fixture_vm(async |strand, [mut out1, mut out2]| {
-            let state = strand.vm().state::<FixtureState>();
+            let state = strand.vm().state::<FixtureStateTag>();
             state
                 .fixture_ty
                 .create(strand, Fixture, Slot::reborrow(&mut out1));
@@ -5955,7 +5955,7 @@ mod tests {
         with_fixture_vm(async |strand, [mut owner, mut out]| {
             make_slot_fixture(strand, 0, "x", Slot::reborrow(&mut owner));
             let value: &Value = &owner;
-            let state = strand.vm().state::<FixtureState>();
+            let state = strand.vm().state::<FixtureStateTag>();
             let with_slot_sym = state.with_slot_sym;
             state
                 .slot_ty

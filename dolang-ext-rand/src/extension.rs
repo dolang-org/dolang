@@ -7,7 +7,7 @@ use dolang::{
     compile::Config,
     extension,
     extension::{Extension, Version},
-    runtime::vm::Builder,
+    runtime::vm::{Builder, StateTag},
 };
 
 /// Random number generation extension
@@ -15,6 +15,10 @@ pub struct RandExt;
 
 /// Lazy setup tag
 struct Tag;
+
+impl StateTag for Tag {
+    type State<'v> = ();
+}
 
 #[derive(Debug)]
 pub enum Infallible {}
@@ -38,7 +42,10 @@ impl Extension for RandExt {
     }
 
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
-        builder.lazy::<Tag>(&["rand"], crate::rand::configure);
+        builder.lazy::<Tag>(&["rand"], |reg| {
+            reg.register_state::<Tag>(());
+            crate::rand::configure(reg);
+        });
         Ok(())
     }
 }

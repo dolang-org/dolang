@@ -16,7 +16,7 @@ use dolang::{
         object::{Mut, Ref, TypeBuilder},
         unpack,
         value::{Array, AsSym, AsTuple, Dict, Empty, Nil, PinBin, PinStr, TypeObject, View},
-        vm::{Register, Stateful},
+        vm::{Register, StateTag},
     },
 };
 
@@ -154,10 +154,10 @@ pub(crate) struct ConcreteNodeTypes<'v> {
     any_type_item: Type<'v, NodeObject<AnyTypeItemTag>>,
 }
 
-pub struct Tag;
+pub(crate) struct Tag;
 
-impl<'v> Stateful<'v> for Global<'v> {
-    type Tag = Tag;
+impl StateTag for Tag {
+    type State<'v> = Global<'v>;
 }
 
 impl<'v> Global<'v> {
@@ -762,7 +762,7 @@ fn with_unit<'v, 's, R>(
     f: impl for<'a> FnOnce(&mut Strand<'v, 's>, Instance<'v, 'a, UnitObject<'v>>) -> Result<'v, 's, R>,
 ) -> Result<'v, 's, R> {
     let cast = strand
-        .state::<Global<'v>>()
+        .state::<Tag>()
         .types
         .unit
         .cast(value)
@@ -1162,7 +1162,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 if this.borrow(strand)?.unit.is_none() {
                     return Err(Error::state_error(strand, "unit was emitted"));
                 }
-                let ty = strand.state::<Global<'v>>().types.diagnostic_iter;
+                let ty = strand.state::<Tag>().types.diagnostic_iter;
                 ty.create(strand, DiagnosticIter { index: 0 }, &mut out);
                 ty.cast(&out).unwrap().enter_sync(strand, |strand, iter| {
                     Output::set(
@@ -1178,7 +1178,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 if this.borrow(strand)?.unit.is_none() {
                     return Err(Error::state_error(strand, "unit was emitted"));
                 }
-                let ty = strand.state::<Global<'v>>().types.node_iter;
+                let ty = strand.state::<Tag>().types.node_iter;
                 ty.create(strand, NodeIter { cursor: None }, &mut out);
                 ty.cast(&out).unwrap().enter_sync(strand, |strand, iter| {
                     Output::set(
@@ -1205,7 +1205,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
             })
             .method("node", async move |this, strand, args, mut out| {
                 let ([id], []) = unpack!(strand, args, 1, 0)?;
-                let Some(id_obj) = strand.state::<Global<'v>>().types.node_id.cast(&id) else {
+                let Some(id_obj) = strand.state::<Tag>().types.node_id.cast(&id) else {
                     return Err(Error::type_error(strand, "expected `compile.NodeId`"));
                 };
                 let id_data = id_obj.enter_sync(strand, |_strand, id| *id.annex());
@@ -1221,7 +1221,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
             })
             .method("tokens", async move |this, strand, args, mut out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let mut tokens = {
                     let borrow = this.borrow(strand)?;
                     let Some(unit) = borrow.unit.as_ref() else {
@@ -1440,7 +1440,7 @@ impl<'v> Object<'v> for DiagnosticIter {
             let source = Ref::slot::<UNIT_SOURCE>(&unit_borrow);
             let path = unit_borrow.path.to_string_lossy();
             create_diagnostic(
-                strand.state(),
+                strand.state::<Tag>(),
                 strand,
                 DiagSources::Unit(&path, source),
                 diag,
@@ -1599,7 +1599,7 @@ impl<'v> Object<'v> for NodeIdObject {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let Some(other) = strand.state::<Global<'v>>().types.node_id.cast(other) else {
+        let Some(other) = strand.state::<Tag>().types.node_id.cast(other) else {
             return Ok(false);
         };
         Ok(other.enter_sync(strand, |_strand, other| *this.annex() == *other.annex()))
@@ -1621,11 +1621,12 @@ fn create_node_id<'v>(
     id: compile::NodeId,
     out: &mut Slot<'v, '_>,
 ) {
-    strand
-        .state::<Global<'v>>()
-        .types
-        .node_id
-        .create_with_annex(strand, NodeIdObject, NodeIdAnnex { unit, id }, out)
+    strand.state::<Tag>().types.node_id.create_with_annex(
+        strand,
+        NodeIdObject,
+        NodeIdAnnex { unit, id },
+        out,
+    )
 }
 
 fn create_typed_node<'v, T: NodeMarker + 'static>(
@@ -1805,7 +1806,7 @@ fn create_node<'v, 's>(
         };
         (kind, b.identity)
     };
-    let t = &strand.state::<Global<'v>>().types.concrete_nodes;
+    let t = &strand.state::<Tag>().types.concrete_nodes;
     macro_rules! make {
         ($ty:expr,$tag:ty) => {{
             let ty = $ty;
@@ -1934,7 +1935,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
         builder = builder.get("span", |this, strand, out| {
             let span = with_node(this, strand, |n, _| n.span().map(span_data))?;
             if let Some(span) = span {
-                create_span(strand.state(), strand, span, out)
+                create_span(strand.state::<Tag>(), strand, span, out)
             } else {
                 Output::set(strand, out, Nil)
             };
@@ -1946,7 +1947,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
         builder = builder.get("doc", |this, strand, out| {
             let doc = with_node(this, strand, |n, _| n.doc().map(span_data))?;
             if let Some(doc) = doc {
-                create_span(strand.state(), strand, doc, out)
+                create_span(strand.state::<Tag>(), strand, doc, out)
             } else {
                 Output::set(strand, out, Nil)
             };
@@ -2006,7 +2007,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                     _ => None,
                 })?;
                 if let Some(span) = span {
-                    create_span(strand.state(), strand, span, out)
+                    create_span(strand.state::<Tag>(), strand, span, out)
                 } else {
                     Output::set(strand, out, Nil)
                 };
@@ -2120,7 +2121,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                     compile::Kind::TypeItem { quant, .. } => quant,
                     _ => unreachable!(),
                 })?;
-                let syms = &strand.state::<Global<'v>>().syms;
+                let syms = &strand.state::<Tag>().syms;
                 match quant {
                     Some(compile::TypeQuant::Opt) => Output::set(strand, out, syms.quant_opt),
                     Some(compile::TypeQuant::Star) => Output::set(strand, out, syms.quant_star),
@@ -2142,7 +2143,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                         compile::Kind::NameType { head, .. } => span_data(head),
                         _ => unreachable!(),
                     })?;
-                    create_span(strand.state(), strand, head, out);
+                    create_span(strand.state::<Tag>(), strand, head, out);
                     Ok(())
                 })
                 .get("target", |this, strand, mut out| {
@@ -2238,7 +2239,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                     } => span_data(name),
                     _ => unreachable!(),
                 })?;
-                create_span(strand.state(), strand, name, out);
+                create_span(strand.state::<Tag>(), strand, name, out);
                 Ok(())
             }),
             "KeyTypeItem" => builder
@@ -2250,7 +2251,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                         } => span_data(key),
                         _ => unreachable!(),
                     })?;
-                    create_span(strand.state(), strand, key, out);
+                    create_span(strand.state::<Tag>(), strand, key, out);
                     Ok(())
                 })
                 .get(
@@ -2379,7 +2380,7 @@ fn project_name<'v, 's, T: NodeMarker + 'static>(
         _ => unreachable!(),
     })?;
     match name {
-        Name::Span(s) => create_span(strand.state(), strand, s, out),
+        Name::Span(s) => create_span(strand.state::<Tag>(), strand, s, out),
         Name::Text(s) => Output::set(strand, out, s.as_str()),
         Name::None => Output::set(strand, out, Nil),
     };
@@ -2415,7 +2416,7 @@ fn project_default<'v, 's, T: NodeMarker + 'static>(
         _ => unreachable!(),
     })?;
     if let Some(v) = v {
-        create_span(strand.state(), strand, v, out)
+        create_span(strand.state::<Tag>(), strand, v, out)
     } else {
         Output::set(strand, out, Nil)
     };
@@ -2431,7 +2432,7 @@ fn project_span_field<'v, 's, T: NodeMarker + 'static>(
         compile::Kind::KeyParam { key, .. } => span_data(key),
         _ => unreachable!(),
     })?;
-    create_span(strand.state(), strand, v, out);
+    create_span(strand.state::<Tag>(), strand, v, out);
     Ok(())
 }
 fn project_import<'v, 's, T: NodeMarker + 'static>(
@@ -2454,7 +2455,7 @@ fn project_import<'v, 's, T: NodeMarker + 'static>(
         _ => unreachable!(),
     })?;
     match v {
-        V::S(v) => create_span(strand.state(), strand, v, out),
+        V::S(v) => create_span(strand.state::<Tag>(), strand, v, out),
         V::T(v) => Output::set(strand, out, v.as_str()),
     };
     Ok(())
@@ -2777,7 +2778,7 @@ impl<'v> Object<'v> for Pos {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        if let Some(other) = strand.state::<Global<'v>>().types.pos.cast(other) {
+        if let Some(other) = strand.state::<Tag>().types.pos.cast(other) {
             Ok(other.enter_sync(strand, |_strand, other| {
                 this.annex().pos == other.annex().pos
             }))
@@ -2800,7 +2801,7 @@ impl<'v> Object<'v> for Pos {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        if let Some(other) = strand.state::<Global<'v>>().types.pos.cast(other) {
+        if let Some(other) = strand.state::<Tag>().types.pos.cast(other) {
             Ok(other.enter_sync(strand, |_strand, other| {
                 this.annex().pos < other.annex().pos
             }))

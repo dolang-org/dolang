@@ -1765,21 +1765,21 @@ impl<'v> Value<'v> {
     /// Downcast value to a formatted sequence
     #[inline]
     pub fn as_fmt(&self, vm: &Vm<'v>) -> Option<Fmt<'v, '_>> {
-        let global = vm.state::<fmt_obj::Global<'v>>();
+        let global = vm.state::<fmt_obj::Tag>();
         Some(Fmt::from_cast(global.types.fmt.cast(self)?))
     }
 
     /// Downcast value to a bound interpolation
     #[inline]
     pub fn as_fmt_value(&self, vm: &Vm<'v>) -> Option<FmtValue<'v, '_>> {
-        let global = vm.state::<fmt_obj::Global<'v>>();
+        let global = vm.state::<fmt_obj::Tag>();
         Some(FmtValue::from_cast(global.types.value.cast(self)?))
     }
 
     /// Downcast value to an unbound parameter
     #[inline]
     pub fn as_fmt_param(&self, vm: &Vm<'v>) -> Option<FmtParam<'v, '_>> {
-        let global = vm.state::<fmt_obj::Global<'v>>();
+        let global = vm.state::<fmt_obj::Tag>();
         Some(FmtParam::from_cast(global.types.param.cast(self)?))
     }
 
@@ -1788,7 +1788,7 @@ impl<'v> Value<'v> {
     /// A specification is plain data, so it needs no view of its own.
     #[inline]
     pub fn as_fmt_spec(&self, vm: &Vm<'v>) -> Option<Spec> {
-        let global = vm.state::<fmt_obj::Global<'v>>();
+        let global = vm.state::<fmt_obj::Tag>();
         Some(
             global
                 .types
@@ -1877,7 +1877,7 @@ impl<'v> Value<'v> {
                 // Format types. These live in stdlib state rather than the
                 // builtin table, so they come last: one lookup covers the
                 // four, and only a value that is none of the above pays it.
-                let fmt = vm.state::<fmt_obj::Global<'v>>();
+                let fmt = vm.state::<fmt_obj::Tag>();
                 if let Some(seq) = fmt.types.fmt.cast(self) {
                     return View::Fmt(Fmt::from_cast(seq));
                 }

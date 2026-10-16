@@ -1,3 +1,5 @@
+use crate::global::WindowsSecurityTag;
+
 use super::*;
 use crate::util;
 
@@ -320,13 +322,13 @@ pub(crate) fn as_windows_sid<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
 ) -> Option<VfsSid> {
-    let global = strand.try_state::<WindowsSecurityGlobal<'v>>()?;
+    let global = strand.try_state::<WindowsSecurityTag>()?;
     let sid = global.types.sid.cast(value)?;
     sid.enter_sync(strand, |_strand, sid| Some(sid.annex().clone()))
 }
 
 pub(crate) fn windows_sid<'v>(strand: &mut Strand<'v, '_>, sid: VfsSid, out: &mut Slot<'v, '_>) {
-    let global = strand.force_state::<WindowsSecurityGlobal<'v>>();
+    let global = strand.force_state::<WindowsSecurityTag>();
     create_sid(strand, global, sid, out);
 }
 
@@ -430,7 +432,7 @@ fn sid_from_sym<'v, 's>(
     sym: Sym<'v, '_>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsSid> {
-    let global = strand.state::<WindowsSecurityGlobal<'v>>();
+    let global = strand.state::<WindowsSecurityTag>();
     match global.syms.well_known_sids.get(sym) {
         Some(sid) => Ok(sid),
         None => {
@@ -556,7 +558,7 @@ impl<'v> Object<'v> for Sid {
             .method("lookup", async move |this, strand, args, mut out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let sid = this.annex().clone();
-                let global = strand.state::<WindowsSecurityGlobal<'v>>();
+                let global = strand.state::<WindowsSecurityTag>();
                 if global.local.get(strand).target().os().family() != OperatingSystemFamily::Windows
                 {
                     return Err(Error::not_supported(strand));
@@ -576,7 +578,7 @@ impl<'v> Object<'v> for Sid {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let global = strand.state::<WindowsSecurityGlobal<'v>>();
+        let global = strand.state::<WindowsSecurityTag>();
         let Some(other) = global.types.sid.cast(other) else {
             return Err(Error::not_supported(strand));
         };
@@ -659,7 +661,7 @@ fn with_acl<'v, 's, T>(
     if let AclAnnex::Owned(acl) = &*this.annex() {
         return Ok(f(acl));
     }
-    let global = strand.state::<WindowsSecurityGlobal<'v>>();
+    let global = strand.state::<WindowsSecurityTag>();
     let borrow = this.borrow(strand)?;
     let descriptor = global
         .types
@@ -698,7 +700,7 @@ impl<'v> ArrayLike<'v> for AclAces {
         index: usize,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.state::<WindowsSecurityGlobal<'v>>();
+        let global = strand.state::<WindowsSecurityTag>();
         let kind = with_acl(this, strand, |acl| {
             ace_kind(acl.aces().nth(index).expect("normalized ACE index"))
         })?;
@@ -728,7 +730,7 @@ impl<'v> Object<'v> for Acl {
         args: Args<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.state::<WindowsSecurityGlobal<'v>>();
+        let global = strand.state::<WindowsSecurityTag>();
         let revision_sym = global.syms.revision;
         let ([mut iterable], [revision]) = unpack!(strand, args, 1, 0, revision_sym = None)?;
         let revision = revision
@@ -953,7 +955,7 @@ async fn ace_flags<'v, 's>(
     value: &Value<'v>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, WinAceFlags> {
-    let ace_flags = strand.state::<WindowsSecurityGlobal<'v>>().types.ace_flags;
+    let ace_flags = strand.state::<WindowsSecurityTag>().types.ace_flags;
     if let Some(flags) = ace_flags.cast_flags(value) {
         return Ok(flags.0);
     }
@@ -990,7 +992,7 @@ fn with_ace<'v, 's, T, const KIND: u8>(
     if let AceAnnex::Owned(ace) = &*this.annex() {
         return Ok(f(ace));
     }
-    let global = strand.state::<WindowsSecurityGlobal<'v>>();
+    let global = strand.state::<WindowsSecurityTag>();
     let borrow = this.borrow(strand)?;
     let acl = global
         .types
@@ -1041,7 +1043,7 @@ impl<'v, const KIND: u8> Object<'v> for Ace<KIND> {
         if KIND != ACE_COMMON && KIND != ACE_OBJECT {
             return Err(Error::not_supported(strand));
         }
-        let global = strand.state::<WindowsSecurityGlobal<'v>>();
+        let global = strand.state::<WindowsSecurityTag>();
         let mask_sym = global.syms.mask;
         let flags_sym = global.syms.flags;
         let callback_sym = global.syms.callback;
@@ -1264,7 +1266,7 @@ impl<'v, const KIND: u8> Object<'v> for Ace<KIND> {
             })
             .get("flags", |this, strand, out| {
                 let value = with_ace(this, strand, |ace| ace.flags())?;
-                let flags = strand.state::<WindowsSecurityGlobal<'v>>().types.ace_flags;
+                let flags = strand.state::<WindowsSecurityTag>().types.ace_flags;
                 flags.create_flags(strand, AceFlags(value), out);
                 Ok(())
             })
@@ -1279,7 +1281,7 @@ impl<'v, const KIND: u8> Object<'v> for Ace<KIND> {
                     let Some(value) = with_ace(this, strand, |ace| ace.mask())? else {
                         return Err(Error::field(strand, mask_field));
                     };
-                    let global = strand.state::<WindowsSecurityGlobal<'v>>();
+                    let global = strand.state::<WindowsSecurityTag>();
                     global
                         .types
                         .access_mask
@@ -1290,7 +1292,7 @@ impl<'v, const KIND: u8> Object<'v> for Ace<KIND> {
                     let Some(value) = with_ace(this, strand, |ace| ace.sid())? else {
                         return Err(Error::field(strand, sid_field));
                     };
-                    let global = strand.state::<WindowsSecurityGlobal<'v>>();
+                    let global = strand.state::<WindowsSecurityTag>();
                     create_sid(strand, global, value, &mut out);
                     Ok(())
                 });
@@ -2668,7 +2670,7 @@ impl<'v> Object<'v> for SecDesc {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.state::<WindowsSecurityGlobal<'v>>();
+        let global = strand.state::<WindowsSecurityTag>();
         let owner = global.syms.owner;
         let group = global.syms.group;
         let dacl = global.syms.dacl;
@@ -2883,7 +2885,7 @@ impl<'v> Object<'v> for SecDesc {
                 Ok(())
             })
             .get("control", |this, strand, out| {
-                let global = strand.state::<WindowsSecurityGlobal<'v>>();
+                let global = strand.state::<WindowsSecurityTag>();
                 global.types.sec_desc_control.create_flags(
                     strand,
                     SecDescControl(this.annex().control()),
@@ -2892,7 +2894,7 @@ impl<'v> Object<'v> for SecDesc {
                 Ok(())
             })
             .get("mask", |this, strand, out| {
-                let global = strand.state::<WindowsSecurityGlobal<'v>>();
+                let global = strand.state::<WindowsSecurityTag>();
                 global
                     .types
                     .sec_info
@@ -2915,7 +2917,7 @@ impl<'v> Object<'v> for SecDesc {
                     Output::set(strand, out, Nil);
                     return Ok(());
                 };
-                let global = strand.state::<WindowsSecurityGlobal<'v>>();
+                let global = strand.state::<WindowsSecurityTag>();
                 create_sid(strand, global, value.clone(), &mut out);
                 Ok(())
             })
@@ -2928,7 +2930,7 @@ impl<'v> Object<'v> for SecDesc {
                     Output::set(strand, out, Nil);
                     return Ok(());
                 };
-                let global = strand.state::<WindowsSecurityGlobal<'v>>();
+                let global = strand.state::<WindowsSecurityTag>();
                 create_sid(strand, global, value.clone(), &mut out);
                 Ok(())
             })
@@ -2940,7 +2942,7 @@ impl<'v> Object<'v> for SecDesc {
                 if !descriptor.dacl_present() || descriptor.dacl().is_none() {
                     Output::set(strand, out, Nil);
                 } else {
-                    let global = strand.state::<WindowsSecurityGlobal<'v>>();
+                    let global = strand.state::<WindowsSecurityTag>();
                     create_acl(strand, global, this, AclComponent::Dacl, &mut out);
                 }
                 Ok(())
@@ -2953,7 +2955,7 @@ impl<'v> Object<'v> for SecDesc {
                 if !descriptor.sacl_present() || descriptor.sacl().is_none() {
                     Output::set(strand, out, Nil);
                 } else {
-                    let global = strand.state::<WindowsSecurityGlobal<'v>>();
+                    let global = strand.state::<WindowsSecurityTag>();
                     create_acl(strand, global, this, AclComponent::Sacl, &mut out);
                 }
                 Ok(())
@@ -3123,7 +3125,7 @@ impl<'v> Object<'v> for SecDesc {
                     sacl_protected = None,
                     rm_control = None
                 )?;
-                let global = strand.state::<WindowsSecurityGlobal<'v>>();
+                let global = strand.state::<WindowsSecurityTag>();
                 let rm_control = match rm_control_value.as_deref() {
                     Some(value) if value.is_nil() => NullableComponent::Clear,
                     Some(value) => NullableComponent::Set(ace_u8(
@@ -3254,7 +3256,7 @@ impl<'v> Object<'v> for SidName {
         let logon_session = builder.sym("LOGON_SESSION");
         builder
             .get("sid", |this, strand, mut out| {
-                let global = strand.state::<WindowsSecurityGlobal<'v>>();
+                let global = strand.state::<WindowsSecurityTag>();
                 create_sid(strand, global, this.annex().sid().clone(), &mut out);
                 Ok(())
             })
@@ -3295,7 +3297,7 @@ impl<'v> Object<'v> for SidName {
             })
             .type_method("lookup", async move |_this, strand, args, mut out| {
                 let ([value], []) = unpack!(strand, args, 1, 0)?;
-                let global = strand.state::<WindowsSecurityGlobal<'v>>();
+                let global = strand.state::<WindowsSecurityTag>();
                 if global.local.get(strand).target().os().family() != OperatingSystemFamily::Windows
                 {
                     return Err(Error::not_supported(strand));
@@ -3350,7 +3352,7 @@ impl<'v> Object<'v> for TokenGroup {
                 Ok(())
             })
             .get("attributes", |this, strand, out| {
-                let global = strand.state::<WindowsSecurityGlobal<'v>>();
+                let global = strand.state::<WindowsSecurityTag>();
                 global.types.token_group_attributes.create_flags(
                     strand,
                     TokenGroupAttributes(this.annex().attributes()),
@@ -3437,7 +3439,7 @@ impl<'v> ArrayLike<'v> for TokenGroups {
             .get(index)
             .expect("array view index was normalized")
             .clone();
-        let global = strand.state::<WindowsSecurityGlobal<'v>>();
+        let global = strand.state::<WindowsSecurityTag>();
         strand.with_slots_sync(|strand, [mut sid]| {
             create_sid(strand, global, token_group.sid().clone(), &mut sid);
             global

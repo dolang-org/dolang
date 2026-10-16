@@ -3,7 +3,7 @@ use dolang::runtime::{
     object::TypeBuilder,
     unpack,
     value::{Root, TypeObject, View},
-    vm::{Builder, Stateful},
+    vm::{Builder, StateTag},
 };
 use js_sys::{Function, Object as JsObject, Promise, Reflect, Uint8Array};
 use wasm_bindgen::{JsCast, prelude::*};
@@ -63,8 +63,8 @@ struct HostState {
 
 struct Tag;
 
-impl<'v> Stateful<'v> for HostState {
-    type Tag = Tag;
+impl StateTag for Tag {
+    type State<'v> = HostState;
 }
 
 /// Aborts an upcall's signal unless the call settled first.
@@ -101,7 +101,7 @@ async fn upcall<'v, 's>(
     let controller = AbortController::new();
     let signal = controller.signal();
     let guard = AbortOnDrop(Some(controller));
-    let state = strand.state::<HostState>();
+    let state = strand.state::<Tag>();
     let result = match call(&state.host, &signal) {
         Ok(value) => JsFuture::from(Promise::resolve(&value)).await,
         Err(error) => Err(error),
@@ -202,7 +202,7 @@ async fn write_host<'v, 's>(strand: &mut Strand<'v, 's>, bytes: &[u8]) -> Result
 /// Registers the host and installs its console as `term`'s. `TermExt` must
 /// already be applied.
 pub(crate) fn configure(builder: &mut Builder<'_>, host: Host) {
-    builder.register_state(HostState { host });
+    builder.register_state::<Tag>(HostState { host });
     let console_type = dolang_ext_term::console_type(builder);
     let console = builder
         .build_type::<PlaygroundConsole>((), ())

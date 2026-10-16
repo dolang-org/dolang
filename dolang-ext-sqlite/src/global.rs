@@ -1,6 +1,6 @@
 use dolang::runtime::{
     Type,
-    vm::{Register, Stateful},
+    vm::{Register, StateTag},
 };
 
 use crate::sqlite::{
@@ -25,10 +25,10 @@ pub(crate) struct Global<'v> {
     pub(crate) types: Types<'v>,
 }
 
-pub struct Tag;
+pub(crate) struct Tag;
 
-impl<'v> Stateful<'v> for Global<'v> {
-    type Tag = Tag;
+impl StateTag for Tag {
+    type State<'v> = Global<'v>;
 }
 
 impl<'v> Global<'v> {

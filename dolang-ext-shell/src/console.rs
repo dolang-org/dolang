@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use dolang::runtime::{
     Instance, Object, Output, Result, Slot, State, Strand, Value,
     object::TypeBuilder,
@@ -43,7 +45,7 @@ impl<'v> Object<'v> for HostConsole {
             })
             .method("flush", async move |_this, strand, args, _out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 global
                     .terminal
                     .writer
@@ -58,14 +60,14 @@ impl<'v> Object<'v> for HostConsole {
                 Ok(())
             })
             .get("can_style", |_this, strand, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 Output::set(strand, out, global.terminal.ansi);
                 Ok(())
             })
             .get("is_tty", |_this, strand, out| {
                 // Whether the console is usable as a terminal: while an
                 // extension has taken the terminal over, it owns the cursor.
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let is_tty =
                     global.terminal.stderr_is_terminal && !global.terminal.redirected.get();
                 Output::set(strand, out, is_tty);
@@ -73,7 +75,7 @@ impl<'v> Object<'v> for HostConsole {
             })
             .method("geometry", async move |_this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let ov = &global.terminal.console_override;
                 // The real terminal is queried even under takeover (a
                 // progress display owns the cursor, but the width is still
@@ -113,7 +115,7 @@ impl<'v> Object<'v> for HostConsole {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         Ok(global.types.host_console.cast(other).is_some())
     }
 
@@ -142,7 +144,7 @@ impl<'v> Object<'v> for HostConsole {
 /// terminator to one `write`, and splitting them across two critical sections
 /// would let a concurrent strand interleave its own line between them.
 async fn write_host<'v, 's>(strand: &mut Strand<'v, 's>, bytes: &[u8]) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     let mut writer = global.terminal.writer.lock().await;
     writer
         .write_all(bytes)

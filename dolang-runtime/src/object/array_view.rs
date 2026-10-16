@@ -990,7 +990,7 @@ mod tests {
         sig,
         sym::Sym,
         test_support::with_builder,
-        vm::{Builder, Stateful},
+        vm::{Builder, StateTag},
     };
 
     use super::*;
@@ -1040,13 +1040,13 @@ mod tests {
 
     struct FixtureStateTag;
 
-    impl<'v> Stateful<'v> for FixtureState<'v> {
-        type Tag = FixtureStateTag;
+    impl StateTag for FixtureStateTag {
+        type State<'v> = FixtureState<'v>;
     }
 
     fn configure(vm: &mut Builder<'_>) {
         let ty = vm.register_type::<FixtureArray>();
-        vm.register_state(FixtureState { ty });
+        vm.register_state::<FixtureStateTag>(FixtureState { ty });
     }
 
     /// Populates `out` (which must be a GC-rooted slot, e.g. from
@@ -1054,7 +1054,7 @@ mod tests {
     /// never returned as bare, unrooted locals — every call site roots the owner for as
     /// long as it's needed before this function returns.
     fn make_owner<'v>(strand: &mut Strand<'v, '_>, items: &[i64], out: Slot<'v, '_>) {
-        let ty = strand.vm().state::<FixtureState>().ty;
+        let ty = strand.vm().state::<FixtureStateTag>().ty;
         let values = items.iter().map(|&i| Value::from_i64(strand, i)).collect();
         ty.create_with_annex(strand, FixtureArray(values), (), out);
     }
@@ -1084,7 +1084,7 @@ mod tests {
             let owner: &Value = &owner_slot;
             let glue = Glue {
                 view: FixtureGlue,
-                ty: strand.vm().state::<FixtureState>().ty,
+                ty: strand.vm().state::<FixtureStateTag>().ty,
             };
             let sig = sig::Unpack::new(3, vec![], vec![], Variadic::NONE);
             strand
@@ -1103,7 +1103,7 @@ mod tests {
             let owner: &Value = &owner_slot;
             let glue = Glue {
                 view: FixtureGlue,
-                ty: strand.vm().state::<FixtureState>().ty,
+                ty: strand.vm().state::<FixtureStateTag>().ty,
             };
             let sig = sig::Unpack::new(1, vec![], vec![], Variadic::NONE);
             strand
@@ -1122,7 +1122,7 @@ mod tests {
             let owner: &Value = &owner_slot;
             let glue = Glue {
                 view: FixtureGlue,
-                ty: strand.vm().state::<FixtureState>().ty,
+                ty: strand.vm().state::<FixtureStateTag>().ty,
             };
             let sig = sig::Unpack::new(1, vec![], vec![], Variadic::Capture);
             strand
@@ -1145,7 +1145,7 @@ mod tests {
             let owner: &Value = &owner_slot;
             let glue = Glue {
                 view: FixtureGlue,
-                ty: strand.vm().state::<FixtureState>().ty,
+                ty: strand.vm().state::<FixtureStateTag>().ty,
             };
             let key_sym = Sym::well_known(sym::LEN);
             let sig = sig::Unpack::new(
@@ -1173,7 +1173,7 @@ mod tests {
             let owner: &Value = &owner_slot;
             let glue = Glue {
                 view: FixtureGlue,
-                ty: strand.vm().state::<FixtureState>().ty,
+                ty: strand.vm().state::<FixtureStateTag>().ty,
             };
             let key_sym = Sym::well_known(sym::LEN);
             // Constructed and consumed in the same expression below, immediately
@@ -1205,7 +1205,7 @@ mod tests {
             let owner: &Value = &owner_slot;
             let glue = Glue {
                 view: FixtureGlue,
-                ty: strand.vm().state::<FixtureState>().ty,
+                ty: strand.vm().state::<FixtureStateTag>().ty,
             };
 
             // A contiguous range whose resolved start (5) is past its resolved end

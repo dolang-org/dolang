@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use std::{cell::Cell, collections::HashSet, mem};
 
 use dolang::runtime::{
@@ -17,7 +19,7 @@ use crate::global::Global;
 /// module has been set up, no handler can have been registered, so the importer declines.
 pub(crate) fn configure_importer<'v>(builder: &mut Builder<'v>) {
     builder.importer(async move |strand, name, mut out| {
-        let Some(global) = strand.try_state::<Global<'v>>() else {
+        let Some(global) = strand.try_state::<Tag>() else {
             return Err(Error::import(strand, name));
         };
         let _executor = ImportExecutor::new(&global.executors);

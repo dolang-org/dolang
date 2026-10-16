@@ -30,7 +30,7 @@ use crate::{
         file_lock::FileLock as FileLockObject, fs_metadata::create_fs_metadata,
         metadata::create_metadata, read_all, read_into_spare, stream, xattr,
     },
-    global::{FsGlobal, WindowsSecurityGlobal},
+    global::{FsGlobal, WindowsSecurityTag},
     io_mode::encode_value,
     util,
 };
@@ -1313,7 +1313,7 @@ impl<'v, M: FileMode> Object<'v> for File<'v, M> {
                         .ok_or_else(|| Error::state_error(strand, "file is closed"))?;
                     file.sec_desc(mask).await.into_sys(strand)?
                 };
-                let windows = strand.force_state::<WindowsSecurityGlobal<'v>>();
+                let windows = strand.force_state::<WindowsSecurityTag>();
                 crate::security::create_sec_desc(strand, windows, descriptor, &mut out);
                 Ok(())
             })
@@ -1356,7 +1356,7 @@ impl<'v, M: FileMode> Object<'v> for File<'v, M> {
                     .into_sys(strand)
             })
             .method("update_sec_desc", async move |this, strand, args, _out| {
-                let windows = strand.force_state::<WindowsSecurityGlobal<'v>>();
+                let windows = strand.force_state::<WindowsSecurityTag>();
                 let descriptor = crate::security::sec_desc_from_args(
                     strand,
                     windows,

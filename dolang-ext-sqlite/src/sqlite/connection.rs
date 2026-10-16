@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use std::{
     cell::Cell,
     ffi::{CString, c_int},
@@ -166,7 +168,7 @@ impl ConnectionAnnex<'_> {
         strand: &mut Strand<'v, 's>,
         mut f: impl AsyncFnMut(&mut Strand<'v, 's>) -> Result<'v, 's, R>,
     ) -> Result<'v, 's, R> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         if self.in_transaction.get() {
             return f(strand).await;
         }

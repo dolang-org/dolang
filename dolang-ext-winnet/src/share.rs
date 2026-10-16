@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use crate::global::Global;
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
@@ -129,14 +131,14 @@ impl<'v> Object<'v> for Share {
             })
             .method("info", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let borrow = this.borrow(strand)?;
                 let info = capability(&borrow, strand)?.info().await.into_sys(strand)?;
                 make_info(strand, global, info, out);
                 Ok(())
             })
             .method("update", async move |this, strand, args, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let comment_sym = global.syms.comment;
                 let max_uses_sym = global.syms.max_uses;
                 let sec_desc_sym = global.syms.sec_desc;

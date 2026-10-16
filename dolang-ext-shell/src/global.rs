@@ -11,7 +11,7 @@ use dolang::runtime::{
     object::{FlagLikeExt, Flags},
     strand::LocalKey,
     value::TypeObject,
-    vm::{Builder, Register, Stateful},
+    vm::{Builder, Register, StateTag},
 };
 use tokio::{
     io::{self as tio, AsyncWrite, stderr},
@@ -205,10 +205,10 @@ impl ConsoleOverride {
     }
 }
 
-pub struct Tag;
+pub(crate) struct Tag;
 
-impl<'v> Stateful<'v> for Global<'v> {
-    type Tag = Tag;
+impl StateTag for Tag {
+    type State<'v> = Global<'v>;
 }
 
 impl<'v> Global<'v> {
@@ -327,10 +327,10 @@ pub(crate) struct ErrorSyms<'v> {
     pub(crate) code: Sym<'v, 'v>,
 }
 
-pub struct ErrorTag;
+pub(crate) struct ErrorTag;
 
-impl<'v> Stateful<'v> for ErrorGlobal<'v> {
-    type Tag = ErrorTag;
+impl StateTag for ErrorTag {
+    type State<'v> = ErrorGlobal<'v>;
 }
 
 impl<'v> ErrorGlobal<'v> {
@@ -584,10 +584,10 @@ pub(crate) struct FsSyms<'v> {
     pub(crate) unknown: Sym<'v, 'v>,
 }
 
-pub struct FsTag;
+pub(crate) struct FsTag;
 
-impl<'v> Stateful<'v> for FsGlobal<'v> {
-    type Tag = FsTag;
+impl StateTag for FsTag {
+    type State<'v> = FsGlobal<'v>;
 }
 
 impl<'v> FsGlobal<'v> {
@@ -708,10 +708,10 @@ pub(crate) struct ShellSyms<'v> {
     pub(crate) join: Sym<'v, 'v>,
 }
 
-pub struct ShellTag;
+pub(crate) struct ShellTag;
 
-impl<'v> Stateful<'v> for ShellGlobal<'v> {
-    type Tag = ShellTag;
+impl StateTag for ShellTag {
+    type State<'v> = ShellGlobal<'v>;
 }
 
 impl<'v> ShellGlobal<'v> {
@@ -762,10 +762,10 @@ pub(crate) struct ProcSyms<'v> {
     pub(crate) stdout_redirect: Sym<'v, 'v>,
 }
 
-pub struct ProcTag;
+pub(crate) struct ProcTag;
 
-impl<'v> Stateful<'v> for ProcGlobal<'v> {
-    type Tag = ProcTag;
+impl StateTag for ProcTag {
+    type State<'v> = ProcGlobal<'v>;
 }
 
 impl<'v> ProcGlobal<'v> {
@@ -808,10 +808,10 @@ pub(crate) struct PipeTypes<'v> {
     pub(crate) pipe_sender: Type<'v, PipeSender>,
 }
 
-pub struct PipeTag;
+pub(crate) struct PipeTag;
 
-impl<'v> Stateful<'v> for PipeGlobal<'v> {
-    type Tag = PipeTag;
+impl StateTag for PipeTag {
+    type State<'v> = PipeGlobal<'v>;
 }
 
 impl<'v> PipeGlobal<'v> {
@@ -837,10 +837,10 @@ pub(crate) struct SysTypes<'v> {
     pub(crate) cpu_info: Type<'v, CpuInfo>,
 }
 
-pub struct SysTag;
+pub(crate) struct SysTag;
 
-impl<'v> Stateful<'v> for SysGlobal<'v> {
-    type Tag = SysTag;
+impl StateTag for SysTag {
+    type State<'v> = SysGlobal<'v>;
 }
 
 impl<'v> SysGlobal<'v> {
@@ -857,6 +857,10 @@ impl<'v> SysGlobal<'v> {
 
 /// Lazy setup tag for the `security` module, which has no state of its own.
 pub struct SecurityTag;
+
+impl StateTag for SecurityTag {
+    type State<'v> = ();
+}
 
 /// State for the `security.unix` module.
 pub(crate) struct UnixSecurityGlobal<'v> {
@@ -882,10 +886,10 @@ pub(crate) struct UnixSecuritySyms<'v> {
     pub(crate) user_obj: Sym<'v, 'v>,
 }
 
-pub struct UnixSecurityTag;
+pub(crate) struct UnixSecurityTag;
 
-impl<'v> Stateful<'v> for UnixSecurityGlobal<'v> {
-    type Tag = UnixSecurityTag;
+impl StateTag for UnixSecurityTag {
+    type State<'v> = UnixSecurityGlobal<'v>;
 }
 
 impl<'v> UnixSecurityGlobal<'v> {
@@ -933,10 +937,10 @@ pub(crate) struct Nfs4SecuritySyms<'v> {
     pub(crate) mask: Sym<'v, 'v>,
 }
 
-pub struct Nfs4SecurityTag;
+pub(crate) struct Nfs4SecurityTag;
 
-impl<'v> Stateful<'v> for Nfs4SecurityGlobal<'v> {
-    type Tag = Nfs4SecurityTag;
+impl StateTag for Nfs4SecurityTag {
+    type State<'v> = Nfs4SecurityGlobal<'v>;
 }
 
 impl<'v> Nfs4SecurityGlobal<'v> {
@@ -981,10 +985,10 @@ pub(crate) struct MacosSecuritySyms<'v> {
     pub(crate) mask: Sym<'v, 'v>,
 }
 
-pub struct MacosSecurityTag;
+pub(crate) struct MacosSecurityTag;
 
-impl<'v> Stateful<'v> for MacosSecurityGlobal<'v> {
-    type Tag = MacosSecurityTag;
+impl StateTag for MacosSecurityTag {
+    type State<'v> = MacosSecurityGlobal<'v>;
 }
 
 impl<'v> MacosSecurityGlobal<'v> {
@@ -1082,10 +1086,10 @@ pub(crate) struct WindowsSecuritySyms<'v> {
     pub(crate) well_known_sids: WellKnownSids<'v>,
 }
 
-pub struct WindowsSecurityTag;
+pub(crate) struct WindowsSecurityTag;
 
-impl<'v> Stateful<'v> for WindowsSecurityGlobal<'v> {
-    type Tag = WindowsSecurityTag;
+impl StateTag for WindowsSecurityTag {
+    type State<'v> = WindowsSecurityGlobal<'v>;
 }
 
 impl<'v> WindowsSecurityGlobal<'v> {
@@ -1201,3 +1205,7 @@ impl<'v> WindowsSecurityGlobal<'v> {
 
 /// Lazy setup tag for the `shlex` module, which has no state of its own.
 pub struct ShlexTag;
+
+impl StateTag for ShlexTag {
+    type State<'v> = ();
+}

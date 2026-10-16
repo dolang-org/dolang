@@ -23,7 +23,7 @@ mod strand;
 pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     let fmt = fmt::register(builder);
     let member_scopes = class::register_member_scopes(builder);
-    let member_scopes = builder.register_state(member_scopes);
+    let member_scopes = builder.register_state::<class::MemberScopeTag>(member_scopes);
     let bc = builder.singletons();
 
     // Core types

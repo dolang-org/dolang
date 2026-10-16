@@ -40,7 +40,7 @@ impl Extension for WinscmExt {
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
         builder.lazy::<global::Tag>(&["winscm"], |reg| {
             let global = Global::new(reg);
-            let global = reg.register_state(global);
+            let global = reg.register_state::<global::Tag>(global);
             crate::manager::configure_vm(reg, global);
         });
         Ok(())

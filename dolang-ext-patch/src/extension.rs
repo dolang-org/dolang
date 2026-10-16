@@ -41,7 +41,7 @@ impl Extension for PatchExt {
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Infallible> {
         builder.lazy::<global::Tag>(&["patch"], |reg| {
             let global = Global::new(reg);
-            let global = reg.register_state(global);
+            let global = reg.register_state::<global::Tag>(global);
             patch::configure_vm(reg, global);
         });
         Ok(())

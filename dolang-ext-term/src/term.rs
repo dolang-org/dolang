@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use dolang::runtime::object::fmt;
 use dolang::runtime::value::fmt::{self as fmt_spec, Fill, Format, Kind, Pad, Spec};
 use dolang::{
@@ -324,7 +326,7 @@ impl<'v> Object<'v> for Text {
                     return Ok(());
                 }
 
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let suffix = suffix
                     .as_ref()
                     .map(|suffix| text_encoding(strand, global, suffix))
@@ -362,7 +364,7 @@ impl<'v> Object<'v> for Text {
                 }
                 drop(text);
                 drop(borrow);
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 create_text(strand, global, indented, out);
                 Ok(())
             })
@@ -379,7 +381,7 @@ impl<'v> Object<'v> for Text {
                     let separator = Ref::slot::<0>(&borrow).as_str(strand).unwrap().to_string();
                     drop(borrow);
 
-                    let global = strand.state::<Global<'v>>();
+                    let global = strand.state::<Tag>();
                     let mut joined = StrEmbryo::new();
                     let mut first = true;
                     while items.next(strand, &mut item).await? {
@@ -434,7 +436,7 @@ impl<'v> Object<'v> for StyleObject {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let global = strand.state::<Global<'v>>();
+        let global = strand.state::<Tag>();
         let keys = global.style_keys;
         make_style(strand, global, keys, Style::default(), args, out)
     }

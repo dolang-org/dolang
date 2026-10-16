@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use crate::global::Global;
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
@@ -75,7 +77,7 @@ async fn member_sid<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
 ) -> Result<'v, 's, dolang_winterop::security::Sid> {
-    match principal(strand, strand.state::<Global<'v>>(), value)? {
+    match principal(strand, strand.state::<Tag>(), value)? {
         ResultPrincipal::Sid(v) => Ok(v),
         ResultPrincipal::Name(v) => Ok(dolang_ext_shell::vfs(strand)
             .account_name(&v)
@@ -109,7 +111,7 @@ impl<'v> Object<'v> for Group {
             })
             .method("info", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let info = this
                     .borrow_mut(strand)?
                     .0
@@ -122,7 +124,7 @@ impl<'v> Object<'v> for Group {
                 Ok(())
             })
             .method("update", async move |this, strand, args, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let name_sym = global.syms.name;
                 let comment_sym = global.syms.comment;
                 let ([], [name, comment]) =
@@ -161,7 +163,7 @@ impl<'v> Object<'v> for Group {
             })
             .method("members", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let members = this
                     .borrow(strand)?
                     .0

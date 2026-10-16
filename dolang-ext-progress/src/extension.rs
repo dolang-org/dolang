@@ -41,7 +41,7 @@ impl Extension for IndicatifExt {
         let local = builder.local();
         builder.lazy::<global::Tag>(&["progress"], move |reg| {
             let global = Global::new(reg, local);
-            let global = reg.register_state(global);
+            let global = reg.register_state::<global::Tag>(global);
             crate::progress::configure_vm(reg, global);
         });
         Ok(())

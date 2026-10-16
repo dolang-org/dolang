@@ -27,7 +27,7 @@ impl Extension for TarExt {
     fn apply_vm<'v>(&self, builder: &mut Builder<'v>) -> Result<(), Self::Error> {
         builder.lazy::<global::Tag>(&["tar"], |reg| {
             let global = Global::new(reg);
-            let global = reg.register_state(global);
+            let global = reg.register_state::<global::Tag>(global);
             tar::configure_vm(reg, global);
         });
         Ok(())

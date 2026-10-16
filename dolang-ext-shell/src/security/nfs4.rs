@@ -1,3 +1,5 @@
+use crate::global::Nfs4SecurityTag;
+
 use super::unix::{posix_id, spec_id};
 use super::*;
 
@@ -90,7 +92,7 @@ impl<'v> ArrayLike<'v> for Nfs4AclAces {
     ) -> Result<'v, 's, ()> {
         let ace = this.annex().entries()[index];
         strand
-            .state::<Nfs4SecurityGlobal<'v>>()
+            .state::<Nfs4SecurityTag>()
             .types
             .nfs4_ace
             .create_with_annex(strand, Nfs4AceObject, ace, out);
@@ -112,7 +114,7 @@ impl<'v> Object<'v> for Nfs4AclObject {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([mut iterable], []) = unpack!(strand, args, 1, 0)?;
-        let global = strand.state::<Nfs4SecurityGlobal<'v>>();
+        let global = strand.state::<Nfs4SecurityTag>();
         iterable.iter(strand, &mut out).await?;
         let mut entries = Vec::new();
         while out.next(strand, &mut iterable).await? {
@@ -346,7 +348,7 @@ impl<'v> Object<'v> for Nfs4AceObject {
                         mask_sym = None,
                         flags_sym = None
                     )?;
-                    let global = strand.state::<Nfs4SecurityGlobal<'v>>();
+                    let global = strand.state::<Nfs4SecurityTag>();
                     let ace_type =
                         nfs4_ace_type(strand, ace_type.as_deref(), allow, deny, audit, alarm)?;
                     let mask = nfs4_ace_mask(strand, global, mask.as_deref()).await?;
@@ -377,7 +379,7 @@ impl<'v> Object<'v> for Nfs4AceObject {
                     mask_sym = None,
                     flags_sym = None
                 )?;
-                let global = strand.state::<Nfs4SecurityGlobal<'v>>();
+                let global = strand.state::<Nfs4SecurityTag>();
                 let ace_type =
                     nfs4_ace_type(strand, ace_type.as_deref(), allow, deny, audit, alarm)?;
                 let mask = nfs4_ace_mask(strand, global, mask.as_deref()).await?;
@@ -401,7 +403,7 @@ impl<'v> Object<'v> for Nfs4AceObject {
                     mask_sym = None,
                     flags_sym = None
                 )?;
-                let global = strand.state::<Nfs4SecurityGlobal<'v>>();
+                let global = strand.state::<Nfs4SecurityTag>();
                 let ace_type =
                     nfs4_ace_type(strand, ace_type.as_deref(), allow, deny, audit, alarm)?;
                 let mask = nfs4_ace_mask(strand, global, mask.as_deref()).await?;
@@ -448,15 +450,12 @@ impl<'v> Object<'v> for Nfs4AceObject {
                 Ok(())
             })
             .get("mask", |this, strand, out| {
-                let mask = strand.state::<Nfs4SecurityGlobal<'v>>().types.nfs4_ace_mask;
+                let mask = strand.state::<Nfs4SecurityTag>().types.nfs4_ace_mask;
                 mask.create_flags(strand, Nfs4AceMask(this.annex().mask()), out);
                 Ok(())
             })
             .get("flags", |this, strand, out| {
-                let flags = strand
-                    .state::<Nfs4SecurityGlobal<'v>>()
-                    .types
-                    .nfs4_ace_flags;
+                let flags = strand.state::<Nfs4SecurityTag>().types.nfs4_ace_flags;
                 flags.create_flags(strand, Nfs4AceFlags(this.annex().flags()), out);
                 Ok(())
             })

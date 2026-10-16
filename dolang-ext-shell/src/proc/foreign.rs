@@ -20,7 +20,7 @@ use dolang_vfs::process::{
 use crate::{
     error::ResultExt,
     fs::path::create_path,
-    global::{FsGlobal, ProcGlobal, UnixSecurityGlobal, WindowsSecurityGlobal},
+    global::{FsTag, ProcGlobal, ProcTag, UnixSecurityTag, WindowsSecurityTag},
     proc::parse_signal,
     security::{create_identity, create_token_info},
 };
@@ -88,7 +88,7 @@ impl<'v> Object<'v> for Info {
                 let annex = this.annex();
                 match annex.info.exe() {
                     Some(exe) => {
-                        let fs = strand.force_state::<FsGlobal<'v>>();
+                        let fs = strand.force_state::<FsTag>();
                         create_path(strand, fs, exe.to_path_buf(), out)
                     }
                     None => {
@@ -101,7 +101,7 @@ impl<'v> Object<'v> for Info {
                 let annex = this.annex();
                 match annex.info.cwd() {
                     Some(cwd) => {
-                        let fs = strand.force_state::<FsGlobal<'v>>();
+                        let fs = strand.force_state::<FsTag>();
                         create_path(strand, fs, cwd.to_path_buf(), out)
                     }
                     None => {
@@ -125,7 +125,7 @@ impl<'v> Object<'v> for Info {
                 let annex = this.annex();
                 match annex.info.identity() {
                     Ok(Some(identity)) => {
-                        let security = strand.force_state::<UnixSecurityGlobal<'v>>();
+                        let security = strand.force_state::<UnixSecurityTag>();
                         create_identity(strand, security, identity, &mut out)
                     }
                     Ok(None) => Output::set(strand, out, Nil),
@@ -137,7 +137,7 @@ impl<'v> Object<'v> for Info {
                 let annex = this.annex();
                 match annex.info.token() {
                     Ok(Some(token)) => {
-                        let security = strand.force_state::<WindowsSecurityGlobal<'v>>();
+                        let security = strand.force_state::<WindowsSecurityTag>();
                         create_token_info(strand, security, token, &mut out)
                     }
                     Ok(None) => Output::set(strand, out, Nil),
@@ -294,7 +294,7 @@ impl<'v> Object<'v> for Proc {
             })
             .method("info", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<ProcGlobal<'v>>();
+                let global = strand.state::<ProcTag>();
                 let info = {
                     let borrow = this.borrow(strand)?;
                     let process = expect_open(strand, &borrow)?;
@@ -324,7 +324,7 @@ impl<'v> Object<'v> for Proc {
             })
             .method("wait", async move |this, strand, args, out| {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                let global = strand.state::<ProcGlobal<'v>>();
+                let global = strand.state::<ProcTag>();
                 let exit = {
                     let borrow = this.borrow(strand)?;
                     let process = expect_open(strand, &borrow)?;

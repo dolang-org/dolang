@@ -1,6 +1,8 @@
 //! `winreg.Key` — an open registry key, and the `winreg.open` entry point
 //! that bootstraps one from a predefined root.
 
+use crate::global::Tag;
+
 use dolang::runtime::{
     Args, Error, Object, Result, Slot, State, Strand, call, method,
     object::{FlagsTypeExt, TypeBuilder},
@@ -269,7 +271,7 @@ impl<'v> Object<'v> for Key {
         let ignore = builder.sym("ignore");
         builder
             .method("open", async move |this, strand, args, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let view_sym = global.syms.view;
                 let access_sym = global.syms.access;
                 let resolve_sym = global.syms.resolve;
@@ -299,7 +301,7 @@ impl<'v> Object<'v> for Key {
                 finish_open(strand, global, inner, block, out).await
             })
             .method("link", async move |this, strand, args, _out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let view_sym = global.syms.view;
                 let ([target_root, target_subpath, link_subpath], [view]) =
                     unpack!(strand, args, 3, 0, view_sym = None)?;
@@ -317,7 +319,7 @@ impl<'v> Object<'v> for Key {
                     .into_sys(strand)
             })
             .method("read_link", async move |this, strand, args, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let view_sym = global.syms.view;
                 let ([subpath], [view]) = unpack!(strand, args, 1, 0, view_sym = None)?;
                 let subpath = expect_str(strand, subpath, "subpath")?;
@@ -337,7 +339,7 @@ impl<'v> Object<'v> for Key {
                 Ok(())
             })
             .method("create", async move |this, strand, args, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let view_sym = global.syms.view;
                 let access_sym = global.syms.access;
                 let ([subpath], [block, view, access]) =
@@ -358,7 +360,7 @@ impl<'v> Object<'v> for Key {
                 finish_open(strand, global, inner, block, out).await
             })
             .method("delete", async move |this, strand, args, _out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let view_sym = global.syms.view;
                 let ([subpath], [view, all, ignore]) = unpack!(
                     strand,
@@ -405,7 +407,7 @@ impl<'v> Object<'v> for Key {
                 }
             })
             .method("subkeys", async move |this, strand, args, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let subkeys = {
                     let borrow = this.borrow(strand)?;
@@ -422,7 +424,7 @@ impl<'v> Object<'v> for Key {
                 Ok(())
             })
             .method("values", async move |this, strand, args, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let values = {
                     let borrow = this.borrow(strand)?;
@@ -461,7 +463,7 @@ impl<'v> Object<'v> for Key {
                 convert::to_do(strand, &value, out)
             })
             .method("get_value", async move |this, strand, args, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let ([name], []) = unpack!(strand, args, 1, 0)?;
                 let name = expect_str(strand, name, "name")?;
                 let value = {
@@ -487,7 +489,7 @@ impl<'v> Object<'v> for Key {
                 Ok(())
             })
             .method("set", async move |this, strand, args, _out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 let kind_sym = global.syms.kind;
                 let ([name, value], [kind]) = unpack!(strand, args, 2, 0, kind_sym = None)?;
                 let name = expect_str(strand, name, "name")?;

@@ -1,3 +1,5 @@
+use crate::global::PipeTag;
+
 use std::{
     cell::RefCell,
     collections::VecDeque,
@@ -529,7 +531,7 @@ pub(crate) async fn negotiate_recv<'v, 's>(
     input: &Value<'v>,
     strand: &mut Strand<'v, 's>,
 ) -> Result<'v, 's, Option<RecvGuard>> {
-    let Some(global) = strand.try_state::<PipeGlobal<'v>>() else {
+    let Some(global) = strand.try_state::<PipeTag>() else {
         return Ok(None);
     };
     let Some(cast) = global.types.pipe_receiver.cast(input) else {
@@ -637,7 +639,7 @@ pub(crate) async fn negotiate_send<'v, 's>(
     output: &Value<'v>,
     strand: &mut Strand<'v, 's>,
 ) -> Result<'v, 's, Option<SendGuard>> {
-    let Some(global) = strand.try_state::<PipeGlobal<'v>>() else {
+    let Some(global) = strand.try_state::<PipeTag>() else {
         return Ok(None);
     };
     let Some(cast) = global.types.pipe_sender.cast(output) else {
@@ -756,7 +758,7 @@ pub(crate) fn make_pair<'v, 's>(
     buffer_size: Option<usize>,
 ) {
     let inner = Rc::new(RefCell::new(PipeChannelShared::new(buffer_size)));
-    let global = strand.force_state::<PipeGlobal<'v>>();
+    let global = strand.force_state::<PipeTag>();
     let recv_annex = PipeAnnex {
         shared: inner.clone(),
         global,

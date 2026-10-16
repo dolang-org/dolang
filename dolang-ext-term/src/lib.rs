@@ -8,14 +8,14 @@ mod local;
 mod term;
 mod util;
 
+use crate::global::Tag;
+
 use dolang::runtime::{
     Args, Input, Output, Result, Slot, Strand, Type, Value,
     vm::{Builder, Vm},
 };
 
 pub use crate::{console::Console, extension::TermExt, geometry::Geometry};
-
-use crate::global::Global;
 
 /// Installs the host console: the console `term.console` names, and the one
 /// output goes to when nothing is captured.
@@ -31,7 +31,7 @@ pub fn install_console<'v>(
     can_style: bool,
     line_ending: &str,
 ) {
-    let global = builder.state::<Global<'v>>();
+    let global = builder.state::<Tag>();
     Output::set(builder, &mut *global.host.console.borrow_mut(), console);
     Output::set(
         builder,
@@ -47,7 +47,7 @@ pub fn install_console<'v>(
 /// registering the subtype must name [`TermExt`] in its `DEPENDS`, or this type
 /// may not exist yet.
 pub fn console_type<'v>(vm: &Vm<'v>) -> Type<'v, Console> {
-    vm.state::<Global<'v>>().types.console
+    vm.state::<Tag>().types.console
 }
 
 /// The `term.Geometry` type object.
@@ -55,7 +55,7 @@ pub fn console_type<'v>(vm: &Vm<'v>) -> Type<'v, Console> {
 /// A native geometry type registers this as a nominal supertype, subject to
 /// the same `DEPENDS` requirement as [`console_type`].
 pub fn geometry_type<'v>(vm: &Vm<'v>) -> Type<'v, Geometry> {
-    vm.state::<Global<'v>>().types.geometry
+    vm.state::<Tag>().types.geometry
 }
 
 /// Collects the arguments of a `Console.write` call — any number of `Str` or
@@ -99,7 +99,7 @@ pub fn is_captured<'v>(strand: &Strand<'v, '_>) -> bool {
 /// Instantiates `term.default`, the output handle that forwards to the ambient
 /// console at call time.
 pub fn default_output<'v>(strand: &mut Strand<'v, '_>, out: impl Output<'v>) {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     global
         .types
         .default
@@ -108,7 +108,7 @@ pub fn default_output<'v>(strand: &mut Strand<'v, '_>, out: impl Output<'v>) {
 
 /// Whether `value` is `term.default`.
 pub fn is_default_output<'v>(strand: &Strand<'v, '_>, value: &Value<'v>) -> bool {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     global.types.default.cast(value).is_some()
 }
 
@@ -153,7 +153,7 @@ pub fn preformatted_text<'v, 's>(
     value: &str,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let global = strand.state::<Global<'v>>();
+    let global = strand.state::<Tag>();
     term::create_preformatted_text(strand, global, value, out)
 }
 

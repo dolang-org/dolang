@@ -9,7 +9,7 @@ use dolang::{
     extension::{CompilerExt, VmExt},
     runtime::{
         Arg, Args, Bytecode, Error, Frame, Slot, Strand, Sym, call, unpack,
-        vm::{Builder, State, Stateful},
+        vm::{Builder, State, StateTag},
     },
 };
 
@@ -140,8 +140,8 @@ impl Default for TestState {
 /// Tag type for TestState registration with the VM.
 pub struct TestStateTag;
 
-impl<'v> Stateful<'v> for TestState {
-    type Tag = TestStateTag;
+impl StateTag for TestStateTag {
+    type State<'v> = TestState;
 }
 
 /// Directives parsed from test file comments.
@@ -679,7 +679,7 @@ pub fn configure_compiler(config: &mut Config, content: &[u8]) -> Vec<Directive>
 pub fn configure_vm<'v>(vm: &mut Builder<'v>) -> State<'v, TestState> {
     let msg: Sym<'v, 'v> = vm.sym("msg");
     let str_sym: Sym<'v, 'v> = vm.sym("str");
-    let state = vm.register_state(TestState::new());
+    let state = vm.register_state::<TestStateTag>(TestState::new());
 
     vm.module("regression")
         .function(
@@ -707,7 +707,7 @@ pub fn configure_vm<'v>(vm: &mut Builder<'v>) -> State<'v, TestState> {
         )
         .function("echo", async move |strand, args, _| {
             use std::io::Write;
-            let test_state = strand.vm().state::<TestState>();
+            let test_state = strand.vm().state::<TestStateTag>();
             let mut buf = test_state.output.borrow_mut();
             let mut space = false;
             for arg in args {

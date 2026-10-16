@@ -1,3 +1,5 @@
+use crate::global::Tag;
+
 use std::hash::{Hash, Hasher};
 
 use dolang::runtime::value::fmt::Format;
@@ -30,7 +32,7 @@ fn create_uuid_with_global<'v, 'a>(
 
 /// Creates a Do `uuid.Uuid` object from an owned `uuid::Uuid`.
 pub fn create_uuid<'v, 'a>(strand: &mut Strand<'v, '_>, id: uuid::Uuid, out: Slot<'v, 'a>) {
-    let global = strand.force_state::<Global<'v>>();
+    let global = strand.force_state::<Tag>();
     create_uuid_with_global(global, strand, id, out);
 }
 
@@ -39,7 +41,7 @@ pub fn create_uuid<'v, 'a>(strand: &mut Strand<'v, '_>, id: uuid::Uuid, out: Slo
 /// forms.
 pub fn cast_uuid<'v>(strand: &mut Strand<'v, '_>, value: &Value<'v>) -> Option<uuid::Uuid> {
     // No `Uuid` can exist before the extension is initialized
-    let global = strand.try_state::<Global<'v>>()?;
+    let global = strand.try_state::<Tag>()?;
     let inst = global.types.uuid.cast(value)?;
     Some(inst.enter_sync(strand, |_strand, inst| inst.annex().inner))
 }
@@ -52,7 +54,7 @@ pub fn value_to_uuid<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
 ) -> Result<'v, 's, uuid::Uuid> {
-    let global = strand.try_state::<Global<'v>>();
+    let global = strand.try_state::<Tag>();
     if let Some(inst) = global.and_then(|global| global.types.uuid.cast(value)) {
         return Ok(inst.enter_sync(strand, |_strand, inst| inst.annex().inner));
     }
@@ -155,12 +157,12 @@ impl<'v> Object<'v> for Uuid {
                 Ok(())
             })
             .type_get("NIL", |_this, strand, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 create_uuid_with_global(global, strand, uuid::Uuid::nil(), out);
                 Ok(())
             })
             .type_get("MAX", |_this, strand, out| {
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 create_uuid_with_global(global, strand, uuid::Uuid::max(), out);
                 Ok(())
             })
@@ -173,7 +175,7 @@ impl<'v> Object<'v> for Uuid {
                         "version:/variant: are reserved for future use; only the default (random, v4) generation is currently supported",
                     ));
                 }
-                let global = strand.state::<Global<'v>>();
+                let global = strand.state::<Tag>();
                 create_uuid_with_global(global, strand, uuid::Uuid::new_v4(), out);
                 Ok(())
             })

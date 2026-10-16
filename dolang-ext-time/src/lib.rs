@@ -4,20 +4,20 @@ mod extension;
 mod global;
 mod time;
 
+use crate::global::Tag;
+
 use std::{io, time::SystemTime};
 
 use dolang::runtime::{AllocExt, Error, Output, Result, Strand, Value};
 
 pub use extension::TimeExt;
 
-use crate::global::Global;
-
 // Functions that only inspect values use `try_state`: no `time` object can exist before the
 // extension is initialized. Functions that create objects force initialization.
 
 /// Extracts a Do `time.DateTime` runtime value.
 pub fn as_datetime<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Option<SystemTime> {
-    let global = strand.try_state::<Global<'v>>()?;
+    let global = strand.try_state::<Tag>()?;
     let datetime = global.types.date_time.cast(value)?;
     datetime.enter_sync(strand, |_strand, inst| inst.annex().to_system_time().ok())
 }
@@ -28,7 +28,7 @@ pub fn datetime<'v>(
     time: SystemTime,
     out: impl Output<'v>,
 ) -> io::Result<()> {
-    let global = strand.force_state::<Global<'v>>();
+    let global = strand.force_state::<Tag>();
     let annex = time::DateTimeAnnex::from_system_time(time)?;
     global
         .types
@@ -43,7 +43,7 @@ pub fn create_datetime<'v, 's>(
     total_nanos: i128,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    let global = strand.force_state::<Global<'v>>();
+    let global = strand.force_state::<Tag>();
     time::create_datetime(strand, global, total_nanos, out)
 }
 
@@ -53,7 +53,7 @@ pub fn datetime_to_unix_nanos<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
 ) -> Result<'v, 's, i128> {
-    let Some(global) = strand.try_state::<Global<'v>>() else {
+    let Some(global) = strand.try_state::<Tag>() else {
         return Err(Error::type_error(strand, "expected DateTime"));
     };
     time::datetime_to_unix_nanos(strand, global.types.date_time, value)
@@ -65,7 +65,7 @@ pub fn duration<'v, 's>(
     duration: std::time::Duration,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    let global = strand.force_state::<Global<'v>>();
+    let global = strand.force_state::<Tag>();
     let total_nanos =
         i128::from(duration.as_secs()) * 1_000_000_000 + i128::from(duration.subsec_nanos());
     global.types.duration.create_with_annex(
@@ -82,7 +82,7 @@ pub fn as_duration<'v, 's>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
 ) -> Option<std::time::Duration> {
-    let global = strand.try_state::<Global<'v>>()?;
+    let global = strand.try_state::<Tag>()?;
     let duration = global.types.duration.cast(value)?;
     duration.enter_sync(strand, |strand, duration| {
         duration.annex().to_std_duration(strand).ok()
@@ -92,7 +92,7 @@ pub fn as_duration<'v, 's>(
 /// Returns whether a value is a Do `time.Duration`.
 pub fn is_duration<'v>(strand: &Strand<'v, '_>, value: &Value<'v>) -> bool {
     strand
-        .try_state::<Global<'v>>()
+        .try_state::<Tag>()
         .is_some_and(|global| global.types.duration.cast(value).is_some())
 }
 
@@ -103,7 +103,7 @@ pub fn coerce_duration<'v, 's>(
     value: &Value<'v>,
     context: &str,
 ) -> Result<'v, 's, std::time::Duration> {
-    let global = strand.try_state::<Global<'v>>();
+    let global = strand.try_state::<Tag>();
     time::coerce_duration(strand, global, value, context)
 }
 
