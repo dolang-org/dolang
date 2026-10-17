@@ -1,6 +1,7 @@
 #![deny(warnings)]
 
 mod attr;
+mod check;
 mod extension;
 mod global;
 mod node;

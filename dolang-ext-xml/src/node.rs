@@ -4,281 +4,494 @@ use dolang::runtime::object::fmt;
 use dolang::runtime::value::fmt::Format;
 
 use dolang::runtime::{
-    Args, Error, Instance, Object, Output, Result, Slot, Strand, Type, Value, call,
-    object::{ArrayLike, ArrayView, Mut, Ref, TypeBuilder},
+    Args, Error, Instance, Object, Output, Result, Slot, Strand, Type, Value,
+    object::{ArrayLike, ArrayView, DictLike, DictView, DictViewSink, Mut, Ref, TypeBuilder},
     unpack,
     value::{Empty, Nil, TypeObject},
 };
 
-use crate::attr::{Attr, Name, optional_string, required_string};
+use crate::{
+    attr::{Attr, Name, attr_key, key_string, optional_string, required_string},
+    check::{
+        validate_name, validate_namespace, validate_namespace_binding, validate_ncname,
+        validate_text,
+    },
+};
 
 pub(crate) const CHILDREN: usize = 0;
-pub(crate) const ATTRS: usize = 1;
-pub(crate) const NAMESPACES: usize = 2;
 pub(crate) const STACK: usize = 0;
-pub(crate) const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
 
 pub(crate) struct Node {
     pub(crate) name: Name,
+    /// Attributes in document order, with distinct expanded names.
+    pub(crate) attrs: Vec<Attr>,
+    /// The namespace declarations this element makes itself, by prefix.
+    pub(crate) namespaces: Vec<(String, String)>,
 }
 
 pub(crate) struct NodeAnnex;
 
 struct Children;
 struct Attrs;
+struct Namespaces;
 
-macro_rules! array_like {
-    ($view:ty, $slot:expr, $name:literal) => {
-        impl<'v> ArrayLike<'v> for $view {
-            type Object = Node;
-            const MODULE: &'v str = "xml";
-            const NAME: &'v str = $name;
-
-            fn len(&self, this: Instance<'v, '_, Node>, strand: &mut Strand<'v, '_>) -> usize {
-                Ref::slot::<$slot>(&this.borrow_unwrap())
-                    .as_array(strand)
-                    .unwrap()
-                    .len(strand)
-                    .expect("conflicting XML array borrow")
-            }
-
-            fn get<'a, 's>(
-                &self,
-                this: Instance<'v, '_, Node>,
-                strand: &'a mut Strand<'v, 's>,
-                index: usize,
-                out: Slot<'v, 'a>,
-            ) -> Result<'v, 's, ()> {
-                let found = Ref::slot::<$slot>(&this.borrow(strand)?)
-                    .as_array(strand)
-                    .unwrap()
-                    .get(strand, index, out)?;
-                debug_assert!(found);
-                Ok(())
-            }
-
-            fn set<'a, 's>(
-                &self,
-                this: Instance<'v, '_, Node>,
-                strand: &'a mut Strand<'v, 's>,
-                index: usize,
-                value: Slot<'v, 'a>,
-            ) -> Result<'v, 's, ()> {
-                let found = Ref::slot::<$slot>(&this.borrow(strand)?)
-                    .as_array(strand)
-                    .unwrap()
-                    .set(strand, index, value)?;
-                debug_assert!(found);
-                Ok(())
-            }
-
-            fn push<'a, 's>(
-                &self,
-                this: Instance<'v, '_, Node>,
-                strand: &'a mut Strand<'v, 's>,
-                values: &mut [Slot<'v, 'a>],
-            ) -> Result<'v, 's, ()> {
-                Ref::slot::<$slot>(&this.borrow(strand)?)
-                    .as_array(strand)
-                    .unwrap()
-                    .push_all(strand, values)
-            }
-
-            fn insert<'a, 's>(
-                &self,
-                this: Instance<'v, '_, Node>,
-                strand: &'a mut Strand<'v, 's>,
-                index: usize,
-                values: &mut [Slot<'v, 'a>],
-            ) -> Result<'v, 's, ()> {
-                let inserted = Ref::slot::<$slot>(&this.borrow(strand)?)
-                    .as_array(strand)
-                    .unwrap()
-                    .insert(strand, index, values)?;
-                debug_assert!(inserted);
-                Ok(())
-            }
-
-            fn pop<'a, 's>(
-                &self,
-                this: Instance<'v, '_, Node>,
-                strand: &'a mut Strand<'v, 's>,
-                index: usize,
-                out: Slot<'v, 'a>,
-            ) -> Result<'v, 's, ()> {
-                let popped = Ref::slot::<$slot>(&this.borrow(strand)?)
-                    .as_array(strand)
-                    .unwrap()
-                    .pop_at(strand, index, out)?;
-                debug_assert!(popped);
-                Ok(())
-            }
-
-            fn delete<'s>(
-                &self,
-                this: Instance<'v, '_, Node>,
-                strand: &mut Strand<'v, 's>,
-                index: usize,
-            ) -> Result<'v, 's, ()> {
-                let deleted = Ref::slot::<$slot>(&this.borrow(strand)?)
-                    .as_array(strand)
-                    .unwrap()
-                    .delete(strand, index)?;
-                debug_assert!(deleted);
-                Ok(())
-            }
-
-            fn clear<'s>(
-                &self,
-                this: Instance<'v, '_, Node>,
-                strand: &mut Strand<'v, 's>,
-            ) -> Result<'v, 's, ()> {
-                Ref::slot::<$slot>(&this.borrow(strand)?)
-                    .as_array(strand)
-                    .unwrap()
-                    .clear(strand)
-            }
-        }
+/// Rejects a child other than a `Node` or valid text.
+fn check_child<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Result<'v, 's, ()> {
+    if strand.state::<Tag>().node_type.cast(value).is_some() {
+        return Ok(());
+    }
+    let Some(text) = value.as_str(strand) else {
+        return Err(Error::type_error(
+            strand,
+            "XML children must be Node or Str",
+        ));
     };
+    let text = text.pin();
+    validate_text(strand, &text, "XML text")
 }
 
-array_like!(Children, CHILDREN, "Children");
-array_like!(Attrs, ATTRS, "Attrs");
+impl<'v> ArrayLike<'v> for Children {
+    type Object = Node;
+    const MODULE: &'v str = "xml";
+    const NAME: &'v str = "Children";
 
+    fn len(&self, this: Instance<'v, '_, Node>, strand: &mut Strand<'v, '_>) -> usize {
+        Ref::slot::<CHILDREN>(&this.borrow_unwrap())
+            .as_array(strand)
+            .unwrap()
+            .len(strand)
+            .expect("conflicting XML array borrow")
+    }
+
+    fn get<'a, 's>(
+        &self,
+        this: Instance<'v, '_, Node>,
+        strand: &'a mut Strand<'v, 's>,
+        index: usize,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let found = Ref::slot::<CHILDREN>(&this.borrow(strand)?)
+            .as_array(strand)
+            .unwrap()
+            .get(strand, index, out)?;
+        debug_assert!(found);
+        Ok(())
+    }
+
+    fn set<'a, 's>(
+        &self,
+        this: Instance<'v, '_, Node>,
+        strand: &'a mut Strand<'v, 's>,
+        index: usize,
+        value: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        check_child(strand, &value)?;
+        let found = Ref::slot::<CHILDREN>(&this.borrow(strand)?)
+            .as_array(strand)
+            .unwrap()
+            .set(strand, index, value)?;
+        debug_assert!(found);
+        Ok(())
+    }
+
+    fn push<'a, 's>(
+        &self,
+        this: Instance<'v, '_, Node>,
+        strand: &'a mut Strand<'v, 's>,
+        values: &mut [Slot<'v, 'a>],
+    ) -> Result<'v, 's, ()> {
+        for value in values.iter() {
+            check_child(strand, value)?;
+        }
+        Ref::slot::<CHILDREN>(&this.borrow(strand)?)
+            .as_array(strand)
+            .unwrap()
+            .push_all(strand, values)
+    }
+
+    fn insert<'a, 's>(
+        &self,
+        this: Instance<'v, '_, Node>,
+        strand: &'a mut Strand<'v, 's>,
+        index: usize,
+        values: &mut [Slot<'v, 'a>],
+    ) -> Result<'v, 's, ()> {
+        for value in values.iter() {
+            check_child(strand, value)?;
+        }
+        let inserted = Ref::slot::<CHILDREN>(&this.borrow(strand)?)
+            .as_array(strand)
+            .unwrap()
+            .insert(strand, index, values)?;
+        debug_assert!(inserted);
+        Ok(())
+    }
+
+    fn pop<'a, 's>(
+        &self,
+        this: Instance<'v, '_, Node>,
+        strand: &'a mut Strand<'v, 's>,
+        index: usize,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let popped = Ref::slot::<CHILDREN>(&this.borrow(strand)?)
+            .as_array(strand)
+            .unwrap()
+            .pop_at(strand, index, out)?;
+        debug_assert!(popped);
+        Ok(())
+    }
+
+    fn delete<'s>(
+        &self,
+        this: Instance<'v, '_, Node>,
+        strand: &mut Strand<'v, 's>,
+        index: usize,
+    ) -> Result<'v, 's, ()> {
+        let deleted = Ref::slot::<CHILDREN>(&this.borrow(strand)?)
+            .as_array(strand)
+            .unwrap()
+            .delete(strand, index)?;
+        debug_assert!(deleted);
+        Ok(())
+    }
+
+    fn clear<'s>(
+        &self,
+        this: Instance<'v, '_, Node>,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        Ref::slot::<CHILDREN>(&this.borrow(strand)?)
+            .as_array(strand)
+            .unwrap()
+            .clear(strand)
+    }
+}
+
+impl<'v> DictLike<'v> for Attrs {
+    type Object = Node;
+    const MODULE: &'v str = "xml";
+    const NAME: &'v str = "Attrs";
+
+    fn len(&self, this: Instance<'v, '_, Node>, _strand: &mut Strand<'v, '_>) -> usize {
+        this.borrow_unwrap().attrs.len()
+    }
+
+    fn get<'a, 's>(
+        &self,
+        this: Instance<'v, '_, Node>,
+        strand: &'a mut Strand<'v, 's>,
+        key: &Value<'v>,
+        instance: i64,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        // Expanded names are distinct.
+        if !matches!(instance, 0 | -1) {
+            return Ok(false);
+        }
+        let Some(key) = key_string(strand, key)? else {
+            return Ok(false);
+        };
+        let node = this.borrow(strand)?;
+        match find_attr(&node.attrs, &Name::from_clark(&key)) {
+            Some(index) => {
+                Output::set(strand, out, node.attrs[index].value.as_str());
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    fn set<'a, 's>(
+        &self,
+        this: Instance<'v, '_, Node>,
+        strand: &'a mut Strand<'v, 's>,
+        key: Slot<'v, 'a>,
+        value: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let name = attr_key(strand, &key)?;
+        let value = required_string(strand, &value, "attribute value")?;
+        let attr = Attr::checked(strand, name, value)?;
+        set_attr(this, strand, attr)
+    }
+
+    fn delete<'s>(
+        &self,
+        this: Instance<'v, '_, Node>,
+        strand: &mut Strand<'v, 's>,
+        key: &Value<'v>,
+    ) -> Result<'v, 's, bool> {
+        let Some(key) = key_string(strand, key)? else {
+            return Ok(false);
+        };
+        let mut node = this.borrow_mut(strand)?;
+        let index = find_attr(&node.attrs, &Name::from_clark(&key));
+        Ok(index.map(|index| node.attrs.remove(index)).is_some())
+    }
+
+    fn pop<'a, 's>(
+        &self,
+        this: Instance<'v, '_, Node>,
+        strand: &'a mut Strand<'v, 's>,
+        key: &Value<'v>,
+        instance: i64,
+        mut out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        if !self.get(this, strand, key, instance, Slot::reborrow(&mut out))? {
+            return Ok(false);
+        }
+        self.delete(this, strand, key)
+    }
+
+    fn clear<'s>(
+        &self,
+        this: Instance<'v, '_, Node>,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        this.borrow_mut(strand)?.attrs.clear();
+        Ok(())
+    }
+
+    fn flatten<'s>(
+        &self,
+        this: Instance<'v, '_, Node>,
+        strand: &mut Strand<'v, 's>,
+        sink: &mut DictViewSink<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        let node = this.borrow(strand)?;
+        for attr in &node.attrs {
+            sink.push(strand, attr.name.clark().as_str(), attr.value.as_str());
+        }
+        Ok(())
+    }
+}
+
+impl<'v> DictLike<'v> for Namespaces {
+    type Object = Node;
+    const MODULE: &'v str = "xml";
+    const NAME: &'v str = "Namespaces";
+
+    fn len(&self, this: Instance<'v, '_, Node>, _strand: &mut Strand<'v, '_>) -> usize {
+        this.borrow_unwrap().namespaces.len()
+    }
+
+    fn get<'a, 's>(
+        &self,
+        this: Instance<'v, '_, Node>,
+        strand: &'a mut Strand<'v, 's>,
+        key: &Value<'v>,
+        instance: i64,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        // Each prefix is declared at most once.
+        if !matches!(instance, 0 | -1) {
+            return Ok(false);
+        }
+        let Some(prefix) = key.as_str(strand).map(|key| key.to_string()) else {
+            return Ok(false);
+        };
+        let node = this.borrow(strand)?;
+        match find_namespace(&node.namespaces, &prefix) {
+            Some(index) => {
+                Output::set(strand, out, node.namespaces[index].1.as_str());
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    fn set<'a, 's>(
+        &self,
+        this: Instance<'v, '_, Node>,
+        strand: &'a mut Strand<'v, 's>,
+        key: Slot<'v, 'a>,
+        value: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let prefix = required_string(strand, &key, "namespace prefix")?;
+        let namespace = required_string(strand, &value, "namespace URI")?;
+        validate_namespace_binding(strand, &prefix, &namespace)?;
+        let mut node = this.borrow_mut(strand)?;
+        match find_namespace(&node.namespaces, &prefix) {
+            Some(index) => node.namespaces[index].1 = namespace,
+            None => node.namespaces.push((prefix, namespace)),
+        }
+        Ok(())
+    }
+
+    fn delete<'s>(
+        &self,
+        this: Instance<'v, '_, Node>,
+        strand: &mut Strand<'v, 's>,
+        key: &Value<'v>,
+    ) -> Result<'v, 's, bool> {
+        let Some(prefix) = key.as_str(strand).map(|key| key.to_string()) else {
+            return Ok(false);
+        };
+        let mut node = this.borrow_mut(strand)?;
+        let index = find_namespace(&node.namespaces, &prefix);
+        Ok(index.map(|index| node.namespaces.remove(index)).is_some())
+    }
+
+    fn pop<'a, 's>(
+        &self,
+        this: Instance<'v, '_, Node>,
+        strand: &'a mut Strand<'v, 's>,
+        key: &Value<'v>,
+        instance: i64,
+        mut out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        if !self.get(this, strand, key, instance, Slot::reborrow(&mut out))? {
+            return Ok(false);
+        }
+        self.delete(this, strand, key)
+    }
+
+    fn clear<'s>(
+        &self,
+        this: Instance<'v, '_, Node>,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        this.borrow_mut(strand)?.namespaces.clear();
+        Ok(())
+    }
+
+    fn flatten<'s>(
+        &self,
+        this: Instance<'v, '_, Node>,
+        strand: &mut Strand<'v, 's>,
+        sink: &mut DictViewSink<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        let node = this.borrow(strand)?;
+        for (prefix, namespace) in &node.namespaces {
+            sink.push(strand, prefix.as_str(), namespace.as_str());
+        }
+        Ok(())
+    }
+}
+
+fn find_namespace(namespaces: &[(String, String)], prefix: &str) -> Option<usize> {
+    namespaces.iter().position(|(key, _)| key == prefix)
+}
+
+/// Rejects `new` attributes whose expanded names repeat each other or one in
+/// `existing`, ignoring the one at `replacing`.
+pub(crate) fn check_new_attrs<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    existing: &[Attr],
+    replacing: Option<usize>,
+    new: &[Attr],
+) -> Result<'v, 's, ()> {
+    for (i, attr) in new.iter().enumerate() {
+        let is = |other: &Attr| other.name.is(&attr.name);
+        let clash = existing
+            .iter()
+            .enumerate()
+            .any(|(j, other)| Some(j) != replacing && is(other))
+            || new[..i].iter().any(is);
+        if clash {
+            return Err(Error::value(
+                strand,
+                format!("duplicate XML attribute {}", attr.name.clark()),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn find_attr(attrs: &[Attr], name: &Name) -> Option<usize> {
+    attrs.iter().position(|attr| attr.name.is(name))
+}
+
+/// Replaces the value of the attribute with `attr`'s name, or appends `attr`.
+fn set_attr<'v, 's>(
+    this: Instance<'v, '_, Node>,
+    strand: &mut Strand<'v, 's>,
+    attr: Attr,
+) -> Result<'v, 's, ()> {
+    let mut node = this.borrow_mut(strand)?;
+    match find_attr(&node.attrs, &attr.name) {
+        Some(index) => node.attrs[index].value = attr.value,
+        None => node.attrs.push(attr),
+    }
+    Ok(())
+}
+
+/// Creates a node; `declarations` are the namespace declarations the
+/// element makes itself.
 pub(crate) fn create_node<'v, 's>(
     strand: &mut Strand<'v, 's>,
     node_type: Type<'v, Node>,
     name: Name,
+    attrs: Vec<Attr>,
+    declarations: Vec<(String, String)>,
     mut out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let binding = name
-        .namespace
-        .as_ref()
-        .map(|namespace| (name.prefix.clone().unwrap_or_default(), namespace.clone()));
-    node_type.create_with_annex(strand, Node { name }, NodeAnnex, &mut out);
+    let node = Node {
+        name,
+        attrs,
+        namespaces: declarations,
+    };
+    node_type.create_with_annex(strand, node, NodeAnnex, &mut out);
     node_type
         .cast(&out)
         .unwrap()
         .enter_sync(strand, |strand, inst| {
             let mut borrow = inst.borrow_mut_unwrap();
             Output::set(strand, Mut::slot_mut::<CHILDREN>(&mut borrow), Empty::Array);
-            Output::set(strand, Mut::slot_mut::<ATTRS>(&mut borrow), Empty::Array);
-            Output::set(
-                strand,
-                Mut::slot_mut::<NAMESPACES>(&mut borrow),
-                Empty::Dict,
-            );
-            let namespace_slot = Mut::slot_mut::<NAMESPACES>(&mut borrow);
-            let namespaces = namespace_slot.as_dict(strand).unwrap();
-            namespaces.insert(strand, "xml", XML_NS, true)?;
-            if let Some((prefix, namespace)) = &binding {
-                namespaces.insert(strand, prefix.as_str(), namespace.as_str(), true)?;
-            }
-            Ok(())
-        })
+        });
+    Ok(())
 }
 
-fn find_attr<'v, 's>(
-    this: Instance<'v, '_, Node>,
+/// Reads the `Str` values of a dict with `Str` or `Sym` keys.
+fn dict_pairs<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    local: &str,
-    namespace: Option<&str>,
-) -> Result<'v, 's, Option<(usize, String)>> {
-    let global = strand.state::<Tag>();
-    let borrow = this.borrow(strand)?;
-    let attrs = Ref::slot::<ATTRS>(&borrow).as_array(strand).unwrap();
-    strand.with_slots_sync(|strand, [mut item]| {
-        for index in 0..attrs.len(strand)? {
-            attrs.get(strand, index, &mut item)?;
-            let Some(attr) = global.attr_type.cast(&item) else {
-                continue;
-            };
-            let found = attr.enter_sync(strand, |strand, attr| {
-                let attr = attr.borrow(strand)?;
-                Ok(
-                    (attr.name.local == local && attr.name.namespace.as_deref() == namespace)
-                        .then(|| attr.value.clone()),
-                )
-            })?;
-            if let Some(value) = found {
-                return Ok(Some((index, value)));
-            }
-        }
-        Ok(None)
-    })
-}
-
-fn append_attr<'v, 's>(
-    this: Instance<'v, '_, Node>,
-    strand: &mut Strand<'v, 's>,
-    attr: Attr,
-) -> Result<'v, 's, ()> {
-    let global = strand.state::<Tag>();
-    let borrow = this.borrow(strand)?;
-    let attrs = Ref::slot::<ATTRS>(&borrow).as_array(strand).unwrap();
-    strand.with_slots_sync(|strand, [mut item]| {
-        global.attr_type.create(strand, attr, &mut item);
-        attrs.push(strand, &mut item)
-    })
-}
-
-/// Appends the pairs of an `attrs:` dict as unnamespaced attributes.
-///
-/// Keys may be `Str` or `Sym`, since bareword dict keys intern as the latter;
-/// values must be `Str`, matching `Attr` and `set_attr`.
-fn append_attrs_dict<'v, 's>(
-    this: Instance<'v, '_, Node>,
-    strand: &mut Strand<'v, 's>,
-    attrs: &Slot<'v, '_>,
-) -> Result<'v, 's, ()> {
-    let dict = attrs
+    dict: &Value<'v>,
+    what: &str,
+) -> Result<'v, 's, Vec<(String, String)>> {
+    let dict = dict
         .as_dict(strand)
-        .ok_or_else(|| Error::type_error(strand, "attrs: expected Dict"))?;
+        .ok_or_else(|| Error::type_error(strand, format!("{what}: expected Dict")))?;
     let mut pairs = dict.pairs();
+    let mut out = Vec::new();
     loop {
         let pair = strand.with_slots_sync(|strand, [mut key, mut value]| {
             if !pairs.next(strand, &mut key, &mut value)? {
                 return Ok(None);
             }
-            let local = key.to_string(strand)?;
-            let value = required_string(strand, &value, "attribute value")?;
-            Ok(Some((local, value)))
+            let Some(key) = key_string(strand, &key)? else {
+                return Err(Error::type_error(
+                    strand,
+                    format!("{what}: expected Str or Sym keys"),
+                ));
+            };
+            let value = required_string(strand, &value, what)?;
+            Ok(Some((key, value)))
         })?;
-        let Some((local, value)) = pair else {
-            return Ok(());
-        };
-        append_attr(
-            this,
-            strand,
-            Attr {
-                name: Name {
-                    local,
-                    namespace: None,
-                    prefix: None,
-                },
-                value,
-            },
-        )?;
+        match pair {
+            Some(pair) => out.push(pair),
+            None => return Ok(out),
+        }
     }
 }
 
-/// Appends one variadic constructor item: an `Attr` becomes an attribute and
-/// anything else becomes a child.
-///
-/// Children are not type-checked here, matching `push` and `children.push`:
-/// `verify` and `encode` remain the single place a tree is validated. Checking
-/// eagerly would also reject Do subclasses of `Node`, which cast as neither
-/// `Node` nor `Str`.
+/// Appends one variadic constructor item: a `Dict` adds attributes keyed in
+/// Clark notation, and anything else becomes a child.
 fn append_item<'v, 's>(
     this: Instance<'v, '_, Node>,
     strand: &mut Strand<'v, 's>,
     item: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let global = strand.state::<Tag>();
-    if let Some(attr) = global.attr_type.cast(&item) {
-        let attr = attr.enter_sync(strand, |strand, attr| Ok(attr.borrow(strand)?.clone()))?;
-        return append_attr(this, strand, attr);
+    if item.as_dict(strand).is_some() {
+        let mut attrs = Vec::new();
+        for (key, value) in dict_pairs(strand, &item, "attribute")? {
+            attrs.push(Attr::checked(strand, Name::from_clark(&key), value)?);
+        }
+        let mut node = this.borrow_mut(strand)?;
+        check_new_attrs(strand, &node.attrs, None, &attrs)?;
+        node.attrs.extend(attrs);
+        return Ok(());
     }
+    check_child(strand, &item)?;
     let borrow = this.borrow(strand)?;
     let children = Ref::slot::<CHILDREN>(&borrow).as_array(strand).unwrap();
     children.push(strand, item)
@@ -287,7 +500,7 @@ fn append_item<'v, 's>(
 impl<'v> Object<'v> for Node {
     const MODULE: &'static str = "xml";
     const NAME: &'static str = "Node";
-    const SLOTS: usize = 3;
+    const SLOTS: usize = 1;
     type Annex = NodeAnnex;
     type Type = ();
     type TypeAnnex = ();
@@ -300,32 +513,41 @@ impl<'v> Object<'v> for Node {
     ) -> Result<'v, 's, ()> {
         let global = strand.state::<Tag>();
         let namespace_sym = global.syms.namespace;
-        let prefix_sym = global.syms.prefix;
-        let attrs_sym = global.syms.attrs;
-        let ([tag], [namespace, prefix, attrs], items) = unpack!(
+        let namespaces_sym = global.syms.namespaces;
+        let ([tag], [namespace, namespaces], items) = unpack!(
             strand,
             args,
             1,
             0,
             namespace_sym = None,
-            prefix_sym = None,
-            attrs_sym = None,
+            namespaces_sym = None,
             *
         )?;
         let name = Name {
             local: required_string(strand, &tag, "tag")?,
             namespace: optional_string(strand, namespace.as_deref(), "namespace")?,
-            prefix: optional_string(strand, prefix.as_deref(), "prefix")?,
         };
-        create_node(strand, this, name, Slot::reborrow(&mut out))?;
+        validate_name(strand, &name, "element name")?;
+        let mut declarations = Vec::new();
+        if let Some(namespaces) = namespaces {
+            for (prefix, namespace) in dict_pairs(strand, &namespaces, "namespaces")? {
+                validate_namespace_binding(strand, &prefix, &namespace)?;
+                match find_namespace(&declarations, &prefix) {
+                    Some(index) => declarations[index].1 = namespace,
+                    None => declarations.push((prefix, namespace)),
+                }
+            }
+        }
+        create_node(
+            strand,
+            this,
+            name,
+            Vec::new(),
+            declarations,
+            Slot::reborrow(&mut out),
+        )?;
         let node = this.cast(&out).expect("freshly created node");
         node.enter_sync(strand, |strand, node| {
-            // `attrs:` lands ahead of any positional `Attr`, so the bulk form
-            // reads as the element's own attribute list regardless of where the
-            // keyword appears in the call.
-            if let Some(attrs) = attrs {
-                append_attrs_dict(node, strand, &attrs)?;
-            }
             for item in items {
                 append_item(node, strand, item)?;
             }
@@ -339,7 +561,7 @@ impl<'v> Object<'v> for Node {
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        fmt!(strand, w, "<xml.Node {}>", borrow.name.qname())
+        fmt!(strand, w, "<xml.Node {}>", borrow.name.clark())
     }
 
     fn index<'a, 's>(
@@ -349,9 +571,10 @@ impl<'v> Object<'v> for Node {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         if let Some(key) = index.as_str(strand) {
-            let key = key.to_string();
-            if let Some((_, value)) = find_attr(this, strand, &key, None)? {
-                Output::set(strand, out, value.as_str());
+            let name = Name::from_clark(&key.to_string());
+            let node = this.borrow(strand)?;
+            if let Some(index) = find_attr(&node.attrs, &name) {
+                Output::set(strand, out, node.attrs[index].value.as_str());
                 Ok(())
             } else {
                 Err(Error::index(strand))
@@ -384,44 +607,13 @@ impl<'v> Object<'v> for Node {
         index: Slot<'v, 'a>,
         value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let key = required_string(strand, &index, "index")?;
+        let name = attr_key(strand, &index)?;
         let value = required_string(strand, &value, "value")?;
-        if let Some((attr_index, _)) = find_attr(this, strand, &key, None)? {
-            let global = strand.state::<Tag>();
-            let borrow = this.borrow(strand)?;
-            let attrs = Ref::slot::<ATTRS>(&borrow).as_array(strand).unwrap();
-            strand.with_slots_sync(|strand, [mut item]| {
-                attrs.get(strand, attr_index, &mut item)?;
-                global
-                    .attr_type
-                    .cast(&item)
-                    .unwrap()
-                    .enter_sync(strand, |strand, attr| {
-                        attr.borrow_mut(strand)?.value = value;
-                        Ok(())
-                    })
-            })
-        } else {
-            append_attr(
-                this,
-                strand,
-                Attr {
-                    name: Name {
-                        local: key,
-                        namespace: None,
-                        prefix: None,
-                    },
-                    value,
-                },
-            )
-        }
+        let attr = Attr::checked(strand, name, value)?;
+        set_attr(this, strand, attr)
     }
 
-    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        let namespace_sym = builder.sym("namespace");
-        let prefix_sym = builder.sym("prefix");
-        let default_sym = builder.sym("default");
-        let else_sym = builder.sym("else");
+    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("tag", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
@@ -429,7 +621,9 @@ impl<'v> Object<'v> for Node {
                 Ok(())
             })
             .set("tag", |this, strand, value| {
-                this.borrow_mut(strand)?.name.local = required_string(strand, &value, "tag")?;
+                let tag = required_string(strand, &value, "tag")?;
+                validate_ncname(strand, &tag, "element name")?;
+                this.borrow_mut(strand)?.name.local = tag;
                 Ok(())
             })
             .get("namespace", |this, strand, out| {
@@ -441,30 +635,13 @@ impl<'v> Object<'v> for Node {
                 Ok(())
             })
             .set("namespace", |this, strand, value| {
-                this.borrow_mut(strand)?.name.namespace =
-                    optional_string(strand, Some(&value), "namespace")?;
-                Ok(())
-            })
-            .get("prefix", |this, strand, out| {
-                if let Some(prefix) = &this.borrow(strand)?.name.prefix {
-                    Output::set(strand, out, prefix.as_str());
-                } else {
-                    Output::set(strand, out, Nil);
-                }
-                Ok(())
-            })
-            .set("prefix", |this, strand, value| {
-                this.borrow_mut(strand)?.name.prefix =
-                    optional_string(strand, Some(&value), "prefix")?;
-                Ok(())
-            })
-            .get("qname", |this, strand, out| {
-                let qname = this.borrow(strand)?.name.qname();
-                Output::set(strand, out, qname.as_str());
+                let namespace = optional_string(strand, Some(&value), "namespace")?;
+                validate_namespace(strand, namespace.as_deref(), "element name")?;
+                this.borrow_mut(strand)?.name.namespace = namespace;
                 Ok(())
             })
             .get("attrs", |this, strand, out| {
-                Output::set(strand, out, ArrayView::new(this, Attrs));
+                Output::set(strand, out, DictView::new(this, Attrs));
                 Ok(())
             })
             .get("children", |this, strand, out| {
@@ -472,127 +649,12 @@ impl<'v> Object<'v> for Node {
                 Ok(())
             })
             .get("namespaces", |this, strand, out| {
-                let borrow = this.borrow(strand)?;
-                Output::set(strand, out, Ref::slot::<NAMESPACES>(&borrow));
-                Ok(())
-            })
-            .method("attr", async move |this, strand, args, out| {
-                let ([name], [namespace, default, else_value]) = unpack!(
-                    strand,
-                    args,
-                    1,
-                    0,
-                    namespace_sym = None,
-                    default_sym = None,
-                    else_sym = None
-                )?;
-                if default.is_some() && else_value.is_some() {
-                    return Err(Error::unexpected_key(strand, else_sym));
-                }
-                let name = required_string(strand, &name, "name")?;
-                let namespace = optional_string(strand, namespace.as_deref(), "namespace")?;
-                if let Some((_, value)) = find_attr(this, strand, &name, namespace.as_deref())? {
-                    Output::set(strand, out, value.as_str());
-                } else if let Some(default) = default {
-                    Output::set(strand, out, default);
-                } else if let Some(else_value) = else_value {
-                    call!(strand, else_value, out).await?;
-                } else {
-                    Output::set(strand, out, Nil);
-                }
-                Ok(())
-            })
-            .method("set_attr", async move |this, strand, args, out| {
-                let ([name, value], [namespace, prefix]) =
-                    unpack!(strand, args, 2, 0, namespace_sym = None, prefix_sym = None)?;
-                let name = required_string(strand, &name, "name")?;
-                let value = required_string(strand, &value, "value")?;
-                let namespace = optional_string(strand, namespace.as_deref(), "namespace")?;
-                let prefix = prefix
-                    .as_deref()
-                    .map(|prefix| optional_string(strand, Some(prefix), "prefix"))
-                    .transpose()?;
-                if let Some((index, _)) = find_attr(this, strand, &name, namespace.as_deref())? {
-                    let global = strand.state::<Tag>();
-                    let borrow = this.borrow(strand)?;
-                    let attrs = Ref::slot::<ATTRS>(&borrow).as_array(strand).unwrap();
-                    if let Some(prefix) = prefix {
-                        strand.with_slots_sync(|strand, [mut item]| {
-                            global.attr_type.create(
-                                strand,
-                                Attr {
-                                    name: Name {
-                                        local: name,
-                                        namespace,
-                                        prefix,
-                                    },
-                                    value,
-                                },
-                                &mut item,
-                            );
-                            let replaced = attrs.set(strand, index, &mut item)?;
-                            debug_assert!(replaced);
-                            Ok(())
-                        })?;
-                    } else {
-                        strand.with_slots_sync(|strand, [mut item]| {
-                            attrs.get(strand, index, &mut item)?;
-                            global.attr_type.cast(&item).unwrap().enter_sync(
-                                strand,
-                                |strand, attr| {
-                                    attr.borrow_mut(strand)?.value = value;
-                                    Ok(())
-                                },
-                            )
-                        })?;
-                    }
-                } else {
-                    append_attr(
-                        this,
-                        strand,
-                        Attr {
-                            name: Name {
-                                local: name,
-                                namespace,
-                                prefix: prefix.flatten(),
-                            },
-                            value,
-                        },
-                    )?;
-                }
-                Output::set(strand, out, Nil);
-                Ok(())
-            })
-            .method("delete_attr", async move |this, strand, args, out| {
-                let ([name], [namespace]) = unpack!(strand, args, 1, 0, namespace_sym = None)?;
-                let name = required_string(strand, &name, "name")?;
-                let namespace = optional_string(strand, namespace.as_deref(), "namespace")?;
-                let global = strand.state::<Tag>();
-                let borrow = this.borrow(strand)?;
-                let attrs = Ref::slot::<ATTRS>(&borrow).as_array(strand).unwrap();
-                let deleted = strand.with_slots_sync(|strand, [mut item]| {
-                    let mut deleted = false;
-                    for index in (0..attrs.len(strand)?).rev() {
-                        attrs.get(strand, index, &mut item)?;
-                        let Some(attr) = global.attr_type.cast(&item) else {
-                            continue;
-                        };
-                        let matches = attr.enter_sync(strand, |strand, attr| {
-                            let attr = attr.borrow(strand)?;
-                            Ok(attr.name.local == name && attr.name.namespace == namespace)
-                        })?;
-                        if matches {
-                            attrs.delete(strand, index)?;
-                            deleted = true;
-                        }
-                    }
-                    Ok(deleted)
-                })?;
-                Output::set(strand, out, deleted);
+                Output::set(strand, out, DictView::new(this, Namespaces));
                 Ok(())
             })
             .method("push", async move |this, strand, args, out| {
                 let ([child], []) = unpack!(strand, args, 1, 0)?;
+                check_child(strand, &child)?;
                 let borrow = this.borrow(strand)?;
                 let arr = Ref::slot::<CHILDREN>(&borrow).as_array(strand).unwrap();
                 arr.push(strand, child)?;

@@ -1,5 +1,5 @@
 # dolang: strict
-# Parses, edits, validates, and serializes XML element trees.
+# Parses, edits, and serializes XML element trees.
 
 import std:
   - @IndexItem
@@ -10,75 +10,41 @@ pub @let EncodeValue = (Node | Str)
 # A value returned by [`decode`](xml.decode).
 pub @let DecodeValue = Node
 
-# An XML attribute.
-pub class Attr
-  # Creates an attribute.
-  #
-  # ## Example
-  #
-  # ```
-  # let attr = Attr "id" "123" namespace: "urn:inventory" prefix: "inv"
-  # ```
-  pub def (init)
-    self
-    # Local attribute name.
-    name @ Str
-    # Attribute value.
-    value @ Str
-    # Namespace URI.
-    :namespace @ Str = nil
-    # Preferred namespace prefix.
-    :prefix @ Str = nil
-  do
-    ...
-
-  # Read-only local attribute name.
-  #[getter]
-  pub def name self -> Str
-    ...
-
-  # Read-only namespace URI, or `nil` for no namespace.
-  #[getter]
-  pub def namespace self -> (Str | nil)
-    ...
-
-  # Read-only preferred prefix, or `nil`.
-  #[getter]
-  pub def prefix self -> (Str | nil)
-    ...
-
-  # Read-only qualified name formed from `prefix` and `name`.
-  #[getter]
-  pub def qname self -> Str
-    ...
-
-  # Mutable attribute value.
-  pub field value @ Str = ...
-
 # A parentless XML element.
 #
 # Nodes can be shared or inserted into different trees. Serialization derives
 # namespace declarations from each node rather than from parent pointers.
+#
+# Attributes are keyed by expanded name in Clark notation: `{namespace}local`,
+# or `local` for an unnamespaced attribute. Names have no prefixes. For a
+# namespaced name, serialization uses a prefix that
+# [`namespaces`](xml.Node.namespaces) declares on the element or an ancestor,
+# and otherwise makes an element's namespace the default or generates a prefix.
+#
+# Changes are checked as they are made, so any tree without a cycle can be
+# serialized. Setting an invalid name, an empty namespace, or the `xmlns`
+# namespace raises `ValueError`, as does adding text or an attribute value
+# containing a character XML forbids. Adding a child other than a `Node` or
+# `Str` raises `TypeError`.
 pub class Node: @Index[{*(Str): Str, *(Node | Str)}] @Assign[Str, Str] @Spread[Node | Str]
   # Creates an element, optionally with attributes and children.
   #
-  # Children are not checked here, matching `children.push`; [`verify`](xml.verify)
-  # and serialization reject children other than `Node` and `Str`.
-  # `attrs:` is applied before positional `Attr` values.
-  #
   # ## Errors
   #
-  # `TypeError` if `attrs:` is not a dict or one of its values is not a `Str`.
+  # | Exception | Condition |
+  # | --- | --- |
+  # | `TypeError` | A dict has a key other than a `Str` or `Sym` or a value other than a `Str`, or a child is not a `Node` or `Str`. |
+  # | `ValueError` | A name, string, or namespace declaration is invalid, or two attributes have the same expanded name. |
   #
   # ## Example
   #
   # ```
-  # let item = Node "item" namespace: "urn:inventory" prefix: "inv"
+  # let item = Node item namespace: "urn:inventory" namespaces: {inv: "urn:inventory"}
   # let disk = Node disk
-  #   attrs:
+  #   $
   #     type: file
   #     device: disk
-  #   - $ Node driver attrs: {name: "qemu", type: "qcow2"}
+  #   - $ Node driver {name: "qemu", type: "qcow2"}
   # ```
   pub def (init)
     self
@@ -86,21 +52,29 @@ pub class Node: @Index[{*(Str): Str, *(Node | Str)}] @Assign[Str, Str] @Spread[N
     tag @ Str
     # Namespace URI.
     :namespace @ Str = nil
-    # Preferred namespace prefix.
-    :prefix @ Str = nil
-    # Unnamespaced attributes with `Sym` or `Str` keys and `Str` values.
-    :attrs @ BaseDict[Sym | Str, Str] = nil
-    # Attributes or children.
-    *items @ (Attr | Value)
+    # Initial [`namespaces`](xml.Node.namespaces), with `Sym` or `Str` keys.
+    :namespaces @ BaseDict[Sym | Str, Str] = nil
+    # Children, and dicts of attributes keyed in Clark notation.
+    #
+    # Bareword dict keys are `Sym`s and name unnamespaced attributes.
+    *items @ (Node | Str | BaseDict[Sym | Str, Str])
   do
     ...
 
-  # Mutable array-like view of [`Attr`](xml.Attr) objects in document order.
+  # Mutable map of attribute values by name in Clark notation, in document
+  # order.
   #
-  # The view supports indexed assignment and array mutation methods. Duplicate
-  # expanded names can exist temporarily, but verification rejects them.
+  # Keys may also be `Sym`s for unnamespaced attributes; iteration yields `Str`
+  # keys. Setting an existing attribute keeps its position.
+  #
+  # ## Example
+  #
+  # ```
+  # node.attrs["{urn:inventory}id"] = "123"
+  # let id = node.attrs.get "{urn:inventory}id"
+  # ```
   #[getter]
-  pub def attrs self -> MutSeq[Attr]
+  pub def attrs self -> MutMap[Str, Str]
     ...
 
   # Mutable array-like view of child `Node` and `Str` values in document order.
@@ -113,56 +87,23 @@ pub class Node: @Index[{*(Str): Str, *(Node | Str)}] @Assign[Str, Str] @Spread[N
   # Mutable namespace URI, or `nil` for no namespace.
   pub field namespace @ (Str | nil) = ...
 
-  # Mutable dict containing the complete effective namespace snapshot.
+  # Mutable map of the namespace declarations this element makes itself.
   #
-  # Keys are prefix strings; `""` is the default namespace. Parsed descendants
-  # retain inherited bindings so they can be detached and serialized.
-  pub field namespaces @ Dict[Str, Str] = ...
-
-  # Mutable preferred prefix, or `nil`.
-  pub field prefix @ (Str | nil) = ...
-
-  # Read-only qualified name formed from `prefix` and `tag`.
+  # Keys are prefix strings; `""` is the default namespace. Serialization
+  # declares these, uses them to spell names in this element's subtree, and
+  # adds whatever else those names need. Declarations choose prefixes, and are
+  # required for prefixes used in content, such as attribute values naming a
+  # qualified type. A parsed element holds the declarations written on it, not
+  # those it inherits.
+  #
+  # Declaring a binding XML forbids, such as a prefix for an empty URI or
+  # another prefix for the XML namespace, raises `ValueError`.
   #[getter]
-  pub def qname self -> Str
+  pub def namespaces self -> MutMap[Str, Str]
     ...
 
   # Mutable local element name.
   pub field tag @ Str = ...
-
-  # Gets the first attribute matching an expanded name.
-  #
-  # ## Example
-  #
-  # ```
-  # let id = node.attr "id" namespace: "urn:inventory"
-  # ```
-  pub def attr[D = nil]
-    self
-    # Local attribute name.
-    name @ Str
-    # Namespace URI.
-    :namespace @ Str = nil
-    # Value returned when absent.
-    :default @ D = nil
-    # Function evaluated when absent.
-    :else @ (() -> D) = nil
-  do -> (Str | D)
-    ...
-
-  # Deletes all attributes matching an expanded name.
-  #
-  # ## Returns
-  #
-  # Whether an attribute was deleted.
-  pub def delete_attr
-    self
-    # Local attribute name.
-    name @ Str
-    # Namespace URI.
-    :namespace @ Str = nil
-  do -> Bool
-    ...
 
   # Appends a child.
   pub def push
@@ -172,29 +113,11 @@ pub class Node: @Index[{*(Str): Str, *(Node | Str)}] @Assign[Str, Str] @Spread[N
   do
     ...
 
-  # Updates the first matching attribute or appends one.
-  #
-  # An omitted `prefix:` mutates the existing value. An explicit prefix,
-  # including `nil`, replaces the attribute because identity fields are
-  # immutable.
-  pub def set_attr
-    self
-    # Local attribute name.
-    name @ Str
-    # Attribute value.
-    value @ Str
-    # Namespace URI.
-    :namespace @ Str = nil
-    # Preferred namespace prefix.
-    :prefix @ Str = nil
-  do
-    ...
-
   # Returns a depth-first, parent-first iterator over this node and descendants.
   pub def traverse self -> Iter[Node | Str]
     ...
 
-  # Reads an unnamespaced attribute by string or a child by integer index.
+  # Reads an attribute by Clark-notation string or a child by integer index.
   #
   # Negative integer indexes count from the end.
   @def (index)[K] self key@K -> IndexItem[{*(Str): Str, *(Node | Str)}, K]
@@ -202,7 +125,7 @@ pub class Node: @Index[{*(Str): Str, *(Node | Str)}] @Assign[Str, Str] @Spread[N
   pub def (index)[K] self key@K -> IndexItem[{*(Str): Str, *(Node | Str)}, K]
     ...
 
-  # Sets an unnamespaced attribute, adding it if it is missing.
+  # Sets an attribute by Clark-notation string, adding it if it is missing.
   pub def (assign) self key@Str value@Str
     ...
 
@@ -240,14 +163,15 @@ pub def decode
 do -> DecodeValue
   ...
 
-# Validates and serializes an XML tree.
+# Serializes an XML tree.
 #
 # Namespace declaration spelling and placement can differ from the input while
 # preserving element and attribute namespace semantics.
 #
 # ## Errors
 #
-# `ValueError` if the tree is invalid or cyclic.
+# `ValueError` if the tree contains a cycle, or a lone string contains a
+# character XML forbids.
 #
 # ## Example
 #
@@ -260,25 +184,4 @@ pub def encode
   # XML node or text.
   node @ EncodeValue
 do -> Str
-  ...
-
-# Checks an entire XML tree without serializing it.
-#
-# Validation covers names, namespace bindings, attribute uniqueness, child and
-# attribute types, and cycles.
-#
-# ## Errors
-#
-# `ValueError` if the tree is invalid or cyclic.
-#
-# ## Example
-#
-# ```
-# let doc = Node "root"
-# verify $doc
-# ```
-pub def verify
-  # Root element.
-  node @ Node
-do
   ...
