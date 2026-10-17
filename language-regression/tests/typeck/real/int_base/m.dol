@@ -1,0 +1,36 @@
+# dolang: strict
+
+pub def valid() -> Int
+  let a @ Int = int "0xFF"
+  let b @ Int = int "FF" base: 16
+  let c @ Int = int 3.5
+  (a + b + c)
+
+pub def invalid() -> Int
+  int 42 base: 16
+  # error: no overload of `std.int` accepts these arguments
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   int 42 base: 16
+  #    |   ^^^^^^^^^^^^^^^
+  #    |
+  #    = note: `(std.Num | std.Str) -> std.Int`: the callee takes no such argument
+  #    = note: `(std.Str, base: std.Int) -> std.Int`: expected `std.Str`, found `42`
+  int "42" base: "10"
+  # error: no overload of `std.int` accepts these arguments
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   int "42" base: "10"
+  #    |   ^^^^^^^^^^^^^^^^^^^
+  #    |
+  #    = note: `(std.Num | std.Str) -> std.Int`: the callee takes no such argument
+  #    = note: `(std.Str, base: std.Int) -> std.Int`: expected `std.Int`, found `"10"`
+  int "42" base: nil
+# error: no overload of `std.int` accepts these arguments
+#   --> m.dol:LL:LL
+#    |
+# LL |   int "42" base: nil
+#    |   ^^^^^^^^^^^^^^^^^^
+#    |
+#    = note: `(std.Num | std.Str) -> std.Int`: the callee takes no such argument
+#    = note: `(std.Str, base: std.Int) -> std.Int`: expected `std.Int`, found `nil`

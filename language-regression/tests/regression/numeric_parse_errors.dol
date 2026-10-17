@@ -11,3 +11,92 @@ assert_throws $std.OverflowError do int "-17014118346046923173168730371588410572
 
 assert_eq (int "42") 42
 assert_eq (float "3.5") 3.5
+
+for prefix base = [("0x", 16), ("0X", 16), ("0o", 8), ("0O", 8), ("0b", 2), ("0B", 2)]
+  assert_eq (int "$(prefix)10") $base
+  assert_eq (int "+$(prefix)1") 1
+  assert_eq (int "-$(prefix)1") -1
+
+for base lower upper = [
+  (2, "1", "1"),
+  (3, "2", "2"),
+  (4, "3", "3"),
+  (5, "4", "4"),
+  (6, "5", "5"),
+  (7, "6", "6"),
+  (8, "7", "7"),
+  (9, "8", "8"),
+  (10, "9", "9"),
+  (11, "a", "A"),
+  (12, "b", "B"),
+  (13, "c", "C"),
+  (14, "d", "D"),
+  (15, "e", "E"),
+  (16, "f", "F"),
+  (17, "g", "G"),
+  (18, "h", "H"),
+  (19, "i", "I"),
+  (20, "j", "J"),
+  (21, "k", "K"),
+  (22, "l", "L"),
+  (23, "m", "M"),
+  (24, "n", "N"),
+  (25, "o", "O"),
+  (26, "p", "P"),
+  (27, "q", "Q"),
+  (28, "r", "R"),
+  (29, "s", "S"),
+  (30, "t", "T"),
+  (31, "u", "U"),
+  (32, "v", "V"),
+  (33, "w", "W"),
+  (34, "x", "X"),
+  (35, "y", "Y"),
+  (36, "z", "Z")
+]
+  assert_eq (int "10" :base) $base
+  assert_eq (int "1_0" :base) $base
+  assert_eq (int lower :base) (base - 1)
+  assert_eq (int upper :base) (base - 1)
+  assert_eq (int "-10" :base) (-base)
+  assert_eq (int "+10" :base) $base
+
+assert_eq (int "zZ" base: 36) 1295
+assert_eq (int "aA" base: 16) 170
+assert_eq (int "010") 10
+assert_eq (int "0xFF_FF") 65535
+assert_eq (int "-1_000") -1000
+assert_eq (int 42) 42
+assert_eq (int 3.5) 3
+assert_eq (int true) 1
+
+for value = ["_1", "1_", "1__0", "0x_FF", "-_1", "+_1", "0x", "-0b", " 1", "1 ", "\t1", "1\n", "0b2", "0o8"]
+  assert_throws $std.ValueError do int $value
+
+for value = ["_1", "1_", "1__0", "-_1", "0x1F", "G", " 1", "1 "]
+  assert_throws $std.ValueError do int $value base: 16
+
+for base = [-1, 0, 1, 37, 170141183460469231731687303715884105727]
+  assert_throws $std.ValueError do int "1" :base
+
+for base = [nil, true, 2.0, "16"]
+  assert_throws $std.TypeError do int "1" :base
+
+for value = [42, 3.5, true, nil, [], {}]
+  assert_throws $std.TypeError do int $value base: 10
+
+assert_eq (int "170141183460469231731687303715884105727") $Int.MAX
+assert_eq (int "-170141183460469231731687303715884105728") $Int.MIN
+assert_eq (int "0x7fffffffffffffffffffffffffffffff") $Int.MAX
+assert_eq (int "-0x80000000000000000000000000000000") $Int.MIN
+assert_eq (int "7fffffffffffffffffffffffffffffff" base: 16) $Int.MAX
+assert_eq (int "-80000000000000000000000000000000" base: 16) $Int.MIN
+assert_throws $std.OverflowError do int "0x80000000000000000000000000000000"
+assert_throws $std.OverflowError do int "-0x80000000000000000000000000000001"
+assert_throws $std.OverflowError do int "80000000000000000000000000000000" base: 16
+assert_throws $std.OverflowError do int "-80000000000000000000000000000001" base: 16
+
+assert_eq (int "0x1F" base: 36) 42819
+assert_throws $std.ValueError do int "2" base: 2
+assert_throws $std.ValueError do int "999999999999999999999999999999999999999999999x"
+assert_throws $std.ValueError do int "999999999999999999999999999999999999999999999_"

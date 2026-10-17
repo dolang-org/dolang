@@ -225,18 +225,37 @@ pub def hash
 do -> Int
   ...
 
-#
+@def int value @ (Num | Str) -> Int
+@def int value @ Str :base @ Int -> Int
+
 # Coerces or parses a value as an [`Int`](std.Int).
+#
+# Strings accept an optional sign and single `_` separators between digits.
+# Without `base:`, `0x`, `0o`, and `0b` prefixes (in either case) select
+# hexadecimal, octal, and binary; other strings are decimal. No whitespace
+# is stripped.
 #
 # ## Errors
 #
 # | Exception | Condition |
 # | --- | --- |
-# | [`ValueError`](std.ValueError) | The string is empty or malformed. |
+# | [`ValueError`](std.ValueError) | The string is empty or malformed, or the base is outside 2–36. |
 # | [`OverflowError`](std.OverflowError) | The integer string is out of range. |
-# | [`TypeError`](std.TypeError) | The value cannot be converted. |
+# | [`TypeError`](std.TypeError) | The value cannot be converted, the base is not an integer, or `base:` is supplied with a non-string value. |
 #
-pub def int value @ (Num | Str) -> Int
+# ## Example
+#
+# ```
+# assert_eq (int "0xFF") 255
+# assert_eq (int "FF" base: 16) 255
+# assert_eq (int "1_000") 1000
+# ```
+pub def int
+  value @ (Num | Str)
+  # Base from 2 to 36, using digits `0-9` and letters `a-z` (in either case).
+  # When supplied, the string contains raw digits: no prefix is stripped.
+  :base @ Int = nil
+do -> Int
   ...
 
 #
