@@ -21,6 +21,7 @@ mod math;
 mod strand;
 
 pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
+    let base_key = builder.sym("base");
     let fmt = fmt::register(builder);
     let member_scopes = class::register_member_scopes(builder);
     let member_scopes = builder.register_state::<class::MemberScopeTag>(member_scopes);
@@ -210,8 +211,17 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             Ok(())
         })
         .function("int", async move |strand, args, out| {
-            let ([value], []) = unpack!(strand, args, 1, 0)?;
-            let value = int::coerce(&value, strand)?;
+            let ([value], [base]) = unpack!(strand, args, 1, 0, base_key = None)?;
+            let base = base
+                .map(|base| {
+                    let base = base.to_int(strand)?;
+                    if !(2..=36).contains(&base) {
+                        return Err(Error::value(strand, "int: base must be between 2 and 36"));
+                    }
+                    Ok(base as u32)
+                })
+                .transpose()?;
+            let value = int::coerce(&value, strand, base)?;
             Output::set(strand, out, value);
             Ok(())
         })

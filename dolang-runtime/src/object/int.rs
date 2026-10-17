@@ -674,18 +674,79 @@ impl<'v> Protocol<'v> for Verbatim {
     }
 }
 
+fn parse_integer(text: &str, base: Option<u32>) -> std::result::Result<i128, IntErrorKind> {
+    let (negative, digits) = match text.as_bytes().first() {
+        Some(b'-') => (true, &text[1..]),
+        Some(b'+') => (false, &text[1..]),
+        _ => (false, text),
+    };
+    let (base, digits) = match base {
+        Some(base) => (base, digits),
+        None => match digits.as_bytes().get(..2) {
+            Some(b"0x" | b"0X") => (16, &digits[2..]),
+            Some(b"0o" | b"0O") => (8, &digits[2..]),
+            Some(b"0b" | b"0B") => (2, &digits[2..]),
+            _ => (10, digits),
+        },
+    };
+    let digit = |byte: u8| {
+        match byte {
+            b'0'..=b'9' => Some(u32::from(byte - b'0')),
+            b'a'..=b'z' => Some(u32::from(byte - b'a') + 10),
+            b'A'..=b'Z' => Some(u32::from(byte - b'A') + 10),
+            _ => None,
+        }
+        .filter(|&value| value < base)
+    };
+    let mut previous_digit = false;
+    for byte in digits.bytes() {
+        if digit(byte).is_some() {
+            previous_digit = true;
+        } else if byte == b'_' && previous_digit {
+            previous_digit = false;
+        } else {
+            return Err(IntErrorKind::InvalidDigit);
+        }
+    }
+    if !previous_digit {
+        return Err(IntErrorKind::InvalidDigit);
+    }
+    digits
+        .bytes()
+        .filter(|&byte| byte != b'_')
+        .try_fold(0i128, |acc, byte| {
+            let value = i128::from(digit(byte).unwrap());
+            acc.checked_mul(base.into())
+                .and_then(|acc| {
+                    if negative {
+                        acc.checked_sub(value)
+                    } else {
+                        acc.checked_add(value)
+                    }
+                })
+                .ok_or(if negative {
+                    IntErrorKind::NegOverflow
+                } else {
+                    IntErrorKind::PosOverflow
+                })
+        })
+}
+
 pub(crate) fn coerce<'v, 's>(
     value: &Value<'v>,
     strand: &mut Strand<'v, 's>,
+    base: Option<u32>,
 ) -> Result<'v, 's, i128> {
-    if let Some(str) = value.as_str_raw(strand) {
-        str.parse::<i128>().map_err(|e| match e.kind() {
-            IntErrorKind::Zero => unreachable!(),
-            IntErrorKind::PosOverflow | IntErrorKind::NegOverflow => Error::overflow(strand),
-            IntErrorKind::Empty | IntErrorKind::InvalidDigit | _ => {
-                Error::value(strand, format!("int: not a valid integer: {:?}", str))
+    if let Some(text) = value.as_str_raw(strand) {
+        parse_integer(text, base).map_err(|error| {
+            if matches!(error, IntErrorKind::PosOverflow | IntErrorKind::NegOverflow) {
+                Error::overflow(strand)
+            } else {
+                Error::value(strand, format!("int: not a valid integer: {:?}", text))
             }
         })
+    } else if base.is_some() {
+        Err(Error::type_error(strand, "int: base requires a Str value"))
     } else {
         match value.to_prim(strand)? {
             Prim::Int(v) => Ok(v),
