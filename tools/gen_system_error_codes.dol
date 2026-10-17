@@ -1,0 +1,248 @@
+#!/usr/bin/env dolang
+# Generates system error-code tables from pinned, hash-verified sources.
+# Local inputs permit offline regeneration. Omit all inputs to download them.
+
+import args digest fs http shell time xml zip
+import regex:
+  - Regex
+
+let DEFINE = Regex r"(?m)^\s*#\s*define\s+(E[A-Z0-9_]+)\s+([^\s/]+)"
+let NUMBER = Regex r"^\(?([0-9]+)\)?$"
+let WIN32 = Regex r"^(0x[0-9A-Fa-f]{8})([A-Z][A-Z0-9_]+)$"
+let WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+# Keep this array ordered: provenance follows the source order.
+let SOURCES = [
+  ("linux-errno-base.h",
+    "https://raw.githubusercontent.com/torvalds/linux/7d0a66e4bb9081d75c82ec4957c50034cb0ea449/include/uapi/asm-generic/errno-base.h",
+    "2c148e92b8318deeb767fabd60822113e575ee664ff09a1873aed8f7a495793c"),
+  ("linux-errno.h",
+    "https://raw.githubusercontent.com/torvalds/linux/7d0a66e4bb9081d75c82ec4957c50034cb0ea449/include/uapi/asm-generic/errno.h",
+    "fb7b5a504015f3a9074c641e7371b250d867d751d90e4a22a8ac17fced3d50af"),
+  ("freebsd-errno.h",
+    "https://raw.githubusercontent.com/freebsd/freebsd-src/a3a884c0d43ab02187022be9ae9084e6c725ba68/sys/sys/errno.h",
+    "4e615f248a900c6c240c0c87844fd60a8bdffc8a34259d876d5dfde74bd9e42c"),
+  ("macos-errno.h",
+    "https://raw.githubusercontent.com/apple-oss-distributions/xnu/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/sys/errno.h",
+    "b16e5eb195f153793b14c3826e6b04db945e9ed6a37c5a9046196555bded6906"),
+  ("ms-erref-23.docx",
+    "https://winprotocoldocs-bhdugrdyduf5h2e4.b02.azurefd.net/MS-ERREF/%5BMS-ERREF%5D-241119.docx",
+    "3851d065ff4a4a6ee8e69c7ddaaa2883947ad46f4f7ecc9b8de30ff5660e4abe"),
+]
+
+def verify_source source path
+  let name _url expected = source
+  let hash = digest.sha256 $path.read("b")
+  let actual = "${hash:x}"
+  if (actual != expected)
+    throw std.ValueError "$name: expected sha256:$expected, got sha256:$actual"
+
+def download_sources directory
+  let paths = []
+  for source = SOURCES
+    let name url _hash = source
+    let path = (directory / name)
+    time.timeout 60 do
+      http.get $url do |response|
+        path.write $response.body()
+    verify_source $source $path
+    paths.push $path
+  paths
+
+def parse_errno paths
+  let definitions = {}
+  let order = []
+  for path = paths
+    for caps = DEFINE.find $path.read()
+      let name = str $caps[1]
+      if !definitions.contains(name)
+        order.push $name
+      definitions[name] = str $caps[2]
+
+  let resolved = {}
+  def resolve name stack
+    if resolved.contains(name)
+      return resolved[name]
+    if stack.contains(name)
+      throw std.ValueError "cyclic errno alias involving $name"
+    let expression = definitions.get $name default: nil
+    if (expression == nil)
+      return nil
+    let value = if let caps = NUMBER.match $expression
+      int (str caps[1])
+    else if definitions.contains(expression)
+      let next_stack = Set $stack
+      next_stack.add $name
+      resolve $expression $next_stack
+    else
+      nil
+    if (value != nil)
+      resolved[name] = value
+    value
+
+  # Numeric definitions are canonical; alias-only names do not replace them.
+  let result = {}
+  for name = order
+    if NUMBER.match $definitions[name]
+      let value = resolve $name (Set [])
+      if ((value != nil) && !result.contains(value))
+        result[value] = name
+  let canonical = []
+  for value name = result
+    canonical.push (value, name)
+  canonical.sort key: (do |pair| pair[0])
+  let aliases = []
+  for name = order
+    let value = resolve $name (Set [])
+    if ((value != nil) && (result.get(value, default: nil) != name))
+      aliases.push (name, value)
+  aliases.sort key: (do |pair| pair[0])
+  (canonical, aliases)
+
+def word_node value tag
+  ((type value xml.Node) && (value.namespace == WORD_NS) && (value.tag == tag))
+
+def word_text element
+  let parts = []
+  for node = element.traverse()
+    if word_node $node t
+      # ElementTree's .text is the text before the first child element.
+      if (node.children.len && type(node.children[0], Str))
+        parts.push $node.children[0]
+  "".join $parts
+
+def parse_windows path
+  let root = zip.open $path do |archive|
+    archive.open word/document.xml do |file|
+      xml.decode (str(file.read()))
+  let body = root.children.find default: nil do |node| word_node $node body
+  if (body == nil)
+    throw std.ValueError "MS-ERREF DOCX has no document body"
+  let active = false
+  let result = {}
+  let names = {}
+  for element = body
+    if !(type element xml.Node)
+      continue
+    if word_node $element p
+      let text = word_text $element
+      if (text == "Win32 Error Codes")
+        active = true
+        continue
+      if (text == "NTSTATUS")
+        active = false
+    if (!active || !word_node(element, "tbl"))
+      continue
+    for row = element.traverse()
+      if !(type row xml.Node)
+        continue
+      if !word_node(row, "tr")
+        continue
+      let cell = row.children.find default: nil do |node| word_node $node tc
+      if (cell == nil)
+        continue
+      if let caps = WIN32.match (word_text cell)
+        let value = int (str caps[1])
+        let name = str $caps[2]
+        if !result.contains(value)
+          result[value] = name
+        if !names.contains(name)
+          names[name] = value
+  if !result.len
+    throw std.ValueError "no Win32 codes found in MS-ERREF DOCX"
+  let canonical = []
+  for value name = result
+    canonical.push (value, name)
+  canonical.sort key: (do |pair| pair[0])
+  let aliases = []
+  for name value = names
+    if (result[value] != name)
+      aliases.push (name, value)
+  aliases.sort key: (do |pair| pair[0])
+  (canonical, aliases)
+
+def rust_table name values aliases value_type
+  let rows = []
+  for value symbol = values
+    rows.push "        $value$value_type => \"$symbol\","
+  let alias_rows = []
+  for symbol value = aliases
+    alias_rows.push "        \"$symbol\" => $value$value_type,"
+  return |
+    #[rustfmt::skip]
+    error_codes!($(name)_BY_CODE, $(name)_BY_NAME, $value_type, {
+    $("\n".join(rows))
+        }, {
+    $("\n".join(alias_rows))
+        });
+
+def provenance indices
+  let lines = []
+  for index = indices
+    let name url hash = SOURCES[index]
+    lines.push "// $name: $url sha256:$hash"
+  "\n".join $lines
+
+def generate paths
+  for index = 0..5
+    verify_source $SOURCES[index] $paths[index]
+  let linux linux_aliases = parse_errno $paths[0..2]
+  let freebsd freebsd_aliases = parse_errno [paths[2]]
+  let macos macos_aliases = parse_errno [paths[3]]
+  let windows windows_aliases = parse_windows $paths[4]
+  let header = "// @generated by tools/gen_system_error_codes.dol; do not edit.\n"
+  let errno = "".join [
+    header, provenance([0, 1, 2, 3]), "\n\n",
+    rust_table("LINUX_ERRNO", linux, linux_aliases, "i32"), "\n",
+    rust_table("FREEBSD_ERRNO", freebsd, freebsd_aliases, "i32"), "\n",
+    rust_table("MACOS_ERRNO", macos, macos_aliases, "i32"),
+  ]
+  let win = "".join [
+    header, "// MS-ERREF revision 23.0 (2024-11-19).\n",
+    provenance([4]), "\n\n", rust_table("WIN_ERROR", windows, windows_aliases, "u32"),
+  ]
+  (errno, win)
+
+args.with
+  help: Generate platform system error-code name tables from pinned sources.
+  - opt: linux
+    parse: $fs.Path
+    collect: true
+  - opt: freebsd
+    parse: $fs.Path
+    collect: true
+  - opt: macos
+    parse: $fs.Path
+    collect: true
+  - opt: windows
+    parse: $fs.Path
+    default: nil
+  - opt: output
+    parse: $fs.Path
+  - opt: windows-output
+    parse: $fs.Path
+  - flag: check
+  do |options|
+    let supplied = (options.linux.len || options.freebsd.len || options.macos.len || options.windows != nil)
+    let complete = (options.linux.len == 2 && options.freebsd.len == 1 && options.macos.len == 1 && options.windows != nil)
+    if (supplied && !complete)
+      throw args.Error "provide all pinned inputs or omit them to download automatically"
+    fs.with_temp_dir do |directory|
+      let paths = if supplied
+        [...options.linux, ...options.freebsd, ...options.macos, options.windows]
+      else
+        download_sources $directory
+      let errno windows = generate $paths
+      let outputs = [(options.output, errno), (options.windows_output, windows)]
+      if options.check
+        let stale = false
+        for path generated = outputs
+          if (path.read() != generated)
+            shell.stderr.write "generated output is stale: $path\n"
+            stale = true
+        if stale
+          shell.exit 1
+      else
+        for path generated = outputs
+          path.parent.create_dir all: true
+          path.write $generated

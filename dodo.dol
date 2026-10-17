@@ -390,7 +390,7 @@ return $
         profile: opt
         extra:
           -Z build-std
-      env RUSTFLAGS: "-Z sanitizer=address --cfg asan" do both_test $spec
+      env RUSTFLAGS: "-Z sanitizer=address --cfg asan" do both_test $spec $args
 
   "test-miri":
     help: run tests with miri
@@ -469,12 +469,12 @@ return $
   "gen-system-error-codes":
     help: generate system error code lookup tables from public source documents
     - arg: args
-      help: source arguments for tools/gen_system_error_codes.py
+      help: source arguments for tools/gen_system_error_codes.dol
       collect: true
     do |args|
-      dodo.show python3 tools/gen_system_error_codes.py
+      dodo.show dolang tools/gen_system_error_codes.dol
         --output dolang-ext-shell/src/error_code/generated.rs
-        --windows-output dolang-winterop/src/win_error/generated.rs
+        --windows-output dolang-winterop/src/error/generated.rs
         ...args.args
 
   "shell-test":
@@ -530,7 +530,7 @@ return $
         do
           spec.cargo llvm-cov test --no-report
           spec.cargo llvm-cov run --no-report --bin dolang --
-            --module-path testlib -m test ...default_shell_tests true true
+            --module-path testlib -m test ...(default_shell_tests true true)
 
   "cov-dump":
     help: write coverage summaries to disk
