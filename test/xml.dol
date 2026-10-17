@@ -140,6 +140,24 @@ def entity_references_are_expanded()
     decode "<!DOCTYPE root [<!ENTITY custom \"value\">]><root>&custom;</root>"
 
 #[test]
+def attribute_values_are_escaped_once()
+  let n = Node "a" attrs: {v: "x&y\"z<w"}
+  assert_eq $encode(n) r#"<a v="x&amp;y&quot;z&lt;w"></a>"#
+  assert_eq $decode(encode(n))["v"] "x&y\"z<w"
+
+  let n = Node "a" namespace: "urn:a?x=1&y=2" prefix: "p"
+  assert_eq $encode(n) r#"<p:a xmlns:p="urn:a?x=1&amp;y=2"></p:a>"#
+  assert_eq $decode(encode(n)).namespace "urn:a?x=1&y=2"
+
+#[test]
+def adjacent_text_coalesces_around_elements()
+  let node = decode "<r>a&amp;b<![CDATA[c]]><e/>d&#65;e</r>"
+  assert_eq $node.children.len 3
+  assert_eq $node[0] "a&bc"
+  assert_eq $node[1].tag "e"
+  assert_eq $node[2] "dAe"
+
+#[test]
 def children_are_mutable()
   let root = Node "root"
   let children = root.children
