@@ -283,9 +283,9 @@ pub def twice[T] x @ T fs @ Array[(T) -> T] -> T
   ...
 
 # An argument that takes an expectation its generic callee's parameter gives only
-# once the call is solved waits for the call's pre-solve. A binder the argument
-# can't raise, as when it occurs only in a callback's parameters, takes what the
-# other arguments give it.
+# once the call is solved is held back, and takes it open in the callee's
+# binders. A callback's parameter then takes what the other arguments give
+# them.
 pub def held ints @ Array[Int] strs @ Array[Str]
   each $ints [(do |y| drop y)]
   #                        ^: flow std.Int
@@ -295,9 +295,9 @@ pub def held ints @ Array[Int] strs @ Array[Str]
   #                            ^: flow std.Str
   both $strs $made(do |y| drop y)
   #                            ^: flow std.Str
-  # A callback's result can raise its binder, so the call gives no expectation
+  # Even where the callback's result raises its binder too
   let _ = twice 1 [(do |y| y)]
-  #                        ^: flow Unknown
+  #                        ^: flow std.Int
 
 # A rest parameter binds a tuple of its items
 pub def rested *xs @ Str

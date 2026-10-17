@@ -28,11 +28,14 @@ pub def refuted plain @ Plain a @ Adder
   # LL |   apply $plain
   #    |          ^^^^^
   map_each ["s"] $a
-  # error: expected `(std.Str) -> Unknown`, found `m.Adder`
+  # error: `m.Adder` does not fit this parameter
   #   --> m.dol:LL:LL
   #    |
   # LL |   map_each ["s"] $a
   #    |                   ^
+  #    |
+  #    = note: `std.Int` doesn't accept `std.Str`
+  #    = note: in `{std.Int}`
   apply "s"
   # error: expected `(std.Int) -> std.Str`, found `"s"`
   #   --> m.dol:LL:LL

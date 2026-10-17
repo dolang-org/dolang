@@ -428,6 +428,9 @@ pub(crate) struct Node {
     pub(crate) step: Option<Step>,
     /// A subtype's sides, each `None` where it doesn't reify; `None` for a call
     pub(crate) sides: Option<(Option<TypeId>, Option<TypeId>)>,
+    /// Its actual side as what's found of it so far, where that doesn't reify
+    /// itself: each unsolved variable as the join of its lower bounds
+    pub(crate) found: Option<TypeId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1176,6 +1179,42 @@ impl<'db> Solver<'db> {
         }
     }
 
+    /// The alternatives of a union term, flattened, with any transparent
+    /// declaration expanded as [`Self::exposed`] does. `None` if it isn't a
+    /// union. A projection is no alternative.
+    pub(crate) fn alternatives(&self, term: Term) -> Option<Vec<Term>> {
+        let mut alternatives = Vec::new();
+        self.collect_alternatives(term, &mut alternatives, 0)
+            .then_some(alternatives)
+    }
+
+    fn collect_alternatives(&self, term: Term, alternatives: &mut Vec<Term>, depth: usize) -> bool {
+        if self.depth(depth).is_err() {
+            return false;
+        }
+        let Ok(Head::Structural(view)) = self.head(term) else {
+            return false;
+        };
+        let Type::Union(members) = self.db.ty(view.ty) else {
+            return false;
+        };
+        if members.is_empty() {
+            return false;
+        }
+        for member in members.iter() {
+            let UnionMember::Type(ty) = *member else {
+                continue;
+            };
+            let alternative = view.child(ty);
+            if !self.collect_alternatives(alternative, alternatives, depth + 1)
+                && !alternatives.contains(&alternative)
+            {
+                alternatives.push(alternative);
+            }
+        }
+        true
+    }
+
     /// The nominal declaration a closed type is, or is an application of, with any
     /// transparent declaration expanded as [`Self::exposed`] does, and its
     /// arguments. `None` if it isn't nominal.
@@ -1191,15 +1230,33 @@ impl<'db> Solver<'db> {
 
     /// Rebuild a closed canonical type, retaining references owned by local binders.
     pub(crate) fn reify(&self, term: Term) -> Result<TypeId, Residual> {
-        self.reify_scoped(term, 0, 0)
+        self.reify_scoped(term, 0, 0, false)
     }
 
-    fn reify_scoped(&self, term: Term, local: u32, depth: usize) -> Result<TypeId, Residual> {
+    /// [`Self::reify`], taking each unsolved variable as the join of its lower
+    /// bounds: what's found of it so far, as a diagnostic shows it
+    pub(crate) fn reify_found(&self, term: Term) -> Result<TypeId, Residual> {
+        self.reify_scoped(term, 0, 0, true)
+    }
+
+    fn reify_scoped(
+        &self,
+        term: Term,
+        local: u32,
+        depth: usize,
+        found: bool,
+    ) -> Result<TypeId, Residual> {
         self.depth(depth)?;
         self.spend()?;
         match term {
             Term::Infer(id) => match self.assignment(id) {
-                Some(term) => self.reify_scoped(term, 0, depth + 1),
+                Some(term) => self.reify_scoped(term, 0, depth + 1, found),
+                None if found => {
+                    let lower = (self.bounds(id).lower())
+                        .map(|term| self.reify_scoped(term, 0, depth + 1, found))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    (self.join(self.variable(id).kind, &lower)).ok_or(Residual::Inference)
+                }
                 None => Err(Residual::Inference),
             },
             // A skolem has no canonical form; nothing leaves its judgment with one
@@ -1217,11 +1274,11 @@ impl<'db> Solver<'db> {
                         kind,
                     );
                     // Replacements carry their own context, not the caller's local scope.
-                    return self.reify_scoped(replacement, 0, depth + 1);
+                    return self.reify_scoped(replacement, 0, depth + 1, found);
                 }
                 self.rigid(view.ty)?;
                 let mapped = ty.map_children(|child, groups| {
-                    self.reify_scoped(view.child(child), local + groups, depth + 1)
+                    self.reify_scoped(view.child(child), local + groups, depth + 1, found)
                 })?;
                 let reified = self.db.intern(mapped);
                 // Item projections and restrictions are evaluated where they're
@@ -1718,7 +1775,7 @@ impl<'db> Solver<'db> {
             };
             for upper in bounds.upper() {
                 if self.same(candidate, upper)? {
-                    self.commit(id, candidate);
+                    self.assign(id, candidate);
                     return Ok(true);
                 }
             }
@@ -1754,7 +1811,7 @@ impl<'db> Solver<'db> {
         if !forced {
             return Ok(false);
         }
-        self.commit(id, self.closed(candidate));
+        self.assign(id, self.closed(candidate));
         Ok(true)
     }
 
@@ -1803,7 +1860,7 @@ impl<'db> Solver<'db> {
 
     /// Assign a candidate and wake what depends on it. A candidate holds no
     /// unsolved variable, so substitution cycles cannot be introduced.
-    fn commit(&self, id: InferVarId, candidate: Term) {
+    fn assign(&self, id: InferVarId, candidate: Term) {
         debug_assert!({
             let mut leaves = FxHashSet::default();
             let scope = self.variable(id).scope;
@@ -1875,8 +1932,25 @@ impl<'db> Solver<'db> {
     /// [`Self::locked`]). A variable standing for the key of an item projection
     /// never decays (see [`Database::item_keys`]).
     pub(crate) fn default_with(&mut self, id: InferVarId, decay: bool) -> Result<TypeId, Residual> {
+        self.default_reified(id, decay, false)
+    }
+
+    /// [`Self::default_with`], leaving out each lower bound that's an unsolved
+    /// variable: that variable is then below the default in turn. It breaks a
+    /// cycle of variables that bound each other, as an invariant argument's do,
+    /// which [`Self::default_with`] leaves unsolved, waiting on each other.
+    pub(crate) fn default_open(&mut self, id: InferVarId, decay: bool) -> Result<TypeId, Residual> {
+        self.default_reified(id, decay, true)
+    }
+
+    fn default_reified(
+        &mut self,
+        id: InferVarId,
+        decay: bool,
+        open: bool,
+    ) -> Result<TypeId, Residual> {
         let defaulted = self
-            .default_term(id, decay)
+            .default_term(id, decay, open)
             .and_then(|term| self.reify(term));
         #[cfg(feature = "debug")]
         if let Err(residual) = defaulted {
@@ -1885,10 +1959,11 @@ impl<'db> Solver<'db> {
         defaulted
     }
 
-    /// [`Self::default_with`], committing a term. A variable with a lower bound
-    /// holding a skolem takes it if it's the only one, and its upper bounds are
-    /// left to the obligations pairing them with it; a skolem can't be probed.
-    fn default_term(&self, id: InferVarId, decay: bool) -> Result<Term, Residual> {
+    /// [`Self::default_with`], committing a term, and with `open`, as
+    /// [`Self::default_open`] does. A variable with a lower bound holding a
+    /// skolem takes it if it's the only one, and its upper bounds are left to
+    /// the obligations pairing them with it; a skolem can't be probed.
+    fn default_term(&self, id: InferVarId, decay: bool, open: bool) -> Result<Term, Residual> {
         if let Some(term) = self.assignment(id) {
             return Ok(term);
         }
@@ -1903,11 +1978,13 @@ impl<'db> Solver<'db> {
                 .open_candidate(id)?
                 .ok_or(Residual::Unsupported("joining a variable's lower bounds"))?;
             self.state_mut(id).defaulted.set(true);
-            self.commit(id, candidate);
+            self.assign(id, candidate);
             return Ok(candidate);
         }
+        let unsolved = |term: Term| open && matches!(self.resolve(term), Ok(Term::Infer(_)));
         let lower = bounds
             .lower()
+            .filter(|&term| !unsolved(term))
             .map(|term| self.reify(term))
             .collect::<Result<Vec<_>, _>>()?;
         let kind = self.variable(id).kind;
@@ -1921,7 +1998,7 @@ impl<'db> Solver<'db> {
                 .collect::<Result<Vec<_>, _>>()?;
             let candidate = self.upper_schema(&upper)?;
             self.state_mut(id).defaulted.set(true);
-            self.commit(id, self.closed(candidate));
+            self.assign(id, self.closed(candidate));
             return Ok(self.closed(candidate));
         }
         let unknown = self.db.unknown_of(kind);
@@ -1953,7 +2030,7 @@ impl<'db> Solver<'db> {
             ));
         }
         self.state_mut(id).defaulted.set(true);
-        self.commit(id, self.closed(candidate));
+        self.assign(id, self.closed(candidate));
         Ok(self.closed(candidate))
     }
 
@@ -1992,7 +2069,7 @@ impl<'db> Solver<'db> {
             }
         })?;
         self.state_mut(id).defaulted.set(true);
-        self.commit(id, self.closed(candidate));
+        self.assign(id, self.closed(candidate));
         #[cfg(feature = "debug")]
         trace!(self, "?{} defaulted from its upper bounds", id.0);
         Ok(candidate)
@@ -2091,6 +2168,9 @@ impl<'db> Solver<'db> {
                         sides: (self.relation(obligation).sides()).map(|(actual, expected)| {
                             (self.reify(actual).ok(), self.reify(expected).ok())
                         }),
+                        found: (self.relation(obligation).sides())
+                            .filter(|&(actual, _)| self.reify(actual).is_err())
+                            .and_then(|(actual, _)| self.reify_found(actual).ok()),
                     })
                     .collect(),
             })
@@ -2989,14 +3069,14 @@ impl<'db> Solver<'db> {
             .collect();
         pending.sort_by_key(|&id| std::cmp::Reverse(self.extent(self.variable(id).scope).depth));
         for &id in &pending {
-            if self.default_term(id, false).is_ok() {
+            if self.default_term(id, false, false).is_ok() {
                 return true;
             }
         }
         for &id in &pending {
             if self.variable(id).kind == Kind::Type && self.bounds(id).lower().next().is_none() {
                 self.state_mut(id).defaulted.set(true);
-                self.commit(id, self.closed(self.db.bottom()));
+                self.assign(id, self.closed(self.db.bottom()));
                 return true;
             }
         }
@@ -3036,7 +3116,16 @@ impl<'db> Solver<'db> {
 
     /// Trace a root through its dependencies to collect issues and determine its status.
     fn outcome(&self, constraint: ConstraintId) -> Outcome {
-        let root = self.roots[constraint.0].obligation;
+        let (status, diagnostics) = self.trace_root(self.roots[constraint.0].obligation);
+        Outcome {
+            constraint,
+            status,
+            diagnostics,
+        }
+    }
+
+    /// The status of a root obligation, and the issues that decide it
+    fn trace_root(&self, root: ObligationId) -> (Status, Vec<Diagnostic>) {
         let mut diagnostics = vec![];
         // Iterative DFS keeps reporting safe even when the obligation graph is
         // deep. Each entry carries the step that reached it.
@@ -3142,11 +3231,7 @@ impl<'db> Solver<'db> {
         } else {
             Status::Unresolved
         };
-        Outcome {
-            constraint,
-            status,
-            diagnostics,
-        }
+        (status, diagnostics)
     }
 }
 

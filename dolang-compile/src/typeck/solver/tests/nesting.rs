@@ -203,3 +203,94 @@ fn probes_assume_only_past_a_guard_through_premises() {
     assert_eq!(query.revisit(one, two, Some(true)), Revisit::Cycle);
     assert_eq!(query.revisit(two, three, Some(true)), Revisit::Assumed);
 }
+
+#[test]
+fn a_committed_fork_is_absorbed() {
+    let mut db = Database::new();
+    let two = literal(&db, 2);
+    db.seal();
+    let gas = Gas::default();
+    let (mut s, a, b) = parent(&db, &gas);
+    let (variables, obligations) = (s.variable_count(), s.obligation_count());
+    let roots = s.solve().len();
+    let (fresh, environment) = s.nest(&gas, |child| {
+        let fresh = child.infer();
+        let environment = child.environment(child.empty_environment(), vec![fresh]);
+        child.constrain(child.closed(two), Term::Infer(b), Provenance::default());
+        child.constrain(Term::Infer(b), fresh, Provenance::default());
+        child.solve();
+        ((variable_id(fresh), environment), true)
+    });
+    // Its entries keep their IDs
+    assert_eq!(fresh.0, variables);
+    assert!(s.owns(fresh) && s.owns(b));
+    assert!(s.has_environment(environment));
+    assert!(s.obligation_count() > obligations);
+    // Its bounds on the parent's variables, and its own, are the parent's now
+    assert!((s.bounds(b).lower()).any(|bound| s.same(bound, s.closed(two)).unwrap()));
+    assert!(s.bounds(fresh).lower().next().is_some());
+    assert!(s.assignment(a).is_some());
+    // Its constraints follow the parent's
+    let outcomes = s.solve();
+    assert_eq!(outcomes.len(), roots + 2);
+    assert!((outcomes.iter()).all(|outcome| outcome.status != Status::Contradicted));
+    // The parent can change, and nest again
+    s.constrain(Term::Infer(b), s.closed(two), Provenance::default());
+    s.nest(&gas, |child| {
+        assert!(!child.owns(fresh));
+        let own = variable_id(child.infer());
+        assert!(child.owns(own));
+        ((), false)
+    });
+    assert_eq!(s.variable_count(), variables + 1);
+}
+
+#[test]
+fn a_fork_not_kept_leaves_its_parent_unchanged() {
+    let mut db = Database::new();
+    let two = literal(&db, 2);
+    db.seal();
+    let gas = Gas::default();
+    let (mut s, _, b) = parent(&db, &gas);
+    let (variables, obligations) = (s.variable_count(), s.obligation_count());
+    s.nest(&gas, |child| {
+        child.constrain(child.closed(two), Term::Infer(b), Provenance::default());
+        child.infer();
+        child.solve();
+        ((), false)
+    });
+    assert_eq!(s.variable_count(), variables);
+    assert_eq!(s.obligation_count(), obligations);
+    assert_eq!(s.bounds(b).lower().count(), 0);
+}
+
+#[test]
+fn a_fork_nested_in_a_fork_commits_into_it() {
+    let mut db = Database::new();
+    let two = literal(&db, 2);
+    db.seal();
+    let gas = Gas::default();
+    let (s, _, b) = parent(&db, &gas);
+    let mut outer = s.fork(&gas);
+    let fresh = outer.nest(&gas, |inner| {
+        let fresh = inner.infer();
+        inner.constrain(inner.closed(two), Term::Infer(b), Provenance::default());
+        inner.solve();
+        (variable_id(fresh), true)
+    });
+    assert!(outer.owns(fresh));
+    assert!((outer.bounds(b).lower()).any(|bound| outer.same(bound, outer.closed(two)).unwrap()));
+    drop(outer);
+    assert_eq!(s.bounds(b).lower().count(), 0);
+}
+
+#[test]
+#[should_panic(expected = "only a fork commits")]
+fn only_a_fork_commits() {
+    let mut db = Database::new();
+    db.seal();
+    let gas = Gas::default();
+    let s = Solver::new(&db, &gas);
+    let trial = s.child(Nesting::Trial, &gas);
+    trial.commit();
+}

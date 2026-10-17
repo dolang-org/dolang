@@ -1,6 +1,6 @@
 # A dict literal held back for a union of dict schemas that mentions the call's
-# binder takes its schema once the binder is solved from the arguments not held
-# back, or else defaulted
+# binder takes its schema open in the binder, which handlers nested in it raise
+# with the others
 
 import std:
   - @BaseDict
@@ -25,11 +25,10 @@ pub def handled()
   let _ = r
   #       ^: flow std.Str
 
-# A binder nothing else bounds is defaulted, so a nested handler leaves it
-# dynamic until #917
-pub def defaulted()
+# A nested handler alone solves it
+pub def nested()
   let r = spec
     - cmd: c
       do |n| "nested $n"
   let _ = r
-  #       ^: flow Unknown
+  #       ^: flow std.Str

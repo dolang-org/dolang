@@ -10,12 +10,13 @@ use dolang_util::{
     intern,
     mono::{MonoHashMap, MonoHashSet, MonoVec},
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 
 use super::{
-    Alternatives, Bases, Bounds, Dependency, Environment, EnvironmentId, InferVarId, ObligationId,
-    ObligationLayer, Relation, Residual, Scope, ScopeId, Skolem, SkolemId, Solver, State, Step,
-    Term, TypeId, Variable, VariableLayer, VariableState,
+    Alternatives, Bases, Bounds, Constructor, DeclId, Dependency, Environment, EnvironmentId,
+    GenericMember, InferVarId, Issue, Lookup, ObligationId, ObligationLayer, Relation, Residual,
+    Root, Scope, ScopeId, Signature, Skolem, SkolemId, Solver, State, Step, Term, TypeId, Variable,
+    VariableLayer, VariableState,
 };
 
 /// A work budget, shared by a solver and the solvers nested in it. Each unit of
@@ -793,5 +794,235 @@ impl<'db> Solver<'db> {
     /// What trials judge in place of `term`, if anything (see [`Solver::blind`])
     pub(super) fn blinded(&self, term: Term) -> Option<Term> {
         (self.blinded.get(&term).copied()).or_else(|| self.open_parent()?.blinded(term))
+    }
+}
+
+/// What a fork records, taken from it by [`Solver::commit`] for its parent to
+/// absorb (see [`Solver::absorb`])
+pub(crate) struct Delta {
+    bases: Bases,
+    environments: intern::Table<Environment, EnvironmentId>,
+    variables: MonoVec<Variable>,
+    layers: MonoVec<VariableLayer>,
+    overlays: MonoHashMap<usize, VariableLayer, FxBuildHasher>,
+    dirty: Vec<bool>,
+    instantiations: FxHashMap<ObligationId, EnvironmentId>,
+    skolemizations: FxHashMap<ObligationId, EnvironmentId>,
+    skolems: MonoVec<Skolem>,
+    scopes: MonoVec<Scope>,
+    relations: MonoVec<(Relation, bool)>,
+    obligations: MonoVec<ObligationLayer>,
+    obligation_overlays: MonoHashMap<usize, ObligationLayer, FxBuildHasher>,
+    queue: MonoVec<ObligationId>,
+    roots: Vec<Root>,
+    alternatives: FxHashMap<ObligationId, Alternatives>,
+    blinded: FxHashMap<Term, Term>,
+    /// The caches of what its assumptions imply, if they're its parent's
+    caches: Option<Caches>,
+    generation: usize,
+}
+
+/// A solver's caches of what its assumptions imply
+struct Caches {
+    rigid_bounds: FxHashMap<TypeId, Vec<(TypeId, Step)>>,
+    constructors: FxHashMap<(DeclId, bool), Constructor>,
+    default_constructions: FxHashMap<DeclId, Option<Option<Signature>>>,
+    generic_members: FxHashMap<GenericMember, Result<Lookup, Issue>>,
+}
+
+impl<'db> Solver<'db> {
+    /// What this fork records, for its parent to absorb (see
+    /// [`Solver::absorb`]). It ends the fork, so its parent can change again.
+    pub(crate) fn commit(self) -> Delta {
+        let Solver {
+            bases,
+            environments,
+            variables,
+            layers,
+            overlays,
+            dirty,
+            instantiations,
+            skolemizations,
+            skolems,
+            scopes,
+            relations,
+            obligations,
+            obligation_overlays,
+            queue,
+            roots,
+            rigid_bounds,
+            alternatives,
+            constructors,
+            default_constructions,
+            generic_members,
+            inherits,
+            generation,
+            blinded,
+            parent,
+            ..
+        } = self;
+        let parent = parent.expect("a fork to commit");
+        assert_eq!(parent.nesting, Nesting::Fork, "only a fork commits");
+        drop(parent);
+        let caches = inherits.then(|| Caches {
+            rigid_bounds: rigid_bounds.into_inner(),
+            constructors: constructors.into_inner(),
+            default_constructions: default_constructions.into_inner(),
+            generic_members: generic_members.into_inner(),
+        });
+        Delta {
+            bases,
+            environments,
+            variables,
+            layers,
+            overlays,
+            dirty: dirty.into_inner(),
+            instantiations: instantiations.into_inner(),
+            skolemizations: skolemizations.into_inner(),
+            skolems,
+            scopes,
+            relations,
+            obligations,
+            obligation_overlays,
+            queue,
+            roots,
+            alternatives: alternatives.into_inner(),
+            blinded,
+            caches,
+            generation: generation.get(),
+        }
+    }
+
+    /// Take over what a fork of this one recorded, as if this one had done it:
+    /// its entries keep their IDs, and its changes to this one's entries apply
+    /// here. Nothing may have changed this one since the fork. Its constraints
+    /// follow this one's, so [`Solver::solve`] gives their outcomes after this
+    /// one's, though the IDs the fork gave them count from its own first.
+    pub(crate) fn absorb(&mut self, delta: Delta) {
+        let Delta {
+            bases,
+            environments,
+            mut variables,
+            mut layers,
+            overlays,
+            dirty,
+            instantiations,
+            skolemizations,
+            mut skolems,
+            mut scopes,
+            mut relations,
+            mut obligations,
+            obligation_overlays,
+            queue,
+            roots,
+            alternatives,
+            blinded,
+            caches,
+            generation,
+        } = delta;
+        assert!(
+            bases.variables == self.variable_count()
+                && bases.obligations == self.obligation_count()
+                && bases.environments == self.environment_count()
+                && bases.skolems == self.skolem_count()
+                && bases.scopes == self.scope_count(),
+            "a fork absorbed into a solver changed since"
+        );
+        // Changes to this one's entries first, while its tables are as the
+        // fork saw them
+        for (&index, layer) in overlays.iter() {
+            let id = InferVarId(index);
+            let state = self.state_mut(id);
+            state.assignment.set(layer.state.assignment.get());
+            state.defaulted.set(layer.state.defaulted.get());
+            state.exact.set(layer.state.exact.get());
+            state.fallback.set(layer.state.fallback.get());
+            for lower in [true, false] {
+                for (&term, sources) in layer.bounds.side(lower).iter() {
+                    for &source in sources.iter() {
+                        self.insert_bound(id, lower, term, source);
+                    }
+                }
+            }
+            for &source in layer.support.iter() {
+                self.add_support(id, source);
+            }
+            for &obligation in layer.subscribers.iter() {
+                self.add_subscriber(id, obligation);
+            }
+        }
+        for (&index, layer) in obligation_overlays.iter() {
+            let id = ObligationId(index);
+            let progress = self.progress_mut(id);
+            progress.state.set(layer.state.get());
+            progress.queued.set(layer.queued.get());
+            *progress.active.borrow_mut() = layer.active.borrow().clone();
+            for dependency in layer.dependencies.iter() {
+                self.add_dependency(id, dependency.obligation, dependency.step.clone());
+            }
+        }
+        for index in 0..environments.len() {
+            let environment = environments.get_by_index(index).expect("a frame");
+            let id = self.environments.id_owned(environment.clone());
+            debug_assert_eq!(
+                self.bases.environments + id.index(),
+                bases.environments + index
+            );
+        }
+        for (variable, layer) in variables.drain().zip(layers.drain()) {
+            self.variables.push(variable);
+            self.layers.push(layer);
+        }
+        // An open fork's marks start from this one's
+        *self.dirty.get_mut() = dirty;
+        for skolem in skolems.drain() {
+            self.skolems.push(skolem);
+        }
+        for scope in scopes.drain() {
+            self.scopes.push(scope);
+        }
+        for (key, layer) in relations.drain().zip(obligations.drain()) {
+            let id = ObligationId(self.obligation_count());
+            self.relations.push(key);
+            self.obligations.push(layer);
+            self.obligation_index.try_insert(key, id).unwrap();
+        }
+        // An open fork's queue starts from this one's
+        self.queue = queue;
+        self.roots.extend(roots);
+        self.instantiations.get_mut().extend(instantiations);
+        self.skolemizations.get_mut().extend(skolemizations);
+        self.alternatives.get_mut().extend(alternatives);
+        self.blinded.extend(blinded);
+        if let Some(caches) = caches {
+            self.rigid_bounds.get_mut().extend(caches.rigid_bounds);
+            self.constructors.get_mut().extend(caches.constructors);
+            (self.default_constructions.get_mut()).extend(caches.default_constructions);
+            self.generic_members
+                .get_mut()
+                .extend(caches.generic_members);
+        }
+        self.generation.set(generation);
+    }
+
+    /// Run `f` on a fork of this one whose work is charged to `gas`, and take
+    /// over what it records if `f` says to keep it
+    #[cfg(test)]
+    pub(crate) fn nest<R>(&mut self, gas: &Gas, f: impl FnOnce(&mut Solver<'_>) -> (R, bool)) -> R {
+        let (result, delta) = {
+            let mut fork = self.fork(gas);
+            let (result, keep) = f(&mut fork);
+            (result, keep.then(|| fork.commit()))
+        };
+        if let Some(delta) = delta {
+            self.absorb(delta);
+        }
+        result
+    }
+
+    /// Whether a variable is this solver's own, rather than one it sees in
+    /// the solver it's nested in
+    pub(crate) fn owns(&self, id: InferVarId) -> bool {
+        id.0 >= self.bases.variables
     }
 }
