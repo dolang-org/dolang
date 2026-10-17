@@ -55,6 +55,19 @@ echo Hello from Do!
 Arguments after the script path are available as `shell.args`.
 The executed script path is available as `shell.program`.
 
+### Checking Scripts
+
+`--check` runs the [type checker](../language/type-checking.md) on a
+script without executing it:
+
+```bash
+dolang --check script.dol
+```
+
+The checker follows imports using the ordinary module search paths, including
+any `--module-path` directories, and uses bundled type libraries when no source
+module is found. With `--strict`, warnings fail the check too.
+
 ### Bundled Entrypoints
 
 `-m` runs an entrypoint bundled with `dolang`:

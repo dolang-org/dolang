@@ -328,7 +328,7 @@ including `(n = 0)` and `- n = 0`.
 
 The parentheses must touch the class name. `Int(n)` is a type test, while
 `Int (n)` binds `Int` and unpacks another value into `n`. The class may be a
-dotted runtime name such as `std.Int`; it takes no type arguments. Type-only
+dotted runtime name such as `std.Int`; it takes no type arguments. Checker-only
 imports, aliases, and protocols cannot supply a runtime class. The class cannot
 be bound by the same pattern or parameter list, as in `let C C(x) = ...`; a
 later pattern may use it.
@@ -492,8 +492,8 @@ Matching follows the same rules as `if let` and `if bind`, including the
 truthiness test for a single name. The new bindings are not in scope inside
 `else`; an existing outer name is still visible there.
 
-In a [strict](types.md#strict-checking) file, `else` is how to destructure a
-value that may not match.
+In a [strict](type-checking.md#strict-checking) file, `else` is how to
+destructure a value that may not match.
 
 The `else` body must diverge: return, throw, break, continue, or call something
 that does not return. Reaching its end raises `std.RuntimeError`, naming the
