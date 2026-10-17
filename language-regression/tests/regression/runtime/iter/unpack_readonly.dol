@@ -18,8 +18,8 @@ check_readonly $"a,b,c".rsplit(",") ["c", "b", "a"]
 check_readonly $b"a,b,c".split(b",") [b"a", b"b", b"c"]
 check_readonly $b"a,b,c".rsplit(b",") [b"c", b"b", b"a"]
 check_readonly $b"abc".unpack().iter() [97, 98, 99]
-check_readonly $"abc".scalars().iter() ["a", "b", "c"]
-check_readonly $"abc".graphemes().iter() ["a", "b", "c"]
+check_readonly $"abc".scalars() ["a", "b", "c"]
+check_readonly $"abc".graphemes() ["a", "b", "c"]
 
 # Missing pair items use binding defaults unchanged, including keyed defaults.
 def check_pair_defaults value expected
@@ -56,3 +56,6 @@ for source = [[10, 20], (10, 20)]
   check_empty_pair_defaults $empty
   check_empty_pair_defaults $empty
   assert_eq (it.next()) (0, 10)
+
+check_readonly $"éx".scalar_bounds() [0, 2, 3]
+check_readonly $"éx".grapheme_bounds() [0, 3, 4]

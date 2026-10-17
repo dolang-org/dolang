@@ -4117,24 +4117,33 @@ pub class Str: @Index[Range[Int], Str]
     ...
 
   #
-  # Returns an immutable view of the string's Unicode scalar values.
+  # Iterates over the string's Unicode scalar values.
   #
-  # The view supports `len`, positive and negative indexing, contiguous range
-  # slicing, iteration, spreading, and positional destructuring. Elements and
-  # slices are strings. Its operations do not change the byte-oriented behavior of
-  # [`Str.len`](#len) or string indexing.
-  #
+  # Destructuring reads from the current position without advancing the iterator.
+  # Materialize `[...s.scalars()]` for positional access.
   #
   # ## Example
   #
   # ```
-  # let scalars = "Aé".scalars()
-  # assert_eq $scalars.len 3
-  # assert_eq [...scalars] ["A", "e", "́"]
-  # assert_eq $scalars[-1] "́"
+  # assert_eq [..."Aé".scalars()] ["A", "e", "́"]
   # ```
+  pub def scalars self -> UnpackIter[Str]
+    ...
+
+  # Iterates over the string's scalar boundary byte offsets.
   #
-  pub def scalars self -> UnpackIterable[Str]
+  # Each offset starts the corresponding fragment in [`scalars`](std.Str.scalars),
+  # followed by the string's byte length. An empty string yields only `0`.
+  # Destructuring reads from the current position without advancing the iterator.
+  #
+  # ## Example
+  #
+  # ```
+  # let s = "Aé"
+  # let bounds = [...s.scalar_bounds()]
+  # assert_eq $s[bounds[1]..bounds[-1]] "é"
+  # ```
+  pub def scalar_bounds self -> UnpackIter[Int]
     ...
 
   #
@@ -4223,22 +4232,34 @@ pub class Str: @Index[Range[Int], Str]
     ...
 
   #
-  # Returns an immutable view of the string's extended grapheme clusters.
+  # Iterates over the string's extended grapheme clusters.
   #
-  # The view has the same indexing, slicing, iteration, spreading, and destructuring
-  # operations as [`scalars`](#scalars). It keeps combining sequences and emoji
-  # sequences together.
-  #
+  # Keeps combining sequences and emoji sequences together. Destructuring reads
+  # from the current position without advancing the iterator.
+  # Materialize `[...s.graphemes()]` for positional access.
   #
   # ## Example
   #
   # ```
-  # let graphemes = "é👩‍💻".graphemes()
-  # assert_eq $graphemes.len 2
-  # assert_eq [...graphemes] ["é", "👩‍💻"]
+  # assert_eq [..."é👩‍💻".graphemes()] ["é", "👩‍💻"]
   # ```
+  pub def graphemes self -> UnpackIter[Str]
+    ...
+
+  # Iterates over the string's grapheme boundary byte offsets.
   #
-  pub def graphemes self -> UnpackIterable[Str]
+  # Each offset starts the corresponding fragment in [`graphemes`](std.Str.graphemes),
+  # followed by the string's byte length. An empty string yields only `0`.
+  # Destructuring reads from the current position without advancing the iterator.
+  #
+  # ## Example
+  #
+  # ```
+  # let s = "Aé"
+  # let bounds = [...s.grapheme_bounds()]
+  # assert_eq $s[bounds[1]..bounds[-1]] "é"
+  # ```
+  pub def grapheme_bounds self -> UnpackIter[Int]
     ...
 
   #

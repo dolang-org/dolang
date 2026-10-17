@@ -97,6 +97,8 @@ well_known_symbols! {
     (Line, "line", LINE),
     (Chomp, "chomp", CHOMP),
     (Scalars, "scalars", SCALARS),
+    (ScalarBounds, "scalar_bounds", SCALAR_BOUNDS),
+    (GraphemeBounds, "grapheme_bounds", GRAPHEME_BOUNDS),
     (Scalar, "scalar", SCALAR),
     (Crimp, "crimp", CRIMP),
     (Map, "map", MAP),

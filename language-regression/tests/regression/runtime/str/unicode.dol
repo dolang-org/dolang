@@ -3,26 +3,15 @@ assert_eq $"é".len 2
 assert_throws $std.RuntimeError str: "invalid UTF-8 substring boundaries" do "é"[0..1]
 assert_eq $"éx"[2..] "x"
 
-# Unicode scalar and extended-grapheme views.
+# Materialize Unicode fragments when positional access is needed.
 let text = "Aé👩‍💻界"
-let scalars = text.scalars()
-let graphemes = text.graphemes()
-assert_eq $scalars.len 7
-assert_eq $graphemes.len 4
-assert_eq $scalars[0] "A"
-assert_eq $scalars[-1] "界"
-assert_eq $scalars[1..3] "é"
-assert_eq $graphemes[1] "é"
-assert_eq $graphemes[2] "👩‍💻"
-assert_eq $graphemes[-1] "界"
-assert_eq $graphemes[1..3] "é👩‍💻"
-assert_eq $graphemes[2..2] ""
-assert_throws $std.RuntimeError str: "index out of range or invalid" do scalars[99]
-assert_throws $std.RuntimeError str: "index out of range or invalid" do
-  graphemes[Range start: 0 end: 3 step: 2]
+let scalars = [...text.scalars()]
+let graphemes = [...text.graphemes()]
+assert_eq $scalars ["A", "e", "́", "👩", "‍", "💻", "界"]
+assert_eq $graphemes ["A", "é", "👩‍💻", "界"]
+assert_eq [..."".scalars()] []
+assert_eq [..."".graphemes()] []
 
-assert_eq [...scalars] ["A", "e", "́", "👩", "‍", "💻", "界"]
-assert_eq [...graphemes] ["A", "é", "👩‍💻", "界"]
 assert_eq ("A".scalar()) 65
 assert_eq ("́".scalar()) 769
 assert_eq ("😀".scalar()) 128512
@@ -35,11 +24,50 @@ assert_eq $a "A"
 assert_eq $b "é"
 assert_eq [...rest] ["👩‍💻", "界"]
 
-# Views and partially-consumed iterators root temporary source strings.
-let temporary_view = ("root".repeat 1000).graphemes()
-assert_eq $temporary_view[-1] "t"
-let temporary_iter = ("👩‍💻x".repeat 1000).graphemes().iter()
+# Partially-consumed iterators root temporary source strings.
+let temporary_iter = ("👩‍💻x".repeat 1000).graphemes()
 assert_eq $temporary_iter.next() "👩‍💻"
 let garbage = "z".repeat 100000
 assert_eq $garbage.len 100000
 assert_eq $temporary_iter.next() "x"
+
+# Materialized boundaries align with fragments and include the terminal offset.
+let scalar_bounds = [...text.scalar_bounds()]
+let grapheme_bounds = [...text.grapheme_bounds()]
+assert_eq $scalar_bounds [0, 1, 2, 4, 8, 11, 15, 18]
+assert_eq $grapheme_bounds [0, 1, 4, 15, 18]
+assert_eq $scalar_bounds[-1] $text.len
+assert_eq $text[scalar_bounds[1]..scalar_bounds[3]] "é"
+assert_eq $text[grapheme_bounds[1]..grapheme_bounds[3]] "é👩‍💻"
+for fragments bounds = [(scalars, scalar_bounds), (graphemes, grapheme_bounds)]
+  assert_eq $bounds.len (fragments.len + 1)
+  for i = (0..fragments.len)
+    assert_eq $text[bounds[i]..bounds[i + 1]] $fragments[i]
+assert_eq [..."".scalar_bounds()] [0]
+assert_eq [..."".grapheme_bounds()] [0]
+assert_eq [..."abc".scalar_bounds()] [0, 1, 2, 3]
+assert_eq [..."abc".grapheme_bounds()] [0, 1, 2, 3]
+
+# All four methods return iterators with non-consuming positional unpack.
+let scalar ...scalar_rest = text.scalars()
+assert_eq $scalar "A"
+assert_eq [...scalar_rest] ["e", "́", "👩", "‍", "💻", "界"]
+for bounds = [text.scalar_bounds(), text.grapheme_bounds()]
+  let first second ...remaining = bounds
+  assert_eq $first 0
+  assert_eq $second 1
+  assert_eq (bounds.next()) 0
+  assert_eq (bounds.next()) 1
+  assert_eq [...remaining] [...bounds]
+for empty = ["".scalar_bounds(), "".grapheme_bounds()]
+  bind empty
+    - zero
+  assert_eq $zero 0
+  assert_eq (empty.next()) 0
+  let ...rest = empty
+  assert_eq [...rest] []
+  assert_eq [...empty] []
+  assert_eq [...empty] []
+let bound_method = text.scalar_bounds
+assert_eq [...bound_method()] $scalar_bounds
+assert_eq [...Str.grapheme_bounds(text)] $grapheme_bounds
