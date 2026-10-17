@@ -268,6 +268,8 @@ pub class File
     ...
 
   # Reads data from the file. Read mode only.
+  # Reads to the end of the entry when `size` is omitted. With `size`, reads
+  # that many bytes unless the end is reached first.
   #
   # ## Errors
   #
@@ -284,8 +286,8 @@ pub class File
   # ```
   pub def read
     self
-    # Maximum number of bytes to read.
-    size @ Int
+    # Number of bytes to read; omit to read the rest of the entry.
+    size @ Int = nil
   do -> Bin
     ...
 

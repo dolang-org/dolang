@@ -827,14 +827,18 @@ impl<'v> Object<'v> for File {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .method("read", async move |this, strand, args, out| {
-                let ([size], []) = unpack!(strand, args, 1, 0)?;
-                let size: usize = size
-                    .to_i64(strand)
-                    .map_err(|_| Error::type_error(strand, "expected integer"))?
-                    .try_into()
-                    .map_err(|_| Error::overflow(strand))?;
+                let ([], [size]) = unpack!(strand, args, 0, 1)?;
+                let size: Option<usize> = size
+                    .map(|size| {
+                        size.to_i64(strand)
+                            .map_err(|_| Error::type_error(strand, "expected integer"))?
+                            .try_into()
+                            .map_err(|_| Error::overflow(strand))
+                    })
+                    .transpose()?;
 
-                let mut data = BinEmbryo::new_with_capacity(strand, size);
+                const CHUNK_SIZE: usize = 8192;
+                let mut data = BinEmbryo::new_with_capacity(strand, size.unwrap_or(CHUNK_SIZE));
                 let mut borrow = this.borrow_mut(strand)?;
                 let inner = borrow
                     .inner
@@ -844,20 +848,25 @@ impl<'v> Object<'v> for File {
                     return Err(Error::state_error(strand, "cannot read in write mode"));
                 };
 
-                while data.len() < size {
-                    let remaining = size - data.len();
+                loop {
+                    let remaining = match size {
+                        Some(size) if data.len() >= size => break,
+                        Some(size) => size - data.len(),
+                        None => CHUNK_SIZE,
+                    };
+                    data.reserve(strand, remaining);
                     let n = read_into_embryo(entry, &mut data, remaining)
                         .await
                         .into_do(strand)?;
                     if n == 0 {
+                        if !*validated {
+                            if entry.compute_hash() != entry.entry().crc32() {
+                                return Err(Error::runtime(strand, "CRC32 checksum mismatch"));
+                            }
+                            *validated = true;
+                        }
                         break;
                     }
-                }
-                if data.len() < size && !*validated {
-                    if entry.compute_hash() != entry.entry().crc32() {
-                        return Err(Error::runtime(strand, "CRC32 checksum mismatch"));
-                    }
-                    *validated = true;
                 }
 
                 drop(borrow);

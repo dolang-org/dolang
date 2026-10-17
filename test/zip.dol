@@ -121,6 +121,29 @@ def read_transfers_the_whole_count()
 
 #[test]
 #[vfs]
+def read_to_end()
+  let data = ("abcdefghij".repeat 200000)
+  zip.open "all.zip" "w" do |archive|
+    archive.open "large.bin" do |file| file.write $data
+    archive.open "empty.bin" do |_| nil
+
+  zip.open "all.zip" do |archive|
+    archive.open "large.bin" do |file|
+      assert_eq (str(file.read())) $data
+      assert_eq $file.read() b""
+    archive.open "large.bin" do |file|
+      assert_eq $file.read(0) b""
+      assert_eq (str(file.read(10))) "abcdefghij"
+      assert_eq (str(file.read())) ("abcdefghij".repeat 199999)
+    archive.open "large.bin" do |file|
+      assert_eq (str(file.read(data.len + 1))) $data
+      assert_eq $file.read() b""
+    archive.open "empty.bin" do |file|
+      assert_eq $file.read() b""
+      assert_eq $file.read() b""
+
+#[test]
+#[vfs]
 def invalid_compression_is_rejected()
   zip.open "invalid.zip" "w" do |archive|
     assert_throws $ValueError do
