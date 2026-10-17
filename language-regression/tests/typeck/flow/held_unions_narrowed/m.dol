@@ -1,5 +1,5 @@
-# Until #917, a handler in a dict held back for a union of dict schemas can't
-# widen the binder that the arguments not held back solve
+# A handler in a dict held back for a union of dict schemas widens the binder
+# that the arguments not held back raise
 
 import std:
   - @BaseDict
@@ -12,17 +12,9 @@ pub def spec[R] *items @ (Item[R] | (Int -> R)) -> R
   ...
 
 pub def narrowed()
-  spec
+  let r = spec
     - cmd: c
       do |n| n
-    # error: expected `{cmd: std.Str, *((std.Int) -> std.Str) | m.Item[std.Str]}`, found `{cmd: "c", (std.Int) -> std.Int}`
-    #   --> m.dol:LL:LL
-    #    |
-    # LL |       - cmd: c
-    #    |  _______^
-    # LL | |       do |n| n
-    #    | |______________^
-    #    |
-    #    = note: `std.Int` does not fit `std.Str`
-    #    = note: in `(std.Int) -> std.Int`
     do |n| "top $n"
+  let _ = r
+  #       ^: flow std.Int | std.Str

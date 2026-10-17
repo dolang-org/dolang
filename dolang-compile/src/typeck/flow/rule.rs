@@ -16,6 +16,15 @@
 //! run: its results are bottom. An item of a comprehension is the exception, since
 //! bottom only says that it occurs zero times.
 //!
+//! An argument held back, as a collection literal that a generic callee's
+//! parameter would expect something of, is evaluated as far as it can be when
+//! it's met, and finished as a sub-rule of its call's rule: made in a fork of
+//! the rule's solver once what the rule makes is solved, toward what that
+//! expects of it with the call's binders still open, and taken over by the rule
+//! (see [`Flow::release`]). Its checks are the rule's, and only the rule
+//! defaults, but in a run that defaults, each sub-rule first defaults its own
+//! variables, as a rule of its own would.
+//!
 //! A call that gives bottom ends the path of the step or terminal making it (see
 //! [`Flow::diverge`]). It's decided never to return only if its rule is decided
 //! and doesn't take a `do` block's result that isn't known yet to be bottom. A
@@ -69,27 +78,84 @@ enum Check {
     Expected(Span),
     /// Nothing that can fail
     Quiet,
+    /// What's expected of the rule's first result, which gives way if it
+    /// contradicts (see [`Flow::conclude`])
+    Seed,
+}
+
+impl Check {
+    /// Whether its outcome decides the rule
+    fn decides(&self) -> bool {
+        !matches!(self, Check::Seed)
+    }
 }
 
 /// A rule's constraints, as they are made
-struct Rule<'s, 'a> {
+struct Rule<'s, 'a, 'p> {
     solver: &'s mut Solver<'a>,
     db: &'a Database,
+    /// The budget of the run it's made for, which its sub-rules share
+    gas: &'a Gas,
     checks: Vec<Check>,
     /// The variables standing for what a call passes the `do` blocks it's given,
     /// by the signature variable each joins into
     passed: Vec<(VarId, Term)>,
     /// The variables standing for the results of `do` blocks not yet known
     pending: Vec<Term>,
-    /// The variables standing for the arguments held back, by index into
-    /// [`Values::held`]
-    held: Vec<(usize, Term)>,
+    /// The arguments held back, to be released once what's made so far is
+    /// solved (see [`Flow::release`])
+    held: Vec<Held<'p>>,
+    /// The calls held back, by the variable standing for each one's result and
+    /// its span, and whether it may occur zero times: a result that's bottom
+    /// ends the path, and unless it may not occur, means the whole isn't
+    /// produced
+    calls: Vec<(Term, Span, bool)>,
+    /// Whether what it makes is held back in a `for`, so it may occur zero
+    /// times
+    repeated: bool,
+    /// Whether it's made for a run that defaults, so each sub-rule defaults
+    /// its own variables, as a rule of its own would
+    defaulting: bool,
+    /// The arguments held back that an earlier make of the run found exactly,
+    /// passed closed (see [`Flow::decide`])
+    exact: &'s [(*const Prepared, TypeId)],
+    /// The arguments held back that it finds exactly: solved, or with only
+    /// solved types below them, without a check of their own left undecided
+    /// or a `do` block
+    found: Vec<(*const Prepared, TypeId)>,
     /// Whether a `do` block's result is left to a variable even once it's known,
     /// so that choosing a fresh dict's schema doesn't depend on it
     blind: bool,
 }
 
-impl<'a> Rule<'_, 'a> {
+/// An argument held back, with the variable standing for it
+#[derive(Clone, Copy)]
+struct Held<'p> {
+    prepared: &'p Prepared,
+    term: Term,
+    /// Whether it's in a `for`, so it may occur zero times
+    repeated: bool,
+}
+
+impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
+    fn new(solver: &'s mut Solver<'a>, db: &'a Database, gas: &'a Gas) -> Self {
+        Rule {
+            solver,
+            db,
+            gas,
+            checks: Vec::new(),
+            passed: Vec::new(),
+            pending: Vec::new(),
+            held: Vec::new(),
+            calls: Vec::new(),
+            repeated: false,
+            defaulting: false,
+            exact: &[],
+            found: Vec::new(),
+            blind: false,
+        }
+    }
+
     fn constrain(&mut self, actual: Term, expected: Term, check: Check) {
         self.solver
             .constrain(actual, expected, Provenance::default());
@@ -135,13 +201,22 @@ impl<'a> Rule<'_, 'a> {
         term
     }
 
-    /// A fresh variable standing for an argument held back
-    fn held(&mut self, index: usize, preview: Option<TypeId>) -> Term {
+    /// A fresh variable standing for an argument held back, above what it's
+    /// known to be already
+    fn hold(&mut self, prepared: &'p Prepared, repeated: bool) -> Term {
+        if let Some(&(_, ty)) =
+            (self.exact.iter()).find(|&&(found, _)| std::ptr::eq(found, prepared))
+        {
+            return self.closed(ty);
+        }
         let term = self.solver.infer();
-        self.held.push((index, term));
-        if let Some(preview) = preview {
-            self.solver
-                .constrain(self.closed(preview), term, Provenance::default());
+        self.held.push(Held {
+            prepared,
+            term,
+            repeated: repeated || self.repeated,
+        });
+        if let Some(preview) = prepared.preview() {
+            self.constrain(self.closed(preview), term, Check::Quiet);
         }
         term
     }
@@ -150,7 +225,7 @@ impl<'a> Rule<'_, 'a> {
     /// with the span each is diagnosed at: its own, its group's, or `fallback`
     fn arguments(
         &mut self,
-        values: &Values<'_>,
+        values: &'p Values,
         spread: Option<DeclId>,
         fallback: Span,
     ) -> (Vec<(Multiplicity, CallArgument)>, Vec<Span>) {
@@ -215,7 +290,7 @@ impl<'a> Rule<'_, 'a> {
                         }
                     }
                     Value::Held(at, index, _) => {
-                        let term = Part::Term(rule.held(index, values.held[index].preview));
+                        let term = Part::Term(rule.hold(&values.held[index], true));
                         match at {
                             HeldAt::Positional => joined.positional.add(rule, term),
                             HeldAt::Keyword(key) => joined.keyed(rule, symbol(key), term),
@@ -260,7 +335,7 @@ impl<'a> Rule<'_, 'a> {
                     vec![(multiplicity, argument, span)]
                 }
                 Value::Held(at, index, span) => {
-                    let term = rule.held(index, values.held[index].preview);
+                    let term = rule.hold(&values.held[index], false);
                     let argument = match at {
                         HeldAt::Positional => CallArgument::Positional(term),
                         HeldAt::Keyword(key) => CallArgument::Keyword(key, term),
@@ -318,6 +393,29 @@ impl<'a> Rule<'_, 'a> {
             .solver
             .environment(self.solver.empty_environment(), holes.group);
         self.solver.view(ty, environment)
+    }
+}
+
+/// A run of a rule (see [`Flow::decide`])
+struct Run<'g> {
+    solver: Solver<'g>,
+    results: Vec<Term>,
+    checks: Vec<Check>,
+    /// How many of the checks are the rule's own, ahead of its sub-rules'
+    own: usize,
+    passed: Vec<(VarId, Term)>,
+    pending: Vec<Term>,
+    calls: Vec<(Term, Span, bool)>,
+    outcomes: Vec<Outcome>,
+    /// Whether the seed is contradicted
+    rejected: bool,
+}
+
+impl Run<'_> {
+    /// Whether any of the first `count` checks has `status`
+    fn any(&self, count: usize, status: Status) -> bool {
+        (self.checks[..count].iter().zip(&self.outcomes))
+            .any(|(check, outcome)| check.decides() && outcome.status == status)
     }
 }
 
@@ -379,12 +477,88 @@ enum HeldAt {
     Pair(TypeId),
 }
 
-/// An argument held back, with the operands its holes pop
-struct Held<'e> {
-    expr: &'e Expr,
-    operands: VecDeque<TypeId>,
-    /// A template evaluated once, with its values and hole shape known.
-    preview: Option<TypeId>,
+/// An argument held back, evaluated as far as it can be before the call's
+/// parameters give it an expectation. It's finished as a sub-rule of the
+/// call's (see [`Flow::release`]).
+enum Prepared {
+    /// A call of a function, and the instance it gives, if it's a constructor
+    /// with unchecked arguments. A range calls its constructor.
+    Call {
+        call: PreparedCall,
+        instance: Option<TypeId>,
+    },
+    Collection(PreparedCollection),
+    /// A template, with its values and hole shape known
+    Fmt(TypeId),
+}
+
+impl Prepared {
+    /// Its type, if it's known before its expectation is
+    fn preview(&self) -> Option<TypeId> {
+        match *self {
+            Prepared::Fmt(ty) => Some(ty),
+            Prepared::Call { .. } | Prepared::Collection(_) => None,
+        }
+    }
+}
+
+/// A call of `callee`, its arguments evaluated
+pub(super) struct PreparedCall {
+    callee: TypeId,
+    values: Values,
+    member: Option<Member>,
+    span: Span,
+    /// The ambient channels it passes
+    channels: (Option<TypeId>, Option<TypeId>),
+}
+
+impl PreparedCall {
+    fn call(&self, expected: Option<TypeId>) -> Call<'static> {
+        Call {
+            args: &[],
+            expected,
+            span: self.span,
+            callee: self.member,
+        }
+    }
+}
+
+/// A collection literal, its items evaluated
+struct PreparedCollection {
+    kind: Collection,
+    class: Option<DeclId>,
+    values: Values,
+    span: Span,
+}
+
+/// What's expected of a fresh collection, and what that lets it be
+struct Fresh {
+    expected: Option<TypeId>,
+    /// An array's type and element type (see [`Flow::fresh_expected`])
+    array: Option<(TypeId, TypeId)>,
+    /// A dict's candidates (see [`Flow::fresh_candidates`])
+    candidates: Vec<(TypeId, TypeId)>,
+}
+
+/// A schema a fresh dict can take: closed, as an application of its class and
+/// the argument, or an alternative of its expectation open in what isn't solved
+/// yet
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Candidate {
+    Closed(TypeId, TypeId),
+    Open(Term),
+}
+
+/// What a collection's rule builds
+#[derive(Clone, Copy)]
+enum Shape {
+    Array,
+    /// A dict whose schema is chosen: its type, and the schema
+    Chosen(Term, Term),
+    /// A dict with the lanes its items can fill, positional then keyed
+    Dict(bool, bool),
+    /// A tuple or record, with the lanes its spreads can fill
+    Items(Rest),
 }
 
 /// A `do` block passed to a rule, which types it: its function type, with a hole
@@ -416,7 +590,7 @@ struct Placed {
 
 /// The evaluated items of an argument list or collection
 #[derive(Default)]
-struct Values<'e> {
+struct Values {
     values: Vec<Placed>,
     /// Each outermost `for`'s span
     groups: Vec<Span>,
@@ -425,10 +599,10 @@ struct Values<'e> {
     /// Whether it has a comprehension
     comprehension: bool,
     /// The arguments held back, in order
-    held: Vec<Held<'e>>,
+    held: Vec<Prepared>,
 }
 
-impl Values<'_> {
+impl Values {
     fn lambdas(&self) -> impl Iterator<Item = &Lambda> {
         (self.values.iter()).filter_map(|placed| match &placed.value {
             Value::Lambda(_, lambda, _) => Some(lambda),
@@ -455,7 +629,8 @@ struct Gathering<'p> {
     /// Whether a `do` block among them is left for the rule to type
     contextual: bool,
     /// Whether an item whose parameter isn't known yet is held back, to be
-    /// expected to be what the call's pre-solve gives it
+    /// released toward what the call's rule expects of it (see
+    /// [`Flow::release`])
     hold: bool,
     /// The next positional item's position, or, unless `exact`, the least it
     /// can be
@@ -512,7 +687,7 @@ enum Part {
 }
 
 impl Slot {
-    fn add(&mut self, rule: &Rule<'_, '_>, part: Part) {
+    fn add(&mut self, rule: &Rule<'_, '_, '_>, part: Part) {
         match part {
             Part::Closed(ty) => {
                 self.closed = Some(match self.closed {
@@ -525,7 +700,7 @@ impl Slot {
     }
 
     /// Its values' join, if any value reaches it
-    fn term(&self, rule: &mut Rule<'_, '_>) -> Option<Term> {
+    fn term(&self, rule: &mut Rule<'_, '_, '_>) -> Option<Term> {
         let closed = self.closed.map(|ty| rule.closed(ty));
         if self.terms.is_empty() {
             return closed;
@@ -539,7 +714,7 @@ impl Slot {
 }
 
 impl Joined {
-    fn keyed(&mut self, rule: &Rule<'_, '_>, key: TypeId, value: Part) {
+    fn keyed(&mut self, rule: &Rule<'_, '_, '_>, key: TypeId, value: Part) {
         if let Type::Literal(_) = rule.db.ty(key) {
             let index = match self.keyed.iter().position(|&(other, _)| other == key) {
                 Some(index) => index,
@@ -556,7 +731,7 @@ impl Joined {
         values.add(rule, value);
     }
 
-    fn atom(&mut self, rule: &Rule<'_, '_>, atom: Atom) {
+    fn atom(&mut self, rule: &Rule<'_, '_, '_>, atom: Atom) {
         match atom {
             Atom::Positional(ty) => self.positional.add(rule, Part::Closed(ty)),
             Atom::Keyed(key, value) => self.keyed(rule, key, Part::Closed(value)),
@@ -565,7 +740,7 @@ impl Joined {
     }
 
     /// Its repeated arguments
-    fn arguments(&self, rule: &mut Rule<'_, '_>) -> Vec<CallArgument> {
+    fn arguments(&self, rule: &mut Rule<'_, '_, '_>) -> Vec<CallArgument> {
         let mut arguments: Vec<_> = (self.positional.term(rule))
             .map(CallArgument::Positional)
             .into_iter()
@@ -690,18 +865,11 @@ pub(super) fn passed_signature(
     })
 }
 
-/// Hold an item back, if it takes an expectation that its position doesn't give
-/// yet: a collection literal, range, call or template. Its operands are set aside
-/// with it. One in an `if` outside every `for` isn't, since the `if`'s branches are compared as
-/// they're gathered. Returns its index into [`Values::held`].
-fn hold<'e>(
-    gathering: &Gathering<'_>,
-    place: Place,
-    expected: Option<TypeId>,
-    value: &'e Expr,
-    operands: &mut VecDeque<TypeId>,
-    values: &mut Values<'e>,
-) -> Option<usize> {
+/// Whether to hold an item back: if it takes an expectation that its position
+/// doesn't give yet, as a collection literal, range, call or template does. One
+/// in an `if` outside every `for` isn't, since the `if`'s branches are compared
+/// as they're gathered.
+fn hold(gathering: &Gathering<'_>, place: Place, expected: Option<TypeId>, value: &Expr) -> bool {
     let takes = matches!(
         value.kind,
         ExprKind::Collection { .. }
@@ -709,20 +877,7 @@ fn hold<'e>(
             | ExprKind::Call { .. }
             | ExprKind::Fmt(_)
     );
-    if !gathering.hold
-        || expected.is_some()
-        || !takes
-        || (place.comprehension && place.group.is_none())
-    {
-        return None;
-    }
-    let operands = operands.drain(..super::holes(value)).collect();
-    values.held.push(Held {
-        expr: value,
-        operands,
-        preview: None,
-    });
-    Some(values.held.len() - 1)
+    gathering.hold && expected.is_none() && takes && !(place.comprehension && place.group.is_none())
 }
 
 /// A call's own arguments, what its result is expected to be, and where it is,
@@ -754,12 +909,12 @@ impl<'a> Flow<'a, '_> {
     /// final pass; otherwise it marks its block undecided. Defaulting takes a `do`
     /// block's result that isn't known yet to be bottom: the block never completes,
     /// until its result grows and runs the rule again.
-    fn conclude(
+    fn conclude<'p>(
         &mut self,
         at: At,
         span: Span,
         expected: Option<TypeId>,
-        build: impl Fn(&mut Rule<'_, '_>) -> Vec<Term>,
+        build: impl Fn(&Self, &mut Rule<'_, '_, 'p>) -> Vec<Term>,
     ) -> Vec<TypeId> {
         self.decide(at, span, expected, build).0
     }
@@ -769,55 +924,90 @@ impl<'a> Flow<'a, '_> {
     /// taking a `do` block's result that isn't known yet to be bottom. A decided
     /// bottom is a value that's never produced, where an undecided one only
     /// stands in for what isn't known yet.
-    fn decide(
+    ///
+    /// Each run solves what `build` makes, with the seed, before releasing the
+    /// arguments it holds back, each as a sub-rule (see [`Flow::release`]). A
+    /// call held back whose result is bottom ends the path, and means the whole
+    /// isn't produced unless it's in a `for`.
+    fn decide<'p>(
         &mut self,
         at: At,
         span: Span,
         expected: Option<TypeId>,
-        build: impl Fn(&mut Rule<'_, '_>) -> Vec<Term>,
+        build: impl Fn(&Self, &mut Rule<'_, '_, 'p>) -> Vec<Term>,
     ) -> (Vec<TypeId>, bool) {
         // Each run has a budget of its own
         let gases = MonoVec::new();
+        // An argument held back that's found exactly is then passed as one that
+        // isn't, closed, so it chooses only what that would: the rule is made
+        // again with it
         let run = |seed: bool, default: bool| {
-            gases.push(Gas::default());
-            let mut solver = self.solver(&gases[gases.len() - 1]);
-            let mut rule = Rule {
-                solver: &mut solver,
-                db: self.db,
-                checks: Vec::new(),
-                passed: Vec::new(),
-                pending: Vec::new(),
-                held: Vec::new(),
-                blind: false,
-            };
-            let results = build(&mut rule);
-            let checks = rule.checks;
-            let lambdas = (rule.passed, rule.pending);
-            let seeded = match expected {
-                Some(expected) if seed => {
-                    solver.constrain(results[0], solver.closed(expected), Provenance::default());
-                    true
+            let mut exact = Vec::new();
+            loop {
+                gases.push(Gas::default());
+                let gas = &gases[gases.len() - 1];
+                let mut solver = self.solver(gas);
+                let mut rule = Rule {
+                    defaulting: default,
+                    exact: &exact,
+                    ..Rule::new(&mut solver, self.db, gas)
+                };
+                let results = build(self, &mut rule);
+                let own = rule.checks.len();
+                let seeded = match expected {
+                    Some(expected) if seed => {
+                        let expected = rule.closed(expected);
+                        rule.constrain(results[0], expected, Check::Seed);
+                        Some(own)
+                    }
+                    _ => None,
+                };
+                if !rule.held.is_empty() {
+                    rule.solver.solve();
+                    self.release(&mut rule);
                 }
-                _ => false,
-            };
-            let outcomes = if default {
-                // The blocks it passes values to have run with them, so a result
-                // that isn't known yet is one that never completes
-                for &term in &lambdas.1 {
-                    let bottom = solver.closed(self.db.bottom());
-                    solver.constrain(bottom, term, Provenance::default());
+                let Rule {
+                    checks,
+                    passed,
+                    pending,
+                    calls,
+                    found,
+                    ..
+                } = rule;
+                if exact.is_empty() && !found.is_empty() {
+                    exact = found;
+                    continue;
                 }
-                let roots = outputs(&results, &[]);
-                default_all(&mut solver, self.db, true, Some(&roots))
-            } else {
-                solver.solve()
-            };
-            let rejected = seeded && outcomes[checks.len()].status == Status::Contradicted;
-            (solver, results, checks, lambdas, outcomes, rejected)
+                let outcomes = if default {
+                    // The blocks it passes values to have run with them, so a
+                    // result that isn't known yet is one that never completes
+                    for &term in &pending {
+                        let bottom = solver.closed(self.db.bottom());
+                        solver.constrain(bottom, term, Provenance::default());
+                    }
+                    let roots = outputs(&results, &[]);
+                    default_all(&mut solver, self.db, true, Some(&roots))
+                } else {
+                    solver.solve()
+                };
+                let rejected =
+                    seeded.is_some_and(|index| outcomes[index].status == Status::Contradicted);
+                break Run {
+                    solver,
+                    results,
+                    checks,
+                    own,
+                    passed,
+                    pending,
+                    calls,
+                    outcomes,
+                    rejected,
+                };
+            }
         };
-        let contradicts = |checks: &[Check], outcomes: &[Outcome]| {
-            (outcomes[..checks.len()].iter()).any(|outcome| outcome.status == Status::Contradicted)
-        };
+        // What the expectation contradicts is the rule's own checks: an argument
+        // held back that contradicts its own reports itself
+        let contradicts = |run: &Run<'_>| run.any(run.own, Status::Contradicted);
         // The expectation mustn't choose for the rule, as by rejecting the
         // alternative a union parameter's argument fits, so a run it contradicts
         // gives way to one without it that isn't. Defaulting can hide what it
@@ -825,66 +1015,76 @@ impl<'a> Flow<'a, '_> {
         // unless the expectation itself is contradicted.
         let attempt = |default: bool, choice: Option<bool>| {
             let seeded = run(true, default);
-            let (_, _, checks, _, outcomes, rejected) = &seeded;
             let unseed = match choice {
-                _ if *rejected => true,
+                _ if seeded.rejected => true,
                 Some(seed) => !seed,
-                None if contradicts(checks, outcomes) => {
+                None if contradicts(&seeded) => {
                     let unseeded = run(false, default);
-                    let (_, _, checks, _, outcomes, _) = &unseeded;
-                    if !contradicts(checks, outcomes) {
-                        let (solver, results, checks, lambdas, outcomes, _) = unseeded;
-                        return (solver, results, checks, lambdas, outcomes, false);
+                    if !contradicts(&unseeded) {
+                        return (unseeded, false);
                     }
                     false
                 }
                 None => false,
             };
-            let (solver, results, checks, lambdas, outcomes, _) = match unseed {
-                true => run(false, default),
-                false => seeded,
-            };
-            (solver, results, checks, lambdas, outcomes, !unseed)
+            match unseed {
+                true => (run(false, default), false),
+                false => (seeded, true),
+            }
         };
-        let (mut solver, mut results, mut checks, mut lambdas, mut outcomes, seeded) =
-            attempt(false, None);
-        let contradicted =
-            (outcomes[..checks.len()].iter()).any(|outcome| outcome.status == Status::Contradicted);
+        let (mut run, seeded) = attempt(false, None);
+        let contradicted = run.any(run.checks.len(), Status::Contradicted);
         // A check left unresolved may be decided by defaulting
-        let unresolved =
-            (outcomes[..checks.len()].iter()).any(|outcome| outcome.status == Status::Unresolved);
-        let reified: Option<Vec<TypeId>> = (results.iter())
-            .map(|&term| solver.reify(term).ok())
+        let unresolved = run.any(run.checks.len(), Status::Unresolved);
+        let reified: Option<Vec<TypeId>> = (run.results.iter())
+            .map(|&term| run.solver.reify(term).ok())
             .collect();
-        let (values, decided): (Vec<TypeId>, bool) = match reified {
+        let (mut values, decided): (Vec<TypeId>, bool) = match reified {
             Some(values) if !contradicted && !unresolved => (values, true),
             _ if self.defaulting || self.observing() => {
-                (solver, results, checks, lambdas, outcomes, _) = attempt(true, Some(seeded));
-                let reified: Vec<_> = (results.iter())
-                    .map(|&term| solver.reify(term).ok())
+                (run, _) = attempt(true, Some(seeded));
+                let reified: Vec<_> = (run.results.iter())
+                    .map(|&term| run.solver.reify(term).ok())
                     .collect();
                 // A strict unit's defaulting leaves what nothing determines
                 // unresolved. A check it leaves unresolved is recorded instead.
-                let decided = (outcomes[..checks.len()].iter())
-                    .all(|outcome| outcome.status != Status::Unresolved);
+                let decided = !run.any(run.checks.len(), Status::Unresolved);
                 if reified.contains(&None) && decided {
                     self.gap(span, "a type nothing determines");
                 }
                 let values = (reified.into_iter())
                     .map(|ty| ty.unwrap_or(self.db.unknown()))
                     .collect();
-                (values, decided && lambdas.1.is_empty())
+                (values, decided && run.pending.is_empty())
             }
             _ => {
                 self.unsettled.insert((at.block, at.ctx));
-                (vec![self.db.bottom(); results.len()], false)
+                (vec![self.db.bottom(); run.results.len()], false)
             }
         };
+        let Run {
+            mut solver,
+            results,
+            checks,
+            passed,
+            pending,
+            calls,
+            outcomes,
+            ..
+        } = run;
+        let bottom = self.db.bottom();
+        for &(term, span, repeated) in &calls {
+            if solver.reify(term).is_ok_and(|ty| ty == bottom) {
+                self.diverge(span, decided);
+                if !repeated {
+                    values.fill(bottom);
+                }
+            }
+        }
         if self.observing() {
             self.blame(&solver, &checks, &outcomes[..checks.len()]);
             return (values, decided);
         }
-        let (passed, pending) = lambdas;
         for (var, ty) in self::passed(&mut solver, self.db, &results, &passed, &pending) {
             self.join(var, ty);
         }
@@ -897,7 +1097,7 @@ impl<'a> Flow<'a, '_> {
         for (check, outcome) in checks.iter().zip(outcomes) {
             let span = match *check {
                 Check::Call { span, .. } | Check::Fits(span, _) | Check::Expected(span) => span,
-                Check::Quiet => continue,
+                Check::Quiet | Check::Seed => continue,
             };
             match outcome.status {
                 Status::Proven => {}
@@ -920,8 +1120,12 @@ impl<'a> Flow<'a, '_> {
                 },
                 Status::Contradicted => {
                     let relation = solver.relation(root(outcome));
-                    // The callee, or the value that doesn't fit
-                    let actual = solver.reify(relation.checked()).ok();
+                    // The callee, or the value that doesn't fit, as what's found
+                    // of it if an argument held back in it is left unsolved
+                    let checked = relation.checked();
+                    let actual = (solver.reify(checked))
+                        .or_else(|_| solver.reify_found(checked))
+                        .ok();
                     let problems: Vec<Problem> = match check {
                         // An argument is reported once, with a note for each of
                         // its parts that doesn't fit
@@ -992,7 +1196,7 @@ impl<'a> Flow<'a, '_> {
                                 causes: notes,
                             }]
                         }
-                        Check::Quiet => Vec::new(),
+                        Check::Quiet | Check::Seed => Vec::new(),
                     };
                     for problem in problems {
                         self.problem(problem);
@@ -1153,13 +1357,24 @@ impl<'a> Flow<'a, '_> {
                 let Some(&arg) = args.get(index) else {
                     return fallback;
                 };
+                let mut root = arguments + 2;
+                // An argument held back that's left unsolved shows what it's
+                // made of, as does one solved as what it's made of
+                if let Some(Derivation::BoundPropagation | Derivation::Assignment) = steps.get(root)
+                    && let Some((found, _)) = path[root].sides
+                    && (found.is_none() || path[root].sides == path[root + 1].sides)
+                {
+                    root += 1;
+                }
                 // A write through a key selecting several items shows the item
                 // the argument doesn't fit
-                let root = match steps.get(arguments + 2) {
-                    Some(Derivation::Selected(_)) => arguments + 3,
-                    _ => arguments + 2,
-                };
-                let Some((Some(found), expected)) = path[root].sides else {
+                if let Some(Derivation::Selected(_)) = steps.get(root) {
+                    root += 1;
+                }
+                // What's found of an argument held back that's left unsolved
+                let Some((Some(found), expected)) = (path[root].sides)
+                    .map(|(found, expected)| (found.or(path[root].found), expected))
+                else {
                     return fallback;
                 };
                 // A parameter whose type is left unsolved shows the bound of it
@@ -1310,7 +1525,7 @@ impl<'a> Flow<'a, '_> {
     /// passes them joins into its signature, and its result, until the block's
     /// analysis gives it, is a variable that keeps the call undecided. An argument
     /// that takes an expectation its generic callee's signature alone doesn't give
-    /// is held back until the call's pre-solve does (see [`Flow::expectations`]).
+    /// is held back, and released in the call's rule (see [`Flow::release`]).
     /// A comprehension's arguments are passed as often as it says: see
     /// [`Flow::gather`]. A callee that isn't a function is called as
     /// [`Flow::call_value`] says.
@@ -1414,20 +1629,53 @@ impl<'a> Flow<'a, '_> {
         receivers: &[(TypeId, Span)],
         call: Call<'_>,
     ) -> TypeId {
-        let mut params = self.params(callee_type).unwrap_or_default();
-        let skipped = receivers.len().min(params.positional.len());
-        params.positional.drain(..skipped);
-        let generic = matches!(self.db.ty(callee_type), Type::Quantified { .. })
-            || self.overloaded(callee_type);
-        let mut values = self.values(at, state, operands, call.args, Some(&params), true, generic);
-        received(&mut values, receivers, self.db.bottom());
-        self.finish_call(at, state, callee_type, &mut values, call)
+        let prepared = self.prepare_call(at, state, operands, callee_type, receivers, call);
+        self.finish_prepared(at, prepared, call.expected)
     }
 
-    /// A call of a union's alternatives, its arguments evaluated once. A held
-    /// argument takes an expectation only when every alternative gives it the
-    /// same one. Each is then solved separately, so a diagnostic's argument
-    /// indexes are its own receivers', and the call gives what they give.
+    /// A call of `callee` as [`Flow::call_with`] makes it, with its arguments
+    /// evaluated and its expectation not yet given
+    pub(super) fn prepare_call(
+        &mut self,
+        at: At,
+        state: &mut State,
+        operands: &mut VecDeque<TypeId>,
+        callee: TypeId,
+        receivers: &[(TypeId, Span)],
+        call: Call<'_>,
+    ) -> PreparedCall {
+        let mut params = self.params(callee).unwrap_or_default();
+        let skipped = receivers.len().min(params.positional.len());
+        params.positional.drain(..skipped);
+        let generic =
+            matches!(self.db.ty(callee), Type::Quantified { .. }) || self.overloaded(callee);
+        let mut values = self.values(at, state, operands, call.args, Some(&params), true, generic);
+        received(&mut values, receivers, self.db.bottom());
+        PreparedCall {
+            callee,
+            values,
+            member: call.callee,
+            span: call.span,
+            channels: self.channels(at),
+        }
+    }
+
+    /// Finish a call [`Flow::prepare_call`] made, expecting `expected` of its
+    /// result
+    pub(super) fn finish_prepared(
+        &mut self,
+        at: At,
+        prepared: PreparedCall,
+        expected: Option<TypeId>,
+    ) -> TypeId {
+        let call = prepared.call(expected);
+        self.finish_call(at, prepared.callee, &prepared.values, call)
+    }
+
+    /// A call of a union's alternatives, its arguments evaluated once. Each is
+    /// solved separately, with the arguments held back released in its own rule,
+    /// so a diagnostic's argument indexes are its own receivers', and the call
+    /// gives what they give.
     fn call_union(
         &mut self,
         at: At,
@@ -1438,31 +1686,8 @@ impl<'a> Flow<'a, '_> {
     ) -> TypeId {
         let (bottom, unknown) = (self.db.bottom(), self.db.unknown());
         let mut values = self.values(at, state, operands, call.args, None, true, true);
-        let (input, output) = self.channels(at);
-        let mut callees = Vec::with_capacity(targets.len());
-        let mut expectations: Option<Vec<Option<TypeId>>> = None;
-        for target in targets {
-            received(&mut values, &target.receivers, bottom);
-            let callee = target.signature.callee(self.db).unwrap_or(unknown);
-            let next = match !values.never && self.callable(callee) {
-                true => self.expectations(callee, &values, input, output, call.expected, call.span),
-                false => vec![None; values.held.len()],
-            };
-            match &mut expectations {
-                None => expectations = Some(next),
-                Some(common) => {
-                    for (common, next) in common.iter_mut().zip(next) {
-                        if *common != next {
-                            *common = None;
-                        }
-                    }
-                }
-            }
-            values.values.drain(..target.receivers.len());
-            callees.push(callee);
-        }
-        let expectations = expectations.unwrap_or_else(|| vec![None; values.held.len()]);
-        self.release(at, state, &mut values, &expectations);
+        values.never |=
+            (targets.iter().flat_map(|target| &target.receivers)).any(|&(ty, _)| ty == bottom);
         if values.never {
             self.diverge(call.span, false);
             return bottom;
@@ -1470,13 +1695,14 @@ impl<'a> Flow<'a, '_> {
         // An alternative that never returns ends the path only if they all do
         let diverged = self.diverged;
         let mut result = bottom;
-        for (target, callee) in targets.iter().zip(callees) {
+        for target in targets {
             received(&mut values, &target.receivers, bottom);
+            let callee = target.signature.callee(self.db).unwrap_or(unknown);
             let call = Call {
                 callee: target.member.or(call.callee),
                 ..call
             };
-            let given = self.finish_call(at, state, callee, &mut values, call);
+            let given = self.finish_call(at, callee, &values, call);
             values.values.drain(..target.receivers.len());
             let given = target.gives(given, bottom);
             trace!(
@@ -1493,44 +1719,29 @@ impl<'a> Flow<'a, '_> {
         result
     }
 
-    /// Finish a call of `callee` with its arguments evaluated: release the ones
-    /// held back, with what the call's pre-solve expects of them, and check the
-    /// call
+    /// Finish a call of `callee` with its arguments evaluated, and check it. The
+    /// arguments held back are released in its rule (see [`Flow::release`]).
     fn finish_call(
         &mut self,
         at: At,
-        state: &mut State,
         callee_type: TypeId,
-        values: &mut Values<'_>,
+        values: &Values,
         call: Call<'_>,
     ) -> TypeId {
         let Call { expected, span, .. } = call;
-        let name = match (call.callee, self.db.ty(callee_type)) {
-            (Some(member), _) => Some(self.member_name(member)),
-            (None, Type::Decl(_)) => Some(self.shown(callee_type)),
-            _ => None,
-        };
+        let name = self.call_name(call.callee, callee_type);
         let bottom = self.db.bottom();
-        let unknown = self.db.unknown();
         let (input, output) = self.channels(at);
-        let callable = self.callable(callee_type);
-        let spread = self.designated(Designated::Spread);
-        if !values.held.is_empty() {
-            let expectations = match callee_type != bottom && !values.never && callable {
-                true => self.expectations(callee_type, values, input, output, expected, span),
-                false => vec![None; values.held.len()],
-            };
-            self.release(at, state, values, &expectations);
-        }
         if callee_type == bottom || values.never {
             self.diverge(span, false);
             return bottom;
         }
-        if !callable {
-            self.untyped(at, values);
-            return unknown;
+        if !self.callable(callee_type) {
+            self.unchecked(at, values, span);
+            return self.db.unknown();
         }
-        let (given, decided) = self.decide(at, span, expected, |rule| {
+        let spread = self.designated(Designated::Spread);
+        let (given, decided) = self.decide(at, span, expected, |_, rule| {
             vec![call_constraint(
                 rule,
                 values,
@@ -1552,6 +1763,30 @@ impl<'a> Flow<'a, '_> {
             self.show(given)
         );
         given
+    }
+
+    /// What a call's diagnostics name its callee: the member it calls, or the
+    /// declaration
+    fn call_name(&self, member: Option<Member>, callee: TypeId) -> Option<String> {
+        match (member, self.db.ty(callee)) {
+            (Some(member), _) => Some(self.member_name(member)),
+            (None, Type::Decl(_)) => Some(self.shown(callee)),
+            _ => None,
+        }
+    }
+
+    /// Check what no rule will among values: instantiate each `do` block as
+    /// anywhere else, and release the arguments held back without an expectation
+    fn unchecked(&mut self, at: At, values: &Values, span: Span) {
+        self.untyped(at, values);
+        if !values.held.is_empty() {
+            self.conclude(at, span, None, |_, rule| {
+                for prepared in &values.held {
+                    rule.hold(prepared, false);
+                }
+                Vec::new()
+            });
+        }
     }
 
     /// Whether a callee is a function, or an overloaded one, or a union of them,
@@ -1576,322 +1811,293 @@ impl<'a> Flow<'a, '_> {
         }
     }
 
-    /// The expectations a call's pre-solve gives the arguments held back, by index
-    /// into [`Values::held`]. It solves the call with a fresh variable for each held
-    /// argument, and never makes a variable dynamic. A variable the held arguments
-    /// can't raise takes its least solution (see [`Solver::raised`]): one they
-    /// can raise would make the expectation too narrow. A held argument's
-    /// expectation is its parameter, if what's forced or chosen solves it.
-    fn expectations(
-        &self,
-        callee: TypeId,
-        values: &Values<'_>,
-        input: Option<TypeId>,
-        output: Option<TypeId>,
-        expected: Option<TypeId>,
-        span: Span,
-    ) -> Vec<Option<TypeId>> {
-        let attempt = |gas, seed| self.presolve(gas, callee, values, input, output, seed, span);
-        let mut expectations = vec![None; values.held.len()];
-        let (seeded, unseeded) = (Gas::default(), Gas::default());
-        let (mut solver, mut held, contradicted) = attempt(&seeded, expected);
-        if contradicted {
-            let contradicted;
-            (solver, held, contradicted) = attempt(&unseeded, None);
-            if contradicted {
-                return expectations;
-            }
-        }
-        let terms: Vec<Term> = held.iter().map(|&(_, term)| term).collect();
-        let raised = (solver.raised(&terms)).unwrap_or_else(|_| solver.unresolved().collect());
-        default_where(&mut solver, |id| !raised.contains(&id), None);
-        for &(index, term) in &held {
-            expectations[index] = expectation(&solver, term);
-        }
-        // A stopgap until #917: a dict left without an expectation, where a union
-        // of dict schemas would choose its schema, widens, and no member of the
-        // union takes it. It's given its parameter with every variable defaulted
-        // from the arguments not held back, so the held ones can't widen them.
-        let dict = self.designated(Designated::Dict);
-        let choosing = |index: usize| {
-            expectations[index].is_none()
-                && matches!(
-                    values.held[index].expr.kind,
-                    ExprKind::Collection {
-                        kind: Collection::Dict,
-                        ..
-                    }
-                )
-        };
-        if let Some(dict) = dict
-            && held.iter().any(|&(index, _)| choosing(index))
-        {
-            default_all(&mut solver, self.db, true, None);
-            let chosen: Vec<(usize, Option<TypeId>)> = (held.iter())
-                .filter(|&&(index, _)| choosing(index))
-                .map(|&(index, term)| {
-                    let expected = expectation(&solver, term)
-                        .filter(|&ty| self.fresh_candidates(dict, Kind::Schema, ty).len() > 1);
-                    (index, expected)
-                })
-                .collect();
-            for (index, expected) in chosen {
-                expectations[index] = expected;
-            }
-        }
-        // Likewise for an array or range an overloaded callee takes: its
-        // undecided choice leaves the literal's parameter unsolved, so an array's
-        // items would decay and a range's bounds decide nothing. Each overload the
-        // call doesn't contradict gives the parameter it would, and the literal
-        // takes the one a fresh value of its class can be, if only one is.
-        let overloads = match self.db.ty(callee) {
-            Type::Overloaded { overloads, .. } => overloads.to_vec(),
-            &Type::Decl(decl) if self.overloaded(callee) => (self.db.overloads(decl).iter())
-                .map(|&overload| self.db.declaration(overload).ty)
-                .collect(),
-            _ => Vec::new(),
-        };
-        let (array, range) = (
-            self.designated(Designated::Array),
-            self.designated(Designated::Range),
-        );
-        let literals: Vec<(usize, DeclId)> = (held.iter())
-            .filter(|&&(index, _)| expectations[index].is_none())
-            .filter_map(|&(index, _)| match values.held[index].expr.kind {
-                ExprKind::Collection {
-                    kind: Collection::Array,
-                    ..
-                } => array.map(|class| (index, class)),
-                ExprKind::Range { .. } => range.map(|class| (index, class)),
-                _ => None,
-            })
-            .collect();
-        if !literals.is_empty() {
-            let mut chosen: Vec<Vec<TypeId>> = vec![Vec::new(); literals.len()];
-            for &overload in &overloads {
-                let gas = Gas::default();
-                let (mut solver, held, contradicted) =
-                    self.presolve(&gas, overload, values, input, output, None, span);
-                if contradicted {
-                    continue;
-                }
-                default_all(&mut solver, self.db, true, None);
-                for (&(index, class), chosen) in literals.iter().zip(&mut chosen) {
-                    let term = held
-                        .iter()
-                        .find(|&&(held, _)| held == index)
-                        .map(|&(_, term)| term);
-                    let expected = term
-                        .and_then(|term| expectation(&solver, term))
-                        .filter(|&ty| self.fresh_expected(class, Kind::Type, ty).is_some());
-                    if let Some(ty) = expected
-                        && !chosen.contains(&ty)
-                    {
-                        chosen.push(ty);
-                    }
-                }
-            }
-            for ((index, _), chosen) in literals.into_iter().zip(chosen) {
-                if let [ty] = chosen[..] {
-                    expectations[index] = Some(ty);
-                }
-            }
-        }
-        expectations
-    }
-
-    /// Solve a call of `callee` with a fresh variable for each argument held back,
-    /// and `expected`, if given, as an upper bound on its result. Returns the
-    /// solver, each held argument's variable by its index into [`Values::held`],
-    /// and whether anything was contradicted.
-    #[expect(clippy::too_many_arguments, reason = "a call's parts")]
-    fn presolve<'g>(
-        &self,
-        gas: &'g Gas,
-        callee: TypeId,
-        values: &Values<'_>,
-        input: Option<TypeId>,
-        output: Option<TypeId>,
-        expected: Option<TypeId>,
-        span: Span,
-    ) -> (Solver<'g>, Vec<(usize, Term)>, bool)
-    where
-        'a: 'g,
-    {
-        let spread = self.designated(Designated::Spread);
-        let mut solver = self.solver(gas);
-        let mut rule = Rule {
-            solver: &mut solver,
-            db: self.db,
-            checks: Vec::new(),
-            passed: Vec::new(),
-            pending: Vec::new(),
-            held: Vec::new(),
-            blind: false,
-        };
-        let call = (span, None);
-        let result = call_constraint(&mut rule, values, spread, call, callee, input, output);
-        let held = rule.held;
-        if let Some(expected) = expected {
-            solver.constrain(result, solver.closed(expected), Provenance::default());
-        }
-        let contradicted =
-            (solver.solve().iter()).any(|outcome| outcome.status == Status::Contradicted);
-        (solver, held, contradicted)
-    }
-
-    /// The candidate of [`Flow::fresh_candidates`] a fresh dict with `values` is:
-    /// the only one, or else the one its items fit, or else the one its keys fit.
-    /// A choice its values don't fit is then reported against it.
-    fn choose_fresh(
-        &self,
-        candidates: &[(TypeId, TypeId)],
-        values: &Values<'_>,
-        span: Span,
-    ) -> Option<(TypeId, TypeId)> {
-        if let &[candidate] = candidates {
-            return Some(candidate);
-        }
-        if candidates.is_empty() || values.never {
-            return None;
-        }
-        // Two survivors are as many as it takes to choose none
-        let survivors = |keys_only: bool| -> Vec<(TypeId, TypeId)> {
-            (candidates.iter().copied())
-                .filter(|&(_, schema)| {
-                    let gas = Gas::default();
-                    let (_, _, contradicted) =
-                        self.presolve_schema(&gas, values, schema, span, true, keys_only);
-                    !contradicted
-                })
-                .take(2)
-                .collect()
-        };
-        let mut chosen = survivors(false);
-        if chosen.is_empty() {
-            chosen = survivors(true);
-        }
-        trace!(
-            "{}: {} candidates, {}",
-            self.tables.locate(self.unit, span),
-            candidates.len(),
-            match chosen[..] {
-                [] => "none fits the dict".to_owned(),
-                [(ty, _)] => format!("chose {}", self.show(ty)),
-                _ => "several fit the dict".to_owned(),
-            }
-        );
-        match chosen[..] {
-            [candidate] => Some(candidate),
-            _ => None,
-        }
-    }
-
-    /// Solve a fresh dict's items, `values`, against `schema`, with a fresh
-    /// variable for each item held back, as [`Flow::presolve`] solves a call.
-    /// With `choosing`, what's left unsolved is defaulted, and with `keys_only`,
-    /// each item's value is a fresh variable, so only its key can contradict.
-    fn presolve_schema<'g>(
-        &self,
-        gas: &'g Gas,
-        values: &Values<'_>,
-        schema: TypeId,
-        span: Span,
-        choosing: bool,
-        keys_only: bool,
-    ) -> (Solver<'g>, Vec<(usize, Term)>, bool)
-    where
-        'a: 'g,
-    {
-        let spread = self.designated(Designated::Spread);
-        let mut solver = self.solver(gas);
-        let mut rule = Rule {
-            solver: &mut solver,
-            db: self.db,
-            checks: Vec::new(),
-            passed: Vec::new(),
-            pending: Vec::new(),
-            held: Vec::new(),
-            blind: choosing,
-        };
-        let (mut arguments, _) = rule.arguments(values, spread, span);
-        if keys_only {
-            for (_, argument) in &mut arguments {
-                match argument {
-                    CallArgument::Positional(value)
-                    | CallArgument::Keyword(_, value)
-                    | CallArgument::Pair(_, value) => *value = rule.solver.infer(),
-                    CallArgument::Spread(_) => {}
-                }
-            }
-        }
-        let exact = rule.solver.arguments_schema(&arguments);
-        let expected = rule.closed(schema);
-        rule.constrain(exact, expected, Check::Quiet);
-        let held = rule.held;
-        let contradicted = |outcomes: &[Outcome]| {
-            (outcomes.iter()).any(|outcome| outcome.status == Status::Contradicted)
-        };
-        let mut rejected = contradicted(&solver.solve());
-        if choosing && !rejected {
-            rejected = contradicted(&default_where(&mut solver, |_| true, None));
-        }
-        (solver, held, rejected)
-    }
-
-    /// Cache templates before pre-solving so their names and values constrain
-    /// the call, while their hole types can still take its expectation.
-    fn preview_template(
+    /// Evaluate an item held back as far as it can be without its expectation.
+    /// What's left to finish is held back; anything else is evaluated whole,
+    /// giving its type: a call of a union's alternatives, or one its rule won't
+    /// check, and what's never produced.
+    fn prepare(
         &mut self,
         at: At,
         state: &mut State,
-        values: &mut Values<'_>,
-        index: usize,
-    ) {
-        let held = &mut values.held[index];
-        if matches!(held.expr.kind, ExprKind::Fmt(_)) {
-            let preview = self.eval(at, state, &mut held.operands, held.expr);
-            values.never |= preview == self.db.bottom();
-            held.preview = Some(preview);
+        operands: &mut VecDeque<TypeId>,
+        expr: &Expr,
+    ) -> Result<Prepared, TypeId> {
+        match &expr.kind {
+            ExprKind::Call { callee, args, .. } => {
+                let callee_type = self.eval(at, state, operands, callee);
+                let targets = self.value_targets((callee_type, callee.span), &[], expr.span);
+                let call = Call {
+                    args,
+                    expected: None,
+                    span: expr.span,
+                    callee: None,
+                };
+                match <[CallTarget; 1]>::try_from(targets) {
+                    Ok([target]) => {
+                        let callee =
+                            (target.signature.callee(self.db)).unwrap_or(self.db.unknown());
+                        let call = Call {
+                            callee: target.member,
+                            ..call
+                        };
+                        let receivers = &target.receivers;
+                        let call = self.prepare_call(at, state, operands, callee, receivers, call);
+                        self.held_call(at, call, target.instance())
+                    }
+                    Err(targets) => Err(self.call_union(at, state, operands, &targets, call)),
+                }
+            }
+            ExprKind::Range { .. } => match self.prepare_range(at, state, operands, expr) {
+                Ok(call) => self.held_call(at, call, None),
+                Err(ty) => Err(ty),
+            },
+            ExprKind::Collection { .. } => {
+                let collection = self.prepare_collection(at, state, operands, expr, None);
+                match self.unchecked_collection(at, &collection) {
+                    Some(ty) => Err(ty),
+                    None => Ok(Prepared::Collection(collection)),
+                }
+            }
+            ExprKind::Fmt(_) => match self.eval(at, state, operands, expr) {
+                ty if ty == self.db.bottom() => Err(ty),
+                ty => Ok(Prepared::Fmt(ty)),
+            },
+            _ => unreachable!("an item that takes an expectation"),
         }
     }
 
-    /// Evaluate the arguments held back, each expecting what `expectations` gives
-    /// it, in place of their placeholders
-    fn release(
+    /// A call held back, giving `instance` if it's a constructor with unchecked
+    /// arguments, unless its rule won't check it: then it's finished now
+    fn held_call(
         &mut self,
         at: At,
-        state: &mut State,
-        values: &mut Values<'_>,
-        expectations: &[Option<TypeId>],
-    ) {
+        call: PreparedCall,
+        instance: Option<TypeId>,
+    ) -> Result<Prepared, TypeId> {
         let bottom = self.db.bottom();
-        let types: Vec<TypeId> = (std::mem::take(&mut values.held).into_iter())
-            .zip(expectations)
-            .map(|(mut held, &expected)| match held.preview {
-                Some(preview) => self.contextual_fmt(preview, expected),
-                None => self.expect(at, state, &mut held.operands, held.expr, expected),
-            })
-            .collect();
-        let mut never = false;
-        values.values.retain_mut(|placed| {
-            let Value::Held(at, index, span) = placed.value else {
-                return true;
-            };
-            let ty = types[index];
-            if ty == bottom {
-                // One in a comprehension occurs zero times
-                never |= placed.group.is_none();
-                return false;
+        if call.callee == bottom || call.values.never || !self.callable(call.callee) {
+            let given = self.finish_prepared(at, call, None);
+            return Err(match instance {
+                Some(instance) if given != bottom => instance,
+                _ => given,
+            });
+        }
+        Ok(Prepared::Call { call, instance })
+    }
+
+    /// Release the arguments a rule holds back, in order. Each is a sub-rule,
+    /// made in a fork of the rule's solver that the rule then takes over: its
+    /// checks and `do` blocks are the rule's, and what's solved so far gives
+    /// its expectation, which leaves the binders it names open (see
+    /// [`expectation`]). It's made seeded with its expectation first, and if
+    /// that contradicts, again without it: then it's solved alone before its
+    /// value is passed. A template only takes the holes its expectation gives,
+    /// once that's solved.
+    fn release(&self, rule: &mut Rule<'_, '_, '_>) {
+        let held = std::mem::take(&mut rule.held);
+        let raisable: Vec<Term> = held.iter().map(|held| held.term).collect();
+        for held in held {
+            let expected = self.held_expectation(rule, held.term, &raisable);
+            if let Prepared::Fmt(preview) = *held.prepared {
+                let expected = expected.and_then(|expected| rule.solver.reify(expected).ok());
+                let refined = self.contextual_fmt(preview, expected);
+                if refined != preview {
+                    rule.constrain(rule.closed(refined), held.term, Check::Quiet);
+                }
+                continue;
             }
-            placed.value = match at {
-                HeldAt::Positional => Value::Pos(ty, span),
-                HeldAt::Keyword(key) => Value::Key(key, ty, span),
-                HeldAt::Pair(key) => Value::Pair(key, ty),
+            if !self.sub_rule(rule, held, expected, true) {
+                self.sub_rule(rule, held, expected, false);
+            }
+        }
+    }
+
+    /// What an argument held back is expected to be: what's solved so far gives
+    /// (see [`expectation`]), unless it's solved once every variable that the
+    /// arguments held back, `raisable`, can't raise takes its least solution (see
+    /// [`Solver::raised`]). Such a variable, as a key's type an item's parameter
+    /// selects by, would otherwise wait on defaulting, though the arguments held
+    /// back can't change it.
+    fn held_expectation(
+        &self,
+        rule: &mut Rule<'_, '_, '_>,
+        held: Term,
+        raisable: &[Term],
+    ) -> Option<Term> {
+        let below = |actual, expected| self.below(actual, expected);
+        let open = expectation(rule.solver, held, below);
+        if open.is_some_and(|expected| rule.solver.reify(expected).is_ok()) {
+            return open;
+        }
+        let solved = {
+            let mut fork = rule.solver.fork(rule.gas);
+            let raised = (fork.raised(raisable)).unwrap_or_else(|_| fork.unresolved().collect());
+            default_where(&mut fork, |id| !raised.contains(&id), None);
+            expectation(&fork, held, below).and_then(|expected| fork.reify(expected).ok())
+        };
+        solved.map(|ty| rule.closed(ty)).or(open)
+    }
+
+    /// Make the sub-rule of an argument held back, seeded or not, and have the
+    /// rule take it over, unless it's seeded and contradicts itself or what
+    /// it's passed to. Returns whether the rule took it over.
+    fn sub_rule<'p>(
+        &self,
+        rule: &mut Rule<'_, '_, 'p>,
+        held: Held<'p>,
+        expected: Option<Term>,
+        seed: bool,
+    ) -> bool {
+        let (db, gas) = (rule.db, rule.gas);
+        // Whether it contradicts what it's passed to can only be told if
+        // nothing is yet
+        let contradicted = seed && rule.solver.contradicts();
+        let lengths = (
+            rule.checks.len(),
+            rule.passed.len(),
+            rule.pending.len(),
+            rule.calls.len(),
+            rule.found.len(),
+        );
+        let delta = {
+            let mut fork = rule.solver.fork(gas);
+            let mut sub = Rule {
+                checks: std::mem::take(&mut rule.checks),
+                passed: std::mem::take(&mut rule.passed),
+                pending: std::mem::take(&mut rule.pending),
+                calls: std::mem::take(&mut rule.calls),
+                found: std::mem::take(&mut rule.found),
+                repeated: held.repeated,
+                defaulting: rule.defaulting,
+                exact: rule.exact,
+                blind: rule.blind,
+                ..Rule::new(&mut fork, db, gas)
             };
-            true
-        });
-        values.never |= never;
+            let (given, seeded) = self.held_term(&mut sub, held.prepared, expected);
+            if seed {
+                if let Some(seeded) = seeded {
+                    sub.constrain(given, seeded, Check::Quiet);
+                }
+                sub.constrain(given, held.term, Check::Quiet);
+            }
+            sub.solver.solve();
+            if !sub.held.is_empty() {
+                self.release(&mut sub);
+                sub.solver.solve();
+            }
+            let keep = !seed || contradicted || !sub.solver.contradicts();
+            // Solved alone, or in a run that defaults, it's what its own defaults
+            // make it, as a rule of its own would be. A `do` block's result that
+            // isn't known yet is bottom, as a defaulting run takes it.
+            if !seed || sub.defaulting {
+                if sub.defaulting {
+                    for index in lengths.2..sub.pending.len() {
+                        let term = sub.pending[index];
+                        sub.constrain(sub.closed(db.bottom()), term, Check::Quiet);
+                    }
+                }
+                let roots = outputs(&[given], &[]);
+                default_own(sub.solver, Some(&roots));
+            }
+            // What it's solved alone as is passed closed, so what the argument
+            // doesn't fit is reported only against the argument
+            if !seed {
+                let given = sub.solver.reify(given).map_or(given, |ty| sub.closed(ty));
+                sub.constrain(given, held.term, Check::Quiet);
+            }
+            // A value that's solved, or that only solved types are below, as a
+            // call's of a function that isn't generic is, is the argument
+            // exactly, as if it were passed closed, so it chooses nothing more
+            // than that would
+            let exact = sub.solver.reify(given).ok().or_else(|| match given {
+                Term::Infer(id)
+                    if (sub.solver.bounds(id).lower())
+                        .all(|lower| sub.solver.reify(lower).is_ok()) =>
+                {
+                    sub.solver.reify_found(given).ok()
+                }
+                _ => None,
+            });
+            if let Some(exact) = exact {
+                sub.constrain(held.term, sub.closed(exact), Check::Quiet);
+                // Found exactly unless what it checks of its own is left
+                // undecided, or it passes a `do` block values
+                let outcomes = sub.solver.solve();
+                let decided =
+                    (sub.checks[lengths.0..].iter().zip(&outcomes)).all(|(check, outcome)| {
+                        match outcome.status {
+                            Status::Proven => true,
+                            Status::Unresolved => matches!(check, Check::Quiet),
+                            Status::Contradicted => false,
+                        }
+                    });
+                if keep
+                    && decided
+                    && exact != db.bottom()
+                    && (sub.passed.len(), sub.pending.len()) == (lengths.1, lengths.2)
+                {
+                    sub.found.push((held.prepared, exact));
+                }
+            }
+            let Rule {
+                checks,
+                passed,
+                pending,
+                calls,
+                found,
+                ..
+            } = sub;
+            (
+                rule.checks,
+                rule.passed,
+                rule.pending,
+                rule.calls,
+                rule.found,
+            ) = (checks, passed, pending, calls, found);
+            keep.then(|| fork.commit())
+        };
+        let Some(delta) = delta else {
+            let (checks, passed, pending, calls, found) = lengths;
+            rule.checks.truncate(checks);
+            rule.passed.truncate(passed);
+            rule.pending.truncate(pending);
+            rule.calls.truncate(calls);
+            rule.found.truncate(found);
+            return false;
+        };
+        rule.solver.absorb(delta);
+        true
+    }
+
+    /// The term of an argument held back, toward `expected`, and what to seed
+    /// it with besides
+    fn held_term<'p>(
+        &self,
+        rule: &mut Rule<'_, '_, 'p>,
+        prepared: &'p Prepared,
+        expected: Option<Term>,
+    ) -> (Term, Option<Term>) {
+        match prepared {
+            Prepared::Call { call, instance } => {
+                let spread = self.designated(Designated::Spread);
+                let name = self.call_name(call.member, call.callee);
+                let (input, output) = call.channels;
+                let result = call_constraint(
+                    rule,
+                    &call.values,
+                    spread,
+                    (call.span, name),
+                    call.callee,
+                    input,
+                    output,
+                );
+                rule.calls.push((result, call.span, rule.repeated));
+                let given = instance.map_or(result, |instance| rule.closed(instance));
+                (given, None)
+            }
+            Prepared::Collection(collection) => self.collection_term(rule, collection, expected),
+            Prepared::Fmt(_) => unreachable!("a template is refined, not made"),
+        }
     }
 
     /// A `do` block as a call's argument: its declared function type, with a hole
@@ -2000,18 +2206,18 @@ impl<'a> Flow<'a, '_> {
     /// expecting what `params` gives its position. With `contextual`, a `do` block
     /// among them is left for the rule to type. With `hold`, an item that takes an
     /// expectation, but whose position `params` doesn't know, is held back (see
-    /// [`Flow::expectations`]).
+    /// [`Flow::release`]).
     #[expect(clippy::too_many_arguments, reason = "how items are gathered")]
-    fn values<'e>(
+    fn values(
         &mut self,
         at: At,
         state: &mut State,
         operands: &mut VecDeque<TypeId>,
-        items: &'e [Item],
+        items: &[Item],
         params: Option<&Params>,
         contextual: bool,
         hold: bool,
-    ) -> Values<'e> {
+    ) -> Values {
         let mut values = Values::default();
         let mut gathering = Gathering {
             params,
@@ -2044,19 +2250,19 @@ impl<'a> Flow<'a, '_> {
     /// `for` gives its branches' items once each, if they're alike, and otherwise
     /// makes them optional.
     #[expect(clippy::too_many_arguments, reason = "one recursion's state")]
-    fn gather<'e>(
+    fn gather(
         &mut self,
         at: At,
         state: &mut State,
         operands: &mut VecDeque<TypeId>,
-        items: &'e [Item],
+        items: &[Item],
         gathering: &mut Gathering<'_>,
         place: Place,
-        values: &mut Values<'e>,
+        values: &mut Values,
         out: &mut Vec<Placed>,
     ) {
         let bottom = self.db.bottom();
-        let produced = |values: &mut Values<'_>, ty: TypeId| {
+        let produced = |values: &mut Values, ty: TypeId| {
             let never = ty == bottom;
             values.never |= never && !place.comprehension;
             !never
@@ -2093,12 +2299,19 @@ impl<'a> Flow<'a, '_> {
                 Item::Pos(value) => {
                     let expected = gathering.expected();
                     gathering.advance(place);
-                    if let Some(index) = hold(gathering, place, expected, value, operands, values) {
-                        self.preview_template(at, state, values, index);
-                        out.push(placed(Value::Held(HeldAt::Positional, index, value.span)));
-                        continue;
-                    }
-                    let ty = self.expect(at, state, operands, value, expected);
+                    let ty = match hold(gathering, place, expected, value) {
+                        true => match self.prepare(at, state, operands, value) {
+                            Ok(prepared) => {
+                                values.held.push(prepared);
+                                let index = values.held.len() - 1;
+                                let held = Value::Held(HeldAt::Positional, index, value.span);
+                                out.push(placed(held));
+                                continue;
+                            }
+                            Err(ty) => ty,
+                        },
+                        false => self.expect(at, state, operands, value, expected),
+                    };
                     if produced(values, ty) {
                         out.push(placed(Value::Pos(ty, value.span)));
                     }
@@ -2107,12 +2320,19 @@ impl<'a> Flow<'a, '_> {
                     let expected = gathering.params.and_then(|params| {
                         (params.keyed.iter()).find_map(|&(name, ty)| (name == key).then_some(ty))
                     });
-                    if let Some(index) = hold(gathering, place, expected, value, operands, values) {
-                        self.preview_template(at, state, values, index);
-                        out.push(placed(Value::Held(HeldAt::Keyword(key), index, value.span)));
-                        continue;
-                    }
-                    let ty = self.expect(at, state, operands, value, expected);
+                    let ty = match hold(gathering, place, expected, value) {
+                        true => match self.prepare(at, state, operands, value) {
+                            Ok(prepared) => {
+                                values.held.push(prepared);
+                                let index = values.held.len() - 1;
+                                let held = Value::Held(HeldAt::Keyword(key), index, value.span);
+                                out.push(placed(held));
+                                continue;
+                            }
+                            Err(ty) => ty,
+                        },
+                        false => self.expect(at, state, operands, value, expected),
+                    };
                     if produced(values, ty) {
                         out.push(placed(Value::Key(key, ty, value.span)));
                     }
@@ -2121,15 +2341,19 @@ impl<'a> Flow<'a, '_> {
                 Item::Pair(key, value) => {
                     let key_type = self.eval(at, state, operands, key);
                     let key_produced = produced(values, key_type);
-                    if key_produced
-                        && let Some(index) = hold(gathering, place, None, value, operands, values)
-                    {
-                        self.preview_template(at, state, values, index);
-                        let held = Value::Held(HeldAt::Pair(key_type), index, value.span);
-                        out.push(placed(held));
-                        continue;
-                    }
-                    let ty = self.eval(at, state, operands, value);
+                    let ty = match key_produced && hold(gathering, place, None, value) {
+                        true => match self.prepare(at, state, operands, value) {
+                            Ok(prepared) => {
+                                values.held.push(prepared);
+                                let index = values.held.len() - 1;
+                                let held = Value::Held(HeldAt::Pair(key_type), index, value.span);
+                                out.push(placed(held));
+                                continue;
+                            }
+                            Err(ty) => ty,
+                        },
+                        false => self.eval(at, state, operands, value),
+                    };
                     if key_produced && produced(values, ty) {
                         out.push(placed(Value::Pair(key_type, ty)));
                     }
@@ -2237,7 +2461,7 @@ impl<'a> Flow<'a, '_> {
     }
 
     /// Instantiate each `do` block among values that no rule types
-    fn untyped(&mut self, at: At, values: &Values<'_>) {
+    fn untyped(&mut self, at: At, values: &Values) {
         for lambda in values.lambdas() {
             self.lambda(at, lambda.func, Span::INVALID);
         }
@@ -2249,8 +2473,8 @@ impl<'a> Flow<'a, '_> {
     /// union expects several schemas of a dict; it takes the one its items fit,
     /// or else the one its keys do, and its items held back take what that
     /// schema expects of them. A tuple or record takes its items' schema; neither
-    /// has a vertical form, so neither holds a comprehension. With an expected type, the collection types the `do`
-    /// blocks among its items.
+    /// has a vertical form, so neither holds a comprehension. With an expected
+    /// type, the collection types the `do` blocks among its items.
     pub(super) fn collection(
         &mut self,
         at: At,
@@ -2259,248 +2483,358 @@ impl<'a> Flow<'a, '_> {
         expr: &Expr,
         expected: Option<TypeId>,
     ) -> TypeId {
+        let ExprKind::Collection { kind, .. } = &expr.kind else {
+            unreachable!("a collection")
+        };
+        let fresh = self.fresh(*kind, self.designated(collection_role(*kind)), expected);
+        let prepared = self.prepare_collection(at, state, operands, expr, Some(&fresh));
+        if let Some(ty) = self.unchecked_collection(at, &prepared) {
+            return ty;
+        }
+        let seed = match prepared.kind {
+            Collection::Array => fresh.array.map(|(ty, _)| ty).or(expected),
+            _ => expected,
+        };
+        self.conclude(at, prepared.span, seed, |flow, rule| {
+            let expected = expected.map(|ty| rule.closed(ty));
+            vec![flow.collection_term(rule, &prepared, expected).0]
+        })[0]
+    }
+
+    /// What a fresh collection of `class` can be to be `expected`. Only a fresh
+    /// array can widen its invariant element type to an expected supertype, such
+    /// as `BaseArray[E]` or `Iterable[E]`: it types its items with `E`, and
+    /// solves as `Array[E]`. A dict expected to be a supertype of `Dict[S]`,
+    /// such as `BaseDict[S]`, is a `Dict[S]`, which only a fresh dict can be.
+    fn fresh(&self, kind: Collection, class: Option<DeclId>, expected: Option<TypeId>) -> Fresh {
+        let (array, candidates) = match (kind, class, expected) {
+            (Collection::Array, Some(class), Some(expected)) => {
+                (self.fresh_expected(class, Kind::Type, expected), Vec::new())
+            }
+            (Collection::Dict, Some(class), Some(expected)) => {
+                (None, self.fresh_candidates(class, Kind::Schema, expected))
+            }
+            _ => (None, Vec::new()),
+        };
+        Fresh {
+            expected,
+            array,
+            candidates,
+        }
+    }
+
+    /// A collection's items, evaluated against what `fresh` says is expected of
+    /// them. A dict with candidates holds back the items that take an
+    /// expectation until its schema is chosen, then gives them the schema's.
+    /// Without `fresh`, the collection is itself held back: its items that take
+    /// an expectation are held back too, and it types its `do` blocks.
+    fn prepare_collection(
+        &mut self,
+        at: At,
+        state: &mut State,
+        operands: &mut VecDeque<TypeId>,
+        expr: &Expr,
+        fresh: Option<&Fresh>,
+    ) -> PreparedCollection {
         let ExprKind::Collection { kind, items, .. } = &expr.kind else {
             unreachable!("a collection")
         };
-        let unknown = self.db.unknown();
-        let role = match kind {
-            Collection::Array => Designated::Array,
-            Collection::Dict => Designated::Dict,
-            Collection::Tuple => Designated::Intrinsic(Intrinsic::Tuple),
-            Collection::Record => Designated::Record,
-        };
-        let class = self.designated(role);
-        // Only a fresh array can widen its invariant element type to an expected
-        // supertype, such as `BaseArray[E]` or `Iterable[E]`. Type its items with
-        // `E`, and solve as `Array[E]`.
-        let expected_array = match kind {
-            Collection::Array => {
-                expected.and_then(|ty| self.fresh_expected(class?, Kind::Type, ty))
-            }
-            _ => None,
-        };
-        let params = expected_array.map(|(_, element)| Params {
+        let params = (fresh.and_then(|fresh| fresh.array)).map(|(_, element)| Params {
             rest: Some(element),
             ..Params::default()
         });
-        // A dict expected to be a supertype of `Dict[S]`, such as `BaseDict[S]`, is
-        // a `Dict[S]`, which only a fresh dict can be. It holds back the items that
-        // take an expectation until its schema is chosen, then gives them the
-        // schema's.
-        let candidates = match (kind, class, expected) {
-            (Collection::Dict, Some(class), Some(expected)) => {
-                self.fresh_candidates(class, Kind::Schema, expected)
-            }
-            _ => Vec::new(),
+        let (contextual, hold) = match fresh {
+            Some(fresh) => (fresh.expected.is_some(), !fresh.candidates.is_empty()),
+            None => (true, true),
         };
-        let mut values = self.values(
+        let values = self.values(
             at,
             state,
             operands,
             items,
             params.as_ref(),
-            expected.is_some(),
-            !candidates.is_empty(),
+            contextual,
+            hold,
         );
-        let expected_dict = self.choose_fresh(&candidates, &values, expr.span);
-        if !values.held.is_empty() {
-            let expectations = match expected_dict {
-                Some((_, schema)) if !values.never => {
-                    let gas = Gas::default();
-                    let (solver, held, _) =
-                        self.presolve_schema(&gas, &values, schema, expr.span, false, false);
-                    let mut expectations = vec![None; values.held.len()];
-                    for (index, term) in held {
-                        expectations[index] = expectation(&solver, term);
-                    }
-                    expectations
-                }
-                _ => vec![None; values.held.len()],
-            };
-            self.release(at, state, &mut values, &expectations);
+        PreparedCollection {
+            kind: *kind,
+            class: self.designated(collection_role(*kind)),
+            values,
+            span: expr.span,
         }
+    }
+
+    /// The type of a collection that no rule checks, if it's one: one that's
+    /// never produced, a tuple or record with a comprehension, or one without
+    /// its class
+    fn unchecked_collection(&mut self, at: At, prepared: &PreparedCollection) -> Option<TypeId> {
+        let PreparedCollection {
+            kind,
+            class,
+            ref values,
+            span,
+        } = *prepared;
         if values.never {
-            return self.db.bottom();
+            return Some(self.db.bottom());
         }
         if values.comprehension
             && !matches!(kind, Collection::Array | Collection::Dict)
             && class.is_some()
         {
-            self.untyped(at, &values);
-            return self.gap(expr.span, "a comprehension in a tuple or record");
+            self.unchecked(at, values, span);
+            return Some(self.gap(span, "a comprehension in a tuple or record"));
         }
-        let Some(class) = class else {
-            self.untyped(at, &values);
-            return unknown;
-        };
+        if class.is_none() {
+            self.unchecked(at, values, span);
+            return Some(self.db.unknown());
+        }
+        None
+    }
+
+    /// The term of a collection with its items evaluated, toward `expected`, and
+    /// what to seed it with besides when it's held back: the type a fresh array
+    /// solves as (see [`Flow::fresh`]). A dict with candidates takes the one
+    /// [`Flow::choose`] does, and its items held back are released toward what
+    /// that schema expects of them; otherwise it's built from the lanes its
+    /// items can fill.
+    fn collection_term<'p>(
+        &self,
+        rule: &mut Rule<'_, '_, 'p>,
+        prepared: &'p PreparedCollection,
+        expected: Option<Term>,
+    ) -> (Term, Option<Term>) {
+        let PreparedCollection {
+            kind,
+            class,
+            ref values,
+            span,
+        } = *prepared;
+        let class = class.expect("a collection of a designated class");
         let spread = self.designated(Designated::Spread);
-        let array_expected = expected_array.map(|(ty, _)| ty).or(expected);
-        let result = match (kind, expected_dict) {
-            (Collection::Array, _) => self.conclude(at, expr.span, array_expected, |rule| {
-                let element = rule.solver.infer();
-                for placed in &values.values {
-                    match placed.value {
-                        Value::Pos(ty, _) => rule.constrain(rule.closed(ty), element, Check::Quiet),
-                        Value::Lambda(key, ref lambda, _) => {
-                            let term = rule.lambda(lambda);
-                            let element = match key {
-                                Some(_) => rule.closed(unknown),
-                                None => element,
+        let mut seed = None;
+        let shape = match kind {
+            Collection::Array => {
+                seed = (expected.and_then(|expected| rule.solver.reify(expected).ok()))
+                    .and_then(|expected| self.fresh_expected(class, Kind::Type, expected))
+                    .map(|(ty, _)| rule.closed(ty));
+                Shape::Array
+            }
+            Collection::Dict => {
+                let candidates = (expected.map(|expected| self.candidates(rule, class, expected)))
+                    .unwrap_or_default();
+                match self.choose(rule, class, &candidates, values, span) {
+                    Some(candidate) => {
+                        let (ty, schema) = self.candidate(rule, class, candidate);
+                        Shape::Chosen(ty, schema)
+                    }
+                    // A lane is present where an item can fill it, and an empty
+                    // dict has the keyed lane
+                    None => {
+                        let (mut has_positional, mut has_keyed) = (false, false);
+                        for placed in &values.values {
+                            let (positional, keyed) = match placed.value {
+                                Value::Pos(..)
+                                | Value::Lambda(None, ..)
+                                | Value::Held(HeldAt::Positional, ..) => (true, false),
+                                Value::Key(..)
+                                | Value::Pair(..)
+                                | Value::Lambda(Some(_), ..)
+                                | Value::Held(..) => (false, true),
+                                Value::Spread(ty, _) => self.spread_lanes(spread, ty),
                             };
-                            rule.constrain(term, element, Check::Quiet);
+                            has_positional |= positional;
+                            has_keyed |= keyed;
                         }
-                        Value::Spread(ty, span) => {
-                            let schema = rule.term(|holes| {
-                                let element = holes.hole(element, Kind::Type);
-                                holes.schema(vec![item(
-                                    Multiplicity::Repeated,
-                                    Element::Positional(element),
-                                )])
-                            });
-                            spread_into(rule, spread, ty, schema, span);
-                        }
-                        Value::Key(..) | Value::Pair(..) => {
-                            rule.constrain(rule.closed(unknown), element, Check::Quiet);
-                        }
-                        Value::Held(..) => unreachable!("only a call holds arguments back"),
+                        has_keyed |= !has_positional;
+                        Shape::Dict(has_positional, has_keyed)
                     }
                 }
-                vec![rule.term(|holes| {
-                    let element = holes.hole(element, Kind::Type);
-                    holes.apply(class, vec![element])
-                })]
-            }),
-            // What's expected of a dict checks its items one by one, where joining
-            // them would lose which is where
-            (Collection::Dict, Some((ty, schema))) => {
-                self.conclude(at, expr.span, expected, |rule| {
-                    let (arguments, _) = rule.arguments(&values, spread, expr.span);
-                    let exact = rule.solver.arguments_schema(&arguments);
-                    rule.constrain(exact, rule.closed(schema), Check::Expected(expr.span));
-                    vec![rule.closed(ty)]
-                })
             }
-            // Positional items stay positional, as they were written: only an
-            // explicit key is a key. A lane is present where an item can fill it,
-            // and an empty dict has the keyed lane.
-            (Collection::Dict, None) => {
-                let (mut has_positional, mut has_keyed) = (false, false);
-                for placed in &values.values {
-                    let (positional, keyed) = match placed.value {
-                        Value::Pos(..) | Value::Lambda(None, ..) => (true, false),
-                        Value::Key(..) | Value::Pair(..) | Value::Lambda(Some(_), ..) => {
-                            (false, true)
-                        }
-                        Value::Spread(ty, _) => self.spread_lanes(spread, ty),
-                        Value::Held(..) => unreachable!("only a call holds arguments back"),
-                    };
-                    has_positional |= positional;
-                    has_keyed |= keyed;
-                }
-                has_keyed |= !has_positional;
-                self.conclude(at, expr.span, expected, |rule| {
-                    let positional = rule.solver.infer();
-                    let keys = rule.solver.infer();
-                    let entries = rule.solver.infer();
-                    let entry = |rule: &mut Rule<'_, '_>, key: TypeId, value: Term| {
-                        rule.constrain(rule.closed(key), keys, Check::Quiet);
-                        rule.constrain(value, entries, Check::Quiet);
-                    };
-                    let lanes = |holes: &mut Holes<'_>, has_positional: bool, has_keyed: bool| {
-                        let mut items = Vec::new();
-                        if has_positional {
-                            let element = holes.hole(positional, Kind::Type);
-                            items.push(item(Multiplicity::Repeated, Element::Positional(element)));
-                        }
-                        if has_keyed {
-                            let key = holes.hole(keys, Kind::Type);
-                            let value = holes.hole(entries, Kind::Type);
-                            items.push(item(Multiplicity::Repeated, Element::Keyed { key, value }));
-                        }
-                        holes.schema(items)
-                    };
-                    // A key written in a dict literal is a term, which decays as its value would
-                    let symbol = |name| rule.db.intern(Type::Fresh(Literal::Sym(name)));
-                    for placed in &values.values {
-                        match placed.value {
-                            Value::Pos(ty, _) => {
-                                rule.constrain(rule.closed(ty), positional, Check::Quiet)
-                            }
-                            Value::Key(name, ty, _) => entry(rule, symbol(name), rule.closed(ty)),
-                            Value::Pair(key_type, ty) => entry(rule, key_type, rule.closed(ty)),
-                            Value::Lambda(key, ref lambda, _) => {
-                                let term = rule.lambda(lambda);
-                                match key {
-                                    Some(key) => entry(rule, symbol(key), term),
-                                    None => rule.constrain(term, positional, Check::Quiet),
-                                }
-                            }
-                            Value::Spread(ty, span) => {
-                                let schema = rule.term(|holes| lanes(holes, true, true));
-                                spread_into(rule, spread, ty, schema, span);
-                            }
-                            Value::Held(..) => unreachable!("only a call holds arguments back"),
-                        }
-                    }
-                    vec![rule.term(|holes| {
-                        let schema = lanes(holes, has_positional, has_keyed);
-                        holes.apply(class, vec![schema])
-                    })]
-                })
-            }
-            (Collection::Tuple | Collection::Record, _) => {
-                let lanes = match kind {
-                    Collection::Tuple => Rest::Positional,
-                    _ => Rest::All,
-                };
-                self.conclude(at, expr.span, expected, |rule| {
-                    let mut elements = Vec::new();
-                    for placed in &values.values {
-                        match placed.value {
-                            Value::Lambda(key, ref lambda, _) => {
-                                elements.push((key, rule.lambda(lambda), Kind::Type));
-                            }
-                            Value::Pos(ty, _) => {
-                                let var = rule.solver.infer();
-                                rule.constrain(rule.closed(ty), var, Check::Quiet);
-                                elements.push((None, var, Kind::Type));
-                            }
-                            Value::Key(key, ty, _) => {
-                                let var = rule.solver.infer();
-                                rule.constrain(rule.closed(ty), var, Check::Quiet);
-                                elements.push((Some(key), var, Kind::Type));
-                            }
-                            Value::Spread(ty, span) => {
-                                let schema = rule.solver.infer_kind(Kind::Schema, lanes);
-                                spread_into(rule, spread, ty, schema, span);
-                                elements.push((None, schema, Kind::Schema));
-                            }
-                            Value::Pair(..) => unreachable!("a tuple or record has no pairs"),
-                            Value::Held(..) => unreachable!("only a call holds arguments back"),
-                        }
-                    }
-                    vec![rule.term(|holes| {
-                        let items = (elements.iter())
-                            .map(|&(key, var, kind)| {
-                                let hole = holes.hole(var, kind);
-                                let element = match (key, kind) {
-                                    (_, Kind::Schema) => Element::Include(hole),
-                                    (Some(key), _) => Element::Keyed {
-                                        key: holes.db.intern(Type::Literal(Literal::Sym(key))),
-                                        value: hole,
-                                    },
-                                    (None, _) => Element::Positional(hole),
-                                };
-                                item(Multiplicity::Required, element)
-                            })
-                            .collect();
-                        let schema = holes.schema(items);
-                        holes.apply(class, vec![schema])
-                    })]
-                })
-            }
+            Collection::Tuple => Shape::Items(Rest::Positional),
+            Collection::Record => Shape::Items(Rest::All),
         };
-        result[0]
+        let term = collection_constraint(rule, values, class, shape, spread, span);
+        (term, seed)
+    }
+
+    /// The candidates of a fresh dict of `class` expected to be `expected`: those
+    /// of [`Flow::fresh_candidates`] if it's solved, and otherwise one for each
+    /// alternative of it the class reaches with an argument that's expected of
+    /// it, open in the binders the alternative names
+    fn candidates(
+        &self,
+        rule: &mut Rule<'_, '_, '_>,
+        class: DeclId,
+        expected: Term,
+    ) -> Vec<Candidate> {
+        let closed = |ty: TypeId| {
+            (self.fresh_candidates(class, Kind::Schema, ty).into_iter())
+                .map(|(ty, schema)| Candidate::Closed(ty, schema))
+        };
+        if let Ok(ty) = rule.solver.reify(expected) {
+            return closed(ty).collect();
+        }
+        // A variable says nothing of what the dict is
+        let expected = rule.solver.resolve(expected).unwrap_or(expected);
+        if let Term::Infer(_) = expected {
+            return Vec::new();
+        }
+        let alternatives = (rule.solver.alternatives(expected)).unwrap_or_else(|| vec![expected]);
+        let mut candidates = Vec::new();
+        for alternative in alternatives {
+            let found: Vec<Candidate> = match rule.solver.reify(alternative) {
+                Ok(ty) => closed(ty).collect(),
+                Err(_) if self.reaches(rule, class, alternative) => {
+                    vec![Candidate::Open(alternative)]
+                }
+                Err(_) => Vec::new(),
+            };
+            for candidate in found {
+                if !candidates.contains(&candidate) {
+                    candidates.push(candidate);
+                }
+            }
+        }
+        candidates
+    }
+
+    /// Whether a fresh dict of `class` can be an open alternative, with an
+    /// argument that's expected of it. One that admits whatever the class's
+    /// bound does, as a binder's bound it's below may, says nothing of it.
+    fn reaches(&self, rule: &mut Rule<'_, '_, '_>, class: DeclId, alternative: Term) -> bool {
+        let mut fork = rule.solver.fork(rule.gas);
+        let (argument, ty) = applied_term(&mut fork, rule.db, class, Kind::Schema);
+        fork.constrain(ty, alternative, Provenance::default());
+        if (fork.solve().iter()).any(|outcome| outcome.status == Status::Contradicted) {
+            return false;
+        }
+        let Some(argument) = expectation(&fork, argument, |a, b| self.below(a, b)) else {
+            return false;
+        };
+        let Ok(argument) = fork.reify(argument) else {
+            return true;
+        };
+        let bound = match self.db.ty(self.db.declaration(class).ty) {
+            Type::Quantified { binders, .. } => binders.first().and_then(|binder| binder.bound),
+            _ => None,
+        };
+        !matches!(self.db.ty(argument), Type::Unknown(_))
+            && !bound.is_some_and(|bound| self.below(bound, argument))
+    }
+
+    /// The candidate a fresh dict with `values` is: the only one, or else the one
+    /// its items fit, or else the one its keys fit. A choice its values don't
+    /// fit is then reported against it.
+    fn choose<'p>(
+        &self,
+        rule: &mut Rule<'_, '_, 'p>,
+        class: DeclId,
+        candidates: &[Candidate],
+        values: &'p Values,
+        span: Span,
+    ) -> Option<Candidate> {
+        if let &[candidate] = candidates {
+            return Some(candidate);
+        }
+        if candidates.is_empty() || values.never {
+            return None;
+        }
+        // Two survivors are as many as it takes to choose none
+        let survivors = |rule: &mut Rule<'_, '_, 'p>, keys_only: bool| {
+            let mut found = Vec::new();
+            for &candidate in candidates {
+                if self.items_fit(rule, class, candidate, values, span, keys_only) {
+                    found.push(candidate);
+                    if found.len() == 2 {
+                        break;
+                    }
+                }
+            }
+            found
+        };
+        let mut chosen = survivors(rule, false);
+        if chosen.is_empty() {
+            chosen = survivors(rule, true);
+        }
+        trace!(
+            "{}: {} candidates, {}",
+            self.tables.locate(self.unit, span),
+            candidates.len(),
+            match chosen[..] {
+                [] => "none fits the dict".to_owned(),
+                [Candidate::Closed(ty, _)] => format!("chose {}", self.show(ty)),
+                [Candidate::Open(_)] => "chose an open candidate".to_owned(),
+                _ => "several fit the dict".to_owned(),
+            }
+        );
+        match chosen[..] {
+            [candidate] => Some(candidate),
+            _ => None,
+        }
+    }
+
+    /// Whether a fresh dict's items, `values`, fit a candidate, in a fork of the
+    /// rule's solver that's discarded. What it leaves unsolved of its own is
+    /// defaulted, and with `keys_only`, each item's value is a fresh variable,
+    /// so only its key can contradict.
+    fn items_fit<'p>(
+        &self,
+        rule: &mut Rule<'_, '_, 'p>,
+        class: DeclId,
+        candidate: Candidate,
+        values: &'p Values,
+        span: Span,
+        keys_only: bool,
+    ) -> bool {
+        let spread = self.designated(Designated::Spread);
+        let (db, gas) = (rule.db, rule.gas);
+        let mut fork = rule.solver.fork(gas);
+        let mut probe = Rule::new(&mut fork, db, gas);
+        probe.blind = true;
+        let (_, schema) = self.candidate(&mut probe, class, candidate);
+        let (mut arguments, _) = probe.arguments(values, spread, span);
+        if keys_only {
+            for (_, argument) in &mut arguments {
+                match argument {
+                    CallArgument::Positional(value)
+                    | CallArgument::Keyword(_, value)
+                    | CallArgument::Pair(_, value) => *value = probe.solver.infer(),
+                    CallArgument::Spread(_) => {}
+                }
+            }
+        }
+        let exact = probe.solver.arguments_schema(&arguments);
+        probe.constrain(exact, schema, Check::Quiet);
+        let contradicted = |outcomes: &[Outcome]| {
+            (outcomes.iter()).any(|outcome| outcome.status == Status::Contradicted)
+        };
+        let solver = probe.solver;
+        !contradicted(&solver.solve()) && !contradicted(&default_own(solver, None))
+    }
+
+    /// A chosen candidate's type and schema. An open one's schema is what its
+    /// alternative expects of the class's argument.
+    fn candidate(
+        &self,
+        rule: &mut Rule<'_, '_, '_>,
+        class: DeclId,
+        candidate: Candidate,
+    ) -> (Term, Term) {
+        match candidate {
+            Candidate::Closed(ty, schema) => (rule.closed(ty), rule.closed(schema)),
+            Candidate::Open(alternative) => {
+                let (argument, ty) = applied_term(rule.solver, rule.db, class, Kind::Schema);
+                rule.constrain(ty, alternative, Check::Quiet);
+                rule.solver.solve();
+                let below = |actual, expected| self.below(actual, expected);
+                let schema = expectation(rule.solver, argument, below).unwrap_or(argument);
+                let ty = rule.term(|holes| {
+                    let schema = holes.hole(schema, Kind::Schema);
+                    holes.apply(class, vec![schema])
+                });
+                (ty, schema)
+            }
+        }
     }
 
     /// Which lanes of a dict a spread of `ty` can fill, positional then keyed:
@@ -2565,20 +2899,14 @@ impl<'a> Flow<'a, '_> {
             }
             let gas = Gas::default();
             let mut solver = self.solver(&gas);
-            let argument = solver.infer_kind(kind, Rest::All);
-            let mut holes = Holes {
-                db: self.db,
-                group: Vec::new(),
-            };
-            let hole = holes.hole(argument, kind);
-            let ty = holes.apply(class, vec![hole]);
-            let environment = solver.environment(solver.empty_environment(), holes.group);
-            let term = solver.view(ty, environment);
+            let (argument, term) = applied_term(&mut solver, self.db, class, kind);
             solver.constrain(term, solver.closed(expected), Provenance::default());
             if (solver.solve().iter()).any(|outcome| outcome.status == Status::Contradicted) {
                 return None;
             }
-            expectation(&solver, argument).filter(|&ty| !matches!(self.db.ty(ty), Type::Unknown(_)))
+            (expectation(&solver, argument, |a, b| self.below(a, b)))
+                .and_then(|argument| solver.reify(argument).ok())
+                .filter(|&ty| !matches!(self.db.ty(ty), Type::Unknown(_)))
         };
         let mut alternatives = Vec::new();
         if !self.expand(expected, &mut alternatives, 0) {
@@ -2655,7 +2983,7 @@ impl<'a> Flow<'a, '_> {
             return result;
         };
         let span = values.first().map_or(Span::INVALID, |&(_, span)| span);
-        self.conclude(at, span, None, |rule| {
+        self.conclude(at, span, None, |_, rule| {
             for &(value, span) in values {
                 rule.constrain(
                     rule.closed(value),
@@ -2683,7 +3011,7 @@ impl<'a> Flow<'a, '_> {
         else {
             return self.lambda(at, func, span);
         };
-        self.conclude(at, span, None, |rule| {
+        self.conclude(at, span, None, |_, rule| {
             let term = rule.lambda(&lambda);
             rule.constrain(term, rule.closed(expected), Check::Quiet);
             vec![term]
@@ -2695,7 +3023,7 @@ impl<'a> Flow<'a, '_> {
         if value == self.db.bottom() {
             return;
         }
-        self.conclude(at, span, None, |rule| {
+        self.conclude(at, span, None, |_, rule| {
             rule.constrain(rule.closed(value), rule.closed(ty), Check::Expected(span));
             Vec::new()
         });
@@ -2988,7 +3316,7 @@ impl<'a> Flow<'a, '_> {
             .solver(&Gas::default())
             .unpack_pattern(value, unpack, &pattern)
         {
-            self.conclude(at, span, None, |rule| {
+            self.conclude(at, span, None, |_, rule| {
                 let target = rule.term(|holes| {
                     let unknown = holes.db.unknown();
                     let schema = holes.schema(vec![
@@ -3061,7 +3389,7 @@ impl<'a> Flow<'a, '_> {
             return Some(types);
         }
         self.gap(span, "a pattern against a schema that can't be found");
-        let types = self.conclude(at, span, None, |rule| {
+        let types = self.conclude(at, span, None, |_, rule| {
             let vars: Vec<Option<Term>> = (items.iter())
                 .map(|item| match item.key {
                     PatternKey::Pos | PatternKey::Key(_) => Some(rule.solver.infer()),
@@ -3108,7 +3436,7 @@ impl<'a> Flow<'a, '_> {
 
 /// Constrain a spread value to spread as `schema`
 fn spread_into(
-    rule: &mut Rule<'_, '_>,
+    rule: &mut Rule<'_, '_, '_>,
     spread: Option<DeclId>,
     ty: TypeId,
     schema: Term,
@@ -3261,19 +3589,42 @@ fn default_where(
     keep: impl Fn(InferVarId) -> bool,
     roots: Option<&[(Term, Variance)]>,
 ) -> Vec<Outcome> {
+    default_rounds(solver, |_, id| keep(id), roots, false)
+}
+
+/// Solve, defaulting a fork's own variables as [`default_where`] defaults
+/// variables. A round that can't default any breaks a cycle of variables that
+/// bound each other (see [`Solver::default_open`]): a fork's own, or one with
+/// what it's nested in, which a rule of its own wouldn't have made.
+fn default_own(solver: &mut Solver<'_>, roots: Option<&[(Term, Variance)]>) -> Vec<Outcome> {
+    default_rounds(solver, |solver, id| solver.owns(id), roots, true)
+}
+
+fn default_rounds(
+    solver: &mut Solver<'_>,
+    keep: impl Fn(&Solver<'_>, InferVarId) -> bool,
+    roots: Option<&[(Term, Variance)]>,
+    open: bool,
+) -> Vec<Outcome> {
     let mut outcomes = solver.solve();
     // Each round solves at least one variable; the limit only guards the solver
     for _ in 0..64 {
-        let unsolved: Vec<_> = solver.unresolved().filter(|&id| keep(id)).collect();
+        let unsolved: Vec<_> = (solver.unresolved())
+            .filter(|&id| keep(solver, id))
+            .collect();
         // Defaults add bounds, so what's locked is found again each round
         let locked = roots.map(|roots| solver.locked(roots));
+        let decays = |id| match &locked {
+            Some(Ok(locked)) => locked.contains(&id),
+            Some(Err(_)) | None => true,
+        };
         let mut progress = false;
-        for id in unsolved {
-            let decay = match &locked {
-                Some(Ok(locked)) => locked.contains(&id),
-                Some(Err(_)) | None => true,
-            };
-            progress |= solver.default_with(id, decay).is_ok();
+        for &id in &unsolved {
+            progress |= solver.default_with(id, decays(id)).is_ok();
+        }
+        // One variable breaks the cycle
+        if !progress && open {
+            progress = (unsolved.iter()).any(|&id| solver.default_open(id, decays(id)).is_ok());
         }
         if !progress {
             break;
@@ -3285,7 +3636,7 @@ fn default_where(
 
 /// Pass `receivers` before a call's own arguments. A receiver that never has a
 /// value means the call never happens.
-fn received(values: &mut Values<'_>, receivers: &[(TypeId, Span)], bottom: TypeId) {
+fn received(values: &mut Values, receivers: &[(TypeId, Span)], bottom: TypeId) {
     values.never |= receivers.iter().any(|&(ty, _)| ty == bottom);
     values.values.splice(
         0..0,
@@ -3302,9 +3653,9 @@ fn received(values: &mut Values<'_>, receivers: &[(TypeId, Span)], bottom: TypeI
 /// callee's overloads are tried against what the arguments alone say, with each
 /// `do` block's result hidden as it is from other alternatives (see
 /// [`Solver::blind`]), and the result `Value`.
-fn call_constraint(
-    rule: &mut Rule<'_, '_>,
-    values: &Values<'_>,
+fn call_constraint<'p>(
+    rule: &mut Rule<'_, '_, 'p>,
+    values: &'p Values,
     spread: Option<DeclId>,
     (span, name): (Span, Option<String>),
     callee: TypeId,
@@ -3349,35 +3700,253 @@ fn call_constraint(
     result
 }
 
-/// What a held argument is expected to be: its parameter, if it's solved, seen
-/// through the binders it names. The variable of a `for`'s joined items stands
-/// between them.
-fn expectation(solver: &Solver<'_>, held: Term) -> Option<TypeId> {
-    let mut found = None;
+/// The designated class a collection literal is
+fn collection_role(kind: Collection) -> Designated {
+    match kind {
+        Collection::Array => Designated::Array,
+        Collection::Dict => Designated::Dict,
+        Collection::Tuple => Designated::Intrinsic(Intrinsic::Tuple),
+        Collection::Record => Designated::Record,
+    }
+}
+
+/// The constraints of a collection of `class` with `values`, as `shape` says to
+/// build it. Returns the term standing for its type.
+fn collection_constraint<'p>(
+    rule: &mut Rule<'_, '_, 'p>,
+    values: &'p Values,
+    class: DeclId,
+    shape: Shape,
+    spread: Option<DeclId>,
+    span: Span,
+) -> Term {
+    let unknown = rule.db.unknown();
+    match shape {
+        Shape::Array => {
+            let element = rule.solver.infer();
+            for placed in &values.values {
+                match placed.value {
+                    Value::Pos(ty, _) => rule.constrain(rule.closed(ty), element, Check::Quiet),
+                    Value::Lambda(key, ref lambda, _) => {
+                        let term = rule.lambda(lambda);
+                        let element = match key {
+                            Some(_) => rule.closed(unknown),
+                            None => element,
+                        };
+                        rule.constrain(term, element, Check::Quiet);
+                    }
+                    Value::Spread(ty, span) => {
+                        let schema = rule.term(|holes| {
+                            let element = holes.hole(element, Kind::Type);
+                            holes.schema(vec![item(
+                                Multiplicity::Repeated,
+                                Element::Positional(element),
+                            )])
+                        });
+                        spread_into(rule, spread, ty, schema, span);
+                    }
+                    Value::Key(..) | Value::Pair(..) => {
+                        rule.constrain(rule.closed(unknown), element, Check::Quiet);
+                    }
+                    Value::Held(at, index, _) => {
+                        let term = rule.hold(&values.held[index], placed.group.is_some());
+                        let element = match at {
+                            HeldAt::Positional => element,
+                            HeldAt::Keyword(_) | HeldAt::Pair(_) => rule.closed(unknown),
+                        };
+                        rule.constrain(term, element, Check::Quiet);
+                    }
+                }
+            }
+            rule.term(|holes| {
+                let element = holes.hole(element, Kind::Type);
+                holes.apply(class, vec![element])
+            })
+        }
+        // What's expected of a dict checks its items one by one, where joining
+        // them would lose which is where
+        Shape::Chosen(ty, schema) => {
+            let (arguments, _) = rule.arguments(values, spread, span);
+            let exact = rule.solver.arguments_schema(&arguments);
+            rule.constrain(exact, schema, Check::Expected(span));
+            ty
+        }
+        // Positional items stay positional, as they were written: only an
+        // explicit key is a key
+        Shape::Dict(has_positional, has_keyed) => {
+            let positional = rule.solver.infer();
+            let keys = rule.solver.infer();
+            let entries = rule.solver.infer();
+            let entry = |rule: &mut Rule<'_, '_, '_>, key: TypeId, value: Term| {
+                rule.constrain(rule.closed(key), keys, Check::Quiet);
+                rule.constrain(value, entries, Check::Quiet);
+            };
+            let lanes = |holes: &mut Holes<'_>, has_positional: bool, has_keyed: bool| {
+                let mut items = Vec::new();
+                if has_positional {
+                    let element = holes.hole(positional, Kind::Type);
+                    items.push(item(Multiplicity::Repeated, Element::Positional(element)));
+                }
+                if has_keyed {
+                    let key = holes.hole(keys, Kind::Type);
+                    let value = holes.hole(entries, Kind::Type);
+                    items.push(item(Multiplicity::Repeated, Element::Keyed { key, value }));
+                }
+                holes.schema(items)
+            };
+            // A key written in a dict literal is a term, which decays as its value would
+            let symbol = |name| rule.db.intern(Type::Fresh(Literal::Sym(name)));
+            for placed in &values.values {
+                match placed.value {
+                    Value::Pos(ty, _) => rule.constrain(rule.closed(ty), positional, Check::Quiet),
+                    Value::Key(name, ty, _) => entry(rule, symbol(name), rule.closed(ty)),
+                    Value::Pair(key_type, ty) => entry(rule, key_type, rule.closed(ty)),
+                    Value::Lambda(key, ref lambda, _) => {
+                        let term = rule.lambda(lambda);
+                        match key {
+                            Some(key) => entry(rule, symbol(key), term),
+                            None => rule.constrain(term, positional, Check::Quiet),
+                        }
+                    }
+                    Value::Spread(ty, span) => {
+                        let schema = rule.term(|holes| lanes(holes, true, true));
+                        spread_into(rule, spread, ty, schema, span);
+                    }
+                    Value::Held(at, index, _) => {
+                        let term = rule.hold(&values.held[index], placed.group.is_some());
+                        match at {
+                            HeldAt::Positional => rule.constrain(term, positional, Check::Quiet),
+                            HeldAt::Keyword(key) => entry(rule, symbol(key), term),
+                            HeldAt::Pair(key) => entry(rule, key, term),
+                        }
+                    }
+                }
+            }
+            rule.term(|holes| {
+                let schema = lanes(holes, has_positional, has_keyed);
+                holes.apply(class, vec![schema])
+            })
+        }
+        Shape::Items(lanes) => {
+            let mut elements = Vec::new();
+            for placed in &values.values {
+                match placed.value {
+                    Value::Lambda(key, ref lambda, _) => {
+                        elements.push((key, rule.lambda(lambda), Kind::Type));
+                    }
+                    Value::Pos(ty, _) => {
+                        let var = rule.solver.infer();
+                        rule.constrain(rule.closed(ty), var, Check::Quiet);
+                        elements.push((None, var, Kind::Type));
+                    }
+                    Value::Key(key, ty, _) => {
+                        let var = rule.solver.infer();
+                        rule.constrain(rule.closed(ty), var, Check::Quiet);
+                        elements.push((Some(key), var, Kind::Type));
+                    }
+                    Value::Spread(ty, span) => {
+                        let schema = rule.solver.infer_kind(Kind::Schema, lanes);
+                        spread_into(rule, spread, ty, schema, span);
+                        elements.push((None, schema, Kind::Schema));
+                    }
+                    Value::Held(at, index, _) => {
+                        let term = rule.hold(&values.held[index], placed.group.is_some());
+                        let var = rule.solver.infer();
+                        rule.constrain(term, var, Check::Quiet);
+                        let key = match at {
+                            HeldAt::Positional => None,
+                            HeldAt::Keyword(key) => Some(key),
+                            HeldAt::Pair(_) => unreachable!("a tuple or record has no pairs"),
+                        };
+                        elements.push((key, var, Kind::Type));
+                    }
+                    Value::Pair(..) => unreachable!("a tuple or record has no pairs"),
+                }
+            }
+            rule.term(|holes| {
+                let items = (elements.iter())
+                    .map(|&(key, var, kind)| {
+                        let hole = holes.hole(var, kind);
+                        let element = match (key, kind) {
+                            (_, Kind::Schema) => Element::Include(hole),
+                            (Some(key), _) => Element::Keyed {
+                                key: holes.db.intern(Type::Literal(Literal::Sym(key))),
+                                value: hole,
+                            },
+                            (None, _) => Element::Positional(hole),
+                        };
+                        item(Multiplicity::Required, element)
+                    })
+                    .collect();
+                let schema = holes.schema(items);
+                holes.apply(class, vec![schema])
+            })
+        }
+    }
+}
+
+/// `class` applied to a fresh variable of `kind`: the variable, and the
+/// application
+fn applied_term(solver: &mut Solver<'_>, db: &Database, class: DeclId, kind: Kind) -> (Term, Term) {
+    let argument = solver.infer_kind(kind, Rest::All);
+    let mut holes = Holes {
+        db,
+        group: Vec::new(),
+    };
+    let hole = holes.hole(argument, kind);
+    let ty = holes.apply(class, vec![hole]);
+    let environment = solver.environment(solver.empty_environment(), holes.group);
+    (argument, solver.view(ty, environment))
+}
+
+/// What a variable standing for a value, as a held argument, is expected to be
+/// so far: its upper bounds, seen through the variables it's below, as the
+/// variable of a `for`'s joined items stands between them. That's the one open
+/// in what isn't solved yet, as the binders of a call its parameter names, or
+/// else the solved one `below` shows is below the others, as a binder's bound
+/// is above what's expected of it. Without another, it's the variable that
+/// ends the walk. `None` if the bounds don't agree.
+fn expectation(
+    solver: &Solver<'_>,
+    held: Term,
+    below: impl Fn(TypeId, TypeId) -> bool,
+) -> Option<Term> {
+    let mut open: Option<Term> = None;
+    let mut closed: Vec<TypeId> = Vec::new();
+    let mut last = None;
     let mut pending = vec![held];
     let mut seen = FxHashSet::default();
     while let Some(term) = pending.pop() {
         let Term::Infer(id) = term else {
-            unreachable!("a variable stands for a held argument")
+            unreachable!("a variable stands for a value")
         };
         if !seen.insert(id) {
             continue;
         }
+        let mut bounded = false;
         for upper in solver.bounds(id).upper() {
+            bounded = true;
             let upper = solver.resolve(upper).unwrap_or(upper);
-            let ty = match (upper, solver.reify(upper)) {
-                (_, Ok(ty)) => ty,
-                (Term::Infer(_), Err(_)) => {
-                    pending.push(upper);
-                    continue;
-                }
-                (_, Err(_)) => return None,
-            };
-            match found {
-                Some(other) if other != ty => return None,
-                _ => found = Some(ty),
+            match (upper, solver.reify(upper)) {
+                (_, Ok(ty)) if !closed.contains(&ty) => closed.push(ty),
+                (_, Ok(_)) => {}
+                (Term::Infer(_), Err(_)) => pending.push(upper),
+                (_, Err(_)) => match open {
+                    Some(other) if other != upper => return None,
+                    _ => open = Some(upper),
+                },
             }
         }
+        if !bounded {
+            last = Some(term);
+        }
     }
-    found
+    match (open, &closed[..]) {
+        (Some(open), []) => Some(open),
+        (Some(_), _) => None,
+        (None, []) => last,
+        (None, closed) => (closed.iter().copied())
+            .find(|&ty| closed.iter().all(|&other| other == ty || below(ty, other)))
+            .map(|ty| solver.closed(ty)),
+    }
 }

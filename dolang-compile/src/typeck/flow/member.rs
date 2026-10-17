@@ -15,7 +15,7 @@ use std::{cell::Cell, collections::VecDeque, iter, mem, slice};
 use super::{
     At, Flow, Results, State,
     problem::{MemberUse, Misfit, Problem},
-    rule::Call,
+    rule::{Call, PreparedCall},
 };
 use crate::{
     lex::Op,
@@ -63,6 +63,11 @@ impl CallTarget {
             receivers: leading.to_vec(),
             ..Self::new(None)
         }
+    }
+
+    /// The instance it gives, if it's a constructor with unchecked arguments
+    pub(super) fn instance(&self) -> Option<TypeId> {
+        self.instance
     }
 
     /// What the call gives, from what calling its signature gave
@@ -1285,8 +1290,7 @@ impl Flow<'_, '_> {
     }
 
     /// A range: a `Range` constructed from its bounds, solved toward what's
-    /// expected of it. Since both have the same type, the bounds present are
-    /// passed first.
+    /// expected of it
     pub(super) fn range(
         &mut self,
         at: At,
@@ -1295,6 +1299,22 @@ impl Flow<'_, '_> {
         expr: &Expr,
         expected: Option<TypeId>,
     ) -> TypeId {
+        match self.prepare_range(at, state, operands, expr) {
+            Ok(call) => self.finish_prepared(at, call, expected),
+            Err(ty) => ty,
+        }
+    }
+
+    /// A range's construction, its bounds evaluated: since both have the same
+    /// type, the bounds present are passed first. Its type instead, if it
+    /// constructs nothing.
+    pub(super) fn prepare_range(
+        &mut self,
+        at: At,
+        state: &mut State,
+        operands: &mut VecDeque<TypeId>,
+        expr: &Expr,
+    ) -> Result<PreparedCall, TypeId> {
         let ExprKind::Range { bounds } = &expr.kind else {
             unreachable!("a range")
         };
@@ -1303,23 +1323,23 @@ impl Flow<'_, '_> {
             .map(|bound| (self.eval(at, state, operands, bound), bound.span))
             .collect();
         if bounds.iter().any(|&(ty, _)| ty == bottom) {
-            return bottom;
+            return Err(bottom);
         }
         let Some(class) = self.designated(Designated::Range) else {
-            return self.db.unknown();
+            return Err(self.db.unknown());
         };
         let call = Call {
             args: &[],
-            expected,
+            expected: None,
             span: expr.span,
             callee: None,
         };
         // The VM builds a range literal itself, without calling `Range`
         match self.solver(&Gas::default()).default_construction(class) {
             Some(Some(signature)) if let Some(constructor) = signature.callee(self.db) => {
-                self.call_with(at, state, operands, constructor, &bounds, call)
+                Ok(self.prepare_call(at, state, operands, constructor, &bounds, call))
             }
-            _ => self.gap(expr.span, "a range without a constructor"),
+            _ => Err(self.gap(expr.span, "a range without a constructor")),
         }
     }
 }

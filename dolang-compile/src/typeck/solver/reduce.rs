@@ -629,7 +629,7 @@ impl Solver<'_> {
             (Head::Nominal(a), Head::Nominal(b)) => self.nominal(a, b, obligation),
             (Head::Nominal(nominal), Head::Structural(view)) => {
                 if let Some(literal) = self.db.literal(view.ty) {
-                    self.class_below_literal(actual, literal)
+                    self.class_below_literal(nominal, actual, literal)
                 } else if self.callee(view.ty) {
                     self.callable(Head::Nominal(nominal), actual, view, expected, obligation)
                 } else {
@@ -647,11 +647,22 @@ impl Solver<'_> {
     }
 
     /// A class is below one of its literals only if it's `nil`'s class, and
-    /// outside it if it's outside the literal's class
-    fn class_below_literal(&self, actual: Term, literal: &Literal) -> Result<(), Issue> {
+    /// outside it if it's outside the literal's class. A class that doesn't
+    /// reach the literal's class is outside it whatever its arguments are.
+    fn class_below_literal(
+        &self,
+        nominal: Nominal,
+        actual: Term,
+        literal: &Literal,
+    ) -> Result<(), Issue> {
         let intrinsic = literal.intrinsic();
         let backing =
             (self.db.intrinsic(intrinsic)).ok_or(Residual::MissingIntrinsic(intrinsic))?;
+        if let Type::Decl(class) = *self.db.ty(backing)
+            && (self.ancestor(nominal, class, &mut FxHashSet::default(), 0)?).is_none()
+        {
+            return Err(Issue::Contradiction(Contradiction::Outside));
+        }
         if self.probe(self.reify(actual)?, backing)? == Status::Contradicted {
             return Err(Issue::Contradiction(Contradiction::Outside));
         }

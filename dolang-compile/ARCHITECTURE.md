@@ -994,26 +994,32 @@ The rules are:
   dispatches the same way (`Flow::call_target`). A union calls each
   alternative and joins their results. Its arguments are evaluated once, and
   each alternative solves its call separately, preserving its receiver's
-  argument indexes in diagnostics. A held argument
-  takes an expectation only when all alternatives agree on it. What its
-  arguments are expected to be comes from the callee's parameters. A parameter
-  that mentions the callee's binders gives an expectation only once the call
-  is solved, so a collection literal, call or template passed to it is held
-  back: a pre-solve stands a fresh variable for it and solves the call without
-  it. A variable the held arguments can't raise takes its least solution
-  (`Solver::raised`), since whatever supplies a function takes its parameters
-  and channels from what's expected of it. Then each held argument is
-  evaluated expecting its parameter, if what's forced or chosen solves it. The
-  pre-solve never makes a variable dynamic, so a binder only a held argument
-  determines gives it no expectation. A held template supplies a cached
-  preliminary type with its interpolated values and distinct hole names.
-  Pre-solving uses that shape, then its hole types take the solved expectation
-  without evaluating its parts again.
+  argument indexes in diagnostics, and releases the held arguments in its own
+  rule. What its arguments are expected to be comes from the callee's
+  parameters. A parameter that mentions the callee's binders gives an
+  expectation only once the call is solved, so a collection literal, call or
+  template passed to it is held back: it's evaluated as far as it can be
+  without its expectation (`Prepared`), and the call's rule stands a fresh
+  variable for it. Once what the rule makes is solved, each held argument is
+  a sub-rule in a fork of the rule's solver, which the rule then takes over
+  (`Flow::release`). Its expectation is what's solved so far expects of its
+  variable, open in the binders not yet solved, so what it holds, such as a
+  nested handler, raises them with the other arguments; where a variable the
+  held arguments can't raise (`Solver::raised`) would solve it once given its
+  least solution, it takes that solved expectation. A dict chooses among an
+  open union's alternatives by probing them in discarded forks. A sub-rule is
+  first made seeded with its expectation; if that contradicts it or the rule,
+  it's made again solved alone, defaulting its own variables, and its value is
+  passed closed. Only the rule defaults, but in a run that defaults, each
+  sub-rule first defaults its own variables, as a rule of its own would. A
+  held template supplies a cached preliminary type with its interpolated
+  values and distinct hole names, and its hole types take its expectation once
+  that's solved.
 - A call through an overloaded function, a def, a method, `(init)` or a
   class-level `(call)`, calls its overloads as a whole (`Type::Overloaded`),
   which the solver chooses among (see "Alternatives and trials"). Every
-  argument that takes an expectation is held back, so the pre-solve that
-  gives held arguments their expectations chooses too. An overloaded def's
+  argument that takes an expectation is held back, so each overload's trial
+  bounds a held argument's open parts itself. An overloaded def's
   value is `Type::Decl` of it, so it's chosen among wherever it's passed as a
   function. A call no overload takes is reported with a note for each
   overload, giving what its trial's contradictions say of a call of it alone.

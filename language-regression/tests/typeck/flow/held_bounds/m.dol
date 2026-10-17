@@ -10,6 +10,8 @@ pub def bounds()
   let _ @ Dict[{a: Int}] = same {a: 1}
   let _ @ BaseDict[{a: Int}] = same {a: 1}
   let _ @ Array[Dict[{a: Int}]] = wrap {a: 1}
+  # A schema the call's result solves
+  let _ @ Record[a: Int] = Record {a: 1}
   let _ @ Dict[{a: Int}] = same {b: 1}
 # error: expected `{a: std.Int}`, found `{b: 1}`
 #   --> m.dol:LL:LL
