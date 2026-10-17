@@ -1,4 +1,4 @@
-import args exec strand term proc
+import args exec strand term proc fs
 
 let rules_key = strand.Key()
 let special_rules = Set ["common", "default"]
@@ -41,15 +41,21 @@ def list_rules rules
       echo "  - $k"
 
 def highlight_prog prog
-  prog = std.verbatim $prog
+  if (type prog fs.Path)
+    prog = str $ prog.shorten()
+  else
+    prog = std.verbatim $prog
   term.text bold: true "▶ " $ term.text fg: :BLUE: $prog
 
 def highlight_arg arg
-  arg = std.verbatim $arg
-  if arg.starts_with "-"
-    term.text fg: :YELLOW: $arg
+  if (type arg fs.Path)
+    term.text fg: :MAGENTA: $arg.shorten()
   else
-    arg
+    arg = std.verbatim $arg
+    if arg.starts_with "-"
+      term.text fg: :YELLOW: $arg
+    else
+      arg
 
 # Runs the external command `cmd`, first printing a highlighted
 # message showing the command to the terminal
