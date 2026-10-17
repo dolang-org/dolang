@@ -15,8 +15,8 @@ use rustc_hash::{FxBuildHasher, FxHashMap};
 use super::{
     Alternatives, Bases, Bounds, Constructor, DeclId, Dependency, Environment, EnvironmentId,
     GenericMember, InferVarId, Issue, Lookup, ObligationId, ObligationLayer, Relation, Residual,
-    Root, Scope, ScopeId, Signature, Skolem, SkolemId, Solver, State, Status, Step, Term, TypeId,
-    Variable, VariableLayer, VariableState,
+    Root, Scope, ScopeId, Signature, Skolem, SkolemId, Solver, State, Step, Term, TypeId, Variable,
+    VariableLayer, VariableState,
 };
 
 /// A work budget, shared by a solver and the solvers nested in it. Each unit of
@@ -1018,18 +1018,6 @@ impl<'db> Solver<'db> {
             self.absorb(delta);
         }
         result
-    }
-
-    /// Whether solving has contradicted a constraint of this solver's, or of an
-    /// open solver it's nested in, as this one sees them
-    pub(crate) fn contradicts(&self) -> bool {
-        let mut roots: Vec<ObligationId> = self.roots.iter().map(|root| root.obligation).collect();
-        let mut parent = self.open_parent();
-        while let Some(solver) = parent {
-            roots.extend(solver.roots.iter().map(|root| root.obligation));
-            parent = solver.open_parent();
-        }
-        (roots.into_iter()).any(|root| self.trace_root(root).0 == Status::Contradicted)
     }
 
     /// Whether a variable is this solver's own, rather than one it sees in
