@@ -1,5 +1,4 @@
 use std::{
-    cell::Cell,
     hash::{DefaultHasher, Hash},
     mem,
     ops::ControlFlow,
@@ -25,11 +24,8 @@ use crate::{
 };
 
 use super::{
-    BoundMethod, index, iter,
-    protocol::{
-        Inspect, Protocol, Recv, Spread, SpreadContext, instance_mcall_fallback,
-        type_mcall_fallback,
-    },
+    BoundMethod, iter,
+    protocol::{Inspect, Protocol, Recv, instance_mcall_fallback, type_mcall_fallback},
     range,
 };
 
@@ -183,19 +179,20 @@ impl<'v> Protocol<'v> for str {
         let me = this.get();
 
         match method.tag() {
-            sym::SCALARS | sym::GRAPHEMES => {
+            sym::SCALARS | sym::GRAPHEMES | sym::SCALAR_BOUNDS | sym::GRAPHEME_BOUNDS => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                strand.builtin_types().str_view.create(
+                strand.builtin_types().str_unicode_iter.create(
                     strand,
-                    View {
-                        str: this.to_strong(),
-                        kind: if method.tag() == sym::SCALARS {
-                            ViewKind::Scalar
+                    UnicodeIter::new(
+                        this.to_strong(),
+                        if matches!(method.tag(), sym::SCALARS | sym::SCALAR_BOUNDS) {
+                            UnicodeKind::Scalar
                         } else {
-                            ViewKind::Grapheme
+                            UnicodeKind::Grapheme
                         },
-                        len: Cell::new(None),
-                    },
+                        matches!(method.tag(), sym::SCALAR_BOUNDS | sym::GRAPHEME_BOUNDS),
+                        strand,
+                    ),
                     out,
                 );
                 Ok(())
@@ -463,6 +460,8 @@ impl<'v> Protocol<'v> for str {
             }
             sym::STARTS_WITH
             | sym::SCALARS
+            | sym::SCALAR_BOUNDS
+            | sym::GRAPHEME_BOUNDS
             | sym::SCALAR
             | sym::GRAPHEMES
             | sym::WITHOUT_PREFIX
@@ -488,90 +487,35 @@ impl<'v> Protocol<'v> for str {
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub(crate) enum ViewKind {
+enum UnicodeKind {
     Scalar,
     Grapheme,
 }
 
-pub(crate) struct View<'v> {
-    str: GcObj<'v, str>,
-    kind: ViewKind,
-    len: Cell<Option<usize>>,
-}
-
-impl View<'_> {
-    fn len(&self) -> usize {
-        if let Some(len) = self.len.get() {
-            return len;
-        }
-        let len = match self.kind {
-            ViewKind::Scalar => self.str.chars().count(),
-            ViewKind::Grapheme => self.str.graphemes(true).count(),
-        };
-        self.len.set(Some(len));
-        len
-    }
-
-    fn byte_at(&self, position: usize) -> Option<usize> {
-        match self.kind {
-            ViewKind::Scalar => self
-                .str
-                .char_indices()
-                .nth(position)
-                .map(|(index, _)| index),
-            ViewKind::Grapheme => self
-                .str
-                .grapheme_indices(true)
-                .nth(position)
-                .map(|(index, _)| index),
-        }
-    }
-
-    fn bounds(&self, index: usize) -> Option<(usize, usize)> {
-        let start = self.byte_at(index)?;
-        let end = self.byte_at(index + 1).unwrap_or(self.str.len());
-        Some((start, end))
-    }
-
-    fn position(&self, index: usize, len: usize) -> Option<usize> {
-        if index == len {
-            Some(self.str.len())
-        } else {
-            self.byte_at(index)
-        }
-    }
-}
-
-unsafe impl<'v> Collect for View<'v> {
-    const CYCLIC: bool = false;
-    const IMMUTABLE: bool = true;
-    type Annex = ();
-
-    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
-        self.str.accept(visit)
-    }
-
-    fn clear(&mut self) {
-        unreachable!()
-    }
-}
-
 #[derive(Clone)]
-enum ViewIterState {
+enum UnicodeIterState {
     Scalar(Chars<'static>),
     Grapheme(Graphemes<'static>),
 }
 
-pub(crate) struct ViewIter<'v> {
+pub(crate) struct UnicodeIter<'v> {
     // Drop order is significant: borrowed iterator, pin, then GC root.
-    state: ViewIterState,
+    state: UnicodeIterState,
+    boundaries: bool,
+    offset: usize,
+    terminal_emitted: bool,
     _pin: PinStr<'v, 'static>,
     str: GcObj<'v, str>,
 }
 
-impl<'v> ViewIter<'v> {
-    fn new(view: &View<'v>, strand: &Strand<'v, '_>) -> Self {
-        let value = Value::from_object(view.str.clone());
+impl<'v> UnicodeIter<'v> {
+    fn new(
+        str: GcObj<'v, str>,
+        kind: UnicodeKind,
+        boundaries: bool,
+        strand: &Strand<'v, '_>,
+    ) -> Self {
+        let value = Value::from_object(str.clone());
         let pin = value.as_str(strand.vm()).unwrap().pin();
         // SAFETY: `str` roots the object and field order drops `state` before
         // `_pin`, then drops the pin before the root.
@@ -579,48 +523,66 @@ impl<'v> ViewIter<'v> {
         // SAFETY: the widened pin is stored below and is dropped only after
         // `state`, the sole user of this reference.
         let pinned = unsafe { mem::transmute::<&str, &'static str>(&pin) };
-        let state = match view.kind {
-            ViewKind::Scalar => ViewIterState::Scalar(pinned.chars()),
-            ViewKind::Grapheme => ViewIterState::Grapheme(pinned.graphemes(true)),
+        let state = match kind {
+            UnicodeKind::Scalar => UnicodeIterState::Scalar(pinned.chars()),
+            UnicodeKind::Grapheme => UnicodeIterState::Grapheme(pinned.graphemes(true)),
         };
         Self {
             state,
+            boundaries,
+            offset: 0,
+            terminal_emitted: false,
             _pin: pin,
-            str: view.str.clone(),
+            str,
         }
     }
 
     fn snapshot(&self, strand: &Strand<'v, '_>) -> Self {
         let kind = match self.state {
-            ViewIterState::Scalar(_) => ViewKind::Scalar,
-            ViewIterState::Grapheme(_) => ViewKind::Grapheme,
+            UnicodeIterState::Scalar(_) => UnicodeKind::Scalar,
+            UnicodeIterState::Grapheme(_) => UnicodeKind::Grapheme,
         };
-        let mut snapshot = Self::new(
-            &View {
-                str: self.str.clone(),
-                kind,
-                len: Cell::new(None),
-            },
-            strand,
-        );
+        let mut snapshot = Self::new(self.str.clone(), kind, self.boundaries, strand);
         snapshot.state = self.state.clone();
+        snapshot.offset = self.offset;
+        snapshot.terminal_emitted = self.terminal_emitted;
         snapshot
+    }
+
+    fn next_value(&mut self, strand: &mut Strand<'v, '_>) -> Option<Value<'v>> {
+        let boundaries = self.boundaries;
+        let offset = self.offset;
+        if let Some(fragment) = self.next_str() {
+            let len = fragment.len();
+            let value = if boundaries {
+                Value::from_int(strand, offset as i128)
+            } else {
+                Value::from_str(strand, fragment)
+            };
+            self.offset += len;
+            Some(value)
+        } else if boundaries && !self.terminal_emitted {
+            self.terminal_emitted = true;
+            Some(Value::from_int(strand, offset as i128))
+        } else {
+            None
+        }
     }
 
     fn next_str(&mut self) -> Option<&str> {
         match &mut self.state {
-            ViewIterState::Scalar(chars) => chars.as_str().chars().next().map(|ch| {
+            UnicodeIterState::Scalar(chars) => chars.as_str().chars().next().map(|ch| {
                 let len = ch.len_utf8();
                 let value = &chars.as_str()[..len];
                 chars.next();
                 value
             }),
-            ViewIterState::Grapheme(graphemes) => graphemes.next(),
+            UnicodeIterState::Grapheme(graphemes) => graphemes.next(),
         }
     }
 }
 
-unsafe impl<'v> Collect for ViewIter<'v> {
+unsafe impl<'v> Collect for UnicodeIter<'v> {
     const CYCLIC: bool = false;
     const IMMUTABLE: bool = false;
     type Annex = ();
@@ -638,16 +600,15 @@ fn fill_unpack<'v, 's>(
     strand: &mut Strand<'v, 's>,
     sig: &sig::Unpack<'v, '_>,
     out: &mut Slots<'v, '_>,
-    mut next: impl FnMut() -> Option<String>,
+    mut next: impl FnMut(&mut Strand<'v, 's>) -> Option<Value<'v>>,
 ) -> Result<'v, 's, ()> {
     for i in 0..sig.required {
-        let value = next().ok_or_else(|| Error::missing_positional(strand, sig.required))?;
-        out.at(i).store(Value::from_str(strand, &value));
+        let value = next(strand).ok_or_else(|| Error::missing_positional(strand, sig.required))?;
+        out.at(i).store(value);
     }
     for (i, default) in sig.optional.iter().enumerate() {
-        if let Some(value) = next() {
-            out.at(sig.required + i)
-                .store(Value::from_str(strand, &value));
+        if let Some(value) = next(strand) {
+            out.at(sig.required + i).store(value);
         } else {
             out.at(sig.required + i).store(default.dup());
         }
@@ -663,137 +624,13 @@ fn fill_unpack<'v, 's>(
             });
         }
     }
-    if sig.pos_rest() == Rest::None && next().is_some() {
+    if sig.pos_rest() == Rest::None && next(strand).is_some() {
         return Err(Error::unexpected_positional(strand, pos_count));
     }
     Ok(())
 }
 
-impl<'v> Protocol<'v> for View<'v> {
-    fn op_debug<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        let label = match this.get().kind {
-            ViewKind::Scalar => "scalars",
-            ViewKind::Grapheme => "graphemes",
-        };
-        crate::fmt!(strand, w, "<str {label}>")
-    }
-
-    fn op_type<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) {
-        Output::set(strand, out, &strand.singletons().iterable)
-    }
-
-    fn op_index<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        index_value: &Value<'v>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        let view = this.get();
-        let len = view.len();
-        if let Some((start, end)) = range::slice_bounds(index_value, strand, len)? {
-            let start = view
-                .position(start, len)
-                .ok_or_else(|| Error::index(strand))?;
-            let end = view
-                .position(end, len)
-                .ok_or_else(|| Error::index(strand))?;
-            Output::set(strand, out, &view.str[start..end]);
-            return Ok(());
-        }
-        let index = index_value
-            .to_i64(strand)
-            .map_err(|_| Error::index(strand))?;
-        let index = index::element(len, index).ok_or_else(|| Error::index(strand))?;
-        let (start, end) = view.bounds(index).ok_or_else(|| Error::index(strand))?;
-        Output::set(strand, out, &view.str[start..end]);
-        Ok(())
-    }
-
-    fn op_get<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        field: Sym<'v, 'a>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        if field.tag() == sym::LEN {
-            Output::set(strand, out, this.get().len());
-            Ok(())
-        } else {
-            iter::iterable_get(strand, &this, field, out)
-        }
-    }
-
-    async fn op_mcall<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        method: Sym<'v, 'a>,
-        args: Args<'v, 'a>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        if method.tag() == sym::LEN {
-            Err(Error::type_error(
-                strand,
-                "string view len is a field, not a method",
-            ))
-        } else {
-            iter::iterable_mcall(strand, &this, method, args, out).await
-        }
-    }
-
-    async fn op_iter<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        strand
-            .builtin_types()
-            .str_view_iter
-            .create(strand, ViewIter::new(this.get(), strand), out);
-        Ok(())
-    }
-
-    async fn op_spread<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        _context: SpreadContext,
-        sink: &'a mut dyn Spread<'v, 's>,
-    ) -> Result<'v, 's, ()> {
-        let mut iter = ViewIter::new(this.get(), strand);
-        while let Some(value) = iter.next_str() {
-            let mut slot = Value::from_str(strand, value);
-            sink.positional(strand, Slot::new(&mut slot))?;
-        }
-        Ok(())
-    }
-
-    async fn op_unpack<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        sig: &'a sig::Unpack<'v, 'a>,
-        mut out: Slots<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        let mut iter = ViewIter::new(this.get(), strand);
-        fill_unpack(strand, sig, &mut out, || iter.next_str().map(str::to_owned))?;
-        if let Some(i) = sig.pos_rest_slot() {
-            strand
-                .builtin_types()
-                .str_view_iter
-                .create(strand, iter, out.at(i));
-        }
-        sig.fill_empty_key_rest(strand, &mut out);
-        Ok(())
-    }
-}
-
-impl<'v> Protocol<'v> for ViewIter<'v> {
+impl<'v> Protocol<'v> for UnicodeIter<'v> {
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -808,7 +645,7 @@ impl<'v> Protocol<'v> for ViewIter<'v> {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<str view iter>")
+        crate::fmt!(strand, w, "<str unicode iter>")
     }
 
     fn op_type<'a, 's>(
@@ -831,13 +668,13 @@ impl<'v> Protocol<'v> for ViewIter<'v> {
     async fn op_next<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
+        mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let mut iter = this.borrow_mut(strand)?;
-        let Some(value) = iter.next_str() else {
+        let Some(value) = iter.next_value(strand) else {
             return Ok(false);
         };
-        Output::set(strand, out, value);
+        out.store(value);
         Ok(true)
     }
 
@@ -867,11 +704,11 @@ impl<'v> Protocol<'v> for ViewIter<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let mut iter = this.borrow(strand)?.snapshot(strand);
-        fill_unpack(strand, sig, &mut out, || iter.next_str().map(str::to_owned))?;
+        fill_unpack(strand, sig, &mut out, |strand| iter.next_value(strand))?;
         if let Some(i) = sig.pos_rest_slot() {
             strand
                 .builtin_types()
-                .str_view_iter
+                .str_unicode_iter
                 .create(strand, iter, out.at(i));
         }
         sig.fill_empty_key_rest(strand, &mut out);
@@ -1195,6 +1032,8 @@ impl<'v> Protocol<'v> for Type {
                 Method(sym::HASH_METHOD),
                 Getter(sym::LEN),
                 Method(sym::SCALARS),
+                Method(sym::SCALAR_BOUNDS),
+                Method(sym::GRAPHEME_BOUNDS),
                 Method(sym::SCALAR),
                 Method(sym::GRAPHEMES),
                 Method(sym::STARTS_WITH),
@@ -1233,6 +1072,8 @@ impl<'v> Protocol<'v> for Type {
             | sym::HASH_METHOD
             | sym::LEN
             | sym::SCALARS
+            | sym::SCALAR_BOUNDS
+            | sym::GRAPHEME_BOUNDS
             | sym::SCALAR
             | sym::GRAPHEMES
             | sym::STARTS_WITH
