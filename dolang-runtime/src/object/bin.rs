@@ -14,7 +14,7 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{BinEmbryo, Empty, Output, Slot, Slots, Value},
+    value::{BinEmbryo, Output, Slot, Slots, Value},
     vm::Vm,
 };
 
@@ -244,7 +244,7 @@ impl<'v> Protocol<'v> for [u8] {
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::STARTS_WITH => {
@@ -456,11 +456,7 @@ impl<'v> Protocol<'v> for [u8] {
             }
             sym::UNPACK => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
-                Output::set(strand, &mut out, Empty::Array);
-                let array = out.as_array(strand).unwrap();
-                for b in this.receiver.get() {
-                    array.push(strand, *b).unwrap();
-                }
+                super::array_view::unpack_bin(strand, Value::from_object(this.to_strong()), out);
                 Ok(())
             }
             sym::LEN => Err(Error::type_error(strand, "len is a field, not a method")),
@@ -490,7 +486,8 @@ impl<'v> Protocol<'v> for [u8] {
             | sym::TRIM
             | sym::TRIM_START
             | sym::TRIM_END
-            | sym::CONTAINS => {
+            | sym::CONTAINS
+            | sym::UNPACK => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
@@ -890,7 +887,8 @@ impl<'v> Protocol<'v> for Class {
             | sym::TRIM
             | sym::TRIM_START
             | sym::TRIM_END
-            | sym::CONTAINS => {
+            | sym::CONTAINS
+            | sym::UNPACK => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }

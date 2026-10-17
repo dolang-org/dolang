@@ -229,38 +229,89 @@ trait ArrayViewGlue<'v>: 'v {
     ) -> Result<'v, 's, ()>;
     fn set<'a, 's>(
         &self,
-        owner: &Value<'v>,
+        _owner: &Value<'v>,
         strand: &'a mut Strand<'v, 's>,
-        index: usize,
-        value: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()>;
+        _index: usize,
+        _value: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Err(Error::immutable(strand))
+    }
     fn push<'a, 's>(
         &self,
-        owner: &Value<'v>,
+        _owner: &Value<'v>,
         strand: &'a mut Strand<'v, 's>,
-        values: &mut [Slot<'v, 'a>],
-    ) -> Result<'v, 's, ()>;
+        _values: &mut [Slot<'v, 'a>],
+    ) -> Result<'v, 's, ()> {
+        Err(Error::immutable(strand))
+    }
     fn insert<'a, 's>(
         &self,
-        owner: &Value<'v>,
+        _owner: &Value<'v>,
         strand: &'a mut Strand<'v, 's>,
-        index: usize,
-        values: &mut [Slot<'v, 'a>],
-    ) -> Result<'v, 's, ()>;
+        _index: usize,
+        _values: &mut [Slot<'v, 'a>],
+    ) -> Result<'v, 's, ()> {
+        Err(Error::immutable(strand))
+    }
     fn pop<'a, 's>(
+        &self,
+        _owner: &Value<'v>,
+        strand: &'a mut Strand<'v, 's>,
+        _index: usize,
+        _out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        Err(Error::immutable(strand))
+    }
+    fn delete<'s>(
+        &self,
+        _owner: &Value<'v>,
+        strand: &mut Strand<'v, 's>,
+        _index: usize,
+    ) -> Result<'v, 's, ()> {
+        Err(Error::immutable(strand))
+    }
+    fn clear<'s>(&self, _owner: &Value<'v>, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
+        Err(Error::immutable(strand))
+    }
+}
+
+/// Creates a byte projection whose owner is the original binary, not a copy.
+pub(super) fn unpack_bin<'v>(strand: &mut Strand<'v, '_>, owner: Value<'v>, out: Slot<'v, '_>) {
+    strand.builtin_types().array_view.create(
+        strand,
+        View {
+            owner,
+            glue: Box::new(Bytes),
+        },
+        out,
+    );
+}
+
+struct Bytes;
+
+impl<'v> ArrayViewGlue<'v> for Bytes {
+    fn module(&self) -> &'v str {
+        "std"
+    }
+    fn name(&self) -> &'v str {
+        "Bytes"
+    }
+
+    fn len(&self, owner: &Value<'v>, strand: &mut Strand<'v, '_>) -> usize {
+        owner.as_bin(strand).unwrap().len()
+    }
+
+    fn get<'a, 's>(
         &self,
         owner: &Value<'v>,
         strand: &'a mut Strand<'v, 's>,
         index: usize,
         out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()>;
-    fn delete<'s>(
-        &self,
-        owner: &Value<'v>,
-        strand: &mut Strand<'v, 's>,
-        index: usize,
-    ) -> Result<'v, 's, ()>;
-    fn clear<'s>(&self, owner: &Value<'v>, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()>;
+    ) -> Result<'v, 's, ()> {
+        let byte = owner.as_u8_slice_raw(strand).unwrap()[index];
+        Output::set(strand, out, byte);
+        Ok(())
+    }
 }
 
 struct Glue<'v, I: ArrayLike<'v>> {

@@ -1389,17 +1389,23 @@ pub class Bin: @Index[Range[Int], Bin]
     ...
 
   #
-  # Unpacks binary data into an array of byte values (integers from 0-255).
+  # Returns an immutable view of the binary data's byte values.
+  #
+  # The view retains the binary data without copying it. It supports `len`,
+  # positive and negative integer indexing, iteration, spreading, and positional
+  # destructuring. Elements are integers from 0 to 255. Range slices materialize
+  # independent, mutable arrays of integers. Use `[...bytes.unpack()]` to copy
+  # the whole view into a mutable array.
   #
   #
   # ## Example
   #
   # ```
   # let bytes = b"hello"
-  # assert_eq $bytes.unpack() [104, 101, 108, 108, 111]
+  # assert_eq [...bytes.unpack()] [104, 101, 108, 108, 111]
   # ```
   #
-  pub def unpack self -> Array[Int]
+  pub def unpack self -> Seq[Int]
     ...
 
   #

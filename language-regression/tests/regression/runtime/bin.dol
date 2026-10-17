@@ -79,7 +79,7 @@ assert_eq [...b"a,b,c".rsplit b"," limit: -1] [b"b,c", b"a"]
 let parts = [b"hello", b"world"]
 assert_eq (b", ".join parts) b"hello, world"
 
-# Unpack into byte array
+# Read-only byte view
 let bytes = b"\x01\x02\x03".unpack()
 assert_eq [...bytes] [1, 2, 3]
 
@@ -121,3 +121,48 @@ assert_throws $std.RuntimeError str: "type error: len is a field, not a method" 
 
 # `Bin.pack` builds a `Bin` from byte values.
 assert_eq (Bin.pack [72, 105]) b"Hi"
+
+let view = b"\x00\x01\xff".unpack()
+assert_eq $view.len 3
+assert_eq $view[0] 0
+assert_eq $view[-1] 255
+assert_eq $view[1..] [1, 255]
+assert_eq $view[-3..-1] [0, 1]
+assert_eq $view[1..1] []
+assert_eq $view[Range start: 0 end: 3 step: 2] [0, 255]
+let slice = view[1..]
+slice[0] = 42
+slice.push 7
+assert_eq $slice [42, 255, 7]
+assert_eq [...view] [0, 1, 255]
+assert_eq [...view] [0, 1, 255]
+assert_eq (array ...view) [0, 1, 255]
+let iter1 = view.iter()
+let iter2 = view.iter()
+assert_eq (iter1.next()) 0
+assert_eq (iter1.next()) 1
+assert_eq (iter2.next()) 0
+let a b ...tail = view
+assert_eq [a, b, ...tail] [0, 1, 255]
+let empty = b"".unpack()
+assert_eq $empty.len 0
+assert_eq [...empty] []
+assert_eq $empty[0..0] []
+bind empty
+  - default = 42
+assert_eq $default 42
+assert_throws $std.MissingPosError do let _a _b _c _d = view
+for index = [3, -4]
+  assert_throws $std.IndexError do view[index]
+assert_throws $std.IndexError do empty[0]
+assert_throws $std.ImmutableError do view[0] = 1
+assert_throws $std.ImmutableError do view.push 1
+assert_throws $std.ImmutableError do view.insert 0 1
+assert_throws $std.ImmutableError do view.pop()
+assert_throws $std.ImmutableError do view.delete 0
+assert_throws $std.ImmutableError do view.clear()
+let unpack = b"hello".unpack
+assert_eq [...unpack()] [104, 101, 108, 108, 111]
+let copied = [...view]
+copied[0] = 99
+assert_eq $view[0] 0
