@@ -52,6 +52,7 @@ an explicit runtime import to use those classes as values.
 | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
 | [`Never`](std.Never), [`Union`](std.Union)                                                                                     | Empty type and unions, including expanded schemas  |
 | [`Seq`](std.Seq), [`AssignSeq`](std.AssignSeq), [`MutSeq`](std.MutSeq)                                                         | Sequences and their mutation capabilities          |
+| [`Map`](std.Map), [`AssignMap`](std.AssignMap), [`MutMap`](std.MutMap)                                                         | Dictionary-like reads, assignment, and removal     |
 | [`Index`](std.Index), [`Assign`](std.Assign), [`Spread`](std.Spread), [`Unpack`](std.Unpack)                                   | Indexing, assignment, spreading, and destructuring |
 | [`BaseIterable`](std.BaseIterable), [`BaseIter`](std.BaseIter), [`BaseSinkable`](std.BaseSinkable), [`BaseSink`](std.BaseSink) | Minimal iteration and sink protocols               |
 | [`UnpackIter`](std.UnpackIter), [`UnpackIterable`](std.UnpackIterable)                                                         | Iteration with read-only unpacking                 |

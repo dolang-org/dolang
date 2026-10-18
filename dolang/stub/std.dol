@@ -514,6 +514,85 @@ pub @class Unpack[S @ {...}, :Rest @ Spread[S] = Spread[S]]: Spread[S]
   pub def (unpack) self -> Unpack[S, Rest: Rest]
 
 
+# Reads dictionary-like entries, including multiple values for a key.
+# Integer keys retain the positional structure described by `S`.
+pub @class Map[S @ {...}]:
+  Index[S] Spread[S] Unpack[S, Rest: Unpack[S]] Iterable[Entries[S]]
+do
+  # The number of pairs, counting repeated keys separately.
+  #[getter]
+  pub def len self -> Int
+
+  # Tests for a key, or for a matching key and value.
+  pub def contains self key @ Value value @ Value = nil -> Bool
+
+  # Counts distinct keys, or the values of one key. Missing keys count as zero.
+  pub def count self key @ Value = nil -> Int
+
+  # Reads an instance, defaulting to the last. Negative instances count backward.
+  # Returns `nil` for a missing instance unless a fallback is supplied.
+  pub def get[K, D = nil]
+    self
+    key @ K
+    instance @ Int = nil
+    :default @ D = nil
+    :else @ (() -> D) = nil
+  do -> (IndexItem[S, K] | D)
+
+  # Yields each distinct key once.
+  pub def keys self -> Iterable[Keys[S]]
+
+  # Yields all values, or the values of one key.
+  @def values self -> Iterable[Values[S]]
+  @def values[K] self key @ K -> Iterable[IndexItem[S, K]]
+  pub def values self key @ Value = nil -> Iterable[Values[S]]
+
+  # Yields key-value pairs, as ordinary iteration does.
+  pub def pairs self -> Iter[Entries[S]]
+
+  # Destructures by key, leaving a rest that can also be destructured.
+  pub def (unpack) self -> Map[S]
+
+
+# A [`Map`](std.Map) supporting assignment, which replaces every value of a key.
+# It need not support adding or removing keys.
+pub @class AssignMap[S @ {...}]: Map[S] Assign[S]
+
+
+# A [`Map`](std.Map) supporting assignment and removal.
+pub @class MutMap[S @ {...}]: AssignMap[S]
+  @def delete[K] self @ MutMap[Deletable[S, K]] key @ K -> Bool
+
+  # Removes every value of a key, reporting whether any were present.
+  pub def delete self key @ Value -> Bool
+
+  @def pop[K, D = Never]
+    self @ MutMap[Deletable[S, K]]
+    key @ K
+    instance @ Int = nil
+    :default @ D = nil
+    :else @ (() -> D) = nil
+  do -> (IndexItem[S, K] | D)
+
+  # Removes one instance, defaulting to the first. Negative instances count backward.
+  #
+  # ## Errors
+  #
+  # [`IndexError`](std.IndexError) if the instance is missing and no fallback is supplied.
+  pub def pop[K, D = Never]
+    self
+    key @ K
+    instance @ Int = nil
+    :default @ D = nil
+    :else @ (() -> D) = nil
+  do -> (IndexItem[S, K] | D)
+
+  @def clear self @ MutMap[Clearable[S]]
+
+  # Removes every pair.
+  pub def clear self
+
+
 # An iterable sequence of `T`, which integers index, slices, spreads, and
 # destructures.
 pub @class Seq[T]: Iterable[T] Index[T] Spread[T] Unpack[T, Rest: Unpack[T]]
@@ -1913,7 +1992,7 @@ pub class CyclicImportError: RuntimeError
 # `BaseDict` is `Dict` at runtime, so only a dict is a `BaseDict`.
 #
 pub class BaseDict[S @ {...}]:
-  @Index[S] @Spread[S]
+  @Map[S] @Index[S] @Spread[S]
   @Unpack[S, Rest: Unpack[S]]
   Iterable[Entries[S]]
 do
@@ -2102,7 +2181,7 @@ do
 #   values by their position (0-indexed) among values for that key; negative
 #   instance indexes count from the end
 #
-pub class Dict[S @ {...}]: BaseDict[S] @Assign[S]
+pub class Dict[S @ {...}]: BaseDict[S] @MutMap[S] @Assign[S]
   #
   #
   # Builds a dictionary by spreading one source, as `{...source}` does.

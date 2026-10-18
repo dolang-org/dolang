@@ -65,6 +65,58 @@ impl<'v> DictLike<'v> for EnvView {
         <Env<'v> as Object>::assign(this, strand, key, value)
     }
 
+    fn delete<'s>(
+        &self,
+        this: Instance<'v, '_, Env<'v>>,
+        strand: &mut Strand<'v, 's>,
+        key: &Value<'v>,
+    ) -> Result<'v, 's, bool> {
+        let key = key
+            .as_str(strand)
+            .ok_or_else(|| Error::index(strand))?
+            .to_string();
+        let global = this.borrow(strand)?.global;
+        let local = global.local.get(strand);
+        let current = local.env();
+        let present = current.get(&key).is_some();
+        if present {
+            let mut env = (*current).clone();
+            env.insert(key, None);
+            local.replace_env(Rc::new(env));
+        }
+        Ok(present)
+    }
+
+    fn pop<'a, 's>(
+        &self,
+        this: Instance<'v, '_, Env<'v>>,
+        strand: &'a mut Strand<'v, 's>,
+        key: &Value<'v>,
+        instance: i64,
+        mut out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        if !self.get(this, strand, key, instance, Slot::reborrow(&mut out))? {
+            return Ok(false);
+        }
+        self.delete(this, strand, key)
+    }
+
+    fn clear<'s>(
+        &self,
+        this: Instance<'v, '_, Env<'v>>,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        let global = this.borrow(strand)?.global;
+        let local = global.local.get(strand);
+        let current = local.env();
+        let mut env = (*current).clone();
+        for key in current.effective_map().into_keys() {
+            env.insert(key, None);
+        }
+        local.replace_env(Rc::new(env));
+        Ok(())
+    }
+
     fn flatten<'s>(
         &self,
         this: Instance<'v, '_, Env<'v>>,
@@ -94,11 +146,13 @@ impl<'v> Object<'v> for Env<'v> {
     ) -> Result<'v, 's, ()> {
         let me = this.borrow(strand)?;
         let key = index.as_str(strand).ok_or_else(|| Error::index(strand))?;
-        let value = if value.is_nil() {
-            None
-        } else {
-            Some(value.to_string(strand)?)
-        };
+        if value.is_nil() {
+            return Err(Error::type_error(
+                strand,
+                "use env.delete to unset a variable",
+            ));
+        }
+        let value = Some(value.to_string(strand)?);
         let local = me.global.local.get(strand);
         let mut env = (*local.env()).clone();
         env.insert(key.to_string(), value);
@@ -124,27 +178,20 @@ impl<'v> Object<'v> for Env<'v> {
     }
 
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        let else_sym = builder.sym("else");
-        let default = builder.sym("default");
+        for name in [
+            "get", "keys", "values", "pairs", "contains", "count", "delete", "pop", "clear",
+        ] {
+            let method = builder.sym(name);
+            builder = builder.method(name, async move |this, strand, args, out| {
+                DictView::method(this, EnvView, strand, method, args, out).await
+            });
+        }
         builder
             .supertype(TypeObject::Func)
-            .method("get", async move |this, strand, args, out| {
-                let ([key], [else_sym, default]) =
-                    unpack!(strand, args, 1, 0, else_sym = None, default = None)?;
-                let borrow = this.borrow(strand)?;
-                let env = borrow.global.local.get(strand).env();
-                let key = key.as_str(strand).ok_or_else(|| Error::index(strand))?;
-                if let Some(value) = strand.access(|x| env.get(key.as_str(x))) {
-                    Output::set(strand, out, value.as_ref());
-                    return Ok(());
-                }
-                if let Some(default) = default {
-                    Output::set(strand, out, default);
-                    return Ok(());
-                }
-                if let Some(thunk) = else_sym {
-                    return call!(strand, thunk, out).await;
-                }
+            .supertype(TypeObject::Iterable)
+            .get("len", |this, strand, out| {
+                let len = EnvView.len(this, strand);
+                Output::set(strand, out, len);
                 Ok(())
             })
     }

@@ -1,0 +1,91 @@
+# dolang: strict
+
+pub def read[S @ {...}] mapping @ Map[S] -> Int
+  mapping.len
+
+pub def covariance mapping @ Dict[Str, Int] -> Int
+  let _wide @ Map[Str, Value] = mapping
+  read $mapping
+
+pub def schema mapping @ Map[{name: Str, ?age: Int}]
+  let _name @ Str = mapping[:name:]
+  let _age @ (Int | nil) = mapping.get :age:
+  let _keys @ Iterable[Sym] = mapping.keys()
+  let _values @ Iterable[Str | Int] = mapping.values()
+  let :name ...rest = mapping
+  let _name2 @ Str = name
+  let _rest @ Unpack[{?age: Int}] = rest
+
+pub def assign mapping @ AssignMap[Str, Int]
+  mapping["x"] = 1
+
+pub def mutate mapping @ MutMap[Str, Int]
+  let _old @ Int = mapping.pop "x"
+  let _default @ (Int | Str) = mapping.pop "x" default: missing
+  let _deleted @ Bool = mapping.delete "x"
+  mapping.clear()
+
+pub def dict_fits mapping @ Dict[Str, Int]
+  let _mutable @ MutMap[Str, Int] = mapping
+  let _assign @ AssignMap[Str, Int] = mapping
+
+pub def required mapping @ MutMap[{name: Str}]
+  mapping.delete :name:
+  # error: this call removes the required item at `:name:`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   mapping.delete :name:
+  #    |   ^^^^^^^^^^^^^^^^^^^^^
+  mapping.pop :name:
+  # error: this call removes the required item at `:name:`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   mapping.pop :name:
+  #    |   ^^^^^^^^^^^^^^^^^^
+  mapping.clear()
+# error: this call removes the required item at `:name:`
+#   --> m.dol:LL:LL
+#    |
+# LL |   mapping.clear()
+#    |   ^^^^^^^^^^^^^^^
+
+pub def readonly mapping @ Map[Str, Int]
+  mapping["x"] = 2
+  # error: `std.Map[std.Str, std.Int]` has no member `(assign)`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   mapping["x"] = 2
+  #    |   ^^^^^^^^^^^^^^^^
+  mapping.delete "x"
+# error: `std.Map[std.Str, std.Int]` has no member `delete`
+#   --> m.dol:LL:LL
+#    |
+# LL |   mapping.delete "x"
+#    |   ^^^^^^^^^^^^^^^^^^
+
+pub def wrong_value mapping @ MutMap[Str, Int]
+  mapping["x"] = "wrong"
+# error: expected `std.Int`, found `"wrong"`
+#   --> m.dol:LL:LL
+#    |
+# LL |   mapping["x"] = "wrong"
+#    |                  ^^^^^^^
+
+pub def positional mapping @ Map[{Int, Str}]
+  let _first @ Int = mapping[0]
+  let _second @ Str = mapping[1]
+  let first second = mapping
+  let _check @ (Int, Str) = (first, second)
+
+pub def optional mapping @ MutMap[{?name: Str}]
+  let _deleted @ Bool = mapping.delete :name:
+  let _old @ (Str | nil) = mapping.pop :name: default: nil
+  mapping.clear()
+
+pub def cannot_widen mapping @ MutMap[Str, Int]
+  let _wide @ MutMap[Str, Value] = mapping
+# error: `std.MutMap[std.Str, std.Int]` does not fit the annotation `std.MutMap[std.Str, Value]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _wide @ MutMap[Str, Value] = mapping
+#    |                                    ^^^^^^^

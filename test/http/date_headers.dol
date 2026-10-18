@@ -5,6 +5,7 @@ import time:
 import test:
   - assert
   - assert_eq
+  - assert_throws
   - test
 
 #[test]
@@ -34,3 +35,12 @@ def date_header_roundtrip()
           assert_eq $headers["last-modified"].unix_secs 1000.0
           assert_eq $headers["last-modified"].unix_nanos 1000000000000
           assert_eq $headers["x-test"] "ok"
+          assert_throws $std.ImmutableError do headers.delete "x-test"
+          assert_throws $std.ImmutableError do headers.pop "x-test"
+          assert_throws $std.ImmutableError do headers.clear()
+          assert_eq $headers["x-test"] "ok"
+        let request_headers = server.received_requests()[0].headers
+        assert_throws $std.ImmutableError do request_headers.delete "if-modified-since"
+        assert_throws $std.ImmutableError do request_headers.pop "if-modified-since"
+        assert_throws $std.ImmutableError do request_headers.clear()
+        assert_eq $request_headers["if-modified-since"].unix_secs 1000.0

@@ -67,6 +67,10 @@ def parse()
   assert_eq $parsed.query.copy().len 4
   assert_throws $ImmutableError do
     parsed.query["x"] = "changed"
+  assert_throws $ImmutableError do parsed.query.delete "x"
+  assert_throws $ImmutableError do parsed.query.pop "x"
+  assert_throws $ImmutableError do parsed.query.clear()
+  assert_eq [...parsed.query.values("x")] ["1", "2"]
 
 #[test]
 def with_query_fragment()
