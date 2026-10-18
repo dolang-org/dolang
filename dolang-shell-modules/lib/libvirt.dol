@@ -1086,35 +1086,35 @@ class DomainConfig
       {format: self.#nvram_format}
     else
       {}
-    Node os attrs: $os_attrs
-      $ Node type hvm attrs: $type_attrs
+    Node os $os_attrs
+      $ Node type hvm $type_attrs
       if secure
         $ Node firmware
-          $ Node feature attrs: {enabled: "yes", name: "secure-boot"}
-          $ Node feature attrs: {enabled: "yes", name: "enrolled-keys"}
-        $ Node nvram (str self.#nvram) attrs: $nvram_attrs
+          $ Node feature {enabled: "yes", name: "secure-boot"}
+          $ Node feature {enabled: "yes", name: "enrolled-keys"}
+        $ Node nvram (str self.#nvram) $nvram_attrs
       else
-        $ Node boot attrs: {dev: "hd"}
+        $ Node boot {dev: "hd"}
 
   # The domain's disks: the overlay, then each attached medium as a cdrom.
   def disk_nodes self overlay_driver
     let Node = xml.Node
-    let overlay = Node disk attrs: {type: "file", device: "disk"}
-      $ Node driver attrs: $overlay_driver
-      $ Node source attrs: {file: str(self.#overlay)}
-      $ Node target attrs: {dev: "vda", bus: "virtio"}
+    let overlay = Node disk {type: "file", device: "disk"}
+      $ Node driver $overlay_driver
+      $ Node source {file: str(self.#overlay)}
+      $ Node target {dev: "vda", bus: "virtio"}
       if (self.#disk_boot != nil)
-        $ Node boot attrs: {order: str(self.#disk_boot)}
+        $ Node boot {order: str(self.#disk_boot)}
     let nodes = [overlay]
     let index = 0
     for entry = self.#media
-      let cdrom = Node disk attrs: {type: "file", device: "cdrom"}
-        $ Node driver attrs: {name: "qemu", type: "raw"}
-        $ Node source attrs: {file: str(entry.path)}
-        $ Node target attrs: {dev: MEDIA_TARGETS[index], bus: "sata"}
+      let cdrom = Node disk {type: "file", device: "cdrom"}
+        $ Node driver {name: "qemu", type: "raw"}
+        $ Node source {file: str(entry.path)}
+        $ Node target {dev: MEDIA_TARGETS[index], bus: "sata"}
         $ Node readonly
         if (entry.boot != nil)
-          $ Node boot attrs: {order: str(entry.boot)}
+          $ Node boot {order: str(entry.boot)}
       nodes.push $cdrom
       index = (index + 1)
     nodes
@@ -1147,9 +1147,9 @@ class DomainConfig
       if (self.#io != nil)
         io: $self.#io
 
-    Node domain attrs: {type: "kvm"}
+    Node domain {type: "kvm"}
       $ Node name $self.name
-      $ Node memory (str self.#memory) attrs: {unit: "MiB"}
+      $ Node memory (str self.#memory) {unit: "MiB"}
       $ Node vcpu (str self.#vcpus)
       $ self.#os_node()
       $ Node features
@@ -1159,59 +1159,59 @@ class DomainConfig
         # the firmware cannot protect the variable store that makes it one.
         # libvirt starts the domain regardless; it is Setup that refuses.
         if profile.smm
-          $ Node smm attrs: {state: "on"}
+          $ Node smm {state: "on"}
         # Without the Hyper-V enlightenments a Windows guest burns host CPU in
         # its own spinlocks and idles badly enough to look hung.
         if profile.hyperv
           $ Node hyperv
-            $ Node relaxed attrs: {state: "on"}
-            $ Node vapic attrs: {state: "on"}
-            $ Node spinlocks attrs: {state: "on", retries: "8191"}
-            $ Node vpindex attrs: {state: "on"}
-            $ Node synic attrs: {state: "on"}
-            $ Node stimer attrs: {state: "on"}
-      $ Node cpu attrs: {mode: "host-passthrough"}
+            $ Node relaxed {state: "on"}
+            $ Node vapic {state: "on"}
+            $ Node spinlocks {state: "on", retries: "8191"}
+            $ Node vpindex {state: "on"}
+            $ Node synic {state: "on"}
+            $ Node stimer {state: "on"}
+      $ Node cpu {mode: "host-passthrough"}
       # Windows keeps the hardware clock in local time and, left on the default
       # timer set, drifts badly enough for Setup and for TLS afterwards.
-      $ Node clock attrs: {offset: profile.clock_offset}
+      $ Node clock {offset: profile.clock_offset}
         if profile.hyperv
-          $ Node timer attrs: {name: "rtc", tickpolicy: "catchup"}
-          $ Node timer attrs: {name: "pit", tickpolicy: "delay"}
-          $ Node timer attrs: {name: "hpet", present: "no"}
-          $ Node timer attrs: {name: "hypervclock", present: "yes"}
+          $ Node timer {name: "rtc", tickpolicy: "catchup"}
+          $ Node timer {name: "pit", tickpolicy: "delay"}
+          $ Node timer {name: "hpet", present: "no"}
+          $ Node timer {name: "hypervclock", present: "yes"}
       $ Node on_poweroff destroy
       $ Node on_reboot restart
       $ Node on_crash destroy
       $ Node devices
         ...self.#disk_nodes(overlay_driver)
-        $ Node interface attrs: {type: "user"}
-          $ Node backend attrs: {type: "passt"}
-          $ Node model attrs: {type: "virtio"}
-          $ Node portForward attrs: {proto: "tcp", address: "127.0.0.1"}
-            $ Node range attrs: {start: str(self.guest.port), to: "22"}
+        $ Node interface {type: "user"}
+          $ Node backend {type: "passt"}
+          $ Node model {type: "virtio"}
+          $ Node portForward {proto: "tcp", address: "127.0.0.1"}
+            $ Node range {start: str(self.guest.port), to: "22"}
         if profile.serial
-          $ Node serial attrs: {type: "pty"}
-            $ Node target attrs: {port: "0"}
-          $ Node console attrs: {type: "pty"}
-            $ Node target attrs: {type: "serial", port: "0"}
+          $ Node serial {type: "pty"}
+            $ Node target {port: "0"}
+          $ Node console {type: "pty"}
+            $ Node target {type: "serial", port: "0"}
         # Windows has no serial console worth reading, so the graphical one is
         # the only way to see an install stopped at a dialog. `vga` needs no
         # driver from the virtio media to be legible during Setup, and without
         # an absolute-positioning tablet the pointer is unusable over VNC.
         if profile.graphics
-          $ Node graphics attrs: {type: "vnc", autoport: "yes", listen: "127.0.0.1"}
+          $ Node graphics {type: "vnc", autoport: "yes", listen: "127.0.0.1"}
           $ Node video
-            $ Node model attrs: {type: "vga"}
-          $ Node input attrs: {type: "tablet", bus: "usb"}
+            $ Node model {type: "vga"}
+          $ Node input {type: "tablet", bus: "usb"}
         if (profile.tpm != nil)
-          $ Node tpm attrs: {model: "tpm-crb"}
-            $ Node backend attrs: {type: "emulator", version: "2.0"}
+          $ Node tpm {model: "tpm-crb"}
+            $ Node backend {type: "emulator", version: "2.0"}
               # libvirt launches swtpm as the session user and lets it keep its
               # state here, so the vTPM lives and dies with the workdir like
               # everything else `undefine` does not remove.
-              $ Node source attrs: {type: "dir", path: str(self.#tpm_state)}
+              $ Node source {type: "dir", path: str(self.#tpm_state)}
       $ Node metadata
-        $ Node vm namespace: $VM_NAMESPACE prefix: dolang
+        $ Node vm namespace: $VM_NAMESPACE namespaces: {dolang: VM_NAMESPACE}
           $ Node managed "true"
           $ Node app $self.#app
           $ Node workdir (str self.#workdir)
@@ -1287,10 +1287,10 @@ class DomainXml
     for disk = devices.children
       if (type disk xml.Node &&
           disk.tag == "disk" &&
-          disk.attr("device") == device)
+          disk.attrs.get("device") == device)
         let source = find_child $disk source
         if source
-          return source.attr "file"
+          return source.attrs.get "file"
     nil
 
   # The firmware variable store: where libvirt keeps it and, from libvirt's own
@@ -1310,7 +1310,7 @@ class DomainXml
     let path = node_text(node).trim()
     if (path == "")
       return nil
-    Struct path: $(Path(path).absolute()) format: $(node.attr "format")
+    Struct path: $(Path(path).absolute()) format: $(node.attrs.get "format")
 
   # The vTPM's state directory and the device it belongs to, or `nil` for a
   # domain with no TPM.
@@ -1325,15 +1325,15 @@ class DomainXml
     if !backend
       return nil
     let source = find_child $backend source
-    if (!source || source.attr("type") != "dir")
+    if (!source || source.attrs.get("type") != "dir")
       return nil
-    let path = source.attr "path"
+    let path = source.attrs.get "path"
     if (path == nil)
       return nil
     Struct
       path: $(Path(path).absolute())
-      model: $(tpm.attr "model")
-      version: $(backend.attr "version")
+      model: $(tpm.attrs.get "model")
+      version: $(backend.attrs.get "version")
 
   # Every file-backed disk source, in document order.
   pub def disk_sources self
@@ -1344,10 +1344,10 @@ class DomainXml
     for disk = devices.children
       if (type disk xml.Node &&
           disk.tag == "disk" &&
-          disk.attr("device") == "disk")
+          disk.attrs.get("device") == "disk")
         let source = find_child $disk source
         if source
-          let path = source.attr "file"
+          let path = source.attrs.get "file"
           if (path != nil)
             sources.push $path
     sources

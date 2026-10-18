@@ -25,6 +25,9 @@ let DRIVER_SUBPATHS = $
 let UNATTEND_NS = "urn:schemas-microsoft-com:unattend"
 let WCM_NS = "http://schemas.microsoft.com/WMIConfig/2002/State"
 
+# A child of an unattend element, or a dict of its attributes.
+@let UnattendItem = (xml.Node | Str | BaseDict[Sym | Str, Str])
+
 # Every `<component>` in an unattend document carries the same assembly
 # identity; only `name` varies.
 let COMPONENT_ATTRS @ {**Str} = $
@@ -72,18 +75,16 @@ def provision_command() -> Str
 # Every element needs it named: `xml.encode` derives namespace declarations
 # per node rather than from parent pointers, so a child of a namespaced node
 # that does not carry one of its own is serialized into no namespace at all.
-def unattend_node tag @ Str *items @ (xml.Node | xml.Attr | Str) -> xml.Node
+def unattend_node tag @ Str *items @ UnattendItem -> xml.Node
   xml.Node $tag namespace: $UNATTEND_NS ...items
 
 # `wcm:action="add"`, which the schema requires on every member of a repeated
 # list — partitions, driver paths, accounts, commands.
-def wcm_add() -> xml.Attr
-  xml.Attr action add namespace: $WCM_NS prefix: wcm
+def wcm_add() -> Dict[Str, Str]
+  {"{$WCM_NS}action": "add"}
 
-def unattend_component name @ Str *items @ (xml.Node | xml.Attr | Str) -> xml.Node
-  let attrs = COMPONENT_ATTRS.copy()
-  attrs[:name:] = name
-  xml.Node component namespace: $UNATTEND_NS attrs: $attrs ...items
+def unattend_component name @ Str *items @ UnattendItem -> xml.Node
+  xml.Node component namespace: $UNATTEND_NS $COMPONENT_ATTRS {name: name} ...items
 
 # The `<InstallFrom>` selecting an edition off multi-edition media, or `nil`
 # to let Setup pick — which on retail media means stopping to ask.
@@ -154,7 +155,7 @@ def unattend_driver_paths() -> xml.Node
     for subpath = DRIVER_SUBPATHS
       paths.push $ unattend_node PathAndCredentials
         $ wcm_add()
-        $ xml.Attr keyValue (str order) namespace: $WCM_NS prefix: wcm
+        $ {"{$WCM_NS}keyValue": str(order)}
         $ unattend_node Path "$drive:\\$subpath"
       order = (order + 1)
   unattend_component "Microsoft-Windows-PnpCustomizationsWinPE"
@@ -271,22 +272,23 @@ do -> Str
   # Pass order as Windows documents it — windowsPE, specialize, auditUser,
   # oobeSystem — rather than in the order they run in wall-clock terms, which
   # puts `oobeSystem` and its reseal before the audit pass it leads to.
-  let document = unattend_node unattend
+  # `wcm` is declared once, on the root, rather than by each element using it.
+  let document = xml.Node unattend namespace: $UNATTEND_NS namespaces: {wcm: WCM_NS}
     $ unattend_node settings
-      $ xml.Attr pass windowsPE
+      $ {pass: "windowsPE"}
       $ locale_pe
       if drivers
         $ unattend_driver_paths()
       $ setup
     $ unattend_node settings
-      $ xml.Attr pass specialize
+      $ {pass: "specialize"}
       $ locale
       $ shell_setup
       $ bootstrap
     $ unattend_node settings
-      $ xml.Attr pass auditUser
+      $ {pass: "auditUser"}
       $ provision
     $ unattend_node settings
-      $ xml.Attr pass oobeSystem
+      $ {pass: "oobeSystem"}
       $ reseal
   "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n$(xml.encode document)\n"

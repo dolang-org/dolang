@@ -46,7 +46,7 @@ pub def scoped node @ xml.Node >Sink[Str] -> nil
     1
   let _n = n
   #   ^~: flow std.Int
-  let _ = node.attr "id" else: do
+  let _ = node.attrs.get "id" else: do
     put "y"
     "d"
   nil

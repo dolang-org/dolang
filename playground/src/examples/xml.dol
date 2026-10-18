@@ -30,32 +30,32 @@ let memory = find memory
 echo "$(find("name")[0]): $(memory[0]) $(memory["unit"])"
 memory.children[0] = (str(int(memory[0]) * 2))
 
-# Namespaced attributes are looked up by local name and namespace URI.
-let APP = "urn:example:app"
+# Namespaced attributes are keyed `{namespace}local`.
 let owner = find owner
-echo "owner: $(owner[0]), team: $(owner.attr "team" namespace: APP)"
-owner.set_attr team storage namespace: $APP
+echo "owner: $(owner[0]), team: $(owner["{urn:example:app}team"])"
+owner["{urn:example:app}team"] = "storage"
 
+# `attrs` is a map of the attributes in document order.
 let disk = find disk
-for attr = disk.attrs
-  echo "disk $(attr.qname) = $(attr.value)"
-(find "target").delete_attr bus
+for name value = disk.attrs
+  echo "disk $name = $value"
+(find "target").attrs.delete bus
 
-# Build a new element with attributes and children.
+# Build a new element: a dict adds attributes, anything else is a child.
 let cdrom = xml.Node disk
-  attrs:
+  $
     type: file
     device: cdrom
-  - $ xml.Node source attrs: {file: "/images/install.iso"}
+  - $ xml.Node source {file: "/images/install.iso"}
   - $ xml.Node readonly
 
 # Text is stored as plain `Str` children, including indentation.
 let devices = (find "devices").children
 devices.insert (devices.len - 1) "\n    " $cdrom
 
-# `verify` checks names, namespaces, and structure without serializing.
+# Changes are checked as they are made, so an invalid name raises at once.
 try
-  xml.verify $ xml.Node "not a name"
+  xml.Node "not a name"
 catch std.ValueError: err
   echo "invalid: $err"
 

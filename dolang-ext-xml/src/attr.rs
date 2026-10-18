@@ -1,33 +1,89 @@
-use crate::global::Tag;
+use dolang::runtime::{Error, Result, Strand, Value};
 
-use dolang::runtime::object::fmt;
-use dolang::runtime::value::fmt::Format;
+use crate::check::{validate_name, validate_text};
 
-use dolang::runtime::{
-    Args, Error, Instance, Object, Output, Result, Slot, Strand, Type, Value, object::TypeBuilder,
-    unpack, value::Nil,
-};
-
+/// An expanded name: a local name and an optional namespace URI.
 #[derive(Clone)]
 pub(crate) struct Name {
     pub(crate) local: String,
     pub(crate) namespace: Option<String>,
-    pub(crate) prefix: Option<String>,
 }
 
 impl Name {
-    pub(crate) fn qname(&self) -> String {
-        match &self.prefix {
-            Some(prefix) => format!("{prefix}:{}", self.local),
+    /// Splits Clark notation, `{namespace}local` or a bare `local`.
+    ///
+    /// The namespace ends at the last `}`, which a local name cannot contain.
+    pub(crate) fn from_clark(key: &str) -> Self {
+        match key.strip_prefix('{').and_then(|rest| rest.rsplit_once('}')) {
+            Some((namespace, local)) => Self {
+                local: local.to_owned(),
+                namespace: Some(namespace.to_owned()),
+            },
+            None => Self {
+                local: key.to_owned(),
+                namespace: None,
+            },
+        }
+    }
+
+    pub(crate) fn clark(&self) -> String {
+        match &self.namespace {
+            Some(namespace) => format!("{{{namespace}}}{}", self.local),
             None => self.local.clone(),
         }
     }
+
+    /// Whether this is the expanded name `{namespace}local`.
+    pub(crate) fn is(&self, other: &Name) -> bool {
+        self.local == other.local && self.namespace == other.namespace
+    }
 }
 
-#[derive(Clone)]
+/// An attribute as stored in a [`Node`](crate::node::Node).
 pub(crate) struct Attr {
     pub(crate) name: Name,
     pub(crate) value: String,
+}
+
+impl Attr {
+    /// Creates an attribute after checking its name and value.
+    pub(crate) fn checked<'v, 's>(
+        strand: &mut Strand<'v, 's>,
+        name: Name,
+        value: String,
+    ) -> Result<'v, 's, Self> {
+        validate_name(strand, &name, "attribute name")?;
+        if name.namespace.is_none() && name.local == "xmlns" {
+            return Err(Error::value(strand, "the xmlns attribute name is reserved"));
+        }
+        validate_text(strand, &value, "attribute value")?;
+        Ok(Self { name, value })
+    }
+}
+
+/// Reads a `Str` or `Sym` key; bareword dict keys intern as the latter.
+pub(crate) fn key_string<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    key: &Value<'v>,
+) -> Result<'v, 's, Option<String>> {
+    if key.as_str(strand).is_none() && key.as_sym(strand).is_none() {
+        return Ok(None);
+    }
+    key.to_string(strand).map(Some)
+}
+
+/// Reads an attribute key in Clark notation.
+pub(crate) fn attr_key<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    key: &Value<'v>,
+) -> Result<'v, 's, Name> {
+    match key_string(strand, key)? {
+        Some(key) => Ok(Name::from_clark(&key)),
+        None => Err(Error::type_error(
+            strand,
+            "attribute name: expected Str or Sym",
+        )),
+    }
 }
 
 pub(crate) fn required_string<'v, 's>(
@@ -50,82 +106,5 @@ pub(crate) fn optional_string<'v, 's>(
         None => Ok(None),
         Some(value) if value.is_nil() => Ok(None),
         Some(value) => required_string(strand, value, field).map(Some),
-    }
-}
-
-impl<'v> Object<'v> for Attr {
-    const MODULE: &'static str = "xml";
-    const NAME: &'static str = "Attr";
-    type Annex = ();
-    type Type = ();
-    type TypeAnnex = ();
-
-    async fn new<'a, 's>(
-        this: Type<'v, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        args: Args<'v, 'a>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        let global = strand.state::<Tag>();
-        let namespace = global.syms.namespace;
-        let prefix = global.syms.prefix;
-        let ([name, value], [namespace, prefix]) =
-            unpack!(strand, args, 2, 0, namespace = None, prefix = None)?;
-        let name = Name {
-            local: required_string(strand, &name, "name")?,
-            namespace: optional_string(strand, namespace.as_deref(), "namespace")?,
-            prefix: optional_string(strand, prefix.as_deref(), "prefix")?,
-        };
-        let value = required_string(strand, &value, "value")?;
-        this.create(strand, Attr { name, value }, out);
-        Ok(())
-    }
-
-    fn debug<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        let borrow = this.borrow(strand)?;
-        fmt!(strand, w, "<xml.Attr {}>", borrow.name.qname())
-    }
-
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder
-            .get("name", |this, strand, out| {
-                let borrow = this.borrow(strand)?;
-                Output::set(strand, out, borrow.name.local.as_str());
-                Ok(())
-            })
-            .get("value", |this, strand, out| {
-                let borrow = this.borrow(strand)?;
-                Output::set(strand, out, borrow.value.as_str());
-                Ok(())
-            })
-            .set("value", |this, strand, value| {
-                this.borrow_mut(strand)?.value = required_string(strand, &value, "value")?;
-                Ok(())
-            })
-            .get("namespace", |this, strand, out| {
-                if let Some(namespace) = &this.borrow(strand)?.name.namespace {
-                    Output::set(strand, out, namespace.as_str());
-                } else {
-                    Output::set(strand, out, Nil);
-                }
-                Ok(())
-            })
-            .get("prefix", |this, strand, out| {
-                if let Some(prefix) = &this.borrow(strand)?.name.prefix {
-                    Output::set(strand, out, prefix.as_str());
-                } else {
-                    Output::set(strand, out, Nil);
-                }
-                Ok(())
-            })
-            .get("qname", |this, strand, out| {
-                let qname = this.borrow(strand)?.name.qname();
-                Output::set(strand, out, qname.as_str());
-                Ok(())
-            })
     }
 }
