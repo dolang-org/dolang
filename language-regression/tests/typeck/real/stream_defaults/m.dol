@@ -1,0 +1,50 @@
+# dolang: strict
+# A `stream` channel that nothing determines takes `Value`, and one with a bound
+# takes it
+
+import strand:
+  - stream
+  - each
+  - pipeline
+  - from
+
+pub def produces -> Iterable[Int]
+  stream do
+    put 1
+
+pub def produces_unexpected()
+  let s = stream do
+    put 1
+  let _ = s
+  #       ^: flow strand.Stream[nil, Value, Value]
+  nil
+
+pub def pipelined -> Iterable[Int]
+  stream do
+    pipeline (do from [1, 2]) (do each do |x @ Int| (x + 1))
+
+pub def consumes()
+  let s = stream do |<Iter[Int]|
+    each do |x @ Int| (x + 1)
+  let _ = s
+  #       ^: flow strand.Stream[nil, Value, std.Int]
+  nil
+
+# Reading the input as something specific needs the channel annotated
+pub def consumes_unannotated -> Iterable[Int]
+  stream do
+    each do |s @ Str| s.len
+    # error: this call does not fit `@[T1, T2] ((T1) -> T2, <std.Iter[T1], >std.Sink[T2]) -> nil`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     each do |s @ Str| s.len
+    #    |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+pub def produces_wrong -> Iterable[Int]
+  stream do
+    put foo
+    # error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     put foo
+    #    |     ^^^^^^^

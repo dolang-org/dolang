@@ -29,3 +29,16 @@ pub def ranges items @ Array[Int] replacement @ BaseArray[Int]
   let _ = items[1..3]
   #   ^: flow [std.Int]
   nil
+
+def anything[T = Value] -> Iterable[T]
+  ...
+
+# A binder's default doesn't override its upper bounds
+pub def defaults()
+  let a @ Iterable[Int] = anything()
+  let _ = a
+  #       ^: flow std.Iterable[std.Int]
+  let b = anything()
+  let _ = b
+  #       ^: flow std.Iterable[Value]
+  nil

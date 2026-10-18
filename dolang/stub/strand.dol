@@ -533,7 +533,7 @@ do -> Strand[R]
   ...
 
 # Runs a function in a background strand with channel-backed endpoints.
-pub def stream[R, I, O]
+pub def stream[R, I = Value, O = Value]
   # the function to execute
   func @ ((<PipeReceiver[I], >PipeSender[O]) -> R)
 do -> Stream[R, O, I]
