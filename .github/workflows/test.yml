@@ -70,12 +70,10 @@ jobs:
           virt: ${{ matrix.target == 'x86_64-freebsd' }}
           save-cache: ${{ github.ref == 'refs/heads/master' }}
 
-      # Skipped in the VM: `clippy --all-targets` compiles the whole dependency
-      # graph again without producing anything `cargo test` can reuse, so it
-      # costs a second cold build to re-check lints that the other three
-      # targets already cover.
+      # Keep PR linting on Linux; check every target on master pushes and
+      # manual runs, including FreeBSD in the VM.
       - name: Lint
-        if: matrix.target != 'x86_64-freebsd'
+        if: github.event_name != 'pull_request' || endsWith(matrix.target, '-linux')
         run: dodo.run lint
 
       # Includes the required bundled-library typecheck-test gate.
