@@ -483,6 +483,8 @@ struct VariableState {
     /// The default of the binder it instantiates, which it takes when nothing
     /// bounds it from below
     fallback: Cell<Option<Term>>,
+    /// Whether it has taken its fallback (see [`Solver::fall_back`])
+    fell_back: Cell<bool>,
 }
 
 /// What a solver records of a variable: its resolution, and what it adds to
@@ -2094,15 +2096,55 @@ impl<'db> Solver<'db> {
         Ok(candidate)
     }
 
-    /// Whether a variable's binder default may be its default: if it can be shown
-    /// to satisfy each of its solved upper bounds (see [`Self::below_upper`]). A
-    /// default stands in for what nothing else gives, so it mustn't override a
-    /// bound, as `Value` would any upper bound. A default that isn't solved yet is
-    /// admitted; the obligations pairing it with the bounds check it.
-    pub(crate) fn admits_fallback(&self, id: InferVarId, default: Term) -> bool {
-        self.reify(default)
+    /// Bound a variable below by its binder default, if it has one that may be its
+    /// default: one that can be shown to satisfy each of its solved upper bounds
+    /// (see [`Self::below_upper`]). A default stands in for what nothing else
+    /// gives, so it mustn't override a bound, as `Value` would any upper bound. A
+    /// default that isn't solved yet is admitted; the obligations pairing it with
+    /// the bounds check it. Returns whether it was taken.
+    pub(crate) fn fall_back(&mut self, id: InferVarId) -> bool {
+        let Some(default) = self.fallback(id) else {
+            return false;
+        };
+        let admitted = self
+            .reify(default)
             .and_then(|default| self.below_upper(id, default))
-            .unwrap_or(true)
+            .unwrap_or(true);
+        if admitted {
+            self.state_mut(id).fell_back.set(true);
+            self.constrain(default, Term::Infer(id), Provenance::default());
+        }
+        admitted
+    }
+
+    /// Whether a term's solution rests on a choice that defaulting made without
+    /// a lower bound to make it from: a binder's default, or a variable without
+    /// lower bounds defaulted to the meet of its upper bounds or to bottom. A
+    /// bottom that's chosen only picks the least type, rather than saying that
+    /// nothing has it.
+    pub(crate) fn chosen(&self, term: Term) -> Result<bool, Residual> {
+        let mut seen = FxHashSet::default();
+        let mut pending = vec![term];
+        while let Some(term) = pending.pop() {
+            let mut leaves = FxHashSet::default();
+            self.leaves(term, 0, 0, &mut leaves)?;
+            for leaf in leaves {
+                let Term::Infer(id) = leaf else {
+                    continue;
+                };
+                if !seen.insert(id) {
+                    continue;
+                }
+                let state = self.state(id);
+                let lower = self.bounds(id).lower;
+                if state.fell_back.get() || state.defaulted.get() && lower.is_empty() {
+                    return Ok(true);
+                }
+                pending.extend(lower);
+                pending.extend(state.assignment.get());
+            }
+        }
+        Ok(false)
     }
 
     /// Whether a candidate can be shown to satisfy each of a variable's solved
@@ -2135,7 +2177,7 @@ impl<'db> Solver<'db> {
     }
 
     /// The default of the binder a variable instantiates, if it has one
-    pub(crate) fn fallback(&self, id: InferVarId) -> Option<Term> {
+    fn fallback(&self, id: InferVarId) -> Option<Term> {
         self.state(id).fallback.get()
     }
 

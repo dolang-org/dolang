@@ -26,9 +26,11 @@
 //! variables, as a rule of its own would.
 //!
 //! A call that gives bottom ends the path of the step or terminal making it (see
-//! [`Flow::diverge`]). It's decided never to return only if its rule is decided
-//! and doesn't take a `do` block's result that isn't known yet to be bottom. A
-//! union's alternatives end it only if they all do.
+//! [`Flow::diverge`]), unless defaulting chose it (see [`Solver::chosen`]): that
+//! bottom only picks the least type the call's result can have. It's decided
+//! never to return only if its rule is decided and doesn't take a `do` block's
+//! result that isn't known yet to be bottom. A union's alternatives end it only
+//! if they all do.
 
 use std::collections::VecDeque;
 
@@ -898,6 +900,16 @@ struct Params {
     keyed: Vec<(SymbolId, TypeId)>,
 }
 
+/// What a run of a rule concludes (see [`Flow::decide`])
+struct Decision {
+    /// Its results
+    values: Vec<TypeId>,
+    /// Whether they're decided
+    decided: bool,
+    /// Whether each is a bottom that defaulting chose
+    chosen: Vec<bool>,
+}
+
 impl<'a> Flow<'a, '_> {
     /// Run a rule: solve the constraints `build` makes and conclude its results in
     /// this context, replacing what its earlier runs concluded. Once the rule
@@ -913,14 +925,15 @@ impl<'a> Flow<'a, '_> {
         expected: Option<TypeId>,
         build: impl Fn(&Self, &mut Rule<'_, '_, 'p>) -> Vec<Term>,
     ) -> Vec<TypeId> {
-        self.decide(at, span, expected, build).0
+        self.decide(at, span, expected, build).values
     }
 
     /// Run a rule as [`Flow::conclude`] does, also saying whether its results are
     /// decided: solved, or defaulted without an unresolved check and without
     /// taking a `do` block's result that isn't known yet to be bottom. A decided
     /// bottom is a value that's never produced, where an undecided one only
-    /// stands in for what isn't known yet.
+    /// stands in for what isn't known yet. It also says which results are a
+    /// bottom that defaulting chose (see [`Solver::chosen`]).
     ///
     /// Each run solves what `build` makes before releasing the arguments it
     /// holds back, each as a sub-rule (see [`Flow::release`]). A run that
@@ -938,7 +951,7 @@ impl<'a> Flow<'a, '_> {
         span: Span,
         expected: Option<TypeId>,
         build: impl Fn(&Self, &mut Rule<'_, '_, 'p>) -> Vec<Term>,
-    ) -> (Vec<TypeId>, bool) {
+    ) -> Decision {
         // Each run has a budget of its own
         let gases = MonoVec::new();
         // An argument held back that's found exactly is then passed as one that
@@ -1070,22 +1083,30 @@ impl<'a> Flow<'a, '_> {
             ..
         } = run;
         let bottom = self.db.bottom();
+        let chosen = |solver: &Solver<'_>, term| solver.chosen(term).unwrap_or(false);
         for &(term, span, repeated) in &calls {
-            if solver.reify(term).is_ok_and(|ty| ty == bottom) {
+            if solver.reify(term).is_ok_and(|ty| ty == bottom) && !chosen(&solver, term) {
                 self.diverge(span, decided);
                 if !repeated {
                     values.fill(bottom);
                 }
             }
         }
+        let chosen = (values.iter().zip(&results))
+            .map(|(&ty, &term)| ty == bottom && chosen(&solver, term))
+            .collect();
         if self.observing() {
             self.blame(&solver, &checks, &outcomes[..checks.len()]);
-            return (values, decided);
+        } else {
+            for (var, ty) in self::passed(&mut solver, self.db, &results, &passed, &pending) {
+                self.join(var, ty);
+            }
         }
-        for (var, ty) in self::passed(&mut solver, self.db, &results, &passed, &pending) {
-            self.join(var, ty);
+        Decision {
+            values,
+            decided,
+            chosen,
         }
-        (values, decided)
     }
 
     /// Diagnose the checks a rule's final run contradicted, and record the ones it
@@ -1740,7 +1761,7 @@ impl<'a> Flow<'a, '_> {
             return self.db.unknown();
         }
         let spread = self.designated(Designated::Spread);
-        let (given, decided) = self.decide(at, span, expected, |_, rule| {
+        let decision = self.decide(at, span, expected, |_, rule| {
             vec![call_constraint(
                 rule,
                 values,
@@ -1751,9 +1772,9 @@ impl<'a> Flow<'a, '_> {
                 output,
             )]
         });
-        let given = given[0];
-        if given == bottom {
-            self.diverge(span, decided);
+        let given = decision.values[0];
+        if given == bottom && !decision.chosen[0] {
+            self.diverge(span, decision.decided);
         }
         trace!(
             "{}: call of {} gives {}",
@@ -3491,7 +3512,7 @@ fn outputs(results: &[Term], parameters: &[Term]) -> Vec<(Term, Variance)> {
 
 /// Solve, defaulting every unsolved variable whose lower bounds are solved, and,
 /// if `bare`, then any variable without lower bounds to its binder's default, or
-/// without one that its upper bounds admit (see [`Solver::admits_fallback`]), to
+/// without one that its upper bounds admit (see [`Solver::fall_back`]), to
 /// the meet of its upper bounds (see [`Solver::default_upper`]),
 /// until nothing more can be defaulted. A round that can default no bare
 /// variable these ways defaults them all to the dynamic type of their kind, or
@@ -3520,11 +3541,7 @@ fn default_all(
         let count = bare.len();
         let mut deferred = Vec::new();
         for id in bare {
-            if let Some(default) = solver.fallback(id)
-                && solver.admits_fallback(id, default)
-            {
-                solver.constrain(default, Term::Infer(id), Provenance::default());
-            } else if solver.default_upper(id).is_err() {
+            if !solver.fall_back(id) && solver.default_upper(id).is_err() {
                 deferred.push(id);
             }
         }

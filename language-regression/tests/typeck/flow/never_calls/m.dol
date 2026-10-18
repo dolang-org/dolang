@@ -208,3 +208,16 @@ pub def explicit()
 #    |
 # LL |   log 1 2
 #    |   ^^^^^^^
+
+# A result that defaulting makes bottom isn't a claim that the call never
+# returns
+def nothing[T = std.Never]() -> T
+  ...
+
+def least[T @ std.Never]() -> T
+  ...
+
+pub def defaulted()
+  nothing()
+  least()
+  log 1 2
