@@ -179,14 +179,10 @@ def create_vm()
 # `--no-modify-path` because `gold.PROFILE` already puts the toolchain on
 # `PATH`; letting rustup append its own line as well would leave two sources of
 # truth for the same thing, only one of which survives into a cached run.
-#
-# `--profile minimal` drops rust-docs, clippy, and rustfmt — several hundred
-# megabytes that this job does not use, off both the download and the cached
-# `.rustup`. Re-enabling lint for this target would need `default` back.
 def install_rust vm
   vm.with do
     http.get https://sh.rustup.rs do |resp|
-      run sh -s -- -y --no-modify-path --profile minimal stdin: $resp.chunks()
+      run sh -s -- -y --no-modify-path --profile default stdin: $resp.chunks()
 
 # Uploads a snapshot of the workspace into the VM's home directory.
 def upload_workspace vm
