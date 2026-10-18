@@ -3491,7 +3491,8 @@ fn outputs(results: &[Term], parameters: &[Term]) -> Vec<(Term, Variance)> {
 
 /// Solve, defaulting every unsolved variable whose lower bounds are solved, and,
 /// if `bare`, then any variable without lower bounds to its binder's default, or
-/// without one, to the meet of its upper bounds (see [`Solver::default_upper`]),
+/// without one that its upper bounds admit (see [`Solver::admits_fallback`]), to
+/// the meet of its upper bounds (see [`Solver::default_upper`]),
 /// until nothing more can be defaulted. A round that can default no bare
 /// variable these ways defaults them all to the dynamic type of their kind, or
 /// for a strict unit's solver, which doesn't make up `Unknown`, leaves them
@@ -3519,7 +3520,9 @@ fn default_all(
         let count = bare.len();
         let mut deferred = Vec::new();
         for id in bare {
-            if let Some(default) = solver.fallback(id) {
+            if let Some(default) = solver.fallback(id)
+                && solver.admits_fallback(id, default)
+            {
                 solver.constrain(default, Term::Infer(id), Provenance::default());
             } else if solver.default_upper(id).is_err() {
                 deferred.push(id);

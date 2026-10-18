@@ -2094,6 +2094,17 @@ impl<'db> Solver<'db> {
         Ok(candidate)
     }
 
+    /// Whether a variable's binder default may be its default: if it can be shown
+    /// to satisfy each of its solved upper bounds (see [`Self::below_upper`]). A
+    /// default stands in for what nothing else gives, so it mustn't override a
+    /// bound, as `Value` would any upper bound. A default that isn't solved yet is
+    /// admitted; the obligations pairing it with the bounds check it.
+    pub(crate) fn admits_fallback(&self, id: InferVarId, default: Term) -> bool {
+        self.reify(default)
+            .and_then(|default| self.below_upper(id, default))
+            .unwrap_or(true)
+    }
+
     /// Whether a candidate can be shown to satisfy each of a variable's solved
     /// upper bounds
     fn below_upper(&self, id: InferVarId, candidate: TypeId) -> Result<bool, Residual> {
