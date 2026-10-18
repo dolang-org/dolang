@@ -56,8 +56,7 @@ use crate::{
         },
         r#type::{
             Argument, BoundRef, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
-            Multiplicity, Rest, SchemaItem, Shown, Style, SymbolId, Type, TypeId, UnionMember,
-            Variance,
+            Multiplicity, Rest, SchemaItem, Shown, Style, SymbolId, Type, TypeId, Variance,
         },
     },
 };
@@ -1573,17 +1572,19 @@ impl<'a> Flow<'a, '_> {
         leading: &[(TypeId, Span)],
         span: Span,
     ) -> Vec<CallTarget> {
-        let mut targets = match self.db.ty(callee.0) {
-            Type::Union(members) if callee.0 != self.db.bottom() => (members.iter())
-                .map(|member| match *member {
-                    UnionMember::Type(ty) => self.call_target((ty, callee.1), span),
-                    _ => {
+        let mut alternatives = Vec::new();
+        let mut targets = if self.expand(callee.0, &mut alternatives) {
+            (alternatives.into_iter())
+                .map(|alternative| match alternative {
+                    Some(ty) => self.call_target((ty, callee.1), span),
+                    None => {
                         self.gap(span, "a projection in a union callee");
                         self.call_target((self.db.unknown(), callee.1), span)
                     }
                 })
-                .collect(),
-            _ => vec![self.call_target(callee, span)],
+                .collect()
+        } else {
+            vec![self.call_target(callee, span)]
         };
         for target in &mut targets {
             target.receivers.extend_from_slice(leading);
@@ -1800,12 +1801,11 @@ impl<'a> Flow<'a, '_> {
             };
             matches!(self.db.ty(ty), Type::Function(_))
         };
-        match self.db.ty(callee) {
-            Type::Union(members) => members.iter().all(|member| match *member {
-                UnionMember::Type(ty) => function(ty),
-                _ => false,
-            }),
-            _ => function(callee),
+        let mut alternatives = Vec::new();
+        if self.expand(callee, &mut alternatives) {
+            (alternatives.into_iter()).all(|alternative| alternative.is_some_and(function))
+        } else {
+            function(callee)
         }
     }
 
@@ -2918,13 +2918,20 @@ impl<'a> Flow<'a, '_> {
     /// that is a member of it, seen through aliases: the application, and its
     /// argument
     fn applied(&self, class: DeclId, expected: TypeId) -> Option<(TypeId, TypeId)> {
+        let (ty, arguments) = self.application(class, expected)?;
+        match arguments[..] {
+            [arg] => Some((ty, arg)),
+            _ => None,
+        }
+    }
+
+    /// The one application of `class` that `expected` is, or that is a member of
+    /// it, seen through aliases: the application, and its arguments
+    fn application(&self, class: DeclId, expected: TypeId) -> Option<(TypeId, Vec<TypeId>)> {
         let gas = Gas::default();
         let solver = self.solver(&gas);
         let applied = |ty: TypeId| match solver.exposed_nominal(ty)? {
-            (decl, arguments) if decl == class => match arguments[..] {
-                [arg] => Some((ty, arg)),
-                _ => None,
-            },
+            (decl, arguments) if decl == class => Some((ty, arguments)),
             _ => None,
         };
         let mut alternatives = Vec::new();
@@ -3066,29 +3073,11 @@ impl<'a> Flow<'a, '_> {
 
     /// The unique expected template schema, including in a union.
     fn fmt_schema(&self, expected: Option<TypeId>) -> Option<TypeId> {
-        self.designated(Designated::Fmt).and_then(|class| {
-            let extract = |ty| match self.db.ty(ty) {
-                Type::Apply { base, args, .. } if *self.db.ty(*base) == Type::Decl(class) => {
-                    match args[..] {
-                        [Argument::Positional(_), Argument::Positional(schema)] => Some(schema),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            };
-            let ty = expected?;
-            match self.db.ty(ty) {
-                Type::Union(members) => {
-                    let mut found = members.iter().filter_map(|member| match member {
-                        UnionMember::Type(ty) => extract(*ty),
-                        _ => None,
-                    });
-                    let first = found.next()?;
-                    found.next().is_none().then_some(first)
-                }
-                _ => extract(ty),
-            }
-        })
+        let class = self.designated(Designated::Fmt)?;
+        match self.application(class, expected?)?.1[..] {
+            [_, schema] => Some(schema),
+            _ => None,
+        }
     }
 
     /// Refine only holes of a cached template, preserving its actual key set.
