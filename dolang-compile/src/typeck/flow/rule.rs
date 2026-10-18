@@ -2880,7 +2880,7 @@ impl<'a> Flow<'a, '_> {
                 .filter(|&ty| !matches!(self.db.ty(ty), Type::Unknown(_)))
         };
         let mut alternatives = Vec::new();
-        if !self.expand(expected, &mut alternatives, 0) {
+        if !self.expand(expected, &mut alternatives) {
             alternatives = vec![Some(expected)];
         }
         let mut arguments: Vec<TypeId> = Vec::new();
@@ -2928,7 +2928,7 @@ impl<'a> Flow<'a, '_> {
             _ => None,
         };
         let mut alternatives = Vec::new();
-        if !self.expand(expected, &mut alternatives, 0) {
+        if !self.expand(expected, &mut alternatives) {
             return applied(expected);
         }
         let mut found = alternatives.into_iter().flatten().filter_map(applied);

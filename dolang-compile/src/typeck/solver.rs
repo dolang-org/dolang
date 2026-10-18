@@ -1170,25 +1170,41 @@ impl<'db> Solver<'db> {
             .filter(|&id| self.assignment(id).is_none())
     }
 
-    /// A closed type with any transparent declaration it's an application of
-    /// expanded, as a union alias is to its union. `None` if it isn't structural.
-    pub(crate) fn exposed(&self, ty: TypeId) -> Option<TypeId> {
-        match self.head(self.closed(ty)) {
-            Ok(Head::Structural(view)) => self.reify(Term::View(view)).ok(),
-            _ => None,
-        }
-    }
-
     /// The alternatives of a union term, flattened, with any transparent
-    /// declaration expanded as [`Self::exposed`] does. `None` if it isn't a
-    /// union. A projection is no alternative.
+    /// declaration exposed, as a union alias is to its union, and any projection
+    /// of one evaluated. `None` if it isn't a union. A projection is no
+    /// alternative.
     pub(crate) fn alternatives(&self, term: Term) -> Option<Vec<Term>> {
         let mut alternatives = Vec::new();
         self.collect_alternatives(term, &mut alternatives, 0)
-            .then_some(alternatives)
+            .then(|| alternatives.into_iter().flatten().collect())
     }
 
-    fn collect_alternatives(&self, term: Term, alternatives: &mut Vec<Term>, depth: usize) -> bool {
+    /// [`Self::alternatives`] of a closed type, with `None` among them for a
+    /// projection or an alternative that can't be reified
+    pub(crate) fn closed_alternatives(&self, ty: TypeId) -> Option<Vec<Option<TypeId>>> {
+        let mut alternatives = Vec::new();
+        if !self.collect_alternatives(self.closed(ty), &mut alternatives, 0) {
+            return None;
+        }
+        let mut closed = Vec::with_capacity(alternatives.len());
+        for alternative in alternatives {
+            let alternative = alternative.and_then(|term| self.reify(term).ok());
+            if !closed.contains(&alternative) {
+                closed.push(alternative);
+            }
+        }
+        Some(closed)
+    }
+
+    /// Collect a union's alternatives, `None` standing for its projections.
+    /// Whether `term` is a union.
+    fn collect_alternatives(
+        &self,
+        term: Term,
+        alternatives: &mut Vec<Option<Term>>,
+        depth: usize,
+    ) -> bool {
         if self.depth(depth).is_err() {
             return false;
         }
@@ -1202,13 +1218,16 @@ impl<'db> Solver<'db> {
             return false;
         }
         for member in members.iter() {
-            let UnionMember::Type(ty) = *member else {
-                continue;
+            let alternative = match *member {
+                UnionMember::Type(ty) => Some(view.child(ty)),
+                _ => None,
             };
-            let alternative = view.child(ty);
-            if !self.collect_alternatives(alternative, alternatives, depth + 1)
-                && !alternatives.contains(&alternative)
+            if let Some(term) = alternative
+                && self.collect_alternatives(term, alternatives, depth + 1)
             {
+                continue;
+            }
+            if !alternatives.contains(&alternative) {
                 alternatives.push(alternative);
             }
         }
@@ -1216,7 +1235,7 @@ impl<'db> Solver<'db> {
     }
 
     /// The nominal declaration a closed type is, or is an application of, with any
-    /// transparent declaration expanded as [`Self::exposed`] does, and its
+    /// transparent declaration exposed, and its
     /// arguments. `None` if it isn't nominal.
     pub(crate) fn exposed_nominal(&self, ty: TypeId) -> Option<(DeclId, Vec<TypeId>)> {
         let Ok(Head::Nominal(nominal)) = self.head(self.closed(ty)) else {
