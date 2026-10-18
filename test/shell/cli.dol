@@ -161,3 +161,19 @@ def boot_is_reserved_for_startup()
   assert_eq $code 1
   assert_eq $out ""
   assert (err.contains "unknown bundled entrypoint: boot")
+
+#[test]
+def fs_metadata_entrypoint()
+  import test:
+    - assert
+  with_temp_dir do |dir|
+    let path = (dir / "metadata.txt")
+    path.write "metadata regression"
+    for flags = [[], ["--all", "--bytes"]]
+      let code out err = invoke ["-m", "fs", "metadata", ...flags, str(path)]
+      assert_eq $code 0
+      assert_eq $out ""
+      assert (err.contains "▸ general")
+      assert (err.contains "type:")
+      assert (err.contains "▸ filesystem")
+      assert (err.contains "capacity:")
