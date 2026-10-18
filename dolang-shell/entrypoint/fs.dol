@@ -90,7 +90,7 @@ def unpack_fields value depth
   try
     let ...rest = value
     $
-      for key value = rest
+      for key value = Dict(rest)
         (str key): (node value (depth + 1))
   catch std.UnsupportedError: _
     nil
@@ -345,7 +345,7 @@ def metadata_sections meta all raw
   let other = {}
   bind meta
     ...rest
-  for name value = rest
+  for name value = Dict(rest)
     let key = (str name)
     if SKIP_FIELDS.contains(key)
       continue
@@ -463,7 +463,7 @@ def filesystem_section path raw
   let entries = {}
   bind fs_meta
     ...rest
-  for name value = rest
+  for name value = Dict(rest)
     let key = (str name)
     if RAW_MASK_FIELDS.contains(key)
       entries[key] = (hex_node value)
