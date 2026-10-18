@@ -64,3 +64,25 @@ pub def included x @ Struct[Both]
   #   ^: flow std.Int
   let _ = x[:b:]
   #   ^: flow std.Str
+
+@let Steps = $
+  ?tag: Str
+  ?count: Int
+
+# A rest's entries, keys and values are those of the schema it stands for, as
+# member uses and expectations see them
+pub def rest_entries **steps @ Steps
+  for entry = steps
+    let _ = entry.len
+    let _ @ ((:count:, Int) | (:tag:, Str)) = entry
+  for key value = steps
+    let _ = key.(str)()
+    let _ @ (:count: | :tag:) = key
+    let _ = value.(str)()
+    let _ @ (Int | Str) = value
+    let _ @ Str = value
+# error: `std.Int | std.Str` does not fit the annotation `std.Str`
+#   --> m.dol:LL:LL
+#    |
+# LL |     let _ @ Str = value
+#    |                   ^^^^^

@@ -249,3 +249,15 @@ pub def call_member f @ (Int -> Str)
   #   ^: flow (std.Int, <m.call_member.#0, >m.call_member.#1) -> std.Str
   let _ = c 1
   #   ^: flow std.Str
+
+@let Thunks = ((() -> Int) | (() -> Str))
+
+# A union alias's callees are its union's
+pub def aliased_union f @ Thunks
+  let _ @ (Int | Str) = f()
+  let _ @ Str = f()
+# error: `std.Int | std.Str` does not fit the annotation `std.Str`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ @ Str = f()
+#    |                 ^^^

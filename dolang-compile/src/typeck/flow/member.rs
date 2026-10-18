@@ -28,7 +28,7 @@ use crate::{
             Access, Constructor, FoundKind, Gas, Issue, Lookup, Residual, Signature, Signatures,
             bound_method,
         },
-        r#type::{DeclId, Intrinsic, Literal, MemberKey, Scope, Type, TypeId, UnionMember},
+        r#type::{DeclId, Intrinsic, Literal, MemberKey, Scope, Type, TypeId},
     },
 };
 
@@ -368,12 +368,12 @@ impl Flow<'_, '_> {
     }
 
     /// A union receiver's alternatives, each of which a member use is made of,
-    /// with a union alias among them expanded to its own. One that projects a
+    /// with a transparent declaration among them exposed. One that projects a
     /// schema is undecided, recorded at `span`. `None` if the receiver isn't a
     /// union.
     fn alternatives(&mut self, receiver: TypeId, span: Span) -> Option<Vec<Option<TypeId>>> {
         let mut alternatives = Vec::new();
-        if !self.expand(receiver, &mut alternatives, 0) {
+        if !self.expand(receiver, &mut alternatives) {
             return None;
         }
         if alternatives.contains(&None) {
@@ -385,37 +385,15 @@ impl Flow<'_, '_> {
         Some(alternatives)
     }
 
-    /// Add a union's alternatives to `alternatives`, expanding a union alias's.
-    /// Whether `ty` is a union.
-    pub(super) fn expand(
-        &self,
-        ty: TypeId,
-        alternatives: &mut Vec<Option<TypeId>>,
-        depth: usize,
-    ) -> bool {
-        // A union alias that expands to itself is ill-formed
-        const DEPTH: usize = 16;
-        let ty = match self.db.ty(ty) {
-            Type::Decl(_) | Type::Apply { .. } if depth < DEPTH => {
-                match self.solver(&Gas::default()).exposed(ty) {
-                    Some(exposed) => exposed,
-                    None => return false,
-                }
-            }
-            _ => ty,
-        };
-        let Type::Union(members) = self.db.ty(ty) else {
+    /// Add a union's alternatives to `alternatives`, as the solver exposes them
+    /// (see [`Solver::closed_alternatives`]). Whether `ty` is a union.
+    ///
+    /// [`Solver::closed_alternatives`]: crate::typeck::solver::Solver::closed_alternatives
+    pub(super) fn expand(&self, ty: TypeId, alternatives: &mut Vec<Option<TypeId>>) -> bool {
+        let Some(found) = self.solver(&Gas::default()).closed_alternatives(ty) else {
             return false;
         };
-        if members.is_empty() {
-            return false;
-        }
-        for member in members.iter() {
-            let alternative = match *member {
-                UnionMember::Type(ty) if self.expand(ty, alternatives, depth + 1) => continue,
-                UnionMember::Type(ty) => Some(ty),
-                _ => None,
-            };
+        for alternative in found {
             if !alternatives.contains(&alternative) {
                 alternatives.push(alternative);
             }
