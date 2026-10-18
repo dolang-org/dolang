@@ -121,6 +121,52 @@ impl Solver<'_> {
         result
     }
 
+    /// Whether two closed types share no value: each pair of their exposed members
+    /// meets in the bottom type
+    pub(crate) fn disjoint_types(&self, a: TypeId, b: TypeId) -> bool {
+        let (a, b) = (self.exposed(a), self.exposed(b));
+        (a.iter()).all(|&a| (b.iter()).all(|&b| self.member_meet(a, b) == Some(self.db.bottom())))
+    }
+
+    /// A fact met with `bound`, a closed type known to hold the same value on its
+    /// own, member by member. Where two members are neither ordered nor disjoint,
+    /// `bound`'s is kept, which is above their meet: a fact's member the solver
+    /// can't relate to a member of `bound` most likely lies outside it, as a
+    /// function type does beside a class.
+    pub(crate) fn refine(&self, fact: TypeId, bound: TypeId) -> TypeId {
+        let bound = self.exposed(bound);
+        let mut result = self.db.bottom();
+        for member in self.exposed(fact) {
+            for &other in &bound {
+                let met = self.member_meet(member, other).unwrap_or(other);
+                result = self.lub(result, met);
+            }
+        }
+        result
+    }
+
+    /// A type's exposed members, each as a type of its own
+    fn exposed(&self, ty: TypeId) -> Vec<TypeId> {
+        let mut members = Vec::new();
+        self.exposed_members(ty, &mut FxHashSet::default(), &mut members);
+        (members.into_iter())
+            .map(|member| match member {
+                UnionMember::Type(member) => member,
+                member => self.db.intern(Type::Union(vec![member].into())),
+            })
+            .collect()
+    }
+
+    /// The meet of two members, as [`Self::meet`] finds it; `None` when they're
+    /// neither ordered nor disjoint, or either is dynamic
+    fn member_meet(&self, a: TypeId, b: TypeId) -> Option<TypeId> {
+        let unknown = self.db.unknown();
+        if a == unknown || b == unknown {
+            return None;
+        }
+        self.meet(a, b).ok().filter(|&met| met != unknown)
+    }
+
     /// A type's union members, with each transparent alias of a union, the whole
     /// or a member, replaced by its alternatives. An alias can hide alternatives
     /// a relation drops, as `A` in `A | :GZIP:` does `:TAR:` and `:ZIP:`, or whose

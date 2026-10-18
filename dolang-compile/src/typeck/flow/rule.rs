@@ -41,6 +41,7 @@ use super::{
     At, Flow, State,
     member::CallTarget,
     problem::{Misfit, Problem},
+    state::Group,
 };
 use crate::typeck::report::Report;
 use crate::{
@@ -54,7 +55,7 @@ use crate::{
         solver::{
             Call as SolverCall, CallArgument, Contradiction, Gas, InferVarId, Issue, Node,
             ObligationId, Outcome, PatternShape, Provenance, Reason, Relation, Residual, Solver,
-            Status, Step as Derivation, Term,
+            Status, Step as Derivation, Term, Unpacked,
         },
         r#type::{
             Argument, BoundRef, Database, DeclId, Element, Function, Intrinsic, Kind, Literal,
@@ -821,7 +822,8 @@ pub(super) fn passed_signature(
     mut fill: impl FnMut(VarId) -> TypeId,
 ) -> Option<Function> {
     let signature = data.signature.as_ref()?;
-    let (Pattern::Unpack(pattern), Type::Schema(items)) = (&data.params, db.ty(declared.params))
+    let (Pattern::Unpack { items: pattern, .. }, Type::Schema(items)) =
+        (&data.params, db.ty(declared.params))
     else {
         return None;
     };
@@ -3262,13 +3264,18 @@ impl<'a> Flow<'a, '_> {
         pattern
     }
 
-    /// The types a pattern's items unpack from a value, diagnosed at `span`;
-    /// `None` if the pattern can't match it. What its `(unpack)` gives must be
+    /// The types a pattern's items unpack from a value, diagnosed at `span`,
+    /// with the columns correlating them (see [`Group`]); `None` if the pattern
+    /// can't match it. What its `(unpack)` gives must be
     /// an `Unpack[S]`. In a strict unit, an `irrefutable` pattern must match
     /// every value `S` admits.
     /// The pattern is walked against `S` (see [`Solver::unpack_pattern`]), giving
     /// a rest `Unpack[tail]`. Where `S` can't be found, every item is optional and
     /// the pattern admits any others, giving a const key or a rest `Unknown`.
+    ///
+    /// Each alternative of a union is sent `(unpack)` on its own, and walked on
+    /// its own for a column, so the columns don't depend on how the solver joins
+    /// what they give.
     pub(super) fn unpack(
         &mut self,
         at: At,
@@ -3277,19 +3284,24 @@ impl<'a> Flow<'a, '_> {
         value: TypeId,
         span: Span,
         irrefutable: bool,
-    ) -> Option<Vec<TypeId>> {
+    ) -> Option<(Vec<TypeId>, Group)> {
         let unknown = self.db.unknown();
+        let bottom = self.db.bottom();
         let original = value;
-        if value == self.db.bottom() {
-            return Some(vec![value; items.len()]);
+        if value == bottom {
+            return Some((vec![value; items.len()], Group::default()));
         }
         let Some(unpack) = self.designated(Designated::Unpack) else {
-            return Some(vec![unknown; items.len()]);
+            return Some((vec![unknown; items.len()], Group::default()));
         };
         // What's unpacked is what the value's `(unpack)` gives
-        let value = self.send_special(at, state, value, "unpack", span);
-        if value == self.db.bottom() {
-            return Some(vec![value; items.len()]);
+        let each = self.send_special_each(at, state, value, "unpack", span);
+        let value = match &each {
+            Some(each) => (each.iter()).fold(bottom, |joined, &given| self.lub(joined, given)),
+            None => self.send_special(at, state, value, "unpack", span),
+        };
+        if value == bottom {
+            return Some((vec![value; items.len()], Group::default()));
         }
         let check = Check::Fits(span, Misfit::Unpackable);
         let pattern = self.pattern_shape(at, state, items);
@@ -3354,20 +3366,12 @@ impl<'a> Flow<'a, '_> {
                     note,
                 });
             }
-            let (positional, keyed) = unpacked.slots.split_at(pattern.positional.len());
-            let (mut positional, mut keyed) = (positional.iter(), keyed.iter());
-            let mut rests = unpacked.rests.iter();
-            let types = (items.iter())
-                .map(|item| {
-                    let slot = match item.key {
-                        PatternKey::Pos => positional.next(),
-                        PatternKey::Key(_) | PatternKey::ConstKey(_) => keyed.next(),
-                        PatternKey::Rest(_) => rests.next(),
-                    };
-                    *slot.expect("a type for each item")
-                })
-                .collect();
-            return Some(types);
+            let types = item_order(items, &pattern, &unpacked);
+            let group = match each {
+                Some(each) => self.columns(items, &pattern, unpack, &each),
+                None => Group::default(),
+            };
+            return Some((types, group));
         }
         self.gap(span, "a pattern against a schema that can't be found");
         let types = self.conclude(at, span, None, |_, rule| {
@@ -3411,8 +3415,66 @@ impl<'a> Flow<'a, '_> {
                 .map(|var| var.unwrap_or(rule.closed(unknown)))
                 .collect()
         });
-        Some(types)
+        Some((types, Group::default()))
     }
+
+    /// The columns of a pattern's items walked against what each alternative's
+    /// `(unpack)` gave. An alternative it can't match has a column of bottom.
+    /// None when an alternative's schema can't be found or is dynamic, or fewer
+    /// than two can match.
+    fn columns(
+        &self,
+        items: &[PatternItem],
+        pattern: &PatternShape,
+        unpack: DeclId,
+        each: &[TypeId],
+    ) -> Group {
+        let (unknown, bottom) = (self.db.unknown(), self.db.bottom());
+        let gas = Gas::default();
+        let solver = self.solver(&gas);
+        let mut columns = Vec::new();
+        for &given in each {
+            let unpacked = match given == bottom {
+                true => None,
+                false => match solver.unpack_pattern(given, unpack, pattern) {
+                    Some(unpacked) => unpacked.possible.then_some(unpacked),
+                    None => return Group::default(),
+                },
+            };
+            let column = match unpacked {
+                Some(unpacked) => item_order(items, pattern, &unpacked),
+                None => vec![bottom; items.len()],
+            };
+            if column.contains(&unknown) {
+                return Group::default();
+            }
+            columns.push(column.into_boxed_slice());
+        }
+        let live = (columns.iter())
+            .filter(|column| column.iter().any(|&ty| ty != bottom))
+            .count();
+        match live {
+            0 | 1 => Group::default(),
+            _ => Group { columns },
+        }
+    }
+}
+
+/// An unpacked pattern's types, in the order of its items
+fn item_order(items: &[PatternItem], pattern: &PatternShape, unpacked: &Unpacked) -> Vec<TypeId> {
+    let (positional, keyed) = unpacked.slots.split_at(pattern.positional.len());
+    let (mut positional, mut keyed) = (positional.iter(), keyed.iter());
+    let mut rests = unpacked.rests.iter();
+    (items.iter())
+        .map(|item| {
+            let slot = match item.key {
+                PatternKey::Pos => positional.next(),
+                PatternKey::Key(_) | PatternKey::ConstKey(_) => keyed.next(),
+                PatternKey::Rest(_) => rests.next(),
+            };
+            *slot.expect("a type for each item")
+        })
+        .collect()
 }
 
 /// Constrain a spread value to spread as `schema`

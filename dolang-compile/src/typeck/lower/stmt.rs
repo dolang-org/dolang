@@ -22,8 +22,8 @@ use crate::{
     typeck::{
         cfg::{
             Against, Assume, BlockId, Collection, EscapeKind, Expr, ExprKind, FuncId, FuncKind,
-            Item, Origin, Pattern, PatternItem, PatternKey, Relation, Signature, Step, Tag, Target,
-            Terminal, VarFlags, VarId,
+            GroupId, Item, Origin, Pattern, PatternItem, PatternKey, Relation, Signature, Step,
+            Tag, Target, Terminal, VarFlags, VarId,
         },
         elab::{Designated, Referent},
         flow::{class_object, function_value},
@@ -55,7 +55,10 @@ impl<'u> Scope<'_, '_, 'u> {
             };
             self.prelude(receiver);
         }
-        self.graph().func_mut(self.ctx.func).params = Pattern::Unpack(items.into());
+        self.graph().func_mut(self.ctx.func).params = Pattern::Unpack {
+            items: items.into(),
+            group: GroupId::PARAMS,
+        };
         self.nested_lets(nested, &frame);
         self.defaults(&func.params, &frame, false);
         let (result, exit) = {
@@ -608,7 +611,9 @@ impl<'u> Scope<'_, '_, 'u> {
                 Pattern::Bind(scope.binding(ident, ty.as_deref()))
             }
             ast::Pattern::Unpack(pat_items) => {
-                Pattern::Unpack(scope.pattern_items(pat_items, &mut nested).into())
+                let items = scope.pattern_items(pat_items, &mut nested).into();
+                let group = scope.graph().alloc_group(scope.ctx.func);
+                Pattern::Unpack { items, group }
             }
             ast::Pattern::TypeTest(_) | ast::Pattern::Constant { .. } | ast::Pattern::Alt(_) => {
                 let var = scope.synthetic();
@@ -1537,8 +1542,12 @@ impl<'u> Scope<'_, '_, 'u> {
                     kind: Collection::Tuple,
                     items: [Item::Pos(operand)].into_iter().collect(),
                 };
+                let group = self.graph().alloc_group(self.ctx.func);
                 self.emit(Step::Let {
-                    pattern: Pattern::Unpack(items.into()),
+                    pattern: Pattern::Unpack {
+                        items: items.into(),
+                        group,
+                    },
                     value: expr(args, span),
                 });
                 self.nested_lets(nested, &frame);
@@ -1812,7 +1821,7 @@ impl<'u> Scope<'_, '_, 'u> {
 /// The narrowing of `var` on the mismatch edge of `pattern`, which drops the
 /// members the pattern always matches. A pattern with a constant key has none.
 fn mismatch(var: VarId, pattern: &Pattern) -> Option<Assume> {
-    let Pattern::Unpack(items) = pattern else {
+    let Pattern::Unpack { items, .. } = pattern else {
         return None;
     };
     let items = (items.iter())

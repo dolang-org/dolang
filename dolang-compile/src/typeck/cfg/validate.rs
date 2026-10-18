@@ -48,6 +48,8 @@ pub(crate) enum Invalid {
     /// A `Cache` other than first in its function's entry block, or naming a
     /// variable its function doesn't capture, or that it may not cache
     Cache(BlockId),
+    /// A pattern in a block naming a group its function didn't allocate
+    Group(BlockId),
 }
 
 impl Ir {
@@ -77,7 +79,7 @@ impl Ir {
             }
             if let Some(signature) = &func.signature {
                 let items = match &func.params {
-                    Pattern::Unpack(items) => items.len(),
+                    Pattern::Unpack { items, .. } => items.len(),
                     Pattern::Bind(_) => usize::MAX,
                 };
                 let valid = matches!(func.kind, FuncKind::Decl(_))
@@ -132,9 +134,12 @@ impl Ir {
             };
             let mut exprs = Vec::new();
             let mut vars = Vec::new();
+            let groups = self.func(block.func).groups;
+            let mut patterns = Vec::new();
             for step in &block.steps {
                 match step {
                     Step::Let { pattern, value } => {
+                        patterns.push(pattern);
                         pattern.walk(&mut |expr| exprs.push(expr));
                         vars.extend(pattern.vars());
                         exprs.push(value);
@@ -168,6 +173,7 @@ impl Ir {
             match &block.terminal {
                 Terminal::If { cond, .. } => exprs.push(cond),
                 Terminal::Unpack { pattern, value, .. } => {
+                    patterns.push(pattern);
                     pattern.walk(&mut |expr| exprs.push(expr));
                     vars.extend(pattern.vars());
                     exprs.push(value);
@@ -177,6 +183,7 @@ impl Ir {
                 }
                 Terminal::Next { iter, pattern, .. } => {
                     vars.extend(*iter);
+                    patterns.push(pattern);
                     pattern.walk(&mut |expr| exprs.push(expr));
                     vars.extend(pattern.vars());
                 }
@@ -207,6 +214,13 @@ impl Ir {
                 | Terminal::Guard { .. }
                 | Terminal::ElseFallthrough { .. }
                 | Terminal::Unreachable => {}
+            }
+            let foreign = patterns.into_iter().any(|pattern| match pattern {
+                Pattern::Unpack { group, .. } => group.index() >= groups as usize,
+                Pattern::Bind(_) => false,
+            });
+            if foreign {
+                return Err(Invalid::Group(id));
             }
             let mut nested = Vec::new();
             for expr in exprs {

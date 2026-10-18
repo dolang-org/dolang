@@ -2,7 +2,10 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::typeck::{cfg::Tag, r#type::TypeId};
+use crate::typeck::{
+    cfg::{GroupId, Tag},
+    r#type::TypeId,
+};
 
 /// What a variable holds at a point
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,6 +22,8 @@ pub(super) struct VarState {
     /// The join of the values it may hold; bottom when it holds none
     pub(super) ty: TypeId,
     pub(super) may: May,
+    /// The row of a group correlating its value with others
+    pub(super) link: Option<Link>,
 }
 
 impl VarState {
@@ -45,15 +50,46 @@ bitflags::bitflags! {
     }
 }
 
+/// A value's row in an unpack group
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Link {
+    pub(super) group: GroupId,
+    /// The pattern item it was bound from
+    pub(super) row: u32,
+}
+
+/// A value on the operand stack
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Operand {
+    pub(super) ty: TypeId,
+    pub(super) link: Option<Link>,
+}
+
+impl Operand {
+    pub(super) fn new(ty: TypeId) -> Self {
+        Self { ty, link: None }
+    }
+}
+
+/// What an unpack of a union bound for each of its alternatives: a column of
+/// each item's type, by alternative. The values linked to it lie together in some
+/// column. A column found impossible is all bottom; with no columns, nothing is
+/// correlated.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct Group {
+    pub(super) columns: Vec<Box<[TypeId]>>,
+}
+
 /// The state at a point: each variable its function owns or caches, by its slot,
-/// and the operand stack
+/// the operand stack, and each of its function's unpack groups
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct State {
     pub(super) vars: Vec<VarState>,
-    pub(super) stack: Vec<TypeId>,
+    pub(super) stack: Vec<Operand>,
     /// Whether the top of the stack is a `Dup` of the slot below it, which a
     /// branch on it narrows too
     pub(super) dup: bool,
+    pub(super) groups: Vec<Group>,
 }
 
 /// The `finally` tags a block is entered with, innermost last, identifying its state
