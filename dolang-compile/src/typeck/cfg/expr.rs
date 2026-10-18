@@ -309,7 +309,7 @@ impl Item {
 impl Pattern {
     /// Visit the expressions in its constant keys
     pub(crate) fn walk<'a>(&'a self, visit: &mut impl FnMut(&'a Expr)) {
-        let Pattern::Unpack(items) = self else {
+        let Pattern::Unpack { items, .. } = self else {
             return;
         };
         for item in items {
@@ -323,7 +323,7 @@ impl Pattern {
     pub(crate) fn vars(&self) -> impl Iterator<Item = VarId> {
         let vars: Vec<VarId> = match self {
             Pattern::Bind(var) => vec![*var],
-            Pattern::Unpack(items) => items.iter().filter_map(|item| item.var).collect(),
+            Pattern::Unpack { items, .. } => items.iter().filter_map(|item| item.var).collect(),
         };
         vars.into_iter()
     }

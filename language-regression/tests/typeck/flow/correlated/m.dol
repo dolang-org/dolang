@@ -1,0 +1,94 @@
+# Testing one item bound by an unpack of a union narrows its siblings to the
+# alternatives the test leaves
+
+# A dict's entry unpacks pointwise: testing its key narrows its value
+pub def keyed d @ Dict[{a: Int, b: Str}]
+  for k v = d
+    match k
+      :a: do
+        let _ = v
+        #       ^: flow std.Int
+    else
+      let _ = v
+      #       ^: flow std.Str
+
+@let Opts = $
+  ?tag: Str
+  ?count: Int
+
+# A rest's entries are its schema's
+pub def rest **opts @ Opts
+  for k v = opts
+    if (k == :count:)
+      let _ = v
+      #       ^: flow std.Int
+    else
+      let _ = v
+      #       ^: flow std.Str
+
+# A constant sub-pattern tests an item of its own
+pub def constant p @ ((:a:, Int) | (:b:, Str))
+  if let :a: v = p
+    let _ = v
+    #       ^: flow std.Int
+
+# A test that drops no alternative still narrows its item, so a later test can
+pub def gradual p @ ((Int | Str, :x:) | (Int | Bool, :y:))
+  let v w = p
+  match v
+    Int(_) do nil
+    Bool(_) do nil
+  else
+    let _ = w
+    #       ^: flow :x:
+
+# A disjoint discriminator narrows items the solver can't tell apart by
+# themselves, as a function type and a class
+pub def callable p @ ((:a:, Str) | (:b:, (Int -> Int)))
+  let k v = p
+  if (k == :a:)
+    let _ = v
+    #       ^: flow std.Str
+  else
+    let _ = v
+    #       ^: flow (std.Int, <m.callable.#0, >m.callable.#1) -> std.Int
+
+# Assigning an item breaks its link
+pub def assigned p @ ((:a:, Int) | (:b:, Str))
+  let k v = p
+  k = :a:
+  if (k == :a:)
+    let _ = v
+    #       ^: flow std.Int | std.Str
+
+# A copy of an item tests as the item does, and narrows it too
+pub def copied p @ ((:a:, Int) | (:b:, Str))
+  let k v = p
+  let j = k
+  if (j == :a:)
+    let _ = v
+    #       ^: flow std.Int
+    let _ = k
+    #       ^: flow :a:
+
+# A copy from an earlier unpack of the same pattern doesn't narrow a later one.
+# `prev` holds nothing on entry, so it's linked at the loop's head.
+pub def stale d @ Dict[{a: Int, b: Str}]
+  let prev = (nil !@ Never)
+  for k v = d
+    if (prev == :a:)
+      let _ = v
+      #       ^: flow std.Int | std.Str
+    prev = k
+
+# An absent optional item's default lies in its alternative
+pub def defaulted p @ ((:a:, Int) | (:b:,))
+  bind p
+    - k
+    - v = nil
+  if (v == nil)
+    let _ = k
+    #       ^: flow :a: | :b:
+  if (k == :b:)
+    let _ = v
+    #       ^: flow std.Nil

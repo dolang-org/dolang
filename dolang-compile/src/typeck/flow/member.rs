@@ -764,6 +764,50 @@ impl Flow<'_, '_> {
         )
     }
 
+    /// Call a special member of each of a union's alternatives with no arguments,
+    /// giving what each gives, in the order [`Self::expand`] finds them. `None`
+    /// unless the receiver has at least two alternatives, none a projection.
+    pub(super) fn send_special_each(
+        &mut self,
+        at: At,
+        state: &mut State,
+        receiver: TypeId,
+        name: &str,
+        span: Span,
+    ) -> Option<Vec<TypeId>> {
+        let mut alternatives = Vec::new();
+        if !self.expand(receiver, &mut alternatives)
+            || alternatives.len() < 2
+            || alternatives.contains(&None)
+        {
+            return None;
+        }
+        let call = Call {
+            args: &[],
+            expected: None,
+            span,
+            callee: None,
+        };
+        let member = self.special(name);
+        let given = (alternatives.into_iter().flatten())
+            .map(|alternative| {
+                let mut operands = VecDeque::new();
+                let targets = self.reached(
+                    at,
+                    state,
+                    &mut operands,
+                    (alternative, span),
+                    Some(receiver),
+                    member,
+                    &[],
+                    span,
+                );
+                self.call_targets(at, state, &mut operands, targets, call)
+            })
+            .collect();
+        Some(given)
+    }
+
     /// Call a receiver's member with `leading` arguments, already evaluated, and
     /// then `call`'s own
     #[expect(clippy::too_many_arguments, reason = "a call through a member")]

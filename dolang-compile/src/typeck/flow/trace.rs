@@ -2,7 +2,7 @@
 
 use super::{
     Flow, State,
-    state::{CtxId, May},
+    state::{CtxId, Link, May},
 };
 use crate::typeck::{
     cfg::{BlockId, FuncKind, Tag, VarId},
@@ -47,15 +47,15 @@ impl Flow<'_, '_> {
     }
 
     /// A block's state: what each variable may hold, as a judgment shows it, marked
-    /// `^` once it may have escaped and `~` once a cached capture thaws, then the
-    /// stack
+    /// `^` once it may have escaped and `~` once a cached capture thaws, with its
+    /// link as `@g<group>.<row>`, then the stack and each group's columns
     pub(super) fn render_state(&self, block: BlockId, state: &State) -> String {
         let func = self.ir.block(block).func;
         let bottom = self.db.bottom();
         let mut parts: Vec<String> = (self.funcs[func.index()].vars.iter().zip(&state.vars))
-            .map(|(&var, slot)| (var, slot.fact(), slot.may))
-            .filter(|(_, fact, _)| fact.ty != bottom || fact.unassigned)
-            .map(|(var, fact, may)| {
+            .map(|(&var, slot)| (var, slot.fact(), slot.may, slot.link))
+            .filter(|(_, fact, _, _)| fact.ty != bottom || fact.unassigned)
+            .map(|(var, fact, may, link)| {
                 let ty = match (fact.unassigned, fact.ty == bottom) {
                     (false, _) => self.show(fact.ty),
                     (true, true) => "unassigned".to_owned(),
@@ -66,13 +66,34 @@ impl Flow<'_, '_> {
                     (false, true) => "~",
                     (false, false) => "",
                 };
-                format!("{}{mark}: {ty}", self.var_name(var))
+                format!("{}{mark}{}: {ty}", self.var_name(var), show_link(link))
             })
             .collect();
         if !state.stack.is_empty() {
-            let stack: Vec<String> = state.stack.iter().map(|&ty| self.show(ty)).collect();
+            let stack: Vec<String> = (state.stack.iter())
+                .map(|operand| format!("{}{}", self.show(operand.ty), show_link(operand.link)))
+                .collect();
             parts.push(format!("stack [{}]", stack.join(", ")));
         }
+        for (index, group) in state.groups.iter().enumerate() {
+            if group.columns.is_empty() {
+                continue;
+            }
+            let columns: Vec<String> = (group.columns.iter())
+                .map(|column| {
+                    let entries: Vec<String> = column.iter().map(|&ty| self.show(ty)).collect();
+                    format!("[{}]", entries.join(", "))
+                })
+                .collect();
+            parts.push(format!("g{index} {}", columns.join(" ")));
+        }
         format!("{{{}}}", parts.join(", "))
+    }
+}
+
+fn show_link(link: Option<Link>) -> String {
+    match link {
+        Some(link) => format!("@g{}.{}", link.group.index(), link.row),
+        None => String::new(),
     }
 }

@@ -101,6 +101,12 @@ macro_rules! id {
 id!(FuncId);
 id!(BlockId);
 id!(VarId);
+id!(GroupId);
+
+impl GroupId {
+    /// A function's parameters'
+    pub(crate) const PARAMS: Self = Self(0);
+}
 
 /// A function's source
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -154,6 +160,8 @@ pub(crate) struct Func {
     /// In an `(init)`, the variables saying whether each superclass with an
     /// `(init)` was initialized, which a [`Step::Escape`] checks
     pub(crate) supers: Vec<VarId>,
+    /// How many unpack groups its patterns allocated, [`GroupId::PARAMS`] first
+    pub(crate) groups: u32,
 }
 
 /// A `do` block's callable state: variables its parent owns and it captures,
@@ -411,7 +419,13 @@ pub(crate) enum Against {
 
 pub(crate) enum Pattern {
     Bind(VarId),
-    Unpack(alias::Box<[PatternItem]>),
+    /// Unpack items. Where the value is a union, the items' types for each of its
+    /// alternatives are correlated in `group`, local to the function, which a
+    /// later unpack by the same pattern overwrites.
+    Unpack {
+        items: alias::Box<[PatternItem]>,
+        group: GroupId,
+    },
 }
 
 pub(crate) struct PatternItem {
@@ -459,13 +473,17 @@ impl Graph {
             entry,
             exit,
             result,
-            params: Pattern::Unpack(alias::Box::default()),
+            params: Pattern::Unpack {
+                items: alias::Box::default(),
+                group: GroupId::PARAMS,
+            },
             signature: None,
             vars: Vec::new(),
             captures: Vec::new(),
             escapes: Vec::new(),
             fields: Vec::new(),
             supers: Vec::new(),
+            groups: 1,
         }));
         let allocated = self.alloc_var(id, Origin::Result, None);
         debug_assert_eq!(allocated, result);
@@ -504,6 +522,14 @@ impl Graph {
             flags: VarFlags::empty(),
         }));
         self.func_mut(owner).vars.push(id);
+        id
+    }
+
+    /// Add an unpack group to a function
+    pub(crate) fn alloc_group(&self, func: FuncId) -> GroupId {
+        let mut func = self.func_mut(func);
+        let id = GroupId::from_index(func.groups as usize);
+        func.groups = id.0 + 1;
         id
     }
 

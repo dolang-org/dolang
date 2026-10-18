@@ -254,7 +254,10 @@ fn non_local() {
         header,
         Terminal::Next {
             iter: Some(iter),
-            pattern: Pattern::Unpack(Default::default()),
+            pattern: Pattern::Unpack {
+                items: Default::default(),
+                group: graph.alloc_group(func),
+            },
             body,
             exit: loop_exit,
             span: Span::INVALID,

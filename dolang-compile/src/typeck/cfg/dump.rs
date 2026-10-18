@@ -357,11 +357,12 @@ impl Dump<'_, '_> {
     }
 
     fn pattern(&self, out: &mut String, pattern: &Pattern) -> fmt::Result {
-        let items = match pattern {
+        let (items, group) = match pattern {
             Pattern::Bind(var) => return self.var(out, *var),
-            Pattern::Unpack(items) => items,
+            Pattern::Unpack { items, group } => (items, group),
         };
-        self.pattern_items(out, items)
+        self.pattern_items(out, items)?;
+        write!(out, " g{}", group.index())
     }
 
     fn pattern_items(&self, out: &mut String, items: &[PatternItem]) -> fmt::Result {

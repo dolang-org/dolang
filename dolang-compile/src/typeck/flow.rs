@@ -96,7 +96,7 @@ use problem::MemberUse;
 pub(crate) use problem::Problem;
 use rustc_hash::{FxHashMap, FxHashSet};
 pub(crate) use state::Fact;
-use state::{Contexts, CtxId, May, State, VarState};
+use state::{Contexts, CtxId, Group, Link, May, Operand, State, VarState};
 
 use super::{
     cfg::{
@@ -318,6 +318,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                         } else {
                             May::UNASSIGNED
                         },
+                        link: None,
                     }
                 })
                 .collect();
@@ -325,6 +326,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 vars,
                 stack: Vec::new(),
                 dup: false,
+                groups: vec![Group::default(); func.groups as usize],
             };
             self.merge(func.entry, CtxId::ROOT, state);
         }
@@ -628,15 +630,23 @@ impl<'a, 'u> Flow<'a, 'u> {
             vars.push(VarState {
                 ty,
                 may: old.may | new.may,
+                link: self.same((old.ty, old.link), (new.ty, new.link)),
             });
         }
         let stack = (old.stack.iter().zip(&state.stack))
-            .map(|(&old, &new)| self.lub(old, new))
+            .map(|(old, new)| Operand {
+                ty: self.lub(old.ty, new.ty),
+                link: self.same((old.ty, old.link), (new.ty, new.link)),
+            })
+            .collect();
+        let groups = (old.groups.iter().zip(&state.groups))
+            .map(|(old, new)| self.join_groups(old, new))
             .collect();
         let joined = State {
             vars,
             stack,
             dup: old.dup && state.dup,
+            groups,
         };
         let grew = joined != old;
         if grew {
@@ -652,6 +662,38 @@ impl<'a, 'u> Flow<'a, 'u> {
             entry.state = joined;
             self.enqueue(block, ctx);
         }
+    }
+
+    /// The link two paths' values keep where they join: the one both have, or
+    /// one's where the other holds no value
+    fn same(&self, old: (TypeId, Option<Link>), new: (TypeId, Option<Link>)) -> Option<Link> {
+        let bottom = self.db.bottom();
+        match (old, new) {
+            ((_, old), (_, new)) if old == new => old,
+            ((ty, _), (_, new)) if ty == bottom => new,
+            ((_, old), (ty, _)) if ty == bottom => old,
+            _ => None,
+        }
+    }
+
+    /// Join two states' versions of a group entrywise, a column only one has being
+    /// bottom in the other. Wherever the linked values lie together in a column
+    /// on either side, they lie in the joined column of the same index.
+    fn join_groups(&self, old: &Group, new: &Group) -> Group {
+        if old == new {
+            return old.clone();
+        }
+        let (longer, shorter) = match old.columns.len() >= new.columns.len() {
+            true => (old, new),
+            false => (new, old),
+        };
+        let mut joined = longer.clone();
+        for (column, other) in joined.columns.iter_mut().zip(&shorter.columns) {
+            for (entry, &ty) in column.iter_mut().zip(other) {
+                *entry = self.lub(*entry, ty);
+            }
+        }
+        joined
     }
 
     /// Join at a widening point, widening once the join has grown too often. An
@@ -893,8 +935,9 @@ impl<'a, 'u> Flow<'a, 'u> {
         };
         let state = State {
             vars: state.vars.clone(),
-            stack: vec![self.db.top()],
+            stack: vec![Operand::new(self.db.top())],
             dup: false,
+            groups: state.groups.clone(),
         };
         self.flow(ctx, handler, state);
     }
@@ -907,7 +950,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             .len()
             .checked_sub(count)
             .expect("an operand for each hole");
-        state.stack.split_off(at).into()
+        state.stack.drain(at..).map(|operand| operand.ty).collect()
     }
 
     /// A call at `span` gave bottom, so the running step or terminal ends its
@@ -934,16 +977,21 @@ impl<'a, 'u> Flow<'a, 'u> {
         self.diverged = None;
         match step {
             Step::Let { pattern, value } => {
+                let link = self.source_link(at, state, value);
                 let mut operands = Self::operands(state, holes(value));
                 let expected = match *pattern {
                     Pattern::Bind(var) => self.ir.var(var).annotation,
-                    Pattern::Unpack(_) => None,
+                    Pattern::Unpack { .. } => None,
                 };
                 let ty = self.expect(at, state, &mut operands, value, expected);
                 if self.diverged.is_some() {
                     return false;
                 }
-                return self.bind(at, state, pattern, ty, value.span, true);
+                let bound = self.bind(at, state, pattern, ty, value.span, true);
+                if let Pattern::Bind(var) = *pattern {
+                    self.relink(at, state, var, link);
+                }
+                return bound;
             }
             Step::Assign(target) => {
                 let value = target.value();
@@ -952,6 +1000,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                     Target::Field { object, .. } => holes(object),
                     Target::Index { object, args } => holes(object) + holes(args[0].pos()),
                 };
+                let link = self.source_link(at, state, value);
                 let mut operands = Self::operands(state, count + holes(value));
                 match *target {
                     Target::Var { var, .. } => {
@@ -962,6 +1011,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                             return false;
                         }
                         self.assign(at, state, var, ty, value.span);
+                        self.relink(at, state, var, link);
                     }
                     Target::Field {
                         ref object,
@@ -1016,6 +1066,14 @@ impl<'a, 'u> Flow<'a, 'u> {
                 if data.owner == at.func && !data.flags.contains(VarFlags::VOLATILE) {
                     let slot = self.slot(*var);
                     state.vars[slot].ty = self.lub(state.vars[slot].ty, ty);
+                    // Where the item is absent, each column has bottom for it
+                    if let Some(link) = state.vars[slot].link {
+                        let row = link.row as usize;
+                        let group = &mut state.groups[link.group.index()];
+                        for column in &mut group.columns {
+                            column[row] = self.lub(column[row], ty);
+                        }
+                    }
                 }
                 self.thaw(at, state, *var);
                 if self.publishes(at, state, *var) {
@@ -1027,9 +1085,10 @@ impl<'a, 'u> Flow<'a, 'u> {
                 self.eval(at, state, &mut operands, value);
             }
             Step::Push(value) => {
+                let link = self.source_link(at, state, value);
                 let mut operands = Self::operands(state, holes(value));
                 let ty = self.eval(at, state, &mut operands, value);
-                state.stack.push(ty);
+                state.stack.push(Operand { ty, link });
             }
             Step::Dup => {
                 let top = *state.stack.last().expect("a value to duplicate");
@@ -1227,6 +1286,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 ty
             };
             slot.may.remove(May::UNASSIGNED);
+            slot.link = None;
         }
         if self.publishes(at, state, var) {
             // A value that doesn't fit the annotation is reported where it's
@@ -1255,28 +1315,68 @@ impl<'a, 'u> Flow<'a, 'u> {
         span: Span,
         irrefutable: bool,
     ) -> bool {
-        match pattern {
-            &Pattern::Bind(var) => self.binding(at, state, var, ty, span),
-            Pattern::Unpack(items) => {
-                let Some(types) = self.unpack(at, state, items, ty, span, irrefutable) else {
+        match *pattern {
+            Pattern::Bind(var) => self.binding(at, state, var, ty, span),
+            Pattern::Unpack { ref items, group } => {
+                let Some((types, columns)) = self.unpack(at, state, items, ty, span, irrefutable)
+                else {
                     if self.observing() {
                         let found = self.subject(ty);
                         self.problem(Problem::Impossible { span, found });
                     }
                     return false;
                 };
-                for (item, ty) in items.iter().zip(types) {
+                // The group's earlier unpack no longer correlates anything
+                let unlinked = |link: &mut Option<Link>| {
+                    if link.is_some_and(|link| link.group == group) {
+                        *link = None;
+                    }
+                };
+                for var in &mut state.vars {
+                    unlinked(&mut var.link);
+                }
+                for operand in &mut state.stack {
+                    unlinked(&mut operand.link);
+                }
+                let correlated = !columns.columns.is_empty();
+                state.groups[group.index()] = columns;
+                for (row, (item, ty)) in items.iter().zip(types).enumerate() {
                     if let Some(var) = item.var {
                         let span = match self.ir.var(var).origin {
                             Origin::Source(span) => span,
                             _ => Span::INVALID,
                         };
                         self.binding(at, state, var, ty, span);
+                        if correlated {
+                            let row = u32::try_from(row).expect("too many pattern items");
+                            self.relink(at, state, var, Some(Link { group, row }));
+                        }
                     }
                 }
             }
         }
         true
+    }
+
+    /// The group row a value comes from: a variable's own, or the top operand's
+    /// for an operand, before it's taken
+    fn source_link(&self, at: At, state: &State, value: &Expr) -> Option<Link> {
+        match value.kind {
+            ExprKind::Var(var) | ExprKind::Copy(var) if self.ir.var(var).owner == at.func => {
+                state.vars[self.slot(var)].link
+            }
+            ExprKind::Operand => state.stack.last()?.link,
+            _ => None,
+        }
+    }
+
+    /// Link a variable the running function caches the type of to a group row,
+    /// once it's assigned
+    fn relink(&self, at: At, state: &mut State, var: VarId, link: Option<Link>) {
+        let data = self.ir.var(var);
+        if data.owner == at.func && !data.flags.contains(VarFlags::VOLATILE) {
+            state.vars[self.slot(var)].link = link;
+        }
     }
 
     /// Bind a variable, checking the value at `span` against its annotation
@@ -1304,7 +1404,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         if !matches!(func.kind, FuncKind::Decl(_)) {
             return;
         }
-        let Pattern::Unpack(items) = &func.params else {
+        let Pattern::Unpack { items, .. } = &func.params else {
             unreachable!("parameters are a pattern of items")
         };
         let declared = (self.declared_params(at.func, items))
@@ -1494,7 +1594,62 @@ impl<'a, 'u> Flow<'a, 'u> {
             }
         );
         fact.ty = narrowed;
-        narrowed != bottom
+        let link = fact.link;
+        narrowed != bottom && link.is_none_or(|link| self.correlate(state, link, narrowed))
+    }
+
+    /// Drop the columns of a group where a value narrowed to `narrowed` can't lie,
+    /// by its row, and refine each value linked to the group by what its row's
+    /// remaining columns give, which hold it on their own. Returns whether any
+    /// column is left.
+    fn correlate(&self, state: &mut State, link: Link, narrowed: TypeId) -> bool {
+        let bottom = self.db.bottom();
+        let gas = Gas::default();
+        let solver = self.solver(&gas);
+        let group = &mut state.groups[link.group.index()];
+        if group.columns.is_empty() {
+            return true;
+        }
+        let row = link.row as usize;
+        let mut dropped = false;
+        for column in &mut group.columns {
+            if column[row] != bottom && solver.disjoint_types(column[row], narrowed) {
+                column.fill(bottom);
+                dropped = true;
+            }
+        }
+        if !dropped {
+            return true;
+        }
+        trace!(
+            "correlate g{}.{}: dropped columns",
+            link.group.index(),
+            link.row
+        );
+        let rows = (group.columns.first()).map_or(0, |column| column.len());
+        let rows: Vec<TypeId> = (0..rows)
+            .map(|row| {
+                (group.columns.iter())
+                    .fold(bottom, |joined, column| solver.lub(joined, column[row]))
+            })
+            .collect();
+        if rows.iter().all(|&ty| ty == bottom) {
+            return false;
+        }
+        let refined = |ty: &mut TypeId, linked: Option<Link>| {
+            if let Some(other) = linked
+                && other.group == link.group
+            {
+                *ty = solver.refine(*ty, rows[other.row as usize]);
+            }
+        };
+        for var in &mut state.vars {
+            refined(&mut var.ty, var.link);
+        }
+        for operand in &mut state.stack {
+            refined(&mut operand.ty, operand.link);
+        }
+        true
     }
 
     /// A type narrowed to its truthy values: without `nil` and `false`, the only
@@ -1532,7 +1687,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let mut truthy = state.clone();
                 if dup {
                     // The value copied for the test is the one left
-                    let top = truthy.stack.last_mut().expect("the copied value");
+                    let top = &mut truthy.stack.last_mut().expect("the copied value").ty;
                     let bottom = self.db.bottom();
                     let narrowed = self.truthy(*top);
                     let empty = narrowed == bottom && *top != bottom;
@@ -1579,7 +1734,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                     true => rest,
                     false => unknown,
                 };
-                let mut rest = *state.stack.last().expect("the exception");
+                let mut rest = state.stack.last().expect("the exception").ty;
                 for (class, clause) in clauses {
                     let ty = self.eval(at, &mut state, &mut operands, class);
                     if self.diverged.is_some() {
@@ -1597,12 +1752,12 @@ impl<'a, 'u> Flow<'a, 'u> {
                     };
                     if caught != self.db.bottom() {
                         let mut entered = state.clone();
-                        *entered.stack.last_mut().expect("the exception") = caught;
+                        *entered.stack.last_mut().expect("the exception") = Operand::new(caught);
                         self.flow(at.ctx, *clause, entered);
                     }
                 }
                 // A generated rethrow only pops the exception, so this is for a catch-all
-                *state.stack.last_mut().expect("the exception") = unclassed(rest);
+                *state.stack.last_mut().expect("the exception") = Operand::new(unclassed(rest));
                 self.flow(at.ctx, *otherwise, state);
             }
             Terminal::Next {
@@ -1767,7 +1922,9 @@ fn step_span(step: &Step) -> Span {
 /// Whether a step can throw: it has a rule, which may call or fail, or it unpacks
 fn throws(step: &Step) -> bool {
     match step {
-        Step::Let { pattern, value } => matches!(pattern, Pattern::Unpack(_)) || has_rule(value),
+        Step::Let { pattern, value } => {
+            matches!(pattern, Pattern::Unpack { .. }) || has_rule(value)
+        }
         Step::Assign(target) => !matches!(target, Target::Var { .. }) || has_rule(target.value()),
         Step::Default { value, .. } | Step::Eval(value) | Step::Push(value) => has_rule(value),
         Step::Dup
