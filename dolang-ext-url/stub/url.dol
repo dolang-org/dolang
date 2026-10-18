@@ -76,7 +76,7 @@ pub class Url
   # assert_eq $pairs[1][1] "c"
   # ```
   #[getter]
-  pub def query self -> Iter[Tuple[Str, Str]]
+  pub def query self -> Map[Str, Str]
     ...
 
   # The raw query string without the leading `?`, or `nil` if absent.

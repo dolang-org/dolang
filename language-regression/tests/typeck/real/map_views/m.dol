@@ -1,0 +1,38 @@
+# dolang: strict
+@import shell http http.mock url time
+
+pub def environment mapping @ shell.Env
+  let _map @ Map[Str, Str] = mapping
+  let _mutable @ MutMap[Str, Str] = mapping
+  mapping["FOO"] = "bar"
+  mapping.delete "FOO"
+  mapping["FOO"] = nil
+# error: expected `std.Str`, found `nil`
+#   --> m.dol:LL:LL
+#    |
+# LL |   mapping["FOO"] = nil
+#    |                    ^^^
+
+pub def headers response @ http.Response status @ http.Status
+  let _headers @ Map[Str, Str | time.DateTime] = response.headers
+  let _status @ Map[Str, Str | time.DateTime] = status.headers
+  response.headers.delete "x-test"
+# error: `std.Map[std.Str, std.Str | time.DateTime]` has no member `delete`
+#   --> m.dol:LL:LL
+#    |
+# LL |   response.headers.delete "x-test"
+#    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+pub def query value @ url.Url
+  let _map @ Map[Str, Str] = value.query
+  let _last @ (Str | nil) = value.query.get "x"
+  let _len @ Int = value.query.len
+  value.query["x"] = "changed"
+# error: `std.Map[std.Str, std.Str]` has no member `(assign)`
+#   --> m.dol:LL:LL
+#    |
+# LL |   value.query["x"] = "changed"
+#    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+pub def request_headers request @ http.mock.Request
+  let _headers @ Map[Str, Str | time.DateTime] = request.headers

@@ -67,7 +67,7 @@ pub class Request
   #       status: 200
   # ```
   #[getter]
-  pub def headers self -> Dict[Str, Str | DateTime]
+  pub def headers self -> Map[Str, Str | DateTime]
     ...
 
 # A handle to the mocks one [`Server.mock`](http.mock.Server.mock) call registered.

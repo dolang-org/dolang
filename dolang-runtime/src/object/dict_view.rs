@@ -90,6 +90,38 @@ pub trait DictLike<'v>: 'v {
         Err(Error::immutable(strand))
     }
 
+    /// Removes every value for `key`, returning whether any were present.
+    fn delete<'s>(
+        &self,
+        _this: Instance<'v, '_, Self::Object>,
+        strand: &mut Strand<'v, 's>,
+        _key: &Value<'v>,
+    ) -> Result<'v, 's, bool> {
+        Err(Error::immutable(strand))
+    }
+
+    /// Removes one instance into `out`, returning whether it was present.
+    /// Negative instances count from the end; a plain `pop` passes zero.
+    fn pop<'a, 's>(
+        &self,
+        _this: Instance<'v, '_, Self::Object>,
+        strand: &'a mut Strand<'v, 's>,
+        _key: &Value<'v>,
+        _instance: i64,
+        _out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        Err(Error::immutable(strand))
+    }
+
+    /// Removes all entries.
+    fn clear<'s>(
+        &self,
+        _this: Instance<'v, '_, Self::Object>,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        Err(Error::immutable(strand))
+    }
+
     fn flatten<'s>(
         &self,
         this: Instance<'v, '_, Self::Object>,
@@ -169,6 +201,23 @@ impl<'v, 'a, I: DictLike<'v>> DictView<'v, 'a, I> {
         }
     }
 
+    /// Invokes a view method on a native owner, rooting the temporary view.
+    pub async fn method<'s>(
+        owner: Instance<'v, '_, I::Object>,
+        view: I,
+        strand: &mut Strand<'v, 's>,
+        method: Sym<'v, '_>,
+        args: Args<'v, '_>,
+        out: impl Output<'v>,
+    ) -> Result<'v, 's, ()> {
+        strand
+            .with_slots(async move |strand, [mut slot]| {
+                Output::set(strand, &mut slot, DictView::new(owner, view));
+                slot.method(strand, method, args, out).await
+            })
+            .await
+    }
+
     /// Implements [`Object::iter`] directly without constructing a view object.
     pub fn iter<'s>(
         owner: Instance<'v, '_, I::Object>,
@@ -245,6 +294,21 @@ trait DictViewGlue<'v>: 'v {
         key: Slot<'v, 'a>,
         value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()>;
+    fn delete<'s>(
+        &self,
+        owner: &Value<'v>,
+        strand: &mut Strand<'v, 's>,
+        key: &Value<'v>,
+    ) -> Result<'v, 's, bool>;
+    fn pop<'a, 's>(
+        &self,
+        owner: &Value<'v>,
+        strand: &'a mut Strand<'v, 's>,
+        key: &Value<'v>,
+        instance: i64,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool>;
+    fn clear<'s>(&self, owner: &Value<'v>, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()>;
     fn flatten<'s>(
         &self,
         owner: &Value<'v>,
@@ -311,6 +375,38 @@ impl<'v, I: DictLike<'v>> DictViewGlue<'v> for Glue<'v, I> {
             key,
             value,
         )
+    }
+    fn delete<'s>(
+        &self,
+        owner: &Value<'v>,
+        strand: &mut Strand<'v, 's>,
+        key: &Value<'v>,
+    ) -> Result<'v, 's, bool> {
+        self.view.delete(
+            Instance::from_native_value(owner, strand, self.ty),
+            strand,
+            key,
+        )
+    }
+    fn pop<'a, 's>(
+        &self,
+        owner: &Value<'v>,
+        strand: &'a mut Strand<'v, 's>,
+        key: &Value<'v>,
+        instance: i64,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, bool> {
+        self.view.pop(
+            Instance::from_native_value(owner, strand, self.ty),
+            strand,
+            key,
+            instance,
+            out,
+        )
+    }
+    fn clear<'s>(&self, owner: &Value<'v>, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
+        self.view
+            .clear(Instance::from_native_value(owner, strand, self.ty), strand)
     }
     fn flatten<'s>(
         &self,
@@ -810,6 +906,9 @@ impl<'v> Protocol<'v> for View<'v> {
                 | sym::COUNT
                 | sym::COPY
                 | sym::CONTAINS
+                | sym::DELETE
+                | sym::POP
+                | sym::CLEAR
         ) {
             BoundMethod::create(strand, &this, field, out);
             Ok(())
@@ -830,11 +929,21 @@ impl<'v> Protocol<'v> for View<'v> {
                 "dictionary view len is a field, not a method",
             ));
         }
-        if method.tag() == sym::GET {
-            // Implemented directly against the glue, unlike every other
-            // method below, so a lookup never needs to flatten/snapshot the
-            // whole view into a real `Dict` first — the entire point of a
-            // lazy projection.
+        if method.tag() == sym::DELETE {
+            let ([key], []) = unpack!(strand, args, 1, 0)?;
+            let view = this.get();
+            let removed = view.glue.delete(&view.owner, strand, &key)?;
+            Output::set(strand, out, removed);
+            return Ok(());
+        }
+        if method.tag() == sym::CLEAR {
+            let ([], []) = unpack!(strand, args, 0, 0)?;
+            let view = this.get();
+            return view.glue.clear(&view.owner, strand);
+        }
+        if matches!(method.tag(), sym::GET | sym::POP) {
+            // Lookups stay lazy, and pops must change the owner rather than
+            // the temporary snapshot used by read-only methods below.
             let default_key = Sym::well_known(sym::DEFAULT);
             let else_key = Sym::well_known(sym::ELSE);
             let ([key], [instance, default, or_else]) =
@@ -844,17 +953,28 @@ impl<'v> Protocol<'v> for View<'v> {
             }
             let instance = match instance {
                 Some(s) => s.to_i64(strand).map_err(|_| Error::index(strand))?,
+                None if method.tag() == sym::POP => 0,
                 None => -1,
             };
             let found = {
                 let view = this.get();
-                view.glue.get(
-                    &view.owner,
-                    strand,
-                    &key,
-                    instance,
-                    Slot::reborrow(&mut out),
-                )?
+                if method.tag() == sym::POP {
+                    view.glue.pop(
+                        &view.owner,
+                        strand,
+                        &key,
+                        instance,
+                        Slot::reborrow(&mut out),
+                    )?
+                } else {
+                    view.glue.get(
+                        &view.owner,
+                        strand,
+                        &key,
+                        instance,
+                        Slot::reborrow(&mut out),
+                    )?
+                }
             };
             return if found {
                 Ok(())
@@ -863,6 +983,8 @@ impl<'v> Protocol<'v> for View<'v> {
                 Ok(())
             } else if let Some(or_else) = or_else {
                 call!(strand, or_else, out).await
+            } else if method.tag() == sym::POP {
+                Err(Error::index(strand))
             } else {
                 out.store(Value::NIL);
                 Ok(())
@@ -1144,5 +1266,212 @@ impl<'v> Protocol<'v> for Rest<'v> {
         out: Slot<'v, 'a>,
     ) {
         Output::set(strand, out, TypeObject::Value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{error::ErrorKind, method, test_support::with_builder};
+
+    use super::*;
+
+    struct Fixture(Vec<(i64, Option<i64>)>);
+
+    impl<'v> Object<'v> for Fixture {
+        const NAME: &'v str = "Fixture";
+        const MODULE: &'v str = "test";
+        type Annex = ();
+        type Type = ();
+        type TypeAnnex = ();
+    }
+
+    struct Projection<const MUTABLE: bool>;
+
+    fn selected(pairs: &[(i64, Option<i64>)], key: i64, instance: i64) -> Option<usize> {
+        let matches: Vec<_> = pairs
+            .iter()
+            .enumerate()
+            .filter_map(|(i, (k, _))| (*k == key).then_some(i))
+            .collect();
+        let index = if instance < 0 {
+            matches
+                .len()
+                .checked_sub(instance.unsigned_abs() as usize)?
+        } else {
+            usize::try_from(instance).ok()?
+        };
+        matches.get(index).copied()
+    }
+
+    impl<'v, const MUTABLE: bool> DictLike<'v> for Projection<MUTABLE> {
+        type Object = Fixture;
+        const NAME: &'v str = "Projection";
+        const MODULE: &'v str = "test";
+
+        fn len(&self, this: Instance<'v, '_, Fixture>, _strand: &mut Strand<'v, '_>) -> usize {
+            this.borrow_unwrap().0.len()
+        }
+
+        fn get<'a, 's>(
+            &self,
+            this: Instance<'v, '_, Fixture>,
+            strand: &'a mut Strand<'v, 's>,
+            key: &Value<'v>,
+            instance: i64,
+            out: Slot<'v, 'a>,
+        ) -> Result<'v, 's, bool> {
+            let pairs = this.borrow(strand)?;
+            let Some(index) = selected(&pairs.0, key.to_i64(strand)?, instance) else {
+                return Ok(false);
+            };
+            match pairs.0[index].1 {
+                Some(value) => Output::set(strand, out, value),
+                None => Output::set(strand, out, &Value::NIL),
+            }
+            Ok(true)
+        }
+
+        fn delete<'s>(
+            &self,
+            this: Instance<'v, '_, Fixture>,
+            strand: &mut Strand<'v, 's>,
+            key: &Value<'v>,
+        ) -> Result<'v, 's, bool> {
+            if !MUTABLE {
+                return Err(Error::immutable(strand));
+            }
+            let key = key.to_i64(strand)?;
+            let mut pairs = this.borrow_mut(strand)?;
+            let old_len = pairs.0.len();
+            pairs.0.retain(|(k, _)| *k != key);
+            Ok(old_len != pairs.0.len())
+        }
+
+        fn pop<'a, 's>(
+            &self,
+            this: Instance<'v, '_, Fixture>,
+            strand: &'a mut Strand<'v, 's>,
+            key: &Value<'v>,
+            instance: i64,
+            out: Slot<'v, 'a>,
+        ) -> Result<'v, 's, bool> {
+            if !MUTABLE {
+                return Err(Error::immutable(strand));
+            }
+            let mut pairs = this.borrow_mut(strand)?;
+            let Some(index) = selected(&pairs.0, key.to_i64(strand)?, instance) else {
+                return Ok(false);
+            };
+            match pairs.0.remove(index).1 {
+                Some(value) => Output::set(strand, out, value),
+                None => Output::set(strand, out, &Value::NIL),
+            }
+            Ok(true)
+        }
+
+        fn clear<'s>(
+            &self,
+            this: Instance<'v, '_, Fixture>,
+            strand: &mut Strand<'v, 's>,
+        ) -> Result<'v, 's, ()> {
+            if !MUTABLE {
+                return Err(Error::immutable(strand));
+            }
+            this.borrow_mut(strand)?.0.clear();
+            Ok(())
+        }
+
+        fn flatten<'s>(
+            &self,
+            _this: Instance<'v, '_, Fixture>,
+            _strand: &mut Strand<'v, 's>,
+            _sink: &mut DictViewSink<'v, '_>,
+        ) -> Result<'v, 's, ()> {
+            panic!("mutation must never flatten the owner")
+        }
+    }
+
+    #[test]
+    fn mutations_reach_owner_and_handle_instances_and_nil() {
+        with_builder(async |vm| {
+            let ty = vm.register_type::<Fixture>();
+            vm.enter_with_slots::<4, _>(
+                async move |strand, [mut owner, mut view, mut out, mut bound]| {
+                    ty.create(
+                        strand,
+                        Fixture(vec![
+                            (1, Some(10)),
+                            (1, Some(20)),
+                            (1, Some(30)),
+                            (2, None),
+                            (3, Some(40)),
+                            (3, Some(50)),
+                        ]),
+                        &mut owner,
+                    );
+                    let native = Instance::from_native_value(&owner, strand, ty);
+                    Output::set(strand, &mut view, DictView::new(native, Projection::<true>));
+                    let pop = Sym::well_known(sym::POP);
+                    method!(strand, &view, pop, &mut out, 1_i64).await.unwrap();
+                    assert_eq!(out.as_int(strand), Some(10));
+                    assert_eq!(native.borrow_unwrap().0.len(), 5);
+                    method!(strand, &view, pop, &mut out, 1_i64, -1_i64)
+                        .await
+                        .unwrap();
+                    assert_eq!(out.as_int(strand), Some(30));
+                    view.get(strand, pop, &mut bound).unwrap();
+                    call!(strand, &bound, &mut out, 2_i64).await.unwrap();
+                    assert!(out.is_nil());
+                    let delete = Sym::well_known(sym::DELETE);
+                    view.get(strand, delete, &mut bound).unwrap();
+                    call!(strand, &bound, &mut out, 3_i64).await.unwrap();
+                    assert!(out.to_bool(strand).unwrap());
+                    assert_eq!(native.borrow_unwrap().0, vec![(1, Some(20))]);
+                    method!(strand, &view, delete, &mut out, 3_i64)
+                        .await
+                        .unwrap();
+                    assert!(!out.to_bool(strand).unwrap());
+                    let clear = Sym::well_known(sym::CLEAR);
+                    view.get(strand, clear, &mut bound).unwrap();
+                    call!(strand, &bound, &mut out).await.unwrap();
+                    assert!(native.borrow_unwrap().0.is_empty());
+                    let err = method!(strand, &view, pop, &mut out, 1_i64)
+                        .await
+                        .unwrap_err();
+                    assert_eq!(err.kind(), ErrorKind::Index);
+                    let default = Sym::well_known(sym::DEFAULT);
+                    method!(strand, &view, pop, &mut out, 1_i64, default: 99_i64)
+                        .await
+                        .unwrap();
+                    assert_eq!(out.as_int(strand), Some(99));
+                },
+            )
+            .await;
+        });
+    }
+
+    #[test]
+    fn invalid_fallbacks_do_not_mutate_and_readonly_views_reject_mutation() {
+        with_builder(async |vm| {
+            let ty = vm.register_type::<Fixture>();
+            vm.enter_with_slots::<3, _>(async move |strand, [mut owner, mut view, mut out]| {
+                ty.create(strand, Fixture(vec![(1, Some(10))]), &mut owner);
+                let native = Instance::from_native_value(&owner, strand, ty);
+                Output::set(strand, &mut view, DictView::new(native, Projection::<true>));
+                let default = Sym::well_known(sym::DEFAULT);
+                let otherwise = Sym::well_known(sym::ELSE);
+                let err = method!(strand, &view, Sym::well_known(sym::POP), &mut out, 1_i64, default: 5_i64, otherwise: 6_i64).await.unwrap_err();
+                assert_eq!(err.kind(), ErrorKind::UnexpectedKey);
+                assert_eq!(native.borrow_unwrap().0, vec![(1, Some(10))]);
+                Output::set(strand, &mut view, DictView::new(native, Projection::<false>));
+                for method in [sym::DELETE, sym::POP] {
+                    let err = method!(strand, &view, Sym::well_known(method), &mut out, 1_i64).await.unwrap_err();
+                    assert_eq!(err.kind(), ErrorKind::Immutable);
+                }
+                let err = method!(strand, &view, Sym::well_known(sym::CLEAR), &mut out).await.unwrap_err();
+                assert_eq!(err.kind(), ErrorKind::Immutable);
+                assert_eq!(native.borrow_unwrap().0, vec![(1, Some(10))]);
+            }).await;
+        });
     }
 }

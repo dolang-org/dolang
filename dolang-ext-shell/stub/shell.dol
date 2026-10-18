@@ -501,29 +501,9 @@ pub let args @ Args = ...
 # The type of [`env`](shell.env), which reads, writes, iterates, spreads, and
 # destructures like a [`Dict`](std.Dict) of variable names and values.
 #
-# Assigning `nil` unsets a variable. Reading a name that is not set raises; use
-# [`get`](shell.Env.get) for a default instead.
-pub @class Env: Index[Str, Str] Assign[Str, Str | nil] Spread[Str, Str] Unpack[Str, Str, Rest: Unpack[Str, Str]] BaseIterable[Tuple[Str, Str]] Func
-  # Reads a variable, returning `nil` rather than raising when it is unset.
-  #
-  # ## Example
-  #
-  # ```
-  # let home = env.get HOME default: /root
-  # let tmp = env.get TMPDIR else: do
-  #   fs.temp_dir()
-  # ```
-  pub def get[D = nil]
-    self
-    # The variable name.
-    name @ Str
-    # The value to return when the variable is unset.
-    :default @ D = nil
-    # A block whose result to return when the variable is unset and there is no
-    # `default`.
-    :else @ (() -> D) = nil
-  do -> (Str | D)
-
+# Use `delete` to unset a variable. Reading a name that is not set raises; use
+# [`get`](std.Map.get) for a default instead.
+pub @class Env: MutMap[Str, Str] Func
   # Calls `body` with overrides from a dict in place, restoring them when it
   # returns.
   @def (call)[R]

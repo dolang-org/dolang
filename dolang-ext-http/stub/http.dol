@@ -101,7 +101,7 @@ pub class Status: Error
   # The response headers, as
   # [`Response.headers`](http.Response.headers) presents them.
   #[getter]
-  pub def headers self -> Dict[Str, Str | DateTime]
+  pub def headers self -> Map[Str, Str | DateTime]
     ...
 
   # Whether the saved body excerpt was cut off,
@@ -196,7 +196,7 @@ pub class Response
   # echo $response.headers["content-type"]
   # ```
   #[getter]
-  pub def headers self -> Dict[Str, Str | DateTime]
+  pub def headers self -> Map[Str, Str | DateTime]
     ...
 
   # Reads the whole body as bytes, consuming and closing the response.
