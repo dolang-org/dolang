@@ -1,8 +1,11 @@
+# dolang: strict
 import progress json patch rand shlex strand proc sys transfer _vfs time
   std:
     - RuntimeError
     - TypeError
     - ValueError
+    - @Entries
+    - null
   strand:
     - pipeline
     - stream
@@ -10,6 +13,7 @@ import progress json patch rand shlex strand proc sys transfer _vfs time
   fs:
     - Path
     - with_temp_dir
+    - @BinFile
   url:
     - Url
   shell:
@@ -19,6 +23,8 @@ import progress json patch rand shlex strand proc sys transfer _vfs time
     - cache_dir
   fs.unix:
     - @Mode
+  json:
+    - @DecodeValue
 
 # An image pull policy.
 #
@@ -56,12 +62,18 @@ pub @let ContainerMount = BaseDict $
 # | `source`   | Host path or volume name. Required for `:BIND:` |
 # | `id`       | Cache ID. Defaults to `target`                  |
 # | `readonly` | Mount read-only. Defaults to `false`            |
+# | `size`     | Size limit                                      |
+# | `chown`    | Change the mount's owner to the container user  |
+# | `selinux`  | Relabel for SELinux: `:SHARED:` or `:PRIVATE:`  |
 pub @let BuildMount = BaseDict $
   type: (:CACHE: | :BIND: | :VOLUME: | :TMPFS:)
   target: (Str | Path)
   ?source: (Str | Path)
   ?id: Str
   ?readonly: Bool
+  ?size: (Int | Str)
+  ?chown: Bool
+  ?selinux: (:SHARED: | :PRIVATE:)
 
 # A network protocol for a published port.
 pub @let PortProtocol = (:TCP: | :UDP: | :SCTP:)
@@ -150,12 +162,40 @@ pub @let ContainerStatus = $
   | :EXITED:
   | :DEAD:
 
+
+# Build steps and tags, in order, as keyword arguments. Keys may repeat.
+#
+# | Key      | Value                                         | Meaning                              |
+# | -------- | --------------------------------------------- | ------------------------------------ |
+# | `tag`    | `Str`                                         | Apply an output image tag            |
+# | `run`    | `() -> nil`                                   | Run a function inside the container  |
+# | `add`    | [`AddSpec`](_container.dockman.AddSpec)       | Add a file to the image              |
+# | `patch`  | [`PatchSpec`](_container.dockman.PatchSpec)   | Apply a patch inside the image       |
+# | `commit` | `Str`                                         | Commit a layer with a message        |
+#
+# A `run` function has the strand input and output of the build's caller.
+pub @let BuildSteps[I, O] = $
+  *tag: Str
+  *run: ((<I, >O) -> nil)
+  *add: AddSpec
+  *patch: PatchSpec
+  *commit: Str
+
 # A published port of a container, as reported by
 # [`Container.state`](_container.dockman.Container.state).
 pub class PortBinding
-  field protocol container_port host_ip host_port
+  field protocol @ (PortProtocol | Str)
+  field container_port @ Int
+  field host_ip @ (Str | nil)
+  field host_port @ (Int | nil)
 
-  def (init) self :protocol :container_port :host_ip :host_port
+  def (init)
+    self
+    :protocol @ (PortProtocol | Str)
+    :container_port @ Int
+    :host_ip @ (Str | nil)
+    :host_port @ (Int | nil)
+  do
     self.#protocol = protocol
     self.#container_port = container_port
     self.#host_ip = host_ip
@@ -181,12 +221,30 @@ pub class PortBinding
   pub def host_port self -> (Int | nil)
     self.#host_port
 
+# A mount type a runtime reports, or its own name for an unrecognized one.
+@let MountType = (:BIND: | :VOLUME: | :TMPFS: | :IMAGE: | :NPIPE: | :CLUSTER: | Str)
+
 # A mount of a container, as reported by
 # [`Container.state`](_container.dockman.Container.state).
 pub class MountInfo
-  field type source target readonly mode propagation name
+  field type @ (MountType | nil)
+  field source @ (Path | nil)
+  field target @ (Path | nil)
+  field readonly @ Bool
+  field mode @ (Str | nil)
+  field propagation @ (Str | nil)
+  field name @ (Str | nil)
 
-  def (init) self :type :source :target :readonly :mode :propagation :name
+  def (init)
+    self
+    :type @ (MountType | nil)
+    :source @ (Path | nil)
+    :target @ (Path | nil)
+    :readonly @ Bool
+    :mode @ (Str | nil)
+    :propagation @ (Str | nil)
+    :name @ (Str | nil)
+  do
     self.#type = type
     self.#source = source
     self.#target = target
@@ -232,9 +290,20 @@ pub class MountInfo
 
 # The live state of a container.
 pub class ContainerState
-  field name state status ports mounts
+  field name @ (Str | nil)
+  field state @ (ContainerStatus | Str | nil)
+  field status @ (Str | nil)
+  field ports @ Tuple[...PortBinding]
+  field mounts @ Tuple[...MountInfo]
 
-  def (init) self :name :state :status :ports :mounts
+  def (init)
+    self
+    :name @ (Str | nil)
+    :state @ (ContainerStatus | Str | nil)
+    :status @ (Str | nil)
+    :ports @ Iterable[PortBinding]
+    :mounts @ Iterable[MountInfo]
+  do
     self.#name = name
     self.#state = state
     self.#status = status
@@ -269,9 +338,10 @@ pub class ContainerState
 
 # A repository and tag naming an image.
 pub class ImageTag
-  field repo tag
+  field repo @ Str
+  field tag @ Str
 
-  def (init) self :repo :tag
+  def (init) self :repo@Str :tag@Str
     self.#repo = repo
     self.#tag = tag
 
@@ -287,9 +357,10 @@ pub class ImageTag
 
 # The result of pushing an image.
 pub class PushResult
-  field ref digest
+  field ref @ Str
+  field digest @ (Str | nil)
 
-  def (init) self :ref :digest
+  def (init) self :ref@Str :digest@(Str | nil)
     self.#ref = ref
     self.#digest = digest
 
@@ -305,14 +376,18 @@ pub class PushResult
 
 let COPY_BLOCK_SIZE = 1048576
 
-let SAVE_FORMATS = $
+let PROGRAMS @ Dict[(:DOCKER: | :PODMAN:), Str] = $
+  DOCKER: docker
+  PODMAN: podman
+
+let SAVE_FORMATS @ Dict[ArchiveFormat, Str] = $
   DOCKER_ARCHIVE: docker-archive
   OCI_ARCHIVE: oci-archive
   OCI_DIR: oci-dir
   DOCKER_DIR: docker-dir
   DIR: dir
 
-let CONTAINER_STATES = $
+let CONTAINER_STATES @ Dict[Str, ContainerStatus] = $
   "created": :CREATED:
   # Podman's own name for the state a container is in between `create` and
   # `start`, which is what Docker calls `created`. Podman 3.x reports it
@@ -325,7 +400,7 @@ let CONTAINER_STATES = $
   "exited": :EXITED:
   "dead": :DEAD:
 
-let MOUNT_TYPES = $
+let MOUNT_TYPES @ Dict[Str, MountType] = $
   "bind": :BIND:
   "volume": :VOLUME:
   "tmpfs": :TMPFS:
@@ -333,68 +408,68 @@ let MOUNT_TYPES = $
   "npipe": :NPIPE:
   "cluster": :CLUSTER:
 
-let PORT_PROTOCOLS = $
+let PORT_PROTOCOLS @ Dict[Str, PortProtocol] = $
   "tcp": :TCP:
   "udp": :UDP:
   "sctp": :SCTP:
 
-let CONTAINER_MOUNT_TYPES = Set $
+let CONTAINER_MOUNT_TYPES @ Set[Sym] = Set $
   - :BIND:
   - :VOLUME:
   - :TMPFS:
 
-let BUILD_MOUNT_TYPES = $
+let BUILD_MOUNT_TYPES @ Dict[Sym, Str] = $
   CACHE: cache
   BIND: bind
   VOLUME: volume
   TMPFS: tmpfs
 
-let CONTAINER_PORT_PROTOCOLS = $
+let CONTAINER_PORT_PROTOCOLS @ Dict[Sym, Str] = $
   TCP: tcp
   UDP: udp
   SCTP: sctp
 
-let RESTART_POLICIES = $
+let RESTART_POLICIES @ Dict[Sym, Str] = $
   NO: no
   ON_FAILURE: on-failure
   ALWAYS: always
   UNLESS_STOPPED: unless-stopped
 
-let PULL_POLICIES = $
+let PULL_POLICIES @ Dict[Sym, Str] = $
   MISSING: missing
   ALWAYS: always
   NEVER: never
 
-let INVALID_IMAGE_REFERENCE_ERRORS = $
+let INVALID_IMAGE_REFERENCE_ERRORS @ Array[Str] = $
   - INVALID REFERENCE FORMAT
 
-let REGISTRY_AUTH_ERRORS = $
+let REGISTRY_AUTH_ERRORS @ Array[Str] = $
   - UNAUTHORIZED
   - AUTHENTICATION REQUIRED
   - REQUESTED ACCESS TO THE RESOURCE IS DENIED
   - DENIED
 
-let NO_IMAGE_ERRORS = $
+let NO_IMAGE_ERRORS @ Array[Str] = $
   - NO SUCH IMAGE
   - IMAGE NOT KNOWN
   - DOES NOT EXIST LOCALLY
   - MANIFEST UNKNOWN
   - FAILED TO RESOLVE REFERENCE
 
-let ARCHIVE_ERRORS = $
+let ARCHIVE_ERRORS @ Array[Str] = $
   - ARCHIVE
   - TAR
   - PAYLOAD
   - NO SUCH FILE
   - CANNOT OPEN
 
-let PUSH_NO_IMAGE_ERRORS = $
+let PUSH_NO_IMAGE_ERRORS @ Array[Str] = $
   - TAG DOES NOT EXIST
   - DOES NOT EXIST LOCALLY
   - IMAGE NOT KNOWN
   - NO SUCH IMAGE
 
-let NO_CONTAINER_ERRORS = $
+let NO_CONTAINER_ERRORS @ Array[Str] = $
   - NO SUCH CONTAINER
   - NO CONTAINER WITH NAME OR ID
   - CONTAINER NOT KNOWN
@@ -406,7 +481,7 @@ pub class InvalidImageReferenceError: RuntimeError
   # The malformed reference.
   pub field ref @ Str = nil
 
-  def (init) self ref
+  def (init) self ref @ Str
     self.ref = ref
     RuntimeError.(init) $self "invalid image reference: $ref"
 
@@ -416,7 +491,7 @@ pub class RegistryAuthError: RuntimeError
   # The image reference.
   pub field ref @ Str = nil
 
-  def (init) self ref
+  def (init) self ref @ Str
     self.ref = ref
     RuntimeError.(init) $self "registry authentication failed: $ref"
 
@@ -426,7 +501,7 @@ pub class ArchiveError: RuntimeError
   # The archive.
   pub field source @ (Str | Path) = nil
 
-  def (init) self source
+  def (init) self source @ (Str | Path)
     self.source = source
     RuntimeError.(init) $self "archive operation failed: $source"
 
@@ -445,11 +520,11 @@ pub class NoImageError: RuntimeError
   # The image reference that was not found.
   pub field ref @ Str = nil
 
-  def (init) self ref
+  def (init) self ref @ Str
     self.ref = ref
     RuntimeError.(init) $self "image not found: $ref"
 
-  pub def (dbg) self
+  pub def (dbg) self -> Str
     "<NoImageError ref: $(dbg self.ref)>"
 
 # Raised when a container ID or name cannot be found.
@@ -458,11 +533,11 @@ pub class NoContainerError: RuntimeError
   # The container ID or name that was not found.
   pub field ref @ Str = nil
 
-  def (init) self ref
+  def (init) self ref @ Str
     self.ref = ref
     RuntimeError.(init) $self "container not found: $ref"
 
-  pub def (dbg) self
+  pub def (dbg) self -> Str
     "<NoContainerError ref: $(dbg self.ref)>"
 
 # Raised by `Container.wait` when the container exits unsuccessfully.
@@ -471,11 +546,11 @@ pub class ContainerExitError: RuntimeError
   # Numeric container exit status.
   pub field rc @ Int = nil
 
-  def (init) self rc
+  def (init) self rc @ Int
     self.rc = rc
     RuntimeError.(init) $self "container exited with status: $rc"
 
-  pub def (dbg) self
+  pub def (dbg) self -> Str
     "<ContainerExitError rc: $(self.rc)>"
 
 # Podman's short-name resolution (containers-registries.conf(5)) prompts
@@ -485,15 +560,15 @@ pub class ContainerExitError: RuntimeError
 # defaults bare names to Docker Hub. Fully qualifying the reference up front
 # sidesteps short-name resolution entirely, so callers don't need a
 # registries.conf tuned for non-interactive use.
-def qualify_ref ref
+def qualify_ref ref @ Str -> Str
   if !(ref.contains "/")
-    "docker.io/library/$ref"
+    return "docker.io/library/$ref"
+  let host _ = ref.split "/" limit: 1
+  else return "docker.io/$ref"
+  if (host.contains "." || host.contains ":" || host == "localhost")
+    ref
   else
-    let host _ = ref.split "/" limit: 1
-    if (host.contains "." || host.contains ":" || host == "localhost")
-      ref
-    else
-      "docker.io/$ref"
+    "docker.io/$ref"
 
 # Applies a pull policy ("always" / "missing" / "never") up front, as a step
 # separate from starting a container. Docker/Podman's own inline
@@ -502,22 +577,58 @@ def qualify_ref ref
 # explicitly reuses `Runtime.pull`, which redirects output and classifies
 # failures (`NoImageError`, `RegistryAuthError`, etc.) via known error
 # patterns.
-def ensure_image runtime img policy
-  policy = PULL_POLICIES.get $policy else: do
+def ensure_image runtime@Runtime img@Str policy@PullPolicy
+  let cli = PULL_POLICIES.get $policy else: do
     throw ValueError "unsupported pull policy: $policy"
-  if (policy == "always")
-    runtime.pull $img
-  else if (policy == "missing")
+  if (cli == "always")
+    let _ = runtime.pull $img
+  else if (cli == "missing")
     let present = try
       inspect_image $runtime $img
       true
     catch NoImageError: _
       false
     if !present
-      runtime.pull $img
+      let _ = runtime.pull $img
 
-def normalize_known mapping value
+def normalize_known[K] mapping@Dict[Str, K] value@Str -> (K | Str)
   mapping.get $value default: $value
+
+# Raises the error for inspect output of an unexpected shape
+def malformed what @ Str -> Never
+  throw TypeError "inspect: unexpected $what"
+
+# A string in inspect output, or `nil` where it's absent or null
+def optional_str what@Str value@DecodeValue -> (Str | nil)
+  match value
+    Str(s) do s
+    nil do nil
+  else
+    malformed $what
+
+# An array of strings in inspect output
+def strings what@Str value@DecodeValue -> Array[Str]
+  let Array(items) = value
+  else malformed $what
+  let result @ Array[Str] = []
+  for item = items
+    let Str(s) = item
+    else malformed $what
+    result.push $s
+  result
+
+# An object of strings in inspect output, or `nil` where it's null
+def string_dict what@Str value@DecodeValue -> (Dict[Str, Str] | nil)
+  if (value == nil)
+    return nil
+  let Dict(items) = value
+  else malformed $what
+  let result @ Dict[Str, Str] = {}
+  for key item = items
+    let Str(s) = item
+    else malformed $what
+    result[key] = s
+  result
 
 # `Cmd` and `Entrypoint` in inspect output are an argument array, except in
 # podman 3.x, which reports `Entrypoint` as a single string. Split it back
@@ -527,36 +638,32 @@ def normalize_known mapping value
 # an argument containing whitespace cannot be recovered faithfully by any
 # splitting rule. `shlex` at least handles the case where such an argument
 # was quoted before it reached the runtime.
-def normalize_argv value
-  if !(type value Str)
-    return value
-  [...shlex.split value]
+def normalize_argv what@Str value@DecodeValue -> (Array[Str] | nil)
+  match value
+    Str(s) do [...shlex.split(s)]
+    nil do nil
+  else
+    strings $what $value
 
-def container_env_args env
-  if !(type env Dict)
-    throw TypeError "env: expected Dict"
-  let args = []
+def container_env_args env @ Env -> Array[Str]
+  let args @ Array[Str] = []
   for key value = env
-    if !(type key Str || type key Sym)
-      throw TypeError "env key: expected Str or Sym"
     if (value == nil)
       throw ValueError "env: nil values are not supported by create"
     if (value == :INHERIT:)
-      args.push --env $key
+      args.push --env "$key"
     else
       args.push --env "$key=$value"
   args
 
-def container_label_args labels
-  if !(type labels Dict)
-    throw TypeError "labels: expected Dict"
-  let args = []
+def container_label_args labels @ BaseDict[Str | Sym, Value] -> Array[Str]
+  let args @ Array[Str] = []
   for key value = labels
     args.push --label "$key=$value"
   args
 
-def container_port_args ports
-  let args = []
+def container_port_args ports @ Iterable[PortSpec] -> Array[Str]
+  let args @ Array[Str] = []
   for port = ports
     bind port
       :container_port
@@ -576,38 +683,38 @@ def container_port_args ports
     args.push --publish $spec
   args
 
-def container_network_args networks
-  let args = []
+def container_network_args networks @ Iterable[Str] -> Array[Str]
+  let args @ Array[Str] = []
   for network = networks
     args.push --network $network
   args
 
-def container_restart_args restart
+def container_restart_args restart @ (RestartSpec | nil) -> Array[Str]
   if (restart == nil)
     return []
   bind restart
     :policy
     :max_retries = nil
-  let policy = RESTART_POLICIES.get $policy else: do
+  let cli = RESTART_POLICIES.get $policy else: do
     throw ValueError "unsupported restart policy: $policy"
   if (max_retries != nil)
-    if (policy != "on-failure")
+    if (cli != "on-failure")
       throw ValueError "restart max_retries requires on-failure policy"
-    policy = "$policy:$max_retries"
-  ["--restart", policy]
+    cli = "$cli:$max_retries"
+  ["--restart", cli]
 
 def container_create_args
-  :name
-  :env
-  :mounts
-  :labels
-  :ports
-  :networks
-  :user
-  :cd
-  :entrypoint
-  :restart
-do
+  :name @ (Str | nil)
+  :env @ Env
+  :mounts @ Iterable[ContainerMount]
+  :labels @ BaseDict[Str | Sym, Value]
+  :ports @ Iterable[PortSpec]
+  :networks @ Iterable[Str]
+  :user @ (Str | nil)
+  :cd @ (Str | Path | nil)
+  :entrypoint @ (Str | nil)
+  :restart @ (RestartSpec | nil)
+do -> Array[Value]
   return $
     if (name != nil)
       --name $name
@@ -625,13 +732,13 @@ do
     ...(container_restart_args restart)
 
 def container_run_args
-  :name
-  :mounts
-  :labels
-  :ports
-  :networks
-  :user
-do
+  :name @ (Str | nil)
+  :mounts @ Iterable[ContainerMount]
+  :labels @ BaseDict[Str | Sym, Value]
+  :ports @ Iterable[PortSpec]
+  :networks @ Iterable[Str]
+  :user @ (Str | nil)
+do -> Array[Value]
   return $
     if (name != nil)
       --name $name
@@ -642,32 +749,22 @@ do
     if (user != nil)
       --user $user
 
-def normalize_save_format runtime format
-  let cli = SAVE_FORMATS.get $format else: do
-    throw "unsupported save format: $format"
-  if (runtime.id == :DOCKER: && cli != "docker-archive")
-    throw "docker only supports docker_archive for save"
-  let file = (cli == "docker-archive" || cli == "oci-archive")
-  let multi = (cli == "docker-archive")
-  record :cli :file :multi
+def normalize_platform platform @ (Platform | nil) -> (Str | nil)
+  match platform
+    nil do nil
+    Str(s) do s
+  else
+    bind platform
+      :os
+      :arch
+      :variant = nil
+    if variant
+      "$os/$arch/$variant"
+    else
+      "$os/$arch"
 
-def normalize_platform platform
-  if (platform == nil)
-    return nil
-  if (type platform Str)
-    return platform
-  let os = platform.get :os: default: nil
-  let arch = platform.get :arch: default: nil
-  let variant = platform.get :variant: default: nil
-  if !(os && arch)
-    throw "platform requires os and arch"
-  let platform = "$os/$arch"
-  if variant
-    platform = "$platform/$variant"
-  platform
-
-def output_lines output stderr
-  let lines = []
+def output_lines output@Str stderr@Iterable[Str] -> Array[Str]
+  let lines @ Array[Str] = []
   if output
     for line = output.split "\n"
       line = line.trim()
@@ -680,8 +777,8 @@ def output_lines output stderr
   lines
 
 # Merges captured stdout and stderr line arrays, trimming and dropping blanks.
-def merged_lines out err
-  let lines = []
+def merged_lines out@Array[Str] err@Array[Str] -> Array[Str]
+  let lines @ Array[Str] = []
   for stream = [out, err]
     for line = stream
       line = line.trim()
@@ -689,10 +786,10 @@ def merged_lines out err
         lines.push $line
   lines
 
-def matches_any haystack needles
+def matches_any haystack@Str needles@Array[Str] -> Bool
   needles.any do |needle| haystack.contains $needle
 
-def classify_image_error ref lines
+def classify_image_error ref@Str lines@Array[Str]
   for line = lines
     let upper = line.upper()
     if (matches_any upper INVALID_IMAGE_REFERENCE_ERRORS)
@@ -702,15 +799,15 @@ def classify_image_error ref lines
     if (matches_any upper NO_IMAGE_ERRORS)
       throw NoImageError $ref
 
-def classify_archive_error source lines
+def classify_archive_error source@(Str | Path) lines@Array[Str]
   for line = lines
     let upper = line.upper()
     if (matches_any upper INVALID_IMAGE_REFERENCE_ERRORS)
-      throw InvalidImageReferenceError $source
+      throw InvalidImageReferenceError $(str source)
     if (matches_any upper ARCHIVE_ERRORS)
       throw ArchiveError $source
 
-def classify_push_error ref lines
+def classify_push_error ref@Str lines@Array[Str]
   for line = lines
     let upper = line.upper()
     if (matches_any upper INVALID_IMAGE_REFERENCE_ERRORS)
@@ -720,7 +817,7 @@ def classify_push_error ref lines
     if (matches_any upper PUSH_NO_IMAGE_ERRORS)
       throw NoImageError $ref
 
-def classify_container_error ref lines
+def classify_container_error ref@Str lines@Array[Str]
   for line = lines
     let upper = line.upper()
     if (matches_any upper NO_CONTAINER_ERRORS)
@@ -734,78 +831,100 @@ def classify_container_error ref lines
 # reporting only the exit status, with everything the CLI actually said
 # discarded. Dump it before rethrowing, the same fallback `transfer` uses for
 # unrecognized unpacking errors.
-def report_unknown lines
+def report_unknown lines @ Array[Str]
   if lines.len
     echo $"\n".join(lines)
 
-def parse_container_ports ports
-  let mapped = []
-  for key bindings = ports
+def parse_container_ports ports @ DecodeValue -> Array[PortBinding]
+  let Dict(entries) = ports
+  else malformed Ports
+  let mapped @ Array[PortBinding] = []
+  for key bindings = entries
     let port proto = key.split "/" limit: 1
+    else malformed "port $key"
     let protocol = normalize_known $PORT_PROTOCOLS $proto
     let container_port = int $port
-    if (bindings == nil)
-      mapped.push $ PortBinding
-        :protocol
-        :container_port
-        host_ip: nil
-        host_port: nil
-    else
-      for binding = bindings
-        bind binding
-          "HostIp": host_ip = nil
-          "HostPort": host_port = nil
-          ...
+    match bindings
+      nil do
         mapped.push $ PortBinding
           :protocol
           :container_port
-          :host_ip
-          host_port: (host_port && int(host_port))
+          host_ip: nil
+          host_port: nil
+      Array(items) do
+        for binding = items
+          bind binding
+            Dict $
+              "HostIp": host_ip = nil
+              "HostPort": host_port = nil
+              ...
+          else malformed "port $key"
+          let host_port = optional_str HostPort $host_port
+          mapped.push $ PortBinding
+            :protocol
+            :container_port
+            host_ip: $optional_str("HostIp", host_ip)
+            host_port: $(host_port != nil && int(host_port) || nil)
+    else
+      malformed "port $key"
   mapped
 
-def parse_container_mounts mounts
-  let mapped = []
-  for mount = mounts
+def parse_container_mounts mounts @ DecodeValue -> Array[MountInfo]
+  let Array(items) = mounts
+  else malformed Mounts
+  let mapped @ Array[MountInfo] = []
+  for mount = items
     bind mount
-      "Type": type = nil
-      "Source": source = nil
-      "Destination": target = nil
-      "Mode": mode = nil
-      "RW": rw = true
-      "Propagation": propagation = nil
-      "Name": name = nil
-      ...
+      Dict $
+        "Type": type = nil
+        "Source": source = nil
+        "Destination": target = nil
+        "Mode": mode = nil
+        "RW": rw = true
+        "Propagation": propagation = nil
+        "Name": name = nil
+        ...
+    else malformed Mounts
+    let Bool(writable) = rw
+    else malformed RW
+    let type = optional_str Type $type
+    let source = optional_str Source $source
+    let target = optional_str Destination $target
     mapped.push $ MountInfo
-      type: (type && normalize_known(MOUNT_TYPES, type))
-      source: (source && Path source)
-      target: (target && Path target)
-      readonly: (!rw)
-      :mode
-      :propagation
-      :name
+      type: $(type != nil && normalize_known(MOUNT_TYPES, type) || nil)
+      source: $(source != nil && Path(source) || nil)
+      target: $(target != nil && Path(target) || nil)
+      readonly: (!writable)
+      mode: $optional_str("Mode", mode)
+      propagation: $optional_str("Propagation", propagation)
+      name: $optional_str("Name", name)
   mapped
 
 # Podman qualifies a locally built/tagged reference with a synthetic
 # `localhost/` registry that Docker never adds for the equivalent
 # unqualified name, so it is stripped for Podman to keep `repo` consistent
 # across backends.
-def parse_image_tags runtime repo_tags
+def parse_image_tags runtime@Runtime repo_tags@Array[Str] -> Array[ImageTag]
   let strip_localhost = (runtime.id == :PODMAN:)
-  Array $ repo_tags.map do |tag|
-    let repo tag = tag.split ":" limit: 1
+  let tags @ Array[ImageTag] = []
+  for ref = repo_tags
+    let repo tag = ref.split ":" limit: 1
+    else malformed "tag $ref"
     if (strip_localhost && repo.starts_with "localhost/")
       repo = repo.without_prefix "localhost/"
-    ImageTag :repo :tag
+    tags.push $ ImageTag :repo :tag
+  tags
 
 # The first object in what `inspect` printed
-def inspected output
-  let data = json.decode $output
-  if !(type data Array)
-    throw TypeError "inspect: expected an array"
-  data[0]
+def inspected output @ Str -> Dict[Str, DecodeValue]
+  let Array(items) = json.decode $output
+  else malformed output
+  let Dict(data) = items[0]
+  else malformed output
+  data
 
-def inspect_image runtime ref
-  let lines = []
+def inspect_image runtime@Runtime ref@Str -> Dict[Str, DecodeValue]
+  let lines @ Array[Str] = []
   let output = try
     sub do runtime.cli inspect --type image $ref stderr: $lines.prechomp()
   catch proc.Error: e
@@ -814,8 +933,8 @@ def inspect_image runtime ref
     throw e
   inspected $output
 
-def inspect_container runtime ref
-  let lines = []
+def inspect_container runtime@Runtime ref@Str -> Dict[Str, DecodeValue]
+  let lines @ Array[Str] = []
   let output = try
     sub do runtime.cli inspect --type container $ref stderr: $lines.prechomp()
   catch proc.Error: e
@@ -830,11 +949,12 @@ def inspect_container runtime ref
 #   image, from Docker and podman 4.x onward
 # - `Loaded image(s): ref,ref`, a single line listing every image, from
 #   podman 3.x
-def parse_loaded_refs output stderr
-  let refs = []
+def parse_loaded_refs output@Str stderr@Array[Str] -> Array[Str]
+  let refs @ Array[Str] = []
   for line = output_lines $output $stderr
     if (line.starts_with "Loaded image(s):")
       let _ rest = line.split ":" limit: 1
+      else continue
       for ref = rest.split ","
         refs.push $ref.trim()
     else if (
@@ -842,35 +962,76 @@ def parse_loaded_refs output stderr
       line.starts_with "Loaded image:"
     )
       let _ ref = line.split ":" limit: 1
+      else continue
       refs.push $ref.trim()
   refs
 
-def parse_pushed_digest output stderr
+def parse_pushed_digest output@Str stderr@Array[Str] -> (Str | nil)
   for line = output_lines $output $stderr
     let upper = line.upper()
     if (upper.contains "DIGEST:")
-      let rest = if (line.contains "digest:")
-        let _ rest = line.split "digest:" limit: 1
-        rest
-      else
-        let _ rest = line.split "Digest:" limit: 1
-        rest
-      let digest _ = rest.trim().split " " limit: 1
+      let separator = (line.contains("digest:") && "digest:" || "Digest:")
+      let _ rest = line.split $separator limit: 1
+      else continue
+      let digest ..._ = rest.trim().split " " limit: 1
+      else continue
       return digest
-  nil
 
+# Runs Docker or Podman.
 pub class Runtime
-  pub field id = nil
+  # Which runtime this is.
+  pub field id @ (:DOCKER: | :PODMAN:)
 
-  def (init) self id
+  field program @ proc.Program
+
+  def (init) self id @ (:DOCKER: | :PODMAN:)
+    self.#program = proc.run[PROGRAMS[id]]
     self.id = id
 
-  pub def cli self ...args
-    let _ = [self, args]
-    throw "Runtime.cli not implemented"
+  # Runs the CLI in a locale-independent environment, so that output this
+  # module parses back is not translated. The CLI reads `stdin`, and nothing
+  # without it.
+  @def cli
+    self
+    :stdin @ (Path | Str | Iterable[Value]) = nil
+    :stdout @ (Path | Str | Sinkable[Str])
+    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
+    *args @ Value
+  do
 
-  # Run CLI with output captured, printing it only on failure
-  pub def quiet_cli self ...args
+  @def cli
+    self
+    :stdin @ (Path | Str | Iterable[Value]) = nil
+    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
+    *args @ Value
+    >Sink[Str]
+  do
+
+  pub def cli
+    self
+    :stdin @ (Path | Str | Iterable[Value]) = nil
+    :stdout @ (Path | Str | Sinkable[Str]) = nil
+    :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = nil
+    *args @ Value
+    >Sink[Str]
+  do
+    let program = self.#program
+    let input = if (stdin == nil)
+      null
+    else
+      stdin
+    env LC_ALL: C LANG: C do
+      # Locals, since a test of what a block captures doesn't narrow it
+      let out = stdout
+      let err = stderr
+      program ...args stdin: $input
+        if (out != nil)
+          stdout: $out
+        if (err != nil)
+          stderr: $err
+
+  # Runs the CLI with output captured, printing it only on failure
+  pub def quiet_cli self *args @ Value
     let output = StrBuf()
     try
       self.cli ...args stdout: $output stderr: $output
@@ -879,13 +1040,21 @@ pub class Runtime
         print $output.freeze()
       throw e
 
-  pub def mount_uopt self
+  pub def mount_uopt self -> Str
     if (self.id == :PODMAN:)
       ",U"
     else
       ""
 
-  pub def with self ctr thunk :cd = nil :env = {} :pull = :MISSING:
+  pub def with[R, T]
+    self
+    ctr @ Str
+    thunk @ (() -> R)
+    :cd @ (Str | Path) = nil
+    :env @ Env = {}
+    :pull @ PullPolicy = :MISSING:
+    <Iter[T]
+  do -> R
     ensure_image $self $ctr $pull
     let ctr_subdir = Path /tmp/dolang-vfs-dir
     let ctr_socket = (ctr_subdir / "socket")
@@ -906,7 +1075,7 @@ pub class Runtime
       # The pipeline's first stage is only the agent bootstrap process, not
       # user command output, so capturing its stderr for classification
       # (rather than the pull chatter leaking to the real terminal) is safe.
-      let lines = []
+      let lines @ Array[Str] = []
       try
         pipeline
           do self.cli run --rm -i --pull=never
@@ -929,69 +1098,80 @@ pub class Runtime
         throw e
 
   def run_direct
-    self ctr cmd
-    :cd
-    :env
-    :argv
-    :pull
-    :name
-    :mounts
-    :labels
-    :ports
-    :networks
-    :user
-    :entrypoint
+    self
+    ctr @ Str
+    cmd @ Str
+    :cd @ (Str | Path | nil)
+    :env @ Env
+    :argv @ Tuple[...Value]
+    :pull @ PullPolicy
+    :name @ (Str | nil)
+    :mounts @ Iterable[ContainerMount]
+    :labels @ BaseDict[Str | Sym, Value]
+    :ports @ Iterable[PortSpec]
+    :networks @ Iterable[Str]
+    :user @ (Str | nil)
+    :entrypoint @ (Str | nil)
+    <Iter[Value]
+    >Sink[Str]
   do
     ensure_image $self $ctr $pull
     let executable = (entrypoint || cmd)
     let executable_args = if entrypoint
       [cmd, ...argv]
     else
-      argv
+      [...argv]
     let config_args = container_run_args
       :name :mounts :labels :ports :networks :user
     self.cli run --rm -i --pull=never
       ...config_args
       --entrypoint env $ctr ...(_vfs.env_args cd env)
       $executable ...executable_args
+      stdin: $strand.input()
 
   pub def run
-    self ctr cmd
-    :cd = nil
-    :env = {}
-    :pull = :MISSING:
-    :name = nil
-    :mounts = []
-    :labels = {}
-    :ports = []
-    :networks = []
-    :user = nil
-    :entrypoint = nil
-    *args
+    self
+    ctr @ Str
+    cmd @ Str
+    :cd @ (Str | Path) = nil
+    :env @ Env = {}
+    :pull @ PullPolicy = :MISSING:
+    :name @ Str = nil
+    :mounts @ Iterable[ContainerMount] = []
+    :labels @ BaseDict[Str | Sym, Value] = {}
+    :ports @ Iterable[PortSpec] = []
+    :networks @ Iterable[Str] = []
+    :user @ Str = nil
+    :entrypoint @ Str = nil
+    *args @ Value
+    <Iter[Value]
+    >Sink[Str]
   do
     self.#run_direct $ctr $cmd
       :cd :env :pull :name :mounts :labels :ports :networks :user :entrypoint
       argv: $args
 
   pub def create
-    self image cmd = nil
-    :name = nil
-    :env = {}
-    :mounts = []
-    :labels = {}
-    :ports = []
-    :networks = []
-    :user = nil
-    :cd = nil
-    :entrypoint = nil
-    :restart = nil
-    :pull = :MISSING:
-    *args
-  do
+    self
+    image @ Str
+    cmd @ (Str | nil) = nil
+    :name @ Str = nil
+    :env @ Env = {}
+    :mounts @ Iterable[ContainerMount] = []
+    :labels @ BaseDict[Str | Sym, Value] = {}
+    :ports @ Iterable[PortSpec] = []
+    :networks @ Iterable[Str] = []
+    :user @ Str = nil
+    :cd @ (Str | Path) = nil
+    :entrypoint @ Str = nil
+    :restart @ RestartSpec = nil
+    :pull @ PullPolicy = :MISSING:
+    *args @ Value
+  do -> Container
     ensure_image $self $image $pull
     let config_args = container_create_args
       :name :env :mounts :labels :ports :networks :user :cd :entrypoint :restart
-    let lines = []
+    let lines @ Array[Str] = []
     let output = try
       sub do self.cli create --pull=never
         ...config_args
@@ -1005,13 +1185,23 @@ pub class Runtime
       throw e
     self.container $output.trim()
 
-  pub def build self :pull = :MISSING: :mounts = [] :cd = nil :env = {} :from **args
+  pub def build[I, O]
+    self
+    :pull @ PullPolicy = :MISSING:
+    :mounts @ Iterable[BuildMount] = []
+    :cd @ (Str | Path) = nil
+    :env @ Env = {}
+    :from @ Str
+    **steps @ BuildSteps[I, O]
+    <I
+    >O
+  do -> Image
     with_temp_dir parent: $runtime_dir() do |subdir|
       subdir.update_metadata mode: 0o700
       let b = Builder $self $subdir $_vfs.bin() $mounts $cd $env
-      b.build $from :pull ...args
+      b.build $from :pull ...steps
 
-  pub def images self :all = false :filter = nil
+  pub def images self :all@Bool = false :filter@Str = nil -> Iterable[Image]
     stream do pipeline
       do self.cli images --no-trunc -q
         if (filter != nil)
@@ -1019,11 +1209,9 @@ pub class Runtime
         if all
           --all
       do each do |id|
-        id = (id @ Str).trim()
-        let data = inspected $ sub do self.cli inspect --type image $id
-        Image $self $data
+        self.image $id.trim()
 
-  pub def containers self :all = false :filter = nil
+  pub def containers self :all@Bool = false :filter@Str = nil -> Iterable[Container]
     stream do pipeline
       do self.cli ps --no-trunc -q
         if all
@@ -1031,54 +1219,68 @@ pub class Runtime
         if (filter != nil)
           --filter $filter
       do each do |id|
-        id = (id @ Str).trim()
-        let data = inspect_container $self $id
-        Container $self $data
+        self.container $id.trim()
 
-  pub def image self ref
+  pub def image self ref @ Str -> Image
     let data = inspect_image $self $ref
     Image $self $data
 
-  pub def container self ref
+  pub def container self ref @ Str -> Container
     let data = inspect_container $self $ref
     Container $self $data
 
-  pub def save self target :format = :DOCKER_ARCHIVE: :platform = nil *images
+  pub def save
+    self
+    target @ (Str | Path)
+    :format @ ArchiveFormat = :DOCKER_ARCHIVE:
+    :platform @ Platform = nil
+    *images @ Str
+  do -> (Str | Path)
     if (images.len == 0)
       throw "save: expected at least one image"
-    let :cli :file :multi = normalize_save_format $self $format
+    let cli = SAVE_FORMATS.get $format else: do
+      throw "unsupported save format: $format"
+    if (self.id == :DOCKER: && cli != "docker-archive")
+      throw "docker only supports docker_archive for save"
+    let file = (cli == "docker-archive" || cli == "oci-archive")
+    let multi = (cli == "docker-archive")
     if (!multi && images.len > 1)
       throw "save format does not support multiple images: $format"
-    let path_target = if file
-      nil
-    else
-      Path $target
     let platform = normalize_platform $platform
     let refs = [...images]
-    let lines = []
+    let lines @ Array[Str] = []
+    # Whatever the CLI prints when it doesn't write the archive there is only
+    # for classifying a failure
+    let out = if file
+      target
+    else
+      lines.prechomp()
     try
       self.cli save
         if (self.id == :PODMAN:)
           --format $cli
         if !file
-          --output $path_target
+          --output $Path(target)
         if (platform != nil)
           --platform $platform
         ...refs
-        if file
-          stdout: $target
+        stdout: $out
         stderr: $lines.prechomp()
     catch proc.Error: e
       classify_image_error $refs[0] $lines
-      classify_archive_error $(file && target || path_target) $lines
+      classify_archive_error $(file && target || Path(target)) $lines
       report_unknown $lines
       throw e
     target
 
-  pub def load self source :platform = nil
+  pub def load
+    self
+    source @ (Str | Path)
+    :platform @ Platform = nil
+  do -> Array[Image]
     let source = Path $source
     let platform = normalize_platform $platform
-    let lines = []
+    let lines @ Array[Str] = []
     let output = try
       sub do self.cli load
         --input $source
@@ -1092,8 +1294,8 @@ pub class Runtime
     let refs = parse_loaded_refs $output $lines
     if (refs.len == 0)
       throw ArchiveError $source
-    let loaded = []
-    let seen = Set()
+    let loaded @ Array[Image] = []
+    let seen @ Set[Str] = Set()
     for ref = refs
       let img = self.image $ref
       if !(seen.contains img.id)
@@ -1101,12 +1303,12 @@ pub class Runtime
         loaded.push $img
     loaded
 
-  pub def pull self ref :platform = nil
+  pub def pull self ref@Str :platform@Platform = nil -> Image
     if (self.id == :PODMAN:)
       ref = qualify_ref $ref
     let platform = normalize_platform $platform
-    let out = []
-    let lines = []
+    let out @ Array[Str] = []
+    let lines @ Array[Str] = []
     try
       self.cli pull --quiet
         if (platform != nil)
@@ -1126,9 +1328,9 @@ pub class Runtime
         return self.image $line
     self.image $ref
 
-  pub def push self ref :platform = nil
+  pub def push self ref@Str :platform@Platform = nil -> PushResult
     let platform = normalize_platform $platform
-    let lines = []
+    let lines @ Array[Str] = []
     let output = try
       sub do self.cli push
         if (platform != nil)
@@ -1142,24 +1344,28 @@ pub class Runtime
     let digest = parse_pushed_digest $output $lines
     PushResult :ref :digest
 
-pub def mount_args mounts
-  let args = []
+def mount_args mounts @ Iterable[BuildMount] -> Array[Str]
+  let args @ Array[Str] = []
   for m = mounts
     bind m
-      :type :target
+      :type
+      :target
       :id = nil
       :source = nil
-      :readonly = nil
+      :readonly = false
       :size = nil
-      :chown = nil
+      :chown = false
       :selinux = nil
-    type = BUILD_MOUNT_TYPES.get $type else: do
+    let kind = BUILD_MOUNT_TYPES.get $type else: do
       throw ValueError "unsupported mount type: $type"
-    if (type == "cache")
+    if (kind == "cache")
       # Emulate cache mount with bind mount for Docker
-      source = str $ cache_dir (id || target)
-      type = "bind"
-    if (type == "bind")
+      source = cache_dir $(id || str(target))
+      kind = "bind"
+    let label = match selinux
+      :SHARED: do "z"
+      :PRIVATE: do "Z"
+    if (kind == "bind")
       let parts = $
         if readonly
           - ro
@@ -1167,98 +1373,93 @@ pub def mount_args mounts
           - rw
         if chown
           - U
-        if (selinux == "shared")
-          - z
-        else if (selinux == "private")
-          - Z
+        if (label != nil)
+          - $label
       args.push -v $source:$target:$(",".join parts)
     else
       let parts = $
-        - type=$type
-        if target
-          - target=$target
-        if source
+        - type=$kind
+        - target=$target
+        if (source != nil)
           - source=$source
         if readonly
           - readonly
         else
           - rw
-        if size
+        if (size != nil)
           - size=$size
         if chown
           - chown=$chown
-        if (selinux == "shared")
-          - z
-        else if (selinux == "private")
-          - Z
+        if (label != nil)
+          - $label
       args.push --mount=$(",".join parts)
   args
 
-def container_mount_args mounts
-  let normalized = []
+def container_mount_args mounts @ Iterable[ContainerMount] -> Array[Str]
+  let checked @ Array[ContainerMount] = []
   for mount = mounts
     bind mount
-      :type :target
+      :type
       :source = nil
-      :readonly = false
+      ...
     if !(CONTAINER_MOUNT_TYPES.contains type)
       throw ValueError "unsupported container mount type: $type"
     if (type == :BIND: && source == nil)
       throw ValueError "bind mount requires source"
-    normalized.push $ record :type :target :source :readonly
-  mount_args $normalized
+    checked.push $mount
+  mount_args $checked
 
-def path_leaf path
+def path_leaf path @ Path -> Str
   let name = path.name
   if !name
     throw "path has no filename: $path"
   name
 
-def url_leaf url
+def url_leaf url @ Url -> Str
   let name = url.name
   if !name
     throw "source URL has no filename: $url"
   name
 
-def parse_source source
-  if (type source Str)
-    if (source.starts_with "http://" || source.starts_with "https://")
-      Url $source
-    else
-      Path $source
+def parse_source source @ (Str | Path | Url) -> (Path | Url)
+  match source
+    Str(s) do
+      if (s.starts_with "http://" || s.starts_with "https://")
+        Url $s
+      else
+        Path $s
   else
     source
 
 class Cache
-  field paths = {}
+  field paths @ Dict[Str, Path] = {}
 
-  pub def ensure self url
-    let payload = (transfer.get(url, app: "dolang-container"))
-    self.#paths[str(url)] = payload
-    payload
+  pub def ensure self url @ Url
+    self.#paths[str(url)] = transfer.get $url app: dolang-container
 
-  pub def path self url
-    let payload = (self.#paths.get(str(url)))
-    if (payload == nil)
+  pub def path self url @ Url -> Path
+    self.#paths.get $str(url) else: do
       throw "cache entry missing for URL: $url"
-    payload
 
 let cache = Cache()
 
-def prefetch_add_urls spec
-  let urls = Set()
-  for add = spec.values(:add:).filter(do |add| add.contains :source:)
-    let source = parse_source $add[:source:]
-    if (type source Url)
-      urls.add $source
+def prefetch_add_urls adds @ Array[AddSpec]
+  let urls @ Set[Url] = Set()
+  for add = adds
+    bind add
+      :source = nil
+      ...
+    if (source != nil)
+      let Url(url) = parse_source $source
+      else continue
+      urls.add $url
   strand.pool 4 $urls do |url| cache.ensure $url
 
-def patch_name p
+def patch_name p @ patch.Patch -> Str
   let kind = p.type
-  if (p.type == :CREATE:)
-    "create $(p.target)"
-  else if (p.type == :DELETE:)
-    "delete $(p.source)"
+  match kind
+    :CREATE: do "create $(p.target)"
+    :DELETE: do "delete $(p.source)"
   else
     let source = p.source
     let target = p.target
@@ -1268,21 +1469,29 @@ def patch_name p
       "$(str(kind).lower()): $source => $target"
 
 pub class Builder
-  field runtime = nil
-  field subdir = nil
-  field socket = nil
-  field ctr_subdir = nil
-  field ctr_socket = nil
-  field ctr_agent = nil
-  field bin = nil
-  field mounts = nil
-  field cd = nil
-  field env = nil
-  field agent = nil
-  field ctr_name = nil
-  field handle = nil
+  field runtime @ Runtime
+  field subdir @ Path
+  field socket @ Path
+  field ctr_subdir @ Path
+  field ctr_socket @ Path
+  field ctr_agent @ Path
+  field bin @ Path
+  field mounts @ Iterable[BuildMount]
+  field cd @ (Str | Path | nil)
+  field env @ Env
+  field agent @ (Vfs | nil) = nil
+  field ctr_name @ (Str | nil) = nil
+  field handle @ (strand.Stream[nil, Value, Value] | nil) = nil
 
-  def (init) self runtime subdir bin mounts cd env
+  def (init)
+    self
+    runtime @ Runtime
+    subdir @ Path
+    bin @ Path
+    mounts @ Iterable[BuildMount]
+    cd @ (Str | Path | nil)
+    env @ Env
+  do
     self.#runtime = runtime
     self.#subdir = subdir
     self.#bin = bin
@@ -1290,16 +1499,31 @@ pub class Builder
     self.#cd = cd
     self.#env = env
     self.#socket = (subdir / "socket")
-    self.#ctr_subdir = Path /tmp/dolang-vfs-dir
-    self.#ctr_socket = (self.#ctr_subdir / "socket")
+    let ctr_subdir = Path /tmp/dolang-vfs-dir
+    self.#ctr_subdir = ctr_subdir
+    self.#ctr_socket = (ctr_subdir / "socket")
     self.#ctr_agent = Path "/tmp/dolang-vfs"
+
+  # The connected agent
+  def live_agent self -> Vfs
+    let agent = self.#agent
+    if (agent == nil)
+      throw RuntimeError "build container is not connected"
+    agent
+
+  # The running container's name
+  def live_ctr_name self -> Str
+    let name = self.#ctr_name
+    if (name == nil)
+      throw RuntimeError "build container is not running"
+    name
 
   # Runs the container in the foreground under a background strand. The name
   # is generated because a foreground `run` prints no container ID, and the
   # commit steps need something to name the live container by. Callers are
   # responsible for ensuring `img` is present first (see `build`'s dedicated
   # pull step) -- `connect` never pulls.
-  def connect self img
+  def connect self img @ Str
     if self.#socket.exists()
       self.#socket.remove()
     let name = "dolang-vfs-$(rand.string 16)"
@@ -1310,12 +1534,14 @@ pub class Builder
     # proves it, and unlinks the socket once it has. A fresh key per container
     # falls out of `step_commit` reconnecting through here.
     let key = _vfs.key()
-    let lines = []
-    let handle = stream do self.#runtime.cli run -i --rm --name $name --pull=never
+    let lines @ Array[Str] = []
+    let runtime = self.#runtime
+    let uopt = runtime.mount_uopt()
+    let handle = stream do runtime.cli run -i --rm --name $name --pull=never
       ...mount_args(self.#mounts)
       --entrypoint env
-      -v $self.#subdir:$self.#ctr_subdir:rw,z$(self.#runtime.mount_uopt())
-      -v $self.#bin:$self.#ctr_agent:ro,z$(self.#runtime.mount_uopt())
+      -v $self.#subdir:$self.#ctr_subdir:rw,z$uopt
+      -v $self.#bin:$self.#ctr_agent:ro,z$uopt
       $img
       $self.#ctr_agent ...(_vfs.vfs_args self.#cd self.#env) --key-stdin --accept $self.#ctr_socket
       stdin: (_vfs.key_input key)
@@ -1345,16 +1571,18 @@ pub class Builder
     # Ending the session makes the agent exit, which exits the container, which
     # `--rm` then removes. If no session was ever established nothing will tell
     # the agent to exit, so force removal is the only way out.
-    if self.#agent
-      time.timeout 30 do self.#agent.stop()
+    let agent = self.#agent
+    let ctr_name = self.#ctr_name
+    if (agent != nil)
+      time.timeout 30 do agent.stop()
       self.#agent = nil
-    else if self.#ctr_name
+    else if (ctr_name != nil)
       try
-        self.#runtime.quiet_cli rm -f $self.#ctr_name
+        self.#runtime.quiet_cli rm -f $ctr_name
       catch proc.Error: _
         nil
-    if self.#handle
-      let handle = self.#handle
+    let handle = self.#handle
+    if (handle != nil)
       self.#handle = nil
       # This runs from `build`'s `finally`; a nonzero exit (which a forced
       # removal produces) must not displace the error being unwound.
@@ -1364,125 +1592,140 @@ pub class Builder
         nil
     self.#ctr_name = nil
 
-  def step_run self thunk
-      self.#agent.with $thunk
-
-  def resolve_target self target leaf
-    target = Path $target
-    self.#agent.with do
-      if (target.exists() && target.metadata().type == :DIR:)
-        (target / leaf)
+  def resolve_target self target@(Str | Path) leaf@Str -> Path
+    let path = Path $target
+    self.#live_agent().with do
+      if (path.exists() && path.metadata().type == :DIR:)
+        (path / leaf)
       else
-        target
+        path
 
-  def copy_to_target self target chmod copy_data
+  def copy_to_target
+    self
+    target @ Path
+    chmod @ (Int | Mode | nil)
+    copy_data @ (BinFile -> nil)
+  do
     let mode = _vfs.parse_mode $chmod
-    self.#agent.with do
-      target.parent.create_dir all: true
-      target.open wb do |dest|
-        copy_data $dest
+    self.#live_agent().with do
+      let dir = target.parent
+      if (dir != nil)
+        dir.create_dir all: true
+      target.open wb do |dest| copy_data $dest
       if (mode != nil)
         target.update_metadata mode: $mode
 
-  def add_file self path target chmod
+  def add_file self path@Path target@Path chmod@(Int | Mode | nil)
     path.open rb do |src|
       self.#copy_to_target $target $chmod do |dest|
         while true
           let chunk = src.read $COPY_BLOCK_SIZE
           if (chunk.len == 0)
             break
-          dest.write $chunk
+          let _ = dest.write $chunk
 
-  def add_url self url target chmod
-    self.#add_file (cache.path url) $target $chmod
-
-  def add_content self content target chmod
+  def add_content self content@(Str | Bin) target@Path chmod@(Int | Mode | nil)
     self.#copy_to_target $target $chmod do |dest|
-      dest.write $content
+      let _ = dest.write $content
 
-  def step_add self spec
+  def step_add self spec @ AddSpec
     bind spec
       :target
       :source = nil
       :content = nil
       :chmod = nil
-    if ((source == nil) == (content == nil))
+    if (source != nil && content != nil)
       throw "add: expected exactly one of source or content"
-    source = parse_source $source
-
     if (content != nil)
       self.#add_content $content (Path target) $chmod
-    else if (type source Url)
-      target = self.#resolve_target $target (url_leaf source)
-      self.#add_url $source $target $chmod
-    else if (type source Path)
-      target = self.#resolve_target $target (path_leaf source)
-      self.#add_file $source $target $chmod
+    else if (source != nil)
+      match parse_source(source)
+        Url(url) do
+          let path = self.#resolve_target $target (url_leaf url)
+          self.#add_file (cache.path url) $path $chmod
+        Path(source) do
+          let path = self.#resolve_target $target (path_leaf source)
+          self.#add_file $source $path $chmod
     else
-      throw "source: expected Str, Path, or Url"
+      throw "add: expected exactly one of source or content"
 
-  def step_patch self spec
+  def step_patch self spec @ PatchSpec
     bind spec
       :source = nil
       :content = nil
-    if ((source == nil) == (content == nil))
+    if (source != nil && content != nil)
       throw "patch: expected exactly one of source or content"
-
     let patch_data = if (content != nil)
       content
-    else
+    else if (source != nil)
       (Path source).read b
+    else
+      throw "patch: expected exactly one of source or content"
 
-    progress.steps message: patch
+    let _ = progress.steps message: patch
       for p = patch.decode $patch_data
         - name: (patch_name p)
-          do
-            let kind = p.type
-            if (kind == :CREATE:)
-              let target = p.target
-              let result = p.apply b""
-              self.#add_content $result $target nil
-            else if (kind == :DELETE:)
-              let source = p.source
-              self.#agent.with do
-                let result = p.apply (source.read "b")
-                if (result.len != 0)
-                  throw "delete patch did not produce empty output: $source"
-                p.source.remove()
-            else if (kind == :MODIFY: || kind == :MOVE: || kind == :COPY:)
-              self.#agent.with do
-                let result = p.apply (p.source.read "b")
-                self.#add_content $result $p.target nil
-                if (kind == :MOVE: && p.source != p.target)
-                  p.source.remove()
+          do self.#apply_patch $p
 
-  def step_commit self msg
-    progress.show message: "commit" do |_|
+  def apply_patch self p @ patch.Patch
+    let kind = p.type
+    if (kind == :CREATE:)
+      self.#add_content $p.apply(b"") $p.target nil
+    else if (kind == :DELETE:)
+      let source = p.source
+      self.#live_agent().with do
+        let result = p.apply (source.read "b")
+        if (result.len != 0)
+          throw "delete patch did not produce empty output: $source"
+        source.remove()
+    else
+      self.#live_agent().with do
+        let result = p.apply (p.source.read "b")
+        self.#add_content $result $p.target nil
+        if (kind == :MOVE: && p.source != p.target)
+          p.source.remove()
+
+  def step_commit self msg @ Str
+    progress.show message: commit do |_|
       let img_id = sub do self.#runtime.cli commit
         if msg
           --message $msg
-        $self.#ctr_name
+        $self.#live_ctr_name()
       self.#cleanup()
       self.#connect $img_id
 
-  def finish_image self tags
-    let img_id = progress.show message: "commit" do |_|
-      sub do self.#runtime.cli commit $self.#ctr_name
+  def step[I, O] self entry @ Entries[BuildSteps[I, O]] <I >O
+    match entry
+      (:run: func) do self.#live_agent().with $func
+      (:add: spec) do self.#step_add $spec
+      (:patch: spec) do self.#step_patch $spec
+      (:commit: msg) do self.#step_commit $msg
+      (:tag: _) do nil
+
+  def finish_image self tags @ Array[Str] -> Image
+    let runtime = self.#runtime
+    let ctr_name = self.#live_ctr_name()
+    let img_id = progress.show message: commit do |_|
+      sub do runtime.cli commit $ctr_name
     progress.show message: tag do |_|
       for tag = tags
-        self.#runtime.quiet_cli tag $img_id $tag
-    self.#runtime.image $img_id
+        runtime.quiet_cli tag $img_id $tag
+    runtime.image $img_id
 
-  pub def build self from :pull = :MISSING: **args
-    let spec = {...args}
-    let tags = [...spec.values :tag:]
-    spec.delete :tag:
-    let steps = $
-      run: $self.#step_run
-      add: $self.#step_add
-      patch: $self.#step_patch
-      commit: $self.#step_commit
-
+  pub def build[I, O]
+    self
+    from @ Str
+    :pull @ PullPolicy = :MISSING:
+    **steps @ BuildSteps[I, O]
+    <I
+    >O
+  do -> Image
+    let tags @ Array[Str] = []
+    let adds @ Array[AddSpec] = []
+    for entry = steps
+      match entry
+        (:tag: tag) do tags.push $tag
+        (:add: spec) do adds.push $spec
     let message = if tags.len
       tags[0]
     else
@@ -1490,17 +1733,14 @@ pub class Builder
 
     try
       progress.steps :message icon: 🔨
-        do prefetch_add_urls $spec
+        do prefetch_add_urls $adds
         do progress.show message: "pulling image" do |_|
           ensure_image $self.#runtime $from $pull
         do progress.show message: "starting container" do |_|
           self.#connect $from
-        for key value = spec
-          do
-            let step = steps.get $key else: do throw "unrecognized step: $key: $value"
-            step $value
-        do
-          return self.#finish_image $tags
+        for entry = steps
+          do self.#step $entry
+      self.#finish_image $tags
     finally
       progress.show message: "stopping container" icon: 🧹 do |_|
         self.#cleanup()
@@ -1533,20 +1773,21 @@ pub class Image
   # Labels, or `nil` when the image has none.
   pub field labels @ (Dict[Str, Str] | nil) = nil
 
-  field runtime = nil
+  field runtime @ Runtime
 
-  def (init) self runtime data
+  def (init) self runtime@Runtime data@Dict[Str, DecodeValue]
     self.#runtime = runtime
 
     bind data
-      "Id": id
-      "Created": created
-      "Size": size
-      "Architecture": arch
-      "Os": os
-      "Config": config
-      "RootFS": root_fs
+      "Id": Str(id)
+      "Created": Str(created)
+      "Size": Int(size)
+      "Architecture": Str(arch)
+      "Os": Str(os)
+      "Config": Dict(config)
+      "RootFS": Dict(root_fs)
       ...
+    else malformed image
 
     # Podman's inspect reports a bare hex digest; Docker's is always
     # `sha256:`-prefixed. Normalized here so `id` has one consistent format
@@ -1560,31 +1801,42 @@ pub class Image
     self.size = size
     self.architecture = arch
     self.os = os
-    self.layers = root_fs.get "Layers" default: []
+    bind root_fs
+      "Layers": layers @ DecodeValue = []
+      ...
+    self.layers = strings Layers $layers
 
     bind config
-      "Labels": labels = {}
+      "Labels": labels @ DecodeValue = {}
       "Cmd": cmd = nil
       "Entrypoint": entrypoint = nil
-      "Env": env = []
+      "Env": env @ DecodeValue = []
       "WorkingDir": working_dir = nil
       "User": user = nil
       ...
 
-    self.labels = labels
-    self.cmd = normalize_argv $cmd
-    self.entrypoint = normalize_argv $entrypoint
-    self.working_dir = (working_dir && Path working_dir)
-    self.user = user
-    self.env = Dict $ env.map do |e| e.split "=" limit: 1
+    self.labels = string_dict Labels $labels
+    self.cmd = normalize_argv Cmd $cmd
+    self.entrypoint = normalize_argv Entrypoint $entrypoint
+    let working_dir = optional_str WorkingDir $working_dir
+    self.working_dir = (working_dir != nil && Path(working_dir) || nil)
+    self.user = optional_str User $user
+    let vars @ Dict[Str, Str] = {}
+    for var = strings Env $env
+      let key value = var.split "=" limit: 1
+      else malformed "Env $var"
+      vars[key] = value
+    self.env = vars
 
-  pub def (str) self
+  pub def (str) self -> Str
     self.id
 
   # Returns the current tags, which are empty for an untagged image.
   pub def tags self -> Array[ImageTag]
-    let data = inspect_image $self.#runtime $self.id
-    parse_image_tags $self.#runtime (data.get "RepoTags"  default: [])
+    bind inspect_image(self.#runtime, self.id)
+      "RepoTags": tags @ DecodeValue = []
+      ...
+    parse_image_tags $self.#runtime $strings("RepoTags", tags)
 
   # Tags the image with a new name.
   #
@@ -1596,8 +1848,7 @@ pub class Image
     # Reference to tag the image as.
     new_tag @ Str
   do
-    let ref = str $self
-    self.#runtime.quiet_cli tag $ref $new_tag
+    self.#runtime.quiet_cli tag $self.id $new_tag
 
   # Removes the image.
   #
@@ -1638,7 +1889,9 @@ pub class Image
     # Platform to save.
     :platform @ Platform = nil
   do -> (Str | Path)
-    self.#runtime.save $target :format :platform $self.id
+    self.#runtime.save $target :format $self.id
+      if (platform != nil)
+        platform: $platform
 
 # A running or stopped container.
 pub class Container
@@ -1657,34 +1910,37 @@ pub class Container
   # Labels, or `nil` when the container has none.
   pub field labels @ (Dict[Str, Str] | nil) = nil
 
-  field runtime = nil
+  field runtime @ Runtime
 
-  def (init) self runtime data
+  def (init) self runtime@Runtime data@Dict[Str, DecodeValue]
     self.#runtime = runtime
 
     bind data
-      "Id": id
+      "Id": Str(id)
       "Created": created = nil
       "Image": image_id = nil
-      "Config": config = {}
+      "Config": config @ DecodeValue = {}
       ...
+    else malformed container
+    let Dict(config) = config
+    else malformed Config
 
     bind config
       "Image": image = nil
       "Cmd": cmd = nil
       "Entrypoint": entrypoint = nil
-      "Labels": labels = {}
+      "Labels": labels @ DecodeValue = {}
       ...
 
     self.id = id
-    self.image = image
-    self.image_id = image_id
-    self.created = created
-    self.cmd = normalize_argv $cmd
-    self.entrypoint = normalize_argv $entrypoint
-    self.labels = labels
+    self.image = optional_str Image $image
+    self.image_id = optional_str Image $image_id
+    self.created = optional_str Created $created
+    self.cmd = normalize_argv Cmd $cmd
+    self.entrypoint = normalize_argv Entrypoint $entrypoint
+    self.labels = string_dict Labels $labels
 
-  pub def (str) self
+  pub def (str) self -> Str
     self.id
 
   # Runs `func` in this running container through a VFS context.
@@ -1702,12 +1958,15 @@ pub class Container
     # Environment overrides. `nil` unsets a variable.
     :env @ Env = {}
   do -> R
+    let runtime = self.#runtime
+    let id = self.id
     with_temp_dir parent: $runtime_dir() do |subdir|
       let ctr_agent = Path "/tmp/dolang-vfs-$(subdir.name)"
-      self.#runtime.cli cp $(_vfs.bin()) "$(self.id):$ctr_agent"
+      runtime.quiet_cli cp $(_vfs.bin()) "$id:$ctr_agent"
 
-      let vfs = Vfs do self.#runtime.cli exec -i $self.id $ctr_agent
+      let vfs = Vfs do runtime.cli exec -i $id $ctr_agent
         ...(_vfs.vfs_args cd env) --stdio
+        stdin: $strand.input()
       try
         return vfs.with do
           try
@@ -1721,24 +1980,33 @@ pub class Container
   # Returns the container's live state.
   pub def state self -> ContainerState
     let data = inspect_container $self.#runtime $self.id
-    let name = data.get "Name"
-    let state = data.get "State" default: {}
-    let mounts = data.get "Mounts" default: []
-    let network = data.get "NetworkSettings" default: {}
-    let status = state.get "Status" default: nil
+    bind data
+      "Name": name = nil
+      "State": state @ DecodeValue = {}
+      "Mounts": mounts @ DecodeValue = []
+      "NetworkSettings": network @ DecodeValue = {}
+      ...
+    let Dict(state) = state
+    else malformed State
+    let Dict(network) = network
+    else malformed NetworkSettings
+    bind network
+      "Ports": ports @ DecodeValue = {}
+      ...
+    let status = optional_str Status $state.get("Status", default: nil)
+    let name = optional_str Name $name
     let live_name = if (name == nil)
       nil
     else if (name.starts_with "/")
-      let _ trimmed = name.split "/" limit: 1
-      trimmed
+      name.without_prefix "/"
     else
       name
-    let live_state = (status && normalize_known(CONTAINER_STATES, status) || nil)
+    let live_state = (status != nil && normalize_known(CONTAINER_STATES, status) || nil)
     ContainerState
       name: $live_name
       state: $live_state
       :status
-      ports: $parse_container_ports(network.get("Ports", default: {}))
+      ports: $parse_container_ports(ports)
       mounts: $parse_container_mounts(mounts)
 
   # Stops the container.
@@ -1763,7 +2031,7 @@ pub class Container
   # [`ContainerExitError`](_container.dockman.ContainerExitError) for a nonzero
   # exit status.
   pub def wait self
-    let lines = []
+    let lines @ Array[Str] = []
     let output = try
       sub do self.#runtime.cli wait $self.id stderr: $lines.prechomp()
     catch proc.Error: e
@@ -1797,9 +2065,9 @@ pub class Container
     # Also remove its anonymous volumes.
     :volumes @ Bool = false
   do
-    let lines = []
+    let lines @ Array[Str] = []
     try
-      sub do self.#runtime.cli rm
+      let _ = sub do self.#runtime.cli rm
         if force
           --force
         if volumes

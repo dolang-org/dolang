@@ -2,10 +2,11 @@
 import
   fs:
    - Path
+  security.unix: unix
   xdg
 
-pub def runtime_dir <Iter[Value] -> Path
-  (xdg.runtime_dir() || Path "/run/user/$(sub do run "id" "-u")")
+pub def runtime_dir() -> Path
+  (xdg.runtime_dir() || Path "/run/user/$(unix.id().euid)")
 
 pub def cache_home() -> Path
   xdg.cache_home()

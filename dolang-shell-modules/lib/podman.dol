@@ -1,7 +1,7 @@
+# dolang: strict
 # Runs and manages Podman containers and images.
 
 import
-  proc
   fs:
     - @Path
   _container.dockman: dockman
@@ -23,6 +23,7 @@ pub import _container.dockman:
   - @AddSpec
   - @ArchiveFormat
   - @BuildMount
+  - @BuildSteps
   - @ContainerMount
   - @ContainerStatus
   - @Env
@@ -33,16 +34,7 @@ pub import _container.dockman:
   - @PullPolicy
   - @RestartSpec
 
-let podman_cli = proc.run["podman"]
-
-class PodmanRuntime: dockman.Runtime
-  def (init) self
-    dockman.Runtime.(init) $self :PODMAN:
-
-  pub def cli _self ...args
-    env LC_ALL: C LANG: C do podman_cli ...args
-
-let podman = PodmanRuntime()
+let podman = dockman.Runtime :PODMAN:
 
 # Runs a command in a temporary Podman container.
 pub def run
@@ -71,10 +63,19 @@ pub def run
   # Entrypoint override.
   :entrypoint @ Str = nil
   # Arguments passed to `cmd`.
-  *args
-do -> nil
-  podman.run $image $cmd :cd :env :pull :name :mounts :labels :ports :networks
-    :user :entrypoint ...args
+  *args @ Value
+  <Iter[Value]
+  >Sink[Str]
+do
+  podman.run $image $cmd :env :pull :mounts :labels :ports :networks ...args
+    if (cd != nil)
+      :cd
+    if (name != nil)
+      :name
+    if (user != nil)
+      :user
+    if (entrypoint != nil)
+      :entrypoint
 
 # Creates a stopped Podman container, in the `:CREATED:` state.
 pub def create
@@ -105,16 +106,25 @@ pub def create
   # Restart policy.
   :restart @ RestartSpec = nil
   # Arguments passed to `cmd`.
-  *args
+  *args @ Value
 do -> Container
-  podman.create $image $cmd :cd :env :pull :name :mounts :labels :ports
-    :networks :user :entrypoint :restart ...args
+  podman.create $image $cmd :env :pull :mounts :labels :ports :networks ...args
+    if (cd != nil)
+      :cd
+    if (name != nil)
+      :name
+    if (user != nil)
+      :user
+    if (entrypoint != nil)
+      :entrypoint
+    if (restart != nil)
+      :restart
 
 # Runs a function in a temporary Podman container.
 #
 # Program execution and filesystem access are redirected for the duration of
 # the function.
-pub def with[R]
+pub def with[R, T]
   # Image name or ID.
   image @ Str
   # Function to run.
@@ -125,8 +135,11 @@ pub def with[R]
   :env @ Env = {}
   # Image pull policy.
   :pull @ PullPolicy = :MISSING:
+  <Iter[T]
 do -> R
-  podman.with $image $func :cd :env :pull
+  podman.with $image $func :env :pull
+    if (cd != nil)
+      :cd
 
 # Builds a Podman image.
 #
@@ -139,7 +152,7 @@ do -> R
 #   tag: my-image
 # assert_eq $img.tags()[0].tag my-image
 # ```
-pub def build
+pub def build[I, O]
   # Image pull policy for the base image.
   :pull @ PullPolicy = :MISSING:
   # Mounts available to every build step.
@@ -151,17 +164,13 @@ pub def build
   # Base image.
   :from @ Str
   # Build steps and tags, in order, as keyword arguments. Keys may repeat.
-  #
-  # | Key      | Value                        | Meaning                              |
-  # | -------- | ---------------------------- | ------------------------------------ |
-  # | `tag`    | `Str`                        | Apply an output image tag            |
-  # | `run`    | `() -> Value`                | Run a function inside the container  |
-  # | `add`    | [`AddSpec`](podman.AddSpec)     | Add a file to the image              |
-  # | `patch`  | [`PatchSpec`](podman.PatchSpec) | Apply a patch inside the image       |
-  # | `commit` | `Str`                        | Commit a layer with a message        |
-  **steps
+  **steps @ BuildSteps[I, O]
+  <I
+  >O
 do -> Image
-  podman.build :pull :mounts :cd :env :from ...steps
+  podman.build :pull :mounts :env :from ...steps
+    if (cd != nil)
+      :cd
 
 # Lists images, one per repository and tag.
 pub def images
@@ -170,7 +179,9 @@ pub def images
   # Filter expression, such as `"reference=myapp*"`.
   :filter @ Str = nil
 do -> Iterable[Image]
-  podman.images :all :filter
+  podman.images :all
+    if (filter != nil)
+      :filter
 
 # Gets an image by reference.
 pub def image
@@ -186,7 +197,9 @@ pub def containers
   # Filter expression, such as `"name=myapp*"`.
   :filter @ Str = nil
 do -> Iterable[Container]
-  podman.containers :all :filter
+  podman.containers :all
+    if (filter != nil)
+      :filter
 
 # Gets a container by ID or name.
 pub def container
@@ -206,7 +219,9 @@ pub def save
   # Image references to save. Only `:DOCKER_ARCHIVE:` holds more than one.
   *images @ Str
 do -> (Str | Path)
-  podman.save $target :format :platform ...images
+  podman.save $target :format ...images
+    if (platform != nil)
+      :platform
 
 # Loads images from an archive.
 pub def load
@@ -215,7 +230,9 @@ pub def load
   # Platform to load.
   :platform @ Platform = nil
 do -> Array[Image]
-  podman.load $source :platform
+  podman.load $source
+    if (platform != nil)
+      :platform
 
 # Pulls an image from a registry.
 pub def pull
@@ -224,7 +241,9 @@ pub def pull
   # Platform to pull.
   :platform @ Platform = nil
 do -> Image
-  podman.pull $ref :platform
+  podman.pull $ref
+    if (platform != nil)
+      :platform
 
 # Pushes an image to a registry.
 pub def push
@@ -233,4 +252,6 @@ pub def push
   # Platform to push.
   :platform @ Platform = nil
 do -> PushResult
-  podman.push $ref :platform
+  podman.push $ref
+    if (platform != nil)
+      :platform
