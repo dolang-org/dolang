@@ -7,7 +7,7 @@ use std::{
 
 use quick_xml::{
     NsReader, Writer, XmlVersion,
-    escape::{escape, resolve_predefined_entity},
+    escape::{resolve_predefined_entity, unescape},
     events::{BytesEnd, BytesStart, BytesText, Event},
     name::{PrefixDeclaration, ResolveResult},
 };
@@ -105,13 +105,19 @@ fn bytes_string<'v, 's>(strand: &mut Strand<'v, 's>, bytes: &[u8]) -> Result<'v,
     Ok(str::from_utf8(bytes).into_do(strand)?.to_owned())
 }
 
+/// Decodes a namespace URI; the resolver yields it still escaped.
+fn namespace_string<'v, 's>(strand: &mut Strand<'v, 's>, bytes: &[u8]) -> Result<'v, 's, String> {
+    let raw = str::from_utf8(bytes).into_do(strand)?;
+    Ok(unescape(raw).into_do(strand)?.into_owned())
+}
+
 fn resolved_namespace<'v, 's>(
     strand: &mut Strand<'v, 's>,
     resolved: ResolveResult<'_>,
 ) -> Result<'v, 's, Option<String>> {
     match resolved {
         ResolveResult::Unbound => Ok(None),
-        ResolveResult::Bound(namespace) => bytes_string(strand, namespace.as_ref()).map(Some),
+        ResolveResult::Bound(namespace) => namespace_string(strand, namespace.as_ref()).map(Some),
         ResolveResult::Unknown(prefix) => Err(Error::value(
             strand,
             format!(
@@ -169,7 +175,7 @@ fn parse_start<'v, 's>(
             PrefixDeclaration::Default => String::new(),
             PrefixDeclaration::Named(prefix) => bytes_string(strand, prefix)?,
         };
-        namespaces.push((prefix, bytes_string(strand, namespace.as_ref())?));
+        namespaces.push((prefix, namespace_string(strand, namespace.as_ref())?));
     }
     Ok(ParsedElement {
         name,
@@ -208,26 +214,17 @@ fn create_parsed_node<'v, 's>(
         })
 }
 
-fn append_text<'v, 's>(
+fn flush_text<'v, 's>(
     strand: &mut Strand<'v, 's>,
     children: &Array<'v, '_>,
-    scratch: &mut Slot<'v, '_>,
-    text: &str,
+    text: &mut String,
 ) -> Result<'v, 's, ()> {
     if text.is_empty() {
         return Ok(());
     }
-    let len = children.len(strand)?;
-    if len > 0 {
-        children.get(strand, len - 1, Slot::reborrow(scratch))?;
-        if let Some(previous) = scratch.as_str(strand) {
-            let mut combined = previous.to_string();
-            combined.push_str(text);
-            children.set(strand, len - 1, combined.as_str())?;
-            return Ok(());
-        }
-    }
-    children.push(strand, text)
+    children.push(strand, text.as_str())?;
+    text.clear();
+    Ok(())
 }
 
 fn parse_element<'v, 's>(
@@ -246,42 +243,39 @@ fn parse_element<'v, 's>(
             .enter_sync(strand, |strand, node| {
                 let borrow = node.borrow(strand)?;
                 let children = Ref::slot::<CHILDREN>(&borrow).as_array(strand).unwrap();
+                // Adjacent text, CDATA, and references coalesce into one child.
+                let mut text = String::new();
                 loop {
                     match reader.read_event().into_do(strand)? {
                         Event::Start(start) => {
+                            flush_text(strand, &children, &mut text)?;
                             let start = start.into_owned();
                             parse_element(strand, reader, &start, state, &mut child)?;
                             children.push(strand, &mut child)?;
                         }
                         Event::Empty(start) => {
+                            flush_text(strand, &children, &mut text)?;
                             let start = start.into_owned();
                             create_parsed_node(strand, reader, &start, state, &mut child)?;
                             children.push(strand, &mut child)?;
                         }
-                        Event::Text(text) => {
-                            let text = text
-                                .xml_content(XmlVersion::Implicit1_0)
-                                .into_do(strand)?
-                                .into_owned();
-                            append_text(strand, &children, &mut child, &text)?;
+                        Event::Text(content) => {
+                            text.push_str(
+                                &content
+                                    .xml_content(XmlVersion::Implicit1_0)
+                                    .into_do(strand)?,
+                            );
                         }
-                        Event::CData(text) => {
-                            let text = bytes_string(strand, text.as_ref())?;
-                            append_text(strand, &children, &mut child, &text)?;
+                        Event::CData(content) => {
+                            text.push_str(str::from_utf8(content.as_ref()).into_do(strand)?);
                         }
                         Event::GeneralRef(reference) => {
                             if let Some(character) = reference.resolve_char_ref().into_do(strand)? {
-                                let mut buffer = [0; 4];
-                                append_text(
-                                    strand,
-                                    &children,
-                                    &mut child,
-                                    character.encode_utf8(&mut buffer),
-                                )?;
+                                text.push(character);
                             } else {
                                 let decoded = reference.decode().into_do(strand)?;
-                                if let Some(text) = resolve_predefined_entity(&decoded) {
-                                    append_text(strand, &children, &mut child, text)?;
+                                if let Some(resolved) = resolve_predefined_entity(&decoded) {
+                                    text.push_str(resolved);
                                 } else {
                                     return Err(Error::value(
                                         strand,
@@ -290,7 +284,10 @@ fn parse_element<'v, 's>(
                                 }
                             }
                         }
-                        Event::End(_) => break,
+                        Event::End(_) => {
+                            flush_text(strand, &children, &mut text)?;
+                            break;
+                        }
                         Event::Eof => {
                             return Err(Error::value(strand, "unexpected end of XML document"));
                         }
@@ -691,16 +688,17 @@ fn walk_value<'v, 's>(
                     } else {
                         format!("xmlns:{prefix}")
                     };
-                    (key, escape(namespace).into_owned())
+                    (key, namespace.as_str())
                 })
                 .collect::<Vec<_>>();
             output_attrs.extend(
                 emitted_attrs
                     .iter()
-                    .map(|(key, value)| (key.clone(), escape(value).into_owned())),
+                    .map(|(key, value)| (key.clone(), value.as_str())),
             );
+            // `push_attribute` escapes the value.
             for (key, value) in &output_attrs {
-                start.push_attribute((key.as_str(), value.as_str()));
+                start.push_attribute((key.as_str(), *value));
             }
             writer.write_event(Event::Start(start)).into_do(strand)?;
         }
