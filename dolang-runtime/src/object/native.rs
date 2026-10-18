@@ -3306,6 +3306,19 @@ impl<'v, 'a> TypeBuilderInner<'v, 'a> {
             Member::method(Sym::well_known(sym::RSHL_METHOD)),
             Member::method(Sym::well_known(sym::SHR_METHOD)),
             Member::method(Sym::well_known(sym::RSHR_METHOD)),
+            // Their defaults raise or, for `(spread)`, use an entry, so a Do
+            // subclass delegating to a type that does not implement one fails
+            // as the class itself would. `(unpack)` is left out: its default
+            // reads only native getters, and would hide a Do subclass's fields.
+            Member::method(Sym::well_known(sym::CALL_METHOD)),
+            Member::method(Sym::well_known(sym::INDEX_METHOD)),
+            Member::method(Sym::well_known(sym::ASSIGN_METHOD)),
+            Member::method(Sym::well_known(sym::ITER_METHOD)),
+            Member::method(Sym::well_known(sym::NEXT_METHOD)),
+            Member::method(Sym::well_known(sym::SINK_METHOD)),
+            Member::method(Sym::well_known(sym::PUT_METHOD)),
+            Member::method(Sym::well_known(sym::SPREAD_METHOD)),
+            Member::method(Sym::well_known(sym::HASH_METHOD)),
         ];
         // Entries resolve local handlers and abstract supertypes by MRO,
         // including Value last when it was not named explicitly. An entry's
