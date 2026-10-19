@@ -1445,15 +1445,39 @@ impl Solver<'_> {
                 }
             }
         }
-        for (i, y) in literals.iter().enumerate() {
-            for other in &literals[..i] {
-                if self.same(y.key, other.key)? {
-                    return Err(Residual::Unsupported("two literal keys that are the same").into());
+        // The literals of each key, in order
+        let mut chains: Vec<Vec<&KeyedAtom>> = Vec::new();
+        for &y in &literals {
+            let mut found = None;
+            for (index, chain) in chains.iter().enumerate() {
+                if self.same(chain[0].key, y.key)? {
+                    found = Some(index);
+                    break;
                 }
+            }
+            match found {
+                Some(index) => chains[index].push(y),
+                None => chains.push(vec![y]),
             }
         }
         let mut claimed = vec![false; xs.len()];
-        for y in &literals {
+        for chain in &chains {
+            let y = match chain[..] {
+                [y] => y,
+                _ => {
+                    self.chain(
+                        xs,
+                        chain,
+                        &domains,
+                        open_actual,
+                        open_expected,
+                        overflow.is_some(),
+                        &mut claimed,
+                        obligation,
+                    )?;
+                    continue;
+                }
+            };
             // The actual atoms with items of the key, in order, each with the
             // fewest and most items of the key before it
             let mut contributing = Vec::new();
@@ -1552,6 +1576,84 @@ impl Solver<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Relate the items of a key that several expected literals share. They fill
+    /// the literals in order, as positional items do, and then a repeated domain
+    /// beside them that admits the key.
+    #[allow(clippy::too_many_arguments)]
+    fn chain(
+        &self,
+        xs: &[KeyedAtom],
+        chain: &[&KeyedAtom],
+        domains: &[&KeyedAtom],
+        open_actual: bool,
+        open_expected: bool,
+        overflowing: bool,
+        claimed: &mut [bool],
+        obligation: ObligationId,
+    ) -> Result<(), Issue> {
+        // The dynamic schema's items of the key could come before any shown
+        if open_actual {
+            return Err(Residual::Alignment.into());
+        }
+        let key = chain[0].key;
+        let mut atoms = Vec::new();
+        for (i, x) in xs.iter().enumerate() {
+            let multiplicity = match self.literal(x.key)? {
+                true if self.same(x.key, key)? => {
+                    claimed[i] = true;
+                    x.multiplicity
+                }
+                false if self.admits(x.key, key)? => Multiplicity::Repeated,
+                _ => continue,
+            };
+            atoms.push(Atom {
+                multiplicity,
+                ty: x.value,
+                item: x.item,
+            });
+        }
+        let mut slots: Vec<Atom> = chain
+            .iter()
+            .map(|y| Atom {
+                multiplicity: y.multiplicity,
+                ty: y.value,
+                item: y.item,
+            })
+            .collect();
+        let item = chain.last().unwrap().item;
+        if chain
+            .iter()
+            .all(|y| y.multiplicity != Multiplicity::Repeated)
+        {
+            if open_expected {
+                slots.push(Atom {
+                    multiplicity: Multiplicity::Repeated,
+                    ty: self.closed(self.db.top()),
+                    item,
+                });
+            } else if !overflowing {
+                let mut absorbing = Vec::new();
+                for domain in domains {
+                    if domain.multiplicity == Multiplicity::Repeated
+                        && self.admits(domain.key, key)?
+                    {
+                        absorbing.push(domain);
+                    }
+                }
+                match absorbing[..] {
+                    [] => {}
+                    [domain] => slots.push(Atom {
+                        multiplicity: Multiplicity::Repeated,
+                        ty: domain.value,
+                        item: domain.item,
+                    }),
+                    _ => return Err(Residual::Alignment.into()),
+                }
+            }
+        }
+        self.align(&atoms, &slots, obligation)
     }
 
     /// Give an actual keyed atom to the expected domains that own its keys. Each
