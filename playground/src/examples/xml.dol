@@ -30,10 +30,10 @@ let memory = find memory
 echo "$(find("name")[0]): $(memory[0]) $(memory["unit"])"
 memory.children[0] = (str(int(memory[0]) * 2))
 
-# Namespaced attributes are keyed `{namespace}local`.
+# Namespaced attribute keys are `(namespace_uri, local_name)` tuples.
 let owner = find owner
-echo "owner: $(owner[0]), team: $(owner["{urn:example:app}team"])"
-owner["{urn:example:app}team"] = "storage"
+echo "owner: $(owner[0]), team: $(owner[("urn:example:app", "team")])"
+owner[("urn:example:app", "team")] = "storage"
 
 # `attrs` is a map of the attributes in document order.
 let disk = find disk
@@ -41,12 +41,12 @@ for name value = disk.attrs
   echo "disk $name = $value"
 (find "target").attrs.delete bus
 
-# Build a new element: a dict adds attributes, anything else is a child.
+# Build a new element with explicit attributes and positional children.
 let cdrom = xml.Node disk
-  $
+  attrs:
     type: file
     device: cdrom
-  - $ xml.Node source {file: "/images/install.iso"}
+  - $ xml.Node source attrs: {file: "/images/install.iso"}
   - $ xml.Node readonly
 
 # Text is stored as plain `Str` children, including indentation.

@@ -12,6 +12,7 @@ pub(crate) struct Global<'v> {
 }
 
 pub(crate) struct Syms<'v> {
+    pub(crate) attrs: Sym<'v, 'v>,
     pub(crate) namespace: Sym<'v, 'v>,
     pub(crate) namespaces: Sym<'v, 'v>,
 }
@@ -28,6 +29,7 @@ impl<'v> Global<'v> {
             node_type: builder.register_type::<Node>(),
             traverse_iter_type: builder.register_type::<TraverseIter>(),
             syms: Syms {
+                attrs: builder.sym("attrs"),
                 namespace: builder.sym("namespace"),
                 namespaces: builder.sym("namespaces"),
             },

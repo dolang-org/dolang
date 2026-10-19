@@ -25,8 +25,8 @@ let DRIVER_SUBPATHS = $
 let UNATTEND_NS = "urn:schemas-microsoft-com:unattend"
 let WCM_NS = "http://schemas.microsoft.com/WMIConfig/2002/State"
 
-# A child of an unattend element, or a dict of its attributes.
-@let UnattendItem = (xml.Node | Str | BaseDict[Sym | Str, Str])
+# A child of an unattend element.
+@let UnattendItem = (xml.Node | Str)
 
 # Every `<component>` in an unattend document carries the same assembly
 # identity; only `name` varies.
@@ -75,16 +75,20 @@ def provision_command() -> Str
 # Every element needs it named: `xml.encode` derives namespace declarations
 # per node rather than from parent pointers, so a child of a namespaced node
 # that does not carry one of its own is serialized into no namespace at all.
-def unattend_node tag @ Str *items @ UnattendItem -> xml.Node
-  xml.Node $tag namespace: $UNATTEND_NS ...items
+def unattend_node
+  tag @ Str
+  :attrs @ BaseDict[Sym | Str | (Str, Str), Str] = {}
+  *items @ UnattendItem
+do -> xml.Node
+  xml.Node $tag namespace: $UNATTEND_NS attrs: $attrs ...items
 
 # `wcm:action="add"`, which the schema requires on every member of a repeated
 # list — partitions, driver paths, accounts, commands.
-def wcm_add() -> Dict[Str, Str]
-  {"{$WCM_NS}action": "add"}
+def wcm_add() -> Dict[(Str, Str), Str]
+  {(WCM_NS, "action"): "add"}
 
 def unattend_component name @ Str *items @ UnattendItem -> xml.Node
-  xml.Node component namespace: $UNATTEND_NS $COMPONENT_ATTRS {name: name} ...items
+  xml.Node component namespace: $UNATTEND_NS attrs: {...COMPONENT_ATTRS, name: name} ...items
 
 # The `<InstallFrom>` selecting an edition off multi-edition media, or `nil`
 # to let Setup pick — which on retail media means stopping to ask.
@@ -93,7 +97,7 @@ def unattend_install_from edition @ (Str | nil) index @ (Int | nil) -> xml.Node
   let value = (edition != nil && edition || str(index))
   unattend_node InstallFrom
     $ unattend_node MetaData
-      $ wcm_add()
+      attrs: $wcm_add()
       $ unattend_node Key $key
       $ unattend_node Value $value
 
@@ -107,34 +111,34 @@ def unattend_disk_config() -> xml.Node
   unattend_node DiskConfiguration
     $ unattend_node WillShowUI "OnError"
     $ unattend_node Disk
-      $ wcm_add()
+      attrs: $wcm_add()
       $ unattend_node DiskID "0"
       $ unattend_node WillWipeDisk "true"
       $ unattend_node CreatePartitions
         $ unattend_node CreatePartition
-          $ wcm_add()
+          attrs: $wcm_add()
           $ unattend_node Order "1"
           $ unattend_node Type "EFI"
           $ unattend_node Size "260"
         $ unattend_node CreatePartition
-          $ wcm_add()
+          attrs: $wcm_add()
           $ unattend_node Order "2"
           $ unattend_node Type "MSR"
           $ unattend_node Size "16"
         $ unattend_node CreatePartition
-          $ wcm_add()
+          attrs: $wcm_add()
           $ unattend_node Order "3"
           $ unattend_node Type "Primary"
           $ unattend_node Extend "true"
       $ unattend_node ModifyPartitions
         $ unattend_node ModifyPartition
-          $ wcm_add()
+          attrs: $wcm_add()
           $ unattend_node Order "1"
           $ unattend_node PartitionID "1"
           $ unattend_node Label "System"
           $ unattend_node Format "FAT32"
         $ unattend_node ModifyPartition
-          $ wcm_add()
+          attrs: $wcm_add()
           $ unattend_node Order "2"
           $ unattend_node PartitionID "3"
           $ unattend_node Label "Windows"
@@ -154,8 +158,7 @@ def unattend_driver_paths() -> xml.Node
   for drive = PROVISION_DRIVES
     for subpath = DRIVER_SUBPATHS
       paths.push $ unattend_node PathAndCredentials
-        $ wcm_add()
-        $ {"{$WCM_NS}keyValue": str(order)}
+        attrs: {...wcm_add(), (WCM_NS, "keyValue"): str(order)}
         $ unattend_node Path "$drive:\\$subpath"
       order = (order + 1)
   unattend_component "Microsoft-Windows-PnpCustomizationsWinPE"
@@ -256,7 +259,7 @@ do -> Str
   let bootstrap = unattend_component "Microsoft-Windows-Deployment"
     $ unattend_node RunSynchronous
       $ unattend_node RunSynchronousCommand
-        $ wcm_add()
+        attrs: $wcm_add()
         $ unattend_node Order "1"
         $ unattend_node Description "dolang bootstrap"
         $ unattend_node Path $(bootstrap_command())
@@ -264,7 +267,7 @@ do -> Str
   let provision = unattend_component "Microsoft-Windows-Deployment"
     $ unattend_node RunSynchronous
       $ unattend_node RunSynchronousCommand
-        $ wcm_add()
+        attrs: $wcm_add()
         $ unattend_node Order "1"
         $ unattend_node Description "dolang provision"
         $ unattend_node Path $(provision_command())
@@ -275,20 +278,20 @@ do -> Str
   # `wcm` is declared once, on the root, rather than by each element using it.
   let document = xml.Node unattend namespace: $UNATTEND_NS namespaces: {wcm: WCM_NS}
     $ unattend_node settings
-      $ {pass: "windowsPE"}
+      attrs: {pass: "windowsPE"}
       $ locale_pe
       if drivers
         $ unattend_driver_paths()
       $ setup
     $ unattend_node settings
-      $ {pass: "specialize"}
+      attrs: {pass: "specialize"}
       $ locale
       $ shell_setup
       $ bootstrap
     $ unattend_node settings
-      $ {pass: "auditUser"}
+      attrs: {pass: "auditUser"}
       $ provision
     $ unattend_node settings
-      $ {pass: "oobeSystem"}
+      attrs: {pass: "oobeSystem"}
       $ reseal
   "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n$(xml.encode document)\n"

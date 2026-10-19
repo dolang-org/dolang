@@ -10,22 +10,6 @@ pub(crate) struct Name {
 }
 
 impl Name {
-    /// Splits Clark notation, `{namespace}local` or a bare `local`.
-    ///
-    /// The namespace ends at the last `}`, which a local name cannot contain.
-    pub(crate) fn from_clark(key: &str) -> Self {
-        match key.strip_prefix('{').and_then(|rest| rest.rsplit_once('}')) {
-            Some((namespace, local)) => Self {
-                local: local.to_owned(),
-                namespace: Some(namespace.to_owned()),
-            },
-            None => Self {
-                local: key.to_owned(),
-                namespace: None,
-            },
-        }
-    }
-
     pub(crate) fn clark(&self) -> String {
         match &self.namespace {
             Some(namespace) => format!("{{{namespace}}}{}", self.local),
@@ -72,18 +56,46 @@ pub(crate) fn key_string<'v, 's>(
     key.to_string(strand).map(Some)
 }
 
-/// Reads an attribute key in Clark notation.
+/// Reads a canonical attribute key, without validating XML names.
+pub(crate) fn attr_name<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    key: &Value<'v>,
+) -> Result<'v, 's, Option<Name>> {
+    if let Some(local) = key.as_str(strand) {
+        return Ok(Some(Name {
+            local: local.to_string(),
+            namespace: None,
+        }));
+    }
+    let Some(tuple) = key.as_tuple(strand) else {
+        return Ok(None);
+    };
+    if tuple.len() != 2 {
+        return Ok(None);
+    }
+    strand.with_slots_sync(|strand, [mut namespace, mut local]| {
+        tuple.get(strand, 0, &mut namespace)?;
+        tuple.get(strand, 1, &mut local)?;
+        let Some(namespace) = namespace.as_str(strand).map(|v| v.to_string()) else {
+            return Ok(None);
+        };
+        let Some(local) = local.as_str(strand).map(|v| v.to_string()) else {
+            return Ok(None);
+        };
+        Ok(Some(Name {
+            local,
+            namespace: Some(namespace),
+        }))
+    })
+}
+
+/// Requires a canonical attribute key.
 pub(crate) fn attr_key<'v, 's>(
     strand: &mut Strand<'v, 's>,
     key: &Value<'v>,
 ) -> Result<'v, 's, Name> {
-    match key_string(strand, key)? {
-        Some(key) => Ok(Name::from_clark(&key)),
-        None => Err(Error::type_error(
-            strand,
-            "attribute name: expected Str or Sym",
-        )),
-    }
+    attr_name(strand, key)?
+        .ok_or_else(|| Error::type_error(strand, "attribute name: expected Str or (Str, Str)"))
 }
 
 pub(crate) fn required_string<'v, 's>(

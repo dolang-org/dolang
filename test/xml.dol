@@ -6,7 +6,6 @@ import
     - test
   std:
     - TypeError
-    - UnexpectedKeyError
     - ValueError
   xml:
     - decode
@@ -134,7 +133,7 @@ def entity_references_are_expanded()
 
 #[test]
 def attribute_values_are_escaped_once()
-  let n = Node "a" {v: "x&y\"z<w"}
+  let n = Node "a" attrs: {v: "x&y\"z<w"}
   assert_eq $encode(n) r#"<a v="x&amp;y&quot;z&lt;w"></a>"#
   assert_eq $decode(encode(n))["v"] "x&y\"z<w"
 
@@ -202,7 +201,7 @@ def attrs_and_tag_are_mutable()
 
   n["x"] = "first"
   assert_eq $n["x"] "first"
-  n.attrs[:x:] = "second"
+  n.attrs["x"] = "second"
   assert_eq (n.attrs.get "x") "second"
   assert_eq (n.attrs.get "missing" default: "fallback") "fallback"
   assert_eq (n.attrs.get "missing" else: do "computed") "computed"
@@ -253,22 +252,22 @@ def namespace_handling()
 def namespaced_attributes()
   let el = decode r#"<root xmlns:a="urn:a" xmlns:b="urn:b" plain="p" a:id="one" b:id="two"/>"#
   assert_eq $el["plain"] "p"
-  assert_eq $el["{urn:a}id"] "one"
-  assert_eq (el.attrs.get "{urn:b}id") "two"
-  assert_eq [...el.attrs.keys()] ["plain", "{urn:a}id", "{urn:b}id"]
+  assert_eq $el[("urn:a", "id")] "one"
+  assert_eq (el.attrs.get(("urn:b", "id"))) "two"
+  assert_eq [...el.attrs.keys()] ["plain", ("urn:a", "id"), ("urn:b", "id")]
 
-  el.attrs["{urn:a}id"] = "changed"
-  el["{urn:b}new"] = "value"
-  assert_eq $el["{urn:a}id"] "changed"
-  assert_eq $el["{urn:b}new"] "value"
-  assert (el.attrs.delete "{urn:b}id")
+  el.attrs[("urn:a", "id")] = "changed"
+  el[("urn:b", "new")] = "value"
+  assert_eq $el[("urn:a", "id")] "changed"
+  assert_eq $el[("urn:b", "new")] "value"
+  assert (el.attrs.delete(("urn:b", "id")))
   assert_eq $encode(el) r#"<root xmlns:a="urn:a" xmlns:b="urn:b" plain="p" a:id="changed" b:new="value"></root>"#
 
-  # The namespace ends at the last `}`.
-  el["{urn:x{y}}z"] = "1"
-  assert_eq (el.attrs.get "{urn:x{y}}z") "1"
-  assert_throws $ValueError do el["{}id"] = "1"
-  assert_throws $ValueError do el["{urn:x}a:b"] = "1"
+  # Namespace URIs do not need string encoding.
+  el[("urn:x{y}", "z")] = "1"
+  assert_eq (el.attrs.get(("urn:x{y}", "z"))) "1"
+  assert_throws $ValueError do el[("", "id")] = "1"
+  assert_throws $ValueError do el[("urn:x", "a:b")] = "1"
 
   assert_throws $ValueError do
     decode r#"<root xmlns:a="urn:x" xmlns:b="urn:x" a:id="1" b:id="2"/>"#
@@ -287,14 +286,14 @@ def default_namespace_semantics()
 
 #[test]
 def namespace_fixup_and_detached_nodes()
-  let child = Node "child" namespace: "urn:child" {"{urn:attr}id": "1"}
+  let child = Node "child" namespace: "urn:child" attrs: {("urn:attr", "id"): "1"}
   let root = Node "root" $child
   assert_eq $encode(root) r#"<root><child xmlns="urn:child" xmlns:ns0="urn:attr" ns0:id="1"></child></root>"#
 
   let parsed = decode $encode(root)
   let parsed_child = [...parsed.children][0]
   assert_eq $parsed_child.namespace "urn:child"
-  assert_eq $parsed_child["{urn:attr}id"] "1"
+  assert_eq $parsed_child[("urn:attr", "id")] "1"
 
   let detached = decode r#"<outer xmlns="urn:default" xmlns:x="urn:x"><x:inner/></outer>"#
   let remixed = [...detached.children][0]
@@ -306,7 +305,7 @@ def namespace_fixup_and_detached_nodes()
 def explicit_namespace_declarations()
   # Declarations survive even when no name uses them, e.g. for prefixes that
   # appear only in attribute values.
-  let root = Node "root" {type: "x:thing"}
+  let root = Node "root" attrs: {type: "x:thing"}
   root.namespaces["x"] = "urn:x"
   assert_eq $encode(root) r#"<root xmlns:x="urn:x" type="x:thing"></root>"#
 
@@ -321,7 +320,7 @@ def explicit_namespace_declarations()
   assert_eq $encode(parsed[0]) r#"<b type="x:thing"></b>"#
 
   # Names use a prefix declared on the element or an ancestor.
-  let node = Node "item" namespace: "urn:x" namespaces: {x: "urn:x"} {"{urn:x}id": "1"}
+  let node = Node "item" namespace: "urn:x" namespaces: {x: "urn:x"} attrs: {("urn:x", "id"): "1"}
   node.push $ Node "sub" namespace: "urn:x"
   assert_eq $encode(node) r#"<x:item xmlns:x="urn:x" x:id="1"><x:sub></x:sub></x:item>"#
 
@@ -340,17 +339,17 @@ def mutations_reject_malformed_trees()
   assert_throws $ValueError do Node "x:y"
   assert_throws $ValueError do Node "root" namespace: ""
   assert_throws $ValueError do Node "root" namespaces: {xmlns: "urn:x"}
-  assert_throws $ValueError do Node "root" {"a b": "1"}
-  assert_throws $ValueError do Node "root" {xmlns: "urn:x"}
-  assert_throws $ValueError do Node "root" {id: "\u{1}"}
+  assert_throws $ValueError do Node "root" attrs: {"a b": "1"}
+  assert_throws $ValueError do Node "root" attrs: {xmlns: "urn:x"}
+  assert_throws $ValueError do Node "root" attrs: {id: "\u{1}"}
 
-  let node = Node "root" {id: "1"}
+  let node = Node "root" attrs: {id: "1"}
   assert_throws $ValueError do node.tag = "1st"
   assert_throws $ValueError do node.namespace = ""
   assert_throws $ValueError do node["a b"] = "1"
   assert_throws $ValueError do node["id"] = "\u{1}"
   assert_throws $ValueError do node.attrs["id"] = "\u{1}"
-  assert_throws $ValueError do node.attrs["{http://www.w3.org/2000/xmlns/}a"] = "1"
+  assert_throws $ValueError do node.attrs[("http://www.w3.org/2000/xmlns/", "a")] = "1"
   assert_throws $TypeError do node.attrs[1] = "1"
   assert_throws $TypeError do node.attrs["id"] = 1
   assert_eq $encode(node) r#"<root id="1"></root>"#
@@ -400,10 +399,10 @@ def namespaces_are_a_checked_view()
 
 #[test]
 def xml_namespace_uses_its_prefix()
-  let node = Node "root" {"{http://www.w3.org/XML/1998/namespace}lang": "en"}
+  let node = Node "root" attrs: {("http://www.w3.org/XML/1998/namespace", "lang"): "en"}
   assert_eq $encode(node) r#"<root xml:lang="en"></root>"#
   let parsed = decode $encode(node)
-  assert_eq $parsed["{http://www.w3.org/XML/1998/namespace}lang"] "en"
+  assert_eq $parsed[("http://www.w3.org/XML/1998/namespace", "lang")] "en"
 
 #[test]
 def traverse_is_depth_first_parent_first()
@@ -431,28 +430,28 @@ def construct_children_variadically()
 
 #[test]
 def construct_attrs_from_dict()
-  let n = Node "disk" {type: "file", device: "disk"}
+  let n = Node "disk" attrs: {type: "file", device: "disk"}
   assert_eq $encode(n) r#"<disk type="file" device="disk"></disk>"#
   assert_eq $n["type"] "file"
 
   # Bareword keys intern as Sym and quoted keys as Str; both name attributes.
-  let n = Node "e" {plain: "1", "x-custom": "2", "{urn:a}id": "3"}
-  assert_eq [...n.attrs.keys()] ["plain", "x-custom", "{urn:a}id"]
+  let n = Node "e" attrs: {plain: "1", "x-custom": "2", ("urn:a", "id"): "3"}
+  assert_eq [...n.attrs.keys()] ["plain", "x-custom", ("urn:a", "id")]
 
-  # Dicts and children mix in any order; attributes keep their order.
-  let n = Node "e" {first: "1"} "text" {second: "2"}
+  # Attributes keep their order independently of children.
+  let n = Node "e" attrs: {first: "1", second: "2"} "text"
   assert_eq [...n.attrs.keys()] ["first", "second"]
   assert_eq $encode(n) r#"<e first="1" second="2">text</e>"#
 
 #[test]
 def construct_mixes_attrs_and_children()
   let n = Node "root"
-    {id: "1"}
+    attrs: {id: "1"}
     (Node "child" "text")
   assert_eq $encode(n) r#"<root id="1"><child>text</child></root>"#
 
   let ns = Node "vm" namespace: "urn:vm" namespaces: {v: "urn:vm"}
-    {managed: "true"}
+    attrs: {managed: "true"}
     $Node("port", "22")
   assert_eq $encode(ns) r#"<v:vm xmlns:v="urn:vm" managed="true"><port>22</port></v:vm>"#
   let parsed = decode $encode(ns)
@@ -463,14 +462,14 @@ def construct_mixes_attrs_and_children()
 #[test]
 def construct_vertical_layout()
   # A nested element is a parenthesized or `$`-compact call; a bare vertical
-  # item is literal text to end of line, and a dash item likewise. A `$` line
-  # opens a vertical dict of attributes.
+  # item is literal text to end of line, and a dash item likewise.
+  # `attrs:` opens a vertical dict of attributes.
   let disk = Node disk
-    $
+    attrs:
       type: file
       device: disk
-    (Node "driver" {name: "qemu", type: "qcow2"})
-    $Node("source", {file: "/tmp/disk.qcow2"})
+    (Node "driver" attrs: {name: "qemu", type: "qcow2"})
+    $Node("source", attrs: {file: "/tmp/disk.qcow2"})
   assert_eq $encode(disk) $ "".join $
     - r#"<disk type="file" device="disk">"#
     - r#"<driver name="qemu" type="qcow2"></driver>"#
@@ -485,28 +484,28 @@ def construct_vertical_layout()
 
   # `- $ ` introduces a command-or-expression running to end of line.
   let dollar = Node disk
-    - $ Node driver {name: "qemu"}
+    - $ Node driver attrs: {name: "qemu"}
   assert_eq $encode(dollar) r#"<disk><driver name="qemu"></driver></disk>"#
 
   let nested = Node disk
     - $ Node source
-        $
+        attrs:
           file: /tmp/disk.qcow2
   assert_eq $encode(nested) r#"<disk><source file="/tmp/disk.qcow2"></source></disk>"#
 
   # `- $ ` items nest arbitrarily deep, each opening its own vertical block.
   let domain = Node domain
-    $
+    attrs:
       type: kvm
     - $ Node name dolang-ci
     - $ Node devices
         - $ Node interface
-            $
+            attrs:
               type: user
             - $ Node portForward
-                $
+                attrs:
                   proto: tcp
-                - $ Node range {start: "20000", to: "22"}
+                - $ Node range attrs: {start: "20000", to: "22"}
   assert_eq $encode(domain) $ "".join $
     - r#"<domain type="kvm"><name>dolang-ci</name><devices>"#
     - r#"<interface type="user"><portForward proto="tcp">"#
@@ -515,14 +514,14 @@ def construct_vertical_layout()
 
 #[test]
 def construct_rejects_invalid_arguments()
-  assert_throws $TypeError do Node "root" {x: 42}
-  assert_throws $TypeError do Node "root" {1: "x"}
+  assert_throws $TypeError do Node "root" attrs: {x: 42}
+  assert_throws $TypeError do Node "root" attrs: {1: "x"}
   assert_throws $TypeError do Node "root" namespaces: "nope"
-  assert_throws $UnexpectedKeyError do Node "root" attrs: {x: "1"}
+  assert_throws $TypeError do Node "root" {x: "1"}
 
 #[test]
 def construct_variadically_through_subclass()
-  let el = Element "root" {id: "1"} (Node "child")
+  let el = Element "root" attrs: {id: "1"} (Node "child")
   assert_eq (type el) $Element
   assert_eq $el["id"] "1"
   assert_eq $el.children[0].tag "child"
@@ -569,7 +568,7 @@ def do_subclasses_are_accepted_as_native_values()
 
 #[test]
 def attrs_are_views_of_their_node()
-  let node = Node "root" {id: "1"}
+  let node = Node "root" attrs: {id: "1"}
   let attrs = node.attrs
   attrs["id"] = "2"
   assert_eq $node["id"] "2"
@@ -577,15 +576,50 @@ def attrs_are_views_of_their_node()
   assert_eq $attrs["id"] "3"
 
   # Iteration yields plain pairs.
-  node["{urn:a}x"] = "4"
+  node[("urn:a", "x")] = "4"
   let pairs = $
     for k v = node.attrs
       - [k, v]
-  assert_eq $pairs [["id", "3"], ["{urn:a}x", "4"]]
+  assert_eq $pairs [["id", "3"], [("urn:a", "x"), "4"]]
 
 #[test]
 def duplicate_attrs_are_rejected()
-  assert_throws $ValueError do Node "root" {x: "1"} {x: "2"}
-  assert_throws $ValueError do Node "root" {x: "1", "x": "2"}
-  let node = Node "root" {x: "1"} {"{urn:x}x": "2"}
+  assert_throws $ValueError do Node "root" attrs: {("urn:x", "x"): "1", ("urn:x", "x"): "2"}
+  assert_throws $ValueError do Node "root" attrs: {x: "1", "x": "2"}
+  let node = Node "root" attrs: {x: "1", ("urn:x", "x"): "2"}
   assert_eq $node.attrs.len 2
+
+#[test]
+def attribute_keys_are_structured()
+  let node = Node root attrs: {id: "plain", ("urn:a", "id"): "one", ("urn:b", "id"): "two"}
+  assert_eq [...node.attrs.keys()] ["id", ("urn:a", "id"), ("urn:b", "id")]
+  node.attrs[("urn:a", "id")] = "changed"
+  assert_eq [...node.attrs.keys()] ["id", ("urn:a", "id"), ("urn:b", "id")]
+  assert_eq (node.attrs.pop(("urn:b", "id"))) "two"
+  assert (!(node.attrs.delete(("urn:b", "id"))))
+  assert_eq (node.attrs.get :id:) nil
+  assert (!(node.attrs.delete :id:))
+  assert_throws $TypeError do node.attrs[:id:] = "bad"
+  assert_throws $TypeError do node[:id:] = "bad"
+  for key = [(), ("urn:a",), ("urn:a", "id", "extra"), (nil, "id"), ("urn:a", :id:), ["urn:a", "id"]]
+    assert_eq (node.attrs.get key) nil
+    assert (!(node.attrs.delete key))
+    assert_throws $TypeError do node.attrs[key] = "bad"
+    assert_throws $TypeError do Node root attrs: {(key): "bad"}
+  assert_throws $ValueError do node.attrs["{urn:a}id"] = "bad"
+  assert_throws $ValueError do Node root attrs: {"{urn:a}id": "bad"}
+  assert_throws $ValueError do Node root attrs: {("", "id"): "bad"}
+  assert_throws $TypeError do Node root attrs: nil
+  assert_throws $TypeError do Node root attrs: "bad"
+  assert_eq $Node("root").attrs.len 0
+  assert_eq $Node("root", attrs: {}).attrs.len 0
+
+#[test]
+def attribute_identity_is_independent_of_prefixes()
+  let node = decode r#"<root xmlns:a="urn:shared" a:id="one"/>"#
+  node.namespaces.clear()
+  node.namespaces["b"] = "urn:shared"
+  assert_eq $node[("urn:shared", "id")] "one"
+  let parsed = decode $encode(node)
+  assert_eq [...parsed.attrs.keys()] [("urn:shared", "id")]
+  assert_eq $parsed[("urn:shared", "id")] "one"
