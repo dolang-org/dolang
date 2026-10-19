@@ -135,3 +135,18 @@ pub def aliased d @ Dict[Steps]
       (:run: v) do
         let _ = v
         #       ^: flow (<Value, >Value) -> nil
+
+def noop()
+  nil
+
+# Narrowing in each arm grows a loop variable's join past the widening limit,
+# which widens it to an ancestor its alternatives share
+pub def widened r @ Record[...{a: Int, b: Int, c: Int, d: Int}]
+  for e = r
+    match e
+      (:a: _) do nil
+      (:b: _) do nil
+      (:c: _) do
+        noop()
+        let _ = e
+        #       ^: flow (:c:, std.Int)
