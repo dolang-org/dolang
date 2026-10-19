@@ -2182,11 +2182,13 @@ impl<'db> Solver<'db> {
     }
 
     /// The least candidate above nonempty lower bounds: their join, or for a
-    /// schema the one they all are, since there are no schema unions
+    /// schema the one the others lie below, since there are no schema unions
     fn join(&self, kind: Kind, lower: &[TypeId]) -> Option<TypeId> {
         match kind {
             Kind::Type => lower.iter().copied().reduce(|a, b| self.lub(a, b)),
-            Kind::Schema => lower.iter().all(|&ty| ty == lower[0]).then_some(lower[0]),
+            Kind::Schema => lower.iter().copied().find(|&top| {
+                (lower.iter()).all(|&ty| ty == top || self.probe(ty, top) == Ok(Status::Proven))
+            }),
         }
     }
 

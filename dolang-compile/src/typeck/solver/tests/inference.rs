@@ -795,3 +795,55 @@ fn schema_upper_bounds_do_not_invent_opaque_or_incompatible_shapes() {
         assert!(solver.reify(variable).is_err());
     }
 }
+
+#[test]
+fn schema_lower_bounds_default_to_the_one_above_the_others() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let empty = items(&db, vec![]);
+    let rest = items(
+        &db,
+        vec![item(
+            Multiplicity::Repeated,
+            Element::Keyed {
+                key: str,
+                value: str,
+            },
+        )],
+    );
+    let [a, b] = ["a", "b"].map(|name| {
+        let key = db.intern(Type::Literal(Literal::Sym(db.intern_symbol(name))));
+        items(
+            &db,
+            vec![item(
+                Multiplicity::Required,
+                Element::Keyed { key, value: int },
+            )],
+        )
+    });
+    db.seal();
+    for lower in [[empty, rest], [rest, empty]] {
+        let gas = Gas::default();
+        let mut solver = Solver::new(&db, &gas);
+        let variable = solver.infer_kind(Kind::Schema, Rest::All);
+        for ty in lower {
+            solver.constrain(solver.closed(ty), variable, Provenance::default());
+        }
+        solver.solve();
+        assert_eq!(solver.default(variable_id(variable)), Ok(rest));
+        assert!(solver.solve().iter().all(|o| o.status == Status::Proven));
+    }
+    // Incomparable schemas have no join
+    let gas = Gas::default();
+    let mut solver = Solver::new(&db, &gas);
+    let variable = solver.infer_kind(Kind::Schema, Rest::All);
+    for ty in [a, b] {
+        solver.constrain(solver.closed(ty), variable, Provenance::default());
+    }
+    solver.solve();
+    assert_eq!(
+        solver.default(variable_id(variable)),
+        Err(Residual::Unsupported("joining a variable's lower bounds"))
+    );
+}
