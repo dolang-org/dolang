@@ -54,7 +54,8 @@ bitflags::bitflags! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Link {
     pub(super) group: GroupId,
-    /// The pattern item it was bound from
+    /// The pattern item it was bound from, or one past the last for the value
+    /// unpacked
     pub(super) row: u32,
 }
 
@@ -72,8 +73,9 @@ impl Operand {
 }
 
 /// What an unpack of a union bound for each of its alternatives: a column of
-/// each item's type, by alternative. The values linked to it lie together in some
-/// column. A column found impossible is all bottom; with no columns, nothing is
+/// each item's type, then the alternative itself, by alternative. The values
+/// linked to it, the unpacked value among them, lie together in some column. A
+/// column found impossible is all bottom; with no columns, nothing is
 /// correlated.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct Group {

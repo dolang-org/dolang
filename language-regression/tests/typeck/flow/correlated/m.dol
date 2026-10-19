@@ -92,3 +92,35 @@ pub def defaulted p @ ((:a:, Int) | (:b:,))
   if (k == :b:)
     let _ = v
     #       ^: flow std.Nil
+
+# An unpacked variable lies in its alternative's column too, so a later arm sees
+# it without the alternatives an earlier arm's failed item tests dropped
+pub def scrutinee e @ ((Int, Str) | (:run:, Bool) | (:add:, Int))
+  match e
+    (Int(_) _) do nil
+    (:run: _) do
+      let _ = e
+      #       ^: flow (:run:, std.Bool)
+    (:add: n) do
+      let _ = n
+      #       ^: flow std.Int
+
+# A test on an item that creates no unpack keeps the item's link
+pub def key **opts @ {*add: Str, *run: (() -> nil), *Bool}
+  for k v = opts
+    match k
+      Int(_) do nil
+      :add: do
+        let _ = v
+        #       ^: flow std.Str
+      :run: do v()
+
+# An unpack of an item correlates it with its own items instead
+pub def recent p @ (((:x:, Int), Str) | ((:y:, Str), Int))
+  let k v = p
+  match k
+    (:x: n) do
+      let _ = n
+      #       ^: flow std.Int
+      let _ = v
+      #       ^: flow std.Int | std.Str

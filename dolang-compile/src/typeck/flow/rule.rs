@@ -3388,11 +3388,19 @@ impl<'a> Flow<'a, '_> {
         // What's unpacked is what the value's `(unpack)` gives
         let each = self.send_special_each(at, state, value, "unpack", span);
         let value = match &each {
-            Some(each) => (each.iter()).fold(bottom, |joined, &given| self.lub(joined, given)),
+            Some(each) => (each.iter()).fold(bottom, |joined, &(_, given)| self.lub(joined, given)),
             None => self.send_special(at, state, value, "unpack", span),
         };
         if value == bottom {
-            return Some((vec![value; items.len()], Group::default()));
+            // Each alternative's column is impossible until its `(unpack)` gives
+            // something, so the links made here survive joining a later pass's
+            let group = Group {
+                columns: match &each {
+                    Some(each) => vec![vec![bottom; items.len() + 1].into(); each.len()],
+                    None => Vec::new(),
+                },
+            };
+            return Some((vec![value; items.len()], group));
         }
         let check = Check::Fits(span, Misfit::Unpackable);
         let pattern = self.pattern_shape(at, state, items);
@@ -3510,21 +3518,21 @@ impl<'a> Flow<'a, '_> {
     }
 
     /// The columns of a pattern's items walked against what each alternative's
-    /// `(unpack)` gave. An alternative it can't match has a column of bottom.
-    /// None when an alternative's schema can't be found or is dynamic, or fewer
-    /// than two can match.
+    /// `(unpack)` gave, each ending with the alternative itself. An alternative
+    /// it can't match has a column of bottom. None when an alternative's schema
+    /// can't be found or is dynamic, or fewer than two can match.
     fn columns(
         &self,
         items: &[PatternItem],
         pattern: &PatternShape,
         unpack: DeclId,
-        each: &[TypeId],
+        each: &[(TypeId, TypeId)],
     ) -> Group {
         let (unknown, bottom) = (self.db.unknown(), self.db.bottom());
         let gas = Gas::default();
         let solver = self.solver(&gas);
         let mut columns = Vec::new();
-        for &given in each {
+        for &(alternative, given) in each {
             let unpacked = match given == bottom {
                 true => None,
                 false => match solver.unpack_pattern(given, unpack, pattern) {
@@ -3532,13 +3540,17 @@ impl<'a> Flow<'a, '_> {
                     None => return Group::default(),
                 },
             };
-            let column = match unpacked {
-                Some(unpacked) => item_order(items, pattern, &unpacked),
+            let mut column = match &unpacked {
+                Some(unpacked) => item_order(items, pattern, unpacked),
                 None => vec![bottom; items.len()],
             };
             if column.contains(&unknown) {
                 return Group::default();
             }
+            column.push(match unpacked {
+                Some(_) => alternative,
+                None => bottom,
+            });
             columns.push(column.into_boxed_slice());
         }
         let live = (columns.iter())
