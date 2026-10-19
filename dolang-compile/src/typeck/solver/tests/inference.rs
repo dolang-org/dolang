@@ -847,3 +847,108 @@ fn schema_lower_bounds_default_to_the_one_above_the_others() {
         Err(Residual::Unsupported("joining a variable's lower bounds"))
     );
 }
+
+#[test]
+fn fresh_variables_take_the_least_choice_above_them() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let array = nominal(&mut db, "Array", vec![binder(Variance::Invariant)], vec![]);
+    let open = apply(&db, array, &[reference(&db, 0, 0)]);
+    let ints = apply(&db, array, &[int]);
+    db.seal();
+    for fresh in [true, false] {
+        let gas = Gas::default();
+        let mut s = Solver::new(&db, &gas);
+        let element = match fresh {
+            true => s.infer_fresh(Kind::Type, Rest::All),
+            false => s.infer(),
+        };
+        let result = s.infer();
+        let e = s.intern_environment(s.empty_environment(), vec![element]);
+        s.constrain(s.view(open, e), result, Provenance::default());
+        s.constrain(s.closed(ints), result, Provenance::default());
+        s.solve();
+        assert_eq!(s.holds_fresh(result), fresh);
+        // Only an empty literal's element is left to what it's in
+        match fresh {
+            true => {
+                assert_eq!(s.default(variable_id(result)), Ok(ints));
+                assert_eq!(s.reify(element), Ok(int));
+                assert!(s.solve().iter().all(|o| o.status == Status::Proven));
+            }
+            false => assert_eq!(s.default(variable_id(result)), Err(Residual::Inference)),
+        }
+    }
+}
+
+#[test]
+fn fresh_variables_take_the_least_choice_through_variables_between() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let array = nominal(&mut db, "Array", vec![binder(Variance::Invariant)], vec![]);
+    let open = apply(&db, array, &[reference(&db, 0, 0)]);
+    let ints = apply(&db, array, &[int]);
+    db.seal();
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
+    // A held literal: `Array[ε] ≤ held ≤ result`
+    let element = s.infer_fresh(Kind::Type, Rest::All);
+    let held = s.infer();
+    let result = s.infer();
+    let e = s.intern_environment(s.empty_environment(), vec![element]);
+    s.constrain(s.view(open, e), held, Provenance::default());
+    s.constrain(held, result, Provenance::default());
+    s.constrain(s.closed(ints), result, Provenance::default());
+    s.solve();
+    assert_eq!(s.default(variable_id(result)), Ok(ints));
+    assert_eq!(s.reify(held), Ok(ints));
+    assert_eq!(s.reify(element), Ok(int));
+    assert!(s.solve().iter().all(|o| o.status == Status::Proven));
+}
+
+#[test]
+fn an_empty_dicts_schema_is_checked_once_solved() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let dict = nominal(
+        &mut db,
+        "Dict",
+        vec![bounded(Kind::Schema, Binding::Positional, None)],
+        vec![],
+    );
+    let open = apply(
+        &db,
+        dict,
+        &[db.intern(Type::Bound {
+            reference: BoundRef::new(0, 0),
+            kind: Kind::Schema,
+        })],
+    );
+    let key = db.intern(Type::Literal(Literal::Sym(db.intern_symbol("a"))));
+    let [required, optional] = [Multiplicity::Required, Multiplicity::Optional]
+        .map(|multiplicity| items(&db, vec![keyed(multiplicity, key, int)]));
+    db.seal();
+    for (schema, admitted) in [(required, false), (optional, true)] {
+        let gas = Gas::default();
+        let mut s = Solver::new(&db, &gas);
+        let fresh = s.infer_fresh(Kind::Schema, Rest::All);
+        let empty = s.constrain_empty(fresh, Provenance::default());
+        let e = s.intern_environment(s.empty_environment(), vec![fresh]);
+        let expected = s.closed(apply(&db, dict, &[schema]));
+        s.constrain(s.view(open, e), expected, Provenance::default());
+        let outcomes = default_all(&mut s);
+        assert_eq!(s.reify(fresh), Ok(schema));
+        let status = match admitted {
+            true => Status::Proven,
+            false => Status::Contradicted,
+        };
+        assert_eq!(outcomes[empty.0].status, status);
+    }
+    // With only upper bounds, it isn't defaulted from them
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
+    let fresh = s.infer_fresh(Kind::Schema, Rest::All);
+    s.constrain(fresh, s.closed(optional), Provenance::default());
+    s.solve();
+    assert_eq!(s.default(variable_id(fresh)), Err(Residual::Inference));
+}

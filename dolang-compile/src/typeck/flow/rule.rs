@@ -78,6 +78,9 @@ enum Check {
     Fits(Span, Misfit),
     /// A value that must be what's expected of it
     Expected(Span),
+    /// An empty dict's schema, which must admit no items. Left undecided, the
+    /// dict's type is one nothing determines, which its rule reports.
+    Empty(Span),
     /// Nothing that can fail
     Quiet,
 }
@@ -158,6 +161,12 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
     fn constrain(&mut self, actual: Term, expected: Term, check: Check) {
         self.solver
             .constrain(actual, expected, Provenance::default());
+        self.checks.push(check);
+    }
+
+    /// Constrain `schema` to admit the empty schema, once it's solved
+    fn constrain_empty(&mut self, schema: Term, check: Check) {
+        self.solver.constrain_empty(schema, Provenance::default());
         self.checks.push(check);
     }
 
@@ -558,6 +567,9 @@ enum Shape {
     Chosen(Term, Term),
     /// A dict with the lanes its items can fill, positional then keyed
     Dict(bool, bool),
+    /// An empty dict, whose schema is left to what it's in, so long as it admits
+    /// no items
+    Empty,
     /// A tuple or record, with the lanes its spreads can fill
     Items(Rest),
 }
@@ -1061,8 +1073,25 @@ impl<'a> Flow<'a, '_> {
                 // A strict unit's defaulting leaves what nothing determines
                 // unresolved. A check it leaves unresolved is recorded instead.
                 let decided = !run.any(run.checks.len(), Status::Unresolved);
-                if reified.contains(&None) && decided {
-                    self.gap(span, "a type nothing determines");
+                let (mut empty, mut others) = (false, false);
+                for (check, outcome) in run.checks.iter().zip(&run.outcomes) {
+                    match (check, outcome.status) {
+                        (Check::Empty(_), Status::Unresolved) => empty = true,
+                        (_, Status::Unresolved) => others = true,
+                        _ => {}
+                    }
+                }
+                let mut open = (run.results.iter().zip(&reified)).filter(|(_, ty)| ty.is_none());
+                empty |= open.clone().any(|(&term, _)| run.solver.holds_fresh(term));
+                if !others {
+                    let what = match (empty, open.next().is_some()) {
+                        (true, _) => Some("an empty collection nothing determines"),
+                        (false, true) => Some("a type nothing determines"),
+                        (false, false) => None,
+                    };
+                    if let Some(what) = what {
+                        self.gap(span, what);
+                    }
                 }
                 let values = (reified.into_iter())
                     .map(|ty| ty.unwrap_or(self.db.unknown()))
@@ -1117,6 +1146,9 @@ impl<'a> Flow<'a, '_> {
         for (check, outcome) in checks.iter().zip(outcomes) {
             let span = match *check {
                 Check::Call { span, .. } | Check::Fits(span, _) | Check::Expected(span) => span,
+                // Its rule reports it left undecided
+                Check::Empty(_) if outcome.status == Status::Unresolved => continue,
+                Check::Empty(span) => span,
                 Check::Quiet => continue,
             };
             match outcome.status {
@@ -1184,7 +1216,7 @@ impl<'a> Flow<'a, '_> {
                                 .map_or(Shown::Type("?".to_owned()), |found| self.subject(found)),
                             misfit,
                         }],
-                        &Check::Expected(span) => {
+                        &Check::Expected(span) | &Check::Empty(span) => {
                             let mut notes = Vec::new();
                             for cause in solver.explain(outcome).iter() {
                                 let steps = steps(&cause.path);
@@ -2011,16 +2043,21 @@ impl<'a> Flow<'a, '_> {
             // A value that's solved, or that only solved types are below, as a
             // call's of a function that isn't generic is, is the argument
             // exactly, as if it were passed closed, so it chooses nothing more
-            // than that would
-            let exact = sub.solver.reify(given).ok().or_else(|| match given {
-                Term::Infer(id)
-                    if (sub.solver.bounds(id).lower())
-                        .all(|lower| sub.solver.reify(lower).is_ok()) =>
-                {
-                    sub.solver.reify_found(given).ok()
-                }
-                _ => None,
-            });
+            // than that would. One holding an empty literal's open part isn't:
+            // what it's in decides that part.
+            let exact = (!sub.solver.holds_fresh(given))
+                .then(|| {
+                    sub.solver.reify(given).ok().or_else(|| match given {
+                        Term::Infer(id)
+                            if (sub.solver.bounds(id).lower())
+                                .all(|lower| sub.solver.reify(lower).is_ok()) =>
+                        {
+                            sub.solver.reify_found(given).ok()
+                        }
+                        _ => None,
+                    })
+                })
+                .flatten();
             if let Some(exact) = exact {
                 sub.constrain(held.term, sub.closed(exact), Check::Quiet);
                 // Found exactly unless what it checks of its own is left
@@ -2621,6 +2658,7 @@ impl<'a> Flow<'a, '_> {
                         let (ty, schema) = self.candidate(rule, class, candidate);
                         Shape::Chosen(ty, schema)
                     }
+                    None if values.values.is_empty() => Shape::Empty,
                     // A lane is present where an item can fill it, and an empty
                     // dict has the keyed lane
                     None => {
@@ -3017,6 +3055,59 @@ impl<'a> Flow<'a, '_> {
             rule.constrain(term, rule.closed(expected), Check::Quiet);
             vec![term]
         })[0]
+    }
+
+    /// A pattern item's default, joined with `present`, the item's type where
+    /// it's present: a rule whose result lies above both, so that what the
+    /// default leaves open takes the least choice, `present` if it fits there.
+    /// Returns the default's own type, which joins `present` as the join does.
+    pub(super) fn default_above(
+        &mut self,
+        at: At,
+        state: &mut State,
+        operands: &mut VecDeque<TypeId>,
+        value: &Expr,
+        present: TypeId,
+    ) -> TypeId {
+        let span = value.span;
+        let held = matches!(
+            value.kind,
+            ExprKind::Collection { .. }
+                | ExprKind::Range { .. }
+                | ExprKind::Call { .. }
+                | ExprKind::Fmt(_)
+        );
+        let mut values = Values::default();
+        let placed = |value| Placed {
+            value,
+            multiplicity: Multiplicity::Required,
+            group: None,
+        };
+        let prepared = match held {
+            true => self.prepare(at, state, operands, value),
+            false => Err(self.expect(at, state, operands, value, None)),
+        };
+        match prepared {
+            Ok(prepared) => {
+                values.held.push(prepared);
+                values
+                    .values
+                    .push(placed(Value::Held(HeldAt::Positional, 0, span)));
+            }
+            Err(ty) if ty == self.db.bottom() => return ty,
+            Err(ty) => values.values.push(placed(Value::Pos(ty, span))),
+        }
+        let spread = self.designated(Designated::Spread);
+        self.conclude(at, span, None, |_, rule| {
+            let (arguments, _) = rule.arguments(&values, spread, span);
+            let [(_, CallArgument::Positional(found))] = arguments[..] else {
+                unreachable!("one positional argument");
+            };
+            let joined = rule.solver.infer();
+            rule.constrain(found, joined, Check::Quiet);
+            rule.constrain(rule.closed(present), joined, Check::Quiet);
+            vec![joined, found]
+        })[1]
     }
 
     /// A value stored where its type must be `ty`, as a field is
@@ -3765,7 +3856,11 @@ fn collection_constraint<'p>(
     let unknown = rule.db.unknown();
     match shape {
         Shape::Array => {
-            let element = rule.solver.infer();
+            // An empty array's element is the least that what it's in allows
+            let element = match values.values.is_empty() {
+                true => rule.solver.infer_fresh(Kind::Type, Rest::All),
+                false => rule.solver.infer(),
+            };
             for placed in &values.values {
                 match placed.value {
                     Value::Pos(ty, _) => rule.constrain(rule.closed(ty), element, Check::Quiet),
@@ -3812,6 +3907,14 @@ fn collection_constraint<'p>(
             let exact = rule.solver.arguments_schema(&arguments);
             rule.constrain(exact, schema, Check::Expected(span));
             ty
+        }
+        Shape::Empty => {
+            let schema = rule.solver.infer_fresh(Kind::Schema, Rest::All);
+            rule.constrain_empty(schema, Check::Empty(span));
+            rule.term(|holes| {
+                let schema = holes.hole(schema, Kind::Schema);
+                holes.apply(class, vec![schema])
+            })
         }
         // Positional items stay positional, as they were written: only an
         // explicit key is a key

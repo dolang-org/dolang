@@ -88,6 +88,9 @@ pub(crate) enum Relation {
     },
     /// A call of a callee (see [`Solver::constrain_call`])
     Call(Call),
+    /// A schema that admits no items, once it's solved: an empty dict's (see
+    /// [`Solver::constrain_empty`])
+    Empty(Term),
 }
 
 /// How the schemas of a subtype relation fill their multiplicities. A parameter
@@ -111,6 +114,7 @@ impl Relation {
         match self {
             Relation::Subtype { actual, .. } => actual,
             Relation::Call(call) => call.callee,
+            Relation::Empty(schema) => schema,
         }
     }
 
@@ -120,7 +124,7 @@ impl Relation {
             Relation::Subtype {
                 actual, expected, ..
             } => Some((actual, expected)),
-            Relation::Call(_) => None,
+            Relation::Call(_) | Relation::Empty(_) => None,
         }
     }
 }
@@ -335,6 +339,8 @@ pub(crate) enum Step {
     /// A restriction that can't be evaluated reduced to its schema, which it
     /// is if it holds
     Restricted,
+    /// The empty schema below a schema that must admit it, once it's solved
+    Empty,
 }
 
 impl Step {
@@ -468,6 +474,9 @@ struct Variable {
     lanes: Rest,
     /// The scope it was created in, which bounds the skolems it may take
     scope: ScopeId,
+    /// Whether it's an empty literal's open part, which only what the literal
+    /// is in decides (see [`Solver::infer_fresh`])
+    fresh: bool,
 }
 
 /// A variable's resolution, independent of accumulated bounds
@@ -846,6 +855,7 @@ impl<'db> Solver<'db> {
                     self.render(call.result)
                 )
             }
+            Relation::Empty(schema) => format!("{{}} <: {}", self.render(schema)),
         }
     }
 
@@ -1119,8 +1129,28 @@ impl<'db> Solver<'db> {
         self.fresh(kind, lanes, ScopeId(0))
     }
 
+    /// A fresh variable for an empty literal's open part: an empty array's
+    /// element, or an empty dict's schema. It has no bounds of its own, so
+    /// defaulting leaves it to what the literal is in, which takes the least
+    /// choice above it (see [`Self::default_with`]).
+    pub(crate) fn infer_fresh(&mut self, kind: Kind, lanes: Rest) -> Term {
+        let scope = ScopeId(0);
+        Term::Infer(self.push_variable(Variable {
+            kind,
+            lanes,
+            scope,
+            fresh: true,
+        }))
+    }
+
     fn fresh(&self, kind: Kind, lanes: Rest, scope: ScopeId) -> Term {
-        Term::Infer(self.push_variable(Variable { kind, lanes, scope }))
+        let fresh = false;
+        Term::Infer(self.push_variable(Variable {
+            kind,
+            lanes,
+            scope,
+            fresh,
+        }))
     }
 
     /// A new scope inside `parent`
@@ -1372,6 +1402,7 @@ impl<'db> Solver<'db> {
             }
             // A call waits only on its callee: what it derives waits on the rest
             Relation::Call(call) => self.leaves(call.callee, 0, 0, &mut leaves)?,
+            Relation::Empty(schema) => self.leaves(schema, 0, 0, &mut leaves)?,
         }
         for leaf in leaves {
             let Term::Infer(variable) = leaf else {
@@ -1973,6 +2004,10 @@ impl<'db> Solver<'db> {
         let defaulted = self
             .default_term(id, decay, open)
             .and_then(|term| self.reify(term));
+        let defaulted = match defaulted {
+            Err(Residual::Inference) => self.default_least(id).ok_or(Residual::Inference),
+            defaulted => defaulted,
+        };
         #[cfg(feature = "debug")]
         if let Err(residual) = defaulted {
             trace!(self, "?{} not defaulted: {residual:?}", id.0);
@@ -2010,7 +2045,8 @@ impl<'db> Solver<'db> {
             .collect::<Result<Vec<_>, _>>()?;
         let kind = self.variable(id).kind;
         if lower.is_empty() {
-            if kind != Kind::Schema {
+            // An empty dict's schema is left to what the dict is in
+            if kind != Kind::Schema || self.variable(id).fresh {
                 return Err(Residual::Inference);
             }
             let upper = bounds
@@ -2053,6 +2089,128 @@ impl<'db> Solver<'db> {
         self.state_mut(id).defaulted.set(true);
         self.assign(id, self.closed(candidate));
         Ok(self.closed(candidate))
+    }
+
+    /// Default a variable whose unsolved lower bounds wait only on fresh
+    /// variables (see [`Self::infer_fresh`]) to the join of its other lower
+    /// bounds, if the fresh variables are then solved below it without
+    /// contradicting anything more: the least choice, which an empty literal
+    /// takes from what it's in. A fresh variable is constrained only against
+    /// the choice and by its literal's own check, so this unifies it with the
+    /// choice rather than searching. The fresh variables may be below others
+    /// that only they and solved types are below, as a held literal's are,
+    /// which are solved once they are.
+    fn default_least(&mut self, id: InferVarId) -> Option<TypeId> {
+        if self.assignment(id).is_some() {
+            return None;
+        }
+        let (mut closed, mut open) = (Vec::new(), Vec::new());
+        for term in self.bounds(id).lower() {
+            match self.reify(term) {
+                Ok(ty) => closed.push(ty),
+                Err(_) => open.push(term),
+            }
+        }
+        let kind = self.variable(id).kind;
+        if closed.is_empty() || open.is_empty() || closed.contains(&self.db.unknown_of(kind)) {
+            return None;
+        }
+        // The fresh leaves, and the variables between them and `id`
+        let mut below = Vec::new();
+        let mut seen = FxHashSet::default();
+        let mut pending = open.clone();
+        while let Some(term) = pending.pop() {
+            let mut leaves = FxHashSet::default();
+            self.solved_leaves(term, &mut leaves).ok()?;
+            for leaf in leaves {
+                let Term::Infer(leaf) = leaf else {
+                    return None;
+                };
+                if leaf == id || !seen.insert(leaf) {
+                    continue;
+                }
+                // One between waits on fresh variables too, or it isn't left
+                // to this choice
+                if !self.variable(leaf).fresh {
+                    let lower: Vec<_> = (self.bounds(leaf).lower())
+                        .filter(|&term| self.reify(term).is_err())
+                        .collect();
+                    if lower.is_empty() {
+                        return None;
+                    }
+                    pending.extend(lower);
+                }
+                below.push(leaf);
+            }
+        }
+        let candidate = self.join(kind, &closed)?;
+        if !self.below_upper(id, candidate).unwrap_or(false) {
+            return None;
+        }
+        let contradicted = |outcomes: Vec<Outcome>| -> Vec<ConstraintId> {
+            (outcomes.into_iter())
+                .filter(|outcome| outcome.status == Status::Contradicted)
+                .map(|outcome| outcome.constraint)
+                .collect()
+        };
+        let before = contradicted(self.solve());
+        let gas = self.gas;
+        self.nest(gas, |fork| {
+            fork.state_mut(id).defaulted.set(true);
+            fork.assign(id, fork.closed(candidate));
+            let mut outcomes = fork.solve();
+            // Each round solves at least one
+            for _ in 0..below.len() {
+                let mut progress = false;
+                for &leaf in &below {
+                    if fork.assignment(leaf).is_none() {
+                        progress |= fork.default_with(leaf, true).is_ok();
+                    }
+                }
+                if !progress {
+                    break;
+                }
+                outcomes = fork.solve();
+            }
+            let kept = open.iter().all(|&term| fork.reify(term).is_ok())
+                && (contradicted(outcomes).iter()).all(|constraint| before.contains(constraint));
+            trace!(
+                fork,
+                "?{} least above fresh lower bounds := {}: {}",
+                id.0,
+                fork.render(fork.closed(candidate)),
+                if kept { "kept" } else { "dropped" }
+            );
+            (kept.then_some(candidate), kept)
+        })
+    }
+
+    /// Whether a term holds an empty literal's open part (see
+    /// [`Self::infer_fresh`]), through assignments and lower bounds: a type
+    /// that's found from it rests on what the literal is in
+    pub(crate) fn holds_fresh(&self, term: Term) -> bool {
+        let mut seen = FxHashSet::default();
+        let mut pending = vec![term];
+        while let Some(term) = pending.pop() {
+            let mut leaves = FxHashSet::default();
+            if self.leaves(term, 0, 0, &mut leaves).is_err() {
+                continue;
+            }
+            for leaf in leaves {
+                let Term::Infer(id) = leaf else {
+                    continue;
+                };
+                if !seen.insert(id) {
+                    continue;
+                }
+                if self.variable(id).fresh {
+                    return true;
+                }
+                pending.extend(self.bounds(id).lower);
+                pending.extend(self.state(id).assignment.get());
+            }
+        }
+        false
     }
 
     /// Default a variable without lower bounds to the meet of its upper bounds,
@@ -2296,6 +2454,22 @@ impl<'db> Solver<'db> {
         self.root(obligation, provenance)
     }
 
+    /// Register as a diagnostic root that `schema` admits no items, as an empty
+    /// dict's must. It's judged once `schema` is solved, and bounds nothing
+    /// before then, so it doesn't choose `schema` itself.
+    pub(crate) fn constrain_empty(&mut self, schema: Term, provenance: Provenance) -> ConstraintId {
+        assert_eq!(self.kind(schema), Kind::Schema, "empty kind mismatch");
+        let relation = Relation::Empty(schema);
+        trace!(
+            self,
+            "#{}: {}",
+            self.roots.len(),
+            self.render_relation(relation)
+        );
+        let obligation = self.enqueue(relation, false);
+        self.root(obligation, provenance)
+    }
+
     /// Register a call of `callee` as a diagnostic root (see [`Call`]).
     /// `arguments` is a schema, as [`Self::arguments_schema`] builds.
     /// Contradictions and derivations under [`Step::Arguments`] name an argument
@@ -2355,7 +2529,7 @@ impl<'db> Solver<'db> {
             (Step::Parameters, _) => Fill::Parameters,
             (Step::Arguments | Step::BoundPropagation | Step::Assignment, _) => Fill::Arguments,
             (_, Relation::Subtype { fill, .. }) => fill,
-            (_, Relation::Call(_)) => Fill::Arguments,
+            (_, Relation::Call(_) | Relation::Empty(_)) => Fill::Arguments,
         };
         let relation = Relation::Subtype {
             actual,
@@ -2404,7 +2578,7 @@ impl<'db> Solver<'db> {
             }
             Step::Item(_) | Step::Key(_) => match child {
                 Relation::Subtype { actual, .. } => self.kind(actual) == Kind::Type,
-                Relation::Call(_) => false,
+                Relation::Call(_) | Relation::Empty(_) => false,
             },
             _ => false,
         }
@@ -3184,7 +3358,7 @@ impl<'db> Solver<'db> {
             Relation::Subtype {
                 actual, expected, ..
             } => self.reify(actual).is_ok() && self.reify(expected).is_ok(),
-            Relation::Call(_) => false,
+            Relation::Call(_) | Relation::Empty(_) => false,
         }
     }
 

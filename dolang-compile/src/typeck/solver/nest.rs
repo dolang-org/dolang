@@ -1007,7 +1007,6 @@ impl<'db> Solver<'db> {
 
     /// Run `f` on a fork of this one whose work is charged to `gas`, and take
     /// over what it records if `f` says to keep it
-    #[cfg(test)]
     pub(crate) fn nest<R>(&mut self, gas: &Gas, f: impl FnOnce(&mut Solver<'_>) -> (R, bool)) -> R {
         let (result, delta) = {
             let mut fork = self.fork(gas);

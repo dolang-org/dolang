@@ -48,6 +48,9 @@ pub def collected()
   let e = []
   let _ = e
   #       ^: flow [Unknown]
+  let f = {}
+  let _ = f
+  #       ^: flow std.Dict[Unknown{}]
   let s = [...xs, :k:]
   let _ = s
   #       ^: flow [std.Int | std.Str | std.Sym]
