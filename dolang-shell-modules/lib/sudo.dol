@@ -57,7 +57,6 @@ pub def with[R]
   :cd @ (Str | Path) = nil
   # Initial environment overrides.
   :env @ BaseDict[Str | Sym, Value] = {}
-  <Iter[Value]
 do -> R
   let agent = _vfs.bin()
 
@@ -80,6 +79,6 @@ do -> R
         strand.next()
         let a = shell.Vfs.unix_socket $socket :key
         try
-          return strand.redirect :input do a.with $func
+          return strand.with_io :input do a.with $func
         finally
           time.timeout 30 do a.stop()

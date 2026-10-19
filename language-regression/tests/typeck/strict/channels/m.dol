@@ -298,3 +298,75 @@ pub def redirects_output()
     put 1
     nil
   nil
+
+# Saving and restoring unbounded channels must not grant I/O capabilities.
+pub def restores[R] block @ (() -> R) -> R
+  let input = strand.input()
+  let output = strand.output()
+  strand.pipeline
+    do strand.put 1
+    do
+      strand.next()
+      strand.with_io :input :output do block()
+
+pub def exact_channels() -> Int
+  strand.with_io input: 42 output: "opaque" do
+    let input = strand.input()
+    #   ^~~~~: flow std.Int
+    let _output = strand.output()
+    #   ^~~~~~~: flow std.Str
+    input
+
+pub def exact_input <Iter[Int] >Sink[Int] -> Int
+  strand.with_io input: $strand.input() do
+    put 1
+    strand.next()
+
+pub def exact_output <Iter[Int] >Sink[Int] -> Int
+  strand.with_io output: $strand.output() do
+    put 1
+    strand.next()
+
+pub def exact_neither() -> Int
+  strand.with_io do 42
+
+pub def restored_unreadable()
+  let input = strand.input()
+  strand.with_io :input do
+    for _x
+      # error: the input of `m.restored_unreadable` has no member `(next)`
+      #   --> m.dol:LL:LL
+      #    |
+      # LL |     for _x
+      #    |     ^^^
+      nil
+    nil
+
+pub def exact_unwritable()
+  strand.with_io output: "opaque" do
+    put 1
+    # error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |     put 1
+    #    |     ^^^^^
+    nil
+
+pub def preserves_unreplaced_input()
+  strand.with_io output: "opaque" do
+    for _x
+      # error: the input of `m.preserves_unreplaced_input` has no member `(next)`
+      #   --> m.dol:LL:LL
+      #    |
+      # LL |     for _x
+      #    |     ^^^
+      nil
+    nil
+
+pub def exact_keys_after_block() -> Int
+  let block = do |<Int >Str| strand.input()
+  strand.with_io $block output: "opaque" input: 42
+
+pub def redirect_keys_after_block() -> Int
+  let block = do |<Iter[Int] >Sink[Int]| strand.next()
+  strand.redirect $block output: [] input: [42]

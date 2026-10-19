@@ -1,0 +1,70 @@
+import strand
+
+# Conversion would throw, so these channels must be installed verbatim.
+class Channel
+  def (iter) _self
+    throw "unexpected iter conversion"
+  def (sink) _self
+    throw "unexpected sink conversion"
+
+let original_input = strand.input()
+let original_output = strand.output()
+let input = Channel()
+let output = Channel()
+let result = strand.with_io :input :output do
+  assert_eq $strand.input() $input
+  assert_eq $strand.output() $output
+  assert_eq (strand.with_io do 42) 42
+  strand.with_io input: nil do
+    assert_eq $strand.input() nil
+    assert_eq $strand.output() $output
+  assert_eq $strand.input() $input
+  strand.with_io output: 7 do
+    assert_eq $strand.input() $input
+    assert_eq $strand.output() 7
+  assert_eq $strand.output() $output
+  try
+    strand.with_io input: 1 output: 2 do throw "boom"
+  catch e
+    assert_eq $e "boom"
+  assert_eq $strand.input() $input
+  assert_eq $strand.output() $output
+  :RESULT:
+assert_eq $result :RESULT:
+assert_eq $strand.input() $original_input
+assert_eq $strand.output() $original_output
+try
+  strand.with_io :input :output do throw "boom"
+catch e
+  assert_eq $e "boom"
+assert_eq $strand.input() $original_input
+assert_eq $strand.output() $original_output
+
+# Ordinary redirect still performs conversion.
+let converted = []
+strand.redirect input: [1, 2] output: $converted do
+  strand.each do |x| x
+assert_eq $converted [1, 2]
+
+# Key arguments may precede, follow, or surround the block.
+let check_channels = do
+  assert_eq $strand.input() $input
+  assert_eq $strand.output() $output
+  :ORDERED:
+assert_eq $strand.with_io(check_channels, input: input, output: output) :ORDERED:
+assert_eq $strand.with_io(output: output, check_channels, input: input) :ORDERED:
+assert_eq $strand.with_io(output: output, input: input, check_channels) :ORDERED:
+assert_eq $strand.input() $original_input
+assert_eq $strand.output() $original_output
+
+let check_redirect = do
+  assert_eq $strand.collect() [3, 4]
+  strand.put 5
+  :CONVERTED:
+let redirected = []
+assert_eq $strand.redirect(check_redirect, input: [3, 4], output: redirected) :CONVERTED:
+assert_eq $strand.redirect(output: redirected, check_redirect, input: [3, 4]) :CONVERTED:
+assert_eq $strand.redirect(output: redirected, input: [3, 4], check_redirect) :CONVERTED:
+assert_eq $redirected [5, 5, 5]
+assert_eq $strand.input() $original_input
+assert_eq $strand.output() $original_output

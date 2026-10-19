@@ -1046,14 +1046,13 @@ pub class Runtime
     else
       ""
 
-  pub def with[R, T]
+  pub def with[R]
     self
     ctr @ Str
     thunk @ (() -> R)
     :cd @ (Str | Path) = nil
     :env @ Env = {}
     :pull @ PullPolicy = :MISSING:
-    <Iter[T]
   do -> R
     ensure_image $self $ctr $pull
     let ctr_subdir = Path /tmp/dolang-vfs-dir
@@ -1089,7 +1088,7 @@ pub class Runtime
             strand.next()
             let agent = Vfs.unix_socket $socket :key
             try
-              return strand.redirect input: $input do agent.with $thunk
+              return strand.with_io input: $input do agent.with $thunk
             finally
               time.timeout 30 do agent.stop()
       catch proc.Error: e

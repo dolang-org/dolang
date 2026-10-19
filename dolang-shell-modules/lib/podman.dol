@@ -124,7 +124,7 @@ do -> Container
 #
 # Program execution and filesystem access are redirected for the duration of
 # the function.
-pub def with[R, T]
+pub def with[R]
   # Image name or ID.
   image @ Str
   # Function to run.
@@ -135,7 +135,6 @@ pub def with[R, T]
   :env @ Env = {}
   # Image pull policy.
   :pull @ PullPolicy = :MISSING:
-  <Iter[T]
 do -> R
   podman.with $image $func :env :pull
     if (cd != nil)

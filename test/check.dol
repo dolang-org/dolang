@@ -217,3 +217,26 @@ def directory_modules_are_resolved_as_roots_and_imports()
       cd $dir do
         run $shell.exe -m compile check ...roots --path . stdout: $out stderr: :STDOUT: mode: :CHUNK:
       assert ((printed out).contains "validated: 2 units, 0 diagnostics")
+
+#[test]
+def vfs_scopes_preserve_unconstrained_input()
+  with_temp_dir do |dir|
+    let source = (dir / "scopes.dol")
+    source.write r|
+      # dolang: strict
+      import docker podman sudo toolbx
+
+      pub def in_docker() -> Int
+        docker.with alpine do 42
+
+      pub def in_podman() -> Int
+        podman.with alpine do 42
+
+      pub def elevated() -> Int
+        sudo.with do 42
+
+      pub def in_toolbox() -> Int
+        toolbx.with do 42
+    let out = BinBuf()
+    run $shell.exe -m compile check --strict $source stdout: $out stderr: :STDOUT: mode: :CHUNK:
+    assert ((printed out).contains "0 diagnostics")
