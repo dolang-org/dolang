@@ -31,7 +31,6 @@ pub def with[R]
   :name @ Str = nil
   :cd @ (Str | Path) = nil
   :env @ BaseDict[Str | Sym, Value] = {}
-  <Iter[Value]
 do -> R
   let socket = "$(runtime_dir())/toolbox-vfs-$name"
   let agent = _vfs.bin()
@@ -54,6 +53,6 @@ do -> R
       strand.next()
       let agent = Vfs.unix_socket $socket :key
       try
-        return strand.redirect input: $input do agent.with $block
+        return strand.with_io input: $input do agent.with $block
       finally
         time.timeout 30 do agent.stop()

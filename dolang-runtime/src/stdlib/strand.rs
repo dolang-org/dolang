@@ -634,21 +634,9 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             };
             Err(err)
         })
-        .function_with_slots("redirect", async move |strand, mut args, out, [mut tmp]| {
-            let mut arg_input = None;
-            let mut arg_output = None;
-            let block = loop {
-                match args.next() {
-                    None => return Err(Error::missing_positional(strand, 0)),
-                    Some(Arg::Pos(slot)) => break slot,
-                    Some(Arg::Key(sym, slot)) if sym == input_key => arg_input = Some(slot),
-                    Some(Arg::Key(sym, slot)) if sym == output_key => arg_output = Some(slot),
-                    Some(Arg::Key(sym, _)) => {
-                        return Err(Error::unexpected_key(strand, sym));
-                    }
-                }
-            };
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+        .function_with_slots("redirect", async move |strand, args, out, [mut tmp]| {
+            let ([block], [arg_input, arg_output]) =
+                unpack!(strand, args, 1, 0, input_key = None, output_key = None)?;
             let mut redir = Redirect::new(strand);
             if let Some(input) = arg_input {
                 input.iter(&mut redir, &mut tmp).await?;
@@ -657,6 +645,20 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             if let Some(output) = arg_output {
                 output.sink(&mut redir, &mut tmp).await?;
                 redir = redir.output(&mut tmp);
+            }
+            redir
+                .enter(async move |strand| call!(strand, block, out).await)
+                .await
+        })
+        .function("with_io", async move |strand, args, out| {
+            let ([block], [arg_input, arg_output]) =
+                unpack!(strand, args, 1, 0, input_key = None, output_key = None)?;
+            let mut redir = Redirect::new(strand);
+            if let Some(input) = arg_input {
+                redir = redir.input(input);
+            }
+            if let Some(output) = arg_output {
+                redir = redir.output(output);
             }
             redir
                 .enter(async move |strand| call!(strand, block, out).await)

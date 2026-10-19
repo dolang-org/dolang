@@ -41,7 +41,7 @@ pub def with_vfs remote block
           strand.next()
           let vfs = Vfs.unix_socket $socket
           try
-            return strand.redirect input: $input do vfs.with $block
+            return strand.with_io input: $input do vfs.with $block
           finally
             time.timeout 30 do vfs.stop()
 

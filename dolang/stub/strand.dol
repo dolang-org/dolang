@@ -479,7 +479,6 @@ pub def put[T] value@T >Sink[T]
 # result.
 #
 # The previous input and output are restored when `block` returns or raises.
-# Keyword arguments must precede `block`.
 #
 # ## Example
 #
@@ -523,6 +522,51 @@ do -> R
 do -> R
 
 pub def redirect ...args @ Value -> Value
+  ...
+
+# Calls a function with strand-local input and output installed verbatim.
+#
+# Unlike [`redirect`](strand.redirect), this does not call `(iter)` or `(sink)`
+# on the supplied values. The block sees their exact types; reading or writing
+# them requires the corresponding channel operations.
+#
+# The previous input and output are restored when `block` returns or raises.
+# Omitted channels are unchanged.
+#
+# ## Example
+#
+# ```
+# def with_saved_input block
+#   let saved_input = input()
+#   redirect input: ["ready"] do
+#     next()
+#     with_io input: $saved_input do block()
+# ```
+@def with_io[R, I, O]
+  # replacement for the strand-local input
+  :input @ I
+  # replacement for the strand-local output
+  :output @ O
+  # function to call
+  block @ ((<I, >O) -> R)
+do -> R
+
+# Calls a function with the strand-local input installed verbatim.
+@def with_io[R, I]
+  :input @ I
+  block @ ((<I) -> R)
+do -> R
+
+# Calls a function with the strand-local output installed verbatim.
+@def with_io[R, O]
+  :output @ O
+  block @ ((>O) -> R)
+do -> R
+
+# Calls a function, returning its result.
+@def with_io[R] block @ (() -> R) -> R
+
+pub def with_io ...args @ Value -> Value
   ...
 
 # Runs a function in a background strand.
