@@ -8,21 +8,29 @@ import
     - TypeError
     - ValueError
   xml:
-    - decode
-    - encode
-    - Node
+    decode: decode_document
+    encode: encode_document
+    - Document
+    - Element
 
-class MyNode: Node
+# Existing element regressions operate on the document root.
+def decode source
+  (decode_document source).root
+
+def encode element
+  encode_document (Document element)
+
+class MyNode: Element
   def (init) self tag
-    Node.(init) $self $tag
+    Element.(init) $self $tag
 
-class Element: Node
+class CustomElement: Element
   def (init) self tag ...items
-    Node.(init) $self $tag ...items
+    Element.(init) $self $tag ...items
 
-class NativeNode: Node
+class NativeNode: Element
   def (init) self tag
-    Node.(init) $self $tag
+    Element.(init) $self $tag
 
 #[test]
 def parse_basic_elements()
@@ -83,19 +91,19 @@ def ignores_xml_declaration()
 
 #[test]
 def round_trip_nodes()
-  let n = Node "foo"
+  let n = Element "foo"
   let s = encode $n
   let parsed = decode $s
   assert_eq $parsed.tag "foo"
 
-  let n = Node "foo"
+  let n = Element "foo"
   n["bar"] = "baz"
   let s = encode $n
   let parsed = decode $s
   assert_eq $parsed.tag "foo"
   assert_eq $parsed["bar"] "baz"
 
-  let n = Node "greeting"
+  let n = Element "greeting"
   n.push "hello world"
   let s = encode $n
   let parsed = decode $s
@@ -104,9 +112,9 @@ def round_trip_nodes()
 
 #[test]
 def round_trip_nested_and_escaped_content()
-  let inner = Node "inner"
+  let inner = Element "inner"
   inner.push "content"
-  let outer = Node "outer"
+  let outer = Element "outer"
   outer.push $inner
   let s = encode $outer
   let parsed = decode $s
@@ -115,7 +123,7 @@ def round_trip_nested_and_escaped_content()
   assert_eq $parsed_children[0].tag "inner"
   assert_eq $[...parsed_children[0].children][0] "content"
 
-  let n = Node "data"
+  let n = Element "data"
   n.push "a < b & c > d"
   let s = encode $n
   let parsed = decode $s
@@ -133,11 +141,11 @@ def entity_references_are_expanded()
 
 #[test]
 def attribute_values_are_escaped_once()
-  let n = Node "a" attrs: {v: "x&y\"z<w"}
+  let n = Element "a" attrs: {v: "x&y\"z<w"}
   assert_eq $encode(n) r#"<a v="x&amp;y&quot;z&lt;w"></a>"#
   assert_eq $decode(encode(n))["v"] "x&y\"z<w"
 
-  let n = Node "a" namespace: "urn:a?x=1&y=2"
+  let n = Element "a" namespace: "urn:a?x=1&y=2"
   assert_eq $encode(n) r#"<a xmlns="urn:a?x=1&amp;y=2"></a>"#
   assert_eq $decode(encode(n)).namespace "urn:a?x=1&y=2"
 
@@ -151,12 +159,12 @@ def adjacent_text_coalesces_around_elements()
 
 #[test]
 def children_are_mutable()
-  let root = Node "root"
+  let root = Element "root"
   let children = root.children
-  let a = Node "a"
-  let b = Node "b"
-  let c = Node "c"
-  let d = Node "d"
+  let a = Element "a"
+  let b = Element "b"
+  let c = Element "c"
+  let d = Element "d"
 
   children.push $a $d
   children.insert 1 $b $c
@@ -165,7 +173,7 @@ def children_are_mutable()
   assert_eq $children[2].tag "c"
   assert_eq $children[3].tag "d"
 
-  let before_last = Node "before-last"
+  let before_last = Element "before-last"
   children.insert -1 $before_last
   assert_eq $children[3].tag "before-last"
   assert_eq $children[4].tag "d"
@@ -195,7 +203,7 @@ def attrs_and_tag_are_mutable()
   assert_eq [...el.attrs.keys()] ["x", "y", "z"]
   assert_eq (el.attrs.pop "z") "3"
 
-  let n = Node "old"
+  let n = Element "old"
   n.tag = "new"
   assert_eq $n.tag "new"
 
@@ -213,11 +221,11 @@ def attrs_and_tag_are_mutable()
 
 #[test]
 def node_type_and_subclassing()
-  let n = Node "foo"
-  assert_eq (type n) $Node
+  let n = Element "foo"
+  assert_eq (type n) $Element
 
   let el = decode "<foo/>"
-  assert (type el Node)
+  assert (type el Element)
 
   let node = MyNode foo
   assert_eq $node.tag foo
@@ -286,8 +294,8 @@ def default_namespace_semantics()
 
 #[test]
 def namespace_fixup_and_detached_nodes()
-  let child = Node "child" namespace: "urn:child" attrs: {("urn:attr", "id"): "1"}
-  let root = Node "root" $child
+  let child = Element "child" namespace: "urn:child" attrs: {("urn:attr", "id"): "1"}
+  let root = Element "root" $child
   assert_eq $encode(root) r#"<root><child xmlns="urn:child" xmlns:ns0="urn:attr" ns0:id="1"></child></root>"#
 
   let parsed = decode $encode(root)
@@ -305,12 +313,12 @@ def namespace_fixup_and_detached_nodes()
 def explicit_namespace_declarations()
   # Declarations survive even when no name uses them, e.g. for prefixes that
   # appear only in attribute values.
-  let root = Node "root" attrs: {type: "x:thing"}
+  let root = Element "root" attrs: {type: "x:thing"}
   root.namespaces["x"] = "urn:x"
   assert_eq $encode(root) r#"<root xmlns:x="urn:x" type="x:thing"></root>"#
 
   # A redundant declaration is not repeated in a child.
-  let child = Node "child"
+  let child = Element "child"
   child.namespaces["x"] = "urn:x"
   root.push $child
   assert_eq $encode(root) r#"<root xmlns:x="urn:x" type="x:thing"><child></child></root>"#
@@ -320,30 +328,30 @@ def explicit_namespace_declarations()
   assert_eq $encode(parsed[0]) r#"<b type="x:thing"></b>"#
 
   # Names use a prefix declared on the element or an ancestor.
-  let node = Node "item" namespace: "urn:x" namespaces: {x: "urn:x"} attrs: {("urn:x", "id"): "1"}
-  node.push $ Node "sub" namespace: "urn:x"
+  let node = Element "item" namespace: "urn:x" namespaces: {x: "urn:x"} attrs: {("urn:x", "id"): "1"}
+  node.push $ Element "sub" namespace: "urn:x"
   assert_eq $encode(node) r#"<x:item xmlns:x="urn:x" x:id="1"><x:sub></x:sub></x:item>"#
 
   # Without one, an element's namespace becomes the default, even where
   # another default is in scope, unless the element declares a default itself.
-  let outer = Node "outer" namespace: "urn:a"
-    $ Node "inner" namespace: "urn:b"
-    $ Node "own" namespace: "urn:c" namespaces: {"": "urn:d"}
+  let outer = Element "outer" namespace: "urn:a"
+    $ Element "inner" namespace: "urn:b"
+    $ Element "own" namespace: "urn:c" namespaces: {"": "urn:d"}
   assert_eq $encode(outer) $ "".join $
     - r#"<outer xmlns="urn:a"><inner xmlns="urn:b"></inner>"#
     - r#"<ns0:own xmlns="urn:d" xmlns:ns0="urn:c"></ns0:own></outer>"#
 
 #[test]
 def mutations_reject_malformed_trees()
-  assert_throws $ValueError do Node "not a name"
-  assert_throws $ValueError do Node "x:y"
-  assert_throws $ValueError do Node "root" namespace: ""
-  assert_throws $ValueError do Node "root" namespaces: {xmlns: "urn:x"}
-  assert_throws $ValueError do Node "root" attrs: {"a b": "1"}
-  assert_throws $ValueError do Node "root" attrs: {xmlns: "urn:x"}
-  assert_throws $ValueError do Node "root" attrs: {id: "\u{1}"}
+  assert_throws $ValueError do Element "not a name"
+  assert_throws $ValueError do Element "x:y"
+  assert_throws $ValueError do Element "root" namespace: ""
+  assert_throws $ValueError do Element "root" namespaces: {xmlns: "urn:x"}
+  assert_throws $ValueError do Element "root" attrs: {"a b": "1"}
+  assert_throws $ValueError do Element "root" attrs: {xmlns: "urn:x"}
+  assert_throws $ValueError do Element "root" attrs: {id: "\u{1}"}
 
-  let node = Node "root" attrs: {id: "1"}
+  let node = Element "root" attrs: {id: "1"}
   assert_throws $ValueError do node.tag = "1st"
   assert_throws $ValueError do node.namespace = ""
   assert_throws $ValueError do node["a b"] = "1"
@@ -356,7 +364,7 @@ def mutations_reject_malformed_trees()
 
   assert_throws $TypeError do node.push 42
   assert_throws $TypeError do node.children.push 42
-  assert_throws $TypeError do Node "root" 42
+  assert_throws $TypeError do Element "root" 42
   assert_throws $ValueError do node.push "\u{1}"
   assert_throws $ValueError do node.children.insert 0 "ok" "\u{1}"
   assert_eq $node.children.len 0
@@ -365,18 +373,18 @@ def mutations_reject_malformed_trees()
   assert_throws $ValueError do decode "<root>&#1;</root>"
   assert_throws $ValueError do encode "\u{1}"
 
-  let cyclic = Node "root"
+  let cyclic = Element "root"
   cyclic.children.push $cyclic
   assert_throws $ValueError do encode $cyclic
 
-  let shared = Node "shared"
-  let dag = Node "root"
+  let shared = Element "shared"
+  let dag = Element "root"
   dag.children.push $shared $shared
   assert_eq $encode(dag) "<root><shared></shared><shared></shared></root>"
 
 #[test]
 def namespaces_are_a_checked_view()
-  let node = Node "root"
+  let node = Element "root"
   assert_throws $TypeError do node.namespaces["x"] = 42
   assert_throws $ValueError do node.namespaces["xmlns"] = "urn:x"
   assert_throws $ValueError do node.namespaces["x"] = ""
@@ -399,7 +407,7 @@ def namespaces_are_a_checked_view()
 
 #[test]
 def xml_namespace_uses_its_prefix()
-  let node = Node "root" attrs: {("http://www.w3.org/XML/1998/namespace", "lang"): "en"}
+  let node = Element "root" attrs: {("http://www.w3.org/XML/1998/namespace", "lang"): "en"}
   assert_eq $encode(node) r#"<root xml:lang="en"></root>"#
   let parsed = decode $encode(node)
   assert_eq $parsed[("http://www.w3.org/XML/1998/namespace", "lang")] "en"
@@ -416,13 +424,13 @@ def traverse_is_depth_first_parent_first()
 
 #[test]
 def construct_children_variadically()
-  let n = Node "greeting" "hello"
+  let n = Element "greeting" "hello"
   assert_eq $encode(n) "<greeting>hello</greeting>"
 
-  let n = Node "root" (Node "a") "text" (Node "b")
+  let n = Element "root" (Element "a") "text" (Element "b")
   assert_eq $encode(n) "<root><a></a>text<b></b></root>"
 
-  let nested = Node "outer" (Node "inner" "content")
+  let nested = Element "outer" (Element "inner" "content")
   let parsed = decode $encode(nested)
   let children = [...parsed.children]
   assert_eq $children[0].tag "inner"
@@ -430,29 +438,29 @@ def construct_children_variadically()
 
 #[test]
 def construct_attrs_from_dict()
-  let n = Node "disk" attrs: {type: "file", device: "disk"}
+  let n = Element "disk" attrs: {type: "file", device: "disk"}
   assert_eq $encode(n) r#"<disk type="file" device="disk"></disk>"#
   assert_eq $n["type"] "file"
 
   # Bareword keys intern as Sym and quoted keys as Str; both name attributes.
-  let n = Node "e" attrs: {plain: "1", "x-custom": "2", ("urn:a", "id"): "3"}
+  let n = Element "e" attrs: {plain: "1", "x-custom": "2", ("urn:a", "id"): "3"}
   assert_eq [...n.attrs.keys()] ["plain", "x-custom", ("urn:a", "id")]
 
   # Attributes keep their order independently of children.
-  let n = Node "e" attrs: {first: "1", second: "2"} "text"
+  let n = Element "e" attrs: {first: "1", second: "2"} "text"
   assert_eq [...n.attrs.keys()] ["first", "second"]
   assert_eq $encode(n) r#"<e first="1" second="2">text</e>"#
 
 #[test]
 def construct_mixes_attrs_and_children()
-  let n = Node "root"
+  let n = Element "root"
     attrs: {id: "1"}
-    (Node "child" "text")
+    (Element "child" "text")
   assert_eq $encode(n) r#"<root id="1"><child>text</child></root>"#
 
-  let ns = Node "vm" namespace: "urn:vm" namespaces: {v: "urn:vm"}
+  let ns = Element "vm" namespace: "urn:vm" namespaces: {v: "urn:vm"}
     attrs: {managed: "true"}
-    $Node("port", "22")
+    $Element("port", "22")
   assert_eq $encode(ns) r#"<v:vm xmlns:v="urn:vm" managed="true"><port>22</port></v:vm>"#
   let parsed = decode $encode(ns)
   assert_eq $parsed.namespace "urn:vm"
@@ -464,12 +472,12 @@ def construct_vertical_layout()
   # A nested element is a parenthesized or `$`-compact call; a bare vertical
   # item is literal text to end of line, and a dash item likewise.
   # `attrs:` opens a vertical dict of attributes.
-  let disk = Node disk
+  let disk = Element disk
     attrs:
       type: file
       device: disk
-    (Node "driver" attrs: {name: "qemu", type: "qcow2"})
-    $Node("source", attrs: {file: "/tmp/disk.qcow2"})
+    (Element "driver" attrs: {name: "qemu", type: "qcow2"})
+    $Element("source", attrs: {file: "/tmp/disk.qcow2"})
   assert_eq $encode(disk) $ "".join $
     - r#"<disk type="file" device="disk">"#
     - r#"<driver name="qemu" type="qcow2"></driver>"#
@@ -477,35 +485,35 @@ def construct_vertical_layout()
 
   # A bare item is an ordinary statement-level argument list, so these are two
   # separate string children; serialization concatenates adjacent text.
-  let text = Node "note"
+  let text = Element "note"
     plain literal words
   assert_eq $text.children.len 3
   assert_eq $encode(text) "<note>plainliteralwords</note>"
 
   # `- $ ` introduces a command-or-expression running to end of line.
-  let dollar = Node disk
-    - $ Node driver attrs: {name: "qemu"}
+  let dollar = Element disk
+    - $ Element driver attrs: {name: "qemu"}
   assert_eq $encode(dollar) r#"<disk><driver name="qemu"></driver></disk>"#
 
-  let nested = Node disk
-    - $ Node source
+  let nested = Element disk
+    - $ Element source
         attrs:
           file: /tmp/disk.qcow2
   assert_eq $encode(nested) r#"<disk><source file="/tmp/disk.qcow2"></source></disk>"#
 
   # `- $ ` items nest arbitrarily deep, each opening its own vertical block.
-  let domain = Node domain
+  let domain = Element domain
     attrs:
       type: kvm
-    - $ Node name dolang-ci
-    - $ Node devices
-        - $ Node interface
+    - $ Element name dolang-ci
+    - $ Element devices
+        - $ Element interface
             attrs:
               type: user
-            - $ Node portForward
+            - $ Element portForward
                 attrs:
                   proto: tcp
-                - $ Node range attrs: {start: "20000", to: "22"}
+                - $ Element range attrs: {start: "20000", to: "22"}
   assert_eq $encode(domain) $ "".join $
     - r#"<domain type="kvm"><name>dolang-ci</name><devices>"#
     - r#"<interface type="user"><portForward proto="tcp">"#
@@ -514,15 +522,15 @@ def construct_vertical_layout()
 
 #[test]
 def construct_rejects_invalid_arguments()
-  assert_throws $TypeError do Node "root" attrs: {x: 42}
-  assert_throws $TypeError do Node "root" attrs: {1: "x"}
-  assert_throws $TypeError do Node "root" namespaces: "nope"
-  assert_throws $TypeError do Node "root" {x: "1"}
+  assert_throws $TypeError do Element "root" attrs: {x: 42}
+  assert_throws $TypeError do Element "root" attrs: {1: "x"}
+  assert_throws $TypeError do Element "root" namespaces: "nope"
+  assert_throws $TypeError do Element "root" {x: "1"}
 
 #[test]
 def construct_variadically_through_subclass()
-  let el = Element "root" attrs: {id: "1"} (Node "child")
-  assert_eq (type el) $Element
+  let el = CustomElement "root" attrs: {id: "1"} (Element "child")
+  assert_eq (type el) $CustomElement
   assert_eq $el["id"] "1"
   assert_eq $el.children[0].tag "child"
 
@@ -531,10 +539,10 @@ def do_subclasses_are_accepted_as_native_values()
   # A Do subclass of a native type is a class instance holding the native in a
   # slot; casts look through it, so it serializes like the base type.
   let el = NativeNode "root"
-  assert (type el Node)
+  assert (type el Element)
   assert_eq $encode(el) "<root></root>"
 
-  let with_child = Node "root"
+  let with_child = Element "root"
   with_child.push (NativeNode "child")
   assert_eq $encode(with_child) "<root><child></child></root>"
 
@@ -552,9 +560,9 @@ def do_subclasses_are_accepted_as_native_values()
 
   # Nested both ways, and through the variadic constructor.
   let tree = NativeNode "outer"
-  tree.push (Node "inner" (NativeNode "leaf"))
+  tree.push (Element "inner" (NativeNode "leaf"))
   assert_eq $encode(tree) "<outer><inner><leaf></leaf></inner></outer>"
-  assert_eq $encode(Node "wrap" (NativeNode "sub")) "<wrap><sub></sub></wrap>"
+  assert_eq $encode(Element "wrap" (NativeNode "sub")) "<wrap><sub></sub></wrap>"
 
   let parsed = decode $encode(tree)
   assert_eq $parsed.tag "outer"
@@ -568,7 +576,7 @@ def do_subclasses_are_accepted_as_native_values()
 
 #[test]
 def attrs_are_views_of_their_node()
-  let node = Node "root" attrs: {id: "1"}
+  let node = Element "root" attrs: {id: "1"}
   let attrs = node.attrs
   attrs["id"] = "2"
   assert_eq $node["id"] "2"
@@ -584,14 +592,14 @@ def attrs_are_views_of_their_node()
 
 #[test]
 def duplicate_attrs_are_rejected()
-  assert_throws $ValueError do Node "root" attrs: {("urn:x", "x"): "1", ("urn:x", "x"): "2"}
-  assert_throws $ValueError do Node "root" attrs: {x: "1", "x": "2"}
-  let node = Node "root" attrs: {x: "1", ("urn:x", "x"): "2"}
+  assert_throws $ValueError do Element "root" attrs: {("urn:x", "x"): "1", ("urn:x", "x"): "2"}
+  assert_throws $ValueError do Element "root" attrs: {x: "1", "x": "2"}
+  let node = Element "root" attrs: {x: "1", ("urn:x", "x"): "2"}
   assert_eq $node.attrs.len 2
 
 #[test]
 def attribute_keys_are_structured()
-  let node = Node root attrs: {id: "plain", ("urn:a", "id"): "one", ("urn:b", "id"): "two"}
+  let node = Element root attrs: {id: "plain", ("urn:a", "id"): "one", ("urn:b", "id"): "two"}
   assert_eq [...node.attrs.keys()] ["id", ("urn:a", "id"), ("urn:b", "id")]
   node.attrs[("urn:a", "id")] = "changed"
   assert_eq [...node.attrs.keys()] ["id", ("urn:a", "id"), ("urn:b", "id")]
@@ -605,14 +613,14 @@ def attribute_keys_are_structured()
     assert_eq (node.attrs.get key) nil
     assert (!(node.attrs.delete key))
     assert_throws $TypeError do node.attrs[key] = "bad"
-    assert_throws $TypeError do Node root attrs: {(key): "bad"}
+    assert_throws $TypeError do Element root attrs: {(key): "bad"}
   assert_throws $ValueError do node.attrs["{urn:a}id"] = "bad"
-  assert_throws $ValueError do Node root attrs: {"{urn:a}id": "bad"}
-  assert_throws $ValueError do Node root attrs: {("", "id"): "bad"}
-  assert_throws $TypeError do Node root attrs: nil
-  assert_throws $TypeError do Node root attrs: "bad"
-  assert_eq $Node("root").attrs.len 0
-  assert_eq $Node("root", attrs: {}).attrs.len 0
+  assert_throws $ValueError do Element root attrs: {"{urn:a}id": "bad"}
+  assert_throws $ValueError do Element root attrs: {("", "id"): "bad"}
+  assert_throws $TypeError do Element root attrs: nil
+  assert_throws $TypeError do Element root attrs: "bad"
+  assert_eq $Element("root").attrs.len 0
+  assert_eq $Element("root", attrs: {}).attrs.len 0
 
 #[test]
 def attribute_identity_is_independent_of_prefixes()

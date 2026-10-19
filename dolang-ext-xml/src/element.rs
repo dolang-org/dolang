@@ -21,7 +21,7 @@ use crate::{
 pub(crate) const CHILDREN: usize = 0;
 pub(crate) const STACK: usize = 0;
 
-pub(crate) struct Node {
+pub(crate) struct Element {
     pub(crate) name: Name,
     /// Attributes in document order, with distinct expanded names.
     pub(crate) attrs: Vec<Attr>,
@@ -29,21 +29,23 @@ pub(crate) struct Node {
     pub(crate) namespaces: Vec<(String, String)>,
 }
 
-pub(crate) struct NodeAnnex;
+pub(crate) struct ElementAnnex;
 
 struct Children;
 struct Attrs;
 struct Namespaces;
 
-/// Rejects a child other than a `Node` or valid text.
+/// Rejects a child other than a `Element` or valid text.
 fn check_child<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Result<'v, 's, ()> {
-    if strand.state::<Tag>().node_type.cast(value).is_some() {
+    if strand.state::<Tag>().element_type.cast(value).is_some()
+        || strand.state::<Tag>().comment_type.cast(value).is_some()
+    {
         return Ok(());
     }
     let Some(text) = value.as_str(strand) else {
         return Err(Error::type_error(
             strand,
-            "XML children must be Node or Str",
+            "XML children must be Element, Comment, or Str",
         ));
     };
     let text = text.pin();
@@ -51,11 +53,11 @@ fn check_child<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Result
 }
 
 impl<'v> ArrayLike<'v> for Children {
-    type Object = Node;
+    type Object = Element;
     const MODULE: &'v str = "xml";
     const NAME: &'v str = "Children";
 
-    fn len(&self, this: Instance<'v, '_, Node>, strand: &mut Strand<'v, '_>) -> usize {
+    fn len(&self, this: Instance<'v, '_, Element>, strand: &mut Strand<'v, '_>) -> usize {
         Ref::slot::<CHILDREN>(&this.borrow_unwrap())
             .as_array(strand)
             .unwrap()
@@ -65,7 +67,7 @@ impl<'v> ArrayLike<'v> for Children {
 
     fn get<'a, 's>(
         &self,
-        this: Instance<'v, '_, Node>,
+        this: Instance<'v, '_, Element>,
         strand: &'a mut Strand<'v, 's>,
         index: usize,
         out: Slot<'v, 'a>,
@@ -80,7 +82,7 @@ impl<'v> ArrayLike<'v> for Children {
 
     fn set<'a, 's>(
         &self,
-        this: Instance<'v, '_, Node>,
+        this: Instance<'v, '_, Element>,
         strand: &'a mut Strand<'v, 's>,
         index: usize,
         value: Slot<'v, 'a>,
@@ -96,7 +98,7 @@ impl<'v> ArrayLike<'v> for Children {
 
     fn push<'a, 's>(
         &self,
-        this: Instance<'v, '_, Node>,
+        this: Instance<'v, '_, Element>,
         strand: &'a mut Strand<'v, 's>,
         values: &mut [Slot<'v, 'a>],
     ) -> Result<'v, 's, ()> {
@@ -111,7 +113,7 @@ impl<'v> ArrayLike<'v> for Children {
 
     fn insert<'a, 's>(
         &self,
-        this: Instance<'v, '_, Node>,
+        this: Instance<'v, '_, Element>,
         strand: &'a mut Strand<'v, 's>,
         index: usize,
         values: &mut [Slot<'v, 'a>],
@@ -129,7 +131,7 @@ impl<'v> ArrayLike<'v> for Children {
 
     fn pop<'a, 's>(
         &self,
-        this: Instance<'v, '_, Node>,
+        this: Instance<'v, '_, Element>,
         strand: &'a mut Strand<'v, 's>,
         index: usize,
         out: Slot<'v, 'a>,
@@ -144,7 +146,7 @@ impl<'v> ArrayLike<'v> for Children {
 
     fn delete<'s>(
         &self,
-        this: Instance<'v, '_, Node>,
+        this: Instance<'v, '_, Element>,
         strand: &mut Strand<'v, 's>,
         index: usize,
     ) -> Result<'v, 's, ()> {
@@ -158,7 +160,7 @@ impl<'v> ArrayLike<'v> for Children {
 
     fn clear<'s>(
         &self,
-        this: Instance<'v, '_, Node>,
+        this: Instance<'v, '_, Element>,
         strand: &mut Strand<'v, 's>,
     ) -> Result<'v, 's, ()> {
         Ref::slot::<CHILDREN>(&this.borrow(strand)?)
@@ -169,17 +171,17 @@ impl<'v> ArrayLike<'v> for Children {
 }
 
 impl<'v> DictLike<'v> for Attrs {
-    type Object = Node;
+    type Object = Element;
     const MODULE: &'v str = "xml";
     const NAME: &'v str = "Attrs";
 
-    fn len(&self, this: Instance<'v, '_, Node>, _strand: &mut Strand<'v, '_>) -> usize {
+    fn len(&self, this: Instance<'v, '_, Element>, _strand: &mut Strand<'v, '_>) -> usize {
         this.borrow_unwrap().attrs.len()
     }
 
     fn get<'a, 's>(
         &self,
-        this: Instance<'v, '_, Node>,
+        this: Instance<'v, '_, Element>,
         strand: &'a mut Strand<'v, 's>,
         key: &Value<'v>,
         instance: i64,
@@ -204,7 +206,7 @@ impl<'v> DictLike<'v> for Attrs {
 
     fn set<'a, 's>(
         &self,
-        this: Instance<'v, '_, Node>,
+        this: Instance<'v, '_, Element>,
         strand: &'a mut Strand<'v, 's>,
         key: Slot<'v, 'a>,
         value: Slot<'v, 'a>,
@@ -217,7 +219,7 @@ impl<'v> DictLike<'v> for Attrs {
 
     fn delete<'s>(
         &self,
-        this: Instance<'v, '_, Node>,
+        this: Instance<'v, '_, Element>,
         strand: &mut Strand<'v, 's>,
         key: &Value<'v>,
     ) -> Result<'v, 's, bool> {
@@ -231,7 +233,7 @@ impl<'v> DictLike<'v> for Attrs {
 
     fn pop<'a, 's>(
         &self,
-        this: Instance<'v, '_, Node>,
+        this: Instance<'v, '_, Element>,
         strand: &'a mut Strand<'v, 's>,
         key: &Value<'v>,
         instance: i64,
@@ -245,7 +247,7 @@ impl<'v> DictLike<'v> for Attrs {
 
     fn clear<'s>(
         &self,
-        this: Instance<'v, '_, Node>,
+        this: Instance<'v, '_, Element>,
         strand: &mut Strand<'v, 's>,
     ) -> Result<'v, 's, ()> {
         this.borrow_mut(strand)?.attrs.clear();
@@ -254,7 +256,7 @@ impl<'v> DictLike<'v> for Attrs {
 
     fn flatten<'s>(
         &self,
-        this: Instance<'v, '_, Node>,
+        this: Instance<'v, '_, Element>,
         strand: &mut Strand<'v, 's>,
         sink: &mut DictViewSink<'v, '_>,
     ) -> Result<'v, 's, ()> {
@@ -274,17 +276,17 @@ impl<'v> DictLike<'v> for Attrs {
 }
 
 impl<'v> DictLike<'v> for Namespaces {
-    type Object = Node;
+    type Object = Element;
     const MODULE: &'v str = "xml";
     const NAME: &'v str = "Namespaces";
 
-    fn len(&self, this: Instance<'v, '_, Node>, _strand: &mut Strand<'v, '_>) -> usize {
+    fn len(&self, this: Instance<'v, '_, Element>, _strand: &mut Strand<'v, '_>) -> usize {
         this.borrow_unwrap().namespaces.len()
     }
 
     fn get<'a, 's>(
         &self,
-        this: Instance<'v, '_, Node>,
+        this: Instance<'v, '_, Element>,
         strand: &'a mut Strand<'v, 's>,
         key: &Value<'v>,
         instance: i64,
@@ -309,7 +311,7 @@ impl<'v> DictLike<'v> for Namespaces {
 
     fn set<'a, 's>(
         &self,
-        this: Instance<'v, '_, Node>,
+        this: Instance<'v, '_, Element>,
         strand: &'a mut Strand<'v, 's>,
         key: Slot<'v, 'a>,
         value: Slot<'v, 'a>,
@@ -327,7 +329,7 @@ impl<'v> DictLike<'v> for Namespaces {
 
     fn delete<'s>(
         &self,
-        this: Instance<'v, '_, Node>,
+        this: Instance<'v, '_, Element>,
         strand: &mut Strand<'v, 's>,
         key: &Value<'v>,
     ) -> Result<'v, 's, bool> {
@@ -341,7 +343,7 @@ impl<'v> DictLike<'v> for Namespaces {
 
     fn pop<'a, 's>(
         &self,
-        this: Instance<'v, '_, Node>,
+        this: Instance<'v, '_, Element>,
         strand: &'a mut Strand<'v, 's>,
         key: &Value<'v>,
         instance: i64,
@@ -355,7 +357,7 @@ impl<'v> DictLike<'v> for Namespaces {
 
     fn clear<'s>(
         &self,
-        this: Instance<'v, '_, Node>,
+        this: Instance<'v, '_, Element>,
         strand: &mut Strand<'v, 's>,
     ) -> Result<'v, 's, ()> {
         this.borrow_mut(strand)?.namespaces.clear();
@@ -364,7 +366,7 @@ impl<'v> DictLike<'v> for Namespaces {
 
     fn flatten<'s>(
         &self,
-        this: Instance<'v, '_, Node>,
+        this: Instance<'v, '_, Element>,
         strand: &mut Strand<'v, 's>,
         sink: &mut DictViewSink<'v, '_>,
     ) -> Result<'v, 's, ()> {
@@ -411,7 +413,7 @@ fn find_attr(attrs: &[Attr], name: &Name) -> Option<usize> {
 
 /// Replaces the value of the attribute with `attr`'s name, or appends `attr`.
 fn set_attr<'v, 's>(
-    this: Instance<'v, '_, Node>,
+    this: Instance<'v, '_, Element>,
     strand: &mut Strand<'v, 's>,
     attr: Attr,
 ) -> Result<'v, 's, ()> {
@@ -425,21 +427,21 @@ fn set_attr<'v, 's>(
 
 /// Creates a node; `declarations` are the namespace declarations the
 /// element makes itself.
-pub(crate) fn create_node<'v, 's>(
+pub(crate) fn create_element<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    node_type: Type<'v, Node>,
+    element_type: Type<'v, Element>,
     name: Name,
     attrs: Vec<Attr>,
     declarations: Vec<(String, String)>,
     mut out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let node = Node {
+    let node = Element {
         name,
         attrs,
         namespaces: declarations,
     };
-    node_type.create_with_annex(strand, node, NodeAnnex, &mut out);
-    node_type
+    element_type.create_with_annex(strand, node, ElementAnnex, &mut out);
+    element_type
         .cast(&out)
         .unwrap()
         .enter_sync(strand, |strand, inst| {
@@ -514,11 +516,11 @@ fn constructor_attrs<'v, 's>(
     Ok(attrs)
 }
 
-impl<'v> Object<'v> for Node {
+impl<'v> Object<'v> for Element {
     const MODULE: &'static str = "xml";
-    const NAME: &'static str = "Node";
+    const NAME: &'static str = "Element";
     const SLOTS: usize = 1;
-    type Annex = NodeAnnex;
+    type Annex = ElementAnnex;
     type Type = ();
     type TypeAnnex = ();
 
@@ -561,7 +563,7 @@ impl<'v> Object<'v> for Node {
             Some(attrs) => constructor_attrs(strand, &attrs)?,
             None => Vec::new(),
         };
-        create_node(
+        create_element(
             strand,
             this,
             name,
@@ -589,7 +591,7 @@ impl<'v> Object<'v> for Node {
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        fmt!(strand, w, "<xml.Node {}>", borrow.name.clark())
+        fmt!(strand, w, "<xml.Element {}>", borrow.name.clark())
     }
 
     fn index<'a, 's>(
@@ -713,7 +715,7 @@ impl<'v> Object<'v> for Node {
     }
 }
 
-/// Depth-first, parent-first traversal iterator over a Node tree.
+/// Depth-first, parent-first traversal iterator over a Element tree.
 pub(crate) struct TraverseIter;
 
 impl<'v> Object<'v> for TraverseIter {
@@ -749,7 +751,7 @@ impl<'v> Object<'v> for TraverseIter {
             if !stack.pop(strand, &mut out)? {
                 return Ok(false);
             }
-            if let Some(node_cast) = global.node_type.cast(&out) {
+            if let Some(node_cast) = global.element_type.cast(&out) {
                 node_cast.enter_sync(strand, |strand, node_inst| {
                     let node_borrow = node_inst.borrow(strand)?;
                     let children = Ref::slot::<CHILDREN>(&node_borrow)

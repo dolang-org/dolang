@@ -18,15 +18,17 @@ use dolang::runtime::{
     error::{Error, Result, ResultExt},
     object::Ref,
     unpack,
-    value::{Array, StrEmbryo, View},
+    value::{Array, Empty, Output, StrEmbryo, View},
     vm::Register,
 };
 
 use crate::{
     attr::{Attr, Name},
     check::{XML_NS, validate_name, validate_namespace_binding, validate_text},
+    comment::{Comment, validate_comment},
+    document::create_document,
+    element::{CHILDREN, check_new_attrs, create_element},
     global::Global,
-    node::{CHILDREN, check_new_attrs, create_node},
 };
 
 struct ParsedElement {
@@ -53,36 +55,81 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, state: State<'v, Global<
             let mut reader = NsReader::from_str(&src);
             reader.config_mut().trim_text(false);
 
-            loop {
-                match reader.read_event().into_do(strand)? {
-                    Event::Start(start) => {
-                        parse_element(strand, &mut reader, &start, state, &mut out)?;
-                        break;
+            strand.with_slots_sync(|strand, [mut children, mut child]| {
+                Output::set(strand, &mut children, Empty::Array);
+                let array = children.as_array(strand).unwrap();
+                loop {
+                    match reader
+                        .read_event()
+                        .map_err(|error| Error::value(strand, error.to_string()))?
+                    {
+                        Event::Start(start) => {
+                            parse_element(strand, &mut reader, &start, state, &mut child)?;
+                            array.push(strand, &mut child)?;
+                        }
+                        Event::Empty(start) => {
+                            create_parsed_element(strand, &reader, &start, state, &mut child)?;
+                            array.push(strand, &mut child)?;
+                        }
+                        Event::Comment(content) => {
+                            let text = content
+                                .xml_content(XmlVersion::Implicit1_0)
+                                .into_do(strand)?
+                                .into_owned();
+                            validate_comment(strand, &text)?;
+                            state
+                                .comment_type
+                                .create(strand, Comment { text }, &mut child);
+                            array.push(strand, &mut child)?;
+                        }
+                        Event::Text(content) => {
+                            let text = content
+                                .xml_content(XmlVersion::Implicit1_0)
+                                .into_do(strand)?;
+                            Output::set(strand, &mut child, text.as_ref());
+                            array.push(strand, &mut child)?;
+                        }
+                        Event::Eof => break,
+                        Event::Decl(_) | Event::PI(_) | Event::DocType(_) => {}
+                        _ => return Err(Error::value(strand, "invalid content outside XML root")),
                     }
-                    Event::Empty(start) => {
-                        create_parsed_node(strand, &reader, &start, state, &mut out)?;
-                        break;
-                    }
-                    Event::Eof => return Err(Error::value(strand, "no root XML element")),
-                    _ => {}
                 }
-            }
+                create_document(
+                    strand,
+                    state.document_type,
+                    &children,
+                    Slot::reborrow(&mut out),
+                )
+            })?;
             Ok(())
         })
         .function("encode", async move |strand, args, out| {
             let ([arg], []) = unpack!(strand, args, 1, 0)?;
-            // Nodes check their text as it is added; a lone string has not been.
-            if let Some(text) = arg.as_str(strand) {
-                let text = text.pin();
-                validate_text(strand, &text, "XML text")?;
-            }
+            let document = state
+                .document_type
+                .cast(&arg)
+                .ok_or_else(|| Error::type_error(strand, "expected xml.Document"))?;
             let mut xml = StrEmbryo::new();
             let mut walk = WalkState::default();
-            walk_value(strand, &arg, state, &HashMap::new(), &mut walk, &mut xml)?;
+            document.enter_sync(strand, |strand, document| {
+                let borrow = document.borrow(strand)?;
+                let children = Ref::slot::<{ crate::document::CHILDREN }>(&borrow)
+                    .as_array(strand)
+                    .unwrap();
+                strand.with_slots_sync(|strand, [mut child]| {
+                    for i in 0..children.len(strand)? {
+                        children.get(strand, i, &mut child)?;
+                        walk_value(strand, &child, state, &HashMap::new(), &mut walk, &mut xml)?;
+                    }
+                    Ok(())
+                })
+            })?;
             xml.finish(strand, out);
             Ok(())
         })
-        .value("Node", state.node_type)
+        .value("Element", state.element_type)
+        .value("Comment", state.comment_type)
+        .value("Document", state.document_type)
         .commit();
 }
 
@@ -162,7 +209,7 @@ fn parse_start<'v, 's>(
     })
 }
 
-fn create_parsed_node<'v, 's>(
+fn create_parsed_element<'v, 's>(
     strand: &mut Strand<'v, 's>,
     reader: &NsReader<&[u8]>,
     start: &BytesStart<'_>,
@@ -170,9 +217,9 @@ fn create_parsed_node<'v, 's>(
     out: &mut Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     let parsed = parse_start(strand, reader, start)?;
-    create_node(
+    create_element(
         strand,
-        state.node_type,
+        state.element_type,
         parsed.name,
         parsed.attrs,
         parsed.namespaces,
@@ -202,10 +249,10 @@ fn parse_element<'v, 's>(
     state: State<'v, Global<'v>>,
     out: &mut Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    create_parsed_node(strand, reader, start, state, out)?;
+    create_parsed_element(strand, reader, start, state, out)?;
     strand.with_slots_sync(|strand, [mut child, mut chunk]| {
         state
-            .node_type
+            .element_type
             .cast(&*out)
             .unwrap()
             .enter_sync(strand, |strand, node| {
@@ -214,7 +261,10 @@ fn parse_element<'v, 's>(
                 // Adjacent text, CDATA, and references coalesce into one child.
                 let mut text = StrEmbryo::new();
                 loop {
-                    match reader.read_event().into_do(strand)? {
+                    match reader
+                        .read_event()
+                        .map_err(|error| Error::value(strand, error.to_string()))?
+                    {
                         Event::Start(start) => {
                             flush_text(strand, &children, &mut text, &mut chunk)?;
                             parse_element(strand, reader, &start, state, &mut child)?;
@@ -222,7 +272,19 @@ fn parse_element<'v, 's>(
                         }
                         Event::Empty(start) => {
                             flush_text(strand, &children, &mut text, &mut chunk)?;
-                            create_parsed_node(strand, reader, &start, state, &mut child)?;
+                            create_parsed_element(strand, reader, &start, state, &mut child)?;
+                            children.push(strand, &mut child)?;
+                        }
+                        Event::Comment(content) => {
+                            flush_text(strand, &children, &mut text, &mut chunk)?;
+                            let text = content
+                                .xml_content(XmlVersion::Implicit1_0)
+                                .into_do(strand)?
+                                .into_owned();
+                            validate_comment(strand, &text)?;
+                            state
+                                .comment_type
+                                .create(strand, Comment { text }, &mut child);
                             children.push(strand, &mut child)?;
                         }
                         Event::Text(content) => {
@@ -353,10 +415,19 @@ fn walk_value<'v, 's>(
     walk: &mut WalkState,
     xml: &mut StrEmbryo<'v>,
 ) -> Result<'v, 's, ()> {
-    let Some(cast) = state.node_type.cast(value) else {
+    if let Some(comment) = state.comment_type.cast(value) {
+        return comment.enter_sync(strand, |strand, comment| {
+            xml.extend(strand, "<!--");
+            let borrow = comment.borrow(strand)?;
+            xml.extend(strand, &borrow.text);
+            xml.extend(strand, "-->");
+            Ok(())
+        });
+    }
+    let Some(cast) = state.element_type.cast(value) else {
         let text = value
             .as_str(strand)
-            .ok_or_else(|| Error::type_error(strand, "expected xml.Node or Str"))?
+            .ok_or_else(|| Error::type_error(strand, "expected xml.Element, xml.Comment, or Str"))?
             .pin();
         xml.extend(strand, &escape(&*text));
         return Ok(());

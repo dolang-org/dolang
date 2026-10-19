@@ -40,7 +40,7 @@ pub def values u @ url.Url p @ patch.Patch -> nil
   nil
 
 # Scoped blocks run with their caller's channels
-pub def scoped node @ xml.Node >Sink[Str] -> nil
+pub def scoped node @ xml.Element >Sink[Str] -> nil
   let n = time.timeout 1 do
     put "x"
     1
@@ -237,9 +237,20 @@ pub def shell_scopes >Sink[Str] -> Int
 
 # XML attribute constructors normalize symbols; views use string/tuple keys.
 pub def xml_attributes() -> Str
-  let node = xml.Node root attrs: {id: "plain", ("urn:test", "id"): "namespaced"}
+  let node = xml.Element root attrs: {id: "plain", ("urn:test", "id"): "namespaced"}
   let attrs @ MutMap[Str | (Str, Str), Str] = node.attrs
   attrs[("urn:test", "id")] = "updated"
   node[("urn:test", "id")] = "direct"
   let value @ Str = node[("urn:test", "id")]
   value
+
+# Documents always expose an element root; comments and text are Node members.
+pub def xml_document() -> xml.Element
+  let comment @ xml.Node = xml.Comment "note"
+  let text @ xml.Node = "text"
+  let root = xml.Element "root" $comment $text
+  let document @ xml.Document = xml.Document $root
+  let children @ MutSeq[xml.Node] = document.children
+  children.push "\n"
+  let parsed @ xml.Document = xml.decode(xml.encode(document))
+  parsed.root

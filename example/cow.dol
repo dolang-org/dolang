@@ -4,8 +4,8 @@ import xml progress docker
 def search name
   let doc = xml.decode $ sub do run zypper --xmlout search $name
   return $
-    for n = doc.traverse()
-      if (type n xml.Node && n.tag == "solvable")
+    for n = doc.root.traverse()
+      if (type n xml.Element && n.tag == "solvable")
         $n["name"]
 
 progress.with do docker.build

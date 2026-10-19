@@ -100,7 +100,7 @@ def parse_errno paths
   (canonical, aliases)
 
 def word_node value tag
-  ((type value xml.Node) && (value.namespace == WORD_NS) && (value.tag == tag))
+  ((type value xml.Element) && (value.namespace == WORD_NS) && (value.tag == tag))
 
 def word_text element
   let parts = []
@@ -114,15 +114,15 @@ def word_text element
 def parse_windows path
   let root = zip.open $path do |archive|
     archive.open word/document.xml do |file|
-      xml.decode (str(file.read()))
+      (xml.decode(str(file.read()))).root
   let body = root.children.find default: nil do |node| word_node $node body
-  if (body == nil)
+  if !(type body xml.Element)
     throw std.ValueError "MS-ERREF DOCX has no document body"
   let active = false
   let result = {}
   let names = {}
   for element = body
-    if !(type element xml.Node)
+    if !(type element xml.Element)
       continue
     if word_node $element p
       let text = word_text $element
@@ -134,7 +134,7 @@ def parse_windows path
     if (!active || !word_node(element, "tbl"))
       continue
     for row = element.traverse()
-      if !(type row xml.Node)
+      if !(type row xml.Element)
         continue
       if !word_node(row, "tr")
         continue

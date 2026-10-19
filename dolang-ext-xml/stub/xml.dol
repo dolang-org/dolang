@@ -1,49 +1,45 @@
 # dolang: strict
-# Parses, edits, and serializes XML element trees.
+# Parses, edits, and serializes XML documents.
 
 import std:
   - @IndexItem
 
-# A value accepted by [`encode`](xml.encode).
-pub @let EncodeValue = (Node | Str)
-
-# A value returned by [`decode`](xml.decode).
-pub @let DecodeValue = Node
+# A child of an XML element.
+pub @let Node = (Element | Comment | Str)
 
 # A parentless XML element.
 #
-# Nodes can be shared or inserted into different trees. Serialization derives
+# Elements can be shared or inserted into different trees. Serialization derives
 # namespace declarations from each node rather than from parent pointers.
 #
 # Attribute keys are local-name strings or `(namespace_uri, local_name)`
 # tuples. Tuple namespaces are URIs, not prefixes. Serialization uses a prefix
-# declared by [`namespaces`](xml.Node.namespaces) on the element or an ancestor,
+# declared by [`namespaces`](xml.Element.namespaces) on the element or an ancestor,
 # and otherwise makes an element's namespace the default or generates a prefix.
 #
 # Changes are checked as they are made, so any tree without a cycle can be
-# serialized. Setting an invalid name, an empty namespace, or the `xmlns`
+# serialized inside a document. Setting an invalid name, an empty namespace, or the `xmlns`
 # namespace raises `ValueError`, as does adding text or an attribute value
-# containing a character XML forbids. Adding a child other than a `Node` or
-# `Str` raises `TypeError`.
-pub class Node: @Index[{*(Str | (Str, Str)): Str, *(Node | Str)}] @Assign[Str | (Str, Str), Str] @Spread[Node | Str]
+# containing a character XML forbids. Adding a child other than an `Element`, `Comment`, or `Str` raises `TypeError`.
+pub class Element: @Index[{*(Str | (Str, Str)): Str, *Node}] @Assign[Str | (Str, Str), Str] @Spread[Node]
   # Creates an element, optionally with attributes and children.
   #
   # ## Errors
   #
   # | Exception | Condition |
   # | --- | --- |
-  # | `TypeError` | An attribute dict has an invalid key type or a value other than a `Str`, or a child is not a `Node` or `Str`. |
+  # | `TypeError` | An attribute dict has an invalid key type or a value other than a `Str`, or a child is not an `Element`, `Comment`, or `Str`. |
   # | `ValueError` | A name, string, or namespace declaration is invalid, or two attributes have the same expanded name. |
   #
   # ## Example
   #
   # ```
-  # let item = Node item namespace: "urn:inventory" namespaces: {inv: "urn:inventory"}
-  # let disk = Node disk
+  # let item = Element item namespace: "urn:inventory" namespaces: {inv: "urn:inventory"}
+  # let disk = Element disk
   #   attrs:
   #     type: file
   #     device: disk
-  #   - $ Node driver attrs: {name: "qemu", type: "qcow2"}
+  #   - $ Element driver attrs: {name: "qemu", type: "qcow2"}
   # ```
   pub def (init)
     self
@@ -51,12 +47,12 @@ pub class Node: @Index[{*(Str | (Str, Str)): Str, *(Node | Str)}] @Assign[Str | 
     tag @ Str
     # Namespace URI.
     :namespace @ Str = nil
-    # Initial [`namespaces`](xml.Node.namespaces), with `Sym` or `Str` keys.
+    # Initial [`namespaces`](xml.Element.namespaces), with `Sym` or `Str` keys.
     :namespaces @ BaseDict[Sym | Str, Str] = nil
     # Attributes; bareword keys name unnamespaced attributes.
     :attrs @ BaseDict[Sym | Str | (Str, Str), Str] = nil
     # Children in document order.
-    *items @ (Node | Str)
+    *items @ Node
   do
     ...
 
@@ -75,11 +71,11 @@ pub class Node: @Index[{*(Str | (Str, Str)): Str, *(Node | Str)}] @Assign[Str | 
   pub def attrs self -> MutMap[Str | (Str, Str), Str]
     ...
 
-  # Mutable array-like view of child `Node` and `Str` values in document order.
+  # Mutable array-like view of child values in document order.
   #
   # Iterating a node iterates this view directly.
   #[getter]
-  pub def children self -> MutSeq[Node | Str]
+  pub def children self -> MutSeq[Node]
     ...
 
   # Mutable namespace URI, or `nil` for no namespace.
@@ -107,20 +103,20 @@ pub class Node: @Index[{*(Str | (Str, Str)): Str, *(Node | Str)}] @Assign[Str | 
   pub def push
     self
     # Child value.
-    child @ (Node | Str)
+    child @ Node
   do
     ...
 
   # Returns a depth-first, parent-first iterator over this node and descendants.
-  pub def traverse self -> Iter[Node | Str]
+  pub def traverse self -> Iter[Node]
     ...
 
   # Reads an attribute by string or namespace/name tuple, or a child by integer index.
   #
   # Negative integer indexes count from the end.
-  @def (index)[K] self key@K -> IndexItem[{*(Str | (Str, Str)): Str, *(Node | Str)}, K]
-  @def (index) self range@Range[Int] -> Array[Node | Str]
-  pub def (index)[K] self key@K -> IndexItem[{*(Str | (Str, Str)): Str, *(Node | Str)}, K]
+  @def (index)[K] self key@K -> IndexItem[{*(Str | (Str, Str)): Str, *Node}, K]
+  @def (index) self range@Range[Int] -> Array[Node]
+  pub def (index)[K] self key@K -> IndexItem[{*(Str | (Str, Str)): Str, *Node}, K]
     ...
 
   # Sets an attribute by string or namespace/name tuple, adding it if missing.
@@ -128,58 +124,62 @@ pub class Node: @Index[{*(Str | (Str, Str)): Str, *(Node | Str)}] @Assign[Str | 
     ...
 
   # Iterates the children.
-  pub def (iter) self -> Iter[Node | Str]
+  pub def (iter) self -> Iter[Node]
     ...
 
   # Spreads the children positionally.
-  pub def (spread) self -> Spread[Node | Str]
+  pub def (spread) self -> Spread[Node]
     ...
 
-# Parses an XML document into a parentless element tree.
+# Holds an XML comment body without markup delimiters.
+#
+# String coercion returns the body. Debug coercion identifies the comment.
+# Invalid XML characters, embedded `--`, and a final `-` raise `ValueError`.
+pub class Comment
+  pub def (init) self text @ Str
+    ...
+
+  # Mutable comment body, checked before assignment.
+  pub field text @ Str = ...
+
+# Holds a complete XML document with exactly one root element.
+#
+# Children may be elements, comments, or XML whitespace strings. Exactly one
+# child must be an element. Invalid child types raise `TypeError`; invalid
+# text or a root count other than one raises `ValueError`.
+pub class Document
+  pub def (init) self *children @ Node
+    ...
+
+  # Mutable view of the document's children in order.
+  #
+  # Removing the root or clearing the view raises `StateError`. Replacement
+  # and insertion must preserve exactly one root or raise `ValueError`.
+  # Failed operations leave the children unchanged.
+  #[getter]
+  pub def children self -> MutSeq[Node]
+    ...
+
+  # The root element. Assignment replaces it in place.
+  pub field root @ Element = ...
+
+# Parses a complete XML document, preserving comments and whitespace.
 #
 # Predefined entities and numeric character references are expanded. Custom
-# DTD entities are not resolved.
-#
-# ## Returns
-#
-# The root element.
-#
-# ## Errors
-#
-# `ValueError` if the document is invalid, lacks a root, or uses an unsupported
-# entity.
-#
-# ## Example
-#
-# ```
-# let doc = decode "<root><child>text</child></root>"
-# assert_eq $doc.tag "root"
-# ```
-pub def decode
-  # XML document.
-  xml @ Str
-do -> DecodeValue
+# DTD entities are not resolved. Invalid documents raise `ValueError`.
+pub def decode xml @ Str -> Document
   ...
 
-# Serializes an XML tree.
+# Serializes a complete XML document.
 #
-# Namespace declaration spelling and placement can differ from the input while
-# preserving element and attribute namespace semantics.
-#
-# ## Errors
-#
-# `ValueError` if the tree contains a cycle, or a lone string contains a
-# character XML forbids.
+# Namespace spelling may differ while preserving expanded names.
+# Cycles raise `ValueError`.
 #
 # ## Example
 #
 # ```
-# let n = Node "greeting"
-# n.push "hello"
-# assert_eq (encode $n) "<greeting>hello</greeting>"
+# let doc = Document (Element "greeting" "hello")
+# assert_eq (encode doc) "<greeting>hello</greeting>"
 # ```
-pub def encode
-  # XML node or text.
-  node @ EncodeValue
-do -> Str
+pub def encode document @ Document -> Str
   ...
