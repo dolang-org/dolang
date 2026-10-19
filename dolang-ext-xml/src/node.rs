@@ -7,11 +7,11 @@ use dolang::runtime::{
     Args, Error, Instance, Object, Output, Result, Slot, Strand, Type, Value,
     object::{ArrayLike, ArrayView, DictLike, DictView, DictViewSink, Mut, Ref, TypeBuilder},
     unpack,
-    value::{Empty, Nil, TypeObject},
+    value::{AsTuple, Empty, Nil, TypeObject},
 };
 
 use crate::{
-    attr::{Attr, Name, attr_key, key_string, optional_string, required_string},
+    attr::{Attr, Name, attr_key, attr_name, key_string, optional_string, required_string},
     check::{
         validate_name, validate_namespace, validate_namespace_binding, validate_ncname,
         validate_text,
@@ -189,11 +189,11 @@ impl<'v> DictLike<'v> for Attrs {
         if !matches!(instance, 0 | -1) {
             return Ok(false);
         }
-        let Some(key) = key_string(strand, key)? else {
+        let Some(name) = attr_name(strand, key)? else {
             return Ok(false);
         };
         let node = this.borrow(strand)?;
-        match find_attr(&node.attrs, &Name::from_clark(&key)) {
+        match find_attr(&node.attrs, &name) {
             Some(index) => {
                 Output::set(strand, out, node.attrs[index].value.as_str());
                 Ok(true)
@@ -221,11 +221,11 @@ impl<'v> DictLike<'v> for Attrs {
         strand: &mut Strand<'v, 's>,
         key: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        let Some(key) = key_string(strand, key)? else {
+        let Some(name) = attr_name(strand, key)? else {
             return Ok(false);
         };
         let mut node = this.borrow_mut(strand)?;
-        let index = find_attr(&node.attrs, &Name::from_clark(&key));
+        let index = find_attr(&node.attrs, &name);
         Ok(index.map(|index| node.attrs.remove(index)).is_some())
     }
 
@@ -260,7 +260,14 @@ impl<'v> DictLike<'v> for Attrs {
     ) -> Result<'v, 's, ()> {
         let node = this.borrow(strand)?;
         for attr in &node.attrs {
-            sink.push(strand, attr.name.clark().as_str(), attr.value.as_str());
+            match &attr.name.namespace {
+                Some(namespace) => sink.push(
+                    strand,
+                    AsTuple::new([namespace.as_str(), attr.name.local.as_str()]),
+                    attr.value.as_str(),
+                ),
+                None => sink.push(strand, attr.name.local.as_str(), attr.value.as_str()),
+            }
         }
         Ok(())
     }
@@ -474,27 +481,37 @@ fn dict_pairs<'v, 's>(
     }
 }
 
-/// Appends one variadic constructor item: a `Dict` adds attributes keyed in
-/// Clark notation, and anything else becomes a child.
-fn append_item<'v, 's>(
-    this: Instance<'v, '_, Node>,
+/// Reads constructor attributes, allowing bareword keys as shorthand.
+fn constructor_attrs<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    item: Slot<'v, '_>,
-) -> Result<'v, 's, ()> {
-    if item.as_dict(strand).is_some() {
-        let mut attrs = Vec::new();
-        for (key, value) in dict_pairs(strand, &item, "attribute")? {
-            attrs.push(Attr::checked(strand, Name::from_clark(&key), value)?);
-        }
-        let mut node = this.borrow_mut(strand)?;
-        check_new_attrs(strand, &node.attrs, None, &attrs)?;
-        node.attrs.extend(attrs);
-        return Ok(());
+    value: &Value<'v>,
+) -> Result<'v, 's, Vec<Attr>> {
+    let dict = value
+        .as_dict(strand)
+        .ok_or_else(|| Error::type_error(strand, "attrs: expected Dict"))?;
+    let mut pairs = dict.pairs();
+    let mut attrs = Vec::new();
+    loop {
+        let attr = strand.with_slots_sync(|strand, [mut key, mut value]| {
+            if !pairs.next(strand, &mut key, &mut value)? {
+                return Ok(None);
+            }
+            let name = if key.as_sym(strand).is_some() {
+                Name {
+                    local: key.to_string(strand)?,
+                    namespace: None,
+                }
+            } else {
+                attr_key(strand, &key)?
+            };
+            let value = required_string(strand, &value, "attribute value")?;
+            Attr::checked(strand, name, value).map(Some)
+        })?;
+        let Some(attr) = attr else { break };
+        check_new_attrs(strand, &attrs, None, std::slice::from_ref(&attr))?;
+        attrs.push(attr);
     }
-    check_child(strand, &item)?;
-    let borrow = this.borrow(strand)?;
-    let children = Ref::slot::<CHILDREN>(&borrow).as_array(strand).unwrap();
-    children.push(strand, item)
+    Ok(attrs)
 }
 
 impl<'v> Object<'v> for Node {
@@ -514,13 +531,15 @@ impl<'v> Object<'v> for Node {
         let global = strand.state::<Tag>();
         let namespace_sym = global.syms.namespace;
         let namespaces_sym = global.syms.namespaces;
-        let ([tag], [namespace, namespaces], items) = unpack!(
+        let attrs_sym = global.syms.attrs;
+        let ([tag], [namespace, namespaces, attrs], items) = unpack!(
             strand,
             args,
             1,
             0,
             namespace_sym = None,
             namespaces_sym = None,
+            attrs_sym = None,
             *
         )?;
         let name = Name {
@@ -538,18 +557,27 @@ impl<'v> Object<'v> for Node {
                 }
             }
         }
+        let attrs = match attrs {
+            Some(attrs) => constructor_attrs(strand, &attrs)?,
+            None => Vec::new(),
+        };
         create_node(
             strand,
             this,
             name,
-            Vec::new(),
+            attrs,
             declarations,
             Slot::reborrow(&mut out),
         )?;
         let node = this.cast(&out).expect("freshly created node");
         node.enter_sync(strand, |strand, node| {
             for item in items {
-                append_item(node, strand, item)?;
+                check_child(strand, &item)?;
+                let borrow = node.borrow(strand)?;
+                Ref::slot::<CHILDREN>(&borrow)
+                    .as_array(strand)
+                    .unwrap()
+                    .push(strand, item)?;
             }
             Ok(())
         })
@@ -570,8 +598,8 @@ impl<'v> Object<'v> for Node {
         index: &Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        if let Some(key) = index.as_str(strand) {
-            let name = Name::from_clark(&key.to_string());
+        if index.as_str(strand).is_some() || index.as_tuple(strand).is_some() {
+            let name = attr_key(strand, index)?;
             let node = this.borrow(strand)?;
             if let Some(index) = find_attr(&node.attrs, &name) {
                 Output::set(strand, out, node.attrs[index].value.as_str());

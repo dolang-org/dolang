@@ -1,0 +1,30 @@
+import xml
+  _vm.unattend:
+    - unattend_xml
+  test:
+    - assert
+    - assert_eq
+    - test
+
+#[test]
+def generates_namespaced_attributes()
+  let source = unattend_xml tester edition: "Windows 11 Pro" drivers: true
+  let document = xml.decode $source
+  let wcm = "http://schemas.microsoft.com/WMIConfig/2002/State"
+  let actions = 0
+  let paths = 0
+  for node = document.traverse()
+    if (type node xml.Node)
+      let action = node.attrs.get (wcm, "action")
+      if (action != nil)
+        assert_eq $action "add"
+        actions = (actions + 1)
+      if (node.tag == "PathAndCredentials")
+        assert_eq $node[(wcm, "action")] "add"
+        assert_eq $node[(wcm, "keyValue")] $str(paths + 1)
+        paths = (paths + 1)
+      if (node.tag == "component")
+        assert_eq $node["processorArchitecture"] "amd64"
+        assert (node.attrs.get "name")
+  assert (actions > paths)
+  assert (paths > 0)

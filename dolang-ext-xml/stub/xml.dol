@@ -15,10 +15,9 @@ pub @let DecodeValue = Node
 # Nodes can be shared or inserted into different trees. Serialization derives
 # namespace declarations from each node rather than from parent pointers.
 #
-# Attributes are keyed by expanded name in Clark notation: `{namespace}local`,
-# or `local` for an unnamespaced attribute. Names have no prefixes. For a
-# namespaced name, serialization uses a prefix that
-# [`namespaces`](xml.Node.namespaces) declares on the element or an ancestor,
+# Attribute keys are local-name strings or `(namespace_uri, local_name)`
+# tuples. Tuple namespaces are URIs, not prefixes. Serialization uses a prefix
+# declared by [`namespaces`](xml.Node.namespaces) on the element or an ancestor,
 # and otherwise makes an element's namespace the default or generates a prefix.
 #
 # Changes are checked as they are made, so any tree without a cycle can be
@@ -26,14 +25,14 @@ pub @let DecodeValue = Node
 # namespace raises `ValueError`, as does adding text or an attribute value
 # containing a character XML forbids. Adding a child other than a `Node` or
 # `Str` raises `TypeError`.
-pub class Node: @Index[{*(Str): Str, *(Node | Str)}] @Assign[Str, Str] @Spread[Node | Str]
+pub class Node: @Index[{*(Str | (Str, Str)): Str, *(Node | Str)}] @Assign[Str | (Str, Str), Str] @Spread[Node | Str]
   # Creates an element, optionally with attributes and children.
   #
   # ## Errors
   #
   # | Exception | Condition |
   # | --- | --- |
-  # | `TypeError` | A dict has a key other than a `Str` or `Sym` or a value other than a `Str`, or a child is not a `Node` or `Str`. |
+  # | `TypeError` | An attribute dict has an invalid key type or a value other than a `Str`, or a child is not a `Node` or `Str`. |
   # | `ValueError` | A name, string, or namespace declaration is invalid, or two attributes have the same expanded name. |
   #
   # ## Example
@@ -41,10 +40,10 @@ pub class Node: @Index[{*(Str): Str, *(Node | Str)}] @Assign[Str, Str] @Spread[N
   # ```
   # let item = Node item namespace: "urn:inventory" namespaces: {inv: "urn:inventory"}
   # let disk = Node disk
-  #   $
+  #   attrs:
   #     type: file
   #     device: disk
-  #   - $ Node driver {name: "qemu", type: "qcow2"}
+  #   - $ Node driver attrs: {name: "qemu", type: "qcow2"}
   # ```
   pub def (init)
     self
@@ -54,27 +53,26 @@ pub class Node: @Index[{*(Str): Str, *(Node | Str)}] @Assign[Str, Str] @Spread[N
     :namespace @ Str = nil
     # Initial [`namespaces`](xml.Node.namespaces), with `Sym` or `Str` keys.
     :namespaces @ BaseDict[Sym | Str, Str] = nil
-    # Children, and dicts of attributes keyed in Clark notation.
-    #
-    # Bareword dict keys are `Sym`s and name unnamespaced attributes.
-    *items @ (Node | Str | BaseDict[Sym | Str, Str])
+    # Attributes; bareword keys name unnamespaced attributes.
+    :attrs @ BaseDict[Sym | Str | (Str, Str), Str] = nil
+    # Children in document order.
+    *items @ (Node | Str)
   do
     ...
 
-  # Mutable map of attribute values by name in Clark notation, in document
-  # order.
+  # Mutable map of attribute values by expanded name, in document order.
   #
-  # Keys may also be `Sym`s for unnamespaced attributes; iteration yields `Str`
-  # keys. Setting an existing attribute keeps its position.
+  # Keys are local-name strings or `(namespace_uri, local_name)` tuples.
+  # Setting an existing attribute keeps its position.
   #
   # ## Example
   #
   # ```
-  # node.attrs["{urn:inventory}id"] = "123"
-  # let id = node.attrs.get "{urn:inventory}id"
+  # node.attrs[("urn:inventory", "id")] = "123"
+  # let id = node.attrs.get ("urn:inventory", "id")
   # ```
   #[getter]
-  pub def attrs self -> MutMap[Str, Str]
+  pub def attrs self -> MutMap[Str | (Str, Str), Str]
     ...
 
   # Mutable array-like view of child `Node` and `Str` values in document order.
@@ -117,16 +115,16 @@ pub class Node: @Index[{*(Str): Str, *(Node | Str)}] @Assign[Str, Str] @Spread[N
   pub def traverse self -> Iter[Node | Str]
     ...
 
-  # Reads an attribute by Clark-notation string or a child by integer index.
+  # Reads an attribute by string or namespace/name tuple, or a child by integer index.
   #
   # Negative integer indexes count from the end.
-  @def (index)[K] self key@K -> IndexItem[{*(Str): Str, *(Node | Str)}, K]
+  @def (index)[K] self key@K -> IndexItem[{*(Str | (Str, Str)): Str, *(Node | Str)}, K]
   @def (index) self range@Range[Int] -> Array[Node | Str]
-  pub def (index)[K] self key@K -> IndexItem[{*(Str): Str, *(Node | Str)}, K]
+  pub def (index)[K] self key@K -> IndexItem[{*(Str | (Str, Str)): Str, *(Node | Str)}, K]
     ...
 
-  # Sets an attribute by Clark-notation string, adding it if it is missing.
-  pub def (assign) self key@Str value@Str
+  # Sets an attribute by string or namespace/name tuple, adding it if missing.
+  pub def (assign) self key@(Str | (Str, Str)) value@Str
     ...
 
   # Iterates the children.

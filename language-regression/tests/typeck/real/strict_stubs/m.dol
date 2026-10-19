@@ -1,7 +1,7 @@
 # dolang: strict
 # Strict extension stubs, used from a strict unit.
 
-import @regex @sys.linux security.unix uuid @url time @patch @xml
+import @regex @sys.linux security.unix uuid @url time @patch xml
   load zip tar sqlite fs winreg winscm winnet progress http shell term
 
 # `Regex.replace` runs a callback with its caller's channels
@@ -234,3 +234,12 @@ pub def shell_scopes >Sink[Str] -> Int
   let _n = n
   #   ^~: flow std.Int
   n
+
+# XML attribute constructors normalize symbols; views use string/tuple keys.
+pub def xml_attributes() -> Str
+  let node = xml.Node root attrs: {id: "plain", ("urn:test", "id"): "namespaced"}
+  let attrs @ MutMap[Str | (Str, Str), Str] = node.attrs
+  attrs[("urn:test", "id")] = "updated"
+  node[("urn:test", "id")] = "direct"
+  let value @ Str = node[("urn:test", "id")]
+  value
