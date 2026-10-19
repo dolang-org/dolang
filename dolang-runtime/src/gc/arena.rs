@@ -241,9 +241,20 @@ const COLLECT_THRESHOLD: isize = 10;
 #[cfg(not(miri))]
 const COLLECT_THRESHOLD: isize = 10000;
 
+const COLLECT_GROWTH: isize = 1;
+
+fn collect_threshold(live: isize) -> isize {
+    if cfg!(miri) {
+        COLLECT_THRESHOLD
+    } else {
+        live.saturating_mul(COLLECT_GROWTH).max(COLLECT_THRESHOLD)
+    }
+}
+
 pub(super) struct ArenaInner {
     pub(super) cyclic: ring!(Header, cyclic),
     pub(super) balance: Cell<isize>,
+    collect_threshold: Cell<isize>,
     pub(super) allocated: Cell<usize>,
 }
 
@@ -289,6 +300,7 @@ impl<'v> Arena<'v> {
         let this = alias::Box::new(ArenaInner {
             cyclic: Default::default(),
             balance: Cell::new(0),
+            collect_threshold: Cell::new(COLLECT_THRESHOLD),
             allocated: Cell::new(0),
         });
         this.cyclic.init();
@@ -297,7 +309,7 @@ impl<'v> Arena<'v> {
 
     #[inline]
     pub(crate) fn collect(&self) -> bool {
-        if self.0.balance.get() >= COLLECT_THRESHOLD {
+        if self.0.balance.get() >= self.0.collect_threshold.get() {
             self.collect_full();
             true
         } else {
@@ -349,6 +361,7 @@ impl<'v> Arena<'v> {
         alive.init();
         jh_trash.init();
 
+        let mut live = 0;
         unsafe {
             // Pass 1: set trial reference count, check for borrow
             for item in this.cyclic.iter() {
@@ -368,6 +381,7 @@ impl<'v> Arena<'v> {
                     return;
                 }
                 item.as_ref().trial.set(item.as_ref().strong.get());
+                live += 1;
             }
             // Pass 2: remove trial references for children
             for item in this.cyclic.iter() {
@@ -488,6 +502,7 @@ impl<'v> Arena<'v> {
                 // clear routine
                 item.as_ref().retain();
                 (vtbl.as_ref().clear)(item);
+                live -= 1;
                 // Drop extra reference
                 if item.as_ref().release() {
                     Header::released(item)
@@ -495,6 +510,9 @@ impl<'v> Arena<'v> {
             }
         }
         debug_eprintln!(topic: "gc", "COLLECT: end");
+        // Cascading releases can remove additional objects, so this is an
+        // approximate survivor count computed without another ring traversal.
+        this.collect_threshold.set(collect_threshold(live));
         this.balance.set(0);
     }
 
@@ -540,5 +558,137 @@ impl<'v> Arena<'v> {
 impl Drop for ArenaInner {
     fn drop(&mut self) {
         self.clear()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::rc::Rc;
+
+    use super::*;
+    use crate::gc::{Collect, Gc};
+
+    struct Node<'v> {
+        children: Vec<Gc<'v, Node<'v>>>,
+        cleared: Rc<Cell<usize>>,
+    }
+
+    // SAFETY: accept visits every child; clear releases every child.
+    unsafe impl Collect for Node<'_> {
+        const CYCLIC: bool = true;
+        const IMMUTABLE: bool = false;
+        type Annex = ();
+
+        fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+            for child in &self.children {
+                child.accept(visit)?;
+            }
+            ControlFlow::Continue(())
+        }
+
+        fn clear(&mut self) {
+            self.cleared.update(|n| n + 1);
+            self.children.clear();
+        }
+    }
+
+    fn node<'v>(arena: &Arena<'v>, cleared: &Rc<Cell<usize>>) -> Gc<'v, Node<'v>> {
+        Gc::new(
+            arena,
+            Node {
+                children: Vec::new(),
+                cleared: cleared.clone(),
+            },
+        )
+    }
+
+    #[test]
+    fn collection_threshold_tracks_live_objects() {
+        let arena = Arena::new();
+        let cleared = Rc::new(Cell::new(0));
+        let count = if cfg!(miri) { 32 } else { 10001 };
+        let keep: Vec<_> = (0..count).map(|_| node(&arena, &cleared)).collect();
+        let garbage: Vec<_> = (0..count)
+            .map(|_| {
+                let item = node(&arena, &cleared);
+                item.borrow_mut().unwrap().children.push(item.clone());
+                Gc::downgrade(&item)
+            })
+            .collect();
+
+        arena.collect_full();
+        assert_eq!(cleared.get(), count);
+        assert!(garbage.iter().all(|weak| weak.upgrade().is_none()));
+        assert_eq!(
+            arena.0.collect_threshold.get(),
+            collect_threshold(count as isize)
+        );
+        assert_eq!(arena.0.balance.get(), 0);
+        assert_eq!(keep.len(), count);
+        assert!(
+            keep.iter()
+                .all(|item| item.borrow().unwrap().children.is_empty())
+        );
+
+        drop(keep);
+        drop(garbage);
+        arena.collect_full();
+        assert_eq!(arena.0.collect_threshold.get(), COLLECT_THRESHOLD);
+        assert_eq!(arena.allocated(), 0);
+    }
+
+    #[test]
+    fn collection_threshold_boundary_and_borrow_abort() {
+        let arena = Arena::new();
+        let cleared = Rc::new(Cell::new(0));
+        let item = node(&arena, &cleared);
+        assert_eq!(arena.0.collect_threshold.get(), COLLECT_THRESHOLD);
+        arena.0.balance.set(-1);
+        assert!(!arena.collect());
+        arena.0.balance.set(COLLECT_THRESHOLD - 1);
+        assert!(!arena.collect());
+
+        let borrow = item.borrow_mut().unwrap();
+        arena.0.balance.set(COLLECT_THRESHOLD);
+        assert!(arena.collect());
+        assert_eq!(arena.0.balance.get(), COLLECT_THRESHOLD);
+        assert_eq!(arena.0.collect_threshold.get(), COLLECT_THRESHOLD);
+        drop(borrow);
+
+        assert!(arena.collect());
+        assert_eq!(arena.0.balance.get(), 0);
+        assert_eq!(arena.0.collect_threshold.get(), COLLECT_THRESHOLD);
+        assert!(!arena.collect());
+    }
+
+    #[test]
+    fn collection_threshold_saturates() {
+        assert_eq!(collect_threshold(0), COLLECT_THRESHOLD);
+        assert_eq!(collect_threshold(1), COLLECT_THRESHOLD);
+        assert_eq!(
+            collect_threshold(isize::MAX),
+            if cfg!(miri) { 10 } else { isize::MAX }
+        );
+    }
+
+    #[test]
+    #[cfg(not(miri))]
+    fn growing_heap_has_linear_collection_work() {
+        let arena = Arena::new();
+        let cleared = Rc::new(Cell::new(0));
+        let mut keep = Vec::new();
+        let mut scanned = 0;
+        let count = 160000;
+        for _ in 0..count {
+            keep.push(node(&arena, &cleared));
+            if arena.collect() {
+                scanned += keep.len();
+            }
+        }
+        assert!(
+            scanned <= 3 * count,
+            "scanned {scanned} objects for {count} allocations"
+        );
+        assert!(arena.0.collect_threshold.get() > COLLECT_THRESHOLD);
     }
 }

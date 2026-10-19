@@ -50,6 +50,11 @@ The vtable provides methods to visit and clear reachable objects during cycle
 collection. Concrete vtables are generally constructed automatically from
 a trait implementation (`Collect`).
 
+Cycle collection runs when net allocations reach `max(10000, live)`, where
+`live` estimates the cyclic objects surviving the last collection. The
+collector counts objects in its initialization pass and subtracts objects it
+clears. Miri uses a fixed threshold of 10 to exercise collection frequently.
+
 ## Object Protocol
 
 The dynamic type system is organized in three layers, each building on the one
