@@ -1,0 +1,74 @@
+# dolang: strict
+# Items of a key that several expected literals share fill them in order, as
+# positional items do, one literal each. A parameter takes the first item of its
+# key, and a rest admitting the key takes the later ones.
+
+@let Opts = $
+  ?image: Str
+  *add: Str
+
+def inner :image @ Str = nil ..._rest @ Opts -> Str
+  (image || "none")
+
+pub def forward ...options @ Opts -> Str
+  inner ...options
+
+@let Two = $
+  ?image: Str
+  ?image: Int
+
+def two ..._rest @ Two
+  ...
+
+pub def ordered()
+  two image: a
+  two image: a image: 2
+  two image: 1
+  # error: expected `std.Str`, found `1`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   two image: 1
+  #    |              ^
+  two image: 2 image: a
+  # error: expected `std.Str`, found `2`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   two image: 2 image: a
+  #    |              ^
+  # error: expected `std.Int`, found `"a"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   two image: 2 image: a
+  #    |                       ^
+  two image: a image: 2 image: 3
+# error: the callee takes no such argument
+#   --> m.dol:LL:LL
+#    |
+# LL |   two image: a image: 2 image: 3
+#    |                                ^
+
+@let Both = $
+  image: Str
+  image: Int
+
+def both ..._rest @ Both
+  ...
+
+pub def missing()
+  both image: a
+# error: this call is missing an argument
+#   --> m.dol:LL:LL
+#    |
+# LL |   both image: a
+#    |   ^^^^^^^^^^^^^
+
+def absorb :image @ Str = nil **_rest @ Int
+  ...
+
+@let Three = $
+  image: Str
+  image: Int
+  image: Int
+
+pub def absorbed ...items @ Three
+  absorb ...items

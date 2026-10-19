@@ -160,9 +160,9 @@ let cleaned = updated.without :status:
 and appends new keys. `without` removes all occurrences of the supplied keys.
 Both leave the original unchanged.
 
-Spreading a repeated key into a call raises
-[UnexpectedKeyError](std.UnexpectedKeyError) if it names a parameter. Duplicates
-captured by a `**` or `...` rest remain in order.
+Spreading a repeated key into a call binds its first value to a parameter of
+that name, and a `**` or `...` rest takes the later ones in order. Without a
+rest, the repeats raise [UnexpectedKeyError](std.UnexpectedKeyError).
 
 See the [Record API](std.Record) for details.
 
