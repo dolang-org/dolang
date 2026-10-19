@@ -978,6 +978,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         match step {
             Step::Let { pattern, value } => {
                 let link = self.source_link(at, state, value);
+                let source = self.source_var(at, value);
                 let mut operands = Self::operands(state, holes(value));
                 let expected = match *pattern {
                     Pattern::Bind(var) => self.ir.var(var).annotation,
@@ -987,7 +988,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 if self.diverged.is_some() {
                     return false;
                 }
-                let bound = self.bind(at, state, pattern, ty, value.span, true);
+                let bound = self.bind(at, state, pattern, (ty, source), value.span, true);
                 if let Pattern::Bind(var) = *pattern {
                     self.relink(at, state, var, link);
                 }
@@ -1316,16 +1317,17 @@ impl<'a, 'u> Flow<'a, 'u> {
         ty
     }
 
-    /// Bind a pattern to a value at `span`, recording each binding. Unpacking is
-    /// a rule. Returns whether the pattern can match, reporting it if it can't.
-    /// An `irrefutable` pattern raises on a mismatch, so a strict unit requires
-    /// it to match every value of the type.
+    /// Bind a pattern to a value at `span`, recording each binding, and linking
+    /// the variable the value was read from, if any, to the whole of an unpack
+    /// that correlates. Unpacking is a rule. Returns whether the pattern can
+    /// match, reporting it if it can't. An `irrefutable` pattern raises on a
+    /// mismatch, so a strict unit requires it to match every value of the type.
     fn bind(
         &mut self,
         at: At,
         state: &mut State,
         pattern: &Pattern,
-        ty: TypeId,
+        (ty, source): (TypeId, Option<VarId>),
         span: Span,
         irrefutable: bool,
     ) -> bool {
@@ -1354,6 +1356,25 @@ impl<'a, 'u> Flow<'a, 'u> {
                 }
                 let correlated = !columns.columns.is_empty();
                 state.groups[group.index()] = columns;
+                // The most recent unpack of a variable correlates it, unless an
+                // item rebinds it
+                if correlated && let Some(source) = source {
+                    let row = u32::try_from(items.len()).expect("too many pattern items");
+                    let link = Some(Link { group, row });
+                    self.relink(at, state, source, link);
+                    // It holds only what its row's columns do, which is nothing
+                    // until the unpack gives something
+                    let slot = &mut state.vars[self.slot(source)];
+                    if slot.link == link {
+                        let gas = Gas::default();
+                        let solver = self.solver(&gas);
+                        let whole = (state.groups[group.index()].columns.iter())
+                            .fold(self.db.bottom(), |joined, column| {
+                                solver.lub(joined, column[items.len()])
+                            });
+                        slot.ty = solver.refine(slot.ty, whole);
+                    }
+                }
                 for (row, (item, ty)) in items.iter().zip(types).enumerate() {
                     if let Some(var) = item.var {
                         let span = match self.ir.var(var).origin {
@@ -1376,10 +1397,17 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// for an operand, before it's taken
     fn source_link(&self, at: At, state: &State, value: &Expr) -> Option<Link> {
         match value.kind {
-            ExprKind::Var(var) | ExprKind::Copy(var) if self.ir.var(var).owner == at.func => {
-                state.vars[self.slot(var)].link
-            }
             ExprKind::Operand => state.stack.last()?.link,
+            _ => state.vars[self.slot(self.source_var(at, value)?)].link,
+        }
+    }
+
+    /// The variable the running function owns that a value is read from
+    fn source_var(&self, at: At, value: &Expr) -> Option<VarId> {
+        match value.kind {
+            ExprKind::Var(var) | ExprKind::Copy(var) if self.ir.var(var).owner == at.func => {
+                Some(var)
+            }
             _ => None,
         }
     }
@@ -1720,6 +1748,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                 then,
                 else_,
             } => {
+                let source = self.source_var(at, value);
                 let mut operands = Self::operands(&mut state, holes(value));
                 self.raise(at.ctx, data.handler, &state);
                 let ty = self.eval(at, &mut state, &mut operands, value);
@@ -1727,7 +1756,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                     return;
                 }
                 let mut bound = state.clone();
-                if self.bind(at, &mut bound, pattern, ty, value.span, false) {
+                if self.bind(at, &mut bound, pattern, (ty, source), value.span, false) {
                     self.flow(at.ctx, *then, bound);
                 }
                 self.flow(at.ctx, *else_, state);
@@ -1788,7 +1817,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                     return;
                 }
                 let mut bound = state.clone();
-                if self.bind(at, &mut bound, pattern, item, *span, true) {
+                if self.bind(at, &mut bound, pattern, (item, None), *span, true) {
                     self.flow(at.ctx, *body, bound);
                 }
                 self.flow(at.ctx, *exit, state);

@@ -765,8 +765,9 @@ impl Flow<'_, '_> {
     }
 
     /// Call a special member of each of a union's alternatives with no arguments,
-    /// giving what each gives, in the order [`Self::expand`] finds them. `None`
-    /// unless the receiver has at least two alternatives, none a projection.
+    /// giving each alternative with what it gives, in the order [`Self::expand`]
+    /// finds them. `None` unless the receiver has at least two alternatives, none
+    /// a projection.
     pub(super) fn send_special_each(
         &mut self,
         at: At,
@@ -774,7 +775,7 @@ impl Flow<'_, '_> {
         receiver: TypeId,
         name: &str,
         span: Span,
-    ) -> Option<Vec<TypeId>> {
+    ) -> Option<Vec<(TypeId, TypeId)>> {
         let mut alternatives = Vec::new();
         if !self.expand(receiver, &mut alternatives)
             || alternatives.len() < 2
@@ -802,7 +803,8 @@ impl Flow<'_, '_> {
                     &[],
                     span,
                 );
-                self.call_targets(at, state, &mut operands, targets, call)
+                let given = self.call_targets(at, state, &mut operands, targets, call);
+                (alternative, given)
             })
             .collect();
         Some(given)

@@ -59,12 +59,12 @@ pub def mismatch_keyed value @ ({a: Int, b: Int} | {a: Int} | Dict[Sym, Int])
     #       ^~~~~: flow std.Dict[std.Sym, std.Int] | {a: std.Int}
 
 # A sub-pattern's mismatch doesn't narrow the whole
-pub def mismatch_nested value @ (Tuple[Int, Tuple[Int, Int]] | Tuple[Int])
+pub def mismatch_nested value @ (Tuple[Int, Tuple[Int, Int] | Tuple[Int]] | Tuple[Int])
   if let _a (_b _c) = value
     nil
   else
     let _ = value
-    #       ^~~~~: flow (std.Int, (std.Int, std.Int)) | (std.Int,)
+    #       ^~~~~: flow (std.Int, (std.Int, std.Int) | (std.Int,)) | (std.Int,)
 
 pub def mismatch_arms value @ (Tuple[Int, Int] | Tuple[Str]) -> Str
   match value
