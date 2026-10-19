@@ -124,3 +124,29 @@ pub def recent p @ (((:x:, Int), Str) | ((:y:, Str), Int))
       #       ^: flow std.Int
       let _ = v
       #       ^: flow std.Int | std.Str
+
+@let Steps = {*run: (() -> nil), *Str}
+
+# Entries of an aliased schema are its alternatives too
+pub def aliased d @ Dict[Steps]
+  for entry = d
+    match entry
+      (Int(_) _) do nil
+      (:run: v) do
+        let _ = v
+        #       ^: flow (<Value, >Value) -> nil
+
+def noop()
+  nil
+
+# Narrowing in each arm grows a loop variable's join past the widening limit,
+# which widens it to an ancestor its alternatives share
+pub def widened r @ Record[...{a: Int, b: Int, c: Int, d: Int}]
+  for e = r
+    match e
+      (:a: _) do nil
+      (:b: _) do nil
+      (:c: _) do
+        noop()
+        let _ = e
+        #       ^: flow (:c:, std.Int)

@@ -171,6 +171,8 @@ impl Solver<'_> {
     /// or a member, replaced by its alternatives. An alias can hide alternatives
     /// a relation drops, as `A` in `A | :GZIP:` does `:TAR:` and `:ZIP:`, or whose
     /// class test preserves their own type arguments, as `FmtSegment[V]` does.
+    /// A projection of a transparent declaration's schema, as `Entries[...S]`, is
+    /// replaced by what it projects to once exposed.
     fn exposed_members(
         &self,
         ty: TypeId,
@@ -185,6 +187,11 @@ impl Solver<'_> {
                 && let Ok(body) = self.reify(Term::View(view))
             {
                 self.exposed_members(body, exposed, members);
+            } else if member.projected().is_some()
+                && let Ok(Some(projected)) = self.exposed_projections(&[member])
+                && exposed.insert(projected)
+            {
+                self.exposed_members(projected, exposed, members);
             } else {
                 members.push(member);
             }

@@ -192,19 +192,24 @@ impl Solver<'_> {
     }
 
     /// A declaration as the head of its own ancestor walk. Its arguments are
-    /// irrelevant, since only whether it reaches another declaration is asked.
+    /// irrelevant, since only whether it reaches another declaration is asked,
+    /// but its supertypes are viewed in their environment.
     fn bare(&self, decl: DeclId) -> Nominal {
-        let arguments = match self.db.ty(self.db.declaration(decl).ty) {
+        let arguments: Vec<Term> = match self.db.ty(self.db.declaration(decl).ty) {
             Type::Quantified { binders, .. } => binders
                 .iter()
                 .map(|binder| self.closed(self.db.unknown_of(binder.kind)))
                 .collect(),
             _ => vec![],
         };
+        let environment = match arguments.is_empty() {
+            true => EnvironmentId(0),
+            false => self.intern_environment(EnvironmentId(0), arguments.clone()),
+        };
         Nominal {
             declaration: decl,
             arguments,
-            environment: EnvironmentId(0),
+            environment,
         }
     }
 
