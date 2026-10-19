@@ -1234,7 +1234,7 @@ impl Solver<'_> {
         };
         let fill = match self.relation(obligation) {
             Relation::Subtype { fill, .. } => fill,
-            Relation::Call(_) => Fill::Arguments,
+            Relation::Call(_) | Relation::Empty(_) => Fill::Arguments,
         };
         let mut decided = FxHashMap::default();
         let mut pairs = FxHashSet::default();

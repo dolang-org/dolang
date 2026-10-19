@@ -30,6 +30,7 @@ impl Solver<'_> {
                 actual, expected, ..
             } => (actual, expected),
             Relation::Call(call) => return self.call(obligation, call),
+            Relation::Empty(schema) => return self.empty(obligation, schema),
         };
         self.record_bounds(obligation, actual, expected)?;
         // What a write must fit is each item its key selects
@@ -84,6 +85,19 @@ impl Solver<'_> {
     }
 
     /// Record a bound for an inference variable that either side resolves to
+    /// What an empty dict's schema must admit, once it's solved: the empty
+    /// schema, related to its solution rather than to it, so that it bounds
+    /// nothing
+    fn empty(&self, obligation: ObligationId, schema: Term) -> Result<(), Issue> {
+        let solved = self.resolve(schema)?;
+        if let Term::Infer(_) = solved {
+            return Err(Residual::Inference.into());
+        }
+        let empty = self.closed(self.db.intern(Type::Schema(Default::default())));
+        self.derive(obligation, empty, solved, Step::Empty);
+        Ok(())
+    }
+
     fn record_bounds(
         &self,
         obligation: ObligationId,

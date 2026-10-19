@@ -1802,15 +1802,15 @@ pub class Image
     self.architecture = arch
     self.os = os
     bind root_fs
-      "Layers": layers @ DecodeValue = []
+      "Layers": layers = []
       ...
     self.layers = strings Layers $layers
 
     bind config
-      "Labels": labels @ DecodeValue = {}
+      "Labels": labels = {}
       "Cmd": cmd = nil
       "Entrypoint": entrypoint = nil
-      "Env": env @ DecodeValue = []
+      "Env": env = []
       "WorkingDir": working_dir = nil
       "User": user = nil
       ...
@@ -1834,7 +1834,7 @@ pub class Image
   # Returns the current tags, which are empty for an untagged image.
   pub def tags self -> Array[ImageTag]
     bind inspect_image(self.#runtime, self.id)
-      "RepoTags": tags @ DecodeValue = []
+      "RepoTags": tags = []
       ...
     parse_image_tags $self.#runtime $strings("RepoTags", tags)
 
@@ -1919,7 +1919,7 @@ pub class Container
       "Id": Str(id)
       "Created": created = nil
       "Image": image_id = nil
-      "Config": config @ DecodeValue = {}
+      "Config": config = {}
       ...
     else malformed container
     let Dict(config) = config
@@ -1929,7 +1929,7 @@ pub class Container
       "Image": image = nil
       "Cmd": cmd = nil
       "Entrypoint": entrypoint = nil
-      "Labels": labels @ DecodeValue = {}
+      "Labels": labels = {}
       ...
 
     self.id = id
@@ -1982,16 +1982,16 @@ pub class Container
     let data = inspect_container $self.#runtime $self.id
     bind data
       "Name": name = nil
-      "State": state @ DecodeValue = {}
-      "Mounts": mounts @ DecodeValue = []
-      "NetworkSettings": network @ DecodeValue = {}
+      "State": state = {}
+      "Mounts": mounts = []
+      "NetworkSettings": network = {}
       ...
     let Dict(state) = state
     else malformed State
     let Dict(network) = network
     else malformed NetworkSettings
     bind network
-      "Ports": ports @ DecodeValue = {}
+      "Ports": ports = {}
       ...
     let status = optional_str Status $state.get("Status", default: nil)
     let name = optional_str Name $name

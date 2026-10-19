@@ -1056,7 +1056,21 @@ impl<'a, 'u> Flow<'a, 'u> {
             Step::Default { var, value } => {
                 let mut operands = Self::operands(state, holes(value));
                 let annotation = self.ir.var(*var).annotation;
-                let ty = self.expect(at, state, &mut operands, value, annotation);
+                // Without an annotation, what the default leaves open may be
+                // what the item has where it's present
+                let present = (annotation.is_none() && self.ir.var(*var).owner == at.func)
+                    .then(|| state.vars[self.slot(*var)].ty)
+                    .filter(|&ty| {
+                        let mut unknown = false;
+                        self.db.walk(ty, |node, _| {
+                            unknown |= matches!(self.db.ty(node), Type::Unknown(_));
+                        });
+                        ty != self.db.bottom() && !unknown
+                    });
+                let ty = match present {
+                    Some(present) => self.default_above(at, state, &mut operands, value, present),
+                    None => self.expect(at, state, &mut operands, value, annotation),
+                };
                 if self.diverged.is_some() {
                     return false;
                 }

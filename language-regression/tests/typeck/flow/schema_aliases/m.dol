@@ -44,13 +44,6 @@ pub def subclass x @ Sized
 pub class Sized: Struct[Later]
   pub def (init) self
     Struct.(init) $self (size: 1)
-# warning: the checker can't verify this
-#   --> m.dol:LL:LL
-#    |
-# LL |     Struct.(init) $self (size: 1)
-#    |     ^^^^^^^^^^^^^
-#    |
-#    = note: nothing determines a type here; annotate it
 
 @let Later = $
   size: Int

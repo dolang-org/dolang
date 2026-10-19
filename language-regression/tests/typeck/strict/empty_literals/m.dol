@@ -1,0 +1,114 @@
+# dolang: strict
+# An empty literal's open part is the least that what it's in allows
+
+import @json
+
+@let Data = {?"Key": Str}
+
+# A pattern default takes the item's type where it's present
+pub def present d @ Dict[Str, json.DecodeValue]
+  bind d
+    "a": a = []
+    "b": b = {}
+    ..._
+  let _ = a
+  #       ^: flow json.DecodeValue
+  let _ = b
+  #       ^: flow json.DecodeValue
+  nil
+
+pub def dicts d @ Dict[Str, Dict[Str, Str]] e @ Dict[Str, Dict[Data]]
+  bind d
+    "a": a = {}
+    ..._
+  let _ = a
+  #       ^: flow std.Dict[std.Str, std.Str]
+  bind e
+    "b": b = {}
+    ..._
+  let _ = b
+  #       ^: flow std.Dict[m.Data]
+  nil
+
+pub def unions d @ Dict[Str, Int | Dict[Data]]
+  bind d
+    "a": a = {}
+    ..._
+  let _ = a
+  #       ^: flow std.Dict[m.Data] | std.Int
+  nil
+
+# A default that widens the item's type still widens it
+pub def sentinels d @ Dict[Str, Array[Int]]
+  bind d
+    "a": a = nil
+    "b": b = "none"
+    "c": c = [nil]
+    ..._
+  let _ = a
+  #       ^: flow [std.Int] | std.Nil
+  let _ = b
+  #       ^: flow [std.Int] | std.Str
+  let _ = c
+  #       ^: flow [std.Int] | [std.Nil]
+  nil
+
+# A nested empty literal is decided by what it's in
+pub def nested d @ Dict[Str, json.DecodeValue]
+  bind d
+    "a": a = [{}]
+    "b": b = [[]]
+    ..._
+  let _ = a
+  #       ^: flow json.DecodeValue
+  let _ = b
+  #       ^: flow json.DecodeValue
+  nil
+
+# An optional item's default takes the item's type
+pub def optional t @ (Int, ?Array[Str]) r @ (?b: Array[Str])
+  let (_ a = []) = t
+  let _ = a
+  #       ^: flow [std.Str]
+  bind t
+    - _
+    - c = []
+  let _ = c
+  #       ^: flow [std.Str]
+  bind r
+    :b = []
+  let _ = b
+  #       ^: flow [std.Str]
+  nil
+
+def pick[T] a @ T _b @ T -> T
+  a
+
+# A generic call's binder is the least of its arguments
+pub def calls p @ Array[Int]
+  let a = pick $p []
+  let _ = a
+  #       ^: flow [std.Int]
+  nil
+
+# Nothing decides an empty literal alone
+pub def alone()
+  let a = []
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let a = []
+  #    |           ^^
+  #    |
+  #    = note: it doesn't handle an empty collection nothing determines
+  let b = {}
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let b = {}
+  #    |           ^^
+  #    |
+  #    = note: it doesn't handle an empty collection nothing determines
+  let _ = a
+  let _ = b
+  nil

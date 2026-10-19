@@ -154,7 +154,7 @@ impl<'db> Solver<'db> {
     fn alternative(&self, obligation: ObligationId, actual: Term, expected: Term) -> Relation {
         let fill = match self.relation(obligation) {
             Relation::Subtype { fill, .. } => fill,
-            Relation::Call(_) => Fill::Arguments,
+            Relation::Call(_) | Relation::Empty(_) => Fill::Arguments,
         };
         Relation::Subtype {
             actual,
