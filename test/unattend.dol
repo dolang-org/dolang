@@ -13,8 +13,8 @@ def generates_namespaced_attributes()
   let wcm = "http://schemas.microsoft.com/WMIConfig/2002/State"
   let actions = 0
   let paths = 0
-  for node = document.traverse()
-    if (type node xml.Node)
+  for node = document.root.traverse()
+    if (type node xml.Element)
       let action = node.attrs.get (wcm, "action")
       if (action != nil)
         assert_eq $action "add"

@@ -21,8 +21,8 @@ let domain = xml.decode r|
 
 # `traverse` walks every element and text node, parents first.
 def find tag
-  for node = domain.traverse()
-    if (type(node, xml.Node) && node.tag == tag)
+  for node = domain.root.traverse()
+    if (type(node, xml.Element) && node.tag == tag)
       return node
 
 # A string index reads an attribute; an integer index reads a child.
@@ -42,12 +42,12 @@ for name value = disk.attrs
 (find "target").attrs.delete bus
 
 # Build a new element with explicit attributes and positional children.
-let cdrom = xml.Node disk
+let cdrom = xml.Element disk
   attrs:
     type: file
     device: cdrom
-  - $ xml.Node source attrs: {file: "/images/install.iso"}
-  - $ xml.Node readonly
+  - $ xml.Element source attrs: {file: "/images/install.iso"}
+  - $ xml.Element readonly
 
 # Text is stored as plain `Str` children, including indentation.
 let devices = (find "devices").children
@@ -55,7 +55,7 @@ devices.insert (devices.len - 1) "\n    " $cdrom
 
 # Changes are checked as they are made, so an invalid name raises at once.
 try
-  xml.Node "not a name"
+  xml.Element "not a name"
 catch std.ValueError: err
   echo "invalid: $err"
 

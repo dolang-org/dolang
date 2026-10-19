@@ -26,7 +26,7 @@ let UNATTEND_NS = "urn:schemas-microsoft-com:unattend"
 let WCM_NS = "http://schemas.microsoft.com/WMIConfig/2002/State"
 
 # A child of an unattend element.
-@let UnattendItem = (xml.Node | Str)
+@let UnattendItem = xml.Node
 
 # Every `<component>` in an unattend document carries the same assembly
 # identity; only `name` varies.
@@ -79,20 +79,20 @@ def unattend_node
   tag @ Str
   :attrs @ BaseDict[Sym | Str | (Str, Str), Str] = {}
   *items @ UnattendItem
-do -> xml.Node
-  xml.Node $tag namespace: $UNATTEND_NS attrs: $attrs ...items
+do -> xml.Element
+  xml.Element $tag namespace: $UNATTEND_NS attrs: $attrs ...items
 
 # `wcm:action="add"`, which the schema requires on every member of a repeated
 # list — partitions, driver paths, accounts, commands.
 def wcm_add() -> Dict[(Str, Str), Str]
   {(WCM_NS, "action"): "add"}
 
-def unattend_component name @ Str *items @ UnattendItem -> xml.Node
-  xml.Node component namespace: $UNATTEND_NS attrs: {...COMPONENT_ATTRS, name: name} ...items
+def unattend_component name @ Str *items @ UnattendItem -> xml.Element
+  xml.Element component namespace: $UNATTEND_NS attrs: {...COMPONENT_ATTRS, name: name} ...items
 
 # The `<InstallFrom>` selecting an edition off multi-edition media, or `nil`
 # to let Setup pick — which on retail media means stopping to ask.
-def unattend_install_from edition @ (Str | nil) index @ (Int | nil) -> xml.Node
+def unattend_install_from edition @ (Str | nil) index @ (Int | nil) -> xml.Element
   let key = (edition != nil && "/IMAGE/NAME" || "/IMAGE/INDEX")
   let value = (edition != nil && edition || str(index))
   unattend_node InstallFrom
@@ -107,7 +107,7 @@ def unattend_install_from edition @ (Str | nil) index @ (Int | nil) -> xml.Node
 # Setup is given an explicit layout rather than an existing partition because
 # the disk it installs onto is blank — `create` sizes an overlay with no
 # backing image on this path — so there is nothing for it to find.
-def unattend_disk_config() -> xml.Node
+def unattend_disk_config() -> xml.Element
   unattend_node DiskConfiguration
     $ unattend_node WillShowUI "OnError"
     $ unattend_node Disk
@@ -152,8 +152,8 @@ def unattend_disk_config() -> xml.Node
 # rather than naming the one that is right: the letter the driver disc gets
 # is not knowable from here, and Setup logs and skips a path that is not
 # there.
-def unattend_driver_paths() -> xml.Node
-  let paths @ [xml.Node] = []
+def unattend_driver_paths() -> xml.Element
+  let paths @ [xml.Element] = []
   let order = 1
   for drive = PROVISION_DRIVES
     for subpath = DRIVER_SUBPATHS
@@ -197,7 +197,7 @@ pub def unattend_xml
   :index @ Int = nil
   :drivers @ Bool = false
 do -> Str
-  let install_from @ (xml.Node | nil) = nil
+  let install_from @ (xml.Element | nil) = nil
   if (edition != nil || index != nil)
     install_from = unattend_install_from $edition $index
 
@@ -276,7 +276,7 @@ do -> Str
   # oobeSystem — rather than in the order they run in wall-clock terms, which
   # puts `oobeSystem` and its reseal before the audit pass it leads to.
   # `wcm` is declared once, on the root, rather than by each element using it.
-  let document = xml.Node unattend namespace: $UNATTEND_NS namespaces: {wcm: WCM_NS}
+  let document = xml.Element unattend namespace: $UNATTEND_NS namespaces: {wcm: WCM_NS}
     $ unattend_node settings
       attrs: {pass: "windowsPE"}
       $ locale_pe
@@ -294,4 +294,4 @@ do -> Str
     $ unattend_node settings
       attrs: {pass: "oobeSystem"}
       $ reseal
-  "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n$(xml.encode document)\n"
+  "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n$(xml.encode(xml.Document(document)))\n"

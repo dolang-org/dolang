@@ -1,0 +1,108 @@
+import xml
+  test:
+    - assert
+    - assert_eq
+    - assert_throws
+    - test
+  std:
+    - StateError
+    - TypeError
+    - ValueError
+
+#[test]
+def comments()
+  let c = xml.Comment "hello <&>"
+  assert_eq $c.text "hello <&>"
+  assert_eq $str(c) "hello <&>"
+  assert_eq $dbg(c) r#"<xml.Comment "hello <&>">"#
+  assert_eq "$c" "hello <&>"
+  assert_eq $"$(c)" "hello <&>"
+  let doc = xml.Document (xml.Element "root" c)
+  assert_eq $xml.encode(doc) "<root><!--hello <&>--></root>"
+  c.text = ""
+  assert_eq $xml.encode(doc) "<root><!----></root>"
+  for invalid = ["a--b", "tail-", "\u{1}", "\u{ffff}"]
+    assert_throws $ValueError do xml.Comment $invalid
+    assert_throws $ValueError do c.text = invalid
+    assert_eq $c.text ""
+  assert_throws $TypeError do xml.Comment 1
+  assert_throws $TypeError do c.text = 1
+  assert_eq $str(xml.Comment "&amp;") "&amp;"
+
+#[test]
+def document_roundtrip()
+  let source = " \n<!--before--><root>a&amp;b<!--&amp;-->c<![CDATA[d]]><leaf/><!--last--></root><!--after-->\n"
+  let doc = xml.decode $source
+  assert (type doc xml.Document)
+  assert_eq $doc.children.len 5
+  assert_eq $doc.root.tag root
+  assert_eq $doc.root.children.len 5
+  assert_eq $doc.root.children[0] "a&b"
+  assert_eq $doc.root.children[1].text "&amp;"
+  assert_eq $doc.root.children[2] cd
+  let traversal = [...doc.root.traverse()]
+  assert_eq $traversal.len 6
+  assert (type traversal[2] xml.Comment)
+  assert_eq $xml.encode(doc) " \n<!--before--><root>a&amp;b<!--&amp;-->cd<leaf></leaf><!--last--></root><!--after-->\n"
+  assert_eq $xml.encode(xml.decode(xml.encode(doc))) $xml.encode(doc)
+
+#[test]
+def document_mutations()
+  let first = xml.Comment before
+  let root = xml.Element root
+  let last = xml.Comment after
+  let doc = xml.Document $first $root $last
+  let children = doc.children
+  let other = xml.Element other
+  let original = xml.encode $doc
+  assert_throws $ValueError do children.push " " $other
+  assert_throws $ValueError do children.insert 0 (xml.Comment "extra") $other
+  assert_throws $ValueError do children[0] = other
+  assert_throws $ValueError do children[1] = first
+  assert_throws $StateError do children.pop 1
+  assert_throws $StateError do children.delete 1
+  assert_throws $StateError do children.clear()
+  assert_eq $xml.encode(doc) $original
+  assert_eq $doc.root $root
+  assert_throws $TypeError do doc.root = nil
+  assert_throws $TypeError do children.push $doc
+  assert_throws $TypeError do children.push (xml.Comment "extra") 1
+  assert_throws $TypeError do children.insert 0 (xml.Comment "extra") 1
+  assert_throws $ValueError do children.push $root
+  assert_throws $ValueError do children.push "no"
+  assert_throws $ValueError do children.push "\u{a0}"
+  assert_eq $xml.encode(doc) $original
+  children[1] = other
+  assert_eq $doc.root $other
+  doc.root = root
+  assert_eq $children[1] $root
+  children[-1] = (xml.Comment "replaced")
+  children.insert 1 "\t" (xml.Comment "inserted")
+  children.push "\n" (xml.Comment "appended")
+  assert_eq $children.pop(-1).text appended
+  children.delete -1
+  children.delete 1
+  assert_eq $children.pop(1).text inserted
+  assert_eq [...children] [first, root, children[2]]
+  assert_eq $doc.root $root
+  assert_eq $children.pop().text replaced
+  children.delete 0
+  assert_eq [...children] [root]
+  assert_throws $StateError do children.pop()
+  assert_throws $StateError do children.delete 0
+  assert_throws $StateError do children.clear()
+  assert_eq $doc.root $root
+
+#[test]
+def document_validation()
+  assert_throws $ValueError do xml.Document()
+  assert_throws $ValueError do xml.Document (xml.Comment "only")
+  let root = xml.Element root
+  assert_throws $ValueError do xml.Document $root $root
+  assert_throws $ValueError do xml.Document "text" $root
+  assert_throws $TypeError do xml.Document 1 $root
+  assert_throws $TypeError do xml.Document (xml.Document root) $root
+  for input = ["", "<!--only-->", "<a/><b/>", "x<a/>", "<a/>x", "<a/><", "<a/><!--bad--body-->", "<a/><!--bad--->", "<![CDATA[ ]]><a/>", "<a/>&#32;"]
+    assert_throws $ValueError do xml.decode $input
+  for value = [root, (xml.Comment "hi"), "text", nil]
+    assert_throws $TypeError do xml.encode $value

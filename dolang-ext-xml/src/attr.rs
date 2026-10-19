@@ -23,7 +23,7 @@ impl Name {
     }
 }
 
-/// An attribute as stored in a [`Node`](crate::node::Node).
+/// An attribute as stored in a [`Element`](crate::element::Element).
 pub(crate) struct Attr {
     pub(crate) name: Name,
     pub(crate) value: String,

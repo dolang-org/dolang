@@ -3,10 +3,14 @@ use dolang::runtime::{
     vm::{Register, StateTag},
 };
 
-use crate::node::{Node, TraverseIter};
+use crate::{comment::Comment, document::Document};
+
+use crate::element::{Element, TraverseIter};
 
 pub(crate) struct Global<'v> {
-    pub(crate) node_type: Type<'v, Node>,
+    pub(crate) comment_type: Type<'v, Comment>,
+    pub(crate) document_type: Type<'v, Document>,
+    pub(crate) element_type: Type<'v, Element>,
     pub(crate) traverse_iter_type: Type<'v, TraverseIter>,
     pub(crate) syms: Syms<'v>,
 }
@@ -26,7 +30,9 @@ impl StateTag for Tag {
 impl<'v> Global<'v> {
     pub(crate) fn new(builder: &mut Register<'v>) -> Self {
         Self {
-            node_type: builder.register_type::<Node>(),
+            comment_type: builder.register_type::<Comment>(),
+            document_type: builder.register_type::<Document>(),
+            element_type: builder.register_type::<Element>(),
             traverse_iter_type: builder.register_type::<TraverseIter>(),
             syms: Syms {
                 attrs: builder.sym("attrs"),

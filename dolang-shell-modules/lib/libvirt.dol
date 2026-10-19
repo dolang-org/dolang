@@ -731,7 +731,7 @@ def file_digest path
 
 def find_child node tag :namespace = nil
   for child = node.children
-    if (type child xml.Node &&
+    if (type child xml.Element &&
         child.tag == tag &&
         child.namespace == namespace)
       return child
@@ -955,11 +955,11 @@ class Guest
   # `guest_from_metadata` reads back.
   pub def to_metadata self
     $
-      $ xml.Node ssh_port (str self.port)
-      $ xml.Node ssh_user $self.#user
-      $ xml.Node ssh_identity (str self.#identity)
-      $ xml.Node ssh_known_hosts (str self.#known_hosts)
-      $ xml.Node vfs_command $self.#command
+      $ xml.Element ssh_port (str self.port)
+      $ xml.Element ssh_user $self.#user
+      $ xml.Element ssh_identity (str self.#identity)
+      $ xml.Element ssh_known_hosts (str self.#known_hosts)
+      $ xml.Element vfs_command $self.#command
 
 # Reads a `Guest` out of a domain's `<dolang:vm>` metadata subtree, which is
 # where `create` recorded it.
@@ -1062,7 +1062,7 @@ class DomainConfig
   # The `<os>` element: firmware selection, and on a BIOS profile the boot
   # device.
   def os_node self
-    let Node = xml.Node
+    let Element = xml.Element
     let profile = self.#profile
     let secure = (profile.firmware == :EFI_SECURE:)
     # `firmware="efi"` asks libvirt to pick a loader satisfying the requested
@@ -1086,35 +1086,35 @@ class DomainConfig
       {format: self.#nvram_format}
     else
       {}
-    Node os attrs: $os_attrs
-      $ Node type hvm attrs: $type_attrs
+    Element os attrs: $os_attrs
+      $ Element type hvm attrs: $type_attrs
       if secure
-        $ Node firmware
-          $ Node feature attrs: {enabled: "yes", name: "secure-boot"}
-          $ Node feature attrs: {enabled: "yes", name: "enrolled-keys"}
-        $ Node nvram (str self.#nvram) attrs: $nvram_attrs
+        $ Element firmware
+          $ Element feature attrs: {enabled: "yes", name: "secure-boot"}
+          $ Element feature attrs: {enabled: "yes", name: "enrolled-keys"}
+        $ Element nvram (str self.#nvram) attrs: $nvram_attrs
       else
-        $ Node boot attrs: {dev: "hd"}
+        $ Element boot attrs: {dev: "hd"}
 
   # The domain's disks: the overlay, then each attached medium as a cdrom.
   def disk_nodes self overlay_driver
-    let Node = xml.Node
-    let overlay = Node disk attrs: {type: "file", device: "disk"}
-      $ Node driver attrs: $overlay_driver
-      $ Node source attrs: {file: str(self.#overlay)}
-      $ Node target attrs: {dev: "vda", bus: "virtio"}
+    let Element = xml.Element
+    let overlay = Element disk attrs: {type: "file", device: "disk"}
+      $ Element driver attrs: $overlay_driver
+      $ Element source attrs: {file: str(self.#overlay)}
+      $ Element target attrs: {dev: "vda", bus: "virtio"}
       if (self.#disk_boot != nil)
-        $ Node boot attrs: {order: str(self.#disk_boot)}
+        $ Element boot attrs: {order: str(self.#disk_boot)}
     let nodes = [overlay]
     let index = 0
     for entry = self.#media
-      let cdrom = Node disk attrs: {type: "file", device: "cdrom"}
-        $ Node driver attrs: {name: "qemu", type: "raw"}
-        $ Node source attrs: {file: str(entry.path)}
-        $ Node target attrs: {dev: MEDIA_TARGETS[index], bus: "sata"}
-        $ Node readonly
+      let cdrom = Element disk attrs: {type: "file", device: "cdrom"}
+        $ Element driver attrs: {name: "qemu", type: "raw"}
+        $ Element source attrs: {file: str(entry.path)}
+        $ Element target attrs: {dev: MEDIA_TARGETS[index], bus: "sata"}
+        $ Element readonly
         if (entry.boot != nil)
-          $ Node boot attrs: {order: str(entry.boot)}
+          $ Element boot attrs: {order: str(entry.boot)}
       nodes.push $cdrom
       index = (index + 1)
     nodes
@@ -1122,7 +1122,7 @@ class DomainConfig
   # The libvirt domain document for this configuration.
   pub def to_xml self
     # Locally aliased so the tree below reads like the XML it emits.
-    let Node = xml.Node
+    let Element = xml.Element
     let profile = self.#profile
 
     # Only the overlay carries the tuning options: media is a read-only ISO
@@ -1147,88 +1147,88 @@ class DomainConfig
       if (self.#io != nil)
         io: $self.#io
 
-    Node domain attrs: {type: "kvm"}
-      $ Node name $self.name
-      $ Node memory (str self.#memory) attrs: {unit: "MiB"}
-      $ Node vcpu (str self.#vcpus)
+    Element domain attrs: {type: "kvm"}
+      $ Element name $self.name
+      $ Element memory (str self.#memory) attrs: {unit: "MiB"}
+      $ Element vcpu (str self.#vcpus)
       $ self.#os_node()
-      $ Node features
-        $ Node acpi
-        $ Node apic
+      $ Element features
+        $ Element acpi
+        $ Element apic
         # Windows 11 checks for a secure boot capable machine, and without SMM
         # the firmware cannot protect the variable store that makes it one.
         # libvirt starts the domain regardless; it is Setup that refuses.
         if profile.smm
-          $ Node smm attrs: {state: "on"}
+          $ Element smm attrs: {state: "on"}
         # Without the Hyper-V enlightenments a Windows guest burns host CPU in
         # its own spinlocks and idles badly enough to look hung.
         if profile.hyperv
-          $ Node hyperv
-            $ Node relaxed attrs: {state: "on"}
-            $ Node vapic attrs: {state: "on"}
-            $ Node spinlocks attrs: {state: "on", retries: "8191"}
-            $ Node vpindex attrs: {state: "on"}
-            $ Node synic attrs: {state: "on"}
-            $ Node stimer attrs: {state: "on"}
-      $ Node cpu attrs: {mode: "host-passthrough"}
+          $ Element hyperv
+            $ Element relaxed attrs: {state: "on"}
+            $ Element vapic attrs: {state: "on"}
+            $ Element spinlocks attrs: {state: "on", retries: "8191"}
+            $ Element vpindex attrs: {state: "on"}
+            $ Element synic attrs: {state: "on"}
+            $ Element stimer attrs: {state: "on"}
+      $ Element cpu attrs: {mode: "host-passthrough"}
       # Windows keeps the hardware clock in local time and, left on the default
       # timer set, drifts badly enough for Setup and for TLS afterwards.
-      $ Node clock attrs: {offset: profile.clock_offset}
+      $ Element clock attrs: {offset: profile.clock_offset}
         if profile.hyperv
-          $ Node timer attrs: {name: "rtc", tickpolicy: "catchup"}
-          $ Node timer attrs: {name: "pit", tickpolicy: "delay"}
-          $ Node timer attrs: {name: "hpet", present: "no"}
-          $ Node timer attrs: {name: "hypervclock", present: "yes"}
-      $ Node on_poweroff destroy
-      $ Node on_reboot restart
-      $ Node on_crash destroy
-      $ Node devices
+          $ Element timer attrs: {name: "rtc", tickpolicy: "catchup"}
+          $ Element timer attrs: {name: "pit", tickpolicy: "delay"}
+          $ Element timer attrs: {name: "hpet", present: "no"}
+          $ Element timer attrs: {name: "hypervclock", present: "yes"}
+      $ Element on_poweroff destroy
+      $ Element on_reboot restart
+      $ Element on_crash destroy
+      $ Element devices
         ...self.#disk_nodes(overlay_driver)
-        $ Node interface attrs: {type: "user"}
-          $ Node backend attrs: {type: "passt"}
-          $ Node model attrs: {type: "virtio"}
-          $ Node portForward attrs: {proto: "tcp", address: "127.0.0.1"}
-            $ Node range attrs: {start: str(self.guest.port), to: "22"}
+        $ Element interface attrs: {type: "user"}
+          $ Element backend attrs: {type: "passt"}
+          $ Element model attrs: {type: "virtio"}
+          $ Element portForward attrs: {proto: "tcp", address: "127.0.0.1"}
+            $ Element range attrs: {start: str(self.guest.port), to: "22"}
         if profile.serial
-          $ Node serial attrs: {type: "pty"}
-            $ Node target attrs: {port: "0"}
-          $ Node console attrs: {type: "pty"}
-            $ Node target attrs: {type: "serial", port: "0"}
+          $ Element serial attrs: {type: "pty"}
+            $ Element target attrs: {port: "0"}
+          $ Element console attrs: {type: "pty"}
+            $ Element target attrs: {type: "serial", port: "0"}
         # Windows has no serial console worth reading, so the graphical one is
         # the only way to see an install stopped at a dialog. `vga` needs no
         # driver from the virtio media to be legible during Setup, and without
         # an absolute-positioning tablet the pointer is unusable over VNC.
         if profile.graphics
-          $ Node graphics attrs: {type: "vnc", autoport: "yes", listen: "127.0.0.1"}
-          $ Node video
-            $ Node model attrs: {type: "vga"}
-          $ Node input attrs: {type: "tablet", bus: "usb"}
+          $ Element graphics attrs: {type: "vnc", autoport: "yes", listen: "127.0.0.1"}
+          $ Element video
+            $ Element model attrs: {type: "vga"}
+          $ Element input attrs: {type: "tablet", bus: "usb"}
         if (profile.tpm != nil)
-          $ Node tpm attrs: {model: "tpm-crb"}
-            $ Node backend attrs: {type: "emulator", version: "2.0"}
+          $ Element tpm attrs: {model: "tpm-crb"}
+            $ Element backend attrs: {type: "emulator", version: "2.0"}
               # libvirt launches swtpm as the session user and lets it keep its
               # state here, so the vTPM lives and dies with the workdir like
               # everything else `undefine` does not remove.
-              $ Node source attrs: {type: "dir", path: str(self.#tpm_state)}
-      $ Node metadata
-        $ Node vm namespace: $VM_NAMESPACE namespaces: {dolang: VM_NAMESPACE}
-          $ Node managed "true"
-          $ Node app $self.#app
-          $ Node workdir (str self.#workdir)
+              $ Element source attrs: {type: "dir", path: str(self.#tpm_state)}
+      $ Element metadata
+        $ Element vm namespace: $VM_NAMESPACE namespaces: {dolang: VM_NAMESPACE}
+          $ Element managed "true"
+          $ Element app $self.#app
+          $ Element workdir (str self.#workdir)
           # `os` is not recoverable from the document libvirt hands back and
           # `arch` only as an attribute of `<os><type>`, so both are recorded
           # here for `Domain.export` to put in a bundle manifest.
-          $ Node os (str(self.#os).lower())
-          $ Node arch (str(self.#arch).lower())
-          $ Node memory (str self.#memory)
-          $ Node vcpus (str self.#vcpus)
+          $ Element os (str(self.#os).lower())
+          $ Element arch (str(self.#arch).lower())
+          $ Element memory (str self.#memory)
+          $ Element vcpus (str self.#vcpus)
           # Recorded so a restored bundle takes its machine shape from what it
           # was built as, rather than from whatever `Profile` says today.
           if (profile.machine != nil)
-            $ Node machine $profile.machine
-          $ Node firmware (str(profile.firmware).lower())
+            $ Element machine $profile.machine
+          $ Element firmware (str(profile.firmware).lower())
           if (profile.tpm != nil)
-            $ Node tpm (str(profile.tpm).lower())
+            $ Element tpm (str(profile.tpm).lower())
           ...self.guest.to_metadata()
 
 # A read-only view over a libvirt domain document.
@@ -1257,7 +1257,7 @@ class DomainXml
   # module did not create.
   def vm self
     for node = self.#document.traverse()
-      if (type node xml.Node &&
+      if (type node xml.Element &&
           node.tag == "vm" &&
           node.namespace == VM_NAMESPACE)
         return node
@@ -1285,7 +1285,7 @@ class DomainXml
     if !devices
       return nil
     for disk = devices.children
-      if (type disk xml.Node &&
+      if (type disk xml.Element &&
           disk.tag == "disk" &&
           disk.attrs.get("device") == device)
         let source = find_child $disk source
@@ -1342,7 +1342,7 @@ class DomainXml
     if !devices
       return sources
     for disk = devices.children
-      if (type disk xml.Node &&
+      if (type disk xml.Element &&
           disk.tag == "disk" &&
           disk.attrs.get("device") == "disk")
         let source = find_child $disk source
@@ -1489,7 +1489,7 @@ class DomainImpl
         throw NoDomainError $self.name
       echo $"\n".join(stderr)
       throw e
-    xml.decode $source
+    (xml.decode source).root
 
   # A view over the domain's current libvirt XML.
   def xml self
@@ -1986,7 +1986,7 @@ class DomainImpl
             # Left in the work directory, which is where `DomainXml.generated_xml`
             # reads it back at export time.
             let path = (workdir / "domain.xml")
-            path.write $ xml.encode $config.to_xml()
+            path.write $ xml.encode(xml.Document(config.to_xml()))
             virsh $connect_uri define $path
             let stderr = []
             try
