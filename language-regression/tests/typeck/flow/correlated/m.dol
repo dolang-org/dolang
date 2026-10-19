@@ -124,3 +124,14 @@ pub def recent p @ (((:x:, Int), Str) | ((:y:, Str), Int))
       #       ^: flow std.Int
       let _ = v
       #       ^: flow std.Int | std.Str
+
+@let Steps = {*run: (() -> nil), *Str}
+
+# Entries of an aliased schema are its alternatives too
+pub def aliased d @ Dict[Steps]
+  for entry = d
+    match entry
+      (Int(_) _) do nil
+      (:run: v) do
+        let _ = v
+        #       ^: flow (<Value, >Value) -> nil
