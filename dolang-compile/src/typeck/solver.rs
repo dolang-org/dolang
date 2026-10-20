@@ -1461,6 +1461,13 @@ impl<'db> Solver<'db> {
         Ok(self.probe_cycle(actual, expected, None)?.0)
     }
 
+    /// Whether `actual <: expected` holds, for a caller that needs only the
+    /// status: a probe, so it stops at the first contradiction. A judgment that
+    /// runs out of budget is unresolved, as a solve reports it.
+    pub(crate) fn holds(&self, actual: TypeId, expected: TypeId) -> Status {
+        self.probe(actual, expected).unwrap_or(Status::Unresolved)
+    }
+
     /// [`Self::probe`], as a premise of `from` if given, and whether an
     /// unresolved result rests on a cycle: a probe of a judgment an enclosing
     /// probe is proving that it may not assume (see [`Self::revisit`]), or a

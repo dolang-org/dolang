@@ -147,7 +147,7 @@ impl Flow<'_, '_> {
         let saved = (self.results.clone(), self.diverged);
         let mut operands = operands.iter().take(super::holes(value)).copied().collect();
         let found = self.expect(at, &mut state.clone(), &mut operands, value, Some(ty));
-        let fits = found != self.db.bottom() && self.relate(found, ty).status == Status::Proven;
+        let fits = found != self.db.bottom() && self.below(found, ty);
         (self.results, self.diverged) = saved;
         fits
     }
