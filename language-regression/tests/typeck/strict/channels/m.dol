@@ -370,3 +370,20 @@ pub def exact_keys_after_block() -> Int
 pub def redirect_keys_after_block() -> Int
   let block = do |<Iter[Int] >Sink[Int]| strand.next()
   strand.redirect $block output: [] input: [42]
+
+# A block nothing passes anything has `Value` parameters and channels, even
+# where a later join meets it
+pub def branch_blocks c @ Bool -> Str
+  let f @ ((Int) -> Str) = if c
+    do |x @ Int| "a$x"
+  else
+    do |x @ Int| "b$x"
+  f 1
+
+pub def joined_block c @ Bool -> Str
+  let f = do |x| "a$x"
+  if c
+    c = false
+  let g @ ((Int) -> Str) = f
+  #                        ^: flow (Value, <Value, >Value) -> std.Str
+  g 1
